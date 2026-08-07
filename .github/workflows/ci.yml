@@ -1,5 +1,5 @@
-# CI for Stage 0. Runs what exists: the oracle, the file-transfer interop
-# suite, and the two Rust audits.
+# Runs what exists: the oracle, the Rust core diffed against it, the
+# file-transfer interop suite, and the two Stage 0 audits.
 #
 # Everything here builds against a SIBLING CHECKOUT of upstream Tera Term at
 # ../teraterm, exactly as the local layout does. That checkout is PINNED to a
@@ -35,6 +35,12 @@ jobs:
           repository: TeraTermProject/teraterm
           ref: ${{ env.TERATERM_REF }}
           path: teraterm
+      # apply_patches.py is a PEP 723 script run via `uv run --script`, so the
+      # oracle cannot build without uv. Missing this is why the oracle job was
+      # red with "Error 127" from the moment patches were introduced.
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: latest
       - name: Build
         run: make -C termitta/oracle
       - name: Regression suite
@@ -97,6 +103,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: latest
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: termitta/crates -> target
