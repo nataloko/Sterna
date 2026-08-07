@@ -32,6 +32,10 @@ already taken in the wild).
    have no per-file licence headers, unlike `ttpfile`.
 6. **Git identity is set per-repo** to the GitHub noreply address, already
    configured locally. Don't change it.
+7. **Commit often.** Small, self-contained commits as work lands, not one
+   omnibus commit at the end of a session. A spike that compiles is a commit; a
+   finding recorded in `PLAN.md` is a commit. This keeps the history bisectable
+   and means an interrupted session leaves something behind.
 
 ## Build and test
 
