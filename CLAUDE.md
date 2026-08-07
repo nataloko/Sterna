@@ -24,6 +24,10 @@ already taken in the wild).
    stub. Every stub is a place the oracle can lie about ground truth.
 3. **Never bless a golden you have not read.** `./run_tests.sh --bless`
    regenerates `cases/*/expected`. A wrong golden is worse than no test.
+   The differential suite (`./run_diff.sh`) sidesteps this entirely — it diffs
+   the two engines against each other, so a new case needs an `input` and
+   nothing to bless. **Prefer adding cases there.** Bless a golden only when you
+   also want the oracle's own suite to guard that case against upstream drift.
 4. **The oracle's settings are load-bearing.** `main.c:settings_defaults()`
    mirrors `ttpset/ttset.c`'s per-key fallbacks. If a dump looks subtly wrong,
    suspect a setting before suspecting the parser. See the traps below.
@@ -40,9 +44,15 @@ already taken in the wild).
 ## Build and test
 
 ```sh
+./run_diff.sh                    # THE gate: Rust engine vs Tera Term, 38 cases
+./run_diff.sh 27                 # just the cases matching "27"
+
+cd crates                        # the Rust core
+cargo test && cargo clippy --all-targets -- -D warnings
+
 cd oracle
 make            # build build/oracle
-make test       # 18 regression cases
+make test       # 38 regression cases
 make stubs      # regenerate the stub layer after upstream headers change
 
 cd xfer                          # Stage 0 spike 2
@@ -160,6 +170,17 @@ something other than what it is.
 - **Make's VPATH beats pattern rules.** Patched sources need *explicit* rules or
   the generic `%.o: %.c` finds the unpatched original via VPATH and silently
   wins.
+- **`ts.ColorFlag` is zero, and that changes how SGR parses.** With
+  `CF_XTERM256` clear — the default — `SGR 38`/`48` do nothing *and do not
+  consume their arguments*, so `ESC [ 38;5;196 m` is read as three parameters:
+  38 (ignored), 5 (**blink on**), 196 (ignored). A port that "correctly" eats
+  the arguments diverges from the oracle and looks like the oracle is broken.
+  `vtterm.c:2239`.
+- **`TermIDGetID()` never fails.** It is a case-sensitive `strcmp` against an
+  UPPERCASE table that returns `IdVT100` for anything unrecognised, so
+  `--term vt220` silently ran as a VT100 and the `== 0` guard in `main.c` could
+  never fire. Fixed in `oracle/src/main.c:resolve_term_id()`; the same shape of
+  trap is anywhere else upstream "defaults" instead of erroring.
 
 And for the desktop side:
 
@@ -214,7 +235,8 @@ oracle/          Tera Term's real VT engine, headless on Linux (see its README)
 xfer/            Stage 0 spike 2 — ttpfile's protocols, running and interoperating
 serial-audit/    Stage 0 spike 4 — serialport-rs vs commlib.c, on real hardware
 ssh-audit/       Stage 0 spike 5 — russh vs legacy SSH algorithms and auth
-crates/          Rust core — not started
+crates/          Rust core — tt-grid, tt-vt, tt-dump (see its README)
+run_diff.sh      the differential gate: Rust engine vs Tera Term, every case
 shell/           Qt 6 shell — not started
 vendor/          vendored Tera Term subsystems — empty, see ATTRIBUTION.md first
 ```

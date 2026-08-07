@@ -82,6 +82,52 @@ jobs:
       - name: Build and lint ssh-audit
         run: cd ssh-audit && cargo build --locked && cargo clippy -- -D warnings
 
+  core:
+    name: core — Rust VT engine, diffed against Tera Term
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: termitta
+      - uses: actions/checkout@v4
+        with:
+          repository: TeraTermProject/teraterm
+          ref: ${{ env.TERATERM_REF }}
+          path: teraterm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: termitta/crates -> target
+      - name: Lint
+        run: |
+          cd termitta/crates
+          cargo fmt --check
+          cargo clippy --all-targets --locked -- -D warnings
+      - name: Unit tests
+        run: cd termitta/crates && cargo test --locked
+      # The gate that matters: every case in oracle/cases/ is fed to BOTH the
+      # Rust engine and Tera Term's real one, and the two dumps must be
+      # identical. No golden files are involved — the oracle is the expectation.
+      - name: Differential suite vs the oracle
+        run: cd termitta && ./run_diff.sh
+
+  core-windows:
+    name: core — builds and tests on Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: crates -> target
+      # Only the core: the oracle needs a POSIX toolchain and the differential
+      # suite needs the oracle. This job exists to catch Linux-only assumptions
+      # creeping into tt-grid/tt-vt while Windows is still three stages away.
+      - name: Build and test
+        run: cd crates && cargo build --locked && cargo test --locked
+
   ssh-audit:
     name: ssh-audit — russh vs legacy algorithms
     runs-on: ubuntu-24.04
@@ -100,8 +146,7 @@ jobs:
           cargo run --locked
           ./servers.sh stop
 
-# No Windows job yet, deliberately. There is no Windows-buildable code in the
-# tree — the shell and core start in Stage 1, Windows support in Stage 3. A
-# windows-latest job that compiled nothing would be theatre. Add it with the
-# first Rust core commit, and the release matrix (linux-x64 + windows-x64) with
-# the first shippable artifact.
+# The Windows job covers `crates/` only, which is all there is to cover: the
+# oracle and xfer both need a POSIX toolchain, and the Qt shell does not exist.
+# Add the release matrix (linux-x64 + windows-x64) with the first shippable
+# artifact, not before.

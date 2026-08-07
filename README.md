@@ -3,11 +3,12 @@
 A cross-platform **communications terminal** — serial, SSH, telnet and local
 shell — for Linux and Windows. Compatible with Tera Term; not Tera Term.
 
-> **Status: Stage 0 complete — nothing is usable yet.** What exists is the
+> **Status: Stage 1 started — nothing is usable yet.** Stage 0 built the
 > groundwork: a differential-test oracle running Tera Term's real VT engine
 > (`oracle/`), a harness running its real file-transfer protocols (`xfer/`),
 > and audits of the serial and SSH layers (`serial-audit/`, `ssh-audit/`).
-> The terminal itself starts in Stage 1. See [PLAN.md](PLAN.md).
+> Stage 1 has begun on the VT engine itself (`crates/`), which is diffed against
+> the oracle on every commit. See [PLAN.md](PLAN.md).
 
 The name is settled. See [PLAN.md](PLAN.md) for scope and status,
 [ATTRIBUTION.md](ATTRIBUTION.md) for what is borrowed from Tera Term and under
@@ -32,7 +33,10 @@ that nothing else on Linux does, done well:
 - SSH2 and telnet, plus `~/.ssh/config` and `known_hosts` (which Tera Term lacks)
 - real scripting — the TTL language, so existing `.ttl` scripts run unchanged
 - the legacy file-transfer suite: XMODEM, YMODEM, ZMODEM, Kermit, B-Plus, Quick-VAN
-- deep CJK support
+
+CJK input methods and the charset tables are **deferred indefinitely** — see
+[PLAN.md](PLAN.md). Wide and combining character handling in the grid stays in
+scope regardless; box drawing, emoji and accents need it.
 
 Explicitly **out of scope**: Tektronix 4010 emulation, the TTX C plugin ABI
 (its hooks are literal Winsock function tables — unportable by construction),
@@ -45,26 +49,28 @@ replaceable because it only ever sees POD types.
 
 ```
 ┌─ Qt 6 Widgets (C++) ──── swappable: Tauri / TUI / headless ─┐
-│  grid painter · .ui dialogs · IME (ibus/fcitx5) · clipboard │
+│  grid painter · .ui dialogs · clipboard · menus              │
 └──────────────────── C ABI (cbindgen) ───────────────────────┘
-┌─ termitta-core (Rust) ────────────────────────────────────────┐
+┌─ termitta-core (Rust) ──────────────────────────────────────┐
 │  vt · grid · charset · conn · xfer · script · config · i18n │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Qt because CJK input-method support on Linux decides it: `QInputMethodEvent` is
-the most-tested IME path there is. Ghostty chose GTK4 for the same reason, and
-GTK4 is not good on Windows. No GPU renderer — at 115200 baud you receive
-11.5 KB/s, and a `QPainter` glyph atlas draws a 200×60 grid in well under a
-millisecond.
+Qt because it is strong on Windows *and* Linux at once, unlike GTK4, and because
+Tera Term's settings surface is 76 dialogs over a 909-line struct — which is
+what Widgets is good at and what the Rust-native toolkits are not. No GPU
+renderer: at 115200 baud you receive 11.5 KB/s, and a plain `QPainter` grid
+measures 255 fps of full-screen repaint on the target Qt, roughly 40× the
+headroom needed.
 
 ## Verification
 
 Rewriting a VT emulator is a correctness problem. Four layers, from day one:
 
 1. **[Differential testing against real Tera Term](oracle/README.md)** — its
-   actual `vtterm.c` and `buffer.c`, built headless on Linux. Ground truth for
-   free, on every commit.
+   actual `vtterm.c` and `buffer.c`, built headless on Linux. `./run_diff.sh`
+   feeds every case to both engines and diffs the dumps against each other, in
+   CI on every commit. No golden files: the oracle is the expected output.
 2. **esctest2** (iTerm2) — automated DEC/xterm conformance.
 3. **Tera Term's own test corpus** — the `.sh`/`.pl` escape-sequence exercisers
    and the 53 `.ttl` scripts.
@@ -76,7 +82,9 @@ Plus a performance gate: cold start, idle RSS, throughput, input latency.
 ## Build
 
 ```sh
-cd oracle && make && make test
+cd oracle && make && make test    # Tera Term's VT engine, headless
+cd crates && cargo test           # the Rust core
+./run_diff.sh                     # the two, diffed against each other
 ```
 
 Needs a sibling Tera Term checkout at `../teraterm`.
