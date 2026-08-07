@@ -51,6 +51,7 @@ already taken in the wild).
 ```sh
 ./run_diff.sh                    # THE gate: Rust engine vs Tera Term, 51 cases
 ./run_diff.sh 27                 # just the cases matching "27"
+./run_upstream.sh                # the same diff over Tera Term's OWN exercisers
 
 cd crates                        # the Rust core
 cargo test && cargo clippy --all-targets -- -D warnings
@@ -232,15 +233,24 @@ And for the desktop side:
   stays in scope: it comes free with the oracle-driven port, and box drawing,
   emoji and combining accents need it regardless of CJK.
 
-## Bug found upstream, not yet reported
+## Bugs found upstream, not yet reported
 
-`BuffGetAnyLineDataW()` (`buffer.c:5832`) does `continue` without advancing `b`
-on padding cells, so it parks on the padding cell after a full-width character
-and drops the rest of the line. Only caller is `filesys_log.cpp:443` — so
-**Tera Term's session logging truncates any line at its first CJK character.**
+Three, all in `buffer.c`, all found by diffing the two engines. Patches in
+`oracle/patches/`, reports drafted in `docs/upstream-bugs.md`. Filing needs a
+GitHub account and is an open item in `PLAN.md`.
 
-One-line fix in `oracle/patches/0001-buffgetanylinedataw-padding.patch`.
-Reporting it upstream is an open item in `PLAN.md`.
+1. **`BuffGetAnyLineDataW` does not advance past padding cells** (`:5832`), so
+   it parks on the padding after a full-width character and drops the rest of
+   the line. Sole caller is `filesys_log.cpp:443` — **session logging truncates
+   any line at its first CJK character.**
+2. **`BuffGetAnyLineDataW` budgets output units with a column count.** `left`
+   is seeded from `copysize` (cells) but spent in `wchar_t` units, so any line
+   with combining marks truncates at about half the width. Independent of 1.
+3. **ECH writes past the end of the line.** `CSI Ps X` clamps `Ps` to the
+   terminal *width* and then writes that many cells *from the cursor*, so it
+   overshoots by the cursor's column into the next line — and off the end of
+   the allocation on the last line. The parameter comes off the wire, so this
+   is an attacker-controlled out-of-bounds write. **File this one first.**
 
 ## Layout
 

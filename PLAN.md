@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-07 · **Stage:** 1 started · **Commits:** 19
+**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 23
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -130,10 +130,11 @@ the trigger to watch — not CJK, and not toolkit fashion.
   not Tera Term's own work — so they carry the Unicode licence, and should be
   regenerated from the UCD rather than copied. Moot while CJK is deferred.
   Detail in `ATTRIBUTION.md`.
-- **Upstream `BuffGetAnyLineDataW` bug: report drafted**, with before/after
+- **Upstream bug reports drafted** — three now, not one, each with before/after
   output measured from patched and unpatched builds rather than asserted. See
-  `docs/upstream-bug-buffgetanylinedataw.md`. **Filing needs a GitHub account**,
-  so it is the one Stage 0 item that still needs the user.
+  `docs/upstream-bugs.md`. **Filing needs a GitHub account**, so it is the one
+  Stage 0 item that still needs the user. One of the three is an
+  attacker-controlled out-of-bounds write and should go first.
 
 ---
 
@@ -386,6 +387,25 @@ misconfigured oracle**, and the only reason it surfaced is that the differential
 suite made a settings bug look like a parser bug and forced the question. A
 golden-file-only suite would have blessed the wrong answer and moved on.
 
+Then `./run_upstream.sh` pointed the same diff at **Tera Term's own exercisers**
+and found two more upstream bugs in `buffer.c` — inside scripts upstream ships
+to test exactly this behaviour, which had evidently been run by eye many times
+without anyone diffing the buffer afterwards:
+
+4. **`BuffGetAnyLineDataW` budgets output units with a column count.** A second,
+   independent defect in the function `0001` already patches: `left` is seeded
+   from a cell count but spent in `wchar_t` units, so any line with combining
+   marks truncates at about half the width. More session-log data loss.
+5. **ECH writes past the end of the line.** `CSI Ps X` clamps `Ps` to the
+   terminal *width* and then writes that many cells *from the cursor*,
+   overshooting into the next line — and off the end of the allocation on the
+   last line. The parameter arrives in the byte stream, so this is an
+   **attacker-controlled out-of-bounds write** in a program whose whole job is
+   reading untrusted bytes. Reachable from upstream's own `bcetest.sh`.
+
+Reports for all three are drafted in `docs/upstream-bugs.md`; **file the ECH one
+first**, and consider whether it wants a private report rather than an issue.
+
 Upstream behaviours reproduced deliberately, which will look like bugs to anyone
 reading the Rust in isolation: G1 starts as DEC special graphics so a bare SO
 draws lines; a single shift never ends in UTF-8 mode; C1 controls are masked to
@@ -502,11 +522,15 @@ file/dir 1k, connection/terminal 2k, dialogs 0.8k, misc 1k — **~9.3k Rust vs
    over a pty, read back via DSR/DECRQSS. Wire into CI in Stage 1.
 3. **⬜ vttest** (Dickey) — interactive; manual gate plus screenshot diffing at
    each stage boundary.
-4. **⬜ Tera Term's own corpus** — the 33 `.sh`/`.pl`/`.rb` exercisers in
-   `teraterm/tests/` as golden-file tests. `unicodebuf-combining*.pl`,
-   `bcetest.sh`, `decfra.sh` and `#38168-deccara-*.sh` are the ones that will
-   break and all stay in scope; `unicodebuf-east_asian_width.txt` is deferred
-   with CJK. The 53 `.ttl` files as the TTL conformance suite.
+4. **🔵 Tera Term's own corpus** — `./run_upstream.sh` runs the escape-sequence
+   exercisers in `teraterm/tests/` headless and diffs the two engines over
+   their output. Not golden files and not copied into the repo: the scripts are
+   executed from the pinned sibling checkout, so the corpus tracks upstream.
+   **12 matching, 9 known-divergent, 6 not run**, each with a recorded reason in
+   `oracle/upstream.cases`. The prediction above was accurate — `bcetest.sh`,
+   `decfra.sh` and the `#38168-deccara-*.sh` trio were among the breakages, and
+   two of them turned out to be upstream bugs rather than ours. Still to do:
+   the 53 `.ttl` files as the TTL conformance suite, in Stage 2.
 5. **⬜ Fuzzing and property tests.** `cargo-fuzz` on the parser — it eats
    untrusted network bytes. `proptest` invariants: cursor in bounds, wide-char
    pairs never split, scrollback monotonic, no attribute leaks across BCE.

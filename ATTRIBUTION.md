@@ -84,7 +84,7 @@ are deferred with it.
 - `BuffGetAnyLineDataW()` drops everything after the first full-width character,
   truncating session logs of CJK text. See
   `oracle/patches/0001-buffgetanylinedataw-padding.patch` and
-  `docs/upstream-bug-buffgetanylinedataw.md` for the report as drafted.
+  `docs/upstream-bugs.md` for the report as drafted.
   **Status: drafted, not yet filed** — needs a GitHub account to post to
   <https://github.com/TeraTermProject/teraterm/issues>.
 
