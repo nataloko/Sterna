@@ -1,0 +1,107 @@
+# CI for Stage 0. Runs what exists: the oracle, the file-transfer interop
+# suite, and the two Rust audits.
+#
+# Everything here builds against a SIBLING CHECKOUT of upstream Tera Term at
+# ../teraterm, exactly as the local layout does. That checkout is PINNED to a
+# SHA on purpose — the oracle compiles upstream's real sources, so tracking
+# their main branch would let an upstream commit break our build with no change
+# on our side, and the failure would look like ours. Bump TERATERM_REF
+# deliberately, and expect to re-bless goldens when you do.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # TeraTermProject/teraterm, v5.6.0-496-g827a35b05
+  TERATERM_REF: 827a35b050c974b0fdf2a77ef73ed882301eb6c4
+
+jobs:
+  oracle:
+    name: oracle — Tera Term's VT engine, headless
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: qtterm
+      - uses: actions/checkout@v4
+        with:
+          repository: TeraTermProject/teraterm
+          ref: ${{ env.TERATERM_REF }}
+          path: teraterm
+      - name: Build
+        run: make -C qtterm/oracle
+      - name: Regression suite
+        run: make -C qtterm/oracle test
+
+  xfer:
+    name: xfer — file-transfer protocol interop
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: qtterm
+      - uses: actions/checkout@v4
+        with:
+          repository: TeraTermProject/teraterm
+          ref: ${{ env.TERATERM_REF }}
+          path: teraterm
+      - name: Install counterparties
+        # G-Kermit, not C-Kermit: C-Kermit sees a pty as a tty and drops into
+        # interactive mode instead of speaking the protocol.
+        run: sudo apt-get update && sudo apt-get install -y lrzsz gkermit
+      - name: Build
+        run: make -C qtterm/xfer
+      - name: Interop suite
+        run: cd qtterm/xfer && ./run_tests.sh
+
+  rust:
+    name: rust — audits build and lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: serial-audit -> target
+      - name: serialport dependency
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      # serial-audit cannot RUN in CI — it needs the FTDI loopback rig — so it
+      # is built and linted only. ssh-audit can run: its servers are just
+      # sshd and dropbear on localhost.
+      - name: Build and lint serial-audit
+        run: cd serial-audit && cargo build --locked && cargo clippy -- -D warnings
+      - name: Build and lint ssh-audit
+        run: cd ssh-audit && cargo build --locked && cargo clippy -- -D warnings
+
+  ssh-audit:
+    name: ssh-audit — russh vs legacy algorithms
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ssh-audit -> target
+      - name: Install servers
+        run: sudo apt-get update && sudo apt-get install -y dropbear-bin openssh-server
+      - name: Run the matrix
+        run: |
+          cd ssh-audit
+          ./servers.sh start
+          cargo run --locked
+          ./servers.sh stop
+
+# No Windows job yet, deliberately. There is no Windows-buildable code in the
+# tree — the shell and core start in Stage 1, Windows support in Stage 3. A
+# windows-latest job that compiled nothing would be theatre. Add it with the
+# first Rust core commit, and the release matrix (linux-x64 + windows-x64) with
+# the first shippable artifact.

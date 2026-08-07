@@ -260,7 +260,7 @@ async fn main() {
     let keyfile = format!("{dir}/id_rsa");
     let user = std::env::var("USER").unwrap_or("nata".into());
 
-    println!("=== spike 5: russh {} vs legacy algorithms ===\n", "0.62");
+    println!("=== spike 5: russh 0.62 vs legacy algorithms ===\n");
     let (mut pass, mut na, mut fail) = (0, 0, 0);
     let mut failures = Vec::new();
 
