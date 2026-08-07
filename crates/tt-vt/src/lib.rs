@@ -11,8 +11,8 @@
 
 use tt_charset::{gset_from_intermediate, sbcs_final, Iso2022, Iso2022State, Shift, ShiftFlags};
 use tt_grid::{
-    Grid, Pen, ATTR2_BACK, ATTR2_COLOR_MASK, ATTR2_FORE, ATTR_BLINK, ATTR_BOLD, ATTR_REVERSE,
-    ATTR_SPECIAL, ATTR_UNDER, DEFAULT_BG, DEFAULT_FG,
+    Grid, Pen, ATTR2_BACK, ATTR2_COLOR_MASK, ATTR2_FORE, ATTR2_PROTECT, ATTR_BLINK, ATTR_BOLD,
+    ATTR_REVERSE, ATTR_SPECIAL, ATTR_UNDER, DEFAULT_BG, DEFAULT_FG,
 };
 use vte::{Params, Perform};
 
@@ -81,6 +81,8 @@ pub struct Config {
     pub accept_8bit_ctrl: bool,
     /// `TF_ALTSCR` (`ttset.c:1681`, key default on).
     pub alt_screen_enabled: bool,
+    /// `TF_REMOTECLEARSBUFF` (`ttset.c:1950`, key default on). Gates `ED 3`.
+    pub remote_clears_buffer: bool,
     pub scrollback_max: usize,
 }
 
@@ -96,6 +98,7 @@ impl Default for Config {
             japanese: false,
             accept_8bit_ctrl: true,
             alt_screen_enabled: true,
+            remote_clears_buffer: true,
             // ttset.c:1213 MaxBuffSize. Not ttset.c:750's ScrollBuffSize (100),
             // which is the *initial* depth the user can grow up to this.
             scrollback_max: 10_000,
@@ -329,7 +332,12 @@ impl State {
             let p = groups[i].first().copied().unwrap_or(0);
             match p {
                 0 => {
+                    // The protect bit survives SGR 0 — `vtterm.c:2178` ORs it
+                    // back in explicitly, so DECSCA outlives an attribute
+                    // reset and only another DECSCA clears it.
+                    let protect = self.grid.pen.attrs & ATTR2_PROTECT;
                     self.grid.pen = Pen::default();
+                    self.grid.pen.attrs |= protect;
                 }
                 1 => self.grid.pen.attrs |= ATTR_BOLD,
                 4 => self.grid.pen.attrs |= ATTR_UNDER,
@@ -457,6 +465,135 @@ impl State {
         }
     }
 
+    /// Every final byte that carries no intermediate, or ignores the one it
+    /// has because upstream does.
+    fn csi_plain(
+        &mut self,
+        params: &Params,
+        private: bool,
+        gt: bool,
+        inter: Option<u8>,
+        action: char,
+    ) {
+        // DECSTBM and friends take no intermediate; anything that arrives with
+        // one is a sequence we have not ported, and running it as its
+        // no-intermediate namesake would be worse than dropping it.
+        if matches!(inter, Some(b) if b != b'?' && b != b'>') {
+            return;
+        }
+        match action {
+            '@' => self.grid.insert_chars(arg(params, 0, 1) as usize),
+            'A' => self.grid.move_up(arg(params, 0, 1) as usize),
+            'B' => self.grid.move_down(arg(params, 0, 1) as usize),
+            'C' => self.grid.move_right(arg(params, 0, 1) as usize),
+            'D' => self.grid.move_left(arg(params, 0, 1) as usize),
+            'E' => {
+                self.grid.move_down(arg(params, 0, 1) as usize);
+                self.grid.carriage_return();
+            }
+            'F' => {
+                self.grid.move_up(arg(params, 0, 1) as usize);
+                self.grid.carriage_return();
+            }
+            'G' | '`' => {
+                let x = arg(params, 0, 1).saturating_sub(1) as usize;
+                self.grid.move_cursor(x, self.grid.cursor.y);
+            }
+            'H' | 'f' => {
+                let y = arg(params, 0, 1).saturating_sub(1) as usize;
+                let x = arg(params, 1, 1).saturating_sub(1) as usize;
+                self.grid.move_cursor_abs(x, y);
+            }
+            'I' => self.grid.forward_tab(arg(params, 0, 1) as usize),
+            // ED, and DECSED under `?`. Mode 3 is not an erase at all: it is
+            // `ClearBuffer`, gated on TF_REMOTECLEARSBUFF, and it homes the
+            // cursor and resets the scroll region on the way out.
+            'J' => match (private, arg0(params, 0)) {
+                (_, 3) => {
+                    if self.config.remote_clears_buffer {
+                        self.grid.clear_buffer();
+                    }
+                }
+                (true, 0) => self.grid.selective_erase_to_end(),
+                (true, 1) => self.grid.selective_erase_to_cursor(),
+                (true, 2) => {
+                    self.grid.selective_erase_to_cursor();
+                    self.grid.selective_erase_to_end();
+                }
+                (true, _) => {}
+                (false, mode) => self.grid.erase_display(mode),
+            },
+            // EL, and DECSEL under `?`.
+            'K' => {
+                let mode = arg0(params, 0);
+                if private {
+                    self.grid.selective_erase_line(mode);
+                } else {
+                    self.grid.erase_line(mode);
+                }
+            }
+            'L' => self.grid.insert_lines(arg(params, 0, 1) as usize),
+            'M' => self.grid.delete_lines(arg(params, 0, 1) as usize),
+            'P' => self.grid.delete_chars(arg(params, 0, 1) as usize),
+            'S' => self.grid.scroll_up(arg(params, 0, 1) as usize),
+            'T' => self.grid.scroll_down(arg(params, 0, 1) as usize),
+            'X' => self.grid.erase_chars(arg(params, 0, 1) as usize),
+            'Z' => self.grid.backward_tab(arg(params, 0, 1) as usize),
+            'b' => {
+                if let Some(cp) = self.last_printed {
+                    for _ in 0..arg(params, 0, 1) {
+                        self.grid.put(cp);
+                    }
+                }
+            }
+            'c' => {
+                if gt {
+                    // Secondary DA: VT382(>32) + xterm rev 331 (vtterm.c:2841).
+                    self.send_csi(">32;331;0c");
+                } else if !private {
+                    let da = self.config.term_id.primary_da();
+                    self.send(b"\x1b[?");
+                    self.send(da.as_bytes());
+                    self.send(b"c");
+                }
+            }
+            'd' => {
+                let y = arg(params, 0, 1).saturating_sub(1) as usize;
+                self.grid.move_cursor(self.grid.cursor.x, y);
+            }
+            'g' => match arg0(params, 0) {
+                0 => self.grid.clear_tab(),
+                3 => self.grid.clear_all_tabs(),
+                _ => {}
+            },
+            'h' => self.set_mode(private, params, true),
+            'l' => self.set_mode(private, params, false),
+            'm' => {
+                if !private && !gt {
+                    self.sgr(params)
+                }
+            }
+            'n' => match arg0(params, 0) {
+                5 => self.send_csi("0n"),
+                6 => {
+                    let (x, y) = (self.grid.cursor.x, self.grid.cursor.y);
+                    let (top, _) = self.grid.scroll_region();
+                    let row = if self.grid.origin_mode { y - top } else { y };
+                    let body = format!("{};{}R", row + 1, x + 1);
+                    self.send_csi(&body);
+                }
+                _ => {}
+            },
+            'r' => {
+                let rows = self.grid.rows() as u16;
+                let top = arg(params, 0, 1).saturating_sub(1) as usize;
+                let bottom = arg(params, 1, rows).saturating_sub(1) as usize;
+                self.grid.set_scroll_region(top, bottom);
+            }
+            _ => {}
+        }
+    }
+
     /// DECSC, and the save half of `ESC [ ? 1048 h` — upstream shares the slot,
     /// charset state included.
     fn save_cursor(&mut self) {
@@ -573,94 +710,21 @@ impl Perform for State {
         if ignore {
             return;
         }
-        let private = intermediates.first() == Some(&b'?');
-        let gt = intermediates.first() == Some(&b'>');
+        let inter = intermediates.first().copied();
+        let private = inter == Some(b'?');
+        let gt = inter == Some(b'>');
 
-        match action {
-            '@' => self.grid.insert_chars(arg(params, 0, 1) as usize),
-            'A' => self.grid.move_up(arg(params, 0, 1) as usize),
-            'B' => self.grid.move_down(arg(params, 0, 1) as usize),
-            'C' => self.grid.move_right(arg(params, 0, 1) as usize),
-            'D' => self.grid.move_left(arg(params, 0, 1) as usize),
-            'E' => {
-                self.grid.move_down(arg(params, 0, 1) as usize);
-                self.grid.carriage_return();
-            }
-            'F' => {
-                self.grid.move_up(arg(params, 0, 1) as usize);
-                self.grid.carriage_return();
-            }
-            'G' | '`' => {
-                let x = arg(params, 0, 1).saturating_sub(1) as usize;
-                self.grid.move_cursor(x, self.grid.cursor.y);
-            }
-            'H' | 'f' => {
-                let y = arg(params, 0, 1).saturating_sub(1) as usize;
-                let x = arg(params, 1, 1).saturating_sub(1) as usize;
-                self.grid.move_cursor_abs(x, y);
-            }
-            'I' => self.grid.forward_tab(arg(params, 0, 1) as usize),
-            'J' => self.grid.erase_display(arg0(params, 0)),
-            'K' => self.grid.erase_line(arg0(params, 0)),
-            'L' => self.grid.insert_lines(arg(params, 0, 1) as usize),
-            'M' => self.grid.delete_lines(arg(params, 0, 1) as usize),
-            'P' => self.grid.delete_chars(arg(params, 0, 1) as usize),
-            'S' => self.grid.scroll_up(arg(params, 0, 1) as usize),
-            'T' => self.grid.scroll_down(arg(params, 0, 1) as usize),
-            'X' => self.grid.erase_chars(arg(params, 0, 1) as usize),
-            'Z' => self.grid.backward_tab(arg(params, 0, 1) as usize),
-            'b' => {
-                if let Some(cp) = self.last_printed {
-                    for _ in 0..arg(params, 0, 1) {
-                        self.grid.put(cp);
-                    }
-                }
-            }
-            'c' => {
-                if gt {
-                    // Secondary DA: VT382(>32) + xterm rev 331 (vtterm.c:2841).
-                    self.send_csi(">32;331;0c");
-                } else if !private {
-                    let da = self.config.term_id.primary_da();
-                    self.send(b"\x1b[?");
-                    self.send(da.as_bytes());
-                    self.send(b"c");
-                }
-            }
-            'd' => {
-                let y = arg(params, 0, 1).saturating_sub(1) as usize;
-                self.grid.move_cursor(self.grid.cursor.x, y);
-            }
-            'g' => match arg0(params, 0) {
-                0 => self.grid.clear_tab(),
-                3 => self.grid.clear_all_tabs(),
+        // Intermediates change what a final byte means, and silently ignoring
+        // them is how `CSI ... $ r` (DECCARA) ends up reprogramming the scroll
+        // region. Everything below assumes no intermediate unless it says so.
+        match (inter, action) {
+            // DECSCA — `vtterm.c:3335`. 0 and 2 both clear.
+            (Some(b'"'), 'q') => match arg0(params, 0) {
+                0 | 2 => self.grid.pen.attrs &= !ATTR2_PROTECT,
+                1 => self.grid.pen.attrs |= ATTR2_PROTECT,
                 _ => {}
             },
-            'h' => self.set_mode(private, params, true),
-            'l' => self.set_mode(private, params, false),
-            'm' => {
-                if !private && !gt {
-                    self.sgr(params)
-                }
-            }
-            'n' => match arg0(params, 0) {
-                5 => self.send_csi("0n"),
-                6 => {
-                    let (x, y) = (self.grid.cursor.x, self.grid.cursor.y);
-                    let (top, _) = self.grid.scroll_region();
-                    let row = if self.grid.origin_mode { y - top } else { y };
-                    let body = format!("{};{}R", row + 1, x + 1);
-                    self.send_csi(&body);
-                }
-                _ => {}
-            },
-            'r' => {
-                let rows = self.grid.rows() as u16;
-                let top = arg(params, 0, 1).saturating_sub(1) as usize;
-                let bottom = arg(params, 1, rows).saturating_sub(1) as usize;
-                self.grid.set_scroll_region(top, bottom);
-            }
-            _ => {}
+            _ => self.csi_plain(params, private, gt, inter, action),
         }
     }
 
@@ -927,6 +991,36 @@ mod tests {
         assert_eq!(row(&vt, 0), "one");
         assert_eq!(row(&vt, 1), "two");
         assert_eq!(row(&vt, 2), "three");
+    }
+
+    #[test]
+    fn decsca_survives_sgr_zero_and_only_decsca_clears_it() {
+        // vtterm.c:2178 ORs the protect bit back in after SGR 0, so a program
+        // that resets attributes between fields keeps its protected regions.
+        let vt = run(b"\x1b[1\"q\x1b[0ma\x1b[2\"qb", 4, 1);
+        assert_eq!(
+            vt.grid().line(0)[0].attrs & tt_grid::ATTR2_PROTECT,
+            tt_grid::ATTR2_PROTECT
+        );
+        assert_eq!(vt.grid().line(0)[1].attrs & tt_grid::ATTR2_PROTECT, 0);
+    }
+
+    #[test]
+    fn decsel_skips_protected_cells_and_el_does_not() {
+        let vt = run(b"\x1b[0\"qAA\x1b[1\"qBB\x1b[0\"qCC\x1b[1;1H\x1b[?2K", 6, 2);
+        assert_eq!(row(&vt, 0), "  BB");
+        let vt = run(b"\x1b[0\"qAA\x1b[1\"qBB\x1b[0\"qCC\x1b[1;1H\x1b[2K", 6, 2);
+        assert_eq!(row(&vt, 0), "");
+    }
+
+    #[test]
+    fn selective_erase_keeps_the_sgr_bits_where_a_plain_erase_drops_them() {
+        // BuffSelectedEraseCharsInLine masks to AttrSgrMask instead of
+        // painting the pen, so bold outlives DECSEL.
+        let vt = run(b"\x1b[1mA\x1b[1;1H\x1b[?2K", 4, 1);
+        assert_eq!(vt.grid().line(0)[0].attrs & ATTR_BOLD, ATTR_BOLD);
+        let vt = run(b"\x1b[1mA\x1b[1;1H\x1b[2K", 4, 1);
+        assert_eq!(vt.grid().line(0)[0].attrs & ATTR_BOLD, 0);
     }
 
     #[test]

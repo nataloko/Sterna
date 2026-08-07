@@ -53,6 +53,28 @@ PATCHES: list[tuple[str, str, str, str]] = [
         "patches/0003-bufferasecharsinline-overrun.patch: ECH writes past the "
         "end of the line, into the next one",
     ),
+    (
+        "buffer.c",
+        "\t\tfor (j = TmpPtr + offset; j < TmpPtr + NumOfColumns - offset; j++) {\r\n"
+        "\t\t\tif (!(CodeLineW[j].attr2 & Attr2Protect)) {\r\n"
+        "\t\t\t\tBuffSetChar(&CodeBuffW[j], 0x20, 'H');\r\n"
+        "\t\t\t\tCodeLineW[j].attr &= AttrSgrMask;\r\n",
+        "\t\tfor (j = TmpPtr + offset; j < TmpPtr + NumOfColumns; j++) {\r\n"
+        "\t\t\tif (!(CodeBuffW[j].attr2 & Attr2Protect)) {\r\n"
+        "\t\t\t\tBuffSetChar(&CodeBuffW[j], 0x20, 'H');\r\n"
+        "\t\t\t\tCodeBuffW[j].attr &= AttrSgrMask;\r\n",
+        "patches/0004-buffselectederase-wrong-base.patch: DECSED indexes a "
+        "line-relative pointer with an absolute offset (CurToEnd)",
+    ),
+    (
+        "buffer.c",
+        "\t\tfor (j = TmpPtr; j < TmpPtr + offset; j++) {\r\n"
+        "\t\t\tif (!(CodeLineW[j].attr2 & Attr2Protect)) {\r\n",
+        "\t\tfor (j = TmpPtr; j < TmpPtr + offset; j++) {\r\n"
+        "\t\t\tif (!(CodeBuffW[j].attr2 & Attr2Protect)) {\r\n",
+        "patches/0004-buffselectederase-wrong-base.patch: DECSED indexes a "
+        "line-relative pointer with an absolute offset (HomeToCur)",
+    ),
 ]
 
 

@@ -29,9 +29,20 @@ pub const ATTR_SPECIAL: u32 = 0x0004;
 pub const ATTR_BLINK: u32 = 0x0008;
 pub const ATTR_REVERSE: u32 = 0x0010;
 
+/// `AttrSgrMask` (`buffer.h:58`) — the four attributes SGR itself can set, and
+/// the only ones a selective erase leaves behind.
+pub const ATTR_SGR_MASK: u32 = ATTR_BOLD | ATTR_UNDER | ATTR_BLINK | ATTR_REVERSE;
+/// The low byte, which is upstream's `Attr`. Masking only it is what
+/// `attr &= ...` means in `buffer.c`.
+pub const ATTR_MASK: u32 = 0x00ff;
+
 pub const ATTR2_FORE: u32 = 0x0100;
 pub const ATTR2_BACK: u32 = 0x0200;
 pub const ATTR2_COLOR_MASK: u32 = ATTR2_FORE | ATTR2_BACK;
+/// `Attr2Protect` (`buffer.h:66`) — DECSCA's bit. Selective erase skips a cell
+/// carrying it, and SGR 0 deliberately does **not** clear it
+/// (`vtterm.c:2178`).
+pub const ATTR2_PROTECT: u32 = 0x0400;
 
 /// Tera Term's `AttrDefaultFG` / `AttrDefaultBG` are both 0, not 7/0.
 pub const DEFAULT_FG: u32 = 0;
@@ -663,13 +674,99 @@ impl Grid {
                     *cell = Cell::erased(pen);
                 }
             }
-            2 | 3 => {
+            // Mode 3 is not an erase at all — see `clear_buffer`, which the
+            // parser routes to because it is gated on a setting.
+            2 => {
                 for row in 0..self.rows {
                     self.lines[row] = vec![Cell::erased(pen); self.cols];
                 }
             }
             _ => {}
         }
+    }
+
+    // --- selective erase (DECSCA / DECSED / DECSEL) ----------------------
+
+    /// One cell of `buffer.c:BuffSelectedEraseCharsInLine`'s inner loop.
+    ///
+    /// A selective erase is not an erase. A protected cell is left entirely
+    /// alone, and an unprotected one is *crushed* and then has its low byte
+    /// masked to `AttrSgrMask` — so bold, underline, blink and reverse survive
+    /// DECSEL where they would not survive EL, and the pen is never consulted.
+    fn selective_erase_cell(&mut self, y: usize, x: usize) {
+        let cell = &mut self.lines[y][x];
+        if cell.attrs & ATTR2_PROTECT != 0 {
+            return;
+        }
+        cell.crush();
+        cell.attrs &= ATTR_SGR_MASK | !ATTR_MASK;
+    }
+
+    /// The kanji fixup shared by every selective-erase entry point. Upstream
+    /// gates it on the *cursor* cell being unprotected even when the pair it
+    /// would break lies elsewhere.
+    fn selective_erase_kanji(&mut self, lr: usize) {
+        let (x, y) = (self.cursor.x, self.cursor.y);
+        if self.lines[y][x].attrs & ATTR2_PROTECT == 0 {
+            self.erase_kanji(y, x, lr);
+        }
+    }
+
+    /// DECSEL. 0 = cursor to end, 1 = start to cursor, 2 = whole line.
+    pub fn selective_erase_line(&mut self, mode: u16) {
+        let (x, y) = (self.cursor.x, self.cursor.y);
+        let (start, end) = match mode {
+            0 => (x, self.cols),
+            1 => (0, (x + 1).min(self.cols)),
+            2 => (0, self.cols),
+            _ => return,
+        };
+        self.selective_erase_kanji(1);
+        for x in start..end {
+            self.selective_erase_cell(y, x);
+        }
+    }
+
+    /// DECSED 0 — `buffer.c:BuffSelectedEraseCurToEnd`.
+    pub fn selective_erase_to_end(&mut self) {
+        let (x, y) = (self.cursor.x, self.cursor.y);
+        self.selective_erase_kanji(1);
+        for col in x..self.cols {
+            self.selective_erase_cell(y, col);
+        }
+        for row in (y + 1)..self.rows {
+            for col in 0..self.cols {
+                self.selective_erase_cell(row, col);
+            }
+        }
+    }
+
+    /// DECSED 1 — `buffer.c:BuffSelectedEraseHomeToCur`.
+    pub fn selective_erase_to_cursor(&mut self) {
+        let (x, y) = (self.cursor.x, self.cursor.y);
+        self.selective_erase_kanji(0);
+        for row in 0..y {
+            for col in 0..self.cols {
+                self.selective_erase_cell(row, col);
+            }
+        }
+        for col in 0..(x + 1).min(self.cols) {
+            self.selective_erase_cell(y, col);
+        }
+    }
+
+    /// `buffer.c:ClearBuffer` — ED 3 and DECSED 3, and far more than "drop the
+    /// scrollback": it wipes the whole allocation, homes the cursor and resets
+    /// the scroll region. Gated on `TF_REMOTECLEARSBUFF`, which ships on.
+    pub fn clear_buffer(&mut self) {
+        let pen = self.pen;
+        self.scrollback.clear();
+        for line in &mut self.lines {
+            *line = vec![Cell::erased(pen); self.cols];
+        }
+        self.cursor = Cursor::default();
+        self.top = 0;
+        self.bottom = self.rows - 1;
     }
 
     // --- writing ---------------------------------------------------------

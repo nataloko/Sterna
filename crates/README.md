@@ -94,6 +94,14 @@ behaviour looks like a bug until you check. Reproduced deliberately:
 - **`DispFindClosestColor` flips bright and dim.** Truecolor red resolves to
   palette index 1, "dark red", not 9; the drawing path applies the inverse, so
   the round trip is consistent and index 1 is what the cell stores.
+- **DECSCA's protect bit survives `SGR 0`.** `vtterm.c:2178` ORs it back in
+  explicitly, so only another DECSCA clears it. And a *selective* erase is not
+  an erase: `BuffSelectedEraseCharsInLine` masks the cell's own attributes to
+  `AttrSgrMask` rather than painting the pen, so bold and underline outlive
+  DECSEL where they would not outlive EL.
+- **`ED 3` is not an erase either.** It is `ClearBuffer`, which drops the
+  scrollback, homes the cursor and resets the scroll region — and only runs at
+  all because `TF_REMOTECLEARSBUFF` ships on (`ttset.c:1950`).
 - **`SGR 38`/`SGR 48` do not consume their arguments** when the matching colour
   mode is off. 256-colour is on by default so this is not normally visible, but
   turn it off and `ESC [ 38;5;196 m` parses as "38 ignored, 5 = **blink on**,
@@ -114,5 +122,7 @@ behaviour looks like a bug until you check. Reproduced deliberately:
   *and* advance the cursor, are not modelled — only nonspacing marks are.
 - **Kanji and Katakana designations** (`ESC $ ...`, `ESC ( I`) are parsed and
   dropped. Deferred with CJK, and inert on a UTF-8 terminal anyway.
-- Not yet implemented at all: DECLRMM, mouse reporting, DCS, and the window
-  report sequences `WF_WINDOWREPORT` enables.
+- Not yet implemented at all: DECLRMM, mouse reporting, DCS, the rectangular
+  area operations (DECSACE, DECCARA, DECRARA, DECFRA, DECERA, DECSERA, DECCRA),
+  and the window control and report sequences `WF_WINDOWCHANGE` /
+  `WF_WINDOWREPORT` enable — including the `CSI 8;h;w t` resize.

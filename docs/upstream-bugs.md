@@ -2,24 +2,27 @@
 
 **Status: drafted, not filed.** Filing needs a GitHub account; post to
 <https://github.com/TeraTermProject/teraterm/issues>. The text below is ready to
-paste. Before filing, re-check against current `main` — all three were found
+paste. Before filing, re-check against current `main` — all four were found
 against `827a35b05` (v5.6.0-496) and may since have been fixed.
 
-Three bugs, all found the same way: by feeding identical bytes to Tera Term's
+Four bugs, all found the same way: by feeding identical bytes to Tera Term's
 real `vtterm.c`/`buffer.c` and to a reimplementation, and investigating every
-disagreement. Two of the three turned up in Tera Term's *own* test scripts,
-which had presumably been run many times by eye without anyone diffing the
-buffer afterwards.
+disagreement. Two of them turned up in Tera Term's *own* test scripts, which had
+presumably been run many times by eye without anyone diffing the buffer
+afterwards.
 
 | # | Bug | Impact | Patch |
 |---|---|---|---|
 | 1 | `BuffGetAnyLineDataW` does not advance past padding cells | Session log truncated at the first full-width character | `oracle/patches/0001-buffgetanylinedataw-padding.patch` |
 | 2 | `BuffGetAnyLineDataW` budgets output units with a column count | Session log truncated on any line with combining marks | `oracle/patches/0002-buffgetanylinedataw-left.patch` |
 | 3 | `BuffEraseCharsInLine` writes `Count` cells from the cursor after clamping `Count` to the terminal width | **Out-of-bounds write** driven by an escape sequence | `oracle/patches/0003-bufferasecharsinline-overrun.patch` |
+| 4 | `BuffSelectedErase*` index a line-relative pointer with an absolute buffer offset | **Out-of-bounds read and write** driven by an escape sequence, and DECSED erases the wrong cells | `oracle/patches/0004-buffselectederase-wrong-base.patch` |
 
-**File #3 first, and consider whether it warrants a private report** rather than
-a public issue: the parameter is attacker-controlled, arrives over the network,
-and the write leaves the buffer entirely on the last line.
+**File #3 and #4 first, and consider whether they warrant a private report**
+rather than public issues. Both are memory-safety bugs reachable from the byte
+stream a terminal reads from the network: #3 leaves the allocation on the last
+line, and #4 does so once the page has scrolled into the second half of the ring
+buffer — confirmed under AddressSanitizer, not inferred.
 
 ---
 
@@ -238,3 +241,133 @@ from it:
 `CSI Ps @` (ICH) and `CSI Ps P` (DCH) clamp correctly in
 `BuffInsertSpace()`/`BuffDeleteChars()`; ECH is the one that does not, so the
 fix is to bring it into line rather than to change a convention.
+
+---
+
+# 4. DECSED indexes a line-relative pointer with an absolute buffer offset
+
+## Title
+
+`CSI ? Ps J` (DECSED) reads and writes outside the screen buffer, and erases
+protected characters
+
+## Body
+
+### Summary
+
+`BuffSelectedEraseCurToEnd()` and `BuffSelectedEraseHomeToCur()` — the two
+halves of DECSED — both take a pointer to the **cursor's line**:
+
+```c
+buff_char_t *CodeLineW = &CodeBuffW[LinePtr];
+```
+
+and then index it with `j`, which is an **absolute buffer offset**:
+
+```c
+/* buffer.c:BuffSelectedEraseCurToEnd() */
+TmpPtr = GetLinePtr(PageStart+CursorY);
+for (i = CursorY ; i <= YEnd ; i++) {
+    for (j = TmpPtr + offset; j < TmpPtr + NumOfColumns - offset; j++) {
+        if (!(CodeLineW[j].attr2 & Attr2Protect)) {     /* wrong cell */
+            BuffSetChar(&CodeBuffW[j], 0x20, 'H');      /* right cell */
+            CodeLineW[j].attr &= AttrSgrMask;           /* wrong cell */
+        }
+    }
+    offset = 0;
+    TmpPtr = NextLinePtr(TmpPtr);
+}
+```
+
+`CodeLineW[j]` is `CodeBuffW[LinePtr + j]` — roughly twice as far into the
+buffer as intended. `BuffSelectedEraseHomeToCur()` has the same wrong base on
+its protect test; its writes already use `CodeBuffW[j]`.
+
+There is a second, independent defect in the same loop: `offset` is the start
+column and is subtracted from the **end** bound as well, so on the cursor's own
+line the loop covers `NumOfColumns - 2*CursorX` cells instead of
+`NumOfColumns - CursorX` — and nothing at all once the cursor is past the
+middle of the screen. Only the first line is affected; `offset` is zeroed for
+the rest.
+
+### Impact
+
+Three things follow from the wrong base:
+
+1. The protect bit is read from the wrong cell, so DECSED erases protected
+   characters and preserves unprotected ones — the inverse of what the sequence
+   exists to do.
+2. `CodeLineW[j].attr &= AttrSgrMask` **modifies** that wrong cell, so
+   unrelated scrollback silently loses its attributes.
+3. `LinePtr` and `TmpPtr` each range up to `BufferSize - NumOfColumns`, so
+   their sum reaches nearly twice `BufferSize`. Once the page has scrolled into
+   the second half of the ring, both the read and the read-modify-write are
+   **outside the allocation**. Both indices come off the wire: CUP places the
+   cursor, and any output scrolls the page.
+
+### Reproduction
+
+Four lines of `aaaaPPPPcccc`, where `PPPP` is written under DECSCA 1
+(`CSI 1 " q`), then DECSED 0 from row 2 column 7:
+
+```
+before:                       after:
+  0 |aaaaPPPPcccc|              0 |aaaaPPPPcccc|
+  1 |aaaaPPPPcccc|              1 |aaaaPPPP    |
+  2 |    PPPP    |              2 |    PPPP    |
+  3 |            |              3 |    PPPP    |
+```
+
+Row 1 is the cursor's own row and is left untouched — that is the `- offset`
+defect. Row 3's protected run is erased, because its protect bits were read
+from a line that is off the screen entirely.
+
+Under AddressSanitizer, with the page scrolled down the ring first (200 line
+feeds, then `CSI 20;40H`, then `CSI ? 0 J`):
+
+```
+==737980==ERROR: AddressSanitizer: heap-buffer-overflow
+READ of size 1 at 0x7f56375fee33 thread T0
+    #0 BuffSelectedEraseCurToEnd buffer.c:5491
+    #1 CSQSelScreenErase vtterm.c:1773
+    #2 CSQuest vtterm.c:3245
+    #3 ParseCS vtterm.c:4127
+0x7f56375fee33 is located 51 bytes after 448000-byte region
+allocated by ChangeBuffer buffer.c:522
+```
+
+`CSI ? 1 J` reaches the same overflow at other cursor positions.
+
+### Suggested fix
+
+Index `CodeBuffW` directly — `CodeLineW` is not the right base for an absolute
+offset — and drop the `- offset` from the end bound:
+
+```diff
+-        for (j = TmpPtr + offset; j < TmpPtr + NumOfColumns - offset; j++) {
+-            if (!(CodeLineW[j].attr2 & Attr2Protect)) {
++        for (j = TmpPtr + offset; j < TmpPtr + NumOfColumns; j++) {
++            if (!(CodeBuffW[j].attr2 & Attr2Protect)) {
+                 BuffSetChar(&CodeBuffW[j], 0x20, 'H');
+-                CodeLineW[j].attr &= AttrSgrMask;
++                CodeBuffW[j].attr &= AttrSgrMask;
+             }
+         }
+```
+
+and in `BuffSelectedEraseHomeToCur()`:
+
+```diff
+         for (j = TmpPtr; j < TmpPtr + offset; j++) {
+-            if (!(CodeLineW[j].attr2 & Attr2Protect)) {
++            if (!(CodeBuffW[j].attr2 & Attr2Protect)) {
+```
+
+`BuffSelectedEraseCharsInLine()` — DECSEL, `CSI ? Ps K` — is correct: it indexes
+`CodeLineW` with a column, which is what that base is for.
+
+### How this was found
+
+By implementing DECSED against Tera Term's own behaviour and diffing the two
+grids. The disagreement was not subtle once DECSCA was in the picture: the
+reimplementation preserved the protected run and Tera Term erased it.

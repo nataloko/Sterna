@@ -309,6 +309,38 @@ static void dump(FILE *out, int cols, int rows, const char *term_id, int want_at
 			}
 			fprintf(out, "|\n");
 		}
+
+		/*
+		 * DECSCA's protect bit gets a section of its own, and only when
+		 * something is actually protected. It is orthogonal to the rest, so
+		 * folding it into attr_char() would hide a protected bold cell behind
+		 * its 'B'; emitting it unconditionally would churn every golden for a
+		 * bit almost no case sets.
+		 */
+		{
+			int protected_any = 0;
+			for (y = 0; y < rows && !protected_any; y++) {
+				int x;
+				for (x = 0; x < cols; x++) {
+					if (BuffGetCursorCharAttr(x, y).Attr2 & Attr2Protect) {
+						protected_any = 1;
+						break;
+					}
+				}
+			}
+			if (protected_any) {
+				fprintf(out, "# protect\n");
+				for (y = 0; y < rows; y++) {
+					int x;
+					fprintf(out, "%3d |", y);
+					for (x = 0; x < cols; x++) {
+						TCharAttr a = BuffGetCursorCharAttr(x, y);
+						fputc((a.Attr2 & Attr2Protect) ? 'P' : '.', out);
+					}
+					fprintf(out, "|\n");
+				}
+			}
+		}
 	}
 
 	reply = oracle_reply(&reply_len);

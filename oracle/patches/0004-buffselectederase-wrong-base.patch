@@ -1,0 +1,106 @@
+Fix DECSED indexing a line-relative pointer with an absolute buffer offset
+
+BuffSelectedEraseCurToEnd() and BuffSelectedEraseHomeToCur() -- the two halves
+of DECSED, CSI ? Ps J -- both take
+
+    buff_char_t *CodeLineW = &CodeBuffW[LinePtr];
+
+which is the base of the CURSOR'S LINE, and then index it with `j`, which is an
+ABSOLUTE buffer offset:
+
+  buffer.c:BuffSelectedEraseCurToEnd()
+      TmpPtr = GetLinePtr(PageStart+CursorY);
+      for (i = CursorY ; i <= YEnd ; i++) {
+          for (j = TmpPtr + offset; j < TmpPtr + NumOfColumns - offset; j++) {
+              if (!(CodeLineW[j].attr2 & Attr2Protect)) {     /* <-- */
+                  BuffSetChar(&CodeBuffW[j], 0x20, 'H');      /* correct */
+                  CodeLineW[j].attr &= AttrSgrMask;           /* <-- */
+              }
+          }
+          offset = 0;
+          TmpPtr = NextLinePtr(TmpPtr);
+      }
+
+So `CodeLineW[j]` is `CodeBuffW[LinePtr + j]`, roughly twice as far into the
+buffer as intended. Three consequences:
+
+1. The protect bit is read from the WRONG CELL, so DECSED erases protected
+   characters and preserves unprotected ones, which is the whole of what the
+   sequence is for.
+
+2. `CodeLineW[j].attr &= AttrSgrMask` MODIFIES that wrong cell -- unrelated
+   scrollback loses its attributes.
+
+3. `LinePtr` and `TmpPtr` each range up to BufferSize - NumOfColumns, so their
+   sum reaches nearly twice BufferSize. Once the page has been scrolled into
+   the second half of the ring, the access is past the end of the allocation.
+   Both the read and the read-modify-write are out of bounds, and both indices
+   come off the wire: CUP places the cursor and any output scrolls the page.
+
+BuffSelectedEraseHomeToCur() has the same wrong base on its protect test; its
+writes already use CodeBuffW[j].
+
+BuffSelectedEraseCurToEnd() has a second, independent defect in the same loop:
+
+    for (j = TmpPtr + offset; j < TmpPtr + NumOfColumns - offset; j++)
+
+`offset` is the start column and is subtracted from the END bound as well, so
+on the cursor's own line the loop covers NumOfColumns - 2*CursorX cells instead
+of NumOfColumns - CursorX, and covers nothing at all once the cursor is past
+the middle of the screen. `offset` is zeroed for every later line, so only the
+first is affected.
+
+Reproduction, via the termitta oracle (vtterm.c + buffer.c headless). Four
+lines of "aaaaPPPPcccc" where PPPP is written under DECSCA 1, then DECSED 0
+from row 2 column 7:
+
+    printf '...' | oracle --cols 12 --rows 4 --attrs
+
+    before:                       after:
+      0 |aaaaPPPPcccc|              0 |aaaaPPPPcccc|
+      1 |aaaaPPPPcccc|              1 |aaaaPPPP    |
+      2 |    PPPP    |              2 |    PPPP    |
+      3 |            |              3 |    PPPP    |
+
+Row 1 is the cursor's row and is untouched, because of defect 2. Row 3's
+protected run is erased, because its protect bits were read from a line that is
+off the screen entirely.
+
+And under AddressSanitizer, with the page scrolled down the ring first
+(200 line feeds, then CUP to row 20 column 40, then CSI ? 0 J):
+
+    ==737980==ERROR: AddressSanitizer: heap-buffer-overflow
+    READ of size 1 at 0x7f56375fee33 thread T0
+        #0 BuffSelectedEraseCurToEnd buffer.c:5491
+        #1 CSQSelScreenErase vtterm.c:1773
+        #2 CSQuest vtterm.c:3245
+        #3 ParseCS vtterm.c:4127
+    0x7f56375fee33 is located 51 bytes after 448000-byte region
+    allocated by ChangeBuffer buffer.c:522
+
+CSI ? 1 J reaches the same overflow with other cursor positions.
+
+Found by diffing DECSED against a reimplementation with the termitta
+differential harness. Tera Term 5.7.0-dev (commit 827a35b05).
+
+--- a/teraterm/teraterm/buffer.c
++++ b/teraterm/teraterm/buffer.c
+@@ -5488,10 +5488,10 @@ void BuffSelectedEraseCurToEnd(void)
+ 	for (i = CursorY ; i <= YEnd ; i++) {
+-		for (j = TmpPtr + offset; j < TmpPtr + NumOfColumns - offset; j++) {
+-			if (!(CodeLineW[j].attr2 & Attr2Protect)) {
++		for (j = TmpPtr + offset; j < TmpPtr + NumOfColumns; j++) {
++			if (!(CodeBuffW[j].attr2 & Attr2Protect)) {
+ 				BuffSetChar(&CodeBuffW[j], 0x20, 'H');
+-				CodeLineW[j].attr &= AttrSgrMask;
++				CodeBuffW[j].attr &= AttrSgrMask;
+ 			}
+ 		}
+ 		offset = 0;
+@@ -5531,7 +5531,7 @@ void BuffSelectedEraseHomeToCur(void)
+ 		for (j = TmpPtr; j < TmpPtr + offset; j++) {
+-			if (!(CodeLineW[j].attr2 & Attr2Protect)) {
++			if (!(CodeBuffW[j].attr2 & Attr2Protect)) {
+ 				BuffSetChar(&CodeBuffW[j], 0x20, 'H');
+ 				CodeBuffW[j].attr &= AttrSgrMask;
+ 			}

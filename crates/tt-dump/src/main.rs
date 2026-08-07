@@ -18,8 +18,8 @@
 use std::io::{Read, Write};
 
 use tt_grid::{
-    char_width, ATTR2_BACK, ATTR2_FORE, ATTR_BLINK, ATTR_BOLD, ATTR_REVERSE, ATTR_SPECIAL,
-    ATTR_UNDER, WIDTH_PAD,
+    char_width, ATTR2_BACK, ATTR2_FORE, ATTR2_PROTECT, ATTR_BLINK, ATTR_BOLD, ATTR_REVERSE,
+    ATTR_SPECIAL, ATTR_UNDER, WIDTH_PAD,
 };
 use tt_vt::{Config, CrReceive, TermId, Vt};
 
@@ -217,6 +217,25 @@ fn dump(out: &mut impl Write, vt: &Vt, args: &Args) -> std::io::Result<()> {
                 }
             }
             writeln!(out, "|")?;
+        }
+
+        // DECSCA's bit gets a section of its own, and only when something is
+        // actually protected — it is orthogonal to the rest, so folding it into
+        // the one-char-per-cell attribute line would hide a protected bold cell
+        // behind its B, and emitting it unconditionally would churn every
+        // existing golden for a bit almost no case sets.
+        let protected = (0..grid.rows())
+            .any(|y| (0..grid.cols()).any(|x| grid.line(y)[x].attrs & ATTR2_PROTECT != 0));
+        if protected {
+            writeln!(out, "# protect")?;
+            for y in 0..grid.rows() {
+                write!(out, "{y:3} |")?;
+                for x in 0..grid.cols() {
+                    let p = grid.line(y)[x].attrs & ATTR2_PROTECT != 0;
+                    out.write_all(if p { b"P" } else { b"." })?;
+                }
+                writeln!(out, "|")?;
+            }
         }
     }
 
