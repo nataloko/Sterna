@@ -1,0 +1,52 @@
+Fix ECH writing past the end of the line, into the next one
+
+ECH (CSI Ps X) erases Ps characters starting at the cursor. Tera Term clamps
+Ps to the terminal WIDTH and then writes that many cells starting AT THE
+CURSOR, so the write runs off the end of the line by exactly the cursor's
+column:
+
+  vtterm.c:CSEraseCharacter()
+      CheckParamVal(Param[1], NumOfColumns);      /* clamp to width      */
+      BuffEraseChars(Param[1]);                   /* -> XStart = CursorX */
+
+  buffer.c:BuffEraseCharsInLine()
+      memsetW(&(CodeLineW[XStart]), 0x20, ..., Count);
+
+CodeBuffW is one contiguous allocation of NumOfColumns * lines cells, so the
+overflow lands in the FOLLOWING line and silently rewrites its first CursorX
+cells -- text, attributes and colours alike. On the last line of the buffer
+there is no following line and the write goes past the end of the allocation.
+
+The parameter is attacker-controlled: it arrives in the byte stream, and a
+terminal reads that stream from the network. `printf '\033[999X'` with the
+cursor at column 40 is a 40-cell out-of-bounds heap write.
+
+Clamp in BuffEraseCharsInLine() rather than at the call site, so every caller
+is covered and Count stays consistent with the redraw range computed from it
+further down.
+
+Reproduction, via the termitta oracle (which runs vtterm.c + buffer.c headless).
+Eleven characters, then erase to end of line -- row 4 is never written to:
+
+    printf 'ECH line\033[999X' | oracle --cols 40 --rows 6 --attrs
+
+    before:  4 |fffffffffff.............................|
+    after:   4 |........................................|
+
+The 'f' cells on row 4 are the eleven that overflowed from row 3.
+
+Found by diffing Tera Term's own tests/bcetest.sh against a reimplementation.
+Tera Term 5.7.0-dev (commit 827a35b05).
+
+--- a/teraterm/teraterm/buffer.c
++++ b/teraterm/teraterm/buffer.c
+@@ -1109,6 +1109,9 @@ void BuffEraseCharsInLine(int XStart, int Count)
+ 		CursorX = CursorXSave;
+ 	}
+
++	if (Count > NumOfColumns - XStart) {
++		Count = NumOfColumns - XStart;
++	}
+ 	NewLine(PageStart+CursorY);
+ 	memsetW(&(CodeLineW[XStart]),0x20, CurCharAttr.Fore, CurCharAttr.Back, AttrDefault, CurCharAttr.Attr2 & Attr2ColorMask, Count);
+

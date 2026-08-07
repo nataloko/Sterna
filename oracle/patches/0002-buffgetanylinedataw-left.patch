@@ -1,0 +1,55 @@
+Fix BuffGetAnyLineDataW truncating any line that contains combining characters
+
+BuffGetAnyLineDataW() has two counters that mean different things and are
+initialised from the same value:
+
+  copysize = min(NumOfColumns, bufsize - 1);   /* how many CELLS to walk   */
+  ...
+  left     = copysize;                          /* how much BUFFER is left */
+
+`left` is passed straight to expand_wchar() as its `buf_size`, which counts
+wchar_t UNITS, and is decremented by the number of units written. But a cell
+holding a base character plus a combining mark writes two units, and a
+surrogate pair writes two more. So on any line with combining characters the
+unit budget is exhausted roughly twice as fast as the cell loop advances,
+expand_wchar() reports `too_small`, and the loop breaks -- silently dropping
+the rest of the line.
+
+`left` should be seeded with the real size of the output buffer. The cell loop
+is already bounded by `copysize`, so the two limits stay independent, which is
+what the code reads as intending.
+
+This is a SECOND defect in the same function as
+0001-buffgetanylinedataw-padding.patch, with the same consequence for the same
+sole caller (filesys_log.cpp:443): **session logging silently truncates lines**.
+0001 truncates at the first full-width character; this one truncates any line
+carrying combining marks, at about half the terminal width.
+
+Reproduction, via the termitta oracle (which runs vtterm.c + buffer.c headless).
+Eight copies of "A U+3099 SPACE" into a 12-column terminal -- the cursor
+arithmetic proves the buffer holds six of them on the first row:
+
+    printf 'A\343\202\231 %.0s' $(seq 1 8) | oracle --cols 12 --rows 4
+
+    before:  # cursor 4,1
+             0 |A゙ A゙ A゙ A゙     |     <- four, and the row is not full
+             1 |A゙ A゙         |
+
+    after:   # cursor 4,1
+             0 |A゙ A゙ A゙ A゙ A゙ A゙ |     <- six, filling all twelve columns
+             1 |A゙ A゙         |
+
+Found by diffing Tera Term's own tests/unicodebuf-combining1.sh against a
+reimplementation. Tera Term 5.7.0-dev (commit 827a35b05).
+
+--- a/teraterm/teraterm/buffer.c
++++ b/teraterm/teraterm/buffer.c
+@@ -5825,7 +5825,7 @@ int BuffGetAnyLineDataW(int offset_y, wchar_t *buf, size_t bufsize)
+ 	Ptr = GetLinePtr(offset_y);
+ 	b = &CodeBuffW[Ptr];
+ 	idx = 0;
+-	left = copysize;
++	left = bufsize - 1;
+ 	for (i = 0; i<copysize; i++) {
+ 		BOOL too_small;
+ 		size_t len;

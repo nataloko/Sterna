@@ -47,7 +47,10 @@ all: $(BUILD)/oracle
 $(BUILD):
 	@mkdir -p $(BUILD)
 
-$(BUILD)/patched/%.c: $(TT)/teraterm/%.c | $(BUILD)
+# apply_patches.py is a prerequisite, not just the tool: the patch set lives
+# inside it, so editing a patch must re-copy the source. Without this a new
+# patch silently does nothing until someone deletes build/patched by hand.
+$(BUILD)/patched/%.c: $(TT)/teraterm/%.c apply_patches.py | $(BUILD)
 	@mkdir -p $(BUILD)/patched
 	./apply_patches.py --src $< --out $@
 

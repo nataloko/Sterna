@@ -34,6 +34,25 @@ PATCHES: list[tuple[str, str, str, str]] = [
         "patches/0001-buffgetanylinedataw-padding.patch: BuffGetAnyLineDataW "
         "drops everything after the first wide character",
     ),
+    (
+        "buffer.c",
+        "\tidx = 0;\r\n\tleft = copysize;\r\n",
+        "\tidx = 0;\r\n\tleft = bufsize - 1;\r\n",
+        "patches/0002-buffgetanylinedataw-left.patch: BuffGetAnyLineDataW "
+        "budgets output units with a column count, truncating combining text",
+    ),
+    (
+        "buffer.c",
+        "\tNewLine(PageStart+CursorY);\r\n"
+        "\tmemsetW(&(CodeLineW[XStart]),0x20, CurCharAttr.Fore,",
+        "\tif (Count > NumOfColumns - XStart) {\r\n"
+        "\t\tCount = NumOfColumns - XStart;\r\n"
+        "\t}\r\n"
+        "\tNewLine(PageStart+CursorY);\r\n"
+        "\tmemsetW(&(CodeLineW[XStart]),0x20, CurCharAttr.Fore,",
+        "patches/0003-bufferasecharsinline-overrun.patch: ECH writes past the "
+        "end of the line, into the next one",
+    ),
 ]
 
 
