@@ -520,25 +520,82 @@ impl Grid {
         }
     }
 
-    /// ICH.
+    /// ICH — `buffer.c:BuffInsertSpace`.
+    ///
+    /// Shifting a line sideways can cut a wide character in half at either end,
+    /// and upstream destroys the whole character rather than leaving a stray
+    /// half. Skipping that leaves an orphaned padding cell, which renders as a
+    /// column that is present in the buffer and invisible on screen.
     pub fn insert_chars(&mut self, n: usize) {
         let (x, y) = (self.cursor.x, self.cursor.y);
         let pen = self.pen;
         let cols = self.cols;
-        for _ in 0..n.min(cols - x) {
+
+        // Inserting *into* the right half of a wide character kills it.
+        self.break_pad_at(y, x);
+
+        let count = n.min(cols - x);
+        for _ in 0..count {
             self.lines[y].remove(cols - 1);
             self.lines[y].insert(x, Cell::erased(pen));
         }
+
+        // Whatever now sits on the last column has had its other half pushed
+        // off the end.
+        self.break_lead_at(y, cols - 1);
     }
 
-    /// DCH.
+    /// DCH — `buffer.c:BuffDeleteChars`.
     pub fn delete_chars(&mut self, n: usize) {
         let (x, y) = (self.cursor.x, self.cursor.y);
         let pen = self.pen;
         let cols = self.cols;
-        for _ in 0..n.min(cols - x) {
+        let count = n.min(cols - x);
+
+        // Either half at the cursor, and either half at the far end of the
+        // deleted run, loses its partner.
+        self.break_pad_at(y, x);
+        self.break_lead_at(y, x);
+        if count > 1 && x + count < cols {
+            self.break_pad_at(y, x + count);
+        }
+
+        for _ in 0..count {
             self.lines[y].remove(x);
             self.lines[y].insert(cols - 1, Cell::erased(pen));
+        }
+    }
+
+    /// DECFI's scroll — shift every row of the scroll region one column left.
+    /// `buffer.c:BuffScrollLeft`.
+    pub fn scroll_left(&mut self, n: usize) {
+        let pen = self.pen;
+        let cols = self.cols;
+        let count = n.min(cols);
+        for y in self.top..=self.bottom {
+            self.break_lead_at(y, cols - 1);
+            if count < cols {
+                self.break_pad_at(y, count);
+            }
+            for _ in 0..count {
+                self.lines[y].remove(0);
+                self.lines[y].push(Cell::erased(pen));
+            }
+        }
+    }
+
+    /// DECBI's scroll. `buffer.c:BuffScrollRight`.
+    pub fn scroll_right(&mut self, n: usize) {
+        let pen = self.pen;
+        let cols = self.cols;
+        let count = n.min(cols);
+        for y in self.top..=self.bottom {
+            self.break_lead_at(y, cols - 1);
+            for _ in 0..count {
+                self.lines[y].pop();
+                self.lines[y].insert(0, Cell::erased(pen));
+            }
+            self.break_lead_at(y, cols - 1);
         }
     }
 
@@ -727,6 +784,28 @@ impl Grid {
         }
         self.lines[y][base].push(cp);
         true
+    }
+
+    /// If `x` holds the **right** half of a wide character, blank the pair.
+    /// Leaves a left half alone — the distinction matters when a shift keeps
+    /// one side and discards the other.
+    fn break_pad_at(&mut self, y: usize, x: usize) {
+        if x < self.cols && x > 0 && self.lines[y][x].width_class == WIDTH_PAD {
+            let pen = self.pen;
+            self.lines[y][x] = Cell::erased(pen);
+            self.lines[y][x - 1] = Cell::erased(pen);
+        }
+    }
+
+    /// If `x` holds the **left** half of a wide character, blank the pair.
+    fn break_lead_at(&mut self, y: usize, x: usize) {
+        if x < self.cols && self.lines[y][x].width_class == WIDTH_WIDE {
+            let pen = self.pen;
+            self.lines[y][x] = Cell::erased(pen);
+            if x + 1 < self.cols {
+                self.lines[y][x + 1] = Cell::erased(pen);
+            }
+        }
     }
 
     /// Break a wide character straddling column `x`, replacing both halves with

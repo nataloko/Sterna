@@ -253,6 +253,14 @@ impl State {
         self.send(body.as_bytes());
     }
 
+    /// DECBI/DECFI act only inside the scroll region. The column half of the
+    /// test is against the left and right margins, which are the screen edges
+    /// until DECLRMM exists.
+    fn cursor_in_region(&self) -> bool {
+        let (top, bottom) = self.grid.scroll_region();
+        (top..=bottom).contains(&self.grid.cursor.y)
+    }
+
     /// Every locking and single shift is gated on `ts.ISO2022Flag` upstream, at
     /// the call site rather than inside the charset code. Same split here.
     fn shift(&mut self, shift: Shift) {
@@ -684,6 +692,27 @@ impl Perform for State {
             }
             b'H' => self.grid.set_tab(),
             b'M' => self.grid.reverse_index(),
+            // DECBI / DECFI (vtterm.c:1482, :1493). Both are no-ops when the
+            // cursor is outside the scroll region, and scroll the region
+            // sideways rather than moving when it is already on the margin.
+            b'6' => {
+                if self.cursor_in_region() {
+                    if self.grid.cursor.x == 0 {
+                        self.grid.scroll_right(1);
+                    } else {
+                        self.grid.move_left(1);
+                    }
+                }
+            }
+            b'9' => {
+                if self.cursor_in_region() {
+                    if self.grid.cursor.x == self.grid.cols() - 1 {
+                        self.grid.scroll_left(1);
+                    } else {
+                        self.grid.move_right(1);
+                    }
+                }
+            }
             b'N' => self.shift(Shift::Ss2),
             b'O' => self.shift(Shift::Ss3),
             b'n' => self.shift(Shift::Ls2),
