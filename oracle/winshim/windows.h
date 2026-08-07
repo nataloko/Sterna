@@ -1,5 +1,5 @@
 /*
- * qtterm oracle — minimal <windows.h> shim for POSIX.
+ * termitta oracle — minimal <windows.h> shim for POSIX.
  *
  * Purpose: let Tera Term's vtterm.c (VT state machine) and buffer.c (grid +
  * scrollback) compile and run on Linux unmodified, so they can serve as a

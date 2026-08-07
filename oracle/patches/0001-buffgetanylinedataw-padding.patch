@@ -10,7 +10,7 @@ The only caller is filesys_log.cpp:443, so the user-visible effect is that
 session logging truncates any line at its first full-width character. For a
 terminal with Tera Term's CJK focus that is a real data-loss bug.
 
-Reproduction, via the qtterm oracle (which runs vtterm.c + buffer.c headless):
+Reproduction, via the termitta oracle (which runs vtterm.c + buffer.c headless):
 
     printf 'ASCII \344\275\240\345\245\275 world' | oracle --cols 30 --rows 2
 

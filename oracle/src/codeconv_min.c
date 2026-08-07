@@ -1,5 +1,5 @@
 /*
- * qtterm oracle — minimal codeconv.
+ * termitta oracle — minimal codeconv.
  *
  * Tera Term's common/codeconv.cpp does not compile off Windows: it leans on
  * GetACP() and the Win32 codepage converters. But vtterm.c and buffer.c only

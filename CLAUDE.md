@@ -1,4 +1,4 @@
-# Working notes for qtterm
+# Working notes for termitta
 
 Read `PLAN.md` for the roadmap and current stage. This file is the working
 agreements and the traps.
@@ -9,7 +9,7 @@ A cross-platform Tera Term successor: Rust core + flat C ABI + Qt 6 Widgets
 shell, Linux and Windows. **Not** a fork of Tera Term and **not** aiming at
 parity — see `PLAN.md` for scope.
 
-`qtterm` is a working name; the real one is still undecided (the current one is
+`termitta` is a working name; the real one is still undecided (the current one is
 already taken in the wild).
 
 ## Ground rules
@@ -98,14 +98,14 @@ no new hardware. Confirmed working: data both directions, DTR→DSR, RTS→CTS,
 break visible in-stream as a NUL, 9600 through 3000000 baud clean, and RTS/CTS
 hardware flow control. Only a physical unplug/replug still needs the user.
 
-### Qt work goes in the `qtterm-fedora` container, not this one
+### Qt work goes in the `termitta-fedora` container, not this one
 
 This container has Qt **6.4.2**; the desktop runs **6.11.1**. That gap has
 already manufactured one false finding — see the traps. So there is a second
 distrobox, created 2026-08-07:
 
 ```sh
-distrobox-host-exec distrobox enter qtterm-fedora --no-tty -- <command>
+distrobox-host-exec distrobox enter termitta-fedora --no-tty -- <command>
 ```
 
 Fedora 44, Qt **6.11.1** — an exact match for the host — plus `gcc-c++`,
@@ -176,7 +176,7 @@ And for the desktop side:
   `QT_WAYLAND_CLIENT_BUFFER_INTEGRATION` appears to fix it. **On Qt 6.11.1 none
   of that is true** — Mesa is never mapped, Wayland costs 3 MB more than X11,
   and the variable does nothing. Startup and RSS were also flattering by ~2x.
-  A whole false optimisation, from one version gap. Use `qtterm-fedora`.
+  A whole false optimisation, from one version gap. Use `termitta-fedora`.
 - **You can screenshot your own widgets, not the desktop.**
   `org.gnome.Shell.Screenshot` returns `AccessDenied` (locked down since
   GNOME 45), `QScreen::grabWindow(0)` is uniform-blank under xcb — host windows
@@ -224,7 +224,7 @@ regression suites for `tt-xfer` and `tt-conn`, and every claim in `PLAN.md`'s
 spike sections is reproducible from them.
 
 `ssh-audit/servers.sh` needs `sudo`: it runs sshd and dropbear on localhost
-ports and creates a throwaway `qtterm-test` account. **Run `./servers.sh stop`
+ports and creates a throwaway `termitta-test` account. **Run `./servers.sh stop`
 when done** — that is what removes the account.
 
 **`oracle/winshim/` is shared, not oracle-private.** `xfer/` builds against it

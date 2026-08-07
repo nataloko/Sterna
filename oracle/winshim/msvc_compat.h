@@ -1,5 +1,5 @@
 /*
- * qtterm oracle — force-included (-include) into every Tera Term translation
+ * termitta oracle — force-included (-include) into every Tera Term translation
  * unit we build.
  *
  * Some of the files we compile in (asprintf.cpp, tttypes_termid.cpp,

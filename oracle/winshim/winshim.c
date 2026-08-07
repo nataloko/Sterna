@@ -1,5 +1,5 @@
 /*
- * qtterm oracle — implementations for the handful of Win32 entry points that
+ * termitta oracle — implementations for the handful of Win32 entry points that
  * vtterm.c and buffer.c actually reach.
  *
  * GetTickCount is backed by a monotonic clock but can also be frozen, because

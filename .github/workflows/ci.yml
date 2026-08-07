@@ -29,16 +29,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          path: qtterm
+          path: termitta
       - uses: actions/checkout@v4
         with:
           repository: TeraTermProject/teraterm
           ref: ${{ env.TERATERM_REF }}
           path: teraterm
       - name: Build
-        run: make -C qtterm/oracle
+        run: make -C termitta/oracle
       - name: Regression suite
-        run: make -C qtterm/oracle test
+        run: make -C termitta/oracle test
 
   xfer:
     name: xfer — file-transfer protocol interop
@@ -46,7 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          path: qtterm
+          path: termitta
       - uses: actions/checkout@v4
         with:
           repository: TeraTermProject/teraterm
@@ -57,9 +57,9 @@ jobs:
         # interactive mode instead of speaking the protocol.
         run: sudo apt-get update && sudo apt-get install -y lrzsz gkermit
       - name: Build
-        run: make -C qtterm/xfer
+        run: make -C termitta/xfer
       - name: Interop suite
-        run: cd qtterm/xfer && ./run_tests.sh
+        run: cd termitta/xfer && ./run_tests.sh
 
   rust:
     name: rust — audits build and lint

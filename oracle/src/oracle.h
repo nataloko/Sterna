@@ -1,5 +1,5 @@
 /*
- * qtterm oracle — public interface of the harness around Tera Term's
+ * termitta oracle — public interface of the harness around Tera Term's
  * vtterm.c / buffer.c.
  */
 #pragma once

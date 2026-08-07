@@ -1,5 +1,5 @@
 /*
- * qtterm oracle — swscanf_s shim.
+ * termitta oracle — swscanf_s shim.
  *
  * MSVC's swscanf_s takes an extra (unsigned) buffer-size argument after every
  * %s / %c / %[...] pointer, so it CANNOT be macro-mapped onto plain swscanf:

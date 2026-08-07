@@ -1,5 +1,5 @@
 /*
- * qtterm xfer — runs Tera Term's real file-transfer protocols on Linux.
+ * termitta xfer — runs Tera Term's real file-transfer protocols on Linux.
  *
  * The protocols in ttpfile/ talk to the rest of Tera Term through three
  * vtables and nothing else:

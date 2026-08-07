@@ -1,4 +1,4 @@
-/* qtterm oracle: MSVC debug-heap header shim (no-op on POSIX). */
+/* termitta oracle: MSVC debug-heap header shim (no-op on POSIX). */
 #pragma once
 #include <assert.h>
 #define _ASSERT(e)      assert(e)

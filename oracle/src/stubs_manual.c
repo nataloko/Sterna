@@ -1,5 +1,5 @@
 /*
- * qtterm oracle — hand-written stubs.
+ * termitta oracle — hand-written stubs.
  *
  * These are the symbols the grid model actually observes, so unlike
  * stubs_generated.c they carry real behaviour:

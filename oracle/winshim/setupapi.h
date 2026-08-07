@@ -1,5 +1,5 @@
 /*
- * qtterm oracle: SetupAPI is pulled in transitively by win32helper.h, which
+ * termitta oracle: SetupAPI is pulled in transitively by win32helper.h, which
  * declares COM-port enumeration helpers. The oracle never enumerates ports —
  * these types exist only so those declarations parse.
  */

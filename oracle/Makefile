@@ -1,4 +1,4 @@
-# qtterm oracle — builds Tera Term's real VT engine headless on Linux.
+# termitta oracle — builds Tera Term's real VT engine headless on Linux.
 #
 # The point of this target is differential testing: feed the same bytes to
 # this and to the Rust reimplementation, diff the grid dumps. See README.md.

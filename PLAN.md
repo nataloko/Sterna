@@ -1,4 +1,4 @@
-# qtterm — plan and status
+# termitta — plan and status
 
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
@@ -106,7 +106,7 @@ the trigger to watch — not CJK, and not toolkit fashion.
 
 ### Open — decide before they get expensive
 
-- **Project name.** `qtterm` is taken in the wild (an existing Qt terminal, plus
+- **Project name.** `termitta` is taken in the wild (an existing Qt terminal, plus
   `qtermwidget`). It ends up in the binary name, config path and desktop file.
   Cheapest to change now.
 - **Licence.** No `LICENSE` file yet. Cheapest with one contributor. Qt LGPLv3
@@ -133,7 +133,7 @@ sees a flat C ABI over POD types.
 │  QWidget grid + QPainter glyph atlas · .ui dialogs                    │
 │  key + mouse events · menus · clipboard · font/colour config          │
 └──────────────────────── C ABI (cbindgen) ─────────────────────────────┘
-┌─ qtterm-core (Rust cdylib) ───────────────────────────────────────────┐
+┌─ termitta-core (Rust cdylib) ───────────────────────────────────────────┐
 │  tt-vt       VT100/220/320/525 + xterm state machine (over `vte`)     │
 │  tt-grid     cells, scrollback, selection, BCE, wide/combining        │
 │  tt-charset  DEC sets + line drawing (CJK tables deferred)            │
@@ -435,7 +435,7 @@ input-to-present latency. Publish the numbers in the README.
 A bare `QWidget` painting an 80x24 grid with `QPainter` — no GPU, no damage
 tracking, no glyph atlas, per-cell `drawText`. A floor, not a ceiling.
 **Measured on Qt 6.11.1 / Fedora 44, which is what the desktop actually runs**
-(the `qtterm-fedora` distrobox, see `CLAUDE.md`).
+(the `termitta-fedora` distrobox, see `CLAUDE.md`).
 
 | | X11 | Wayland |
 |---|---|---|
@@ -503,7 +503,7 @@ batching can only help.
    which makes it tempting to trust it for everything — don't. **This has already
    produced one false finding and one set of flattering-by-2x numbers**, both
    caught only by re-measuring; see the baseline above. Mitigation exists: the
-   `qtterm-fedora` distrobox runs Qt 6.11.1, matching the host exactly. Use it
+   `termitta-fedora` distrobox runs Qt 6.11.1, matching the host exactly. Use it
    for anything the shell's behaviour or footprint depends on.
 
 Dropped from this list: **IME/CJK**, formerly risk 3 and the item most likely to

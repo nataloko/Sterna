@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# qtterm oracle regression suite.
+# termitta oracle regression suite.
 #
 # Each case is a directory under cases/ holding:
 #   cmd       one line of oracle arguments (optional, default: --cols 40 --rows 6)

@@ -1,5 +1,5 @@
 /*
- * qtterm oracle — MSVC Secure CRT / locale shim for POSIX.
+ * termitta oracle — MSVC Secure CRT / locale shim for POSIX.
  *
  * vtterm.c and buffer.c reach for exactly five MSVC-only CRT functions.
  * These reimplementations follow Microsoft's documented semantics closely,

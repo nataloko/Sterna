@@ -1,4 +1,4 @@
-# qtterm
+# termitta
 
 A cross-platform **communications terminal** — serial, SSH, telnet and local
 shell — for Linux and Windows. Compatible with Tera Term; not Tera Term.
@@ -7,7 +7,7 @@ shell — for Linux and Windows. Compatible with Tera Term; not Tera Term.
 > differential-test oracle (`oracle/`) that the rest of the project will be
 > validated against. See [PLAN.md](PLAN.md).
 
-`qtterm` is a working name and will change.
+`termitta` is a working name and will change.
 
 ## Why
 
@@ -43,7 +43,7 @@ replaceable because it only ever sees POD types.
 ┌─ Qt 6 Widgets (C++) ──── swappable: Tauri / TUI / headless ─┐
 │  grid painter · .ui dialogs · IME (ibus/fcitx5) · clipboard │
 └──────────────────── C ABI (cbindgen) ───────────────────────┘
-┌─ qtterm-core (Rust) ────────────────────────────────────────┐
+┌─ termitta-core (Rust) ────────────────────────────────────────┐
 │  vt · grid · charset · conn · xfer · script · config · i18n │
 └─────────────────────────────────────────────────────────────┘
 ```
