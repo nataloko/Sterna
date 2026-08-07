@@ -15,8 +15,6 @@ from it, so regenerate rather than edit rasters.
 | `icons/termitta-{48..1024}.png` | Generated from the *full* mark. |
 | `termitta.ico` | 16/24/32/48/64/128/256, each from the appropriate variant. |
 | `termitta-master.png` | 1254px render of the full mark, for convenience. |
-| `alternates/accessible/` | Higher-contrast palette, both variants. See below. |
-| `alternates/monochrome/` | Earlier raster monochrome master, superseded by `svg/termitta-mono.svg`. |
 | `termitta-master-chroma.png` | The original generated raster, kept for provenance. |
 | `size-test-{light,dark}.png` | Review sheets: 16, 24, 32, 48, 64, 128, 256 on contrasting backgrounds. Not application resources. |
 
@@ -61,11 +59,17 @@ which affects roughly 8% of men. Measured body-to-prompt contrast:
 | `#A8008C` / `#B6FF8C` (accessible) | 5.81:1 | 2.98:1 |
 
 At 1.47:1 the prompt is effectively invisible to a deuteranope — it reads as
-brown on olive. The primary palette is kept because it is the intended look and
-the mark is still *recognisable* by silhouette; `alternates/accessible/` exists
-for anywhere the prompt has to be *read* rather than merely recognised. Note
-that darkening the body alone makes deuteranopic contrast **worse**, not better
-— both colours have to move together.
+brown on olive.
+
+**The primary palette is the decision**: it is the intended look, and the
+silhouette still carries recognition regardless of hue. What is lost for those
+readers is the ability to *read* the prompt, not to recognise the mark.
+
+Recorded so the trade-off is not rediscovered from scratch. If a high-contrast
+variant is ever wanted, it is a two-colour substitution on the same geometry —
+`#D900B5`→`#A8008C`, `#39FF14`→`#B6FF8C` — which measures 5.81:1 / 2.98:1. Note
+that darkening the body **alone** makes deuteranopic contrast *worse* (1.07:1);
+both colours have to move together.
 
 The greyscale rendering is fine, so the luminance structure of the design is
 sound; this is purely a hue-pair problem.
