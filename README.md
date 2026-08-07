@@ -3,11 +3,15 @@
 A cross-platform **communications terminal** — serial, SSH, telnet and local
 shell — for Linux and Windows. Compatible with Tera Term; not Tera Term.
 
-> **Status: Stage 0.** Nothing is usable yet. What exists today is the
-> differential-test oracle (`oracle/`) that the rest of the project will be
-> validated against. See [PLAN.md](PLAN.md).
+> **Status: Stage 0 complete — nothing is usable yet.** What exists is the
+> groundwork: a differential-test oracle running Tera Term's real VT engine
+> (`oracle/`), a harness running its real file-transfer protocols (`xfer/`),
+> and audits of the serial and SSH layers (`serial-audit/`, `ssh-audit/`).
+> The terminal itself starts in Stage 1. See [PLAN.md](PLAN.md).
 
-`termitta` is a working name and will change.
+The name is settled. See [PLAN.md](PLAN.md) for scope and status,
+[ATTRIBUTION.md](ATTRIBUTION.md) for what is borrowed from Tera Term and under
+which terms.
 
 ## Why
 

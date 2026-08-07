@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-07 · **Stage:** 0 (de-risking) · **Commits:** 11
+**Last updated:** 2026-08-07 · **Stage:** 0 complete → 1 next · **Commits:** 15
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -104,22 +104,36 @@ Windows?"** Qt wins because it is strong on both platforms at once. If Windows
 ever leaves scope, GTK4 and the Rust-native options become live again. That is
 the trigger to watch — not CJK, and not toolkit fashion.
 
-### Open — decide before they get expensive
+### Settled 2026-08-07 — nothing open
 
-- **Project name.** `termitta` is taken in the wild (an existing Qt terminal, plus
-  `qtermwidget`). It ends up in the binary name, config path and desktop file.
-  Cheapest to change now.
-- **Licence.** No `LICENSE` file yet. Cheapest with one contributor. Qt LGPLv3
-  permits dynamic linking under any licence; Tera Term's vendored code is
-  3-clause BSD.
-- **Qt licensing posture.** LGPLv3 forces dynamic linking; static needs
-  commercial or GPL. Affects "light" (≈30 MB Qt runtime bundled on Windows;
-  free on Fedora, it's in-distro).
-- **Vendoring clearance.** `ttpfile/*.c` carry inline 3-clause BSD headers and
-  are clear. The 14 `.lng` and 49 `.map`/`.tbl` files have **no per-file
-  headers** — confirm against the copyright page before copying. See
-  `ATTRIBUTION.md`.
-- **Report the `BuffGetAnyLineDataW` bug upstream.** See below.
+- **Project name: `termitta`.** The working name `qtterm` collided with an
+  existing Qt terminal and with `qtermwidget`, and tied the project to a toolkit
+  the architecture deliberately treats as swappable. Upstream is
+  <https://github.com/nataloko/termitta>. Accepted cost: `termite` is a known
+  (archived) VTE terminal one letter away, so search results will mix a little.
+- **Licence: 3-clause BSD.** See `LICENSE`. It matches the vendored Tera Term
+  code, so the shipped distribution carries one licence text rather than two,
+  and it keeps the no-endorsement clause — the live one for a project that is
+  explicitly not affiliated with the TeraTerm Project. MIT was the alternative
+  and differs only in dropping that clause.
+- **Qt licensing posture: LGPLv3, dynamically linked, no commercial licence.**
+  The obligations that follow are small but real and constrain packaging, so
+  they are recorded rather than rediscovered: **never static-link Qt**; ship it
+  as separate shared libraries so a user can substitute their own build; and
+  carry the LGPL text plus an offer of Qt's source. On Fedora this costs
+  nothing — Qt is in-distro and the rpm just depends on it. On Windows it means
+  bundling ~30 MB of Qt DLLs in the installer, which is the real price of the
+  toolkit choice and belongs in the README's size numbers.
+- **Vendoring clearance: done, and it corrected an assumption.** `ttpfile/*.c`
+  and the 14 `.lng` files are clear under Tera Term's 3-clause BSD. But 45 of
+  the 49 `.map`/`.tbl` tables are **generated from Unicode Consortium data**,
+  not Tera Term's own work — so they carry the Unicode licence, and should be
+  regenerated from the UCD rather than copied. Moot while CJK is deferred.
+  Detail in `ATTRIBUTION.md`.
+- **Upstream `BuffGetAnyLineDataW` bug: report drafted**, with before/after
+  output measured from patched and unpatched builds rather than asserted. See
+  `docs/upstream-bug-buffgetanylinedataw.md`. **Filing needs a GitHub account**,
+  so it is the one Stage 0 item that still needs the user.
 
 ---
 
@@ -200,7 +214,23 @@ Net: ~10k LOC of C carried forward, ~30k as executable specification, ~115k dele
 
 ## Stages
 
-### ✅ Stage 0 — bootstrap + de-risking (3–4 weeks)
+### ✅ Stage 0 — bootstrap + de-risking — **COMPLETE 2026-08-07**
+
+Every spike resolved, every open decision settled, CI green on all of it. The
+one item still needing a human is filing the upstream bug report, which needs a
+GitHub account and blocks nothing.
+
+**What Stage 0 bought:** the two subsystems that would have been the most
+expensive surprises are now proven rather than assumed. Tera Term's VT engine
+runs headless as a differential oracle (15,325 lines), and its file-transfer
+protocols run and interoperate on Linux (8,409 lines) — so "vendor, don't
+rewrite" is measured, not hoped. The serial and SSH layers were audited against
+real hardware and real servers. The one risk that could not be closed is
+old-device SSH *behaviour*, and it is recorded as accepted with a named
+mitigation rather than left looking open.
+
+**Stage 1 starts from a standing start on the Rust side** — `crates/` is still
+empty. That is deliberate: Stage 0 was about finding out what not to write.
 
 Spike 1 delivered `oracle/` — see `oracle/README.md`. Result exceeded the plan:
 **15,325 lines compile unmodified**, not the 12,082 estimated, because
