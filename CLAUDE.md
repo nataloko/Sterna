@@ -48,6 +48,9 @@ make stubs      # regenerate the stub layer after upstream headers change
 cd xfer                          # Stage 0 spike 2
 make && ./run_tests.sh           # 10 interop cases vs lrzsz and gkermit
 
+cd ssh-audit                     # Stage 0 spike 5
+./servers.sh start && cargo run && ./servers.sh stop
+
 cd serial-audit                  # Stage 0 spike 4, needs the FTDI loopback rig
 cargo run --bin serial-audit     # capability audit vs commlib.c
 cargo run --bin rawpatch         # are the gaps patchable through the raw fd?
@@ -210,14 +213,19 @@ ATTRIBUTION.md   licensing, and what still needs clearing before vendoring
 oracle/          Tera Term's real VT engine, headless on Linux (see its README)
 xfer/            Stage 0 spike 2 — ttpfile's protocols, running and interoperating
 serial-audit/    Stage 0 spike 4 — serialport-rs vs commlib.c, on real hardware
+ssh-audit/       Stage 0 spike 5 — russh vs legacy SSH algorithms and auth
 crates/          Rust core — not started
 shell/           Qt 6 shell — not started
 vendor/          vendored Tera Term subsystems — empty, see ATTRIBUTION.md first
 ```
 
-Neither `xfer/` nor `serial-audit/` is throwaway. They become the regression
-suites for `tt-xfer` and `tt-conn`, and every claim in `PLAN.md`'s spike
-sections is reproducible from them.
+None of `xfer/`, `serial-audit/` or `ssh-audit/` is throwaway. They become the
+regression suites for `tt-xfer` and `tt-conn`, and every claim in `PLAN.md`'s
+spike sections is reproducible from them.
+
+`ssh-audit/servers.sh` needs `sudo`: it runs sshd and dropbear on localhost
+ports and creates a throwaway `qtterm-test` account. **Run `./servers.sh stop`
+when done** — that is what removes the account.
 
 **`oracle/winshim/` is shared, not oracle-private.** `xfer/` builds against it
 too. Adding to it is usually right — the Win32 surface the protocols needed

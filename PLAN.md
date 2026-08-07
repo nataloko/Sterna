@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-07 · **Stage:** 0 (de-risking) · **Commits:** 9
+**Last updated:** 2026-08-07 · **Stage:** 0 (de-risking) · **Commits:** 11
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -12,7 +12,7 @@ thing a fresh session should read first, together with `CLAUDE.md`.
 | 2 | `ttpfile` protocols on Linux | ✅ **done** — 8,409 lines build unmodified, 10/10 interop |
 | 3 | Qt 6 IME reality check | ⏸ **deferred indefinitely** — CJK is out of scope (2026-08-07) |
 | 4 | `serialport-rs` audit | ✅ **done** — adopt it, plus a thin patch layer; see below |
-| 5 | `russh` compatibility sweep | 🔶 **blocked: needs old gear / Dropbear to talk to** |
+| 5 | `russh` compatibility sweep | ✅ **done** — algorithms and auth green; real-device behaviour an accepted risk |
 
 **The "needs the user's desktop / hardware" premise was wrong.** Measured
 2026-08-07: the dev container is a distrobox container on a Bluefin (Fedora
@@ -22,9 +22,10 @@ an FTDI Quad RS232-HS is present with `ttyUSB0`/`ttyUSB1` wired back-to-back on
 data *and* control lines. See `CLAUDE.md` for the capability table and the three
 places it still bites.
 
-So of the three items once called highest-risk: spike 3 became a scope decision,
-spike 4 is **done and passed**, and only spike 5 still waits on the user's own
-gear. Don't let spike 5 drift — it is now the last unknown in Stage 0.
+**All Stage 0 spikes are now resolved.** Of the three once called highest-risk:
+spike 3 became a scope decision, spike 4 passed, and spike 5 was re-scoped —
+see below — because the hardware it was waiting for does not exist here and
+never will. What remains in Stage 0 is decisions and CI, not unknowns.
 
 ---
 
@@ -481,15 +482,19 @@ batching can only help.
 2. **Motivation cliff at the dialogs.** 76 dialogs arrive right after the fun
    part ends. The settings-schema codegen is the mitigation and must exist
    before it's needed.
-3. ~~**`serialport-rs` gaps**~~ — **measured and downgraded 2026-08-07.** Break,
+3. **Old-device SSH behaviour — accepted, not closed.** Spike 5 proved the
+   *algorithms* work; it could not test real-device *behaviour*, because there
+   is no old device to test against. Non-RFC banners, hang-ups on unexpected
+   packets, 30-second key exchange on weak CPUs: all still unknown. **The
+   mitigation is the trait seam plus a `libssh2` fallback, which is now the plan
+   rather than insurance.** Do not let a green spike 5 read as "SSH is done".
+4. ~~**`serialport-rs` gaps**~~ — **measured and downgraded 2026-08-07.** Break,
    modem lines and hotplug all work; the real gaps are four small ones, three
    patchable through the raw fd and one (DSR flow control) that Linux does not
    have at all. The plan's instinct — "assume a platform-specific serial layer
    is needed, don't hope" — was right, but the layer is a few hundred lines, not
    a replacement. See the spike 4 result above. Still open: Windows, and the
    `CH340G_hw_flowctrl` case, which needs a CH340 adapter.
-4. **`russh` maturity** against old gear. Keep SSH behind a trait; `libssh2`
-   fallback. The one spike still waiting on the user.
 5. **Three build systems** (Cargo, CMake/Qt, vendored C). Mitigate: the `cc`
    crate compiles the C from Cargo, CMake touches only Qt, one `cargo-xtask` on
    top.

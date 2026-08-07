@@ -191,6 +191,68 @@ fn cases() -> Vec<Case> {
     v
 }
 
+/// Auth methods, tested separately from the algorithm matrix. Old equipment
+/// rarely supports public keys, so password and keyboard-interactive are the
+/// paths that actually matter — and the UI depends on telling a *rejection*
+/// apart from a *transport failure*, so the wrong-password case is a real
+/// assertion, not padding.
+async fn auth_cases(user: &str, pass: &str) -> Vec<(String, Result<String, String>)> {
+    let mut out = Vec::new();
+    let cfg = || {
+        Arc::new(client::Config {
+            inactivity_timeout: Some(Duration::from_secs(8)),
+            ..Default::default()
+        })
+    };
+
+    // password, correct
+    out.push(("auth password (correct)".to_string(), async {
+        let mut s = client::connect(cfg(), ("127.0.0.1", 2222u16), Handler)
+            .await
+            .map_err(|e| format!("connect: {e}"))?;
+        let r = s.authenticate_password(user, pass).await
+            .map_err(|e| format!("auth: {e}"))?;
+        if r.success() { Ok("accepted".into()) } else { Err("rejected a valid password".into()) }
+    }.await));
+
+    // password, wrong — must be cleanly rejected, not an error
+    out.push(("auth password (wrong, expect reject)".to_string(), async {
+        let mut s = client::connect(cfg(), ("127.0.0.1", 2222u16), Handler)
+            .await
+            .map_err(|e| format!("connect: {e}"))?;
+        let r = s.authenticate_password(user, "definitely-wrong").await
+            .map_err(|e| format!("auth: {e}"))?;
+        if r.success() { Err("accepted a wrong password".into()) } else { Ok("rejected".into()) }
+    }.await));
+
+    // keyboard-interactive: the prompt/response cycle old devices use
+    out.push(("auth keyboard-interactive".to_string(), async {
+        let mut s = client::connect(cfg(), ("127.0.0.1", 2222u16), Handler)
+            .await
+            .map_err(|e| format!("connect: {e}"))?;
+        let mut resp = s.authenticate_keyboard_interactive_start(user, None).await
+            .map_err(|e| format!("kbdint start: {e}"))?;
+        for _ in 0..4 {
+            match resp {
+                client::KeyboardInteractiveAuthResponse::Success => {
+                    return Ok("accepted".into())
+                }
+                client::KeyboardInteractiveAuthResponse::Failure { .. } => {
+                    return Err("rejected".into())
+                }
+                client::KeyboardInteractiveAuthResponse::InfoRequest { ref prompts, .. } => {
+                    let answers = prompts.iter().map(|_| pass.to_string()).collect();
+                    resp = s.authenticate_keyboard_interactive_respond(answers).await
+                        .map_err(|e| format!("kbdint respond: {e}"))?;
+                }
+            }
+        }
+        Err("too many prompt rounds".into())
+    }.await));
+
+    out
+}
+
 #[tokio::main]
 async fn main() {
     let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or("/tmp".into())
@@ -219,6 +281,18 @@ async fn main() {
             Err(e) => {
                 println!("  FAIL {:<40} {}", c.label, e);
                 failures.push((c.label, e));
+                fail += 1;
+            }
+        }
+    }
+
+    println!();
+    for (label, r) in auth_cases("qtterm-test", "spike5-not-a-secret").await {
+        match r {
+            Ok(note) => { println!("  ok   openssh   {label:<38} {note}"); pass += 1; }
+            Err(e) => {
+                println!("  FAIL openssh   {label:<38} {e}");
+                failures.push((Box::leak(label.into_boxed_str()) as &str, e));
                 fail += 1;
             }
         }

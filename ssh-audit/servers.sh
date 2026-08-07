@@ -13,6 +13,11 @@ set -u
 DIR="${XDG_RUNTIME_DIR:-/tmp}/qtterm-ssh-audit"
 OPENSSH_PORT=2222
 DROPBEAR_PORT=2223
+# Throwaway account for the password / keyboard-interactive cases. Old gear
+# rarely does public keys, so those auth paths need covering. Both servers
+# listen on 127.0.0.1 only and the account is removed by `stop`.
+TESTUSER=qtterm-test
+TESTPASS=spike5-not-a-secret
 
 setup_keys() {
 	mkdir -p "$DIR"
@@ -42,9 +47,10 @@ HostKey $DIR/hostkey_ed25519
 PidFile $DIR/sshd.pid
 AuthorizedKeysFile $DIR/authorized_keys
 StrictModes no
-UsePAM no
-PasswordAuthentication no
-KbdInteractiveAuthentication no
+# UsePAM is what makes keyboard-interactive available at all.
+UsePAM yes
+PasswordAuthentication yes
+KbdInteractiveAuthentication yes
 PubkeyAuthentication yes
 PermitRootLogin no
 Subsystem sftp internal-sftp
@@ -65,6 +71,10 @@ case "${1:-status}" in
 start)
 	setup_keys
 	write_sshd_config
+	if ! id "$TESTUSER" >/dev/null 2>&1; then
+		sudo useradd -m -s /bin/sh "$TESTUSER"
+		echo "$TESTUSER:$TESTPASS" | sudo chpasswd
+	fi
 	# sshd refuses to start without its privsep directory, and says so in a way
 	# that reads like a config error rather than a missing mkdir.
 	sudo mkdir -p /run/sshd && sudo chmod 755 /run/sshd
@@ -88,6 +98,7 @@ start)
 stop)
 	[ -f "$DIR/sshd.pid" ] && sudo kill "$(cat "$DIR/sshd.pid")" 2>/dev/null
 	[ -f "$DIR/dropbear.pid" ] && sudo kill "$(cat "$DIR/dropbear.pid")" 2>/dev/null
+	id "$TESTUSER" >/dev/null 2>&1 && sudo userdel -r "$TESTUSER" 2>/dev/null
 	echo "stopped"
 	;;
 status)
