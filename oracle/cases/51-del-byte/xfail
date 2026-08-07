@@ -1,0 +1,8 @@
+DEL (0x7F) occupies a cell in Tera Term; vte discards it.
+`charset.cpp:ParseFirstUTF8` sends every byte <= 0x7F that is not C0 to
+PutU32, so DEL is stored as a cell holding U+007F -- but only in the ground
+state: inside an escape sequence it is stripped, and `ESC [ <DEL> 1 m` is
+still a valid SGR. Reproducing that needs to know which parser state we are
+in, and `vte` does not expose it; ECMA-48, xterm, VTE and alacritty all
+ignore DEL, so vte is arguably right and Tera Term is the outlier.
+Costs one invisible cell of divergence. Revisit if the parser is ever forked.

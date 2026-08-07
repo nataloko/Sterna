@@ -11,6 +11,11 @@
 #   ./run_diff.sh 09 12        run the cases whose names contain 09 or 12
 #   ./run_diff.sh -v 09        also print the full dump from both engines
 #
+# A case directory containing an `xfail` file is a KNOWN divergence: the file
+# says why, the diff is reported but not counted as a failure, and if the two
+# engines ever agree it is reported as XPASS and *does* fail, so the marker
+# cannot outlive the bug it describes.
+#
 # oracle/run_tests.sh still exists and is still the golden-file suite for the
 # oracle itself. That one guards against the oracle drifting; this one measures
 # how far the port has got.
@@ -41,7 +46,7 @@ echo "run_diff: building tt-dump" >&2
 export PATH="$HOME/.cargo/bin:$PATH"
 (cd crates && cargo build --quiet) || { echo "run_diff: cargo build failed" >&2; exit 2; }
 
-pass=0; fail=0; skip=0
+pass=0; fail=0; skip=0; xfail=0
 failed_names=()
 
 for dir in oracle/cases/*/; do
@@ -73,9 +78,20 @@ for dir in oracle/cases/*/; do
 	fi
 
 	if [ "$want" = "$got" ]; then
+		if [ -f "$dir/xfail" ]; then
+			printf '  XPASS %-26s (expected to differ but matched — delete %sxfail)\n' \
+				"$name" "$dir"
+			fail=$((fail + 1)); failed_names+=("$name")
+			continue
+		fi
 		printf '  ok   %s\n' "$name"
 		pass=$((pass + 1))
 		[ "$VERBOSE" = 1 ] && printf '%s\n' "$got" | sed 's/^/       /'
+	elif [ -f "$dir/xfail" ]; then
+		printf '  xfail %-26s %s\n' "$name" "$(head -1 "$dir/xfail")"
+		xfail=$((xfail + 1))
+		[ "$VERBOSE" = 1 ] && diff -u <(printf '%s\n' "$want") <(printf '%s\n' "$got") \
+			--label "oracle (Tera Term)" --label "tt-vt (Rust)" | sed 's/^/       /'
 	else
 		printf '  FAIL %s\n' "$name"
 		fail=$((fail + 1)); failed_names+=("$name")
@@ -85,7 +101,7 @@ for dir in oracle/cases/*/; do
 done
 
 echo
-echo "$pass matched, $fail differed, $skip skipped"
+echo "$pass matched, $fail differed, $xfail known-divergent, $skip skipped"
 if [ "$fail" -gt 0 ]; then
 	printf 'differing: %s\n' "${failed_names[*]}"
 fi
