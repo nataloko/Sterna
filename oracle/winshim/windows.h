@@ -171,7 +171,9 @@ typedef PLOGFONTA PLOGFONT;
 #define GetGValue(c) ((BYTE)(((WORD)(c)) >> 8))
 #define GetBValue(c) ((BYTE)((c) >> 16))
 
+#ifndef _countof
 #define _countof(a) (sizeof(a)/sizeof((a)[0]))
+#endif
 
 #ifndef min
 #define min(a,b) (((a) < (b)) ? (a) : (b))

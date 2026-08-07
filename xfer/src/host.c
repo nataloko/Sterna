@@ -9,15 +9,23 @@
 #include "xfer.h"
 
 #include <stdio.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
 
 #include "ttlib.h"
 
-int xfer_timeout_secs = 0;
-int xfer_timer_ms = 0;
-int xfer_verbose = 0;
+double xfer_deadline = 0;
+int    xfer_timer_ms = 0;
+int    xfer_verbose = 0;
+
+double xfer_now(void)
+{
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return t.tv_sec + t.tv_nsec / 1e9;
+}
 
 /* ---------------------------------------------------------------- services */
 
@@ -49,7 +57,9 @@ static char *svc_get_receive_path(TFileVarProto *fv)
 static void svc_set_timeout(TFileVarProto *fv, int t)
 {
 	(void)fv;
-	xfer_timeout_secs = t;
+	/* Always re-arm, even when t is unchanged — that is the whole point of
+	 * the call. See the note in xfer.h. */
+	xfer_deadline = (t > 0) ? xfer_now() + t : 0;
 }
 
 static void svc_set_dialog_caption(TFileVarProto *fv, const char *key,

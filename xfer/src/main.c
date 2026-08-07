@@ -150,13 +150,14 @@ static void usage(void)
 	    "usage: xfer --proto x|y|z|kermit|bplus|quickvan\n"
 	    "            --send FILE... | --recv DIR\n"
 	    "            --pty 'CMD' | --serial DEV [--baud N] | --fd N\n"
+    "            [--recv-name NAME]   # required by xmodem: no name on the wire\n"
 	    "            [--limit SECONDS] [-v]\n");
 }
 
 int main(int argc, char **argv)
 {
 	const char *proto_name = NULL, *pty_cmd = NULL, *serial = NULL;
-	const char *recv_dir = NULL;
+	const char *recv_dir = NULL, *recv_name = NULL;
 	char **send_files = NULL;
 	int send_count = 0, baud = 115200, fd = -1, limit = 60;
 	int sending = 0;
@@ -175,6 +176,8 @@ int main(int argc, char **argv)
 			fd = atoi(argv[++i]);
 		} else if (!strcmp(argv[i], "--recv") && i + 1 < argc) {
 			recv_dir = argv[++i];
+		} else if (!strcmp(argv[i], "--recv-name") && i + 1 < argc) {
+			recv_name = argv[++i];
 		} else if (!strcmp(argv[i], "--limit") && i + 1 < argc) {
 			limit = atoi(argv[++i]);
 		} else if (!strcmp(argv[i], "-v")) {
@@ -217,10 +220,24 @@ int main(int argc, char **argv)
 		fprintf(stderr, "out of memory\n");
 		return 1;
 	}
-	if (sending)
+	/*
+	 * XMODEM carries no filename, so on receive the destination comes from
+	 * GetNextFname — in Tera Term that is what the receive dialog puts into
+	 * FileNames[]. Protocols that do carry a name (y/z/kermit) must NOT get
+	 * one this way, or they will use it instead of the peer's.
+	 */
+	static char *recv_target[1];
+	char recv_path[4096];
+	if (sending) {
 		filevar_set_send_files(fv, send_files, send_count);
-	else
+	} else {
 		filevar_set_receive_dir(fv, recv_dir);
+		if (recv_name != NULL) {
+			snprintf(recv_path, sizeof(recv_path), "%s/%s", recv_dir, recv_name);
+			recv_target[0] = recv_path;
+			filevar_set_send_files(fv, recv_target, 1);
+		}
+	}
 
 	TProto *proto = NULL;
 	if (!strcmp(proto_name, "x")) {
@@ -233,6 +250,10 @@ int main(int argc, char **argv)
 		proto = YCreate(fv);
 		fv->OpId = sending ? OpYSend : OpYRcv;
 		proto->Op->SetOpt(proto, YMODEM_MODE, sending ? IdXSend : IdXReceive);
+		/* Tera Term hardcodes Yopt1K (filesys_proto.cpp:1409). Leaving this
+		 * unset means YOpt==0, which falls through YSendPacket's switch to
+		 * assert(0) — a crash, not a protocol error. */
+		proto->Op->SetOpt(proto, YMODEM_OPT, Yopt1K);
 	} else if (!strcmp(proto_name, "z")) {
 		proto = ZCreate(fv);
 		fv->OpId = sending ? OpZSend : OpZRcv;
@@ -265,8 +286,8 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	double start = now_sec(), deadline = 0;
-	int last_timeout = 0, timeouts = 0, rc = 0;
+	double start = now_sec();
+	int timeouts = 0, rc = 0;
 
 	for (;;) {
 		struct pollfd pfd = { fd, POLLIN, 0 };
@@ -275,18 +296,12 @@ int main(int argc, char **argv)
 		if (!proto->Op->Parse(proto))
 			break;
 
-		/* The protocol asks for a timeout in seconds via FTSetTimeOut; when
-		 * it elapses it wants TimeOutProc, which is how it retries a NAK. */
-		if (xfer_timeout_secs != last_timeout) {
-			last_timeout = xfer_timeout_secs;
-			deadline = xfer_timeout_secs > 0
-			         ? now_sec() + xfer_timeout_secs : 0;
-		}
-		if (deadline > 0 && now_sec() > deadline) {
+		/* FTSetTimeOut arms the deadline in host.c; when it elapses the
+		 * protocol wants TimeOutProc, which is how it retries a NAK. */
+		if (xfer_deadline > 0 && now_sec() > xfer_deadline) {
 			proto->Op->TimeOutProc(proto);
 			timeouts++;
-			deadline = xfer_timeout_secs > 0
-			         ? now_sec() + xfer_timeout_secs : 0;
+			xfer_deadline = 0;   /* the protocol re-arms if it wants more */
 		}
 		if (now_sec() - start > limit) {
 			fprintf(stderr, "wall-clock limit (%ds) hit\n", limit);

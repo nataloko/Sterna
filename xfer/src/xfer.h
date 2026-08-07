@@ -37,8 +37,15 @@ void filevar_destroy(TFileVarProto *fv);
 void filevar_set_send_files(TFileVarProto *fv, char *const *paths, int count);
 void filevar_set_receive_dir(TFileVarProto *fv, const char *dir);
 
-/* Set by the harness so the driver loop can see a protocol-requested timeout.
- * Tera Term routes these through Win32 timers; headless we just record them. */
-extern int   xfer_timeout_secs;   /* from FTSetTimeOut */
-extern int   xfer_timer_ms;       /* from SetTimer, 0 when killed */
-extern int   xfer_verbose;
+/*
+ * Protocol-requested timeout, as an absolute CLOCK_MONOTONIC deadline; 0 means
+ * disarmed. It must be a deadline rather than a duration: protocols call
+ * FTSetTimeOut with the SAME value on every packet in order to RE-ARM the
+ * timer, so treating it as a value-change signal makes spurious timeouts fire
+ * mid-transfer. That showed up as a ~1-in-3 flaky ymodem send.
+ */
+extern double xfer_deadline;
+extern int    xfer_timer_ms;   /* from SetTimer, 0 when killed */
+extern int    xfer_verbose;
+
+double xfer_now(void);
