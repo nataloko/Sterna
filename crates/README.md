@@ -68,6 +68,18 @@ behaviour looks like a bug until you check. Reproduced deliberately:
   wrap**, because it scrolls instead of calling `MoveCursor`.
 - **A combining mark with no base character** gets a U+00A0 base and advances
   the cursor one column.
+- **The padding half of a wide character carries no attributes at all.**
+  `buffer.c:3400` writes `attr`, `attr2`, `fg` and `bg` as zero, so a
+  background-coloured wide character reports its colour on the lead cell and
+  nothing on the pad. (The *insert-mode* branch at `:3325` copies the pen onto
+  the pad instead. That inconsistency is upstream's; we reproduce both.)
+- **Breaking a wide character is not the same as erasing it, and which one
+  happens depends on who broke it.** Overwriting, inserting, deleting and
+  scrolling all go through `BuffSetChar(b, ' ', 'H')`, which blanks the text
+  and the colour indices but leaves the SGR attribute bits untouched and never
+  consults the pen. The erase paths go through `EraseKanji`, which paints the
+  whole pen — bold included, unlike the `memsetW` that erases the cells around
+  it. `Cell::crush` and `Grid::erase_kanji` are the two halves of that split.
 - **G1 starts as DEC special graphics**, so a bare SO switches to line drawing
   with no `ESC ( 0` in the stream at all. `charset.cpp:CharSetInit2`.
 - **A single shift never ends.** `ParseFirst` clears `SSflag` after one

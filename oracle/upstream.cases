@@ -31,11 +31,11 @@ unicodebuf-ich.sh                    | --cols 80 --rows 24 --attrs |
 unicodebuf-combining1.sh             | --cols 80 --rows 24 --attrs |
 bcetest.sh                           | --cols 80 --rows 24 --attrs |
 decfi-bce.sh                         | --cols 80 --rows 24 --attrs |
+unicodebuf-boxdrawing.sh             | --cols 80 --rows 24 --attrs |
 
 # --- known divergences ---------------------------------------------------
-unicodebuf-irm3.sh                   | --cols 80 --rows 24 --attrs | XFAIL: DECSCA/DECSEL selective erase not implemented
+unicodebuf-irm3.sh                   | --cols 80 --rows 24 --attrs | XFAIL: XTWINOPS `CSI 8;h;w t` resize not implemented, so the script's 20-column screen stays 80 wide
 unicodebuf-decsel.sh                 | --cols 80 --rows 24 --attrs | XFAIL: DECSCA/DECSEL selective erase not implemented
-unicodebuf-boxdrawing.sh             | --cols 80 --rows 24 --attrs | XFAIL: DECSCA/DECSEL selective erase not implemented
 #33906-decsace.sh                    | --cols 80 --rows 24 --attrs | XFAIL: DECSACE + rectangular area ops not implemented
 #38168-deccara-range.sh              | --cols 80 --rows 24 --attrs | XFAIL: DECCARA not implemented
 #38169-deccara-color.sh              | --cols 80 --rows 24 --attrs | XFAIL: DECCARA not implemented

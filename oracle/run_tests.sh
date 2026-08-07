@@ -4,9 +4,17 @@
 # Each case is a directory under cases/ holding:
 #   cmd       one line of oracle arguments (optional, default: --cols 40 --rows 6)
 #   input     the byte stream fed to the terminal
-#   expected  the golden dump
+#   expected  the golden dump (optional)
 #
-# Regenerate goldens after an intentional change with: ./run_tests.sh --bless
+# The cases are shared with ../run_diff.sh, which needs no golden because it
+# diffs the two engines against each other. So a case with no `expected` is
+# REPORTED AND SKIPPED here rather than failed: it is a differential-only case,
+# which is the default and the one to prefer. Adding a golden opts that case
+# into this suite as well, whose separate job is catching the *oracle* drifting
+# when upstream is bumped or the stub layer changes.
+#
+# Regenerate goldens after an intentional change with: ./run_tests.sh --bless —
+# and read what it produces. A wrong golden is worse than no test.
 set -uo pipefail
 
 cd "$(dirname "$0")"
@@ -19,7 +27,7 @@ if [ ! -x "$ORACLE" ]; then
 	exit 2
 fi
 
-pass=0; fail=0; blessed=0
+pass=0; fail=0; skip=0; blessed=0
 for dir in cases/*/; do
 	name=$(basename "$dir")
 	[ -f "$dir/input" ] || continue
@@ -40,8 +48,8 @@ for dir in cases/*/; do
 	fi
 
 	if [ ! -f "$dir/expected" ]; then
-		printf '  FAIL %-28s (no golden; run --bless)\n' "$name"
-		fail=$((fail + 1))
+		printf '  skip %-28s (differential-only; no golden)\n' "$name"
+		skip=$((skip + 1))
 		continue
 	fi
 
@@ -60,5 +68,5 @@ if [ "$BLESS" = 1 ]; then
 	exit 0
 fi
 
-echo "$pass passed, $fail failed"
+echo "$pass passed, $fail failed, $skip differential-only"
 [ "$fail" -eq 0 ]

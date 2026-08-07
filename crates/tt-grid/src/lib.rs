@@ -138,6 +138,22 @@ impl Cell {
         self.text.iter().copied().take_while(|&c| c != 0)
     }
 
+    /// `buffer.c:BuffSetChar(b, ' ', 'H')` — how the *shift* and *overwrite*
+    /// paths break a wide character they cannot keep whole.
+    ///
+    /// It is deliberately **not** an erase. The text becomes a space and the
+    /// width class and colour indices go back to default, but the SGR
+    /// attribute bits are left exactly as they were and the pen is never
+    /// consulted. Erasing paints the pen over the cell; this does not, and the
+    /// two are visible apart the moment a coloured wide character is
+    /// overwritten by a narrow one under a different pen.
+    pub fn crush(&mut self) {
+        self.text = [b' ' as u32, 0, 0, 0];
+        self.fg = DEFAULT_FG;
+        self.bg = DEFAULT_BG;
+        self.width_class = WIDTH_NARROW;
+    }
+
     /// Append a combining mark. Returns false if the cell is full.
     pub fn push(&mut self, cp: u32) -> bool {
         for slot in self.text.iter_mut() {
@@ -601,50 +617,51 @@ impl Grid {
 
     /// ECH.
     pub fn erase_chars(&mut self, n: usize) {
-        let (x, y) = (self.cursor.x, self.cursor.y);
-        let pen = self.pen;
-        let end = (x + n).min(self.cols);
-        self.split_wide_at(y, x);
-        self.split_wide_at(y, end);
-        for cell in &mut self.lines[y][x..end] {
-            *cell = Cell::erased(pen);
-        }
+        let x = self.cursor.x;
+        self.erase_range_in_line(x, n);
     }
 
     /// EL. 0 = cursor to end, 1 = start to cursor, 2 = whole line.
     pub fn erase_line(&mut self, mode: u16) {
-        let (x, y) = (self.cursor.x, self.cursor.y);
-        let (start, end) = match mode {
-            0 => (x, self.cols),
-            1 => (0, (x + 1).min(self.cols)),
-            2 => (0, self.cols),
-            _ => return,
-        };
-        let pen = self.pen;
-        self.split_wide_at(y, start);
-        self.split_wide_at(y, end);
-        for cell in &mut self.lines[y][start..end] {
-            *cell = Cell::erased(pen);
+        let x = self.cursor.x;
+        match mode {
+            0 => self.erase_range_in_line(x, self.cols - x),
+            1 => self.erase_range_in_line(0, x + 1),
+            2 => self.erase_range_in_line(0, self.cols),
+            _ => {}
         }
     }
 
     /// ED. 0 = cursor to end of screen, 1 = start to cursor, 2 = all.
+    ///
+    /// `BuffEraseCurToEnd`/`BuffEraseHomeToCur`, which are *not*
+    /// `BuffEraseCharsInLine` in a loop: each does a single `EraseKanji` at the
+    /// cursor and then a plain fill, so the wide-character handling differs
+    /// from EL's at the far end of the range.
     pub fn erase_display(&mut self, mode: u16) {
         let (x, y) = (self.cursor.x, self.cursor.y);
         let pen = self.pen;
         match mode {
             0 => {
-                self.erase_line(0);
+                self.erase_kanji(y, x, 1);
+                for cell in &mut self.lines[y][x..] {
+                    *cell = Cell::erased(pen);
+                }
                 for row in (y + 1)..self.rows {
                     self.lines[row] = vec![Cell::erased(pen); self.cols];
                 }
             }
             1 => {
+                // EraseKanji(0): a wide character *starting* at the cursor has
+                // its padding outside the erased range, so it goes too.
+                self.erase_kanji(y, x, 0);
                 for row in 0..y {
                     self.lines[row] = vec![Cell::erased(pen); self.cols];
                 }
-                self.erase_line(1);
-                let _ = x;
+                let end = (x + 1).min(self.cols);
+                for cell in &mut self.lines[y][..end] {
+                    *cell = Cell::erased(pen);
+                }
             }
             2 | 3 => {
                 for row in 0..self.rows {
@@ -735,11 +752,16 @@ impl Grid {
             width_class: if w == 2 { WIDTH_WIDE } else { WIDTH_NARROW },
         };
         if w == 2 && x + 1 < self.cols {
+            // The padding half is written with *zeroed* attributes, not the
+            // pen — `buffer.c:3400` sets `attr`, `attr2`, `fg` and `bg` all to
+            // 0. So a background-coloured wide character reports its colour on
+            // the lead cell and nothing on the pad, which is visible the moment
+            // anything dumps attributes per column.
             self.lines[y][x + 1] = Cell {
                 text: [0, 0, 0, 0],
-                fg: pen.fg,
-                bg: pen.bg,
-                attrs: pen.attrs,
+                fg: DEFAULT_FG,
+                bg: DEFAULT_BG,
+                attrs: 0,
                 width_class: WIDTH_PAD,
             };
         }
@@ -786,49 +808,93 @@ impl Grid {
         true
     }
 
-    /// If `x` holds the **right** half of a wide character, blank the pair.
+    /// If `x` holds the **right** half of a wide character, crush the pair.
     /// Leaves a left half alone — the distinction matters when a shift keeps
     /// one side and discards the other.
     fn break_pad_at(&mut self, y: usize, x: usize) {
         if x < self.cols && x > 0 && self.lines[y][x].width_class == WIDTH_PAD {
-            let pen = self.pen;
-            self.lines[y][x] = Cell::erased(pen);
-            self.lines[y][x - 1] = Cell::erased(pen);
+            self.lines[y][x].crush();
+            self.lines[y][x - 1].crush();
         }
     }
 
-    /// If `x` holds the **left** half of a wide character, blank the pair.
+    /// If `x` holds the **left** half of a wide character, crush the pair.
     fn break_lead_at(&mut self, y: usize, x: usize) {
         if x < self.cols && self.lines[y][x].width_class == WIDTH_WIDE {
-            let pen = self.pen;
-            self.lines[y][x] = Cell::erased(pen);
+            self.lines[y][x].crush();
             if x + 1 < self.cols {
-                self.lines[y][x + 1] = Cell::erased(pen);
+                self.lines[y][x + 1].crush();
             }
         }
     }
 
-    /// Break a wide character straddling column `x`, replacing both halves with
-    /// blanks. A no-op if `x` is out of range or holds a narrow cell.
+    /// Break a wide character straddling column `x`, from either side. A no-op
+    /// if `x` is out of range or holds a narrow cell.
+    ///
+    /// This is the *overwrite* path — the three `BuffSetChar(p, ' ', 'H')`
+    /// pairs at `buffer.c:3221-3270` — so it crushes rather than erases. The
+    /// erase paths want [`Grid::erase_kanji`] instead.
     fn split_wide_at(&mut self, y: usize, x: usize) {
         if x >= self.cols {
             return;
         }
-        let pen = self.pen;
         match self.lines[y][x].width_class {
             WIDTH_WIDE => {
-                self.lines[y][x] = Cell::erased(pen);
+                self.lines[y][x].crush();
                 if x + 1 < self.cols {
-                    self.lines[y][x + 1] = Cell::erased(pen);
+                    self.lines[y][x + 1].crush();
                 }
             }
             WIDTH_PAD => {
-                self.lines[y][x] = Cell::erased(pen);
+                self.lines[y][x].crush();
                 if x > 0 {
-                    self.lines[y][x - 1] = Cell::erased(pen);
+                    self.lines[y][x - 1].crush();
                 }
             }
             _ => {}
+        }
+    }
+
+    /// `buffer.c:EraseKanji` — the *erase* paths' way of breaking a wide
+    /// character, which does paint the pen over both halves.
+    ///
+    /// `lr` is upstream's argument, and it decides which cell is inspected:
+    /// `1` asks "does a wide character end at `x`, i.e. is `x` its padding?",
+    /// `0` asks "does one start at `x`?". Note it never looks further than one
+    /// cell, so a wide character *starting* at the far end of an erased range
+    /// is left whole on purpose.
+    fn erase_kanji(&mut self, y: usize, x: usize, lr: usize) -> bool {
+        if x < lr {
+            return false;
+        }
+        let bx = x - lr;
+        if bx >= self.cols || self.lines[y][bx].width_class != WIDTH_WIDE {
+            return false;
+        }
+        // EraseKanji copies the whole pen, bold and all — unlike `memsetW`,
+        // which passes AttrDefault. So the two halves can end up carrying
+        // attributes the erased range around them does not.
+        let pen = self.pen;
+        self.lines[y][bx] = Cell::blank(pen);
+        if bx + 1 < self.cols {
+            self.lines[y][bx + 1] = Cell::blank(pen);
+        }
+        true
+    }
+
+    /// `buffer.c:BuffEraseCharsInLine` — ECH and all three EL modes go through
+    /// here. The head check is always at the **cursor**, not at `start`; the
+    /// tail check is at the end of the range and only when that is on screen.
+    fn erase_range_in_line(&mut self, start: usize, count: usize) {
+        let (cx, y) = (self.cursor.x, self.cursor.y);
+        self.erase_kanji(y, cx, 1);
+        if start + count < self.cols {
+            self.erase_kanji(y, start + count, 1);
+        }
+        let pen = self.pen;
+        let end = (start + count).min(self.cols);
+        for cell in &mut self.lines[y][start..end] {
+            *cell = Cell::erased(pen);
         }
     }
 }
