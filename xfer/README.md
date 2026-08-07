@@ -93,6 +93,19 @@ Each of these cost real debugging time, and each looks like something else.
   comparison against the original will fail — that is the protocol, not a bug.
 - **Kermit uppercases filenames** ("common form"), so `payload.bin` arrives as
   `PAYLOAD.BIN`. Correct on both sides.
+- **`rb` exits without ACKing the end of a YMODEM batch.** After the closing
+  null block, lrzsz's `rb` just leaves. Tera Term's `ymodem.c` sets
+  `fv->Success = TRUE` only on that final ACK (`ymodem.c:851`), so the transfer
+  completes, the file is byte-correct, and the protocol still reports failure —
+  intermittently, depending on whether `rb` gets scheduled before or after we
+  poll. It presented as a ~2-in-10 flake with `in=10` instead of `in=11`:
+  **exactly one byte short.**
+  The harness now detects peer-close (EOF/EIO, which `Read1Byte` cannot express
+  — it returns 0 for both "nothing yet" and "gone forever") and exits with code
+  **4** instead of spinning to the wall-clock limit. `run_tests.sh` accepts 4
+  *only* together with a byte-identical file. Do not widen that: the file
+  comparison is the real assertion, and code 4 on its own means the peer
+  vanished mid-transfer.
 - **C-Kermit is the wrong counterparty for a pty.** It sees a tty and drops into
   interactive command mode. G-Kermit (`gkermit`) speaks the protocol on stdio
   and is what the suite uses.

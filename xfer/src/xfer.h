@@ -24,6 +24,10 @@
 TComm *comm_fd_create(int fd);
 void comm_fd_destroy(TComm *comm);
 
+/* True once the far end has gone away (EOF/EIO), as opposed to merely having
+ * nothing buffered. The protocols cannot distinguish the two. */
+int comm_fd_peer_closed(TComm *comm);
+
 /* Bytes moved, for the summary line. */
 unsigned long comm_fd_bytes_in(TComm *comm);
 unsigned long comm_fd_bytes_out(TComm *comm);

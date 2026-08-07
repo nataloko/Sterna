@@ -69,7 +69,13 @@ run_case() {
 	fi
 	rc=$?
 
-	if [ $rc -eq 0 ] && compare "$d/payload.bin" "$d/out/payload.bin" "$padded"; then
+	# rc 4 is "the peer closed before the final handshake". lrzsz's `rb` exits
+	# without acknowledging the closing null block of a YMODEM batch, so the
+	# file is complete and correct but the protocol never sees its last ACK.
+	# The byte-comparison below is the real assertion either way, so accept 4 —
+	# but only alongside a byte-identical file, never on its own.
+	if { [ $rc -eq 0 ] || [ $rc -eq 4 ]; } \
+	   && compare "$d/payload.bin" "$d/out/payload.bin" "$padded"; then
 		printf '  ok   %-22s %s\n' "$name" "$(echo "$out" | grep -o 'in=[0-9]* out=[0-9]*')"
 		pass=$((pass+1))
 	else

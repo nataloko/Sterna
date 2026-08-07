@@ -16,6 +16,7 @@
 typedef struct {
 	int fd;
 	unsigned long in, out;
+	int peer_closed;
 
 	/* Insert1Byte puts a byte at the FRONT of the outbound stream. Tera Term
 	 * uses it to inject a flow-control or cancel byte ahead of queued data;
@@ -40,8 +41,13 @@ static int comm_read1(TComm *comm, BYTE *b)
 		}
 		if (n < 0 && errno == EINTR)
 			continue;
-		/* EAGAIN: nothing buffered. 0/EIO: peer gone — both mean
-		 * "no byte for you", and the protocol's own timeout handles it. */
+		/* EAGAIN means "nothing buffered yet"; 0 or EIO on a pty master means
+		 * the peer is gone. The protocol cannot tell these apart through
+		 * Read1Byte — both are "no byte" — so record it for the driver, which
+		 * would otherwise spin until its wall-clock limit waiting for a byte
+		 * that can never arrive. */
+		if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK))
+			c->peer_closed = 1;
 		return 0;
 	}
 }
@@ -67,7 +73,6 @@ static int comm_binary_out(TComm *comm, const CHAR *buf, size_t len)
 
 static void comm_insert1(TComm *comm, BYTE b)
 {
-	CommFd *c = comm->private_data;
 	CHAR ch = (CHAR)b;
 	comm_binary_out(comm, &ch, 1);
 }
@@ -115,6 +120,11 @@ void comm_fd_destroy(TComm *comm)
 		return;
 	free(comm->private_data);
 	free(comm);
+}
+
+int comm_fd_peer_closed(TComm *comm)
+{
+	return comm ? ((CommFd *)comm->private_data)->peer_closed : 0;
 }
 
 unsigned long comm_fd_bytes_in(TComm *comm)

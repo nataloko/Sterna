@@ -306,6 +306,15 @@ int main(int argc, char **argv)
 			timeouts++;
 			xfer_deadline = 0;   /* the protocol re-arms if it wants more */
 		}
+		if (comm_fd_peer_closed(comm)) {
+			/* Exit code 4, distinct from a real failure. lrzsz's `rb` exits
+			 * without acknowledging the closing null block of a YMODEM batch,
+			 * so the transfer is complete and correct but the protocol never
+			 * sees its final ACK. Waiting longer cannot help. */
+			fprintf(stderr, "peer closed the connection\n");
+			rc = 4;
+			break;
+		}
 		if (now_sec() - start > limit) {
 			fprintf(stderr, "wall-clock limit (%ds) hit\n", limit);
 			rc = 3;
