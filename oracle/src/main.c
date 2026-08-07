@@ -12,6 +12,7 @@
  */
 #include <windows.h>
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,6 +43,41 @@ extern TComVar cv;
  * and buffer.c actually read. Everything else stays zero, which is also
  * ttset.c's behaviour for the flag words.
  */
+/*
+ * Resolve --term.
+ *
+ * NOT TermIDGetID(): that is a case-sensitive strcmp against an UPPERCASE table
+ * and it returns IdVT100 for anything it does not recognise rather than an
+ * error, so `--term vt220` silently ran as a VT100 and the guard below could
+ * never fire. Caught by the differential suite in 2026-08: the Rust engine
+ * answered DA as a VT220 and the oracle as a VT100, and the oracle was wrong.
+ *
+ * Walk the same table case-insensitively and refuse what is not in it, so a
+ * typo is a failed run rather than a quietly downgraded terminal.
+ */
+static int resolve_term_id(const char *name)
+{
+	int i;
+
+	for (i = 0; ; i++) {
+		const TermIDList *e = TermIDGetList(i);
+		const char *a, *b;
+
+		if (e == NULL) {
+			break;
+		}
+		for (a = name, b = e->TermIDStr; *a != '\0' && *b != '\0'; a++, b++) {
+			if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) {
+				break;
+			}
+		}
+		if (*a == '\0' && *b == '\0') {
+			return e->TermID;
+		}
+	}
+	return 0;
+}
+
 static void settings_defaults(int cols, int rows, const char *term_id, int cr_receive)
 {
 	memset(&ts, 0, sizeof(ts));
@@ -49,7 +85,7 @@ static void settings_defaults(int cols, int rows, const char *term_id, int cr_re
 
 	ts.TerminalWidth = cols;
 	ts.TerminalHeight = rows;
-	ts.TerminalID = TermIDGetID(term_id);
+	ts.TerminalID = resolve_term_id(term_id);
 	if (ts.TerminalID == 0) {
 		fprintf(stderr, "oracle: unknown terminal id '%s'\n", term_id);
 		exit(2);
