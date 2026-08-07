@@ -32,6 +32,10 @@ make_payload() {
 # trailing padding is expected, not a failure. Compare only the sent length.
 compare() {
 	local orig=$1 got=$2 padded=$3
+	# Kermit transmits names in its "common form", which is uppercase, so the
+	# received file is PAYLOAD.BIN. That is correct protocol behaviour on both
+	# sides, not a defect — accept either spelling.
+	[ -f "$got" ] || got="$(dirname "$got")/$(basename "$got" | tr 'a-z' 'A-Z')"
 	[ -f "$got" ] || return 1
 	if [ "$padded" = pad ]; then
 		head -c "$(stat -c%s "$orig")" "$got" | cmp -s - "$orig"
@@ -71,9 +75,10 @@ run_case() {
 	else
 		printf '  FAIL %-22s rc=%d\n' "$name" "$rc"
 		[ -n "$VERBOSE" ] && echo "$out" | sed 's/^/         /'
-		if [ -f "$d/out/payload.bin" ]; then
-			printf '       sizes: sent %s got %s\n' \
-			  "$(stat -c%s "$d/payload.bin")" "$(stat -c%s "$d/out/payload.bin")"
+		local any; any=$(ls "$d/out" 2>/dev/null | head -1)
+		if [ -n "$any" ]; then
+			printf '       sizes: sent %s got %s (%s)\n' \
+			  "$(stat -c%s "$d/payload.bin")" "$(stat -c%s "$d/out/$any")" "$any"
 		else
 			printf '       no file received\n'
 		fi
@@ -97,11 +102,13 @@ run_case zmodem-send    z send "rz -b"        exact
 run_case zmodem-recv-1m z recv "sz -b @FILE@" exact 1048576
 run_case zmodem-send-1m z send "rz -b"        exact 1048576
 
-if command -v kermit >/dev/null; then
-	run_case kermit-recv kermit recv "kermit -i -s @FILE@" exact
-	run_case kermit-send kermit send "kermit -i -r"        exact
+# G-Kermit rather than C-Kermit: C-Kermit on a pty sees a tty and drops into
+# interactive command mode instead of speaking the protocol.
+if command -v gkermit >/dev/null; then
+	run_case kermit-recv kermit recv "gkermit -s @FILE@" exact
+	run_case kermit-send kermit send "gkermit -r"        exact
 else
-	echo "  skip kermit (C-Kermit not installed)"; skip=$((skip+1))
+	echo "  skip kermit (gkermit not installed)"; skip=$((skip+1))
 fi
 
 echo

@@ -262,7 +262,10 @@ int main(int argc, char **argv)
 	} else if (!strcmp(proto_name, "kermit")) {
 		proto = KmtCreate(fv);
 		fv->OpId = sending ? OpKmtSend : OpKmtRcv;
-		proto->Op->SetOpt(proto, KMT_MODE, sending ? OpKmtSend : OpKmtRcv);
+		/* KMT_MODE takes KMT_MODE_T, NOT the OpId_t used for fv->OpId. The two
+		 * enums overlap misleadingly: OpKmtRcv == 3 == IdKmtSend, so passing
+		 * the OpId here tells kermit to send when you asked it to receive. */
+		proto->Op->SetOpt(proto, KMT_MODE, sending ? IdKmtSend : IdKmtReceive);
 	} else if (!strcmp(proto_name, "bplus")) {
 		proto = BPCreate(fv);
 		fv->OpId = sending ? OpBPSend : OpBPRcv;
