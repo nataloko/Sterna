@@ -1,0 +1,10 @@
+[package]
+name = "tt-grid"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Terminal grid: cells, lines, cursor, scroll region, scrollback"
+
+[dependencies]
+unicode-width = "0.2"

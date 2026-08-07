@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["tt-grid", "tt-vt", "tt-dump"]
+
+# This workspace is `crates/`, not the repository root, on purpose: the Stage 0
+# spikes (serial-audit/, ssh-audit/) are standalone crates with their own
+# lockfiles and their own CI jobs, and folding them in here would entangle the
+# core's dependency resolution with audit tooling that is not shipped.
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "BSD-3-Clause"
+repository = "https://github.com/nataloko/termitta"
+
+[workspace.dependencies]
+tt-grid = { path = "tt-grid" }
+tt-vt = { path = "tt-vt" }

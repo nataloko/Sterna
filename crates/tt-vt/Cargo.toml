@@ -1,0 +1,11 @@
+[package]
+name = "tt-vt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "VT100/220/320/525 + xterm state machine, ported against the Tera Term oracle"
+
+[dependencies]
+tt-grid.workspace = true
+vte = "0.15"

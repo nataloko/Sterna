@@ -1,0 +1,11 @@
+[package]
+name = "tt-dump"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Drive tt-vt over a byte stream and print the oracle's dump format"
+
+[dependencies]
+tt-grid.workspace = true
+tt-vt.workspace = true
