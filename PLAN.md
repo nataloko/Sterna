@@ -336,42 +336,66 @@ Deliberately absent: file transfer, macros, tabs, Windows build, most settings.
 
 #### First landing — the differential gate is live
 
-`crates/` exists: `tt-grid` (cells, cursor, scroll region, scrollback), `tt-vt`
-(the state machine, `vte` for byte-level parsing), and `tt-dump` (a CLI that
-speaks the oracle's argument set and dump format). `./run_diff.sh` feeds every
-case to **both** engines and diffs them against each other. **38 cases, all
-matching.**
+`crates/` exists: `tt-grid` (cells, cursor, scroll region, scrollback, alternate
+screen), `tt-charset` (ISO-2022 and DEC special graphics), `tt-vt` (the state
+machine, `vte` for byte-level parsing), and `tt-dump` (a CLI that speaks the
+oracle's argument set and dump format). `./run_diff.sh` feeds every case to
+**both** engines and diffs them against each other. **51 cases: 50 matching and
+one known divergence.**
 
 **The design decision worth recording: the differential suite has no golden
 files.** The oracle *is* the expectation, so a new case is an input file and
 nothing else — nothing to bless, nothing that can quietly enshrine a wrong
 answer. `oracle/run_tests.sh` keeps its goldens for the different job of
-catching the oracle itself drifting when upstream is bumped.
+catching the oracle itself drifting when upstream is bumped. A case can carry an
+`xfail` file naming a *known* divergence; it is reported but not fatal, and it
+fails if the two ever agree, so the marker cannot outlive the bug.
 
 Covered: cursor motion and clamping, ED/EL/ICH/DCH/ECH/IL/DL/SU/SD, scroll
 regions, origin mode, insert mode, autowrap on and off, deferred wrap, tab
-stops, DECSC/DECRC including the pen, DA/DSR replies, OSC titles, all four
-`CRReceive` modes, wide characters at the margin, and combining marks. Not yet:
-character sets and DEC special graphics, alternate screen, mouse reporting,
-DECLRMM, and the 256-colour path (which is *off* upstream by default — see
-below).
+stops, DECSC/DECRC including the pen and the G-sets, DA/DSR replies, OSC titles,
+all four `CRReceive` modes, wide characters at the margin, combining marks,
+ISO-2022 designation and every locking and single shift, DEC special graphics,
+256-colour and truecolor, 8-bit C1 controls, and the alternate screen. Not yet:
+DECLRMM, mouse reporting, DCS, and the window report sequences.
+
+#### What the harness caught, which is the point of having it
 
 **The first run matched 18/18, which meant the corpus was too easy, not that the
-port was done.** Twenty harder cases followed; those found one real bug — in the
-oracle. `TermIDGetID()` is a case-sensitive `strcmp` against an UPPERCASE table
-that returns `IdVT100` for anything unrecognised rather than an error, so
-`--term vt220` had been silently running as a VT100 and `main.c`'s guard against
-that could never fire. Fixed in the oracle's own runner, upstream untouched.
+port was done.** Every subsequent finding came from writing a harder case.
 
-Two upstream behaviours are reproduced deliberately and will look like bugs to
-anyone reading the Rust in isolation. `SGR 38`/`48` do not consume their
-arguments unless `CF_XTERM256` is set, and it is **off** by default — so
-`ESC [ 38;5;196 m` parses as "38 ignored, 5 = blink on, 196 ignored". And a line
-feed at the bottom of the scroll region leaves the pending-wrap flag set,
-because it scrolls instead of calling `MoveCursor`. Both are in
-`crates/README.md` with citations, along with the known divergences — chiefly
+1. **`TermIDGetID()` never fails.** Case-sensitive `strcmp` against an UPPERCASE
+   table, returning `IdVT100` for anything unrecognised — so `--term vt220` ran
+   as a VT100 and `main.c`'s guard against that could never fire.
+2. **A `ts->X = 0` at the top of `ttset.c` is an initialiser, not a default.**
+   The big one. `ColorFlag`, `TermFlag`, `ISO2022Flag` and `WindowFlag` are each
+   zeroed near `ttset.c:559` and then built up from per-key `GetOnOff(…, TRUE)`
+   calls a thousand lines later. The oracle had taken the zeros, so it was
+   reporting a Tera Term with **256-colour off, every ISO-2022 shift off, 8-bit
+   controls off and the alternate screen off** — none of which is how it ships.
+   Found while porting character sets, when SO and SI did nothing.
+3. **A manual stub was lying.** `DispFindClosestColor` lives in the oracle's
+   `stubs_manual.c` because `vtdisp.c` is not compiled; it held *xterm's*
+   palette rather than Tera Term's and omitted the bright/dim flip the real one
+   applies, so every truecolor SGR resolved to the wrong index. This is exactly
+   the failure `CLAUDE.md` warns about — "every stub is a place the oracle can
+   lie" — caught only because a Rust implementation disagreed with it.
+
+Finding 2 is worth dwelling on: **the port was briefly being written against a
+misconfigured oracle**, and the only reason it surfaced is that the differential
+suite made a settings bug look like a parser bug and forced the question. A
+golden-file-only suite would have blessed the wrong answer and moved on.
+
+Upstream behaviours reproduced deliberately, which will look like bugs to anyone
+reading the Rust in isolation: G1 starts as DEC special graphics so a bare SO
+draws lines; a single shift never ends in UTF-8 mode; C1 controls are masked to
+C0 below VT220, making `U+008D` a carriage return; the nearest-colour search
+flips bright and dim so truecolor red lands on index 1; and a line feed at the
+bottom of the scroll region leaves pending-wrap set. All are in
+`crates/README.md` with citations, alongside the known divergences — chiefly
 that character width comes from the `unicode-width` crate rather than Tera
-Term's own tables, which is fine until CJK is revived.
+Term's own tables, which is fine until CJK is revived, and that DEL occupies a
+cell upstream but not for us.
 
 ### ⬜ Stage 2 — the differentiators (3–4 months, ~20k LOC)
 
@@ -472,7 +496,7 @@ file/dir 1k, connection/terminal 2k, dialogs 0.8k, misc 1k — **~9.3k Rust vs
 1. **✅ Differential testing against real Tera Term** — `oracle/` built and
    green, and as of Stage 1 actually wired up: `./run_diff.sh` feeds identical
    byte streams to it and to the Rust engine and diffs the grid dumps, in CI on
-   every commit. 38 cases. **This is the asset the whole project rests on**, and
+   every commit. 51 cases. **This is the asset the whole project rests on**, and
    it is now a gate rather than a promise.
 2. **⬜ esctest2** (iTerm2) — ~1000 automated DEC/xterm conformance assertions
    over a pty, read back via DSR/DECRQSS. Wire into CI in Stage 1.

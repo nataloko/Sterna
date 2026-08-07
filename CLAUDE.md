@@ -28,9 +28,14 @@ already taken in the wild).
    the two engines against each other, so a new case needs an `input` and
    nothing to bless. **Prefer adding cases there.** Bless a golden only when you
    also want the oracle's own suite to guard that case against upstream drift.
-4. **The oracle's settings are load-bearing.** `main.c:settings_defaults()`
-   mirrors `ttpset/ttset.c`'s per-key fallbacks. If a dump looks subtly wrong,
-   suspect a setting before suspecting the parser. See the traps below.
+4. **The oracle's settings are load-bearing, and `ttset.c` lies about them.**
+   `main.c:settings_defaults()` mirrors `ttpset/ttset.c`'s per-key fallbacks —
+   the ones applied *after* the initialiser at the top of the function, not the
+   initialiser itself. Every flag word (`ColorFlag`, `TermFlag`, `ISO2022Flag`,
+   `WindowFlag`) is set to 0 near the top and then built up key by key hundreds
+   of lines later; reading the 0 as the default is wrong and silently disables
+   256-colour, ISO-2022 shifts, 8-bit controls and the alternate screen. If a
+   dump looks subtly wrong, suspect a setting before suspecting the parser.
 5. **Attribution and licensing are not paperwork.** Before vendoring anything
    from Tera Term, check `ATTRIBUTION.md` — the `.lng` and `.map`/`.tbl` assets
    have no per-file licence headers, unlike `ttpfile`.
@@ -44,7 +49,7 @@ already taken in the wild).
 ## Build and test
 
 ```sh
-./run_diff.sh                    # THE gate: Rust engine vs Tera Term, 38 cases
+./run_diff.sh                    # THE gate: Rust engine vs Tera Term, 51 cases
 ./run_diff.sh 27                 # just the cases matching "27"
 
 cd crates                        # the Rust core
@@ -52,7 +57,7 @@ cargo test && cargo clippy --all-targets -- -D warnings
 
 cd oracle
 make            # build build/oracle
-make test       # 38 regression cases
+make test       # 51 regression cases
 make stubs      # regenerate the stub layer after upstream headers change
 
 cd xfer                          # Stage 0 spike 2
@@ -170,17 +175,28 @@ something other than what it is.
 - **Make's VPATH beats pattern rules.** Patched sources need *explicit* rules or
   the generic `%.o: %.c` finds the unpatched original via VPATH and silently
   wins.
-- **`ts.ColorFlag` is zero, and that changes how SGR parses.** With
-  `CF_XTERM256` clear — the default — `SGR 38`/`48` do nothing *and do not
-  consume their arguments*, so `ESC [ 38;5;196 m` is read as three parameters:
-  38 (ignored), 5 (**blink on**), 196 (ignored). A port that "correctly" eats
-  the arguments diverges from the oracle and looks like the oracle is broken.
+- **A `ts->X = 0` at the top of `ttset.c` is an initialiser, not a default.**
+  This cost the most time of anything here. `ISO2022Flag`, `ColorFlag`,
+  `TermFlag` and `WindowFlag` are each zeroed around `ttset.c:559-564` and then
+  ORed together from per-key `GetOnOff(..., TRUE)` calls a thousand lines
+  further down. The oracle took the zeros, so for a while it reported a Tera
+  Term with **256-colour off, every ISO-2022 shift off, 8-bit controls off and
+  the alternate screen off** — none of which is how it ships. Corrected
+  2026-08. If you add a setting, find the key, not the initialiser.
+- **`SGR 38`/`48` do not consume their arguments when their colour mode is
+  off.** Normally invisible because 256-colour defaults on, but flip it off and
+  `ESC [ 38;5;196 m` reads as 38 (ignored), 5 (**blink on**), 196 (ignored).
   `vtterm.c:2239`.
 - **`TermIDGetID()` never fails.** It is a case-sensitive `strcmp` against an
   UPPERCASE table that returns `IdVT100` for anything unrecognised, so
   `--term vt220` silently ran as a VT100 and the `== 0` guard in `main.c` could
   never fire. Fixed in `oracle/src/main.c:resolve_term_id()`; the same shape of
   trap is anywhere else upstream "defaults" instead of erroring.
+- **Stubs lie, and `DispFindClosestColor` did.** It lived in `stubs_manual.c`
+  with *xterm's* palette rather than Tera Term's, and without the bright/dim
+  flip the real one applies, so every truecolor SGR resolved to the wrong
+  index. When a manual stub reimplements upstream logic, diff it against the
+  original — `vtdisp.c` is not compiled into the oracle, so nothing else will.
 
 And for the desktop side:
 
