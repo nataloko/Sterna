@@ -3,21 +3,28 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-07 · **Stage:** 0 (de-risking) · **Commits:** 1
+**Last updated:** 2026-08-07 · **Stage:** 0 (de-risking) · **Commits:** 2
 
 | | Stage 0 spike | Status |
 |---|---|---|
 | 0 | Repo bootstrap | ✅ done |
 | 1 | Headless C oracle | ✅ **done** — 15,325 LOC of Tera Term builds on Linux, 18 tests green |
 | 2 | `ttpfile` protocols on Linux | ⬜ next — fully automatable |
-| 3 | Qt 6 IME reality check | 🔶 **blocked: needs a real desktop session** (ibus/fcitx5, Wayland + X11) |
-| 4 | `serialport-rs` audit | 🔶 **blocked: needs real hardware** (USB-serial adapter) |
+| 3 | Qt 6 IME reality check | ⏸ **deferred indefinitely** — CJK is out of scope (2026-08-07) |
+| 4 | `serialport-rs` audit | ✅ **done** — adopt it, plus a thin patch layer; see below |
 | 5 | `russh` compatibility sweep | 🔶 **blocked: needs old gear / Dropbear to talk to** |
 
-Spikes 3–5 are the three highest-risk items in the whole project and none can
-be verified from a headless container. They need the user's Fedora desktop and
-some hardware. Do not let them drift — a nasty surprise in spike 3 invalidates
-the toolkit choice, and that is a Stage 0 decision, not a Stage 4 one.
+**The "needs the user's desktop / hardware" premise was wrong.** Measured
+2026-08-07: the dev container is a distrobox container on a Bluefin (Fedora
+Silverblue 44) host and inherits the whole session — Qt 6 windows open on the
+real desktop under both Wayland and Xwayland, the session bus is reachable, and
+an FTDI Quad RS232-HS is present with `ttyUSB0`/`ttyUSB1` wired back-to-back on
+data *and* control lines. See `CLAUDE.md` for the capability table and the three
+places it still bites.
+
+So of the three items once called highest-risk: spike 3 became a scope decision,
+spike 4 is **done and passed**, and only spike 5 still waits on the user's own
+gear. Don't let spike 5 drift — it is now the last unknown in Stage 0.
 
 ---
 
@@ -61,11 +68,40 @@ else on Linux does. **Not parity.**
 |---|---|---|
 | Scope | Focused successor | Parity is 3+ years; the niche is narrow and real |
 | Core | Rust | `russh` deletes 62.6k LOC; `tokio` dissolves the `WSAAsyncSelect` problem |
-| Shell | Qt 6 Widgets | CJK IME on Linux decides it; also good on Windows, unlike GTK4 |
-| Renderer | `QPainter` + glyph atlas, **no GPU** | 115200 baud is 11.5 KB/s; GPU spends the scarce resource on the non-bottleneck |
+| Shell | Qt 6 Widgets | Good on Windows *and* Linux, unlike GTK4; **76 dialogs make Widgets the load-bearing reason**; re-confirmed 2026-08-07, see below |
+| Renderer | `QPainter` + glyph atlas, **no GPU** | 115200 baud is 11.5 KB/s; GPU spends the scarce resource on the non-bottleneck. **Measured 2026-08-07 on Qt 6.11.1: 255 fps full repaint, ~40x headroom** |
 | Platforms | Windows + Linux | No macOS |
 | Stage 1 focus | Serial, then SSH/telnet | The user's own daily-driver needs |
 | Relationship to upstream | Fresh project that vendors specific subsystems | A fork means carrying 157k LOC we intend to delete |
+
+**CJK is deferred indefinitely (2026-08-07).** Not on the roadmap: input
+methods, the `.map`/`.tbl` charset depth, ambiguous-width policy, and the CJK
+conformance corpus. This is worth recording honestly, because the toolkit was
+chosen on the strength of "CJK IME on Linux decides it" — that argument is now
+gone, and Qt 6 stands on its remaining merits, which are real but no longer
+decisive. Revisit the toolkit only if something *else* about Qt disappoints; do
+not reopen it on this ground alone.
+
+Two things stay in scope regardless. **Wide and combining character handling in
+the grid** — it arrives free with the oracle-driven port, and box drawing,
+emoji and combining accents need it whether or not CJK does. And the **14 `.lng`
+translation files**, which are donated work in 14 languages and cost nothing to
+carry.
+
+**Toolkit re-evaluated after the CJK deferral (2026-08-07) — conclusion
+unchanged.** Recorded so it isn't redone from scratch. Dropping CJK removed an
+*advantage* Qt held; it did not grant one to any alternative, and no pairwise
+comparison flips: GTK4 always lost on Windows rather than on IME, the
+Rust-native toolkits (egui, iced, Slint) lost on dialogs, native integration and
+text layout, and a webview lost on RSS and startup. What changed is which
+argument bears the weight — it is now the **76 dialogs and the 909-line
+`TTTSet`**, which is a sturdier reason than IME ever was, since it is also
+risk 2 on the list below.
+
+**The sharper framing: this question is a proxy for "are we still shipping
+Windows?"** Qt wins because it is strong on both platforms at once. If Windows
+ever leaves scope, GTK4 and the Rust-native options become live again. That is
+the trigger to watch — not CJK, and not toolkit fashion.
 
 ### Open — decide before they get expensive
 
@@ -94,12 +130,12 @@ sees a flat C ABI over POD types.
 ```
 ┌─ frontend: Qt 6 Widgets (C++) ──── swappable: Tauri / TUI / headless ─┐
 │  QWidget grid + QPainter glyph atlas · .ui dialogs                    │
-│  QInputMethodEvent → ibus/fcitx5 · menus · clipboard                  │
+│  key + mouse events · menus · clipboard · font/colour config          │
 └──────────────────────── C ABI (cbindgen) ─────────────────────────────┘
 ┌─ qtterm-core (Rust cdylib) ───────────────────────────────────────────┐
 │  tt-vt       VT100/220/320/525 + xterm state machine (over `vte`)     │
 │  tt-grid     cells, scrollback, selection, BCE, wide/combining        │
-│  tt-charset  49 vendored .map/.tbl tables, DEC sets, EAW policy       │
+│  tt-charset  DEC sets + line drawing (CJK tables deferred)            │
 │  tt-conn     serial | ssh (russh) | telnet | pty | pipe    [tokio]    │
 │  tt-xfer     FFI → vendored C: x/y/zmodem, kermit, bplus, quickvan    │
 │  tt-script   TTL interpreter + mlua over one shared command table     │
@@ -117,8 +153,9 @@ verification); transfer progress; and the five script dialog requests
 `ttpmacro/` already defines (`inpdlg`, `msgdlg`, `statdlg`, `ListDlg`, `errdlg`).
 
 **Frontend → core:** `key_event(keysym, mods)` — **the core owns the keymap**,
-because `KEYBOARD.CNF` is a compatibility artifact; `paste`, `commit_preedit`,
-`selection_get`; `resize(cols, rows)` + `set_cell_metrics(w_px, h_px)`;
+because `KEYBOARD.CNF` is a compatibility artifact; `paste`, `selection_get`
+(and `commit_preedit`, should CJK ever be revived — keep room for it, don't
+build it); `resize(cols, rows)` + `set_cell_metrics(w_px, h_px)`;
 `connect`/`disconnect`/`send_file`/`run_script`; `settings_get/set`; prompt and
 dialog results.
 
@@ -147,7 +184,7 @@ Stage 2 while morale is high, not Stage 3 when it hurts.
 | Asset | LOC | Disposition |
 |---|---:|---|
 | `ttpfile/*.c` protocols | 9,777 | **Vendor as C**, call via FFI behind `TFileIO` |
-| 49 `.map`/`.tbl` charset tables | data | **Vendor verbatim** — encode exact round-trip behaviour `encoding_rs` doesn't reproduce |
+| 49 `.map`/`.tbl` charset tables | data | **Deferred with CJK.** If revived: vendor verbatim — they encode exact round-trip behaviour `encoding_rs` doesn't reproduce |
 | 14 `.lng` files | 17,610 | **Vendor verbatim, keep the format** |
 | `vtterm.c` + `buffer.c` | 12,082 | **Port to Rust** (~14–16k). Reused as specification and oracle |
 | `ttssh2/` | 62,596 | **Delete** → `russh` |
@@ -169,9 +206,53 @@ Spike 1 delivered `oracle/` — see `oracle/README.md`. Result exceeded the plan
 `charset.cpp` and `unicode.cpp` came along free (and they carry the CJK width
 and ISO-2022 behaviour, so that matters).
 
-Remaining spikes 2–5 above. Also still open: Qt licence posture, and CI —
+Remaining spikes 2 and 5 above. Also still open: Qt licence posture, and CI —
 copy the matrix from `../tine/.github/workflows/release.yml`, keep linux-x64 and
 windows-x64, drop macOS/Flatpak.
+
+#### Spike 4 result — adopt `serialport-rs`, with a thin patch layer
+
+Audited 2026-08-07 against an FTDI Quad RS232-HS with two ports wired
+back-to-back, and — this is the point — **against the requirement in
+`commlib.c`**, not a generic wishlist. What Stage 1 needs works: enumeration
+with USB vid/pid/manufacturer, 5–8 data bits, 1/2 stop bits, none/odd/even
+parity, both flow-control modes, latched `set_break`/`clear_break` matching
+`SetCommBreak` semantics, DTR→DSR and RTS→CTS both observable, honest timeouts,
+and every baud rate exact on readback from 300 to 3000000 including a
+non-standard 250000. Hotplug: removal and re-attach both seen by
+re-enumeration.
+
+Five gaps, and how each lands:
+
+| Gap | In `commlib.c` | Verdict |
+|---|---|---|
+| MARK / SPACE parity | `:194-200` | Patchable — `CMSPAR` on the raw fd |
+| Incoming break vs. a real NUL | — | Patchable — `PARMRK` yields an `FF 00 00` marker |
+| XON/XOFF characters | `XonChar`/`XoffChar` | Patchable — `VSTART`/`VSTOP` |
+| XON/XOFF thresholds | `XonLim=768`, `XoffLim=3328` | **Not on Linux** — the kernel owns its watermarks |
+| DSR/DTR flow control | `:219` `fOutxDsrFlow` | **Not a crate gap — Linux has no DSR flow-control bit.** Emulate: poll DSR, gate writes |
+
+**The finding that makes the patch layer viable:** `serialport-rs` does not
+clobber foreign termios changes. `PARMRK` survived `set_baud_rate`, `set_parity`,
+`set_flow_control`, `set_timeout` and `write_request_to_send`. Had it rewritten
+termios wholesale, every crate call would have silently undone our settings and
+adoption would have meant a fork.
+
+Two consequences for `tt-conn`:
+
+- **The serial layer is platform-split at the type level regardless.** The raw-fd
+  escape hatch lives on the concrete `TTYPort`; `Box<dyn SerialPort>` does not
+  implement `AsRawFd`. Make that split explicit and thin rather than pretending
+  the portable trait suffices.
+- **The port picker must key on USB topology** (`/dev/serial/by-path/`), not on
+  `ttyUSBn` and not on the serial number — the FTDI quad reports `serial=None`,
+  and `ttyUSBn` is assignment-order dependent, so a reconnect can otherwise
+  reattach to a different physical port. Disconnect surfaces as
+  `ErrorKind::BrokenPipe` with `raw_os_error() == None`, an undocumented crate
+  mapping rather than `EIO`/`ENXIO`; wrap it so there is one place to fix.
+
+Untested: Windows, where `fOutxDsrFlow` exists natively and this inverts; and
+the `CH340G_hw_flowctrl` case upstream carries, which needs a CH340 adapter.
 
 ### ⬜ Stage 1 — the Linux serial + SSH terminal (3–4 months, ~25–30k LOC)
 
@@ -180,8 +261,10 @@ Must be shippable and genuinely useful, not a demo.
 - `tt-vt` + `tt-grid`: VT100/220 + core xterm, SGR/256/truecolor, scrollback,
   selection, BCE, wide + combining chars. Ported **against the oracle**.
 - `tt-conn`: **serial first** (the differentiator), then SSH2 via `russh`, then
-  telnet, then local PTY via `portable-pty`.
-- Qt shell: one window, grid painter, IME, clipboard, font/colour config,
+  telnet, then local PTY via `portable-pty`. Serial is `serialport-rs` plus the
+  patch layer spike 4 specified: `CMSPAR` parity, `PARMRK` break detection,
+  `VSTART`/`VSTOP`, a userspace DSR-flow shim, and by-path port identity.
+- Qt shell: one window, grid painter, clipboard, font/colour config,
   connect dialog, serial-port picker with live enumeration.
 - **`~/.ssh/config`, `~/.ssh/known_hosts`, `~/.ssh/id_*`** — Tera Term lacks
   this and it is a major Linux adoption lever.
@@ -215,9 +298,8 @@ Tabs and sessions; session duplication as an in-process concept rather than
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
-CJK completeness (DEC special graphics, ambiguous-width policy, the
-`unicodebuf-*` corpus), macro reference docs, Lua plugin API, sixel,
-self-updater, deb.
+DEC special graphics (line drawing — not CJK, and needed), macro reference docs,
+Lua plugin API, sixel, self-updater, deb.
 
 **Realistic total to a credible replacement: 15–20 months solo with AI
 assistance.** Full parity is 3+ years and should be explicitly renounced in the
@@ -298,10 +380,10 @@ file/dir 1k, connection/terminal 2k, dialogs 0.8k, misc 1k — **~9.3k Rust vs
 3. **⬜ vttest** (Dickey) — interactive; manual gate plus screenshot diffing at
    each stage boundary.
 4. **⬜ Tera Term's own corpus** — the 33 `.sh`/`.pl`/`.rb` exercisers in
-   `teraterm/tests/` as golden-file tests (`unicodebuf-combining*.pl`,
-   `unicodebuf-east_asian_width.txt`, `bcetest.sh`, `decfra.sh`,
-   `#38168-deccara-*.sh` are exactly the CJK and DEC cases that will break). The
-   53 `.ttl` files as the TTL conformance suite.
+   `teraterm/tests/` as golden-file tests. `unicodebuf-combining*.pl`,
+   `bcetest.sh`, `decfra.sh` and `#38168-deccara-*.sh` are the ones that will
+   break and all stay in scope; `unicodebuf-east_asian_width.txt` is deferred
+   with CJK. The 53 `.ttl` files as the TTL conformance suite.
 5. **⬜ Fuzzing and property tests.** `cargo-fuzz` on the parser — it eats
    untrusted network bytes. `proptest` invariants: cursor in bounds, wide-char
    pairs never split, scrollback monotonic, no attribute leaks across BCE.
@@ -311,6 +393,46 @@ file/dir 1k, connection/terminal 2k, dialogs 0.8k, misc 1k — **~9.3k Rust vs
 **Plus a perf gate from Stage 1**, calibrated the way `../tine/docs/BENCH.md`
 describes: cold start (ms), idle RSS, time to render 10 MB of `cat`,
 input-to-present latency. Publish the numbers in the README.
+
+### Measured baseline — Qt 6 Widgets, 2026-08-07
+
+A bare `QWidget` painting an 80x24 grid with `QPainter` — no GPU, no damage
+tracking, no glyph atlas, per-cell `drawText`. A floor, not a ceiling.
+**Measured on Qt 6.11.1 / Fedora 44, which is what the desktop actually runs**
+(the `qtterm-fedora` distrobox, see `CLAUDE.md`).
+
+| | X11 | Wayland |
+|---|---|---|
+| exec → first paint | 90 ms | 60 ms |
+| idle RSS | 59 MB | 62 MB |
+| full repaint, every cell dirty | 3.9 ms (255 fps) | 3.9 ms (258 fps) |
+
+**The no-GPU decision holds comfortably.** 255 fps of full-screen repaint, with
+none of the obvious optimisations applied, is above any display refresh rate and
+about 40x what a 115200 baud link can dirty (11.5 KB/s ≈ 6 screenfuls/s). The
+GPU would be spent on the non-bottleneck, exactly as assumed.
+
+**~60 MB idle is Qt's floor, and it is worth stating plainly.** That is mid-pack
+among modern terminals but well above Tera Term's Windows footprint, and
+"light" is the reason this project exists. It is imposed by the toolkit, not
+something the code can optimise away later. Publish it in the README rather than
+meeting it in a review.
+
+**Correction: an earlier EGL finding did not survive contact with the real Qt.**
+Measured first in the Ubuntu 24.04 container on Qt 6.4.2, the Wayland plugin
+loaded Mesa's gallium driver and cost 62 MB of *private* memory, apparently
+fixable by steering `QT_WAYLAND_CLIENT_BUFFER_INTEGRATION` off EGL. **None of it
+reproduces on 6.11.1** — Mesa is never mapped at all, Wayland costs 3 MB more
+than X11 rather than 62, and the variable changes nothing. It was a packaging
+artifact of an old Qt. Had it shipped, Stage 1 would have carried a permanent
+piece of cargo cult in its startup path. Risk 6 below, caught live on its first
+outing; the 6.4.2 numbers (30 ms start, 32 MB RSS) were also wrong by roughly 2x
+in the flattering direction.
+
+A colour-run batching variant was measured too and is inconclusive by
+construction: the synthetic data changes colour every cell, so runs are length 1
+and it collapses into the per-cell path. Real console output has long runs, so
+batching can only help.
 
 ---
 
@@ -324,16 +446,28 @@ input-to-present latency. Publish the numbers in the README.
 2. **Motivation cliff at the dialogs.** 76 dialogs arrive right after the fun
    part ends. The settings-schema codegen is the mitigation and must exist
    before it's needed.
-3. **IME/CJK.** Qt is the best available answer, not a guarantee — fcitx5 on
-   Wayland still has edge cases. Spike 3, still unrun.
-4. **`serialport-rs` gaps** — break signalling, modem lines, hotplug,
-   vendor-specific flow control (upstream carries a `CH340G_hw_flowctrl`
-   branch). Assume a platform-specific serial layer is needed, don't hope.
-5. **`russh` maturity** against old gear. Keep SSH behind a trait; `libssh2`
-   fallback.
-6. **Three build systems** (Cargo, CMake/Qt, vendored C). Mitigate: the `cc`
+3. ~~**`serialport-rs` gaps**~~ — **measured and downgraded 2026-08-07.** Break,
+   modem lines and hotplug all work; the real gaps are four small ones, three
+   patchable through the raw fd and one (DSR flow control) that Linux does not
+   have at all. The plan's instinct — "assume a platform-specific serial layer
+   is needed, don't hope" — was right, but the layer is a few hundred lines, not
+   a replacement. See the spike 4 result above. Still open: Windows, and the
+   `CH340G_hw_flowctrl` case, which needs a CH340 adapter.
+4. **`russh` maturity** against old gear. Keep SSH behind a trait; `libssh2`
+   fallback. The one spike still waiting on the user.
+5. **Three build systems** (Cargo, CMake/Qt, vendored C). Mitigate: the `cc`
    crate compiles the C from Cargo, CMake touches only Qt, one `cargo-xtask` on
    top.
+6. **Qt version skew in development.** The agent container is Ubuntu 24.04 with
+   Qt 6.4.2; the desktop runs 6.11.1. Windowing works from the Ubuntu container,
+   which makes it tempting to trust it for everything — don't. **This has already
+   produced one false finding and one set of flattering-by-2x numbers**, both
+   caught only by re-measuring; see the baseline above. Mitigation exists: the
+   `qtterm-fedora` distrobox runs Qt 6.11.1, matching the host exactly. Use it
+   for anything the shell's behaviour or footprint depends on.
+
+Dropped from this list: **IME/CJK**, formerly risk 3 and the item most likely to
+invalidate the toolkit choice. Deferred out of scope, not solved.
 
 **"Why not just use Wine?"** — concede the strong form: for one user it's the
 rational zero-effort answer and works acceptably for telnet and SSH today. But
@@ -346,8 +480,10 @@ and broken for the part you do.
 Qt 6, and tine's CI/packaging pipeline.
 
 **Read, don't fork:** `alacritty_terminal` and `wezterm-term`/`termwiz` encode
-*their* terminals' behaviour, not Tera Term's VT320/VT525 and CJK depth — which
-is the thing being preserved. **Watch `libghostty`**: it is explicitly trying to
+*their* terminals' behaviour, not Tera Term's VT320/VT525 depth — which is the
+thing being preserved. Note this argument got narrower when CJK was deferred: it
+now rests on DEC depth alone, so revisit it honestly rather than by habit if
+adopting one of them would save real time. **Watch `libghostty`**: it is trying to
 become a reusable terminal core with a C ABI, and if it stabilises before
 Stage 3 it could replace `tt-vt` + `tt-grid` outright. Keep that seam clean
 enough to find out.
