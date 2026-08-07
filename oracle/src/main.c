@@ -99,19 +99,63 @@ static void settings_defaults(int cols, int rows, const char *term_id, int cr_re
 	 * shifts every row in the dump. Override with --crreceive. */
 	ts.CRReceive = cr_receive;
 	ts.CRSend = IdCR;
-	ts.ScrollBuffSize = 10000;
-	ts.ScrollBuffMax = 10000;       /* ttset.c:1215 */
-	ts.MaxOSCBufferSize = 1024 * 1024;
-	ts.TabStopFlag = TABF_ALL;      /* ttset.c:1719 */
-	ts.ISO2022Flag = ISO2022_SHIFT_NONE;
+	ts.ScrollBuffSize = 100;        /* ttset.c:750 */
+	ts.ScrollBuffMax = 10000;       /* ttset.c:1213 */
+	ts.MaxOSCBufferSize = 4096;     /* ttset.c:1789 */
+	ts.TabStopFlag = TABF_ALL;      /* ttset.c:1719, key default "on" */
 	ts.Beep = IdBeepOff;            /* silence, and keeps runs deterministic */
-	ts.CursorShape = IdBlkCur;
+	ts.CursorShape = IdBlkCur;      /* ttset.c:725, the else branch */
+	ts.BSKey = IdBS;                /* ttset.c:882, the else branch */
 	ts.AutoWinResize = FALSE;
 	ts.EnableScrollBuff = 1;
 	ts.SelectStartDelay = 0;
-	ts.TermFlag = 0;                /* ttset.c:559 initialises to 0 */
+	ts.ScrollWindowClearScreen = TRUE;      /* ttset.c:1444 */
 	/* ttset.c:1568 defaults this to "overwrite", not off. */
 	ts.AcceptTitleChangeRequest = IdTitleChangeRequestOverwrite;
+
+	/*
+	 * THE FLAG WORDS ARE NOT ZERO.
+	 *
+	 * Every one of these is initialised to 0 near the top of ttset.c and then
+	 * built up, key by key, from per-key defaults further down. Reading only
+	 * the initialiser — which is what this function used to do — gives a
+	 * terminal with 256-colour off, ISO-2022 shifts off, 8-bit controls off
+	 * and the alternate screen off, none of which is how Tera Term ships.
+	 * The oracle then reports that as ground truth and the port copies it.
+	 *
+	 * Corrected 2026-08 after the ISO-2022 gap turned up while porting
+	 * character sets. Each bit below is a key whose GetOnOff default is TRUE;
+	 * keys defaulting to FALSE are deliberately absent, not forgotten.
+	 */
+
+	/* ttset.c:743 Xterm256Color=on, :857 EnableANSIColor=on, :759 :764 :777
+	 * :785 the attribute-colour keys. PcBoldColor and Aixterm16Color default
+	 * off, so CF_FULLCOLOR is NOT the answer here. */
+	ts.ColorFlag = CF_XTERM256 | CF_ANSICOLOR | CF_BOLDCOLOR | CF_BLINKCOLOR |
+	               CF_URLCOLOR | CF_UNDERLINE;
+
+	/* ttset.c:1875 — the key default string is "on", which means
+	 * ISO2022_SHIFT_ALL. SO/SI/SS2/SS3 and every locking shift are live. */
+	ts.ISO2022Flag = ISO2022_SHIFT_ALL;
+
+	/* ttset.c:1075 Accept8BitCtrl=on, :1159 CtrlInKanji=on, :1188
+	 * EnableStatusLine=on, :1681 AlternateScreenBuffer=on, :1711 LockTUID=on,
+	 * :1950 ClearScrollBufferFromRemote=on. */
+	ts.TermFlag = TF_ACCEPT8BITCTRL | TF_CTRLINKANJI | TF_ENABLESLINE |
+	              TF_ALTSCR | TF_LOCKTUID | TF_REMOTECLEARSBUFF;
+
+	/* ttset.c:1653 WindowCtrlSequence=on, :1661 WindowReportSequence=on.
+	 * CursorCtrlSequence defaults off; TitleReportSequence defaults "Empty",
+	 * which sets no WF_TITLEREPORT bit. */
+	ts.WindowFlag = WF_WINDOWCHANGE | WF_WINDOWREPORT;
+
+	/* ttset.c:1537 DecSpMappingDir defaults to IdDecSpecialDoNot, not the
+	 * IdDecSpecialUniToDec that a zeroed struct produces. :1546
+	 * UnicodeToDecSpMapping defaults to 3. The pair matters: with DoNot the
+	 * mapping is inert, so DEC special characters keep their raw byte value
+	 * and carry AttrSpecial instead of becoming U+25xx box drawing. */
+	ts.Dec2Unicode = IdDecSpecialDoNot;
+	ts.UnicodeDecSpMapping = 3;
 
 	cv.Ready = TRUE;
 	cv.CRSend = ts.CRSend;

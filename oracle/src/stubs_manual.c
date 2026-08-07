@@ -277,11 +277,23 @@ static int g_colors_init;
 static void colors_init_once(void)
 {
 	int i;
+	/*
+	 * Tera Term's palette, NOT xterm's.
+	 *
+	 * These are ttset.c:797's default ANSIColor string (0,0,0 / 255,0,0 / ...)
+	 * already permuted through vtdisp.c:GetIndex256From16, which swaps the
+	 * bright and dim halves — the 16-colour table is ordered
+	 * dim-then-bright and ANSIColor[256] is ordered bright-then-dim.
+	 *
+	 * This used to hold xterm's palette (205/238/229/92), which is a
+	 * different set of colours, so every truecolor SGR resolved to the wrong
+	 * index. A stub is a place the oracle can lie, and this one did.
+	 */
 	static const unsigned char base[16][3] = {
-		{  0,  0,  0}, {205,  0,  0}, {  0,205,  0}, {205,205,  0},
-		{  0,  0,238}, {205,  0,205}, {  0,205,205}, {229,229,229},
-		{127,127,127}, {255,  0,  0}, {  0,255,  0}, {255,255,  0},
-		{ 92, 92,255}, {255,  0,255}, {  0,255,255}, {255,255,255},
+		{  0,  0,  0}, {128,  0,  0}, {  0,128,  0}, {128,128,  0},
+		{  0,  0,128}, {128,  0,128}, {  0,128,128}, {192,192,192},
+		{128,128,128}, {255,  0,  0}, {  0,255,  0}, {255,255,  0},
+		{  0,  0,255}, {255,  0,255}, {  0,255,255}, {255,255,255},
 	};
 
 	if (g_colors_init) {
@@ -327,12 +339,28 @@ void DispResetColor(vtdraw_t *vt, unsigned int num)
 	colors_init_once();
 }
 
+/*
+ * vtdisp.c:DispFindClosestColor, reproduced rather than approximated.
+ *
+ * Two details the earlier version dropped, both of which change the answer:
+ * the out-of-range guard returns -1 (which the SGR parser treats as "no
+ * colour"), and the result is flipped between the bright and dim halves of the
+ * base 16 when any full-colour mode is on. That flip looks like a bug — it maps
+ * pure red to index 1, "dark red" — but the drawing path applies the inverse
+ * when it turns a sequence index back into a palette index, so the round trip
+ * is what matters, and this is the half the buffer stores.
+ */
 int DispFindClosestColor(vtdraw_t *vt, int red, int green, int blue)
 {
 	int i, best = 0;
 	long bestd = -1;
 
 	(void)vt;
+
+	if (red < 0 || red > 255 || green < 0 || green > 255 || blue < 0 || blue > 255) {
+		return -1;
+	}
+
 	colors_init_once();
 	for (i = 0; i < 256; i++) {
 		long dr = (long)GetRValue(g_colors[i]) - red;
@@ -343,6 +371,10 @@ int DispFindClosestColor(vtdraw_t *vt, int red, int green, int blue)
 			bestd = d;
 			best = i;
 		}
+	}
+
+	if ((ts.ColorFlag & CF_FULLCOLOR) != 0 && best < 16 && (best & 7) != 0) {
+		best ^= 8;
 	}
 	return best;
 }
