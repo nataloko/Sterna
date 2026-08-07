@@ -45,23 +45,30 @@ make            # build build/oracle
 make test       # 18 regression cases
 make stubs      # regenerate the stub layer after upstream headers change
 
+cd xfer                          # Stage 0 spike 2
+make && ./run_tests.sh           # 10 interop cases vs lrzsz and gkermit
+
 cd serial-audit                  # Stage 0 spike 4, needs the FTDI loopback rig
 cargo run --bin serial-audit     # capability audit vs commlib.c
 cargo run --bin rawpatch         # are the gaps patchable through the raw fd?
 cargo run --bin hotplug          # needs a human to pull the cable
 ```
 
+`xfer` needs `lrzsz` and `gkermit` installed for its interop suite.
+
 The oracle needs `gcc` and Python 3.11+ and nothing else.
 
-Rust, cmake, Qt 6, lrzsz and ckermit are installed in the dev container.
+Rust, cmake, Qt 6, lrzsz, C-Kermit and G-Kermit are installed in the dev
+container. For protocol interop use **G-Kermit** — C-Kermit sees a pty as a tty
+and drops into interactive mode instead of speaking the protocol.
 **`cargo` is on `PATH` only for login shells** — export
 `$HOME/.cargo/bin` first or `cargo: command not found` will look like a missing
 toolchain. It isn't; don't reinstall it.
 
 Two packages were added on 2026-08-07 and a rebuilt container will need them
 again: **`libudev-dev`** (`serialport-rs` enumeration — without it the crate
-does not build) and **`libxcb-cursor0`** (Qt's `xcb` platform plugin refuses to
-start without it).
+does not build), **`libxcb-cursor0`** (Qt's `xcb` platform plugin refuses to
+start without it) and **`gkermit`** (xfer's kermit interop case).
 
 ## The dev container is not headless
 
@@ -201,12 +208,18 @@ Reporting it upstream is an open item in `PLAN.md`.
 PLAN.md          roadmap + status — read first
 ATTRIBUTION.md   licensing, and what still needs clearing before vendoring
 oracle/          Tera Term's real VT engine, headless on Linux (see its README)
+xfer/            Stage 0 spike 2 — ttpfile's protocols, running and interoperating
 serial-audit/    Stage 0 spike 4 — serialport-rs vs commlib.c, on real hardware
 crates/          Rust core — not started
 shell/           Qt 6 shell — not started
 vendor/          vendored Tera Term subsystems — empty, see ATTRIBUTION.md first
 ```
 
-`serial-audit/` is not throwaway: it becomes the regression test for the serial
-patch layer once `tt-conn` exists, and every claim in `PLAN.md`'s spike 4
-section is reproducible from it.
+Neither `xfer/` nor `serial-audit/` is throwaway. They become the regression
+suites for `tt-xfer` and `tt-conn`, and every claim in `PLAN.md`'s spike
+sections is reproducible from them.
+
+**`oracle/winshim/` is shared, not oracle-private.** `xfer/` builds against it
+too. Adding to it is usually right — the Win32 surface the protocols needed
+turned out to be a subset of the VT engine's — but **re-run `oracle/run_tests.sh`
+after touching it**, because the oracle is the thing that must not regress.

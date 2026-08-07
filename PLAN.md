@@ -3,13 +3,13 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-07 · **Stage:** 0 (de-risking) · **Commits:** 2
+**Last updated:** 2026-08-07 · **Stage:** 0 (de-risking) · **Commits:** 9
 
 | | Stage 0 spike | Status |
 |---|---|---|
 | 0 | Repo bootstrap | ✅ done |
 | 1 | Headless C oracle | ✅ **done** — 15,325 LOC of Tera Term builds on Linux, 18 tests green |
-| 2 | `ttpfile` protocols on Linux | ⬜ next — fully automatable |
+| 2 | `ttpfile` protocols on Linux | ✅ **done** — 8,409 lines build unmodified, 10/10 interop |
 | 3 | Qt 6 IME reality check | ⏸ **deferred indefinitely** — CJK is out of scope (2026-08-07) |
 | 4 | `serialport-rs` audit | ✅ **done** — adopt it, plus a thin patch layer; see below |
 | 5 | `russh` compatibility sweep | 🔶 **blocked: needs old gear / Dropbear to talk to** |
@@ -183,7 +183,7 @@ Stage 2 while morale is high, not Stage 3 when it hurts.
 
 | Asset | LOC | Disposition |
 |---|---:|---|
-| `ttpfile/*.c` protocols | 9,777 | **Vendor as C**, call via FFI behind `TFileIO` |
+| `ttpfile/*.c` protocols | 9,777 | **Vendor as C**, call via FFI behind `TFileIO`. Validated by spike 2 — builds and interoperates on Linux |
 | 49 `.map`/`.tbl` charset tables | data | **Deferred with CJK.** If revived: vendor verbatim — they encode exact round-trip behaviour `encoding_rs` doesn't reproduce |
 | 14 `.lng` files | 17,610 | **Vendor verbatim, keep the format** |
 | `vtterm.c` + `buffer.c` | 12,082 | **Port to Rust** (~14–16k). Reused as specification and oracle |
@@ -206,9 +206,42 @@ Spike 1 delivered `oracle/` — see `oracle/README.md`. Result exceeded the plan
 `charset.cpp` and `unicode.cpp` came along free (and they carry the CJK width
 and ISO-2022 behaviour, so that matters).
 
-Remaining spikes 2 and 5 above. Also still open: Qt licence posture, and CI —
-copy the matrix from `../tine/.github/workflows/release.yml`, keep linux-x64 and
+Only spike 5 remains. Also still open: Qt licence posture, and CI — copy the
+matrix from `../tine/.github/workflows/release.yml`, keep linux-x64 and
 windows-x64, drop macOS/Flatpak.
+
+#### Spike 2 result — vendoring `ttpfile` is sound
+
+`xfer/`, 2026-08-07. **8,409 lines of protocol C compile unmodified on Linux**
+and interoperate in both directions with the reference implementations:
+x/y/zmodem against `lrzsz`, kermit against G-Kermit, 10/10 including a 1 MB
+zmodem transfer. A 64 KB zmodem send also ran over the **real FTDI serial wire**
+at essentially full line rate, so this is not a pty artifact.
+
+The entire Win32 portability gap was **three things** — `MB_*` constants,
+`struct _stati64`, `_S_IFREG` — plus five Secure-CRT functions. All went into
+the oracle's existing `winshim`, which turned out to already cover most of what
+the protocols need; the VT engine had needed a superset.
+
+Structurally the protocols attach through **three vtables and six external
+symbols**, nothing more:
+
+| Seam | Supplied by |
+|---|---|
+| `TComm` — BinaryOut / Read1Byte / Insert1Byte / FlashReceiveBuf | a pty, socket or serial fd |
+| `TFileIO` — 14 file ops | a POSIX impl replacing `filesys_win32.cpp` |
+| `TFileVarProto` — services + `InfoOp` progress | the host |
+
+plus `SetTimer`, `KillTimer`, `ProtoEnd`, `TTMessageBoxW`, `_atoi64`, `ctime_s`.
+**That is the shape `tt-xfer` exposes to the Rust core**, and it is small enough
+that the FFI boundary is a morning's work rather than a subsystem.
+
+Not covered: B-Plus and Quick-VAN compile and are wired but have no counterparty
+anywhere to test against — which is exactly why they stay vendored and
+best-effort. Only happy paths are exercised; line noise, cancellation, resume
+and disk-full want a fault-injecting transport, which is Stage 2 work. See
+`xfer/README.md` for the traps, several of which are silent-stall or core-dump
+shaped.
 
 #### Spike 4 result — adopt `serialport-rs`, with a thin patch layer
 
@@ -387,8 +420,10 @@ file/dir 1k, connection/terminal 2k, dialogs 0.8k, misc 1k — **~9.3k Rust vs
 5. **⬜ Fuzzing and property tests.** `cargo-fuzz` on the parser — it eats
    untrusted network bytes. `proptest` invariants: cursor in bounds, wide-char
    pairs never split, scrollback monotonic, no attribute leaks across BCE.
-6. **⬜ Protocol interop** over a socketpair/pty: `sz`/`rz` (lrzsz) for
-   x/y/zmodem, `gkermit`/`ckermit` for kermit. Both installed in the container.
+6. **✅ Protocol interop** over a pty: `sz`/`rz`, `sb`/`rb`, `sx`/`rx` (lrzsz)
+   for x/y/zmodem, `gkermit` for kermit. Built and green — `xfer/run_tests.sh`,
+   10/10 both directions. Use **G-Kermit, not C-Kermit**: C-Kermit sees a pty as
+   a tty and drops into interactive mode. Wire it into CI alongside the oracle.
 
 **Plus a perf gate from Stage 1**, calibrated the way `../tine/docs/BENCH.md`
 describes: cold start (ms), idle RSS, time to render 10 MB of `cat`,
