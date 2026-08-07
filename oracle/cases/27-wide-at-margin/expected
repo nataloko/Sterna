@@ -1,0 +1,6 @@
+# termitta-oracle 1
+# term vt100 7x3
+# cursor 2,1
+  0 |AB你好 |
+  1 |世     |
+  2 |       |
