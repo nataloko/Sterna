@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Termitta">
+  <title>Termitta</title>
+  <!-- Accessible palette variant. Same geometry as the primary; only the two
+     colours differ. #A8008C / #B6FF8C = 5.81:1 normal, 2.98:1 deuteranopia,
+     against 3.35:1 / 1.47:1 for the primary. -->
+  <!--
+    Small-size variant, for 32px and below.
+
+    The full mark turns to mush at icon sizes and takes the `>_` down with it,
+    which is fatal because the prompt is the whole idea. This keeps the head,
+    the antennae and the prompt, scaled up to fill the frame.
+
+    Derived from the SAME traced geometry as termitta.svg — not redrawn, and
+    not cut off. The head is isolated as a connected component from the master
+    (it is disjoint from the thorax and legs, which are separate components),
+    so its natural tapered bottom edge is intact. Scaling is UNIFORM.
+
+    Two earlier attempts got this wrong, so if it ever needs regenerating:
+      - do not hand-draw the head; it comes out wider and squarer than the real
+        one, with the antennae wrong
+      - do not crop at the neck's narrowest row; that cuts through the taper and
+        leaves the head looking chopped off
+  -->
+  <g transform="translate(18.4533,3.0000) scale(0.203333)">
+    <g transform="translate(0,600.0) scale(0.1,-0.1)">
+      <path fill="#A8008C" d="M4241 5984 c-86 -23 -140 -71 -224 -197 -102 -154 -481 -789 -709 -1186 l-94 -164 -809 1 c-446 0 -880 0 -966 1 l-157 1 -118 208 c-117 206 -494 839 -648 1087 -120 194 -193 255 -304 255 -121 0 -212 -83 -212 -193 0 -53 25 -93 182 -290 159 -201 292 -397 518 -767 157 -255 233 -394 220 -398 -42 -14 -207 -138 -275 -206 -142 -143 -358 -436 -505 -684 -60 -101 -62 -142 -58 -1017 4 -822 -5 -746 98 -879 80 -105 523 -616 849 -980 79 -89 198 -222 264 -296 187 -210 228 -250 267 -260 42 -11 1072 -16 1220 -5 143 10 148 13 410 287 402 419 706 753 1027 1126 213 247 193 134 197 1106 5 933 13 834 -82 996 -255 436 -468 679 -689 788 -40 20 -73 40 -73 45 0 10 132 241 200 352 274 443 364 581 535 815 159 217 175 243 175 298 0 119 -110 191 -239 156z"/>
+      <path fill="#B6FF8C" d="M1035 3213 c-72 -38 -105 -88 -105 -160 1 -67 6 -74 175 -234 232 -220 445 -430 445 -439 0 -5 -135 -140 -299 -301 -165 -161 -304 -304 -310 -316 -41 -90 60 -227 168 -227 62 0 38 -20 473 401 397 384 387 371 375 466 -5 40 -25 61 -389 420 -431 425 -446 436 -533 390z M2193 1740 c-81 -49 -85 -159 -8 -230 27 -25 27 -25 605 -25 579 0 579 0 610 30 63 61 61 155 -5 214 -36 31 -36 31 -603 31 -545 0 -568 -1 -599 -20z"/>
+    </g>
+  </g>
+</svg>
