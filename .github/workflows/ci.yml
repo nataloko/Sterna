@@ -112,6 +112,10 @@ jobs:
       # identical. No golden files are involved — the oracle is the expectation.
       - name: Differential suite vs the oracle
         run: cd termitta && ./run_diff.sh
+      # And the same diff over Tera Term's own escape-sequence exercisers,
+      # executed out of the pinned checkout rather than copied into the repo.
+      - name: Differential suite over upstream's exercisers
+        run: cd termitta && ./run_upstream.sh
 
   core-windows:
     name: core — builds and tests on Windows

@@ -1,0 +1,52 @@
+# Tera Term's own escape-sequence exercisers, as differential cases.
+#
+# These live in ../teraterm/tests and are NOT copied into this repository —
+# `run_upstream.sh` executes them from the read-only sibling checkout and
+# captures their stdout as the byte stream. That keeps the corpus in step with
+# the pinned upstream SHA and vendors nothing.
+#
+# Format, `|`-separated:
+#
+#   script | oracle arguments | note
+#
+# An empty note means the two engines must agree. A note beginning `XFAIL:`
+# marks a known divergence — reported, not fatal, and failed as XPASS if they
+# ever agree. A note beginning `SKIP:` means the script is not run at all, and
+# says why; a skipped line is a decision, not an oversight.
+#
+# The scripts pause on stdin, so they are fed newlines, and the shell ones are
+# run with a no-op `sleep` on PATH. Perl's Time::HiRes cannot be stubbed that
+# way, which is why the two perl scripts that use it are skipped.
+
+# --- green ---------------------------------------------------------------
+ansi.sh                              | --cols 80 --rows 24 --attrs |
+colortable16.sh                      | --cols 80 --rows 24 --attrs |
+256colors2.pl                        | --cols 80 --rows 24 --attrs |
+decfont.pl                           | --cols 80 --rows 24 --attrs |
+unicodebuf-dch.sh                    | --cols 80 --rows 24 --attrs |
+unicodebuf-ech.sh                    | --cols 80 --rows 24 --attrs |
+unicodebuf-irm.sh                    | --cols 80 --rows 24 --attrs |
+unicodebuf-irm2.sh                   | --cols 80 --rows 24 --attrs |
+unicodebuf-ich.sh                    | --cols 80 --rows 24 --attrs |
+unicodebuf-combining1.sh             | --cols 80 --rows 24 --attrs |
+bcetest.sh                           | --cols 80 --rows 24 --attrs |
+decfi-bce.sh                         | --cols 80 --rows 24 --attrs |
+
+# --- known divergences ---------------------------------------------------
+unicodebuf-irm3.sh                   | --cols 80 --rows 24 --attrs | XFAIL: DECSCA/DECSEL selective erase not implemented
+unicodebuf-decsel.sh                 | --cols 80 --rows 24 --attrs | XFAIL: DECSCA/DECSEL selective erase not implemented
+unicodebuf-boxdrawing.sh             | --cols 80 --rows 24 --attrs | XFAIL: DECSCA/DECSEL selective erase not implemented
+#33906-decsace.sh                    | --cols 80 --rows 24 --attrs | XFAIL: DECSACE + rectangular area ops not implemented
+#38168-deccara-range.sh              | --cols 80 --rows 24 --attrs | XFAIL: DECCARA not implemented
+#38169-deccara-color.sh              | --cols 80 --rows 24 --attrs | XFAIL: DECCARA not implemented
+#38170-deccara-kanji-broken.sh       | --cols 80 --rows 24 --attrs | XFAIL: DECCARA not implemented
+decfra.sh                            | --cols 80 --rows 24 --attrs | XFAIL: DECFRA/DECERA not implemented
+unicodebuf-combining-spacing_mark.pl | --cols 80 --rows 24 --attrs | XFAIL: spacing combining marks advance the cursor; only nonspacing are modelled
+
+# --- not run -------------------------------------------------------------
+unicodebuf-combining.pl              | | SKIP: paces itself with Time::HiRes::usleep, so a bounded capture truncates mid-stream. Covered deterministically by cases 10 and 28.
+color-sgr-decscnm.pl                 | | SKIP: loops forever once stdin reaches EOF.
+erase.pl                             | | SKIP: interactive menu driver; needs a scripted command sequence, not blank lines.
+unicodebuf-url.sh                    | | SKIP: clickable-URL highlighting, which is a frontend concern and out of scope.
+unicodebuf-unicode_15.1-.pl          | | SKIP: Unicode 15.1 width tables. Deferred with CJK, and we knowingly use the unicode-width crate rather than Tera Term's tables.
+change-terminal-test.sh              | | SKIP: changes the terminal id mid-stream; the dump header is fixed at startup.
