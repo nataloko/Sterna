@@ -7,5 +7,6 @@ repository.workspace = true
 description = "VT100/220/320/525 + xterm state machine, ported against the Tera Term oracle"
 
 [dependencies]
+tt-charset.workspace = true
 tt-grid.workspace = true
 vte = "0.15"

@@ -1,0 +1,9 @@
+[package]
+name = "tt-charset"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ISO-2022 designation and invocation, and DEC special graphics"
+
+[dependencies]

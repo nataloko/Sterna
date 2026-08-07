@@ -9,12 +9,14 @@
 //! Comments citing `vtterm.c` line numbers refer to the pinned upstream SHA in
 //! `.github/workflows/ci.yml`.
 
+use tt_charset::{gset_from_intermediate, sbcs_final, Iso2022, Iso2022State, Shift, ShiftFlags};
 use tt_grid::{
     Grid, Pen, ATTR2_BACK, ATTR2_COLOR_MASK, ATTR2_FORE, ATTR_BLINK, ATTR_BOLD, ATTR_REVERSE,
-    ATTR_UNDER, DEFAULT_BG, DEFAULT_FG,
+    ATTR_SPECIAL, ATTR_UNDER, DEFAULT_BG, DEFAULT_FG,
 };
 use vte::{Params, Perform};
 
+pub mod palette;
 pub mod term_id;
 pub use term_id::TermId;
 
@@ -32,16 +34,35 @@ pub enum CrReceive {
     Auto,
 }
 
-/// Tera Term's `ts.ColorFlag`. Both bits are **off** by default, which is not a
-/// simplification but the shipped behaviour: with `CF_XTERM256` clear, `SGR 38`
-/// and `SGR 48` do nothing *and do not consume their arguments*, so
-/// `ESC [ 38;5;196 m` degrades into "38 (ignored), 5 (blink on), 196 (ignored)".
-/// That looks like a bug in the port until you check upstream. See
-/// `vtterm.c:2239`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Tera Term's `ts.ColorFlag`, or the two bits of it that change how SGR parses.
+///
+/// `Xterm256Color` defaults to **on** (`ttset.c:743`) and `Aixterm16Color` to
+/// off (`:739`). The asymmetry is load-bearing in an unobvious way: when a bit
+/// is clear, the corresponding SGR parameter is ignored *without consuming its
+/// arguments*, so with 256-colour disabled `ESC [ 38;5;196 m` would be read as
+/// "38 ignored, 5 = blink on, 196 ignored". `vtterm.c:2239`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ColorFlags {
     pub xterm256: bool,
     pub aixterm16: bool,
+}
+
+impl ColorFlags {
+    /// `CF_FULLCOLOR` — any of PC-bold-16, aixterm-16 or xterm-256. It gates
+    /// the bright/dim flip in the nearest-colour search, so 256-colour being on
+    /// by default means the flip is on by default too.
+    pub fn full_color(self) -> bool {
+        self.xterm256 || self.aixterm16
+    }
+}
+
+impl Default for ColorFlags {
+    fn default() -> Self {
+        ColorFlags {
+            xterm256: true,
+            aixterm16: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -51,6 +72,15 @@ pub struct Config {
     pub term_id: TermId,
     pub cr_receive: CrReceive,
     pub color_flags: ColorFlags,
+    /// `ts.ISO2022Flag`. Defaults to every shift enabled.
+    pub iso2022_flags: ShiftFlags,
+    /// `LangIsJapanese(ts.KanjiCode)`. False for a UTF-8 terminal, which is all
+    /// we support; it gates the Katakana designations only.
+    pub japanese: bool,
+    /// `TF_ACCEPT8BITCTRL` (`ttset.c:1075`, key default on).
+    pub accept_8bit_ctrl: bool,
+    /// `TF_ALTSCR` (`ttset.c:1681`, key default on).
+    pub alt_screen_enabled: bool,
     pub scrollback_max: usize,
 }
 
@@ -62,6 +92,12 @@ impl Default for Config {
             term_id: TermId::Vt100,
             cr_receive: CrReceive::Cr,
             color_flags: ColorFlags::default(),
+            iso2022_flags: ShiftFlags::ALL,
+            japanese: false,
+            accept_8bit_ctrl: true,
+            alt_screen_enabled: true,
+            // ttset.c:1213 MaxBuffSize. Not ttset.c:750's ScrollBuffSize (100),
+            // which is the *initial* depth the user can grow up to this.
             scrollback_max: 10_000,
         }
     }
@@ -71,6 +107,10 @@ impl Default for Config {
 pub struct Vt {
     parser: vte::Parser,
     state: State,
+    /// A `0xC2` seen at the end of the previous chunk. Without this, feeding
+    /// `[0xC2]` then `[0x8D]` would print a replacement character where a
+    /// single call would have produced a carriage return.
+    pending_c2: bool,
 }
 
 impl Vt {
@@ -83,11 +123,68 @@ impl Vt {
                 config,
                 ..State::empty()
             },
+            pending_c2: false,
         }
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
-        self.parser.advance(&mut self.state, bytes);
+        // 0xC2 is the only lead byte that can produce a C1 codepoint, so a
+        // stream without one needs no rewriting at all — which is almost all
+        // of them.
+        if !self.pending_c2 && !bytes.contains(&0xc2) {
+            self.parser.advance(&mut self.state, bytes);
+            return;
+        }
+        let rewritten = self.rewrite_c1(bytes);
+        self.parser.advance(&mut self.state, &rewritten);
+    }
+
+    /// Fold 8-bit C1 controls into something `vte` can act on.
+    ///
+    /// `vtterm.c:1053`: on a non-English terminal — which UTF-8 is, for that
+    /// predicate — a C1 byte is dropped outright when `TF_ACCEPT8BITCTRL` is
+    /// clear, and masked to `b & 0x7F` when the terminal's VT level is below 2.
+    /// So on the default VT100, `U+008D` is a **carriage return**, not RI, and
+    /// `U+009B` is an ESC rather than a CSI introducer. Verified against the
+    /// oracle across all 32 C1 codes rather than assumed.
+    ///
+    /// At level 2 and up the mask does not apply and the control keeps its C1
+    /// meaning; we hand those to `vte` in the equivalent `ESC Fe` form, since
+    /// its parser reaches the same states either way.
+    ///
+    /// This runs over the whole stream, including OSC and DCS payloads. Tera
+    /// Term decodes UTF-8 before its escape parser too, so it has the same
+    /// property; a C1 inside a string is mangled by both.
+    fn rewrite_c1(&mut self, bytes: &[u8]) -> Vec<u8> {
+        let accept = self.state.config.accept_8bit_ctrl;
+        let level = self.state.config.term_id.vt_level();
+        let mut out = Vec::with_capacity(bytes.len());
+
+        for &b in bytes {
+            if self.pending_c2 {
+                self.pending_c2 = false;
+                if (0x80..=0x9f).contains(&b) {
+                    if !accept {
+                        continue; // dropped, as upstream drops it
+                    } else if level < 2 {
+                        out.push(b & 0x7f);
+                    } else {
+                        out.push(0x1b);
+                        out.push(b - 0x40);
+                    }
+                    continue;
+                }
+                // Not a C1 after all — put the lead byte back and fall through
+                // so this byte is handled normally.
+                out.push(0xc2);
+            }
+            if b == 0xc2 {
+                self.pending_c2 = true;
+            } else {
+                out.push(b);
+            }
+        }
+        out
     }
 
     pub fn grid(&self) -> &Grid {
@@ -116,6 +213,10 @@ impl Vt {
 struct State {
     grid: Grid,
     config: Config,
+    charset: Iso2022,
+    /// DECSC saves the G-sets alongside the cursor — `vtterm.c:228`.
+    saved_charset: Option<Iso2022State>,
+    alt_screen: bool,
     reply: Vec<u8>,
     title: String,
     /// `ts.CRReceive == Auto` keeps one byte of history to collapse CR+LF.
@@ -131,6 +232,9 @@ impl State {
         State {
             grid: Grid::new(1, 1, 0),
             config: Config::default(),
+            charset: Iso2022::new(),
+            saved_charset: None,
+            alt_screen: false,
             reply: Vec::new(),
             title: String::new(),
             prev_was_cr: false,
@@ -147,6 +251,14 @@ impl State {
     fn send_csi(&mut self, body: &str) {
         self.send(b"\x1b[");
         self.send(body.as_bytes());
+    }
+
+    /// Every locking and single shift is gated on `ts.ISO2022Flag` upstream, at
+    /// the call site rather than inside the charset code. Same split here.
+    fn shift(&mut self, shift: Shift) {
+        if self.config.iso2022_flags.allows(shift) {
+            self.charset.invoke(shift);
+        }
     }
 
     // --- C0 --------------------------------------------------------------
@@ -225,7 +337,8 @@ impl State {
                 }
                 38 | 48 => {
                     if self.config.color_flags.xterm256 {
-                        if let Some((color, consumed)) = extended_color(&groups, i) {
+                        let full = self.config.color_flags.full_color();
+                        if let Some((color, consumed)) = extended_color(&groups, i, full) {
                             if p == 38 {
                                 self.grid.pen.attrs |= ATTR2_FORE;
                                 self.grid.pen.fg = color;
@@ -288,6 +401,7 @@ impl State {
                         self.grid.move_cursor(0, if on { top } else { 0 });
                     }
                     7 => self.grid.autowrap = on,
+                    47 | 1047 | 1048 | 1049 => self.alt_screen(p, on),
                     _ => {}
                 }
             } else if p == 4 {
@@ -295,17 +409,73 @@ impl State {
             }
         }
     }
+
+    /// `vtterm.c:2970` / `:3030` / `:3144` / `:3194`.
+    ///
+    /// The `!alt`/`alt` guards are upstream's and they matter: a second
+    /// `ESC [ ? 1049 h` while already on the alternate screen must not stash
+    /// the alternate screen over the saved main one. Programs that re-arm the
+    /// mode on redraw do exactly that.
+    fn alt_screen(&mut self, mode: u16, on: bool) {
+        if !self.config.alt_screen_enabled {
+            return;
+        }
+        match (mode, on) {
+            // 1048 is the cursor half alone, and shares DECSC's slot.
+            (1048, true) => self.save_cursor(),
+            (1048, false) => self.restore_cursor(),
+
+            (47 | 1047, true) if !self.alt_screen => {
+                self.grid.save_screen();
+                self.alt_screen = true;
+            }
+            (47 | 1047, false) if self.alt_screen => {
+                self.grid.restore_screen();
+                self.alt_screen = false;
+            }
+            (1049, true) if !self.alt_screen => {
+                self.save_cursor();
+                self.grid.save_screen();
+                self.grid.clear_screen();
+                self.alt_screen = true;
+            }
+            (1049, false) if self.alt_screen => {
+                self.grid.clear_screen();
+                self.grid.restore_screen();
+                self.alt_screen = false;
+                self.restore_cursor();
+            }
+            _ => {}
+        }
+    }
+
+    /// DECSC, and the save half of `ESC [ ? 1048 h` — upstream shares the slot,
+    /// charset state included.
+    fn save_cursor(&mut self) {
+        self.grid.save_cursor();
+        self.saved_charset = Some(self.charset.save());
+    }
+
+    fn restore_cursor(&mut self) {
+        self.grid.restore_cursor();
+        if let Some(s) = self.saved_charset {
+            self.charset.restore(s);
+        }
+    }
 }
 
 /// Decode `38;2;r;g;b` / `38;5;idx` in all the colon and semicolon spellings
 /// upstream accepts. Returns the colour and how many extra parameter groups it
 /// swallowed.
-fn extended_color(groups: &[Vec<u16>], i: usize) -> Option<(u32, usize)> {
+fn extended_color(groups: &[Vec<u16>], i: usize, full_color: bool) -> Option<(u32, usize)> {
+    let rgb =
+        |r: u16, g: u16, b: u16| palette::find_closest(r as i32, g as i32, b as i32, full_color);
+
     // Colon form: 38:5:idx arrives as a single group.
     let g = &groups[i];
     if g.len() > 1 {
         return match g[1] {
-            2 if g.len() >= 5 => Some((closest_color(g[2], g[3], g[4]), 0)),
+            2 if g.len() >= 5 => Some((rgb(g[2], g[3], g[4])?, 0)),
             5 if g.len() >= 3 => Some(((g[2] as u32).min(255), 0)),
             _ => None,
         };
@@ -317,7 +487,7 @@ fn extended_color(groups: &[Vec<u16>], i: usize) -> Option<(u32, usize)> {
             let r = groups.get(i + 2)?.first().copied()?;
             let g_ = groups.get(i + 3)?.first().copied()?;
             let b = groups.get(i + 4)?.first().copied()?;
-            Some((closest_color(r, g_, b), 4))
+            Some((rgb(r, g_, b)?, 4))
         }
         5 => {
             let idx = groups.get(i + 2)?.first().copied()?;
@@ -325,23 +495,6 @@ fn extended_color(groups: &[Vec<u16>], i: usize) -> Option<(u32, usize)> {
         }
         _ => None,
     }
-}
-
-/// Placeholder for `DispFindClosestColor`. Truecolor is stored as an xterm-256
-/// index upstream because the cell has one byte for it; matching the exact
-/// palette search is Stage 1 work and only matters once `xterm256` is enabled.
-fn closest_color(r: u16, g: u16, b: u16) -> u32 {
-    let q = |v: u16| -> u32 {
-        let v = v.min(255) as u32;
-        if v < 48 {
-            0
-        } else if v < 115 {
-            1
-        } else {
-            (v - 35) / 40
-        }
-    };
-    16 + 36 * q(r) + 6 * q(g) + q(b)
 }
 
 fn arg(params: &Params, n: usize, default: u16) -> u16 {
@@ -362,8 +515,22 @@ fn arg0(params: &Params, n: usize) -> u16 {
 
 impl Perform for State {
     fn print(&mut self, c: char) {
-        self.grid.put(c as u32);
-        self.last_printed = Some(c as u32);
+        let cp = c as u32;
+        // `vtterm.c:788` only consults the charset for codepoints that could
+        // have come from a single byte; anything above U+00FF is text by
+        // definition and never DEC special graphics.
+        let special = cp <= 0xff && self.charset.is_special(cp);
+        if special {
+            // Upstream builds a throwaway attribute for the one character
+            // (`CharAttrTmp`), leaving the pen alone. Same here.
+            let pen = self.grid.pen.attrs;
+            self.grid.pen.attrs |= ATTR_SPECIAL;
+            self.grid.put(cp);
+            self.grid.pen.attrs = pen;
+        } else {
+            self.grid.put(cp);
+        }
+        self.last_printed = Some(cp);
         self.prev_was_cr = false;
         self.prev_was_lf = false;
     }
@@ -373,6 +540,8 @@ impl Perform for State {
             0x07 => {} // BEL — the oracle silences it (IdBeepOff)
             0x08 => self.grid.backspace(),
             0x09 => self.grid.forward_tab(1),
+            0x0e => self.shift(Shift::Ls1), // SO
+            0x0f => self.shift(Shift::Ls0), // SI
             // LF, VT and FF all line-feed (vtterm.c treats them alike).
             0x0a..=0x0c => {
                 self.process_lf();
@@ -491,15 +660,23 @@ impl Perform for State {
         if ignore {
             return;
         }
-        // Character-set designation (ESC ( B and friends) is parsed and dropped
-        // until tt-charset exists; dropping it silently is wrong for DEC line
-        // drawing and is the next thing this file will grow.
-        if !intermediates.is_empty() {
+
+        // Single-byte character-set designation: ESC ( ) * + <final>.
+        if let Some(&i) = intermediates.first() {
+            if matches!(i, b'(' | b')' | b'*' | b'+') && intermediates.len() == 1 {
+                if let Some(cs) = sbcs_final(byte, self.config.japanese) {
+                    self.charset.designate(gset_from_intermediate(i), cs);
+                }
+                // TF_AUTOINVOKE would fold G0 into GL here, but the key
+                // defaults off (ttset.c:1102) so there is nothing to do.
+            }
+            // Multi-byte designations (ESC $ ...) are Kanji, deferred with CJK.
             return;
         }
+
         match byte {
-            b'7' => self.grid.save_cursor(),
-            b'8' => self.grid.restore_cursor(),
+            b'7' => self.save_cursor(),
+            b'8' => self.restore_cursor(),
             b'D' => self.grid.line_feed(),
             b'E' => {
                 self.grid.carriage_return();
@@ -507,8 +684,17 @@ impl Perform for State {
             }
             b'H' => self.grid.set_tab(),
             b'M' => self.grid.reverse_index(),
+            b'N' => self.shift(Shift::Ss2),
+            b'O' => self.shift(Shift::Ss3),
+            b'n' => self.shift(Shift::Ls2),
+            b'o' => self.shift(Shift::Ls3),
+            b'|' => self.shift(Shift::Ls3r),
+            b'}' => self.shift(Shift::Ls2r),
+            b'~' => self.shift(Shift::Ls1r),
             b'c' => {
                 self.grid.reset();
+                self.charset.reset();
+                self.saved_charset = None;
                 self.title.clear();
             }
             _ => {}
@@ -590,13 +776,114 @@ mod tests {
     }
 
     #[test]
-    fn sgr_38_without_xterm256_leaks_its_arguments() {
-        // Not a bug: with ts.ColorFlag == 0, `38` is ignored without consuming
-        // `5`, which then turns blink on. Upstream behaviour, reproduced.
+    fn sgr_38_sets_a_256_colour_foreground_by_default() {
         let vt = run(b"\x1b[38;5;196mR", 20, 2);
+        let cell = vt.grid().line(0)[0];
+        assert_eq!(cell.attrs & ATTR2_FORE, ATTR2_FORE);
+        assert_eq!(cell.fg, 196);
+        assert_eq!(cell.attrs & ATTR_BLINK, 0);
+    }
+
+    #[test]
+    fn sgr_38_leaks_its_arguments_when_xterm256_is_off() {
+        // Not a bug, and the reason ColorFlags is modelled at all: with the bit
+        // clear, `38` is ignored *without consuming* `5`, which then turns
+        // blink on. vtterm.c:2239.
+        let mut vt = Vt::new(Config {
+            cols: 20,
+            rows: 2,
+            color_flags: ColorFlags {
+                xterm256: false,
+                aixterm16: false,
+            },
+            ..Config::default()
+        });
+        vt.feed(b"\x1b[38;5;196mR");
         let cell = vt.grid().line(0)[0];
         assert_eq!(cell.attrs & ATTR_BLINK, ATTR_BLINK);
         assert_eq!(cell.attrs & ATTR2_COLOR_MASK, 0);
+    }
+
+    #[test]
+    fn so_switches_to_line_drawing_and_si_switches_back() {
+        let vt = run(b"\x0eqq\x0fqq", 12, 1);
+        let attrs: Vec<u32> = (0..4)
+            .map(|x| vt.grid().line(0)[x].attrs & ATTR_SPECIAL)
+            .collect();
+        assert_eq!(attrs, vec![ATTR_SPECIAL, ATTR_SPECIAL, 0, 0]);
+    }
+
+    #[test]
+    fn esc_open_paren_zero_designates_dec_special_graphics() {
+        let vt = run(b"\x1b(0qq\x1b(Bqq", 12, 1);
+        let attrs: Vec<u32> = (0..4)
+            .map(|x| vt.grid().line(0)[x].attrs & ATTR_SPECIAL)
+            .collect();
+        assert_eq!(attrs, vec![ATTR_SPECIAL, ATTR_SPECIAL, 0, 0]);
+        // The byte is stored as-is; mapping it to U+2500 is the renderer's job,
+        // because DecSpMappingDir defaults to "do not map".
+        assert_eq!(vt.grid().line(0)[0].text[0], b'q' as u32);
+    }
+
+    #[test]
+    fn c1_controls_fold_to_c0_on_a_vt100() {
+        // U+008D is 0x0D once masked, so it is a carriage return and C lands on
+        // top of A. On a VT220 the mask does not apply and it would be RI.
+        let vt = run("A\u{84}B\u{8d}C".as_bytes(), 16, 3);
+        assert_eq!(row(&vt, 0), "CB");
+        assert_eq!(vt.grid().cursor.x, 1);
+    }
+
+    #[test]
+    fn c1_controls_keep_their_meaning_above_vt100() {
+        let mut vt = Vt::new(Config {
+            cols: 16,
+            rows: 3,
+            term_id: TermId::Vt220,
+            ..Config::default()
+        });
+        vt.feed("A\u{8d}B".as_bytes()); // U+008D = RI at level 2
+        assert_eq!(row(&vt, 0), " B");
+        assert_eq!(row(&vt, 1), "A");
+    }
+
+    #[test]
+    fn a_split_c1_survives_the_chunk_boundary() {
+        let mut vt = Vt::new(Config {
+            cols: 16,
+            rows: 3,
+            ..Config::default()
+        });
+        vt.feed(b"A\xc2");
+        vt.feed(b"\x8dC");
+        assert_eq!(row(&vt, 0), "C");
+    }
+
+    #[test]
+    fn alt_screen_hides_its_contents_and_restores_the_cursor() {
+        let vt = run(b"main\x1b[?1049hALT\x1b[?1049l", 12, 3);
+        assert_eq!(row(&vt, 0), "main");
+        assert_eq!(vt.grid().cursor.x, 4);
+    }
+
+    #[test]
+    fn re_entering_the_alt_screen_does_not_clobber_the_saved_main() {
+        // A program that re-arms 1049 on every redraw would otherwise stash the
+        // alternate screen over the main one and lose it.
+        let vt = run(b"main\x1b[?1049hALT\x1b[?1049hMORE\x1b[?1049l", 12, 3);
+        assert_eq!(row(&vt, 0), "main");
+    }
+
+    #[test]
+    fn truecolor_resolves_through_the_palette() {
+        let vt = run(b"\x1b[38;2;255;0;0mR", 16, 2);
+        assert_eq!(vt.grid().line(0)[0].fg, 1);
+    }
+
+    #[test]
+    fn decsc_restores_the_g_sets() {
+        let vt = run(b"\x1b(0\x1b7\x1b(Bq\x1b8q", 12, 1);
+        assert_eq!(vt.grid().line(0)[0].attrs & ATTR_SPECIAL, ATTR_SPECIAL);
     }
 
     #[test]

@@ -187,6 +187,9 @@ pub struct Grid {
     pub origin_mode: bool,
     tabs: Vec<bool>,
     saved: Option<SavedCursor>,
+    /// The main screen, parked here while the alternate screen is up.
+    /// `buffer.c:BuffSaveScreen`/`BuffRestoreScreen`.
+    stashed: Option<Vec<Line>>,
 }
 
 impl Grid {
@@ -210,6 +213,28 @@ impl Grid {
             origin_mode: false,
             tabs: default_tabs(cols),
             saved: None,
+            stashed: None,
+        }
+    }
+
+    /// `BuffSaveScreen` — park a copy of the visible page.
+    pub fn save_screen(&mut self) {
+        self.stashed = Some(self.lines.clone());
+    }
+
+    /// `BuffRestoreScreen` — put the parked page back. A no-op if nothing was
+    /// saved, which is what keeps a stray `ESC [ ? 1047 l` harmless.
+    pub fn restore_screen(&mut self) {
+        if let Some(lines) = self.stashed.take() {
+            self.lines = lines;
+        }
+    }
+
+    /// `BuffClearScreen`.
+    pub fn clear_screen(&mut self) {
+        let pen = self.pen;
+        for line in &mut self.lines {
+            *line = vec![Cell::erased(pen); self.cols];
         }
     }
 

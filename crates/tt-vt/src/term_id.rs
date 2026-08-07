@@ -63,6 +63,24 @@ impl TermId {
         }
     }
 
+    /// `tttypes_termid.cpp:TermIDGetVTLevel`.
+    ///
+    /// Level 1 terminals fold 8-bit C1 controls down to their C0 equivalents
+    /// instead of acting on them; level 2 and up treat them as real C1. That
+    /// one comparison is the whole difference between `ESC [ 0x9B` being a CSI
+    /// introducer and being an ESC.
+    pub fn vt_level(self) -> u8 {
+        match self {
+            TermId::Vt100 | TermId::Vt100J | TermId::Vt101 => 1,
+            TermId::Vt102 | TermId::Vt102J | TermId::Vt220 | TermId::Vt220J => 2,
+            TermId::Vt282 | TermId::Vt320 | TermId::Vt382 => 3,
+            TermId::Vt420 => 4,
+            TermId::Vt520 | TermId::Vt525 => 5,
+            // Not in upstream's switch, which asserts and falls back to 1.
+            TermId::Dumb => 1,
+        }
+    }
+
     /// The body of the Primary DA reply, between `ESC [ ?` and `c`.
     ///
     /// `dumb` has no case in the upstream switch, so it answers with an empty
