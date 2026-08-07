@@ -8,6 +8,7 @@
  * The runner freezes it by default; see oracle_clock_set_frozen().
  */
 #define _GNU_SOURCE
+#include <stdio.h>
 #include <windows.h>
 
 #include <stdlib.h>
@@ -204,4 +205,15 @@ HINSTANCE ShellExecuteW(HWND hwnd, const wchar_t *lpOperation,
 	(void)hwnd; (void)lpOperation; (void)lpFile;
 	(void)lpParameters; (void)lpDirectory; (void)nShowCmd;
 	return (HINSTANCE)(LONG_PTR)42;   /* >32 means success in Win32. */
+}
+
+int MessageBoxA(HWND hWnd, const char *text, const char *caption, UINT type)
+{
+	/* Headless: a dialog is a diagnostic. Callers in ttpfile only ever use
+	 * this to report a failure they have already decided to return FALSE for,
+	 * so answering IDOK changes nothing. */
+	(void)hWnd; (void)type;
+	fprintf(stderr, "[MessageBox] %s: %s\n",
+	        caption ? caption : "(no caption)", text ? text : "");
+	return IDOK;
 }

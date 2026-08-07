@@ -212,6 +212,30 @@ HINSTANCE ShellExecuteW(HWND hwnd, const wchar_t *lpOperation,
                         const wchar_t *lpFile, const wchar_t *lpParameters,
                         const wchar_t *lpDirectory, int nShowCmd);
 
+/* ---- MessageBox, for ttpfile's error paths ----
+ *
+ * The file-transfer protocols report failures ("Cannot create file") through
+ * MessageBox. Headless those are diagnostics, not dialogs, so the shim writes
+ * them to stderr. Without a declaration these compile via C89 implicit
+ * declaration and only fail at link, which is a confusing way to find out.
+ */
+#define MB_OK                0x0000
+#define MB_OKCANCEL          0x0001
+#define MB_YESNO             0x0004
+#define MB_ICONERROR         0x0010
+#define MB_ICONQUESTION      0x0020
+#define MB_ICONEXCLAMATION   0x0030
+#define MB_ICONINFORMATION   0x0040
+#define MB_TASKMODAL         0x2000
+
+#define IDOK      1
+#define IDCANCEL  2
+#define IDYES     6
+#define IDNO      7
+
+int MessageBoxA(HWND hWnd, const char *text, const char *caption, UINT type);
+#define MessageBox MessageBoxA
+
 /* ---- the three functions vtterm.c/buffer.c actually call ---- */
 void  Sleep(DWORD dwMilliseconds);
 DWORD GetTickCount(void);

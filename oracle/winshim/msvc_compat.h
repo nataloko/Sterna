@@ -11,8 +11,24 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <sys/stat.h>
 
 #include "msvc_crt.h"
+
+/*
+ * MSVC's 64-bit stat. `_stati64` appears only as a struct tag in the sources
+ * we build (ttpfile/filesys_io.h's vtable and kermit.c), never as the function
+ * of the same name, so mapping the tag onto the POSIX struct is exact rather
+ * than approximate: st_mode, st_size and st_mtime are all present and mean the
+ * same thing. `_S_IFREG` likewise has the same value as `S_IFREG` — zmodem.c
+ * ORs it into the file mode it transmits, so the wire format depends on it.
+ */
+#ifndef _stati64
+#define _stati64 stat
+#endif
+#ifndef _S_IFREG
+#define _S_IFREG S_IFREG
+#endif
 
 #ifndef _countof
 #define _countof(a) (sizeof(a) / sizeof((a)[0]))
