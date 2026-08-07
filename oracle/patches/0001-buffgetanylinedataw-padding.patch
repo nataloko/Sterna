@@ -1,0 +1,33 @@
+Fix BuffGetAnyLineDataW dropping everything after the first wide character
+
+BuffGetAnyLineDataW() walks a line cell by cell, advancing `b` only on the
+non-padding path. When it meets the padding cell that follows a full-width
+(CJK) character it does `continue` WITHOUT advancing `b`, so `b` stays parked
+on that padding cell. Every remaining iteration then sees padding too, and the
+rest of the line is silently dropped.
+
+The only caller is filesys_log.cpp:443, so the user-visible effect is that
+session logging truncates any line at its first full-width character. For a
+terminal with Tera Term's CJK focus that is a real data-loss bug.
+
+Reproduction, via the qtterm oracle (which runs vtterm.c + buffer.c headless):
+
+    printf 'ASCII \344\275\240\345\245\275 world' | oracle --cols 30 --rows 2
+
+    before:  |ASCII 你                      |
+    after:   |ASCII 你好 world              |
+
+Found while building a differential-test harness against Tera Term 5.7.0-dev
+(commit 827a35b05). Not yet reported upstream -- see oracle/README.md.
+
+--- a/teraterm/teraterm/buffer.c
++++ b/teraterm/teraterm/buffer.c
+@@ -5829,6 +5829,7 @@ int BuffGetAnyLineDataW(int offset_y, wchar_t *buf, size_t bufsize)
+ 	for (i = 0; i<copysize; i++) {
+ 		BOOL too_small;
+ 		size_t len;
+ 		if (IsBuffPadding(b)) {
++			b++;
+ 			continue;
+ 		}
+ 		len = expand_wchar(b, &buf[idx], left, &too_small);

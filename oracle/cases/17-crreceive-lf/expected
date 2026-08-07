@@ -1,0 +1,7 @@
+# qtterm-oracle 1
+# term vt100 20x4
+# cursor 5,2
+  0 |one                 |
+  1 |two                 |
+  2 |three               |
+  3 |                    |
