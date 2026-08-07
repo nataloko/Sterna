@@ -3,7 +3,7 @@ target/
 **/*.rs.bk
 
 # CMake / Qt
-/build
+build/
 /shell/build
 *.o
 *.so

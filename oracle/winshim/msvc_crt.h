@@ -15,6 +15,8 @@
 
 #include <locale.h>
 #include <stddef.h>
+#include <stdio.h>
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -35,6 +37,24 @@ _locale_t _create_locale(int category, const char *locale);
 void      _free_locale(_locale_t locale);
 
 /* Return 0 on success, STRUNCATE when _TRUNCATE truncated, EINVAL on bad args. */
+/* Secure-CRT fopen. Wide paths are converted with wcstombs: the protocol log
+ * is opened by name from a wchar_t path, and POSIX filesystems take bytes. */
+int _wfopen_s(FILE **pFile, const wchar_t *filename, const wchar_t *mode);
+
+/*
+ * NOTE: MSVC's sscanf_s takes an extra buffer-size argument after every %s,
+ * %c and %[ conversion; this forwards to vsscanf and therefore does NOT.
+ * Safe because every call site we compile (kermit.c, zmodem.c, ymodem.c)
+ * scans numbers only — verified. A future %s here would read garbage, so
+ * check the format string before adding call sites.
+ */
+int sscanf_s(const char *buffer, const char *format, ...);
+
+int ctime_s(char *buf, size_t size, const time_t *t);
+int localtime_s(struct tm *tm, const time_t *t);
+int memmove_s(void *dest, size_t destsz, const void *src, size_t count);
+long long _atoi64(const char *s);
+
 int strncpy_s(char *dest, size_t destsz, const char *src, size_t count);
 int strncat_s(char *dest, size_t destsz, const char *src, size_t count);
 

@@ -2,6 +2,8 @@
  * qtterm oracle — MSVC Secure CRT / locale shim for POSIX. See msvc_crt.h.
  */
 #define _GNU_SOURCE
+#include <time.h>
+#include <stdlib.h>
 #include "msvc_crt.h"
 
 #include <errno.h>
@@ -195,4 +197,64 @@ int _snprintf_s_l(char *buffer, size_t sizeOfBuffer, size_t count,
 	r = snprintf_s_v(buffer, sizeOfBuffer, count, format, locale, ap);
 	va_end(ap);
 	return r;
+}
+
+int _wfopen_s(FILE **pFile, const wchar_t *filename, const wchar_t *mode)
+{
+	char path[4096], m[16];
+	if (pFile == NULL)
+		return 22;              /* EINVAL, as the Secure CRT reports it. */
+	*pFile = NULL;
+	if (wcstombs(path, filename, sizeof(path)) == (size_t)-1)
+		return 22;
+	if (wcstombs(m, mode, sizeof(m)) == (size_t)-1)
+		return 22;
+	*pFile = fopen(path, m);
+	return (*pFile != NULL) ? 0 : errno;
+}
+
+int sscanf_s(const char *buffer, const char *format, ...)
+{
+	/* See the note in msvc_crt.h: numeric conversions only. */
+	va_list ap;
+	int n;
+	va_start(ap, format);
+	n = vsscanf(buffer, format, ap);
+	va_end(ap);
+	return n;
+}
+
+int ctime_s(char *buf, size_t size, const time_t *t)
+{
+	char tmp[32];
+	if (buf == NULL || size < 26 || t == NULL)
+		return 22;                      /* EINVAL */
+	if (ctime_r(t, tmp) == NULL)
+		return 22;
+	strncpy(buf, tmp, size - 1);
+	buf[size - 1] = '\0';
+	return 0;
+}
+
+int localtime_s(struct tm *tm, const time_t *t)
+{
+	/* Argument order is MSVC's (out, in) — the reverse of localtime_r. */
+	if (tm == NULL || t == NULL)
+		return 22;
+	return localtime_r(t, tm) != NULL ? 0 : 22;
+}
+
+int memmove_s(void *dest, size_t destsz, const void *src, size_t count)
+{
+	if (dest == NULL || src == NULL)
+		return 22;
+	if (count > destsz)
+		return 34;                      /* ERANGE */
+	memmove(dest, src, count);
+	return 0;
+}
+
+long long _atoi64(const char *s)
+{
+	return strtoll(s, NULL, 10);
 }
