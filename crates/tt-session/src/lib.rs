@@ -96,6 +96,8 @@ pub struct Session {
     /// `Grid::scrolled_off` as of the last time the view was reconciled. The
     /// difference is how far the content moved under a scrolled-back viewer.
     seen_scrolled_off: u64,
+    /// The grid's size as of the same moment — see [`Session::follow_scroll`].
+    seen_size: (usize, usize),
     /// What the last transport said on its way out, if it said anything.
     close_note: Option<String>,
 }
@@ -115,6 +117,7 @@ impl Session {
             log: None,
             view_offset: 0,
             seen_scrolled_off: 0,
+            seen_size: (0, 0),
             close_note: None,
         }
     }
@@ -497,6 +500,7 @@ impl Session {
         // honest answer is to stop guessing and go live.
         self.view_offset = 0;
         self.seen_scrolled_off = self.vt.grid().scrolled_off();
+        self.seen_size = (cols, rows);
         self.events.push(Event::Damage);
         if let Some(c) = self.conn.as_mut() {
             c.resize(cols as u16, rows as u16)?;
@@ -546,7 +550,23 @@ impl Session {
     /// evicted: both shift the content by the same amount. Clamping is left to
     /// the accessors, so a view pushed off the top lands on the oldest line
     /// rather than being reset.
+    /// A resize that arrives *in the byte stream* re-anchors the view too.
+    ///
+    /// [`Session::resize`] is only the frontend's path. DECCOLM and the
+    /// XTWINOPS resize both reach `Grid::resize` from inside the parser, and
+    /// that moves lines between the page and the scrollback without
+    /// `scrolled_off` recording it — so the difference this function reads
+    /// stops meaning what it means everywhere else, and a scrolled-back view
+    /// jumps by however many lines the resize shuffled. Same answer as the
+    /// frontend path: stop guessing, go live.
     fn follow_scroll(&mut self) {
+        let size = (self.vt.grid().cols(), self.vt.grid().rows());
+        if size != self.seen_size {
+            self.seen_size = size;
+            self.view_offset = 0;
+            self.seen_scrolled_off = self.vt.grid().scrolled_off();
+            return;
+        }
         let now = self.vt.grid().scrolled_off();
         if self.view_offset > 0 {
             self.view_offset += (now - self.seen_scrolled_off) as usize;

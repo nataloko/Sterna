@@ -148,6 +148,25 @@ fn a_resize_goes_live() {
     assert_eq!(s.view_offset(), 0);
 }
 
+/// And a resize that nobody asked for goes live too.
+///
+/// `Session::resize` is the frontend's path. DECCOLM and the XTWINOPS resize
+/// reach the same `Grid::resize` from inside the parser, so the anchor moves
+/// with no call to reconcile it — the view would be left counting from a
+/// scrollback that had just gained or lost lines.
+#[test]
+fn a_resize_from_the_far_end_goes_live_as_well() {
+    for resize in [&b"\x1b[8;8;20t"[..], &b"\x1b[?3h"[..], &b"\x1b[?3l"[..]] {
+        let (mut s, _h) = session(20, 4, 100);
+        s.feed(&lines(0, 10));
+        s.set_view_offset(5);
+        assert_eq!(s.view_offset(), 5);
+
+        s.feed(resize);
+        assert_eq!(s.view_offset(), 0, "after {resize:?}");
+    }
+}
+
 #[test]
 fn the_cursor_is_reported_only_while_it_is_on_screen() {
     let (mut s, _h) = session(20, 4, 100);
