@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 35
+**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 38
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -341,7 +341,7 @@ Deliberately absent: file transfer, macros, tabs, Windows build, most settings.
 screen), `tt-charset` (ISO-2022 and DEC special graphics), `tt-vt` (the state
 machine, `vte` for byte-level parsing), and `tt-dump` (a CLI that speaks the
 oracle's argument set and dump format). `./run_diff.sh` feeds every case to
-**both** engines and diffs them against each other. **62 cases: 61 matching and
+**both** engines and diffs them against each other. **72 cases: 71 matching and
 one known divergence.**
 
 **The design decision worth recording: the differential suite has no golden
@@ -359,8 +359,13 @@ all four `CRReceive` modes, wide characters at the margin, combining marks,
 ISO-2022 designation and every locking and single shift, DEC special graphics,
 256-colour and truecolor, 8-bit C1 controls, the alternate screen, DECSCA and
 selective erase, the whole rectangular-area family (DECSACE, DECCARA, DECRARA,
-DECFRA, DECERA, DECSERA, DECCRA), and the XTWINOPS resize. Not yet: DECLRMM,
-mouse reporting, and DCS.
+DECFRA, DECERA, DECSERA, DECCRA), the XTWINOPS resize, left and right margins
+(DECLRMM/DECSLRM) through every operation that reads them, DECALN, the soft
+resets (DECSTR, DECSCL) and DECRQSS.
+
+**Only mouse reporting is left**, and it is not differential-testable here at
+all: it turns *input events* into reports, and a headless dump has no mouse. It
+belongs with the Qt shell, not with the oracle.
 
 #### What the harness caught, which is the point of having it
 
@@ -419,6 +424,17 @@ A third arrived while implementing DECSED:
 Reports for all four are drafted in `docs/upstream-bugs.md`; **file the two
 memory-safety ones (ECH and DECSED) first**, and consider whether they want a
 private report rather than public issues.
+
+Margins found two more, neither of them about margins:
+
+7. **A plain HT takes the pending wrap before it tabs** (`vtterm.c:Tab`), so a
+   tab arriving on a full line starts the next one. `CSI Ps I` (CHT) does not —
+   it calls `CursorForwardTab` directly. Ours had been leaving the tab on the
+   old row, which put the next character a row too high.
+8. **A scroll region starting at row 0 fills the scrollback even when its
+   bottom margin does not reach the last row.** `BuffScroll` slides the page
+   and copies the rows below the region down to keep them in place. Nothing in
+   the dump can see the scrollback, so case 69 reads it back through a resize.
 
 Two more findings were the oracle's own, both of the same shape as finding 3 —
 harness code reimplementing upstream logic and getting it wrong. Its
@@ -549,7 +565,7 @@ file/dir 1k, connection/terminal 2k, dialogs 0.8k, misc 1k — **~9.3k Rust vs
 1. **✅ Differential testing against real Tera Term** — `oracle/` built and
    green, and as of Stage 1 actually wired up: `./run_diff.sh` feeds identical
    byte streams to it and to the Rust engine and diffs the grid dumps, in CI on
-   every commit. 62 cases. **This is the asset the whole project rests on**, and
+   every commit. 72 cases. **This is the asset the whole project rests on**, and
    it is now a gate rather than a promise.
 2. **⬜ esctest2** (iTerm2) — ~1000 automated DEC/xterm conformance assertions
    over a pty, read back via DSR/DECRQSS. Wire into CI in Stage 1.
