@@ -90,6 +90,11 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/termitta myrouter        # an alias out of ~/.ssh/config
 ./build/termitta --shell         # a local login shell
 
+./bench/bench.py --core          # the perf gate's half that runs anywhere
+./bench/bench.py                 # ...and the Qt half, in termitta-fedora only
+./bench/bench.py --update        # re-record baseline.json, on a QUIET machine
+cmake --build shell/build-release --target bench_shell   # it is EXCLUDE_FROM_ALL
+
 cd packaging/appimage            # the only Linux artifact — build it in
                                  # termitta-fedora, never here
 ./build.sh                       # → build/termitta-x86_64.AppImage
@@ -485,6 +490,29 @@ And for SSH:
   `adjustSize()` removes the discrepancy — otherwise a perfectly good dialog
   looks broken in its own screenshot.
 
+And for measuring anything:
+
+- **`QFile` cannot read `/proc`, and does not say so.** `QFileDevice::atEnd()`
+  answers from `size()`, and every file under `/proc` reports zero because its
+  contents are generated on read — so a `while (!f.atEnd())` loop never runs
+  once, the field is never found, and the measurement comes out as a confident
+  `0.0 MB`. Which is exactly what a window using no memory would look like.
+  `bench_shell` uses stdio, which has no opinion about size.
+- **How fast the shell absorbs a burst is mostly a platform property.** Ten
+  megabytes out of a pty: ~390 frames and 39 MB/s under Wayland, ~3000 frames
+  and 4 MB/s under xcb, ~2900 and 7 MB/s offscreen. Wayland's frame callbacks
+  coalesce repaints; X11 has none and the session pumps once per notifier wake,
+  so every 8 KB read gets its own frame. Two consequences: a headless number
+  **understates** the desktop by 4x rather than flattering it, and a throughput
+  measurement is meaningless without naming the platform — which is why
+  `bench/baseline.json` records the platform *and* the Qt version, since 6.4.2
+  and 6.11.1 both answer `"wayland"`.
+- **The calibration loop corrects for a slower machine, not a busier one.** The
+  first baseline here was recorded while a `cmake` build was finishing: the
+  fixed CPU loop was 1.5% slow and the engine was 14% slow, so nothing flagged
+  it and the gate would have been permanently weaker with no way to tell.
+  Re-record on a quiet machine, and read the file before committing it.
+
 And for the serial side:
 
 - **`tcsetattr` returns success if it could apply *any* of what you asked.**
@@ -646,6 +674,7 @@ ssh-audit/       Stage 0 spike 5 — russh vs legacy SSH algorithms and auth
 crates/          Rust core — tt-grid, tt-vt, tt-conn, tt-session, tt-ffi (see its README)
 crates/tt-fuzz/  the properties, and what they found (see its README)
 crates/fuzz/     the libFuzzer targets — nightly, weekly in CI
+bench/           the perf gate: a floor in CI, a baseline locally (see README)
 run_diff.sh      the differential gate: Rust engine vs Tera Term, every case
 shell/           Qt 6 shell — one window on the C ABI (see its README)
 vendor/          vendored Tera Term subsystems — empty, see ATTRIBUTION.md first

@@ -78,8 +78,29 @@ Rewriting a VT emulator is a correctness problem. Four layers, from day one:
    and the 53 `.ttl` scripts.
 4. **Fuzzing** — the parser eats untrusted bytes off the network.
 
-Plus a performance gate: cold start, idle RSS, throughput, input latency.
-"Simple, light, performant" is a claim; CI should enforce it.
+## Performance
+
+"Simple, light, performant" is a claim, so it is measured — see
+[bench/README.md](bench/README.md). On an AMD Ryzen 7 7840HS, Fedora 44,
+Qt 6.11.1 under Wayland, 2026-08-08:
+
+| | |
+|---|---|
+| exec → first frame | 68 ms |
+| idle RSS / PSS, with a shell attached | 64.5 / 40.5 MB |
+| keystroke → the frame that shows it | 1.03 ms |
+| 10 MB out of a pty, painted | 39 MB/s |
+| the VT engine alone, 10 MB | 67–84 MB/s |
+
+Two of those are worth stating plainly rather than meeting in a review.
+**~60 MB is Qt's floor** — mid-pack among modern terminals, well above Tera
+Term on Windows, and imposed by the toolkit rather than by anything the code
+can optimise away. And **throughput through the window is 6–9x better under
+Wayland than under X11**, because Wayland's frame callbacks coalesce repaints
+and X11 has no such brake.
+
+CI enforces an absolute floor on the engine half — the shell half depends on a
+Qt version no CI runner has, so it is a local gate against a recorded baseline.
 
 ## Build
 
@@ -87,6 +108,7 @@ Plus a performance gate: cold start, idle RSS, throughput, input latency.
 cd oracle && make && make test    # Tera Term's VT engine, headless
 cd crates && cargo test           # the Rust core
 ./run_diff.sh                     # the two, diffed against each other
+./bench/bench.py --core           # the engine, against the recorded baseline
 ```
 
 Needs a sibling Tera Term checkout at `../teraterm`.

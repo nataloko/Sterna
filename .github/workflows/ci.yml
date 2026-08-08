@@ -189,6 +189,14 @@ jobs:
       # The gate that matters: every case in oracle/cases/ is fed to BOTH the
       # Rust engine and Tera Term's real one, and the two dumps must be
       # identical. No golden files are involved — the oracle is the expectation.
+      # A floor, not a baseline. `bench/baseline.json` is the same-machine
+      # gate and cannot be enforced from a shared runner — see `bench/README.md`
+      # and the note in `tt-bench` on why the number here does not ratchet.
+      # What this catches is structural: an accidental quadratic, a per-byte
+      # allocation, a scrollback that copies. `--runs 1` because a floor an
+      # order of magnitude down does not need the minimum of five.
+      - name: Engine throughput, against the floor
+        run: cd termitta/crates && cargo run --release --locked -p tt-bench -- --check --runs 1
       - name: Differential suite vs the oracle
         run: cd termitta && ./run_diff.sh
       # And the same diff over Tera Term's own escape-sequence exercisers,

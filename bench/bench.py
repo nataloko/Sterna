@@ -158,7 +158,8 @@ def measure(args) -> dict | None:
             "bench: no bench_shell -- the Qt half is skipped.\n"
             "       build it in termitta-fedora:\n"
             "         cmake -S shell -B shell/build-release -G Ninja "
-            "-DCMAKE_BUILD_TYPE=Release && cmake --build shell/build-release\n")
+            "-DCMAKE_BUILD_TYPE=Release\n"
+            "         cmake --build shell/build-release --target bench_shell\n")
         return record
 
     shell = run_json([shell_exe, "--json", "--runs", args.runs, "--mb", args.mb])

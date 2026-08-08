@@ -141,7 +141,11 @@ add_custom_target(tt_bench_emitter
     COMMENT "cargo build -p tt-bench --release (the bench corpus generator)"
     USES_TERMINAL VERBATIM)
 
-add_executable(bench_shell tests/bench_shell.cpp)
+# `EXCLUDE_FROM_ALL`, so an ordinary build — and CI's — does not compile it or
+# the release-profile cargo target it drags in. Build it by name:
+#
+#   cmake --build build-release --target bench_shell
+add_executable(bench_shell EXCLUDE_FROM_ALL tests/bench_shell.cpp)
 add_dependencies(bench_shell tt_bench_emitter)
 target_link_libraries(bench_shell PRIVATE termitta_shell)
 target_compile_options(bench_shell PRIVATE -Wall -Wextra)

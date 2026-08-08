@@ -1,6 +1,6 @@
 # termitta core
 
-The Rust side. Seven of the eight crates `PLAN.md` describes, plus two CLIs
+The Rust side. Seven of the eight crates `PLAN.md` describes, plus three CLIs
 that exist so the engine can be measured against something.
 
 | Crate | What it is |
@@ -14,6 +14,7 @@ that exist so the engine can be measured against something.
 | `tt-dump` | A CLI that drives `tt-vt` over a byte stream and prints the oracle's dump format. Exists for the differential harness. |
 | `tt-host` | A terminal with no window: runs a program on a pty and is the terminal on the other end of it. Exists for `esctest/`, which cannot be a recording. |
 | `tt-fuzz` | The engine's properties — no panic, the grid stays consistent, and the chunk boundaries do not matter — shared by the stable test suite and the libFuzzer targets in `fuzz/`. See [its README](tt-fuzz/README.md). |
+| `tt-bench` | Ten megabytes through the engine, in the chunk sizes a pty gives. The half of the perf gate with no window in it, and the corpus generator the other half feeds through a pty. See [bench/README.md](../bench/README.md). |
 
 ```sh
 cargo build && cargo test
@@ -21,6 +22,7 @@ cargo clippy --all-targets -- -D warnings
 tt-ffi/run_abi.sh              # the C ABI, compiled and driven from C
 ../run_diff.sh                 # the gate that actually matters
 ../esctest/run_tests.sh        # ...and conformance, from inside our own terminal
+../bench/bench.py --core       # ...and that it has not got slower
 ```
 
 The pty suites in both crates need nothing and always run, so a bare

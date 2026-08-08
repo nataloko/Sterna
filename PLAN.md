@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 92
+**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 106
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -433,6 +433,11 @@ Must be shippable and genuinely useful, not a demo.
   the registry, maps no window, warns about nothing and never exits non-zero —
   which looks exactly like a working headless run and was briefly counted as
   one here.
+
+- **A perf gate**, because "light" is the reason this project exists. ✅
+  **done** — `bench/`, four shell numbers and three engine ones, an absolute
+  floor in CI and a same-machine baseline locally. See `bench/README.md`, and
+  the numbers below.
 
 **Done when:** the Wine shortcut gets deleted and it's daily-driven for serial
 console work.
@@ -1156,9 +1161,70 @@ file/dir 1k, connection/terminal 2k, dialogs 0.8k, misc 1k — **~9.3k Rust vs
    10/10 both directions. Use **G-Kermit, not C-Kermit**: C-Kermit sees a pty as
    a tty and drops into interactive mode. Wire it into CI alongside the oracle.
 
-**Plus a perf gate from Stage 1**, calibrated the way `../tine/docs/BENCH.md`
-describes: cold start (ms), idle RSS, time to render 10 MB of `cat`,
-input-to-present latency. Publish the numbers in the README.
+7. **✅ The perf gate** — `bench/`, 2026-08-08, calibrated the way
+   `../tine/docs/BENCH.md` describes. Cold start, idle RSS, 10 MB of `cat`, and
+   keystroke latency, plus the engine's own throughput on three workloads. The
+   numbers are in the README, which is where the plan said to put them.
+
+   **The two halves gate differently, and that is the whole design.** The core
+   half is a Rust binary with no window in it, so CI runs it — against an
+   *absolute floor* an order of magnitude below a real measurement, which
+   catches an accidental quadratic and cannot flake because a shared runner had
+   a bad minute. The shell half needs Qt 6.11.1 and a real compositor, so it is
+   local only, gated against a same-machine baseline with per-metric budgets.
+
+   Two things it cost to find. **The calibration loop corrects for a slower
+   machine, not a busier one**: the first baseline was recorded while a build
+   was finishing and came out 14% under the truth while the calibration was
+   1.5% slow — a permanently weaker gate that nothing downstream could have
+   detected. And **`QFile` cannot read `/proc`** and does not say so, because
+   `atEnd()` answers from `size()` and every generated file reports zero, so
+   the idle-memory probe confidently measured 0.0 MB.
+
+   The finding, which is about the shell rather than the benchmark, is below.
+
+### Measured — the real shell, 2026-08-08
+
+`bench/baseline.json`. AMD Ryzen 7 7840HS, Fedora 44, Qt 6.11.1, Wayland, a
+Release build out of the build tree.
+
+| | |
+|---|---|
+| exec → first frame | 68 ms |
+| idle RSS / PSS, a shell attached | 64.5 / 40.5 MB |
+| keystroke → the frame that shows it | 1.03 ms |
+| 10 MB out of a pty, painted | 39 MB/s (~390 frames) |
+| the engine alone: plain / sgr / fullscreen | 67 / 74 / 84 MB/s |
+
+The synthetic spike below predicted the shape of all of this and was right about
+the important part — ~60 MB is Qt's floor and the no-GPU decision holds. What it
+could not predict is the one number that turned into a finding.
+
+**Throughput through the window is dominated by how many frames get painted,
+and on X11 that is 8x too many.** The same binary, the same machine, the same
+ten megabytes:
+
+| platform | frames | throughput |
+|---|---:|---:|
+| wayland | ~390 | 27–39 MB/s |
+| offscreen | ~2900 | 7 MB/s |
+| xcb | ~3000 | 4 MB/s |
+
+Wayland's frame callbacks throttle repainting to the compositor, so several
+8 KB reads coalesce into one frame. X11 has no such brake, and the session
+pumps once per notifier wake — so every read is its own turn of the event loop
+and its own frame, and a burst is absorbed 6–9x more slowly.
+
+**The fix is in the shell, not in the engine**, and it is the one the event
+loop's design deliberately left open: `pump` takes a budget, the shell passes
+zero, and zero means "read once and repaint". A small time budget would let a
+burst coalesce on every platform while still repainting at well over 100 fps.
+Worth doing before Stage 1 ships, and worth measuring rather than assuming —
+the harness that found it is the harness that can prove it.
+
+It also means **a headless CI number would understate the desktop by 4x**,
+which is the opposite of the usual assumption about offscreen being the fast
+case. One more reason the shell half of the gate is local.
 
 ### Measured baseline — Qt 6 Widgets, 2026-08-07
 

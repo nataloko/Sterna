@@ -21,7 +21,7 @@ distrobox-host-exec distrobox enter termitta-fedora --no-tty -- bash -lc '
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
   cd ~/Projects/termitta
   cmake -S shell -B shell/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
-  cmake --build shell/build-release
+  cmake --build shell/build-release --target bench_shell
   ./bench/bench.py'
 ```
 

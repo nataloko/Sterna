@@ -24,6 +24,17 @@ distrobox-host-exec distrobox enter termitta-fedora --no-tty -- bash -lc '
 '
 ```
 
+The performance gate is `bench_shell`, and it is deliberately not built by
+default — it is not a test, it takes tens of seconds, and its numbers depend on
+the machine. Build it in a **Release** tree and run it from `bench/`:
+
+```sh
+cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release --target bench_shell
+../bench/bench.py                # measures both halves, compares to the baseline
+./build-release/bench_shell      # ...or just this half
+```
+
 `pty_test` is the one that needs nothing at all — no server, no hardware, no
 environment variables — so it is the end-to-end check of this event loop that
 actually runs everywhere, including CI. A pty also exercises the case the other
