@@ -4,7 +4,8 @@ A terminal attached to a connection. `tt-vt` turns bytes into a grid and keys
 into bytes; `tt-conn` moves bytes; neither knows about the other, and something
 has to own the loop between them.
 
-**This is what the C ABI will export**, more or less directly. A frontend deals
+**This is what the C ABI exports**, more or less directly — see
+[`tt-ffi`](../tt-ffi/README.md). A frontend deals
 with a `Session` and never with a `Vt` — which is the point, because the pieces
 that have to move together (a resize is a grid change *and* an ioctl; a mouse
 click is an encoding *and* a write) are exactly the ones a frontend gets wrong
@@ -15,6 +16,10 @@ cargo test -p tt-session                                 # memory transport
 TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
   cargo test -p tt-session -- --test-threads=1           # and over real wire
 ```
+
+One package at a time when the rig is involved: `--test-threads=1` is per test
+binary, so asking for `tt-conn` and `tt-session` together puts both hardware
+suites on the same two ports at once.
 
 ## Nothing here spawns a thread
 

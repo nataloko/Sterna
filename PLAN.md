@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 47
+**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 48
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -369,9 +369,12 @@ Must be shippable and genuinely useful, not a demo.
 - `tt-session`: the loop between engine and transport, and what the C ABI
   exports. ✅ **done** — 20 tests, three of them over the real wire. See
   `crates/tt-session/README.md`.
+- `tt-ffi`: the flat C ABI, `cbindgen` over `tt-session`. ✅ **done** —
+  `libtermitta.so` plus a generated, committed, CI-gated header, exercised from
+  C and C++ rather than from Rust. See `crates/tt-ffi/README.md` and below.
 - Qt shell: one window, grid painter, clipboard, font/colour config,
-  connect dialog, serial-port picker with live enumeration. **Next**, and it
-  needs the C ABI (`cbindgen` over `tt-session`) first.
+  connect dialog, serial-port picker with live enumeration. **Next**, and now
+  unblocked.
 - **`~/.ssh/config`, `~/.ssh/known_hosts`, `~/.ssh/id_*`** — Tera Term lacks
   this and it is a major Linux adoption lever.
 - Session logging (timestamped, rotation).
@@ -381,6 +384,51 @@ Must be shippable and genuinely useful, not a demo.
 console work.
 
 Deliberately absent: file transfer, macros, tabs, Windows build, most settings.
+
+#### The C ABI is the seam, and it is now real
+
+`crates/tt-ffi/`, 2026-08-08. `libtermitta.so` and a generated
+`include/termitta.h`: session lifecycle, zero-copy row reads, the key and mouse
+input paths, serial connect with live port enumeration, and the drained event
+queue. Roughly forty functions, which is the whole of what a terminal window
+needs.
+
+**The design decision worth recording: the ABI takes its enums straight from
+the core crates.** `#[repr(u32)]` on `tt_vt::Key` rather than a `TtKey` here
+with a conversion table — so there is one list of the 55 key names, one list of
+parity values, and no mapping function that can be quietly wrong about which
+`F` key is which. The price is that reordering one of those Rust enums is an
+ABI break with no other symptom, so the generated header is **committed and CI
+fails on a diff**: the break becomes a review question instead of a runtime
+mystery. Same reasoning as the differential suite — put the check where a
+mistake is visible, not where it is plausible.
+
+Three things it cost to find, all in `CLAUDE.md`:
+
+- **cbindgen parses files, not crates, so privacy does not exist.** `tt-vt`'s
+  private `locator_flag` module put `PIXEL`, `ONE_SHOT` and `FILTERED` into the
+  public header, unprefixed, until they were excluded by name.
+- **`Builder::with_crate` runs `cargo metadata` from inside a build script**,
+  which can block on the package cache lock — and combined with `with_src` it
+  parses the crate twice and emits every declaration twice.
+- **`--test-threads=1` is per test binary.** Cargo runs the binaries
+  concurrently regardless, so the command both READMEs gave for the hardware
+  tests put `tt-conn`'s and `tt-session`'s suites on the same two ports at
+  once. It failed as a flaky `tt-conn` rather than as an overbooked rig.
+
+The test is `tests/abi.c`, compiled against the generated header with
+`-Wall -Wextra -Werror -pedantic` and linked against the shared library, plus
+the same header compiled as C++. A Rust test would prove the logic and nothing
+about the seam: it never compiles the header, never links the library, and
+cannot notice that a struct the frontend has to fill in is unreachable without
+a Rust type.
+
+Deliberately not exposed yet, each for a reason: the **settings surface**
+(`TtConfig` carries six fields, not `tt_vt::Config`'s thirty — those are
+`TERATERM.INI` keys and belong to Stage 2's generated schema, so transcribing
+them now would be work done twice, the second time as a deletion),
+**scrollback and selection** (`tt-session` has no viewport yet), and
+**connects for transports that do not exist**.
 
 #### First landing — the differential gate is live
 

@@ -48,7 +48,11 @@ pub enum DataBits {
 
 /// `ts.Parity` — `commlib.c:182`, all five values including the two Linux
 /// needs `CMSPAR` for.
+///
+/// `repr(u8)` here and on the two enums below: the C ABI names these
+/// variants directly rather than keeping a second copy. See `tt-ffi`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[repr(u8)]
 pub enum Parity {
     #[default]
     None,
@@ -69,6 +73,7 @@ pub enum StopBits {
 
 /// `ts.Flow` — `commlib.c:204`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[repr(u8)]
 pub enum FlowControl {
     #[default]
     None,
@@ -84,6 +89,7 @@ pub enum FlowControl {
 
 /// `dcb.fDtrControl` / `dcb.fRtsControl`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[repr(u8)]
 pub enum PinControl {
     /// `*_CONTROL_DISABLE` — hold the line low.
     Disable,

@@ -5,6 +5,7 @@
 //! which sequences to send, so a wrong entry here is not cosmetic.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[repr(u32)]
 pub enum TermId {
     #[default]
     Vt100,

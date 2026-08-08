@@ -1,0 +1,23 @@
+[package]
+name = "tt-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The flat C ABI over tt-session — what a frontend links against."
+
+# `termitta`, not `tt_ffi`: this is the shared library the Qt shell links, and
+# `-ltermitta` is what its CMakeLists will say. The rlib is here so Rust tests
+# can call the ABI without dlopen.
+[lib]
+name = "termitta"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+tt-conn.workspace = true
+tt-grid.workspace = true
+tt-session.workspace = true
+tt-vt.workspace = true
+
+[build-dependencies]
+cbindgen = { version = "0.29", default-features = false }

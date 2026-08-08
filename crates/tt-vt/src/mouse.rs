@@ -12,10 +12,15 @@
 
 /// `MouseReportMode` — `tttypes.h:650`.
 ///
+/// The `repr(u32)` on this and its neighbours is not decoration: the C ABI
+/// names these variants directly rather than keeping a second copy of the
+/// list that can drift. See `tt-ffi`.
+///
 /// One variable holds two unrelated protocols: the xterm family and DEC's
 /// locator. They are mutually exclusive upstream because they share this
 /// field, which is why `DECELR` and `DECSET 1000` cancel each other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[repr(u32)]
 pub enum Tracking {
     #[default]
     None,
@@ -41,6 +46,7 @@ pub enum Tracking {
 /// `MouseReportExtMode` — `tttypes.h:661`. How a report is spelled, chosen
 /// independently of which events are reported.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[repr(u32)]
 pub enum Encoding {
     /// The original `CSI M` form. One byte per field, offset by 32, so it
     /// cannot express a column past 223.
@@ -58,6 +64,7 @@ pub enum Encoding {
 
 /// `IdMouseEvent*` — `tttypes.h:668`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
 pub enum MouseEvent {
     /// Not a real event: DECRQLP asks the locator where it is.
     CurStat,
@@ -77,6 +84,7 @@ pub const BUTTON_RELEASE: u8 = 3;
 
 /// What `ShiftKey()`/`AltKey()`/`ControlKey()` would have answered.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(C)]
 pub struct Modifiers {
     pub shift: bool,
     pub alt: bool,

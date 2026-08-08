@@ -20,7 +20,11 @@
 /// A key with a terminal meaning. Names and grouping follow
 /// `common/tttypes_key.h`, so a `KEYBOARD.CNF` reader can map onto them
 /// directly.
+///
+/// `repr(u32)` is not decoration: the C ABI names these variants directly rather
+/// than keeping a second copy of the list that can drift. See `tt-ffi`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
 pub enum Key {
     Up,
     Down,

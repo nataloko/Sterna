@@ -55,8 +55,11 @@ already taken in the wild).
 
 cd crates                        # the Rust core
 cargo test && cargo clippy --all-targets -- -D warnings
+tt-ffi/run_abi.sh                # the C ABI, compiled and driven from C
 TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
   cargo test -p tt-conn -- --test-threads=1   # + the serial hardware tests
+TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
+  cargo test -p tt-session -- --test-threads=1   # one package at a time
 
 cd oracle
 make            # build build/oracle
@@ -258,6 +261,31 @@ And for the serial side:
   stop bytes already handed to the adapter; they turn up in the next test's
   first read and look like a bug in whatever it measures. `loopback.rs`
   settles the rig between tests.
+- **`--test-threads=1` is per test *binary*, and cargo runs the binaries
+  concurrently anyway.** So `cargo test -p tt-conn -p tt-session --
+  --test-threads=1` puts two hardware suites on the same two ports at the same
+  time, and one loses — `lock_uses_whatever_the_flow_control_implies` is
+  usually the one that reports it, which makes it look like a flaky `tt-conn`
+  rather than an overbooked rig. Run one package at a time. There is no cargo
+  flag for this; `--jobs` is about compilation.
+
+And for the C ABI:
+
+- **cbindgen parses files, not crates, so it cannot see `pub(crate)` or a
+  private module.** `tt-vt`'s private `locator_flag` put `PIXEL`, `ONE_SHOT`
+  and `FILTERED` into the public header, unprefixed, until they were excluded
+  by name in `cbindgen.toml`. Anything new and `pub const` in a parsed file
+  lands in the header; the committed-header diff is what catches it.
+- **`Builder::with_crate` runs `cargo metadata` from inside a build script**,
+  which can block on the package cache lock — and passing it *and*
+  `with_src("src/lib.rs")` parses the crate twice, emitting every declaration
+  twice. `tt-ffi/build.rs` lists source files and never calls `with_crate`.
+- **The header is the only place an ABI break shows up.** `TtKey`, `TtParity`
+  and `TtCell` come straight from the core crates rather than from a second
+  list here, which is the right trade — one list of key names, no mapping
+  table to get wrong — but it means reordering `tt_vt::Key` silently renumbers
+  the ABI. CI regenerates the header and fails on a diff, so it becomes a
+  review question instead of a runtime mystery.
 
 And for the desktop side:
 
@@ -333,7 +361,7 @@ oracle/          Tera Term's real VT engine, headless on Linux (see its README)
 xfer/            Stage 0 spike 2 — ttpfile's protocols, running and interoperating
 serial-audit/    Stage 0 spike 4 — serialport-rs vs commlib.c, on real hardware
 ssh-audit/       Stage 0 spike 5 — russh vs legacy SSH algorithms and auth
-crates/          Rust core — tt-grid, tt-vt, tt-conn, tt-dump (see its README)
+crates/          Rust core — tt-grid, tt-vt, tt-conn, tt-session, tt-ffi (see its README)
 run_diff.sh      the differential gate: Rust engine vs Tera Term, every case
 shell/           Qt 6 shell — not started
 vendor/          vendored Tera Term subsystems — empty, see ATTRIBUTION.md first

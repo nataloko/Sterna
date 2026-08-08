@@ -123,6 +123,17 @@ jobs:
       # so what runs here is the decoders and the enumeration.
       - name: Unit tests
         run: cd termitta/crates && cargo test --locked
+      # The C ABI has to be compiled and linked from C to mean anything: a
+      # Rust test never touches the header. This also regenerates it, so the
+      # check below is what keeps the committed copy honest — the ABI takes
+      # its enums straight from the core crates, and a reordered variant is
+      # invisible anywhere else.
+      - name: C ABI, from C
+        run: cd termitta/crates && ./tt-ffi/run_abi.sh
+      - name: The committed header matches the source
+        run: |
+          cd termitta
+          git diff --exit-code -- crates/tt-ffi/include/termitta.h
       # The gate that matters: every case in oracle/cases/ is fed to BOTH the
       # Rust engine and Tera Term's real one, and the two dumps must be
       # identical. No golden files are involved — the oracle is the expectation.

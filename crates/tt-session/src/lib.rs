@@ -273,6 +273,13 @@ impl Session {
         self.vt.mouse_tracking()
     }
 
+    /// Tell the core how big a character cell is, in pixels. Mouse reporting
+    /// is the only thing that reads it, and `DECSET 1016` reports pixels back
+    /// unconverted, which is why the number crosses the boundary at all.
+    pub fn set_cell_pixels(&mut self, w: i32, h: i32) {
+        self.vt.set_cell_pixels(w, h);
+    }
+
     /// Resize the terminal and tell the far end.
     ///
     /// Both halves matter and they are easy to separate by accident: a grid
