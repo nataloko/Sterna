@@ -76,7 +76,7 @@ impl Interp {
     /// The order of the two checks is upstream's and is visible: a trailing
     /// token gives `ErrSyntax` even with no terminal attached, where `send`
     /// would have said `ErrLinkFirst` first.
-    fn comm_cmd(&mut self, host: &mut dyn ScriptHost) -> TtlResult<()> {
+    pub(crate) fn comm_cmd(&mut self, host: &mut dyn ScriptHost) -> TtlResult<()> {
         self.end_of_line()?;
         if host.linked() {
             Ok(())
@@ -87,14 +87,14 @@ impl Interp {
 
     /// `TTLCommCmdInt` — one integer, which upstream renders to decimal and
     /// the terminal reads back with `atoi`.
-    fn comm_cmd_int(&mut self, host: &mut dyn ScriptHost) -> TtlResult<i32> {
+    pub(crate) fn comm_cmd_int(&mut self, host: &mut dyn ScriptHost) -> TtlResult<i32> {
         let v = expr::get_int_val(&mut self.lx, &mut self.vars)?;
         self.comm_cmd(host)?;
         Ok(v)
     }
 
     /// `TTLCommCmdFile` — one string, which must not be empty.
-    fn comm_cmd_file(&mut self, host: &mut dyn ScriptHost) -> TtlResult<Vec<u8>> {
+    pub(crate) fn comm_cmd_file(&mut self, host: &mut dyn ScriptHost) -> TtlResult<Vec<u8>> {
         let s = expr::get_str_val(&mut self.lx, &mut self.vars)?;
         if s.is_empty() {
             return Err(TtlError::Syntax);

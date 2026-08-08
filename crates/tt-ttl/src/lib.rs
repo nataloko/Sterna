@@ -23,6 +23,7 @@ pub mod files;
 pub mod host;
 pub mod interp;
 pub mod lexer;
+pub mod logcmds;
 pub mod pathcmds;
 pub mod rsv;
 pub mod sesscmds;
@@ -33,7 +34,7 @@ pub mod wait;
 pub use error::{TtlError, TtlResult};
 pub use host::{
     DialogAnchor, DialogEnd, DialogOrigin, DialogPos, ErrorReport, FlowControl, ListBoxOpts,
-    ModemLines, RecordingHost, ScriptHost, Xfer, XmodemOpt,
+    LogClock, LogInfo, LogOpen, LogRotate, ModemLines, RecordingHost, ScriptHost, Xfer, XmodemOpt,
 };
 pub use interp::Interp;
 pub use lexer::Lexer;

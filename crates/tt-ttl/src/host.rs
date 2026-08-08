@@ -378,6 +378,152 @@ pub trait ScriptHost {
     fn set_dialog_pos(&mut self, pos: Option<DialogPos>) {
         let _ = pos;
     }
+
+    // ---- session logging ----
+    //
+    // The log is the *terminal's*, not the macro's: upstream sends each of
+    // these over DDE to `filesys_log.cpp`, which is also where the file the
+    // user opened from the menu lives. So `logopen` from a macro and
+    // `File > Log` are one log and the second of them to run displaces the
+    // first — which is why `logopen` reports failure when one is already
+    // open rather than quietly opening a second.
+
+    /// `logopen` — start logging. `true` if the file was opened.
+    ///
+    /// Reported to the macro **inverted**: `result` is 0 for success and 1 for
+    /// failure, which is the opposite of every other command here and is what
+    /// the documentation promises.
+    fn log_open(&mut self, req: &LogOpen<'_>) -> Result<bool, TtlError> {
+        let _ = req;
+        Err(TtlError::NotSupported)
+    }
+
+    /// `logclose`. Closing a log that is not open is not an error.
+    fn log_close(&mut self) -> Result<(), TtlError> {
+        Err(TtlError::NotSupported)
+    }
+
+    /// `logpause` and `logstart` — stop and resume writing.
+    ///
+    /// What arrives while paused is **discarded**, not buffered
+    /// (`logpause.html`), so this is not a valve on a queue.
+    fn log_pause(&mut self, paused: bool) -> Result<(), TtlError> {
+        let _ = paused;
+        Err(TtlError::NotSupported)
+    }
+
+    /// `logwrite` — put a string into the log without it having come from the
+    /// far end. Works while paused, which is the point of it.
+    fn log_write(&mut self, s: &[u8]) -> Result<(), TtlError> {
+        let _ = s;
+        Err(TtlError::NotSupported)
+    }
+
+    /// `loginfo` — the open log's name and flags, or `None` when not logging.
+    fn log_info(&mut self) -> Result<Option<LogInfo>, TtlError> {
+        Err(TtlError::NotSupported)
+    }
+
+    /// `logrotate` — reconfigure rotation. It does not rotate anything now;
+    /// the documentation says so twice.
+    fn log_rotate(&mut self, how: LogRotate) -> Result<(), TtlError> {
+        let _ = how;
+        Err(TtlError::NotSupported)
+    }
+
+    /// `logautoclosemode` — whether the log closes when the **macro** ends.
+    ///
+    /// Not the connection. Upstream hangs it off the DDE conversation going
+    /// away (`ttdde.c:1340`), and clears the flag at the same time, so it
+    /// lasts one run and no longer — which the documentation calls out because
+    /// it surprises people.
+    fn log_auto_close(&mut self, on: bool) -> Result<(), TtlError> {
+        let _ = on;
+        Err(TtlError::NotSupported)
+    }
+}
+
+/// `logopen`'s arguments, in the order the command reads them.
+///
+/// The four flags after `append` are optional and each defaults to off, so a
+/// host sees the same struct however many the macro wrote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LogOpen<'a> {
+    /// As written. A bare name is relative to the macro's current directory,
+    /// which is `changedir`'s, not the process's.
+    pub path: &'a [u8],
+    /// Every byte as it arrived, escape sequences included.
+    pub binary: bool,
+    /// Add to the file rather than truncating it.
+    pub append: bool,
+    /// Drop non-printable ASCII.
+    pub plain_text: bool,
+    /// Prefix each line with a time.
+    pub timestamp: bool,
+    /// Do not show the log's progress window.
+    pub hide_dialog: bool,
+    /// Write the scrollback into the file before anything new.
+    pub include_screen: bool,
+    /// Which clock [`timestamp`](LogOpen::timestamp) reads.
+    pub timestamp_type: LogClock,
+}
+
+/// `logopen`'s `<timestamp type>` (`logopen.html`).
+///
+/// Not `tt_session::log::Timestamp`, for the reason [`FlowControl`] is not
+/// `tt_conn`'s: the numbering is the macro language's and this crate depends
+/// on nothing. Note there is no "none" here — that is the `timestamp` flag —
+/// and that upstream's two elapsed clocks measure from different events.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LogClock {
+    #[default]
+    Local,
+    Utc,
+    /// Since the log was opened.
+    ElapsedLog,
+    /// Since the connection came up.
+    ElapsedConnection,
+}
+
+impl LogClock {
+    /// 0 through 3. `logopen` rejects anything else, so `None` is unreachable
+    /// from a macro.
+    pub fn from_code(v: i32) -> Option<LogClock> {
+        match v {
+            0 => Some(LogClock::Local),
+            1 => Some(LogClock::Utc),
+            2 => Some(LogClock::ElapsedLog),
+            3 => Some(LogClock::ElapsedConnection),
+            _ => None,
+        }
+    }
+}
+
+/// What `loginfo` reports about an open log (`filesys_log.cpp:852`).
+///
+/// The five flags are the ones `logopen` was given, not what the log is doing
+/// now — pausing it does not show up here, and neither does the timestamp
+/// *type*.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogInfo {
+    pub path: Vec<u8>,
+    pub binary: bool,
+    pub append: bool,
+    pub plain_text: bool,
+    pub timestamp: bool,
+    pub hide_dialog: bool,
+}
+
+/// `logrotate`'s three forms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogRotate {
+    /// Rotate once the file passes this many bytes. At least 128, which the
+    /// command enforces; a `K` or `M` suffix has already been multiplied out.
+    Size(i32),
+    /// How many generations to keep, at least 1.
+    Keep(i32),
+    /// Stop rotating.
+    Halt,
 }
 
 /// How a modal dialog ended, and what it produced.
@@ -685,6 +831,13 @@ pub struct RecordingHost {
     pub file_replies: std::collections::VecDeque<Option<Vec<u8>>>,
     /// The last `setdlgpos`, or `None` if it asked for the default position.
     pub dialog_pos: Option<DialogPos>,
+
+    /// Every logging command, rendered, in order.
+    pub logs: Vec<String>,
+    /// Whether `logopen` should report that it opened the file.
+    pub log_open_fails: bool,
+    /// What `loginfo` should find. `None` is a terminal that is not logging.
+    pub log_info: Option<LogInfo>,
 }
 
 impl RecordingHost {
@@ -894,6 +1047,52 @@ impl ScriptHost for RecordingHost {
             None => "setdlgpos default".into(),
         });
         self.dialog_pos = pos;
+    }
+
+    fn log_open(&mut self, req: &LogOpen<'_>) -> Result<bool, TtlError> {
+        self.logs.push(format!(
+            "logopen {} binary={} append={} plain={} ts={} hide={} screen={} clock={:?}",
+            show(req.path),
+            req.binary as u8,
+            req.append as u8,
+            req.plain_text as u8,
+            req.timestamp as u8,
+            req.hide_dialog as u8,
+            req.include_screen as u8,
+            req.timestamp_type,
+        ));
+        Ok(!self.log_open_fails)
+    }
+
+    fn log_close(&mut self) -> Result<(), TtlError> {
+        self.logs.push("logclose".into());
+        Ok(())
+    }
+
+    fn log_pause(&mut self, paused: bool) -> Result<(), TtlError> {
+        self.logs
+            .push(if paused { "logpause" } else { "logstart" }.into());
+        Ok(())
+    }
+
+    fn log_write(&mut self, s: &[u8]) -> Result<(), TtlError> {
+        self.logs.push(format!("logwrite {}", show(s)));
+        Ok(())
+    }
+
+    fn log_info(&mut self) -> Result<Option<LogInfo>, TtlError> {
+        self.logs.push("loginfo".into());
+        Ok(self.log_info.clone())
+    }
+
+    fn log_rotate(&mut self, how: LogRotate) -> Result<(), TtlError> {
+        self.logs.push(format!("logrotate {how:?}"));
+        Ok(())
+    }
+
+    fn log_auto_close(&mut self, on: bool) -> Result<(), TtlError> {
+        self.logs.push(format!("logautoclosemode {}", on as u8));
+        Ok(())
     }
 }
 

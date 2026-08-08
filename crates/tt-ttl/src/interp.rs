@@ -468,6 +468,9 @@ impl Interp {
         if let Some(r) = self.dialog_command(host, w) {
             return r;
         }
+        if let Some(r) = self.log_command(host, w) {
+            return r;
+        }
         match w {
             // --- control flow ---
             Rsv::If => self.cmd_if(host),
