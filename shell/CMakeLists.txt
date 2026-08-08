@@ -1,0 +1,102 @@
+cmake_minimum_required(VERSION 3.21)
+project(termitta-shell VERSION 0.0.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_AUTOMOC ON)
+
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "" FORCE)
+endif()
+
+find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets)
+
+# --- the Rust core -----------------------------------------------------------
+#
+# Cargo is driven from here so one `cmake --build` produces a runnable shell,
+# and its target directory is *inside the CMake build tree* rather than the
+# workspace's own `crates/target`.
+#
+# That is not tidiness. The Qt work happens in the `termitta-fedora` container
+# (Qt 6.11.1, matching the desktop) while the core's tests run in the Ubuntu
+# one, and the two share a home directory — so a shared target directory would
+# hand a library linked against one distribution's glibc to a binary built on
+# the other. It works in one direction and fails confusingly in the other. A
+# build tree per container costs one extra compile of the core and removes the
+# question.
+
+set(TT_CORE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../crates")
+set(TT_CARGO_DIR "${CMAKE_BINARY_DIR}/cargo")
+
+find_program(CARGO_EXECUTABLE cargo
+    HINTS "$ENV{HOME}/.cargo/bin" "$ENV{CARGO_HOME}/bin")
+if(NOT CARGO_EXECUTABLE)
+    message(FATAL_ERROR
+        "cargo not found. It is on PATH only for login shells in the dev "
+        "container — export $HOME/.cargo/bin, or pass -DCARGO_EXECUTABLE=.")
+endif()
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(TT_CARGO_FLAGS "")
+    set(TT_CARGO_SUBDIR debug)
+else()
+    set(TT_CARGO_FLAGS --release)
+    set(TT_CARGO_SUBDIR release)
+endif()
+
+set(TT_CORE_LIB "${TT_CARGO_DIR}/${TT_CARGO_SUBDIR}/${CMAKE_SHARED_LIBRARY_PREFIX}termitta${CMAKE_SHARED_LIBRARY_SUFFIX}")
+
+# Always run: cargo does its own dependency tracking and is a no-op when
+# nothing changed, which is cheaper and more correct than globbing the
+# workspace's sources into a DEPENDS list that silently misses a new file.
+add_custom_target(tt_core ALL
+    BYPRODUCTS "${TT_CORE_LIB}"
+    COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${TT_CARGO_DIR}"
+            "${CARGO_EXECUTABLE}" build -p tt-ffi ${TT_CARGO_FLAGS}
+    WORKING_DIRECTORY "${TT_CORE_ROOT}"
+    COMMENT "cargo build -p tt-ffi"
+    USES_TERMINAL VERBATIM)
+
+add_library(termitta_core SHARED IMPORTED GLOBAL)
+set_target_properties(termitta_core PROPERTIES
+    IMPORTED_LOCATION "${TT_CORE_LIB}"
+    INTERFACE_INCLUDE_DIRECTORIES "${TT_CORE_ROOT}/tt-ffi/include")
+
+# --- the shell ---------------------------------------------------------------
+
+add_library(termitta_shell STATIC
+    src/MainWindow.cpp
+    src/TerminalView.cpp
+    src/Session.cpp
+    src/Theme.cpp
+    src/SerialDialog.cpp)
+
+add_dependencies(termitta_shell tt_core)
+target_link_libraries(termitta_shell PUBLIC Qt6::Widgets termitta_core)
+target_include_directories(termitta_shell PUBLIC src)
+target_compile_options(termitta_shell PRIVATE -Wall -Wextra)
+
+add_executable(termitta src/main.cpp)
+target_link_libraries(termitta PRIVATE termitta_shell)
+target_compile_options(termitta PRIVATE -Wall -Wextra)
+
+# --- tests -------------------------------------------------------------------
+#
+# The painter is the one part of the shell that nothing else can check: the
+# differential suite proves the *grid* matches Tera Term, and stops at the
+# point where cells become pixels. `QWidget::grab()` re-renders offscreen,
+# which is both what we want to test and the only screenshot that works here —
+# GNOME's screenshot D-Bus API is locked down and `QScreen::grabWindow` returns
+# blank under xcb and null under Wayland.
+
+enable_testing()
+
+add_executable(render_test tests/render_test.cpp)
+target_link_libraries(render_test PRIVATE termitta_shell)
+target_compile_options(render_test PRIVATE -Wall -Wextra)
+add_test(NAME render COMMAND render_test)
+
+# So the build tree runs without LD_LIBRARY_PATH. An installed build gets a
+# real rpath when there is packaging to hang it off; there is not yet.
+set_target_properties(termitta render_test PROPERTIES
+    BUILD_RPATH "${TT_CARGO_DIR}/${TT_CARGO_SUBDIR}")
