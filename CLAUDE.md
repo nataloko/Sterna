@@ -765,7 +765,9 @@ crates/fuzz/     the libFuzzer targets — nightly, weekly in CI
 bench/           the perf gate: a floor in CI, a baseline locally (see README)
 run_diff.sh      the differential gate: Rust engine vs Tera Term, every case
 shell/           Qt 6 shell — one window on the C ABI (see its README)
-vendor/          vendored Tera Term subsystems — empty, see ATTRIBUTION.md first
+winshim/         what Tera Term's C needs from Windows — shared by the three
+                 things that compile it (see its README)
+vendor/          vendored Tera Term subsystems — see ATTRIBUTION.md first
 ```
 
 None of `xfer/`, `serial-audit/` or `ssh-audit/` is throwaway. They become the
@@ -776,7 +778,9 @@ spike sections is reproducible from them.
 ports and creates a throwaway `termitta-test` account. **Run `./servers.sh stop`
 when done** — that is what removes the account.
 
-**`oracle/winshim/` is shared, not oracle-private.** `xfer/` builds against it
-too. Adding to it is usually right — the Win32 surface the protocols needed
-turned out to be a subset of the VT engine's — but **re-run `oracle/run_tests.sh`
-after touching it**, because the oracle is the thing that must not regress.
+**`winshim/` is shared by three consumers** — `oracle/`, `xfer/` and
+`crates/tt-xfer/`. It was `oracle/winshim/` until the third arrived; a shipped
+crate must not reach into the test harness for its build. Adding to it is
+usually right — the Win32 surface the protocols needed turned out to be a
+subset of the VT engine's — but **re-run `oracle/run_tests.sh` after touching
+it**, because the oracle is the thing that must not regress.

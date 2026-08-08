@@ -123,6 +123,6 @@ Each of these cost real debugging time, and each looks like something else.
 ## Dependencies
 
 `gcc`, `make`, and for the interop suite `lrzsz` and `gkermit`. Shares
-`../oracle/winshim` — the Win32 surface these protocols need turned out to be a
+`../winshim` — the Win32 surface these protocols need turned out to be a
 subset of what the VT engine already needed, plus `MessageBox` and MSVC's
 `stat`.

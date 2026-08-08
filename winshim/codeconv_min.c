@@ -1,9 +1,11 @@
 /*
- * termitta oracle — minimal codeconv.
+ * Minimal codeconv.
  *
  * Tera Term's common/codeconv.cpp does not compile off Windows: it leans on
  * GetACP() and the Win32 codepage converters. But vtterm.c and buffer.c only
  * need eight of its entry points, and most are pure Unicode transforms.
+ * ttpfile/protolog.cpp needs two of the same ones for its path handling,
+ * which is why this sits beside the Win32 shim rather than inside the oracle.
  *
  * UTF32ToUTF16 in particular is NOT optional. buffer.c:234 calls it to fill
  * buff_char_t::wc2, and expand_wchar() reads back from wc2 — so a stub that

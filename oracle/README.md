@@ -63,13 +63,13 @@ oracle can lie, and this README has three worked examples of it doing so.
 ## Layout
 
 ```
-winshim/     A <windows.h> that is types-and-three-functions, not an emulation.
-             Plus MSVC Secure CRT (strncpy_s, _snprintf_s_l, ...) and swscanf_s.
+../winshim/  The portability layer, shared with xfer/ and crates/tt-xfer/:
+             a <windows.h> that is types-and-three-functions rather than an
+             emulation, MSVC's Secure CRT, and codeconv_min.c.
 src/
   main.c              runner + the dump format
   stubs_manual.c      symbols whose behaviour the grid observes -- REAL logic
   stubs_generated.c   no-op stubs, generated; do not edit
-  codeconv_min.c      the eight codeconv entry points that are actually needed
 patches/     Local fixes to Tera Term, applied to a COPY under build/patched/.
 cases/       Regression cases: input + golden dump.
 ```

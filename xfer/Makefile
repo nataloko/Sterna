@@ -1,10 +1,10 @@
 # termitta xfer — Tera Term's real file-transfer protocols, running on Linux.
 #
-# Shares oracle/winshim: the Win32 surface these protocols need is a subset of
+# Shares ../winshim: the Win32 surface these protocols need is a subset of
 # what the VT engine already needed. See README.md.
 
 TT      ?= ../../teraterm/teraterm
-SHIM    ?= ../oracle/winshim
+SHIM    ?= ../winshim
 BUILD   ?= build
 
 # Compiled UNMODIFIED, exactly as found in the Tera Term tree.
@@ -18,15 +18,14 @@ TT_C    := $(TT)/ttpfile/xmodem.c \
 TT_CXX  := $(TT)/ttpfile/protolog.cpp \
            $(TT)/common/asprintf.cpp
 
-# protolog.cpp converts paths through Tera Term's codeconv; the oracle already
+# protolog.cpp converts paths through Tera Term's codeconv; the shim already
 # carries the minimal subset of that, so share it rather than write a second.
-ORACLE_C := ../oracle/src/codeconv_min.c
-
-SHIM_C  := $(SHIM)/winshim.c $(SHIM)/msvc_crt.c $(SHIM)/swscanf_s.c
+SHIM_C  := $(SHIM)/winshim.c $(SHIM)/msvc_crt.c $(SHIM)/swscanf_s.c \
+           $(SHIM)/codeconv_min.c
 OURS    := src/main.c src/comm_fd.c src/fileio_posix.c src/host.c
 
 INCLUDES := -include $(SHIM)/msvc_compat.h -I$(SHIM) -Isrc \
-            -I$(TT)/common -I$(TT)/teraterm -I$(TT)/ttpfile -I../oracle/src
+            -I$(TT)/common -I$(TT)/teraterm -I$(TT)/ttpfile
 
 # -w for Tera Term's own sources: someone else's code, another compiler.
 CFLAGS   := -std=gnu99 -O1 -g $(INCLUDES) -w
@@ -36,10 +35,9 @@ OURFLAGS := -std=gnu99 -O1 -g $(INCLUDES) -Wall -Wextra -Wno-unused-parameter
 OBJS := $(addprefix $(BUILD)/,$(notdir $(TT_C:.c=.o))) \
         $(addprefix $(BUILD)/,$(notdir $(TT_CXX:.cpp=.o))) \
         $(addprefix $(BUILD)/,$(notdir $(SHIM_C:.c=.o))) \
-        $(addprefix $(BUILD)/,$(notdir $(ORACLE_C:.c=.o))) \
         $(addprefix $(BUILD)/,$(notdir $(OURS:.c=.o)))
 
-VPATH := $(TT)/ttpfile:$(TT)/common:$(SHIM):src:../oracle/src
+VPATH := $(TT)/ttpfile:$(TT)/common:$(SHIM):src
 
 .PHONY: all clean test
 all: $(BUILD)/xfer

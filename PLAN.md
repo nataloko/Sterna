@@ -251,7 +251,7 @@ at essentially full line rate, so this is not a pty artifact.
 
 The entire Win32 portability gap was **three things** — `MB_*` constants,
 `struct _stati64`, `_S_IFREG` — plus five Secure-CRT functions. All went into
-the oracle's existing `winshim`, which turned out to already cover most of what
+the shared `winshim`, which turned out to already cover most of what
 the protocols need; the VT engine had needed a superset.
 
 Structurally the protocols attach through **three vtables and six external

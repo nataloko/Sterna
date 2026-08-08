@@ -4,6 +4,7 @@
 # this and to the Rust reimplementation, diff the grid dumps. See README.md.
 
 TT      ?= ../../teraterm/teraterm
+SHIMDIR ?= ../winshim
 BUILD   ?= build
 
 # Tera Term sources compiled UNMODIFIED. Adding to this list is always
@@ -23,11 +24,13 @@ TT_CXX  := $(TT)/teraterm/charset.cpp \
 # the Tera Term tree itself is never modified. See patches/ and apply_patches.py.
 TT_PATCHED := buffer.c vtterm.c
 
-SHIM    := winshim/winshim.c winshim/msvc_crt.c winshim/swscanf_s.c
-HARNESS := src/stubs_manual.c src/codeconv_min.c src/keys.c \
-           src/stubs_generated.c src/main.c
+# ../winshim is shared with xfer/ and crates/tt-xfer/, which is why it is not
+# under oracle/ any more: a shipped crate must not reach into the test oracle.
+SHIM    := $(SHIMDIR)/winshim.c $(SHIMDIR)/msvc_crt.c $(SHIMDIR)/swscanf_s.c \
+           $(SHIMDIR)/codeconv_min.c
+HARNESS := src/stubs_manual.c src/keys.c src/stubs_generated.c src/main.c
 
-INCLUDES := -include winshim/msvc_compat.h -Iwinshim -Isrc \
+INCLUDES := -include $(SHIMDIR)/msvc_compat.h -I$(SHIMDIR) -Isrc \
             -I$(TT)/common -I$(TT)/teraterm
 
 # -w because these are someone else's sources built for a different compiler;
@@ -42,7 +45,7 @@ OBJS := $(addprefix $(BUILD)/,$(notdir $(TT_C:.c=.o))) \
         $(addprefix $(BUILD)/,$(notdir $(SHIM:.c=.o))) \
         $(addprefix $(BUILD)/,$(notdir $(HARNESS:.c=.o)))
 
-VPATH := $(TT)/teraterm:$(TT)/common:winshim:src
+VPATH := $(TT)/teraterm:$(TT)/common:$(SHIMDIR):src
 
 .PHONY: all clean test stubs
 all: $(BUILD)/oracle
