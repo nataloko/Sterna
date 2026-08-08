@@ -8,6 +8,7 @@ members = [
     "tt-session",
     "tt-config",
     "tt-xfer",
+    "tt-ttl",
     "tt-ffi",
     "tt-dump",
     "tt-host",
@@ -34,4 +35,5 @@ tt-conn = { path = "tt-conn" }
 tt-session = { path = "tt-session" }
 tt-config = { path = "tt-config" }
 tt-xfer = { path = "tt-xfer" }
+tt-ttl = { path = "tt-ttl" }
 tt-ffi = { path = "tt-ffi" }

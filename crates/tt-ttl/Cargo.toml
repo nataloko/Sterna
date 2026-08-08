@@ -1,0 +1,9 @@
+[package]
+name = "tt-ttl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Tera Term's TTL macro language, as an interpreter with no window in it"
+
+[dependencies]
