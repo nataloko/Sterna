@@ -22,5 +22,17 @@ sha2 = "0.11"
 russh = { version = "0.62", features = ["des", "dsa"] }
 tokio = { version = "1", features = ["rt", "net", "io-util", "time", "sync", "macros"] }
 
+# The local shell. Adopted for the two things that are actually hard and
+# actually platform-specific — the `setsid`/`TIOCSCTTY` dance in the forked
+# child, and ConPTY when Stage 3 arrives. It drags in `serial2`, a *second*
+# serial-port crate, unconditionally and with no feature to turn it off; see
+# `README.md` for why that is accepted rather than fixed.
+portable-pty = "0.9"
+
 [target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(unix)'.dev-dependencies]
+# The pty tests poll the descriptor and check the child is gone, which is the
+# frontend's own event loop in miniature.
 libc = "0.2"

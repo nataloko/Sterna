@@ -3,7 +3,7 @@
 //! Serial first, because it is the differentiator: `minicom` and `picocom`
 //! have no GUI and no scripting, PuTTY has serial but neither scripting nor
 //! file transfer, and the one tool that covers this ground is closed and paid.
-//! SSH (`russh`), telnet and a local pty follow.
+//! SSH (`russh`), telnet and a local pty (`portable-pty`) follow.
 //!
 //! The serial layer is built against the requirement in Tera Term's
 //! `commlib.c` rather than against a generic idea of what a serial port does.
@@ -26,6 +26,7 @@
 //! ```
 
 pub mod error;
+pub mod pty;
 pub mod serial;
 pub mod ssh;
 pub mod telnet;
