@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 43
+**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 45
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -268,6 +268,35 @@ and disk-full want a fault-injecting transport, which is Stage 2 work. See
 `xfer/README.md` for the traps, several of which are silent-stall or core-dump
 shaped.
 
+#### `tt-conn` — the serial transport is built
+
+`crates/tt-conn/`, 2026-08-08. Everything spike 4 specified, exercised by 15
+tests against the FTDI loopback rig (they skip loudly without
+`TT_SERIAL_A`/`TT_SERIAL_B`, so CI stays green without hardware rather than
+pretending). Written against `commlib.c`'s DCB fields one by one, which is why
+it has MARK/SPACE parity and DSR flow control at all.
+
+Three things the tests found that the spike had not:
+
+- **`serialport-rs` reports a *busy* port as `ErrorKind::NoDevice`** — message
+  "Device or resource busy", no errno. The obvious mapping tells a user with
+  `minicom` open in another window that their adapter was unplugged, for the
+  single most common serial failure there is. Separated by asking whether the
+  device node still exists, not by matching the crate's message text.
+- **`tcsetattr` succeeding does not mean the driver applied it.** `CS6` is
+  refused with `EINVAL`, which is fine; **`CS5` is accepted and ignored**, with
+  eight bits still on the wire. The layer reads the setting back and refuses,
+  because a settings dialog reporting five bits over an eight-bit wire produces
+  corruption that looks like a cabling fault.
+- **`flush` cannot be `tcdrain`.** Flow control holds the output queue
+  indefinitely, so a flush from a UI thread with CTS low is a frozen
+  application — and that is not an edge case, it is what backpressure looks
+  like. `TIOCOUTQ` is polled against a deadline instead.
+
+Deferred deliberately: async. `tokio` belongs here eventually and `russh` will
+require it, but inventing the async shape before the second transport exists
+would be guessing at a seam that is currently a byte-stream API.
+
 #### Spike 4 result — adopt `serialport-rs`, with a thin patch layer
 
 Audited 2026-08-07 against an FTDI Quad RS232-HS with two ports wired
@@ -332,9 +361,10 @@ Must be shippable and genuinely useful, not a demo.
   remains is selection, which is a frontend concept the grid only has to
   support.
 - `tt-conn`: **serial first** (the differentiator), then SSH2 via `russh`, then
-  telnet, then local PTY via `portable-pty`. Serial is `serialport-rs` plus the
-  patch layer spike 4 specified: `CMSPAR` parity, `PARMRK` break detection,
-  `VSTART`/`VSTOP`, a userspace DSR-flow shim, and by-path port identity.
+  telnet, then local PTY via `portable-pty`. 🔵 **serial done** — the patch
+  layer spike 4 specified is built and green on the loopback rig: `CMSPAR`
+  parity, `PARMRK` break detection, `VSTART`/`VSTOP`, a userspace DSR-flow
+  shim, and by-path port identity. See `crates/tt-conn/README.md`.
 - Qt shell: one window, grid painter, clipboard, font/colour config,
   connect dialog, serial-port picker with live enumeration.
 - **`~/.ssh/config`, `~/.ssh/known_hosts`, `~/.ssh/id_*`** — Tera Term lacks

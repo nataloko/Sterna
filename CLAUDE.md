@@ -55,6 +55,8 @@ already taken in the wild).
 
 cd crates                        # the Rust core
 cargo test && cargo clippy --all-targets -- -D warnings
+TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
+  cargo test -p tt-conn -- --test-threads=1   # + the serial hardware tests
 
 cd oracle
 make            # build build/oracle
@@ -237,6 +239,26 @@ something other than what it is.
   index. When a manual stub reimplements upstream logic, diff it against the
   original — `vtdisp.c` is not compiled into the oracle, so nothing else will.
 
+And for the serial side:
+
+- **`tcsetattr` returns success if it could apply *any* of what you asked.**
+  The FTDI accepts `CS5` and then transmits eight bits anyway. Read settings
+  back before believing them; `tt-conn`'s `set_data_bits` does.
+- **`serialport-rs` calls a busy port `ErrorKind::NoDevice`**, so the naive
+  mapping says "unplugged" when the truth is "`minicom` is still running".
+  Both that and the `BrokenPipe`-means-disconnect mapping are wrapped in
+  `tt-conn/src/error.rs` — one place to fix.
+- **Never call `tcdrain` from a thread that must stay responsive.** Flow
+  control can hold the output queue forever. `tt-conn::SerialConn::flush` takes
+  a timeout and polls `TIOCOUTQ`.
+- **A test byte with bit 7 set cannot tell 7 data bits from 8.** At seven bits
+  the stop bit lands in bit 7, so `0xA5` round-trips as `0xA5` either way and
+  the test passes whatever the port is doing. Use `0x25`.
+- **Ports left in flight leak into the next test.** Closing a port does not
+  stop bytes already handed to the adapter; they turn up in the next test's
+  first read and look like a bug in whatever it measures. `loopback.rs`
+  settles the rig between tests.
+
 And for the desktop side:
 
 - **The container's Qt is 6.4.2; the desktop's is 6.11.1.** Seven releases apart.
@@ -311,7 +333,7 @@ oracle/          Tera Term's real VT engine, headless on Linux (see its README)
 xfer/            Stage 0 spike 2 — ttpfile's protocols, running and interoperating
 serial-audit/    Stage 0 spike 4 — serialport-rs vs commlib.c, on real hardware
 ssh-audit/       Stage 0 spike 5 — russh vs legacy SSH algorithms and auth
-crates/          Rust core — tt-grid, tt-vt, tt-dump (see its README)
+crates/          Rust core — tt-grid, tt-vt, tt-conn, tt-dump (see its README)
 run_diff.sh      the differential gate: Rust engine vs Tera Term, every case
 shell/           Qt 6 shell — not started
 vendor/          vendored Tera Term subsystems — empty, see ATTRIBUTION.md first
