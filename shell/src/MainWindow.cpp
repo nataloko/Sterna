@@ -16,6 +16,8 @@
 
 #include "SerialDialog.h"
 #include "Session.h"
+#include "SshDialog.h"
+#include "SshPrompts.h"
 #include "TerminalView.h"
 
 namespace {
@@ -66,6 +68,10 @@ MainWindow::MainWindow()
     connect(m_session, &Session::notice, this, &MainWindow::onNotice);
     connect(m_session, &Session::connectionChanged, this,
             &MainWindow::onConnectionChanged);
+    connect(m_session, &Session::sshHostKeyWanted, this,
+            &MainWindow::onSshHostKeyWanted);
+    connect(m_session, &Session::sshAuthWanted, this, &MainWindow::onSshAuthWanted);
+    connect(m_session, &Session::sshFailed, this, &MainWindow::onSshFailed);
 
     buildMenus();
     updateStatus();
@@ -82,6 +88,7 @@ void MainWindow::buildMenus()
     QMenu *file = menuBar()->addMenu(tr("File"));
     file->addAction(tr("Connect to serial port..."), QKeySequence(Qt::ALT | Qt::Key_N),
                     this, &MainWindow::showConnectDialog);
+    file->addAction(tr("Connect over SSH..."), this, &MainWindow::showSshDialog);
     m_disconnectAction = file->addAction(tr("Disconnect"), this,
                                          &MainWindow::disconnectPort);
     file->addSeparator();
@@ -130,6 +137,85 @@ void MainWindow::connectSerial(const QString &path, const TtSerialParams &params
     }
     m_lastPort = path;
     m_lastParams = params;
+    updateStatus();
+}
+
+void MainWindow::showSshDialog()
+{
+    SshDialog dialog(this);
+    dialog.setInitial(m_lastSshHost, m_lastSshUser, m_lastSshPort,
+                      m_lastSshIdentity, m_lastSshLegacy);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    if (dialog.host().isEmpty()) {
+        QMessageBox::warning(this, tr("SSH"), tr("Enter a host to connect to."));
+        return;
+    }
+
+    TtSshParams params;
+    dialog.fill(&params);
+    QString error;
+    if (!m_session->startSsh(params, &error)) {
+        QMessageBox::critical(this, tr("SSH"),
+                              tr("Could not start the connection.\n\n%1").arg(error));
+        return;
+    }
+    m_lastSshHost = dialog.host();
+    statusBar()->showMessage(tr("Connecting to %1...").arg(m_lastSshHost));
+    updateStatus();
+}
+
+void MainWindow::connectSsh(const QString &host, const QString &user, int port)
+{
+    TtSshParams params;
+    tt_ssh_params_default(&params);
+    const QByteArray hostUtf8 = host.toUtf8();
+    const QByteArray userUtf8 = user.toUtf8();
+    params.host = hostUtf8.constData();
+    // Blank means "whatever ~/.ssh/config says", which is not the same as
+    // empty — so it stays null rather than pointing at "".
+    params.user = user.isEmpty() ? nullptr : userUtf8.constData();
+    params.port = static_cast<uint16_t>(port);
+
+    QString error;
+    if (!m_session->startSsh(params, &error)) {
+        QMessageBox::critical(this, tr("SSH"),
+                              tr("Could not start the connection.\n\n%1").arg(error));
+        return;
+    }
+    m_lastSshHost = host;
+    m_lastSshUser = user;
+    m_lastSshPort = port;
+    statusBar()->showMessage(tr("Connecting to %1...").arg(host));
+    updateStatus();
+}
+
+void MainWindow::onSshHostKeyWanted(const HostKeyRequest &request)
+{
+    HostKeyDialog dialog(request, this);
+    dialog.exec();
+    m_session->answerHostKey(dialog.decision());
+}
+
+void MainWindow::onSshAuthWanted(const AuthRequest &request)
+{
+    AuthDialog dialog(request, this);
+    if (dialog.exec() != QDialog::Accepted) {
+        // Cancelling has to end the attempt rather than send empty strings:
+        // a device that counts failures should not be walked toward a lockout
+        // by someone who changed their mind.
+        m_session->cancelSsh();
+        statusBar()->showMessage(tr("Connection cancelled"), 5000);
+        updateStatus();
+        return;
+    }
+    m_session->answerAuth(dialog.answers());
+}
+
+void MainWindow::onSshFailed(const QString &error)
+{
+    QMessageBox::critical(this, tr("SSH"), error);
     updateStatus();
 }
 
@@ -244,11 +330,20 @@ void MainWindow::updateStatus()
     updateLogStatus();
 
     const bool connected = m_session->isConnected();
-    m_status->setText(connected ? m_session->describe() : tr("not connected"));
+    const bool connecting = m_session->isConnecting();
+    m_status->setText(connected ? m_session->describe()
+                      : connecting ? tr("connecting...")
+                                   : tr("not connected"));
     if (m_disconnectAction) {
-        m_disconnectAction->setEnabled(connected);
+        // Enabled while connecting too: stopping an attempt that is waiting on
+        // a slow key exchange is a thing people need to be able to do.
+        m_disconnectAction->setEnabled(connected || connecting);
     }
     if (m_breakAction) {
-        m_breakAction->setEnabled(connected);
+        // Asked of the core rather than inferred from the transport: SSH has
+        // no break — RFC 4335 defines one and russh does not implement it —
+        // and offering the item anyway offers an error message at the moment
+        // a console has stopped answering.
+        m_breakAction->setEnabled(m_session->supportsBreak());
     }
 }

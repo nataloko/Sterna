@@ -12,9 +12,20 @@ distrobox-host-exec distrobox enter termitta-fedora --no-tty -- bash -lc '
   cd ~/Projects/termitta/shell
   cmake -S . -B build -G Ninja && cmake --build build
   ./build/render_test            # the painter, against grabbed pixels
+  ./build/ssh_test               # the window's event loop, against a real server
+  ./build/ssh_test --write /tmp  # ...and the four SSH dialogs, as PNGs
   ./build/termitta --port /dev/ttyUSB0 --baud 115200
+  ./build/termitta myrouter      # an alias out of ~/.ssh/config
 '
 ```
+
+`ssh_test` needs a server and skips loudly without one — start `ssh-audit`'s
+(`cd ssh-audit && ./servers.sh start`) and set `TT_SSH_HOST`, `TT_SSH_PORT`,
+`TT_SSH_USER` and `TT_SSH_KEY`. It is the only thing that drives the *window's*
+event loop against a real connection: the core's own SSH tests poll in a busy
+loop, so this is what would notice a `QSocketNotifier` on the wrong descriptor
+or the handover from connection to session losing a wakeup — which looks like a
+window that connects and then shows nothing.
 
 CMake drives cargo, so one build command produces a runnable binary. Its
 `CARGO_TARGET_DIR` is inside the CMake build tree rather than `crates/target`
@@ -196,6 +207,54 @@ Text mode strips escape sequences because the *parser* does — the tap is insid
 silently untimestamped, which is upstream's rule and the right one: a `[time] `
 in the middle of a byte capture makes it no longer replayable.
 
+## Connecting over SSH is a conversation, not a call
+
+Everything else the shell does to the core is a function that returns. SSH is
+not: the far end asks whether its host key is acceptable, then what the
+password is, and the answers come from a person. So `Session::startSsh` returns
+as soon as the attempt is under way, the questions arrive as signals, and
+`answerHostKey` / `answerAuth` reply whenever the dialog closes.
+
+Three things about that are worth knowing before changing it.
+
+**A dialog spins a nested event loop.** The notifier fires again while one is
+open, so `Session::pollSsh` guards with `m_sshWaiting`: without it the poll
+re-enters, invalidates the borrowed strings the open dialog is showing, and
+asks the same question twice.
+
+**The prompts are copied out of the ABI, not held.** Everything
+`tt_ssh_connect_host_key` hands back dies at the next poll, and the dialog
+outlives that. `HostKeyRequest` and `AuthRequest` are the copies.
+
+**One descriptor spans the handover.** `tt_ssh_connect_poll_fd` and
+`tt_session_poll_fd` return the same fd, so `Session::rearm` asks whichever
+owns it now and the `QSocketNotifier` never has to be replaced at the moment
+output starts.
+
+Cancelling an authentication dialog ends the attempt rather than sending empty
+strings: a device that counts failures should not be walked toward a lockout by
+someone who changed their mind.
+
+### The host-key dialog says different things for different reasons
+
+A first connection, a key of a new type, and a key that *changed* are three
+different events, and presenting them the same way is how users learn to click
+through the one that matters. A changed key gets the critical icon, defaults to
+Disconnect, shows both fingerprints one above the other for comparison, and has
+"Accept and remember" **disabled** — remembering it would overwrite the only
+evidence that it changed, and Return should not be able to do that.
+
+"Accept once" is the third button, and it is not padding. "Yes, but do not
+write it down" is what someone on a network they do not trust means.
+
+### Break is not offered over SSH
+
+`tt_session_supports_break` decides whether the menu item is enabled, rather
+than the window guessing from the transport. RFC 4335 defines a break request
+and `russh` does not implement it, and a break is what someone reaches for when
+a console has stopped answering — the worst possible moment to find out the
+menu item was decorative.
+
 ## Not here yet
 
 - **Word and line selection on double and triple click**, which wants the same
@@ -207,5 +266,10 @@ in the middle of a byte capture makes it no longer replayable.
   having one.
 - **Session profiles.** The dialog remembers the last port and settings for the
   lifetime of the window. Saving them is Stage 2's, with the INI reader.
-- **SSH, telnet and pty**, each of which adds one connect path and, for SSH, the
-  prompt lifecycle `PLAN.md` describes.
+- **Telnet and pty**, each of which adds one connect path.
+- **A host-key manager.** Removing a changed key still means editing
+  `~/.ssh/known_hosts` by hand — the dialog says which file and which line, and
+  that is as far as it goes.
+- **Saved SSH sessions.** The dialog remembers the last host for the lifetime
+  of the window, and `~/.ssh/config` covers the rest. Profiles on disk are
+  Stage 2's, with the INI reader.

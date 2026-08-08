@@ -3,6 +3,7 @@
 #include "Session.h"
 
 #include <QSocketNotifier>
+#include <QStringList>
 #include <QTimer>
 
 namespace {
@@ -37,11 +38,14 @@ Session::Session(int cols, int rows, QObject *parent)
 
 Session::~Session()
 {
-    // Order matters: the notifier watches a descriptor the session owns, and
-    // freeing the session closes it. A notifier left armed on a closed
-    // descriptor is a warning at best and a busy loop at worst.
+    // Order matters: the notifier watches a descriptor the session or the
+    // pending connection owns, and freeing either closes it. A notifier left
+    // armed on a closed descriptor is a warning at best and a busy loop at
+    // worst.
     delete m_notifier;
     m_notifier = nullptr;
+    tt_ssh_connect_free(m_ssh);
+    m_ssh = nullptr;
     tt_session_free(m_session);
 }
 
@@ -98,6 +102,8 @@ bool Session::backspaceSendsBs() const
 
 bool Session::isConnected() const { return tt_session_is_connected(m_session); }
 
+bool Session::supportsBreak() const { return tt_session_supports_break(m_session); }
+
 QString Session::describe() const
 {
     const char *d = tt_session_describe(m_session);
@@ -121,6 +127,9 @@ bool Session::connectSerial(const QString &path, const TtSerialParams &params,
 
 void Session::disconnectPort()
 {
+    // A connection still being set up is a connection: "Disconnect" while a
+    // password dialog is open has to stop the attempt, not do nothing.
+    cancelSsh();
     // Drop the notifier first — `tt_session_disconnect` closes the descriptor
     // it is watching.
     delete m_notifier;
@@ -128,6 +137,162 @@ void Session::disconnectPort()
     tt_session_disconnect(m_session);
     rearm();
     emit connectionChanged();
+}
+
+// --- ssh ---------------------------------------------------------------------
+
+bool Session::startSsh(const TtSshParams &params, QString *outError)
+{
+    cancelSsh();
+    m_ssh = tt_ssh_connect(&params);
+    if (!m_ssh) {
+        if (outError) {
+            *outError = QString::fromUtf8(tt_last_error());
+        }
+        return false;
+    }
+    // The descriptor moves from the connection to the session at the moment
+    // the shell starts, and it is the *same* descriptor — so `rearm` keeps
+    // the notifier it already has rather than swapping one in mid-burst.
+    rearm();
+    // Nothing will have happened yet, but polling once costs a function call
+    // and covers the case where it already has.
+    pollSsh();
+    return true;
+}
+
+void Session::cancelSsh()
+{
+    if (!m_ssh) {
+        return;
+    }
+    // Freeing the handle stops the attempt, and the descriptor it owns goes
+    // with it — so the notifier has to go first.
+    delete m_notifier;
+    m_notifier = nullptr;
+    endSsh();
+    rearm();
+}
+
+void Session::endSsh()
+{
+    tt_ssh_connect_free(m_ssh);
+    m_ssh = nullptr;
+    m_sshWaiting = false;
+}
+
+void Session::answerHostKey(int decision)
+{
+    if (!m_ssh) {
+        return;
+    }
+    tt_ssh_connect_answer_host_key(m_ssh, decision);
+    m_sshWaiting = false;
+    pollSsh();
+}
+
+void Session::answerAuth(const QStringList &answers)
+{
+    if (!m_ssh) {
+        return;
+    }
+    QVector<QByteArray> utf8;
+    QVector<const char *> ptrs;
+    utf8.reserve(answers.size());
+    ptrs.reserve(answers.size());
+    for (const QString &a : answers) {
+        utf8.append(a.toUtf8());
+    }
+    // Two passes: `utf8` must stop reallocating before any pointer into it is
+    // taken, or every earlier one dangles.
+    for (const QByteArray &a : utf8) {
+        ptrs.append(a.constData());
+    }
+    tt_ssh_connect_answer_auth(m_ssh, ptrs.constData(),
+                               static_cast<size_t>(ptrs.size()));
+    m_sshWaiting = false;
+    pollSsh();
+}
+
+void Session::pollSsh()
+{
+    // A dialog spins a nested event loop, so the notifier fires again while
+    // one is open. Re-entering here would invalidate the strings that dialog
+    // is showing and ask the same question twice.
+    if (!m_ssh || m_sshWaiting) {
+        return;
+    }
+    for (;;) {
+        const TtSshStep step = tt_ssh_connect_poll(m_ssh, m_session);
+        if (step == TT_SSH_WORKING) {
+            return;
+        }
+        if (step == TT_SSH_HOST_KEY) {
+            const TtSshHostKeyPrompt *p = tt_ssh_connect_host_key(m_ssh);
+            if (!p) {
+                return;
+            }
+            // Copied out, because everything the ABI handed back dies at the
+            // next poll and the dialog outlives it.
+            HostKeyRequest r;
+            r.host = QString::fromUtf8(p->host);
+            r.port = p->port;
+            r.algorithm = QString::fromUtf8(p->algorithm);
+            r.fingerprint = QString::fromUtf8(p->fingerprint);
+            r.verdict = p->verdict;
+            if (p->recorded_at) {
+                r.recordedAt = QString::fromUtf8(p->recorded_at);
+            }
+            if (p->recorded_fingerprint) {
+                r.recordedFingerprint = QString::fromUtf8(p->recorded_fingerprint);
+            }
+            if (p->also_known) {
+                r.alsoKnown = QString::fromUtf8(p->also_known);
+            }
+            m_sshWaiting = true;
+            emit sshHostKeyWanted(r);
+            return;
+        }
+        if (step == TT_SSH_AUTH) {
+            const TtSshAuthPrompt *p = tt_ssh_connect_auth(m_ssh);
+            if (!p) {
+                return;
+            }
+            AuthRequest r;
+            r.kind = p->kind;
+            r.name = QString::fromUtf8(p->name);
+            r.instruction = QString::fromUtf8(p->instruction);
+            if (p->path) {
+                r.path = QString::fromUtf8(p->path);
+            }
+            for (size_t i = 0; i < p->prompt_count; i++) {
+                r.lines.append({QString::fromUtf8(p->prompts[i].text),
+                                p->prompts[i].echo});
+            }
+            m_sshWaiting = true;
+            emit sshAuthWanted(r);
+            return;
+        }
+        if (step == TT_SSH_READY) {
+            endSsh();
+            rearm();
+            emit connectionChanged();
+            // Whatever the far end sent while the handle was being freed is
+            // still waiting, and the descriptor may not fire again for it.
+            pumpAndDispatch(0);
+            return;
+        }
+        // TT_SSH_FAILED, or anything a future core adds that this does not
+        // know: stop, and say why.
+        const QString error = QString::fromUtf8(tt_last_error());
+        endSsh();
+        delete m_notifier;
+        m_notifier = nullptr;
+        rearm();
+        emit sshFailed(error);
+        emit connectionChanged();
+        return;
+    }
 }
 
 // --- input -------------------------------------------------------------------
@@ -256,6 +421,11 @@ void Session::feed(const QByteArray &bytes)
 
 void Session::onReadable()
 {
+    if (m_ssh) {
+        pollSsh();
+        return;
+    }
+
     // A budget of zero reads exactly once. Anything larger would let the pump
     // loop round to a second read, and that one blocks for the transport's
     // read timeout — on the UI thread. The descriptor stays readable while
@@ -327,7 +497,11 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
 
 void Session::rearm()
 {
-    const int fd = tt_session_poll_fd(m_session);
+    // While connecting, the connection owns the descriptor; afterwards the
+    // session does, and it is the same one. Asking in this order means the
+    // handover changes nothing the notifier can see.
+    const int fd = m_ssh ? tt_ssh_connect_poll_fd(m_ssh)
+                         : tt_session_poll_fd(m_session);
 
     if (m_notifier && m_notifier->socket() != fd) {
         // Deleted rather than re-pointed: a QSocketNotifier's descriptor is

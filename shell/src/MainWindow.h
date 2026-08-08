@@ -7,9 +7,10 @@
 
 #include "termitta.h"
 
+#include "Session.h"
+
 class QLabel;
 class QScrollBar;
-class Session;
 class TerminalView;
 
 /// One window, one session.
@@ -27,6 +28,10 @@ public:
 
     /// Connect at startup, for the command line.
     void connectSerial(const QString &path, const TtSerialParams &params);
+    /// Connect at startup, for the command line. `host` may be an alias from
+    /// `~/.ssh/config`; a blank `user` or a zero `port` means "whatever the
+    /// config says".
+    void connectSsh(const QString &host, const QString &user, int port);
 
     /// The window's session. Exposed so a test can drive it, and because a
     /// control socket will want it long before tabs make "which session"
@@ -35,7 +40,13 @@ public:
 
 private slots:
     void showConnectDialog();
+    void showSshDialog();
     void disconnectPort();
+    /// Ask about a host key. Raised from the session's poll, which means a
+    /// nested event loop — see `Session::pollSsh` for why that is safe.
+    void onSshHostKeyWanted(const HostKeyRequest &request);
+    void onSshAuthWanted(const AuthRequest &request);
+    void onSshFailed(const QString &error);
     void sendBreak();
     void toggleLogging();
     void chooseFont();
@@ -69,4 +80,9 @@ private:
     // again. A session profile on disk is Stage 2's, with the settings schema.
     QString m_lastPort;
     TtSerialParams m_lastParams;
+    QString m_lastSshHost;
+    QString m_lastSshUser;
+    int m_lastSshPort = 0;
+    QString m_lastSshIdentity;
+    bool m_lastSshLegacy = false;
 };

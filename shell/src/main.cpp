@@ -14,7 +14,7 @@ int main(int argc, char **argv)
 
     QCommandLineParser parser;
     parser.setApplicationDescription(
-        QStringLiteral("A serial and SSH terminal. Stage 1: serial."));
+        QStringLiteral("A serial and SSH terminal."));
     parser.addHelpOption();
     parser.addVersionOption();
 
@@ -28,6 +28,12 @@ int main(int argc, char **argv)
     QCommandLineOption baudOption(
         {QStringLiteral("b"), QStringLiteral("baud")},
         QStringLiteral("Baud rate (default 9600)."), QStringLiteral("rate"));
+    // `user@host`, or a bare alias out of ~/.ssh/config — the same thing that
+    // would be typed after `ssh`, because anyone reaching for this already
+    // knows that spelling.
+    parser.addPositionalArgument(
+        QStringLiteral("[user@]host[:port]"),
+        QStringLiteral("Connect over SSH. May be an alias from ~/.ssh/config."));
     parser.addOption(portOption);
     parser.addOption(baudOption);
     parser.process(app);
@@ -42,6 +48,24 @@ int main(int argc, char **argv)
             params.baud = parser.value(baudOption).toUInt();
         }
         window.connectSerial(parser.value(portOption), params);
+    } else if (!parser.positionalArguments().isEmpty()) {
+        QString target = parser.positionalArguments().constFirst();
+        QString user;
+        int port = 0;
+        const int at = target.indexOf(QLatin1Char('@'));
+        if (at >= 0) {
+            user = target.left(at);
+            target = target.mid(at + 1);
+        }
+        // Split on the *last* colon so a bracketed IPv6 literal survives; a
+        // bare IPv6 address without brackets is ambiguous here exactly as it
+        // is for `ssh`, and is spelled with -p there and in ~/.ssh/config.
+        const int colon = target.lastIndexOf(QLatin1Char(':'));
+        if (colon > target.lastIndexOf(QLatin1Char(']'))) {
+            port = target.mid(colon + 1).toInt();
+            target = target.left(colon);
+        }
+        window.connectSsh(target, user, port);
     }
 
     return app.exec();

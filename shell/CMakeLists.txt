@@ -69,7 +69,9 @@ add_library(termitta_shell STATIC
     src/TerminalView.cpp
     src/Session.cpp
     src/Theme.cpp
-    src/SerialDialog.cpp)
+    src/SerialDialog.cpp
+    src/SshDialog.cpp
+    src/SshPrompts.cpp)
 
 add_dependencies(termitta_shell tt_core)
 target_link_libraries(termitta_shell PUBLIC Qt6::Widgets termitta_core)
@@ -96,7 +98,14 @@ target_link_libraries(render_test PRIVATE termitta_shell)
 target_compile_options(render_test PRIVATE -Wall -Wextra)
 add_test(NAME render COMMAND render_test)
 
+# The only thing that exercises the *window's* event loop against a real
+# server. Skips loudly without TT_SSH_HOST, so it is safe to leave in ctest.
+add_executable(ssh_test tests/ssh_test.cpp)
+target_link_libraries(ssh_test PRIVATE termitta_shell)
+target_compile_options(ssh_test PRIVATE -Wall -Wextra)
+add_test(NAME ssh COMMAND ssh_test)
+
 # So the build tree runs without LD_LIBRARY_PATH. An installed build gets a
 # real rpath when there is packaging to hang it off; there is not yet.
-set_target_properties(termitta render_test PROPERTIES
+set_target_properties(termitta render_test ssh_test PROPERTIES
     BUILD_RPATH "${TT_CARGO_DIR}/${TT_CARGO_SUBDIR}")

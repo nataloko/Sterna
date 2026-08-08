@@ -6,11 +6,45 @@
 
 #include <QObject>
 #include <QString>
+#include <QVector>
 
 #include "termitta.h"
 
 class QSocketNotifier;
 class QTimer;
+
+/// A host key the `known_hosts` files did not already trust, copied out of the
+/// ABI's borrowed strings so a dialog can outlive the poll that produced it.
+struct HostKeyRequest {
+    QString host;
+    int port = 22;
+    QString algorithm;
+    /// `SHA256:…`, the form every other client prints.
+    QString fingerprint;
+    TtHostKeyVerdict verdict = TT_HOST_KEY_UNKNOWN;
+    /// `path:line` of the entry that disagrees, for `TT_HOST_KEY_CHANGED`.
+    QString recordedAt;
+    QString recordedFingerprint;
+    /// Algorithms already on file, for `TT_HOST_KEY_NEW_ALGORITHM`.
+    QString alsoKnown;
+};
+
+/// Something that has to be typed before authentication can continue.
+struct AuthRequest {
+    struct Line {
+        QString text;
+        /// Whether to show what is typed. The server chooses — a
+        /// keyboard-interactive challenge may legitimately want it echoed.
+        bool echo = false;
+    };
+    TtSshAuthKind kind = TT_SSH_AUTH_PASSWORD;
+    /// The server's own wording, where it sent any. Usually empty.
+    QString name;
+    QString instruction;
+    /// The key file, for `TT_SSH_AUTH_PASSPHRASE`.
+    QString path;
+    QVector<Line> lines;
+};
 
 /// Owns one `TtSession` and drives its loop from the Qt event loop.
 ///
@@ -68,11 +102,36 @@ public:
     // --- the connection -----------------------------------------------------
 
     bool isConnected() const;
+    /// Whether `sendBreak` will do anything. False when nothing is connected,
+    /// and false over SSH — which has no break at all.
+    bool supportsBreak() const;
     QString describe() const;
     /// Open a serial port. `path` should be a `TtPortInfo::open_path`.
     bool connectSerial(const QString &path, const TtSerialParams &params,
                        QString *outError);
     void disconnectPort();
+
+    // --- ssh ----------------------------------------------------------------
+    //
+    // Connecting over SSH is a conversation, not a call: the far end asks
+    // whether its host key is acceptable and what the password is, and the
+    // answers come from a user. So `startSsh` returns as soon as the attempt
+    // is under way and the questions arrive as signals; answer them with
+    // `answerHostKey` / `answerAuth` whenever the dialog closes.
+    //
+    // The same `QSocketNotifier` carries the connection and then the session —
+    // the core hands out one descriptor for both — so nothing is re-registered
+    // at the moment output starts.
+
+    /// Begin connecting. False and `outError` only when the attempt could not
+    /// be *started*; everything after that arrives through the signals.
+    bool startSsh(const TtSshParams &params, QString *outError);
+    /// Give up on a connection in progress. Harmless when there is none.
+    void cancelSsh();
+    bool isConnecting() const { return m_ssh != nullptr; }
+    /// 1 accepts and records, 2 accepts once, anything else refuses.
+    void answerHostKey(int decision);
+    void answerAuth(const QStringList &answers);
 
     // --- input --------------------------------------------------------------
 
@@ -117,6 +176,14 @@ signals:
     /// lets someone walk away from a capture that ended an hour ago.
     void logStateChanged();
 
+    /// The far end's host key needs a decision. Answer with `answerHostKey`.
+    void sshHostKeyWanted(const HostKeyRequest &request);
+    /// Something has to be typed. Answer with `answerAuth`.
+    void sshAuthWanted(const AuthRequest &request);
+    /// The attempt is over and did not succeed. Success arrives as
+    /// `connectionChanged` instead.
+    void sshFailed(const QString &error);
+
 private slots:
     void onReadable();
     void onRetryPending();
@@ -127,9 +194,22 @@ private:
     /// Point the notifier at whatever descriptor the session has *now*, and
     /// run the retry timer only if output is stuck.
     void rearm();
+    /// Drain the connection state machine until it has nothing more to say.
+    void pollSsh();
+    /// Free the handle and stop watching it.
+    void endSsh();
 
     TtSession *m_session = nullptr;
     QSocketNotifier *m_notifier = nullptr;
     QTimer *m_retry = nullptr;
     QString m_title;
+
+    /// The connection being set up, or null.
+    TtSshConnect *m_ssh = nullptr;
+    /// True between emitting a question and being answered.
+    ///
+    /// A dialog spins a nested event loop, so the notifier fires again while
+    /// one is open. Without this, `pollSsh` re-enters, invalidates the strings
+    /// the open dialog is showing, and asks the same question twice.
+    bool m_sshWaiting = false;
 };
