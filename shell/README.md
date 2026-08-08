@@ -15,11 +15,19 @@ distrobox-host-exec distrobox enter termitta-fedora --no-tty -- bash -lc '
   ./build/ssh_test               # the window's event loop, against a real server
   ./build/ssh_test --write /tmp  # ...and the four SSH dialogs, as PNGs
   ./build/telnet_test            # the same, over telnet
+  ./build/pty_test               # ...and over a local shell, which never skips
   ./build/termitta --port /dev/ttyUSB0 --baud 115200
   ./build/termitta myrouter      # an alias out of ~/.ssh/config
   ./build/termitta --telnet console-server:2001
+  ./build/termitta --shell       # a local login shell
+  ./build/termitta --shell -- journalctl -f
 '
 ```
+
+`pty_test` is the one that needs nothing at all — no server, no hardware, no
+environment variables — so it is the end-to-end check of this event loop that
+actually runs everywhere, including CI. A pty also exercises the case the other
+two cannot: a connection that ends *by itself*, with a reason.
 
 `ssh_test` needs a server and skips loudly without one — start `ssh-audit`'s
 (`cd ssh-audit && ./servers.sh start`) and set `TT_SSH_HOST`, `TT_SSH_PORT`,
@@ -55,7 +63,10 @@ budget of **zero**, which reads exactly once and returns. A burst arrives over
 several turns of the event loop and the window keeps painting through it.
 
 Measured: **zero CPU ticks over five seconds** with a port open and idle, at
-65 MB RSS — in line with `PLAN.md`'s ~60 MB Qt floor.
+65 MB RSS — in line with `PLAN.md`'s ~60 MB Qt floor. Re-measured with a local
+shell attached, which is the harder case because there is a live child process
+on the other end: 80 ms to start and paint `bash`'s prompt, then **zero ticks
+over the next six seconds**, at 72 MB.
 
 The one thing a descriptor cannot cover is output the far end refused. Flow
 control holds the line, the write comes up short, and the remainder waits for a
@@ -284,6 +295,23 @@ The request is bounded before it is honoured. It comes off the wire, and an
 800x600 terminal from a confused server is a window nobody wants and a grid
 allocation nobody asked for.
 
+## A local shell has no dialog, and a disconnect now has a reason
+
+"Local shell" is a menu item that connects, because there is nothing to ask:
+the shell, the size and the environment are all already known, and a dialog
+whose only button is OK is one nobody wants twice. From the command line it is
+`--shell`, with the positional arguments taken as the command to run instead —
+`termitta --shell -- journalctl -f`, the spelling `xterm -e` and
+`gnome-terminal --` already use.
+
+The half worth recording is what it did to the *disconnect* path. Every other
+transport ends the way it looks: an adapter is unplugged, a socket closes, and
+"Disconnected" is the whole story. A local shell is different — it exits, with a
+status — so `tt_session_close_note` is asked before the generic wording is used,
+and the status bar says "bash exited with status 1". That routes through the
+core rather than through a `if (transport == pty)` here, because the frontend
+should not be the thing that knows which transports have something to say.
+
 ## Not here yet
 
 - **Word and line selection on double and triple click**, which wants the same
@@ -295,7 +323,6 @@ allocation nobody asked for.
   having one.
 - **Session profiles.** The dialog remembers the last port and settings for the
   lifetime of the window. Saving them is Stage 2's, with the INI reader.
-- **A local pty**, which is the last transport Stage 1 names.
 - **A host-key manager.** Removing a changed key still means editing
   `~/.ssh/known_hosts` by hand — the dialog says which file and which line, and
   that is as far as it goes.

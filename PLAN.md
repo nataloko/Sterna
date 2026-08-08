@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 69
+**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 86
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -362,15 +362,16 @@ Must be shippable and genuinely useful, not a demo.
   remains is selection, which is a frontend concept the grid only has to
   support.
 - `tt-conn`: **serial first** (the differentiator), then SSH2 via `russh`, then
-  telnet, then local PTY via `portable-pty`. 🔵 **serial, SSH and telnet done**
-  — the patch layer spike 4 specified is built and green on the loopback rig
+  telnet, then local PTY via `portable-pty`. ✅ **done — all four transports** —
+  the patch layer spike 4 specified is built and green on the loopback rig
   (`CMSPAR` parity, `PARMRK` break detection, `VSTART`/`VSTOP`, a userspace
   DSR-flow shim, by-path port identity); SSH is built on `russh` with a
   caller-driven prompt lifecycle, 15 integration tests against real OpenSSH and
   real dropbear, and its own `known_hosts` and `ssh_config` readers; telnet is
   ported from `telnet.c` plus `ttcmn.c`'s framing, with 28 unit tests and 10
-  against a real `telnetd`. **Only the local pty remains.** See
-  `crates/tt-conn/README.md` and below.
+  against a real `telnetd`; and the local pty is `portable-pty` with our own
+  read path, 19 tests that need no rig at all. See `crates/tt-conn/README.md`
+  and below.
 - `tt-session`: the loop between engine and transport, and what the C ABI
   exports. ✅ **done** — 20 tests, three of them over the real wire. See
   `crates/tt-session/README.md`.
@@ -380,8 +381,9 @@ Must be shippable and genuinely useful, not a demo.
 - Qt shell: one window, grid painter, clipboard, font/colour config,
   connect dialog, serial-port picker with live enumeration. ✅ **done for
   Stage 1's purposes** — all of that, plus scrollback with a scrollbar, wheel
-  and `Shift+PageUp`, and the SSH connect path with its host-key and
-  authentication dialogs. See `shell/README.md` and below.
+  and `Shift+PageUp`, the SSH connect path with its host-key and authentication
+  dialogs, telnet, and a local shell on a menu item. See `shell/README.md` and
+  below.
 - **`~/.ssh/config`, `~/.ssh/known_hosts`, `~/.ssh/id_*`** — Tera Term lacks
   this and it is a major Linux adoption lever. ✅ **done** — an alias typed into
   the connect dialog, or given on the command line, brings its user, port, key,
@@ -834,6 +836,54 @@ it by resizing the window.
 Two are deliberately absent, and both are opt-in settings upstream too, so
 neither is a default difference: local echo (`ts.TelEcho`, off) and LINEMODE
 (`ts.EnableLineMode`, off).
+
+#### The local pty, and the transport that knows why it ended
+
+`crates/tt-conn/src/pty/`, 2026-08-08. The fourth transport, and the one
+upstream reaches by *not* being a terminal for it: `cygwin/cygterm` is a
+separate program that forks a shell onto a pty and bridges it back over a
+**loopback telnet socket**, implementing ECHO, SGA, TERMINAL-TYPE and NAWS by
+hand (`cygterm.cpp:1083` onward). That existed because a Windows program cannot
+fork. Here the pty is a transport like any other and the detour is deleted —
+which is the first place the port has *removed* a subsystem rather than
+replacing one.
+
+Two of upstream's decisions survive, because they are about how a shell should
+start rather than about Win32: a **login shell** by default (`cygterm.cfg`'s
+`LOGIN_SHELL = Yes`) and an explicitly set `TERM`. The value does not survive —
+upstream says `vt100`, we say `xterm-256color` — because that is a claim about
+the engine behind it, and underclaiming costs the user `ls --color` and a mouse
+that does nothing in `vim`.
+
+**The trap is that both failure modes are silent, and one of them is a busy
+loop.** Holding the slave end open after the fork means the master never sees
+the hangup, so the shell exits and the window waits forever on nobody. And
+`portable-pty`'s own reader maps `EIO` — a pty master reporting that the child
+is gone — to `Ok(0)`, which is already this project's word for "the line is
+quiet". Taking that would collapse the two, and because a hung-up descriptor is
+*permanently* readable, the frontend's notifier would fire forever against a
+read returning nothing: **a dead shell presenting as a terminal at 100% CPU.**
+So the byte-level read and write are ours, on the master's descriptor, and the
+adoption is for the parts that are genuinely hard — the child-side
+`setsid`/`TIOCSCTTY` dance, and ConPTY in Stage 3.
+
+It also added the one thing the seam was missing. `Transport::closing_note` is
+asked once, after a disconnect and **before the transport is dropped**, because
+a pty's exit status dies with the child handle. Every other transport returns
+`None`: an unplugged adapter and a closed socket are what they look like. A
+local shell is not, and "bash exited with status 1" is the difference between a
+window that explains itself and one that just goes quiet.
+
+**And it is the first end-to-end suite that never skips.** Serial needs the
+loopback rig, SSH needs a server, telnet needs a `telnetd`; a pty needs nothing,
+so 19 transport tests, 7 session tests, the C ABI case and the Qt window's own
+event-loop test all run on a fresh checkout and in CI. Measured with a shell
+attached: 80 ms to start and paint `bash`'s prompt, then zero CPU ticks over the
+next six seconds, at 72 MB RSS.
+
+One cost, recorded rather than fixed: `portable-pty` drags in **`serial2`, a
+second serial-port crate**, unconditionally and with no feature to switch it
+off.
 
 **`telnet-audit/` exists because the unit tests cannot close the loop.** They
 are byte strings derived from upstream's C, so they prove the port matches

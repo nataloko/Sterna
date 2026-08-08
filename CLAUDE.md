@@ -78,8 +78,10 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/ssh_test                 # the window's event loop, against a real server
 ./build/ssh_test --write /tmp    # ...and the four SSH dialogs, as PNGs
 ./build/telnet_test              # the same, over telnet
+./build/pty_test                 # ...and over a local shell, which needs nothing
 ./build/termitta --port /dev/ttyUSB0 --baud 115200
 ./build/termitta myrouter        # an alias out of ~/.ssh/config
+./build/termitta --shell         # a local login shell
 
 cd oracle
 make            # build build/oracle
@@ -310,6 +312,38 @@ And for telnet:
   the laxity.
 - **Telnet has a break and SSH does not**, which is why `supports_break` is on
   the transport rather than assumed.
+
+And for the local pty:
+
+- **Hold the slave end open and nothing ever ends.** We own one end of the pty
+  and the child owns the other; keeping ours after `spawn_command` means the
+  master never sees the hangup when the child exits. No error, no data, no EOF
+  — the window waits forever on a shell that left. `pty/mod.rs` drops
+  `pair.slave` immediately and says so.
+- **`portable-pty`'s unix reader maps `EIO` to `Ok(0)`**, so `read_to_string`
+  terminates on it. `EIO` is a pty master saying the child is gone, and `Ok(0)`
+  is already `tt-conn`'s word for "the line is quiet". Take that mapping and a
+  dead shell looks idle — and because a hung-up descriptor is *permanently*
+  readable, the frontend's `QSocketNotifier` fires forever against a read that
+  returns nothing. **A dead shell would present as a terminal at 100% CPU.** So
+  the read and write are done on the master's raw fd instead.
+- **The exit status dies with the child handle**, which is why
+  `Transport::closing_note` is asked *before* the transport is dropped rather
+  than afterwards. Every other transport returns `None` from it.
+- **`std::process::Child` does not reap on drop.** A session that opens and
+  closes local shells all day would leave one zombie per shell, so `Drop`
+  closes the master (which is the `SIGHUP`), waits briefly, then `SIGKILL`s.
+  Both waits are bounded: leaving a zombie beats hanging the window that is
+  trying to close.
+- **`portable-pty` sets no `TERM`**, so the child would inherit ours — *that*
+  terminal's name when launched from a terminal, and nothing at all when
+  launched from a desktop menu. It is set explicitly, along with `COLORTERM`,
+  and `LINES`/`COLUMNS` are removed because the `winsize` is the truth and a
+  stale pair survives every resize.
+- **`portable-pty` drags in `serial2`**, a second serial-port crate, with no
+  feature to disable it. Accepted; don't "fix" it by hand-rolling the pty —
+  what it buys is the child-side `setsid`/`TIOCSCTTY` dance and ConPTY in
+  Stage 3.
 
 And for SSH:
 

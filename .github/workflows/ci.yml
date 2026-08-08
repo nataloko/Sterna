@@ -130,7 +130,8 @@ jobs:
           cargo clippy --all-targets --locked -- -D warnings
       # tt-conn's serial tests need two ports wired back-to-back and skip
       # without TT_SERIAL_A/TT_SERIAL_B. Only the dev container has the rig,
-      # so what runs here is the decoders and the enumeration.
+      # so what runs here is the decoders, the enumeration — and the pty,
+      # which is the one transport whose whole suite runs anywhere.
       - name: Unit tests
         run: cd termitta/crates && cargo test --locked
       # And again with the servers named, which is what turns the eleven
@@ -269,6 +270,13 @@ jobs:
           TT_TELNET_PORT: 2323
           QT_QPA_PLATFORM: offscreen
         run: cd shell && ./build/telnet_test
+      # The one connection test that skips nothing: a pty needs no server and
+      # no hardware, so this runs on every push rather than only where a rig
+      # happens to exist.
+      - name: A local shell, through the window's event loop
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: cd shell && ./build/pty_test
       - name: Stop the servers
         if: always()
         run: |

@@ -4,10 +4,11 @@ The connection layer. **Serial first**, because that is the differentiator:
 `minicom` and `picocom` have no GUI and no scripting, `cutecom` and `moserial`
 are toys, PuTTY has serial but neither scripting nor file transfer, and the one
 tool that covers this ground — SecureCRT — is closed and paid. SSH (`russh`),
-telnet and a local pty follow.
+telnet and a local pty (`portable-pty`) follow. **All four transports are
+built**; see the sections below for each one's decisions.
 
 ```sh
-cargo test -p tt-conn                                    # unit tests only
+cargo test -p tt-conn                    # unit tests, plus the whole pty suite
 TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
   cargo test -p tt-conn -- --test-threads=1              # and the hardware ones
 
@@ -23,6 +24,9 @@ cd ../../ssh-audit && ./servers.sh stop                  # removes the account
 shared, the *server* simply refuses to be hammered. OpenSSH's `MaxStartups`
 defaults to `10:30:100` and dropbear's ceiling is lower, so running them in
 parallel produces a scatter of unrelated failures that all pass on their own.
+
+The pty suite is the exception to all of that: it needs no rig, no server and no
+variables, so `cargo test -p tt-conn` runs all nineteen of its cases anywhere.
 
 Without those two variables the hardware tests **skip loudly** rather than pass
 quietly, so a machine with no rig still gets a green `cargo test` without
@@ -135,12 +139,6 @@ accumulating until Stage 3. What is *behind* those `cfg`s on Windows is mostly
 unwritten: `fOutxDsrFlow` is native there and inverts this whole design, and
 that is Stage 3's problem.
 
-## Still to come
-
-Async. `PLAN.md` puts `tokio` under `tt-conn`, and `russh` will require it, but
-inventing the async shape before the second transport exists would be guessing.
-The seam is the byte-stream API above; a runtime goes behind it.
-
 ## Telnet
 
 Third transport, and after serial the one that matters most: a terminal server
@@ -238,3 +236,77 @@ the wrong machine.
   far end ignoring it.
 - Port forwarding, agent forwarding, X11, `ProxyJump`, certificates, and SSH-1
   — the last permanently, per `PLAN.md`.
+
+## The local pty
+
+Fourth transport, and the one upstream reaches by *not* being a terminal for it.
+`cygwin/cygterm` is a separate program that forks a shell onto a pty and bridges
+it back to Tera Term over a **loopback telnet socket** — `cygterm.cpp:1083`
+onward implements ECHO, SGA, TERMINAL-TYPE and NAWS by hand. That existed
+because a Windows program cannot fork. Here a pty is a transport like any other
+and the detour is deleted.
+
+Two of upstream's decisions survive it, because they are about how a shell
+should *start* rather than about Win32:
+
+- **A login shell by default** — `cygterm.cfg`'s `LOGIN_SHELL = Yes`,
+  implemented at `cygterm.cpp:988` by rewriting `argv[0]` to `-bash`. It is what
+  makes `~/.profile` run.
+- **`TERM` set explicitly.** The value does not survive: upstream says `vt100`,
+  we say `xterm-256color`, because that is a claim about the engine behind it
+  and ours does 256 colour, truecolor and xterm mouse tracking. Underclaiming
+  costs the user `ls --color` and a mouse that does nothing in `vim`.
+
+Three environment variables are corrected on the way in, each wrong by default
+in a way that is invisible until it isn't. `TERM` is **never inherited** — a
+window launched from another terminal would otherwise hand the shell *that*
+terminal's name, and one launched from a desktop menu would hand it nothing at
+all. `COLORTERM` says truecolor. `LINES` and `COLUMNS` are *removed*: they are a
+snapshot, the pty's `winsize` is the truth, and a stale pair inherited from a
+differently sized parent survives every resize.
+
+### The two traps, both of which fail as silence
+
+**The slave end has to be dropped, and immediately.** We hold one end of the pty
+and the child holds the other; keeping ours open means the master never sees the
+hangup when the child exits. The shell dies and the window sits there forever
+waiting for output from nobody — no error, no data, nothing to debug.
+
+**`portable-pty`'s own reader maps `EIO` to `Ok(0)`**, so that `read_to_string`
+terminates. `EIO` is how a pty master reports that the last slave closed, i.e.
+that the child is gone, and `Ok(0)` is already this crate's word for "the line is
+quiet" — the state a terminal spends nearly all its time in. Taking that mapping
+collapses the two: the window never learns the shell exited, and because a
+hung-up descriptor is *permanently* readable, the frontend's `QSocketNotifier`
+fires forever against a read that never returns anything. **A dead shell would
+present as a terminal at 100% CPU.** So the byte-level read and write are ours,
+straight on the master's descriptor, and `EIO` means disconnected.
+
+### What it adds to the seam
+
+`Transport::closing_note` — asked once, after a disconnect and before the
+transport is dropped, because a pty's exit status dies with the child handle.
+Every other transport returns `None`: an unplugged adapter and a closed socket
+are what they look like. A local shell is not, and "bash exited with status 1"
+is the message that says whether anything went wrong.
+
+`Drop` hangs up and then collects. Closing the master is what a terminal window
+closing *means* — the kernel sends `SIGHUP` to the foreground process group —
+and only then is there anything to reap. Reaping matters: `std::process::Child`
+does not do it on drop, so a session that opens and closes local shells all day
+would leave one zombie per shell. Both waits are bounded, and a shell that
+ignores `SIGHUP` gets `SIGKILL`.
+
+`supports_break()` is false. A pty has no line to break; the thing a break
+stands in for is `SIGINT`, which arrives as `Ctrl+C` through the line discipline
+like any other keystroke.
+
+### The cost of adopting `portable-pty`
+
+It drags in **`serial2`, a second serial-port crate**, unconditionally and with
+no feature to switch it off — the crate carries a "serial port as a pty" mode
+nothing here uses. Twenty-seven packages in total. Accepted rather than fixed,
+because what it supplies is the part that is genuinely hard and genuinely
+platform-specific: the `setsid`/`TIOCSCTTY` dance in the forked child, and
+ConPTY when Stage 3 arrives. Writing that twice to save a dependency would be
+the wrong trade in the direction the project keeps choosing against.

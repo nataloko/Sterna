@@ -12,9 +12,9 @@ click is an encoding *and* a write) are exactly the ones a frontend gets wrong
 when handed the parts.
 
 ```sh
-cargo test -p tt-session                                 # memory transport
+cargo test -p tt-session                        # memory transport, and a real pty
 TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
-  cargo test -p tt-session -- --test-threads=1           # and over real wire
+  cargo test -p tt-session -- --test-threads=1  # and over real wire
 ```
 
 One package at a time when the rig is involved: `--test-threads=1` is per test
@@ -24,11 +24,10 @@ suites on the same two ports at once.
 ## Nothing here spawns a thread
 
 `Session::pump(budget)` blocks for as long as the caller allows and no longer,
-so *where* the loop runs is the frontend's decision — a Qt worker thread, a
-tokio task once SSH arrives, a test's main thread. Baking a runtime in before
-the second transport exists would be guessing at the shape of a problem we have
-not met, and `PLAN.md` puts `tokio` under `tt-conn` for reasons that only bite
-when `russh` lands.
+so *where* the loop runs is the frontend's decision. That survived contact with
+SSH: `russh` needs a tokio runtime, and it lives inside `tt-conn`'s SSH module
+rather than here, so this layer, the C ABI and the Qt shell all stayed
+synchronous. What crosses the seam is a descriptor and a pump.
 
 The corollary is that events are **drained, not delivered**. A callback would
 have to be `Send` and would fire on whichever thread the pump happens to be on,
@@ -36,10 +35,11 @@ which is precisely what a UI toolkit cannot take.
 
 ## The transport seam
 
-`tt_conn::Transport` is four methods and a `describe()`. Serial, SSH, telnet
-and a pty have almost nothing in common internally, and a terminal needs almost
-nothing from them: bytes both ways, plus the things that are *not* bytes — a
-line break, a byte that arrived corrupted, the far end going away.
+`tt_conn::Transport` is four methods, a `describe()` and a `closing_note()`.
+Serial, SSH, telnet and a pty have almost nothing in common internally, and a
+terminal needs almost nothing from them: bytes both ways, plus the things that
+are *not* bytes — a line break, a byte that arrived corrupted, the far end going
+away.
 
 Keeping it short is deliberate. Anything transport-specific — baud rate, host
 key, the pty's child — is reached through the concrete type before it is boxed,
@@ -65,7 +65,12 @@ the same thing to the host.
   rather than a missing ioctl. `connect()` announces the size too, or a pty
   starts at 80x24 and emits a screenful of wrongly-wrapped output first.
 - **A disconnect is reported once and leaves the screen alone.** The text
-  explaining *why* it dropped is the whole reason anyone looks afterwards.
+  explaining *why* it dropped is the whole reason anyone looks afterwards. The
+  transport gets asked for its own account of it — `close_note()` — **before**
+  it is dropped, because a pty's exit status dies with the child handle, and
+  "bash exited with status 1" is a different message from "disconnected". It
+  survives a `disconnect()` and is cleared by the next `connect()`, so a status
+  line can keep showing it while the window sits there.
 - **Typing at a dead session must not queue forever.** Otherwise pulling a
   cable turns into a slow leak.
 
@@ -98,9 +103,14 @@ One deliberate divergence: upstream writes CR LF for each logged line
 artefact is a text file read in a pager on Linux. `LogOptions::crlf` gets a
 byte-identical Tera Term log back.
 
+## The one end-to-end test that never skips
+
+`tests/pty.rs`. Every other composition test here needs something the machine
+may not have — two serial ports wired back-to-back, an `sshd`, a `telnetd` — and
+skips loudly without it. A pty needs nothing, so this is the suite that actually
+proves the loop on a fresh checkout and in CI: a real child process, a real
+descriptor, a real disconnect with a real exit status.
+
 ## Still to come
 
 - **Selection**, which is a frontend concept the core only has to support.
-- **The prompt lifecycle** `PLAN.md` describes for SSH (password,
-  keyboard-interactive, host-key verification). It needs a transport that can
-  ask a question, which serial cannot.

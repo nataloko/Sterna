@@ -7,8 +7,8 @@ The Rust side. Seven crates so far, of the eight `PLAN.md` describes.
 | `tt-grid` | Cells, lines, cursor, scroll region, scrollback, alternate screen. No I/O, no escape sequences. |
 | `tt-charset` | ISO-2022 designation and invocation, and whether a byte is DEC special graphics. |
 | `tt-vt` | The escape-sequence state machine. Byte-level parsing is the `vte` crate; the semantics are ported from Tera Term. |
-| `tt-conn` | The connection layer — serial so far. Built against `commlib.c`'s requirement; see [its README](tt-conn/README.md). |
-| `tt-session` | A terminal attached to a connection: the loop between `tt-vt` and `tt-conn`, and what the C ABI will export. See [its README](tt-session/README.md). |
+| `tt-conn` | The connection layer — serial, SSH, telnet and a local pty, all four built. The serial half is written against `commlib.c`'s requirement; see [its README](tt-conn/README.md). |
+| `tt-session` | A terminal attached to a connection: the loop between `tt-vt` and `tt-conn`, and what the C ABI exports. See [its README](tt-session/README.md). |
 | `tt-ffi` | The flat C ABI over `tt-session` — the whole core/frontend seam, and what the Qt shell links. See [its README](tt-ffi/README.md). |
 | `tt-dump` | A CLI that drives `tt-vt` over a byte stream and prints the oracle's dump format. Exists for the differential harness. |
 
@@ -18,6 +18,11 @@ cargo clippy --all-targets -- -D warnings
 tt-ffi/run_abi.sh              # the C ABI, compiled and driven from C
 ../run_diff.sh                 # the gate that actually matters
 ```
+
+The pty suites in both crates need nothing and always run, so a bare
+`cargo test` does exercise one transport end to end. Everything else in
+`tt-conn` and `tt-session` that touches the outside world needs a rig or a
+server and skips loudly without it.
 
 `tt-conn`'s and `tt-session`'s hardware tests need two serial ports wired
 back-to-back and skip without them. **Run them one package at a time:**

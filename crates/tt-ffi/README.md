@@ -52,7 +52,7 @@ Two things about how it is generated, both learned the hard way:
 | Screen | `tt_session_row` (borrowed, zero-copy), `_cols`, `_rows`, `_cursor`, `_title`, `_reverse_video`, `tt_palette_rgb` |
 | Viewport | `_scrollback_len`, `_view_offset`, `_set_view_offset`, `_cursor_view_row` |
 | Input | `_send_key`, `_send_text`, `_paste`, `_mouse`, `_focus`, `_resize`, `_set_cell_pixels`, `_send_break`, `_feed` |
-| Connection | `_connect_serial`, `_disconnect`, `_is_connected`, `_describe`, `_pump`, `_drain_events` |
+| Connection | `_connect_serial`, `_connect_telnet`, `_connect_pty`, `_disconnect`, `_is_connected`, `_describe`, `_close_note`, `_pump`, `_drain_events` |
 | SSH | `tt_ssh_params_default`, `tt_ssh_connect`, `_poll`, `_poll_fd`, `_host_key`, `_auth`, `_answer_host_key`, `_answer_auth`, `_free` |
 | Ports | `tt_serial_enumerate`, `tt_port_list_len` / `_at` / `_free`, `tt_ssh_config_aliases` + `tt_string_list_*` |
 | Logging | `tt_log_options_default`, `tt_session_log_start` / `_stop` / `_path` / `_bytes` |
@@ -66,9 +66,13 @@ Deliberately absent, and each for a reason rather than for lack of time:
 - **Selection.** A frontend concept the core only has to support: the
   viewport hands out rows, and which of them are highlighted is the window's
   business.
-- **Telnet and pty connects.** One `connect` per transport, added as each
-  transport lands. A generic `connect(url)` would have to grow a parser and a
-  prompt protocol before either exists.
+- **A generic `connect(url)`.** There is one `connect` per transport instead —
+  serial, telnet, pty, and SSH's polling variant — because a single entry point
+  would have to grow a URL parser *and* a prompt protocol before either was
+  needed. The four have genuinely different shapes: only SSH asks questions.
+- **The pty's environment.** `TtPtyParams` carries argv, cwd, `TERM` and the
+  login-shell flag; `PtyParams` in Rust also takes arbitrary environment
+  variables. Those are settings, and settings are Stage 2's generated schema.
 
 ## Things a frontend will get wrong, so they are documented in the header
 
@@ -108,6 +112,11 @@ Deliberately absent, and each for a reason rather than for lack of time:
 - **A null string in `TtSshParams` means "take it from `~/.ssh/config`"**,
   which is not the same as an empty one. A dialog whose user field is blank
   must send null, or the config's `User` is overridden with nothing.
+- **`tt_session_close_note` is what a disconnect *means*, and it is null for
+  most transports.** An unplugged adapter and a closed socket are what they look
+  like; a local shell is not, and "bash exited with status 1" is the difference
+  between a window that explains itself and one that just goes quiet. Read it
+  after `TT_EVENT_KIND_DISCONNECTED` and fall back to the generic wording.
 
 ## `run_abi.sh` is the only test that means anything here
 
