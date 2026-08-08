@@ -517,10 +517,18 @@ impl Grid {
         }
     }
 
-    pub fn move_up(&mut self, n: usize) {
+    /// CUU with `margins`, VPB without — `vtterm.c:CSCursorUp`, whose
+    /// `AffectMargin` argument this is.
+    ///
+    /// The four movers come in pairs upstream for one reason: the ECMA-48
+    /// "position" forms (HPR, VPR, HPB, VPB) are the same motion measured
+    /// against the *page* rather than against the margins. Same clamp
+    /// otherwise, so they share the code, and telling them apart matters only
+    /// once a scroll region or a left/right margin exists.
+    pub fn move_up(&mut self, n: usize, margins: bool) {
         // Cursor motion stops at the scroll region edge, but only if the cursor
         // started inside it.
-        let limit = if self.cursor.y >= self.top {
+        let limit = if margins && self.cursor.y >= self.top {
             self.top
         } else {
             0
@@ -529,8 +537,9 @@ impl Grid {
         self.move_cursor(self.cursor.x, y);
     }
 
-    pub fn move_down(&mut self, n: usize) {
-        let limit = if self.cursor.y <= self.bottom {
+    /// CUD with `margins`, VPR without.
+    pub fn move_down(&mut self, n: usize, margins: bool) {
+        let limit = if margins && self.cursor.y <= self.bottom {
             self.bottom
         } else {
             self.rows - 1
@@ -539,10 +548,11 @@ impl Grid {
         self.move_cursor(self.cursor.x, y);
     }
 
-    /// CUB. Stops at the left margin, but only when the cursor started at or
-    /// right of it — from outside, the margin is not a barrier.
-    pub fn move_left(&mut self, n: usize) {
-        let limit = if self.cursor.x >= self.left {
+    /// CUB with `margins`, HPB without. Stops at the left margin, but only when
+    /// the cursor started at or right of it — from outside, the margin is not a
+    /// barrier.
+    pub fn move_left(&mut self, n: usize, margins: bool) {
+        let limit = if margins && self.cursor.x >= self.left {
             self.left
         } else {
             0
@@ -551,15 +561,29 @@ impl Grid {
         self.move_cursor(x, self.cursor.y);
     }
 
-    /// CUF. Mirror image of [`Grid::move_left`].
-    pub fn move_right(&mut self, n: usize) {
-        let limit = if self.cursor.x <= self.right {
+    /// CUF with `margins`, HPR without. Mirror image of [`Grid::move_left`].
+    pub fn move_right(&mut self, n: usize, margins: bool) {
+        let limit = if margins && self.cursor.x <= self.right {
             self.right
         } else {
             self.cols - 1
         };
         let x = (self.cursor.x + n).min(limit);
         self.move_cursor(x, self.cursor.y);
+    }
+
+    /// VPA — `vtterm.c:CSMoveToLineN`, the vertical twin of
+    /// [`Grid::move_to_column`], and **origin mode applies**. `y` is 0-based.
+    ///
+    /// Not the same as passing the row to [`Grid::move_cursor`]: under origin
+    /// mode the row counts from the top margin and stops at the bottom one.
+    pub fn move_to_row(&mut self, y: usize) {
+        if self.origin_mode {
+            let y = (self.top + y).min(self.bottom);
+            self.move_cursor(self.cursor.x, y);
+        } else {
+            self.move_cursor(self.cursor.x, y);
+        }
     }
 
     /// `vtterm.c:CarriageReturn`. It only moves — and therefore only clears the

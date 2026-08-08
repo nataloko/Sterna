@@ -1758,21 +1758,21 @@ impl State {
         }
         match action {
             '@' => self.grid.insert_chars(arg(params, 0, 1) as usize),
-            'A' => self.grid.move_up(arg(params, 0, 1) as usize),
-            'B' => self.grid.move_down(arg(params, 0, 1) as usize),
-            'C' => self.grid.move_right(arg(params, 0, 1) as usize),
-            'D' => self.grid.move_left(arg(params, 0, 1) as usize),
+            'A' => self.grid.move_up(arg(params, 0, 1) as usize, true),
+            'B' => self.grid.move_down(arg(params, 0, 1) as usize, true),
+            'C' => self.grid.move_right(arg(params, 0, 1) as usize, true),
+            'D' => self.grid.move_left(arg(params, 0, 1) as usize, true),
             // CNL and CPL move to the *left margin*, and do it before the
             // vertical move rather than after — `vtterm.c:1691`.
             'E' => {
                 let (left, _) = self.grid.margins();
                 self.grid.move_cursor(left, self.grid.cursor.y);
-                self.grid.move_down(arg(params, 0, 1) as usize);
+                self.grid.move_down(arg(params, 0, 1) as usize, true);
             }
             'F' => {
                 let (left, _) = self.grid.margins();
                 self.grid.move_cursor(left, self.grid.cursor.y);
-                self.grid.move_up(arg(params, 0, 1) as usize);
+                self.grid.move_up(arg(params, 0, 1) as usize, true);
             }
             'G' | '`' => {
                 let x = arg(params, 0, 1).saturating_sub(1) as usize;
@@ -1860,9 +1860,18 @@ impl State {
                     self.send(b"c");
                 }
             }
+            // HPR and VPR — `vtterm.c:4096` and `:4100`. The same motion as CUF
+            // and CUD against the page rather than the margins.
+            'a' => self.grid.move_right(arg(params, 0, 1) as usize, false),
+            'e' => self.grid.move_down(arg(params, 0, 1) as usize, false),
+            // HPB and VPB — `vtterm.c:4105` and `:4106`, the backwards pair.
+            'j' => self.grid.move_left(arg(params, 0, 1) as usize, false),
+            'k' => self.grid.move_up(arg(params, 0, 1) as usize, false),
+            // VPA. Origin mode applies, which is what separates it from a bare
+            // cursor move — `vtterm.c:CSMoveToLineN`.
             'd' => {
                 let y = arg(params, 0, 1).saturating_sub(1) as usize;
-                self.grid.move_cursor(self.grid.cursor.x, y);
+                self.grid.move_to_row(y);
             }
             'g' => match arg0(params, 0) {
                 0 => self.grid.clear_tab(),
@@ -2223,7 +2232,7 @@ impl Perform for State {
                     if self.grid.cursor.x == self.grid.margins().0 {
                         self.grid.scroll_right(1);
                     } else {
-                        self.grid.move_left(1);
+                        self.grid.move_left(1, true);
                     }
                 }
             }
@@ -2232,7 +2241,7 @@ impl Perform for State {
                     if self.grid.cursor.x == self.grid.margins().1 {
                         self.grid.scroll_left(1);
                     } else {
-                        self.grid.move_right(1);
+                        self.grid.move_right(1, true);
                     }
                 }
             }
