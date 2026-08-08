@@ -22,6 +22,7 @@ pub mod files;
 pub mod host;
 pub mod interp;
 pub mod lexer;
+pub mod pathcmds;
 pub mod rsv;
 pub mod sesscmds;
 pub mod strcmds;

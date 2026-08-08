@@ -104,6 +104,19 @@ pub trait ScriptHost {
         0
     }
 
+    /// A Unix timestamp as `%Y-%m-%d %H:%M:%S` — `filestat`'s third output,
+    /// and what `getdate` and `gettime` will want.
+    ///
+    /// It is here because a wall clock is not in the standard library: there
+    /// are no time zones and no `strftime`, and this crate has no
+    /// dependencies. Upstream's `localtime` is the *user's* zone, which the
+    /// frontend knows and the interpreter does not, so the default below
+    /// answers in **UTC** — right shape, and honest about not knowing where it
+    /// is. A host with a date library should override it.
+    fn format_time(&mut self, unix_secs: i64) -> String {
+        format_utc(unix_secs)
+    }
+
     /// Whether the run has been cancelled from outside.
     ///
     /// The interpreter runs on its own thread and blocks in `wait` and `pause`,
@@ -239,6 +252,34 @@ pub trait ScriptHost {
         let _ = req;
         Err(TtlError::NotSupported)
     }
+}
+
+/// A Unix timestamp as `%Y-%m-%d %H:%M:%S`, in UTC.
+///
+/// Hinnant's `civil_from_days`: shift the epoch to March 1st of year 0 so that
+/// the leap day lands at the end of the era, and the month arithmetic becomes
+/// exact integer division. Correct for any date the proleptic Gregorian
+/// calendar covers, which is more than a filesystem will produce.
+pub fn format_utc(unix_secs: i64) -> String {
+    let days = unix_secs.div_euclid(86_400);
+    let secs = unix_secs.rem_euclid(86_400);
+
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}",
+        secs / 3600,
+        (secs / 60) % 60,
+        secs % 60
+    )
 }
 
 /// `setflowctrl`'s four values (`ttdde.c:1002`).

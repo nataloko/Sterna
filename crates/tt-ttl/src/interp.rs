@@ -19,6 +19,7 @@ use crate::expr::{self, Eval};
 use crate::files::Files;
 use crate::host::{ErrorReport, ScriptHost};
 use crate::lexer::{check_reserved, Lexer};
+use crate::pathcmds::NUM_DIR_HANDLE;
 use crate::rsv::Rsv;
 use crate::vars::{VarRef, VarType, Vars};
 use crate::wait::{RecvLine, WaitSet};
@@ -51,6 +52,12 @@ pub struct Interp {
     pub(crate) recv_line: RecvLine,
     /// The sixteen file handles and the directory relative paths hang off.
     pub(crate) files: Files,
+    /// `DirHandle` — eight directory walks at once, each holding the names it
+    /// has not handed out yet. Upstream keeps a live `FindFirstFile` handle
+    /// and reads the directory lazily; the whole listing is taken up front
+    /// here, which a macro can only tell apart by creating a file in a
+    /// directory it is already walking.
+    pub(crate) finds: [Option<Vec<Vec<u8>>>; NUM_DIR_HANDLE],
 }
 
 impl Interp {
@@ -75,6 +82,7 @@ impl Interp {
             waits: WaitSet::new(),
             recv_line: RecvLine::new(),
             files,
+            finds: Default::default(),
         };
         it.buf.open(name, body);
         it.define_system_variables(&[]);
@@ -452,6 +460,9 @@ impl Interp {
             return r;
         }
         if let Some(r) = self.file_command(host, w) {
+            return r;
+        }
+        if let Some(r) = self.path_command(host, w) {
             return r;
         }
         match w {
