@@ -252,6 +252,223 @@ pub trait ScriptHost {
         let _ = req;
         Err(TtlError::NotSupported)
     }
+
+    // ---- the dialogs ----
+    //
+    // Upstream's are `ttpmacro.exe`'s own windows, put up on the thread that
+    // is also running the macro, so each is an ordinary `DoModal` and the
+    // interpreter simply waits. That is the shape here too — every one of
+    // these blocks — and it is why the interpreter must not be on the UI
+    // thread: a frontend answers these by spinning its own event loop.
+    //
+    // They refuse by default rather than answering for the absent user. A
+    // macro that puts up a `messagebox` on a host with no UI would otherwise
+    // carry on as though somebody had read it.
+
+    /// `messagebox` — one button, and no answer to report.
+    ///
+    /// [`Cancel`] cannot happen: `CMsgDlg::OnCancel` swallows Escape when
+    /// there is no No button (`msgdlg.cpp:216`). The only way out other than
+    /// OK is the window's close button and its confirmation, which upstream
+    /// ends this dialog with `IDCANCEL` and the yes/no one with `IDCLOSE` —
+    /// so the interpreter ends the macro on either non-`Ok` answer.
+    ///
+    /// [`Cancel`]: DialogEnd::Cancel
+    fn message_box(&mut self, text: &[u8], title: &[u8]) -> Result<DialogEnd, TtlError> {
+        let _ = (text, title);
+        Err(TtlError::NotSupported)
+    }
+
+    /// `yesnobox` — [`Ok`] is Yes, [`Cancel`] is No, and [`Closed`] ends the
+    /// macro with `result` still 0.
+    ///
+    /// [`Ok`]: DialogEnd::Ok
+    /// [`Cancel`]: DialogEnd::Cancel
+    /// [`Closed`]: DialogEnd::Closed
+    fn yes_no_box(&mut self, text: &[u8], title: &[u8]) -> Result<DialogEnd, TtlError> {
+        let _ = (text, title);
+        Err(TtlError::NotSupported)
+    }
+
+    /// `statusbox` — put up the modeless status box, or retitle the one that
+    /// is already there.
+    ///
+    /// One dialog, not one per call: `OpenStatDlg` (`ttmdlg.cpp:326`) creates
+    /// it the first time and updates it every time after, and the user cannot
+    /// dismiss it — only `closesbox` closes it. It does not block.
+    fn status_box(&mut self, text: &[u8], title: &[u8]) -> Result<(), TtlError> {
+        let _ = (text, title);
+        Err(TtlError::NotSupported)
+    }
+
+    /// `closesbox`. Nothing to close is not an error upstream, and must not be
+    /// one here.
+    fn close_status_box(&mut self) -> Result<(), TtlError> {
+        Err(TtlError::NotSupported)
+    }
+
+    /// `bringupbox` — raise the status box. Also a no-op when there is none.
+    fn bringup_status_box(&mut self) -> Result<(), TtlError> {
+        Err(TtlError::NotSupported)
+    }
+
+    /// `listbox` — choose one of `items`, starting on `selected`.
+    ///
+    /// `selected` has already been folded to 0 when the macro's index was out
+    /// of range, which is upstream's (`ttl_gui.cpp:512`), so it is always a
+    /// valid index and `items` is never empty.
+    fn list_box(
+        &mut self,
+        text: &[u8],
+        title: &[u8],
+        items: &[&[u8]],
+        selected: usize,
+        opts: &ListBoxOpts,
+    ) -> Result<DialogEnd<usize>, TtlError> {
+        let _ = (text, title, items, selected, opts);
+        Err(TtlError::NotSupported)
+    }
+
+    /// `inputbox`, and `passwordbox` with `password` set.
+    ///
+    /// [`Cancel`] is Escape. Upstream cannot tell it from OK — see the note on
+    /// the command — so the interpreter answers it with an empty `inputstr`,
+    /// which is what the documentation promises and what upstream's own
+    /// `getpassword` does with the same dialog.
+    ///
+    /// [`Cancel`]: DialogEnd::Cancel
+    fn input_box(
+        &mut self,
+        text: &[u8],
+        title: &[u8],
+        default: &[u8],
+        password: bool,
+    ) -> Result<DialogEnd<Vec<u8>>, TtlError> {
+        let _ = (text, title, default, password);
+        Err(TtlError::NotSupported)
+    }
+
+    /// `filenamebox` — the platform's file chooser. `None` is cancelled.
+    ///
+    /// `save` is the documented meaning of the `<dialogtype>` argument, not
+    /// upstream's flags, which are swapped; see the note on the command.
+    fn filename_box(
+        &mut self,
+        title: &[u8],
+        save: bool,
+        init_dir: &[u8],
+    ) -> Result<Option<Vec<u8>>, TtlError> {
+        let _ = (title, save, init_dir);
+        Err(TtlError::NotSupported)
+    }
+
+    /// `dirnamebox` — the platform's folder chooser. `None` is cancelled.
+    fn dirname_box(&mut self, title: &[u8], init_dir: &[u8]) -> Result<Option<Vec<u8>>, TtlError> {
+        let _ = (title, init_dir);
+        Err(TtlError::NotSupported)
+    }
+
+    /// `setdlgpos` — where the next dialog opens, and where the status box
+    /// moves to if one is already up (`ttmdlg.cpp:189`).
+    ///
+    /// `None` is the no-argument form: upstream stores `CW_USEDEFAULT` in both
+    /// coordinates, which every dialog reads as "centre me". A preference with
+    /// no user in it, so it does not refuse — a host with no dialogs has
+    /// nothing to do and upstream's command cannot fail either.
+    fn set_dialog_pos(&mut self, pos: Option<DialogPos>) {
+        let _ = pos;
+    }
+}
+
+/// How a modal dialog ended, and what it produced.
+///
+/// The three ways out are the same for all of them: `Ok` is the affirmative
+/// button, `Cancel` is No or Escape, and `Closed` is the window's close button
+/// **after** the "halt the script?" confirmation upstream puts in front of it
+/// (`msgdlg.cpp:227`). That confirmation is why `Closed` ends the macro and
+/// `Cancel` does not — the user has already said so.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DialogEnd<T = ()> {
+    Ok(T),
+    Cancel,
+    Closed,
+}
+
+/// `listbox`'s keyword parameters (`ttl_gui.cpp:476`).
+///
+/// All of them are hints about the window rather than about the choice, so a
+/// host that ignores the lot still implements `listbox` correctly.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ListBoxOpts {
+    /// `dblclick=on` — a double click chooses the item under it.
+    pub double_click: bool,
+    /// `minmaxbutton=on`.
+    pub min_max_button: bool,
+    /// `minimize=on`. Exclusive with [`maximized`](ListBoxOpts::maximized):
+    /// each keyword clears the other, so the last one written wins.
+    pub minimized: bool,
+    /// `maximize=on`.
+    pub maximized: bool,
+    /// `listboxsize=WxH`, in characters — width then height.
+    pub size: Option<(u32, u32)>,
+}
+
+/// Where `setdlgpos` wants the dialogs, in pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DialogPos {
+    /// The top-left corner, from the primary display's origin.
+    pub x: i32,
+    pub y: i32,
+    /// The `<position>` argument, when one was given. Absent means the
+    /// coordinates alone decide, which is the two-argument form.
+    pub anchor: Option<(DialogAnchor, DialogOrigin)>,
+    /// Added to the anchored position, and zero unless an anchor was given.
+    pub offset_x: i32,
+    pub offset_y: i32,
+}
+
+/// Which corner of [`DialogOrigin`] a dialog is placed against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DialogAnchor {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+    Center,
+}
+
+/// What [`DialogAnchor`] is measured from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DialogOrigin {
+    /// The display the terminal is on, or the primary one when there is no
+    /// terminal to ask.
+    Display,
+    /// The terminal window itself. Upstream falls back to the stored
+    /// coordinates when there is no window, or when it is minimised or hidden
+    /// (`ttmdlg.cpp:247`), because a window nobody can see is not a position.
+    VtWindow,
+}
+
+impl DialogAnchor {
+    /// `setdlgpos`'s `<position>`: 1-5 against the display and 6-10 against
+    /// the VT window, each in the order top-left, top-right, bottom-left,
+    /// bottom-right, centre. The command rejects anything else outright, so
+    /// the `None` here is unreachable from a macro.
+    pub fn from_code(v: i32) -> Option<(DialogAnchor, DialogOrigin)> {
+        let origin = match v {
+            1..=5 => DialogOrigin::Display,
+            6..=10 => DialogOrigin::VtWindow,
+            _ => return None,
+        };
+        let anchor = match (v - 1) % 5 {
+            0 => DialogAnchor::TopLeft,
+            1 => DialogAnchor::TopRight,
+            2 => DialogAnchor::BottomLeft,
+            3 => DialogAnchor::BottomRight,
+            _ => DialogAnchor::Center,
+        };
+        Some((anchor, origin))
+    }
 }
 
 /// A Unix timestamp as `%Y-%m-%d %H:%M:%S`, in UTC.
@@ -449,6 +666,25 @@ pub struct RecordingHost {
     pub transfers: Vec<String>,
     /// Whether a transfer should report success.
     pub transfer_fails: bool,
+
+    // The dialogs. This host implements them all rather than refusing, which
+    // is the point of it — a test asserts on what was asked and answers from
+    // the queues below. For the refusing default, use a host that does not
+    // override them.
+    /// Every dialog put up, rendered, in order — including the ones that ask
+    /// nothing, so a test can assert `closesbox` ran.
+    pub dialogs: Vec<String>,
+    /// What `messagebox` and `yesnobox` should answer, in order. An empty
+    /// queue is `Ok(())`, which is the button a user presses without thinking.
+    pub msg_replies: std::collections::VecDeque<DialogEnd>,
+    /// What `inputbox` and `passwordbox` should answer. Empty is `Cancel`.
+    pub input_replies: std::collections::VecDeque<DialogEnd<Vec<u8>>>,
+    /// What `listbox` should answer. Empty is `Cancel`.
+    pub list_replies: std::collections::VecDeque<DialogEnd<usize>>,
+    /// What `filenamebox` and `dirnamebox` should answer. Empty is cancelled.
+    pub file_replies: std::collections::VecDeque<Option<Vec<u8>>>,
+    /// The last `setdlgpos`, or `None` if it asked for the default position.
+    pub dialog_pos: Option<DialogPos>,
 }
 
 impl RecordingHost {
@@ -572,4 +808,101 @@ impl ScriptHost for RecordingHost {
         self.transfers.push(format!("{req:?}"));
         Ok(!self.transfer_fails)
     }
+
+    fn message_box(&mut self, text: &[u8], title: &[u8]) -> Result<DialogEnd, TtlError> {
+        self.dialogs
+            .push(format!("messagebox {}", show2(text, title)));
+        Ok(self.msg_replies.pop_front().unwrap_or(DialogEnd::Ok(())))
+    }
+
+    fn yes_no_box(&mut self, text: &[u8], title: &[u8]) -> Result<DialogEnd, TtlError> {
+        self.dialogs
+            .push(format!("yesnobox {}", show2(text, title)));
+        Ok(self.msg_replies.pop_front().unwrap_or(DialogEnd::Ok(())))
+    }
+
+    fn status_box(&mut self, text: &[u8], title: &[u8]) -> Result<(), TtlError> {
+        self.dialogs
+            .push(format!("statusbox {}", show2(text, title)));
+        Ok(())
+    }
+
+    fn close_status_box(&mut self) -> Result<(), TtlError> {
+        self.dialogs.push("closesbox".into());
+        Ok(())
+    }
+
+    fn bringup_status_box(&mut self) -> Result<(), TtlError> {
+        self.dialogs.push("bringupbox".into());
+        Ok(())
+    }
+
+    fn list_box(
+        &mut self,
+        text: &[u8],
+        title: &[u8],
+        items: &[&[u8]],
+        selected: usize,
+        opts: &ListBoxOpts,
+    ) -> Result<DialogEnd<usize>, TtlError> {
+        let items: Vec<String> = items.iter().map(|i| show(i)).collect();
+        self.dialogs.push(format!(
+            "listbox {} [{}] sel={selected} {opts:?}",
+            show2(text, title),
+            items.join(", ")
+        ));
+        Ok(self.list_replies.pop_front().unwrap_or(DialogEnd::Cancel))
+    }
+
+    fn input_box(
+        &mut self,
+        text: &[u8],
+        title: &[u8],
+        default: &[u8],
+        password: bool,
+    ) -> Result<DialogEnd<Vec<u8>>, TtlError> {
+        let name = if password { "passwordbox" } else { "inputbox" };
+        self.dialogs
+            .push(format!("{name} {} {}", show2(text, title), show(default)));
+        Ok(self.input_replies.pop_front().unwrap_or(DialogEnd::Cancel))
+    }
+
+    fn filename_box(
+        &mut self,
+        title: &[u8],
+        save: bool,
+        init_dir: &[u8],
+    ) -> Result<Option<Vec<u8>>, TtlError> {
+        self.dialogs.push(format!(
+            "filenamebox {} save={} {}",
+            show(title),
+            save as u8,
+            show(init_dir)
+        ));
+        Ok(self.file_replies.pop_front().flatten())
+    }
+
+    fn dirname_box(&mut self, title: &[u8], init_dir: &[u8]) -> Result<Option<Vec<u8>>, TtlError> {
+        self.dialogs
+            .push(format!("dirnamebox {} {}", show(title), show(init_dir)));
+        Ok(self.file_replies.pop_front().flatten())
+    }
+
+    fn set_dialog_pos(&mut self, pos: Option<DialogPos>) {
+        self.dialogs.push(match &pos {
+            Some(p) => format!("setdlgpos {p:?}"),
+            None => "setdlgpos default".into(),
+        });
+        self.dialog_pos = pos;
+    }
+}
+
+/// A dialog string as a test wants to read it. Lossy on purpose — a TTL string
+/// is bytes and need not be UTF-8, and a record nobody can print is no use.
+fn show(s: &[u8]) -> String {
+    format!("{:?}", String::from_utf8_lossy(s))
+}
+
+fn show2(text: &[u8], title: &[u8]) -> String {
+    format!("{} {}", show(text), show(title))
 }

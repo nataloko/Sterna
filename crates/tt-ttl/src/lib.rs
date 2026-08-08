@@ -15,6 +15,7 @@
 
 pub mod buffer;
 pub mod conncmds;
+pub mod dlgcmds;
 pub mod error;
 pub mod expr;
 pub mod filecmds;
@@ -30,7 +31,10 @@ pub mod vars;
 pub mod wait;
 
 pub use error::{TtlError, TtlResult};
-pub use host::{ErrorReport, FlowControl, ModemLines, RecordingHost, ScriptHost, Xfer, XmodemOpt};
+pub use host::{
+    DialogAnchor, DialogEnd, DialogOrigin, DialogPos, ErrorReport, FlowControl, ListBoxOpts,
+    ModemLines, RecordingHost, ScriptHost, Xfer, XmodemOpt,
+};
 pub use interp::Interp;
 pub use lexer::Lexer;
 pub use rsv::Rsv;

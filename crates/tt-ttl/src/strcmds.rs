@@ -339,24 +339,7 @@ impl Interp {
             self.vars.str_at(target).to_vec()
         };
 
-        let mut out = Vec::with_capacity(src.len());
-        let mut i = 0;
-        while i < src.len() {
-            if src[i] == b'\\' && i + 1 < src.len() {
-                let (byte, step) = match src[i + 1] {
-                    b'\\' => (b'\\', 2),
-                    b'n' => (b'\n', 2),
-                    b't' => (b'\t', 2),
-                    b'0' => (0u8, 2),
-                    _ => (b'\\', 1),
-                };
-                out.push(byte);
-                i += step;
-            } else {
-                out.push(src[i]);
-                i += 1;
-            }
-        }
+        let out = restore_new_line(&src);
         self.vars.set_str(target, &out);
         Ok(())
     }
@@ -501,12 +484,49 @@ impl Interp {
     }
 }
 
+/// `RestoreNewLine` (`common/ttlib.c:619`) — expand `\n`, `\t`, `\\` and `\0`.
+///
+/// `strspecial` is the command for it, and the `<special>` argument that
+/// `messagebox`, `statusbox`, `yesnobox` and `inputbox` all carry runs the same
+/// function over their message. A backslash before anything else stays a
+/// backslash, including a trailing one — upstream reads the byte after it,
+/// which is the terminator, and takes the `default:` arm.
+///
+/// The cut at the first NUL is upstream's callers rather than upstream's
+/// function: it writes the NUL into the buffer and keeps going, and then every
+/// caller hands the buffer to something that treats it as a C string. Doing it
+/// here makes that one rule instead of five.
+pub(crate) fn restore_new_line(src: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(src.len());
+    let mut i = 0;
+    while i < src.len() {
+        if src[i] == b'\\' && i + 1 < src.len() {
+            let (byte, step) = match src[i + 1] {
+                b'\\' => (b'\\', 2),
+                b'n' => (b'\n', 2),
+                b't' => (b'\t', 2),
+                b'0' => (0u8, 2),
+                _ => (b'\\', 1),
+            };
+            if byte == 0 {
+                break;
+            }
+            out.push(byte);
+            i += step;
+        } else {
+            out.push(src[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
 /// `sscanf("%d")` / `sscanf("%i")` on a hex string, in the part TTL uses.
 ///
 /// Leading whitespace and a sign are allowed, parsing stops at the first byte
 /// that is not a digit of the radix, and the answer is `None` only when there
 /// was no digit at all — which is what makes `result` 0.
-fn scan_int(s: &[u8], radix: u32) -> Option<i32> {
+pub(crate) fn scan_int(s: &[u8], radix: u32) -> Option<i32> {
     let mut i = 0;
     while i < s.len() && (s[i] as char).is_whitespace() {
         i += 1;

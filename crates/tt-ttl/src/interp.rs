@@ -46,7 +46,7 @@ pub struct Interp {
     /// instead of reading one.
     parse_again: bool,
     /// `TTLStatus == IdTTLEnd`.
-    ended: bool,
+    pub(crate) ended: bool,
     /// The `wait` patterns, and the line the far end is part-way through.
     pub(crate) waits: WaitSet,
     pub(crate) recv_line: RecvLine,
@@ -463,6 +463,9 @@ impl Interp {
             return r;
         }
         if let Some(r) = self.path_command(host, w) {
+            return r;
+        }
+        if let Some(r) = self.dialog_command(host, w) {
             return r;
         }
         match w {
