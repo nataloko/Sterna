@@ -123,6 +123,57 @@ pub struct Config {
     /// not convert at all. It never learns anything else about pixels.
     pub cell_w: i32,
     pub cell_h: i32,
+    /// `ts.TranslateWheelToCursor` (`ttset.c:1515`, key default on). Gates
+    /// `DECSET 7786`, and is what a reset restores that mode to.
+    pub translate_wheel_to_cursor: bool,
+    /// `WF_CURSORCHANGE` (`ttset.c:1656` `CursorCtrlSequence`, key default
+    /// **off**). Gates DECSCUSR and `DECSET 12`, and shifts what DECRQM
+    /// answers for the three cursor modes by two.
+    pub cursor_ctrl_sequence: bool,
+    /// `ts.LocalEcho` (`ttset.c:660`, key default off). SRM writes it.
+    pub local_echo: bool,
+    /// `ts.CRSend == IdCRLF` (`ttset.c:657`, default `IdCR`). It seeds LNM.
+    pub cr_send_crlf: bool,
+    /// `ts.BSKey == IdBS` (`ttset.c:882`, the else branch). DECBKM writes it.
+    pub bs_key_is_bs: bool,
+}
+
+/// The private and ANSI modes that are one flag each. Grouped so a reset can
+/// name them together, and so `DECRQM` has one place to read.
+#[derive(Clone, Debug)]
+struct Modes {
+    /// DECCKM. The frontend needs it to pick `ESC O A` over `ESC [ A`.
+    appli_cursor: bool,
+    /// DECNKM.
+    appli_key: bool,
+    /// `AppliEscapeMode` — 0, or mintty's 1 from `DECSET 7727`, or 2/3/4 from
+    /// the three upstream test modes at 14002-14004.
+    appli_escape: u16,
+    /// DECARM. On out of reset.
+    auto_repeat: bool,
+    /// DECTCEM, `IsCaretEnabled()`. On out of reset.
+    caret: bool,
+    /// DECPEX. Starts **set** — `vtterm.c:176` initialises it TRUE and
+    /// nothing resets it, so DECRQM reports 1 on a fresh terminal.
+    print_ex: bool,
+    /// `DECSET 2004`.
+    bracketed_paste: bool,
+    /// `DECSET 7786`, `AcceptWheelToCursor`.
+    wheel_to_cursor: bool,
+    /// `DECSET 8200`. Makes `ED 2` home the cursor afterwards.
+    clear_then_home: bool,
+    /// DECSCNM. Upstream keeps it in `ts.ColorFlag`; nothing in the grid reads
+    /// it, since reversing the whole screen is the renderer's job.
+    reverse_video: bool,
+    /// KAM. On out of reset — the keyboard is not locked.
+    keyb_enabled: bool,
+    /// SRM, mirroring `ts.LocalEcho`. Note the sense: `SM 12` turns local echo
+    /// *off*.
+    local_echo: bool,
+    /// LNM. Also rewrites what a CR sends, which is why it is not just a flag.
+    lf_mode: bool,
+    /// DECBKM, mirroring `ts.BSKey`.
+    bs_key_is_bs: bool,
 }
 
 impl Default for Config {
@@ -152,6 +203,66 @@ impl Default for Config {
             // an injected event lands on the same character in both engines.
             cell_w: 8,
             cell_h: 16,
+            translate_wheel_to_cursor: true,
+            cursor_ctrl_sequence: false,
+            local_echo: false,
+            cr_send_crlf: false,
+            bs_key_is_bs: true,
+        }
+    }
+}
+
+impl Modes {
+    /// `vtterm.c:ResetTerminal`. Note what is *not* here: DECPEX, the keyboard
+    /// lock, local echo and DECBKM all survive a RIS, because upstream never
+    /// clears them. Bracketed paste does not — it is cleared much further
+    /// down the same function (`vtterm.c:336`), a hundred lines after the
+    /// block that clears the other modes.
+    fn reset(&mut self, config: &Config) -> Modes {
+        Modes {
+            appli_cursor: false,
+            appli_key: false,
+            appli_escape: 0,
+            auto_repeat: true,
+            caret: true,
+            print_ex: self.print_ex,
+            bracketed_paste: false,
+            wheel_to_cursor: config.translate_wheel_to_cursor,
+            clear_then_home: false,
+            reverse_video: false,
+            keyb_enabled: self.keyb_enabled,
+            local_echo: self.local_echo,
+            lf_mode: config.cr_send_crlf,
+            bs_key_is_bs: self.bs_key_is_bs,
+        }
+    }
+
+    /// `vtterm.c:SoftReset`, which is a much shorter list.
+    fn soft_reset(&mut self, config: &Config) {
+        self.auto_repeat = true;
+        self.caret = true;
+        self.appli_cursor = false;
+        self.appli_key = false;
+        self.appli_escape = 0;
+        self.wheel_to_cursor = config.translate_wheel_to_cursor;
+    }
+
+    fn from_config(config: &Config) -> Modes {
+        Modes {
+            appli_cursor: false,
+            appli_key: false,
+            appli_escape: 0,
+            auto_repeat: true,
+            caret: true,
+            print_ex: true,
+            bracketed_paste: false,
+            wheel_to_cursor: config.translate_wheel_to_cursor,
+            clear_then_home: false,
+            reverse_video: false,
+            keyb_enabled: true,
+            local_echo: config.local_echo,
+            lf_mode: config.cr_send_crlf,
+            bs_key_is_bs: config.bs_key_is_bs,
         }
     }
 }
@@ -177,6 +288,7 @@ impl Vt {
             parser: vte::Parser::new(),
             state: State {
                 grid,
+                modes: Modes::from_config(&config),
                 config,
                 vt_level,
                 send_8bit,
@@ -310,6 +422,62 @@ impl Vt {
         self.state.config.cell_w = w.max(1);
         self.state.config.cell_h = h.max(1);
     }
+
+    /// DECCKM. The frontend sends `ESC O A` rather than `ESC [ A` while it is
+    /// on — but the keymap lives in the core, so this exists for the shell's
+    /// own decisions (scrollbar behaviour, wheel translation) rather than for
+    /// building key sequences.
+    pub fn application_cursor_keys(&self) -> bool {
+        self.state.modes.appli_cursor
+    }
+
+    /// DECNKM.
+    pub fn application_keypad(&self) -> bool {
+        self.state.modes.appli_key
+    }
+
+    /// DECTCEM. False means the cursor should not be drawn.
+    pub fn cursor_visible(&self) -> bool {
+        self.state.modes.caret
+    }
+
+    /// `DECSET 2004`. A paste must be wrapped in `ESC [ 200 ~` … `ESC [ 201 ~`
+    /// while it is on.
+    pub fn bracketed_paste(&self) -> bool {
+        self.state.modes.bracketed_paste
+    }
+
+    /// DECSCNM. The whole screen is drawn with foreground and background
+    /// swapped; nothing in the grid changes, which is why it lives here.
+    pub fn reverse_video(&self) -> bool {
+        self.state.modes.reverse_video
+    }
+
+    /// KAM. The host has asked that typing be ignored.
+    pub fn keyboard_enabled(&self) -> bool {
+        self.state.modes.keyb_enabled
+    }
+
+    /// SRM — the host wants the terminal to echo locally.
+    pub fn local_echo(&self) -> bool {
+        self.state.modes.local_echo
+    }
+
+    /// LNM. A CR from the keyboard sends CR LF while it is on.
+    pub fn newline_mode(&self) -> bool {
+        self.state.modes.lf_mode
+    }
+
+    /// DECBKM. False means Backspace sends DEL rather than BS.
+    pub fn backspace_sends_bs(&self) -> bool {
+        self.state.modes.bs_key_is_bs
+    }
+
+    /// `DECSET 7786` — translate the wheel into cursor keys when the
+    /// application cursor mode is on.
+    pub fn wheel_to_cursor(&self) -> bool {
+        self.state.modes.wheel_to_cursor
+    }
 }
 
 struct State {
@@ -345,6 +513,7 @@ struct State {
     dcs: Option<(Option<u8>, char)>,
     dcs_buf: Vec<u8>,
     mouse: mouse::MouseState,
+    modes: Modes,
 }
 
 impl State {
@@ -368,6 +537,7 @@ impl State {
             dcs: None,
             dcs_buf: Vec::new(),
             mouse: mouse::MouseState::default(),
+            modes: Modes::from_config(&Config::default()),
         }
     }
 
@@ -800,12 +970,64 @@ impl State {
                             };
                         }
                     }
+                    // The rest are one flag each, and are here rather than
+                    // dropped because the frontend reads several of them and
+                    // DECRQM reports all of them.
+                    1 => self.modes.appli_cursor = on,
+                    3 => self.dec_colm(on),
+                    5 => self.modes.reverse_video = on,
+                    8 => self.modes.auto_repeat = on,
+                    // `DECSET 12` and DECSCUSR are both gated on a setting
+                    // that ships *off*, so by default this does nothing.
+                    12 => {
+                        if self.config.cursor_ctrl_sequence {
+                            self.config.nonblinking_cursor = !on;
+                        }
+                    }
+                    19 => self.modes.print_ex = on,
+                    25 => self.modes.caret = on,
+                    66 => self.modes.appli_key = on,
+                    67 => self.modes.bs_key_is_bs = on,
+                    2004 => self.modes.bracketed_paste = on,
+                    7727 => self.modes.appli_escape = u16::from(on),
+                    7786 => {
+                        if !on {
+                            self.modes.wheel_to_cursor = false;
+                        } else if self.config.translate_wheel_to_cursor {
+                            self.modes.wheel_to_cursor = true;
+                        }
+                    }
+                    8200 => self.modes.clear_then_home = on,
+                    14002..=14004 => {
+                        self.modes.appli_escape = if on { p - 14000 } else { 0 };
+                    }
                     _ => {}
                 }
-            } else if p == 4 {
-                self.grid.insert_mode = on;
+            } else {
+                match p {
+                    // KAM. `SM 2` *locks* the keyboard, so the sense inverts.
+                    2 => self.modes.keyb_enabled = !on,
+                    4 => self.grid.insert_mode = on,
+                    // SRM inverts too: `SM 12` means "send/receive", which is
+                    // local echo off.
+                    12 => self.modes.local_echo = !on,
+                    20 => self.modes.lf_mode = on,
+                    _ => {}
+                }
             }
         }
+    }
+
+    /// DECCOLM — `vtterm.c:CSQChangeColumnMode`. It is a resize, it throws the
+    /// left/right margins away, and because `TF_CLEARONRESIZE` ships off it
+    /// also clears the screen and homes the cursor by hand.
+    fn dec_colm(&mut self, wide: bool) {
+        let rows = self.grid.rows();
+        self.grid.resize(if wide { 132 } else { 80 }, rows);
+        self.lr_margin_mode = false;
+        self.grid.reset_lr_margins();
+        self.grid.move_cursor(0, 0);
+        self.grid.clear_screen();
     }
 
     /// `vtterm.c:2970` / `:3030` / `:3144` / `:3194`.
@@ -884,6 +1106,7 @@ impl State {
         self.grid.soft_reset();
         self.charset.reset();
         self.saved_charset = Some(self.charset.save());
+        self.modes.soft_reset(&self.config);
     }
 
     /// `vtterm.c:SendDCSstr` — `ESC P … ESC \`, or the 8-bit `DCS … ST` when
@@ -1035,6 +1258,113 @@ impl State {
             }
             _ => {}
         }
+    }
+
+    /// DECRQM — `vtterm.c:CSDolRequestMode`. Answers `CSI [?]Ps;Ps $ y`, where
+    /// the second parameter is 1 set, 2 reset, 3 permanently set, 4 permanently
+    /// reset, and 0 "not recognised".
+    ///
+    /// The two halves differ in their fallback and that is upstream's, not a
+    /// slip: an unknown **ANSI** mode answers 4, an unknown **DEC private**
+    /// mode answers 0.
+    fn decrqm(&mut self, mode: u16, private: bool) {
+        let onoff = |b: bool| if b { 1 } else { 2 };
+        let m = &self.modes;
+
+        let resp: u16 = if private {
+            // `!ts.MouseEventTracking` makes every mouse mode permanently
+            // reset rather than merely off.
+            let mouse = |live: bool| {
+                if !self.config.mouse_tracking_enabled {
+                    4
+                } else {
+                    onoff(live)
+                }
+            };
+            // Without TF_ALTSCR the alternate screen is permanently reset —
+            // except 1048, the cursor half, which is permanently *set*.
+            let alt = |live: bool| {
+                if !self.config.alt_screen_enabled {
+                    4
+                } else {
+                    onoff(live)
+                }
+            };
+            // The three cursor modes add two to their answer when the setting
+            // that gates them is off, turning "set/reset" into "permanently
+            // set/permanently reset".
+            let cursor = |v: u16| v + if self.config.cursor_ctrl_sequence { 0 } else { 2 };
+
+            match mode {
+                1 => onoff(m.appli_cursor),
+                3 => onoff(self.grid.cols() == 132),
+                5 => onoff(m.reverse_video),
+                6 => onoff(self.grid.origin_mode),
+                7 => onoff(self.grid.autowrap),
+                8 => onoff(m.auto_repeat),
+                9 => mouse(self.mouse.tracking == Tracking::X10),
+                12 => cursor(onoff(!self.config.nonblinking_cursor)),
+                19 => onoff(m.print_ex),
+                25 => onoff(m.caret),
+                // DECTEK is permanently reset: the oracle has no Tek window
+                // and neither will we.
+                38 => 4,
+                47 => alt(self.alt_screen),
+                // DECKKDM answers 0 on a terminal that is not Japanese, which
+                // this one never is.
+                59 => 0,
+                66 => onoff(m.appli_key),
+                67 => onoff(m.bs_key_is_bs),
+                69 => onoff(self.lr_margin_mode),
+                1000 => mouse(self.mouse.tracking == Tracking::Vt200),
+                // Highlight tracking is `#if 0`'d out upstream and always
+                // answers permanently reset, even though setting it works.
+                1001 => 4,
+                1002 => mouse(self.mouse.tracking == Tracking::BtnEvent),
+                1003 => mouse(self.mouse.tracking == Tracking::AllEvent),
+                1004 => mouse(self.mouse.focus_report),
+                1005 => mouse(self.mouse.encoding == Encoding::Utf8),
+                1006 => mouse(self.mouse.encoding == Encoding::Sgr),
+                1015 => mouse(self.mouse.encoding == Encoding::Urxvt),
+                1016 => mouse(self.mouse.encoding == Encoding::SgrPixels),
+                1047 => alt(self.alt_screen),
+                1048 => {
+                    if self.config.alt_screen_enabled {
+                        1
+                    } else {
+                        4
+                    }
+                }
+                1049 => alt(self.alt_screen),
+                2004 => onoff(m.bracketed_paste),
+                7727 => onoff(m.appli_escape == 1),
+                7786 => {
+                    if !self.config.translate_wheel_to_cursor {
+                        4
+                    } else {
+                        onoff(m.wheel_to_cursor)
+                    }
+                }
+                8200 => onoff(m.clear_then_home),
+                14001 => mouse(self.mouse.tracking == Tracking::NetTerm),
+                14002..=14004 => onoff(m.appli_escape == mode - 14000),
+                _ => 0,
+            }
+        } else {
+            let cursor = |v: u16| v + if self.config.cursor_ctrl_sequence { 0 } else { 2 };
+            match mode {
+                2 => onoff(!m.keyb_enabled),
+                4 => onoff(self.grid.insert_mode),
+                12 => onoff(!m.local_echo),
+                20 => onoff(m.lf_mode),
+                33 => cursor(onoff(self.config.nonblinking_cursor)),
+                34 => cursor(onoff(self.config.cursor_shape == 3)),
+                _ => 4,
+            }
+        };
+
+        let body = format!("{}{};{}$y", if private { "?" } else { "" }, mode, resp);
+        self.send_csi(&body);
     }
 
     /// `vtterm.c:CSQuote` — DEC's locator, which is a second mouse protocol
@@ -1269,7 +1599,21 @@ impl State {
                     self.grid.selective_erase_to_end();
                 }
                 (true, _) => {}
-                (false, mode) => self.grid.erase_display(mode),
+                (false, mode) => {
+                    self.grid.erase_display(mode);
+                    // `DECSET 8200` homes the cursor after `ED 2` — to the
+                    // region origin, or the screen origin under origin mode
+                    // (`vtterm.c:1749`).
+                    if mode == 2 && self.modes.clear_then_home {
+                        if self.grid.origin_mode {
+                            self.grid.move_cursor(0, 0);
+                        } else {
+                            let (top, _) = self.grid.scroll_region();
+                            let (left, _) = self.grid.margins();
+                            self.grid.move_cursor(left, top);
+                        }
+                    }
+                }
             },
             // EL, and DECSEL under `?`.
             'K' => {
@@ -1598,6 +1942,13 @@ impl Perform for State {
                 self.send_8bit = !(self.vt_level < 2 || arg0(params, 1) == 1);
             }
             (Some(b'\''), _) => self.csi_quote(params, action),
+            // DECRQM. `vte` puts the private marker in the intermediates, so
+            // `CSI ? Ps $ p` arrives as `?$` and would otherwise fall through
+            // to the plain path as a bare `p`.
+            (Some(b'?'), 'p') if intermediates.get(1) == Some(&b'$') => {
+                self.decrqm(arg0(params, 0), true)
+            }
+            (Some(b'$'), 'p') => self.decrqm(arg0(params, 0), false),
             (Some(b'$'), _) => self.csi_dollar(params, action),
             _ => self.csi_plain(params, private, gt, inter, action),
         }
@@ -1699,6 +2050,7 @@ impl Perform for State {
                 // `ResetTerminal` clears the mouse state outright, position
                 // and button mask included. `SoftReset` clears none of it.
                 self.mouse.reset();
+                self.modes = self.modes.reset(&self.config);
             }
             _ => {}
         }

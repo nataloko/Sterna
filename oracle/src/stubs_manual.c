@@ -232,6 +232,26 @@ void DispChangeWinSize(vtdraw_t *vt, int Nx, int Ny)
 	WinHeight = Ny;
 }
 
+/*
+ * vtdisp.c:2057 / :2066. The real pair is a single static BOOL, initialised
+ * TRUE (`vtdisp.c:139`) and only ever assigned; the drawing it gates is
+ * elsewhere. DECRQM reports it for DECTCEM, so a stub returning 0 would have
+ * made `CSI ? 25 h` answer "reset" forever -- and a differential suite would
+ * then have taught the port to agree with the stub.
+ */
+static BOOL CaretEnabled = TRUE;
+
+void DispEnableCaret(vtdraw_t *vt, BOOL On)
+{
+	(void)vt;
+	CaretEnabled = On;
+}
+
+BOOL IsCaretEnabled(void)
+{
+	return CaretEnabled;
+}
+
 void DispGetCellSize(vtdraw_t *vt, int *width, int *height)
 {
 	/* Nominal 8x16 cell. Only pixel-mode mouse reports observe this, and

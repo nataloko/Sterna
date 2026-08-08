@@ -148,6 +148,34 @@ behaviour looks like a bug until you check. Reproduced deliberately:
   turn it off and `ESC [ 38;5;196 m` parses as "38 ignored, 5 = **blink on**,
   196 ignored". `vtterm.c:2239`.
 
+### Modes
+
+Every private mode `vtterm.c` tracks is tracked here, and `DECRQM`
+(`CSI [?]Ps $ p`) is the differential probe for all of them at once — one case
+sweeps 43 modes, another flips them and asks again, and a third checks what a
+soft reset and a RIS each clear. The frontend reads the ones it needs through
+accessors (`cursor_visible`, `bracketed_paste`, `application_cursor_keys`,
+`reverse_video`, …) rather than through the escape sequences.
+
+The corners worth knowing, all upstream's:
+
+- **An unknown ANSI mode answers 4, an unknown DEC private mode answers 0.**
+  The two halves of `CSDolRequestMode` have different fallbacks.
+- **`SM 2` and `SM 12` invert.** KAM *locks* the keyboard, and SRM being set
+  means local echo is off.
+- **DECPEX starts set** (`vtterm.c:176` initialises `PrintEX` TRUE) and no reset
+  clears it, so a fresh terminal answers 1.
+- **RIS clears bracketed paste, but not DECPEX, the keyboard lock, local echo
+  or DECBKM.** Bracketed paste is cleared a hundred lines below the block that
+  clears everything else.
+- **DECSCUSR and `DECSET 12` are gated on `CursorCtrlSequence`, which ships
+  off**, so by default they do nothing and DECRQM adds two to its answer for
+  modes 12, 33 and 34 — "set" becomes "permanently set".
+- **Highlight tracking (1001) can be set but always reports 4**, because the
+  reporting arm is `#if 0`'d out.
+- **`DECSET 8200` makes `ED 2` home the cursor**, to the region origin, or the
+  screen origin under origin mode.
+
 ### Mouse and focus reporting
 
 Six wire formats and eight tracking modes, all of them upstream's, and all of
@@ -213,6 +241,9 @@ Things that look wrong in isolation and are upstream's:
   window is or moves it, so in a headless diff the answers would come from the
   oracle's *stubs* rather than from Tera Term, and matching them would be
   matching a stub.
+- **DECSCNM, DECPEX and `DECSET 12` are tracked but do nothing**, because what
+  they change belongs to the renderer or the printer. They are here so DECRQM
+  answers honestly and so the shell can read `reverse_video` when it paints.
 - Of DCS, only DECRQSS (`DCS $ q … ST`) is implemented. `DCS + q` — xterm's
   termcap query — and `DCS ! {` (DECSTUI) are collected and dropped rather than
   answered wrongly.

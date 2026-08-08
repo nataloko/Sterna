@@ -131,10 +131,6 @@ BOOL DispDeleteLines(vtdraw_t *vt, int Count, int YEnd)
 	return 0;
 }
 
-void DispEnableCaret(vtdraw_t *vt, BOOL On)
-{
-}
-
 ttdc_t *DispInitDC(vtdraw_t *vt)
 {
 	return NULL;
@@ -246,11 +242,6 @@ DWORD GetPrivateProfileOnOffW(const wchar_t *section, const wchar_t *key, const 
 }
 
 DWORD hGetPrivateProfileStringW(const wchar_t *section, const wchar_t *key, const wchar_t *def, const wchar_t *ini, wchar_t **str)
-{
-	return 0;
-}
-
-BOOL IsCaretEnabled(void)
 {
 	return 0;
 }
