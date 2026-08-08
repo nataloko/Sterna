@@ -48,6 +48,8 @@
 #include <ctime>
 #include <limits>
 
+#include <QStandardPaths>
+
 #include "MainWindow.h"
 #include "Session.h"
 
@@ -335,6 +337,14 @@ struct Results {
 
 int main(int argc, char **argv)
 {
+    // Before anything constructs a window, because a `MainWindow` reads the
+    // settings and the settings decide the terminal's size. A developer with a
+    // 132x50 in their own `termitta.ini` would otherwise be benchmarking a
+    // different window from the baseline's, and nothing downstream could tell:
+    // the numbers would simply be worse, consistently, for a reason nobody
+    // would think to look for.
+    QStandardPaths::setTestModeEnabled(true);
+
     QApplication app(argc, argv);
     const QStringList args = QApplication::arguments();
 
