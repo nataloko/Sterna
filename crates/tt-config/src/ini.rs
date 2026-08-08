@@ -462,6 +462,13 @@ fn split_lines(text: &str) -> Vec<String> {
     out
 }
 
+/// `GetPrivateProfileInt`'s number parser, for a value already in hand.
+/// The schema's `int` needs it for a value typed into a dialog rather than
+/// read from a file, and there must be exactly one of these.
+pub(crate) fn parse_int_public(s: &str) -> u32 {
+    parse_int(s)
+}
+
 /// `GetPrivateProfileInt`'s number parser, wrapping like the original.
 fn parse_int(s: &str) -> u32 {
     let s = s.trim_start();

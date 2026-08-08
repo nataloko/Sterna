@@ -1,0 +1,208 @@
+# The settings schema.
+#
+# One line per setting, and `src/bin/gen-settings.rs` turns the file into
+# `src/generated.rs`: the struct, the defaults, the reader, the writer, and a
+# metadata table that the dialog, the scripting commands and the docs all walk
+# instead of each carrying their own copy of this list. `PLAN.md` calls that
+# the difference between the project finishing and not — `common/tttypes.h` is
+# a 909-line struct surfaced by ~13.8k lines of dialog code across 76 templates,
+# and hand-porting it is where the motivation goes to die.
+#
+#   name | type | section | key | default | label
+#
+# `name` is dotted: the part before the first dot is the dialog page, and the
+# whole thing is what a script says. It becomes a Rust field with the dots
+# turned into underscores.
+#
+# `label` is the `.lng` key for the dialog, or `-` where upstream has no dialog
+# for it. Those are real settings people set by hand, so they still need to be
+# readable and writable — they just have no widget yet.
+#
+# Types:
+#   bool          `GetOnOff`, which is **not** a symmetric parse. See below.
+#   int           `GetPrivateProfileInt`
+#   string        the raw value
+#   enum(...)     `spelling=Variant`, compared case-insensitively; anything
+#                 that matches nothing takes the *default*, which is how
+#                 upstream spells most of its defaults and why several of them
+#                 are an `else` branch rather than a value
+#   color2        two RGB triples, `fg_r,fg_g,fg_b,bg_r,bg_g,bg_b`
+#
+# **`GetOnOff` is default-biased** (`ttset.c:344`) and this is a trap worth
+# stating twice. With a default of on, anything that is not literally `off` is
+# on; with a default of off, only literally `on` is on. So `Key=1` means
+# *different things* for two different settings, and `Key=yes` means off for
+# half of them. It also reads into a 4-byte buffer, so only the first three
+# characters are compared and `offline` is `off`. All of it is reproduced.
+#
+# Comment lines immediately above a setting become its documentation, in the
+# generated Rust and in the dialog's tooltip. Cite the line in `ttset.c` that
+# proves the default — `CLAUDE.md` has four traps that are all "the default is
+# not where it looks like it is".
+
+# --- terminal ---------------------------------------------------------------
+
+# `ttset.c:611`. Clamped to 1..500 on read, as upstream clamps to
+# `TermWidthMax`.
+terminal.cols | int | Tera Term | TerminalSize.1 | 80 | DLG_TABSHEET_TITLE_TERM
+
+# `ttset.c:611`, the second half of the same key.
+terminal.rows | int | Tera Term | TerminalSize.2 | 24 | DLG_TABSHEET_TITLE_TERM
+
+# `ts.TerminalID`. `ttset.c:709` reads the key with an empty default and hands
+# it to `TermIDGetID`, which is a case-sensitive `strcmp` against an UPPERCASE
+# table that returns `IdVT100` for anything it does not recognise — so it never
+# fails, and a typo silently runs as a VT100.
+terminal.id | enum(VT100=Vt100,VT100J=Vt100J,VT101=Vt101,VT102=Vt102,VT102J=Vt102J,VT220J=Vt220J,VT282=Vt282,VT320=Vt320,VT382=Vt382,VT420=Vt420,VT520=Vt520,VT525=Vt525) | Tera Term | TerminalID | VT100 | DLG_TERM_TERMID
+
+# **`ttset.c:631`, and the default is the `else` branch.** A bare CR is a
+# carriage *return*, not a newline, so `"Hello\rWorld"` overwrites the line.
+# Reading this as CRLF shifts every row of every dump.
+terminal.cr_receive | enum(CR=Cr,CRLF=CrLf,LF=Lf,AUTO=Auto) | Tera Term | CRReceive | CR | DLG_TERM_CRRECEIVE
+
+# `ttset.c:646`, the same shape, one variant short — there is no AUTO on send.
+terminal.cr_send | enum(CR=Cr,CRLF=CrLf,LF=Lf) | Tera Term | CRSend | CR | DLG_TERM_CRSEND
+
+# `ttset.c:660`.
+terminal.local_echo | bool | Tera Term | LocalEcho | off | DLG_TERM_LOCALECHO
+
+# `ttset.c:625`. With it on, resizing the window resizes the terminal.
+terminal.size_follows_window | bool | Tera Term | TermIsWin | off | DLG_TERM_TERMISWIN
+
+# `ttset.c:628`. With it on, a remote resize resizes the window.
+terminal.auto_win_resize | bool | Tera Term | AutoWinResize | off | -
+
+# `ttset.c:743`. Off keeps the terminal to one screen and no history.
+terminal.scrollback_enabled | bool | Tera Term | EnableScrollBuff | on | DLG_TERM_SCROLLBUFF
+
+# `ttset.c:751`. Upstream ships **100** lines, which is small for a console
+# log; it is a setting rather than a constant precisely so it can be raised.
+terminal.scrollback_lines | int | Tera Term | ScrollBuffSize | 100 | DLG_TERM_SCROLLBUFF
+
+# `ts.Title`, `ttset.c:713`. The window title before the host sends one.
+terminal.title | string | Tera Term | Title | Tera Term | DLG_TERM_TITLE
+
+# --- keyboard ----------------------------------------------------------------
+
+# **`ttset.c:877` reads this with an empty fallback and only the literal `DEL`
+# takes the other arm**, so an absent key means BS. That is Tera Term's default
+# and it is probably not what a Linux user wants: a `getty` usually has
+# `stty erase` set to `^?`, so backspace echoes instead of erasing until the
+# host sets DECBKM. Faithful by default, and changeable — which is the whole
+# point of this file existing.
+keyboard.backspace | enum(BS=Bs,DEL=Del) | Tera Term | BSKey | BS | DLG_KEYB_BSKEY
+
+# `ttset.c:887`. Upstream ships this **off**, and every Linux line editor and
+# Emacs expects Alt to prefix an ESC. The shell has been diverging from
+# upstream here since it was written; this is where that divergence becomes a
+# setting instead of a hard-coded opinion.
+keyboard.meta | enum(off=Off,on=On,left=Left,right=Right) | Tera Term | MetaKey | off | DLG_KEYB_METAKEY
+
+# `ttset.c:882`. Whether the Delete key sends DEL rather than the VT220
+# Remove sequence.
+keyboard.delete_sends_del | bool | Tera Term | DeleteKey | off | DLG_KEYB_DELKEY
+
+# `ttset.c:1167`, and the value is **hex-escaped** (`Hex2StrW`): `$20` is a
+# space. The default is a space plus every ASCII punctuation mark except
+# underscore, which is what makes `some_name` one word and `some-name` three
+# when you double-click it.
+keyboard.word_delimiters | string | Tera Term | DelimList | $20!"#$24%&'()*+,-./:;<=>?@[\]^`{|}~ | -
+
+# --- colour ------------------------------------------------------------------
+#
+# Every one of these is a pair, foreground then background, because upstream's
+# bold, blink, underline and reverse attributes each carry their own pair and
+# which one applies is a priority chain rather than a blend
+# (`vtdisp.c:GetDrawAttr`, ported in `shell/src/Theme.cpp`).
+
+# `ttset.c:754`. Black on white, which is what Tera Term looks like out of the
+# box and surprises people who expect a terminal to be dark.
+color.normal | color2 | Tera Term | VTColor | 0,0,0,255,255,255 | DLG_TAB_VISUAL_FGCOLOR
+
+# `ttset.c:757`. Blue.
+color.bold | color2 | Tera Term | VTBoldColor | 0,0,255,255,255,255 | DLG_TAB_VISUAL_FGCOLOR
+
+# `ttset.c:762`. Red.
+color.blink | color2 | Tera Term | VTBlinkColor | 255,0,0,255,255,255 | DLG_TAB_VISUAL_FGCOLOR
+
+# `ttset.c:786`. Magenta.
+color.underline | color2 | Tera Term | VTUnderlineColor | 255,0,255,255,255,255 | DLG_TAB_VISUAL_FGCOLOR
+
+# `ttset.c:767`. White on black — and unlike the other three this one ships
+# **off**, so reverse video uses the normal pair swapped instead.
+color.reverse | color2 | Tera Term | VTReverseColor | 255,255,255,0,0,0 | DLG_TAB_VISUAL_FGCOLOR
+
+# `ttset.c:758`.
+color.bold_enabled | bool | Tera Term | EnableBoldAttrColor | on | -
+
+# `ttset.c:763`.
+color.blink_enabled | bool | Tera Term | EnableBlinkAttrColor | on | -
+
+# `ttset.c:768`. **Off**, which is why `SGR 7` swaps the normal pair rather
+# than using the colours above.
+color.reverse_enabled | bool | Tera Term | EnableReverseAttrColor | off | -
+
+# `ttset.c:790`. Whether `SGR 4` gets its own colour pair at all.
+color.underline_enabled | bool | Tera Term | EnableUnderlineAttrColor | off | -
+
+# `ttset.c:741`. **On**, and this is one of the four flag words `CLAUDE.md`
+# warns about: `ColorFlag` is zeroed at the top of `ttset.c` and built up from
+# per-key calls a thousand lines later, so reading the zero as the default
+# turns 256-colour off and looks like a parser bug.
+color.xterm_256 | bool | Tera Term | Xterm256Color | on | -
+
+# `ttset.c:738`. **Off**, so `SGR 90-97` and `100-107` are ignored and the
+# previous pen stands — which looks exactly like a painter bug.
+color.aixterm_16 | bool | Tera Term | Aixterm16Color | off | -
+
+# `ttset.c:735`. PC-style bold colour mapping.
+color.pc_bold_16 | bool | Tera Term | PcBoldColor | off | -
+
+# --- cursor ------------------------------------------------------------------
+
+# `ttset.c:718`, and the default is again the `else` branch.
+cursor.shape | enum(block=Block,vertical=Vertical,horizontal=Horizontal) | Tera Term | CursorShape | block | DLG_TAB_VISUAL_CURSOR
+
+# `ttset.c:1227`.
+cursor.nonblinking | bool | Tera Term | NonblinkingCursor | off | DLG_TAB_VISUAL_CURSOR
+
+# --- window ------------------------------------------------------------------
+
+# `ttset.c:1653`, part of `WindowFlag` — the same trap as `ColorFlag`. Gates
+# every XTWINOPS operation that *changes* something, the resize included.
+window.change_allowed | bool | Tera Term | WindowChangeSequence | on | -
+
+# `ttset.c:1661`. Gates the ones that answer back.
+window.report_allowed | bool | Tera Term | WindowReportSequence | on | -
+
+# `ttset.c:1656`. **Off**, so DECSCUSR and `DECSET 12` do nothing until it is
+# turned on, and DECRQM reports them reset.
+window.cursor_ctrl_allowed | bool | Tera Term | CursorCtrlSequence | off | -
+
+# `ttset.c:1075`, part of `TermFlag`. Whether 8-bit C1 bytes are executed as
+# controls.
+window.accept_8bit_ctrl | bool | Tera Term | Accept8BitCtrl | on | -
+
+# `ttset.c:1283`. Whether *replies* use 8-bit C1 introducers.
+window.send_8bit_ctrl | bool | Tera Term | Send8BitCtrl | off | -
+
+# `ttset.c:1681`, part of `TermFlag`. The alternate screen, which `vim` and
+# `less` need.
+window.alt_screen | bool | Tera Term | AltScreenBuffer | on | -
+
+# `ttset.c:1950`. Whether `ED 3` may discard the scrollback.
+window.remote_clears_buffer | bool | Tera Term | RemoteClearsBuffer | on | -
+
+# --- mouse -------------------------------------------------------------------
+
+# `ttset.c:1523`. **On**, and it was left zeroed here for a while, which
+# silently disabled every mouse mode and made DECRQM answer "permanently
+# reset" for all of them.
+mouse.tracking | bool | Tera Term | MouseEventTracking | on | -
+
+# `ttset.c:1591`. Holding Ctrl suppresses the report so text can still be
+# selected in a full-screen application.
+mouse.ctrl_disables_tracking | bool | Tera Term | DisableMouseTrackingByCtrl | on | -
+
+# `ttset.c:1515`. Gates `DECSET 7786`, and is what a reset restores it to.
+mouse.wheel_to_cursor | bool | Tera Term | TranslateWheelToCursor | on | -
