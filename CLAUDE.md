@@ -678,10 +678,27 @@ And for the macro language:
   them loudly is not faithful.
 - **`ttl.cpp` bounds-checks its handle arrays in about half the places it
   indexes them**, and the halves are not the obvious ones — `HandleGet` has a
-  check that is off by one, `HandleFree` and `FPointer[fhi]` have none. Six
+  check that is off by one, `HandleFree` and `FPointer[fhi]` have none. Seven
   out-of-bounds accesses have been found in `ttpmacro` by reading; none is
   reproduced, all are listed in `PLAN.md`. Assume the next array is unchecked
   until you have looked.
+- **A missing reserved word does not report "unknown command".** An
+  unrecognised name is read as a *variable*, so a command left out of the table
+  fails as a syntax error on a line that is perfectly good — which is what hid
+  `filenamebox` for four commits. `rsv.rs`'s table is a transcription of
+  `ttmparse.cpp:CheckReservedWord`, and the way to check a transcription is to
+  extract both lists and diff them, not to read them. That goes for every
+  upstream list this port copies.
+- **The commands are not all named what their documentation page is called.**
+  `logautoclosemode` is the reserved word; `logautoclose` is nothing at all,
+  and a test written against it passes through the same variable-not-command
+  path above. Take the spelling from `CheckReservedWord`, never from prose.
+- **A macro that shows a dialog must not be run on the UI thread**, which is
+  the same rule `wait` already imposed and for a different reason: upstream's
+  dialogs are modal on the macro's own thread, so the faithful shape is a host
+  method that blocks, and a frontend answers it by spinning a nested event
+  loop. See the `Session::m_sshWaiting` trap for what re-entering that loop
+  costs if the notifier is left armed.
 
 And for the C ABI:
 
@@ -770,13 +787,16 @@ diffing the two engines. Patches in `oracle/patches/`, reports drafted in
 `docs/upstream-bugs.md`. Filing needs a GitHub account and is an open item in
 `PLAN.md`.
 
-**Eight more are in `ttpmacro` and none of them is in that file**, because they
+**Twelve more are in `ttpmacro` and none of them is in that file**, because they
 were found by reading the source rather than by two engines disagreeing, and
 `docs/upstream-bugs.md` holds only what a differential run proved. They are
 written up in `PLAN.md`'s TTL sections: `waitn`'s timeout arm leaving the
 received-line buffer in the wrong mode, `getmodemstatus` never reporting
-failure, and six out-of-bounds accesses (`strtrim`, `strsplit`, `GetFactor`,
-`HandleGet`, `HandleFree`, `FPointer`). Demonstrate each against a real
+failure, `logopen` discarding the error from its own mandatory arguments,
+`filenamebox`'s Open and Save flag sets being each other's, `inputbox` copying
+an uninitialised stack buffer into `inputstr` when Escape dismisses it, and
+seven out-of-bounds accesses (`strtrim`, `strsplit`, `GetFactor`, `HandleGet`,
+`HandleFree`, `FPointer`, `logrotate`). Demonstrate each against a real
 `ttpmacro.exe` in Stage 3 before filing.
 
 **And one in `vte`**, which is a dependency rather than the specification, so it

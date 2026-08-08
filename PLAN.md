@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 complete, 2 in progress · **Commits:** 148
+**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 153
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1045,14 +1045,14 @@ before anything else in every session.
 - **TTL interpreter**: native Rust, **in-process on a thread** — deletes ~2,600
   LOC of DDE glue (`ttpmacro/ttmdde.c` + `teraterm/ttdde.c`) and a whole class
   of races. Target: the 53 `.ttl` scripts in `teraterm/tests/` pass.
-  🔵 **the language runs, holds a conversation, and drives a session**,
-  2026-08-08 — `crates/tt-ttl/`: the tokeniser, the variables, the eleven
-  precedence levels, the control flow, the string and integer commands,
+  🔵 **the language runs, holds a conversation, drives a session and talks to
+  the user**, 2026-08-09 — `crates/tt-ttl/`: the tokeniser, the variables, the
+  eleven precedence levels, the control flow, the string and integer commands,
   `send`/`wait`/`waitln`/`waitn`/`waitrecv`/`recvln`/`pause`/`flushrecv`, the
   link and the connection, the serial control lines, all sixteen transfer
-  commands, and the whole file family. What is left is the dialogs, the
-  logging commands, the environment and clipboard odds and ends, and the regex
-  family. See below.
+  commands, the whole file family, the eleven dialogs and the eight logging
+  commands. What is left is the environment and clipboard odds and ends, the
+  checksums, the clock, and the regex family. See below.
 - **Lua via `mlua`** over the same `ScriptHost` command table (~500 LOC glue).
 - `ttctl` JSON-RPC control socket replacing DDE. Keep a `ttpmacro script.ttl`
   CLI entry point so existing shortcuts and `.bat` wrappers keep working.
@@ -1471,11 +1471,129 @@ and `fileseekback`. That makes six found by reading, and the tally is the point:
 `ttl.cpp` bounds-checks its handle arrays in about half the places it indexes
 them.
 
-**What is left**, in the order it is likely to be built: the dialogs
-(`messagebox`, `inputbox`, `listbox`, the status box and the rest of the
-`ttmdlg.cpp` family, all of which want a host method each), the logging
-commands, the environment/clipboard/`exec` odds and ends, and the regex family.
-That last one is a decision, not a port: `sprintf` validates its
+#### The dialogs, and one word the table had lost
+
+`crates/tt-ttl/src/dlgcmds.rs`, 2026-08-09. `messagebox`, `yesnobox`,
+`statusbox`, `closesbox`, `bringupbox`, `listbox`, `inputbox`, `passwordbox`,
+`filenamebox`, `dirnamebox` and `setdlgpos` — one host method each, every one
+of them blocking the way upstream's `DoModal` does.
+
+**The seam is the same shape as `wait`'s and for the same reason.** Upstream's
+dialogs are `ttpmacro.exe`'s own windows on the thread the macro runs on, so
+each is an ordinary modal call and the interpreter simply waits. Here the
+window belongs to the frontend, which answers by spinning its own event loop —
+so the interpreter has to be off the UI thread, which it already had to be.
+
+Three shapes in the family are not guessable from the command names:
+
+- **Closing a dialog is not cancelling it.** Every one of these windows puts a
+  "halt the script?" confirmation in front of its close button
+  (`msgdlg.cpp:227`), so the close answer arrives only when the user has agreed
+  to stop — which is why it ends the macro and Escape does not. The codes
+  differ per dialog for a reason that is pure Win32 accounting: a plain
+  message box has no No button, so its close path spends `IDCANCEL` where the
+  yes/no one spends `IDCLOSE`.
+- **`filenamebox` and `dirnamebox` guard on `inputstr` still being a string**
+  and skip the dialog entirely if it is not — a step further than the silence
+  every other `inputstr` writer has. Unreachable from a macro, since TTL will
+  not retype a variable, and reproduced anyway.
+- **`inputbox`'s third argument is read twice.** It is tried as a string and,
+  on a type mismatch, the line is rewound and the `<special>` arm gets it. That
+  is what makes `inputbox 'a' 'b' 1` the flag rather than a default of `"1"`.
+
+**`filenamebox` was missing from the reserved-word table.** One name out of 214,
+dropped when the table was transcribed from `ttmparse.cpp:245`, and invisible
+because an unknown word is not an error — it is read as a variable, so the
+command reported a syntax error rather than "unknown command". Found by
+diffing the two tables mechanically, which is now worth doing after any
+transcription of an upstream list.
+
+Three more upstream defects, all found by reading and none in
+`docs/upstream-bugs.md` for the usual reason:
+
+1. **`inputbox` and `passwordbox` copy an uninitialised stack buffer into
+   `inputstr` when the dialog is dismissed with Escape.** `CInpDlg` does not
+   override `OnCancel`, so Escape reaches `TTCDialog::OnCancel`
+   (`tmfc.cpp:312`) and ends the dialog with `IDCANCEL`; `TTLInputBox`
+   (`ttl_gui.cpp:353`) declares `wchar_t input_string[MaxStrLen]` with no
+   initialiser, tests only for `IDCLOSE`, and hands the buffer to `SetStrVal`
+   on every other path. `TTLGetPassword` and `TTLGetPassword2` initialise the
+   same buffer, which is what makes this an oversight rather than a
+   convention. Not reproduced — the empty string is what the documentation
+   implies and what the neighbouring commands produce.
+2. **`filenamebox`'s two flag sets are each other's** (`ttl_gui.cpp:180`). A
+   non-zero `<dialogtype>` opens the Save dialog with `OFN_FILEMUSTEXIST`,
+   which is Win32's "only an existing name will do" and stops the user naming
+   a new file; zero opens the Open dialog with `OFN_OVERWRITEPROMPT`, which an
+   Open dialog has nothing to do with. Implemented as documented: a Save dialog
+   that cannot save is not a behaviour a script can be written against.
+3. **`listbox`'s `listboxsize=` test compares five characters**
+   (`ttl_gui.cpp:486`): `_wcsnicmp(..., L"listboxsize=", 5)`, where the length
+   should be 12. So any keyword starting `listb` enters that arm and must then
+   parse as a size — which means a misspelling like `listbee=60x20` silently
+   works and `listbee` alone is a syntax error rather than being tried as a
+   selection index. Reproduced; it is harmless, and no real keyword collides.
+
+#### The logging commands, and an error that is thrown away
+
+`crates/tt-ttl/src/logcmds.rs`, 2026-08-09. `logopen`, `logclose`, `logpause`,
+`logstart`, `logwrite`, `loginfo`, `logrotate` and `logautoclosemode`.
+
+The log is the *terminal's*, not the macro's — upstream sends all eight over
+DDE to `filesys_log.cpp`, which is the same log `File > Log` opens — so six of
+them are the thin `TTLCommCmd*` shapes and carry `SendCmnd`'s link check
+without mentioning it. `tt-session` already has the log (Stage 1); wiring these
+methods to it is the frontend's job, not this crate's.
+
+Four behaviours that are not what the command names suggest:
+
+- **`logopen` reports success as 0.** The terminal answers the character `1`
+  and `TTLLogOpen` inverts it, which is documented and is the opposite of every
+  other command in the file.
+- **`loginfo` answers -1 when nothing is logging**, and otherwise a five-bit
+  flag word of what `logopen` was *given* — not what the log is doing. Pausing
+  does not show up, and neither does the timestamp type. It travels as one
+  character, `'0' + flags` (`filesys_log.cpp:856`), which is also how it
+  carries a negative without a sign.
+- **`logrotate` has no end-of-line check**, alone in the file, so
+  `logrotate 'halt' and then some` runs and ignores the tail. Its keyword is
+  also the one enumerated argument here compared with `strcmp`, so `'Halt'` is
+  a syntax error, and its size suffix is an uppercase `K` or `M` only.
+- **`logautoclosemode` is not `logautoclose`** and does not close the log when
+  the *connection* goes: it closes it when the **macro** ends, off the DDE
+  conversation disconnecting (`ttdde.c:1340`), and clears itself at the same
+  time so it lasts exactly one run.
+
+**A tenth upstream defect, and this one is reproduced.** `TTLLogOpen`
+(`ttl.cpp:3243`) never tests the error from its three *mandatory* arguments.
+It accumulates into a sticky `Err` like every command around it, but the first
+test of that variable is after the *fourth* argument, the label the optional
+arguments jump to checks only that the filename is non-empty and that nothing
+is left on the line, and then `Err = GetTTParam(...)` overwrites whatever was
+in it. So `logopen 'f' 1` — one argument short of the documented three —
+opens a log, with `append` reading as the 0 its array was initialised with.
+Reproduced, and it was the closest call in the file: a macro that has been
+opening a log with two arguments has been working, the flags it silently gets
+are the documented defaults, and turning it into a syntax error would break
+that script for nobody's benefit.
+
+**And a seventh out-of-bounds read**, same class as the six in the handle table
+and `strtrim`: `logrotate 'size' ''` evaluates `Str2[len-1]` with `len` zero
+(`ttl.cpp:3179`), reading the byte before a 512-byte stack buffer, and hands
+the result to `isdigit` as a signed `char` — so a size argument ending in a
+byte above 0x7F has `strtrim`'s problem as well. Not reproduced; an empty
+argument is a syntax error here, which is what the non-digit arm would have
+said anyway.
+
+That is **twelve** found in `ttpmacro` by reading: `waitn`'s timeout arm,
+`getmodemstatus`'s always-zero result, `logopen`'s discarded error,
+`filenamebox`'s swapped flags, `inputbox`'s uninitialised buffer, and seven
+out-of-bounds accesses.
+
+**What is left**, in the order it is likely to be built: the
+environment/clipboard/`exec` odds and ends, the checksum family, the
+`getdate`/`gettime`/`uptime` clock commands, and the regex family. That last
+one is a decision, not a port: `sprintf` validates its
 format specifiers with **Oniguruma** and `strmatch`/`strreplace`/`waitregex`
 match with it, so *which regex dialect this speaks* is a compatibility question
 that wants answering deliberately rather than by whichever crate is reached for.
