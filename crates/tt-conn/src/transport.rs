@@ -29,6 +29,14 @@ pub enum TransportEvent {
     /// dropped: it is usually still readable, and silently losing it makes a
     /// bad cable look like a bad program.
     BadByte(u8),
+    /// The **far end** says the terminal should be this size.
+    ///
+    /// Backwards from the usual direction, and real: telnet's NAWS is defined
+    /// client-to-server, and a console server sends it the other way to say
+    /// what the equipment behind it actually is. Upstream honours it
+    /// (`telnet.c:298`), so a window that ignores it is a window drawing 80
+    /// columns at a device that said 132.
+    Resize { cols: u16, rows: u16 },
 }
 
 impl From<SerialEvent> for TransportEvent {
