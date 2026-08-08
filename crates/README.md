@@ -106,6 +106,23 @@ behaviour looks like a bug until you check. Reproduced deliberately:
   halves outside the range are written with the full pen either way. So a
   DECERA under a bold pen leaves a bold cell on each edge and unbold cells
   between them. Case 56 pins it.
+- **Left and right margins gate far more than horizontal scrolling.** With
+  DECSLRM set, the wrap point moves to the right margin, CR goes to the left
+  margin (but to column 0 when the cursor is *left* of it), backspace stops
+  dead on the left margin, CUB/CUF clamp to the margins only when the cursor
+  started inside them, tabs stop at the right margin, ICH/DCH are **refused**
+  outside the margins rather than clipped, and every vertical scroll — LF at
+  the bottom of the region, SU, SD, IL, DL — moves only the margin columns and
+  leaves the rest of each row alone. Cases 63 to 67.
+- **A plain HT takes the pending wrap before it tabs** (`vtterm.c:Tab()`), so a
+  tab arriving on a full line starts the next one. `CSI Ps I` (CHT) does not —
+  it calls `CursorForwardTab` directly. And a tab that runs out of stops parks
+  on the right margin and *arms* the wrap, because `ts.VTCompatTab` is off.
+- **A scroll region that starts at row 0 fills the scrollback even when its
+  bottom margin does not reach the last row.** `BuffScroll` slides the page and
+  copies the rows below the region down to keep them in place, so the top rows
+  leave the page rather than being discarded. Only a later resize can see the
+  difference, which is how case 69 reads it back.
 - **Resizing truncates; it never reflows.** `ChangeBuffer` copies each line's
   first `cols` cells and drops the rest, crushing a wide character cut by the
   new right edge. Height is expressed by sliding the page over the scrollback
@@ -149,4 +166,4 @@ behaviour looks like a bug until you check. Reproduced deliberately:
   window is or moves it, so in a headless diff the answers would come from the
   oracle's *stubs* rather than from Tera Term, and matching them would be
   matching a stub.
-- Not yet implemented at all: DECLRMM, mouse reporting, and DCS.
+- Not yet implemented at all: mouse reporting and DCS.

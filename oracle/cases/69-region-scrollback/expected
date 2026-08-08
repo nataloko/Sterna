@@ -1,0 +1,13 @@
+# termitta-oracle 1
+# term vt100 12x10
+# cursor 5,7
+  0 |line1       |
+  1 |line2       |
+  2 |line3       |
+  3 |line4       |
+  4 |line5       |
+  5 |line6       |
+  6 |line7       |
+  7 |            |
+  8 |            |
+  9 |            |

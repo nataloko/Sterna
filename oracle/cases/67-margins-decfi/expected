@@ -1,0 +1,9 @@
+# termitta-oracle 1
+# term vt100 16x6
+# cursor 0,0
+  0 |abcdefghijklmnop|
+  1 |abcd fghijklmnop|
+  2 |abcd fghijklmnop|
+  3 |abcd fghijklmnop|
+  4 |abcd fghijklmnop|
+  5 |abcdefghijklmnop|

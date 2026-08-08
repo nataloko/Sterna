@@ -225,6 +225,13 @@ pub struct Grid {
     /// Scroll region, 0-based and inclusive. Tera Term's `CursorTop`/`CursorBottom`.
     top: usize,
     bottom: usize,
+    /// Left and right margins, 0-based and inclusive — `CursorLeftM` /
+    /// `CursorRightM`. They are the screen edges until DECSLRM moves them, and
+    /// they gate far more than the name suggests: the wrap point, CR, the tab
+    /// stops, ICH/DCH, IL/DL, every region scroll and DECFI/DECBI all read
+    /// them.
+    left: usize,
+    right: usize,
     pub insert_mode: bool,
     pub autowrap: bool,
     pub origin_mode: bool,
@@ -250,6 +257,8 @@ impl Grid {
             pen,
             top: 0,
             bottom: rows - 1,
+            left: 0,
+            right: cols - 1,
             insert_mode: false,
             // DECAWM is on out of reset.
             autowrap: true,
@@ -270,6 +279,22 @@ impl Grid {
     pub fn restore_screen(&mut self) {
         if let Some(lines) = self.stashed.take() {
             self.lines = lines;
+        }
+    }
+
+    /// DECALN (`ESC # 8`) — `buffer.c:BuffFillWithE`. Every cell becomes an
+    /// `E` with **default** attributes, not the pen's, so it also clears the
+    /// protect bit. The caller resets the margins and homes the cursor.
+    pub fn fill_with_e(&mut self) {
+        let default = Cell::blank(Pen::default());
+        for line in &mut self.lines {
+            *line = vec![
+                Cell {
+                    text: [b'E' as u32, 0, 0, 0],
+                    ..default
+                };
+                self.cols
+            ];
         }
     }
 
@@ -378,6 +403,8 @@ impl Grid {
         // 3. Margins, tab stops and the cursor all go back to a known state.
         self.top = 0;
         self.bottom = rows - 1;
+        self.left = 0;
+        self.right = cols - 1;
         self.tabs = default_tabs(cols);
         self.cursor.x = self.cursor.x.min(cols - 1);
         self.cursor.y = self.cursor.y.min(rows - 1);
@@ -393,6 +420,8 @@ impl Grid {
         self.cursor = Cursor::default();
         self.top = 0;
         self.bottom = self.rows - 1;
+        self.left = 0;
+        self.right = self.cols - 1;
         self.insert_mode = false;
         self.autowrap = true;
         self.origin_mode = false;
@@ -410,13 +439,26 @@ impl Grid {
         self.cursor.pending_wrap = false;
     }
 
-    /// Cursor position for CUP/HVP, honouring origin mode.
+    /// Cursor position for CUP/HVP, honouring origin mode. In origin mode the
+    /// column is relative to the **left margin**, not to the screen.
     pub fn move_cursor_abs(&mut self, x: usize, y: usize) {
         if self.origin_mode {
+            let x = (self.left + x).min(self.right);
             let y = (self.top + y).min(self.bottom);
             self.move_cursor(x, y);
         } else {
             self.move_cursor(x, y);
+        }
+    }
+
+    /// CHA / HPA — `vtterm.c:CSMoveToColumnN`, the horizontal twin of
+    /// `move_cursor_abs`.
+    pub fn move_to_column(&mut self, x: usize) {
+        if self.origin_mode {
+            let x = (self.left + x).min(self.right);
+            self.move_cursor(x, self.cursor.y);
+        } else {
+            self.move_cursor(x, self.cursor.y);
         }
     }
 
@@ -442,20 +484,37 @@ impl Grid {
         self.move_cursor(self.cursor.x, y);
     }
 
+    /// CUB. Stops at the left margin, but only when the cursor started at or
+    /// right of it — from outside, the margin is not a barrier.
     pub fn move_left(&mut self, n: usize) {
-        let x = self.cursor.x.saturating_sub(n);
+        let limit = if self.cursor.x >= self.left {
+            self.left
+        } else {
+            0
+        };
+        let x = self.cursor.x.saturating_sub(n).max(limit);
         self.move_cursor(x, self.cursor.y);
     }
 
+    /// CUF. Mirror image of [`Grid::move_left`].
     pub fn move_right(&mut self, n: usize) {
-        let x = (self.cursor.x + n).min(self.cols - 1);
+        let limit = if self.cursor.x <= self.right {
+            self.right
+        } else {
+            self.cols - 1
+        };
+        let x = (self.cursor.x + n).min(limit);
         self.move_cursor(x, self.cursor.y);
     }
 
     /// `vtterm.c:CarriageReturn`. It only moves — and therefore only clears the
     /// pending wrap — when the cursor is not already at the left margin.
     pub fn carriage_return(&mut self) {
-        if self.origin_mode || self.cursor.x > 0 {
+        if self.origin_mode || self.cursor.x > self.left {
+            self.move_cursor(self.left, self.cursor.y);
+        } else if self.cursor.x < self.left {
+            // Left of the margin, CR goes to column 0 rather than *forward* to
+            // the margin.
             self.move_cursor(0, self.cursor.y);
         }
     }
@@ -485,8 +544,11 @@ impl Grid {
         }
     }
 
+    /// BS — `vtterm.c:BackSpace`. It stops dead *on* the left margin rather
+    /// than stepping past it, and `TF_BACKWRAP` (off by default) is the only
+    /// thing that would move it to the previous line.
     pub fn backspace(&mut self) {
-        if self.cursor.x > 0 {
+        if self.cursor.x != self.left && self.cursor.x > 0 {
             self.move_cursor(self.cursor.x - 1, self.cursor.y);
         }
     }
@@ -529,34 +591,58 @@ impl Grid {
         self.tabs = vec![false; self.cols];
     }
 
-    pub fn forward_tab(&mut self, n: usize) {
-        let mut x = self.cursor.x;
-        for _ in 0..n.max(1) {
-            let mut next = self.cols - 1;
-            for probe in (x + 1)..self.cols {
-                if self.tabs[probe] {
-                    next = probe;
-                    break;
-                }
-            }
-            x = next;
-        }
-        self.move_cursor(x, self.cursor.y);
+    fn tab_stops(&self) -> Vec<usize> {
+        (0..self.cols).filter(|&x| self.tabs[x]).collect()
     }
 
-    pub fn backward_tab(&mut self, n: usize) {
-        let mut x = self.cursor.x;
-        for _ in 0..n.max(1) {
-            let mut next = 0;
-            for probe in (0..x).rev() {
-                if self.tabs[probe] {
-                    next = probe;
-                    break;
-                }
+    /// CHT and plain HT — `buffer.c:CursorForwardTab`.
+    ///
+    /// A tab that runs out of stops parks on the right margin **and arms the
+    /// pending wrap**, because `ts.VTCompatTab` is off by default
+    /// (`ttset.c:1343`). So a tab at the end of a line behaves like a printed
+    /// character there, not like a cursor move.
+    pub fn forward_tab(&mut self, n: usize) {
+        let line_end = if self.cursor.x > self.right || !self.cursor_in_region() {
+            self.cols - 1
+        } else {
+            self.right
+        };
+        let stops = self.tab_stops();
+        let first = stops
+            .iter()
+            .position(|&s| s > self.cursor.x)
+            .unwrap_or(stops.len());
+        match stops.get(first + n.max(1) - 1) {
+            Some(&s) if s <= line_end => self.move_cursor(s, self.cursor.y),
+            _ => {
+                self.move_cursor(line_end, self.cursor.y);
+                self.cursor.pending_wrap = self.autowrap;
             }
-            x = next;
         }
-        self.move_cursor(x, self.cursor.y);
+    }
+
+    /// CBT — `buffer.c:CursorBackwardTab`.
+    pub fn backward_tab(&mut self, n: usize) {
+        let line_start = if self.cursor.x < self.left || !self.cursor_in_region() {
+            0
+        } else {
+            self.left
+        };
+        let stops = self.tab_stops();
+        let first = stops
+            .iter()
+            .position(|&s| s >= self.cursor.x)
+            .unwrap_or(stops.len());
+        let n = n.max(1);
+        let target = match first.checked_sub(n).and_then(|i| stops.get(i)) {
+            Some(&s) if s >= line_start => s,
+            _ => line_start,
+        };
+        self.move_cursor(target, self.cursor.y);
+    }
+
+    fn cursor_in_region(&self) -> bool {
+        (self.top..=self.bottom).contains(&self.cursor.y)
     }
 
     // --- scroll region ---------------------------------------------------
@@ -589,12 +675,103 @@ impl Grid {
         self.bottom = self.rows - 1;
     }
 
-    pub fn scroll_up(&mut self, n: usize) {
+    // --- left/right margins ----------------------------------------------
+
+    pub fn margins(&self) -> (usize, usize) {
+        (self.left, self.right)
+    }
+
+    /// True while the margins are still the screen edges, which is the fast
+    /// path every region operation takes unless DECSLRM has been used.
+    fn full_width(&self) -> bool {
+        self.left == 0 && self.right == self.cols - 1
+    }
+
+    /// DECSLRM (`vtterm.c:CSSetLRScrollRegion`). Rejected outright when the
+    /// pair is inside out, and the cursor homes to the *screen* origin unless
+    /// origin mode is on — the same shape as DECSTBM.
+    pub fn set_lr_margins(&mut self, left: usize, right: usize) {
+        let max = self.cols - 1;
+        let (left, right) = (left.min(max), right.min(max));
+        if left >= right {
+            return;
+        }
+        self.left = left;
+        self.right = right;
+        if self.origin_mode {
+            self.move_cursor(self.left, self.top);
+        } else {
+            self.move_cursor(0, 0);
+        }
+    }
+
+    pub fn reset_lr_margins(&mut self) {
+        self.left = 0;
+        self.right = self.cols - 1;
+    }
+
+    /// `buffer.c:EraseKanjiOnLRMargin` — run before any region shift while a
+    /// margin is inset, because the shift is about to move one half of a wide
+    /// character and leave the other behind.
+    fn erase_kanji_on_lr_margin(&mut self, y0: usize, y1: usize) {
+        if self.full_width() {
+            return;
+        }
+        let (left, right, cols) = (self.left, self.right, self.cols);
+        for y in y0..=y1 {
+            if left > 0 && self.lines[y][left - 1].width_class == WIDTH_WIDE {
+                self.lines[y][left - 1].crush();
+                self.lines[y][left].crush();
+            }
+            if right < cols - 1 && self.lines[y][right].width_class == WIDTH_WIDE {
+                self.lines[y][right].crush();
+                self.lines[y][right + 1].crush();
+            }
+        }
+    }
+
+    /// Move the margin columns of `[top, bottom]` by `delta` rows, filling what
+    /// is vacated. Negative is downward. This is the body every region scroll
+    /// shares once a margin is inset: only the columns between the margins take
+    /// part, and the rest of each row stays exactly where it is.
+    fn shift_region_rows(&mut self, n: usize, up: bool) {
         let pen = self.pen;
-        let full_screen = self.top == 0 && self.bottom == self.rows - 1;
+        let (top, bottom, left, right) = (self.top, self.bottom, self.left, self.right);
+        let n = n.min(bottom - top + 1);
+        self.erase_kanji_on_lr_margin(top, bottom);
+        let blank = vec![Cell::erased(pen); right - left + 1];
+        let rows: Vec<usize> = if up {
+            (top..=bottom).collect()
+        } else {
+            (top..=bottom).rev().collect()
+        };
+        for y in rows {
+            let src = if up {
+                y.checked_add(n)
+            } else {
+                y.checked_sub(n)
+            };
+            let taken = match src {
+                Some(s) if (top..=bottom).contains(&s) => self.lines[s][left..=right].to_vec(),
+                _ => blank.clone(),
+            };
+            self.lines[y][left..=right].copy_from_slice(&taken);
+        }
+    }
+
+    pub fn scroll_up(&mut self, n: usize) {
+        if !self.full_width() {
+            self.shift_region_rows(n, true);
+            return;
+        }
+        let pen = self.pen;
+        // `BuffScroll` keeps what it scrolls off whenever the region starts at
+        // the top of the screen — the bottom margin does not have to reach the
+        // last row for the scrollback to fill.
+        let keep = self.top == 0;
         for _ in 0..n.min(self.bottom - self.top + 1) {
             let line = self.lines.remove(self.top);
-            if full_screen {
+            if keep {
                 self.push_scrollback(line);
             }
             self.lines
@@ -603,6 +780,10 @@ impl Grid {
     }
 
     pub fn scroll_down(&mut self, n: usize) {
+        if !self.full_width() {
+            self.shift_region_rows(n, false);
+            return;
+        }
         let pen = self.pen;
         for _ in 0..n.min(self.bottom - self.top + 1) {
             self.lines.remove(self.bottom);
@@ -623,29 +804,65 @@ impl Grid {
 
     // --- editing ---------------------------------------------------------
 
-    /// IL. Only acts while the cursor is inside the scroll region.
+    /// IL — `buffer.c:BuffInsertLines`. Only acts while the cursor is inside
+    /// the scroll region, and only over the margin columns.
     pub fn insert_lines(&mut self, n: usize) {
         if self.cursor.y < self.top || self.cursor.y > self.bottom {
             return;
         }
+        let n = n.min(self.bottom - self.cursor.y + 1);
+        if !self.full_width() {
+            self.shift_lines_in_margins(self.cursor.y, n, false);
+            return;
+        }
         let pen = self.pen;
-        for _ in 0..n.min(self.bottom - self.cursor.y + 1) {
+        for _ in 0..n {
             self.lines.remove(self.bottom);
             self.lines
                 .insert(self.cursor.y, vec![Cell::erased(pen); self.cols]);
         }
     }
 
-    /// DL.
+    /// DL — `buffer.c:BuffDeleteLines`.
     pub fn delete_lines(&mut self, n: usize) {
         if self.cursor.y < self.top || self.cursor.y > self.bottom {
             return;
         }
+        let n = n.min(self.bottom - self.cursor.y + 1);
+        if !self.full_width() {
+            self.shift_lines_in_margins(self.cursor.y, n, true);
+            return;
+        }
         let pen = self.pen;
-        for _ in 0..n.min(self.bottom - self.cursor.y + 1) {
+        for _ in 0..n {
             self.lines.remove(self.cursor.y);
             self.lines
                 .insert(self.bottom, vec![Cell::erased(pen); self.cols]);
+        }
+    }
+
+    /// IL/DL restricted to the margin columns of `[start, bottom]`.
+    fn shift_lines_in_margins(&mut self, start: usize, n: usize, up: bool) {
+        let pen = self.pen;
+        let (bottom, left, right) = (self.bottom, self.left, self.right);
+        self.erase_kanji_on_lr_margin(start, bottom);
+        let blank = vec![Cell::erased(pen); right - left + 1];
+        let rows: Vec<usize> = if up {
+            (start..=bottom).collect()
+        } else {
+            (start..=bottom).rev().collect()
+        };
+        for y in rows {
+            let src = if up {
+                y.checked_add(n)
+            } else {
+                y.checked_sub(n)
+            };
+            let taken = match src {
+                Some(s) if (start..=bottom).contains(&s) => self.lines[s][left..=right].to_vec(),
+                _ => blank.clone(),
+            };
+            self.lines[y][left..=right].copy_from_slice(&taken);
         }
     }
 
@@ -657,74 +874,97 @@ impl Grid {
     /// column that is present in the buffer and invisible on screen.
     pub fn insert_chars(&mut self, n: usize) {
         let (x, y) = (self.cursor.x, self.cursor.y);
+        // Outside the margins the whole operation is refused, not clipped.
+        if x < self.left || x > self.right {
+            return;
+        }
         let pen = self.pen;
-        let cols = self.cols;
+        let right = self.right;
 
-        // Inserting *into* the right half of a wide character kills it.
+        // Inserting *into* the right half of a wide character kills it, and so
+        // does pushing one out past the right margin.
         self.break_pad_at(y, x);
+        if right < self.cols - 1 {
+            self.break_lead_at(y, right);
+        }
 
-        let count = n.min(cols - x);
+        let count = n.min(right + 1 - x);
         for _ in 0..count {
-            self.lines[y].remove(cols - 1);
+            self.lines[y].remove(right);
             self.lines[y].insert(x, Cell::erased(pen));
         }
 
-        // Whatever now sits on the last column has had its other half pushed
-        // off the end.
-        self.break_lead_at(y, cols - 1);
+        self.break_lead_at(y, right);
     }
 
     /// DCH — `buffer.c:BuffDeleteChars`.
     pub fn delete_chars(&mut self, n: usize) {
         let (x, y) = (self.cursor.x, self.cursor.y);
+        if x < self.left || x > self.right {
+            return;
+        }
         let pen = self.pen;
-        let cols = self.cols;
-        let count = n.min(cols - x);
+        let right = self.right;
+        let count = n.min(right + 1 - x);
 
         // Either half at the cursor, and either half at the far end of the
         // deleted run, loses its partner.
         self.break_pad_at(y, x);
         self.break_lead_at(y, x);
-        if count > 1 && x + count < cols {
+        if count > 1 && x + count <= right {
             self.break_pad_at(y, x + count);
+        }
+        if right < self.cols - 1 {
+            self.break_lead_at(y, right);
         }
 
         for _ in 0..count {
             self.lines[y].remove(x);
-            self.lines[y].insert(cols - 1, Cell::erased(pen));
+            self.lines[y].insert(right, Cell::erased(pen));
         }
     }
 
-    /// DECFI's scroll — shift every row of the scroll region one column left.
-    /// `buffer.c:BuffScrollLeft`.
+    /// DECFI's scroll — shift the margin columns of every row of the scroll
+    /// region one column left. `buffer.c:BuffScrollLeft`.
     pub fn scroll_left(&mut self, n: usize) {
         let pen = self.pen;
-        let cols = self.cols;
-        let count = n.min(cols);
+        let (left, right, cols) = (self.left, self.right, self.cols);
+        let width = right - left + 1;
+        let count = n.min(width);
         for y in self.top..=self.bottom {
-            self.break_lead_at(y, cols - 1);
-            if count < cols {
-                self.break_pad_at(y, count);
+            // A wide character on the right margin loses the half that sits
+            // outside it; one on the left margin loses the half being shifted
+            // away; and the last cell shifted out orphans its padding.
+            self.break_lead_at(y, right);
+            if count < width {
+                self.break_pad_at(y, left + count);
+            }
+            if left > 0 {
+                self.break_lead_at(y, left - 1);
             }
             for _ in 0..count {
-                self.lines[y].remove(0);
-                self.lines[y].push(Cell::erased(pen));
+                self.lines[y].remove(left);
+                self.lines[y].insert(right, Cell::erased(pen));
             }
+            let _ = cols;
         }
     }
 
     /// DECBI's scroll. `buffer.c:BuffScrollRight`.
     pub fn scroll_right(&mut self, n: usize) {
         let pen = self.pen;
-        let cols = self.cols;
-        let count = n.min(cols);
+        let (left, right) = (self.left, self.right);
+        let count = n.min(right - left + 1);
         for y in self.top..=self.bottom {
-            self.break_lead_at(y, cols - 1);
-            for _ in 0..count {
-                self.lines[y].pop();
-                self.lines[y].insert(0, Cell::erased(pen));
+            self.break_lead_at(y, right);
+            if left > 0 {
+                self.break_lead_at(y, left - 1);
             }
-            self.break_lead_at(y, cols - 1);
+            for _ in 0..count {
+                self.lines[y].remove(right);
+                self.lines[y].insert(left, Cell::erased(pen));
+            }
+            self.break_lead_at(y, right);
         }
     }
 
@@ -869,6 +1109,8 @@ impl Grid {
         self.cursor = Cursor::default();
         self.top = 0;
         self.bottom = self.rows - 1;
+        self.left = 0;
+        self.right = self.cols - 1;
     }
 
     // --- rectangular areas (DECSACE / DECCARA / DECRARA / DECFRA / ...) --
@@ -1062,13 +1304,15 @@ impl Grid {
 
         let x = self.cursor.x;
         if w == 1 {
-            if x >= self.cols - 1 {
+            // `vtterm.c:917` — the wrap is armed at the right *margin* as well
+            // as at the screen edge, so a narrow margin wraps early.
+            if x == self.right || x >= self.cols - 1 {
                 self.cursor.pending_wrap = self.autowrap;
             } else {
                 self.cursor.x = x + 1;
                 self.cursor.pending_wrap = false;
             }
-        } else if x + 1 >= self.cols - 1 {
+        } else if x + 1 == self.right || x + 1 >= self.cols - 1 {
             // Cursor lands on the padding half, as it does upstream.
             self.cursor.x = x + 1;
             self.cursor.pending_wrap = self.autowrap;

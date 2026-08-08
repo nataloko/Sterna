@@ -1,0 +1,9 @@
+# termitta-oracle 1
+# term vt100 16x6
+# cursor 5,5
+  0 |                |
+  1 |        X       |
+  2 |        Y       |
+  3 |    W           |
+  4 |                |
+  5 |    !           |

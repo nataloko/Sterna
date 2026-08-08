@@ -1,0 +1,9 @@
+# termitta-oracle 1
+# term vt100 16x6
+# cursor 9,5
+  0 |   ABCDEFG      |
+  1 |   HIJKLMN      |
+  2 |                |
+  3 |xx              |
+  4 |      yy        |
+  5 |   <     >      |

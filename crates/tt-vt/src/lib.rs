@@ -239,6 +239,10 @@ struct State {
     /// DECSACE's `RectangleMode` (`vtterm.c:113`). False — stream — out of
     /// reset, and it decides how DECCARA and DECRARA read their rectangle.
     rect_mode: bool,
+    /// DECLRMM's `LRMarginMode` (`vtterm.c:112`). While it is off, `CSI Ps ; Ps s`
+    /// is SCP (save cursor) rather than DECSLRM, and there are no margins to
+    /// set — which is why the mode exists at all.
+    lr_margin_mode: bool,
 }
 
 impl State {
@@ -256,6 +260,7 @@ impl State {
             auto_generated_crlf: false,
             last_printed: None,
             rect_mode: false,
+            lr_margin_mode: false,
         }
     }
 
@@ -268,12 +273,12 @@ impl State {
         self.send(body.as_bytes());
     }
 
-    /// DECBI/DECFI act only inside the scroll region. The column half of the
-    /// test is against the left and right margins, which are the screen edges
-    /// until DECLRMM exists.
+    /// DECBI/DECFI act only inside the scroll region *and* between the
+    /// margins — `vtterm.c:1484`.
     fn cursor_in_region(&self) -> bool {
         let (top, bottom) = self.grid.scroll_region();
-        (top..=bottom).contains(&self.grid.cursor.y)
+        let (left, right) = self.grid.margins();
+        (top..=bottom).contains(&self.grid.cursor.y) && (left..=right).contains(&self.grid.cursor.x)
     }
 
     /// Every locking and single shift is gated on `ts.ISO2022Flag` upstream, at
@@ -437,6 +442,14 @@ impl State {
                         self.grid.move_cursor(0, if on { top } else { 0 });
                     }
                     7 => self.grid.autowrap = on,
+                    // DECLRMM. Turning it off also throws the margins away
+                    // (`vtterm.c:3168`); turning it on does not set them.
+                    69 => {
+                        self.lr_margin_mode = on;
+                        if !on {
+                            self.grid.reset_lr_margins();
+                        }
+                    }
                     47 | 1047 | 1048 | 1049 => self.alt_screen(p, on),
                     _ => {}
                 }
@@ -657,17 +670,21 @@ impl State {
             'B' => self.grid.move_down(arg(params, 0, 1) as usize),
             'C' => self.grid.move_right(arg(params, 0, 1) as usize),
             'D' => self.grid.move_left(arg(params, 0, 1) as usize),
+            // CNL and CPL move to the *left margin*, and do it before the
+            // vertical move rather than after — `vtterm.c:1691`.
             'E' => {
+                let (left, _) = self.grid.margins();
+                self.grid.move_cursor(left, self.grid.cursor.y);
                 self.grid.move_down(arg(params, 0, 1) as usize);
-                self.grid.carriage_return();
             }
             'F' => {
+                let (left, _) = self.grid.margins();
+                self.grid.move_cursor(left, self.grid.cursor.y);
                 self.grid.move_up(arg(params, 0, 1) as usize);
-                self.grid.carriage_return();
             }
             'G' | '`' => {
                 let x = arg(params, 0, 1).saturating_sub(1) as usize;
-                self.grid.move_cursor(x, self.grid.cursor.y);
+                self.grid.move_to_column(x);
             }
             'H' | 'f' => {
                 let y = arg(params, 0, 1).saturating_sub(1) as usize;
@@ -748,8 +765,13 @@ impl State {
                 6 => {
                     let (x, y) = (self.grid.cursor.x, self.grid.cursor.y);
                     let (top, _) = self.grid.scroll_region();
-                    let row = if self.grid.origin_mode { y - top } else { y };
-                    let body = format!("{};{}R", row + 1, x + 1);
+                    let (left, _) = self.grid.margins();
+                    let (col, row) = if self.grid.origin_mode {
+                        (x.saturating_sub(left), y.saturating_sub(top))
+                    } else {
+                        (x, y)
+                    };
+                    let body = format!("{};{}R", row + 1, col + 1);
                     self.send_csi(&body);
                 }
                 _ => {}
@@ -761,6 +783,20 @@ impl State {
                 self.grid.set_scroll_region(top, bottom);
             }
             't' => self.window_op(params),
+            // DECSLRM, but only while DECLRMM is on: otherwise the same final
+            // byte is SCP, the ANSI.SYS save-cursor. `vtterm.c:4115`.
+            's' => {
+                if self.lr_margin_mode {
+                    let cols = self.grid.cols() as u16;
+                    let left = check_param_val(arg0(params, 0), cols);
+                    let right = check_param_val_max(arg0(params, 1), cols);
+                    self.grid
+                        .set_lr_margins(left as usize - 1, right as usize - 1);
+                } else {
+                    self.save_cursor();
+                }
+            }
+            'u' => self.restore_cursor(),
             _ => {}
         }
     }
@@ -912,7 +948,19 @@ impl Perform for State {
         match byte {
             0x07 => {} // BEL — the oracle silences it (IdBeepOff)
             0x08 => self.grid.backspace(),
-            0x09 => self.grid.forward_tab(1),
+            0x09 => {
+                // `vtterm.c:Tab()` — a plain HT takes the *pending wrap first*
+                // and only then tabs, so a tab arriving on a full line starts
+                // the next one. CHT (`CSI Ps I`) does not do this; it calls
+                // `CursorForwardTab` directly. `ts.VTCompatTab` would suppress
+                // it, but it is off by default.
+                if self.grid.cursor.pending_wrap {
+                    self.grid.carriage_return();
+                    self.grid.line_feed();
+                    self.grid.cursor.pending_wrap = false;
+                }
+                self.grid.forward_tab(1);
+            }
             0x0e => self.shift(Shift::Ls1), // SO
             0x0f => self.shift(Shift::Ls0), // SI
             // LF, VT and FF all line-feed (vtterm.c treats them alike).
@@ -969,6 +1017,18 @@ impl Perform for State {
             return;
         }
 
+        // DECALN — `ESC # 8`. It fills the screen with `E` and resets both
+        // margin pairs, which is why it is here and not with the charsets.
+        if intermediates.first() == Some(&b'#') {
+            if byte == b'8' {
+                self.grid.fill_with_e();
+                self.grid.reset_scroll_region();
+                self.grid.reset_lr_margins();
+                self.grid.move_cursor(0, 0);
+            }
+            return;
+        }
+
         // Single-byte character-set designation: ESC ( ) * + <final>.
         if let Some(&i) = intermediates.first() {
             if matches!(i, b'(' | b')' | b'*' | b'+') && intermediates.len() == 1 {
@@ -997,7 +1057,7 @@ impl Perform for State {
             // sideways rather than moving when it is already on the margin.
             b'6' => {
                 if self.cursor_in_region() {
-                    if self.grid.cursor.x == 0 {
+                    if self.grid.cursor.x == self.grid.margins().0 {
                         self.grid.scroll_right(1);
                     } else {
                         self.grid.move_left(1);
@@ -1006,7 +1066,7 @@ impl Perform for State {
             }
             b'9' => {
                 if self.cursor_in_region() {
-                    if self.grid.cursor.x == self.grid.cols() - 1 {
+                    if self.grid.cursor.x == self.grid.margins().1 {
                         self.grid.scroll_left(1);
                     } else {
                         self.grid.move_right(1);
@@ -1025,6 +1085,8 @@ impl Perform for State {
                 self.charset.reset();
                 self.saved_charset = None;
                 self.title.clear();
+                self.rect_mode = false;
+                self.lr_margin_mode = false;
             }
             _ => {}
         }
@@ -1257,6 +1319,31 @@ mod tests {
         assert_eq!(vt.grid().line(0)[0].attrs & ATTR_BOLD, ATTR_BOLD);
         let vt = run(b"\x1b[1mA\x1b[1;1H\x1b[2K", 4, 1);
         assert_eq!(vt.grid().line(0)[0].attrs & ATTR_BOLD, 0);
+    }
+
+    #[test]
+    fn decslrm_moves_the_wrap_point_and_the_carriage_return() {
+        // DECSLRM needs DECLRMM on first; without it `CSI 4;10s` is SCP.
+        let vt = run(b"\x1b[?69h\x1b[4;10s\x1b[1;4HABCDEFGHIJ", 16, 3);
+        assert_eq!(row(&vt, 0), "   ABCDEFG");
+        assert_eq!(row(&vt, 1), "   HIJ");
+    }
+
+    #[test]
+    fn decslrm_is_scp_while_declrmm_is_off() {
+        let vt = run(b"\x1b[2;3Hx\x1b[5;5s\x1b[1;1Hy\x1b[uz", 16, 6);
+        assert_eq!(vt.grid().margins(), (0, 15));
+        // The cursor came back to where `CSI 5;5s` saved it, after the `y`.
+        assert_eq!(row(&vt, 1), "  xz");
+    }
+
+    #[test]
+    fn a_tab_at_the_end_of_a_line_wraps_before_it_tabs() {
+        // `vtterm.c:Tab()` takes the pending wrap first. Getting this wrong
+        // leaves the tab on the old row and the next character a row too high.
+        let vt = run(b"\x1b[1;1H\t\t\tX", 16, 3);
+        assert_eq!(row(&vt, 0), "");
+        assert_eq!(row(&vt, 1), "        X");
     }
 
     #[test]
