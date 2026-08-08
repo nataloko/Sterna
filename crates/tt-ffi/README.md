@@ -50,6 +50,7 @@ Two things about how it is generated, both learned the hard way:
 |---|---|
 | Lifecycle | `tt_session_new` / `_free`, `tt_config_default` |
 | Screen | `tt_session_row` (borrowed, zero-copy), `_cols`, `_rows`, `_cursor`, `_title`, `_reverse_video`, `tt_palette_rgb` |
+| Viewport | `_scrollback_len`, `_view_offset`, `_set_view_offset`, `_cursor_view_row` |
 | Input | `_send_key`, `_send_text`, `_paste`, `_mouse`, `_focus`, `_resize`, `_set_cell_pixels`, `_send_break`, `_feed` |
 | Connection | `_connect_serial`, `_disconnect`, `_is_connected`, `_describe`, `_pump`, `_drain_events` |
 | Ports | `tt_serial_enumerate`, `tt_port_list_len` / `_at` / `_free` |
@@ -60,9 +61,9 @@ Deliberately absent, and each for a reason rather than for lack of time:
   thirty. Every one of those thirty is a `TERATERM.INI` key, which makes them
   the generated settings schema's job in Stage 2 — hand-transcribing them into
   a C struct now would be work done twice, the second time as a deletion.
-- **Scrollback and selection.** `tt-session` has no viewport onto the
-  scrollback yet, so there is nothing here to expose. Selection is a frontend
-  concept the core only has to support.
+- **Selection.** A frontend concept the core only has to support: the
+  viewport hands out rows, and which of them are highlighted is the window's
+  business.
 - **SSH, telnet and pty connects.** One `connect` per transport, added as each
   transport lands. A generic `connect(url)` would have to grow a parser and a
   prompt protocol before either exists.

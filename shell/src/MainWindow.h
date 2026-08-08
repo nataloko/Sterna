@@ -28,6 +28,11 @@ public:
     /// Connect at startup, for the command line.
     void connectSerial(const QString &path, const TtSerialParams &params);
 
+    /// The window's session. Exposed so a test can drive it, and because a
+    /// control socket will want it long before tabs make "which session"
+    /// an interesting question.
+    Session *session() const { return m_session; }
+
 private slots:
     void showConnectDialog();
     void disconnectPort();

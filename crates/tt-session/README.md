@@ -79,9 +79,7 @@ so the interface does not have to change when it is.
 
 ## Still to come
 
-- **Scrollback and selection.** The grid has scrollback; nothing exposes a
-  viewport onto it yet, and selection is a frontend concept the core only has
-  to support.
+- **Selection**, which is a frontend concept the core only has to support.
 - **Session logging**, which is a Stage 1 deliverable and belongs here — it is
   a tap on the same byte stream.
 - **The prompt lifecycle** `PLAN.md` describes for SSH (password,

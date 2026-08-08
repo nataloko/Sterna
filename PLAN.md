@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 52
+**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 56
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -373,10 +373,9 @@ Must be shippable and genuinely useful, not a demo.
   `libtermitta.so` plus a generated, committed, CI-gated header, exercised from
   C and C++ rather than from Rust. See `crates/tt-ffi/README.md` and below.
 - Qt shell: one window, grid painter, clipboard, font/colour config,
-  connect dialog, serial-port picker with live enumeration. 🔵 **first landing
-  done** — all of that exists and is driven from the C ABI; what is missing is
-  scrollback, which needs a viewport the core does not expose yet. See
-  `shell/README.md` and below.
+  connect dialog, serial-port picker with live enumeration. ✅ **done for
+  Stage 1's purposes** — all of that, plus scrollback with a scrollbar, wheel
+  and `Shift+PageUp`. See `shell/README.md` and below.
 - **`~/.ssh/config`, `~/.ssh/known_hosts`, `~/.ssh/id_*`** — Tera Term lacks
   this and it is a major Linux adoption lever.
 - Session logging (timestamped, rotation).
@@ -496,6 +495,39 @@ bright and dim when a full-colour mode is on, and 256-colour ships on),
 `SGR 101` doing nothing at all (`Aixterm16Color` ships off, so 90-97 and
 100-107 are ignored and the previous pen stands), and a cell's `fg`/`bg`
 meaning a palette index only when its attribute bit says so.
+
+#### The scrollback viewport, and why it is in the core
+
+The grid had scrollback from the first landing and nothing could look at it.
+The viewport that closed that is in `tt-session` rather than in the shell, for
+one reason: **it has to be anchored to content, not to the bottom**, and only
+the thing that owns the feed knows when the grid scrolled.
+
+Anchoring to the bottom is the obvious implementation and it fails in exactly
+the case anyone scrolls back on a serial console — reading a boot log on a
+device that is still booting, where every line printed slides what you are
+reading up by one. So `Grid` counts the lines that leave the page,
+**monotonically rather than by length**, because once the scrollback is full its
+length stops changing while the content still shifts by one per line; the
+session moves the offset by that count.
+
+Two shapes fell out of it that are worth keeping:
+
+- **`row()` is viewport-relative**, rather than there being a second row
+  function beside it. A painter cannot then pick the wrong one, and with the
+  offset at zero — which is where it stays until something scrolls — it is the
+  live screen exactly as before.
+- **The cursor needs the opposite and gets its own accessor.** It belongs to
+  the live screen, so scrolling back moves it *down* and off the bottom;
+  painting `TtCursor::y` regardless would stamp a block onto a line of history
+  and read as a prompt that is not there.
+
+The frontend consequence is that the scrollbar follows the session rather than
+the session following the scrollbar, and its own updates are signal-blocked —
+otherwise every pump writes back into the session and the rounding fights the
+offset the core just chose. Ten tests in `tt-session` and three render tests
+cover it, the render ones because a frontend that re-read the offset wrongly
+would undo the whole thing with no core test noticing.
 
 #### First landing — the differential gate is live
 

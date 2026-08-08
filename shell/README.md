@@ -149,10 +149,38 @@ setting when the schema exists:
   an interrupt. Middle-click pastes the primary selection, and releasing a drag
   fills it.
 
+## Scrollback follows the session, not the other way round
+
+The wheel, `Shift+PageUp`/`PageDown` and the scrollbar all move the same thing:
+`tt_session_set_view_offset`, in lines back from the live screen.
+
+What is easy to get wrong is the direction of the dependency. **The core moves
+the offset itself**, on every pump, so that a scrolled-back view stays on the
+same *lines* while the host keeps printing — anchoring to the bottom instead
+would slide what you are reading up by one for every line the device emits,
+which is precisely the situation anyone scrolls back in. So the scrollbar
+re-reads the offset after every pump rather than assuming its own last write is
+still current, and its own updates are signal-blocked, or each pump would write
+back into the session and the rounding would fight the offset the core chose.
+
+The cursor gets the opposite treatment: it belongs to the live screen, so
+scrolling back moves it *down* and off the bottom. `tt_session_cursor_view_row`
+says where — or that it is not in view, at which point it is simply not painted.
+Using `TtCursor::y` there would stamp a block onto a line of history and look
+like a prompt that is not there.
+
+Two consequences worth knowing:
+
+- **Typing snaps to the live screen**, because typing blind into a screen you
+  cannot see is worse than losing your place. `Shift+PageUp` is checked before
+  the key table, which would otherwise send PageUp to the host.
+- **Scrolling clears the selection.** It is held in viewport coordinates, so
+  scrolling would leave the highlight sitting on whatever text moved under it.
+  Anchoring a selection to the history wants the same work as selecting
+  *across* a scroll, so both wait.
+
 ## Not here yet
 
-- **Scrollback.** The grid has it; nothing exposes a viewport onto it, so the
-  wheel has nowhere to scroll and selection is limited to the visible screen.
 - **Word and line selection on double and triple click**, which wants the same
   word-boundary rules the scrollback selection will need — one thing to write
   rather than two.
