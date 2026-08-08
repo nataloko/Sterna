@@ -287,9 +287,31 @@ impl Grid {
 
     /// `BuffRestoreScreen` — put the parked page back. A no-op if nothing was
     /// saved, which is what keeps a stray `ESC [ ? 1047 l` harmless.
+    ///
+    /// It copies **into** the page rather than replacing it, clipped to
+    /// `min(saved, current)` on both axes — upstream's `CopyX`/`CopyY`
+    /// (`buffer.c:5423`). That is not a detail: a resize between the save and
+    /// the restore leaves the two different sizes, and swapping the whole
+    /// buffer in would give the grid a page with the wrong number of rows,
+    /// after which the first write past the old height panics. Four escape
+    /// sequences reach it — `CSI ? 1047 h`, `CSI 8 ; h ; w t`, `CSI ? 1047 l`,
+    /// then any output.
+    ///
+    /// The kanji fixup at the end is upstream's too (`:5431`): the last copied
+    /// column may hold the lead half of a wide character whose padding was not
+    /// copied, so it is crushed rather than left pointing at a cell that is no
+    /// longer its own.
     pub fn restore_screen(&mut self) {
-        if let Some(lines) = self.stashed.take() {
-            self.lines = lines;
+        let Some(stash) = self.stashed.take() else {
+            return;
+        };
+        let copy_y = stash.len().min(self.rows);
+        for (y, src) in stash.into_iter().take(copy_y).enumerate() {
+            let copy_x = src.len().min(self.cols);
+            self.lines[y][..copy_x].copy_from_slice(&src[..copy_x]);
+            if self.lines[y][copy_x - 1].width_class == WIDTH_WIDE {
+                self.lines[y][copy_x - 1].crush();
+            }
         }
     }
 
@@ -400,14 +422,12 @@ impl Grid {
         for line in &mut self.lines {
             fit(line);
         }
-        // The parked main screen is not upstream's to resize — it lives in a
-        // separate allocation there — but every line here is required to be
-        // `cols` wide, so it comes along rather than being left ragged.
-        if let Some(stash) = &mut self.stashed {
-            for line in stash.iter_mut() {
-                fit(line);
-            }
-        }
+        // The parked main screen is deliberately *not* resized. Upstream keeps
+        // it in a separate allocation with its own `SaveBuffX`/`SaveBuffY`,
+        // which `BuffChangeTerminalSize` never touches; `restore_screen` is
+        // what reconciles the two sizes, by clipping. Refitting it here instead
+        // would work but would leave that clip unreachable, and the clip is the
+        // thing keeping a restore onto a differently-sized page in bounds.
 
         // 2. Height, as the page sliding over the scrollback.
         let cy = self.cursor.y;
