@@ -746,6 +746,40 @@ typedef struct {
 } TtTelnetParams;
 
 /**
+ * What to run on a local pty, and what to tell it about itself.
+ */
+typedef struct {
+    /**
+     * The command and its arguments, `argv[0]` first. **Null or empty means
+     * the user's login shell**, which is what a "Local shell" menu item
+     * wants; anything else is run as itself.
+     */
+    const char *const *argv;
+    size_t argc;
+    /**
+     * Working directory. Null means the user's home, which is where a window
+     * opened from a desktop menu should start.
+     */
+    const char *cwd;
+    /**
+     * `$TERM`. Null means `xterm-256color`.
+     *
+     * Set by us and **never inherited**: a window launched from another
+     * terminal would otherwise hand the shell that terminal's name, and one
+     * launched from a desktop menu would hand it nothing at all.
+     */
+    const char *term;
+    /**
+     * Start the shell as a login shell, so `~/.profile` runs. Upstream's
+     * default too — `cygterm.cfg`'s `LOGIN_SHELL = Yes`.
+     *
+     * **Only meaningful when `argv` is empty**: the trick is a `-bash` in
+     * `argv[0]`, and `argv[0]` is also what gets looked up on `PATH`.
+     */
+    bool login_shell;
+} TtPtyParams;
+
+/**
  * One serial port, as a picker wants to show it. Every string is borrowed
  * from the owning [`TtPortList`] and dies with it.
  */
@@ -1486,6 +1520,26 @@ TtStatus tt_session_connect_telnet(TtSession *session,
                                    const TtTelnetParams *params);
 
 /**
+ * Fill `out` with the defaults: the user's login shell, their home
+ * directory, `xterm-256color`.
+ */
+void tt_pty_params_default(TtPtyParams *out);
+
+/**
+ * Fork a shell onto a local pty and attach it. Replaces any current
+ * connection.
+ *
+ * The size comes from the session rather than from `params`, because the
+ * window already knows it and a child that starts at the wrong width draws
+ * one wrong prompt before the first resize corrects it.
+ *
+ * When the child exits, the session reports `TT_EVENT_DISCONNECTED` and
+ * [`tt_session_close_note`] says what happened to it.
+ */
+TtStatus tt_session_connect_pty(TtSession *session,
+                                const TtPtyParams *params);
+
+/**
  * Drop the connection. The screen is left alone. A no-op when there is none.
  */
 void tt_session_disconnect(TtSession *session);
@@ -1511,6 +1565,19 @@ bool tt_session_supports_break(const TtSession *session);
  * Borrowed, and valid until the next call to this function on this session.
  */
 const char *tt_session_describe(TtSession *session);
+
+/**
+ * Why the last connection ended, when the transport knew something the word
+ * "disconnected" does not say — "bash exited with status 1" from a local
+ * shell. Null when nothing more is known, which is the usual case.
+ *
+ * Read it after `TT_EVENT_DISCONNECTED`. It survives until the next
+ * [`tt_session_connect_serial`] or friend, so a status line can keep showing
+ * it while the window sits there disconnected.
+ *
+ * Borrowed, and valid until the next call to this function on this session.
+ */
+const char *tt_session_close_note(TtSession *session);
 
 /**
  * Every serial port the system can see, sorted by device node so a picker

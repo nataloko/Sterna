@@ -460,6 +460,9 @@ static void test_null_safety(void)
     tt_string_list_free(NULL);
     tt_telnet_params_default(NULL, 23);
     CHECK(tt_session_connect_telnet(NULL, "h", 23, NULL) == TT_ERR_INVALID);
+    tt_pty_params_default(NULL);
+    CHECK(tt_session_connect_pty(NULL, NULL) == TT_ERR_INVALID);
+    CHECK(tt_session_close_note(NULL) == NULL);
     CHECK(!tt_session_supports_break(NULL));
     CHECK(tt_last_error() != NULL);
 
@@ -474,6 +477,8 @@ static void test_null_safety(void)
     CHECK(tt_session_connect_serial(s, "/dev/null", NULL) == TT_ERR_INVALID);
     CHECK(tt_session_connect_telnet(s, "h", 23, NULL) == TT_ERR_INVALID);
     CHECK(tt_session_connect_telnet(s, NULL, 23, NULL) == TT_ERR_INVALID);
+    CHECK(tt_session_connect_pty(s, NULL) == TT_ERR_INVALID);
+    CHECK(tt_session_close_note(s) == NULL);
     tt_session_free(s);
 }
 
@@ -748,6 +753,76 @@ static void test_telnet(void)
     tt_session_free(s);
 }
 
+/* The local shell — the one transport that needs nothing set up, so this is
+ * the only connect path in this file that always runs.
+ */
+static void test_pty(void)
+{
+    TtPtyParams p;
+    tt_pty_params_default(&p);
+    CHECK(p.argv == NULL); /* null means the login shell, not "no program" */
+    CHECK(p.argc == 0);
+    CHECK(p.term == NULL); /* null means the default, not empty */
+    CHECK(p.login_shell);
+
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    cfg.cols = 40;
+    cfg.rows = 6;
+    TtSession *s = tt_session_new(&cfg);
+
+    /* An explicit command, so the test does not depend on the developer's
+     * shell or on their dotfiles. */
+    const char *argv[] = {"/bin/sh", "-c", "stty size; printf 'pty-abi-ok\\r\\n'; exit 5"};
+    p.argv = argv;
+    p.argc = 3;
+    p.term = "vt220-abi";
+    CHECK_OK(tt_session_connect_pty(s, &p));
+    CHECK(tt_session_is_connected(s));
+    /* A pty has no line to break, and the menu is drawn from this. */
+    CHECK(!tt_session_supports_break(s));
+    CHECK(tt_session_close_note(s) == NULL);
+
+    int fd = tt_session_poll_fd(s);
+    CHECK(fd >= 0);
+
+    int seen = 0, sized = 0;
+    long deadline = now_ms() + 5000;
+    while (now_ms() < deadline && tt_session_is_connected(s)) {
+        wait_readable(fd, 100);
+        size_t got = 0;
+        tt_session_pump(s, 20, &got);
+        for (size_t y = 0; y < tt_session_rows(s); y++) {
+            size_t len = 0;
+            const TtCell *row = tt_session_row(s, y, &len);
+            char line[256] = {0};
+            for (size_t x = 0; x < len && x < sizeof line - 1; x++)
+                line[x] = base(&row[x]) < 128 ? (char)base(&row[x]) : '?';
+            if (strstr(line, "pty-abi-ok"))
+                seen = 1;
+            /* The child starts at the *session's* size, not at 80x24. */
+            if (strstr(line, "6 40"))
+                sized = 1;
+        }
+    }
+    CHECK(seen);
+    CHECK(sized);
+
+    /* The child exited, so the session must have noticed rather than sitting
+     * on a quiet line, and must be able to say what happened to it. */
+    CHECK(!tt_session_is_connected(s));
+    const char *note = tt_session_close_note(s);
+    CHECK(note != NULL);
+    if (note) {
+        printf("  pty: %s\n", note);
+        CHECK(strstr(note, "exited with status 5") != NULL);
+    }
+    /* The descriptor belonged to the transport and went with it. */
+    CHECK(tt_session_poll_fd(s) < 0);
+
+    tt_session_free(s);
+}
+
 int main(void)
 {
     printf("termitta core %s\n", tt_version());
@@ -760,6 +835,7 @@ int main(void)
     test_serial();
     test_ssh();
     test_telnet();
+    test_pty();
     test_null_safety();
 
     if (failures) {

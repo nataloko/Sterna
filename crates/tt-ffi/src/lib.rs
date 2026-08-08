@@ -77,6 +77,7 @@ use tt_conn::ssh::{
     AuthPromptKind, HostKeyDecision, HostKeyPolicy, KnownHosts, SshConfig, SshConnect, SshParams,
     Step, Verdict,
 };
+use tt_conn::pty::{PtyConn, PtyParams};
 use tt_conn::telnet::{TelnetConn, TelnetMode, TelnetParams};
 use tt_conn::Error;
 use tt_grid::Cell;
@@ -305,6 +306,7 @@ pub struct TtSession {
     describe: CString,
     title: CString,
     log_path: CString,
+    close_note: CString,
 }
 
 /// Create a session. Returns null only if `config` is null.
@@ -337,6 +339,7 @@ pub extern "C" fn tt_session_new(config: *const TtConfig) -> *mut TtSession {
         event_texts: Vec::new(),
         describe: CString::default(),
         log_path: CString::default(),
+        close_note: CString::default(),
     }))
 }
 
@@ -1269,6 +1272,107 @@ pub extern "C" fn tt_session_connect_telnet(
     }
 }
 
+/// What to run on a local pty, and what to tell it about itself.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtPtyParams {
+    /// The command and its arguments, `argv[0]` first. **Null or empty means
+    /// the user's login shell**, which is what a "Local shell" menu item
+    /// wants; anything else is run as itself.
+    pub argv: *const *const c_char,
+    pub argc: usize,
+    /// Working directory. Null means the user's home, which is where a window
+    /// opened from a desktop menu should start.
+    pub cwd: *const c_char,
+    /// `$TERM`. Null means `xterm-256color`.
+    ///
+    /// Set by us and **never inherited**: a window launched from another
+    /// terminal would otherwise hand the shell that terminal's name, and one
+    /// launched from a desktop menu would hand it nothing at all.
+    pub term: *const c_char,
+    /// Start the shell as a login shell, so `~/.profile` runs. Upstream's
+    /// default too — `cygterm.cfg`'s `LOGIN_SHELL = Yes`.
+    ///
+    /// **Only meaningful when `argv` is empty**: the trick is a `-bash` in
+    /// `argv[0]`, and `argv[0]` is also what gets looked up on `PATH`.
+    pub login_shell: bool,
+}
+
+/// Fill `out` with the defaults: the user's login shell, their home
+/// directory, `xterm-256color`.
+#[no_mangle]
+pub extern "C" fn tt_pty_params_default(out: *mut TtPtyParams) {
+    let Some(out) = (unsafe { out.as_mut() }) else {
+        return;
+    };
+    *out = TtPtyParams {
+        argv: ptr::null(),
+        argc: 0,
+        cwd: ptr::null(),
+        term: ptr::null(),
+        login_shell: true,
+    };
+}
+
+/// Fork a shell onto a local pty and attach it. Replaces any current
+/// connection.
+///
+/// The size comes from the session rather than from `params`, because the
+/// window already knows it and a child that starts at the wrong width draws
+/// one wrong prompt before the first resize corrects it.
+///
+/// When the child exits, the session reports `TT_EVENT_DISCONNECTED` and
+/// [`tt_session_close_note`] says what happened to it.
+#[no_mangle]
+pub extern "C" fn tt_session_connect_pty(
+    session: *mut TtSession,
+    params: *const TtPtyParams,
+) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    let Some(p) = (unsafe { params.as_ref() }) else {
+        return fail(TT_ERR_INVALID, "null TtPtyParams");
+    };
+
+    let mut argv = Vec::with_capacity(p.argc);
+    if !p.argv.is_null() {
+        for i in 0..p.argc {
+            let entry = unsafe { *p.argv.add(i) };
+            match unsafe { str_arg(entry, usize::MAX) } {
+                Ok(a) => argv.push(a.to_string()),
+                Err(e) => return e,
+            }
+        }
+    }
+
+    let mut rust = PtyParams {
+        argv,
+        login_shell: p.login_shell,
+        cols: s.session.grid().cols() as u16,
+        rows: s.session.grid().rows() as u16,
+        ..PtyParams::default()
+    };
+    if !p.cwd.is_null() {
+        match unsafe { str_arg(p.cwd, usize::MAX) } {
+            Ok(d) => rust.cwd = Some(d.into()),
+            Err(e) => return e,
+        }
+    }
+    if !p.term.is_null() {
+        match unsafe { str_arg(p.term, usize::MAX) } {
+            Ok(t) => rust.term = t.to_string(),
+            Err(e) => return e,
+        }
+    }
+
+    match PtyConn::open(&rust) {
+        Ok(conn) => {
+            s.session.connect(Box::new(conn));
+            TT_OK
+        }
+        Err(e) => report(e),
+    }
+}
+
 /// Drop the connection. The screen is left alone. A no-op when there is none.
 #[no_mangle]
 pub extern "C" fn tt_session_disconnect(session: *mut TtSession) {
@@ -1305,6 +1409,27 @@ pub extern "C" fn tt_session_describe(session: *mut TtSession) -> *const c_char 
         Some(d) => {
             s.describe = cstring(&d);
             s.describe.as_ptr()
+        }
+        None => ptr::null(),
+    }
+}
+
+/// Why the last connection ended, when the transport knew something the word
+/// "disconnected" does not say — "bash exited with status 1" from a local
+/// shell. Null when nothing more is known, which is the usual case.
+///
+/// Read it after `TT_EVENT_DISCONNECTED`. It survives until the next
+/// [`tt_session_connect_serial`] or friend, so a status line can keep showing
+/// it while the window sits there disconnected.
+///
+/// Borrowed, and valid until the next call to this function on this session.
+#[no_mangle]
+pub extern "C" fn tt_session_close_note(session: *mut TtSession) -> *const c_char {
+    let s = session!(session, ptr::null());
+    match s.session.close_note() {
+        Some(n) => {
+            s.close_note = cstring(n);
+            s.close_note.as_ptr()
         }
         None => ptr::null(),
     }
