@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 111
+**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 117
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -364,9 +364,9 @@ Must be shippable and genuinely useful, not a demo.
 - `tt-vt` + `tt-grid`: VT100/220 + core xterm, SGR/256/truecolor, scrollback,
   selection, BCE, wide + combining chars. Ported **against the oracle**.
   ✅ **done for Stage 1's purposes** — 102 differential cases and 365 of
-  esctest's 568, see below. What
-  remains is selection, which is a frontend concept the grid only has to
-  support.
+  esctest's 568, see below. Selection, the last piece, landed 2026-08-08: the
+  grid's half of it is naming a line so a highlight can outlive the output
+  under it, and the rest is the window's.
 - `tt-conn`: **serial first** (the differentiator), then SSH2 via `russh`, then
   telnet, then local PTY via `portable-pty`. ✅ **done — all four transports** —
   the patch layer spike 4 specified is built and green on the loopback rig
@@ -387,9 +387,10 @@ Must be shippable and genuinely useful, not a demo.
 - Qt shell: one window, grid painter, clipboard, font/colour config,
   connect dialog, serial-port picker with live enumeration. ✅ **done for
   Stage 1's purposes** — all of that, plus scrollback with a scrollbar, wheel
-  and `Shift+PageUp`, the SSH connect path with its host-key and authentication
-  dialogs, telnet, and a local shell on a menu item. See `shell/README.md` and
-  below.
+  and `Shift+PageUp`, selection by character, word and line that survives the
+  output scrolling under it, the SSH connect path with its host-key and
+  authentication dialogs, telnet, and a local shell on a menu item. See
+  `shell/README.md` and below.
 - **`~/.ssh/config`, `~/.ssh/known_hosts`, `~/.ssh/id_*`** — Tera Term lacks
   this and it is a major Linux adoption lever. ✅ **done** — an alias typed into
   the connect dialog, or given on the command line, brings its user, port, key,
@@ -586,6 +587,46 @@ otherwise every pump writes back into the session and the rounding fights the
 offset the core just chose. Ten tests in `tt-session` and three render tests
 cover it, the render ones because a frontend that re-read the offset wrongly
 would undo the whole thing with no core test noticing.
+
+#### And selection, which is the same argument one level up
+
+The last Stage 1 item. A selection held in viewport rows is held in "wherever
+this has slid to by now", so the honest thing the old code did was **drop it on
+every scroll** — and the case people actually copy in is a line off a device
+that is *still printing*, where the highlight would otherwise stay put while
+the text walks up the screen underneath it.
+
+So the core grew the one thing a frontend cannot work out for itself: a
+**number for a line**. `top_line` is `Grid::scrolled_off`, which makes the top
+of the live page always line *n* by construction, and `line_at(row)` /
+`line(n)` are the two directions across it. A line that has been evicted, or
+one not printed yet, comes back **absent** rather than making the caller
+range-check first — a frontend holding an old number has to be able to ask.
+
+The window's half is upstream's, and every piece of it looks arbitrary until
+the original turns up:
+
+- **Endpoints round to the nearest boundary between characters**
+  (`buffer.c:GetCharCell`), which is what makes dragging across `abc` select
+  `abc` rather than `ab`. Wide characters are taken or left whole.
+- **`ts.DelimList`'s default word set** — a space and every ASCII punctuation
+  mark **except** underscore — and `CheckDelimiterChar`'s two arms: starting on
+  a delimiter takes the run of *that same character*, so double-clicking the
+  gap between two columns of output selects the gap.
+- **The anchor is the whole unit the drag started on**, not the point it
+  started at, which is what lets a double-clicked word be dragged leftwards and
+  keep its right-hand edge. Upstream keeps the same pair.
+
+Two things it cost. **Qt has no triple-click event** — the second press arrives
+as `mouseDoubleClickEvent` *instead of* a press, so a widget counting clicks in
+its press handler never reaches three. And **the padding half of a wide
+character always joins a word run**, so the leftward walk can stop on padding
+whose lead it has just refused; stepping the wrong way there puts half a
+character in the selection.
+
+Six render tests cover it, driven through real `QMouseEvent`s rather than by
+calling the handlers, because the click counting is part of what is being
+tested.
 
 #### First landing — the differential gate is live
 

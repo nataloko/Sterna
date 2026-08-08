@@ -231,10 +231,49 @@ Two consequences worth knowing:
 - **Typing snaps to the live screen**, because typing blind into a screen you
   cannot see is worse than losing your place. `Shift+PageUp` is checked before
   the key table, which would otherwise send PageUp to the host.
-- **Scrolling clears the selection.** It is held in viewport coordinates, so
-  scrolling would leave the highlight sitting on whatever text moved under it.
-  Anchoring a selection to the history wants the same work as selecting
-  *across* a scroll, so both wait.
+- **Scrolling does not clear the selection**, because the selection is held in
+  absolute line numbers rather than in rows. See below.
+
+## The selection is anchored to lines, not to rows
+
+A row number means "wherever this line has slid to by now", which is the wrong
+thing to hold: the case people copy in is a line off a device that is *still
+printing*, and a highlight held in rows stays where it is while the text walks
+up the screen underneath it. So both ends are a `Session::line` number — the
+core's `line_at`/`top_line`/`line` — and scrolling, new output and even the
+history evicting the selected line all leave the selection meaning what it
+meant. A line that has aged out is skipped from the copy rather than coming
+back as a blank.
+
+The rest is upstream's, and each piece looks arbitrary until you find the
+original:
+
+- **Endpoints round to the nearest boundary between characters**
+  (`buffer.c:GetCharCell`), so dragging across `abc` selects `abc` rather than
+  `ab`. A wide character is taken or left whole from either half.
+- **Double click selects a word, on `ts.DelimList`'s default set** — a space
+  and every ASCII punctuation mark *except* underscore, so `some_name` is one
+  word and `some-name` is three. `CheckDelimiterChar` has two arms rather than
+  one: starting on a delimiter takes the run of *that same character*, which is
+  what makes double-clicking the gap between two columns of output select the
+  gap. Starting anywhere else takes the run of non-delimiters, and stops where
+  the character width changes (`ts.DelimDBCS`, on by default).
+- **Triple click selects the line.** Qt has no triple-click event — the second
+  press arrives as `mouseDoubleClickEvent` *instead of* a press — so the run is
+  counted in the widget or the third click never reaches three.
+- **The anchor is the whole unit the drag started on**, not the point it
+  started at, which is what lets a double-clicked word be dragged *leftwards*
+  and keep its right-hand edge. Upstream keeps the same pair
+  (`DblClkStart`/`DblClkEnd`).
+
+A drag held outside the window scrolls it, on a timer that runs only while that
+is true — same shape as the repaint floor and the pending-out retry. Without it
+a selection can never be longer than one screen.
+
+Two things still clear a selection, both because a resize re-flows every line
+so the numbers stop meaning what they meant: the widget's own resize, and one
+that arrives in the byte stream (DECCOLM, or a telnet NAWS from the far end),
+which is noticed on the next pump rather than through a resize event.
 
 ## Session logging
 
@@ -347,9 +386,6 @@ should not be the thing that knows which transports have something to say.
 
 ## Not here yet
 
-- **Word and line selection on double and triple click**, which wants the same
-  word-boundary rules the scrollback selection will need — one thing to write
-  rather than two.
 - **Blinking cursor and blinking text.** Tera Term colours blink rather than
   animating it (`VTBlinkColor`, on by default), which is reproduced; an
   animated form would need a timer, and the point of this event loop is not

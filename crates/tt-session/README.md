@@ -103,6 +103,27 @@ One deliberate divergence: upstream writes CR LF for each logged line
 artefact is a text file read in a pager on Linux. `LogOptions::crlf` gets a
 byte-identical Tera Term log back.
 
+## The viewport, and why a line has a number
+
+Scrolling back lives here rather than in the frontend because it has to be
+**anchored to content**: `follow_scroll` moves the offset by however many lines
+left the page, so a scrolled-back view stays on the same lines while the host
+keeps printing. Counting from the bottom instead means a stack trace walks off
+the screen while it is being read, which is exactly the situation anyone scrolls
+back in.
+
+`row(y)` is viewport-relative — there is no second row function a painter could
+pick wrongly between — and the cursor gets its own accessor, because it belongs
+to the live screen and scrolling back moves it *down* and off the bottom.
+
+`line_at`, `top_line` and `line` are the other half, and the distinction is the
+point: **a row says where a line is and a number says which line it is.** Only
+the second survives output. It is `Grid::scrolled_off`, so the top of the live
+page is always `top_line()` — true by construction, since every scroll pushes
+one line off and increments it — and a frontend holding a selection holds two of
+these. `line()` reports a line that has been evicted, or one not printed yet, as
+absent rather than making the caller range-check first.
+
 ## The one end-to-end test that never skips
 
 `tests/pty.rs`. Every other composition test here needs something the machine
@@ -113,4 +134,8 @@ descriptor, a real disconnect with a real exit status.
 
 ## Still to come
 
-- **Selection**, which is a frontend concept the core only has to support.
+- **Per-row damage**, if a measurement ever asks for it. See above.
+- **The settings surface.** `TtConfig` carries six fields where `tt_vt::Config`
+  has thirty, because the rest are `TERATERM.INI` keys and belong to Stage 2's
+  generated schema — transcribing them by hand now is work done twice, the
+  second time as a deletion.

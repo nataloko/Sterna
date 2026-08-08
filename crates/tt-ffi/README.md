@@ -50,7 +50,7 @@ Two things about how it is generated, both learned the hard way:
 |---|---|
 | Lifecycle | `tt_session_new` / `_free`, `tt_config_default` |
 | Screen | `tt_session_row` (borrowed, zero-copy), `_cols`, `_rows`, `_cursor`, `_title`, `_reverse_video`, `tt_palette_rgb` |
-| Viewport | `_scrollback_len`, `_view_offset`, `_set_view_offset`, `_cursor_view_row` |
+| Viewport | `_scrollback_len`, `_view_offset`, `_set_view_offset`, `_cursor_view_row`, `_line_at`, `_top_line`, `_line` |
 | Input | `_send_key`, `_send_text`, `_paste`, `_mouse`, `_focus`, `_resize`, `_set_cell_pixels`, `_send_break`, `_feed` |
 | Connection | `_connect_serial`, `_connect_telnet`, `_connect_pty`, `_disconnect`, `_is_connected`, `_describe`, `_close_note`, `_pump`, `_drain_events` |
 | SSH | `tt_ssh_params_default`, `tt_ssh_connect`, `_poll`, `_poll_fd`, `_host_key`, `_auth`, `_answer_host_key`, `_answer_auth`, `_free` |
@@ -63,9 +63,12 @@ Deliberately absent, and each for a reason rather than for lack of time:
   thirty. Every one of those thirty is a `TERATERM.INI` key, which makes them
   the generated settings schema's job in Stage 2 — hand-transcribing them into
   a C struct now would be work done twice, the second time as a deletion.
-- **Selection.** A frontend concept the core only has to support: the
-  viewport hands out rows, and which of them are highlighted is the window's
-  business.
+- **Selection.** A frontend concept the core only has to *support*, and what
+  it supports is naming a line. `tt_session_row` is the painter's call and
+  moves with the output; `tt_session_line_at` says which line a row is showing
+  and `tt_session_line` reads that line back whether or not it is still in
+  view. Which cells are highlighted, and what a double click means, stay the
+  window's business.
 - **A generic `connect(url)`.** There is one `connect` per transport instead —
   serial, telnet, pty, and SSH's polling variant — because a single entry point
   would have to grow a URL parser *and* a prompt protocol before either was
