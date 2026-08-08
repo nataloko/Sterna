@@ -162,6 +162,39 @@ jobs:
       - name: Build and test
         run: cd crates && cargo build --locked && cargo test --locked
 
+  shell:
+    name: shell — the Qt frontend, and what it paints
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: crates -> target
+      # qt6-base-dev is Qt 6.4.2 here and the desktop runs 6.11.1 — a gap that
+      # has already produced one false finding, so this job's job is "does it
+      # compile and does the painter still agree", NOT anything about
+      # behaviour or footprint. Measure those in the termitta-fedora
+      # container; see CLAUDE.md.
+      #
+      # fonts-dejavu-core is not decoration: the render test compares a box
+      # drawing character against a letter, and a runner with no font carrying
+      # U+2500 draws a tofu box that has more ink than either.
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-base-dev ninja-build libudev-dev fonts-dejavu-core
+      - name: Build
+        run: |
+          cd shell
+          cmake -S . -B build -G Ninja
+          cmake --build build
+      # QWidget::grab() renders through the raster engine, so the offscreen
+      # platform paints the same pixels a real window would — which is the
+      # only reason the painter is testable without a display at all.
+      - name: Render tests
+        run: cd shell && ./build/render_test
+
   ssh-audit:
     name: ssh-audit — russh vs legacy algorithms
     runs-on: ubuntu-24.04
@@ -180,7 +213,8 @@ jobs:
           cargo run --locked
           ./servers.sh stop
 
-# The Windows job covers `crates/` only, which is all there is to cover: the
-# oracle and xfer both need a POSIX toolchain, and the Qt shell does not exist.
-# Add the release matrix (linux-x64 + windows-x64) with the first shippable
-# artifact, not before.
+# The Windows job covers `crates/` only. The oracle and xfer both need a POSIX
+# toolchain, and the shell is Linux-only until Stage 3 — its serial connect
+# path is the one thing `tt-conn` has not built for Windows. Add the release
+# matrix (linux-x64 + windows-x64) with the first shippable artifact, not
+# before.
