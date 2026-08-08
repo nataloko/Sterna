@@ -1,0 +1,19 @@
+[package]
+name = "tt-xfer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Tera Term's file-transfer protocols, vendored and driven from Rust"
+
+[build-dependencies]
+cc = "1"
+
+[dev-dependencies]
+# The interop suite drives the protocols over a real pty against lrzsz and
+# gkermit, which is also the shape tt-session will use — so it borrows the
+# transport rather than opening a pty of its own. A dev-dependency only: the
+# crate itself is transport-agnostic on purpose.
+tt-conn.workspace = true
+libc = "0.2"
+tempfile = "3"

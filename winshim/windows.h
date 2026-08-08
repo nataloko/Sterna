@@ -238,6 +238,15 @@ HINSTANCE ShellExecuteW(HWND hwnd, const wchar_t *lpOperation,
 int MessageBoxA(HWND hWnd, const char *text, const char *caption, UINT type);
 #define MessageBox MessageBoxA
 
+/* A consumer that has somewhere better to put the text than stderr says so
+ * here. `tt-xfer` does: "Cannot create file" is the only account the user gets
+ * of why a transfer failed, and a library that printed it to the terminal's
+ * own stderr would be writing it where nobody is looking. Passing NULL
+ * restores the default. Not thread-safe by design — set it at startup. */
+void winshim_set_message_sink(void (*sink)(void *ctx, const char *caption,
+                                           const char *text),
+                              void *ctx);
+
 /* ---- the three functions vtterm.c/buffer.c actually call ---- */
 void  Sleep(DWORD dwMilliseconds);
 DWORD GetTickCount(void);

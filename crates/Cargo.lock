@@ -2214,6 +2214,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tt-xfer"
+version = "0.0.0"
+dependencies = [
+ "cc",
+ "libc",
+ "tempfile",
+ "tt-conn",
+]
+
+[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

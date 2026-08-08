@@ -207,12 +207,27 @@ HINSTANCE ShellExecuteW(HWND hwnd, const wchar_t *lpOperation,
 	return (HINSTANCE)(LONG_PTR)42;   /* >32 means success in Win32. */
 }
 
+static void (*message_sink)(void *, const char *, const char *);
+static void *message_sink_ctx;
+
+void winshim_set_message_sink(void (*sink)(void *ctx, const char *caption,
+                                           const char *text),
+                              void *ctx)
+{
+	message_sink = sink;
+	message_sink_ctx = ctx;
+}
+
 int MessageBoxA(HWND hWnd, const char *text, const char *caption, UINT type)
 {
 	/* Headless: a dialog is a diagnostic. Callers in ttpfile only ever use
 	 * this to report a failure they have already decided to return FALSE for,
 	 * so answering IDOK changes nothing. */
 	(void)hWnd; (void)type;
+	if (message_sink != NULL) {
+		message_sink(message_sink_ctx, caption, text);
+		return IDOK;
+	}
 	fprintf(stderr, "[MessageBox] %s: %s\n",
 	        caption ? caption : "(no caption)", text ? text : "");
 	return IDOK;
