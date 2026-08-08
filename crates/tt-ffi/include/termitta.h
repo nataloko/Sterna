@@ -508,6 +508,17 @@ typedef struct TtPortList TtPortList;
 typedef struct TtSession TtSession;
 
 /**
+ * A connection being set up. Free it with [`tt_ssh_connect_free`], whether or
+ * not it reached [`TT_SSH_READY`].
+ */
+typedef struct TtSshConnect TtSshConnect;
+
+/**
+ * An owned list of strings. Free it with [`tt_string_list_free`].
+ */
+typedef struct TtStringList TtStringList;
+
+/**
  * What a session is created with.
  *
  * Deliberately small. `tt_vt::Config` has thirty-odd fields and every one of
@@ -719,6 +730,148 @@ typedef struct {
     const char *serial;
 } TtPortInfo;
 
+/**
+ * What to do about a host key the `known_hosts` files do not already trust.
+ *
+ * `TT_HOST_KEY_POLICY_ASK` is what a GUI wants; the other three exist because
+ * `~/.ssh/config` contains them and a client that ignores `StrictHostKeyChecking`
+ * is a client the user has to configure twice.
+ */
+typedef uint32_t TtHostKeyPolicy;
+
+/**
+ * Where to connect and what to try.
+ *
+ * Every string may be null, and null does not mean "empty" — it means "take
+ * it from `~/.ssh/config`, or from the default". That distinction is the
+ * whole value of `use_ssh_config`: a dialog that leaves the user field blank
+ * must get the config's `User`, not an empty user name.
+ */
+typedef struct {
+    /**
+     * The host, or an alias from `~/.ssh/config`. Required.
+     */
+    const char *host;
+    /**
+     * 0 means the config's `Port`, or 22.
+     */
+    uint16_t port;
+    /**
+     * Null means the config's `User`, or `$USER`.
+     */
+    const char *user;
+    /**
+     * `$TERM` for the far end. Null means `xterm-256color`, which is what
+     * the engine actually implements.
+     */
+    const char *term;
+    /**
+     * Read `~/.ssh/config` and fill in everything this struct leaves unset —
+     * the user, the port, the identity files, `StrictHostKeyChecking`, and
+     * whether the config already says this is old equipment.
+     */
+    bool use_ssh_config;
+    /**
+     * A null-terminated array of key paths, or null for the OpenSSH defaults
+     * (or whatever the config named).
+     */
+    const char *const *identities;
+    bool use_agent;
+    /**
+     * Offer the pre-2020 algorithms as well. A config naming SHA-1 key
+     * exchange or a CBC cipher turns this on by itself.
+     */
+    bool legacy;
+    uint32_t connect_timeout_ms;
+    /**
+     * 0 for none, which is OpenSSH's default.
+     */
+    uint32_t keepalive_ms;
+    TtHostKeyPolicy host_key_policy;
+} TtSshParams;
+
+/**
+ * What [`tt_ssh_connect_poll`] found.
+ */
+typedef int32_t TtSshStep;
+
+/**
+ * What the `known_hosts` files made of the key the server presented.
+ */
+typedef uint32_t TtHostKeyVerdict;
+
+/**
+ * The far end's host key, and what the files said about it.
+ *
+ * Every pointer is borrowed from the [`TtSshConnect`] and is valid until the
+ * next [`tt_ssh_connect_poll`] on it.
+ */
+typedef struct {
+    const char *host;
+    uint16_t port;
+    /**
+     * The key's own type name as `known_hosts` records it — `ssh-ed25519`,
+     * `ssh-rsa` — not the negotiated signature algorithm.
+     */
+    const char *algorithm;
+    /**
+     * `SHA256:…`, the form every other client prints.
+     */
+    const char *fingerprint;
+    TtHostKeyVerdict verdict;
+    /**
+     * For [`TT_HOST_KEY_CHANGED`]: `path:line` of the entry that disagrees,
+     * so the message can tell the user what to delete. Null otherwise.
+     */
+    const char *recorded_at;
+    /**
+     * For [`TT_HOST_KEY_CHANGED`]: the fingerprint on file, for showing
+     * beside the new one. Null otherwise.
+     */
+    const char *recorded_fingerprint;
+    /**
+     * For [`TT_HOST_KEY_NEW_ALGORITHM`]: the algorithms already recorded,
+     * comma-separated. Null otherwise.
+     */
+    const char *also_known;
+} TtSshHostKeyPrompt;
+
+/**
+ * What is being asked for.
+ */
+typedef uint32_t TtSshAuthKind;
+
+/**
+ * One line of something to type.
+ */
+typedef struct {
+    const char *text;
+    /**
+     * Whether to show what is typed. The server chooses.
+     */
+    bool echo;
+} TtSshPrompt;
+
+/**
+ * A question that has to reach the user before authentication can go on.
+ *
+ * Borrowed like [`TtSshHostKeyPrompt`], and valid for exactly as long.
+ */
+typedef struct {
+    TtSshAuthKind kind;
+    /**
+     * The server's own wording, where it sent any. Never null; often empty.
+     */
+    const char *name;
+    const char *instruction;
+    /**
+     * For [`TT_SSH_AUTH_PASSPHRASE`]: the key file. Null otherwise.
+     */
+    const char *path;
+    const TtSshPrompt *prompts;
+    size_t prompt_count;
+} TtSshAuthPrompt;
+
 #define TT_OK 0
 
 /**
@@ -763,6 +916,98 @@ typedef struct {
  * Anything else the operating system said.
  */
 #define TT_ERR_IO -6
+
+/**
+ * The SSH protocol failed — the socket, the banner, key exchange, opening
+ * the channel.
+ */
+#define TT_ERR_SSH -7
+
+/**
+ * The far end is not who `known_hosts` says it is, or is who it says must be
+ * refused. **Separate from [`TT_ERR_SSH`] because a frontend must not offer
+ * to retry**: this is the one failure where the right affordance is none.
+ */
+#define TT_ERR_HOST_KEY -8
+
+/**
+ * Every authentication method failed or was not on offer. [`tt_last_error`]
+ * names what the server said it would still accept, which is the only thing
+ * that makes the message actionable.
+ */
+#define TT_ERR_AUTH -9
+
+#define TT_HOST_KEY_POLICY_ASK 0
+
+/**
+ * `accept-new`: record a first-seen host silently, refuse a changed one.
+ */
+#define TT_HOST_KEY_POLICY_ACCEPT_NEW 1
+
+/**
+ * `yes`: refuse anything not recorded, and never prompt.
+ */
+#define TT_HOST_KEY_POLICY_STRICT 2
+
+/**
+ * `no`: connect to anything.
+ */
+#define TT_HOST_KEY_POLICY_ACCEPT_ANY 3
+
+/**
+ * Nothing anywhere mentions this host. A first connection.
+ */
+#define TT_HOST_KEY_UNKNOWN 0
+
+/**
+ * Recorded under this algorithm, and **different**. The alarming one — a
+ * frontend should not present it with the same words as the others.
+ */
+#define TT_HOST_KEY_CHANGED 1
+
+/**
+ * The host is recorded, but only under other key algorithms. Usually a
+ * server that gained an Ed25519 key.
+ */
+#define TT_HOST_KEY_NEW_ALGORITHM 2
+
+#define TT_SSH_AUTH_PASSWORD 0
+
+#define TT_SSH_AUTH_KEYBOARD_INTERACTIVE 1
+
+/**
+ * The passphrase for a local private key. `path` says which file, and it is
+ * the only prompt that is ours rather than the server's.
+ */
+#define TT_SSH_AUTH_PASSPHRASE 2
+
+/**
+ * Nothing yet. Wait for the descriptor to become readable.
+ */
+#define TT_SSH_WORKING 0
+
+/**
+ * [`tt_ssh_connect_host_key`] has a question. Answer it with
+ * [`tt_ssh_connect_answer_host_key`].
+ */
+#define TT_SSH_HOST_KEY 1
+
+/**
+ * [`tt_ssh_connect_auth`] has a question. Answer it with
+ * [`tt_ssh_connect_answer_auth`].
+ */
+#define TT_SSH_AUTH 2
+
+/**
+ * Connected, and attached to the session that was passed in. The handle has
+ * nothing more to say and can be freed.
+ */
+#define TT_SSH_READY 3
+
+/**
+ * Over. [`tt_last_error`] says why.
+ */
+#define TT_SSH_FAILED 4
 
 #ifdef __cplusplus
 extern "C" {
@@ -1166,6 +1411,101 @@ size_t tt_port_list_len(const TtPortList *list);
 const TtPortInfo *tt_port_list_at(const TtPortList *list, size_t index);
 
 void tt_port_list_free(TtPortList *list);
+
+/**
+ * Fill `out` with the sensible defaults: read `~/.ssh/config`, use the agent,
+ * ask about unknown host keys, modern algorithms only, 30-second timeout.
+ */
+void tt_ssh_params_default(TtSshParams *out);
+
+/**
+ * Start connecting. Returns immediately, before anything has happened; null
+ * only if the thread or the pipe could not be created.
+ *
+ * The session is **not** passed here. It is passed to
+ * [`tt_ssh_connect_poll`], which attaches the transport the moment the shell
+ * is running — so nothing stores a `TtSession *` it does not own.
+ */
+TtSshConnect *tt_ssh_connect(const TtSshParams *params);
+
+/**
+ * The descriptor to wait on.
+ *
+ * **The same one [`tt_session_poll_fd`] returns once the session is
+ * connected**, so a frontend registers its notifier once and keeps it across
+ * the handover rather than swapping it at the moment output starts.
+ */
+int tt_ssh_connect_poll_fd(const TtSshConnect *c);
+
+/**
+ * What the connection needs next. Never blocks.
+ *
+ * On [`TT_SSH_READY`] the transport is attached to `session`, replacing
+ * whatever was there. `session` may be null only if the caller intends to
+ * throw the connection away, in which case `READY` still ends it.
+ */
+TtSshStep tt_ssh_connect_poll(TtSshConnect *c, TtSession *session);
+
+/**
+ * The outstanding host-key question, or null when the last poll did not
+ * return [`TT_SSH_HOST_KEY`]. Valid until the next poll.
+ */
+const TtSshHostKeyPrompt *tt_ssh_connect_host_key(const TtSshConnect *c);
+
+/**
+ * The outstanding authentication question, or null when the last poll did
+ * not return [`TT_SSH_AUTH`]. Valid until the next poll.
+ */
+const TtSshAuthPrompt *tt_ssh_connect_auth(const TtSshConnect *c);
+
+/**
+ * Answer a [`TT_SSH_HOST_KEY`] with 1 to accept and record, 2 to accept just
+ * this once, and anything else to refuse.
+ *
+ * Deliberately three answers rather than a bool. "Yes, but do not write it
+ * down" is what a user on a network they do not trust means, and collapsing
+ * it into "yes" silently records a key they did not want recorded.
+ */
+void tt_ssh_connect_answer_host_key(TtSshConnect *c, int decision);
+
+/**
+ * Answer a [`TT_SSH_AUTH`], one string per prompt in the order asked.
+ *
+ * A short or long list is padded or truncated to what the server asked for
+ * rather than passed on: the protocol requires one response per prompt, and
+ * getting it wrong desynchronises the exchange in a way that reads as a
+ * server bug.
+ */
+void tt_ssh_connect_answer_auth(TtSshConnect *c,
+                                const char *const *answers,
+                                size_t count);
+
+/**
+ * Stop, and free. Safe on null, and safe after [`TT_SSH_READY`] — the
+ * session owns the connection by then and freeing the handle does not touch
+ * it.
+ */
+void tt_ssh_connect_free(TtSshConnect *c);
+
+/**
+ * Every `Host` alias in `~/.ssh/config` that names one machine — no
+ * wildcards, no negations — for filling a picker. Null on failure.
+ *
+ * A `Host *` block is not somewhere to connect, and a `!bastion` names a host
+ * its block is *about* rather than one it configures. Offering either would
+ * put entries in a dropdown that cannot be connected to.
+ */
+TtStringList *tt_ssh_config_aliases(void);
+
+size_t tt_string_list_len(const TtStringList *list);
+
+/**
+ * Borrow one entry. Null when `index` is out of range. Valid until the list
+ * is freed.
+ */
+const char *tt_string_list_at(const TtStringList *list, size_t index);
+
+void tt_string_list_free(TtStringList *list);
 
 #ifdef __cplusplus
 }  // extern "C"

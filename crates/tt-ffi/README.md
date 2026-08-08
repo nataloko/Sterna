@@ -53,7 +53,8 @@ Two things about how it is generated, both learned the hard way:
 | Viewport | `_scrollback_len`, `_view_offset`, `_set_view_offset`, `_cursor_view_row` |
 | Input | `_send_key`, `_send_text`, `_paste`, `_mouse`, `_focus`, `_resize`, `_set_cell_pixels`, `_send_break`, `_feed` |
 | Connection | `_connect_serial`, `_disconnect`, `_is_connected`, `_describe`, `_pump`, `_drain_events` |
-| Ports | `tt_serial_enumerate`, `tt_port_list_len` / `_at` / `_free` |
+| SSH | `tt_ssh_params_default`, `tt_ssh_connect`, `_poll`, `_poll_fd`, `_host_key`, `_auth`, `_answer_host_key`, `_answer_auth`, `_free` |
+| Ports | `tt_serial_enumerate`, `tt_port_list_len` / `_at` / `_free`, `tt_ssh_config_aliases` + `tt_string_list_*` |
 | Logging | `tt_log_options_default`, `tt_session_log_start` / `_stop` / `_path` / `_bytes` |
 
 Deliberately absent, and each for a reason rather than for lack of time:
@@ -65,7 +66,7 @@ Deliberately absent, and each for a reason rather than for lack of time:
 - **Selection.** A frontend concept the core only has to support: the
   viewport hands out rows, and which of them are highlighted is the window's
   business.
-- **SSH, telnet and pty connects.** One `connect` per transport, added as each
+- **Telnet and pty connects.** One `connect` per transport, added as each
   transport lands. A generic `connect(url)` would have to grow a parser and a
   prompt protocol before either exists.
 
@@ -90,6 +91,23 @@ Deliberately absent, and each for a reason rather than for lack of time:
   frontend does not need a null check before every call. What is left is the
   contract no ABI escapes: a non-null pointer has to be real, and a session
   must not have been freed.
+- **SSH connects by polling, not by returning.** `tt_ssh_connect` returns
+  before anything has happened; `tt_ssh_connect_poll` then reports what the
+  connection needs — a host-key decision, a password, a keyboard-interactive
+  challenge — and attaches the transport to the session on `TT_SSH_READY`. A
+  callback would have to be thread-safe and would fire on a worker thread,
+  which is exactly where a Qt frontend cannot raise a dialog.
+- **`tt_ssh_connect_poll_fd` is the same descriptor `tt_session_poll_fd`
+  returns afterwards.** Register the notifier once, before connecting, and
+  keep it: swapping it at the moment output starts is a race with the first
+  screenful.
+- **`tt_session_pump` returns as soon as the line is quiet**, which is the
+  point of it — so waiting belongs on the descriptor, not in a pump loop.
+  Pumping in a bare loop spins through a thousand iterations in a millisecond
+  and concludes the far end never answered. The C test does it the right way.
+- **A null string in `TtSshParams` means "take it from `~/.ssh/config`"**,
+  which is not the same as an empty one. A dialog whose user field is blank
+  must send null, or the config's `User` is overridden with nothing.
 
 ## `run_abi.sh` is the only test that means anything here
 

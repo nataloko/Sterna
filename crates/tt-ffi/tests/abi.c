@@ -10,10 +10,32 @@
  * Run it with ./run_abi.sh.
  */
 
+/* For poll(2), which is how a frontend waits on tt_ssh_connect_poll_fd —
+ * `-std=c11 -pedantic` hides everything POSIX until this is defined. */
+#define _POSIX_C_SOURCE 200809L
+
+#include <poll.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <termitta.h>
+
+/* Wait for the connection's descriptor, exactly as a frontend's event loop
+ * does. A timeout is not a failure: readable is a wakeup, not a promise. */
+static void wait_readable(int fd, int ms)
+{
+    struct pollfd pfd = {fd, POLLIN, 0};
+    poll(&pfd, 1, ms);
+}
+
+static long now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
 
 static int failures = 0;
 
@@ -424,6 +446,18 @@ static void test_null_safety(void)
     CHECK(tt_port_list_len(NULL) == 0);
     CHECK(tt_port_list_at(NULL, 0) == NULL);
     tt_port_list_free(NULL);
+    tt_ssh_params_default(NULL);
+    CHECK(tt_ssh_connect(NULL) == NULL);
+    CHECK(tt_ssh_connect_poll_fd(NULL) == -1);
+    CHECK(tt_ssh_connect_poll(NULL, NULL) == TT_SSH_FAILED);
+    CHECK(tt_ssh_connect_host_key(NULL) == NULL);
+    CHECK(tt_ssh_connect_auth(NULL) == NULL);
+    tt_ssh_connect_answer_host_key(NULL, 1);
+    tt_ssh_connect_answer_auth(NULL, NULL, 0);
+    tt_ssh_connect_free(NULL);
+    CHECK(tt_string_list_len(NULL) == 0);
+    CHECK(tt_string_list_at(NULL, 0) == NULL);
+    tt_string_list_free(NULL);
     CHECK(tt_last_error() != NULL);
 
     TtConfig cfg;
@@ -438,6 +472,189 @@ static void test_null_safety(void)
     tt_session_free(s);
 }
 
+
+/* Drive an SSH connection the way the shell will: poll, answer, poll.
+ *
+ * The server comes from TT_SSH_HOST/PORT/USER/KEY, and without them this
+ * exercises the parts that need no server — the defaults, the null handling,
+ * and the config alias list — then skips loudly rather than passing quietly.
+ */
+static void test_ssh(void)
+{
+    TtSshParams p;
+    tt_ssh_params_default(&p);
+    CHECK(p.host == NULL);
+    CHECK(p.port == 0);
+    CHECK(p.use_ssh_config);
+    CHECK(p.use_agent);
+    CHECK(!p.legacy);
+    CHECK(p.host_key_policy == TT_HOST_KEY_POLICY_ASK);
+    CHECK(p.connect_timeout_ms == 30000);
+
+    /* Reading ~/.ssh/config must work on a machine that has none. */
+    TtStringList *aliases = tt_ssh_config_aliases();
+    CHECK(aliases != NULL);
+    if (aliases) {
+        size_t n = tt_string_list_len(aliases);
+        for (size_t i = 0; i < n; i++)
+            CHECK(tt_string_list_at(aliases, i) != NULL);
+        CHECK(tt_string_list_at(aliases, n) == NULL);
+        tt_string_list_free(aliases);
+    }
+
+    /* A host that is not there fails rather than hanging, and does it through
+     * TT_SSH_FAILED rather than by returning null from tt_ssh_connect —
+     * connecting is asynchronous, so nothing can be known at the start. */
+    p.host = "127.0.0.1";
+    p.port = 1;  /* nothing listens on tcpmux */
+    p.use_ssh_config = false;
+    p.connect_timeout_ms = 5000;
+    TtSshConnect *c = tt_ssh_connect(&p);
+    CHECK(c != NULL);
+    if (c) {
+        CHECK(tt_ssh_connect_poll_fd(c) >= 0);
+        TtSshStep step;
+        for (int i = 0; i < 2000; i++) {
+            step = tt_ssh_connect_poll(c, NULL);
+            if (step != TT_SSH_WORKING)
+                break;
+            wait_readable(tt_ssh_connect_poll_fd(c), 20);
+        }
+        CHECK(step == TT_SSH_FAILED);
+        CHECK(strlen(tt_last_error()) > 0);
+        tt_ssh_connect_free(c);
+    }
+
+    const char *host = getenv("TT_SSH_HOST");
+    const char *key = getenv("TT_SSH_KEY");
+    if (!host || !key) {
+        printf("  ssh: SKIPPED (set TT_SSH_HOST and TT_SSH_KEY)\n");
+        return;
+    }
+
+    const char *identities[2] = {key, NULL};
+    tt_ssh_params_default(&p);
+    p.host = host;
+    p.port = (uint16_t)atoi(getenv("TT_SSH_PORT") ? getenv("TT_SSH_PORT") : "22");
+    p.user = getenv("TT_SSH_USER");
+    p.identities = identities;
+    /* The agent belongs to whoever runs the tests and must not decide
+     * whether they pass. */
+    p.use_agent = false;
+    /* No ~/.ssh/config: the point here is the ABI, not the file. */
+    p.use_ssh_config = false;
+    p.connect_timeout_ms = 15000;
+
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+
+    c = tt_ssh_connect(&p);
+    CHECK(c != NULL);
+    if (!c) {
+        tt_session_free(s);
+        return;
+    }
+    int fd = tt_ssh_connect_poll_fd(c);
+    CHECK(fd >= 0);
+
+    int ready = 0, asked_host_key = 0;
+    for (int i = 0; i < 4000; i++) {
+        TtSshStep step = tt_ssh_connect_poll(c, s);
+        if (step == TT_SSH_HOST_KEY) {
+            const TtSshHostKeyPrompt *hk = tt_ssh_connect_host_key(c);
+            CHECK(hk != NULL);
+            if (hk) {
+                CHECK(hk->host != NULL && strcmp(hk->host, host) == 0);
+                CHECK(hk->algorithm != NULL && strlen(hk->algorithm) > 0);
+                /* Every other client prints this form, and a user comparing
+                 * it against a Post-it needs it to match. */
+                CHECK(hk->fingerprint != NULL &&
+                      strncmp(hk->fingerprint, "SHA256:", 7) == 0);
+                printf("  ssh: %s %s\n", hk->algorithm, hk->fingerprint);
+                asked_host_key = 1;
+            }
+            /* 2 = accept once: do not write to the user's known_hosts from a
+             * test run. */
+            tt_ssh_connect_answer_host_key(c, 2);
+            continue;
+        }
+        if (step == TT_SSH_AUTH) {
+            const TtSshAuthPrompt *a = tt_ssh_connect_auth(c);
+            CHECK(a != NULL);
+            /* The key should have answered; anything asked here is a
+             * failure of the auth ordering, not of the prompt plumbing. */
+            fprintf(stderr, "unexpected auth prompt kind %u\n",
+                    a ? a->kind : 0);
+            failures++;
+            tt_ssh_connect_answer_auth(c, NULL, 0);
+            continue;
+        }
+        if (step == TT_SSH_READY) {
+            ready = 1;
+            break;
+        }
+        if (step == TT_SSH_FAILED) {
+            fprintf(stderr, "ssh connect failed: %s\n", tt_last_error());
+            failures++;
+            break;
+        }
+        wait_readable(fd, 20);
+    }
+    CHECK(asked_host_key);
+    CHECK(ready);
+
+    if (ready) {
+        CHECK(tt_session_is_connected(s));
+        /* One descriptor across the handover: a frontend registers its
+         * notifier before connecting and keeps it. */
+        CHECK(tt_session_poll_fd(s) == fd);
+        CHECK(tt_session_describe(s) != NULL);
+
+        /* And it is a terminal: type at it and read the screen back.
+         *
+         * `tt_session_pump` returns the moment the line is quiet — that is
+         * the point of it — so waiting has to be done on the descriptor, not
+         * by pumping in a loop. Pumping alone spins through a thousand
+         * iterations in a millisecond and concludes the shell never started.
+         */
+        size_t got = 0;
+        long deadline = now_ms() + 5000;
+        /* A login shell is not ready when request_shell returns: the MOTD and
+         * the first prompt arrive first, and anything typed before bash reads
+         * is echoed by the pty and dropped. */
+        long quiet_until = now_ms() + 500;
+        while (now_ms() < deadline && now_ms() < quiet_until) {
+            wait_readable(fd, 100);
+            tt_session_pump(s, 20, &got);
+            if (got > 0)
+                quiet_until = now_ms() + 500;
+        }
+        CHECK_OK(tt_session_send_text(s, "echo abi-ok\n", 12));
+
+        int seen = 0;
+        deadline = now_ms() + 5000;
+        while (now_ms() < deadline && !seen) {
+            wait_readable(fd, 100);
+            tt_session_pump(s, 20, &got);
+            for (size_t y = 0; y < tt_session_rows(s) && !seen; y++) {
+                size_t len = 0;
+                const TtCell *row = tt_session_row(s, y, &len);
+                char line[256] = {0};
+                for (size_t x = 0; x < len && x < sizeof line - 1; x++)
+                    line[x] = base(&row[x]) < 128 ? (char)base(&row[x]) : '?';
+                /* The echoed command line contains the text too, so match a
+                 * line that starts with the output rather than contains it. */
+                if (strncmp(line, "abi-ok", 6) == 0)
+                    seen = 1;
+            }
+        }
+        CHECK(seen);
+    }
+    tt_ssh_connect_free(c);
+    tt_session_free(s);
+}
+
 int main(void)
 {
     printf("termitta core %s\n", tt_version());
@@ -448,6 +665,7 @@ int main(void)
     test_input();
     test_palette();
     test_serial();
+    test_ssh();
     test_null_safety();
 
     if (failures) {

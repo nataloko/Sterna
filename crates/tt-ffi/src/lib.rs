@@ -73,6 +73,9 @@ use std::time::Duration;
 use tt_conn::serial::{
     DataBits, FlowControl, Parity, PinControl, SerialConn, SerialParams, StopBits,
 };
+use tt_conn::ssh::{
+    AuthPromptKind, HostKeyDecision, HostKeyPolicy, SshConfig, SshConnect, SshParams, Step, Verdict,
+};
 use tt_conn::Error;
 use tt_grid::Cell;
 use tt_session::{Event, LogMode, LogOptions, Session, Timestamp};
@@ -111,6 +114,17 @@ pub const TT_ERR_PERMISSION: TtStatus = -4;
 pub const TT_ERR_UNSUPPORTED: TtStatus = -5;
 /// Anything else the operating system said.
 pub const TT_ERR_IO: TtStatus = -6;
+/// The SSH protocol failed — the socket, the banner, key exchange, opening
+/// the channel.
+pub const TT_ERR_SSH: TtStatus = -7;
+/// The far end is not who `known_hosts` says it is, or is who it says must be
+/// refused. **Separate from [`TT_ERR_SSH`] because a frontend must not offer
+/// to retry**: this is the one failure where the right affordance is none.
+pub const TT_ERR_HOST_KEY: TtStatus = -8;
+/// Every authentication method failed or was not on offer. [`tt_last_error`]
+/// names what the server said it would still accept, which is the only thing
+/// that makes the message actionable.
+pub const TT_ERR_AUTH: TtStatus = -9;
 
 thread_local! {
     static LAST_ERROR: RefCell<CString> = RefCell::new(CString::default());
@@ -136,6 +150,9 @@ fn report(e: Error) -> TtStatus {
         Error::PermissionDenied { .. } => TT_ERR_PERMISSION,
         Error::Open { .. } => TT_ERR_IO,
         Error::Unsupported(_) => TT_ERR_UNSUPPORTED,
+        Error::Ssh(_) => TT_ERR_SSH,
+        Error::HostKey(_) => TT_ERR_HOST_KEY,
+        Error::Auth { .. } => TT_ERR_AUTH,
         Error::Io(_) => TT_ERR_IO,
     };
     fail(status, e.to_string())
@@ -1252,6 +1269,557 @@ pub extern "C" fn tt_port_list_at(list: *const TtPortList, index: usize) -> *con
 
 #[no_mangle]
 pub extern "C" fn tt_port_list_free(list: *mut TtPortList) {
+    if !list.is_null() {
+        drop(unsafe { Box::from_raw(list) });
+    }
+}
+
+// --- ssh ------------------------------------------------------------------
+
+/// What to do about a host key the `known_hosts` files do not already trust.
+///
+/// `TT_HOST_KEY_POLICY_ASK` is what a GUI wants; the other three exist because
+/// `~/.ssh/config` contains them and a client that ignores `StrictHostKeyChecking`
+/// is a client the user has to configure twice.
+pub type TtHostKeyPolicy = u32;
+
+pub const TT_HOST_KEY_POLICY_ASK: TtHostKeyPolicy = 0;
+/// `accept-new`: record a first-seen host silently, refuse a changed one.
+pub const TT_HOST_KEY_POLICY_ACCEPT_NEW: TtHostKeyPolicy = 1;
+/// `yes`: refuse anything not recorded, and never prompt.
+pub const TT_HOST_KEY_POLICY_STRICT: TtHostKeyPolicy = 2;
+/// `no`: connect to anything.
+pub const TT_HOST_KEY_POLICY_ACCEPT_ANY: TtHostKeyPolicy = 3;
+
+/// What the `known_hosts` files made of the key the server presented.
+pub type TtHostKeyVerdict = u32;
+
+/// Nothing anywhere mentions this host. A first connection.
+pub const TT_HOST_KEY_UNKNOWN: TtHostKeyVerdict = 0;
+/// Recorded under this algorithm, and **different**. The alarming one — a
+/// frontend should not present it with the same words as the others.
+pub const TT_HOST_KEY_CHANGED: TtHostKeyVerdict = 1;
+/// The host is recorded, but only under other key algorithms. Usually a
+/// server that gained an Ed25519 key.
+pub const TT_HOST_KEY_NEW_ALGORITHM: TtHostKeyVerdict = 2;
+
+/// What is being asked for.
+pub type TtSshAuthKind = u32;
+
+pub const TT_SSH_AUTH_PASSWORD: TtSshAuthKind = 0;
+pub const TT_SSH_AUTH_KEYBOARD_INTERACTIVE: TtSshAuthKind = 1;
+/// The passphrase for a local private key. `path` says which file, and it is
+/// the only prompt that is ours rather than the server's.
+pub const TT_SSH_AUTH_PASSPHRASE: TtSshAuthKind = 2;
+
+/// What [`tt_ssh_connect_poll`] found.
+pub type TtSshStep = i32;
+
+/// Nothing yet. Wait for the descriptor to become readable.
+pub const TT_SSH_WORKING: TtSshStep = 0;
+/// [`tt_ssh_connect_host_key`] has a question. Answer it with
+/// [`tt_ssh_connect_answer_host_key`].
+pub const TT_SSH_HOST_KEY: TtSshStep = 1;
+/// [`tt_ssh_connect_auth`] has a question. Answer it with
+/// [`tt_ssh_connect_answer_auth`].
+pub const TT_SSH_AUTH: TtSshStep = 2;
+/// Connected, and attached to the session that was passed in. The handle has
+/// nothing more to say and can be freed.
+pub const TT_SSH_READY: TtSshStep = 3;
+/// Over. [`tt_last_error`] says why.
+pub const TT_SSH_FAILED: TtSshStep = 4;
+
+/// Where to connect and what to try.
+///
+/// Every string may be null, and null does not mean "empty" — it means "take
+/// it from `~/.ssh/config`, or from the default". That distinction is the
+/// whole value of `use_ssh_config`: a dialog that leaves the user field blank
+/// must get the config's `User`, not an empty user name.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtSshParams {
+    /// The host, or an alias from `~/.ssh/config`. Required.
+    pub host: *const c_char,
+    /// 0 means the config's `Port`, or 22.
+    pub port: u16,
+    /// Null means the config's `User`, or `$USER`.
+    pub user: *const c_char,
+    /// `$TERM` for the far end. Null means `xterm-256color`, which is what
+    /// the engine actually implements.
+    pub term: *const c_char,
+    /// Read `~/.ssh/config` and fill in everything this struct leaves unset —
+    /// the user, the port, the identity files, `StrictHostKeyChecking`, and
+    /// whether the config already says this is old equipment.
+    pub use_ssh_config: bool,
+    /// A null-terminated array of key paths, or null for the OpenSSH defaults
+    /// (or whatever the config named).
+    pub identities: *const *const c_char,
+    pub use_agent: bool,
+    /// Offer the pre-2020 algorithms as well. A config naming SHA-1 key
+    /// exchange or a CBC cipher turns this on by itself.
+    pub legacy: bool,
+    pub connect_timeout_ms: u32,
+    /// 0 for none, which is OpenSSH's default.
+    pub keepalive_ms: u32,
+    pub host_key_policy: TtHostKeyPolicy,
+}
+
+/// Fill `out` with the sensible defaults: read `~/.ssh/config`, use the agent,
+/// ask about unknown host keys, modern algorithms only, 30-second timeout.
+#[no_mangle]
+pub extern "C" fn tt_ssh_params_default(out: *mut TtSshParams) {
+    let Some(out) = (unsafe { out.as_mut() }) else {
+        return;
+    };
+    *out = TtSshParams {
+        host: ptr::null(),
+        port: 0,
+        user: ptr::null(),
+        term: ptr::null(),
+        use_ssh_config: true,
+        identities: ptr::null(),
+        use_agent: true,
+        legacy: false,
+        connect_timeout_ms: 30_000,
+        keepalive_ms: 0,
+        host_key_policy: TT_HOST_KEY_POLICY_ASK,
+    };
+}
+
+/// The far end's host key, and what the files said about it.
+///
+/// Every pointer is borrowed from the [`TtSshConnect`] and is valid until the
+/// next [`tt_ssh_connect_poll`] on it.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtSshHostKeyPrompt {
+    pub host: *const c_char,
+    pub port: u16,
+    /// The key's own type name as `known_hosts` records it — `ssh-ed25519`,
+    /// `ssh-rsa` — not the negotiated signature algorithm.
+    pub algorithm: *const c_char,
+    /// `SHA256:…`, the form every other client prints.
+    pub fingerprint: *const c_char,
+    pub verdict: TtHostKeyVerdict,
+    /// For [`TT_HOST_KEY_CHANGED`]: `path:line` of the entry that disagrees,
+    /// so the message can tell the user what to delete. Null otherwise.
+    pub recorded_at: *const c_char,
+    /// For [`TT_HOST_KEY_CHANGED`]: the fingerprint on file, for showing
+    /// beside the new one. Null otherwise.
+    pub recorded_fingerprint: *const c_char,
+    /// For [`TT_HOST_KEY_NEW_ALGORITHM`]: the algorithms already recorded,
+    /// comma-separated. Null otherwise.
+    pub also_known: *const c_char,
+}
+
+/// One line of something to type.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtSshPrompt {
+    pub text: *const c_char,
+    /// Whether to show what is typed. The server chooses.
+    pub echo: bool,
+}
+
+/// A question that has to reach the user before authentication can go on.
+///
+/// Borrowed like [`TtSshHostKeyPrompt`], and valid for exactly as long.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtSshAuthPrompt {
+    pub kind: TtSshAuthKind,
+    /// The server's own wording, where it sent any. Never null; often empty.
+    pub name: *const c_char,
+    pub instruction: *const c_char,
+    /// For [`TT_SSH_AUTH_PASSPHRASE`]: the key file. Null otherwise.
+    pub path: *const c_char,
+    pub prompts: *const TtSshPrompt,
+    pub prompt_count: usize,
+}
+
+/// A connection being set up. Free it with [`tt_ssh_connect_free`], whether or
+/// not it reached [`TT_SSH_READY`].
+pub struct TtSshConnect {
+    inner: SshConnect,
+    /// The prompt the last poll produced, kept alive until the next one.
+    host_key: Option<TtSshHostKeyPrompt>,
+    auth: Option<TtSshAuthPrompt>,
+    prompts: Vec<TtSshPrompt>,
+    /// Backing store for every `*const c_char` above.
+    _strings: Vec<CString>,
+    /// How many answers the outstanding auth prompt wants, so a caller that
+    /// sends the wrong number is corrected here rather than desynchronising
+    /// the exchange with the server.
+    wanted: usize,
+}
+
+/// Start connecting. Returns immediately, before anything has happened; null
+/// only if the thread or the pipe could not be created.
+///
+/// The session is **not** passed here. It is passed to
+/// [`tt_ssh_connect_poll`], which attaches the transport the moment the shell
+/// is running — so nothing stores a `TtSession *` it does not own.
+#[no_mangle]
+pub extern "C" fn tt_ssh_connect(params: *const TtSshParams) -> *mut TtSshConnect {
+    let Some(p) = (unsafe { params.as_ref() }) else {
+        fail(TT_ERR_INVALID, "null TtSshParams");
+        return ptr::null_mut();
+    };
+    let host = match unsafe { str_arg(p.host, usize::MAX) } {
+        Ok(h) => h,
+        Err(_) => {
+            fail(TT_ERR_INVALID, "TtSshParams.host is required");
+            return ptr::null_mut();
+        }
+    };
+    let opt = |ptr: *const c_char| -> Option<&str> {
+        if ptr.is_null() {
+            None
+        } else {
+            unsafe { str_arg(ptr, usize::MAX) }.ok()
+        }
+    };
+
+    let mut rust = if p.use_ssh_config {
+        let config = match SshConfig::user_default() {
+            Ok(c) => c,
+            Err(e) => {
+                // A config that exists and cannot be read would otherwise
+                // connect as the wrong user to the wrong port and look like a
+                // server problem.
+                fail(TT_ERR_IO, format!("~/.ssh/config: {e}"));
+                return ptr::null_mut();
+            }
+        };
+        SshParams::from_config(
+            &config,
+            host,
+            opt(p.user),
+            if p.port == 0 { None } else { Some(p.port) },
+        )
+    } else {
+        SshParams::new(
+            host,
+            if p.port == 0 { 22 } else { p.port },
+            opt(p.user)
+                .map(str::to_string)
+                .or_else(|| std::env::var("USER").ok())
+                .unwrap_or_default(),
+        )
+    };
+
+    if let Some(term) = opt(p.term) {
+        rust.term = term.to_string();
+    }
+    if !p.identities.is_null() {
+        // A null-terminated array, because the alternative is a second
+        // count field that a caller can get wrong in a way nothing detects.
+        let mut files = Vec::new();
+        let mut i = 0isize;
+        loop {
+            let entry = unsafe { *p.identities.offset(i) };
+            if entry.is_null() {
+                break;
+            }
+            match unsafe { str_arg(entry, usize::MAX) } {
+                Ok(s) => files.push(std::path::PathBuf::from(s)),
+                Err(_) => {
+                    fail(TT_ERR_INVALID, "TtSshParams.identities is not UTF-8");
+                    return ptr::null_mut();
+                }
+            }
+            i += 1;
+        }
+        rust.identities = files;
+    }
+    // The struct's own switches only ever *narrow* the agent and *widen* the
+    // algorithms, so a config that already said "old equipment" is not undone
+    // by a dialog whose legacy box is unticked.
+    rust.use_agent &= p.use_agent;
+    rust.legacy |= p.legacy;
+    if p.connect_timeout_ms > 0 {
+        rust.connect_timeout = Duration::from_millis(p.connect_timeout_ms.into());
+    }
+    if p.keepalive_ms > 0 {
+        rust.keepalive = Some(Duration::from_millis(p.keepalive_ms.into()));
+    }
+    if p.host_key_policy != TT_HOST_KEY_POLICY_ASK {
+        rust.host_key_policy = match p.host_key_policy {
+            TT_HOST_KEY_POLICY_ACCEPT_NEW => HostKeyPolicy::AcceptNew,
+            TT_HOST_KEY_POLICY_STRICT => HostKeyPolicy::Strict,
+            TT_HOST_KEY_POLICY_ACCEPT_ANY => HostKeyPolicy::AcceptAny,
+            _ => HostKeyPolicy::Ask,
+        };
+    }
+
+    match SshConnect::start(rust) {
+        Ok(inner) => Box::into_raw(Box::new(TtSshConnect {
+            inner,
+            host_key: None,
+            auth: None,
+            prompts: Vec::new(),
+            _strings: Vec::new(),
+            wanted: 0,
+        })),
+        Err(e) => {
+            report(e);
+            ptr::null_mut()
+        }
+    }
+}
+
+/// The descriptor to wait on.
+///
+/// **The same one [`tt_session_poll_fd`] returns once the session is
+/// connected**, so a frontend registers its notifier once and keeps it across
+/// the handover rather than swapping it at the moment output starts.
+#[no_mangle]
+pub extern "C" fn tt_ssh_connect_poll_fd(c: *const TtSshConnect) -> c_int {
+    match unsafe { c.as_ref() } {
+        Some(c) => c.inner.poll_fd(),
+        None => -1,
+    }
+}
+
+/// What the connection needs next. Never blocks.
+///
+/// On [`TT_SSH_READY`] the transport is attached to `session`, replacing
+/// whatever was there. `session` may be null only if the caller intends to
+/// throw the connection away, in which case `READY` still ends it.
+#[no_mangle]
+pub extern "C" fn tt_ssh_connect_poll(c: *mut TtSshConnect, session: *mut TtSession) -> TtSshStep {
+    let Some(c) = (unsafe { c.as_mut() }) else {
+        fail(TT_ERR_INVALID, "null TtSshConnect");
+        return TT_SSH_FAILED;
+    };
+    // Anything the previous poll handed out dies here, which is what the
+    // "valid until the next poll" contract in the header means.
+    c.host_key = None;
+    c.auth = None;
+    c.prompts.clear();
+    c._strings.clear();
+    c.wanted = 0;
+
+    match c.inner.poll() {
+        Step::Working => TT_SSH_WORKING,
+        Step::HostKey(p) => {
+            let mut strings = Vec::new();
+            let mut push = |s: &str| {
+                strings.push(cstring(s));
+                strings.len() - 1
+            };
+            let host = push(&p.host);
+            let algorithm = push(&p.algorithm);
+            let fingerprint = push(&p.fingerprint);
+            let (verdict, at, recorded_fp, also) = match &p.verdict {
+                Verdict::Changed { site, recorded } => (
+                    TT_HOST_KEY_CHANGED,
+                    Some(push(&site.to_string())),
+                    Some(push(&recorded.fingerprint())),
+                    None,
+                ),
+                Verdict::NewAlgorithm { also_known } => (
+                    TT_HOST_KEY_NEW_ALGORITHM,
+                    None,
+                    None,
+                    Some(push(&also_known.join(", "))),
+                ),
+                // `Trusted` and `Revoked` never reach a prompt: one connects
+                // silently and the other refuses without asking.
+                _ => (TT_HOST_KEY_UNKNOWN, None, None, None),
+            };
+            c._strings = strings;
+            let at_ptr = |i: Option<usize>| i.map_or(ptr::null(), |i| c._strings[i].as_ptr());
+            c.host_key = Some(TtSshHostKeyPrompt {
+                host: c._strings[host].as_ptr(),
+                port: p.port,
+                algorithm: c._strings[algorithm].as_ptr(),
+                fingerprint: c._strings[fingerprint].as_ptr(),
+                verdict,
+                recorded_at: at_ptr(at),
+                recorded_fingerprint: at_ptr(recorded_fp),
+                also_known: at_ptr(also),
+            });
+            TT_SSH_HOST_KEY
+        }
+        Step::Auth(p) => {
+            let mut strings = Vec::new();
+            strings.push(cstring(&p.name));
+            strings.push(cstring(&p.instruction));
+            let path = match &p.kind {
+                AuthPromptKind::Passphrase(path) => {
+                    strings.push(cstring(&path.display().to_string()));
+                    Some(strings.len() - 1)
+                }
+                _ => None,
+            };
+            let first_prompt = strings.len();
+            for prompt in &p.prompts {
+                strings.push(cstring(&prompt.text));
+            }
+            c.wanted = p.prompts.len();
+            c._strings = strings;
+            c.prompts = p
+                .prompts
+                .iter()
+                .enumerate()
+                .map(|(i, prompt)| TtSshPrompt {
+                    text: c._strings[first_prompt + i].as_ptr(),
+                    echo: prompt.echo,
+                })
+                .collect();
+            c.auth = Some(TtSshAuthPrompt {
+                kind: match p.kind {
+                    AuthPromptKind::Password => TT_SSH_AUTH_PASSWORD,
+                    AuthPromptKind::KeyboardInteractive => TT_SSH_AUTH_KEYBOARD_INTERACTIVE,
+                    AuthPromptKind::Passphrase(_) => TT_SSH_AUTH_PASSPHRASE,
+                },
+                name: c._strings[0].as_ptr(),
+                instruction: c._strings[1].as_ptr(),
+                path: path.map_or(ptr::null(), |i| c._strings[i].as_ptr()),
+                prompts: c.prompts.as_ptr(),
+                prompt_count: c.prompts.len(),
+            });
+            TT_SSH_AUTH
+        }
+        Step::Ready(conn) => {
+            if let Some(s) = unsafe { session.as_mut() } {
+                s.session.connect(Box::new(conn));
+            }
+            TT_SSH_READY
+        }
+        Step::Failed(e) => {
+            report(e);
+            TT_SSH_FAILED
+        }
+    }
+}
+
+/// The outstanding host-key question, or null when the last poll did not
+/// return [`TT_SSH_HOST_KEY`]. Valid until the next poll.
+#[no_mangle]
+pub extern "C" fn tt_ssh_connect_host_key(c: *const TtSshConnect) -> *const TtSshHostKeyPrompt {
+    match unsafe { c.as_ref() } {
+        Some(c) => c.host_key.as_ref().map_or(ptr::null(), |p| p as *const _),
+        None => ptr::null(),
+    }
+}
+
+/// The outstanding authentication question, or null when the last poll did
+/// not return [`TT_SSH_AUTH`]. Valid until the next poll.
+#[no_mangle]
+pub extern "C" fn tt_ssh_connect_auth(c: *const TtSshConnect) -> *const TtSshAuthPrompt {
+    match unsafe { c.as_ref() } {
+        Some(c) => c.auth.as_ref().map_or(ptr::null(), |p| p as *const _),
+        None => ptr::null(),
+    }
+}
+
+/// Answer a [`TT_SSH_HOST_KEY`] with 1 to accept and record, 2 to accept just
+/// this once, and anything else to refuse.
+///
+/// Deliberately three answers rather than a bool. "Yes, but do not write it
+/// down" is what a user on a network they do not trust means, and collapsing
+/// it into "yes" silently records a key they did not want recorded.
+#[no_mangle]
+pub extern "C" fn tt_ssh_connect_answer_host_key(c: *mut TtSshConnect, decision: c_int) {
+    let Some(c) = (unsafe { c.as_mut() }) else {
+        return;
+    };
+    c.inner.answer_host_key(match decision {
+        1 => HostKeyDecision::AcceptAndSave,
+        2 => HostKeyDecision::AcceptOnce,
+        _ => HostKeyDecision::Refuse,
+    });
+}
+
+/// Answer a [`TT_SSH_AUTH`], one string per prompt in the order asked.
+///
+/// A short or long list is padded or truncated to what the server asked for
+/// rather than passed on: the protocol requires one response per prompt, and
+/// getting it wrong desynchronises the exchange in a way that reads as a
+/// server bug.
+#[no_mangle]
+pub extern "C" fn tt_ssh_connect_answer_auth(
+    c: *mut TtSshConnect,
+    answers: *const *const c_char,
+    count: usize,
+) {
+    let Some(c) = (unsafe { c.as_mut() }) else {
+        return;
+    };
+    let mut out = Vec::with_capacity(c.wanted);
+    if !answers.is_null() {
+        for i in 0..count {
+            let entry = unsafe { *answers.add(i) };
+            let s = if entry.is_null() {
+                String::new()
+            } else {
+                unsafe { str_arg(entry, usize::MAX) }
+                    .map(str::to_string)
+                    .unwrap_or_default()
+            };
+            out.push(s);
+        }
+    }
+    out.resize(c.wanted, String::new());
+    c.inner.answer_auth(out);
+}
+
+/// Stop, and free. Safe on null, and safe after [`TT_SSH_READY`] — the
+/// session owns the connection by then and freeing the handle does not touch
+/// it.
+#[no_mangle]
+pub extern "C" fn tt_ssh_connect_free(c: *mut TtSshConnect) {
+    if !c.is_null() {
+        drop(unsafe { Box::from_raw(c) });
+    }
+}
+
+/// An owned list of strings. Free it with [`tt_string_list_free`].
+pub struct TtStringList {
+    items: Vec<CString>,
+}
+
+/// Every `Host` alias in `~/.ssh/config` that names one machine — no
+/// wildcards, no negations — for filling a picker. Null on failure.
+///
+/// A `Host *` block is not somewhere to connect, and a `!bastion` names a host
+/// its block is *about* rather than one it configures. Offering either would
+/// put entries in a dropdown that cannot be connected to.
+#[no_mangle]
+pub extern "C" fn tt_ssh_config_aliases() -> *mut TtStringList {
+    match SshConfig::user_default() {
+        Ok(c) => Box::into_raw(Box::new(TtStringList {
+            items: c.aliases().iter().map(|a| cstring(a)).collect(),
+        })),
+        Err(e) => {
+            fail(TT_ERR_IO, format!("~/.ssh/config: {e}"));
+            ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tt_string_list_len(list: *const TtStringList) -> usize {
+    match unsafe { list.as_ref() } {
+        Some(l) => l.items.len(),
+        None => 0,
+    }
+}
+
+/// Borrow one entry. Null when `index` is out of range. Valid until the list
+/// is freed.
+#[no_mangle]
+pub extern "C" fn tt_string_list_at(list: *const TtStringList, index: usize) -> *const c_char {
+    match unsafe { list.as_ref() } {
+        Some(l) => l.items.get(index).map_or(ptr::null(), |s| s.as_ptr()),
+        None => ptr::null(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tt_string_list_free(list: *mut TtStringList) {
     if !list.is_null() {
         drop(unsafe { Box::from_raw(list) });
     }
