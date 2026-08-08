@@ -37,6 +37,7 @@ use hmac::{Hmac, KeyInit, Mac};
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
 
+use super::pattern::matches_list;
 use crate::error::Result;
 
 /// A host key as it exists in both places that matter: an algorithm name and
@@ -431,26 +432,20 @@ impl<'a> Entry<'a> {
 /// OpenSSH's `match_hostname`: a comma-separated list where any `!pattern`
 /// that matches vetoes the whole entry, and hashed entries stand alone.
 fn match_patterns(patterns: &str, host: &str) -> bool {
-    let mut matched = false;
-    for entry in patterns.split(',') {
-        if let Some(rest) = entry.strip_prefix("|1|") {
-            if match_hashed(rest, host) {
-                matched = true;
+    // A hashed entry is never wildcarded or negated — it is the digest of one
+    // exact name — so it is taken out before the glob rules apply.
+    let mut hashed = false;
+    let plain: Vec<&str> = patterns
+        .split(',')
+        .filter(|entry| match entry.strip_prefix("|1|") {
+            Some(rest) => {
+                hashed |= match_hashed(rest, host);
+                false
             }
-            continue;
-        }
-        let (negated, pattern) = match entry.strip_prefix('!') {
-            Some(p) => (true, p),
-            None => (false, entry),
-        };
-        if match_glob(pattern, host) {
-            if negated {
-                return false;
-            }
-            matched = true;
-        }
-    }
-    matched
+            None => true,
+        })
+        .collect();
+    hashed || matches_list(plain.into_iter(), host)
 }
 
 fn match_hashed(rest: &str, host: &str) -> bool {
@@ -469,26 +464,6 @@ fn match_hashed(rest: &str, host: &str) -> bool {
     };
     mac.update(host.as_bytes());
     mac.verify_slice(&hash).is_ok()
-}
-
-/// `*` and `?`, case-insensitively, with no character classes — which is
-/// exactly what OpenSSH's `match_pattern` and Tera Term's copy of it support.
-fn match_glob(pattern: &str, host: &str) -> bool {
-    let p: Vec<char> = pattern.chars().flat_map(|c| c.to_lowercase()).collect();
-    let h: Vec<char> = host.chars().flat_map(|c| c.to_lowercase()).collect();
-    glob(&p, &h)
-}
-
-fn glob(p: &[char], h: &[char]) -> bool {
-    match p.first() {
-        None => h.is_empty(),
-        Some('*') => {
-            // Greedy would need backtracking anyway; try every split.
-            (0..=h.len()).any(|i| glob(&p[1..], &h[i..]))
-        }
-        Some('?') => !h.is_empty() && glob(&p[1..], &h[1..]),
-        Some(c) => h.first() == Some(c) && glob(&p[1..], &h[1..]),
-    }
 }
 
 #[cfg(test)]

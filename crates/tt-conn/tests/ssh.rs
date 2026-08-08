@@ -30,7 +30,9 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use tt_conn::ssh::{HostKeyDecision, KnownHosts, SshConn, SshConnect, SshParams, Step, Verdict};
+use tt_conn::ssh::{
+    HostKeyDecision, HostKeyPolicy, KnownHosts, SshConn, SshConnect, SshParams, Step, Verdict,
+};
 use tt_conn::{Error, Transport};
 
 /// What the servers need, or a reason there is nothing to test against.
@@ -462,4 +464,128 @@ fn the_descriptor_survives_the_handover() {
         .0
         .expect("connect");
     assert_eq!(conn.poll_fd(), Some(before));
+}
+
+#[test]
+fn accept_new_records_a_first_seen_host_without_asking() {
+    let s = server_or_skip!();
+    let scratch = Scratch::new("acceptnew");
+    if s.key.is_none() {
+        eprintln!("SKIPPED: no TT_SSH_KEY");
+        return;
+    }
+    let mut p = params(&s, &scratch);
+    p.host_key_policy = HostKeyPolicy::AcceptNew;
+    let c = SshConnect::start(p).expect("start");
+    // `Refuse` is what the prompt would be answered with if one were raised,
+    // so a connection proves no prompt happened.
+    let (conn, seen) = drive(c, HostKeyDecision::Refuse, &[]);
+    conn.expect("connect");
+    assert!(seen.host_key.is_empty(), "asked: {:?}", seen.host_key);
+    assert!(!scratch.known_hosts_text().is_empty(), "nothing recorded");
+}
+
+#[test]
+fn accept_new_refuses_a_changed_key_without_asking() {
+    let s = server_or_skip!();
+    let scratch = Scratch::new("acceptnew-changed");
+    if s.key.is_none() {
+        eprintln!("SKIPPED: no TT_SSH_KEY");
+        return;
+    }
+    let mut p = params(&s, &scratch);
+    p.host_key_policy = HostKeyPolicy::AcceptNew;
+    drop(
+        drive(
+            SshConnect::start(p.clone()).expect("start"),
+            HostKeyDecision::Refuse,
+            &[],
+        )
+        .0
+        .expect("first connect"),
+    );
+    corrupt_recorded_key(&scratch);
+
+    let c = SshConnect::start(p).expect("start");
+    // `AcceptAndSave` would connect if a prompt were raised, so a failure
+    // proves the policy refused on its own.
+    let (conn, seen) = drive(c, HostKeyDecision::AcceptAndSave, &[]);
+    assert!(seen.host_key.is_empty(), "asked: {:?}", seen.host_key);
+    match conn {
+        Err(Error::HostKey(_)) => {}
+        Err(e) => panic!("wrong error: {e}"),
+        Ok(_) => panic!("connected to a host whose key had changed"),
+    }
+}
+
+#[test]
+fn strict_refuses_an_unknown_host_before_asking() {
+    let s = server_or_skip!();
+    let scratch = Scratch::new("strict");
+    let mut p = params(&s, &scratch);
+    p.host_key_policy = HostKeyPolicy::Strict;
+    let c = SshConnect::start(p).expect("start");
+    let (conn, seen) = drive(c, HostKeyDecision::AcceptAndSave, &[]);
+    assert!(
+        seen.host_key.is_empty(),
+        "asked despite StrictHostKeyChecking yes"
+    );
+    match conn {
+        Err(Error::HostKey(_)) => {}
+        Err(e) => panic!("wrong error: {e}"),
+        Ok(_) => panic!("connected to an unrecorded host under Strict"),
+    }
+    assert!(
+        scratch.known_hosts_text().is_empty(),
+        "Strict wrote to known_hosts"
+    );
+}
+
+#[test]
+fn accept_any_connects_to_a_changed_key_and_keeps_the_evidence() {
+    let s = server_or_skip!();
+    let scratch = Scratch::new("acceptany");
+    if s.key.is_none() {
+        eprintln!("SKIPPED: no TT_SSH_KEY");
+        return;
+    }
+    let mut p = params(&s, &scratch);
+    p.host_key_policy = HostKeyPolicy::AcceptAny;
+    drop(
+        drive(
+            SshConnect::start(p.clone()).expect("start"),
+            HostKeyDecision::Refuse,
+            &[],
+        )
+        .0
+        .expect("first connect"),
+    );
+    let corrupted = corrupt_recorded_key(&scratch);
+
+    let (conn, seen) = drive(
+        SshConnect::start(p).expect("start"),
+        HostKeyDecision::Refuse,
+        &[],
+    );
+    conn.expect("connect");
+    assert!(
+        seen.host_key.is_empty(),
+        "asked despite StrictHostKeyChecking no"
+    );
+    // The old line is still there and no new one was added: overwriting it
+    // would destroy the only evidence that the key changed.
+    assert_eq!(scratch.known_hosts_text(), corrupted);
+}
+
+/// Replace the recorded key with a different one of the same algorithm, and
+/// return the file's new contents.
+fn corrupt_recorded_key(scratch: &Scratch) -> String {
+    let path = scratch.0.join("known_hosts");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut fields: Vec<&str> = text.trim().split(' ').collect();
+    let other = "AAAAC3NzaC1lZDI1NTE5AAAAIGb5f8Vb1DzWn8Yc9k3Nl4Pv2Qw6Rt8Uy0Ia2Cs4Ee6G";
+    fields[2] = other;
+    let out = format!("{}\n", fields.join(" "));
+    std::fs::write(&path, &out).unwrap();
+    out
 }

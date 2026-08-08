@@ -88,6 +88,30 @@ pub struct SshParams {
     /// reason to want one.
     pub keepalive: Option<Duration>,
     pub known_hosts: KnownHosts,
+    /// What to do about a host key that is not already trusted.
+    pub host_key_policy: HostKeyPolicy,
+}
+
+/// `StrictHostKeyChecking`, as a decision the transport can take on its own.
+///
+/// This lives here rather than in the frontend because the frontend would
+/// otherwise have to reimplement it — and because `Strict` has to *refuse*
+/// before the prompt is raised, not after the user answers it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HostKeyPolicy {
+    /// Ask about anything not already trusted. What a GUI does, and OpenSSH's
+    /// `ask`.
+    #[default]
+    Ask,
+    /// `accept-new`: record a first-seen host without asking, and refuse a
+    /// changed one without asking either. OpenSSH's default since 8.5.
+    AcceptNew,
+    /// `yes`: refuse anything not already in the files. Never prompts.
+    Strict,
+    /// `no`: connect to anything. A new host is still recorded; a **changed**
+    /// key is accepted and *not* recorded, because overwriting the old entry
+    /// would destroy the only evidence that it changed.
+    AcceptAny,
 }
 
 impl SshParams {
@@ -105,7 +129,57 @@ impl SshParams {
             connect_timeout: Duration::from_secs(30),
             keepalive: None,
             known_hosts: KnownHosts::user_default(),
+            host_key_policy: HostKeyPolicy::Ask,
         }
+    }
+
+    /// Build the parameters `~/.ssh/config` already describes for `alias`.
+    ///
+    /// This is the adoption lever in one function: a user who can type
+    /// `ssh myrouter` gets the same connection here without re-entering the
+    /// user, the port, the key or the fact that it is old equipment.
+    /// `user` and `port` override the file, because something typed into a
+    /// dialog is more specific than a pattern in a file.
+    ///
+    /// One deliberate simplification: `IdentitiesOnly yes` turns the agent
+    /// off entirely, where OpenSSH still lets the agent hold a *listed* key.
+    /// The narrower reading costs a user with an agent-held listed key one
+    /// passphrase prompt; the wider one would offer keys they said not to.
+    pub fn from_config(
+        config: &super::config::SshConfig,
+        alias: &str,
+        user: Option<&str>,
+        port: Option<u16>,
+    ) -> SshParams {
+        use super::config::StrictHostKeyChecking as S;
+
+        let r = config.resolve(alias, user);
+        let mut p = SshParams::new(
+            r.host_name.clone(),
+            port.or(r.port).unwrap_or(22),
+            r.user
+                .clone()
+                .or_else(|| std::env::var("USER").ok())
+                .unwrap_or_default(),
+        );
+        p.identities = r.identity_files.clone();
+        p.use_agent = r.use_agent && !r.identities_only;
+        p.legacy = r.legacy;
+        if let Some(t) = r.connect_timeout {
+            p.connect_timeout = t;
+        }
+        p.keepalive = r.server_alive_interval;
+        if !r.user_known_hosts_files.is_empty() {
+            p.known_hosts = KnownHosts::with_files(r.user_known_hosts_files.clone());
+        }
+        p.known_hosts = p.known_hosts.hashing(r.hash_known_hosts);
+        p.host_key_policy = match r.strict_host_key_checking {
+            Some(S::Yes) => HostKeyPolicy::Strict,
+            Some(S::AcceptNew) => HostKeyPolicy::AcceptNew,
+            Some(S::No) => HostKeyPolicy::AcceptAny,
+            Some(S::Ask) | None => HostKeyPolicy::Ask,
+        };
+        p
     }
 
     fn describe(&self) -> String {
@@ -503,9 +577,29 @@ impl Drop for SshConn {
 struct Handler {
     shared: Arc<Shared>,
     known_hosts: KnownHosts,
+    policy: HostKeyPolicy,
     host: String,
     port: u16,
     decisions: UnboundedReceiver<HostKeyDecision>,
+}
+
+impl Handler {
+    /// Write the key down, and treat failure as a note rather than a refusal.
+    ///
+    /// The user — or the policy — said connect. Failing the connection because
+    /// `known_hosts` is on a read-only filesystem would be answering a
+    /// different question from the one that was asked.
+    fn record(&self, key: HostKeyRef<'_>) {
+        if let Err(e) = self.known_hosts.learn(&self.host, self.port, key) {
+            self.shared
+                .push(format!("\r\ncould not record the host key: {e}\r\n").as_bytes());
+        }
+    }
+
+    fn refuse(&self, why: String) {
+        self.shared
+            .set_phase(Phase::Ended(Some(Error::HostKey(why))));
+    }
 }
 
 impl client::Handler for Handler {
@@ -541,13 +635,48 @@ impl client::Handler for Handler {
         if verdict.is_trusted() {
             return Ok(true);
         }
+        // Revocation is not a policy question. Nothing may click through it,
+        // and no `StrictHostKeyChecking no` in a config file overrides it.
         if let Verdict::Revoked(site) = &verdict {
-            self.shared
-                .set_phase(Phase::Ended(Some(Error::HostKey(format!(
-                    "the host key for {} is revoked at {site}",
-                    self.host
-                )))));
+            self.refuse(format!(
+                "the host key for {} is revoked at {site}",
+                self.host
+            ));
             return Ok(false);
+        }
+
+        let changed = matches!(verdict, Verdict::Changed { .. });
+        match self.policy {
+            // Refuses *before* the prompt, which is the whole point of it —
+            // asking and then ignoring the answer would be worse than not
+            // asking.
+            HostKeyPolicy::Strict => {
+                self.refuse(format!(
+                    "{} is not in the known_hosts files and StrictHostKeyChecking is yes",
+                    self.host
+                ));
+                return Ok(false);
+            }
+            HostKeyPolicy::AcceptNew if changed => {
+                self.refuse(format!(
+                    "the host key for {} has changed; StrictHostKeyChecking is accept-new",
+                    self.host
+                ));
+                return Ok(false);
+            }
+            HostKeyPolicy::AcceptNew => {
+                self.record(recorded);
+                return Ok(true);
+            }
+            // A changed key is deliberately *not* recorded: overwriting the
+            // old entry would destroy the only evidence that it changed.
+            HostKeyPolicy::AcceptAny => {
+                if !changed {
+                    self.record(recorded);
+                }
+                return Ok(true);
+            }
+            HostKeyPolicy::Ask => {}
         }
 
         self.shared.prompt(Pending::HostKey(HostKeyPrompt {
@@ -559,13 +688,7 @@ impl client::Handler for Handler {
         }));
         match self.decisions.recv().await {
             Some(HostKeyDecision::AcceptAndSave) => {
-                if let Err(e) = self.known_hosts.learn(&self.host, self.port, recorded) {
-                    // Not fatal. The user said connect; failing the connection
-                    // because the file is read-only would be answering a
-                    // different question from the one they were asked.
-                    self.shared
-                        .push(format!("\r\ncould not record the host key: {e}\r\n").as_bytes());
-                }
+                self.record(recorded);
                 Ok(true)
             }
             Some(HostKeyDecision::AcceptOnce) => Ok(true),
@@ -641,6 +764,7 @@ async fn connect(
     let handler = Handler {
         shared: Arc::clone(shared),
         known_hosts: params.known_hosts.clone(),
+        policy: params.host_key_policy,
         host: params.host.clone(),
         port: params.port,
         decisions: host_key_rx,
@@ -1126,6 +1250,60 @@ mod tests {
         // A truncated or non-UTF-8 blob is not a panic.
         assert_eq!(algorithm_from_blob(&[0, 0, 0]), None);
         assert_eq!(algorithm_from_blob(&[0, 0, 0, 99, b'x']), None);
+    }
+
+    #[test]
+    fn a_config_alias_becomes_a_connection() {
+        // The adoption lever, end to end: what `ssh myrouter` would do.
+        let config = super::super::config::SshConfig::parse(
+            "Host myrouter\n\
+             \x20 HostName 10.0.0.1\n\
+             \x20 User admin\n\
+             \x20 Port 2222\n\
+             \x20 IdentityFile /keys/router\n\
+             \x20 IdentitiesOnly yes\n\
+             \x20 KexAlgorithms +diffie-hellman-group14-sha1\n\
+             \x20 StrictHostKeyChecking accept-new\n\
+             \x20 ConnectTimeout 5\n\
+             \x20 ServerAliveInterval 30\n",
+            std::path::Path::new("/home/nobody/.ssh/config"),
+        );
+        let p = SshParams::from_config(&config, "myrouter", None, None);
+        assert_eq!(p.host, "10.0.0.1");
+        assert_eq!(p.port, 2222);
+        assert_eq!(p.user, "admin");
+        assert_eq!(p.identities, vec![PathBuf::from("/keys/router")]);
+        // IdentitiesOnly: do not offer whatever the agent happens to hold.
+        assert!(!p.use_agent);
+        // The config already said this is old equipment.
+        assert!(p.legacy);
+        assert_eq!(p.host_key_policy, HostKeyPolicy::AcceptNew);
+        assert_eq!(p.connect_timeout, Duration::from_secs(5));
+        assert_eq!(p.keepalive, Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn what_was_typed_overrides_the_file() {
+        let config = super::super::config::SshConfig::parse(
+            "Host r\n  HostName 10.0.0.1\n  User admin\n  Port 2222\n",
+            std::path::Path::new("/home/nobody/.ssh/config"),
+        );
+        let p = SshParams::from_config(&config, "r", Some("root"), Some(2022));
+        assert_eq!(p.user, "root");
+        assert_eq!(p.port, 2022);
+        // ...but not the host name, which is what the alias is *for*.
+        assert_eq!(p.host, "10.0.0.1");
+    }
+
+    #[test]
+    fn a_host_with_no_config_still_works() {
+        let config = super::super::config::SshConfig::default();
+        let p = SshParams::from_config(&config, "plain.example.com", Some("nata"), None);
+        assert_eq!(p.host, "plain.example.com");
+        assert_eq!(p.port, 22);
+        assert_eq!(p.host_key_policy, HostKeyPolicy::Ask);
+        assert!(p.use_agent);
+        assert!(!p.legacy);
     }
 
     #[test]
