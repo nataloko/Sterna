@@ -55,7 +55,10 @@ already taken in the wild).
 
 cd crates                        # the Rust core
 cargo test && cargo clippy --all-targets -- -D warnings
+cargo fmt -p tt-vt               # per package: --all rewrites generated.rs
 tt-ffi/run_abi.sh                # the C ABI, compiled and driven from C
+cargo test -p tt-xfer            # the protocols vs lrzsz and gkermit, over a pty
+../vendor/ttpfile/sync.sh --check   # ...and that the vendored C has not drifted
 cargo run -p tt-config --bin gen-settings   # after editing the settings schema
 TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
   cargo test -p tt-conn -- --test-threads=1   # + the serial hardware tests
@@ -765,8 +768,10 @@ serial-audit/    Stage 0 spike 4 — serialport-rs vs commlib.c, on real hardwar
 telnet-audit/    a real telnetd, so the telnet port has an independent check
 ssh-audit/       Stage 0 spike 5 — russh vs legacy SSH algorithms and auth
 ini-audit/       what GetPrivateProfile* really does, asked of Wine (see its README)
+vendor/ttpfile/  Tera Term's file-transfer protocols, verbatim — the only
+                 upstream code the distribution ships (see its README)
 crates/          Rust core — tt-grid, tt-vt, tt-conn, tt-session, tt-config,
-                 tt-ffi (see its README)
+                 tt-xfer, tt-ffi (see its README)
 crates/tt-fuzz/  the properties, and what they found (see its README)
 crates/fuzz/     the libFuzzer targets — nightly, weekly in CI
 bench/           the perf gate: a floor in CI, a baseline locally (see README)
@@ -774,7 +779,6 @@ run_diff.sh      the differential gate: Rust engine vs Tera Term, every case
 shell/           Qt 6 shell — one window on the C ABI (see its README)
 winshim/         what Tera Term's C needs from Windows — shared by the three
                  things that compile it (see its README)
-vendor/          vendored Tera Term subsystems — see ATTRIBUTION.md first
 ```
 
 None of `xfer/`, `serial-audit/` or `ssh-audit/` is throwaway. They become the

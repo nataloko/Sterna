@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 complete, 2 started · **Commits:** 137
+**Last updated:** 2026-08-08 · **Stage:** 1 complete, 2 in progress · **Commits:** 137
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1039,7 +1039,9 @@ before anything else in every session.
 ### 🔵 Stage 2 — the differentiators (3–4 months, ~20k LOC)
 
 - **File transfer**: FFI to the vendored C, all six protocols, interop-tested
-  against `lrzsz` and `gkermit`.
+  against `lrzsz` and `gkermit`. ✅ **done through the C ABI**, 2026-08-08 —
+  `vendor/ttpfile/`, `crates/tt-xfer/`, the session wiring and the ABI
+  surface. What remains is the Qt dialogs. See below.
 - **TTL interpreter**: native Rust, **in-process on a thread** — deletes ~2,600
   LOC of DDE glue (`ttpmacro/ttmdde.c` + `teraterm/ttdde.c`) and a whole class
   of races. Target: the 53 `.ttl` scripts in `teraterm/tests/` pass.
@@ -1155,6 +1157,71 @@ And it found four things, all of the same family as every other settings trap:
    off that made the terminal one row tall. Fixed by separating them, which also
    fixed line numbering with no scrollback at all: lines are counted off the
    page whether or not anything keeps them, or a held line number means nothing.
+
+#### File transfer, and what a driver found that a spike could not
+
+`vendor/ttpfile/`, `crates/tt-xfer/`, `tt-session/src/xfer.rs` and the ABI
+surface, 2026-08-08. A file moves from the Qt shell's connection to `rz` and
+back; what is missing is the dialogs to start it from.
+
+**The vendoring is real now**, which is a first for this tree: 33 files and
+11,568 lines copied verbatim at a named upstream revision, every one carrying
+its BSD notice, with `sync.sh --check` as the only guard they have — nothing
+diffs them against anything, because they *are* the implementation.
+`ATTRIBUTION.md` records it as the one piece of Tera Term the distribution
+contains. `winshim/` moved out of `oracle/` on the way: a shipped crate must
+not reach into the test harness for its build.
+
+**`tt-xfer` is the host, not the protocols.** Upstream's equivalent is
+`filesys_proto.cpp` — the same three vtables plus a modal dialog, a message
+pump and a file-scope global. Here the vtables are 700 lines of C and the loop
+is in Rust, and the comm side is written against `ttcmn.c` rather than
+invented, because three places in the protocol sources reach past the vtable
+into `TComVar` and would notice.
+
+The spike drove the same C from a file descriptor. **A transfer over the
+*terminal's own connection* is a different problem**, and it is the one that
+found things:
+
+- **`Insert1Byte` puts the byte at the front of the *receive* buffer.** The
+  header comments it as "send one byte" and `CommInsert1Byte` does the
+  opposite; it exists so ZMODEM auto-start can push back the trigger the
+  terminal already swallowed. `xfer/`'s spike had it backwards and nothing
+  noticed, because nothing there ran an auto-start mode.
+- **`Read1Byte` must be the *raw* one, and so must `BinaryOut`.** The
+  difference is the telnet codec, which upstream runs on the way past because
+  one buffer serves the terminal and the transfer both. `tt-conn` has already
+  done it, and doing it twice eats one `0xFF` of every escaped pair — fatal on
+  every binary transfer to a terminal server, invisible on text.
+- **No protocol closes the received file.** XMODEM's EOT arm sets `Success`,
+  ACKs and returns FALSE; `Destroy` frees its state without touching the file.
+  Upstream gets away with it because `ProtoEnd` tears the whole `FileVar` down
+  a moment later — a library cannot, because the caller is entitled to report
+  "done" and let the user open the file. The symptom was a 4,106-byte payload
+  arriving as exactly 4,096: one stdio buffer short, which reads as a truncated
+  transfer and is not one.
+- **`FTSetTimeOut` and ZMODEM's 500 ms cancel timer are one timer.** Both are
+  `IdProtoTimer` and the cancel *deliberately* displaces the read deadline. Two
+  clocks looked tidier and meant a cancelled transfer waited out a ten-second
+  timeout before it noticed.
+- **ZMODEM's own verdict on a cancel is `Success`**, because the cancel
+  provokes a `ZFIN` and `zmodem.c:1047` sets it on any `ZFIN`. Not an answer to
+  give the person who pressed cancel.
+- **The protocols throttle progress to ten updates a second**
+  (`zmodem.c:197`), so a transfer that finishes in under a tenth of a second
+  finishes having reported nothing. A frontend must not read `bytes == 0` as
+  "not started" — a test here did, and was wrong.
+
+`Transport` grew one method for this, `link_kind`, which is the exception its
+own documentation argues against. It earns it: `cv->PortType` picks the timeout
+set, caps ZMODEM's block size and decides whether Kermit quotes the eighth bit,
+and the network branch means *no timeout at all* — right for a socket that will
+notice a dead peer, wrong for a pty, where it is a transfer that hangs for ever.
+
+Twelve interop cases against `lrzsz` and `gkermit` moved from a shell script
+into `cargo test`, seven session-level cases, and one in `abi.c` that sends a
+file to `rz` from C. B-Plus and Quick-VAN still have no counterparty anywhere
+and stay best-effort, which is also upstream's position.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
