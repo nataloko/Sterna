@@ -7,6 +7,7 @@ repository.workspace = true
 
 [dependencies]
 tt-conn.workspace = true
+tt-config.workspace = true
 tt-grid.workspace = true
 tt-vt.workspace = true
 

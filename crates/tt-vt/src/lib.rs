@@ -77,7 +77,7 @@ impl Default for ColorFlags {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     pub cols: usize,
     pub rows: usize,

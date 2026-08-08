@@ -66,11 +66,21 @@
 #define TT_DEFAULT_BG 0
 
 /**
- * `BuffXMax` (`buffer.c:82`), which is `TermWidthMax`. There is no matching
- * row cap on the resize path — `BuffChangeTerminalSize` clamps the height to
- * `ts.ScrollBuffMax` instead, so a very tall terminal is legal.
+ * `BuffXMax` (`buffer.c:82`), which is `TermWidthMax` — **1000**, not the 500
+ * this used to say. 500 is `TermHeightMax`, one line below it in
+ * `tttypes.h:633`, and taking the wrong one made a 640-column terminal
+ * silently half the width it asked for.
  */
-#define TT_BUFF_X_MAX 500
+#define TT_BUFF_X_MAX 1000
+
+/**
+ * `ts.ScrollBuffMax`'s default (`ttset.c:1213`, key `MaxBuffSize`), which is
+ * the cap `BuffChangeTerminalSize` puts on the *height* (`buffer.c:4977`) —
+ * a different quantity from [`Grid::scrollback_max`], which is how deep the
+ * history actually goes. Conflating them means a terminal with its scroll
+ * buffer turned off can only be one row tall.
+ */
+#define MAX_ROWS_DEFAULT 10000
 
 /**
  * One column.

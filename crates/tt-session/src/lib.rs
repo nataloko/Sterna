@@ -34,8 +34,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub mod log;
+pub mod settings;
 
 pub use log::{LogMode, LogOptions, SessionLog, Timestamp};
+pub use settings::vt_config;
+pub use tt_config::Settings;
 
 use tt_conn::{Error, Result, Transport, TransportEvent};
 use tt_grid::{Cell, Grid};
@@ -100,6 +103,9 @@ pub struct Session {
     seen_size: (usize, usize),
     /// What the last transport said on its way out, if it said anything.
     close_note: Option<String>,
+    /// Every setting, including the ones this layer does not act on — see
+    /// [`Session::settings`].
+    settings: Settings,
 }
 
 impl Session {
@@ -119,7 +125,77 @@ impl Session {
             seen_scrolled_off: 0,
             seen_size: (0, 0),
             close_note: None,
+            settings: Settings::default(),
         }
+    }
+
+    /// A session configured from `TERATERM.INI` rather than from the
+    /// terminal's own defaults.
+    ///
+    /// The two agree today — `settings::tests` asserts it, because a
+    /// disagreement means one of them is wrong about upstream — so this is
+    /// about where the truth *lives*, not about changing any value.
+    pub fn from_settings(settings: Settings) -> Session {
+        let mut session = Session::new(vt_config(&settings, &Config::default()));
+        session.settings = settings;
+        session
+    }
+
+    /// Every setting, the terminal's and the window's alike.
+    ///
+    /// The session keeps them because it is the thing both sides of the C ABI
+    /// can reach: the frontend asks by name for the ones it draws with — the
+    /// colour pairs, the word delimiters — and the terminal takes the ones it
+    /// runs on. Two copies would be two things to keep in step.
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    /// Replace them and apply what a running terminal can take.
+    ///
+    /// **This overwrites modes the host set**, because upstream's settings
+    /// *are* those modes — see [`tt_vt::Vt::set_config`]. It also resizes: the
+    /// grid takes the new size, the far end is told, and a scrolled-back view
+    /// goes live, since a resize moves lines between the page and the history
+    /// in both directions.
+    ///
+    /// Everything the core does not read is still stored, which is the point:
+    /// a setting with no subsystem yet has to survive being written back to
+    /// the file it came from.
+    pub fn set_settings(&mut self, settings: Settings) -> Result<()> {
+        let config = vt_config(&settings, self.vt.config());
+        self.settings = settings;
+        self.vt.set_config(config);
+        // `set_config` may have resized the grid, and `follow_scroll` is where
+        // that is noticed — it re-anchors the viewport on a size change rather
+        // than leaving the offset pointing at a line that has moved.
+        self.follow_scroll();
+        self.events.push(Event::Damage);
+        let (cols, rows) = (self.vt.grid().cols(), self.vt.grid().rows());
+        if let Some(c) = self.conn.as_mut() {
+            c.resize(cols as u16, rows as u16)?;
+        }
+        Ok(())
+    }
+
+    /// One setting by name, in the INI's own spelling. `None` for a name that
+    /// is not in the schema.
+    pub fn setting(&self, name: &str) -> Option<String> {
+        self.settings.get_str(name)
+    }
+
+    /// Set one by name and apply it. False for a name that is not ours.
+    ///
+    /// The value is parsed exactly as the file would parse it, bounds and
+    /// default-biased booleans included, so a script and a hand-edited
+    /// `TERATERM.INI` cannot disagree about what a value means.
+    pub fn set_setting(&mut self, name: &str, value: &str) -> Result<bool> {
+        let mut settings = self.settings.clone();
+        if !settings.set_str(name, value) {
+            return Ok(false);
+        }
+        self.set_settings(settings)?;
+        Ok(true)
     }
 
     /// Attach a connection. The terminal is not reset: reconnecting a serial
