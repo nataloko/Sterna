@@ -776,6 +776,15 @@ typedef struct {
      * (or whatever the config named).
      */
     const char *const *identities;
+    /**
+     * A null-terminated array of `known_hosts` files, or null for the
+     * config's `UserKnownHostsFile` and then `~/.ssh/known_hosts`.
+     *
+     * Present because Tera Term keeps its own `ssh_known_hosts`, and the
+     * migration path in `PLAN.md` is to read *both*. New keys are recorded
+     * in the first.
+     */
+    const char *const *known_hosts;
     bool use_agent;
     /**
      * Offer the pre-2020 algorithms as well. A config naming SHA-1 key
@@ -1387,6 +1396,18 @@ TtStatus tt_session_connect_serial(TtSession *session,
 void tt_session_disconnect(TtSession *session);
 
 bool tt_session_is_connected(const TtSession *session);
+
+/**
+ * Whether [`tt_session_send_break`] will do anything on the current
+ * connection. False when there is none.
+ *
+ * **For drawing the menu, not for handling the failure.** SSH has no break —
+ * RFC 4335 defines one and `russh` does not implement it — so a window that
+ * offers the item on an SSH session is offering an error message, and it
+ * offers it at the moment a console has stopped answering, which is the worst
+ * time to find out.
+ */
+bool tt_session_supports_break(const TtSession *session);
 
 /**
  * A short name for the status line — `/dev/ttyUSB0`, `user@host`. Null when

@@ -480,6 +480,17 @@ impl Session {
         }
     }
 
+    /// Whether [`send_break`](Session::send_break) will do anything on the
+    /// current connection. False when there is none.
+    ///
+    /// A frontend needs this to draw its menu rather than to handle a failure:
+    /// a break is what someone reaches for when a console has stopped
+    /// answering, which is the worst moment to discover the transport cannot
+    /// send one.
+    pub fn supports_break(&self) -> bool {
+        self.conn.as_ref().is_some_and(|c| c.supports_break())
+    }
+
     /// Feed bytes as though they had arrived from the far end. For local echo
     /// and for tests; it is also how a replayed session log would work.
     pub fn feed(&mut self, bytes: &[u8]) {

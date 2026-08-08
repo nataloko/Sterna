@@ -74,7 +74,8 @@ use tt_conn::serial::{
     DataBits, FlowControl, Parity, PinControl, SerialConn, SerialParams, StopBits,
 };
 use tt_conn::ssh::{
-    AuthPromptKind, HostKeyDecision, HostKeyPolicy, SshConfig, SshConnect, SshParams, Step, Verdict,
+    AuthPromptKind, HostKeyDecision, HostKeyPolicy, KnownHosts, SshConfig, SshConnect, SshParams,
+    Step, Verdict,
 };
 use tt_conn::Error;
 use tt_grid::Cell;
@@ -1140,6 +1141,19 @@ pub extern "C" fn tt_session_is_connected(session: *const TtSession) -> bool {
     session_ref!(session, false).session.is_connected()
 }
 
+/// Whether [`tt_session_send_break`] will do anything on the current
+/// connection. False when there is none.
+///
+/// **For drawing the menu, not for handling the failure.** SSH has no break —
+/// RFC 4335 defines one and `russh` does not implement it — so a window that
+/// offers the item on an SSH session is offering an error message, and it
+/// offers it at the moment a console has stopped answering, which is the worst
+/// time to find out.
+#[no_mangle]
+pub extern "C" fn tt_session_supports_break(session: *const TtSession) -> bool {
+    session_ref!(session, false).session.supports_break()
+}
+
 /// A short name for the status line — `/dev/ttyUSB0`, `user@host`. Null when
 /// nothing is connected.
 ///
@@ -1354,6 +1368,13 @@ pub struct TtSshParams {
     /// A null-terminated array of key paths, or null for the OpenSSH defaults
     /// (or whatever the config named).
     pub identities: *const *const c_char,
+    /// A null-terminated array of `known_hosts` files, or null for the
+    /// config's `UserKnownHostsFile` and then `~/.ssh/known_hosts`.
+    ///
+    /// Present because Tera Term keeps its own `ssh_known_hosts`, and the
+    /// migration path in `PLAN.md` is to read *both*. New keys are recorded
+    /// in the first.
+    pub known_hosts: *const *const c_char,
     pub use_agent: bool,
     /// Offer the pre-2020 algorithms as well. A config naming SHA-1 key
     /// exchange or a CBC cipher turns this on by itself.
@@ -1378,6 +1399,7 @@ pub extern "C" fn tt_ssh_params_default(out: *mut TtSshParams) {
         term: ptr::null(),
         use_ssh_config: true,
         identities: ptr::null(),
+        known_hosts: ptr::null(),
         use_agent: true,
         legacy: false,
         connect_timeout_ms: 30_000,
@@ -1511,26 +1533,21 @@ pub extern "C" fn tt_ssh_connect(params: *const TtSshParams) -> *mut TtSshConnec
     if let Some(term) = opt(p.term) {
         rust.term = term.to_string();
     }
-    if !p.identities.is_null() {
-        // A null-terminated array, because the alternative is a second
-        // count field that a caller can get wrong in a way nothing detects.
-        let mut files = Vec::new();
-        let mut i = 0isize;
-        loop {
-            let entry = unsafe { *p.identities.offset(i) };
-            if entry.is_null() {
-                break;
-            }
-            match unsafe { str_arg(entry, usize::MAX) } {
-                Ok(s) => files.push(std::path::PathBuf::from(s)),
-                Err(_) => {
-                    fail(TT_ERR_INVALID, "TtSshParams.identities is not UTF-8");
-                    return ptr::null_mut();
-                }
-            }
-            i += 1;
+    match unsafe { path_array(p.identities) } {
+        Ok(Some(files)) => rust.identities = files,
+        Ok(None) => {}
+        Err(_) => {
+            fail(TT_ERR_INVALID, "TtSshParams.identities is not UTF-8");
+            return ptr::null_mut();
         }
-        rust.identities = files;
+    }
+    match unsafe { path_array(p.known_hosts) } {
+        Ok(Some(files)) => rust.known_hosts = KnownHosts::with_files(files),
+        Ok(None) => {}
+        Err(_) => {
+            fail(TT_ERR_INVALID, "TtSshParams.known_hosts is not UTF-8");
+            return ptr::null_mut();
+        }
     }
     // The struct's own switches only ever *narrow* the agent and *widen* the
     // algorithms, so a config that already said "old equipment" is not undone
@@ -1565,6 +1582,31 @@ pub extern "C" fn tt_ssh_connect(params: *const TtSshParams) -> *mut TtSshConnec
             report(e);
             ptr::null_mut()
         }
+    }
+}
+
+/// A null-terminated array of paths, or `None` when the pointer is null.
+///
+/// Null-terminated rather than pointer-plus-count, because a count is a second
+/// thing a caller can get wrong in a way nothing here can detect.
+unsafe fn path_array(
+    array: *const *const c_char,
+) -> std::result::Result<Option<Vec<std::path::PathBuf>>, ()> {
+    if array.is_null() {
+        return Ok(None);
+    }
+    let mut out = Vec::new();
+    let mut i = 0isize;
+    loop {
+        let entry = *array.offset(i);
+        if entry.is_null() {
+            return Ok(Some(out));
+        }
+        match str_arg(entry, usize::MAX) {
+            Ok(s) => out.push(std::path::PathBuf::from(s)),
+            Err(_) => return Err(()),
+        }
+        i += 1;
     }
 }
 

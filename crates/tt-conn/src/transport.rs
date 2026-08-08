@@ -64,6 +64,17 @@ pub trait Transport: Send {
         Ok(())
     }
 
+    /// Whether [`send_break`](Transport::send_break) will do anything.
+    ///
+    /// Separate from trying it and failing, because a frontend needs to know
+    /// *before* it draws the menu. Offering "Send break" on a connection that
+    /// cannot is offering an error message, and a break is the kind of thing
+    /// someone reaches for when a console has stopped answering — which is
+    /// exactly the wrong moment to find out.
+    fn supports_break(&self) -> bool {
+        true
+    }
+
     /// Tell the far end the window changed size. Meaningless on a serial
     /// line, which is why it defaults to doing nothing; a pty and SSH both
     /// need it.

@@ -547,6 +547,10 @@ impl Transport for SshConn {
         ))
     }
 
+    fn supports_break(&self) -> bool {
+        false
+    }
+
     fn resize(&mut self, cols: u16, rows: u16) -> Result<()> {
         let _ = self.cmd.send(Cmd::Resize(cols, rows));
         Ok(())
