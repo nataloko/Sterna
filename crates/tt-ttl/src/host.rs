@@ -112,6 +112,249 @@ pub trait ScriptHost {
     fn cancelled(&mut self) -> bool {
         false
     }
+
+    // ---- the session ----
+
+    /// Whether the terminal has a connection open — upstream's `ComReady`.
+    ///
+    /// Distinct from [`linked`](ScriptHost::linked), which is whether there is
+    /// a terminal at all. `testlink` reports the pair as one number and
+    /// `connect` answers with the same one.
+    fn com_ready(&mut self) -> bool {
+        false
+    }
+
+    /// `connect` / `cygconnect` — open a connection described by a Tera Term
+    /// command line, blocking until it is up or has failed.
+    ///
+    /// The command line is passed through unparsed. `cygwin` selects
+    /// `cygconnect`, which upstream implements by launching `cyglaunch.exe`
+    /// instead of `ttermpro.exe` and which here means a local shell.
+    ///
+    /// **Upstream's two branches are one call.** `TTLConnect` either tells an
+    /// existing Tera Term to connect or spawns a fresh `ttermpro.exe` and
+    /// links to it over DDE; in-process the second has no analogue, because
+    /// the host either has a window or it does not and the macro cannot
+    /// conjure one. What the macro observes is unchanged: `result` is read
+    /// back off `linked` and `com_ready` afterwards, which is exactly the
+    /// three-value table the documentation promises.
+    fn connect(&mut self, cmdline: &[u8], cygwin: bool) -> Result<(), TtlError> {
+        let _ = (cmdline, cygwin);
+        Err(TtlError::NotSupported)
+    }
+
+    /// `disconnect` — close the connection, keeping the terminal.
+    ///
+    /// `confirm` is upstream's optional argument and defaults to *true*: a
+    /// bare `disconnect` puts the confirmation dialog up, and only
+    /// `disconnect 0` skips it.
+    fn disconnect(&mut self, confirm: bool) -> Result<(), TtlError> {
+        let _ = confirm;
+        Err(TtlError::NotSupported)
+    }
+
+    /// `closett` — close the terminal, blocking until it has gone.
+    fn close_terminal(&mut self) -> Result<(), TtlError> {
+        Err(TtlError::NotSupported)
+    }
+
+    /// `unlink` and the tail of `closett` — give up the terminal.
+    ///
+    /// After this [`linked`](ScriptHost::linked) must answer `false`, which is
+    /// what makes every communication command fail with `ErrLinkFirst` until a
+    /// `connect` links again.
+    fn unlink(&mut self) {}
+
+    /// `setsync` — whether the terminal throttles itself to what the macro has
+    /// read.
+    ///
+    /// Upstream's asynchronous mode is a 16 KB ring the terminal fills whether
+    /// or not anything is reading, and the synchronous mode is that ring with
+    /// backpressure. A host whose reads are already backpressured has nothing
+    /// to do here, which is why this refuses nothing and returns nothing.
+    fn set_sync(&mut self, on: bool) {
+        let _ = on;
+    }
+
+    // ---- the serial control lines ----
+    //
+    // Every one of these is a no-op upstream unless the connection is serial,
+    // and `setdtr`/`setrts` need the flow control to be "none" as well
+    // (`ttdde.c:1013`, `:1032`). None of that is the interpreter's business:
+    // the terminal answers `DDE_FNOTPROCESSED` and the macro carries on, so
+    // the host declining quietly is the faithful shape.
+
+    /// `setdtr` — raise or lower DTR.
+    fn set_dtr(&mut self, on: bool) {
+        let _ = on;
+    }
+
+    /// `setrts` — raise or lower RTS.
+    fn set_rts(&mut self, on: bool) {
+        let _ = on;
+    }
+
+    /// `setbaud` / `setspeed` — the serial line's speed in bits per second.
+    ///
+    /// Upstream ignores a value that is not positive (`ttdde.c:983`), so this
+    /// is never called with zero.
+    fn set_baud(&mut self, baud: u32) {
+        let _ = baud;
+    }
+
+    /// `setflowctrl`.
+    fn set_flow_control(&mut self, flow: FlowControl) {
+        let _ = flow;
+    }
+
+    /// `getmodemstatus` — the four input control lines.
+    ///
+    /// `None` is "could not ask", which the macro cannot tell from all four
+    /// being low; see [`ModemLines`].
+    fn modem_lines(&mut self) -> Option<ModemLines> {
+        None
+    }
+
+    /// `sendbreak`. Serial holds the line at space; telnet sends `IAC BREAK`
+    /// and SSH a `break` channel request, which is why this is not serial-only.
+    fn send_break(&mut self) -> Result<(), TtlError> {
+        Err(TtlError::NotSupported)
+    }
+
+    // ---- file transfer ----
+
+    /// One of the transfer commands, run to completion. `true` if the file
+    /// arrived.
+    ///
+    /// The one method here that is not one-per-command, because [`Xfer`] is:
+    /// sixteen commands that differ only in what they name go through one
+    /// call, and the enum keeps each one's arguments exactly as its own
+    /// command supplies them rather than flattening them into a request struct
+    /// with fields that half the protocols ignore.
+    ///
+    /// It blocks, as upstream's does — `IdTTLWaitCmndResult` parks the macro
+    /// until the protocol reports — so a frontend must run the interpreter off
+    /// the UI thread, which it must anyway for `wait`.
+    fn transfer(&mut self, req: &Xfer<'_>) -> Result<bool, TtlError> {
+        let _ = req;
+        Err(TtlError::NotSupported)
+    }
+}
+
+/// `setflowctrl`'s four values (`ttdde.c:1002`).
+///
+/// Not `tt_conn::serial::FlowControl`, and deliberately: the numbering is the
+/// macro language's, this crate depends on nothing, and a host that has a
+/// serial port maps one enum to the other in the one place that has both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlowControl {
+    XonXoff,
+    RtsCts,
+    None,
+    DsrDtr,
+}
+
+impl FlowControl {
+    /// The number as `setflowctrl` writes it. Anything else is not an error —
+    /// the terminal's `switch` has no arm for it, so the command does nothing
+    /// at all.
+    pub fn from_code(v: i32) -> Option<FlowControl> {
+        match v {
+            1 => Some(FlowControl::XonXoff),
+            2 => Some(FlowControl::RtsCts),
+            3 => Some(FlowControl::None),
+            4 => Some(FlowControl::DsrDtr),
+            _ => None,
+        }
+    }
+}
+
+/// What `getmodemstatus` reports, before it becomes a bit mask.
+///
+/// The mask itself — 1, 2, 4, 8 — is built in the interpreter because the
+/// numbering is the macro language's; upstream builds it in `ttdde.c:1112`
+/// out of `GetCommModemStatus`'s `MS_*` bits, which are Win32's.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ModemLines {
+    pub cts: bool,
+    pub dsr: bool,
+    pub ring: bool,
+    /// RLSD, which everything outside Win32 calls DCD.
+    pub carrier: bool,
+}
+
+/// XMODEM's block format, numbered as the macro language numbers it
+/// (`xmodem.h:43`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum XmodemOpt {
+    Checksum,
+    Crc,
+    /// 1K blocks. Sender-side only: `xmodemrecv 3` is folded to [`Crc`] before
+    /// it ever reaches here, which upstream comments "for compatibility".
+    ///
+    /// [`Crc`]: XmodemOpt::Crc
+    Crc1K,
+}
+
+/// A transfer command, with the arguments its own command line supplies.
+///
+/// One variant per command rather than a protocol plus a direction, because
+/// the commands are not symmetrical: `xmodemsend` has no binary flag
+/// (`XMODEMStartSend` does not take one), the receive halves of ZMODEM, YMODEM,
+/// Kermit, B-Plus and Quick-VAN name no file at all, and `recvfile` is not a
+/// protocol. Flattening the sixteen into one struct would mean inventing
+/// values for the fields each of them does not have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Xfer<'a> {
+    XmodemSend {
+        path: &'a [u8],
+        opt: XmodemOpt,
+    },
+    XmodemRecv {
+        path: &'a [u8],
+        binary: bool,
+        opt: XmodemOpt,
+    },
+    YmodemSend {
+        path: &'a [u8],
+    },
+    YmodemRecv,
+    ZmodemSend {
+        path: &'a [u8],
+        binary: bool,
+    },
+    ZmodemRecv,
+    KmtSend {
+        path: &'a [u8],
+    },
+    KmtRecv,
+    /// Ask a peer in server mode for a file by name.
+    KmtGet {
+        path: &'a [u8],
+    },
+    /// Tell a peer in server mode to leave it.
+    KmtFinish,
+    BPlusSend {
+        path: &'a [u8],
+    },
+    BPlusRecv,
+    QuickVanSend {
+        path: &'a [u8],
+    },
+    QuickVanRecv,
+    /// `sendfile` — no protocol: the file's bytes down the line, with CR/LF
+    /// translation and control-character stripping unless `binary`.
+    SendFile {
+        path: &'a [u8],
+        binary: bool,
+    },
+    /// `recvfile` — the line into a file until it has been quiet for
+    /// `autostop`. Zero means wait for ever; upstream floors a negative
+    /// argument at zero rather than treating it as an error.
+    RecvFile {
+        path: &'a [u8],
+        autostop: Duration,
+    },
 }
 
 /// A host that records what it was told and refuses everything else.
@@ -140,6 +383,31 @@ pub struct RecordingHost {
     /// How long it asked to sleep for, in total.
     pub slept: Duration,
     pub flushes: usize,
+
+    // The session, recorded rather than acted on.
+    /// Whether the connection commands should believe there is a connection.
+    /// `connect` sets it, `disconnect` clears it, so `testlink` moves.
+    pub com_ready: bool,
+    /// Every `connect` / `cygconnect`: the command line, and whether it was
+    /// the cygwin one.
+    pub connects: Vec<(Vec<u8>, bool)>,
+    /// Whether `connect` should succeed.
+    pub connect_fails: bool,
+    /// Every `disconnect`, and whether it asked for confirmation.
+    pub disconnects: Vec<bool>,
+    pub unlinks: usize,
+    pub closes: usize,
+    pub syncs: Vec<bool>,
+    /// Every control-line change, rendered, in order — one list so a test can
+    /// assert the order across the whole family rather than a field each.
+    pub lines: Vec<String>,
+    /// What `getmodemstatus` should find. `None` is a port that cannot answer.
+    pub modem: Option<ModemLines>,
+    /// Every transfer, rendered — the request borrows, and its `Debug` is
+    /// exactly what a test wants to assert on.
+    pub transfers: Vec<String>,
+    /// Whether a transfer should report success.
+    pub transfer_fails: bool,
 }
 
 impl RecordingHost {
@@ -197,5 +465,70 @@ impl ScriptHost for RecordingHost {
 
     fn sleep(&mut self, d: Duration) {
         self.slept += d;
+    }
+
+    fn com_ready(&mut self) -> bool {
+        self.com_ready
+    }
+
+    fn connect(&mut self, cmdline: &[u8], cygwin: bool) -> Result<(), TtlError> {
+        self.connects.push((cmdline.to_vec(), cygwin));
+        if self.connect_fails {
+            return Ok(());
+        }
+        self.linked = true;
+        self.com_ready = true;
+        Ok(())
+    }
+
+    fn disconnect(&mut self, confirm: bool) -> Result<(), TtlError> {
+        self.disconnects.push(confirm);
+        self.com_ready = false;
+        Ok(())
+    }
+
+    fn close_terminal(&mut self) -> Result<(), TtlError> {
+        self.closes += 1;
+        self.com_ready = false;
+        Ok(())
+    }
+
+    fn unlink(&mut self) {
+        self.unlinks += 1;
+        self.linked = false;
+    }
+
+    fn set_sync(&mut self, on: bool) {
+        self.syncs.push(on);
+    }
+
+    fn set_dtr(&mut self, on: bool) {
+        self.lines.push(format!("dtr={}", on as u8));
+    }
+
+    fn set_rts(&mut self, on: bool) {
+        self.lines.push(format!("rts={}", on as u8));
+    }
+
+    fn set_baud(&mut self, baud: u32) {
+        self.lines.push(format!("baud={baud}"));
+    }
+
+    fn set_flow_control(&mut self, flow: FlowControl) {
+        self.lines.push(format!("flow={flow:?}"));
+    }
+
+    fn modem_lines(&mut self) -> Option<ModemLines> {
+        self.modem
+    }
+
+    fn send_break(&mut self) -> Result<(), TtlError> {
+        self.lines.push("break".into());
+        Ok(())
+    }
+
+    fn transfer(&mut self, req: &Xfer<'_>) -> Result<bool, TtlError> {
+        self.transfers.push(format!("{req:?}"));
+        Ok(!self.transfer_fails)
     }
 }

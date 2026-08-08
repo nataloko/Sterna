@@ -21,12 +21,13 @@ pub mod host;
 pub mod interp;
 pub mod lexer;
 pub mod rsv;
+pub mod sesscmds;
 pub mod strcmds;
 pub mod vars;
 pub mod wait;
 
 pub use error::{TtlError, TtlResult};
-pub use host::{ErrorReport, RecordingHost, ScriptHost};
+pub use host::{ErrorReport, FlowControl, ModemLines, RecordingHost, ScriptHost, Xfer, XmodemOpt};
 pub use interp::Interp;
 pub use lexer::Lexer;
 pub use rsv::Rsv;
