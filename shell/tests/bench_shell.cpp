@@ -454,6 +454,10 @@ int main(int argc, char **argv)
         printf("  \"throughput_mb_s\": %.2f,\n", best.throughputMbS);
         printf("  \"throughput_paints\": %d,\n", best.paints);
         printf("  \"platform\": \"%s\",\n", qPrintable(QApplication::platformName()));
+        // Part of the machine's identity for `bench/bench.py`, not decoration.
+        // Qt 6.4.2 and 6.11.1 both call themselves "wayland" and do not
+        // measure alike — that gap has produced a false finding here before.
+        printf("  \"qt\": \"%s\",\n", qVersion());
         printf("  \"failed_probes\": %d\n", failures);
         printf("}\n");
     } else {

@@ -1,0 +1,21 @@
+{
+  "recorded": "2026-08-08",
+  "machine": {
+    "host": "natux",
+    "cpu": "AMD Ryzen 7 7840HS w/ Radeon 780M Graphics",
+    "qt_platform": "wayland",
+    "qt": "6.11.1"
+  },
+  "metrics": {
+    "core.plain": 66.924,
+    "core.sgr": 73.983,
+    "core.fullscreen": 83.553,
+    "shell.start_ms": 67.5,
+    "shell.idle_rss_mb": 64.5,
+    "shell.idle_pss_mb": 40.5,
+    "shell.latency_ms": 1.03,
+    "shell.throughput_mb_s": 38.63
+  },
+  "calib_ms": 58.432,
+  "shell_paints": 393
+}
