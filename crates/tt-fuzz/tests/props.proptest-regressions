@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc d1e18899c8dbe4db4900529407e9b7108520e121b7ac446a5bc79ec0d462aba9 # shrinks to bytes = [32, 204, 129, 32, 228, 184, 128], sizes = [2, 3]
+cc 95cfc0eca788bdfed25baa47bf13239e0d41643936f6ff6f6c19c0194fb1c3ab # shrinks to bytes = [32, 32, 32, 194, 160, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 228, 184, 128, 32, 228, 184, 128, 240, 159, 152, 128, 32, 194, 160, 32, 32, 32, 32, 32, 240, 159, 152, 128, 32, 32, 32, 32, 32, 228, 184, 128, 27, 91, 67, 228, 184, 128]
+cc 6a2f6685f2cc02274f1d89f5600c54a2a53f87b0a11cb60b0f7cab972b2fbb0d # shrinks to bytes = [27, 91, 53, 66, 10, 27, 91, 63, 51, 108]
+cc cb799096a22cb8a8b90feb4cd8a1ee07d99fecf81c7f6abfd1213ffd689e5a41 # shrinks to bytes = [11, 228, 184, 128, 32, 194, 160, 32, 228, 184, 128, 32, 32, 32, 27, 91, 65, 27, 91, 59, 52, 104, 32, 32, 228, 184, 128, 32, 32, 32, 228, 184, 128, 32, 32, 228, 184, 128, 32, 32, 32, 194, 160, 194, 160, 32, 228, 184, 128, 32, 32, 32]
+cc f58d8866c2649d6eb56dd85c7dd47bf19ec7f0761e1d05e59e9c0b5f37cd301c # shrinks to bytes = [27, 91, 59, 52, 104, 228, 184, 128, 228, 184, 128, 228, 184, 128, 228, 184, 128, 194, 160, 32, 228, 184, 128, 228, 184, 128, 228, 184, 128, 13, 32, 32, 32, 228, 184, 128]

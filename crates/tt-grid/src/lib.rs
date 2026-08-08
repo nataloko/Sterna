@@ -384,6 +384,142 @@ impl Grid {
         self.scrolled_off
     }
 
+    /// The grid's structural contract, as an assertion rather than as prose.
+    ///
+    /// Everything here is something another layer indexes with: the painter
+    /// walks `rows` lines of `cols` cells, the C ABI hands those cells out
+    /// unchanged, and `codepoints()` stops at the first zero. A violation is
+    /// therefore a panic waiting for the next write, which has already happened
+    /// here once — see [`restore_screen`](Grid::restore_screen).
+    ///
+    /// Wide-character pairing is *not* here, because upstream does not maintain
+    /// it either; [`check_wide_pairs`](Grid::check_wide_pairs) has it, and says
+    /// where.
+    ///
+    /// It is not a *behavioural* check: whether the cells hold what Tera Term
+    /// would put in them is `run_diff.sh`'s question, and this deliberately
+    /// says nothing about it. What this covers is the ground the differential
+    /// suite cannot reach, because a stream that panics produces no dump to
+    /// diff.
+    ///
+    /// Cheap enough to call after every chunk in a fuzz target — one pass over
+    /// the page and the scrollback — and that is its main caller. See
+    /// `crates/tt-fuzz/`.
+    pub fn check_invariants(&self) -> Result<(), String> {
+        if self.cols == 0 || self.rows == 0 {
+            return Err(format!("zero-sized grid {}x{}", self.cols, self.rows));
+        }
+        if self.lines.len() != self.rows {
+            return Err(format!(
+                "page holds {} lines, rows is {}",
+                self.lines.len(),
+                self.rows
+            ));
+        }
+        if self.cursor.x >= self.cols || self.cursor.y >= self.rows {
+            return Err(format!(
+                "cursor {},{} outside {}x{}",
+                self.cursor.x, self.cursor.y, self.cols, self.rows
+            ));
+        }
+        if self.top > self.bottom || self.bottom >= self.rows {
+            return Err(format!(
+                "scroll region {}..={} outside {} rows",
+                self.top, self.bottom, self.rows
+            ));
+        }
+        if self.left > self.right || self.right >= self.cols {
+            return Err(format!(
+                "margins {}..={} outside {} columns",
+                self.left, self.right, self.cols
+            ));
+        }
+        if self.tabs.len() != self.cols {
+            return Err(format!(
+                "{} tab stops for {} columns",
+                self.tabs.len(),
+                self.cols
+            ));
+        }
+        if self.scrollback.len() > self.scrollback_max {
+            return Err(format!(
+                "scrollback holds {} lines, max is {}",
+                self.scrollback.len(),
+                self.scrollback_max
+            ));
+        }
+        if (self.scrollback.len() as u64) > self.scrolled_off {
+            return Err(format!(
+                "scrollback holds {} lines but only {} ever left the page",
+                self.scrollback.len(),
+                self.scrolled_off
+            ));
+        }
+
+        for (i, line) in self.scrollback.iter().enumerate() {
+            check_line(line, self.cols, &format!("scrollback line {i}"))?;
+        }
+        for (y, line) in self.lines.iter().enumerate() {
+            check_line(line, self.cols, &format!("row {y}"))?;
+        }
+        Ok(())
+    }
+
+    /// Every wide cell has its padding and every padding cell has its wide.
+    ///
+    /// Deliberately **not** part of [`check_invariants`](Grid::check_invariants),
+    /// because Tera Term does not maintain it. Three paths break it upstream and
+    /// are reproduced:
+    ///
+    /// - **DECCRA** is a bare `memcpyW` (`buffer.c:1430`) with no kanji fixup
+    ///   anywhere in it or in its caller, so a rectangle whose edge cuts a wide
+    ///   character leaves one half behind.
+    /// - **[`restore_screen`](Grid::restore_screen)** copies
+    ///   `min(saved, current)` columns, so the destination's own padding can
+    ///   outlive the wide cell it belonged to. Upstream crushes the *copied*
+    ///   lead (`:5431`) and not that one.
+    /// - **A double-width insert** shifts by two, but upstream's guard only
+    ///   crushes the lead at `LineEnd - 1` (`:3298`), so a lead two cells in
+    ///   still arrives at the margin without its padding.
+    ///
+    /// All three were found by the property test in `crates/tt-fuzz/` and then
+    /// **settled against upstream's source rather than against its output**,
+    /// because the dump cannot arbitrate them: a lead with no padding still
+    /// prints as one glyph in two columns and a padding cell prints as nothing,
+    /// so a row whose halves have come apart renders exactly like one whose have
+    /// not. `run_diff.sh` says "ok" to all of it. Reading `AttrKanji` out of the
+    /// oracle does not fix that either — the bit is set on the non-insert write
+    /// path and not the insert one (`Attr_Attr` is the pen's byte alone), and
+    /// `BuffSetChar` never clears it, so upstream's own copy is incoherent.
+    ///
+    /// **This function is the only check that covers that ground**, which is why
+    /// it exists as something separate rather than as a debug assertion. What is
+    /// left after the three exclusions — writing, wrapping, deleting, scrolling,
+    /// erasing — is ours, and two real bugs have already come out of it.
+    pub fn check_wide_pairs(&self) -> Result<(), String> {
+        for (y, line) in self.lines.iter().enumerate() {
+            for (x, cell) in line.iter().enumerate() {
+                match cell.width_class {
+                    // A lead with no padding is a two-column glyph in a
+                    // one-column box, drawn over whatever is next to it.
+                    WIDTH_WIDE if x + 1 >= self.cols => {
+                        return Err(format!("row {y} column {x}: wide cell at the right edge"))
+                    }
+                    WIDTH_WIDE if line[x + 1].width_class != WIDTH_PAD => {
+                        return Err(format!("row {y} column {x}: wide cell with no padding"))
+                    }
+                    // And a padding cell with nothing to pad is a column that
+                    // renders as nothing at all.
+                    WIDTH_PAD if x == 0 || line[x - 1].width_class != WIDTH_WIDE => {
+                        return Err(format!("row {y} column {x}: padding with no wide cell"))
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// `buffer.c:BuffChangeTerminalSize` — the resize behind XTWINOPS
     /// `CSI 8 ; h ; w t`.
     ///
@@ -1409,10 +1545,23 @@ impl Grid {
         // A double-width glyph with only one column left: Tera Term parks a
         // space in the orphan cell so the glyph is never split in half, then
         // wraps and retries.
+        //
+        // Upstream parks it by calling `BuffPutUnicode(0x20, …)` recursively
+        // (`vtterm.c:896`), so the space goes through the whole write path —
+        // including the two crushes at the top of it, which break a wide
+        // character the cursor is standing on *before* the overflow is even
+        // detected (`buffer.c:3219`, `:3241`). Writing the cell directly skips
+        // that, and the cursor is standing on a padding cell rather often here:
+        // a wide glyph at the right margin leaves it there by design, and any
+        // cursor motion that clears the pending wrap leaves it there with the
+        // wrap gone. The result was a wide character with its right half
+        // replaced by a space — half a glyph, which is the one thing this
+        // branch exists to prevent.
         if w == 2 && self.cursor.x + 1 > self.cols - 1 {
             if self.autowrap {
                 let (x, y) = (self.cursor.x, self.cursor.y);
                 let pen = self.pen;
+                self.split_wide_at(y, x);
                 self.lines[y][x] = Cell::blank(pen);
                 self.carriage_return();
                 self.line_feed();
@@ -1466,6 +1615,14 @@ impl Grid {
             } else {
                 self.right
             };
+            // `buffer.c:3298` — "一番最後の文字が全角の場合", if the last
+            // character is full-width. The shift pushes the cell at `end` off
+            // the line, so a wide character whose padding is there would lose
+            // its right half and be left as a lead alone at the margin. Break
+            // it first, exactly as upstream does, rather than after the fact.
+            if end > 0 {
+                self.break_lead_at(y, end - 1);
+            }
             for _ in 0..w.min(end + 1 - x) {
                 self.lines[y].remove(end);
                 self.lines[y].insert(x, Cell::erased(pen));
@@ -1629,6 +1786,46 @@ impl Grid {
 
 fn default_tabs(cols: usize) -> Vec<bool> {
     (0..cols).map(|x| x > 0 && x % 8 == 0).collect()
+}
+
+/// One line's share of [`Grid::check_invariants`]. `where` names the line for
+/// the message, since a violation two hundred rows into a scrollback is
+/// otherwise indistinguishable from one on the page.
+fn check_line(line: &[Cell], cols: usize, wher: &str) -> Result<(), String> {
+    if line.len() != cols {
+        return Err(format!(
+            "{wher} is {} cells wide, cols is {cols}",
+            line.len()
+        ));
+    }
+    for (x, cell) in line.iter().enumerate() {
+        // A zero terminates the cell's codepoints, so a live one after it is
+        // unreachable through `codepoints()` — the character is in the grid and
+        // will never be drawn.
+        if let Some(gap) = cell.text.iter().position(|&c| c == 0) {
+            if cell.text[gap..].iter().any(|&c| c != 0) {
+                return Err(format!("{wher} column {x}: text {:?} has a gap", cell.text));
+            }
+        }
+        match cell.width_class {
+            WIDTH_WIDE => {}
+            WIDTH_PAD => {
+                if cell.text[0] != 0 {
+                    return Err(format!(
+                        "{wher} column {x}: padding cell holds {:?}",
+                        cell.text
+                    ));
+                }
+            }
+            WIDTH_NARROW => {
+                if cell.text[0] == 0 {
+                    return Err(format!("{wher} column {x}: narrow cell holds no text"));
+                }
+            }
+            other => return Err(format!("{wher} column {x}: width class {other}")),
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

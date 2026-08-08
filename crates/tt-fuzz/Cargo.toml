@@ -1,0 +1,16 @@
+[package]
+name = "tt-fuzz"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The engine's properties, stated once for both the fuzzer and the test suite"
+publish = false
+
+[dependencies]
+tt-conn.workspace = true
+tt-grid.workspace = true
+tt-vt.workspace = true
+
+[dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }

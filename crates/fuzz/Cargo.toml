@@ -1,0 +1,45 @@
+[package]
+name = "termitta-fuzz"
+version = "0.0.0"
+edition = "2021"
+license = "BSD-3-Clause"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+# Detached from `crates/`'s workspace on purpose. libfuzzer-sys needs nightly
+# and a sanitizer-instrumented build of every dependency, so folding it in
+# would put those requirements on `cargo test` for the whole core.
+[workspace]
+
+[dependencies]
+arbitrary = { version = "1", features = ["derive"] }
+libfuzzer-sys = "0.4"
+tt-conn = { path = "../tt-conn" }
+tt-fuzz = { path = "../tt-fuzz" }
+tt-vt = { path = "../tt-vt" }
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "vt_stream"
+path = "fuzz_targets/vt_stream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vt_chunks"
+path = "fuzz_targets/vt_chunks.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "telnet"
+path = "fuzz_targets/telnet.rs"
+test = false
+doc = false
+bench = false
