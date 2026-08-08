@@ -319,6 +319,17 @@ enum TtEventKind
      * resize the window with it — or ignore it.
      */
     TT_EVENT_KIND_RESIZE = 6,
+    /**
+     * A file transfer moved. Read [`tt_session_transfer_status`] for where
+     * it has got to.
+     */
+    TT_EVENT_KIND_TRANSFER_PROGRESS = 7,
+    /**
+     * A file transfer ended, for any reason. Read
+     * [`tt_session_transfer_result`] for how it went — and read it *on this
+     * event*, because the next transfer replaces it.
+     */
+    TT_EVENT_KIND_TRANSFER_DONE = 8,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -327,6 +338,23 @@ typedef enum TtEventKind TtEventKind;
 typedef uint32_t TtEventKind;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
+
+/**
+ * Which protocol. Mirrors `tt_xfer::Job`'s discriminants.
+ */
+typedef enum {
+    TT_XFER_PROTOCOL_X_MODEM = 0,
+    TT_XFER_PROTOCOL_Y_MODEM = 1,
+    TT_XFER_PROTOCOL_Z_MODEM = 2,
+    TT_XFER_PROTOCOL_KERMIT = 3,
+    TT_XFER_PROTOCOL_B_PLUS = 4,
+    TT_XFER_PROTOCOL_QUICK_VAN = 5,
+    /**
+     * Not a protocol: read the connection into a file until it goes quiet.
+     * Receive only.
+     */
+    TT_XFER_PROTOCOL_RAW = 6,
+} TtXferProtocol;
 
 /**
  * A key with a terminal meaning. Names and grouping follow
@@ -768,6 +796,103 @@ typedef struct {
      */
     const char *text;
 } TtEvent;
+
+/**
+ * How to run a transfer.
+ *
+ * One struct rather than a function per protocol, because a frontend builds
+ * it from a dialog: the user picks a protocol and the options that belong to
+ * it, and the fields that do not apply are ignored. Which those are is in
+ * `tt-xfer`'s `Job` — XMODEM has a text flag and no filename on the wire,
+ * Kermit has four modes and no direction, Raw has neither.
+ */
+typedef struct {
+    TtXferProtocol protocol;
+    /**
+     * Ignored by Kermit, which takes `kermit_mode` instead, and by Raw.
+     */
+    bool sending;
+    /**
+     * XMODEM: 1 = checksum, 2 = CRC, 3 = 1K CRC, 4 = 1K checksum.
+     * YMODEM: 1 = 1K, 2 = G, 3 = single. Zero takes the sensible default,
+     * which for YMODEM is the *only* value its packet builder handles.
+     */
+    int32_t option;
+    /**
+     * XMODEM only: CRLF translation and `^Z` padding.
+     */
+    bool text;
+    /**
+     * ZMODEM only, and on by default. Clearing it asks for end-of-line
+     * translation, which is almost never wanted.
+     */
+    bool binary;
+    /**
+     * ZMODEM and B-Plus: the peer's trigger has already gone past in the
+     * terminal stream, so the protocol pushes it back and reads it itself.
+     */
+    bool auto_start;
+    /**
+     * Kermit only: 1 = receive, 2 = get, 3 = send, 4 = finish.
+     */
+    int32_t kermit_mode;
+    /**
+     * Raw only: stop after this many seconds of silence.
+     */
+    int32_t autostop_sec;
+} TtXferJob;
+
+/**
+ * Where a running transfer has got to.
+ *
+ * **Every number here is something the protocol reported, and the protocols
+ * throttle themselves to ten updates a second** (`zmodem.c:197`). A transfer
+ * that finishes in under a tenth of a second finishes having reported
+ * nothing, so a frontend must not read `bytes == 0` as "not started".
+ */
+typedef struct {
+    /**
+     * "ZMODEM", "Kermit" — the protocol's own word for itself. Borrowed and
+     * valid until the next call to this function on this session.
+     */
+    const char *protocol;
+    /**
+     * The file in flight, as the protocol named it. Empty before the first
+     * one is opened.
+     */
+    const char *file;
+    bool sending;
+    int64_t bytes;
+    int64_t packets;
+    /**
+     * Position within the current file, and its size. `total` is 0 when the
+     * size is not known — XMODEM never learns it.
+     */
+    int64_t done;
+    int64_t total;
+    /**
+     * The whole-percent high-water mark, or -1 when there is no meaningful
+     * bar to draw.
+     */
+    int32_t percent;
+    uint32_t elapsed_ms;
+} TtTransferStatus;
+
+/**
+ * How the last transfer ended.
+ */
+typedef struct {
+    bool success;
+    bool cancelled;
+    /**
+     * What the protocol said when it failed — "Cannot create file" — or null.
+     * Often the only account of the failure there is. Borrowed, and valid
+     * until the next call to this function on this session.
+     */
+    const char *message;
+    int64_t bytes;
+    uint32_t elapsed_ms;
+} TtTransferResult;
 
 /**
  * What `ShiftKey()`/`AltKey()`/`ControlKey()` would have answered.
@@ -1554,6 +1679,67 @@ TtStatus tt_session_settings_save(const TtSession *session, const char *path);
  * is exactly what a UI toolkit cannot take.
  */
 size_t tt_session_drain_events(TtSession *session, const TtEvent **out);
+
+/**
+ * Start sending files. `paths` is `count` UTF-8 paths.
+ *
+ * **The terminal goes deaf and mute for the duration**: keystrokes are
+ * dropped and the protocol's traffic never reaches the parser, which is what
+ * upstream's modal transfer dialog achieves by other means. One transfer at a
+ * time per session.
+ */
+TtStatus tt_session_send_files(TtSession *session,
+                               const TtXferJob *job,
+                               const char *const *paths,
+                               size_t count);
+
+/**
+ * Start receiving into `dir`.
+ *
+ * `name` is XMODEM's alone and may be null for everything else: XMODEM's wire
+ * format carries no filename, so there is nothing to derive a destination
+ * from. Supplying one to a protocol that *does* carry a name would override
+ * the peer's, so it is ignored there — which is what upstream's receive
+ * dialog does with the same field.
+ */
+TtStatus tt_session_receive_files(TtSession *session,
+                                  const TtXferJob *job,
+                                  const char *dir,
+                                  const char *name);
+
+/**
+ * Whether a transfer is running, and where it has got to. False when none is.
+ */
+bool tt_session_transfer_status(TtSession *session, TtTransferStatus *out);
+
+/**
+ * How the last transfer ended. False when none has.
+ *
+ * Read it on [`TtEventKind::TransferDone`]: it is kept until the next
+ * transfer finishes and then replaced.
+ */
+bool tt_session_transfer_result(TtSession *session, TtTransferResult *out);
+
+/**
+ * Ask the running transfer to stop. A no-op when none is.
+ *
+ * It does not stop here. The protocol sends its cancel sequence and finishes
+ * on its own terms — ZMODEM arms a 500 ms timer and ends on that — so keep
+ * pumping and wait for [`TtEventKind::TransferDone`].
+ */
+void tt_session_cancel_transfer(TtSession *session);
+
+/**
+ * Milliseconds until the running transfer needs attention, or -1 when
+ * nothing is armed and -2 when no transfer is running.
+ *
+ * **A frontend that only wakes on [`tt_session_poll_fd`] will stall a
+ * transfer.** The protocols retry by timeout — an XMODEM receiver that hears
+ * nothing re-sends its `NAK` after ten seconds — and a quiet line produces no
+ * descriptor wakeup at all, so nothing would ever fire it. Arm a timer for
+ * this value, and re-read it after every pump.
+ */
+int64_t tt_session_transfer_deadline_ms(const TtSession *session);
 
 /**
  * Move bytes in both directions for at most `budget_ms`, and write how many

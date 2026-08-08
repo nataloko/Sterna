@@ -309,6 +309,13 @@ pub struct TtSession {
     log_path: CString,
     close_note: CString,
     setting: CString,
+    /// The strings the last `TtTransferStatus` handed out, and the outcome of
+    /// the last transfer to finish. Kept on the session because the C caller
+    /// has nowhere to put them.
+    xfer_protocol: CString,
+    xfer_file: CString,
+    xfer_message: CString,
+    transfer_result: Option<tt_session::TransferOutcome>,
 }
 
 /// Create a session. Returns null only if `config` is null.
@@ -343,6 +350,10 @@ pub extern "C" fn tt_session_new(config: *const TtConfig) -> *mut TtSession {
         log_path: CString::default(),
         close_note: CString::default(),
         setting: CString::default(),
+        xfer_protocol: CString::default(),
+        xfer_file: CString::default(),
+        xfer_message: CString::default(),
+        transfer_result: None,
     }))
 }
 
@@ -908,7 +919,10 @@ pub extern "C" fn tt_settings_choice(index: usize, n: usize) -> *const c_char {
 ///
 /// Borrowed, and valid until the next call to this function on this session.
 #[no_mangle]
-pub extern "C" fn tt_session_setting(session: *mut TtSession, name: *const c_char) -> *const c_char {
+pub extern "C" fn tt_session_setting(
+    session: *mut TtSession,
+    name: *const c_char,
+) -> *const c_char {
     let s = session!(session, ptr::null());
     let Ok(name) = (unsafe { str_arg(name, usize::MAX) }) else {
         return ptr::null();
@@ -1045,6 +1059,13 @@ pub enum TtEventKind {
     /// painting the wrong number of cells. Call [`tt_session_resize`] — and
     /// resize the window with it — or ignore it.
     Resize = 6,
+    /// A file transfer moved. Read [`tt_session_transfer_status`] for where
+    /// it has got to.
+    TransferProgress = 7,
+    /// A file transfer ended, for any reason. Read
+    /// [`tt_session_transfer_result`] for how it went — and read it *on this
+    /// event*, because the next transfer replaces it.
+    TransferDone = 8,
 }
 
 #[repr(C)]
@@ -1099,6 +1120,15 @@ pub extern "C" fn tt_session_drain_events(
                 let p = s.event_texts.last().expect("just pushed").as_ptr();
                 (TtEventKind::LogFailed, 0, p)
             }
+            // The payload does not travel in the event: `TtEvent` is a fixed
+            // struct and a transfer's is two strings and six numbers. It is
+            // read through its own accessor instead, which is also what lets
+            // a frontend poll a progress bar without draining.
+            Event::TransferProgress(_) => (TtEventKind::TransferProgress, 0, ptr::null()),
+            Event::TransferDone(outcome) => {
+                s.transfer_result = Some(*outcome);
+                (TtEventKind::TransferDone, 0, ptr::null())
+            }
         };
         s.events.push(TtEvent {
             kind,
@@ -1116,6 +1146,327 @@ pub extern "C" fn tt_session_drain_events(
         };
     }
     s.events.len()
+}
+
+// --- file transfer --------------------------------------------------------
+
+/// Which protocol. Mirrors `tt_xfer::Job`'s discriminants.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TtXferProtocol {
+    XModem = 0,
+    YModem = 1,
+    ZModem = 2,
+    Kermit = 3,
+    BPlus = 4,
+    QuickVan = 5,
+    /// Not a protocol: read the connection into a file until it goes quiet.
+    /// Receive only.
+    Raw = 6,
+}
+
+/// How to run a transfer.
+///
+/// One struct rather than a function per protocol, because a frontend builds
+/// it from a dialog: the user picks a protocol and the options that belong to
+/// it, and the fields that do not apply are ignored. Which those are is in
+/// `tt-xfer`'s `Job` — XMODEM has a text flag and no filename on the wire,
+/// Kermit has four modes and no direction, Raw has neither.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtXferJob {
+    pub protocol: TtXferProtocol,
+    /// Ignored by Kermit, which takes `kermit_mode` instead, and by Raw.
+    pub sending: bool,
+    /// XMODEM: 1 = checksum, 2 = CRC, 3 = 1K CRC, 4 = 1K checksum.
+    /// YMODEM: 1 = 1K, 2 = G, 3 = single. Zero takes the sensible default,
+    /// which for YMODEM is the *only* value its packet builder handles.
+    pub option: i32,
+    /// XMODEM only: CRLF translation and `^Z` padding.
+    pub text: bool,
+    /// ZMODEM only, and on by default. Clearing it asks for end-of-line
+    /// translation, which is almost never wanted.
+    pub binary: bool,
+    /// ZMODEM and B-Plus: the peer's trigger has already gone past in the
+    /// terminal stream, so the protocol pushes it back and reads it itself.
+    pub auto_start: bool,
+    /// Kermit only: 1 = receive, 2 = get, 3 = send, 4 = finish.
+    pub kermit_mode: i32,
+    /// Raw only: stop after this many seconds of silence.
+    pub autostop_sec: i32,
+}
+
+/// Where a running transfer has got to.
+///
+/// **Every number here is something the protocol reported, and the protocols
+/// throttle themselves to ten updates a second** (`zmodem.c:197`). A transfer
+/// that finishes in under a tenth of a second finishes having reported
+/// nothing, so a frontend must not read `bytes == 0` as "not started".
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtTransferStatus {
+    /// "ZMODEM", "Kermit" — the protocol's own word for itself. Borrowed and
+    /// valid until the next call to this function on this session.
+    pub protocol: *const c_char,
+    /// The file in flight, as the protocol named it. Empty before the first
+    /// one is opened.
+    pub file: *const c_char,
+    pub sending: bool,
+    pub bytes: i64,
+    pub packets: i64,
+    /// Position within the current file, and its size. `total` is 0 when the
+    /// size is not known — XMODEM never learns it.
+    pub done: i64,
+    pub total: i64,
+    /// The whole-percent high-water mark, or -1 when there is no meaningful
+    /// bar to draw.
+    pub percent: i32,
+    pub elapsed_ms: u32,
+}
+
+/// How the last transfer ended.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtTransferResult {
+    pub success: bool,
+    pub cancelled: bool,
+    /// What the protocol said when it failed — "Cannot create file" — or null.
+    /// Often the only account of the failure there is. Borrowed, and valid
+    /// until the next call to this function on this session.
+    pub message: *const c_char,
+    pub bytes: i64,
+    pub elapsed_ms: u32,
+}
+
+fn job_from(j: &TtXferJob) -> tt_xfer::Job {
+    use tt_xfer::{Direction, Job, KermitMode, XmodemOpt, YmodemOpt};
+    let dir = if j.sending {
+        Direction::Send
+    } else {
+        Direction::Receive
+    };
+    match j.protocol {
+        TtXferProtocol::XModem => Job::XModem {
+            dir,
+            opt: match j.option {
+                1 => XmodemOpt::Checksum,
+                3 => XmodemOpt::Crc1K,
+                4 => XmodemOpt::Checksum1K,
+                _ => XmodemOpt::Crc,
+            },
+            text: j.text,
+        },
+        TtXferProtocol::YModem => Job::YModem {
+            dir,
+            opt: match j.option {
+                2 => YmodemOpt::G,
+                3 => YmodemOpt::Single,
+                _ => YmodemOpt::K1,
+            },
+        },
+        TtXferProtocol::ZModem => Job::ZModem {
+            dir,
+            binary: j.binary,
+            auto: j.auto_start,
+        },
+        TtXferProtocol::Kermit => Job::Kermit {
+            mode: match j.kermit_mode {
+                2 => KermitMode::Get,
+                3 => KermitMode::Send,
+                4 => KermitMode::Finish,
+                _ => KermitMode::Receive,
+            },
+        },
+        TtXferProtocol::BPlus => Job::BPlus {
+            dir,
+            auto: j.auto_start,
+        },
+        TtXferProtocol::QuickVan => Job::QuickVan { dir },
+        TtXferProtocol::Raw => Job::Raw {
+            autostop: Duration::from_secs(j.autostop_sec.max(0) as u64),
+        },
+    }
+}
+
+/// Start sending files. `paths` is `count` UTF-8 paths.
+///
+/// **The terminal goes deaf and mute for the duration**: keystrokes are
+/// dropped and the protocol's traffic never reaches the parser, which is what
+/// upstream's modal transfer dialog achieves by other means. One transfer at a
+/// time per session.
+#[no_mangle]
+pub extern "C" fn tt_session_send_files(
+    session: *mut TtSession,
+    job: *const TtXferJob,
+    paths: *const *const c_char,
+    count: usize,
+) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    let Some(job) = (unsafe { job.as_ref() }) else {
+        set_error("null TtXferJob");
+        return TT_ERR_INVALID;
+    };
+    if paths.is_null() || count == 0 {
+        set_error("no files to send");
+        return TT_ERR_INVALID;
+    }
+    let raw = unsafe { slice::from_raw_parts(paths, count) };
+    let mut files = Vec::with_capacity(count);
+    for p in raw {
+        match unsafe { str_arg(*p, usize::MAX) } {
+            Ok(p) => files.push(std::path::PathBuf::from(p)),
+            Err(e) => return e,
+        }
+    }
+    let opts = s.session.transfer_options();
+    match s.session.send_files(job_from(job), &files, &opts) {
+        Ok(()) => TT_OK,
+        Err(e) => xfer_error(e),
+    }
+}
+
+/// Start receiving into `dir`.
+///
+/// `name` is XMODEM's alone and may be null for everything else: XMODEM's wire
+/// format carries no filename, so there is nothing to derive a destination
+/// from. Supplying one to a protocol that *does* carry a name would override
+/// the peer's, so it is ignored there — which is what upstream's receive
+/// dialog does with the same field.
+#[no_mangle]
+pub extern "C" fn tt_session_receive_files(
+    session: *mut TtSession,
+    job: *const TtXferJob,
+    dir: *const c_char,
+    name: *const c_char,
+) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    let Some(job) = (unsafe { job.as_ref() }) else {
+        set_error("null TtXferJob");
+        return TT_ERR_INVALID;
+    };
+    let dir = match unsafe { str_arg(dir, usize::MAX) } {
+        Ok(d) => d,
+        Err(e) => return e,
+    };
+    let name = if name.is_null() {
+        None
+    } else {
+        match unsafe { str_arg(name, usize::MAX) } {
+            Ok(n) => Some(n),
+            Err(e) => return e,
+        }
+    };
+    let opts = s.session.transfer_options();
+    match s
+        .session
+        .receive_files(job_from(job), std::path::Path::new(dir), name, &opts)
+    {
+        Ok(()) => TT_OK,
+        Err(e) => xfer_error(e),
+    }
+}
+
+fn xfer_error(e: tt_session::TransferError) -> TtStatus {
+    use tt_session::TransferError;
+    let code = match e {
+        TransferError::NotConnected => TT_ERR_DISCONNECTED,
+        TransferError::AlreadyRunning => TT_ERR_BUSY,
+        TransferError::Protocol(_) => TT_ERR_INVALID,
+    };
+    set_error(e.to_string());
+    code
+}
+
+/// Whether a transfer is running, and where it has got to. False when none is.
+#[no_mangle]
+pub extern "C" fn tt_session_transfer_status(
+    session: *mut TtSession,
+    out: *mut TtTransferStatus,
+) -> bool {
+    let s = session!(session, false);
+    let Some(st) = s.session.transfer() else {
+        return false;
+    };
+    s.xfer_protocol = cstring(&st.protocol);
+    s.xfer_file = cstring(&st.file);
+    if let Some(out) = unsafe { out.as_mut() } {
+        *out = TtTransferStatus {
+            protocol: s.xfer_protocol.as_ptr(),
+            file: s.xfer_file.as_ptr(),
+            sending: st.sending,
+            bytes: st.progress.bytes,
+            packets: st.progress.packets,
+            done: st.progress.done,
+            total: st.progress.total,
+            percent: st.progress.percent,
+            elapsed_ms: st.progress.elapsed.as_millis() as u32,
+        };
+    }
+    true
+}
+
+/// How the last transfer ended. False when none has.
+///
+/// Read it on [`TtEventKind::TransferDone`]: it is kept until the next
+/// transfer finishes and then replaced.
+#[no_mangle]
+pub extern "C" fn tt_session_transfer_result(
+    session: *mut TtSession,
+    out: *mut TtTransferResult,
+) -> bool {
+    let s = session!(session, false);
+    let Some(r) = s.transfer_result.clone() else {
+        return false;
+    };
+    s.xfer_message = match &r.message {
+        Some(m) => cstring(m),
+        None => CString::default(),
+    };
+    if let Some(out) = unsafe { out.as_mut() } {
+        *out = TtTransferResult {
+            success: r.success,
+            cancelled: r.cancelled,
+            message: if r.message.is_some() {
+                s.xfer_message.as_ptr()
+            } else {
+                ptr::null()
+            },
+            bytes: r.bytes,
+            elapsed_ms: r.elapsed.as_millis() as u32,
+        };
+    }
+    true
+}
+
+/// Ask the running transfer to stop. A no-op when none is.
+///
+/// It does not stop here. The protocol sends its cancel sequence and finishes
+/// on its own terms — ZMODEM arms a 500 ms timer and ends on that — so keep
+/// pumping and wait for [`TtEventKind::TransferDone`].
+#[no_mangle]
+pub extern "C" fn tt_session_cancel_transfer(session: *mut TtSession) {
+    let s = session!(session);
+    s.session.cancel_transfer();
+}
+
+/// Milliseconds until the running transfer needs attention, or -1 when
+/// nothing is armed and -2 when no transfer is running.
+///
+/// **A frontend that only wakes on [`tt_session_poll_fd`] will stall a
+/// transfer.** The protocols retry by timeout — an XMODEM receiver that hears
+/// nothing re-sends its `NAK` after ten seconds — and a quiet line produces no
+/// descriptor wakeup at all, so nothing would ever fire it. Arm a timer for
+/// this value, and re-read it after every pump.
+#[no_mangle]
+pub extern "C" fn tt_session_transfer_deadline_ms(session: *const TtSession) -> i64 {
+    let s = session_ref!(session, -2);
+    if s.session.transfer().is_none() {
+        return -2;
+    }
+    match s.session.transfer_deadline() {
+        Some(d) => d.as_millis() as i64,
+        None => -1,
+    }
 }
 
 // --- the loop -------------------------------------------------------------

@@ -1024,6 +1024,106 @@ static void test_pty(void)
     tt_session_free(s);
 }
 
+/* A ZMODEM send to a real `rz`, over a pty, driven entirely from C.
+ *
+ * The only test that exercises the transfer seam the way the shell will: a
+ * job struct built as a dialog would build it, a pump loop that has to honour
+ * `tt_session_transfer_deadline_ms` as well as the descriptor, and the result
+ * read on the done event rather than guessed at. */
+static void test_transfer(void)
+{
+    if (system("command -v rz >/dev/null 2>&1") != 0) {
+        printf("  transfer: skipped, lrzsz is not installed\n");
+        return;
+    }
+
+    char dir[] = "/tmp/tt-abi-xfer-XXXXXX";
+    if (mkdtemp(dir) == NULL) {
+        CHECK(0);
+        return;
+    }
+    char src[256], got[256], cmd[600];
+    snprintf(src, sizeof src, "%s/payload.bin", dir);
+    snprintf(got, sizeof got, "%s/out/payload.bin", dir);
+    snprintf(cmd, sizeof cmd, "mkdir -p %s/out", dir);
+    CHECK(system(cmd) == 0);
+
+    FILE *f = fopen(src, "wb");
+    CHECK(f != NULL);
+    if (!f)
+        return;
+    for (int i = 0; i < 32768; i++)
+        fputc((i * 31 + i / 251) & 0xff, f);
+    fclose(f);
+
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+
+    TtPtyParams p;
+    tt_pty_params_default(&p);
+    const char *argv[] = {"/bin/sh", "-c", "rz -b 2>/dev/null"};
+    p.argv = argv;
+    p.argc = 3;
+    p.cwd = NULL;
+    /* `rz` writes to its working directory, and the pty starts the child in
+     * the user's home unless told otherwise. */
+    char cwd[256];
+    snprintf(cwd, sizeof cwd, "%s/out", dir);
+    p.cwd = cwd;
+    CHECK_OK(tt_session_connect_pty(s, &p));
+
+    TtXferJob job = {0};
+    job.protocol = TT_XFER_PROTOCOL_Z_MODEM;
+    job.sending = true;
+    job.binary = true;
+    const char *files[] = {src};
+    CHECK_OK(tt_session_send_files(s, &job, files, 1));
+
+    TtTransferStatus st;
+    CHECK(tt_session_transfer_status(s, &st));
+    CHECK(!tt_session_transfer_result(s, NULL)); /* nothing has finished yet */
+
+    int fd = tt_session_poll_fd(s);
+    int done = 0, saw_progress = 0;
+    TtTransferResult result = {0};
+    long deadline = now_ms() + 30000;
+    while (!done && now_ms() < deadline) {
+        size_t n = 0;
+        tt_session_pump(s, 20, &n);
+        const TtEvent *evs = NULL;
+        size_t count = tt_session_drain_events(s, &evs);
+        for (size_t i = 0; i < count; i++) {
+            if (evs[i].kind == TT_EVENT_KIND_TRANSFER_PROGRESS)
+                saw_progress = 1;
+            if (evs[i].kind == TT_EVENT_KIND_TRANSFER_DONE) {
+                CHECK(tt_session_transfer_result(s, &result));
+                done = 1;
+            }
+        }
+        if (done)
+            break;
+        /* Both wakeups matter. The descriptor carries the peer's answers; the
+         * deadline carries the protocol's own retries, and on a quiet line
+         * there is no descriptor wakeup at all. */
+        long wait = tt_session_transfer_deadline_ms(s);
+        wait_readable(fd, wait >= 0 && wait < 50 ? (int)wait + 1 : 50);
+    }
+    CHECK(done);
+    CHECK(saw_progress);
+    CHECK(result.success);
+    CHECK(!result.cancelled);
+    /* And it is a terminal again. */
+    CHECK(!tt_session_transfer_status(s, &st));
+
+    snprintf(cmd, sizeof cmd, "cmp -s %s %s", src, got);
+    CHECK(system(cmd) == 0);
+
+    tt_session_free(s);
+    snprintf(cmd, sizeof cmd, "rm -rf %s", dir);
+    CHECK(system(cmd) == 0);
+}
+
 int main(void)
 {
     printf("termitta core %s\n", tt_version());
@@ -1039,6 +1139,7 @@ int main(void)
     test_ssh();
     test_telnet();
     test_pty();
+    test_transfer();
     test_null_safety();
 
     if (failures) {
