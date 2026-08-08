@@ -14,6 +14,7 @@
 //! choice was open, `PLAN.md` and the comments here say which way it went.
 
 pub mod buffer;
+pub mod cksumcmds;
 pub mod conncmds;
 pub mod dlgcmds;
 pub mod error;
