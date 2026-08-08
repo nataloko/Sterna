@@ -457,6 +457,7 @@ dependencies = [
 name = "tt-session"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "tt-conn",
  "tt-grid",
  "tt-vt",

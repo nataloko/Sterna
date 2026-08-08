@@ -111,6 +111,26 @@ impl Session {
         self.conn.as_ref().map(|c| c.describe())
     }
 
+    /// A descriptor that becomes readable when [`pump`](Session::pump) has
+    /// something to do, so a frontend can wait in its own event loop instead
+    /// of polling this one.
+    ///
+    /// This is the whole reason the shell does not have a timer. `pump` blocks
+    /// for the transport's read timeout, so calling it on a UI thread freezes
+    /// the window for as long as the line is quiet — which is most of the time
+    /// on a serial console — and calling it on a timer instead trades that for
+    /// a wakeup every frame, forever, to learn that nothing happened. Handing
+    /// the descriptor out lets the toolkit wait properly and then call
+    /// `pump(Duration::ZERO)`, which reads exactly once and returns.
+    ///
+    /// **Re-read it after every connect and disconnect.** It belongs to the
+    /// transport, not to the session, so it changes when the transport does
+    /// and is `None` when there is none.
+    #[cfg(unix)]
+    pub fn poll_fd(&self) -> Option<std::os::unix::io::RawFd> {
+        self.conn.as_ref().and_then(|c| c.poll_fd())
+    }
+
     pub fn grid(&self) -> &Grid {
         self.vt.grid()
     }

@@ -130,6 +130,76 @@ fn a_break_on_the_wire_surfaces_as_a_session_event() {
     assert_eq!(row(&s, 0), "XY");
 }
 
+/// Wait on the session's own descriptor, the way the Qt shell does.
+fn readable(s: &Session, timeout: Duration) -> bool {
+    let Some(fd) = s.poll_fd() else { return false };
+    let mut pfd = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let n = unsafe { libc::poll(&mut pfd, 1, timeout.as_millis() as libc::c_int) };
+    n > 0 && pfd.revents & libc::POLLIN != 0
+}
+
+#[test]
+fn the_poll_descriptor_sleeps_on_a_quiet_line_and_wakes_on_bytes() {
+    // The contract the shell's event loop is built on, and the reason there is
+    // no timer in it. Returning a descriptor is not the claim — a descriptor
+    // that is *always* readable would pass that and spin the UI at 100% for
+    // the life of the session. The claim is that it stays quiet and then
+    // wakes, and that a zero-budget pump is enough to collect what woke it.
+    let Some((a, b)) = rig() else { return };
+    let mut far = SerialConn::open(&b, &params()).expect("open the far end");
+    let near = SerialConn::open(&a, &params()).expect("open the near end");
+
+    let mut s = Session::new(Config {
+        cols: 40,
+        rows: 6,
+        ..Config::default()
+    });
+    s.connect(Box::new(near));
+    far.clear(true, true).ok();
+    // Settle whatever the open left in flight before measuring silence.
+    pump_until(&mut s, Duration::from_millis(200), |_| false);
+    s.drain_events();
+
+    assert!(
+        !readable(&s, Duration::from_millis(250)),
+        "a quiet line reported readable — the shell would spin"
+    );
+
+    far.write(b"hello", Duration::from_secs(1)).unwrap();
+    far.flush(Duration::from_millis(500)).ok();
+    assert!(
+        readable(&s, Duration::from_secs(2)),
+        "bytes on the wire did not wake the descriptor"
+    );
+
+    // A budget of zero is what the shell passes: one read, no blocking.
+    let mut got = 0;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline && got < 5 {
+        got += s.pump(Duration::ZERO).expect("pump");
+        if got < 5 && !readable(&s, Duration::from_millis(200)) {
+            break;
+        }
+    }
+    assert_eq!(row(&s, 0), "hello");
+
+    // And it goes quiet again once drained, rather than staying hot.
+    assert!(
+        !readable(&s, Duration::from_millis(250)),
+        "still readable after the bytes were consumed"
+    );
+}
+
+#[test]
+fn the_poll_descriptor_is_none_with_nothing_connected() {
+    let s = Session::new(Config::default());
+    assert!(s.poll_fd().is_none());
+}
+
 #[test]
 fn unplugging_the_far_end_ends_the_session() {
     // Closing the other handle is not an unplug, so this only checks the

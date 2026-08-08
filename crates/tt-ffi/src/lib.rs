@@ -65,7 +65,7 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::cell::RefCell;
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{c_char, c_int, CStr, CString};
 use std::ptr;
 use std::slice;
 use std::time::Duration;
@@ -566,6 +566,50 @@ pub extern "C" fn tt_session_pump(
             TT_OK
         }
         Err(e) => report(e),
+    }
+}
+
+/// A descriptor that becomes readable when [`tt_session_pump`] has something
+/// to do — `-1` when there is none.
+///
+/// Hand it to whatever the frontend already waits on: `QSocketNotifier`,
+/// `poll(2)`, `epoll`, a `GSource`. When it fires, call `tt_session_pump` with
+/// a budget of **0**, which reads exactly once and returns.
+///
+/// This exists because the two obvious event loops are both wrong. Pumping
+/// from the UI thread blocks for the transport's read timeout every time the
+/// line is quiet, which on a serial console is nearly always, and the window
+/// stops repainting for that long. Pumping on a timer instead trades the
+/// freeze for a wakeup every frame, forever, to discover that nothing arrived
+/// — on a terminal whose whole claim is being light.
+///
+/// Three things to get right:
+///
+/// - **Re-read it after every connect and disconnect**, including the implicit
+///   disconnect a [`TtEventKind::Disconnected`] event reports. It belongs to
+///   the transport, not to the session.
+/// - **Readable does not promise bytes.** A pump may still report zero — the
+///   break decoder can be holding a partial `PARMRK` escape. It is a wakeup,
+///   not a guarantee, and a frontend that repaints only on a `Damage` event is
+///   already doing the right thing.
+/// - **Do not close it, and do not keep it past a disconnect.** It is the
+///   transport's own descriptor, not a copy.
+///
+/// Returns `-1` on Windows, where a serial port is a `HANDLE` and an
+/// `OVERLAPPED` event rather than a descriptor. A frontend that gets `-1` has
+/// to fall back to a timer, which is what that platform will need until this
+/// grows a second spelling.
+#[no_mangle]
+pub extern "C" fn tt_session_poll_fd(session: *const TtSession) -> c_int {
+    let s = session_ref!(session, -1);
+    #[cfg(unix)]
+    {
+        s.session.poll_fd().unwrap_or(-1)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = s;
+        -1
     }
 }
 

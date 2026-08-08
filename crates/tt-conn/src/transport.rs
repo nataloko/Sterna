@@ -71,6 +71,36 @@ pub trait Transport: Send {
         Ok(())
     }
 
+    /// A descriptor that becomes readable when there is something to
+    /// [`read`](Transport::read), for a frontend that would rather wait in its
+    /// own event loop than poll ours.
+    ///
+    /// This exists because the alternative is bad in both directions. A UI
+    /// thread that calls `read` directly blocks for the transport's read
+    /// timeout on every quiet line — which is the *normal* state of a serial
+    /// console — and one that polls on a timer burns a wakeup per frame
+    /// forever to discover nothing happened. Handing out the descriptor lets
+    /// the toolkit do what it is already good at: Qt's `QSocketNotifier`,
+    /// `poll(2)`, `epoll`, whatever the frontend runs on.
+    ///
+    /// Two caveats, both of which the caller must be able to take:
+    ///
+    /// - **Readable does not promise bytes.** `read` may still return `Ok(0)`
+    ///   — the break decoder can be holding a partial `PARMRK` escape whose
+    ///   remaining bytes have not arrived. Treat readiness as a wakeup, not as
+    ///   a guarantee.
+    /// - **The descriptor is borrowed and dies with the transport.** It is
+    ///   only valid while this `Transport` is alive; a frontend that caches it
+    ///   across a reconnect is watching a closed or recycled fd.
+    ///
+    /// `None` means the transport cannot be waited on this way and the caller
+    /// has to poll. Nothing implements that yet, but a Windows serial port
+    /// will: it has a `HANDLE` and an `OVERLAPPED` event, not a descriptor.
+    #[cfg(unix)]
+    fn poll_fd(&self) -> Option<std::os::unix::io::RawFd> {
+        None
+    }
+
     /// A short name for the status line — `/dev/ttyUSB0`, `user@host`.
     fn describe(&self) -> String;
 }

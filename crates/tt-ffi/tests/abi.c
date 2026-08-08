@@ -262,6 +262,11 @@ static void test_serial(void)
     CHECK_OK(tt_session_pump(s, 1, &got));
     CHECK(got == 0);
 
+    /* And there is nothing to wait on until something is connected. A shell
+     * that handed -1 to QSocketNotifier would abort, so this is the value the
+     * frontend branches on rather than one it can assume away. */
+    CHECK(tt_session_poll_fd(s) == -1);
+
     tt_session_free(s);
 }
 
@@ -282,6 +287,7 @@ static void test_null_safety(void)
     CHECK(tt_session_mouse_tracking(NULL) == TT_TRACKING_NONE);
     CHECK(tt_session_drain_events(NULL, NULL) == 0);
     CHECK(tt_session_pump(NULL, 0, NULL) == TT_ERR_INVALID);
+    CHECK(tt_session_poll_fd(NULL) == -1);
     CHECK(tt_session_send_text(NULL, "x", 1) == TT_ERR_INVALID);
     CHECK(tt_session_focus(NULL, true) == TT_ERR_INVALID);
     CHECK(tt_session_send_break(NULL, 1) == TT_ERR_INVALID);

@@ -491,6 +491,22 @@ impl crate::transport::Transport for SerialConn {
         Ok(())
     }
 
+    /// The port's own descriptor. `serialport-rs` opens the tty and we already
+    /// reach through to it for the patch layer, so there is nothing to
+    /// construct here — the same escape hatch, used for waiting instead of for
+    /// `termios`.
+    #[cfg(unix)]
+    fn poll_fd(&self) -> Option<std::os::unix::io::RawFd> {
+        use std::os::unix::io::AsRawFd;
+        // A dead port's fd is still open until `Drop` runs, but a frontend
+        // waiting on it would spin: EOF on a character device reads ready
+        // forever. Say no instead, and let the disconnect event do its job.
+        if self.dead {
+            return None;
+        }
+        Some(self.port.as_raw_fd())
+    }
+
     fn describe(&self) -> String {
         format!("{} {}", self.path, self.params.baud)
     }
