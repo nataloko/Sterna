@@ -476,7 +476,13 @@ int main(int argc, char **argv)
 		}
 	}
 
-	dump(stdout, cols, rows, term_id, want_attrs);
+	/*
+	 * The LIVE size, not the one from argv: XTWINOPS `CSI 8;h;w t` changes
+	 * NumOfColumns/NumOfLines mid-stream, and dumping the startup size after
+	 * that pads every row past its own width and reports a header the terminal
+	 * has outgrown.
+	 */
+	dump(stdout, NumOfColumns, NumOfLines, term_id, want_attrs);
 
 	free(input);
 	return 0;

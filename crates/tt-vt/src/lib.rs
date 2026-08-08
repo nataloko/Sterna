@@ -83,6 +83,12 @@ pub struct Config {
     pub alt_screen_enabled: bool,
     /// `TF_REMOTECLEARSBUFF` (`ttset.c:1950`, key default on). Gates `ED 3`.
     pub remote_clears_buffer: bool,
+    /// `WF_WINDOWCHANGE` (`ttset.c:1653`, key default on). Gates the XTWINOPS
+    /// operations that *change* something, including the resize.
+    pub window_change: bool,
+    /// `WF_WINDOWREPORT` (`ttset.c:1661`, key default on). Gates the ones that
+    /// answer back.
+    pub window_report: bool,
     pub scrollback_max: usize,
 }
 
@@ -99,6 +105,8 @@ impl Default for Config {
             accept_8bit_ctrl: true,
             alt_screen_enabled: true,
             remote_clears_buffer: true,
+            window_change: true,
+            window_report: true,
             // ttset.c:1213 MaxBuffSize. Not ttset.c:750's ScrollBuffSize (100),
             // which is the *initial* depth the user can grow up to this.
             scrollback_max: 10_000,
@@ -508,6 +516,36 @@ impl State {
         })
     }
 
+    /// `vtterm.c:CSSunSequence` — XTWINOPS, `CSI Ps ; ... t`.
+    ///
+    /// Only the two operations that mean something without a window are here.
+    /// Everything else in that switch asks the display layer where the window
+    /// is or moves it, and the answers would come from the oracle's stubs
+    /// rather than from Tera Term, so matching them would be matching a stub.
+    fn window_op(&mut self, params: &Params) {
+        match arg0(params, 0) {
+            // Set terminal size. A height or width of 0 or 1 is refused and
+            // replaced by the 24x80 default rather than honoured.
+            8 if self.config.window_change => {
+                let mut rows = arg0(params, 1);
+                let mut cols = arg0(params, 2);
+                if rows <= 1 {
+                    rows = 24;
+                }
+                if cols <= 1 {
+                    cols = 80;
+                }
+                self.grid.resize(cols as usize, rows as usize);
+            }
+            // Report terminal size, in the same spelling that sets it.
+            18 if self.config.window_report => {
+                let body = format!("8;{};{}t", self.grid.rows(), self.grid.cols());
+                self.send_csi(&body);
+            }
+            _ => {}
+        }
+    }
+
     /// `vtterm.c:CSDol` — the `$`-intermediate family, which is every
     /// rectangular area operation.
     fn csi_dollar(&mut self, params: &Params, action: char) {
@@ -722,6 +760,7 @@ impl State {
                 let bottom = arg(params, 1, rows).saturating_sub(1) as usize;
                 self.grid.set_scroll_region(top, bottom);
             }
+            't' => self.window_op(params),
             _ => {}
         }
     }

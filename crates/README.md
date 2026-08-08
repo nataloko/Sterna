@@ -106,6 +106,13 @@ behaviour looks like a bug until you check. Reproduced deliberately:
   halves outside the range are written with the full pen either way. So a
   DECERA under a bold pen leaves a bold cell on each edge and unbold cells
   between them. Case 56 pins it.
+- **Resizing truncates; it never reflows.** `ChangeBuffer` copies each line's
+  first `cols` cells and drops the rest, crushing a wide character cut by the
+  new right edge. Height is expressed by sliding the page over the scrollback
+  rather than by moving text: shrinking keeps the *top* rows unless the cursor
+  would fall off the bottom, in which case the page ends at the cursor and the
+  rows above it become scrollback; growing pulls lines back *out* of the
+  scrollback before it extends downward. Cases 59 to 62 pin all four paths.
 - **`ED 3` is not an erase either.** It is `ClearBuffer`, which drops the
   scrollback, homes the cursor and resets the scroll region — and only runs at
   all because `TF_REMOTECLEARSBUFF` ships on (`ttset.c:1950`).
@@ -137,6 +144,9 @@ behaviour looks like a bug until you check. Reproduced deliberately:
   that spelling, which is how this surfaced; it carries the XFAIL in
   `oracle/upstream.cases`. Fixing it means normalising the byte stream before
   `vte` sees it, which has not been worth the scanner so far.
-- Not yet implemented at all: DECLRMM, mouse reporting, DCS, and the window
-  control and report sequences `WF_WINDOWCHANGE` / `WF_WINDOWREPORT` enable —
-  including the `CSI 8;h;w t` resize.
+- Of XTWINOPS, only `CSI 8;h;w t` (set terminal size) and `CSI 18 t` (report
+  it) are implemented. The rest of that switch asks the display layer where the
+  window is or moves it, so in a headless diff the answers would come from the
+  oracle's *stubs* rather than from Tera Term, and matching them would be
+  matching a stub.
+- Not yet implemented at all: DECLRMM, mouse reporting, and DCS.

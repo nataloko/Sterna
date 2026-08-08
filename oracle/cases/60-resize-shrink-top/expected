@@ -1,0 +1,7 @@
+# termitta-oracle 1
+# term vt100 12x4
+# cursor 0,1
+  0 |row1        |
+  1 |row2        |
+  2 |row3        |
+  3 |row4        |

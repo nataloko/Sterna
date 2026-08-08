@@ -37,9 +37,9 @@ unicodebuf-decsel.sh                 | --cols 80 --rows 24 --attrs |
 #38169-deccara-color.sh              | --cols 80 --rows 24 --attrs |
 #38170-deccara-kanji-broken.sh       | --cols 80 --rows 24 --attrs |
 decfra.sh                            | --cols 80 --rows 24 --attrs |
+unicodebuf-irm3.sh                   | --cols 80 --rows 24 --attrs |
 
 # --- known divergences ---------------------------------------------------
-unicodebuf-irm3.sh                   | --cols 80 --rows 24 --attrs | XFAIL: XTWINOPS `CSI 8;h;w t` resize not implemented, so the script's 20-column screen stays 80 wide
 #38168-deccara-range.sh              | --cols 80 --rows 24 --attrs | XFAIL: the script opens with `ESC [ * 2 x`, an intermediate BEFORE its parameter. Tera Term's CSI parser accepts the two in any order; the `vte` crate follows ECMA-48 and ignores the sequence, so DECSACE never reaches rectangle mode
 unicodebuf-combining-spacing_mark.pl | --cols 80 --rows 24 --attrs | XFAIL: spacing combining marks advance the cursor; only nonspacing are modelled
 

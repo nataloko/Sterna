@@ -50,6 +50,11 @@ pub const DEFAULT_BG: u32 = 0;
 
 // --- cell width ----------------------------------------------------------
 
+/// `BuffXMax` (`buffer.c:82`), which is `TermWidthMax`. There is no matching
+/// row cap on the resize path — `BuffChangeTerminalSize` clamps the height to
+/// `ts.ScrollBuffMax` instead, so a very tall terminal is legal.
+pub const BUFF_X_MAX: usize = 500;
+
 /// One column.
 pub const WIDTH_NARROW: u8 = 0;
 /// Two columns; the cell to the right is [`WIDTH_PAD`].
@@ -290,6 +295,92 @@ impl Grid {
 
     pub fn scrollback(&self) -> impl Iterator<Item = &Line> {
         self.scrollback.iter()
+    }
+
+    /// `buffer.c:BuffChangeTerminalSize` — the resize behind XTWINOPS
+    /// `CSI 8 ; h ; w t`.
+    ///
+    /// Content is **truncated, never reflowed**: every line keeps its first
+    /// `cols` cells, a wide character cut by the new right edge is crushed, and
+    /// growing pads with blanks. `TF_CLEARONRESIZE` is off by default, so the
+    /// screen survives; what moves is which lines the page covers.
+    ///
+    /// Height is the interesting half, and upstream expresses it by sliding
+    /// `PageStart` rather than by moving text:
+    ///
+    /// - **Shrinking** keeps the *top* rows and drops the rest — unless the
+    ///   cursor would fall off the bottom, in which case the page instead ends
+    ///   at the cursor's line and everything above it becomes scrollback.
+    /// - **Growing** pulls lines back *out of the scrollback* to fill the new
+    ///   rows, and only extends downward once the scrollback runs out.
+    pub fn resize(&mut self, cols: usize, rows: usize) {
+        let cols = cols.clamp(1, BUFF_X_MAX);
+        let rows = rows.clamp(1, self.scrollback_max.max(1));
+        if cols == self.cols && rows == self.rows {
+            return;
+        }
+        let pen = self.pen;
+
+        // 1. Width, over the scrollback and the page alike — `ChangeBuffer`
+        //    copies both through the same `memcpyW` and the same kanji fixup.
+        let fit = |line: &mut Line| {
+            line.resize(cols, Cell::erased(Pen::default()));
+            if line[cols - 1].width_class == WIDTH_WIDE {
+                line[cols - 1].crush();
+            }
+        };
+        for line in &mut self.scrollback {
+            fit(line);
+        }
+        for line in &mut self.lines {
+            fit(line);
+        }
+        // The parked main screen is not upstream's to resize — it lives in a
+        // separate allocation there — but every line here is required to be
+        // `cols` wide, so it comes along rather than being left ragged.
+        if let Some(stash) = &mut self.stashed {
+            for line in stash.iter_mut() {
+                fit(line);
+            }
+        }
+
+        // 2. Height, as the page sliding over the scrollback.
+        let cy = self.cursor.y;
+        if rows < self.rows {
+            if rows > cy + 1 {
+                self.lines.truncate(rows);
+            } else {
+                // The page ends at the cursor; everything above it scrolls off.
+                let first = cy + 1 - rows;
+                let scrolled: Vec<Line> = self.lines.drain(..first).collect();
+                for line in scrolled {
+                    self.push_scrollback(line);
+                }
+                self.lines.truncate(rows);
+                self.cursor.y = rows - 1;
+            }
+        } else if rows > self.rows {
+            let wanted = rows - self.rows;
+            let from_scrollback = wanted.min(self.scrollback.len());
+            for _ in 0..from_scrollback {
+                let line = self.scrollback.pop_back().expect("checked len");
+                self.lines.insert(0, line);
+            }
+            self.cursor.y += from_scrollback;
+            for _ in 0..(wanted - from_scrollback) {
+                self.lines.push(vec![Cell::erased(pen); cols]);
+            }
+        }
+
+        self.cols = cols;
+        self.rows = rows;
+
+        // 3. Margins, tab stops and the cursor all go back to a known state.
+        self.top = 0;
+        self.bottom = rows - 1;
+        self.tabs = default_tabs(cols);
+        self.cursor.x = self.cursor.x.min(cols - 1);
+        self.cursor.y = self.cursor.y.min(rows - 1);
     }
 
     /// RIS. Everything except the scrollback, which survives a reset in Tera
