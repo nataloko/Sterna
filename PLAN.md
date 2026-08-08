@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 45
+**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 46
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -383,7 +383,7 @@ Deliberately absent: file transfer, macros, tabs, Windows build, most settings.
 screen), `tt-charset` (ISO-2022 and DEC special graphics), `tt-vt` (the state
 machine, `vte` for byte-level parsing), and `tt-dump` (a CLI that speaks the
 oracle's argument set and dump format). `./run_diff.sh` feeds every case to
-**both** engines and diffs them against each other. **92 cases: 91 matching and
+**both** engines and diffs them against each other. **93 cases: 92 matching and
 one known divergence.**
 
 **The design decision worth recording: the differential suite has no golden
@@ -435,8 +435,27 @@ through their out-parameters. None of it was reachable until something called
 the mouse path.
 
 **The lesson generalises: "not testable against the oracle" is worth
-re-examining before it becomes a design constraint.** The same shape of answer
-probably exists for key input, which is the other half of the frontend seam.
+re-examining before it becomes a design constraint.** It paid off again
+immediately — see the key table below, where the answer was the same shape.
+
+#### And the key table, which is bytes *out*
+
+`keyboard.c` now compiles into the oracle too (1,651 lines), so `tt.key <name>`
+runs Tera Term's own `GetKeyStr()` and one case sweeps **55 keys across 10 mode
+combinations**. The table was never transcribed.
+
+Reaching it needed `src/keys.c` to `#include` the translation unit, because
+`GetKeyStr` is `static` — upstream stays unmodified, and 200-odd escape
+sequences stay untyped. The obvious alternative, driving the public
+`KeyCodeSend()`, is worse: it routes through the delayed-send queue, so it
+would have dragged an async subsystem into an answer decided before it.
+
+Compiling it found two more places the oracle had been standing in for upstream
+and getting it wrong: `keyboard.c` **owns** `AppliKeyMode`, `AppliCursorMode`,
+`AppliEscapeMode`, `AutoRepeatMode` and `Send8BitMode`, which `stubs_manual.c`
+had been defining — so `vtterm.c` set a mode and the real key table would never
+have seen it — and `ShiftKey`/`ControlKey`/`AltKey` are upstream's, over
+`GetAsyncKeyState`, rather than three booleans of ours.
 
 #### What the harness caught, which is the point of having it
 
@@ -645,8 +664,9 @@ file/dir 1k, connection/terminal 2k, dialogs 0.8k, misc 1k — **~9.3k Rust vs
 1. **✅ Differential testing against real Tera Term** — `oracle/` built and
    green, and as of Stage 1 actually wired up: `./run_diff.sh` feeds identical
    byte streams to it and to the Rust engine and diffs the grid dumps *and the
-   replies*, in CI on every commit. 92 cases. Since the oracle also takes
-   injected mouse and focus events, this covers the input seam too. **This is
+   replies*, in CI on every commit. 93 cases. Since the oracle also takes
+   injected mouse, focus and **key** events — and compiles `keyboard.c` for the
+   last of those — this covers both halves of the frontend seam. **This is
    the asset the whole project rests on**, and it is now a gate rather than a
    promise.
 2. **⬜ esctest2** (iTerm2) — ~1000 automated DEC/xterm conformance assertions

@@ -32,7 +32,7 @@ drawing calls. The engine was already separable; nobody had separated it.
 
 ```sh
 make          # build build/oracle
-make test     # run the regression suite (18 cases)
+make test     # run the regression suite (72 cases)
 ./run_tests.sh --bless   # regenerate goldens after an intentional change
 ```
 
@@ -40,20 +40,25 @@ Needs `gcc` and Python 3.11+ (for the two generator scripts). Nothing else.
 
 ## What gets compiled
 
-**15,325 lines of Tera Term, unmodified** — no `#ifdef` sprinkling, no forked
-copies:
+**16,976 lines of Tera Term**, all but five of them unmodified — no `#ifdef`
+sprinkling, no forked copies:
 
 | Source | Lines | Why |
 |---|---:|---|
 | `teraterm/vtterm.c` | 5,939 | The escape-sequence state machine |
 | `teraterm/buffer.c` | 6,143 | Grid, scrollback, attributes, wide/combining |
+| `teraterm/keyboard.c` | 1,651 | The key table — bytes *out*, via `src/keys.c` |
 | `teraterm/charset.cpp` | 1,082 | ISO-2022 designation and invocation |
 | `teraterm/unicode.cpp` | 979 | East-asian width, combining, emoji, virama tables |
 | `common/ttlib_charset.cpp`, `teraterm/checkeol.cpp`, `common/asprintf.cpp`, `common/tttypes_termid.cpp`, `common/makeoutputstring.cpp` | 1,182 | Support |
 
+`vtterm.c` and `buffer.c` are compiled from patched *copies* under
+`build/patched/` — five one-line fixes for defects drafted in
+`docs/upstream-bugs.md`, and nothing else. Tera Term's tree is never modified.
+
 Adding a real Tera Term source to `TT_CXX` in the Makefile is **always**
 preferable to reimplementing its behaviour in a stub. Every stub is a place the
-oracle can lie.
+oracle can lie, and this README has three worked examples of it doing so.
 
 ## Layout
 
