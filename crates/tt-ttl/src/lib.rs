@@ -17,6 +17,8 @@ pub mod buffer;
 pub mod conncmds;
 pub mod error;
 pub mod expr;
+pub mod filecmds;
+pub mod files;
 pub mod host;
 pub mod interp;
 pub mod lexer;

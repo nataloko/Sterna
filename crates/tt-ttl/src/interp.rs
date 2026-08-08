@@ -16,6 +16,7 @@
 use crate::buffer::Buffers;
 use crate::error::{TtlError, TtlResult};
 use crate::expr::{self, Eval};
+use crate::files::Files;
 use crate::host::{ErrorReport, ScriptHost};
 use crate::lexer::{check_reserved, Lexer};
 use crate::rsv::Rsv;
@@ -48,11 +49,20 @@ pub struct Interp {
     /// The `wait` patterns, and the line the far end is part-way through.
     pub(crate) waits: WaitSet,
     pub(crate) recv_line: RecvLine,
+    /// The sixteen file handles and the directory relative paths hang off.
+    pub(crate) files: Files,
 }
 
 impl Interp {
-    /// Load a macro. `name` is only used in error reports.
+    /// Load a macro.
+    ///
+    /// `name` names it in error reports, and — when it is an absolute path —
+    /// is also where `CurrentDir` starts, which is what a relative filename in
+    /// a file command resolves against. `TTLStart` does the same
+    /// (`ttl.cpp:267`).
     pub fn new(name: impl Into<String>, body: Vec<u8>, host: &mut dyn ScriptHost) -> Self {
+        let name = name.into();
+        let files = Files::new(&name);
         let mut it = Interp {
             lx: Lexer::new(),
             vars: Vars::new(),
@@ -64,8 +74,9 @@ impl Interp {
             ended: false,
             waits: WaitSet::new(),
             recv_line: RecvLine::new(),
+            files,
         };
-        it.buf.open(name.into(), body);
+        it.buf.open(name, body);
         it.define_system_variables(&[]);
         it.register_labels(host);
         it
@@ -438,6 +449,9 @@ impl Interp {
             return r;
         }
         if let Some(r) = self.session_command(host, w) {
+            return r;
+        }
+        if let Some(r) = self.file_command(host, w) {
             return r;
         }
         match w {
