@@ -83,6 +83,12 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/termitta myrouter        # an alias out of ~/.ssh/config
 ./build/termitta --shell         # a local login shell
 
+cd packaging/appimage            # the only Linux artifact — build it in
+                                 # termitta-fedora, never here
+./build.sh                       # → build/termitta-x86_64.AppImage
+./build.sh --clean               # ...from scratch
+./build.sh --run                 # ...and start it
+
 cd esctest                       # conformance, from inside our own terminal
 ./run_tests.sh                   # 568 cases; gates on drift from `expected`
 ./run_tests.sh CUPTests          # just the ones matching (a regex)
@@ -287,6 +293,29 @@ something other than what it is.
   mouse mode and made DECRQM answer "permanently reset" for all of them. When
   adding a setting, the rule is the same as for the flag words: find the key,
   not the initialiser.
+And for the AppImage, where two of the three failures are silent:
+
+- **linuxdeploy's `patchelf` corrupts every library it bundles on Fedora 44.**
+  It predates `.relr.dyn`, the compact relocation format the base uses
+  everywhere. Its `strip` hits the same wall and says so out loud — "unknown
+  type [0x13]" — so `NO_STRIP=1` is set; its `patchelf` says nothing, and the
+  file comes out ~2 KB larger and **segfaults in its own `_init`**, before
+  `main`, before Qt can log a word. Whichever bundled library the loader
+  reaches first is the one in the backtrace, so the crash appears to move
+  between libgomp, libicudata and whatever else and to be *about* that library.
+  `packaging/appimage/build.sh` lets linuxdeploy do the discovery and then puts
+  the originals back, resolving by `LD_LIBRARY_PATH` instead of by rpath.
+- **A Wayland window that never appears is not an error.** Qt's Wayland
+  platform plugin needs `wayland-shell-integration/libxdg-shell.so` to create
+  an `xdg_toplevel`; without it the process binds the registry and sits there
+  with no window, no warning and no non-zero exit — which is indistinguishable
+  from a working headless run. `WAYLAND_DEBUG=1` and a grep for
+  `get_xdg_surface` is the only check that tells them apart, and it is why
+  "it stayed alive for 8 seconds" was wrong the first time.
+- **The desktop has Qt 6.11.1 installed, so an AppImage that quietly used the
+  host's Qt would pass every obvious test.** Check
+  `/proc/<pid>/maps` for where `libQt6Core.so.6` actually came from; it must be
+  the `/tmp/.mount_termit*` path.
 - **A named constant can be a flag word too, and `IdTitleReportEmpty` is.** It
   is **24**, which is `WF_TITLEREPORT` entire (8|16) — so
   `TitleReportSequence`'s "Empty" default sets *both* bits and lands on the
@@ -564,6 +593,7 @@ PLAN.md          roadmap + status — read first
 ATTRIBUTION.md   licensing, and what still needs clearing before vendoring
 oracle/          Tera Term's real VT engine, headless on Linux (see its README)
 esctest/         the conformance suite, run inside our own terminal (see its README)
+packaging/       the AppImage, which is the whole of Linux packaging (see its README)
 xfer/            Stage 0 spike 2 — ttpfile's protocols, running and interoperating
 serial-audit/    Stage 0 spike 4 — serialport-rs vs commlib.c, on real hardware
 telnet-audit/    a real telnetd, so the telnet port has an independent check

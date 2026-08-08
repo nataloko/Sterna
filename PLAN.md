@@ -120,9 +120,11 @@ the trigger to watch — not CJK, and not toolkit fashion.
   The obligations that follow are small but real and constrain packaging, so
   they are recorded rather than rediscovered: **never static-link Qt**; ship it
   as separate shared libraries so a user can substitute their own build; and
-  carry the LGPL text plus an offer of Qt's source. On Fedora this costs
-  nothing — Qt is in-distro and the rpm just depends on it. On Windows it means
-  bundling ~30 MB of Qt DLLs in the installer, which is the real price of the
+  carry the LGPL text plus an offer of Qt's source. **This binds on both
+  platforms**, because Linux is an AppImage and an AppImage bundles Qt — the
+  "Fedora just depends on the distro's Qt" escape hatch went away with the rpm
+  (see Stage 1). So ~30 MB of Qt rides in the Windows installer and a
+  comparable weight of `libQt6*.so` in the image, which is the real price of the
   toolkit choice and belongs in the README's size numbers.
 - **Vendoring clearance: done, and it corrected an assumption.** `ttpfile/*.c`
   and the 14 `.lng` files are clear under Tera Term's 3-clause BSD. But 45 of
@@ -395,7 +397,39 @@ Must be shippable and genuinely useful, not a demo.
   `[time] ` line prefixes, generation rotation, and a live indicator in the
   window. The text tap is inside `tt-vt` at upstream's `FLogPutUTF32` seam
   rather than a second escape-sequence stripper beside the log.
-- rpm + AppImage. Fedora first.
+- **AppImage. And only an AppImage** — decided 2026-08-08, ✅ **built the same
+  day**; see `packaging/README.md`. No rpm, and by the same decision no deb
+  later. One artifact, one thing to test, and no per-distro
+  packaging to keep alive alongside the Windows installer while the project is
+  one person. It also suits the machine this is being written for: the host is
+  Bluefin, an image-based Fedora where layering an rpm is the awkward path and
+  a self-contained binary is the ordinary one.
+
+  **The cost lands on the Qt licence, and it is not zero.** The posture above
+  assumed Linux would be an rpm depending on in-distro Qt, which costs nothing;
+  an AppImage *bundles* Qt, so Linux now carries the same obligations Windows
+  does — never static-link it, keep it as separate shared libraries a user can
+  substitute, and ship the LGPL text plus an offer of Qt's source **inside the
+  image**. That is a build step, not a note in a README, and
+  `packaging/appimage/build.sh` does it.
+
+  **Measured from the image on the desktop:** 37 MB on disk, 43 MB RSS / 33 MB
+  PSS with a shell attached under Wayland, ~144 ms from exec to a mapped window
+  — the last of which includes mounting the SquashFS, a cost the build tree does
+  not pay. The base is `termitta-fedora`, so the **glibc floor is 2.43**: this
+  image runs on Fedora 44 and not much else yet, which is deliberate and
+  temporary. Reaching older distributions needs an older base *and* a Qt fetched
+  separately, because the distributions that give reach also ship old Qt — the
+  Ubuntu 24.04 container was rejected as a base for exactly that reason, its
+  Qt 6.4.2 being the one that costs 62 MB of extra private memory under Wayland.
+
+  **Two of the three ways this fails are silent**, both now in `CLAUDE.md`:
+  linuxdeploy's `patchelf` predates `.relr.dyn` and corrupts every library it
+  bundles, which presents as a segfault in the `_init` of whichever one the
+  loader reaches first; and a Qt Wayland plugin with no shell integration binds
+  the registry, maps no window, warns about nothing and never exits non-zero —
+  which looks exactly like a working headless run and was briefly counted as
+  one here.
 
 **Done when:** the Wine shortcut gets deleted and it's daily-driven for serial
 console work.
@@ -968,7 +1002,8 @@ Tabs and sessions; session duplication as an in-process concept rather than
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
 DEC special graphics (line drawing — not CJK, and needed), macro reference docs,
-Lua plugin API, sixel, self-updater, deb.
+Lua plugin API, sixel, self-updater. **No deb** — the AppImage-only decision in
+Stage 1 covers this too.
 
 **Realistic total to a credible replacement: 15–20 months solo with AI
 assistance.** Full parity is 3+ years and should be explicitly renounced in the

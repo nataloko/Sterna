@@ -118,7 +118,23 @@ target_link_libraries(pty_test PRIVATE termitta_shell)
 target_compile_options(pty_test PRIVATE -Wall -Wextra)
 add_test(NAME pty COMMAND pty_test)
 
-# So the build tree runs without LD_LIBRARY_PATH. An installed build gets a
-# real rpath when there is packaging to hang it off; there is not yet.
+# So the build tree runs without LD_LIBRARY_PATH, and so an installed one finds
+# the core next to itself.
+#
+# The install rpath is `$ORIGIN/../lib` and not a path, because the whole point
+# of the AppImage is that it has no idea where it will be mounted. Cargo gives a
+# cdylib no `DT_SONAME` (see `tt-ffi/build.rs`), so what the binary records is
+# whatever path the linker was handed — which out of tree is *relative*, and ran
+# only from the build directory until that was fixed.
 set_target_properties(termitta render_test ssh_test telnet_test pty_test PROPERTIES
-    BUILD_RPATH "${TT_CARGO_DIR}/${TT_CARGO_SUBDIR}")
+    BUILD_RPATH "${TT_CARGO_DIR}/${TT_CARGO_SUBDIR}"
+    INSTALL_RPATH "$ORIGIN/../lib")
+
+# --- install -----------------------------------------------------------------
+#
+# `lib` and `bin` spelled out rather than taken from GNUInstallDirs: this
+# prefix is an AppDir, not a system one, and on Fedora GNUInstallDirs would say
+# `lib64` while everything downstream — linuxdeploy, the AppRun it writes —
+# expects `usr/lib`. A packaging layout is not a distribution layout.
+install(TARGETS termitta RUNTIME DESTINATION bin)
+install(FILES "${TT_CORE_LIB}" DESTINATION lib)
