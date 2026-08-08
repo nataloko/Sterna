@@ -101,6 +101,18 @@ pub struct Config {
     /// `WF_WINDOWREPORT` (`ttset.c:1661`, key default on). Gates the ones that
     /// answer back.
     pub window_report: bool,
+    /// DECRQCRA, the rectangular-area checksum — **and the one thing here that
+    /// is not upstream's**. Tera Term has no `CSI * y` at all; `vtterm.c` never
+    /// mentions a checksum, so the faithful answer to the request is silence,
+    /// and that is what the default gives.
+    ///
+    /// It exists because it is the only way to read a cell back over the wire,
+    /// and `esctest/` — iTerm2's conformance suite, which runs *inside* the
+    /// terminal — asserts on screen contents through nothing else. So the
+    /// conformance harness turns it on and everything else leaves it off,
+    /// which keeps a real connection byte-for-byte Tera Term while still
+    /// letting a thousand assertions look at the grid.
+    pub decrqcra: bool,
     /// `ts.Send8BitCtrl` (`ttset.c:1283`, key default off). Above VT level 1 it
     /// decides whether replies use 8-bit C1 introducers; DECSCL can turn it on
     /// as well.
@@ -204,6 +216,7 @@ impl Default for Config {
             remote_clears_buffer: true,
             window_change: true,
             window_report: true,
+            decrqcra: false,
             send_8bit_ctrl: false,
             cursor_shape: 1,
             nonblinking_cursor: false,
@@ -1229,6 +1242,53 @@ impl State {
         })
     }
 
+    /// DECRQCRA — `CSI Pid ; Pp ; Pt ; Pl ; Pb ; Pr * y`, answered
+    /// `DCS Pid ! ~ HHHH ST`.
+    ///
+    /// **Nothing upstream corresponds to this**; see [`Config::decrqcra`] for
+    /// why it exists and why it is off by default. Three decisions it makes on
+    /// its own, none of which upstream can arbitrate:
+    ///
+    /// - **The sum is over characters only, not attributes.** DEC STD 070 folds
+    ///   the attribute bits in and xterm has resources to choose; `esctest`
+    ///   asserts that a single cell's checksum *equals its character code*, so
+    ///   anything added here would make every screen assertion in the suite
+    ///   fail. A combining mark adds its own codepoint, and the padding half of
+    ///   a wide character holds no codepoint and so adds nothing.
+    /// - **It is the plain sum, not the two's complement.** That is xterm from
+    ///   patch #279 onward; the harness passes `--xterm-checksum` high enough
+    ///   to say so.
+    /// - **An erased cell counts as a space**, because that is what an erase
+    ///   leaves in the grid — Tera Term has no "empty versus blank"
+    ///   distinction to preserve, which is xterm's behaviour from patch #334.
+    ///
+    /// An inverted rectangle answers zero rather than staying silent. The
+    /// rectangular *operations* return without acting on one, which is
+    /// upstream's behaviour and fine for something with no reply; doing the
+    /// same to a request would leave the far end waiting on an answer that
+    /// never comes.
+    fn decrqcra(&mut self, params: &Params) {
+        if !self.config.decrqcra {
+            return;
+        }
+        let id = arg0(params, 0);
+        let sum = match self.area_rect(params, 2) {
+            Some(area) => {
+                let mut sum: u16 = 0;
+                for y in area.y0..=area.y1 {
+                    for cell in &self.grid.line(y)[area.x0..=area.x1] {
+                        for cp in cell.codepoints() {
+                            sum = sum.wrapping_add(cp as u16);
+                        }
+                    }
+                }
+                sum
+            }
+            None => 0,
+        };
+        self.send_dcs(&format!("{id}!~{sum:04X}"));
+    }
+
     /// `vtterm.c:SoftReset` — DECSTR (`CSI ! p`), and the first half of
     /// DECSCL.
     fn soft_reset(&mut self) {
@@ -2069,6 +2129,8 @@ impl Perform for State {
                 2 => self.rect_mode = true,
                 _ => {}
             },
+            // DECRQCRA. Not upstream's — see `Config::decrqcra`.
+            (Some(b'*'), 'y') => self.decrqcra(params),
             // DECSTR, the soft reset.
             (Some(b'!'), 'p') => self.soft_reset(),
             // DECSCL. It soft-resets, re-reads the terminal id's level, and
@@ -2587,6 +2649,83 @@ mod tests {
         vt.mouse_event(MouseEvent::Press, 0, 24, 80, Modifiers::default());
         vt.focus_event(true);
         assert!(vt.reply().is_empty());
+    }
+
+    fn checksummer(cols: usize, rows: usize) -> Vt {
+        Vt::new(Config {
+            cols,
+            rows,
+            decrqcra: true,
+            ..Config::default()
+        })
+    }
+
+    #[test]
+    fn decrqcra_is_silent_unless_it_is_asked_for() {
+        // The default, and the faithful one: `vtterm.c` has no `CSI * y`.
+        let vt = run(b"ab\x1b[42;0;1;1;1;2*y", 10, 2);
+        assert!(vt.reply().is_empty());
+    }
+
+    #[test]
+    fn decrqcra_sums_the_characters_in_the_rectangle() {
+        let mut vt = checksummer(10, 2);
+        vt.feed(b"ab\x1b[42;0;1;1;1;2*y");
+        // 'a' + 'b' = 0x61 + 0x62.
+        assert_eq!(vt.take_reply(), b"\x1bP42!~00C3\x1b\\");
+    }
+
+    #[test]
+    fn decrqcra_reads_one_cell_as_its_own_character() {
+        // The shape the whole conformance suite is built on: a single-cell
+        // request must come back as exactly that character's code.
+        let mut vt = checksummer(10, 2);
+        vt.feed(b"Hi\x1b[7;0;1;1;1;1*y");
+        assert_eq!(vt.take_reply(), b"\x1bP7!~0048\x1b\\");
+    }
+
+    #[test]
+    fn decrqcra_counts_an_erased_cell_as_a_space() {
+        // xterm from patch #334, and the only thing our grid can say: an
+        // erase leaves a space behind, not a distinguishable "empty".
+        let mut vt = checksummer(10, 2);
+        vt.feed(b"X\x1b[2J\x1b[1;0;1;1;1;1*y");
+        assert_eq!(vt.take_reply(), b"\x1bP1!~0020\x1b\\");
+    }
+
+    #[test]
+    fn decrqcra_answers_an_inverted_rectangle_with_zero() {
+        // The rectangular *operations* return silently on one. A request
+        // cannot: the far end is waiting.
+        let mut vt = checksummer(10, 4);
+        vt.feed(b"\x1b[9;0;3;1;2;1*y");
+        assert_eq!(vt.take_reply(), b"\x1bP9!~0000\x1b\\");
+    }
+
+    #[test]
+    fn decrqcra_defaults_the_rectangle_to_the_whole_screen() {
+        let mut vt = checksummer(4, 2);
+        vt.feed(b"ab\x1b[5*y");
+        // Two written cells plus six spaces.
+        let want = 0x61 + 0x62 + 6 * 0x20;
+        assert_eq!(
+            vt.take_reply(),
+            format!("\x1bP5!~{want:04X}\x1b\\").as_bytes()
+        );
+    }
+
+    #[test]
+    fn decrqcra_follows_the_reply_encoding_the_terminal_was_told_to_use() {
+        let mut vt = Vt::new(Config {
+            cols: 10,
+            rows: 2,
+            decrqcra: true,
+            term_id: TermId::Vt320,
+            ..Config::default()
+        });
+        // S8C1T, so the reply is wrapped in 8-bit DCS/ST rather than ESC P … ESC \.
+        vt.feed(b"a\x1b G\x1b[3;0;1;1;1;1*y");
+        assert_eq!(vt.take_reply(), b"\x903!~0061\x9c");
     }
 
     #[test]
