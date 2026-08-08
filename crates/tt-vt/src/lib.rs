@@ -327,6 +327,24 @@ pub struct Vt {
     /// chunk boundaries for the same reason. A byte in `80..=9F` is a C1
     /// control only when nothing is expecting it.
     utf8_left: u8,
+    /// The start of that sequence, held back rather than handed to `vte`.
+    ///
+    /// **`vte` 0.15.0 loses bytes when it resumes one.**
+    /// `advance_partial_utf8` (`lib.rs:687`) fills a 4-byte buffer, decodes it,
+    /// prints only the *first* character — "we just ignore the rest", says the
+    /// comment — and then returns `valid_up_to()` as the number of bytes it
+    /// consumed. Any complete character between that first one and the
+    /// incomplete tail is dropped without a trace. Reachable whenever a 2-byte
+    /// sequence is cut by a read boundary and the next read holds exactly one
+    /// ASCII byte before another multi-byte lead: `[C3 A9]` split as
+    /// `[.. C3] [A9 'a' E4 B8 80]` prints `é一` and eats the `a`.
+    ///
+    /// So the partial sequence never reaches `vte` at all — it waits here and
+    /// goes out with the next chunk. That is the right place for it regardless:
+    /// this walk already has to know where sequences begin and end, because
+    /// telling a continuation byte from a bare C1 control is the whole reason
+    /// [`Vt::rewrite_c1`] exists.
+    held: Vec<u8>,
 }
 
 impl Vt {
@@ -348,6 +366,7 @@ impl Vt {
             },
             pending_c2: false,
             utf8_left: 0,
+            held: Vec::new(),
         }
     }
 
@@ -391,7 +410,14 @@ impl Vt {
     fn rewrite_c1(&mut self, bytes: &[u8]) -> Vec<u8> {
         let accept = self.state.config.accept_8bit_ctrl;
         let level = self.state.vt_level;
-        let mut out = Vec::with_capacity(bytes.len());
+        // Whatever was held back last time leads off, already vetted. If it is
+        // there at all then `utf8_left` is non-zero, so the loop below picks up
+        // mid-sequence exactly where it left off.
+        let mut out = std::mem::take(&mut self.held);
+        out.reserve(bytes.len());
+        // Where the sequence in progress starts in `out`. Only meaningful while
+        // `utf8_left > 0`, and 0 on entry because that is where `held` put it.
+        let mut seq_start = 0;
 
         for &b in bytes {
             if self.pending_c2 {
@@ -427,14 +453,17 @@ impl Vt {
                 0xc2 => self.pending_c2 = true,
                 0xc0..=0xdf => {
                     self.utf8_left = 1;
+                    seq_start = out.len();
                     out.push(b);
                 }
                 0xe0..=0xef => {
                     self.utf8_left = 2;
+                    seq_start = out.len();
                     out.push(b);
                 }
                 0xf0..=0xf7 => {
                     self.utf8_left = 3;
+                    seq_start = out.len();
                     out.push(b);
                 }
                 // A bare C1 byte. Invisible until a line is not 8-bit clean or
@@ -445,6 +474,13 @@ impl Vt {
                 0x80..=0x9f => out.extend_from_slice("\u{fffd}".as_bytes()),
                 _ => out.push(b),
             }
+        }
+
+        // A sequence still in progress goes no further. See [`Vt::held`] — the
+        // point is that `vte` never sees a partial one, because its resumption
+        // path drops bytes.
+        if self.utf8_left > 0 {
+            self.held = out.split_off(seq_start);
         }
         out
     }
