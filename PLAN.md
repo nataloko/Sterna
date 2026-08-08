@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 64
+**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 69
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -362,13 +362,15 @@ Must be shippable and genuinely useful, not a demo.
   remains is selection, which is a frontend concept the grid only has to
   support.
 - `tt-conn`: **serial first** (the differentiator), then SSH2 via `russh`, then
-  telnet, then local PTY via `portable-pty`. 🔵 **serial and SSH done** — the
-  patch layer spike 4 specified is built and green on the loopback rig
+  telnet, then local PTY via `portable-pty`. 🔵 **serial, SSH and telnet done**
+  — the patch layer spike 4 specified is built and green on the loopback rig
   (`CMSPAR` parity, `PARMRK` break detection, `VSTART`/`VSTOP`, a userspace
-  DSR-flow shim, by-path port identity), and SSH is built on `russh` with a
+  DSR-flow shim, by-path port identity); SSH is built on `russh` with a
   caller-driven prompt lifecycle, 15 integration tests against real OpenSSH and
-  real dropbear, and its own `known_hosts` and `ssh_config` readers. Telnet and
-  pty remain. See `crates/tt-conn/README.md` and below.
+  real dropbear, and its own `known_hosts` and `ssh_config` readers; telnet is
+  ported from `telnet.c` plus `ttcmn.c`'s framing, with 28 unit tests and 10
+  against a real `telnetd`. **Only the local pty remains.** See
+  `crates/tt-conn/README.md` and below.
 - `tt-session`: the loop between engine and transport, and what the C ABI
   exports. ✅ **done** — 20 tests, three of them over the real wire. See
   `crates/tt-session/README.md`.
@@ -803,6 +805,43 @@ doesn't work". `IdentityFile` is the one exception and accumulates.
 an arbitrary shell command every time the connect dialog enumerates hosts.
 Keywords that are not acted on are *reported* rather than dropped, because a
 silently ignored `ProxyJump` is a connection to the wrong machine.
+
+#### Telnet, and why "raw" is a first-class mode
+
+`crates/tt-conn/src/telnet/`, 2026-08-08. Ported from `telnet.c` **and**
+`ttpcmn/ttcmn.c`, which is the first thing to know: the IAC framing and the
+option negotiation live in different files upstream and the framing runs first.
+`ttcmn.c` unescapes `IAC IAC`, swallows the `NUL` after a `CR`, and only then
+hands bytes to `telnet.c`. Reading `telnet.c` alone gives a parser that doubles
+every `0xFF` and passes `CR NUL` through to the terminal.
+
+**The mode follows the port, and that is the design.** Upstream sends its
+opening negotiation only when the port is 23 (`vtwin.cpp:3666`,
+`ts.TCPPort == ts.TelPort`), which reads like an oversight and is not: a
+terminal server puts one TCP port on each serial line, those ports are not
+telnet servers, and opening at one with `WILL TERMINAL-TYPE` puts five bytes of
+protocol into somebody's console. So `Raw` is a first-class choice — an `0xFF`
+in a firmware upload is data, and a client that eats it corrupts the transfer —
+`Auto` is upstream's `TelAutoDetect`, and `Negotiate` is the burst.
+
+Two upstream behaviours are reproduced that look like bugs and are decisions:
+`MaxTelOpt` is 34, so `NEW-ENVIRON` and `CHARSET` are refused flat; and NAWS is
+acted on **in the direction RFC 1073 does not define**, with the "did we
+negotiate this" test commented out at `telnet.c:299` — that is a console server
+telling a client what the equipment behind it really is, and the shell honours
+it by resizing the window.
+
+Two are deliberately absent, and both are opt-in settings upstream too, so
+neither is a default difference: local echo (`ts.TelEcho`, off) and LINEMODE
+(`ts.EnableLineMode`, off).
+
+**`telnet-audit/` exists because the unit tests cannot close the loop.** They
+are byte strings derived from upstream's C, so they prove the port matches
+upstream and nothing about whether upstream matches the world. GNU inetutils'
+`telnetd` behind a fifteen-line inetd closes it, and proves the point
+immediately: it opens with `WILL AUTHENTICATION`, `WILL ENCRYPT`, `DO XDISPLOC`
+and `DO NEW-ENVIRON`, four options above `MaxTelOpt`, so the refusal path runs
+before anything else in every session.
 
 ### ⬜ Stage 2 — the differentiators (3–4 months, ~20k LOC)
 

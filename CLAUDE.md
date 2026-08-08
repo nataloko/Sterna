@@ -501,6 +501,7 @@ ATTRIBUTION.md   licensing, and what still needs clearing before vendoring
 oracle/          Tera Term's real VT engine, headless on Linux (see its README)
 xfer/            Stage 0 spike 2 — ttpfile's protocols, running and interoperating
 serial-audit/    Stage 0 spike 4 — serialport-rs vs commlib.c, on real hardware
+telnet-audit/    a real telnetd, so the telnet port has an independent check
 ssh-audit/       Stage 0 spike 5 — russh vs legacy SSH algorithms and auth
 crates/          Rust core — tt-grid, tt-vt, tt-conn, tt-session, tt-ffi (see its README)
 run_diff.sh      the differential gate: Rust engine vs Tera Term, every case
