@@ -493,6 +493,58 @@ impl Vt {
         &mut self.state.grid
     }
 
+    /// The settings the terminal is running under.
+    ///
+    /// A settings dialog starts from this rather than from the defaults, so
+    /// that a page nobody opened does not quietly reset what it holds — and so
+    /// that the four fields an escape sequence can write are read back as they
+    /// now are, not as the file left them.
+    pub fn config(&self) -> &Config {
+        &self.state.config
+    }
+
+    /// Apply settings to a running terminal — the dialog's OK button, which
+    /// upstream spells `CVTWindow::SetupTerm` (`vtwin.cpp:1383`).
+    ///
+    /// **Upstream keeps no separate copy of most of this.** `vtterm.c` reads
+    /// `ts` at the point of use, so writing the setting *is* applying it, and
+    /// the escape sequences write the very same variables back: DECBKM assigns
+    /// `ts.BSKey` (`vtterm.c:2992`), SRM assigns `ts.LocalEcho` (`:2053`), LNM
+    /// assigns `ts.CRSend` (`:2059`). Our `Modes` holds copies of those
+    /// three, so they are refreshed here — which means applying settings
+    /// overwrites what the host asked for, exactly as it does upstream. That is
+    /// surprising the first time it happens and is not a bug.
+    ///
+    /// The two upstream *does* keep separately are deliberately left alone:
+    /// `LFMode` and `AcceptWheelToCursor` are seeded from `ts` at reset
+    /// (`vtterm.c:285`, `:290`) and `SetupTerm` never touches them.
+    ///
+    /// The grid is resized to match, so a caller with a connection has to tell
+    /// the far end afterwards — `tt_session::Session::apply_settings` is the
+    /// thing that does both.
+    pub fn set_config(&mut self, config: Config) {
+        let s = &mut self.state;
+        s.config = config;
+
+        // `ChangeTerminalID` (`vtterm.c:5850`): a terminal ID changed in the
+        // dialog re-derives the VT level, and level 1 never sends 8-bit
+        // controls whatever the setting says.
+        s.vt_level = s.config.term_id.vt_level();
+        s.send_8bit = s.vt_level >= 2 && s.config.send_8bit_ctrl;
+
+        s.modes.local_echo = s.config.local_echo;
+        s.modes.bs_key_is_bs = s.config.bs_key_is_bs;
+        s.modes.cr_send = s.config.cr_send;
+
+        s.grid.set_scrollback_max(s.config.scrollback_max);
+        s.grid.resize(s.config.cols, s.config.rows);
+
+        // `SetupTerm` opens with `ResetCharSet()`, so a G1 designation made by
+        // the host does not survive the dialog. Reproduced rather than
+        // improved on: it is the same rule as the three above.
+        s.charset.reset();
+    }
+
     /// Bytes the terminal wants to send back to the host: DA, DSR, and friends.
     pub fn reply(&self) -> &[u8] {
         &self.state.reply
@@ -2925,5 +2977,45 @@ mod tests {
         // Column 300 saturates at 223 and is reported as 255; row 200 is
         // under the limit and comes through as 232.
         assert_eq!(vt.take_reply(), vec![0x1b, b'[', b'M', 32, 255, 232]);
+    }
+
+    /// Applying settings overwrites the modes the host set, because upstream
+    /// keeps no second copy of them — the setting and the mode are the same
+    /// variable there.
+    #[test]
+    fn applying_settings_overwrites_what_the_host_set() {
+        let mut vt = Vt::new(Config::default());
+        // SRM, DECBKM and LNM, each writing a `ts` field upstream.
+        vt.feed(b"\x1b[?67l\x1b[12l\x1b[20h");
+        assert!(vt.local_echo());
+        assert!(!vt.backspace_sends_bs());
+        assert_eq!(vt.state.modes.cr_send, CrSend::CrLf);
+        // LFMode is upstream's own variable rather than a view of `ts`.
+        assert!(vt.newline_mode());
+
+        vt.set_config(Config::default());
+        assert!(!vt.local_echo());
+        assert!(vt.backspace_sends_bs());
+        assert_eq!(vt.state.modes.cr_send, CrSend::Cr);
+        // ...so it survives, and that asymmetry is `SetupTerm`'s.
+        assert!(vt.newline_mode());
+    }
+
+    #[test]
+    fn applying_settings_resizes_and_re_derives_the_vt_level() {
+        let mut vt = Vt::new(Config::default());
+        vt.feed(b"hello");
+        vt.set_config(Config {
+            cols: 100,
+            rows: 40,
+            term_id: TermId::Vt320,
+            scrollback_max: 4,
+            ..Config::default()
+        });
+        assert_eq!((vt.grid().cols(), vt.grid().rows()), (100, 40));
+        assert_eq!(vt.grid().scrollback_max(), 4);
+        assert_eq!(row(&vt, 0), "hello");
+        vt.feed(b"\x1b[c");
+        assert_eq!(vt.take_reply(), b"\x1b[?63;1;2;6;7;8;9c");
     }
 }
