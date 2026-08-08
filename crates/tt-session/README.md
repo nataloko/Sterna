@@ -124,6 +124,37 @@ one line off and increments it — and a frontend holding a selection holds two 
 these. `line()` reports a line that has been evicted, or one not printed yet, as
 absent rather than making the caller range-check first.
 
+## The settings, and the three groups they fall into
+
+`settings.rs` is the map from `TERATERM.INI` onto a running terminal, and it
+lives here because `tt-config` deliberately does not depend on `tt-vt`: the
+schema describes a *file*, and one that knew about the parser would be two
+things at once. This is the one crate that already holds both.
+
+Three groups come out of `Settings` and only the first reaches the core:
+
+1. **The terminal's** — sizes, the terminal ID, the CR modes, the colour flags,
+   the window and mouse gates. `vt_config` names each one, rather than deriving
+   the mapping, so that a setting acting on nothing is visible as an absence.
+2. **The window's** — the five colour pairs, the cursor shape as something to
+   *draw*, the word delimiters. The frontend reads those by name through the
+   metadata table, so there is no second struct to keep in step.
+3. **Nobody's yet**, and they are still stored and written back, because the
+   first save must not drop a setting whose subsystem is a later stage.
+
+**Applying settings overwrites modes the host set**, and that is upstream's
+behaviour rather than an oversight: `vtterm.c` reads `ts` at the point of use,
+so DECBKM assigns `ts.BSKey` and the settings dialog assigns it back. The two
+upstream keeps *separately* — `LFMode` and `AcceptWheelToCursor` — are
+deliberately left alone by `Vt::set_config`, which is `CVTWindow::SetupTerm`.
+
+**`ScrollBuffSize` is not the depth of the history.** It is the whole buffer,
+page included, and upstream grows it to hold the page rather than shrinking the
+page to it (`buffer.c:641`) — so `Grid::scrollback_max`, which counts the lines
+*beyond* the page, is `max(lines, rows) - rows`. Getting that backwards makes
+`EnableScrollBuff=off` a terminal one row tall, which is how the grid's own
+conflation of the two was found.
+
 ## The one end-to-end test that never skips
 
 `tests/pty.rs`. Every other composition test here needs something the machine
@@ -135,7 +166,7 @@ descriptor, a real disconnect with a real exit status.
 ## Still to come
 
 - **Per-row damage**, if a measurement ever asks for it. See above.
-- **The settings surface.** `TtConfig` carries six fields where `tt_vt::Config`
-  has thirty, because the rest are `TERATERM.INI` keys and belong to Stage 2's
-  generated schema — transcribing them by hand now is work done twice, the
-  second time as a deletion.
+- **`TtConfig`'s six fields**, which the settings surface now supersedes:
+  everything a window needs beyond the cell size arrives through
+  `set_settings`, so what is left at the ABI is a constructor argument that
+  could become just the cell metrics.

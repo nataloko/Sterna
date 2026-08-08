@@ -117,9 +117,11 @@ SGR colour then overrides whichever won.
 
 The defaults are upstream's, which is why **the terminal is black on white,
 bold text is blue and underlined text is magenta**. That is what Tera Term
-looks like out of the box. Every one of those values is a `TERATERM.INI` key,
-so they belong to Stage 2's generated settings schema; they are constants here
-so that the schema ends up being the only thing that ever parses them.
+looks like out of the box. They are compiled in as a starting point and then
+replaced by `Theme::applySettings`, which asks the core for `color.normal` and
+its siblings **by name** — so this file holds no list of settings and no
+parser, and adding a colour setting to the schema is all it takes to honour
+one.
 
 Three things that look like painter bugs and are not:
 
@@ -384,14 +386,53 @@ and the status bar says "bash exited with status 1". That routes through the
 core rather than through a `if (transport == pty)` here, because the frontend
 should not be the thing that knows which transports have something to say.
 
+## The setup dialog has no list of settings in it
+
+`SettingsDialog` walks `tt_settings_field`, the core's metadata table: a tab per
+page, a widget per kind, the bounds of a spin box from the schema's own range,
+a combo box built from the INI's own spellings, and the citation for the
+default in the tooltip. Adding a setting is a line in `schema/settings.txt`;
+nothing here changes.
+
+**That is the whole argument for the schema**, and it is `PLAN.md`'s risk 2 —
+76 dialog templates and ~13.8k lines of dialog code are where the motivation
+goes to die. The original sketch was to *generate* the dialog as C++, which is
+worse: a second copy of the list, in the other build system, that every schema
+change has to be pushed through. Reading the table at runtime leaves nothing to
+keep in step.
+
+Three things it does deliberately:
+
+- **Only what changed is written.** A dialog that applied every field would pin
+  all 39 settings into the user's file the first time it was opened, and a
+  pinned setting stops following upstream's default for ever.
+- **The combo box shows the file's spellings**, not prettified ones. Upstream
+  compares `TerminalID` with `strcmp`, so `Vt320` would read back as a VT100.
+- **The label is derived from the setting's name**, because `.lng` has no
+  loader yet. The label key is in the tooltip, waiting for `tt-i18n`.
+
+Applying reaches the running terminal, and **it overwrites modes the host set** —
+`ts.BSKey` is the same variable DECBKM writes, upstream and here. The size is
+the window's business rather than the painter's: the *window* is resized and
+the view fits the terminal to it, the same path a remote NAWS resize takes.
+`Setup > Save setup` writes the file, which is upstream's bargain — a change
+applies now and outlives the session only if it is saved.
+
+The file is `$XDG_CONFIG_HOME/termitta/termitta.ini`: Tera Term's *format*, in
+the place a Linux configuration file belongs, since the executable may be
+inside a read-only AppImage. Pointing it at a real `TERATERM.INI` is a
+supported thing to do and `--ini` is how it will be spelled.
+
 ## Not here yet
 
 - **Blinking cursor and blinking text.** Tera Term colours blink rather than
   animating it (`VTBlinkColor`, on by default), which is reproduced; an
   animated form would need a timer, and the point of this event loop is not
   having one.
-- **Session profiles.** The dialog remembers the last port and settings for the
-  lifetime of the window. Saving them is Stage 2's, with the INI reader.
+- **Session profiles.** The connect dialogs remember the last port and host for
+  the lifetime of the window; the *terminal's* settings now persist through
+  `Setup > Save setup`, but which port was last opened is not one of the 39
+  settings in the schema yet.
 - **A host-key manager.** Removing a changed key still means editing
   `~/.ssh/known_hosts` by hand — the dialog says which file and which line, and
   that is as far as it goes.

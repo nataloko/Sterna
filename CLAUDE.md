@@ -494,6 +494,17 @@ And for SSH:
   layout**, so wrapped labels overlap in the image and nowhere else. One
   `adjustSize()` removes the discrepancy — otherwise a perfectly good dialog
   looks broken in its own screenshot.
+- **Qt caps a window's *initial* size at two thirds of the screen**
+  (`QWidgetPrivate::adjustedSize`), so a `sizeHint` of 100x30 cells opens at
+  59x23 under the 800x800 offscreen platform and at 100x30 on a real desktop.
+  A test that asserts a configured terminal size has to `resize(sizeHint())`
+  first, or it is measuring the screen rather than the code.
+- **Anything that constructs a `MainWindow` now reads the developer's own
+  settings**, because the window loads `termitta.ini` — and the terminal's
+  *size* is in it. `bench_shell` calls `QStandardPaths::setTestModeEnabled`
+  before `QApplication` for that reason: otherwise a 132x50 in somebody's file
+  silently benchmarks a different window from the baseline's, consistently, for
+  a reason nobody would think to look for.
 
 And for measuring anything:
 
@@ -586,6 +597,34 @@ And for the settings, all of which came out of `ini-audit/`:
   write rewrites every line ending in the file, and normalises `[ s ]` to
   `[s]`. Both are in `ini-audit/divergences.txt` as *not* reproduced. Re-run
   the battery on Windows in Stage 3 before trusting either.
+- **`TerminalID` is `strcmp`; every other enumerated setting is `_stricmp`.**
+  `tttypes_termid.cpp:60`. And `TermIDGetID` never fails, so `TerminalID=vt320`
+  is not an error — it is a VT100, silently, for ever. That is why the schema
+  has an `enum_exact` at all. The same table also has `VT220` and a
+  **lower-case `dumb`**, both of which the first schema pass omitted, so both
+  read as VT100 too.
+- **`TermWidthMax` is 1000 and `TermHeightMax` is 500** (`tttypes.h:633`), one
+  line apart. Taking the wrong one put a 500-column cap on `tt-grid` and a
+  wrong range in the schema, and neither shows up until somebody asks for a
+  640-column terminal and quietly gets half of it.
+- **`ttset.c:615` bounds a size and does not clamp it.** At or below the floor
+  takes the *default*, above the ceiling takes the ceiling — so
+  `TerminalSize=0,0` is 80x24, not 1x1. Clamping to the floor gives a
+  one-column window out of a file the user's own Tera Term opens fine.
+- **`ScrollBuffSize` is the whole buffer, page included, and upstream grows it
+  to hold the page rather than shrinking the page to it** (`buffer.c:641`,
+  `:4983`). `Grid::scrollback_max` counts the lines *beyond* the page, so the
+  conversion is `max(lines, rows) - rows`. The related trap the grid itself
+  had: the row ceiling is `ts.ScrollBuffMax` (`MaxBuffSize`, 10000), a
+  different setting, and using the history's depth for it makes
+  `EnableScrollBuff=off` a terminal one row tall.
+- **Applying settings overwrites what the host set, and that is upstream.**
+  `vtterm.c` reads `ts` at the point of use, so DECBKM assigns `ts.BSKey`
+  (`:2992`), SRM assigns `ts.LocalEcho` (`:2053`) and LNM assigns `ts.CRSend`
+  (`:2059`) — the setting and the mode are one variable. `Vt::set_config`
+  refreshes exactly those and deliberately leaves `LFMode` and
+  `AcceptWheelToCursor`, which upstream *does* keep separately and
+  `CVTWindow::SetupTerm` does not touch.
 
 And for the C ABI:
 

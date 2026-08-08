@@ -95,15 +95,30 @@ four-byte buffer, so only the first three characters are compared and `offline`
 is `off`. All of it is reproduced, because a file that says `offline` is one
 somebody's Tera Term is already treating as off.
 
+## Two spellings the file needs that the first pass did not have
+
+Both found by wiring the schema to the terminal, and both are the same shape as
+every other trap here — a rule that looks uniform and is not.
+
+- **`enum_exact`.** Every enumerated setting upstream reads with `_stricmp`
+  **except `TerminalID`**, which is a `strcmp` against `tttypes_termid.cpp`'s
+  table. Since `TermIDGetID` never fails, `TerminalID=vt320` in the wrong case
+  is not an error — it is a VT100. Reproduced, for the same reason `offline` is
+  `off`: it is what the user's own Tera Term is already doing with that file.
+  The same pass found two names missing from the list altogether, `VT220` and
+  `dumb`, which had been silently reading as VT100.
+- **`int(lo..hi)`.** `ttset.c:615` bounds a size, and **not by clamping**: at
+  or below the floor takes the *default*, above the ceiling takes the ceiling.
+  So `TerminalSize=0,0` is 80x24 rather than a one-column window. The bounds
+  are also what the dialog builds a spin box from, so they have to be data
+  rather than a comment. `TermWidthMax` is **1000** and `TermHeightMax` is
+  **500**; this file said 500 for both, which is the next line of
+  `tttypes.h:633` and the same wrong constant `tt-grid` had.
+
 ## Still to come
 
-- **Wiring**, which is the next step: `Settings` onto `tt_vt::Config` and onto
-  the shell's `Theme`, both of which currently hold their own hard-coded copies
-  of these values. That is where `keyboard.backspace` stops being a note in
-  `shell/README.md` about how backspace does the wrong thing on Linux.
 - **The rest of the settings.** 39 of roughly 600. The machinery is the
   expensive part and it is done; adding a row is a line and a citation.
-- **The dialog**, built from `FIELDS` over the C ABI, with the search box
-  `PLAN.md` asks for — which is worth more than the tabs, since nobody can find
-  anything in 76 dialogs.
+- **`.lng` labels.** The metadata carries the label key and nothing looks it
+  up, so the dialog derives a name from the setting instead. That is `tt-i18n`.
 - **`KEYBOARD.CNF`**, which is an INI and reads with the same layer.

@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 complete, 2 started · **Commits:** 123
+**Last updated:** 2026-08-08 · **Stage:** 1 complete, 2 started · **Commits:** 137
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1046,10 +1046,11 @@ before anything else in every session.
 - **Lua via `mlua`** over the same `ScriptHost` command table (~500 LOC glue).
 - `ttctl` JSON-RPC control socket replacing DDE. Keep a `ttpmacro script.ttl`
   CLI entry point so existing shortcuts and `.bat` wrappers keep working.
-- **Settings schema + generated dialogs**, first pass. 🔵 **the schema and the
-  INI layer are built** — `crates/tt-config/`, 39 settings, 2026-08-08. What
-  remains is wiring it to the running terminal and building the dialog from
-  the metadata. See below.
+- **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
+  `crates/tt-config/` (39 settings), the map onto a running terminal in
+  `tt-session`, the schema as data over the C ABI, and a Qt dialog that builds
+  itself from it, 2026-08-08. What remains is the *rest of the settings*, which
+  is a line and a citation each. See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
   against a real Win32 rather than against a reading of the documentation;
   `KEYBOARD.CNF` is an INI and reads with the same layer.
@@ -1106,6 +1107,55 @@ arrangement as `tt-ffi`'s header.
 39 settings of roughly 600. The machinery was the expensive part; adding a row
 is a line and a citation.
 
+#### And then it was wired, which is where the schema paid for itself
+
+`tt-session/src/settings.rs`, the C ABI's settings surface and
+`shell/src/SettingsDialog.cpp`, 2026-08-08. A setting typed into the dialog now
+reaches the terminal, the painter and the file.
+
+**The dialog holds no list of settings.** It walks `tt_settings_field` — a row
+per setting, carrying the page, the INI section and key, the kind, an int's
+bounds, the `.lng` label and the citation for the default — and builds a tab per
+page and a widget per kind. This document originally sketched *generating* the
+dialog as C++, and that is worse: a second copy of the list, living in the other
+build system, that every schema change has to be pushed through. A table read at
+runtime leaves nothing to keep in step, which is the difference between "adding
+a setting is a line in a text file" and "adding a setting is a build".
+
+Three decisions worth recording, each of which looks like a bug from one side:
+
+- **Applying settings overwrites modes the host set**, because upstream keeps no
+  second copy of them: `vtterm.c` reads `ts` at the point of use, so DECBKM
+  assigns `ts.BSKey`, SRM assigns `ts.LocalEcho` and LNM assigns `ts.CRSend`.
+  `Vt::set_config` is `CVTWindow::SetupTerm` (`vtwin.cpp:1383`) and refreshes
+  exactly those — while deliberately leaving `LFMode` and `AcceptWheelToCursor`,
+  which upstream *does* keep separately and `SetupTerm` does not touch.
+- **The dialog writes only what changed.** Applying every field would pin all 39
+  settings into the user's file the first time it was opened, and a pinned
+  setting stops following upstream's default for ever.
+- **The size resizes the *window*, not the grid** — the same path a telnet NAWS
+  resize takes, because the view fits the terminal to the space it has.
+
+And it found four things, all of the same family as every other settings trap:
+
+1. **`TermWidthMax` is 1000 and `TermHeightMax` is 500**, one line apart in
+   `tttypes.h`. The wrong one had become `tt-grid`'s column cap *and* the
+   schema's documented range, so a 640-column terminal would have silently been
+   500.
+2. **`TerminalID` is the one enumerated setting compared with `strcmp`**, not
+   `_stricmp` — and `TermIDGetID` never fails, so `TerminalID=vt320` in the
+   wrong case is a VT100. The schema grew an `enum_exact` for it, and two names
+   it had been missing entirely: `VT220`, and upstream's lower-case `dumb`.
+3. **`ttset.c:615` bounds a size without clamping it**: at or below the floor
+   takes the default, above the ceiling takes the ceiling. `TerminalSize=0,0` is
+   80x24, and a schema that clamped would have given a one-column window.
+4. **`ScrollBuffSize` is the whole buffer, page included** (`buffer.c:641`), and
+   the grid was using its scrollback *depth* as the ceiling on the page height —
+   two different upstream settings sharing one field. With the history switched
+   off that made the terminal one row tall. Fixed by separating them, which also
+   fixed line numbering with no scrollback at all: lines are counted off the
+   page whether or not anything keeps them, or a held line number means nothing.
+
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
 Windows build, ConPTY, Win32 serial edge cases, NSIS installer. All 14 `.lng`
@@ -1158,7 +1208,12 @@ Adoption hinges on "my existing setup just works." Budget real time here.
   as the plan said: a generic INI crate gets the duplicate-key rule, the quote
   stripping, the empty-value rule and the comment rules wrong, and every one of
   those is a setting the user never changed, changing. New settings go in an
-  additive section so round-tripping with real Tera Term survives.
+  additive section so round-tripping with real Tera Term survives. **Wired to
+  the running terminal and to a dialog on the same day**: the shell reads
+  `$XDG_CONFIG_HOME/termitta/termitta.ini` — Tera Term's format, in the place a
+  Linux configuration file belongs, since the executable may be inside a
+  read-only AppImage — and `Setup > Save setup` writes it back, touching only
+  the keys the schema owns.
 - **`KEYBOARD.CNF`** — it's an INI. Read as-is, 1–2 days.
 - **Hosts and keys** — read Tera Term's `ssh_known_hosts` *and*
   `~/.ssh/known_hosts`; read `~/.ssh/id_*` and `~/.ssh/config`; write OpenSSH
@@ -1403,9 +1458,14 @@ batching can only help.
    Tera Term. Stage 1 must be narrow and must beat everything else on Linux at
    exactly one thing: **GUI serial console work with real scripting.** If Stage 1
    slips past 5 months, cut features, not the ship date.
-2. **Motivation cliff at the dialogs.** 76 dialogs arrive right after the fun
-   part ends. The settings-schema codegen is the mitigation and must exist
-   before it's needed.
+2. ~~**Motivation cliff at the dialogs.**~~ — **mitigated 2026-08-08.** 76
+   dialogs arrive right after the fun part ends, and the mitigation had to
+   exist before it was needed. It does: one schema, and a Qt dialog that builds
+   itself from the metadata over the C ABI rather than being generated as C++.
+   Adding a setting is a line in `schema/settings.txt` and a citation. What is
+   left is 560 lines of that, which is tedious rather than risky — and the risk
+   this entry was really about, that the *machinery* would be attempted at the
+   moment morale was lowest, is gone.
 3. **Old-device SSH behaviour — accepted, not closed.** Spike 5 proved the
    *algorithms* work; it could not test real-device *behaviour*, because there
    is no old device to test against. Non-RFC banners, hang-ups on unexpected

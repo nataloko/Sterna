@@ -56,13 +56,19 @@ Two things about how it is generated, both learned the hard way:
 | SSH | `tt_ssh_params_default`, `tt_ssh_connect`, `_poll`, `_poll_fd`, `_host_key`, `_auth`, `_answer_host_key`, `_answer_auth`, `_free` |
 | Ports | `tt_serial_enumerate`, `tt_port_list_len` / `_at` / `_free`, `tt_ssh_config_aliases` + `tt_string_list_*` |
 | Logging | `tt_log_options_default`, `tt_session_log_start` / `_stop` / `_path` / `_bytes` |
+| Settings | `tt_settings_field_count` / `_field` / `tt_settings_choice`, `tt_session_setting` / `_set_setting` / `_settings_load` / `_settings_save` |
 
 Deliberately absent, and each for a reason rather than for lack of time:
 
-- **The settings surface.** `TtConfig` carries six fields, not `tt_vt::Config`'s
-  thirty. Every one of those thirty is a `TERATERM.INI` key, which makes them
-  the generated settings schema's job in Stage 2 — hand-transcribing them into
-  a C struct now would be work done twice, the second time as a deletion.
+- **A C struct of settings**, which is what `TtConfig` would have grown into.
+  There is none: settings cross **by name**, and the *schema* crosses as data.
+  `tt_settings_field` hands out a row per setting — name, page, INI section and
+  key, kind, bounds, the `.lng` label, and the citation for the default — and a
+  dialog builds itself from that table. A C struct would have had to be
+  regenerated and rebuilt on both sides of the seam for every new setting; a
+  table costs a line in `schema/settings.txt`. The strings it hands out live
+  for the life of the process, which is the one exception to rule 2 above:
+  they describe the schema rather than any session's values.
 - **Selection.** A frontend concept the core only has to *support*, and what
   it supports is naming a line. `tt_session_row` is the painter's call and
   moves with the output; `tt_session_line_at` says which line a row is showing
