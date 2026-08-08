@@ -526,6 +526,34 @@ impl Vt {
         key.encode(self.key_modes())
     }
 
+    /// Turn the plain-text log tap on or off.
+    ///
+    /// While it is on, every character the parser decides to *print* is
+    /// recorded, plus a newline for each line feed. Escape sequences never
+    /// appear because the parser has already consumed them — which is the
+    /// point, and the reason this lives here rather than in a stripper beside
+    /// the log. A second escape-sequence scanner would be one more place to
+    /// disagree with the one that is verified against Tera Term.
+    ///
+    /// This is upstream's `FLogPutUTF32` seam, reached from `vtterm.c:468`
+    /// with the same characters at the same moments.
+    pub fn set_log_text_enabled(&mut self, on: bool) {
+        if on {
+            self.state.log_text.get_or_insert_with(String::new);
+        } else {
+            self.state.log_text = None;
+        }
+    }
+
+    /// Take what the tap has collected since the last call, leaving the buffer
+    /// allocated for reuse. Empty when the tap is off.
+    pub fn take_log_text(&mut self) -> String {
+        match &mut self.state.log_text {
+            Some(buf) => std::mem::take(buf),
+            None => String::new(),
+        }
+    }
+
     /// Encode typed text — `ttcmn.c:OutControl`, which every `IdText` byte
     /// goes through on its way out.
     ///
@@ -575,6 +603,10 @@ struct State {
     auto_generated_crlf: bool,
     /// The last printable codepoint, for REP.
     last_printed: Option<u32>,
+    /// The plain-text log tap — `Some` only while a text log is open, so the
+    /// cost when it is not is one branch per printed character. See
+    /// [`Vt::take_log_text`].
+    log_text: Option<String>,
     /// DECSACE's `RectangleMode` (`vtterm.c:113`). False — stream — out of
     /// reset, and it decides how DECCARA and DECRARA read their rectangle.
     rect_mode: bool,
@@ -610,6 +642,7 @@ impl State {
             prev_was_lf: false,
             auto_generated_crlf: false,
             last_printed: None,
+            log_text: None,
             rect_mode: false,
             lr_margin_mode: false,
             vt_level: 1,
@@ -1962,6 +1995,9 @@ impl Perform for State {
         } else {
             self.grid.put(cp);
         }
+        if let Some(log) = &mut self.log_text {
+            log.push(c);
+        }
         self.last_printed = Some(cp);
         self.prev_was_cr = false;
         self.prev_was_lf = false;
@@ -1988,6 +2024,9 @@ impl Perform for State {
             0x0f => self.shift(Shift::Ls0), // SI
             // LF, VT and FF all line-feed (vtterm.c treats them alike).
             0x0a..=0x0c => {
+                if let Some(log) = &mut self.log_text {
+                    log.push('\n');
+                }
                 self.process_lf();
                 self.prev_was_lf = true;
                 self.prev_was_cr = false;

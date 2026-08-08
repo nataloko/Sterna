@@ -127,6 +127,45 @@ typedef uint32_t TtTermId;
 #endif // __cplusplus
 
 /**
+ * Which clock the `[time] ` prefix reads.
+ *
+ * `repr(u32)` because the C ABI names these variants directly rather than
+ * keeping a second copy of the list that can drift — the same trade as
+ * `tt_vt::Key`, and with the same consequence: reordering them is an ABI
+ * break whose only symptom is the committed header's diff.
+ */
+enum TtLogTimestamp
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    /**
+     * No prefix.
+     */
+    TT_LOG_TIMESTAMP_NONE,
+    /**
+     * `%Y-%m-%d %H:%M:%S.%N` in local time — upstream's default format.
+     */
+    TT_LOG_TIMESTAMP_LOCAL,
+    /**
+     * The same, in UTC.
+     */
+    TT_LOG_TIMESTAMP_UTC,
+    /**
+     * Seconds since the log was opened, as `H:MM:SS.mmm`. The one that is
+     * actually useful on a console: "how long after reset did it hang".
+     */
+    TT_LOG_TIMESTAMP_ELAPSED,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum TtLogTimestamp TtLogTimestamp;
+#else
+typedef uint32_t TtLogTimestamp;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+/**
  * `MouseReportMode` — `tttypes.h:650`.
  *
  * The `repr(u32)` on this and its neighbours is not decoration: the C ABI
@@ -214,6 +253,12 @@ enum TtEventKind
      * because the text explaining why it dropped is the reason anyone looks.
      */
     TT_EVENT_KIND_DISCONNECTED = 4,
+    /**
+     * The session log could not be written and has been closed. `text` says
+     * why. Reported once — a disk that filled up will not un-fill, and
+     * retrying on every pump turns one problem into a stall.
+     */
+    TT_EVENT_KIND_LOG_FAILED = 5,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -503,6 +548,54 @@ typedef struct {
 } TtCell;
 
 /**
+ * What a session log records and how it is written.
+ *
+ * Every field is a `TERATERM.INI` key, so this is one of the few places the
+ * settings schema will land in Stage 2 rather than a struct to keep growing
+ * by hand. It is here now because a console capture is the reason people
+ * leave a serial terminal open, not a nicety.
+ */
+typedef struct {
+    /**
+     * True for a byte-for-byte capture — `ts.LogBinary`. False logs the text
+     * the terminal decided to display, with escape sequences already
+     * consumed by the parser.
+     *
+     * **A raw log is silently untimestamped.** That is upstream's behaviour
+     * and the right one: a `[time] ` in the middle of a byte capture makes it
+     * no longer replayable.
+     */
+    bool raw;
+    TtLogTimestamp timestamp;
+    /**
+     * Add to an existing file rather than truncating it.
+     */
+    bool append;
+    /**
+     * Rotate past this many bytes. Zero disables rotation, as does
+     * `rotate_keep` of zero.
+     */
+    uint64_t rotate_size;
+    /**
+     * Generations to keep: `file.1` is the newest, `file.<n>` the oldest.
+     */
+    uint32_t rotate_keep;
+    /**
+     * Write CR LF for each line rather than LF. Upstream always does;
+     * this defaults to off, because the artefact is a text file read on
+     * Linux.
+     */
+    bool crlf;
+} TtLogOptions;
+
+/**
+ * The return of every fallible call. Zero is success and negative is
+ * failure; the codes exist so a frontend can branch without parsing English,
+ * and [`tt_last_error`] carries the sentence for the user.
+ */
+typedef int32_t TtStatus;
+
+/**
  * Where the cursor is and whether to draw it.
  */
 typedef struct {
@@ -536,13 +629,6 @@ typedef struct {
      */
     const char *text;
 } TtEvent;
-
-/**
- * The return of every fallible call. Zero is success and negative is
- * failure; the codes exist so a frontend can branch without parsing English,
- * and [`tt_last_error`] carries the sentence for the user.
- */
-typedef int32_t TtStatus;
 
 /**
  * What `ShiftKey()`/`AltKey()`/`ControlKey()` would have answered.
@@ -746,6 +832,40 @@ size_t tt_session_rows(const TtSession *session);
 const TtCell *tt_session_row(const TtSession *session,
                              size_t y,
                              size_t *out_len);
+
+/**
+ * Fill `out` with the defaults: text, no timestamp, truncate, no rotation.
+ */
+void tt_log_options_default(TtLogOptions *out);
+
+/**
+ * Start writing a session log to `path`, replacing any log already open.
+ *
+ * Nothing is logged retroactively — the capture starts here. (Upstream can
+ * prepend the scrollback; the function it uses to do that is one of the
+ * upstream bugs on file, since it truncates every line at its first wide
+ * character, so that option waits for the report to be answered.)
+ */
+TtStatus tt_session_log_start(TtSession *session,
+                              const char *path,
+                              const TtLogOptions *options);
+
+/**
+ * Close the log, flushing it. A no-op when none is open.
+ */
+void tt_session_log_stop(TtSession *session);
+
+/**
+ * The path being logged to, or null when nothing is.
+ *
+ * Borrowed, and valid until the next call to this function on this session.
+ */
+const char *tt_session_log_path(TtSession *session);
+
+/**
+ * Bytes written to the log since it was opened, across all generations.
+ */
+uint64_t tt_session_log_bytes(const TtSession *session);
 
 /**
  * How many lines of history there are to scroll through.

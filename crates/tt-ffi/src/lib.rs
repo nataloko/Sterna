@@ -75,7 +75,7 @@ use tt_conn::serial::{
 };
 use tt_conn::Error;
 use tt_grid::Cell;
-use tt_session::{Event, Session};
+use tt_session::{Event, LogMode, LogOptions, Session, Timestamp};
 use tt_vt::{Config, Key, Modifiers, MouseEvent, TermId, Tracking};
 
 // --- status ---------------------------------------------------------------
@@ -285,6 +285,7 @@ pub struct TtSession {
     event_texts: Vec<CString>,
     describe: CString,
     title: CString,
+    log_path: CString,
 }
 
 /// Create a session. Returns null only if `config` is null.
@@ -316,6 +317,7 @@ pub extern "C" fn tt_session_new(config: *const TtConfig) -> *mut TtSession {
         events: Vec::new(),
         event_texts: Vec::new(),
         describe: CString::default(),
+        log_path: CString::default(),
     }))
 }
 
@@ -378,6 +380,123 @@ pub extern "C" fn tt_session_row(
         *len = row.len();
     }
     row.as_ptr()
+}
+
+// --- session logging ------------------------------------------------------
+
+/// What a session log records and how it is written.
+///
+/// Every field is a `TERATERM.INI` key, so this is one of the few places the
+/// settings schema will land in Stage 2 rather than a struct to keep growing
+/// by hand. It is here now because a console capture is the reason people
+/// leave a serial terminal open, not a nicety.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtLogOptions {
+    /// True for a byte-for-byte capture — `ts.LogBinary`. False logs the text
+    /// the terminal decided to display, with escape sequences already
+    /// consumed by the parser.
+    ///
+    /// **A raw log is silently untimestamped.** That is upstream's behaviour
+    /// and the right one: a `[time] ` in the middle of a byte capture makes it
+    /// no longer replayable.
+    pub raw: bool,
+    pub timestamp: Timestamp,
+    /// Add to an existing file rather than truncating it.
+    pub append: bool,
+    /// Rotate past this many bytes. Zero disables rotation, as does
+    /// `rotate_keep` of zero.
+    pub rotate_size: u64,
+    /// Generations to keep: `file.1` is the newest, `file.<n>` the oldest.
+    pub rotate_keep: u32,
+    /// Write CR LF for each line rather than LF. Upstream always does;
+    /// this defaults to off, because the artefact is a text file read on
+    /// Linux.
+    pub crlf: bool,
+}
+
+/// Fill `out` with the defaults: text, no timestamp, truncate, no rotation.
+#[no_mangle]
+pub extern "C" fn tt_log_options_default(out: *mut TtLogOptions) {
+    let Some(out) = (unsafe { out.as_mut() }) else {
+        set_error("null TtLogOptions");
+        return;
+    };
+    let d = LogOptions::default();
+    *out = TtLogOptions {
+        raw: d.mode == LogMode::Raw,
+        timestamp: d.timestamp,
+        append: d.append,
+        rotate_size: d.rotate_size,
+        rotate_keep: d.rotate_keep,
+        crlf: d.crlf,
+    };
+}
+
+/// Start writing a session log to `path`, replacing any log already open.
+///
+/// Nothing is logged retroactively — the capture starts here. (Upstream can
+/// prepend the scrollback; the function it uses to do that is one of the
+/// upstream bugs on file, since it truncates every line at its first wide
+/// character, so that option waits for the report to be answered.)
+#[no_mangle]
+pub extern "C" fn tt_session_log_start(
+    session: *mut TtSession,
+    path: *const c_char,
+    options: *const TtLogOptions,
+) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    let path = match unsafe { str_arg(path, usize::MAX) } {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let Some(o) = (unsafe { options.as_ref() }) else {
+        set_error("null TtLogOptions");
+        return TT_ERR_INVALID;
+    };
+    let opts = LogOptions {
+        mode: if o.raw { LogMode::Raw } else { LogMode::Text },
+        timestamp: o.timestamp,
+        append: o.append,
+        rotate_size: o.rotate_size,
+        rotate_keep: o.rotate_keep,
+        crlf: o.crlf,
+    };
+    match s.session.start_log(std::path::Path::new(path), opts) {
+        Ok(()) => TT_OK,
+        Err(e) => {
+            set_error(e.to_string());
+            TT_ERR_IO
+        }
+    }
+}
+
+/// Close the log, flushing it. A no-op when none is open.
+#[no_mangle]
+pub extern "C" fn tt_session_log_stop(session: *mut TtSession) {
+    let s = session!(session);
+    s.session.stop_log();
+}
+
+/// The path being logged to, or null when nothing is.
+///
+/// Borrowed, and valid until the next call to this function on this session.
+#[no_mangle]
+pub extern "C" fn tt_session_log_path(session: *mut TtSession) -> *const c_char {
+    let s = session!(session, ptr::null());
+    match s.session.log_path() {
+        Some(p) => {
+            s.log_path = CString::new(p.to_string_lossy().as_bytes()).unwrap_or_default();
+            s.log_path.as_ptr()
+        }
+        None => ptr::null(),
+    }
+}
+
+/// Bytes written to the log since it was opened, across all generations.
+#[no_mangle]
+pub extern "C" fn tt_session_log_bytes(session: *const TtSession) -> u64 {
+    session_ref!(session, 0).session.log_bytes()
 }
 
 /// How many lines of history there are to scroll through.
@@ -561,6 +680,10 @@ pub enum TtEventKind {
     /// The transport went away. Reported once; the screen is left alone,
     /// because the text explaining why it dropped is the reason anyone looks.
     Disconnected = 4,
+    /// The session log could not be written and has been closed. `text` says
+    /// why. Reported once — a disk that filled up will not un-fill, and
+    /// retrying on every pump turns one problem into a stall.
+    LogFailed = 5,
 }
 
 #[repr(C)]
@@ -601,6 +724,11 @@ pub extern "C" fn tt_session_drain_events(
             Event::Break => (TtEventKind::Break, 0, ptr::null()),
             Event::BadByte(b) => (TtEventKind::BadByte, b, ptr::null()),
             Event::Disconnected => (TtEventKind::Disconnected, 0, ptr::null()),
+            Event::LogFailed(msg) => {
+                s.event_texts.push(CString::new(msg).unwrap_or_default());
+                let p = s.event_texts.last().expect("just pushed").as_ptr();
+                (TtEventKind::LogFailed, 0, p)
+            }
         };
         s.events.push(TtEvent { kind, byte, text });
     }

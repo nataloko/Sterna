@@ -10,8 +10,10 @@ tt-conn.workspace = true
 tt-grid.workspace = true
 tt-vt.workspace = true
 
-# Only the hardware tests, and only to call `poll(2)` — the thing `poll_fd`
-# exists to be handed to. Asserting the descriptor is *returned* would prove
-# nothing; asserting it goes quiet and then wakes is the whole contract.
-[target.'cfg(unix)'.dev-dependencies]
+# Two things, both unix-only: `localtime_r`, for the local offset a log
+# timestamp needs and which nothing in std can answer, and `poll(2)` in the
+# hardware tests — the call `poll_fd` exists to be handed to. Asserting the
+# descriptor is *returned* would prove nothing; asserting it goes quiet and
+# then wakes is the whole contract.
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"

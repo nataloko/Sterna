@@ -149,6 +149,55 @@ static void test_scrollback_viewport(void)
     tt_session_free(s);
 }
 
+static void test_logging(void)
+{
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+
+    TtLogOptions opts;
+    tt_log_options_default(&opts);
+    CHECK(!opts.raw);
+    CHECK(opts.timestamp == TT_LOG_TIMESTAMP_NONE);
+
+    CHECK(tt_session_log_path(s) == NULL);
+    CHECK(tt_session_log_bytes(s) == 0);
+
+    /* A directory cannot be opened for writing, so this is a real IO failure
+     * reported through the status rather than through an event — a frontend
+     * must not end up believing it is logging when it is not. */
+    CHECK(tt_session_log_start(s, "/", &opts) == TT_ERR_IO);
+    CHECK(strlen(tt_last_error()) > 0);
+    CHECK(tt_session_log_path(s) == NULL);
+
+    const char *path = "/tmp/tt-ffi-abi-test.log";
+    CHECK_OK(tt_session_log_start(s, path, &opts));
+    CHECK(tt_session_log_path(s) != NULL);
+    CHECK(strcmp(tt_session_log_path(s), path) == 0);
+
+    /* The escape sequence is consumed by the parser, so a text log gets the
+     * text and nothing else. */
+    static const char stream[] = "\033[31mlogged\033[0m\r\n";
+    tt_session_feed(s, (const uint8_t *)stream, sizeof stream - 1);
+    CHECK(tt_session_log_bytes(s) == 7);
+
+    tt_session_log_stop(s);
+    CHECK(tt_session_log_path(s) == NULL);
+
+    FILE *f = fopen(path, "rb");
+    CHECK(f != NULL);
+    if (f) {
+        char buf[64] = {0};
+        size_t n = fread(buf, 1, sizeof buf - 1, f);
+        fclose(f);
+        CHECK(n == 7);
+        CHECK(strcmp(buf, "logged\n") == 0);
+        remove(path);
+    }
+
+    tt_session_free(s);
+}
+
 static void test_attributes(void)
 {
     TtConfig cfg;
@@ -353,6 +402,11 @@ static void test_null_safety(void)
     CHECK(tt_session_pump(NULL, 0, NULL) == TT_ERR_INVALID);
     CHECK(tt_session_poll_fd(NULL) == -1);
     CHECK(tt_session_scrollback_len(NULL) == 0);
+    tt_log_options_default(NULL);
+    CHECK(tt_session_log_start(NULL, "/tmp/x", NULL) == TT_ERR_INVALID);
+    tt_session_log_stop(NULL);
+    CHECK(tt_session_log_path(NULL) == NULL);
+    CHECK(tt_session_log_bytes(NULL) == 0);
     CHECK(tt_session_view_offset(NULL) == 0);
     tt_session_set_view_offset(NULL, 5);
     CHECK(!tt_session_cursor_view_row(NULL, NULL));
@@ -390,6 +444,7 @@ int main(void)
     test_screen();
     test_attributes();
     test_scrollback_viewport();
+    test_logging();
     test_input();
     test_palette();
     test_serial();

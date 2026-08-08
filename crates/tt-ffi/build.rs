@@ -22,6 +22,7 @@ const DEP_SOURCES: &[&str] = &[
     "../tt-vt/src/mouse.rs",        // MouseEvent, Modifiers, Tracking
     "../tt-vt/src/term_id.rs",      // TermId
     "../tt-conn/src/serial/mod.rs", // Parity, FlowControl, PinControl
+    "../tt-session/src/log.rs",     // Timestamp
 ];
 
 fn main() {

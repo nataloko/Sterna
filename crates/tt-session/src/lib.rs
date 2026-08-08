@@ -29,8 +29,13 @@
 //! main thread. Baking a runtime in before the second transport exists would
 //! be guessing at the shape of a problem we have not met.
 
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+pub mod log;
+
+pub use log::{LogMode, LogOptions, SessionLog, Timestamp};
 
 use tt_conn::{Error, Result, Transport, TransportEvent};
 use tt_grid::{Cell, Grid};
@@ -55,6 +60,10 @@ pub enum Event {
     BadByte(u8),
     /// The transport went away — unplugged, hung up, or the child exited.
     Disconnected,
+    /// The session log could not be written and has been closed. Reported
+    /// once: a disk that filled up will not un-fill, and retrying on every
+    /// pump turns one problem into a stall.
+    LogFailed(String),
 }
 
 /// A terminal, and optionally something for it to talk to.
@@ -69,6 +78,9 @@ pub struct Session {
     pending: Vec<u8>,
     last_title: String,
     write_timeout: Duration,
+    /// The open session log, if any. A tap on the same byte stream, not a
+    /// second one — see [`Session::start_log`].
+    log: Option<SessionLog>,
     /// Lines scrolled back from the live screen; 0 is live.
     view_offset: usize,
     /// `Grid::scrolled_off` as of the last time the view was reconciled. The
@@ -88,6 +100,7 @@ impl Session {
             rx_events: Vec::new(),
             pending: Vec::new(),
             write_timeout: Duration::from_millis(200),
+            log: None,
             view_offset: 0,
             seen_scrolled_off: 0,
         }
@@ -185,6 +198,69 @@ impl Session {
         }
     }
 
+    // --- session logging ----------------------------------------------------
+
+    /// Start writing a session log, replacing any log already open.
+    ///
+    /// A tap on the same byte stream rather than a second one: a raw log gets
+    /// what the transport handed over, and a text log gets what the *parser*
+    /// decided to display. Stripping escape sequences with a scanner beside
+    /// the log would be a second parser to keep in agreement with the one
+    /// that is verified against Tera Term.
+    ///
+    /// Nothing is logged retroactively. Upstream can prepend the scrollback
+    /// (`LogAllBuffIncludedInFirst`) and the function it uses to do that is
+    /// one of the upstream bugs on file — it truncates every line at its first
+    /// wide character — so that option waits for the report to be answered.
+    pub fn start_log(&mut self, path: &Path, opts: LogOptions) -> std::io::Result<()> {
+        let text = opts.mode == LogMode::Text;
+        let log = SessionLog::open(path, opts)?;
+        self.log = Some(log);
+        self.vt.set_log_text_enabled(text);
+        // Whatever the tap collected before this point belongs to no log.
+        let _ = self.vt.take_log_text();
+        Ok(())
+    }
+
+    /// Close the log, flushing it. A no-op when none is open.
+    pub fn stop_log(&mut self) {
+        self.vt.set_log_text_enabled(false);
+        // Dropping flushes, but taking it explicitly means a failed flush is
+        // not silently swallowed by a destructor that cannot report.
+        if let Some(mut log) = self.log.take() {
+            let _ = log.flush();
+        }
+    }
+
+    pub fn log_path(&self) -> Option<&Path> {
+        self.log.as_ref().map(|l| l.path())
+    }
+
+    /// Bytes written to the log since it was opened, for a status line.
+    pub fn log_bytes(&self) -> u64 {
+        self.log.as_ref().map_or(0, |l| l.bytes())
+    }
+
+    /// Feed the log from whatever just arrived. Errors are reported once and
+    /// then the log is closed: a disk that filled up will not un-fill, and
+    /// retrying every pump turns one problem into a stall.
+    fn log_bytes_in(&mut self, raw: &[u8]) {
+        let Some(log) = self.log.as_mut() else {
+            return;
+        };
+        let text = log.mode() == LogMode::Text;
+        let result = if text {
+            let collected = self.vt.take_log_text();
+            log.write_text(&collected)
+        } else {
+            log.write_raw(raw)
+        };
+        if let Err(e) = result {
+            self.events.push(Event::LogFailed(e.to_string()));
+            self.stop_log();
+        }
+    }
+
     /// How many lines of history there are to scroll through.
     pub fn scrollback_len(&self) -> usize {
         self.vt.grid().scrollback_len()
@@ -260,6 +336,7 @@ impl Session {
                 total += n;
                 let bytes = std::mem::take(&mut self.rx);
                 self.vt.feed(&bytes);
+                self.log_bytes_in(&bytes);
                 self.rx = bytes;
                 self.follow_scroll();
                 self.events.push(Event::Damage);
@@ -407,6 +484,7 @@ impl Session {
     /// and for tests; it is also how a replayed session log would work.
     pub fn feed(&mut self, bytes: &[u8]) {
         self.vt.feed(bytes);
+        self.log_bytes_in(bytes);
         self.follow_scroll();
         self.events.push(Event::Damage);
         self.collect_title();

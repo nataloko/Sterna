@@ -22,7 +22,13 @@ sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
 # files rather than crates, so it cannot see that. Left in, its constants would
 # put `PIXEL`, `ONE_SHOT` and `FILTERED` into every translation unit that
 # includes this header.
-exclude = ["ONE_SHOT", "PIXEL", "BUTTON_DOWN", "BUTTON_UP", "FILTERED"]
+#
+# `LogMode` and `LogOptions` are `tt-session`'s own shapes; the ABI carries
+# `TtLogOptions` instead, which is `repr(C)` and spells the mode as a bool.
+exclude = [
+    "ONE_SHOT", "PIXEL", "BUTTON_DOWN", "BUTTON_UP", "FILTERED",
+    "LogMode", "LogOptions", "SessionLog",
+]
 
 # Types and constants that reach the ABI from the core crates keep their Rust
 # names, which are not namespaced. Rename rather than duplicate the definitions
@@ -38,6 +44,9 @@ exclude = ["ONE_SHOT", "PIXEL", "BUTTON_DOWN", "BUTTON_UP", "FILTERED"]
 "FlowControl" = "TtFlowControl"
 "TermId" = "TtTermId"
 "Tracking" = "TtTracking"
+# `Timestamp` unprefixed in a public C header is a collision waiting to
+# happen — it is a common enough name that some other header will have one.
+"Timestamp" = "TtLogTimestamp"
 
 "CELL_TEXT_MAX" = "TT_CELL_TEXT_MAX"
 "ATTR_BOLD" = "TT_ATTR_BOLD"
