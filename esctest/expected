@@ -1,0 +1,203 @@
+known-bug APCTests.test_APC_8bit  # esctest's own annotation for xterm
+fail BSTests.test_BS_AfterNoWrappedInlines  # reverse wraparound. DECSET 45 is not a mode upstream - TF_BACKWRAP is a TERATERM.INI key and off by default - so BS stops dead at the left margin
+fail BSTests.test_BS_AfterOneWrappedInline  # reverse wraparound. DECSET 45 is not a mode upstream - TF_BACKWRAP is a TERATERM.INI key and off by default - so BS stops dead at the left margin
+fail BSTests.test_BS_ReversewrapFromLeftEdgeToRightMargin  # reverse wraparound. DECSET 45 is not a mode upstream - TF_BACKWRAP is a TERATERM.INI key and off by default - so BS stops dead at the left margin
+fail BSTests.test_BS_ReverseWrapGoesToBottom  # reverse wraparound. DECSET 45 is not a mode upstream - TF_BACKWRAP is a TERATERM.INI key and off by default - so BS stops dead at the left margin
+fail BSTests.test_BS_ReverseWrapStartingInDoWrapPosition  # reverse wraparound. DECSET 45 is not a mode upstream - TF_BACKWRAP is a TERATERM.INI key and off by default - so BS stops dead at the left margin
+fail BSTests.test_BS_ReverseWrapWithLeftRight  # reverse wraparound. DECSET 45 is not a mode upstream - TF_BACKWRAP is a TERATERM.INI key and off by default - so BS stops dead at the left margin
+fail BSTests.test_BS_WrapsInWraparoundMode  # reverse wraparound. DECSET 45 is not a mode upstream - TF_BACKWRAP is a TERATERM.INI key and off by default - so BS stops dead at the left margin
+fail CBTTests.test_CBT_IgnoresRegion  # Tera Term does the same (esctest/run_diff.sh) - upstream's CursorBackwardTab stops at the left margin rather than ignoring it
+fail ChangeColorTests.test_ChangeColor_CIELab  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeColorTests.test_ChangeColor_CIELuv  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeColorTests.test_ChangeColor_CIEuvY  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeColorTests.test_ChangeColor_CIExyY  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeColorTests.test_ChangeColor_CIEXYZ  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeColorTests.test_ChangeColor_Hash12  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeColorTests.test_ChangeColor_Hash3  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeColorTests.test_ChangeColor_Hash6  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeColorTests.test_ChangeColor_Hash9  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeColorTests.test_ChangeColor_Multiple  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeColorTests.test_ChangeColor_RGB  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeColorTests.test_ChangeColor_RGBI  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeColorTests.test_ChangeColor_TekHVC  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeDynamicColorTests.test_ChangeDynamicColor_CIELab  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeDynamicColorTests.test_ChangeDynamicColor_CIELuv  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeDynamicColorTests.test_ChangeDynamicColor_CIEuvY  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeDynamicColorTests.test_ChangeDynamicColor_CIExyY  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeDynamicColorTests.test_ChangeDynamicColor_CIEXYZ  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeDynamicColorTests.test_ChangeDynamicColor_Hash12  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeDynamicColorTests.test_ChangeDynamicColor_Hash3  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeDynamicColorTests.test_ChangeDynamicColor_Hash6  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeDynamicColorTests.test_ChangeDynamicColor_Hash9  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeDynamicColorTests.test_ChangeDynamicColor_Multiple  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeDynamicColorTests.test_ChangeDynamicColor_RGB  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeDynamicColorTests.test_ChangeDynamicColor_RGBI  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeDynamicColorTests.test_ChangeDynamicColor_TekHVC  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeSpecialColorTests.test_ChangeSpecialColor_CIELab  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeSpecialColorTests.test_ChangeSpecialColor_CIELuv  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeSpecialColorTests.test_ChangeSpecialColor_CIEuvY  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeSpecialColorTests.test_ChangeSpecialColor_CIExyY  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeSpecialColorTests.test_ChangeSpecialColor_CIEXYZ  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeSpecialColorTests.test_ChangeSpecialColor_Hash12  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeSpecialColorTests.test_ChangeSpecialColor_Hash3  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeSpecialColorTests.test_ChangeSpecialColor_Hash6  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeSpecialColorTests.test_ChangeSpecialColor_Hash9  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeSpecialColorTests.test_ChangeSpecialColor_Multiple  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeSpecialColorTests.test_ChangeSpecialColor_Multiple2  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeSpecialColorTests.test_ChangeSpecialColor_RGB  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeSpecialColorTests.test_ChangeSpecialColor_RGBI  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ChangeSpecialColorTests.test_ChangeSpecialColor_TekHVC  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail CUBTests.test_CUB_AfterNoWrappedInlines  # reverse wraparound. DECSET 45 is not a mode upstream - TF_BACKWRAP is a TERATERM.INI key and off by default - so BS stops dead at the left margin
+fail CUBTests.test_CUB_AfterOneWrappedInline  # reverse wraparound. DECSET 45 is not a mode upstream - TF_BACKWRAP is a TERATERM.INI key and off by default - so BS stops dead at the left margin
+fail DA2Tests.test_DA2_0  # we answer as Tera Term: Primary DA is the terminal id's own payload (tttypes_termid.cpp) and Secondary DA is upstream's fixed >32;331;0c (vtterm.c:2841)
+fail DA2Tests.test_DA2_NoParameter  # we answer as Tera Term: Primary DA is the terminal id's own payload (tttypes_termid.cpp) and Secondary DA is upstream's fixed >32;331;0c (vtterm.c:2841)
+fail DATests.test_DA_0  # we answer as Tera Term: Primary DA is the terminal id's own payload (tttypes_termid.cpp) and Secondary DA is upstream's fixed >32;331;0c (vtterm.c:2841)
+fail DATests.test_DA_NoParameter  # we answer as Tera Term: Primary DA is the terminal id's own payload (tttypes_termid.cpp) and Secondary DA is upstream's fixed >32;331;0c (vtterm.c:2841)
+fail DECBITests.test_DECBI_LeftOfMargin  # Tera Term does the same (esctest/run_diff.sh) - upstream's DECBI/DECFI test the scroll region only (vtterm.c:1482)
+fail DECCRATests.test_DECCRA_respectsOriginMode  # upstream's rectangular operations shift only the row pair under origin mode; vtterm.c:3696 leaves the column half as a TODO comment
+fail DECDCTests.test_DECDC_CursorWithinTopBottom  # DECIC and DECDC are absent from vtterm.c - the ' intermediate table has no } or ~
+fail DECDCTests.test_DECDC_DefaultParam  # DECIC and DECDC are absent from vtterm.c - the ' intermediate table has no } or ~
+fail DECDCTests.test_DECDC_DeleteAll  # DECIC and DECDC are absent from vtterm.c - the ' intermediate table has no } or ~
+fail DECDCTests.test_DECDC_DeleteAllWithLeftRightMargins  # DECIC and DECDC are absent from vtterm.c - the ' intermediate table has no } or ~
+fail DECDCTests.test_DECDC_DeleteWithLeftRightMargins  # DECIC and DECDC are absent from vtterm.c - the ' intermediate table has no } or ~
+fail DECDCTests.test_DECDC_ExplicitParam  # DECIC and DECDC are absent from vtterm.c - the ' intermediate table has no } or ~
+fail DECDSRTests.test_DECDSR_DECCKSR  # vtterm.c:CSQ_n_Mode answers 53 and 55 and nothing else; the rest of DEC's status reports are not implemented upstream
+fail DECDSRTests.test_DECDSR_DECMSR  # vtterm.c:CSQ_n_Mode answers 53 and 55 and nothing else; the rest of DEC's status reports are not implemented upstream
+fail DECDSRTests.test_DECDSR_DECXCPR  # vtterm.c:CSQ_n_Mode answers 53 and 55 and nothing else; the rest of DEC's status reports are not implemented upstream
+fail DECDSRTests.test_DECDSR_DSRDataIntegrity  # vtterm.c:CSQ_n_Mode answers 53 and 55 and nothing else; the rest of DEC's status reports are not implemented upstream
+fail DECDSRTests.test_DECDSR_DSRKeyboard  # vtterm.c:CSQ_n_Mode answers 53 and 55 and nothing else; the rest of DEC's status reports are not implemented upstream
+fail DECDSRTests.test_DECDSR_DSRMultipleSessionStatus  # vtterm.c:CSQ_n_Mode answers 53 and 55 and nothing else; the rest of DEC's status reports are not implemented upstream
+fail DECDSRTests.test_DECDSR_DSRPrinterPort  # vtterm.c:CSQ_n_Mode answers 53 and 55 and nothing else; the rest of DEC's status reports are not implemented upstream
+fail DECDSRTests.test_DECDSR_DSRUDKLocked  # vtterm.c:CSQ_n_Mode answers 53 and 55 and nothing else; the rest of DEC's status reports are not implemented upstream
+fail DECDSRTests.test_DECDSR_LocatorType  # vtterm.c:CSQ_n_Mode answers 53 and 55 and nothing else; the rest of DEC's status reports are not implemented upstream
+fail DECERATests.test_DECERA_respectsOriginMode  # upstream's rectangular operations shift only the row pair under origin mode; vtterm.c:3696 leaves the column half as a TODO comment
+fail DECFITests.test_DECFI_RightOfMargin  # Tera Term does the same (esctest/run_diff.sh) - upstream's DECBI/DECFI test the scroll region only (vtterm.c:1482)
+fail DECFRATests.test_DECFRA_respectsOriginMode  # upstream's rectangular operations shift only the row pair under origin mode; vtterm.c:3696 leaves the column half as a TODO comment
+fail DECICTests.test_DECIC_CursorWithinTopBottom  # DECIC and DECDC are absent from vtterm.c - the ' intermediate table has no } or ~
+fail DECICTests.test_DECIC_DefaultParam  # DECIC and DECDC are absent from vtterm.c - the ' intermediate table has no } or ~
+fail DECICTests.test_DECIC_ExplicitParam  # DECIC and DECDC are absent from vtterm.c - the ' intermediate table has no } or ~
+fail DECICTests.test_DECIC_ScrollEntirelyOffRightEdge  # DECIC and DECDC are absent from vtterm.c - the ' intermediate table has no } or ~
+fail DECICTests.test_DECIC_ScrollOffRightEdge  # DECIC and DECDC are absent from vtterm.c - the ' intermediate table has no } or ~
+fail DECICTests.test_DECIC_ScrollOffRightMarginInScrollRegion  # DECIC and DECDC are absent from vtterm.c - the ' intermediate table has no } or ~
+known-bug DECIDTests.test_DECID_8bit  # esctest's own annotation for xterm
+fail DECRCTests.test_SaveRestoreCursor_Wrap  # esctest wants the deferred wrap itself to survive DECSC; upstream restores the position through MoveCursor, which clears it (vtterm.c:264)
+known-bug DECRQMTests.test_DECRQM_DEC_DECAAM  # esctest's own annotation for xterm
+fail DECRQMTests.test_DECRQM_DEC_DECARM  # a DEC private mode Tera Term does not implement, and upstream's DECRQM answers 0 - "not recognised" - for an unknown private mode
+known-bug DECRQMTests.test_DECRQM_DEC_DECARSM  # esctest's own annotation for xterm
+known-bug DECRQMTests.test_DECRQM_DEC_DECCANSM  # esctest's own annotation for xterm
+known-bug DECRQMTests.test_DECRQM_DEC_DECCRTSM  # esctest's own annotation for xterm
+known-bug DECRQMTests.test_DECRQM_DEC_DECESKM  # esctest's own annotation for xterm
+fail DECRQMTests.test_DECRQM_DEC_DECHCCM  # a DEC private mode Tera Term does not implement, and upstream's DECRQM answers 0 - "not recognised" - for an unknown private mode
+known-bug DECRQMTests.test_DECRQM_DEC_DECHDPXM  # esctest's own annotation for xterm
+fail DECRQMTests.test_DECRQM_DEC_DECHEBM  # a DEC private mode Tera Term does not implement, and upstream's DECRQM answers 0 - "not recognised" - for an unknown private mode
+known-bug DECRQMTests.test_DECRQM_DEC_DECHEM  # esctest's own annotation for xterm
+known-bug DECRQMTests.test_DECRQM_DEC_DECKBUM  # esctest's own annotation for xterm
+known-bug DECRQMTests.test_DECRQM_DEC_DECKPM  # esctest's own annotation for xterm
+known-bug DECRQMTests.test_DECRQM_DEC_DECMCM  # esctest's own annotation for xterm
+known-bug DECRQMTests.test_DECRQM_DEC_DECNAKB  # esctest's own annotation for xterm
+known-bug DECRQMTests.test_DECRQM_DEC_DECNCSM  # esctest's own annotation for xterm
+fail DECRQMTests.test_DECRQM_DEC_DECNRCM  # a DEC private mode Tera Term does not implement, and upstream's DECRQM answers 0 - "not recognised" - for an unknown private mode
+known-bug DECRQMTests.test_DECRQM_DEC_DECNULM  # esctest's own annotation for xterm
+known-bug DECRQMTests.test_DECRQM_DEC_DECOSCNM  # esctest's own annotation for xterm
+known-bug DECRQMTests.test_DECRQM_DEC_DECPCCM  # esctest's own annotation for xterm
+fail DECRQMTests.test_DECRQM_DEC_DECPFF  # a DEC private mode Tera Term does not implement, and upstream's DECRQM answers 0 - "not recognised" - for an unknown private mode
+known-bug DECRQMTests.test_DECRQM_DEC_DECRLCM  # esctest's own annotation for xterm
+known-bug DECRQMTests.test_DECRQM_DEC_DECRLM  # esctest's own annotation for xterm
+fail DECRQMTests.test_DECRQM_DEC_DECSCLM  # a DEC private mode Tera Term does not implement, and upstream's DECRQM answers 0 - "not recognised" - for an unknown private mode
+known-bug DECRQMTests.test_DECRQM_DEC_DECVCCM  # esctest's own annotation for xterm
+known-bug DECRQMTests.test_DECRQM_DEC_DECXRLM  # esctest's own annotation for xterm
+known-bug DECRQSSTests.test_DECRQSS_DECELF  # esctest's own annotation for xterm
+known-bug DECRQSSTests.test_DECRQSS_DECLFKC  # esctest's own annotation for xterm
+fail DECRQSSTests.test_DECRQSS_DECSASD  # not in vtterm.c:RequestStatusString, which covers DECSCUSR, DECSCL, DECSCA, DECSACE, SGR and the two margin pairs
+fail DECRQSSTests.test_DECRQSS_DECSCUSR  # DECSCUSR is gated on WF_CURSORCHANGE, which ships OFF (ttset.c:1656), so the shape never changes and the report is the configured default
+fail DECRQSSTests.test_DECRQSS_DECSLPP  # not in vtterm.c:RequestStatusString, which covers DECSCUSR, DECSCL, DECSCA, DECSACE, SGR and the two margin pairs
+known-bug DECRQSSTests.test_DECRQSS_DECSMKR  # esctest's own annotation for xterm
+fail DECRQSSTests.test_DECRQSS_DECSNLS  # not in vtterm.c:RequestStatusString, which covers DECSCUSR, DECSCL, DECSCA, DECSACE, SGR and the two margin pairs
+fail DECRQSSTests.test_DECRQSS_DECSSDT  # not in vtterm.c:RequestStatusString, which covers DECSCUSR, DECSCL, DECSCA, DECSACE, SGR and the two margin pairs
+fail DECSCLTests.test_DECSCL_Level2DoesntSupportDECRQM  # upstream's DECRQM and DECSLRM are not gated on the conformance level, so lowering it with DECSCL does not withdraw them
+fail DECSCLTests.test_DECSCL_Level5_SupportsDECNCSM  # DECSET 95 (DECNCSM) is not a mode upstream
+known-bug DECSCLTests.test_DECSCL_RISOnChange  # esctest's own annotation for xterm
+fail DECSCLTests.test_DSCSCL_Level3_SupportsDECRQMDoesntSupportDECSLRM  # upstream's DECRQM and DECSLRM are not gated on the conformance level, so lowering it with DECSCL does not withdraw them
+fail DECSEDTests.test_DECSED_3  # ED 3 is ClearBuffer upstream: it scrolls the page out and drops the scrollback rather than erasing saved lines in place, and it is gated on TF_REMOTECLEARSBUFF
+fail DECSEDTests.test_DECSED_3_Protection  # ED 3 is ClearBuffer upstream: it scrolls the page out and drops the scrollback rather than erasing saved lines in place, and it is gated on TF_REMOTECLEARSBUFF
+fail DECSEDTests.test_DECSED_doesNotRespectISOProtect  # SPA and EPA are not implemented upstream; only DECSCA's protect bit is, so ISO 6429 protection never marks a cell
+fail DECSELTests.test_DECSEL_doesNotRespectISOProtect  # SPA and EPA are not implemented upstream; only DECSCA's protect bit is, so ISO 6429 protection never marks a cell
+fail DECSERATests.test_DECSERA_respectsOriginMode  # upstream's rectangular operations shift only the row pair under origin mode; vtterm.c:3696 leaves the column half as a TODO comment
+fail DECSETTests.test_DECSET_Allow80To132  # DECSET 40 is not a mode upstream - DECCOLM changes the width whether or not it was allowed to
+fail DECSETTests.test_DECSET_ALTBUF  # Tera Term does the same (esctest/run_diff.sh) - 47 and 1047 swap the page without saving the cursor, which is what 1049 is for
+fail DECSETTests.test_DECSET_DECAWM_NoLineWrapOnTabWithLeftRightMargin  # upstream's Tab() takes the pending wrap before it tabs (vtterm.c:713), so a tab on a full line starts the next one
+fail DECSETTests.test_DECSET_DECAWM_TabDoesNotWrapAround  # upstream's Tab() takes the pending wrap before it tabs (vtterm.c:713), so a tab on a full line starts the next one
+fail DECSETTests.test_DECSET_DECLRMM_ModeResetByDECSTR  # upstream's SoftReset resets the margins but leaves DECLRMM itself set (vtterm.c:3270)
+known-bug DECSETTests.test_DECSET_DECNCSM  # esctest's own annotation for xterm
+fail DECSETTests.test_DECSET_DECOM_DECRQCRA  # DECRQCRA is ours, not upstream's, and its rectangle follows origin mode the way the other rectangular operations do; esctest wants it absolute
+fail DECSETTests.test_DECSET_MoreFix  # mintty's DECSET 41 is not a mode upstream
+fail DECSETTests.test_DECSET_OPT_ALTBUF  # Tera Term does the same (esctest/run_diff.sh) - 47 and 1047 swap the page without saving the cursor, which is what 1049 is for
+fail DECSETTests.test_DECSET_ReverseWraparound_BS  # reverse wraparound. DECSET 45 is not a mode upstream - TF_BACKWRAP is a TERATERM.INI key and off by default - so BS stops dead at the left margin
+fail DECSETTests.test_DECSET_ReverseWraparoundLastCol_BS  # reverse wraparound. DECSET 45 is not a mode upstream - TF_BACKWRAP is a TERATERM.INI key and off by default - so BS stops dead at the left margin
+fail DECSETTests.test_DECSET_ReverseWraparound_Multi  # reverse wraparound. DECSET 45 is not a mode upstream - TF_BACKWRAP is a TERATERM.INI key and off by default - so BS stops dead at the left margin
+fail DECSETTiteInhibitTests.test_SaveRestoreCursor_Wrap  # esctest wants the deferred wrap itself to survive DECSC; upstream restores the position through MoveCursor, which clears it (vtterm.c:264)
+fail DLTests.test_DL_OutsideLeftRightScrollRegion  # Tera Term does the same (esctest/run_diff.sh) - upstream's DL acts wherever the cursor is and does not test the left/right margins
+fail ECHTests.test_ECH_respectsISOProtection  # SPA and EPA are not implemented upstream; only DECSCA's protect bit is, so ISO 6429 protection never marks a cell
+fail EDTests.test_ED_3  # ED 3 is ClearBuffer upstream: it scrolls the page out and drops the scrollback rather than erasing saved lines in place, and it is gated on TF_REMOTECLEARSBUFF
+fail EDTests.test_ED_respectsISOProtection  # SPA and EPA are not implemented upstream; only DECSCA's protect bit is, so ISO 6429 protection never marks a cell
+fail ELTests.test_EL_respectsISOProtection  # SPA and EPA are not implemented upstream; only DECSCA's protect bit is, so ISO 6429 protection never marks a cell
+fail FFTests.test_FF_MovesDoesNotScrollOutsideLeftRight  # Tera Term does the same (esctest/run_diff.sh) - upstream's LineFeed scrolls the region without consulting the left/right margins
+known-bug HTSTests.test_HTS_8bit  # esctest's own annotation for xterm
+known-bug INDTests.test_IND_8bit  # esctest's own annotation for xterm
+fail INDTests.test_IND_MovesDoesNotScrollOutsideLeftRight  # Tera Term does the same (esctest/run_diff.sh) - upstream's LineFeed scrolls the region without consulting the left/right margins
+fail LFTests.test_LF_MovesDoesNotScrollOutsideLeftRight  # Tera Term does the same (esctest/run_diff.sh) - upstream's LineFeed scrolls the region without consulting the left/right margins
+known-bug ManipulateSelectionDataTests.test_ManipulateSelectionData_default  # esctest's own annotation for xterm
+known-bug NELTests.test_NEL_8bit  # esctest's own annotation for xterm
+fail NELTests.test_NEL_MovesDoesNotScrollOutsideLeftRight  # Tera Term does the same (esctest/run_diff.sh) - upstream's LineFeed scrolls the region without consulting the left/right margins
+known-bug PMTests.test_PM_8bit  # esctest's own annotation for xterm
+fail ResetColorTests.test_ResetColor_All  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ResetColorTests.test_ResetColor_Standard  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ResetSpecialColorTests.test_ResetSpecialColor_Dynamic  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ResetSpecialColorTests.test_ResetSpecialColor_Multiple  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ResetSpecialColorTests.test_ResetSpecialColor_Multiple2  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ResetSpecialColorTests.test_ResetSpecialColor_Single  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail ResetSpecialColorTests.test_ResetSpecialColor_Single2  # the palette belongs to the display layer (vtdisp.c DispGetColor/DispSetColor), so OSC 4/5/10-19/104/105 have nothing in the engine to answer from; the oracle answers from a stub and cannot arbitrate this one
+fail RISTests.test_RIS_ResetDECCOLM  # upstream's ResetTerminal leaves the column count alone, so RIS after DECCOLM keeps 132
+fail RISTests.test_RIS_ResetTitleMode  # the xterm title modes (CSI > Ps t) are not implemented upstream
+known-bug RITests.test_RI_8bit  # esctest's own annotation for xterm
+fail RITests.test_RI_MovesDoesNotScrollOutsideLeftRight  # Tera Term does the same (esctest/run_diff.sh) - upstream's LineFeed scrolls the region without consulting the left/right margins
+known-bug S8C1TTests.test_S8C1T_CSI  # esctest's own annotation for xterm
+known-bug S8C1TTests.test_S8C1T_DCS  # esctest's own annotation for xterm
+known-bug S8C1TTests.test_S8C1T_SPA_EPA  # esctest's own annotation for xterm
+fail SCORCTests.test_SaveRestoreCursor_Wrap  # esctest wants the deferred wrap itself to survive DECSC; upstream restores the position through MoveCursor, which clears it (vtterm.c:264)
+known-bug SMTitleTests.test_SMTitle_SetHexQueryHex  # esctest's own annotation for xterm
+known-bug SMTitleTests.test_SMTitle_SetHexQueryUTF8  # esctest's own annotation for xterm
+known-bug SMTitleTests.test_SMTitle_SetUTF8QueryHex  # esctest's own annotation for xterm
+known-bug SMTitleTests.test_SMTitle_SetUTF8QueryUTF8  # esctest's own annotation for xterm
+known-bug SOSTests.test_SOS_8bit  # esctest's own annotation for xterm
+fail VTTests.test_VT_MovesDoesNotScrollOutsideLeftRight  # Tera Term does the same (esctest/run_diff.sh) - upstream's LineFeed scrolls the region without consulting the left/right margins
+fail XtermSaveTests.test_XtermSave_SaveResetState  # XTSAVE and XTRESTORE (CSI ? Ps s and r) are not in vtterm.c's private table
+fail XtermSaveTests.test_XtermSave_SaveSetState  # XTSAVE and XTRESTORE (CSI ? Ps s and r) are not in vtterm.c's private table
+fail XtermWinopsTests.test_XtermWinops_DECSLPP  # asks the display layer where the window is, or moves it; vtdisp.c is not in the engine and the oracle answers from a stub
+fail XtermWinopsTests.test_XtermWinops_Fullscreen  # asks the display layer where the window is, or moves it; vtdisp.c is not in the engine and the oracle answers from a stub
+fail XtermWinopsTests.test_XtermWinops_IconifyDeiconfiy  # asks the display layer where the window is, or moves it; vtdisp.c is not in the engine and the oracle answers from a stub
+fail XtermWinopsTests.test_XtermWinops_MaximizeWindow_Horizontally  # asks the display layer where the window is, or moves it; vtdisp.c is not in the engine and the oracle answers from a stub
+fail XtermWinopsTests.test_XtermWinops_MaximizeWindow_HorizontallyAndVertically  # asks the display layer where the window is, or moves it; vtdisp.c is not in the engine and the oracle answers from a stub
+fail XtermWinopsTests.test_XtermWinops_MaximizeWindow_Vertically  # asks the display layer where the window is, or moves it; vtdisp.c is not in the engine and the oracle answers from a stub
+fail XtermWinopsTests.test_XtermWinops_MoveToXY  # asks the display layer where the window is, or moves it; vtdisp.c is not in the engine and the oracle answers from a stub
+fail XtermWinopsTests.test_XtermWinops_MoveToXY_Defaults  # asks the display layer where the window is, or moves it; vtdisp.c is not in the engine and the oracle answers from a stub
+fail XtermWinopsTests.test_XtermWinops_PushIconAndWindow_PopIcon  # TitleReportSequence ships as "Empty" (ttset.c:1664), so CSI 20/21 t answer an empty OSC string on purpose - a terminal that echoes its title into the input stream is an injection path. The stack is implemented; the readback is blank
+fail XtermWinopsTests.test_XtermWinops_PushIconAndWindow_PopIconAndWindow  # TitleReportSequence ships as "Empty" (ttset.c:1664), so CSI 20/21 t answer an empty OSC string on purpose - a terminal that echoes its title into the input stream is an injection path. The stack is implemented; the readback is blank
+fail XtermWinopsTests.test_XtermWinops_PushIconAndWindow_PopWindow  # TitleReportSequence ships as "Empty" (ttset.c:1664), so CSI 20/21 t answer an empty OSC string on purpose - a terminal that echoes its title into the input stream is an injection path. The stack is implemented; the readback is blank
+fail XtermWinopsTests.test_XtermWinops_PushIcon_PopIcon  # TitleReportSequence ships as "Empty" (ttset.c:1664), so CSI 20/21 t answer an empty OSC string on purpose - a terminal that echoes its title into the input stream is an injection path. The stack is implemented; the readback is blank
+fail XtermWinopsTests.test_XtermWinops_PushIconThenWindowThenPopBoth  # TitleReportSequence ships as "Empty" (ttset.c:1664), so CSI 20/21 t answer an empty OSC string on purpose - a terminal that echoes its title into the input stream is an injection path. The stack is implemented; the readback is blank
+fail XtermWinopsTests.test_XtermWinops_PushMultiplePopMultiple_Icon  # TitleReportSequence ships as "Empty" (ttset.c:1664), so CSI 20/21 t answer an empty OSC string on purpose - a terminal that echoes its title into the input stream is an injection path. The stack is implemented; the readback is blank
+fail XtermWinopsTests.test_XtermWinops_PushMultiplePopMultiple_Window  # TitleReportSequence ships as "Empty" (ttset.c:1664), so CSI 20/21 t answer an empty OSC string on purpose - a terminal that echoes its title into the input stream is an injection path. The stack is implemented; the readback is blank
+fail XtermWinopsTests.test_XtermWinops_PushWindow_PopWindow  # TitleReportSequence ships as "Empty" (ttset.c:1664), so CSI 20/21 t answer an empty OSC string on purpose - a terminal that echoes its title into the input stream is an injection path. The stack is implemented; the readback is blank
+fail XtermWinopsTests.test_XtermWinops_ReportIconLabel  # TitleReportSequence ships as "Empty" (ttset.c:1664), so CSI 20/21 t answer an empty OSC string on purpose - a terminal that echoes its title into the input stream is an injection path. The stack is implemented; the readback is blank
+fail XtermWinopsTests.test_XtermWinops_ReportWindowLabel  # TitleReportSequence ships as "Empty" (ttset.c:1664), so CSI 20/21 t answer an empty OSC string on purpose - a terminal that echoes its title into the input stream is an injection path. The stack is implemented; the readback is blank
+fail XtermWinopsTests.test_XtermWinops_ResizeChars_BothParameters  # asks the display layer where the window is, or moves it; vtdisp.c is not in the engine and the oracle answers from a stub
+fail XtermWinopsTests.test_XtermWinops_ResizeChars_DefaultHeight  # asks the display layer where the window is, or moves it; vtdisp.c is not in the engine and the oracle answers from a stub
+fail XtermWinopsTests.test_XtermWinops_ResizeChars_DefaultWidth  # asks the display layer where the window is, or moves it; vtdisp.c is not in the engine and the oracle answers from a stub
+fail XtermWinopsTests.test_XtermWinops_ResizeChars_ZeroHeight  # asks the display layer where the window is, or moves it; vtdisp.c is not in the engine and the oracle answers from a stub
+fail XtermWinopsTests.test_XtermWinops_ResizeChars_ZeroWidth  # asks the display layer where the window is, or moves it; vtdisp.c is not in the engine and the oracle answers from a stub
+fail XtermWinopsTests.test_XtermWinops_ResizePixels_BothParameters  # asks the display layer where the window is, or moves it; vtdisp.c is not in the engine and the oracle answers from a stub
+fail XtermWinopsTests.test_XtermWinops_ResizePixels_OmittedHeight  # asks the display layer where the window is, or moves it; vtdisp.c is not in the engine and the oracle answers from a stub
+fail XtermWinopsTests.test_XtermWinops_ResizePixels_OmittedWidth  # asks the display layer where the window is, or moves it; vtdisp.c is not in the engine and the oracle answers from a stub
+fail XtermWinopsTests.test_XtermWinops_ResizePixels_ZeroHeight  # asks the display layer where the window is, or moves it; vtdisp.c is not in the engine and the oracle answers from a stub
+fail XtermWinopsTests.test_XtermWinops_ResizePixels_ZeroWidth  # asks the display layer where the window is, or moves it; vtdisp.c is not in the engine and the oracle answers from a stub
