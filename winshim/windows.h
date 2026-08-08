@@ -1,12 +1,12 @@
 /*
- * termitta oracle — minimal <windows.h> shim for POSIX.
+ * Minimal <windows.h> shim for POSIX.
  *
- * Purpose: let Tera Term's vtterm.c (VT state machine) and buffer.c (grid +
- * scrollback) compile and run on Linux unmodified, so they can serve as a
- * differential-test oracle for the Rust reimplementation.
+ * Purpose: let Tera Term's C — the VT engine in `vtterm.c` and `buffer.c`, and
+ * the file-transfer protocols in `ttpfile/` — compile and run on Linux
+ * unmodified, as a differential-test oracle and as shipped code respectively.
  *
  * This is deliberately NOT a Win32 emulation. It provides only the types and
- * the three functions those two translation units actually reach for:
+ * the three functions those translation units actually reach for:
  * Sleep, GetTickCount, WideCharToMultiByte.
  */
 #pragma once
@@ -14,6 +14,15 @@
 #include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
+/*
+ * `<stdlib.h>` and `<string.h>` are here because MSVC's `<windows.h>` drags in
+ * enough of the CRT that upstream does not always include them itself —
+ * `ttpfile/raw.c` calls `malloc` and `free` having included neither. That was
+ * a warning on GCC 13 and is an **error** on GCC 14 and later, so the file
+ * built in the Ubuntu container and not in the Fedora one, which is the sort
+ * of gap that looks like a broken toolchain rather than a missing include.
+ */
+#include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
 
@@ -237,6 +246,19 @@ HINSTANCE ShellExecuteW(HWND hwnd, const wchar_t *lpOperation,
 
 int MessageBoxA(HWND hWnd, const char *text, const char *caption, UINT type);
 #define MessageBox MessageBoxA
+
+/* ---- window timers, for the protocols' one deadline ----
+ *
+ * `ttpfile/zmodem.c:1586` arms a 500 ms timer on cancel and nothing declares
+ * these, so on GCC 13 they compiled as implicit declarations and on GCC 14 and
+ * later they do not compile at all. Declared here rather than defined: the two
+ * are `IdProtoTimer` and the host owns what a timer *means*. `tt-xfer` defines
+ * them per transfer; the oracle never reaches them.
+ *
+ * `FTSetTimeOut` is the same timer, killed and re-armed — see
+ * `teraterm/filesys_proto.cpp:176`. There is only one. */
+UINT_PTR SetTimer(HWND hWnd, UINT_PTR nIDEvent, UINT uElapse, void *lpTimerFunc);
+BOOL KillTimer(HWND hWnd, UINT_PTR uIDEvent);
 
 /* A consumer that has somewhere better to put the text than stderr says so
  * here. `tt-xfer` does: "Cannot create file" is the only account the user gets

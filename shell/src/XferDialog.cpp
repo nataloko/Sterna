@@ -1,0 +1,243 @@
+// Copyright (c) the termitta authors. 3-clause BSD; see LICENSE.
+
+#include "XferDialog.h"
+
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDialogButtonBox>
+#include <QFormLayout>
+#include <QLabel>
+#include <QProgressBar>
+#include <QPushButton>
+#include <QVBoxLayout>
+
+namespace {
+
+/// A size in the units a person reads.
+QString humanBytes(qint64 n)
+{
+    if (n < 1024) {
+        return XferProgressDialog::tr("%1 B").arg(n);
+    }
+    if (n < 1024 * 1024) {
+        return XferProgressDialog::tr("%1 KiB").arg(n / 1024.0, 0, 'f', 1);
+    }
+    return XferProgressDialog::tr("%1 MiB").arg(n / (1024.0 * 1024.0), 0, 'f', 1);
+}
+
+} // namespace
+
+// --- picking a protocol ------------------------------------------------------
+
+XferOptionsDialog::XferOptionsDialog(bool sending, QWidget *parent)
+    : QDialog(parent), m_sending(sending)
+{
+    setWindowTitle(sending ? tr("Send file") : tr("Receive file"));
+
+    m_protocol = new QComboBox(this);
+    m_protocol->addItem(tr("ZMODEM"), TT_XFER_PROTOCOL_Z_MODEM);
+    m_protocol->addItem(tr("YMODEM"), TT_XFER_PROTOCOL_Y_MODEM);
+    m_protocol->addItem(tr("XMODEM"), TT_XFER_PROTOCOL_X_MODEM);
+    m_protocol->addItem(tr("Kermit"), TT_XFER_PROTOCOL_KERMIT);
+    // Listed, and listed last, with what is known about them said out loud
+    // rather than left for someone to discover.
+    m_protocol->addItem(tr("B-Plus (untested)"), TT_XFER_PROTOCOL_B_PLUS);
+    m_protocol->addItem(tr("Quick-VAN (untested)"), TT_XFER_PROTOCOL_QUICK_VAN);
+    m_protocol->setToolTip(
+        tr("ZMODEM unless the far end cannot. B-Plus was CompuServe's and "
+           "Quick-VAN was NIFTY-Serve's; both services are gone, so neither "
+           "has been tested against anything and both are best-effort."));
+
+    m_option = new QComboBox(this);
+    m_optionLabel = new QLabel(tr("Blocks:"), this);
+
+    m_text = new QCheckBox(tr("Text mode (translate line endings)"), this);
+    m_text->setToolTip(tr("XMODEM only, and off unless the file is text: it "
+                          "rewrites CRLF and pads the last block with ^Z."));
+
+    connect(m_protocol, &QComboBox::currentIndexChanged, this,
+            &XferOptionsDialog::protocolChanged);
+
+    auto *form = new QFormLayout;
+    form->addRow(tr("Protocol:"), m_protocol);
+    form->addRow(m_optionLabel, m_option);
+    form->addRow(QString(), m_text);
+
+    auto *buttons =
+        new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+
+    auto *layout = new QVBoxLayout(this);
+    layout->addLayout(form);
+    layout->addWidget(buttons);
+
+    protocolChanged();
+}
+
+void XferOptionsDialog::protocolChanged()
+{
+    const auto proto = static_cast<TtXferProtocol>(m_protocol->currentData().toInt());
+
+    m_option->clear();
+    switch (proto) {
+    case TT_XFER_PROTOCOL_X_MODEM:
+        // Upstream's four, in the order its own dialog lists them. CRC first
+        // because it is what a receiver asks for by sending `C`; checksum is
+        // for a peer old enough not to know about CRC.
+        m_option->addItem(tr("128 bytes, CRC"), 2);
+        m_option->addItem(tr("128 bytes, checksum"), 1);
+        m_option->addItem(tr("1K, CRC"), 3);
+        m_option->addItem(tr("1K, checksum"), 4);
+        break;
+    case TT_XFER_PROTOCOL_Y_MODEM:
+        // 1K is the only value the sender's packet builder has a case for —
+        // `filesys_proto.cpp:1409` hardcodes it and `YSendPacket` asserts on
+        // anything else. G is receive-only in practice.
+        m_option->addItem(tr("1K blocks"), 1);
+        if (!m_sending) {
+            m_option->addItem(tr("YMODEM-g (no per-block ACK)"), 2);
+        }
+        break;
+    default:
+        break;
+    }
+
+    const bool hasOption = m_option->count() > 0;
+    m_option->setVisible(hasOption);
+    m_optionLabel->setVisible(hasOption);
+    m_text->setVisible(proto == TT_XFER_PROTOCOL_X_MODEM);
+}
+
+void XferOptionsDialog::setProtocol(TtXferProtocol protocol)
+{
+    const int i = m_protocol->findData(protocol);
+    if (i >= 0) {
+        m_protocol->setCurrentIndex(i);
+    }
+}
+
+QString XferOptionsDialog::protocolName() const
+{
+    return m_protocol->currentText();
+}
+
+bool XferOptionsDialog::needsReceiveName() const
+{
+    return !m_sending
+           && static_cast<TtXferProtocol>(m_protocol->currentData().toInt())
+                  == TT_XFER_PROTOCOL_X_MODEM;
+}
+
+TtXferJob XferOptionsDialog::job() const
+{
+    TtXferJob job = {};
+    job.protocol = static_cast<TtXferProtocol>(m_protocol->currentData().toInt());
+    job.sending = m_sending;
+    job.option = m_option->count() > 0 ? m_option->currentData().toInt() : 0;
+    job.text = m_text->isVisible() && m_text->isChecked();
+    // Binary is the ZMODEM default and the only sane one for a file; the
+    // alternative rewrites line endings inside what the user asked to copy.
+    job.binary = true;
+    job.auto_start = false;
+    job.kermit_mode = m_sending ? 3 : 1;
+    job.autostop_sec = 0;
+    return job;
+}
+
+// --- watching it happen ------------------------------------------------------
+
+XferProgressDialog::XferProgressDialog(const QString &title, QWidget *parent)
+    : QDialog(parent)
+{
+    setWindowTitle(title);
+
+    m_file = new QLabel(tr("Starting…"), this);
+    m_file->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    // Elide rather than grow: a path can be longer than a screen, and a dialog
+    // that resizes itself to fit one jumps under the pointer.
+    m_file->setWordWrap(false);
+    m_file->setMinimumWidth(380);
+
+    m_bar = new QProgressBar(this);
+    m_bar->setRange(0, 100);
+    m_bar->setValue(0);
+
+    m_stats = new QLabel(QString(), this);
+
+    m_buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
+    connect(m_buttons, &QDialogButtonBox::rejected, this, [this] {
+        if (m_done) {
+            accept();
+        } else {
+            emit cancelled();
+        }
+    });
+
+    auto *layout = new QVBoxLayout(this);
+    layout->addWidget(m_file);
+    layout->addWidget(m_bar);
+    layout->addWidget(m_stats);
+    layout->addWidget(m_buttons);
+}
+
+void XferProgressDialog::update(const TransferProgress &progress)
+{
+    if (m_done) {
+        return;
+    }
+    if (!progress.file.isEmpty()) {
+        m_file->setText(progress.file);
+        m_file->setToolTip(progress.file);
+    }
+
+    // Three states, not two. A protocol that knows the size gives a
+    // percentage; one that does not — XMODEM never learns it, and ZMODEM only
+    // if the sender said — gets a busy indicator rather than a bar frozen at
+    // zero, which reads as "stuck".
+    if (progress.total > 0) {
+        m_bar->setRange(0, 100);
+        m_bar->setValue(progress.percent < 0 ? 0 : progress.percent);
+    } else {
+        m_bar->setRange(0, 0);
+    }
+
+    const double secs = progress.elapsedMs / 1000.0;
+    QString rate;
+    if (secs > 0.5 && progress.bytes > 0) {
+        rate = tr(" · %1/s").arg(humanBytes(static_cast<qint64>(progress.bytes / secs)));
+    }
+    if (progress.total > 0) {
+        m_stats->setText(tr("%1 of %2%3")
+                             .arg(humanBytes(progress.done), humanBytes(progress.total), rate));
+    } else {
+        m_stats->setText(tr("%1%2").arg(humanBytes(progress.bytes), rate));
+    }
+}
+
+void XferProgressDialog::finish(const TransferResult &result)
+{
+    m_done = true;
+    m_bar->setRange(0, 100);
+    m_bar->setValue(result.success ? 100 : m_bar->value());
+
+    if (result.success) {
+        m_stats->setText(tr("Complete — %1 in %2 s")
+                             .arg(humanBytes(result.bytes))
+                             .arg(result.elapsedMs / 1000.0, 0, 'f', 1));
+    } else if (result.cancelled) {
+        m_stats->setText(tr("Cancelled after %1").arg(humanBytes(result.bytes)));
+    } else if (!result.message.isEmpty()) {
+        // The protocol's own words. Often the only account of the failure
+        // there is — upstream puts these in a message box.
+        m_stats->setText(tr("Failed: %1").arg(result.message));
+    } else {
+        m_stats->setText(tr("Failed after %1").arg(humanBytes(result.bytes)));
+    }
+
+    m_buttons->setStandardButtons(QDialogButtonBox::Close);
+    if (QPushButton *close = m_buttons->button(QDialogButtonBox::Close)) {
+        close->setDefault(true);
+        close->setFocus();
+    }
+}

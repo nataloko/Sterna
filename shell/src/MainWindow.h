@@ -12,6 +12,7 @@
 class QLabel;
 class QScrollBar;
 class TerminalView;
+class XferProgressDialog;
 
 /// One window, one session.
 ///
@@ -66,6 +67,10 @@ private slots:
     /// server saying 132x43 is describing equipment the user cannot see.
     void onRemoteResize(int cols, int rows);
     void sendBreak();
+    void sendFile();
+    void receiveFile();
+    void onTransferProgressed(const TransferProgress &progress);
+    void onTransferFinished(const TransferResult &result);
     void toggleLogging();
     void chooseFont();
     void showSettingsDialog();
@@ -100,7 +105,13 @@ private:
     QAction *m_disconnectAction = nullptr;
     QAction *m_breakAction = nullptr;
     QAction *m_logAction = nullptr;
+    QAction *m_sendAction = nullptr;
+    QAction *m_receiveAction = nullptr;
     QLabel *m_logStatus = nullptr;
+    /// The progress dialog, while one is up. Modeless, and owned here rather
+    /// than on the stack: the transfer is driven by this window's event loop,
+    /// so a dialog that blocked it would block the transfer it is showing.
+    XferProgressDialog *m_xferDialog = nullptr;
 
     // Remembered so reopening the dialog does not start from the defaults
     // again. A session profile on disk is Stage 2's, with the settings schema.

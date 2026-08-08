@@ -11,6 +11,7 @@
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QLocale>
 #include <QStatusBar>
 
@@ -24,6 +25,7 @@
 #include "SshPrompts.h"
 #include "TelnetDialog.h"
 #include "TerminalView.h"
+#include "XferDialog.h"
 
 namespace {
 
@@ -79,6 +81,10 @@ MainWindow::MainWindow()
     connect(m_session, &Session::sshFailed, this, &MainWindow::onSshFailed);
     connect(m_session, &Session::remoteResize, this, &MainWindow::onRemoteResize);
     connect(m_session, &Session::settingsChanged, this, &MainWindow::onSettingsChanged);
+    connect(m_session, &Session::transferProgressed, this,
+            &MainWindow::onTransferProgressed);
+    connect(m_session, &Session::transferFinished, this,
+            &MainWindow::onTransferFinished);
 
     buildMenus();
 
@@ -174,6 +180,17 @@ void MainWindow::buildMenus()
                     m_view, &TerminalView::copySelection);
     edit->addAction(tr("Paste"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V),
                     m_view, &TerminalView::pasteClipboard);
+
+    // Under File, next to the connection, because that is where upstream puts
+    // it and because a transfer is a thing you do *to* a connection.
+    file->insertSeparator(m_disconnectAction);
+    m_sendAction = new QAction(tr("Send file..."), this);
+    connect(m_sendAction, &QAction::triggered, this, &MainWindow::sendFile);
+    m_receiveAction = new QAction(tr("Receive file..."), this);
+    connect(m_receiveAction, &QAction::triggered, this, &MainWindow::receiveFile);
+    file->insertAction(m_disconnectAction, m_sendAction);
+    file->insertAction(m_disconnectAction, m_receiveAction);
+    file->insertSeparator(m_disconnectAction);
 
     QMenu *terminal = menuBar()->addMenu(tr("Terminal"));
     m_breakAction = terminal->addAction(tr("Send break"), this, &MainWindow::sendBreak);
@@ -381,6 +398,112 @@ void MainWindow::sendBreak()
     m_session->sendBreak(kBreakMs);
 }
 
+void MainWindow::sendFile()
+{
+    XferOptionsDialog options(true, this);
+    if (options.exec() != QDialog::Accepted) {
+        return;
+    }
+    // The protocol first and the files second, because the protocol decides
+    // whether more than one is allowed: X/YMODEM send a batch happily, and
+    // Kermit's `Send` does too, but a user who picked XMODEM and three files
+    // would be surprised by which one arrived.
+    const bool batch = options.job().protocol != TT_XFER_PROTOCOL_X_MODEM;
+    const QStringList paths =
+        batch ? QFileDialog::getOpenFileNames(this, tr("Send"))
+              : QStringList{QFileDialog::getOpenFileName(this, tr("Send"))};
+    if (paths.isEmpty() || paths.first().isEmpty()) {
+        return;
+    }
+
+    QString error;
+    if (!m_session->sendFiles(options.job(), paths, &error)) {
+        QMessageBox::warning(this, tr("Send file"), error);
+        return;
+    }
+
+    m_xferDialog = new XferProgressDialog(
+        tr("Sending — %1").arg(options.protocolName()), this);
+    m_xferDialog->setAttribute(Qt::WA_DeleteOnClose);
+    connect(m_xferDialog, &XferProgressDialog::cancelled, m_session,
+            &Session::cancelTransfer);
+    connect(m_xferDialog, &QObject::destroyed, this, [this] { m_xferDialog = nullptr; });
+    m_xferDialog->show();
+    updateStatus();
+}
+
+void MainWindow::receiveFile()
+{
+    XferOptionsDialog options(false, this);
+    if (options.exec() != QDialog::Accepted) {
+        return;
+    }
+    const QString dir =
+        QFileDialog::getExistingDirectory(this, tr("Receive into"));
+    if (dir.isEmpty()) {
+        return;
+    }
+
+    QString name;
+    if (options.needsReceiveName()) {
+        // XMODEM carries no filename on the wire, so there is nothing to
+        // derive a destination from and the user has to say. Asked with a save
+        // dialog rather than a line edit, because it is a file name and the
+        // platform has a widget for that.
+        const QString chosen = QFileDialog::getSaveFileName(
+            this, tr("Save the received file as"), dir + QLatin1String("/received.bin"));
+        if (chosen.isEmpty()) {
+            return;
+        }
+        name = QFileInfo(chosen).fileName();
+    }
+
+    QString error;
+    if (!m_session->receiveFiles(options.job(), dir, name, &error)) {
+        QMessageBox::warning(this, tr("Receive file"), error);
+        return;
+    }
+
+    m_xferDialog = new XferProgressDialog(
+        tr("Receiving — %1").arg(options.protocolName()), this);
+    m_xferDialog->setAttribute(Qt::WA_DeleteOnClose);
+    connect(m_xferDialog, &XferProgressDialog::cancelled, m_session,
+            &Session::cancelTransfer);
+    connect(m_xferDialog, &QObject::destroyed, this, [this] { m_xferDialog = nullptr; });
+    m_xferDialog->show();
+    updateStatus();
+}
+
+void MainWindow::onTransferProgressed(const TransferProgress &progress)
+{
+    if (m_xferDialog) {
+        m_xferDialog->update(progress);
+    }
+}
+
+void MainWindow::onTransferFinished(const TransferResult &result)
+{
+    if (m_xferDialog) {
+        // Left open rather than closed. A transfer that failed has something
+        // to say — often the protocol's own words, which are the only account
+        // of the failure there is — and a dialog that vanished at the moment
+        // of failure would say it to nobody.
+        m_xferDialog->finish(result);
+    }
+    // The status line gets it too, because the dialog may already have been
+    // dismissed and because this is the sentence that survives.
+    if (result.success) {
+        m_status->setText(tr("Transfer complete"));
+    } else if (result.cancelled) {
+        m_status->setText(tr("Transfer cancelled"));
+    } else {
+        m_status->setText(result.message.isEmpty() ? tr("Transfer failed")
+                                                   : tr("Transfer failed: %1")
+                                                         .arg(result.message));
+    }
+    updateStatus();
+}
+
 void MainWindow::toggleLogging()
 {
     if (m_session->isLogging()) {
@@ -496,5 +619,14 @@ void MainWindow::updateStatus()
         // and offering the item anyway offers an error message at the moment
         // a console has stopped answering.
         m_breakAction->setEnabled(m_session->supportsBreak());
+    }
+    // One transfer at a time, and only over something. The core refuses both
+    // anyway, but a greyed item says so before the click rather than after.
+    const bool canTransfer = connected && !m_session->isTransferring();
+    if (m_sendAction) {
+        m_sendAction->setEnabled(canTransfer);
+    }
+    if (m_receiveAction) {
+        m_receiveAction->setEnabled(canTransfer);
     }
 }

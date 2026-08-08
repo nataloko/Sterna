@@ -73,7 +73,8 @@ add_library(termitta_shell STATIC
     src/SettingsDialog.cpp
     src/SshDialog.cpp
     src/SshPrompts.cpp
-    src/TelnetDialog.cpp)
+    src/TelnetDialog.cpp
+    src/XferDialog.cpp)
 
 add_dependencies(termitta_shell tt_core)
 target_link_libraries(termitta_shell PUBLIC Qt6::Widgets termitta_core)
@@ -118,6 +119,14 @@ add_executable(pty_test tests/pty_test.cpp)
 target_link_libraries(pty_test PRIVATE termitta_shell)
 target_compile_options(pty_test PRIVATE -Wall -Wextra)
 add_test(NAME pty COMMAND pty_test)
+
+# A file transfer, driven by the window's event loop rather than by a pump
+# loop. It needs `lrzsz` for the transfer itself and skips loudly without it;
+# the cancel case and the dialogs need nothing.
+add_executable(xfer_test tests/xfer_test.cpp)
+target_link_libraries(xfer_test PRIVATE termitta_shell)
+target_compile_options(xfer_test PRIVATE -Wall -Wextra)
+add_test(NAME xfer COMMAND xfer_test)
 
 # --- the performance gate ----------------------------------------------------
 #

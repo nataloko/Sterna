@@ -16,6 +16,8 @@ distrobox-host-exec distrobox enter termitta-fedora --no-tty -- bash -lc '
   ./build/ssh_test --write /tmp  # ...and the four SSH dialogs, as PNGs
   ./build/telnet_test            # the same, over telnet
   ./build/pty_test               # ...and over a local shell, which never skips
+  ./build/xfer_test              # a ZMODEM send, driven by the event loop
+  ./build/xfer_test --write /tmp # ...and the transfer dialogs, as PNGs
   ./build/termitta --port /dev/ttyUSB0 --baud 115200
   ./build/termitta myrouter      # an alias out of ~/.ssh/config
   ./build/termitta --telnet console-server:2001
@@ -422,6 +424,46 @@ The file is `$XDG_CONFIG_HOME/termitta/termitta.ini`: Tera Term's *format*, in
 the place a Linux configuration file belongs, since the executable may be
 inside a read-only AppImage. Pointing it at a real `TERATERM.INI` is a
 supported thing to do and `--ini` is how it will be spelled.
+
+## A transfer is the second thing with a timer, and the only other one
+
+`File > Send file...` and `File > Receive file...`. The protocols are Tera
+Term's own C, vendored and driven by `tt-xfer`; what the window supplies is a
+protocol chooser, a progress dialog, and the wakeups.
+
+**The wakeups are the part worth reading.** Everything else in this window
+runs off the descriptor, and a transfer cannot: the protocols retry by
+*timeout* — an XMODEM receiver that hears nothing re-sends its `NAK` after ten
+seconds, ZMODEM finishes a cancel 500 ms after sending it — and a line that has
+gone quiet produces no descriptor wakeup at all. So `Session` has a second
+single-shot timer, armed after every pump from
+`tt_session_transfer_deadline_ms` and stopped the moment no transfer is
+running. It is the same shape as the flow-control retry timer already there,
+and for the same reason: a case a descriptor genuinely cannot carry.
+`xfer_test` covers it directly, by cancelling a transfer whose peer is a
+`sleep`.
+
+Three smaller decisions:
+
+- **The progress dialog is modeless**, where upstream's is modal. Not a style
+  preference: the transfer is driven by *this* window's event loop, so a dialog
+  that blocked it would block the transfer it is showing. Modality has nothing
+  left to protect either — the core refuses keystrokes and keeps the protocol's
+  traffic out of the parser for the duration, which is what upstream's modal
+  dialog was achieving by other means.
+- **It stays open when the transfer fails.** The protocol's own words —
+  "Cannot create file" — are often the only account of the failure there is,
+  and a dialog that vanished at the moment of failure would say it to nobody.
+- **A bar that cannot mean anything becomes a busy indicator.** XMODEM never
+  learns the size and ZMODEM only learns it if the sender said, so a percentage
+  is sometimes unavailable; a bar frozen at zero reads as "stuck", which is the
+  one thing it must not say. Relatedly, `bytes == 0` does not mean "not
+  started": the protocols throttle their own reporting to ten updates a second.
+
+B-Plus and Quick-VAN are in the list, last, labelled *untested*. They compile
+and are wired, and there has been no counterparty for either since CompuServe
+and NIFTY-Serve shut down — saying so in the menu is better than letting
+someone find out.
 
 ## Not here yet
 

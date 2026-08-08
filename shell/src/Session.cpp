@@ -5,6 +5,9 @@
 #include <QSocketNotifier>
 #include <QStringList>
 #include <QTimer>
+#include <QVector>
+
+#include <optional>
 
 namespace {
 
@@ -34,6 +37,10 @@ Session::Session(int cols, int rows, QObject *parent)
     m_retry = new QTimer(this);
     m_retry->setInterval(kRetryIntervalMs);
     connect(m_retry, &QTimer::timeout, this, &Session::onRetryPending);
+
+    m_xferTimer = new QTimer(this);
+    m_xferTimer->setSingleShot(true);
+    connect(m_xferTimer, &QTimer::timeout, this, &Session::onTransferDeadline);
 }
 
 Session::~Session()
@@ -479,6 +486,87 @@ quint64 Session::logBytes() const
     return tt_session_log_bytes(m_session);
 }
 
+// --- file transfer -----------------------------------------------------------
+
+bool Session::sendFiles(const TtXferJob &job, const QStringList &paths, QString *outError)
+{
+    QVector<QByteArray> utf8;
+    QVector<const char *> argv;
+    utf8.reserve(paths.size());
+    argv.reserve(paths.size());
+    for (const QString &p : paths) {
+        utf8.append(p.toUtf8());
+        argv.append(utf8.last().constData());
+    }
+    if (tt_session_send_files(m_session, &job, argv.constData(),
+                              static_cast<size_t>(argv.size())) != TT_OK) {
+        if (outError) {
+            *outError = QString::fromUtf8(tt_last_error());
+        }
+        return false;
+    }
+    // Straight into the loop: a sending protocol makes its first move on its
+    // own, with nothing arriving to wake us.
+    pumpAndDispatch(0);
+    return true;
+}
+
+bool Session::receiveFiles(const TtXferJob &job, const QString &dir, const QString &name,
+                           QString *outError)
+{
+    const QByteArray dirUtf8 = dir.toUtf8();
+    const QByteArray nameUtf8 = name.toUtf8();
+    if (tt_session_receive_files(m_session, &job, dirUtf8.constData(),
+                                 name.isEmpty() ? nullptr : nameUtf8.constData()) != TT_OK) {
+        if (outError) {
+            *outError = QString::fromUtf8(tt_last_error());
+        }
+        return false;
+    }
+    pumpAndDispatch(0);
+    return true;
+}
+
+void Session::cancelTransfer()
+{
+    tt_session_cancel_transfer(m_session);
+    pumpAndDispatch(0);
+}
+
+bool Session::isTransferring() const
+{
+    return tt_session_transfer_deadline_ms(m_session) != -2;
+}
+
+TransferProgress Session::transferProgress() const
+{
+    TransferProgress out;
+    TtTransferStatus st;
+    // const_cast: the ABI caches the two strings it hands back, so it takes a
+    // mutable session. Nothing observable changes — the same argument as
+    // `logPath` above.
+    if (!tt_session_transfer_status(const_cast<TtSession *>(m_session), &st)) {
+        return out;
+    }
+    out.protocol = QString::fromUtf8(st.protocol ? st.protocol : "");
+    out.file = QString::fromUtf8(st.file ? st.file : "");
+    out.sending = st.sending;
+    out.bytes = st.bytes;
+    out.packets = st.packets;
+    out.done = st.done;
+    out.total = st.total;
+    out.percent = st.percent;
+    out.elapsedMs = st.elapsed_ms;
+    return out;
+}
+
+void Session::onTransferDeadline()
+{
+    // The protocol's own retry clock ran out. Pumping is what fires it: the
+    // core checks the deadline as part of driving the transfer.
+    pumpAndDispatch(0);
+}
+
 void Session::feed(const QByteArray &bytes)
 {
     tt_session_feed(m_session, reinterpret_cast<const uint8_t *>(bytes.constData()),
@@ -573,6 +661,8 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
 
     bool dirty = false;
     bool connectionEnded = false;
+    bool transferMoved = false;
+    std::optional<TransferResult> transferEnded;
     for (size_t i = 0; i < n; i++) {
         switch (events[i].kind) {
         case TT_EVENT_KIND_DAMAGE:
@@ -610,6 +700,22 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
                             .arg(QString::fromUtf8(events[i].text ? events[i].text : "")));
             emit logStateChanged();
             break;
+        case TT_EVENT_KIND_TRANSFER_PROGRESS:
+            // Coalesced like damage: one pump can move a transfer several
+            // times and a dialog only needs the latest.
+            transferMoved = true;
+            break;
+        case TT_EVENT_KIND_TRANSFER_DONE: {
+            TtTransferResult r;
+            if (tt_session_transfer_result(m_session, &r)) {
+                transferEnded = TransferResult{
+                    r.success, r.cancelled,
+                    QString::fromUtf8(r.message ? r.message : ""), r.bytes, r.elapsed_ms};
+            } else {
+                transferEnded = TransferResult{};
+            }
+            break;
+        }
         }
     }
 
@@ -619,6 +725,14 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
     // Rearm before announcing the disconnect: the descriptor is already gone
     // and whatever the notice wakes up must not find a live notifier on it.
     rearm();
+    // And before the signals, so a dialog opening its nested event loop on
+    // `transferProgressed` finds the deadline timer already running.
+    if (transferMoved && !transferEnded) {
+        emit transferProgressed(transferProgress());
+    }
+    if (transferEnded) {
+        emit transferFinished(*transferEnded);
+    }
     if (connectionEnded) {
         // A local shell knows why it ended; a serial line does not. "bash
         // exited with status 1" is the difference between a window that
@@ -654,5 +768,21 @@ void Session::rearm()
         m_retry->start();
     } else if (!stuck && m_retry->isActive()) {
         m_retry->stop();
+    }
+
+    // -2 is "no transfer", -1 is "a transfer with nothing armed". Only the
+    // first stops the timer: a transfer waiting purely on the peer still needs
+    // the notifier, and re-arming on every pump would be a timer in the idle
+    // path, which this class does not have.
+    const int64_t deadline = tt_session_transfer_deadline_ms(m_session);
+    if (deadline < 0) {
+        m_xferTimer->stop();
+    } else {
+        // A single shot, restarted after each pump, so the interval always
+        // reflects what the protocol has *just* armed rather than what it
+        // wanted a second ago. Floored at 1 ms: a zero-interval Qt timer fires
+        // on every pass of the event loop, which is a spin.
+        const int64_t ms = deadline < 1 ? 1 : (deadline > 60000 ? 60000 : deadline);
+        m_xferTimer->start(static_cast<int>(ms));
     }
 }

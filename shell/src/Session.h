@@ -46,6 +46,38 @@ struct AuthRequest {
     QVector<Line> lines;
 };
 
+/// Where a running file transfer has got to, copied out of the ABI's borrowed
+/// strings so a dialog can hold it.
+///
+/// **`bytes == 0` does not mean "not started".** The protocols report their
+/// own progress and throttle it to ten updates a second (`zmodem.c:197`), so a
+/// transfer that finishes quickly finishes having said almost nothing.
+struct TransferProgress {
+    QString protocol;
+    QString file;
+    bool sending = true;
+    qint64 bytes = 0;
+    qint64 packets = 0;
+    /// Position in the current file and its size. `total` is 0 when the size
+    /// is unknown, which is always true of XMODEM — it never learns one.
+    qint64 done = 0;
+    qint64 total = 0;
+    /// A whole-percent high-water mark, or -1 for "no meaningful bar".
+    int percent = 0;
+    quint32 elapsedMs = 0;
+};
+
+/// How a transfer ended.
+struct TransferResult {
+    bool success = false;
+    bool cancelled = false;
+    /// What the protocol said when it failed — "Cannot create file". Often the
+    /// only account of the failure there is.
+    QString message;
+    qint64 bytes = 0;
+    quint32 elapsedMs = 0;
+};
+
 /// Owns one `TtSession` and drives its loop from the Qt event loop.
 ///
 /// **There is no timer in the idle path**, which is the whole design of this
@@ -181,6 +213,28 @@ public:
     QString logPath() const;
     quint64 logBytes() const;
 
+    // --- file transfer ------------------------------------------------------
+    //
+    // The terminal is deaf and mute while one runs: keystrokes are dropped and
+    // the protocol's traffic never reaches the parser. That is the core's
+    // doing, not the window's, and it is what upstream's modal transfer dialog
+    // achieves by other means — so a window that forgets to disable its input
+    // is untidy rather than dangerous.
+
+    /// Send files. False and `outError` when it could not be started at all.
+    bool sendFiles(const TtXferJob &job, const QStringList &paths, QString *outError);
+    /// Receive into `dir`. `name` is XMODEM's alone — its wire format carries
+    /// no filename — and is ignored by every other protocol, which is what
+    /// upstream's receive dialog does with the same field.
+    bool receiveFiles(const TtXferJob &job, const QString &dir, const QString &name,
+                      QString *outError);
+    /// Ask it to stop. It does not stop here: the protocol sends its cancel
+    /// sequence and finishes on its own terms, so wait for `transferFinished`.
+    void cancelTransfer();
+    bool isTransferring() const;
+    /// Where it has got to. Only meaningful while `isTransferring`.
+    TransferProgress transferProgress() const;
+
     /// Feed bytes as though they had arrived from the far end.
     void feed(const QByteArray &bytes);
 
@@ -231,6 +285,12 @@ signals:
     /// `connectionChanged` instead.
     void sshFailed(const QString &error);
 
+    /// A file transfer moved. Emitted once per pump while one is running.
+    void transferProgressed(const TransferProgress &progress);
+    /// A file transfer ended, for any reason: finished, cancelled, refused by
+    /// the peer, or cut off by the connection going away.
+    void transferFinished(const TransferResult &result);
+
     /// The **far end** says the terminal should be this size — telnet's NAWS,
     /// arriving backwards from a console server describing the equipment
     /// behind it. Nothing has resized yet: the window owns its own size.
@@ -239,6 +299,7 @@ signals:
 private slots:
     void onReadable();
     void onRetryPending();
+    void onTransferDeadline();
 
 private:
     /// Pump, then turn what came out into signals.
@@ -254,6 +315,15 @@ private:
     TtSession *m_session = nullptr;
     QSocketNotifier *m_notifier = nullptr;
     QTimer *m_retry = nullptr;
+    /// Runs only while a transfer is up.
+    ///
+    /// **The descriptor is not enough for a transfer.** The protocols retry by
+    /// timeout — an XMODEM receiver that hears nothing re-sends its `NAK`
+    /// after ten seconds — and a line that has gone quiet produces no wakeup
+    /// at all, so nothing would ever fire it. This is the second and last
+    /// timer in the class, and like the first it exists for a case a
+    /// descriptor genuinely cannot cover.
+    QTimer *m_xferTimer = nullptr;
     QString m_title;
 
     /// The connection being set up, or null.

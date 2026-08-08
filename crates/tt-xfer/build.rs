@@ -74,6 +74,13 @@ fn main() {
     base(&mut theirs_cxx);
     theirs_cxx
         .cpp(true)
+        // Pinned, not inherited. `common/ttcstd.h:45` typedefs `char8_t` under
+        // `__cplusplus >= 202002L` — the guard is inverted, since that is
+        // exactly when the language already has it — so the file compiles at
+        // C++17 and not at C++20. GCC 13 defaults to gnu++17 and GCC 16
+        // defaults to C++20, which is why this built in one container and not
+        // the other.
+        .std("gnu++17")
         .warnings(false)
         .extra_warnings(false)
         .flag("-w");

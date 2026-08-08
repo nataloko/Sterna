@@ -90,6 +90,8 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/ssh_test --write /tmp    # ...and the four SSH dialogs, as PNGs
 ./build/telnet_test              # the same, over telnet
 ./build/pty_test                 # ...and over a local shell, which needs nothing
+./build/xfer_test                # a ZMODEM send, driven by the event loop
+./build/xfer_test --write /tmp   # ...and the transfer dialogs, as PNGs
 ./build/termitta --port /dev/ttyUSB0 --baud 115200
 ./build/termitta myrouter        # an alias out of ~/.ssh/config
 ./build/termitta --shell         # a local login shell
@@ -146,6 +148,9 @@ and drops into interactive mode instead of speaking the protocol.
 **`cargo` is on `PATH` only for login shells** — export
 `$HOME/.cargo/bin` first or `cargo: command not found` will look like a missing
 toolchain. It isn't; don't reinstall it.
+
+`termitta-fedora` needs **`lrzsz`** too, for `shell/build/xfer_test` (added
+2026-08-08).
 
 Two packages were added on 2026-08-07 and a rebuilt container will need them
 again: **`libudev-dev`** (`serialport-rs` enumeration — without it the crate
@@ -394,6 +399,22 @@ And for the AppImage, where two of the three failures are silent:
   flip the real one applies, so every truecolor SGR resolved to the wrong
   index. When a manual stub reimplements upstream logic, diff it against the
   original — `vtdisp.c` is not compiled into the oracle, so nothing else will.
+
+And for the vendored protocol C, which two compilers disagree about:
+
+- **The Ubuntu container's GCC 13 compiles `vendor/ttpfile/` and Fedora's does
+  not**, and neither failure names the real cause. `raw.c` calls `malloc`
+  having included no `<stdlib.h>` — a warning on GCC 13, an *error* from GCC 14
+  — and `zmodem.c:1586` calls `SetTimer`/`KillTimer`, which nothing declared.
+  Both are fixed in `winshim/windows.h`, which is where MSVC's `<windows.h>`
+  would have supplied them. **The rule: a vendored source that needs a
+  declaration gets it from the shim, never from an edit.**
+- **`common/ttcstd.h:45` typedefs `char8_t` when `__cplusplus >= 202002L`** —
+  the guard is inverted, since that is exactly when the language already has
+  it. So `protolog.cpp` compiles at C++17 and not at C++20, and GCC 13 defaults
+  to the first while GCC 16 defaults to the second. `tt-xfer/build.rs` pins
+  `gnu++17` for the vendored C++ rather than inheriting whatever the container
+  has.
 
 And for telnet:
 

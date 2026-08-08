@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 complete, 2 in progress · **Commits:** 137
+**Last updated:** 2026-08-08 · **Stage:** 1 complete, 2 in progress · **Commits:** 138
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1040,8 +1040,8 @@ before anything else in every session.
 
 - **File transfer**: FFI to the vendored C, all six protocols, interop-tested
   against `lrzsz` and `gkermit`. ✅ **done through the C ABI**, 2026-08-08 —
-  `vendor/ttpfile/`, `crates/tt-xfer/`, the session wiring and the ABI
-  surface. What remains is the Qt dialogs. See below.
+  `vendor/ttpfile/`, `crates/tt-xfer/`, the session wiring, the ABI surface
+  and the Qt dialogs. See below.
 - **TTL interpreter**: native Rust, **in-process on a thread** — deletes ~2,600
   LOC of DDE glue (`ttpmacro/ttmdde.c` + `teraterm/ttdde.c`) and a whole class
   of races. Target: the 53 `.ttl` scripts in `teraterm/tests/` pass.
@@ -1160,9 +1160,9 @@ And it found four things, all of the same family as every other settings trap:
 
 #### File transfer, and what a driver found that a spike could not
 
-`vendor/ttpfile/`, `crates/tt-xfer/`, `tt-session/src/xfer.rs` and the ABI
-surface, 2026-08-08. A file moves from the Qt shell's connection to `rz` and
-back; what is missing is the dialogs to start it from.
+`vendor/ttpfile/`, `crates/tt-xfer/`, `tt-session/src/xfer.rs`, the ABI surface
+and `shell/src/XferDialog.cpp`, 2026-08-08. `File > Send file...` moves a file
+from the window's own connection to `rz` and back.
 
 **The vendoring is real now**, which is a first for this tree: 33 files and
 11,568 lines copied verbatim at a named upstream revision, every one carrying
@@ -1218,10 +1218,25 @@ set, caps ZMODEM's block size and decides whether Kermit quotes the eighth bit,
 and the network branch means *no timeout at all* — right for a socket that will
 notice a dead peer, wrong for a pty, where it is a transfer that hangs for ever.
 
+**The window needed a second timer, and it is the only other one.** Everything
+else in the shell runs off a descriptor; a transfer cannot, because the
+protocols retry by *timeout* and a quiet line produces no wakeup at all. The
+progress dialog is also modeless where upstream's is modal — not a style
+preference, since the transfer is driven by the window's own event loop and a
+dialog that blocked it would block the transfer it is showing.
+
 Twelve interop cases against `lrzsz` and `gkermit` moved from a shell script
-into `cargo test`, seven session-level cases, and one in `abi.c` that sends a
-file to `rz` from C. B-Plus and Quick-VAN still have no counterparty anywhere
-and stay best-effort, which is also upstream's position.
+into `cargo test`, seven session-level cases, one in `abi.c` that sends a file
+to `rz` from C, and three in `shell/tests/xfer_test.cpp` driven by Qt. B-Plus
+and Quick-VAN still have no counterparty anywhere and stay best-effort, which
+is also upstream's position — the protocol list says *untested* beside them
+rather than letting somebody find out.
+
+Two portability findings came out of building it on the *other* container's
+compiler, both recorded in `CLAUDE.md`: upstream leans on `<windows.h>` for
+`<stdlib.h>` and for the `SetTimer`/`KillTimer` declarations, which GCC 13
+forgave and GCC 14 does not, and `ttcstd.h`'s `char8_t` guard is inverted so
+the C++ has to be pinned at `gnu++17`.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
