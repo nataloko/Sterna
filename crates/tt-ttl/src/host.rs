@@ -431,6 +431,125 @@ pub trait ScriptHost {
         Err(TtlError::NotSupported)
     }
 
+    // ---- the terminal's odds and ends ----
+    //
+    // The `TTLCommCmd*` two-liners, whose behaviour is all in `ttdde.c`.
+    // Three of them switch on the *first character* of the decimal argument;
+    // that is folded into the `from_code` on each enum, so a host sees only
+    // the meaning.
+
+    /// `beep` — a sound, not a terminal bell. Upstream's is `MessageBeep` in
+    /// the macro process, so it works with no terminal attached and the sounds
+    /// are Windows' system events; a host maps them to whatever it has.
+    fn beep(&mut self, sound: BeepSound) -> Result<(), TtlError> {
+        let _ = sound;
+        Err(TtlError::NotSupported)
+    }
+
+    /// `callmenu` — invoke a menu item by its Win32 command id.
+    ///
+    /// The ids are the ones in upstream's `Keycode` documentation and there is
+    /// no way to make them portable: a macro that says `callmenu 50210` means
+    /// Edit > Copy, and a host either has that table or it does not.
+    /// Upstream routes 51110..51990 to the TEK window and everything else to
+    /// the VT one (`ttdde.c:931`).
+    fn call_menu(&mut self, id: i32) -> Result<(), TtlError> {
+        let _ = id;
+        Err(TtlError::NotSupported)
+    }
+
+    /// `changedir` — the **file transfer** directory, which is not the macro's
+    /// own.
+    ///
+    /// `setdir` moves the macro; this moves what a relative filename in
+    /// `sendfile`, `zmodemrecv` and the rest resolves against, and where a log
+    /// lands. Two commands, two directories, and the names are the wrong way
+    /// round for guessing.
+    fn set_transfer_dir(&mut self, path: &[u8]) -> Result<(), TtlError> {
+        let _ = path;
+        Err(TtlError::NotSupported)
+    }
+
+    /// `clearscreen`.
+    fn clear_screen(&mut self, what: ClearScreen) -> Result<(), TtlError> {
+        let _ = what;
+        Err(TtlError::NotSupported)
+    }
+
+    /// `enablekeyb` — stop the user typing into the terminal while a macro
+    /// drives it.
+    fn enable_keyboard(&mut self, on: bool) -> Result<(), TtlError> {
+        let _ = on;
+        Err(TtlError::NotSupported)
+    }
+
+    /// `loadkeymap` — read a `KEYBOARD.CNF`.
+    fn load_key_map(&mut self, path: &[u8]) -> Result<(), TtlError> {
+        let _ = path;
+        Err(TtlError::NotSupported)
+    }
+
+    /// `restoresetup` — read a `TERATERM.INI` and apply it.
+    fn restore_setup(&mut self, path: &[u8]) -> Result<(), TtlError> {
+        let _ = path;
+        Err(TtlError::NotSupported)
+    }
+
+    /// `setdebug` — what the terminal does with what arrives.
+    fn set_debug_mode(&mut self, mode: DebugMode) -> Result<(), TtlError> {
+        let _ = mode;
+        Err(TtlError::NotSupported)
+    }
+
+    /// `setecho`. Upstream also renegotiates telnet echo when the connection
+    /// is a telnet one and `ts.TelEcho` is set (`ttdde.c:830`), which is the
+    /// host's business rather than the interpreter's.
+    fn set_local_echo(&mut self, on: bool) -> Result<(), TtlError> {
+        let _ = on;
+        Err(TtlError::NotSupported)
+    }
+
+    /// `settitle`.
+    fn set_title(&mut self, title: &[u8]) -> Result<(), TtlError> {
+        let _ = title;
+        Err(TtlError::NotSupported)
+    }
+
+    /// `gettitle`.
+    fn title(&mut self) -> Result<Vec<u8>, TtlError> {
+        Err(TtlError::NotSupported)
+    }
+
+    /// `showtt` — the terminal, the TEK window or the log window.
+    fn show_window(&mut self, which: ShowWindow) -> Result<(), TtlError> {
+        let _ = which;
+        Err(TtlError::NotSupported)
+    }
+
+    /// `show` — the **macro's** own window, which upstream has and this port
+    /// only has if the frontend made one to show a macro running.
+    fn show_macro_window(&mut self, how: MacroWindow) -> Result<(), TtlError> {
+        let _ = how;
+        Err(TtlError::NotSupported)
+    }
+
+    /// `getttpos` — where the terminal's window is. `None` is "cannot say",
+    /// which the macro reads as -1.
+    fn terminal_geometry(&mut self) -> Result<Option<WindowGeometry>, TtlError> {
+        Err(TtlError::NotSupported)
+    }
+
+    /// `setserialdelaychar` / `setserialdelayline` — pace what `send` writes,
+    /// by character or by line. `true` if the connection took it.
+    ///
+    /// Serial-only upstream, and one of the few commands that waits for a
+    /// result, so a host with another kind of connection answers `false`
+    /// rather than refusing — the same shape as the control lines.
+    fn set_serial_delay(&mut self, per_line: bool, ms: i32) -> Result<bool, TtlError> {
+        let _ = (per_line, ms);
+        Err(TtlError::NotSupported)
+    }
+
     /// `logautoclosemode` — whether the log closes when the **macro** ends.
     ///
     /// Not the connection. Upstream hangs it off the DDE conversation going
@@ -440,6 +559,183 @@ pub trait ScriptHost {
     fn log_auto_close(&mut self, on: bool) -> Result<(), TtlError> {
         let _ = on;
         Err(TtlError::NotSupported)
+    }
+}
+
+/// `beep`'s optional argument (`ttl.cpp:TTLBeep`).
+///
+/// Windows system-event sounds, so a host that has none of them plays whatever
+/// it does have. Only [`Simple`](BeepSound::Simple) has a portable meaning:
+/// upstream passes `MessageBeep(-1)`, which is the speaker rather than a
+/// theme sound.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BeepSound {
+    Simple,
+    Asterisk,
+    Exclamation,
+    CriticalStop,
+    Question,
+    /// The default beep, and what a bare `beep` plays.
+    #[default]
+    Default,
+}
+
+impl BeepSound {
+    /// 0 through 5. Unlike its neighbours in this family, `beep` reports a
+    /// syntax error for anything else rather than doing nothing.
+    pub fn from_code(v: i32) -> Option<BeepSound> {
+        Some(match v {
+            0 => BeepSound::Simple,
+            1 => BeepSound::Asterisk,
+            2 => BeepSound::Exclamation,
+            3 => BeepSound::CriticalStop,
+            4 => BeepSound::Question,
+            5 => BeepSound::Default,
+            _ => return None,
+        })
+    }
+}
+
+/// `clearscreen`'s target (`ttdde.c:592`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClearScreen {
+    /// The visible screen, leaving the scrollback.
+    Screen,
+    /// The scrollback as well.
+    ScreenAndBuffer,
+    /// The TEK window's, which this port does not have.
+    TekScreen,
+}
+
+impl ClearScreen {
+    /// **The first character of the decimal argument**, which is what reaches
+    /// the terminal. `clearscreen 25` is `clearscreen 2`, and anything with no
+    /// arm — including every negative, since `'-'` is the character — does
+    /// nothing at all rather than reporting.
+    pub fn from_code(v: i32) -> Option<ClearScreen> {
+        Some(match first_digit(v) {
+            b'0' => ClearScreen::Screen,
+            b'1' => ClearScreen::ScreenAndBuffer,
+            b'2' => ClearScreen::TekScreen,
+            _ => return None,
+        })
+    }
+}
+
+/// `showtt`'s ten states (`ttdde.c:846`), across three windows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShowWindow {
+    VtHide,
+    VtMinimize,
+    VtRestore,
+    /// The four TEK arms, which this port does not have a window for.
+    TekHide,
+    TekMinimize,
+    TekOpen,
+    TekClose,
+    LogHide,
+    LogMinimize,
+    LogRestore,
+}
+
+impl ShowWindow {
+    /// The first character again, so `showtt 100` restores the VT window and
+    /// **any** negative hides it — `-1` and `-99` are the same `'-'` arm.
+    pub fn from_code(v: i32) -> Option<ShowWindow> {
+        Some(match first_digit(v) {
+            b'-' => ShowWindow::VtHide,
+            b'0' => ShowWindow::VtMinimize,
+            b'1' => ShowWindow::VtRestore,
+            b'2' => ShowWindow::TekHide,
+            b'3' => ShowWindow::TekMinimize,
+            b'4' => ShowWindow::TekOpen,
+            b'5' => ShowWindow::TekClose,
+            b'6' => ShowWindow::LogHide,
+            b'7' => ShowWindow::LogMinimize,
+            b'8' => ShowWindow::LogRestore,
+            _ => return None,
+        })
+    }
+}
+
+/// `setdebug`'s four modes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DebugMode {
+    /// Display what arrives, as usual.
+    Off,
+    /// Show control codes as their caret spellings.
+    Normal,
+    /// Show every byte as two uppercase hex digits, space separated.
+    Hex,
+    /// Display nothing at all.
+    Silent,
+}
+
+impl DebugMode {
+    /// The first character once more (`ttdde.c:834` sends `Command[1]`), so
+    /// `setdebug 10` is `setdebug 1`.
+    pub fn from_code(v: i32) -> Option<DebugMode> {
+        Some(match first_digit(v) {
+            b'0' => DebugMode::Off,
+            b'1' => DebugMode::Normal,
+            b'2' => DebugMode::Hex,
+            b'3' => DebugMode::Silent,
+            _ => return None,
+        })
+    }
+}
+
+/// The first character of a number's decimal spelling — `'-'` for a negative.
+///
+/// Three of `ttdde.c`'s commands read exactly this and nothing else, because
+/// the argument crosses the DDE boundary as text and the switch never looks
+/// past `[0]`.
+fn first_digit(v: i32) -> u8 {
+    // The same rendering upstream sends: `"%d"`, then byte zero of it.
+    v.to_string().as_bytes()[0]
+}
+
+/// `show`'s three states — the macro's own window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MacroWindow {
+    /// A negative argument.
+    Hide,
+    /// Zero.
+    Minimize,
+    /// Anything positive, which also raises it.
+    Restore,
+}
+
+/// What `getttpos` reports (`ttdde.c:1136`).
+///
+/// Both rectangles are `(x, y, width, height)` in screen pixels: the frame
+/// first, then the text area inside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowGeometry {
+    pub state: WindowState,
+    pub window: (i32, i32, i32, i32),
+    pub client: (i32, i32, i32, i32),
+}
+
+/// `getttpos`'s first output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowState {
+    Normal,
+    Minimized,
+    Maximized,
+    Hidden,
+}
+
+impl WindowState {
+    /// The number the macro sees. Upstream tests iconic, then zoomed, then
+    /// visible, in that order, so a minimised window reports 1 and not 3.
+    pub fn code(self) -> i32 {
+        match self {
+            WindowState::Normal => 0,
+            WindowState::Minimized => 1,
+            WindowState::Maximized => 2,
+            WindowState::Hidden => 3,
+        }
     }
 }
 
@@ -832,6 +1128,16 @@ pub struct RecordingHost {
     /// The last `setdlgpos`, or `None` if it asked for the default position.
     pub dialog_pos: Option<DialogPos>,
 
+    /// Every terminal odds-and-ends command, rendered, in order.
+    pub terminal: Vec<String>,
+    /// What `gettitle` should find.
+    pub title: Vec<u8>,
+    /// What `getttpos` should find. `None` is a host with no window.
+    pub geometry: Option<WindowGeometry>,
+    /// Whether the two serial-delay commands should report failure, which is
+    /// what a connection that is not serial does.
+    pub serial_delay_fails: bool,
+
     /// Every logging command, rendered, in order.
     pub logs: Vec<String>,
     /// Whether `logopen` should report that it opened the file.
@@ -1047,6 +1353,82 @@ impl ScriptHost for RecordingHost {
             None => "setdlgpos default".into(),
         });
         self.dialog_pos = pos;
+    }
+
+    fn beep(&mut self, sound: BeepSound) -> Result<(), TtlError> {
+        self.terminal.push(format!("beep {sound:?}"));
+        Ok(())
+    }
+
+    fn call_menu(&mut self, id: i32) -> Result<(), TtlError> {
+        self.terminal.push(format!("callmenu {id}"));
+        Ok(())
+    }
+
+    fn set_transfer_dir(&mut self, path: &[u8]) -> Result<(), TtlError> {
+        self.terminal.push(format!("changedir {}", show(path)));
+        Ok(())
+    }
+
+    fn clear_screen(&mut self, what: ClearScreen) -> Result<(), TtlError> {
+        self.terminal.push(format!("clearscreen {what:?}"));
+        Ok(())
+    }
+
+    fn enable_keyboard(&mut self, on: bool) -> Result<(), TtlError> {
+        self.terminal.push(format!("enablekeyb {}", on as u8));
+        Ok(())
+    }
+
+    fn load_key_map(&mut self, path: &[u8]) -> Result<(), TtlError> {
+        self.terminal.push(format!("loadkeymap {}", show(path)));
+        Ok(())
+    }
+
+    fn restore_setup(&mut self, path: &[u8]) -> Result<(), TtlError> {
+        self.terminal.push(format!("restoresetup {}", show(path)));
+        Ok(())
+    }
+
+    fn set_debug_mode(&mut self, mode: DebugMode) -> Result<(), TtlError> {
+        self.terminal.push(format!("setdebug {mode:?}"));
+        Ok(())
+    }
+
+    fn set_local_echo(&mut self, on: bool) -> Result<(), TtlError> {
+        self.terminal.push(format!("setecho {}", on as u8));
+        Ok(())
+    }
+
+    fn set_title(&mut self, title: &[u8]) -> Result<(), TtlError> {
+        self.terminal.push(format!("settitle {}", show(title)));
+        Ok(())
+    }
+
+    fn title(&mut self) -> Result<Vec<u8>, TtlError> {
+        self.terminal.push("gettitle".into());
+        Ok(self.title.clone())
+    }
+
+    fn show_window(&mut self, which: ShowWindow) -> Result<(), TtlError> {
+        self.terminal.push(format!("showtt {which:?}"));
+        Ok(())
+    }
+
+    fn show_macro_window(&mut self, how: MacroWindow) -> Result<(), TtlError> {
+        self.terminal.push(format!("show {how:?}"));
+        Ok(())
+    }
+
+    fn terminal_geometry(&mut self) -> Result<Option<WindowGeometry>, TtlError> {
+        self.terminal.push("getttpos".into());
+        Ok(self.geometry)
+    }
+
+    fn set_serial_delay(&mut self, per_line: bool, ms: i32) -> Result<bool, TtlError> {
+        let which = if per_line { "line" } else { "char" };
+        self.terminal.push(format!("serialdelay {which} {ms}"));
+        Ok(!self.serial_delay_fails)
     }
 
     fn log_open(&mut self, req: &LogOpen<'_>) -> Result<bool, TtlError> {

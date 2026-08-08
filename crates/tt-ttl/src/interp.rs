@@ -474,6 +474,9 @@ impl Interp {
         if let Some(r) = self.checksum_command(w) {
             return r;
         }
+        if let Some(r) = self.terminal_command(host, w) {
+            return r;
+        }
         match w {
             // --- control flow ---
             Rsv::If => self.cmd_if(host),
@@ -1066,6 +1069,10 @@ endif";
 
     #[test]
     fn an_unimplemented_command_is_an_unknown_one_for_now() {
-        assert_eq!(err("beep"), TtlError::NotSupported);
+        // A real reserved word with no arm in the dispatch. It has to be
+        // replaced each time the port catches up with whichever one is named
+        // here — `regexoption` is furthest out, since the regex family is a
+        // dialect decision rather than a port.
+        assert_eq!(err("regexoption 1"), TtlError::NotSupported);
     }
 }

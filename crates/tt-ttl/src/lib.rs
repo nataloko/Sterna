@@ -29,13 +29,16 @@ pub mod pathcmds;
 pub mod rsv;
 pub mod sesscmds;
 pub mod strcmds;
+pub mod termcmds;
 pub mod vars;
 pub mod wait;
 
 pub use error::{TtlError, TtlResult};
 pub use host::{
-    DialogAnchor, DialogEnd, DialogOrigin, DialogPos, ErrorReport, FlowControl, ListBoxOpts,
-    LogClock, LogInfo, LogOpen, LogRotate, ModemLines, RecordingHost, ScriptHost, Xfer, XmodemOpt,
+    BeepSound, ClearScreen, DebugMode, DialogAnchor, DialogEnd, DialogOrigin, DialogPos,
+    ErrorReport, FlowControl, ListBoxOpts, LogClock, LogInfo, LogOpen, LogRotate, MacroWindow,
+    ModemLines, RecordingHost, ScriptHost, ShowWindow, WindowGeometry, WindowState, Xfer,
+    XmodemOpt,
 };
 pub use interp::Interp;
 pub use lexer::Lexer;
