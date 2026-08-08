@@ -203,13 +203,18 @@ pub struct Cursor {
     pub pending_wrap: bool,
 }
 
+/// `vtterm.c:SaveCursorBuf` — everything DECSC puts away. The two modes come
+/// with it and are easy to miss: restoring a cursor also restores **autowrap**
+/// and **origin mode**, so `ESC 7` … `ESC [ ? 7 l` … `ESC 8` leaves autowrap
+/// *on*. The pending wrap is deliberately absent, because upstream restores the
+/// position through `MoveCursor`, which clears it.
 #[derive(Clone, Copy, Debug)]
 struct SavedCursor {
     x: usize,
     y: usize,
-    pending_wrap: bool,
     pen: Pen,
     origin_mode: bool,
+    autowrap: bool,
 }
 
 pub type Line = Vec<Cell>;
@@ -240,7 +245,8 @@ pub struct Grid {
     pub autowrap: bool,
     pub origin_mode: bool,
     tabs: Vec<bool>,
-    saved: Option<SavedCursor>,
+    /// DECSC's two slots, main screen and alternate. See [`Grid::saved_slot`].
+    saved: [Option<SavedCursor>; 2],
     /// The main screen, parked here while the alternate screen is up.
     /// `buffer.c:BuffSaveScreen`/`BuffRestoreScreen`.
     stashed: Option<Vec<Line>>,
@@ -269,7 +275,7 @@ impl Grid {
             autowrap: true,
             origin_mode: false,
             tabs: default_tabs(cols),
-            saved: None,
+            saved: [None, None],
             stashed: None,
         }
     }
@@ -481,7 +487,7 @@ impl Grid {
         self.autowrap = true;
         self.origin_mode = false;
         self.tabs = default_tabs(self.cols);
-        self.saved = None;
+        self.saved = [None, None];
     }
 
     // --- cursor ----------------------------------------------------------
@@ -632,25 +638,40 @@ impl Grid {
         }
     }
 
+    /// Which of the two DECSC slots is live — `SBuff1` or `SBuff3`
+    /// (`vtterm.c:SaveCursor`). Upstream picks on `AltScr`, and `stashed` is
+    /// `Some` for exactly as long as the alternate screen is up, so it is the
+    /// same test. Sharing one slot would let a full-screen editor's `ESC 7`
+    /// overwrite the position the shell underneath it is going to come back to.
+    ///
+    /// (Upstream has a third, `SBuff2`, for the status line. We have no status
+    /// line.)
+    fn saved_slot(&self) -> usize {
+        usize::from(self.stashed.is_some())
+    }
+
     pub fn save_cursor(&mut self) {
-        self.saved = Some(SavedCursor {
+        let slot = self.saved_slot();
+        self.saved[slot] = Some(SavedCursor {
             x: self.cursor.x,
             y: self.cursor.y,
-            pending_wrap: self.cursor.pending_wrap,
             pen: self.pen,
             origin_mode: self.origin_mode,
+            autowrap: self.autowrap,
         });
     }
 
     pub fn restore_cursor(&mut self) {
-        if let Some(s) = self.saved {
-            self.origin_mode = s.origin_mode;
-            self.pen = s.pen;
-            self.cursor.x = s.x.min(self.cols - 1);
-            self.cursor.y = s.y.min(self.rows - 1);
-            self.cursor.pending_wrap = s.pending_wrap;
-        } else {
-            self.move_cursor(0, 0);
+        match self.saved[self.saved_slot()] {
+            Some(s) => {
+                self.origin_mode = s.origin_mode;
+                self.autowrap = s.autowrap;
+                self.pen = s.pen;
+                // Through `move_cursor`, so the pending wrap clears — which is
+                // what upstream's `MoveCursor` does on the way out.
+                self.move_cursor(s.x, s.y);
+            }
+            None => self.move_cursor(0, 0),
         }
     }
 

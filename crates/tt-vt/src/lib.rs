@@ -648,8 +648,9 @@ struct State {
     grid: Grid,
     config: Config,
     charset: Iso2022,
-    /// DECSC saves the G-sets alongside the cursor — `vtterm.c:228`.
-    saved_charset: Option<Iso2022State>,
+    /// DECSC saves the G-sets alongside the cursor — `vtterm.c:228` — and so
+    /// there is one slot per screen, the same two `Grid` keeps the position in.
+    saved_charset: [Option<Iso2022State>; 2],
     alt_screen: bool,
     reply: Vec<u8>,
     title: String,
@@ -690,7 +691,7 @@ impl State {
             grid: Grid::new(1, 1, 0),
             config: Config::default(),
             charset: Iso2022::new(),
-            saved_charset: None,
+            saved_charset: [None, None],
             alt_screen: false,
             reply: Vec::new(),
             title: String::new(),
@@ -992,6 +993,13 @@ impl State {
                 }
             }
             _ => self.grid.line_feed(),
+        }
+        // `vtterm.c:706`, and it is the *receive* side of LNM rather than the
+        // send side everything else about mode 20 is about: with it set, a bare
+        // LF from the far end returns the carriage as well. Upstream does it
+        // after the vertical move, not before.
+        if self.modes.lf_mode {
+            self.grid.carriage_return();
         }
     }
 
@@ -1337,7 +1345,7 @@ impl State {
     fn soft_reset(&mut self) {
         self.grid.soft_reset();
         self.charset.reset();
-        self.saved_charset = Some(self.charset.save());
+        self.saved_charset[usize::from(self.alt_screen)] = Some(self.charset.save());
         self.modes.soft_reset(&self.config);
     }
 
@@ -1982,12 +1990,12 @@ impl State {
     /// charset state included.
     fn save_cursor(&mut self) {
         self.grid.save_cursor();
-        self.saved_charset = Some(self.charset.save());
+        self.saved_charset[usize::from(self.alt_screen)] = Some(self.charset.save());
     }
 
     fn restore_cursor(&mut self) {
         self.grid.restore_cursor();
-        if let Some(s) = self.saved_charset {
+        if let Some(s) = self.saved_charset[usize::from(self.alt_screen)] {
             self.charset.restore(s);
         }
     }
@@ -2307,7 +2315,7 @@ impl Perform for State {
             b'c' => {
                 self.grid.reset();
                 self.charset.reset();
-                self.saved_charset = None;
+                self.saved_charset = [None, None];
                 self.title.clear();
                 self.rect_mode = false;
                 self.lr_margin_mode = false;
