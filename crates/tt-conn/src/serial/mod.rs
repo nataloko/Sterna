@@ -19,9 +19,22 @@ pub use enumerate::{enumerate, PortInfo, UsbInfo};
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 
-use serialport::{SerialPort, TTYPort};
+use serialport::SerialPort;
 
 use crate::error::{Error, Result};
+
+/// The platform's concrete port type.
+///
+/// **Concrete, not `Box<dyn SerialPort>`, and that is the design.** The raw-fd
+/// patch layer needs `AsRawFd`, which the trait object does not implement, so
+/// the split exists whether or not the API admits it — spike 4's conclusion
+/// was to make it explicit and thin rather than to pretend the portable trait
+/// suffices. Hiding it would mean discovering it at the point where MARK
+/// parity has to work.
+#[cfg(unix)]
+type NativePort = serialport::TTYPort;
+#[cfg(windows)]
+type NativePort = serialport::COMPort;
 
 /// `ts.DataBit`, widened. Tera Term's dialog offers 7 and 8; the hardware
 /// does 5 and 6 as well and old teletype gear needs them.
@@ -138,13 +151,8 @@ pub struct ModemLines {
 }
 
 /// An open serial port.
-///
-/// Concrete rather than `Box<dyn SerialPort>` on purpose: the raw-fd patch
-/// layer needs `AsRawFd`, which the trait object does not provide, and
-/// pretending otherwise would mean discovering it at the point where MARK
-/// parity has to work.
 pub struct SerialConn {
-    port: TTYPort,
+    port: NativePort,
     params: SerialParams,
     decoder: parmrk::Parmrk,
     path: String,
@@ -161,7 +169,7 @@ impl SerialConn {
     /// reconnecting by that name can land on a different physical port.
     pub fn open(path: &str, params: &SerialParams) -> Result<Self> {
         let builder = serialport::new(path, params.baud).timeout(params.read_timeout);
-        let port = TTYPort::open(&builder).map_err(|e| Error::from_open(path, e))?;
+        let port = NativePort::open(&builder).map_err(|e| Error::from_open(path, e))?;
 
         let mut conn = SerialConn {
             port,
@@ -426,7 +434,11 @@ impl SerialConn {
             FlowControl::RtsCts => self.set_rts(!lock),
             FlowControl::DsrDtr => self.set_dtr(!lock),
             FlowControl::None | FlowControl::XonXoff => {
-                let b = if lock { self.params.xoff } else { self.params.xon };
+                let b = if lock {
+                    self.params.xoff
+                } else {
+                    self.params.xon
+                };
                 self.write_raw(&[b])?;
                 self.flush(Duration::from_millis(500)).map(|_| ())
             }

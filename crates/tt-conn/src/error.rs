@@ -15,12 +15,19 @@ pub enum Error {
     /// serial failure — `minicom` left running in another terminal, a
     /// ModemManager probe, a second window of our own — and the one where a
     /// wrong message wastes the most of the user's time.
-    Busy { path: String },
+    Busy {
+        path: String,
+    },
     /// The port exists but we are not allowed to open it. On Linux this
     /// usually means the user is not in `dialout`.
-    PermissionDenied { path: String },
+    PermissionDenied {
+        path: String,
+    },
     /// The port exists and cannot be opened for some other reason.
-    Open { path: String, source: std::io::Error },
+    Open {
+        path: String,
+        source: std::io::Error,
+    },
     /// A setting this platform cannot express. Carries what was asked for, so
     /// the message can say so rather than "invalid argument".
     Unsupported(String),
@@ -41,9 +48,12 @@ impl Error {
     /// checked too, because a port opened by any other route reports those.
     pub fn from_io(e: std::io::Error) -> Error {
         use std::io::ErrorKind::*;
-        match e.raw_os_error() {
-            Some(libc::EIO) | Some(libc::ENXIO) | Some(libc::ENODEV) => return Error::Disconnected,
-            _ => {}
+        #[cfg(unix)]
+        if matches!(
+            e.raw_os_error(),
+            Some(libc::EIO) | Some(libc::ENXIO) | Some(libc::ENODEV)
+        ) {
+            return Error::Disconnected;
         }
         match e.kind() {
             BrokenPipe | NotFound | ConnectionReset | ConnectionAborted => Error::Disconnected,
@@ -67,6 +77,7 @@ impl Error {
     /// reword. The text only chooses between the two remaining reasons.
     pub fn from_open(path: &str, e: serialport::Error) -> Error {
         let io = std::io::Error::from(e);
+        #[cfg(unix)]
         match io.raw_os_error() {
             Some(libc::EBUSY) => {
                 return Error::Busy {
@@ -113,7 +124,10 @@ impl fmt::Display for Error {
             Error::Disconnected => write!(f, "the device disconnected"),
             Error::Busy { path } => write!(f, "{path} is in use by another program"),
             Error::PermissionDenied { path } => {
-                write!(f, "no permission to open {path} (is the user in `dialout`?)")
+                write!(
+                    f,
+                    "no permission to open {path} (is the user in `dialout`?)"
+                )
             }
             Error::Open { path, source } => write!(f, "cannot open {path}: {source}"),
             Error::Unsupported(what) => write!(f, "not supported on this platform: {what}"),

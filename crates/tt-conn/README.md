@@ -110,10 +110,18 @@ before it was noticed.
 
 ## Why the type is concrete
 
-`SerialConn` holds a `TTYPort`, not a `Box<dyn SerialPort>`. The raw-fd patch
-layer needs `AsRawFd` and the trait object does not provide it, so the split is
-at the type level whether or not the API admits it. Better to admit it than to
-find out at the point where MARK parity has to work.
+`SerialConn` holds a `NativePort` — `TTYPort` on unix, `COMPort` on Windows —
+not a `Box<dyn SerialPort>`. The raw-fd patch layer needs `AsRawFd` and the
+trait object does not provide it, so the split is at the type level whether or
+not the API admits it. Spike 4's conclusion was to make it explicit and thin
+rather than to pretend the portable trait suffices; better that than finding
+out at the point where MARK parity has to work.
+
+The crate cross-compiles for `x86_64-pc-windows-gnu` today and CI checks it on
+a real Windows runner, so the Linux-only parts stay behind `cfg` rather than
+accumulating until Stage 3. What is *behind* those `cfg`s on Windows is mostly
+unwritten: `fOutxDsrFlow` is native there and inverts this whole design, and
+that is Stage 3's problem.
 
 ## Still to come
 

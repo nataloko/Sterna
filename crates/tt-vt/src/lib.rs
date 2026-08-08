@@ -569,7 +569,14 @@ impl State {
     ///
     /// `px`/`py` are window pixels. Every branch below is upstream's, including
     /// the ones that return `true` after sending nothing.
-    fn mouse_report(&mut self, event: MouseEvent, button: u8, px: i32, py: i32, m: Modifiers) -> bool {
+    fn mouse_report(
+        &mut self,
+        event: MouseEvent,
+        button: u8,
+        px: i32,
+        py: i32,
+        m: Modifiers,
+    ) -> bool {
         let button = button as i32;
 
         // The button mask and the last position are updated before any of the
@@ -680,16 +687,22 @@ impl State {
         // Out of range is signalled by a negative x alone; y keeps its value
         // and is simply not printed.
         let (mut x, y) = if pixel {
-            let (max_x, max_y) = self.screen_to_win(
-                self.grid.cols() as i32 + 1,
-                self.grid.rows() as i32 + 1,
-            );
+            let (max_x, max_y) =
+                self.screen_to_win(self.grid.cols() as i32 + 1, self.grid.rows() as i32 + 1);
             let (x, y) = (last_x + 1, last_y + 1);
-            (if x < 1 || x > max_x || y < 1 || y > max_y { -1 } else { x }, y)
+            (
+                if x < 1 || x > max_x || y < 1 || y > max_y {
+                    -1
+                } else {
+                    x
+                },
+                y,
+            )
         } else {
             let (cx, cy) = self.win_to_screen(last_x, last_y);
             let (x, y) = (cx + 1, cy + 1);
-            let ok = x >= 1 && x <= self.grid.cols() as i32 && y >= 1 && y <= self.grid.rows() as i32;
+            let ok =
+                x >= 1 && x <= self.grid.cols() as i32 && y >= 1 && y <= self.grid.rows() as i32;
             (if ok { x } else { -1 }, y)
         };
 
@@ -1293,7 +1306,13 @@ impl State {
             // The three cursor modes add two to their answer when the setting
             // that gates them is off, turning "set/reset" into "permanently
             // set/permanently reset".
-            let cursor = |v: u16| v + if self.config.cursor_ctrl_sequence { 0 } else { 2 };
+            let cursor = |v: u16| {
+                v + if self.config.cursor_ctrl_sequence {
+                    0
+                } else {
+                    2
+                }
+            };
 
             match mode {
                 1 => onoff(m.appli_cursor),
@@ -1351,7 +1370,13 @@ impl State {
                 _ => 0,
             }
         } else {
-            let cursor = |v: u16| v + if self.config.cursor_ctrl_sequence { 0 } else { 2 };
+            let cursor = |v: u16| {
+                v + if self.config.cursor_ctrl_sequence {
+                    0
+                } else {
+                    2
+                }
+            };
             match mode {
                 2 => onoff(!m.keyb_enabled),
                 4 => onoff(self.grid.insert_mode),

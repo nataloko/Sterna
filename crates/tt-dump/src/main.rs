@@ -173,7 +173,10 @@ fn run_directive(vt: &mut Vt, mods: &mut Modifiers, body: &[u8]) {
                 "wheel" => MouseEvent::Wheel,
                 _ => fail("unknown tt.mouse event"),
             };
-            let num = |s: &str| s.parse::<i32>().unwrap_or_else(|_| fail("tt.mouse wants numbers"));
+            let num = |s: &str| {
+                s.parse::<i32>()
+                    .unwrap_or_else(|_| fail("tt.mouse wants numbers"))
+            };
             vt.mouse_event(event, num(tok[2]) as u8, num(tok[3]), num(tok[4]), *mods);
         }
         _ => fail("unknown tt. directive"),

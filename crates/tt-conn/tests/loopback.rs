@@ -52,11 +52,7 @@ fn settle(a: &mut SerialConn, b: &mut SerialConn) {
 }
 
 /// Read until `want` bytes have arrived or the deadline passes.
-fn read_for(
-    port: &mut SerialConn,
-    want: usize,
-    dur: Duration,
-) -> (Vec<u8>, Vec<SerialEvent>) {
+fn read_for(port: &mut SerialConn, want: usize, dur: Duration) -> (Vec<u8>, Vec<SerialEvent>) {
     let (mut data, mut events) = (Vec::new(), Vec::new());
     let deadline = std::time::Instant::now() + dur;
     while std::time::Instant::now() < deadline && data.len() < want {
@@ -344,7 +340,9 @@ fn lock_uses_whatever_the_flow_control_implies() {
 
 #[test]
 fn the_pin_control_settings_are_honoured_on_open() {
-    let Some((a_path, b_path)) = rig() else { return };
+    let Some((a_path, b_path)) = rig() else {
+        return;
+    };
     let mut b = SerialConn::open(&b_path, &SerialParams::default()).unwrap();
 
     for (dtr, rts, want) in [

@@ -109,11 +109,18 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: termitta/crates -> target
+      # tt-conn depends on serialport, which needs libudev to enumerate.
+      # Without this the whole core job fails to build, not just tt-conn.
+      - name: serialport dependency
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
       - name: Lint
         run: |
           cd termitta/crates
           cargo fmt --check
           cargo clippy --all-targets --locked -- -D warnings
+      # tt-conn's serial tests need two ports wired back-to-back and skip
+      # without TT_SERIAL_A/TT_SERIAL_B. Only the dev container has the rig,
+      # so what runs here is the decoders and the enumeration.
       - name: Unit tests
         run: cd termitta/crates && cargo test --locked
       # The gate that matters: every case in oracle/cases/ is fed to BOTH the
@@ -137,7 +144,10 @@ jobs:
           workspaces: crates -> target
       # Only the core: the oracle needs a POSIX toolchain and the differential
       # suite needs the oracle. This job exists to catch Linux-only assumptions
-      # creeping into tt-grid/tt-vt while Windows is still three stages away.
+      # creeping into the core while Windows is still three stages away — and
+      # tt-conn is where they will creep in, since its patch layer is termios.
+      # tt-conn's hardware tests skip without TT_SERIAL_A/B, so they are inert
+      # here rather than failing.
       - name: Build and test
         run: cd crates && cargo build --locked && cargo test --locked
 
