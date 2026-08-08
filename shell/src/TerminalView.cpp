@@ -252,6 +252,13 @@ void TerminalView::paintEvent(QPaintEvent *)
     // an exact multiple of the cell size.
     p.fillRect(rect(), screenReverse ? QColor(Qt::black) : m_theme.defaultBackground());
 
+    // Once per frame, not once per row: expanding a word selection reads the
+    // line it is on, and this is the path a screenful of output repaints
+    // through.
+    SelPoint selFirst;
+    SelPoint selLast;
+    const bool selected = selectionRange(&selFirst, &selLast);
+
     for (int y = 0; y < rows; y++) {
         size_t len = 0;
         const TtCell *cells = m_session->row(y, &len);
@@ -259,12 +266,17 @@ void TerminalView::paintEvent(QPaintEvent *)
             continue;
         }
 
-        // Once per row, not once per cell: the selection is held in absolute
-        // line numbers, so asking per cell would be a call into the core for
-        // every character on the screen.
+        // Which columns of *this* row are highlighted, once for the row rather
+        // than a lookup per cell.
         int selFrom = 0;
         int selTo = 0;
-        selectionSpan(m_session->lineAt(y), &selFrom, &selTo);
+        if (selected) {
+            const quint64 line = m_session->lineAt(y);
+            if (line >= selFirst.line && line <= selLast.line) {
+                selFrom = (line == selFirst.line) ? selFirst.x : 0;
+                selTo = (line == selLast.line) ? selLast.x : m_session->cols();
+            }
+        }
 
         // One `drawText` per run of cells that look alike. Real console output
         // is mostly long runs of one colour, so this is a large win over a
@@ -863,18 +875,6 @@ bool TerminalView::selectionRange(SelPoint *from, SelPoint *to) const
         *to = unitEnd(m_selHead);
     }
     return true;
-}
-
-bool TerminalView::selectionSpan(quint64 line, int *from, int *to) const
-{
-    SelPoint a;
-    SelPoint b;
-    if (!selectionRange(&a, &b) || line < a.line || line > b.line) {
-        return false;
-    }
-    *from = (line == a.line) ? a.x : 0;
-    *to = (line == b.line) ? b.x : m_session->cols();
-    return *to > *from;
 }
 
 QString TerminalView::selectedText() const

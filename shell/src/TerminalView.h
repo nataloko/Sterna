@@ -106,9 +106,6 @@ private:
     /// refers to depends on which side of the selection it is.
     SelPoint unitStart(SelPoint p) const;
     SelPoint unitEnd(SelPoint p) const;
-    /// The columns of `line` that are selected, as `[from, to)`. False when
-    /// none are.
-    bool selectionSpan(quint64 line, int *from, int *to) const;
     QString selectedText() const;
     void clearSelection();
     /// Extend the drag to a widget position, scrolling if it is off the edge.
