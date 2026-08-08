@@ -310,8 +310,16 @@ impl State {
         self.reply.extend_from_slice(bytes);
     }
 
+    /// `vtterm.c:SendCSIstr` — the introducer is the 8-bit CSI once the host
+    /// has asked for one, via S8C1T or DECSCL. Every CSI reply goes through
+    /// here **except** the Primary DA, which upstream builds by hand with a
+    /// stricter rule of its own; see `'c'` in [`State::csi_dispatch`].
     fn send_csi(&mut self, body: &str) {
-        self.send(b"\x1b[");
+        if self.send_8bit {
+            self.send(&[0x9b]);
+        } else {
+            self.send(b"\x1b[");
+        }
         self.send(body.as_bytes());
     }
 
@@ -909,8 +917,18 @@ impl State {
                     // Secondary DA: VT382(>32) + xterm rev 331 (vtterm.c:2841).
                     self.send_csi(">32;331;0c");
                 } else if !private {
+                    // `vtterm.c:AnswerTerminalType` does *not* use SendCSIstr.
+                    // It writes its own introducer, and gates the 8-bit form on
+                    // `ts.TerminalID >= IdVT320` as well as on Send8BitMode —
+                    // so a VT220 told S8C1T answers DSR with `9B` and Primary
+                    // DA with `ESC [`. Note the test is the terminal *id*, not
+                    // the VT level, so DECSCL cannot change it.
                     let da = self.config.term_id.primary_da();
-                    self.send(b"\x1b[?");
+                    if self.send_8bit && self.config.term_id.ordinal() >= TermId::Vt320.ordinal() {
+                        self.send(&[0x9b, b'?']);
+                    } else {
+                        self.send(b"\x1b[?");
+                    }
                     self.send(da.as_bytes());
                     self.send(b"c");
                 }
@@ -1219,6 +1237,18 @@ impl Perform for State {
             return;
         }
 
+        // S7C1T / S8C1T — `ESC SP F` and `ESC SP G` (`vtterm.c:ESCSpace`).
+        // The 8-bit form is refused below VT level 2, and DECSCL having
+        // lowered the level is enough to refuse it.
+        if intermediates.first() == Some(&b' ') {
+            match byte {
+                b'F' => self.send_8bit = false,
+                b'G' if self.vt_level >= 2 => self.send_8bit = true,
+                _ => {}
+            }
+            return;
+        }
+
         // Single-byte character-set designation: ESC ( ) * + <final>.
         if let Some(&i) = intermediates.first() {
             if matches!(i, b'(' | b')' | b'*' | b'+') && intermediates.len() == 1 {
@@ -1277,6 +1307,12 @@ impl Perform for State {
                 self.title.clear();
                 self.rect_mode = false;
                 self.lr_margin_mode = false;
+                // `ResetTerminal` ends with `ChangeTerminalID()`
+                // (`vtterm.c:5850`), which recomputes both from the terminal
+                // *id* — so RIS undoes a DECSCL that lowered the level, and
+                // undoes an S8C1T only as far as the configured default.
+                self.vt_level = self.config.term_id.vt_level();
+                self.send_8bit = self.vt_level >= 2 && self.config.send_8bit_ctrl;
             }
             _ => {}
         }

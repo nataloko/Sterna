@@ -63,6 +63,29 @@ impl TermId {
         }
     }
 
+    /// The `IdTerminalID` enum value (`tttypes_termid.h:36`), which starts at 1
+    /// and runs in model order. Upstream compares `ts.TerminalID` against
+    /// `IdVT320` directly in two places, and that ordering is not the same as
+    /// [`TermId::vt_level`] — `dumb` sorts *above* every VT.
+    pub fn ordinal(self) -> u8 {
+        match self {
+            TermId::Vt100 => 1,
+            TermId::Vt100J => 2,
+            TermId::Vt101 => 3,
+            TermId::Vt102 => 4,
+            TermId::Vt102J => 5,
+            TermId::Vt220 => 6,
+            TermId::Vt220J => 7,
+            TermId::Vt282 => 8,
+            TermId::Vt320 => 9,
+            TermId::Vt382 => 10,
+            TermId::Vt420 => 11,
+            TermId::Vt520 => 12,
+            TermId::Vt525 => 13,
+            TermId::Dumb => 14,
+        }
+    }
+
     /// `tttypes_termid.cpp:TermIDGetVTLevel`.
     ///
     /// Level 1 terminals fold 8-bit C1 controls down to their C0 equivalents
