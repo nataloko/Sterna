@@ -1,4 +1,4 @@
-# termitta
+# Sterna
 
 A cross-platform **communications terminal** — serial, SSH, telnet and local
 shell — for Linux and Windows. Compatible with Tera Term; not Tera Term.

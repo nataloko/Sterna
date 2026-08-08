@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QIcon>
 
 #include "MainWindow.h"
 #include "termitta.h"
@@ -10,7 +11,9 @@ int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("termitta"));
+    QGuiApplication::setApplicationDisplayName(QStringLiteral("Sterna"));
     QCoreApplication::setApplicationVersion(QString::fromUtf8(tt_version()));
+    app.setWindowIcon(QIcon(QStringLiteral(":/branding/sterna.svg")));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(

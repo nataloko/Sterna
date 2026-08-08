@@ -4,6 +4,7 @@ project(termitta-shell VERSION 0.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "" FORCE)
@@ -81,7 +82,13 @@ target_link_libraries(termitta_shell PUBLIC Qt6::Widgets termitta_core)
 target_include_directories(termitta_shell PUBLIC src)
 target_compile_options(termitta_shell PRIVATE -Wall -Wextra)
 
-add_executable(termitta src/main.cpp)
+add_executable(termitta
+    src/main.cpp
+    resources/branding.qrc)
+if(WIN32)
+    enable_language(RC)
+    target_sources(termitta PRIVATE resources/sterna.rc)
+endif()
 target_link_libraries(termitta PRIVATE termitta_shell)
 target_compile_options(termitta PRIVATE -Wall -Wextra)
 

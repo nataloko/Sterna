@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/branding">
+    <file alias="sterna.svg">../../assets/branding/sterna/svg/sterna-app.svg</file>
+  </qresource>
+</RCC>

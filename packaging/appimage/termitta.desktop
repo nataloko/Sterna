@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=termitta
+Name=Sterna
 GenericName=Terminal Emulator
 Comment=Serial, SSH and telnet console with scripting and file transfer
 Exec=termitta
-Icon=termitta
+Icon=sterna
 Terminal=false
 Categories=System;TerminalEmulator;
 Keywords=serial;console;ssh;telnet;terminal;tty;modem;

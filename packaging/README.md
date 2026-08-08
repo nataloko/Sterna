@@ -103,9 +103,9 @@ something other than what it is.
   is on disk rather than asserting a spelling, which is also what will keep it
   working when the base moves.
 - **linuxdeploy names the deployed icon after the file.** Handing it
-  `termitta-256.png` installs an icon called `termitta-256`, and then it fails
-  with "could not find suitable icon for Icon entry: termitta". Each size is
-  staged as its own `termitta.png` under its own directory.
+  `sterna-256.png` installs an icon called `sterna-256`, and then it fails
+  with "could not find suitable icon for Icon entry: sterna". Each size is
+  staged as its own `sterna.png` under its own directory.
 - **`--appimage-extract-and-run` is required in the container.** linuxdeploy,
   its Qt plugin and appimagetool are all AppImages themselves, and a rootless
   podman container has `/dev/fuse` but no working `fusermount` helper.

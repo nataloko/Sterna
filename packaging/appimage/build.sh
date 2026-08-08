@@ -109,7 +109,7 @@ cp QT-LGPL-NOTICE.md LGPL-3.0.txt GPL-3.0.txt "$docs/"
 # against, so the offer of source points at something specific rather than at
 # "some Qt 6".
 {
-	echo "termitta AppImage build"
+	echo "Sterna AppImage build"
 	echo
 	echo "built:      $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	echo "commit:     $(git -C "$root" rev-parse HEAD 2>/dev/null || echo unknown)"
@@ -146,20 +146,20 @@ done
 export EXTRA_PLATFORM_PLUGINS="$want"
 
 # linuxdeploy names the deployed icon after the *file*, and then looks for the
-# desktop entry's `Icon=` among those names — so handing it `termitta-256.png`
-# installs an icon called `termitta-256` and then fails with "could not find
-# suitable icon for Icon entry: termitta". Each size is staged under its own
-# directory so they can all be called `termitta.png` without colliding; the
+# desktop entry's `Icon=` among those names — so handing it `sterna-256.png`
+# installs an icon called `sterna-256` and then fails with "could not find
+# suitable icon for Icon entry: sterna". Each size is staged under its own
+# directory so they can all be called `sterna.png` without colliding; the
 # size in the AppDir comes from the image, not from the path.
 icons=$build/icons
 rm -rf "$icons"
 icon_args=()
 for size in 64 128 256 512; do
-	src=$root/assets/branding/termitta/icons/termitta-$size.png
+	src=$root/assets/branding/sterna/icons/sterna-$size.png
 	[ -e "$src" ] || continue
 	mkdir -p "$icons/$size"
-	cp "$src" "$icons/$size/termitta.png"
-	icon_args+=(--icon-file "$icons/$size/termitta.png")
+	cp "$src" "$icons/$size/sterna.png"
+	icon_args+=(--icon-file "$icons/$size/sterna.png")
 done
 
 echo "appimage: bundling ($want)" >&2

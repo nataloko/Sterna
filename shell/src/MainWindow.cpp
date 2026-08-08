@@ -101,7 +101,7 @@ MainWindow::MainWindow()
     }
 
     updateStatus();
-    setWindowTitle(tr("termitta"));
+    setWindowTitle(tr("Sterna"));
     m_view->setFocus();
 }
 
@@ -514,7 +514,7 @@ void MainWindow::toggleLogging()
     }
 
     const QString path = QFileDialog::getSaveFileName(
-        this, tr("Log session to"), QStringLiteral("termitta.log"),
+        this, tr("Log session to"), QStringLiteral("sterna.log"),
         tr("Log files (*.log);;All files (*)"));
     if (path.isEmpty()) {
         return;
@@ -551,7 +551,7 @@ void MainWindow::chooseFont()
 
 void MainWindow::onTitleChanged(const QString &title)
 {
-    setWindowTitle(title.isEmpty() ? tr("termitta") : title);
+    setWindowTitle(title.isEmpty() ? tr("Sterna") : title);
 }
 
 void MainWindow::onNotice(const QString &text)
