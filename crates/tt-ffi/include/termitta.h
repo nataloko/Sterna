@@ -808,6 +808,22 @@ TtStatus tt_session_pump(TtSession *session,
                          size_t *out_bytes);
 
 /**
+ * How many bytes are still waiting for the far end.
+ *
+ * Non-zero means flow control held the line — CTS low, an XOFF, a DSR that
+ * dropped — and a short write left the rest queued for the next
+ * [`tt_session_pump`].
+ *
+ * **A frontend that waits on [`tt_session_poll_fd`] has to watch this**, or it
+ * will appear to drop keystrokes. That descriptor wakes on bytes *arriving*,
+ * and a device asserting backpressure is usually not sending any, so the pump
+ * that would flush the queue never happens. Run a short retry timer while
+ * this is non-zero and stop it when it reaches zero; the idle case then still
+ * costs nothing.
+ */
+size_t tt_session_pending_out(const TtSession *session);
+
+/**
  * A descriptor that becomes readable when [`tt_session_pump`] has something
  * to do — `-1` when there is none.
  *

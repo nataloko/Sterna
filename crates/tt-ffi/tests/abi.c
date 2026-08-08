@@ -267,6 +267,11 @@ static void test_serial(void)
      * frontend branches on rather than one it can assume away. */
     CHECK(tt_session_poll_fd(s) == -1);
 
+    /* Typing at a disconnected window queues nothing, so the retry timer a
+     * frontend runs off this never starts. */
+    CHECK_OK(tt_session_send_text(s, "hello", SIZE_MAX));
+    CHECK(tt_session_pending_out(s) == 0);
+
     tt_session_free(s);
 }
 
@@ -288,6 +293,7 @@ static void test_null_safety(void)
     CHECK(tt_session_drain_events(NULL, NULL) == 0);
     CHECK(tt_session_pump(NULL, 0, NULL) == TT_ERR_INVALID);
     CHECK(tt_session_poll_fd(NULL) == -1);
+    CHECK(tt_session_pending_out(NULL) == 0);
     CHECK(tt_session_send_text(NULL, "x", 1) == TT_ERR_INVALID);
     CHECK(tt_session_focus(NULL, true) == TT_ERR_INVALID);
     CHECK(tt_session_send_break(NULL, 1) == TT_ERR_INVALID);

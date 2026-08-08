@@ -242,10 +242,15 @@ fn a_short_write_keeps_the_rest_for_the_next_pump() {
 
     s.send_text("abcd").unwrap();
     assert_eq!(h.outbound(), b"a", "one byte per write, as set");
+    // And the frontend can see that something is stuck. A window waiting only
+    // on `poll_fd` gets no wakeup here — the far end is holding the line, not
+    // talking — so this is what tells it to keep pumping.
+    assert_eq!(s.pending_out(), 3);
     for _ in 0..8 {
         s.pump(TICK).unwrap();
     }
     assert_eq!(h.outbound(), b"abcd", "the rest must arrive, in order");
+    assert_eq!(s.pending_out(), 0, "nothing left, so the retry timer stops");
 }
 
 #[test]

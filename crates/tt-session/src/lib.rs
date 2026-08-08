@@ -111,6 +111,22 @@ impl Session {
         self.conn.as_ref().map(|c| c.describe())
     }
 
+    /// How many bytes are still waiting for the far end.
+    ///
+    /// Non-zero means flow control held the line — CTS low, an XOFF, a DSR
+    /// that dropped — and a short write left the rest here for the next
+    /// [`pump`](Session::pump). A frontend has to know, because the pump it is
+    /// waiting for may never come: [`poll_fd`](Session::poll_fd) wakes on
+    /// *incoming* bytes, and a device asserting backpressure is usually not
+    /// sending any. Without this the keystrokes sit in the queue until the
+    /// host happens to say something, which reads as dropped input.
+    ///
+    /// The intended use is a retry timer that exists only while this is
+    /// non-zero, so the idle case still costs nothing.
+    pub fn pending_out(&self) -> usize {
+        self.pending.len()
+    }
+
     /// A descriptor that becomes readable when [`pump`](Session::pump) has
     /// something to do, so a frontend can wait in its own event loop instead
     /// of polling this one.
