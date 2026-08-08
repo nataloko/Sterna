@@ -127,7 +127,7 @@ write-case-existing  | [s]\r\nKeyName=1\r\n | write | s | keyname | 9
 keys-with-comments   | [s]\r\n;A=1\r\n#B=2\r\nC=3\r\nNoEquals\r\n | keys | s
 get-semicolon-key    | [s]\r\n;A=1\r\n | get | s | ;A | DEF
 get-hash-key         | [s]\r\n#B=2\r\n | get | s | #B | DEF
-get-noequals-key     | [s]\r\nNoEquals\r\nC=3\r\n | get | s | NoEquals | @empty
+get-noequals-key     | [s]\r\nNoEquals\r\nC=3\r\n | get | s | NoEquals | DEF
 
 # --- names with awkward characters ----------------------------------------
 key-with-space       | [s]\r\nMy Key=1\r\n | get | s | My Key | DEF
@@ -144,3 +144,11 @@ write-into-comment   | [s]\r\n;A=1\r\n | write | s | A | 9
 write-value-crlf     | [s]\r\nA=1\r\n | write | s | B | x\r\ny
 write-key-with-space | [s]\r\nA=1\r\n | write | s | My Key | 1
 write-section-spaced | [ s ]\r\nA=1\r\n | write | s | B | 2
+
+# --- the empty section name, which two cases above disagree about ----------
+empty-sec-first-key  | A=1\r\n[]\r\nB=2\r\n | get | @empty | A | DEF
+empty-sec-second-key | A=1\r\n[]\r\nB=2\r\n | get | @empty | B | DEF
+empty-sec-keys       | []\r\nKey=1\r\n | keys | @empty
+empty-sec-sections   | []\r\nKey=1\r\n | sections
+leading-keys-list    | Key=1\r\n[s]\r\nA=2\r\n | sections
+leading-keys-keys    | Key=1\r\n[s]\r\nA=2\r\n | keys | @empty

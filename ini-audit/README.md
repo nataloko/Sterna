@@ -26,7 +26,7 @@ to a new user is read the `TERATERM.INI` they already have and then write it
 back, and a wrong duplicate-key rule or a dropped comment silently changes
 settings or destroys a file that took years to accumulate.
 
-The battery lives in `cases.txt` as **data**, so the same 98 questions can be
+The battery lives in `cases.txt` as **data**, so the same 104 questions can be
 put to the Rust implementation and the answers diffed. Same argument as
 `run_diff.sh`: put the check where a mistake is visible rather than where it is
 plausible.
@@ -70,8 +70,9 @@ The rest, in the order they would bite:
 | Empty value | `Key=` returns an **empty string, not the default**. This is the trap `CLAUDE.md` records for `BSKey`, at the API level |
 | Comments | `;` starts one; **`#` does not** — `#B=2` is a key called `#B` |
 | Trailing comment | `Key=value ; note` keeps the whole thing, comment and all |
-| A line with no `=` | Not enumerated, but *does* answer a lookup, with an empty string |
-| A key before any section | Belongs to a section whose name is empty, which `[]` does **not** create |
+| ...and a comment is only a comment to *enumeration* | A lookup has no notion of one: `;A=1` is an entry whose key is `;A`, and asking for `;A` returns `1`. Asking for `A` misses because the names differ, which is why this is invisible until something enumerates |
+| A line with no `=` | Not an entry at all — neither enumerated nor found |
+| A key before any section | Belongs to a section whose name is empty. A literal `[]` starts a *different* section that is unreachable and unlisted, so the keys after it are lost |
 | `[s] junk` | The junk after `]` is ignored, so the section is `s` |
 | `[s` | Unterminated: the section does not exist |
 | Line endings | LF-only and CR-only files both parse |

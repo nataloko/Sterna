@@ -83,7 +83,7 @@ write-case-existing	ok=1 file=[s]\r\nKeyName=9\r\n
 keys-with-comments	len=5 str=#B\0C\0
 get-semicolon-key	len=1 str=1
 get-hash-key	len=1 str=2
-get-noequals-key	len=0 str=
+get-noequals-key	len=3 str=DEF
 key-with-space	len=1 str=1
 key-with-space-query	len=3 str=DEF
 section-with-bracket	len=3 str=DEF
@@ -96,3 +96,9 @@ write-into-comment	ok=1 file=[s]\r\n;A=1\r\nA=9\r\n
 write-value-crlf	ok=1 file=[s]\r\nA=1\r\nB=x\r\ny\r\n
 write-key-with-space	ok=1 file=[s]\r\nA=1\r\nMy Key=1\r\n
 write-section-spaced	ok=1 file=[s]\r\nA=1\r\nB=2\r\n
+empty-sec-first-key	len=1 str=1
+empty-sec-second-key	len=3 str=DEF
+empty-sec-keys	len=0 str=
+empty-sec-sections	len=0 str=
+leading-keys-list	len=2 str=s\0
+leading-keys-keys	len=4 str=Key\0
