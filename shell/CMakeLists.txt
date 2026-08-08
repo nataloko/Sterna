@@ -111,7 +111,14 @@ target_link_libraries(telnet_test PRIVATE termitta_shell)
 target_compile_options(telnet_test PRIVATE -Wall -Wextra)
 add_test(NAME telnet COMMAND telnet_test)
 
+# The only connection test here that skips nothing — a pty needs no server and
+# no hardware — so it is what actually runs in CI.
+add_executable(pty_test tests/pty_test.cpp)
+target_link_libraries(pty_test PRIVATE termitta_shell)
+target_compile_options(pty_test PRIVATE -Wall -Wextra)
+add_test(NAME pty COMMAND pty_test)
+
 # So the build tree runs without LD_LIBRARY_PATH. An installed build gets a
 # real rpath when there is packaging to hang it off; there is not yet.
-set_target_properties(termitta render_test ssh_test telnet_test PROPERTIES
+set_target_properties(termitta render_test ssh_test telnet_test pty_test PROPERTIES
     BUILD_RPATH "${TT_CARGO_DIR}/${TT_CARGO_SUBDIR}")

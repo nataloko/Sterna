@@ -114,6 +114,13 @@ public:
     /// asks no questions — a login prompt is terminal output, not a dialog.
     bool connectTelnet(const QString &host, quint16 port,
                        const TtTelnetParams &params, QString *outError);
+    /// Fork a shell onto a local pty. `argv` empty runs the user's login
+    /// shell, which is what the menu item does.
+    bool connectPty(const QStringList &argv, QString *outError);
+    /// Why the last connection ended, when there is more to say than
+    /// "disconnected" — "bash exited with status 1". Empty otherwise, which is
+    /// the usual case.
+    QString closeNote() const;
 
     // --- ssh ----------------------------------------------------------------
     //

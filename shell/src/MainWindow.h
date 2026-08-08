@@ -34,6 +34,8 @@ public:
     void connectSsh(const QString &host, const QString &user, int port);
     /// Connect at startup, for the command line.
     void connectTelnet(const QString &host, quint16 port);
+    /// Fork a local shell. An empty `argv` runs the user's login shell.
+    void connectPty(const QStringList &argv = {});
 
     /// The window's session. Exposed so a test can drive it, and because a
     /// control socket will want it long before tabs make "which session"

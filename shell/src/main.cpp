@@ -40,7 +40,15 @@ int main(int argc, char **argv)
                        "The protocol follows the port: negotiated on 23, "
                        "auto-detected elsewhere, which is what a terminal "
                        "server's per-line port needs."));
+    // A local shell takes no argument, so the positional list is free for the
+    // command to run — `termitta --shell -- journalctl -f` — the same spelling
+    // `xterm -e` and `gnome-terminal --` use.
+    QCommandLineOption shellOption(
+        {QStringLiteral("s"), QStringLiteral("shell")},
+        QStringLiteral("Run a local shell. Any positional arguments are the "
+                       "command to run instead of the login shell."));
     parser.addOption(telnetOption);
+    parser.addOption(shellOption);
     parser.addOption(portOption);
     parser.addOption(baudOption);
     parser.process(app);
@@ -48,7 +56,9 @@ int main(int argc, char **argv)
     MainWindow window;
     window.show();
 
-    if (parser.isSet(portOption)) {
+    if (parser.isSet(shellOption)) {
+        window.connectPty(parser.positionalArguments());
+    } else if (parser.isSet(portOption)) {
         TtSerialParams params;
         tt_serial_params_default(&params);
         if (parser.isSet(baudOption)) {

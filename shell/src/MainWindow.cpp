@@ -92,6 +92,10 @@ void MainWindow::buildMenus()
                     this, &MainWindow::showConnectDialog);
     file->addAction(tr("Connect over SSH..."), this, &MainWindow::showSshDialog);
     file->addAction(tr("Connect over telnet..."), this, &MainWindow::showTelnetDialog);
+    // No dialog: there is nothing to ask. The shell, the size and the
+    // environment are all already known, and a dialog whose only button is OK
+    // is a dialog nobody wants twice.
+    file->addAction(tr("Local shell"), this, [this] { connectPty(); });
     m_disconnectAction = file->addAction(tr("Disconnect"), this,
                                          &MainWindow::disconnectPort);
     file->addSeparator();
@@ -249,6 +253,17 @@ void MainWindow::connectTelnet(const QString &host, quint16 port)
     }
     m_lastTelnetHost = host;
     m_lastTelnetPort = port;
+    updateStatus();
+}
+
+void MainWindow::connectPty(const QStringList &argv)
+{
+    QString error;
+    if (!m_session->connectPty(argv, &error)) {
+        QMessageBox::critical(this, tr("Local shell"),
+                              tr("Could not start a local shell.\n\n%1").arg(error));
+        return;
+    }
     updateStatus();
 }
 

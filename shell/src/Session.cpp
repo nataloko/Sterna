@@ -141,6 +141,47 @@ bool Session::connectTelnet(const QString &host, quint16 port,
     return true;
 }
 
+bool Session::connectPty(const QStringList &argv, QString *outError)
+{
+    cancelSsh();
+
+    // The ABI borrows these, so both the bytes and the pointer array have to
+    // outlive the call — hence two vectors rather than a temporary each.
+    QVector<QByteArray> owned;
+    QVector<const char *> pointers;
+    owned.reserve(argv.size());
+    pointers.reserve(argv.size());
+    for (const QString &arg : argv) {
+        owned.append(arg.toUtf8());
+    }
+    for (const QByteArray &arg : owned) {
+        pointers.append(arg.constData());
+    }
+
+    TtPtyParams params;
+    tt_pty_params_default(&params);
+    if (!pointers.isEmpty()) {
+        params.argv = pointers.constData();
+        params.argc = static_cast<size_t>(pointers.size());
+    }
+
+    if (tt_session_connect_pty(m_session, &params) != TT_OK) {
+        if (outError) {
+            *outError = QString::fromUtf8(tt_last_error());
+        }
+        return false;
+    }
+    rearm();
+    emit connectionChanged();
+    return true;
+}
+
+QString Session::closeNote() const
+{
+    const char *note = tt_session_close_note(const_cast<TtSession *>(m_session));
+    return note ? QString::fromUtf8(note) : QString();
+}
+
 void Session::disconnectPort()
 {
     // A connection still being set up is a connection: "Disconnect" while a
@@ -513,7 +554,11 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
     // and whatever the notice wakes up must not find a live notifier on it.
     rearm();
     if (connectionEnded) {
-        emit notice(tr("Disconnected"));
+        // A local shell knows why it ended; a serial line does not. "bash
+        // exited with status 1" is the difference between a window that
+        // explains itself and one that just goes quiet.
+        const QString note = closeNote();
+        emit notice(note.isEmpty() ? tr("Disconnected") : note);
         emit connectionChanged();
     }
 }
