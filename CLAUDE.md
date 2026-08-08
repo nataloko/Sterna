@@ -49,7 +49,7 @@ already taken in the wild).
 ## Build and test
 
 ```sh
-./run_diff.sh                    # THE gate: Rust engine vs Tera Term, 51 cases
+./run_diff.sh                    # THE gate: Rust engine vs Tera Term, 92 cases
 ./run_diff.sh 27                 # just the cases matching "27"
 ./run_upstream.sh                # the same diff over Tera Term's OWN exercisers
 
@@ -58,7 +58,7 @@ cargo test && cargo clippy --all-targets -- -D warnings
 
 cd oracle
 make            # build build/oracle
-make test       # 51 regression cases
+make test       # 72 regression cases
 make stubs      # regenerate the stub layer after upstream headers change
 
 cd xfer                          # Stage 0 spike 2
@@ -210,6 +210,27 @@ something other than what it is.
   buffer had given it two, and the row was padded past its own width. Also: the
   dump takes its size from `NumOfColumns`/`NumOfLines`, **not** from argv, or a
   mid-stream `CSI 8;h;w t` measures against the startup size.
+- **Three more stubs lied, and all three were invisible until a mouse event
+  arrived.** `ShiftKey`/`ControlKey`/`AltKey` are declared as *functions* in
+  `keyboard.h` and were defined in `stubs_manual.c` as `BOOL` **variables** —
+  which links, and jumps into the data section the first time anything calls
+  one. `DispConvWinToScreen`/`DispConvScreenToWin` were empty generated stubs
+  that never stored through their out-parameters, so `MouseReport` read an
+  uninitialised position off the stack. And `IsCaretEnabled` returned 0
+  unconditionally, which would have made DECRQM report DECTCEM permanently
+  reset and taught the port to agree. All three now carry real behaviour.
+- **`WinOrgY` drifts negative in a headless build and must not be used.**
+  `buffer.c:3865` subtracts the scroll amount from it on every scroll so the
+  visible rows stay put, and `vtdisp.c` — not compiled here — puts it back.
+  The oracle's coordinate conversion therefore uses a fixed `(0,0)` origin,
+  which is the state a real Tera Term is in when not scrolled back. Adding it
+  back put a click six rows above the screen.
+- **`ts.MouseEventTracking` and `ts.TranslateWheelToCursor` are the flag-word
+  trap in a plain `WORD`.** Both are `GetOnOff(..., TRUE)` (`ttset.c:1523`,
+  `:1515`) and both were left zeroed by `memset`, which silently disabled every
+  mouse mode and made DECRQM answer "permanently reset" for all of them. When
+  adding a setting, the rule is the same as for the flag words: find the key,
+  not the initialiser.
 - **Stubs lie, and `DispFindClosestColor` did.** It lived in `stubs_manual.c`
   with *xterm's* palette rather than Tera Term's, and without the bright/dim
   flip the real one applies, so every truecolor SGR resolved to the wrong
@@ -252,9 +273,10 @@ And for the desktop side:
 
 ## Bugs found upstream, not yet reported
 
-Four, all in `buffer.c`, all found by diffing the two engines. Patches in
-`oracle/patches/`, reports drafted in `docs/upstream-bugs.md`. Filing needs a
-GitHub account and is an open item in `PLAN.md`.
+Five — four in `buffer.c` and one in `vtterm.c` — all found by diffing the two
+engines. Patches in `oracle/patches/`, reports drafted in
+`docs/upstream-bugs.md`. Filing needs a GitHub account and is an open item in
+`PLAN.md`.
 
 1. **`BuffGetAnyLineDataW` does not advance past padding cells** (`:5832`), so
    it parks on the padding after a full-width character and drops the rest of
@@ -274,6 +296,11 @@ GitHub account and is an open item in `PLAN.md`.
    to it, and leaves the allocation once the page is in the second half of the
    ring — proven under ASan. A second, unrelated defect in the same loop
    subtracts the start column from the end bound. **File this one second.**
+5. **`MakeMouseReportStr` builds the row's UTF-8 lead byte from the column**
+   (`vtterm.c:5591`). In `DECSET 1005` mouse tracking a row past 96 needs two
+   bytes, and that branch reads `x` where it means `y` — so the row is wrong by
+   a multiple of 64, or the report contains `0xC0`, which is not valid UTF-8.
+   The only one outside `buffer.c`.
 
 ## Layout
 

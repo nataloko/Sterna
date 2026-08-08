@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 38
+**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 43
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -318,7 +318,9 @@ Must be shippable and genuinely useful, not a demo.
 
 - `tt-vt` + `tt-grid`: VT100/220 + core xterm, SGR/256/truecolor, scrollback,
   selection, BCE, wide + combining chars. Ported **against the oracle**.
-  🔵 **started** — see below.
+  ✅ **done for Stage 1's purposes** — 92 differential cases, see below. What
+  remains is selection, which is a frontend concept the grid only has to
+  support.
 - `tt-conn`: **serial first** (the differentiator), then SSH2 via `russh`, then
   telnet, then local PTY via `portable-pty`. Serial is `serialport-rs` plus the
   patch layer spike 4 specified: `CMSPAR` parity, `PARMRK` break detection,
@@ -341,7 +343,7 @@ Deliberately absent: file transfer, macros, tabs, Windows build, most settings.
 screen), `tt-charset` (ISO-2022 and DEC special graphics), `tt-vt` (the state
 machine, `vte` for byte-level parsing), and `tt-dump` (a CLI that speaks the
 oracle's argument set and dump format). `./run_diff.sh` feeds every case to
-**both** engines and diffs them against each other. **72 cases: 71 matching and
+**both** engines and diffs them against each other. **92 cases: 91 matching and
 one known divergence.**
 
 **The design decision worth recording: the differential suite has no golden
@@ -361,11 +363,40 @@ ISO-2022 designation and every locking and single shift, DEC special graphics,
 selective erase, the whole rectangular-area family (DECSACE, DECCARA, DECRARA,
 DECFRA, DECERA, DECSERA, DECCRA), the XTWINOPS resize, left and right margins
 (DECLRMM/DECSLRM) through every operation that reads them, DECALN, the soft
-resets (DECSTR, DECSCL) and DECRQSS.
+resets (DECSTR, DECSCL), DECRQSS, 8-bit control replies (S7C1T/S8C1T), every
+private and ANSI mode via DECRQM, DECCOLM, and **mouse and focus reporting** —
+all eight tracking modes and all five encodings, including DEC's locator.
 
-**Only mouse reporting is left**, and it is not differential-testable here at
-all: it turns *input events* into reports, and a headless dump has no mouse. It
-belongs with the Qt shell, not with the oracle.
+**The VT engine is functionally complete for Stage 1.** What is left is
+deliberate: Tek, printing, Japanese charset designations, and the XTWINOPS
+operations that ask the display layer where the window is. See
+`crates/README.md` for the list and the reason for each.
+
+#### Mouse reporting turned out to be differential-testable after all
+
+The plan said it could not be: it turns *input events* into reports, and a
+headless dump has no mouse. That was a failure of imagination about the
+*harness*, not a fact about the problem. The oracle now takes directives inside
+the byte stream —
+
+```
+ESC [ ? 1000 h ESC _ tt.mouse down 0 24 80 ESC \
+```
+
+— which the runner strips and executes between parses, on both engines. The
+reports come out in the reply dump and are diffed like everything else.
+Fourteen cases now cover it. Getting there fixed three more places the oracle
+was lying: `ts.MouseEventTracking` and `ts.TranslateWheelToCursor` were left
+zeroed when both ship on (the flag-word trap again, this time in a plain
+`WORD`), `ShiftKey`/`ControlKey`/`AltKey` were defined as `BOOL` *variables*
+when `keyboard.h` declares them as functions, and
+`DispConvWinToScreen`/`DispConvScreenToWin` were empty stubs that never stored
+through their out-parameters. None of it was reachable until something called
+the mouse path.
+
+**The lesson generalises: "not testable against the oracle" is worth
+re-examining before it becomes a design constraint.** The same shape of answer
+probably exists for key input, which is the other half of the frontend seam.
 
 #### What the harness caught, which is the point of having it
 
@@ -424,6 +455,15 @@ A third arrived while implementing DECSED:
 Reports for all four are drafted in `docs/upstream-bugs.md`; **file the two
 memory-safety ones (ECH and DECSED) first**, and consider whether they want a
 private report rather than public issues.
+
+A fifth turned up as soon as the oracle could be driven with a mouse:
+
+9. **`MakeMouseReportStr` builds the row's UTF-8 lead byte from the column.**
+   In `DECSET 1005` mouse tracking, coordinates above 127 take a two-byte form;
+   the row's branch reads `x` where it means `y`. Past row 96 the report carries
+   the wrong row, or — when the column is small — the byte `0xC0`, which is not
+   valid UTF-8 at all. The first bug found in `vtterm.c` rather than
+   `buffer.c`.
 
 Margins found two more, neither of them about margins:
 
@@ -564,9 +604,11 @@ file/dir 1k, connection/terminal 2k, dialogs 0.8k, misc 1k — **~9.3k Rust vs
 
 1. **✅ Differential testing against real Tera Term** — `oracle/` built and
    green, and as of Stage 1 actually wired up: `./run_diff.sh` feeds identical
-   byte streams to it and to the Rust engine and diffs the grid dumps, in CI on
-   every commit. 72 cases. **This is the asset the whole project rests on**, and
-   it is now a gate rather than a promise.
+   byte streams to it and to the Rust engine and diffs the grid dumps *and the
+   replies*, in CI on every commit. 92 cases. Since the oracle also takes
+   injected mouse and focus events, this covers the input seam too. **This is
+   the asset the whole project rests on**, and it is now a gate rather than a
+   promise.
 2. **⬜ esctest2** (iTerm2) — ~1000 automated DEC/xterm conformance assertions
    over a pty, read back via DSR/DECRQSS. Wire into CI in Stage 1.
 3. **⬜ vttest** (Dickey) — interactive; manual gate plus screenshot diffing at
