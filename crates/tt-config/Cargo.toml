@@ -1,0 +1,9 @@
+[package]
+name = "tt-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TERATERM.INI, read and written the way GetPrivateProfile* does"
+
+[dependencies]

@@ -6,6 +6,7 @@ members = [
     "tt-vt",
     "tt-conn",
     "tt-session",
+    "tt-config",
     "tt-ffi",
     "tt-dump",
     "tt-host",
@@ -30,4 +31,5 @@ tt-charset = { path = "tt-charset" }
 tt-vt = { path = "tt-vt" }
 tt-conn = { path = "tt-conn" }
 tt-session = { path = "tt-session" }
+tt-config = { path = "tt-config" }
 tt-ffi = { path = "tt-ffi" }

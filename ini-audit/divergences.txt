@@ -1,0 +1,25 @@
+# Cases where this project deliberately does not do what Win32 does, one
+# reason each. `crates/tt-config/tests/win32.rs` reads this file, and the gate
+# is drift in both directions: a case that starts *agreeing* fails too, so a
+# reason cannot outlive the behaviour it describes.
+#
+#   name | why
+#
+# Everything not listed here matches byte for byte, which is the point. Six of
+# 104 is the whole of "bug-compatible, except".
+
+utf8-no-bom | Win32 decodes a BOM-less file in the machine's ANSI codepage and turns UTF-8 into mojibake. There is no ANSI codepage on Linux to be faithful to, and a file with no BOM is one that has been edited — by a text editor that wrote UTF-8. Reading it as UTF-8 is right here and would be wrong on Windows; revisit in Stage 3, where the codepage exists.
+
+write-non-ascii | Win32 transcodes the value into the ANSI codepage and loses whatever that cannot hold. We upgrade the file to UTF-8 with a BOM instead — the one encoding both sides read the same way — and only when the value being written actually needs it. An ASCII-only session never changes a file's encoding.
+
+write-lf-file | Win32 re-emits every line with CRLF, so writing one key to an LF-only file rewrites the whole thing. We keep each line's ending. Tera Term parses LF-only files (measured: `lf-only`), so nothing is lost by it, and a settings change that shows up as a hundred-line diff looks like corruption to the person reading it.
+
+write-crlf-missing | The same, with the write landing in an existing section rather than at the end.
+
+write-value-crlf | Win32 writes a value containing CR LF raw, which splits the line and leaves a fragment behind as a bogus key — the file is silently corrupt from then on. We refuse the write and say so. Upstream never relies on the raw form: values that need line endings are hex-escaped (`Str2HexW`, for `DelimList`), which is the mechanism that belongs in the schema.
+
+write-section-spaced | Win32 normalises `[ s ]` to `[s]` while writing an unrelated key in that section. Rewriting lines the caller did not ask about is exactly what this implementation is built not to do; the header is left as the user typed it.
+
+# Not a divergence but worth knowing when reading the record: `section-query-spaced`
+# and `key-query-spaced` show that the *query* is trimmed as well as the file,
+# and both implementations agree.
