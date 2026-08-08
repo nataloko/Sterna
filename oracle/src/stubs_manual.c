@@ -251,18 +251,26 @@ void DispGetCellSize(vtdraw_t *vt, int *width, int *height)
  * even store through their out-parameters, so MouseReport read an
  * uninitialised x and y off the stack. That is invisible until a mouse event
  * arrives, which is exactly the shape of stub CLAUDE.md warns about.
+ *
+ * The window origin is taken as (0,0) rather than (WinOrgX,WinOrgY), and that
+ * is deliberate. WinOrgY is a *scrollback viewport* offset: buffer.c:3865
+ * drives it negative on every scroll so the visible rows stay put, and
+ * vtdisp.c then restores it -- but vtdisp.c is not compiled here, so it only
+ * ever drifts. Adding it back made a click six rows above the screen after six
+ * lines of scrolling. The oracle's dump is always the current page, which is
+ * exactly the state a real Tera Term reports with WinOrgY == 0.
  */
 void DispConvWinToScreen(vtdraw_t *vt, int Xw, int Yw, int *Xs, int *Ys, PBOOL Right)
 {
 	(void)vt;
 	if (Xs != NULL) {
-		*Xs = Xw / ORACLE_CELL_W + WinOrgX;
+		*Xs = Xw / ORACLE_CELL_W;
 	}
 	if (Ys != NULL) {
-		*Ys = Yw / ORACLE_CELL_H + WinOrgY;
+		*Ys = Yw / ORACLE_CELL_H;
 	}
 	if (Xs != NULL && Right != NULL) {
-		*Right = (Xw - (*Xs - WinOrgX) * ORACLE_CELL_W) >= ORACLE_CELL_W / 2;
+		*Right = (Xw - *Xs * ORACLE_CELL_W) >= ORACLE_CELL_W / 2;
 	}
 }
 
@@ -270,10 +278,10 @@ void DispConvScreenToWin(vtdraw_t *vt, int Xs, int Ys, int *Xw, int *Yw)
 {
 	(void)vt;
 	if (Xw != NULL) {
-		*Xw = (Xs - WinOrgX) * ORACLE_CELL_W;
+		*Xw = Xs * ORACLE_CELL_W;
 	}
 	if (Yw != NULL) {
-		*Yw = (Ys - WinOrgY) * ORACLE_CELL_H;
+		*Yw = Ys * ORACLE_CELL_H;
 	}
 }
 

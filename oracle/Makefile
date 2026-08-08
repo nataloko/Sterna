@@ -7,8 +7,10 @@ TT      ?= ../../teraterm/teraterm
 BUILD   ?= build
 
 # Tera Term sources compiled UNMODIFIED. Adding to this list is always
-# preferable to reimplementing behaviour in a stub.
-TT_C    := $(TT)/teraterm/vtterm.c
+# preferable to reimplementing behaviour in a stub. Empty since vtterm.c
+# joined buffer.c in TT_PATCHED below; both are still compiled whole, with a
+# handful of one-line fixes for defects reported upstream.
+TT_C    :=
 TT_CXX  := $(TT)/teraterm/charset.cpp \
            $(TT)/teraterm/unicode.cpp \
            $(TT)/teraterm/checkeol.cpp \
@@ -19,7 +21,7 @@ TT_CXX  := $(TT)/teraterm/charset.cpp \
 
 # Sources needing a local fix are copied to build/patched/ and patched there;
 # the Tera Term tree itself is never modified. See patches/ and apply_patches.py.
-TT_PATCHED := buffer.c
+TT_PATCHED := buffer.c vtterm.c
 
 SHIM    := winshim/winshim.c winshim/msvc_crt.c winshim/swscanf_s.c
 HARNESS := src/stubs_manual.c src/codeconv_min.c src/stubs_generated.c src/main.c

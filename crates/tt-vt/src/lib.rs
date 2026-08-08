@@ -16,8 +16,10 @@ use tt_grid::{
 };
 use vte::{Params, Perform};
 
+pub mod mouse;
 pub mod palette;
 pub mod term_id;
+pub use mouse::{Encoding, Modifiers, MouseEvent, Tracking};
 pub use term_id::TermId;
 
 /// What an incoming CR and LF mean. Tera Term's `ts.CRReceive`.
@@ -109,6 +111,18 @@ pub struct Config {
     /// the DECSCUSR value.
     pub nonblinking_cursor: bool,
     pub scrollback_max: usize,
+    /// `ts.MouseEventTracking` (`ttset.c:1523`, key default **on**). With it
+    /// off, every `DECSET 9/1000…1016` is a no-op and DECRQM reports those
+    /// modes as permanently reset.
+    pub mouse_tracking_enabled: bool,
+    /// `ts.DisableMouseTrackingByCtrl` (`ttset.c:1591`, key default on). Holding
+    /// Ctrl suppresses the report so the user can still select text.
+    pub disable_mouse_tracking_by_ctrl: bool,
+    /// The character cell in pixels. The core needs it for exactly two things:
+    /// converting a mouse position to a cell, and SGR-pixel reports, which do
+    /// not convert at all. It never learns anything else about pixels.
+    pub cell_w: i32,
+    pub cell_h: i32,
 }
 
 impl Default for Config {
@@ -132,6 +146,12 @@ impl Default for Config {
             // ttset.c:1213 MaxBuffSize. Not ttset.c:750's ScrollBuffSize (100),
             // which is the *initial* depth the user can grow up to this.
             scrollback_max: 10_000,
+            mouse_tracking_enabled: true,
+            disable_mouse_tracking_by_ctrl: true,
+            // Matches the oracle's nominal cell (`oracle.h:ORACLE_CELL_W`), so
+            // an injected event lands on the same character in both engines.
+            cell_w: 8,
+            cell_h: 16,
         }
     }
 }
@@ -247,6 +267,49 @@ impl Vt {
     pub fn title(&self) -> &str {
         &self.state.title
     }
+
+    /// Report a mouse event, in **window pixels**. Returns true if the
+    /// terminal consumed it — the frontend should then not also treat the
+    /// click as the start of a text selection.
+    ///
+    /// `button` is upstream's numbering ([`mouse::BUTTON_LEFT`] and friends);
+    /// for [`MouseEvent::Wheel`] it is 0 for up and 1 for down.
+    pub fn mouse_event(
+        &mut self,
+        event: MouseEvent,
+        button: u8,
+        px: i32,
+        py: i32,
+        mods: Modifiers,
+    ) -> bool {
+        self.state.mouse_report(event, button, px, py, mods)
+    }
+
+    /// Focus gained or lost. Emits nothing unless `DECSET 1004` is on.
+    pub fn focus_event(&mut self, focused: bool) {
+        self.state.focus_report(focused);
+    }
+
+    /// Which mouse events the host has asked for. The frontend needs this to
+    /// decide whether to track motion at all.
+    pub fn mouse_tracking(&self) -> Tracking {
+        self.state.mouse.tracking
+    }
+
+    pub fn mouse_encoding(&self) -> Encoding {
+        self.state.mouse.encoding
+    }
+
+    pub fn focus_reporting(&self) -> bool {
+        self.state.mouse.focus_report
+    }
+
+    /// Tell the core how big a character cell is, after a font change. It is
+    /// used only to convert mouse positions and to answer pixel-mode reports.
+    pub fn set_cell_pixels(&mut self, w: i32, h: i32) {
+        self.state.config.cell_w = w.max(1);
+        self.state.config.cell_h = h.max(1);
+    }
 }
 
 struct State {
@@ -281,6 +344,7 @@ struct State {
     /// payload. `None` when no DCS is open.
     dcs: Option<(Option<u8>, char)>,
     dcs_buf: Vec<u8>,
+    mouse: mouse::MouseState,
 }
 
 impl State {
@@ -303,6 +367,7 @@ impl State {
             send_8bit: false,
             dcs: None,
             dcs_buf: Vec::new(),
+            mouse: mouse::MouseState::default(),
         }
     }
 
@@ -315,12 +380,208 @@ impl State {
     /// here **except** the Primary DA, which upstream builds by hand with a
     /// stricter rule of its own; see `'c'` in [`State::csi_dispatch`].
     fn send_csi(&mut self, body: &str) {
+        self.send_csi_bytes(body.as_bytes());
+    }
+
+    /// The mouse formats are not all UTF-8, so they arrive as raw bytes.
+    fn send_csi_bytes(&mut self, body: &[u8]) {
         if self.send_8bit {
             self.send(&[0x9b]);
         } else {
             self.send(b"\x1b[");
         }
-        self.send(body.as_bytes());
+        self.send(body);
+    }
+
+    /// `vtterm.c:MouseReport`. Returns whether the event was consumed by
+    /// reporting — the frontend uses that to decide whether the click is also
+    /// a text selection.
+    ///
+    /// `px`/`py` are window pixels. Every branch below is upstream's, including
+    /// the ones that return `true` after sending nothing.
+    fn mouse_report(&mut self, event: MouseEvent, button: u8, px: i32, py: i32, m: Modifiers) -> bool {
+        let button = button as i32;
+
+        // The button mask and the last position are updated before any of the
+        // early exits, so they stay live while reporting is off. DECRQLP can
+        // read them back afterwards.
+        match event {
+            MouseEvent::Press => self.mouse.button_stat |= 8 >> (button + 1),
+            MouseEvent::Release => self.mouse.button_stat &= !(8 >> (button + 1)),
+            _ => {}
+        }
+        self.mouse.last = (px, py);
+
+        if self.mouse.tracking == Tracking::None {
+            return false;
+        }
+        if self.config.disable_mouse_tracking_by_ctrl && m.ctrl {
+            return false;
+        }
+        if self.mouse.tracking == Tracking::DecLocator {
+            return self.locator_report(event, button);
+        }
+
+        let (x, y) = if self.mouse.encoding == Encoding::SgrPixels {
+            // Pixels go out unconverted; only the floor at 1 applies.
+            (px.max(1), py.max(1))
+        } else {
+            let (cx, cy) = self.win_to_screen(px, py);
+            (
+                (cx + 1).clamp(1, self.grid.cols() as i32),
+                (cy + 1).clamp(1, self.grid.rows() as i32),
+            )
+        };
+        let modifier = m.bits();
+
+        let body = match event {
+            MouseEvent::CurStat => return false,
+            MouseEvent::Press => match self.mouse.tracking {
+                Tracking::X10 => mouse::encode(self.mouse.encoding, button, x, y),
+                Tracking::Vt200 | Tracking::BtnEvent | Tracking::AllEvent => {
+                    self.mouse.last_send = (x, y);
+                    self.mouse.last_button = button;
+                    mouse::encode(self.mouse.encoding, button | modifier, x, y)
+                }
+                Tracking::NetTerm => {
+                    // Not a CSI, and not routed through SendCSIstr — upstream
+                    // writes it to the wire directly (`vtterm.c:5687`).
+                    let raw = format!("\x1b}}{y},{x}\r");
+                    self.send(raw.as_bytes());
+                    return true;
+                }
+                _ => return false,
+            },
+            MouseEvent::Release => match self.mouse.tracking {
+                Tracking::Vt200 | Tracking::BtnEvent | Tracking::AllEvent => {
+                    // The SGR forms can say *which* button was released; the
+                    // others cannot, and report the anonymous button 3.
+                    let mb = if matches!(self.mouse.encoding, Encoding::Sgr | Encoding::SgrPixels) {
+                        button | modifier | 128
+                    } else {
+                        mouse::BUTTON_RELEASE as i32 | modifier
+                    };
+                    self.mouse.last_send = (x, y);
+                    self.mouse.last_button = mouse::BUTTON_RELEASE as i32;
+                    mouse::encode(self.mouse.encoding, mb, x, y)
+                }
+                // Nothing to send, but the event is still consumed.
+                Tracking::X10 | Tracking::NetTerm => return true,
+                _ => return false,
+            },
+            MouseEvent::Move => match self.mouse.tracking {
+                // 1002 reports motion only while a button is held, and the
+                // test is against the last button *sent*, not the mask.
+                Tracking::BtnEvent | Tracking::AllEvent => {
+                    if self.mouse.tracking == Tracking::BtnEvent
+                        && self.mouse.last_button == mouse::BUTTON_RELEASE as i32
+                    {
+                        return false;
+                    }
+                    if (x, y) == self.mouse.last_send {
+                        return false;
+                    }
+                    self.mouse.last_send = (x, y);
+                    let mb = self.mouse.last_button | modifier | 32;
+                    mouse::encode(self.mouse.encoding, mb, x, y)
+                }
+                _ => return false,
+            },
+            MouseEvent::Wheel => match self.mouse.tracking {
+                Tracking::Vt200 | Tracking::BtnEvent | Tracking::AllEvent => {
+                    mouse::encode(self.mouse.encoding, button | modifier | 64, x, y)
+                }
+                _ => return false,
+            },
+        };
+
+        if body.is_empty() {
+            return false;
+        }
+        self.send_csi_bytes(&body);
+        true
+    }
+
+    /// `vtterm.c:DecLocatorReport`.
+    fn locator_report(&mut self, event: MouseEvent, button: i32) -> bool {
+        let (last_x, last_y) = self.mouse.last;
+        let pixel = self.mouse.locator_flags & mouse::PIXEL != 0;
+
+        // Out of range is signalled by a negative x alone; y keeps its value
+        // and is simply not printed.
+        let (mut x, y) = if pixel {
+            let (max_x, max_y) = self.screen_to_win(
+                self.grid.cols() as i32 + 1,
+                self.grid.rows() as i32 + 1,
+            );
+            let (x, y) = (last_x + 1, last_y + 1);
+            (if x < 1 || x > max_x || y < 1 || y > max_y { -1 } else { x }, y)
+        } else {
+            let (cx, cy) = self.win_to_screen(last_x, last_y);
+            let (x, y) = (cx + 1, cy + 1);
+            let ok = x >= 1 && x <= self.grid.cols() as i32 && y >= 1 && y <= self.grid.rows() as i32;
+            (if ok { x } else { -1 }, y)
+        };
+
+        let stat = self.mouse.button_stat;
+        let body = match event {
+            MouseEvent::CurStat => {
+                if self.mouse.tracking == Tracking::DecLocator {
+                    mouse::encode_locator(1, stat, x, y)
+                } else {
+                    // DECRQLP with no locator enabled still answers, to say so.
+                    b"0&w".to_vec()
+                }
+            }
+            MouseEvent::Press if self.mouse.locator_flags & mouse::BUTTON_DOWN != 0 => {
+                mouse::encode_locator(button * 2 + 2, stat, x, y)
+            }
+            MouseEvent::Release if self.mouse.locator_flags & mouse::BUTTON_UP != 0 => {
+                mouse::encode_locator(button * 2 + 3, stat, x, y)
+            }
+            MouseEvent::Move if self.mouse.locator_flags & mouse::FILTERED != 0 => {
+                let (top, left, bottom, right) = self.mouse.filter;
+                if y < top || y > bottom || x < left || x > right {
+                    self.mouse.locator_flags &= !mouse::FILTERED;
+                    // The filter compares against the *unclamped* x, so an
+                    // out-of-page locator escapes the rectangle by definition.
+                    x = if x < 1 { -1 } else { x };
+                    mouse::encode_locator(10, stat, x, y)
+                } else {
+                    Vec::new()
+                }
+            }
+            _ => Vec::new(),
+        };
+
+        if body.is_empty() {
+            return false;
+        }
+        self.send_csi_bytes(&body);
+        if self.mouse.locator_flags & mouse::ONE_SHOT != 0 {
+            self.mouse.tracking = Tracking::None;
+        }
+        true
+    }
+
+    /// `vtdisp.c:DispConvWinToScreen`, with `WinOrgX`/`WinOrgY` fixed at zero —
+    /// the core has no scrolled-back viewport of its own.
+    fn win_to_screen(&self, px: i32, py: i32) -> (i32, i32) {
+        (
+            px / self.config.cell_w.max(1),
+            py / self.config.cell_h.max(1),
+        )
+    }
+
+    fn screen_to_win(&self, cx: i32, cy: i32) -> (i32, i32) {
+        (cx * self.config.cell_w, cy * self.config.cell_h)
+    }
+
+    /// `vtterm.c:FocusReport`.
+    fn focus_report(&mut self, focused: bool) {
+        if self.mouse.focus_report {
+            self.send_csi(if focused { "I" } else { "O" });
+        }
     }
 
     /// DECBI/DECFI act only inside the scroll region *and* between the
@@ -501,6 +762,44 @@ impl State {
                         }
                     }
                     47 | 1047 | 1048 | 1049 => self.alt_screen(p, on),
+
+                    // Mouse tracking. Every *set* is gated on the setting;
+                    // every *reset* is unconditional, and resets the whole
+                    // mode rather than only the one named — so `DECRESET 9`
+                    // turns off any-event tracking too (`vtterm.c:3135`).
+                    9 | 1000 | 1001 | 1002 | 1003 | 14001 => {
+                        if !on {
+                            self.mouse.tracking = Tracking::None;
+                        } else if self.config.mouse_tracking_enabled {
+                            self.mouse.tracking = match p {
+                                9 => Tracking::X10,
+                                1000 => Tracking::Vt200,
+                                1001 => Tracking::Vt200Hl,
+                                1002 => Tracking::BtnEvent,
+                                1003 => Tracking::AllEvent,
+                                _ => Tracking::NetTerm,
+                            };
+                        }
+                    }
+                    1004 => {
+                        if !on {
+                            self.mouse.focus_report = false;
+                        } else if self.config.mouse_tracking_enabled {
+                            self.mouse.focus_report = true;
+                        }
+                    }
+                    1005 | 1006 | 1015 | 1016 => {
+                        if !on {
+                            self.mouse.encoding = Encoding::Normal;
+                        } else if self.config.mouse_tracking_enabled {
+                            self.mouse.encoding = match p {
+                                1005 => Encoding::Utf8,
+                                1006 => Encoding::Sgr,
+                                1015 => Encoding::Urxvt,
+                                _ => Encoding::SgrPixels,
+                            };
+                        }
+                    }
                     _ => {}
                 }
             } else if p == 4 {
@@ -733,6 +1032,89 @@ impl State {
             18 if self.config.window_report => {
                 let body = format!("8;{};{}t", self.grid.rows(), self.grid.cols());
                 self.send_csi(&body);
+            }
+            _ => {}
+        }
+    }
+
+    /// `vtterm.c:CSQuote` — DEC's locator, which is a second mouse protocol
+    /// sharing one state variable with the xterm family.
+    fn csi_quote(&mut self, params: &Params, action: char) {
+        match action {
+            // DECEFR — enable filter rectangle. A zero edge means "the
+            // locator's current position", so `CSI ' w` alone arms a
+            // one-cell rectangle around wherever it is.
+            'w' => {
+                if self.mouse.tracking != Tracking::DecLocator {
+                    return;
+                }
+                let (last_x, last_y) = self.mouse.last;
+                let (x, y) = if self.mouse.locator_flags & mouse::PIXEL != 0 {
+                    (last_x + 1, last_y + 1)
+                } else {
+                    let (cx, cy) = self.win_to_screen(last_x, last_y);
+                    (cx + 1, cy + 1)
+                };
+                let edge = |n, dflt| match arg0(params, n) {
+                    0 => dflt,
+                    v => v as i32,
+                };
+                let (mut top, mut left) = (edge(0, y), edge(1, x));
+                let (mut bottom, mut right) = (edge(2, y), edge(3, x));
+                if top > bottom {
+                    std::mem::swap(&mut top, &mut bottom);
+                }
+                if left > right {
+                    std::mem::swap(&mut left, &mut right);
+                }
+                self.mouse.filter = (top, left, bottom, right);
+                self.mouse.locator_flags |= mouse::FILTERED;
+                self.locator_report(MouseEvent::Move, 0);
+            }
+            // DECELR — enable locator reporting. The second parameter picks
+            // cell or pixel coordinates and is re-read on every call, so a
+            // bare `CSI 0'z` also drops back to cells.
+            'z' => {
+                match arg0(params, 0) {
+                    0 if self.mouse.tracking == Tracking::DecLocator => {
+                        self.mouse.tracking = Tracking::None;
+                    }
+                    v @ (1 | 2) if self.config.mouse_tracking_enabled => {
+                        self.mouse.tracking = Tracking::DecLocator;
+                        if v == 1 {
+                            self.mouse.locator_flags &= !mouse::ONE_SHOT;
+                        } else {
+                            self.mouse.locator_flags |= mouse::ONE_SHOT;
+                        }
+                    }
+                    _ => {}
+                }
+                if params.len() > 1 && arg0(params, 1) == 1 {
+                    self.mouse.locator_flags |= mouse::PIXEL;
+                } else {
+                    self.mouse.locator_flags &= !mouse::PIXEL;
+                }
+            }
+            // DECSLE — which locator events to report.
+            '{' => {
+                for group in params.iter() {
+                    match group.first().copied().unwrap_or(0) {
+                        0 => {
+                            self.mouse.locator_flags &=
+                                !(mouse::BUTTON_UP | mouse::BUTTON_DOWN | mouse::FILTERED)
+                        }
+                        1 => self.mouse.locator_flags |= mouse::BUTTON_DOWN,
+                        2 => self.mouse.locator_flags &= !mouse::BUTTON_DOWN,
+                        3 => self.mouse.locator_flags |= mouse::BUTTON_UP,
+                        4 => self.mouse.locator_flags &= !mouse::BUTTON_UP,
+                        _ => {}
+                    }
+                }
+            }
+            // DECRQLP — where is the locator? Answers even when no locator is
+            // enabled, with the `0&w` that says so.
+            '|' => {
+                self.locator_report(MouseEvent::CurStat, 0);
             }
             _ => {}
         }
@@ -1215,6 +1597,7 @@ impl Perform for State {
                 }
                 self.send_8bit = !(self.vt_level < 2 || arg0(params, 1) == 1);
             }
+            (Some(b'\''), _) => self.csi_quote(params, action),
             (Some(b'$'), _) => self.csi_dollar(params, action),
             _ => self.csi_plain(params, private, gt, inter, action),
         }
@@ -1313,6 +1696,9 @@ impl Perform for State {
                 // undoes an S8C1T only as far as the configured default.
                 self.vt_level = self.config.term_id.vt_level();
                 self.send_8bit = self.vt_level >= 2 && self.config.send_8bit_ctrl;
+                // `ResetTerminal` clears the mouse state outright, position
+                // and button mask included. `SoftReset` clears none of it.
+                self.mouse.reset();
             }
             _ => {}
         }
@@ -1622,5 +2008,101 @@ mod tests {
         let vt = run(b"\x1b[2;4r", 10, 6);
         assert_eq!(vt.grid().scroll_region(), (1, 3));
         assert_eq!((vt.grid().cursor.x, vt.grid().cursor.y), (0, 0));
+    }
+
+    /// Drives a stream, then a sequence of mouse events, and returns the reply.
+    fn mouse(stream: &[u8], events: &[(MouseEvent, u8, i32, i32)], mods: Modifiers) -> Vec<u8> {
+        let mut vt = Vt::new(Config {
+            cols: 20,
+            rows: 6,
+            ..Config::default()
+        });
+        vt.feed(stream);
+        let _ = vt.take_reply();
+        for &(e, b, x, y) in events {
+            vt.mouse_event(e, b, x, y, mods);
+        }
+        vt.take_reply()
+    }
+
+    #[test]
+    fn mouse_tracking_is_off_until_asked_for() {
+        let out = mouse(b"", &[(MouseEvent::Press, 0, 24, 80)], Modifiers::default());
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn ctrl_suppresses_the_report_so_the_user_can_still_select() {
+        // `ts.DisableMouseTrackingByCtrl` defaults on (ttset.c:1591).
+        let ctrl = Modifiers {
+            ctrl: true,
+            ..Modifiers::default()
+        };
+        let out = mouse(b"\x1b[?1000h", &[(MouseEvent::Press, 0, 24, 80)], ctrl);
+        assert!(out.is_empty());
+
+        let mut vt = Vt::new(Config {
+            cols: 20,
+            rows: 6,
+            disable_mouse_tracking_by_ctrl: false,
+            ..Config::default()
+        });
+        vt.feed(b"\x1b[?1000h\x1b[?1006h");
+        vt.mouse_event(MouseEvent::Press, 0, 24, 80, ctrl);
+        assert_eq!(vt.take_reply(), b"\x1b[<16;4;6M");
+    }
+
+    #[test]
+    fn the_report_position_follows_the_cell_size() {
+        let mut vt = Vt::new(Config {
+            cols: 20,
+            rows: 6,
+            ..Config::default()
+        });
+        vt.feed(b"\x1b[?1000h\x1b[?1006h");
+        vt.set_cell_pixels(10, 20);
+        vt.mouse_event(MouseEvent::Press, 0, 25, 41, Modifiers::default());
+        // 25/10 = 2, 41/20 = 2, both one-based in the report.
+        assert_eq!(vt.take_reply(), b"\x1b[<0;3;3M");
+    }
+
+    #[test]
+    fn mouse_state_is_visible_to_the_frontend() {
+        let mut vt = Vt::new(Config::default());
+        assert_eq!(vt.mouse_tracking(), Tracking::None);
+        vt.feed(b"\x1b[?1003h\x1b[?1006h\x1b[?1004h");
+        assert_eq!(vt.mouse_tracking(), Tracking::AllEvent);
+        assert_eq!(vt.mouse_encoding(), Encoding::Sgr);
+        assert!(vt.focus_reporting());
+    }
+
+    #[test]
+    fn the_setting_can_switch_mouse_tracking_off_entirely() {
+        let mut vt = Vt::new(Config {
+            mouse_tracking_enabled: false,
+            ..Config::default()
+        });
+        vt.feed(b"\x1b[?1000h\x1b[?1006h\x1b[?1004h");
+        assert_eq!(vt.mouse_tracking(), Tracking::None);
+        assert!(!vt.focus_reporting());
+        vt.mouse_event(MouseEvent::Press, 0, 24, 80, Modifiers::default());
+        vt.focus_event(true);
+        assert!(vt.reply().is_empty());
+    }
+
+    #[test]
+    fn the_normal_encoding_saturates_rather_than_wrapping() {
+        // MOUSE_POS_LIMIT is 223; a wider terminal simply stops counting.
+        let mut vt = Vt::new(Config {
+            cols: 300,
+            rows: 200,
+            ..Config::default()
+        });
+        vt.feed(b"\x1b[?1000h");
+        let _ = vt.take_reply();
+        vt.mouse_event(MouseEvent::Press, 0, 2392, 3184, Modifiers::default());
+        // Column 300 saturates at 223 and is reported as 255; row 200 is
+        // under the limit and comes through as 232.
+        assert_eq!(vt.take_reply(), vec![0x1b, b'[', b'M', 32, 255, 232]);
     }
 }

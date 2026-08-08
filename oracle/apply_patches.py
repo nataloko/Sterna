@@ -75,6 +75,17 @@ PATCHES: list[tuple[str, str, str, str]] = [
         "patches/0004-buffselectederase-wrong-base.patch: DECSED indexes a "
         "line-relative pointer with an absolute offset (HomeToCur)",
     ),
+    (
+        "vtterm.c",
+        "\t\telse {\r\n"
+        "\t\t\ttmpy[0] = ((x >> 6) & 0x1f) | 0xc0;\r\n"
+        "\t\t\ttmpy[1] = (y & 0x3f) | 0x80;\r\n",
+        "\t\telse {\r\n"
+        "\t\t\ttmpy[0] = ((y >> 6) & 0x1f) | 0xc0;\r\n"
+        "\t\t\ttmpy[1] = (y & 0x3f) | 0x80;\r\n",
+        "patches/0005-mousereport-utf8-row.patch: the UTF-8 mouse report builds "
+        "the row's lead byte from the column",
+    ),
 ]
 
 

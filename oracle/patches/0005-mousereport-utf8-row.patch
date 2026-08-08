@@ -1,0 +1,56 @@
+Fix the UTF-8 mouse report building the row's lead byte from the column
+
+MakeMouseReportStr() encodes the two coordinates of an extended mouse report
+when DECSET 1005 (UTF-8 mouse tracking) is active. Values above 127 take a
+two-byte form. The row's branch computes its lead byte from `x` instead of
+`y`:
+
+  vtterm.c:MakeMouseReportStr(), case IdMouseTrackExtUTF8
+
+      if (y < 128) {
+          tmpy[0] = y;
+          tmpy[1] = 0;
+      }
+      else {
+          tmpy[0] = ((x >> 6) & 0x1f) | 0xc0;   /* <- x, should be y */
+          tmpy[1] = (y & 0x3f) | 0x80;
+          tmpy[2] = 0;
+      }
+
+The column's branch four lines above is correct, so the typo is visible only
+on a terminal tall enough for the row to pass 96 (the wire value is the row
+plus 32). The continuation byte is still derived from `y`, so the low six bits
+survive and the row is wrong by a multiple of 64 -- or, when the column is
+small enough that `(x >> 6) & 0x1f` is zero, the report contains the byte 0xC0,
+which is not valid UTF-8 at all and cannot be decoded by a conforming reader.
+
+Reproduction, via the termitta oracle (which runs vtterm.c headless and can
+inject mouse events). A press at window pixel (8, 1600) on a 300x200 terminal
+is column 2, row 101; 101 + 32 = 133, so the row needs two bytes:
+
+    before:  ESC [ M  <sp>  "  C0 85
+    after:   ESC [ M  <sp>  "  C2 85
+
+0xC2 0x85 decodes to U+0085 = 133. 0xC0 0x85 is an overlong form and is
+rejected by any UTF-8 decoder written since 2003.
+
+Related, and NOT changed here because it is arguably a design choice rather
+than a slip: the button byte on the line below is emitted with `%c` rather
+than through the same encoder, so it too becomes a lone byte above 127 once
+enough modifiers are held. A host reading the report as UTF-8 -- which is what
+mode 1005 asks it to do -- cannot decode that either. Fixing it would change
+the wire format for existing clients, so it wants a maintainer's decision.
+
+Tera Term 5.7.0-dev (commit 827a35b05).
+
+--- a/teraterm/teraterm/vtterm.c
++++ b/teraterm/teraterm/vtterm.c
+@@ -5588,7 +5588,7 @@ static int MakeMouseReportStr(char *buff, size_t buffsize, int mb, int x, int y)
+ 			tmpy[1] = 0;
+ 		}
+ 		else {
+-			tmpy[0] = ((x >> 6) & 0x1f) | 0xc0;
++			tmpy[0] = ((y >> 6) & 0x1f) | 0xc0;
+ 			tmpy[1] = (y & 0x3f) | 0x80;
+ 			tmpy[2] = 0;
+ 		}

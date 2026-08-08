@@ -148,6 +148,43 @@ behaviour looks like a bug until you check. Reproduced deliberately:
   turn it off and `ESC [ 38;5;196 m` parses as "38 ignored, 5 = **blink on**,
   196 ignored". `vtterm.c:2239`.
 
+### Mouse and focus reporting
+
+Six wire formats and eight tracking modes, all of them upstream's, and all of
+them driven from `Vt::mouse_event` / `Vt::focus_event` rather than from the byte
+stream. The core owns the encoding for the same reason it owns the keymap: which
+format is live is terminal state the frontend never sees.
+
+Positions cross the boundary as **window pixels**, not cells — that is what
+`MouseReport` takes, and SGR-pixel mode (`DECSET 1016`) reports them back
+unconverted, so a cell-only API could not express it. `Vt::set_cell_pixels`
+tells the core how to convert; it learns nothing else about pixels.
+
+Testing it needed the oracle to grow an input side. `oracle/README.md` has the
+directive syntax; a case reads
+
+```
+ESC [ ? 1000 h ESC _ tt.mouse down 0 24 80 ESC \
+```
+
+and the two engines are diffed on the bytes they send back. Fourteen cases cover
+X10 through any-event tracking, all five encodings, the modifier bits, wheel,
+focus, NetTerm, the DEC locator including one-shot and filter rectangles, and
+what RIS and DECSTR each reset.
+
+Things that look wrong in isolation and are upstream's:
+
+- **A motion event before any press reports button 3**, because `LastButton` is
+  a function static initialised to `IdButtonRelease` (`vtterm.c:5614`).
+- **`DECRESET 9` turns off any-event tracking**, and every other mouse mode:
+  the reset arm assigns `IdMouseTrackNone` regardless of which mode is live.
+- **Ctrl suppresses every report** (`ts.DisableMouseTrackingByCtrl`, default
+  on), so ctrl-click stays available for text selection.
+- **X10 and NetTerm consume the button release and send nothing**, returning
+  "handled" rather than falling through to selection.
+- **RIS clears the mouse mode; DECSTR does not.** `SoftReset` deliberately
+  leaves tracking alone, so a program that soft-resets keeps its mouse.
+
 ## Known divergences
 
 - **DEL (0x7F) occupies a cell in Tera Term; `vte` discards it.** Only in the
@@ -179,4 +216,12 @@ behaviour looks like a bug until you check. Reproduced deliberately:
 - Of DCS, only DECRQSS (`DCS $ q … ST`) is implemented. `DCS + q` — xterm's
   termcap query — and `DCS ! {` (DECSTUI) are collected and dropped rather than
   answered wrongly.
-- Not yet implemented at all: mouse reporting.
+- **The UTF-8 mouse encoding (`DECSET 1005`) still emits its button byte raw.**
+  Upstream formats it with `%c` while the coordinates go through the two-byte
+  encoder, so with enough modifiers held the report stops being valid UTF-8.
+  Reproduced deliberately — it is the wire format hosts see — unlike the row
+  coordinate beside it, which was an outright typo and is patched (bug 5 in
+  `docs/upstream-bugs.md`).
+- Highlight tracking (`DECSET 1001`) reports nothing, because upstream never
+  implemented it. It still *displaces* whatever mode was active, which is
+  observable, so the mode is tracked rather than ignored.

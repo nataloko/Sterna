@@ -2,10 +2,10 @@
 
 **Status: drafted, not filed.** Filing needs a GitHub account; post to
 <https://github.com/TeraTermProject/teraterm/issues>. The text below is ready to
-paste. Before filing, re-check against current `main` — all four were found
+paste. Before filing, re-check against current `main` — all five were found
 against `827a35b05` (v5.6.0-496) and may since have been fixed.
 
-Four bugs, all found the same way: by feeding identical bytes to Tera Term's
+Five bugs, all found the same way: by feeding identical bytes to Tera Term's
 real `vtterm.c`/`buffer.c` and to a reimplementation, and investigating every
 disagreement. Two of them turned up in Tera Term's *own* test scripts, which had
 presumably been run many times by eye without anyone diffing the buffer
@@ -17,6 +17,7 @@ afterwards.
 | 2 | `BuffGetAnyLineDataW` budgets output units with a column count | Session log truncated on any line with combining marks | `oracle/patches/0002-buffgetanylinedataw-left.patch` |
 | 3 | `BuffEraseCharsInLine` writes `Count` cells from the cursor after clamping `Count` to the terminal width | **Out-of-bounds write** driven by an escape sequence | `oracle/patches/0003-bufferasecharsinline-overrun.patch` |
 | 4 | `BuffSelectedErase*` index a line-relative pointer with an absolute buffer offset | **Out-of-bounds read and write** driven by an escape sequence, and DECSED erases the wrong cells | `oracle/patches/0004-buffselectederase-wrong-base.patch` |
+| 5 | `MakeMouseReportStr` builds the row's UTF-8 lead byte from the column | `DECSET 1005` mouse reports carry the wrong row, or invalid UTF-8, past row 96 | `oracle/patches/0005-mousereport-utf8-row.patch` |
 
 **File #3 and #4 first, and consider whether they warrant a private report**
 rather than public issues. Both are memory-safety bugs reachable from the byte
@@ -371,3 +372,79 @@ and in `BuffSelectedEraseHomeToCur()`:
 By implementing DECSED against Tera Term's own behaviour and diffing the two
 grids. The disagreement was not subtle once DECSCA was in the picture: the
 reimplementation preserved the protected run and Tera Term erased it.
+
+---
+
+# 5. The UTF-8 mouse report builds the row's lead byte from the column
+
+## Title
+
+`DECSET 1005` mouse reports encode the row from the column above row 96
+
+## Body
+
+### Summary
+
+`MakeMouseReportStr()` encodes the two coordinates of an extended mouse report
+when UTF-8 mouse tracking (`CSI ? 1005 h`) is active. Values above 127 take a
+two-byte form, and the row's branch computes its lead byte from `x`:
+
+```c
+/* vtterm.c:MakeMouseReportStr(), case IdMouseTrackExtUTF8 */
+if (y < 128) {
+    tmpy[0] = y;
+    tmpy[1] = 0;
+}
+else {
+    tmpy[0] = ((x >> 6) & 0x1f) | 0xc0;   /* <- x, should be y */
+    tmpy[1] = (y & 0x3f) | 0x80;
+    tmpy[2] = 0;
+}
+```
+
+The column's branch four lines above is correct, so the typo only shows on a
+terminal tall enough for the row to pass 96 — the wire value is the row plus
+32. The continuation byte still comes from `y`, so the low six bits survive and
+the row is wrong by a multiple of 64. When the column is small enough that
+`(x >> 6) & 0x1f` is zero the report contains the byte `0xC0`, which is not a
+valid UTF-8 lead byte at all.
+
+### Reproduction
+
+A press at window pixel (8, 1600) on a 300x200 terminal is column 2, row 101.
+101 + 32 = 133, so the row needs two bytes:
+
+```
+before:  ESC [ M  SP  "  C0 85
+after:   ESC [ M  SP  "  C2 85
+```
+
+`C2 85` decodes to U+0085 = 133. `C0 85` is an overlong form, rejected by any
+UTF-8 decoder written since 2003.
+
+### Patch
+
+```diff
+         else {
+-            tmpy[0] = ((x >> 6) & 0x1f) | 0xc0;
++            tmpy[0] = ((y >> 6) & 0x1f) | 0xc0;
+             tmpy[1] = (y & 0x3f) | 0x80;
+             tmpy[2] = 0;
+         }
+```
+
+### A related question, deliberately not patched
+
+The button byte on the `_snprintf_s_l` line below is emitted with `%c` rather
+than through the same encoder, so it too becomes a lone byte above 127 once
+enough modifiers are held (`3 | 4 | 8 | 16 | 32 | 64` plus the 32 offset is
+159). A host reading the report as UTF-8 — which is what mode 1005 asks it to
+do — cannot decode that either. Changing it would change the wire format for
+existing clients, so it wants a maintainer's decision rather than a patch from
+outside.
+
+### How this was found
+
+By injecting mouse events into a headless build of `vtterm.c` and diffing its
+reports against a reimplementation, across every combination of tracking mode
+and encoding.
