@@ -59,7 +59,8 @@ Five, in the first session it existed.
    then reports `valid_up_to()` as consumed, so anything complete in between is
    lost: `[.. C3] [A9 'a' E4 B8 80]` prints `é一` and eats the `a`. Silent data
    loss on a UTF-8 console. `tt-vt` now holds partial sequences back so `vte`
-   never sees one. **Not reported upstream yet** — see `PLAN.md`.
+   never sees one. Report drafted in `docs/vte-bug.md`; filing needs a GitHub
+   account, like the Tera Term ones.
 3. **A parked space did not break the wide cell under it.** With one column
    left, upstream parks a space and retries — via a recursive `BuffPutUnicode`
    (`vtterm.c:896`), so the space goes through the crushes at the top of the
