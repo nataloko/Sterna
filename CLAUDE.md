@@ -61,6 +61,13 @@ TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
 TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
   cargo test -p tt-session -- --test-threads=1   # one package at a time
 
+cd shell                         # the Qt 6 frontend — build it in
+                                 # termitta-fedora, never here
+cmake -S . -B build -G Ninja && cmake --build build
+./build/render_test              # the painter, asserted against grabbed pixels
+./build/render_test --write /tmp # ...and dumped as a PNG to look at
+./build/termitta --port /dev/ttyUSB0 --baud 115200
+
 cd oracle
 make            # build build/oracle
 make test       # 72 regression cases
@@ -148,7 +155,19 @@ Two things `--home` does *not* cover, both checked on 2026-08-07:
 - `distrobox rm` cleans that launcher up on its own, so removing a container
   leaves nothing behind.
 
-Add Rust to it when the shell work starts; it is not installed there yet.
+**Rust needs no install there.** `~/.cargo` is the same directory both
+containers see, and the Ubuntu-built toolchain runs fine on Fedora 44 — glibc
+2.43 runs a binary linked against 2.39, just not the other way round. Export
+`$HOME/.cargo/bin` and it works. **`systemd-devel` does** need installing (done
+2026-08-08): it is Fedora's `libudev.pc`, without which `serialport-rs` will
+not build, and it is the same dependency the Ubuntu container needed as
+`libudev-dev`.
+
+That glibc asymmetry is also why `shell/CMakeLists.txt` points
+`CARGO_TARGET_DIR` at its own build tree rather than at `crates/target`. A
+shared target directory would let a library linked in one container be reused
+by a binary built in the other — fine in one direction, a confusing loader
+error in the other.
 
 ## Traps
 
@@ -311,6 +330,34 @@ And for the desktop side:
   re-renders offscreen, which is exactly right for checking our own painting.
   Full-desktop capture needs the xdg-desktop-portal Screenshot API, which
   prompts the user every time.
+- **Cargo does not give a cdylib a `DT_SONAME`.** So whatever links against
+  `libtermitta.so` records the path it was *handed*, and the shell built out of
+  tree got a relative `DT_NEEDED` of `cargo/debug/libtermitta.so` — it ran from
+  the build directory and nowhere else, reporting a missing file that plainly
+  exists. Fixed in `tt-ffi/build.rs` with `rustc-cdylib-link-arg`, which
+  applies to the cdylib alone; the same flag through `RUSTFLAGS` would attach a
+  soname to every test binary in the workspace.
+- **A run of text drifts off the grid unless the font is told the cell size.**
+  Batching a row into one `drawText` is the large win over a call per cell, but
+  even a monospace face rarely advances by a whole number of device pixels, so
+  80 cells accumulate the error. The symptom is not obviously a font problem —
+  it is a cursor that stops lining up with the character under it.
+  `Theme::recomputeMetrics` rounds the advance to a cell and hands the
+  difference back as `QFont::AbsoluteSpacing`. Wide characters advance by their
+  own metrics, so they are drawn alone in their two-cell box.
+- **`QWidget::grab()` works under `-platform offscreen`, and so does focus** —
+  but only after `show()` **and** `activateWindow()`. Without them `hasFocus()`
+  is false, so a cursor test silently measures the hollow unfocused form and
+  fails on a colour that was never going to be there.
+- **Sample a cell's corner, not its middle, to read a background.** The middle
+  of a cell with a glyph in it is ink. And a CJK glyph can overhang its own
+  advance by a pixel, so "the next cell is untouched" has to be asserted as a
+  fill *width* rather than by probing the neighbour.
+- **`git add -A` from the repository root sweeps in-progress work from every
+  other subtree.** It put six half-written `shell/` files into a commit whose
+  message was about the key table. Stage the paths the commit is actually
+  about, or check `git status` first — the two commits will otherwise have to
+  be split apart afterwards, which only works while nothing is pushed.
 - **CJK is deferred indefinitely** (decision 2026-08-07, see `PLAN.md`). Don't
   start IME work, and don't read "IME untested" as an open risk. If it is ever
   revived: the plumbing is there — Qt's `libibusplatforminputcontextplugin.so`
@@ -363,7 +410,7 @@ serial-audit/    Stage 0 spike 4 — serialport-rs vs commlib.c, on real hardwar
 ssh-audit/       Stage 0 spike 5 — russh vs legacy SSH algorithms and auth
 crates/          Rust core — tt-grid, tt-vt, tt-conn, tt-session, tt-ffi (see its README)
 run_diff.sh      the differential gate: Rust engine vs Tera Term, every case
-shell/           Qt 6 shell — not started
+shell/           Qt 6 shell — one window on the C ABI (see its README)
 vendor/          vendored Tera Term subsystems — empty, see ATTRIBUTION.md first
 ```
 

@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 48
+**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 52
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -373,8 +373,10 @@ Must be shippable and genuinely useful, not a demo.
   `libtermitta.so` plus a generated, committed, CI-gated header, exercised from
   C and C++ rather than from Rust. See `crates/tt-ffi/README.md` and below.
 - Qt shell: one window, grid painter, clipboard, font/colour config,
-  connect dialog, serial-port picker with live enumeration. **Next**, and now
-  unblocked.
+  connect dialog, serial-port picker with live enumeration. 🔵 **first landing
+  done** — all of that exists and is driven from the C ABI; what is missing is
+  scrollback, which needs a viewport the core does not expose yet. See
+  `shell/README.md` and below.
 - **`~/.ssh/config`, `~/.ssh/known_hosts`, `~/.ssh/id_*`** — Tera Term lacks
   this and it is a major Linux adoption lever.
 - Session logging (timestamped, rotation).
@@ -429,6 +431,71 @@ Deliberately not exposed yet, each for a reason: the **settings surface**
 them now would be work done twice, the second time as a deletion),
 **scrollback and selection** (`tt-session` has no viewport yet), and
 **connects for transports that do not exist**.
+
+#### The Qt shell exists, and its event loop has no timer in it
+
+`shell/`, 2026-08-08. One window on the C ABI — grid painter, keyboard, mouse,
+selection, clipboard, a serial connect dialog whose port list refreshes while
+it is open, and a status line. Built and run in the `termitta-fedora`
+container, so the Qt is 6.11.1, the one the desktop runs.
+
+**The design decision worth recording is the event loop.** `tt_session_pump`
+blocks for the transport's read timeout, which leaves two obvious shapes and
+both are wrong: pumping from the UI thread freezes the window for as long as
+the line is quiet — the *normal* state of a serial console — and pumping on a
+timer instead spends a wakeup every frame, forever, to discover that nothing
+arrived, on a terminal whose whole claim is being light.
+
+So the core grew `tt_session_poll_fd`, a `QSocketNotifier` waits on it, and the
+pump runs with a budget of **zero**, which reads exactly once and returns. A
+burst arrives over several turns of the event loop and the window keeps
+painting through it. Measured on the loopback rig at 115200: **zero CPU ticks
+over five seconds** with a port open and idle, 65 MB RSS (in line with the
+~60 MB Qt floor above), and **40 ms of CPU for 44 KB** of coloured output —
+after which it returns to zero.
+
+The one case a descriptor cannot cover is output the far end *refused*: flow
+control holds the line, the write comes up short, and the remainder waits for a
+pump that never comes, because a device asserting backpressure is not sending
+anything to wake us with. `tt_session_pending_out` makes that visible and the
+shell runs a 20 ms retry timer only while it is non-zero. Without it a stalled
+write reads as dropped keystrokes.
+
+Three more things the shell needed from the core, each because the frontend
+should not have been holding it:
+
+- **Return and Backspace are not `TtKey`s**, because `keyboard.c` handles
+  `VK_RETURN` and `VK_BACK` in `KeyDown` rather than in the table `GetKeyStr`
+  walks. Return needed nothing new at the seam — upstream marks it `IdText` so
+  `OutControl` expands the CR by LNM, so `send_text` does the same and a shell
+  sends `"\r"`. Backspace needed DECBKM's state, now readable.
+- **The cdylib had no `DT_SONAME`**, which cargo does not add, so the shell
+  built out of tree recorded a *relative* `DT_NEEDED` and ran only from its
+  build directory.
+
+**The colour model is `vtdisp.c:GetDrawAttr` ported, not invented.** Tera Term's
+bold, blink and underline attributes each carry their own colour pair and which
+applies is a priority chain, not a blend; an explicit SGR colour then overrides
+whichever won. With upstream's defaults that means **black on white, blue bold
+and magenta underline**, which is what Tera Term looks like out of the box.
+Those values are all `TERATERM.INI` keys and become Stage 2's schema.
+
+**`shell/tests/render_test.cpp` is the only thing that can check the painter.**
+The differential suite proves the grid matches Tera Term and stops where cells
+become pixels. `QWidget::grab()` re-renders offscreen — which is both the thing
+worth testing and the only screenshot available here, GNOME's screenshot D-Bus
+API having been locked down since 45. Ten cases assert on background fills,
+which are the entire output of the colour model; glyphs are checked only for
+ink present or absent, which is font-independent and catches the failure that
+actually happens — the right codepoints rendering blank.
+
+Three of those cases pin behaviour that looks like a painter bug and is an
+upstream default, which is exactly the shape of thing someone later "fixes":
+truecolor pure red resolving to *dark* red (the nearest-colour search flips
+bright and dim when a full-colour mode is on, and 256-colour ships on),
+`SGR 101` doing nothing at all (`Aixterm16Color` ships off, so 90-97 and
+100-107 are ignored and the previous pen stands), and a cell's `fg`/`bg`
+meaning a palette index only when its attribute bit says so.
 
 #### First landing — the differential gate is live
 
