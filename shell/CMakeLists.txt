@@ -118,6 +118,35 @@ target_link_libraries(pty_test PRIVATE termitta_shell)
 target_compile_options(pty_test PRIVATE -Wall -Wextra)
 add_test(NAME pty COMMAND pty_test)
 
+# --- the performance gate ----------------------------------------------------
+#
+# NOT a test, and deliberately not in `ctest`: it takes tens of seconds, its
+# numbers depend on the machine, and a gate that fails because somebody started
+# a compile is a gate people learn to ignore. `bench/bench.py` is what compares
+# it against a baseline.
+#
+# It runs the corpus generator out of `tt-bench` so the bytes crossing the pty
+# are the same ones the engine is measured on alone — the difference between
+# the two numbers is what the window costs. Its own cargo target, because a
+# release binary is wanted here even when the shell is built Debug, and because
+# nothing else in this build needs it.
+
+set(TT_BENCH_EXE "${TT_CARGO_DIR}/release/tt-bench")
+
+add_custom_target(tt_bench_emitter
+    BYPRODUCTS "${TT_BENCH_EXE}"
+    COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${TT_CARGO_DIR}"
+            "${CARGO_EXECUTABLE}" build -p tt-bench --release
+    WORKING_DIRECTORY "${TT_CORE_ROOT}"
+    COMMENT "cargo build -p tt-bench --release (the bench corpus generator)"
+    USES_TERMINAL VERBATIM)
+
+add_executable(bench_shell tests/bench_shell.cpp)
+add_dependencies(bench_shell tt_bench_emitter)
+target_link_libraries(bench_shell PRIVATE termitta_shell)
+target_compile_options(bench_shell PRIVATE -Wall -Wextra)
+target_compile_definitions(bench_shell PRIVATE TT_BENCH_EXE="${TT_BENCH_EXE}")
+
 # So the build tree runs without LD_LIBRARY_PATH, and so an installed one finds
 # the core next to itself.
 #
@@ -126,7 +155,7 @@ add_test(NAME pty COMMAND pty_test)
 # cdylib no `DT_SONAME` (see `tt-ffi/build.rs`), so what the binary records is
 # whatever path the linker was handed — which out of tree is *relative*, and ran
 # only from the build directory until that was fixed.
-set_target_properties(termitta render_test ssh_test telnet_test pty_test PROPERTIES
+set_target_properties(termitta render_test ssh_test telnet_test pty_test bench_shell PROPERTIES
     BUILD_RPATH "${TT_CARGO_DIR}/${TT_CARGO_SUBDIR}"
     INSTALL_RPATH "$ORIGIN/../lib")
 

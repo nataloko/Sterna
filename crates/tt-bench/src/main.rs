@@ -29,6 +29,7 @@
 //! measurement that a slow shared runner cannot trip them.
 
 use std::hint::black_box;
+use std::io::Write;
 use std::time::{Duration, Instant};
 
 use tt_vt::{Config, CrReceive, TermId, Vt};
@@ -54,21 +55,10 @@ const FLOOR_MB_S: f64 = 5.0;
 const CALIB_ITERS: u64 = 40_000_000;
 
 const USAGE: &str = "usage: tt-bench [--json] [--runs K] [--mb N] [--workload NAME] [--check]\n\
+                     \x20      tt-bench --emit NAME [--mb N]   # the corpus, on stdout\n\
                      \x20              workloads: plain, sgr, fullscreen\n";
 
 fn main() {
-    // A debug build measures rustc's inlining decisions, not the engine's
-    // shape, and the number it gives is wrong by about an order of magnitude —
-    // which is more than any regression this is meant to catch. Refusing is
-    // better than a footnote nobody reads.
-    if cfg!(debug_assertions) {
-        eprintln!(
-            "tt-bench: built without optimisation — the numbers would be \
-             meaningless.\n            run `cargo run --release -p tt-bench`."
-        );
-        std::process::exit(2);
-    }
-
     let args = match Args::parse() {
         Ok(Some(a)) => a,
         Ok(None) => return,
@@ -77,6 +67,39 @@ fn main() {
             std::process::exit(2);
         }
     };
+
+    // The corpus, on stdout and nothing else. `shell/tests/bench_shell.cpp`
+    // runs this on the far end of a pty, so the bytes the *window* has to get
+    // through are the same bytes measured here — which is what makes the
+    // difference between the two numbers mean "the window".
+    if let Some(name) = args.emit {
+        let corpus = generate(&name, args.mb);
+        if let Err(e) = std::io::stdout().write_all(&corpus) {
+            // A reader that hung up is how this ends when the window closes
+            // early. It is not a failure worth a message.
+            if e.kind() != std::io::ErrorKind::BrokenPipe {
+                eprintln!("tt-bench: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    // A debug build measures rustc's inlining decisions, not the engine's
+    // shape, and the number it gives is wrong by about an order of magnitude —
+    // more than any regression this exists to catch. Refusing is better than a
+    // footnote nobody reads.
+    //
+    // After `--emit`, deliberately: generating bytes is not a measurement, and
+    // the shell's benchmark needs the corpus whichever way its own build tree
+    // was configured.
+    if cfg!(debug_assertions) {
+        eprintln!(
+            "tt-bench: built without optimisation — the numbers would be \
+             meaningless.\n          run `cargo run --release -p tt-bench`."
+        );
+        std::process::exit(2);
+    }
 
     let calib = calibrate();
 
@@ -269,6 +292,11 @@ fn generate(name: &str, mb: usize) -> Vec<u8> {
             _ => unreachable!("workload names are validated in parse()"),
         }
     }
+    // Cut to exactly the size asked for, mid-sequence if that is where it
+    // falls. `--emit` hands this same corpus to the shell's benchmark through
+    // a pty, and the two numbers are only subtractable if both engines are
+    // given the same bytes down to the last one.
+    out.truncate(target);
     out
 }
 
@@ -371,6 +399,8 @@ struct Args {
     runs: u32,
     mb: usize,
     workloads: Vec<String>,
+    /// Write the corpus to stdout instead of measuring anything.
+    emit: Option<String>,
 }
 
 const ALL_WORKLOADS: &[&str] = &["plain", "sgr", "fullscreen"];
@@ -383,6 +413,7 @@ impl Args {
             runs: 5,
             mb: 10,
             workloads: Vec::new(),
+            emit: None,
         };
         let mut argv = std::env::args().skip(1);
         while let Some(arg) = argv.next() {
@@ -395,14 +426,18 @@ impl Args {
                 "--check" => args.check = true,
                 "--runs" => args.runs = next_num(&mut argv, "--runs")? as u32,
                 "--mb" => args.mb = next_num(&mut argv, "--mb")?,
-                "--workload" => {
+                "--workload" | "--emit" => {
                     let name = argv
                         .next()
-                        .ok_or_else(|| format!("tt-bench: --workload needs a name\n{USAGE}"))?;
+                        .ok_or_else(|| format!("tt-bench: {arg} needs a name\n{USAGE}"))?;
                     if !ALL_WORKLOADS.contains(&name.as_str()) {
                         return Err(format!("tt-bench: unknown workload '{name}'\n{USAGE}"));
                     }
-                    args.workloads.push(name);
+                    if arg == "--emit" {
+                        args.emit = Some(name);
+                    } else {
+                        args.workloads.push(name);
+                    }
                 }
                 _ => return Err(format!("tt-bench: unexpected argument '{arg}'\n{USAGE}")),
             }
