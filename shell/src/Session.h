@@ -87,6 +87,19 @@ public:
     void resize(int cols, int rows);
     void setCellPixels(int w, int h);
     void sendBreak(int ms);
+
+    // --- session logging ----------------------------------------------------
+
+    /// Start logging to `path`. Returns false and fills `outError` on failure.
+    bool startLog(const QString &path, const TtLogOptions &options, QString *outError);
+    void stopLog();
+    /// These three const_cast the session pointer, because the ABI's
+    /// `tt_session_log_path` caches the string it hands back and so takes a
+    /// mutable session. The observable state is not changed.
+    bool isLogging() const;
+    QString logPath() const;
+    quint64 logBytes() const;
+
     /// Feed bytes as though they had arrived from the far end.
     void feed(const QByteArray &bytes);
 
@@ -99,6 +112,10 @@ signals:
     void notice(const QString &text);
     /// Connected, disconnected, or dropped by the far end.
     void connectionChanged();
+    /// Logging started, stopped, or was stopped *for* us by a write failure —
+    /// which is the case that matters, because a window still claiming to log
+    /// lets someone walk away from a capture that ended an hour ago.
+    void logStateChanged();
 
 private slots:
     void onReadable();

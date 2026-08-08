@@ -37,6 +37,7 @@ private slots:
     void showConnectDialog();
     void disconnectPort();
     void sendBreak();
+    void toggleLogging();
     void chooseFont();
     void onTitleChanged(const QString &title);
     void onNotice(const QString &text);
@@ -49,6 +50,11 @@ private slots:
 private:
     void buildMenus();
     void updateStatus();
+    /// Just the log indicator. Driven by `damaged` rather than by a timer:
+    /// the count changes exactly when bytes arrive, and bytes arriving is
+    /// what `damaged` means — so the idle path stays free of wakeups, which
+    /// is the same reason `Session` has no poll timer.
+    void updateLogStatus();
 
     Session *m_session;
     TerminalView *m_view;
@@ -56,6 +62,8 @@ private:
     QLabel *m_status;
     QAction *m_disconnectAction = nullptr;
     QAction *m_breakAction = nullptr;
+    QAction *m_logAction = nullptr;
+    QLabel *m_logStatus = nullptr;
 
     // Remembered so reopening the dialog does not start from the defaults
     // again. A session profile on disk is Stage 2's, with the settings schema.

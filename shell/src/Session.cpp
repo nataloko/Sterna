@@ -202,6 +202,49 @@ void Session::sendBreak(int ms)
     }
 }
 
+bool Session::startLog(const QString &path, const TtLogOptions &options,
+                       QString *outError)
+{
+    const QByteArray utf8 = path.toUtf8();
+    if (tt_session_log_start(m_session, utf8.constData(), &options) != TT_OK) {
+        if (outError) {
+            *outError = QString::fromUtf8(tt_last_error());
+        }
+        return false;
+    }
+    // Emitted here rather than left to the caller: the state changed, and a
+    // window that only refreshes when *it* was the one to ask would miss a log
+    // started from anywhere else — including the failure path, which stops one
+    // nobody asked to stop.
+    emit logStateChanged();
+    return true;
+}
+
+void Session::stopLog()
+{
+    const bool was = isLogging();
+    tt_session_log_stop(m_session);
+    if (was) {
+        emit logStateChanged();
+    }
+}
+
+bool Session::isLogging() const
+{
+    return tt_session_log_path(const_cast<TtSession *>(m_session)) != nullptr;
+}
+
+QString Session::logPath() const
+{
+    const char *p = tt_session_log_path(const_cast<TtSession *>(m_session));
+    return p ? QString::fromUtf8(p) : QString();
+}
+
+quint64 Session::logBytes() const
+{
+    return tt_session_log_bytes(m_session);
+}
+
 void Session::feed(const QByteArray &bytes)
 {
     tt_session_feed(m_session, reinterpret_cast<const uint8_t *>(bytes.constData()),
@@ -258,6 +301,14 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
             break;
         case TT_EVENT_KIND_DISCONNECTED:
             connectionEnded = true;
+            break;
+        case TT_EVENT_KIND_LOG_FAILED:
+            // The log is already closed, so this is the one chance to say so.
+            // A window that kept claiming to be logging would let someone walk
+            // away from a capture that stopped an hour ago.
+            emit notice(tr("Logging stopped: %1")
+                            .arg(QString::fromUtf8(events[i].text ? events[i].text : "")));
+            emit logStateChanged();
             break;
         }
     }

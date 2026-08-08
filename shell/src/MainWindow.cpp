@@ -10,6 +10,8 @@
 #include <QMessageBox>
 #include <QScrollBar>
 #include <QSignalBlocker>
+#include <QFileDialog>
+#include <QLocale>
 #include <QStatusBar>
 
 #include "SerialDialog.h"
@@ -52,8 +54,13 @@ MainWindow::MainWindow()
 
     tt_serial_params_default(&m_lastParams);
 
+    m_logStatus = new QLabel(this);
+    statusBar()->addPermanentWidget(m_logStatus);
     m_status = new QLabel(this);
     statusBar()->addPermanentWidget(m_status);
+
+    connect(m_session, &Session::logStateChanged, this, &MainWindow::updateStatus);
+    connect(m_session, &Session::damaged, this, &MainWindow::updateLogStatus);
 
     connect(m_session, &Session::titleChanged, this, &MainWindow::onTitleChanged);
     connect(m_session, &Session::notice, this, &MainWindow::onNotice);
@@ -88,6 +95,9 @@ void MainWindow::buildMenus()
 
     QMenu *terminal = menuBar()->addMenu(tr("Terminal"));
     m_breakAction = terminal->addAction(tr("Send break"), this, &MainWindow::sendBreak);
+    terminal->addSeparator();
+    m_logAction = terminal->addAction(tr("Start logging..."), this,
+                                      &MainWindow::toggleLogging);
     terminal->addSeparator();
     terminal->addAction(tr("Font..."), this, &MainWindow::chooseFont);
 }
@@ -132,6 +142,38 @@ void MainWindow::disconnectPort()
 void MainWindow::sendBreak()
 {
     m_session->sendBreak(kBreakMs);
+}
+
+void MainWindow::toggleLogging()
+{
+    if (m_session->isLogging()) {
+        m_session->stopLog();
+        statusBar()->showMessage(tr("Logging stopped"), 3000);
+        updateStatus();
+        return;
+    }
+
+    const QString path = QFileDialog::getSaveFileName(
+        this, tr("Log session to"), QStringLiteral("termitta.log"),
+        tr("Log files (*.log);;All files (*)"));
+    if (path.isEmpty()) {
+        return;
+    }
+
+    TtLogOptions opts;
+    tt_log_options_default(&opts);
+    // Elapsed time rather than wall clock, and it is the useful one on a
+    // console: the question is nearly always "how long after reset did it
+    // stop", not what time it was. Both are `TERATERM.INI` keys and become
+    // choices when the settings schema exists.
+    opts.timestamp = TT_LOG_TIMESTAMP_ELAPSED;
+    QString error;
+    if (!m_session->startLog(path, opts, &error)) {
+        QMessageBox::critical(this, tr("Logging"),
+                              tr("Could not write %1.\n\n%2").arg(path, error));
+        return;
+    }
+    updateStatus();
 }
 
 void MainWindow::chooseFont()
@@ -179,8 +221,28 @@ void MainWindow::syncScrollBar()
     m_scroll->setVisible(history > 0);
 }
 
+void MainWindow::updateLogStatus()
+{
+    if (!m_logStatus) {
+        return;
+    }
+    // `formattedDataSize` rather than a KiB division, so a log that has only
+    // just started reads "REC 44 bytes" instead of "REC 0 KiB" — the number
+    // anyone actually checks is whether it is *moving*.
+    m_logStatus->setText(m_session->isLogging()
+                             ? tr("REC %1  ").arg(QLocale().formattedDataSize(
+                                   static_cast<qint64>(m_session->logBytes())))
+                             : QString());
+}
+
 void MainWindow::updateStatus()
 {
+    if (m_logAction) {
+        m_logAction->setText(m_session->isLogging() ? tr("Stop logging")
+                                                    : tr("Start logging..."));
+    }
+    updateLogStatus();
+
     const bool connected = m_session->isConnected();
     m_status->setText(connected ? m_session->describe() : tr("not connected"));
     if (m_disconnectAction) {
