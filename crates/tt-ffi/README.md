@@ -54,6 +54,7 @@ Two things about how it is generated, both learned the hard way:
 | Input | `_send_key`, `_send_text`, `_paste`, `_mouse`, `_focus`, `_resize`, `_set_cell_pixels`, `_send_break`, `_feed` |
 | Connection | `_connect_serial`, `_disconnect`, `_is_connected`, `_describe`, `_pump`, `_drain_events` |
 | Ports | `tt_serial_enumerate`, `tt_port_list_len` / `_at` / `_free` |
+| Logging | `tt_log_options_default`, `tt_session_log_start` / `_stop` / `_path` / `_bytes` |
 
 Deliberately absent, and each for a reason rather than for lack of time:
 

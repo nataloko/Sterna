@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 56
+**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 60
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -378,7 +378,10 @@ Must be shippable and genuinely useful, not a demo.
   and `Shift+PageUp`. See `shell/README.md` and below.
 - **`~/.ssh/config`, `~/.ssh/known_hosts`, `~/.ssh/id_*`** — Tera Term lacks
   this and it is a major Linux adoption lever.
-- Session logging (timestamped, rotation).
+- Session logging (timestamped, rotation). ✅ **done** — raw and text modes,
+  `[time] ` line prefixes, generation rotation, and a live indicator in the
+  window. The text tap is inside `tt-vt` at upstream's `FLogPutUTF32` seam
+  rather than a second escape-sequence stripper beside the log.
 - rpm + AppImage. Fedora first.
 
 **Done when:** the Wine shortcut gets deleted and it's daily-driven for serial

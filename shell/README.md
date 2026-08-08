@@ -179,6 +179,23 @@ Two consequences worth knowing:
   Anchoring a selection to the history wants the same work as selecting
   *across* a scroll, so both wait.
 
+## Session logging
+
+`Terminal > Start logging` writes what arrives to a file, with a `REC <size>`
+in the status bar. Timestamps default to **elapsed** rather than wall clock,
+because the question on a console is nearly always "how long after reset did it
+stop", not what time it was.
+
+The indicator is driven by `damaged`, not by a timer: the byte count changes
+exactly when bytes arrive, and that is what `damaged` means. A one-second
+ticker was the first version, and it was both redundant and against the point
+of this event loop.
+
+Text mode strips escape sequences because the *parser* does — the tap is inside
+`tt-vt` at upstream's `FLogPutUTF32` seam. Raw mode keeps every byte and is
+silently untimestamped, which is upstream's rule and the right one: a `[time] `
+in the middle of a byte capture makes it no longer replayable.
+
 ## Not here yet
 
 - **Word and line selection on double and triple click**, which wants the same

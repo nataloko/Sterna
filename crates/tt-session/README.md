@@ -77,11 +77,30 @@ It says "the screen changed", not which rows. The measured baseline is a full
 something says it is needed, not a thing to design around now. The event exists
 so the interface does not have to change when it is.
 
+## Session logging is a tap, not a second stream
+
+`start_log` writes what arrives to a file. The half worth explaining is text
+mode: it records what the **parser** decided to print, through a tap in `tt-vt`
+at upstream's `FLogPutUTF32` seam. Stripping escape sequences with a scanner
+beside the log would be a second parser to keep in agreement with the one that
+is verified against Tera Term — the same argument as everywhere else here.
+
+Raw mode is every byte, verbatim, and is silently untimestamped
+(`filesys_log.cpp:243` clears the flag with the mode): a `[time] ` inside a
+byte capture makes it no longer replayable.
+
+Rotation renames generations rather than dating them, and walks **backwards**
+from the oldest — forwards overwrites `.2` with `.1` before `.2` has moved to
+`.3`, and the history quietly collapses to two files.
+
+One deliberate divergence: upstream writes CR LF for each logged line
+(`vtterm.c:361` sets `log_cr_type = 0`) and this writes LF, because the
+artefact is a text file read in a pager on Linux. `LogOptions::crlf` gets a
+byte-identical Tera Term log back.
+
 ## Still to come
 
 - **Selection**, which is a frontend concept the core only has to support.
-- **Session logging**, which is a Stage 1 deliverable and belongs here — it is
-  a tap on the same byte stream.
 - **The prompt lifecycle** `PLAN.md` describes for SSH (password,
   keyboard-interactive, host-key verification). It needs a transport that can
   ask a question, which serial cannot.
