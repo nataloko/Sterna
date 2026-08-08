@@ -224,23 +224,44 @@ impl PtyConn {
         self.exit.clone()
     }
 
-    fn reap(&mut self) {
+    /// True once the child's fate is settled — collected, or unknowable.
+    fn reap(&mut self) -> bool {
         if self.exit.is_some() {
-            return;
+            return true;
         }
-        if let Ok(Some(status)) = self.child.try_wait() {
-            self.exit = Some(PtyExit {
-                code: status.exit_code(),
-                signal: status.signal().map(str::to_string),
-            });
+        match self.child.try_wait() {
+            Ok(Some(status)) => {
+                self.exit = Some(PtyExit {
+                    code: status.exit_code(),
+                    signal: status.signal().map(str::to_string),
+                });
+                true
+            }
+            Ok(None) => false,
+            // It cannot be waited for at all — already collected elsewhere, or
+            // never ours. Asking again would only spend the deadline.
+            Err(_) => true,
         }
     }
 
     /// Mark the connection dead and collect the child, so the caller's next
     /// question about *why* has an answer ready.
+    ///
+    /// **The wait is not belt-and-braces; there is a real race and it is
+    /// small.** The kernel closes a dying process's file descriptors in
+    /// `exit_files()` — which is what makes the master read `EIO` — *before*
+    /// `exit_notify()` makes it waitable. So the read can learn the shell is
+    /// gone microseconds before `try_wait` can say how, and without this the
+    /// window says "Disconnected" instead of "bash exited with status 4", some
+    /// of the time. An intermittently missing explanation is worse than none:
+    /// it teaches the reader that the message means something it does not.
+    ///
+    /// Bounded like `Drop`'s, and for the same reason. A child that closed the
+    /// slave and kept running — a daemon detaching — is the case that spends
+    /// the whole deadline, once, at the end of a connection.
     fn died(&mut self) -> Error {
         self.dead = true;
-        self.reap();
+        self.wait_briefly();
         Error::Disconnected
     }
 }
@@ -428,17 +449,22 @@ impl Drop for PtyConn {
 }
 
 impl PtyConn {
-    /// Poll for the child for a fifth of a second. True if it was collected.
+    /// Poll for the child for a fifth of a second, keeping its status. True if
+    /// its fate was settled inside that.
+    ///
+    /// A millisecond between tries rather than five: the race this closes on
+    /// the read path is microseconds wide, and sleeping through it five times
+    /// over would put the cost where there is no need for one.
     fn wait_briefly(&mut self) -> bool {
         let deadline = Instant::now() + Duration::from_millis(200);
         loop {
-            if matches!(self.child.try_wait(), Ok(Some(_)) | Err(_)) {
+            if self.reap() {
                 return true;
             }
             if Instant::now() >= deadline {
                 return false;
             }
-            std::thread::sleep(Duration::from_millis(5));
+            std::thread::sleep(Duration::from_millis(1));
         }
     }
 }
