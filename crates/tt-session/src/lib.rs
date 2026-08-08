@@ -38,7 +38,10 @@ pub mod settings;
 
 pub use log::{LogMode, LogOptions, SessionLog, Timestamp};
 pub use settings::vt_config;
-pub use tt_config::Settings;
+// Re-exported rather than reached for directly, so that a frontend — the C ABI
+// above all — takes the settings and the metadata that describes them from the
+// same place it takes the session they belong to.
+pub use tt_config::{Field, Ini, Kind, Settings, FIELDS};
 
 use tt_conn::{Error, Result, Transport, TransportEvent};
 use tt_grid::{Cell, Grid};

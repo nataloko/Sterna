@@ -474,6 +474,130 @@ static void test_serial(void)
 /* Every entry point takes null without crashing. A frontend will pass one
  * eventually — after a failed connect, or from a signal handler racing a
  * teardown — and an ABI that segfaults on it is one nobody can debug. */
+
+/* The schema, from C — which is how the settings dialog will be built.
+ *
+ * The point of the metadata table is that the dialog holds no list of its own,
+ * so this walks it the way a dialog would: every field, its page, its widget
+ * kind, and for an enum the spellings a combo box would offer.
+ */
+static void test_settings(void)
+{
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+
+    size_t n = tt_settings_field_count();
+    CHECK(n > 0);
+
+    int seen_enum = 0, seen_range = 0, seen_color = 0, seen_unlabelled = 0;
+    for (size_t i = 0; i < n; i++) {
+        TtSettingField f;
+        CHECK(tt_settings_field(i, &f));
+        CHECK(f.name && f.page && f.section && f.key && f.default_value && f.doc);
+        /* The page is the dotted name's first component, which is what puts a
+         * setting on a tab without a second table saying so. */
+        CHECK(strncmp(f.name, f.page, strlen(f.page)) == 0);
+        CHECK(f.name[strlen(f.page)] == '.');
+        /* A setting with no dialog upstream has no label and still has to be
+         * readable and writable. */
+        if (!f.label)
+            seen_unlabelled++;
+
+        if (f.kind == TT_SETTING_KIND_ENUM) {
+            seen_enum++;
+            CHECK(f.choices > 1);
+            CHECK(tt_settings_choice(i, f.choices) == NULL);
+            int found_default = 0;
+            for (size_t c = 0; c < f.choices; c++) {
+                const char *spelling = tt_settings_choice(i, c);
+                CHECK(spelling != NULL);
+                if (spelling && strcmp(spelling, f.default_value) == 0)
+                    found_default = 1;
+            }
+            CHECK(found_default);
+        } else {
+            CHECK(f.choices == 0);
+            CHECK(tt_settings_choice(i, 0) == NULL);
+        }
+        if (f.kind == TT_SETTING_KIND_INT_RANGE) {
+            seen_range++;
+            CHECK(f.min < f.max);
+        }
+        if (f.kind == TT_SETTING_KIND_COLOR2)
+            seen_color++;
+
+        /* Every name in the table is one the session answers to. */
+        CHECK(tt_session_setting(s, f.name) != NULL);
+    }
+    CHECK(seen_enum > 0);
+    CHECK(seen_range > 0);
+    CHECK(seen_color > 0);
+    CHECK(seen_unlabelled > 0);
+
+    TtSettingField f;
+    CHECK(!tt_settings_field(n, &f));
+
+    /* Reading and writing by name, and the value is the file's spelling both
+     * ways so a combo box can round-trip it. */
+    CHECK(strcmp(tt_session_setting(s, "terminal.id"), "VT100") == 0);
+    CHECK_OK(tt_session_set_setting(s, "terminal.id", "VT320"));
+    CHECK(strcmp(tt_session_setting(s, "terminal.id"), "VT320") == 0);
+    CHECK(tt_session_setting(s, "no.such.setting") == NULL);
+    CHECK(tt_session_set_setting(s, "no.such.setting", "1") == TT_ERR_INVALID);
+
+    /* Applying reaches the running terminal: the size resizes the grid, and
+     * the backspace key changes what the window has to send. */
+    CHECK(tt_session_backspace_sends_bs(s));
+    CHECK_OK(tt_session_set_setting(s, "keyboard.backspace", "DEL"));
+    CHECK(!tt_session_backspace_sends_bs(s));
+    CHECK_OK(tt_session_set_setting(s, "terminal.cols", "132"));
+    CHECK(tt_session_cols(s) == 132);
+    /* Out of range is not an error — it lands where the file would put it,
+     * which for a size at or below the floor is the default rather than the
+     * floor itself. */
+    CHECK_OK(tt_session_set_setting(s, "terminal.cols", "0"));
+    CHECK(tt_session_cols(s) == 80);
+
+    /* A round trip through a file, including a key nothing here knows about:
+     * a TERATERM.INI shared with a real Tera Term has to survive being
+     * written back. */
+    const char *path = "/tmp/tt-ffi-abi-settings.ini";
+    FILE *f2 = fopen(path, "wb");
+    CHECK(f2 != NULL);
+    if (f2) {
+        fputs("; a comment\r\n[Tera Term]\r\nTerminalSize=100,40\r\n"
+              "SomethingElse=kept\r\n",
+              f2);
+        fclose(f2);
+    }
+    CHECK_OK(tt_session_settings_load(s, path));
+    CHECK(tt_session_cols(s) == 100);
+    CHECK(tt_session_rows(s) == 40);
+    CHECK(strcmp(tt_session_setting(s, "terminal.id"), "VT100") == 0);
+
+    CHECK_OK(tt_session_set_setting(s, "terminal.title", "termitta"));
+    CHECK_OK(tt_session_settings_save(s, path));
+    f2 = fopen(path, "rb");
+    CHECK(f2 != NULL);
+    if (f2) {
+        char buf[2048] = {0};
+        size_t got = fread(buf, 1, sizeof buf - 1, f2);
+        fclose(f2);
+        CHECK(got > 0);
+        CHECK(strstr(buf, "; a comment") != NULL);
+        CHECK(strstr(buf, "SomethingElse=kept") != NULL);
+        CHECK(strstr(buf, "Title=termitta") != NULL);
+        remove(path);
+    }
+
+    /* A file that is not there is a first run, not a failure. */
+    CHECK_OK(tt_session_settings_load(s, "/tmp/tt-ffi-abi-no-such.ini"));
+    CHECK(tt_session_cols(s) == 80);
+
+    tt_session_free(s);
+}
+
 static void test_null_safety(void)
 {
     tt_config_default(NULL);
@@ -533,6 +657,11 @@ static void test_null_safety(void)
     CHECK(tt_session_connect_pty(NULL, NULL) == TT_ERR_INVALID);
     CHECK(tt_session_close_note(NULL) == NULL);
     CHECK(!tt_session_supports_break(NULL));
+    CHECK(tt_session_setting(NULL, "terminal.cols") == NULL);
+    CHECK(tt_session_set_setting(NULL, "terminal.cols", "80") == TT_ERR_INVALID);
+    CHECK(tt_session_settings_load(NULL, "/tmp/x.ini") == TT_ERR_INVALID);
+    CHECK(tt_session_settings_save(NULL, "/tmp/x.ini") == TT_ERR_INVALID);
+    CHECK(!tt_settings_field(0, NULL));
     CHECK(tt_last_error() != NULL);
 
     TtConfig cfg;
@@ -547,6 +676,9 @@ static void test_null_safety(void)
     CHECK(tt_session_connect_telnet(s, "h", 23, NULL) == TT_ERR_INVALID);
     CHECK(tt_session_connect_telnet(s, NULL, 23, NULL) == TT_ERR_INVALID);
     CHECK(tt_session_connect_pty(s, NULL) == TT_ERR_INVALID);
+    CHECK(tt_session_setting(s, NULL) == NULL);
+    CHECK(tt_session_set_setting(s, NULL, "1") == TT_ERR_INVALID);
+    CHECK(tt_session_settings_load(s, NULL) == TT_ERR_INVALID);
     CHECK(tt_session_close_note(s) == NULL);
     tt_session_free(s);
 }
@@ -900,6 +1032,7 @@ int main(void)
     test_scrollback_viewport();
     test_absolute_lines();
     test_logging();
+    test_settings();
     test_input();
     test_palette();
     test_serial();

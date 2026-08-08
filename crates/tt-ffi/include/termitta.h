@@ -232,6 +232,44 @@ typedef uint32_t TtTracking;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
+/**
+ * What a setting holds — enough for a dialog to pick a widget and no more.
+ */
+enum TtSettingKind
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    /**
+     * On or off. Note the value is spelled `on`/`off`, not `1`/`0`, and that
+     * **the file's parse of it is not symmetric** — see [`TtSettingField`].
+     */
+    TT_SETTING_KIND_BOOL,
+    TT_SETTING_KIND_INT,
+    /**
+     * An int with bounds: `min` and `max` are meaningful.
+     */
+    TT_SETTING_KIND_INT_RANGE,
+    TT_SETTING_KIND_STR,
+    /**
+     * One of `choices` spellings, fetched with [`tt_settings_choice`].
+     */
+    TT_SETTING_KIND_ENUM,
+    /**
+     * Six numbers, `fg_r,fg_g,fg_b,bg_r,bg_g,bg_b`. Upstream's attributes
+     * each carry their own foreground *and* background, which is why a colour
+     * setting is a pair rather than one value.
+     */
+    TT_SETTING_KIND_COLOR2,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum TtSettingKind TtSettingKind;
+#else
+typedef uint32_t TtSettingKind;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
 enum TtEventKind
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint32_t
@@ -650,6 +688,68 @@ typedef struct {
      */
     bool pending_wrap;
 } TtCursor;
+
+/**
+ * One setting, as data — the row a generated dialog builds a widget from.
+ *
+ * **This is the point of having a schema at all.** `PLAN.md` puts ~13.8k
+ * lines of dialog code over Tera Term's 909-line settings struct, across 76
+ * dialog templates; a dialog that reads this table has nothing to keep in
+ * step with it, while one generated as C++ would be a second copy of the list
+ * living in the other build system.
+ *
+ * Every string is `NUL`-terminated, never null except `label`, and **lives
+ * for the life of the process**: they describe the schema rather than any
+ * session's values, so unlike everything else in this header they need no
+ * "valid until" rule.
+ */
+typedef struct {
+    /**
+     * The dotted name a script and [`tt_session_setting`] use.
+     */
+    const char *name;
+    /**
+     * Everything before the first dot: which page of the dialog it belongs on.
+     */
+    const char *page;
+    /**
+     * Its `TERATERM.INI` section and key. Two settings may share a key —
+     * `TerminalSize` holds both `terminal.cols` and `terminal.rows`.
+     */
+    const char *section;
+    const char *key;
+    /**
+     * The default, in the INI's own spelling. For a `Bool` this is
+     * load-bearing rather than cosmetic: `GetOnOff` is default-biased
+     * (`ttset.c:344`), so with a default of `on` anything but `off` reads as
+     * on, and with a default of `off` only `on` does. `Key=1` therefore means
+     * opposite things for two settings out of the same file.
+     */
+    const char *default_value;
+    /**
+     * The `.lng` key for the label, or **null** where upstream has no dialog
+     * for this setting. Those are real settings people set by hand; they have
+     * no widget yet, not no meaning.
+     */
+    const char *label;
+    /**
+     * The schema's own comment, which is where the citation for the default
+     * lives. Meant for a tooltip and for the generated documentation.
+     */
+    const char *doc;
+    TtSettingKind kind;
+    /**
+     * Bounds, for `TT_SETTING_KIND_INT_RANGE`. Note what the file does
+     * outside them, because a spin box cannot express it: at or below `min`
+     * takes the *default*, above `max` takes `max` (`ttset.c:615`).
+     */
+    int32_t min;
+    int32_t max;
+    /**
+     * How many spellings an `Enum` accepts; zero for every other kind.
+     */
+    size_t choices;
+} TtSettingField;
 
 typedef struct {
     TtEventKind kind;
@@ -1370,6 +1470,77 @@ bool tt_palette_rgb(uint32_t index,
                     uint8_t *r,
                     uint8_t *g,
                     uint8_t *b);
+
+/**
+ * How many settings there are. The index runs `0..count` and is stable for
+ * the life of the process, but **not across versions** — the schema grows.
+ */
+size_t tt_settings_field_count(void);
+
+/**
+ * Describe setting `index`. False, and `out` untouched, past the end.
+ */
+bool tt_settings_field(size_t index, TtSettingField *out);
+
+/**
+ * The `n`th spelling an `Enum` setting accepts, or null.
+ *
+ * These are the INI's own spellings, which is what
+ * [`tt_session_set_setting`] takes and [`tt_session_setting`] returns — so a
+ * combo box can be built out of them and read back without a table of its
+ * own. They are not translated; the `.lng` label belongs to the setting, not
+ * to its values.
+ */
+const char *tt_settings_choice(size_t index,
+                               size_t n);
+
+/**
+ * One setting's current value, in the INI's own spelling. Null for a name
+ * that is not in the schema.
+ *
+ * Borrowed, and valid until the next call to this function on this session.
+ */
+const char *tt_session_setting(TtSession *session, const char *name);
+
+/**
+ * Set one setting by name and apply it to the running terminal.
+ *
+ * The value is parsed exactly as the file would parse it — bounds, quote
+ * stripping, and `GetOnOff`'s default-biased booleans included — so a dialog,
+ * a script and a hand-edited `TERATERM.INI` cannot disagree about what a
+ * value means. An out-of-range number is therefore **not** an error; it lands
+ * where the file would put it.
+ *
+ * `TT_ERR_INVALID` for a name that is not in the schema. Applying can also
+ * resize the terminal, which is told to the far end and can fail there.
+ *
+ * **It overwrites modes the host set**, and that is upstream's behaviour
+ * rather than an oversight: in Tera Term the setting and the mode are the
+ * same variable, so `DECSET 67` writes `ts.BSKey` and the settings dialog
+ * writes it back.
+ */
+TtStatus tt_session_set_setting(TtSession *session,
+                                const char *name,
+                                const char *value);
+
+/**
+ * Read `TERATERM.INI` and apply all of it.
+ *
+ * A file that does not exist reads as an empty one — every setting takes its
+ * default — because that is a first run, not a failure.
+ */
+TtStatus tt_session_settings_load(TtSession *session,
+                                  const char *path);
+
+/**
+ * Write every setting back, leaving the rest of the file alone.
+ *
+ * The file is re-read first and only the keys the schema owns are touched, so
+ * comments, ordering, spelling and every setting this project does not know
+ * about survive — which is what makes a `TERATERM.INI` shared with a real
+ * Tera Term keep working.
+ */
+TtStatus tt_session_settings_save(const TtSession *session, const char *path);
 
 /**
  * Take everything that has happened since the last drain.

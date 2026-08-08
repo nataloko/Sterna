@@ -68,6 +68,7 @@ use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::ptr;
 use std::slice;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use tt_conn::pty::{PtyConn, PtyParams};
@@ -81,7 +82,7 @@ use tt_conn::ssh::{
 use tt_conn::telnet::{TelnetConn, TelnetMode, TelnetParams};
 use tt_conn::Error;
 use tt_grid::Cell;
-use tt_session::{Event, LogMode, LogOptions, Session, Timestamp};
+use tt_session::{Event, Ini, LogMode, LogOptions, Session, Settings, Timestamp};
 use tt_vt::{Config, Key, Modifiers, MouseEvent, TermId, Tracking};
 
 // --- status ---------------------------------------------------------------
@@ -307,6 +308,7 @@ pub struct TtSession {
     title: CString,
     log_path: CString,
     close_note: CString,
+    setting: CString,
 }
 
 /// Create a session. Returns null only if `config` is null.
@@ -340,6 +342,7 @@ pub extern "C" fn tt_session_new(config: *const TtConfig) -> *mut TtSession {
         describe: CString::default(),
         log_path: CString::default(),
         close_note: CString::default(),
+        setting: CString::default(),
     }))
 }
 
@@ -733,6 +736,278 @@ pub extern "C" fn tt_palette_rgb(index: u32, r: *mut u8, g: *mut u8, b: *mut u8)
         }
     }
     true
+}
+
+// --- settings -------------------------------------------------------------
+
+/// What a setting holds — enough for a dialog to pick a widget and no more.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TtSettingKind {
+    /// On or off. Note the value is spelled `on`/`off`, not `1`/`0`, and that
+    /// **the file's parse of it is not symmetric** — see [`TtSettingField`].
+    Bool,
+    Int,
+    /// An int with bounds: `min` and `max` are meaningful.
+    IntRange,
+    Str,
+    /// One of `choices` spellings, fetched with [`tt_settings_choice`].
+    Enum,
+    /// Six numbers, `fg_r,fg_g,fg_b,bg_r,bg_g,bg_b`. Upstream's attributes
+    /// each carry their own foreground *and* background, which is why a colour
+    /// setting is a pair rather than one value.
+    Color2,
+}
+
+/// One setting, as data — the row a generated dialog builds a widget from.
+///
+/// **This is the point of having a schema at all.** `PLAN.md` puts ~13.8k
+/// lines of dialog code over Tera Term's 909-line settings struct, across 76
+/// dialog templates; a dialog that reads this table has nothing to keep in
+/// step with it, while one generated as C++ would be a second copy of the list
+/// living in the other build system.
+///
+/// Every string is `NUL`-terminated, never null except `label`, and **lives
+/// for the life of the process**: they describe the schema rather than any
+/// session's values, so unlike everything else in this header they need no
+/// "valid until" rule.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtSettingField {
+    /// The dotted name a script and [`tt_session_setting`] use.
+    pub name: *const c_char,
+    /// Everything before the first dot: which page of the dialog it belongs on.
+    pub page: *const c_char,
+    /// Its `TERATERM.INI` section and key. Two settings may share a key —
+    /// `TerminalSize` holds both `terminal.cols` and `terminal.rows`.
+    pub section: *const c_char,
+    pub key: *const c_char,
+    /// The default, in the INI's own spelling. For a `Bool` this is
+    /// load-bearing rather than cosmetic: `GetOnOff` is default-biased
+    /// (`ttset.c:344`), so with a default of `on` anything but `off` reads as
+    /// on, and with a default of `off` only `on` does. `Key=1` therefore means
+    /// opposite things for two settings out of the same file.
+    pub default_value: *const c_char,
+    /// The `.lng` key for the label, or **null** where upstream has no dialog
+    /// for this setting. Those are real settings people set by hand; they have
+    /// no widget yet, not no meaning.
+    pub label: *const c_char,
+    /// The schema's own comment, which is where the citation for the default
+    /// lives. Meant for a tooltip and for the generated documentation.
+    pub doc: *const c_char,
+    pub kind: TtSettingKind,
+    /// Bounds, for `TT_SETTING_KIND_INT_RANGE`. Note what the file does
+    /// outside them, because a spin box cannot express it: at or below `min`
+    /// takes the *default*, above `max` takes `max` (`ttset.c:615`).
+    pub min: i32,
+    pub max: i32,
+    /// How many spellings an `Enum` accepts; zero for every other kind.
+    pub choices: usize,
+}
+
+/// The schema as C sees it. Built once and never freed — it is 39 rows of
+/// static description, and handing out pointers that outlive every call is
+/// what lets a dialog keep them.
+struct Schema {
+    fields: Vec<TtSettingField>,
+    choices: Vec<Vec<*const c_char>>,
+}
+
+// Raw pointers into leaked, immutable, `NUL`-terminated strings. Nothing here
+// is ever written after `OnceLock` publishes it.
+unsafe impl Send for Schema {}
+unsafe impl Sync for Schema {}
+
+static SCHEMA: OnceLock<Schema> = OnceLock::new();
+
+/// A string that lives as long as the process. Leaked deliberately: the
+/// alternative is a `Vec<CString>` whose pointers a caller has to stop using
+/// at some moment nobody can name.
+fn leak(s: &str) -> *const c_char {
+    cstring(s).into_raw().cast_const()
+}
+
+fn schema() -> &'static Schema {
+    SCHEMA.get_or_init(|| {
+        let mut fields = Vec::with_capacity(tt_session::FIELDS.len());
+        let mut choices = Vec::with_capacity(tt_session::FIELDS.len());
+        for f in tt_session::FIELDS {
+            let (kind, min, max) = match f.kind {
+                tt_session::Kind::Bool => (TtSettingKind::Bool, 0, 0),
+                tt_session::Kind::Int => (TtSettingKind::Int, i32::MIN, i32::MAX),
+                tt_session::Kind::IntRange(lo, hi) => (TtSettingKind::IntRange, lo, hi),
+                tt_session::Kind::Str => (TtSettingKind::Str, 0, 0),
+                tt_session::Kind::Enum(_) => (TtSettingKind::Enum, 0, 0),
+                tt_session::Kind::Color2 => (TtSettingKind::Color2, 0, 0),
+            };
+            let spellings: Vec<*const c_char> = match f.kind {
+                tt_session::Kind::Enum(list) => list.iter().map(|s| leak(s)).collect(),
+                _ => Vec::new(),
+            };
+            fields.push(TtSettingField {
+                name: leak(f.name),
+                page: leak(f.page),
+                section: leak(f.section),
+                key: leak(f.key),
+                default_value: leak(f.default),
+                label: f.label.map_or(ptr::null(), leak),
+                doc: leak(f.doc),
+                kind,
+                min,
+                max,
+                choices: spellings.len(),
+            });
+            choices.push(spellings);
+        }
+        Schema { fields, choices }
+    })
+}
+
+/// How many settings there are. The index runs `0..count` and is stable for
+/// the life of the process, but **not across versions** — the schema grows.
+#[no_mangle]
+pub extern "C" fn tt_settings_field_count() -> usize {
+    schema().fields.len()
+}
+
+/// Describe setting `index`. False, and `out` untouched, past the end.
+#[no_mangle]
+pub extern "C" fn tt_settings_field(index: usize, out: *mut TtSettingField) -> bool {
+    let Some(out) = (unsafe { out.as_mut() }) else {
+        set_error("null TtSettingField");
+        return false;
+    };
+    match schema().fields.get(index) {
+        Some(f) => {
+            *out = *f;
+            true
+        }
+        None => false,
+    }
+}
+
+/// The `n`th spelling an `Enum` setting accepts, or null.
+///
+/// These are the INI's own spellings, which is what
+/// [`tt_session_set_setting`] takes and [`tt_session_setting`] returns — so a
+/// combo box can be built out of them and read back without a table of its
+/// own. They are not translated; the `.lng` label belongs to the setting, not
+/// to its values.
+#[no_mangle]
+pub extern "C" fn tt_settings_choice(index: usize, n: usize) -> *const c_char {
+    schema()
+        .choices
+        .get(index)
+        .and_then(|c| c.get(n))
+        .copied()
+        .unwrap_or(ptr::null())
+}
+
+/// One setting's current value, in the INI's own spelling. Null for a name
+/// that is not in the schema.
+///
+/// Borrowed, and valid until the next call to this function on this session.
+#[no_mangle]
+pub extern "C" fn tt_session_setting(session: *mut TtSession, name: *const c_char) -> *const c_char {
+    let s = session!(session, ptr::null());
+    let Ok(name) = (unsafe { str_arg(name, usize::MAX) }) else {
+        return ptr::null();
+    };
+    match s.session.setting(name) {
+        Some(v) => {
+            s.setting = cstring(&v);
+            s.setting.as_ptr()
+        }
+        None => {
+            set_error(format!("no setting named {name}"));
+            ptr::null()
+        }
+    }
+}
+
+/// Set one setting by name and apply it to the running terminal.
+///
+/// The value is parsed exactly as the file would parse it — bounds, quote
+/// stripping, and `GetOnOff`'s default-biased booleans included — so a dialog,
+/// a script and a hand-edited `TERATERM.INI` cannot disagree about what a
+/// value means. An out-of-range number is therefore **not** an error; it lands
+/// where the file would put it.
+///
+/// `TT_ERR_INVALID` for a name that is not in the schema. Applying can also
+/// resize the terminal, which is told to the far end and can fail there.
+///
+/// **It overwrites modes the host set**, and that is upstream's behaviour
+/// rather than an oversight: in Tera Term the setting and the mode are the
+/// same variable, so `DECSET 67` writes `ts.BSKey` and the settings dialog
+/// writes it back.
+#[no_mangle]
+pub extern "C" fn tt_session_set_setting(
+    session: *mut TtSession,
+    name: *const c_char,
+    value: *const c_char,
+) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    let (name, value) = match unsafe { (str_arg(name, usize::MAX), str_arg(value, usize::MAX)) } {
+        (Ok(n), Ok(v)) => (n, v),
+        (Err(e), _) | (_, Err(e)) => return e,
+    };
+    match s.session.set_setting(name, value) {
+        Ok(true) => TT_OK,
+        Ok(false) => fail(TT_ERR_INVALID, format!("no setting named {name}")),
+        Err(e) => report(e),
+    }
+}
+
+/// Read `TERATERM.INI` and apply all of it.
+///
+/// A file that does not exist reads as an empty one — every setting takes its
+/// default — because that is a first run, not a failure.
+#[no_mangle]
+pub extern "C" fn tt_session_settings_load(
+    session: *mut TtSession,
+    path: *const c_char,
+) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    let path = match unsafe { str_arg(path, usize::MAX) } {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let ini = match Ini::load(std::path::Path::new(path)) {
+        Ok(ini) => ini,
+        Err(e) => return fail(TT_ERR_IO, format!("{path}: {e}")),
+    };
+    match s.session.set_settings(Settings::load(&ini)) {
+        Ok(()) => TT_OK,
+        Err(e) => report(e),
+    }
+}
+
+/// Write every setting back, leaving the rest of the file alone.
+///
+/// The file is re-read first and only the keys the schema owns are touched, so
+/// comments, ordering, spelling and every setting this project does not know
+/// about survive — which is what makes a `TERATERM.INI` shared with a real
+/// Tera Term keep working.
+#[no_mangle]
+pub extern "C" fn tt_session_settings_save(
+    session: *const TtSession,
+    path: *const c_char,
+) -> TtStatus {
+    let s = session_ref!(session, TT_ERR_INVALID);
+    let path = match unsafe { str_arg(path, usize::MAX) } {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let path = std::path::Path::new(path);
+    let mut ini = match Ini::load(path) {
+        Ok(ini) => ini,
+        Err(e) => return fail(TT_ERR_IO, format!("{}: {e}", path.display())),
+    };
+    s.session.settings().store(&mut ini);
+    match ini.save(path) {
+        Ok(()) => TT_OK,
+        Err(e) => fail(TT_ERR_IO, format!("{}: {e}", path.display())),
+    }
 }
 
 // --- events ---------------------------------------------------------------
