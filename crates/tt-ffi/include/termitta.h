@@ -259,6 +259,18 @@ enum TtEventKind
      * retrying on every pump turns one problem into a stall.
      */
     TT_EVENT_KIND_LOG_FAILED = 5,
+    /**
+     * The **far end** says the terminal should be this size — `cols` and
+     * `rows`. Telnet's NAWS, arriving backwards: RFC 1073 defines it
+     * client-to-server, and a console server sends it the other way to say
+     * what the equipment behind it actually is.
+     *
+     * **The core does not resize itself on this.** The window owns its own
+     * size, and a grid that changed under the frontend would leave it
+     * painting the wrong number of cells. Call [`tt_session_resize`] — and
+     * resize the window with it — or ignore it.
+     */
+    TT_EVENT_KIND_RESIZE = 6,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -636,7 +648,13 @@ typedef struct {
      */
     uint8_t byte;
     /**
-     * Meaningful for [`TtEventKind::Title`] only; null otherwise.
+     * Meaningful for [`TtEventKind::Resize`] only.
+     */
+    uint16_t cols;
+    uint16_t rows;
+    /**
+     * Meaningful for [`TtEventKind::Title`] and [`TtEventKind::LogFailed`];
+     * null otherwise.
      */
     const char *text;
 } TtEvent;
@@ -689,6 +707,43 @@ typedef struct {
      */
     uint32_t read_timeout_ms;
 } TtSerialParams;
+
+/**
+ * How much of the telnet protocol to speak.
+ */
+typedef uint32_t TtTelnetMode;
+
+/**
+ * What to tell the far end about this terminal.
+ */
+typedef struct {
+    /**
+     * [`TT_TELNET_RAW`], [`TT_TELNET_AUTO`] or [`TT_TELNET_NEGOTIATE`].
+     *
+     * [`tt_telnet_params_default`] sets it from the port, which is upstream's
+     * rule: negotiate on 23, auto-detect elsewhere. **Do not "improve" that
+     * to always negotiating** — a terminal server is not a telnet server, and
+     * opening at one with `WILL TERMINAL-TYPE` puts five bytes of protocol
+     * into somebody's serial console.
+     */
+    TtTelnetMode mode;
+    /**
+     * `$TERM` for `TERMINAL-TYPE`. Null means `xterm-256color`.
+     */
+    const char *term_type;
+    /**
+     * `TERMINAL-SPEED`, which is a claim about the line behind the server
+     * rather than about this connection. Upstream defaults both to 38400.
+     */
+    uint32_t input_speed;
+    uint32_t output_speed;
+    /**
+     * Ask for `BINARY` in the opening burst. Upstream's `ts.TelBin`, which
+     * defaults **off** — it agrees if asked, but does not ask.
+     */
+    bool binary;
+    uint32_t connect_timeout_ms;
+} TtTelnetParams;
 
 /**
  * One serial port, as a picker wants to show it. Every string is borrowed
@@ -945,6 +1000,24 @@ typedef struct {
  * that makes the message actionable.
  */
 #define TT_ERR_AUTH -9
+
+/**
+ * Every byte is data, `0xFF` included. What a console server's per-line port
+ * needs, and the only mode that cannot corrupt a binary stream.
+ */
+#define TT_TELNET_RAW 0
+
+/**
+ * Data until the first `IAC` arrives, and telnet from then on. Upstream's
+ * `TelAutoDetect`, which defaults on.
+ */
+#define TT_TELNET_AUTO 1
+
+/**
+ * Telnet from the first byte, opening with the negotiation upstream opens
+ * with. Upstream does this only when the port is 23.
+ */
+#define TT_TELNET_NEGOTIATE 2
 
 #define TT_HOST_KEY_POLICY_ASK 0
 
@@ -1389,6 +1462,28 @@ void tt_serial_params_default(TtSerialParams *out);
 TtStatus tt_session_connect_serial(TtSession *session,
                                    const char *path,
                                    const TtSerialParams *params);
+
+/**
+ * Fill `out` with the defaults for `port`: upstream's mode rule, 38400 both
+ * ways, no `BINARY`, a ten-second connect timeout.
+ */
+void tt_telnet_params_default(TtTelnetParams *out, uint16_t port);
+
+/**
+ * Open a telnet (or raw TCP) connection and attach it. Replaces any current
+ * one.
+ *
+ * Synchronous, unlike [`tt_ssh_connect`], and that is not an inconsistency:
+ * telnet asks no questions. There is no host key and no password — the login
+ * prompt a server sends is *terminal output*, typed into like any other.
+ *
+ * The terminal is **not** reset, so reconnecting keeps the scrollback that
+ * explains why it dropped.
+ */
+TtStatus tt_session_connect_telnet(TtSession *session,
+                                   const char *host,
+                                   uint16_t port,
+                                   const TtTelnetParams *params);
 
 /**
  * Drop the connection. The screen is left alone. A no-op when there is none.

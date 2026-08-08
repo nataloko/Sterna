@@ -60,6 +60,16 @@ pub enum Event {
     BadByte(u8),
     /// The transport went away — unplugged, hung up, or the child exited.
     Disconnected,
+    /// The **far end** says the terminal should be this size.
+    ///
+    /// Backwards from the usual direction and real: telnet's NAWS is defined
+    /// client-to-server, and a console server sends it the other way to say
+    /// what the equipment behind it actually is. The session does **not**
+    /// resize itself on it — the window owns its own size, and a core that
+    /// silently changed the grid would leave the frontend painting the wrong
+    /// number of cells. Honouring it is the frontend's decision, which is what
+    /// upstream does too (`buffer.c:5106` goes through the window).
+    Resize { cols: u16, rows: u16 },
     /// The session log could not be written and has been closed. Reported
     /// once: a disk that filled up will not un-fill, and retrying on every
     /// pump turns one problem into a stall.
@@ -329,6 +339,7 @@ impl Session {
                 self.events.push(match ev {
                     TransportEvent::Break => Event::Break,
                     TransportEvent::BadByte(b) => Event::BadByte(b),
+                    TransportEvent::Resize { cols, rows } => Event::Resize { cols, rows },
                 });
             }
 

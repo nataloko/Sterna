@@ -73,6 +73,7 @@ use std::time::Duration;
 use tt_conn::serial::{
     DataBits, FlowControl, Parity, PinControl, SerialConn, SerialParams, StopBits,
 };
+use tt_conn::telnet::{TelnetConn, TelnetMode, TelnetParams};
 use tt_conn::ssh::{
     AuthPromptKind, HostKeyDecision, HostKeyPolicy, KnownHosts, SshConfig, SshConnect, SshParams,
     Step, Verdict,
@@ -702,6 +703,16 @@ pub enum TtEventKind {
     /// why. Reported once — a disk that filled up will not un-fill, and
     /// retrying on every pump turns one problem into a stall.
     LogFailed = 5,
+    /// The **far end** says the terminal should be this size — `cols` and
+    /// `rows`. Telnet's NAWS, arriving backwards: RFC 1073 defines it
+    /// client-to-server, and a console server sends it the other way to say
+    /// what the equipment behind it actually is.
+    ///
+    /// **The core does not resize itself on this.** The window owns its own
+    /// size, and a grid that changed under the frontend would leave it
+    /// painting the wrong number of cells. Call [`tt_session_resize`] — and
+    /// resize the window with it — or ignore it.
+    Resize = 6,
 }
 
 #[repr(C)]
@@ -710,7 +721,11 @@ pub struct TtEvent {
     pub kind: TtEventKind,
     /// Meaningful for [`TtEventKind::BadByte`] only.
     pub byte: u8,
-    /// Meaningful for [`TtEventKind::Title`] only; null otherwise.
+    /// Meaningful for [`TtEventKind::Resize`] only.
+    pub cols: u16,
+    pub rows: u16,
+    /// Meaningful for [`TtEventKind::Title`] and [`TtEventKind::LogFailed`];
+    /// null otherwise.
     pub text: *const c_char,
 }
 
@@ -732,6 +747,7 @@ pub extern "C" fn tt_session_drain_events(
     s.events.clear();
     s.event_texts.clear();
     for ev in s.session.drain_events() {
+        let mut size = (0u16, 0u16);
         let (kind, byte, text) = match ev {
             Event::Damage => (TtEventKind::Damage, 0, ptr::null()),
             Event::Title(t) => {
@@ -742,13 +758,23 @@ pub extern "C" fn tt_session_drain_events(
             Event::Break => (TtEventKind::Break, 0, ptr::null()),
             Event::BadByte(b) => (TtEventKind::BadByte, b, ptr::null()),
             Event::Disconnected => (TtEventKind::Disconnected, 0, ptr::null()),
+            Event::Resize { cols, rows } => {
+                size = (cols, rows);
+                (TtEventKind::Resize, 0, ptr::null())
+            }
             Event::LogFailed(msg) => {
                 s.event_texts.push(CString::new(msg).unwrap_or_default());
                 let p = s.event_texts.last().expect("just pushed").as_ptr();
                 (TtEventKind::LogFailed, 0, p)
             }
         };
-        s.events.push(TtEvent { kind, byte, text });
+        s.events.push(TtEvent {
+            kind,
+            byte,
+            cols: size.0,
+            rows: size.1,
+            text,
+        });
     }
     if let Some(out) = unsafe { out.as_mut() } {
         *out = if s.events.is_empty() {
@@ -1121,6 +1147,120 @@ pub extern "C" fn tt_session_connect_serial(
         Err(e) => return e,
     };
     match SerialConn::open(path, &params) {
+        Ok(conn) => {
+            s.session.connect(Box::new(conn));
+            TT_OK
+        }
+        Err(e) => report(e),
+    }
+}
+
+/// How much of the telnet protocol to speak.
+pub type TtTelnetMode = u32;
+
+/// Every byte is data, `0xFF` included. What a console server's per-line port
+/// needs, and the only mode that cannot corrupt a binary stream.
+pub const TT_TELNET_RAW: TtTelnetMode = 0;
+/// Data until the first `IAC` arrives, and telnet from then on. Upstream's
+/// `TelAutoDetect`, which defaults on.
+pub const TT_TELNET_AUTO: TtTelnetMode = 1;
+/// Telnet from the first byte, opening with the negotiation upstream opens
+/// with. Upstream does this only when the port is 23.
+pub const TT_TELNET_NEGOTIATE: TtTelnetMode = 2;
+
+/// What to tell the far end about this terminal.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtTelnetParams {
+    /// [`TT_TELNET_RAW`], [`TT_TELNET_AUTO`] or [`TT_TELNET_NEGOTIATE`].
+    ///
+    /// [`tt_telnet_params_default`] sets it from the port, which is upstream's
+    /// rule: negotiate on 23, auto-detect elsewhere. **Do not "improve" that
+    /// to always negotiating** — a terminal server is not a telnet server, and
+    /// opening at one with `WILL TERMINAL-TYPE` puts five bytes of protocol
+    /// into somebody's serial console.
+    pub mode: TtTelnetMode,
+    /// `$TERM` for `TERMINAL-TYPE`. Null means `xterm-256color`.
+    pub term_type: *const c_char,
+    /// `TERMINAL-SPEED`, which is a claim about the line behind the server
+    /// rather than about this connection. Upstream defaults both to 38400.
+    pub input_speed: u32,
+    pub output_speed: u32,
+    /// Ask for `BINARY` in the opening burst. Upstream's `ts.TelBin`, which
+    /// defaults **off** — it agrees if asked, but does not ask.
+    pub binary: bool,
+    pub connect_timeout_ms: u32,
+}
+
+/// Fill `out` with the defaults for `port`: upstream's mode rule, 38400 both
+/// ways, no `BINARY`, a ten-second connect timeout.
+#[no_mangle]
+pub extern "C" fn tt_telnet_params_default(out: *mut TtTelnetParams, port: u16) {
+    let Some(out) = (unsafe { out.as_mut() }) else {
+        return;
+    };
+    *out = TtTelnetParams {
+        mode: match TelnetMode::for_port(port) {
+            TelnetMode::Raw => TT_TELNET_RAW,
+            TelnetMode::Auto => TT_TELNET_AUTO,
+            TelnetMode::Negotiate => TT_TELNET_NEGOTIATE,
+        },
+        term_type: ptr::null(),
+        input_speed: 38400,
+        output_speed: 38400,
+        binary: false,
+        connect_timeout_ms: 10_000,
+    };
+}
+
+/// Open a telnet (or raw TCP) connection and attach it. Replaces any current
+/// one.
+///
+/// Synchronous, unlike [`tt_ssh_connect`], and that is not an inconsistency:
+/// telnet asks no questions. There is no host key and no password — the login
+/// prompt a server sends is *terminal output*, typed into like any other.
+///
+/// The terminal is **not** reset, so reconnecting keeps the scrollback that
+/// explains why it dropped.
+#[no_mangle]
+pub extern "C" fn tt_session_connect_telnet(
+    session: *mut TtSession,
+    host: *const c_char,
+    port: u16,
+    params: *const TtTelnetParams,
+) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    let host = match unsafe { str_arg(host, usize::MAX) } {
+        Ok(h) => h,
+        Err(e) => return e,
+    };
+    let Some(p) = (unsafe { params.as_ref() }) else {
+        return fail(TT_ERR_INVALID, "null TtTelnetParams");
+    };
+    let mut rust = TelnetParams {
+        mode: match p.mode {
+            TT_TELNET_RAW => TelnetMode::Raw,
+            TT_TELNET_NEGOTIATE => TelnetMode::Negotiate,
+            _ => TelnetMode::Auto,
+        },
+        speed: (p.input_speed, p.output_speed),
+        cols: s.session.grid().cols() as u16,
+        rows: s.session.grid().rows() as u16,
+        binary: p.binary,
+        ..TelnetParams::default()
+    };
+    if !p.term_type.is_null() {
+        match unsafe { str_arg(p.term_type, usize::MAX) } {
+            Ok(t) => rust.term_type = t.to_string(),
+            Err(e) => return e,
+        }
+    }
+    let timeout = Duration::from_millis(if p.connect_timeout_ms == 0 {
+        10_000
+    } else {
+        p.connect_timeout_ms.into()
+    });
+    match TelnetConn::connect(host, port, &rust, timeout) {
         Ok(conn) => {
             s.session.connect(Box::new(conn));
             TT_OK

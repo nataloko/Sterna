@@ -458,6 +458,9 @@ static void test_null_safety(void)
     CHECK(tt_string_list_len(NULL) == 0);
     CHECK(tt_string_list_at(NULL, 0) == NULL);
     tt_string_list_free(NULL);
+    tt_telnet_params_default(NULL, 23);
+    CHECK(tt_session_connect_telnet(NULL, "h", 23, NULL) == TT_ERR_INVALID);
+    CHECK(!tt_session_supports_break(NULL));
     CHECK(tt_last_error() != NULL);
 
     TtConfig cfg;
@@ -469,6 +472,8 @@ static void test_null_safety(void)
     CHECK_OK(tt_session_pump(s, 0, NULL));
     CHECK(tt_session_send_text(s, NULL, 1) == TT_ERR_INVALID);
     CHECK(tt_session_connect_serial(s, "/dev/null", NULL) == TT_ERR_INVALID);
+    CHECK(tt_session_connect_telnet(s, "h", 23, NULL) == TT_ERR_INVALID);
+    CHECK(tt_session_connect_telnet(s, NULL, 23, NULL) == TT_ERR_INVALID);
     tt_session_free(s);
 }
 
@@ -655,6 +660,94 @@ static void test_ssh(void)
     tt_session_free(s);
 }
 
+
+/* Telnet, against a real server when there is one.
+ *
+ * Synchronous, unlike SSH: telnet asks no questions, so there is no state
+ * machine to drive and the whole path is one call.
+ */
+static void test_telnet(void)
+{
+    TtTelnetParams p;
+    /* Upstream's rule, and the one thing here that is easy to get wrong: the
+     * mode comes from the port. */
+    tt_telnet_params_default(&p, 23);
+    CHECK(p.mode == TT_TELNET_NEGOTIATE);
+    tt_telnet_params_default(&p, 2001);
+    CHECK(p.mode == TT_TELNET_AUTO);
+    CHECK(p.input_speed == 38400);
+    CHECK(!p.binary);
+    CHECK(p.term_type == NULL); /* null means the default, not empty */
+
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+
+    /* Nothing listens on tcpmux, and the failure has to be an error rather
+     * than a hang. */
+    tt_telnet_params_default(&p, 1);
+    p.connect_timeout_ms = 2000;
+    CHECK(tt_session_connect_telnet(s, "127.0.0.1", 1, &p) != TT_OK);
+    CHECK(strlen(tt_last_error()) > 0);
+    CHECK(!tt_session_is_connected(s));
+
+    const char *host = getenv("TT_TELNET_HOST");
+    if (!host) {
+        printf("  telnet: SKIPPED (set TT_TELNET_HOST)\n");
+        tt_session_free(s);
+        return;
+    }
+    const char *port_s = getenv("TT_TELNET_PORT");
+    uint16_t port = (uint16_t)(port_s ? atoi(port_s) : 23);
+
+    tt_telnet_params_default(&p, port);
+    /* The server is on 2323 rather than 23, so say so explicitly — the
+     * default would auto-detect and never send the opening burst. */
+    p.mode = TT_TELNET_NEGOTIATE;
+    p.term_type = "vt100";
+    CHECK_OK(tt_session_connect_telnet(s, host, port, &p));
+    CHECK(tt_session_is_connected(s));
+    /* Telnet has a break where SSH does not: a console server turns it into a
+     * real one on the serial port behind it. */
+    CHECK(tt_session_supports_break(s));
+    printf("  telnet: %s\n", tt_session_describe(s));
+
+    int fd = tt_session_poll_fd(s);
+    CHECK(fd >= 0);
+
+    size_t got = 0;
+    long deadline = now_ms() + 5000;
+    long quiet_until = now_ms() + 500;
+    while (now_ms() < deadline && now_ms() < quiet_until) {
+        wait_readable(fd, 100);
+        tt_session_pump(s, 20, &got);
+        if (got > 0)
+            quiet_until = now_ms() + 500;
+    }
+
+    CHECK_OK(tt_session_send_text(s, "abi-telnet-ok\r\n", 15));
+    int seen = 0;
+    deadline = now_ms() + 5000;
+    while (now_ms() < deadline && !seen) {
+        wait_readable(fd, 100);
+        tt_session_pump(s, 20, &got);
+        for (size_t y = 0; y < tt_session_rows(s) && !seen; y++) {
+            size_t len = 0;
+            const TtCell *row = tt_session_row(s, y, &len);
+            char line[256] = {0};
+            for (size_t x = 0; x < len && x < sizeof line - 1; x++)
+                line[x] = base(&row[x]) < 128 ? (char)base(&row[x]) : '?';
+            if (strstr(line, "abi-telnet-ok"))
+                seen = 1;
+        }
+    }
+    CHECK(seen);
+
+    tt_session_disconnect(s);
+    CHECK(!tt_session_is_connected(s));
+    tt_session_free(s);
+}
+
 int main(void)
 {
     printf("termitta core %s\n", tt_version());
@@ -666,6 +759,7 @@ int main(void)
     test_palette();
     test_serial();
     test_ssh();
+    test_telnet();
     test_null_safety();
 
     if (failures) {
