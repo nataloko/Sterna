@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 23
+**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 35
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -341,7 +341,7 @@ Deliberately absent: file transfer, macros, tabs, Windows build, most settings.
 screen), `tt-charset` (ISO-2022 and DEC special graphics), `tt-vt` (the state
 machine, `vte` for byte-level parsing), and `tt-dump` (a CLI that speaks the
 oracle's argument set and dump format). `./run_diff.sh` feeds every case to
-**both** engines and diffs them against each other. **51 cases: 50 matching and
+**both** engines and diffs them against each other. **62 cases: 61 matching and
 one known divergence.**
 
 **The design decision worth recording: the differential suite has no golden
@@ -357,8 +357,10 @@ regions, origin mode, insert mode, autowrap on and off, deferred wrap, tab
 stops, DECSC/DECRC including the pen and the G-sets, DA/DSR replies, OSC titles,
 all four `CRReceive` modes, wide characters at the margin, combining marks,
 ISO-2022 designation and every locking and single shift, DEC special graphics,
-256-colour and truecolor, 8-bit C1 controls, and the alternate screen. Not yet:
-DECLRMM, mouse reporting, DCS, and the window report sequences.
+256-colour and truecolor, 8-bit C1 controls, the alternate screen, DECSCA and
+selective erase, the whole rectangular-area family (DECSACE, DECCARA, DECRARA,
+DECFRA, DECERA, DECSERA, DECCRA), and the XTWINOPS resize. Not yet: DECLRMM,
+mouse reporting, and DCS.
 
 #### What the harness caught, which is the point of having it
 
@@ -403,8 +405,29 @@ without anyone diffing the buffer afterwards:
    **attacker-controlled out-of-bounds write** in a program whose whole job is
    reading untrusted bytes. Reachable from upstream's own `bcetest.sh`.
 
-Reports for all three are drafted in `docs/upstream-bugs.md`; **file the ECH one
-first**, and consider whether it wants a private report rather than an issue.
+A third arrived while implementing DECSED:
+
+6. **`BuffSelectedErase*` index a line-relative pointer with an absolute buffer
+   offset.** `CodeLineW = &CodeBuffW[LinePtr]` is the cursor's line; `j` is an
+   absolute offset. So DECSED reads the protect bit from a cell roughly twice as
+   far into the buffer, *writes* to it as well, and leaves the allocation
+   entirely once the page has scrolled into the second half of the ring —
+   confirmed under AddressSanitizer for both `CSI ? 0 J` and `CSI ? 1 J`. The
+   same function also subtracts the start column from its end bound, so the
+   cursor's own row erases nothing once the cursor is past mid-screen.
+
+Reports for all four are drafted in `docs/upstream-bugs.md`; **file the two
+memory-safety ones (ECH and DECSED) first**, and consider whether they want a
+private report rather than public issues.
+
+Two more findings were the oracle's own, both of the same shape as finding 3 —
+harness code reimplementing upstream logic and getting it wrong. Its
+`disp_width()` treated only `'W'` as full-width and not `'F'`, so every
+fullwidth form counted one column in the dump while `buffer.c` had given it two;
+and it dumped its argv size rather than `NumOfColumns`/`NumOfLines`, so any
+stream that resized the terminal was measured against the wrong width. **Both
+were invisible until a Rust implementation disagreed**, which is the entire
+argument for the differential suite over golden files.
 
 Upstream behaviours reproduced deliberately, which will look like bugs to anyone
 reading the Rust in isolation: G1 starts as DEC special graphics so a bare SO
@@ -416,6 +439,16 @@ bottom of the scroll region leaves pending-wrap set. All are in
 that character width comes from the `unicode-width` crate rather than Tera
 Term's own tables, which is fine until CJK is revived, and that DEL occupies a
 cell upstream but not for us.
+
+**One divergence is structural and worth flagging: Tera Term's CSI parser takes
+intermediates and parameters in any order, and `vte` does not.**
+`ControlSequence()` dispatches each byte on its numeric range alone, so
+`ESC [ * 2 x` is a perfectly good DECSACE upstream; `vte` follows ECMA-48, where
+an intermediate ends the parameter string, and drops the sequence. Upstream's own
+`tests/#38168-deccara-range.sh` is written that way. Closing it means normalising
+the byte stream before `vte` sees it — a small scanner, not a redesign — and it
+is the first thing to reach for if a real device turns out to emit the same
+shape.
 
 ### ⬜ Stage 2 — the differentiators (3–4 months, ~20k LOC)
 
@@ -516,7 +549,7 @@ file/dir 1k, connection/terminal 2k, dialogs 0.8k, misc 1k — **~9.3k Rust vs
 1. **✅ Differential testing against real Tera Term** — `oracle/` built and
    green, and as of Stage 1 actually wired up: `./run_diff.sh` feeds identical
    byte streams to it and to the Rust engine and diffs the grid dumps, in CI on
-   every commit. 51 cases. **This is the asset the whole project rests on**, and
+   every commit. 62 cases. **This is the asset the whole project rests on**, and
    it is now a gate rather than a promise.
 2. **⬜ esctest2** (iTerm2) — ~1000 automated DEC/xterm conformance assertions
    over a pty, read back via DSR/DECRQSS. Wire into CI in Stage 1.
@@ -526,11 +559,15 @@ file/dir 1k, connection/terminal 2k, dialogs 0.8k, misc 1k — **~9.3k Rust vs
    exercisers in `teraterm/tests/` headless and diffs the two engines over
    their output. Not golden files and not copied into the repo: the scripts are
    executed from the pinned sibling checkout, so the corpus tracks upstream.
-   **12 matching, 9 known-divergent, 6 not run**, each with a recorded reason in
+   **19 matching, 2 known-divergent, 6 not run**, each with a recorded reason in
    `oracle/upstream.cases`. The prediction above was accurate — `bcetest.sh`,
    `decfra.sh` and the `#38168-deccara-*.sh` trio were among the breakages, and
-   two of them turned out to be upstream bugs rather than ours. Still to do:
-   the 53 `.ttl` files as the TTL conformance suite, in Stage 2.
+   three of them turned out to be upstream bugs rather than ours. Of the two
+   still divergent, one is `vte` following ECMA-48 where Tera Term's CSI parser
+   does not (see below) and the other is spacing combining marks, deferred with
+   CJK. **Two of the nine original xfail notes named the wrong cause** — a
+   reminder that an xfail reason is a hypothesis until something re-tests it.
+   Still to do: the 53 `.ttl` files as the TTL conformance suite, in Stage 2.
 5. **⬜ Fuzzing and property tests.** `cargo-fuzz` on the parser — it eats
    untrusted network bytes. `proptest` invariants: cursor in bounds, wide-char
    pairs never split, scrollback monotonic, no attribute leaks across BCE.

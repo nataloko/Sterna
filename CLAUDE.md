@@ -193,6 +193,23 @@ something other than what it is.
   `--term vt220` silently ran as a VT100 and the `== 0` guard in `main.c` could
   never fire. Fixed in `oracle/src/main.c:resolve_term_id()`; the same shape of
   trap is anywhere else upstream "defaults" instead of erroring.
+- **Breaking a wide character and erasing one are different operations, and
+  the oracle knows which is which even when it looks arbitrary.** The
+  overwrite/insert/delete/scroll paths call `BuffSetChar(b, ' ', 'H')`, which
+  blanks the text and the colour indices and leaves the SGR bits; the erase
+  paths call `EraseKanji`, which paints the whole pen. Using one where upstream
+  uses the other is invisible until a case sets a background colour and then
+  cuts a wide character with a different pen.
+- **The padding half of a wide character is written with zeroed attributes**
+  (`buffer.c:3400`) — except in the insert-mode branch (`:3325`), which copies
+  the pen. Both are reproduced; neither is a typo on our side.
+- **`disp_width()` in the oracle's own `main.c` is a stub of the same dangerous
+  kind.** It used to test only `'W'` for full width, when
+  `BuffIsHalfWidthFromPropery` treats `'W'` **and** `'F'` that way — so every
+  fullwidth form (U+FF01 onward) counted one column in the dump while the
+  buffer had given it two, and the row was padded past its own width. Also: the
+  dump takes its size from `NumOfColumns`/`NumOfLines`, **not** from argv, or a
+  mid-stream `CSI 8;h;w t` measures against the startup size.
 - **Stubs lie, and `DispFindClosestColor` did.** It lived in `stubs_manual.c`
   with *xterm's* palette rather than Tera Term's, and without the bright/dim
   flip the real one applies, so every truecolor SGR resolved to the wrong
@@ -235,7 +252,7 @@ And for the desktop side:
 
 ## Bugs found upstream, not yet reported
 
-Three, all in `buffer.c`, all found by diffing the two engines. Patches in
+Four, all in `buffer.c`, all found by diffing the two engines. Patches in
 `oracle/patches/`, reports drafted in `docs/upstream-bugs.md`. Filing needs a
 GitHub account and is an open item in `PLAN.md`.
 
@@ -251,6 +268,12 @@ GitHub account and is an open item in `PLAN.md`.
    overshoots by the cursor's column into the next line — and off the end of
    the allocation on the last line. The parameter comes off the wire, so this
    is an attacker-controlled out-of-bounds write. **File this one first.**
+4. **`BuffSelectedErase*` index a line-relative pointer with an absolute buffer
+   offset** (`:5491`, `:5531`). `CodeLineW` is the cursor's line, `j` is an
+   absolute offset, so DECSED tests the protect bit on the wrong cell, writes
+   to it, and leaves the allocation once the page is in the second half of the
+   ring — proven under ASan. A second, unrelated defect in the same loop
+   subtracts the start column from the end bound. **File this one second.**
 
 ## Layout
 
