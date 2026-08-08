@@ -181,11 +181,17 @@ static void test_input(void)
     CHECK(consumed);
 
     /* Backspace is one of the two keys a frontend encodes itself, so its mode
-     * has to be readable. DECBKM flips it and DECSTR does not clear it. */
-    CHECK(!tt_session_backspace_sends_bs(s));
-    static const char bkm[] = "\033[?67h";
-    tt_session_feed(s, (const uint8_t *)bkm, sizeof bkm - 1);
+     * has to be readable.
+     *
+     * The default is BS, not DEL, and it is another `else` branch rather than
+     * a stated default: `ttset.c:877` reads the BSKey string with an empty
+     * fallback and only "DEL" takes the DEL arm, so an absent key means BS.
+     * Reading the initialiser instead — the same mistake the ColorFlag words
+     * cost a day to — would put 0x7F on the wire for every backspace. */
     CHECK(tt_session_backspace_sends_bs(s));
+    static const char bkm[] = "\033[?67l";
+    tt_session_feed(s, (const uint8_t *)bkm, sizeof bkm - 1);
+    CHECK(!tt_session_backspace_sends_bs(s));
 
     CHECK_OK(tt_session_resize(s, 132, 43));
     CHECK(tt_session_cols(s) == 132);
@@ -301,6 +307,8 @@ static void test_null_safety(void)
     CHECK(tt_session_pump(NULL, 0, NULL) == TT_ERR_INVALID);
     CHECK(tt_session_poll_fd(NULL) == -1);
     CHECK(tt_session_pending_out(NULL) == 0);
+    /* Null answers false, which happens to be the non-default — a frontend
+     * that lost its session sends DEL rather than reading through a null. */
     CHECK(!tt_session_backspace_sends_bs(NULL));
     CHECK(tt_session_send_text(NULL, "x", 1) == TT_ERR_INVALID);
     CHECK(tt_session_focus(NULL, true) == TT_ERR_INVALID);
