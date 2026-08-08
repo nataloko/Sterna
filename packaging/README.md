@@ -43,6 +43,18 @@ would reach much further, but its Qt 6.4.2 loads Mesa's gallium driver under
 Wayland and costs 62 MB of extra private memory (`CLAUDE.md`). Bundling that
 would ship a regression to every user of a terminal whose claim is being light.
 
+## Not in CI, and that is deliberate
+
+CI runs on `ubuntu-24.04`, which is precisely the base this build rejects — a
+job there would produce, on every push, the artifact the section above explains
+why not to ship. So the AppImage is a release step against a base CI does not
+have, and it stays a manual build until the portable base exists. What CI *does*
+cover is everything the image is made of: the shell compiles and its render,
+telnet, SSH and pty tests run there already.
+
+The install rules the image needs (`shell/CMakeLists.txt`) are exercised by
+every build, so the half of this that can rot silently does not.
+
 ## Qt is bundled, and that has consequences
 
 `PLAN.md`'s licensing posture assumed Linux would be an rpm depending on the
