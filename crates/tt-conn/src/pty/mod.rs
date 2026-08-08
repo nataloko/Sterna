@@ -393,6 +393,13 @@ impl Transport for PtyConn {
     fn describe(&self) -> String {
         self.describe.clone()
     }
+
+    /// "bash exited with status 1", which is the whole difference between a
+    /// shell that finished and one that fell over.
+    fn closing_note(&mut self) -> Option<String> {
+        let exit = self.exit_status()?;
+        Some(format!("{} {exit}", self.describe))
+    }
 }
 
 impl Drop for PtyConn {

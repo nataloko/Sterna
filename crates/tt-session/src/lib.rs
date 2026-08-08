@@ -96,6 +96,8 @@ pub struct Session {
     /// `Grid::scrolled_off` as of the last time the view was reconciled. The
     /// difference is how far the content moved under a scrolled-back viewer.
     seen_scrolled_off: u64,
+    /// What the last transport said on its way out, if it said anything.
+    close_note: Option<String>,
 }
 
 impl Session {
@@ -113,6 +115,7 @@ impl Session {
             log: None,
             view_offset: 0,
             seen_scrolled_off: 0,
+            close_note: None,
         }
     }
 
@@ -121,6 +124,7 @@ impl Session {
     /// explains why it dropped.
     pub fn connect(&mut self, conn: Box<dyn Transport>) {
         self.pending.clear();
+        self.close_note = None;
         self.conn = Some(conn);
         let (cols, rows) = (self.vt.grid().cols(), self.vt.grid().rows());
         if let Some(c) = self.conn.as_mut() {
@@ -131,6 +135,20 @@ impl Session {
     pub fn disconnect(&mut self) {
         self.conn = None;
         self.pending.clear();
+        // Deliberately not cleared: the user disconnecting is not a reason to
+        // forget why the *last* connection ended, and the note is what the
+        // status line is showing.
+    }
+
+    /// Why the last connection ended, when the transport had something to add
+    /// beyond "disconnected" — "bash exited with status 1" from a local shell.
+    ///
+    /// Set alongside [`Event::Disconnected`] and cleared by the next
+    /// [`connect`](Session::connect). `None` means nothing more is known,
+    /// which is the usual case: an unplugged adapter and a closed socket are
+    /// what they look like.
+    pub fn close_note(&self) -> Option<&str> {
+        self.close_note.as_deref()
     }
 
     pub fn is_connected(&self) -> bool {
@@ -328,6 +346,10 @@ impl Session {
             let n = match conn.read(&mut self.rx, &mut self.rx_events) {
                 Ok(n) => n,
                 Err(e) if e.is_disconnected() => {
+                    // Asked before the transport is dropped, which is the only
+                    // moment it still knows: a pty's exit status dies with the
+                    // child handle.
+                    self.close_note = conn.closing_note();
                     self.conn = None;
                     self.events.push(Event::Disconnected);
                     return Ok(total);
@@ -553,6 +575,7 @@ impl Session {
                 Ok(())
             }
             Err(e) if e.is_disconnected() => {
+                self.close_note = conn.closing_note();
                 self.conn = None;
                 self.pending.clear();
                 self.events.push(Event::Disconnected);

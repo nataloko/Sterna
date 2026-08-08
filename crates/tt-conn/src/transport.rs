@@ -122,4 +122,17 @@ pub trait Transport: Send {
 
     /// A short name for the status line — `/dev/ttyUSB0`, `user@host`.
     fn describe(&self) -> String;
+
+    /// Why the connection ended, when the transport knows something the word
+    /// "disconnected" does not say.
+    ///
+    /// Called once, after a read or write reports
+    /// [`Disconnected`](crate::Error::Disconnected) and before the transport
+    /// is dropped. Most have nothing to add — an unplugged adapter and a
+    /// closed socket are exactly what they look like — but a local shell does:
+    /// "bash exited with status 1" is a different message from "the device
+    /// disconnected", and it is the one that says whether anything went wrong.
+    fn closing_note(&mut self) -> Option<String> {
+        None
+    }
 }
