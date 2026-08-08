@@ -8,5 +8,13 @@ repository.workspace = true
 [dependencies]
 serialport = "4.9.0"
 
+# known_hosts. Versions pinned to what russh already resolves, so the SSH
+# transport does not drag a second copy of any of them into the tree.
+data-encoding = "2.11"
+getrandom = "0.4"
+hmac = "0.13"
+sha1 = "0.11"
+sha2 = "0.11"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

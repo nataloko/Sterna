@@ -27,6 +27,7 @@
 
 pub mod error;
 pub mod serial;
+pub mod ssh;
 pub mod transport;
 
 pub use error::{Error, Result};
