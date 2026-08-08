@@ -7,12 +7,17 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QTimer>
 #include <QWheelEvent>
 
 #include "DecGraphics.h"
 #include "Session.h"
 
 namespace {
+
+/// The shortest gap between frames, in milliseconds — 125 a second, which is
+/// above every display refresh rate this will meet. See `requestRepaint`.
+constexpr qint64 kMinFrameMs = 8;
 
 /// The text one cell draws: the base character plus its combining marks.
 QString cellText(const TtCell &cell)
@@ -142,11 +147,18 @@ TerminalView::TerminalView(Session *session, QWidget *parent)
     // startup time and a preedit that cannot be committed.
     setAttribute(Qt::WA_InputMethodEnabled, false);
 
+    // Only ever runs while output is arriving faster than the frame floor
+    // below, and stops itself at the next frame. Same shape as the session's
+    // pending-out retry: a timer that exists during a burst and not otherwise.
+    m_repaint = new QTimer(this);
+    m_repaint->setSingleShot(true);
+    connect(m_repaint, &QTimer::timeout, this, [this] { update(); });
+
     connect(m_session, &Session::damaged, this, [this] {
+        requestRepaint();
         // Output can move the offset — the core keeps a scrolled-back view on
         // the same lines — so the scrollbar has to hear about every pump, not
         // only about the scrolls this widget made.
-        update();
         emit viewChanged();
     });
 
@@ -168,8 +180,41 @@ void TerminalView::applyFont(const QFont &font)
 
 // --- painting ----------------------------------------------------------------
 
+/// Repaint now, or at the frame floor — whichever is later.
+///
+/// The session pumps once per wake of its notifier, so a burst arrives as one
+/// damage per 8 KB read, each on its own turn of the event loop. Without a
+/// floor that is **one frame per read**: 10 MB of `cat` painted 3,000 times,
+/// and since a frame costs about as much as parsing 8 KB, the transfer takes
+/// roughly twice as long as it needs to.
+///
+/// Wayland already coalesces about eight reads into a frame, through its own
+/// frame callbacks. X11 has no such brake — measured at 4 MB/s against
+/// Wayland's 39 on the same machine — and neither does the offscreen platform,
+/// which is why a headless measurement *understates* the desktop rather than
+/// flattering it. `bench/README.md` has the table.
+///
+/// So: a floor, not a timer in the idle path. An idle window has not painted
+/// for a long time, so a keystroke still repaints on the spot — measured at
+/// 1.03 ms, unchanged by this — and the timer only exists while output is
+/// outrunning 125 frames a second.
+void TerminalView::requestRepaint()
+{
+    const qint64 since = m_sincePaint.isValid() ? m_sincePaint.elapsed() : kMinFrameMs;
+    if (since >= kMinFrameMs) {
+        update();
+        return;
+    }
+    if (!m_repaint->isActive()) {
+        m_repaint->start(int(kMinFrameMs - since));
+    }
+}
+
 void TerminalView::paintEvent(QPaintEvent *)
 {
+    m_repaint->stop();
+    m_sincePaint.restart();
+
     QPainter p(this);
     const int cw = m_theme.cellWidth();
     const int ch = m_theme.cellHeight();

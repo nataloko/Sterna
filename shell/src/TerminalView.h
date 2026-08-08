@@ -4,12 +4,14 @@
 
 #pragma once
 
+#include <QElapsedTimer>
 #include <QPoint>
 #include <QWidget>
 
 #include "Theme.h"
 #include "termitta.h"
 
+class QTimer;
 class Session;
 
 /// The terminal screen.
@@ -63,6 +65,11 @@ protected:
     void focusOutEvent(QFocusEvent *event) override;
 
 private:
+    /// Repaint now, or at the frame floor — whichever is later. Everything
+    /// that reacts to *output* goes through this; the frontend's own changes
+    /// (selection, focus, a new font) still call `update` directly, because
+    /// they happen at the speed a hand moves.
+    void requestRepaint();
     /// Cell under a widget position, clamped to the grid.
     QPoint cellAt(const QPointF &pos) const;
     bool isSelected(int x, int y) const;
@@ -73,6 +80,11 @@ private:
 
     Session *m_session;
     Theme m_theme;
+
+    /// Since the last frame was painted, for the floor in `requestRepaint`.
+    QElapsedTimer m_sincePaint;
+    /// The deferred repaint, alive only while output outruns that floor.
+    QTimer *m_repaint;
 
     // Selection is a frontend concept — the core only has to support it — and
     // it lives on the visible screen because there is no scrollback viewport
