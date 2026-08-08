@@ -1,0 +1,98 @@
+plain	len=5 str=value
+missing-key	len=3 str=DEF
+missing-section	len=3 str=DEF
+empty-file	len=3 str=DEF
+double-quoted	len=5 str=value
+single-quoted	len=5 str=value
+quoted-with-spaces	len=10 str=  spaced  
+quote-only-leading	len=6 str="value
+quote-only-trailing	len=6 str=value"
+quote-mismatched	len=7 str="value'
+quote-inside	len=5 str=a"b"c
+quote-empty	len=0 str=
+quote-doubled	len=7 str="value"
+space-around-value	len=5 str=value
+space-before-key	len=5 str=value
+tab-around-value	len=5 str=value
+space-in-section	len=5 str=value
+space-in-section-q	len=3 str=DEF
+value-with-spaces	len=9 str=two words
+section-case	len=5 str=value
+key-case	len=5 str=value
+duplicate-key	len=5 str=first
+duplicate-section	len=5 str=first
+duplicate-across-sec	len=3 str=DEF
+duplicate-keys-list	len=8 str=Key\0Key\0
+comment-semicolon	len=3 str=DEF
+comment-hash	len=3 str=DEF
+comment-trailing	len=22 str=value ; not a comment?
+comment-indented	len=3 str=DEF
+no-equals	len=3 str=DEF
+equals-in-value	len=3 str=a=b
+empty-value	len=0 str=
+empty-value-spaces	len=0 str=
+key-before-section	len=5 str=value
+unterminated-section	len=3 str=DEF
+text-after-bracket	len=5 str=value
+empty-section-name	len=3 str=DEF
+bare-bracket-value	len=3 str=[x]
+lf-only	len=5 str=value
+cr-only	len=5 str=value
+no-trailing-newline	len=5 str=value
+blank-lines	len=5 str=value
+utf16-le-bom	len=3 str=val
+utf8-bom	len=5 str=value
+utf8-no-bom	len=5 str=caf\xc3\x83\xc2\xa9
+latin1-high-byte	len=4 str=caf\xc3\xa9
+int-plain	42
+int-leading-space	42
+int-trailing-junk	42
+int-leading-junk	0
+int-negative	4294967291
+int-plus	5
+int-hex	31
+int-empty	7
+int-quoted	42
+int-missing	7
+int-huge	1215752191
+int-default-negative	4294967295
+keys-of-section	len=4 str=A\0B\0
+keys-of-missing	len=0 str=
+keys-empty-section	len=0 str=
+section-names	len=4 str=s\0t\0
+section-names-dup	len=4 str=s\0s\0
+truncate-exact	len=5 str=value
+truncate-short	len=2 str=va
+truncate-one	len=0 str=
+write-new-key	ok=1 file=[s]\r\nA=1\r\nB=2\r\n
+write-existing-key	ok=1 file=[s]\r\nA=9\r\nB=2\r\n
+write-new-section	ok=1 file=[s]\r\nA=1\r\n[t]\r\nB=2\r\n
+write-into-empty	ok=1 file=[s]\r\nA=1\r\n
+write-delete-key	ok=1 file=[s]\r\nB=2\r\n
+write-delete-section	ok=1 file=[t]\r\nB=2\r\n
+write-keeps-comments	ok=1 file=; a note\r\n[s]\r\nA=9\r\n; another\r\nB=2\r\n
+write-value-spaces	ok=1 file=[s]\r\nA=1\r\nB=two words\r\n
+write-value-quotes	ok=1 file=[s]\r\nA=1\r\nB="quoted"\r\n
+write-empty-value	ok=1 file=[s]\r\nA=1\r\nB=\r\n
+write-lf-file	ok=1 file=[s]\r\nA=1\r\nB=2\r\n
+write-duplicate-key	ok=1 file=[s]\r\nA=9\r\nA=2\r\n
+write-utf16-file	ok=1 file=\xff\xfe[\0s\0]\0\r\0\n\0A\0=\01\0\r\0\n\0B\0=\02\0\r\0\n\0
+write-utf8-bom-file	ok=1 file=\xef\xbb\xbf[s]\r\nA=1\r\nB=2\r\n
+write-non-ascii	ok=1 file=[s]\r\nA=1\r\nB=caf\xe9\r\n
+write-case-existing	ok=1 file=[s]\r\nKeyName=9\r\n
+keys-with-comments	len=5 str=#B\0C\0
+get-semicolon-key	len=1 str=1
+get-hash-key	len=1 str=2
+get-noequals-key	len=0 str=
+key-with-space	len=1 str=1
+key-with-space-query	len=3 str=DEF
+section-with-bracket	len=3 str=DEF
+section-query-spaced	len=1 str=1
+key-query-spaced	len=1 str=1
+value-trailing-tab	len=1 str=v
+write-no-final-nl	ok=1 file=[s]\r\nA=1\r\nB=2\r\n
+write-crlf-missing	ok=1 file=[s]\r\nA=1\r\nB=2\r\nC=3\r\n
+write-into-comment	ok=1 file=[s]\r\n;A=1\r\nA=9\r\n
+write-value-crlf	ok=1 file=[s]\r\nA=1\r\nB=x\r\ny\r\n
+write-key-with-space	ok=1 file=[s]\r\nA=1\r\nMy Key=1\r\n
+write-section-spaced	ok=1 file=[s]\r\nA=1\r\nB=2\r\n

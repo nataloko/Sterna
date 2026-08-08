@@ -1,0 +1,146 @@
+# The battery, as data rather than as code, so that the Win32 exerciser and
+# the Rust implementation can be asked exactly the same questions.
+#
+#   name | fixture bytes | op | args...
+#
+# Fixture bytes take \r \n \t \0 \\ \xHH. `@empty` is an empty argument and
+# `@null` a missing one; both are things a literal field cannot spell.
+#
+# Operations:
+#   get <section> <key> <default>            GetPrivateProfileStringW
+#   int <section> <key> <default>            GetPrivateProfileIntW
+#   keys <section>                           ...with a null key name
+#   sections                                 ...with a null section name
+#   write <section> <key|@null> <val|@null>  WritePrivateProfileStringW, then
+#                                            the whole file back
+#   truncate <section> <key> <default> <n>   ...into a buffer of n wide chars
+
+# --- the ordinary case, so a difference elsewhere is not the harness -------
+plain                | [s]\r\nKey=value\r\n | get | s | Key | DEF
+missing-key          | [s]\r\nKey=value\r\n | get | s | Other | DEF
+missing-section      | [s]\r\nKey=value\r\n | get | nope | Key | DEF
+empty-file           | @empty | get | s | Key | DEF
+
+# --- quoting. MSDN says the marks are discarded; the plan assumed not ------
+double-quoted        | [s]\r\nKey="value"\r\n | get | s | Key | DEF
+single-quoted        | [s]\r\nKey='value'\r\n | get | s | Key | DEF
+quoted-with-spaces   | [s]\r\nKey="  spaced  "\r\n | get | s | Key | DEF
+quote-only-leading   | [s]\r\nKey="value\r\n | get | s | Key | DEF
+quote-only-trailing  | [s]\r\nKey=value"\r\n | get | s | Key | DEF
+quote-mismatched     | [s]\r\nKey="value'\r\n | get | s | Key | DEF
+quote-inside         | [s]\r\nKey=a"b"c\r\n | get | s | Key | DEF
+quote-empty          | [s]\r\nKey=""\r\n | get | s | Key | DEF
+quote-doubled        | [s]\r\nKey=""value""\r\n | get | s | Key | DEF
+
+# --- whitespace -----------------------------------------------------------
+space-around-value   | [s]\r\nKey =   value   \r\n | get | s | Key | DEF
+space-before-key     | [s]\r\n   Key=value\r\n | get | s | Key | DEF
+tab-around-value     | [s]\r\nKey=\tvalue\t\r\n | get | s | Key | DEF
+space-in-section     | [ s ]\r\nKey=value\r\n | get | s | Key | DEF
+space-in-section-q   | [ s ]\r\nKey=value\r\n | get | @empty | Key | DEF
+value-with-spaces    | [s]\r\nKey=two words\r\n | get | s | Key | DEF
+
+# --- case, which decides whether `ColorFlag` finds `colorflag` -------------
+section-case         | [Section]\r\nKey=value\r\n | get | SECTION | Key | DEF
+key-case             | [s]\r\nKeyName=value\r\n | get | s | keyname | DEF
+
+# --- duplicates. First or last wins is not a detail: TERATERM.INI is
+#     round-tripped, so the wrong answer silently changes a setting. --------
+duplicate-key        | [s]\r\nKey=first\r\nKey=second\r\n | get | s | Key | DEF
+duplicate-section    | [s]\r\nKey=first\r\n[s]\r\nKey=second\r\n | get | s | Key | DEF
+duplicate-across-sec | [s]\r\nA=1\r\n[s]\r\nB=2\r\n | get | s | B | DEF
+duplicate-keys-list  | [s]\r\nKey=first\r\nKey=second\r\n | keys | s
+
+# --- comments and malformed lines -----------------------------------------
+comment-semicolon    | [s]\r\n;Key=value\r\n | get | s | Key | DEF
+comment-hash         | [s]\r\n#Key=value\r\n | get | s | Key | DEF
+comment-trailing     | [s]\r\nKey=value ; not a comment?\r\n | get | s | Key | DEF
+comment-indented     | [s]\r\n  ;Key=value\r\n | get | s | Key | DEF
+no-equals            | [s]\r\nKey\r\n | get | s | Key | DEF
+equals-in-value      | [s]\r\nKey=a=b\r\n | get | s | Key | DEF
+empty-value          | [s]\r\nKey=\r\n | get | s | Key | DEF
+empty-value-spaces   | [s]\r\nKey=   \r\n | get | s | Key | DEF
+key-before-section   | Key=value\r\n[s]\r\n | get | @empty | Key | DEF
+unterminated-section | [s\r\nKey=value\r\n | get | s | Key | DEF
+text-after-bracket   | [s] junk\r\nKey=value\r\n | get | s | Key | DEF
+empty-section-name   | []\r\nKey=value\r\n | get | @empty | Key | DEF
+bare-bracket-value   | [s]\r\nKey=[x]\r\n | get | s | Key | DEF
+
+# --- line endings, which a file edited on Linux will have ------------------
+lf-only              | [s]\nKey=value\n | get | s | Key | DEF
+cr-only              | [s]\rKey=value\r | get | s | Key | DEF
+no-trailing-newline  | [s]\r\nKey=value | get | s | Key | DEF
+blank-lines          | [s]\r\n\r\nKey=value\r\n\r\n | get | s | Key | DEF
+
+# --- encoding. Tera Term 5 writes UTF-16; older files are 8-bit. -----------
+utf16-le-bom         | \xff\xfe[\x00s\x00]\x00\r\x00\n\x00K\x00e\x00y\x00=\x00v\x00a\x00l\x00\r\x00\n\x00 | get | s | Key | DEF
+utf8-bom             | \xef\xbb\xbf[s]\r\nKey=value\r\n | get | s | Key | DEF
+utf8-no-bom          | [s]\r\nKey=caf\xc3\xa9\r\n | get | s | Key | DEF
+latin1-high-byte     | [s]\r\nKey=caf\xe9\r\n | get | s | Key | DEF
+
+# --- GetPrivateProfileInt, which is its own parser -------------------------
+int-plain            | [s]\r\nKey=42\r\n | int | s | Key | 7
+int-leading-space    | [s]\r\nKey=  42\r\n | int | s | Key | 7
+int-trailing-junk    | [s]\r\nKey=42abc\r\n | int | s | Key | 7
+int-leading-junk     | [s]\r\nKey=abc42\r\n | int | s | Key | 7
+int-negative         | [s]\r\nKey=-5\r\n | int | s | Key | 7
+int-plus             | [s]\r\nKey=+5\r\n | int | s | Key | 7
+int-hex              | [s]\r\nKey=0x1f\r\n | int | s | Key | 7
+int-empty            | [s]\r\nKey=\r\n | int | s | Key | 7
+int-quoted           | [s]\r\nKey="42"\r\n | int | s | Key | 7
+int-missing          | [s]\r\n | int | s | Key | 7
+int-huge             | [s]\r\nKey=99999999999\r\n | int | s | Key | 7
+int-default-negative | [s]\r\n | int | s | Key | -1
+
+# --- enumeration ----------------------------------------------------------
+keys-of-section      | [s]\r\nA=1\r\nB=2\r\n[t]\r\nC=3\r\n | keys | s
+keys-of-missing      | [s]\r\nA=1\r\n | keys | nope
+keys-empty-section   | [s]\r\n[t]\r\nA=1\r\n | keys | s
+section-names        | [s]\r\nA=1\r\n[t]\r\nB=2\r\n | sections
+section-names-dup    | [s]\r\nA=1\r\n[s]\r\nB=2\r\n | sections
+
+# --- a buffer that is too small -------------------------------------------
+truncate-exact       | [s]\r\nKey=value\r\n | truncate | s | Key | DEF | 6
+truncate-short       | [s]\r\nKey=value\r\n | truncate | s | Key | DEF | 3
+truncate-one         | [s]\r\nKey=value\r\n | truncate | s | Key | DEF | 1
+
+# --- writing. This is the half that can destroy a user's file. ------------
+write-new-key        | [s]\r\nA=1\r\n | write | s | B | 2
+write-existing-key   | [s]\r\nA=1\r\nB=2\r\n | write | s | A | 9
+write-new-section    | [s]\r\nA=1\r\n | write | t | B | 2
+write-into-empty     | @empty | write | s | A | 1
+write-delete-key     | [s]\r\nA=1\r\nB=2\r\n | write | s | A | @null
+write-delete-section | [s]\r\nA=1\r\n[t]\r\nB=2\r\n | write | s | @null | @null
+write-keeps-comments | ; a note\r\n[s]\r\nA=1\r\n; another\r\nB=2\r\n | write | s | A | 9
+write-value-spaces   | [s]\r\nA=1\r\n | write | s | B | two words
+write-value-quotes   | [s]\r\nA=1\r\n | write | s | B | "quoted"
+write-empty-value    | [s]\r\nA=1\r\n | write | s | B | @empty
+write-lf-file        | [s]\nA=1\n | write | s | B | 2
+write-duplicate-key  | [s]\r\nA=1\r\nA=2\r\n | write | s | A | 9
+write-utf16-file     | \xff\xfe[\x00s\x00]\x00\r\x00\n\x00A\x00=\x001\x00\r\x00\n\x00 | write | s | B | 2
+write-utf8-bom-file  | \xef\xbb\xbf[s]\r\nA=1\r\n | write | s | B | 2
+write-non-ascii      | [s]\r\nA=1\r\n | write | s | B | caf\xc3\xa9
+write-case-existing  | [s]\r\nKeyName=1\r\n | write | s | keyname | 9
+
+# --- what enumeration says, which is the only way to tell a comment from a
+#     key with an odd name. `;Key=1` read back as absent could be either. ---
+keys-with-comments   | [s]\r\n;A=1\r\n#B=2\r\nC=3\r\nNoEquals\r\n | keys | s
+get-semicolon-key    | [s]\r\n;A=1\r\n | get | s | ;A | DEF
+get-hash-key         | [s]\r\n#B=2\r\n | get | s | #B | DEF
+get-noequals-key     | [s]\r\nNoEquals\r\nC=3\r\n | get | s | NoEquals | @empty
+
+# --- names with awkward characters ----------------------------------------
+key-with-space       | [s]\r\nMy Key=1\r\n | get | s | My Key | DEF
+key-with-space-query | [s]\r\nMy Key=1\r\n | get | s | My  Key | DEF
+section-with-bracket | [a]b]\r\nKey=1\r\n | get | a]b | DEF | DEF
+section-query-spaced | [s]\r\nKey=1\r\n | get | \x20s\x20 | Key | DEF
+key-query-spaced     | [s]\r\nKey=1\r\n | get | s | \x20Key\x20 | DEF
+value-trailing-tab   | [s]\r\nKey=v\t\t\r\n | get | s | Key | DEF
+
+# --- writing to a file the API has to extend or repair --------------------
+write-no-final-nl    | [s]\r\nA=1 | write | s | B | 2
+write-crlf-missing   | [s]\nA=1\nB=2\n | write | s | C | 3
+write-into-comment   | [s]\r\n;A=1\r\n | write | s | A | 9
+write-value-crlf     | [s]\r\nA=1\r\n | write | s | B | x\r\ny
+write-key-with-space | [s]\r\nA=1\r\n | write | s | My Key | 1
+write-section-spaced | [ s ]\r\nA=1\r\n | write | s | B | 2
