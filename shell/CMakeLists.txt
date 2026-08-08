@@ -70,6 +70,7 @@ add_library(termitta_shell STATIC
     src/Session.cpp
     src/Theme.cpp
     src/SerialDialog.cpp
+    src/SettingsDialog.cpp
     src/SshDialog.cpp
     src/SshPrompts.cpp
     src/TelnetDialog.cpp)

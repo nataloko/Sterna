@@ -486,6 +486,60 @@ void Session::feed(const QByteArray &bytes)
     pumpAndDispatch(0);
 }
 
+// --- settings ----------------------------------------------------------------
+
+QString Session::setting(const QString &name) const
+{
+    const QByteArray utf8 = name.toUtf8();
+    // `tt_session_setting` caches the string it hands back, so it takes a
+    // mutable session; nothing observable changes. Same const_cast as the log
+    // accessors above, and for the same reason.
+    const char *value = tt_session_setting(const_cast<TtSession *>(m_session),
+                                           utf8.constData());
+    return value ? QString::fromUtf8(value) : QString();
+}
+
+bool Session::setSetting(const QString &name, const QString &value, QString *outError)
+{
+    const QByteArray n = name.toUtf8();
+    const QByteArray v = value.toUtf8();
+    if (tt_session_set_setting(m_session, n.constData(), v.constData()) != TT_OK) {
+        if (outError) {
+            *outError = QString::fromUtf8(tt_last_error());
+        }
+        return false;
+    }
+    emit settingsChanged();
+    emit damaged();
+    return true;
+}
+
+bool Session::loadSettings(const QString &path, QString *outError)
+{
+    const QByteArray utf8 = path.toUtf8();
+    if (tt_session_settings_load(m_session, utf8.constData()) != TT_OK) {
+        if (outError) {
+            *outError = QString::fromUtf8(tt_last_error());
+        }
+        return false;
+    }
+    emit settingsChanged();
+    emit damaged();
+    return true;
+}
+
+bool Session::saveSettings(const QString &path, QString *outError) const
+{
+    const QByteArray utf8 = path.toUtf8();
+    if (tt_session_settings_save(m_session, utf8.constData()) != TT_OK) {
+        if (outError) {
+            *outError = QString::fromUtf8(tt_last_error());
+        }
+        return false;
+    }
+    return true;
+}
+
 // --- the loop ----------------------------------------------------------------
 
 void Session::onReadable()

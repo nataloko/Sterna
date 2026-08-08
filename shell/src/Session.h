@@ -184,6 +184,26 @@ public:
     /// Feed bytes as though they had arrived from the far end.
     void feed(const QByteArray &bytes);
 
+    // --- settings -----------------------------------------------------------
+    //
+    // Addressed by name, because the list of settings lives in the core's
+    // schema and nothing here should hold a second copy of it. `SettingsDialog`
+    // walks `tt_settings_field` and asks for these by the names it finds.
+
+    /// One setting, in the INI's own spelling. Empty for a name the schema
+    /// does not have.
+    QString setting(const QString &name) const;
+    /// Set one and apply it to the running terminal. The value is parsed the
+    /// way the file would parse it, so an out-of-range number is corrected
+    /// rather than refused.
+    bool setSetting(const QString &name, const QString &value, QString *outError);
+    /// Read a `TERATERM.INI` and apply all of it. A file that is not there is
+    /// a first run, not a failure.
+    bool loadSettings(const QString &path, QString *outError);
+    /// Write every setting back, leaving comments, ordering and any setting
+    /// this project does not know about alone.
+    bool saveSettings(const QString &path, QString *outError) const;
+
 signals:
     /// The screen changed and wants repainting.
     void damaged();
@@ -193,6 +213,11 @@ signals:
     void notice(const QString &text);
     /// Connected, disconnected, or dropped by the far end.
     void connectionChanged();
+    /// A setting changed, so anything derived from one is stale — the colours
+    /// the painter resolves with, and the terminal's size. Emitted once per
+    /// applied change rather than per field, since the dialog applies on OK.
+    void settingsChanged();
+
     /// Logging started, stopped, or was stopped *for* us by a write failure —
     /// which is the case that matters, because a window still claiming to log
     /// lets someone walk away from a capture that ended an hour ago.

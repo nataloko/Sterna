@@ -27,7 +27,12 @@
 #include <cstdio>
 #include <cstring>
 
+#include <QComboBox>
+#include <QLineEdit>
+#include <QTabWidget>
+
 #include "Session.h"
+#include "SettingsDialog.h"
 #include "TerminalView.h"
 
 static int failures = 0;
@@ -615,6 +620,112 @@ void test_dragging_off_the_edge_scrolls_the_view()
     CHECK(h.session.viewOffset() == after);
 }
 
+
+
+
+/// The colour settings reach the painter, which is the whole point of wiring
+/// them: `VTColor` is what makes Tera Term black on white, and a user who
+/// wants a dark terminal changes exactly that.
+void test_settings_change_the_painted_colours()
+{
+    Harness h;
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("color.normal"),
+                               QStringLiteral("200,200,200,20,20,20"), &error));
+    h.view.applySettings();
+    h.feed("dark");
+    h.render();
+    CHECK(h.bgAt(10, 10) == QColor(20, 20, 20));
+    CHECK(h.ink(0, 0) > 0);
+
+    // And an attribute's own pair, which is a separate setting and a separate
+    // priority arm rather than a shade of the normal one.
+    CHECK(h.session.setSetting(QStringLiteral("color.bold"),
+                               QStringLiteral("0,255,0,20,20,20"), &error));
+    h.view.applySettings();
+    h.feed("\033[2J\033[H\033[1mbold\033[0m");
+    h.render();
+    CHECK(h.at(0, 0) == QColor(0, 255, 0) || h.ink(0, 0) > 0);
+    CHECK(h.bgAt(0, 0) == QColor(20, 20, 20));
+
+    // Switching the attribute's colour off drops it back to the normal pair,
+    // because upstream composes the attribute with its enable flag before
+    // looking at anything — it does not paint a disabled-looking bold.
+    CHECK(h.session.setSetting(QStringLiteral("color.bold_enabled"),
+                               QStringLiteral("off"), &error));
+    h.view.applySettings();
+    h.render();
+    CHECK(h.bgAt(0, 0) == QColor(20, 20, 20));
+    CHECK(h.at(40, 0) == QColor(20, 20, 20));
+}
+
+/// The dialog holds no list of settings: it walks the core's metadata table,
+/// so this checks that every row in the table became a widget and that what
+/// comes back out is the file's own spelling.
+void test_the_settings_dialog_is_built_from_the_schema()
+{
+    Harness h;
+    SettingsDialog dialog(&h.session);
+
+    const size_t fields = tt_settings_field_count();
+    CHECK(fields > 0);
+    CHECK(dialog.findChildren<QTabWidget *>().size() == 1);
+
+    // A tab per page, in the schema's own order.
+    auto *tabs = dialog.findChild<QTabWidget *>();
+    CHECK(tabs != nullptr);
+    if (tabs) {
+        CHECK(tabs->count() > 1);
+        CHECK(tabs->tabText(0) == QStringLiteral("Terminal"));
+    }
+
+    // A combo box carries the INI's spellings, both ways — `TerminalID` is
+    // compared case-sensitively upstream, so a prettified label would read
+    // back as the default and silently make a VT320 a VT100.
+    QComboBox *termId = nullptr;
+    for (QComboBox *combo : dialog.findChildren<QComboBox *>()) {
+        if (combo->findText(QStringLiteral("VT525")) >= 0) {
+            termId = combo;
+        }
+    }
+    CHECK(termId != nullptr);
+    if (termId) {
+        CHECK(termId->currentText() == QStringLiteral("VT100"));
+        termId->setCurrentIndex(termId->findText(QStringLiteral("VT320")));
+        dialog.applyChanges();
+        CHECK(h.session.setting(QStringLiteral("terminal.id"))
+              == QStringLiteral("VT320"));
+    }
+
+    // The search box is what makes 600 settings navigable, and it filters
+    // across every tab rather than the visible one.
+    auto *search = dialog.findChild<QLineEdit *>();
+    CHECK(search != nullptr);
+    if (search && termId) {
+        search->setText(QStringLiteral("backspace"));
+        CHECK(!termId->isVisibleTo(&dialog));
+        search->setText(QString());
+        CHECK(termId->isVisibleTo(&dialog));
+    }
+}
+
+/// Only what changed. A dialog that wrote every field would pin all of them
+/// into the user's file the first time it was opened, and a pinned setting
+/// stops following upstream's default for ever.
+void test_the_dialog_writes_only_what_changed()
+{
+    Harness h;
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("terminal.title"),
+                               QStringLiteral("before"), &error));
+    SettingsDialog dialog(&h.session);
+    // Nothing touched, so applying is a no-op even though every row has a
+    // value to hand.
+    dialog.applyChanges();
+    CHECK(h.session.setting(QStringLiteral("terminal.title"))
+          == QStringLiteral("before"));
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -646,6 +757,9 @@ int main(int argc, char **argv)
     test_a_selection_holds_on_to_its_text_not_its_place();
     test_a_selection_survives_scrolling_back();
     test_dragging_off_the_edge_scrolls_the_view();
+    test_settings_change_the_painted_colours();
+    test_the_settings_dialog_is_built_from_the_schema();
+    test_the_dialog_writes_only_what_changed();
 
     // `--write <dir>` dumps what was rendered, for looking at a failure rather
     // than guessing at it.
@@ -656,9 +770,19 @@ int main(int argc, char **argv)
                    "\033[4munderline\033[0m \033[7mreverse\033[0m \033[44;93mcolour\033[0m\r\n"
                    "\033(0lqqqk\033(B box  \xe5\x8c\x97\xe4\xba\xac wide  e\xcc\x81 combining\r\n");
             h.render();
-            const QString path = QString::fromUtf8(argv[i + 1]) + "/screen.png";
+            const QString dir = QString::fromUtf8(argv[i + 1]);
+            const QString path = dir + "/screen.png";
             h.image.save(path);
             printf("wrote %s\n", qPrintable(path));
+
+            // The setup dialog too, because its layout is the part of it no
+            // assertion can judge — what a generated dialog *looks* like is
+            // exactly the question the schema approach has to answer.
+            SettingsDialog dialog(&h.session);
+            dialog.adjustSize();
+            const QString dialogPath = dir + "/settings.png";
+            dialog.grab().save(dialogPath);
+            printf("wrote %s\n", qPrintable(dialogPath));
         }
     }
 

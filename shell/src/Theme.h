@@ -20,13 +20,23 @@
 /// from the thing this project is a successor to.
 ///
 /// The defaults are upstream's `TERATERM.INI` defaults, which is why the
-/// terminal is black on white and bold text comes out blue. Every one of them
-/// is an INI key, so they belong to Stage 2's generated settings schema; they
-/// are constants here rather than a config file so that the schema is the only
-/// thing that ever parses them.
+/// terminal is black on white and bold text comes out blue. They are compiled
+/// in as a starting point and then **replaced from the settings** — see
+/// [`applySettings`], which is the only thing here that reads a file, and does
+/// it by asking the core rather than by parsing anything.
 class Theme {
 public:
     Theme();
+
+    /// Take the colour settings from a session's `TERATERM.INI`.
+    ///
+    /// Addressed by name through the C ABI, so this holds no list of settings
+    /// and no parser: `color.normal` and its four siblings arrive as the six
+    /// numbers the file spells them with, and the four enable flags as `on` or
+    /// `off`. A name the schema does not have leaves the compiled-in default
+    /// standing, which is what makes adding a colour setting to the schema the
+    /// only change needed to honour it.
+    void applySettings(const class Session &session);
 
     /// Resolve one cell to the two colours it is painted with.
     ///
@@ -69,8 +79,9 @@ private:
     QColor m_reverse[2];
     QColor m_cursor;
 
-    // `ts.ColorFlag` bits, and `ts.UseNormalBGColor`. Fixed at upstream's
-    // defaults until the settings schema exists.
+    // `ts.ColorFlag` bits, and `ts.UseNormalBGColor`. Upstream's defaults
+    // until `applySettings` reads the file; `EnableANSIColor` and
+    // `UseNormalBGColor` have no schema row yet and so stay put.
     bool m_ansiColor = true;
     bool m_boldColor = true;
     bool m_blinkColor = true;

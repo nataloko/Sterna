@@ -6,6 +6,47 @@
 #include <QFontMetricsF>
 #include <QtMath>
 
+#include "Session.h"
+
+namespace {
+
+/// `fg_r,fg_g,fg_b,bg_r,bg_g,bg_b` into the pair upstream stores.
+///
+/// A short or unparseable value leaves the pair alone rather than throwing it
+/// away — the same rule `tt-config`'s reader applies to the file, so a colour
+/// that arrives half-written does not paint the screen black.
+void readPair(const Session &session, const char *name, QColor *pair)
+{
+    const QStringList parts = session.setting(QString::fromLatin1(name)).split(QLatin1Char(','));
+    if (parts.size() < 6) {
+        return;
+    }
+    int n[6];
+    for (int i = 0; i < 6; i++) {
+        bool ok = false;
+        n[i] = parts.at(i).trimmed().toInt(&ok);
+        if (!ok || n[i] < 0 || n[i] > 255) {
+            return;
+        }
+    }
+    pair[0] = QColor(n[0], n[1], n[2]);
+    pair[1] = QColor(n[3], n[4], n[5]);
+}
+
+/// The schema normalises a boolean to `on` or `off` on the way out, whatever
+/// the file said — so this is a comparison rather than a second parse of
+/// `GetOnOff`, which is default-biased and belongs in exactly one place.
+bool readFlag(const Session &session, const char *name, bool fallback)
+{
+    const QString value = session.setting(QString::fromLatin1(name));
+    if (value.isEmpty()) {
+        return fallback;
+    }
+    return value == QLatin1String("on");
+}
+
+} // namespace
+
 Theme::Theme()
 {
     for (uint32_t i = 0; i < 256; i++) {
@@ -31,6 +72,26 @@ Theme::Theme()
     m_font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     m_font.setPointSizeF(11.0);
     setFont(m_font);
+}
+
+void Theme::applySettings(const Session &session)
+{
+    readPair(session, "color.normal", m_normal);
+    readPair(session, "color.bold", m_bold);
+    readPair(session, "color.blink", m_blink);
+    readPair(session, "color.underline", m_underline);
+    readPair(session, "color.reverse", m_reverse);
+
+    m_boldColor = readFlag(session, "color.bold_enabled", m_boldColor);
+    m_blinkColor = readFlag(session, "color.blink_enabled", m_blinkColor);
+    m_underlineColor = readFlag(session, "color.underline_enabled", m_underlineColor);
+    m_reverseColor = readFlag(session, "color.reverse_enabled", m_reverseColor);
+
+    // The cursor is painted in the normal foreground, which is what upstream
+    // does when `VTCursorColor` is absent — and it is absent from the schema,
+    // so following the text colour is the only answer that cannot leave an
+    // invisible cursor on a reconfigured background.
+    m_cursor = m_normal[0];
 }
 
 void Theme::setFont(const QFont &font)

@@ -14,8 +14,12 @@
 #include <QLocale>
 #include <QStatusBar>
 
+#include <QDir>
+#include <QStandardPaths>
+
 #include "SerialDialog.h"
 #include "Session.h"
+#include "SettingsDialog.h"
 #include "SshDialog.h"
 #include "SshPrompts.h"
 #include "TelnetDialog.h"
@@ -74,11 +78,75 @@ MainWindow::MainWindow()
     connect(m_session, &Session::sshAuthWanted, this, &MainWindow::onSshAuthWanted);
     connect(m_session, &Session::sshFailed, this, &MainWindow::onSshFailed);
     connect(m_session, &Session::remoteResize, this, &MainWindow::onRemoteResize);
+    connect(m_session, &Session::settingsChanged, this, &MainWindow::onSettingsChanged);
 
     buildMenus();
+
+    // Before the window is shown, so the size the file asks for is the size it
+    // opens at rather than a resize the user watches happen. A file that is
+    // not there is a first run: every setting takes its default and nothing is
+    // written until `Save setup`.
+    QString error;
+    if (!m_session->loadSettings(settingsPath(), &error)) {
+        // Not fatal and not a dialog. An unreadable settings file is a reason
+        // to run with the defaults and say so once, not a reason to refuse to
+        // open a terminal.
+        onNotice(tr("Could not read the settings: %1").arg(error));
+    }
+
     updateStatus();
     setWindowTitle(tr("termitta"));
     m_view->setFocus();
+}
+
+QString MainWindow::settingsPath()
+{
+    const QString dir =
+        QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    return QDir(dir).filePath(QStringLiteral("termitta.ini"));
+}
+
+void MainWindow::onSettingsChanged()
+{
+    m_view->applySettings();
+
+    // The *window* is resized rather than the grid, the same way a remote
+    // resize is handled: the view fits the terminal to the space it has, so
+    // setting the grid directly would leave the painter drawing the old number
+    // of columns until the next resize event undid it.
+    //
+    // Only once the window is up: before it is laid out the view has no size
+    // to measure against, and the first layout takes the terminal's size from
+    // `TerminalView::sizeHint` instead — which is what makes a configured
+    // 132x50 window *open* at 132x50 rather than resize itself in front of the
+    // user.
+    const int cols = m_session->setting(QStringLiteral("terminal.cols")).toInt();
+    const int rows = m_session->setting(QStringLiteral("terminal.rows")).toInt();
+    if (isVisible() && cols > 0 && rows > 0
+        && (cols != m_session->cols() || rows != m_session->rows())) {
+        const QSize want = m_view->sizeForCells(cols, rows);
+        resize(size() + (want - m_view->size()));
+    }
+    updateStatus();
+}
+
+void MainWindow::showSettingsDialog()
+{
+    SettingsDialog dialog(m_session, this);
+    dialog.exec();
+}
+
+void MainWindow::saveSettings()
+{
+    const QString path = settingsPath();
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QString error;
+    if (!m_session->saveSettings(path, &error)) {
+        QMessageBox::warning(this, tr("Setup"),
+                             tr("Could not save the settings: %1").arg(error));
+        return;
+    }
+    onNotice(tr("Settings saved to %1").arg(path));
 }
 
 void MainWindow::buildMenus()
@@ -112,8 +180,13 @@ void MainWindow::buildMenus()
     terminal->addSeparator();
     m_logAction = terminal->addAction(tr("Start logging..."), this,
                                       &MainWindow::toggleLogging);
-    terminal->addSeparator();
-    terminal->addAction(tr("Font..."), this, &MainWindow::chooseFont);
+    // "Setup", which is Tera Term's own name for this menu, so that someone
+    // arriving from it looks in the right place.
+    QMenu *setup = menuBar()->addMenu(tr("Setup"));
+    setup->addAction(tr("Terminal..."), this, &MainWindow::showSettingsDialog);
+    setup->addAction(tr("Font..."), this, &MainWindow::chooseFont);
+    setup->addSeparator();
+    setup->addAction(tr("Save setup"), this, &MainWindow::saveSettings);
 }
 
 void MainWindow::showConnectDialog()

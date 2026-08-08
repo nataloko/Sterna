@@ -42,6 +42,16 @@ public:
     /// an interesting question.
     Session *session() const { return m_session; }
 
+    /// Where the settings are read from and written to.
+    ///
+    /// `$XDG_CONFIG_HOME/termitta/termitta.ini` rather than a `TERATERM.INI`
+    /// beside the executable, because on Linux that is where a configuration
+    /// file belongs and the executable may be inside a read-only AppImage. The
+    /// *format* is Tera Term's, which is the part that matters: pointing this
+    /// at a real `TERATERM.INI` is a supported thing to do, and `--ini` is how
+    /// it will be spelled.
+    static QString settingsPath();
+
 private slots:
     void showConnectDialog();
     void showSshDialog();
@@ -58,6 +68,14 @@ private slots:
     void sendBreak();
     void toggleLogging();
     void chooseFont();
+    void showSettingsDialog();
+    /// Write the settings out — upstream's `Setup > Save setup`, and the same
+    /// bargain: a change applies to this session immediately and outlives it
+    /// only if it is saved.
+    void saveSettings();
+    /// Re-read everything derived from a setting: the painter's colours, and
+    /// the terminal's size.
+    void onSettingsChanged();
     void onTitleChanged(const QString &title);
     void onNotice(const QString &text);
     void onConnectionChanged();

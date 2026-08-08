@@ -194,7 +194,16 @@ TerminalView::TerminalView(Session *session, QWidget *parent)
 
 QSize TerminalView::sizeHint() const
 {
-    return QSize(80 * m_theme.cellWidth(), 24 * m_theme.cellHeight());
+    // The terminal's size, not a constant: `TerminalSize` in the settings is
+    // read before the window is laid out, so this is what makes a configured
+    // 132x50 open at 132x50.
+    return sizeForCells(m_session->cols(), m_session->rows());
+}
+
+void TerminalView::applySettings()
+{
+    m_theme.applySettings(*m_session);
+    update();
 }
 
 void TerminalView::applyFont(const QFont &font)

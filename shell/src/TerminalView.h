@@ -50,6 +50,9 @@ public:
     const Theme &theme() const { return m_theme; }
     /// Re-measure the font and re-fit the terminal to the window.
     void applyFont(const QFont &font);
+    /// Take the colours from the session's settings and repaint. The size is
+    /// the window's business, not the painter's — see `MainWindow`.
+    void applySettings();
 
     QSize sizeHint() const override;
     /// The pixel size this many cells needs, at the current font.
