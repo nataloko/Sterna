@@ -56,6 +56,7 @@ already taken in the wild).
 cd crates                        # the Rust core
 cargo test && cargo clippy --all-targets -- -D warnings
 tt-ffi/run_abi.sh                # the C ABI, compiled and driven from C
+cargo run -p tt-config --bin gen-settings   # after editing the settings schema
 TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
   cargo test -p tt-conn -- --test-threads=1   # + the serial hardware tests
 TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
@@ -121,6 +122,10 @@ cd ssh-audit                     # Stage 0 spike 5
 
 cd telnet-audit                  # a real telnetd for the transport's interop
 ./servers.sh start && ./servers.sh stop
+
+cd ini-audit                     # what GetPrivateProfile* really does
+./run.sh                         # needs wine64 + mingw-w64; 127 without them
+./run.sh --record                # ...and rewrite win32.txt with the answers
 
 cd serial-audit                  # Stage 0 spike 4, needs the FTDI loopback rig
 cargo run --bin serial-audit     # capability audit vs commlib.c
@@ -550,6 +555,38 @@ And for the serial side:
   rather than an overbooked rig. Run one package at a time. There is no cargo
   flag for this; `--jobs` is about compilation.
 
+And for the settings, all of which came out of `ini-audit/`:
+
+- **`GetOnOff` is default-biased, so `Key=1` means opposite things for two
+  different settings.** `ttset.c:344`: with a default of on, anything that is
+  not literally `off` is on; with a default of off, only literally `on` is on.
+  So `Xterm256Color=1` is on and `Aixterm16Color=1` is off, from the same file,
+  with the same value. It also reads into a **four-byte buffer**, so only the
+  first three characters reach the comparison and `offline` is `off`. This is
+  the fifth member of the family that already holds `CRReceive`, `BSKey` and
+  the flag words: **when a setting looks boolean, find out what its default is
+  before deciding what a value means.**
+- **`GetPrivateProfileString` strips a matched pair of quotes**, single or
+  double — which `PLAN.md` had backwards, and which MSDN does document. An
+  unmatched or interior quote is kept, and `""x""` loses exactly one pair. A
+  reader that keeps them puts literal `"` into every quoted setting; one that
+  strips unconditionally mangles a value that legitimately starts with one.
+- **`Key=` is an empty string, not the default**, and upstream leans on it —
+  that is exactly how `ts.BSKey` reaches its `else` branch. Collapsing empty
+  into absent changes the setting for everyone who has the key without a value.
+- **The first duplicate wins, and a duplicate section is not merged.** A key
+  that appears only in the second `[Tera Term]` block is invisible to Tera Term,
+  so it must be invisible here too — reading it would apply a setting the user's
+  own terminal ignores.
+- **A comment is only a comment to *enumeration*.** `;A=1` is an entry whose key
+  is `;A`, and a lookup for `;A` returns `1`; only a key listing skips it. A
+  line with no `=` is not an entry at all, either way. Both were guesses until a
+  probe case settled them, which is the reason `ini-audit/` exists.
+- **Wine is not Windows, and two of the recorded answers are Wine's alone**: a
+  write rewrites every line ending in the file, and normalises `[ s ]` to
+  `[s]`. Both are in `ini-audit/divergences.txt` as *not* reproduced. Re-run
+  the battery on Windows in Stage 3 before trusting either.
+
 And for the C ABI:
 
 - **cbindgen parses files, not crates, so it cannot see `pub(crate)` or a
@@ -681,7 +718,9 @@ xfer/            Stage 0 spike 2 — ttpfile's protocols, running and interopera
 serial-audit/    Stage 0 spike 4 — serialport-rs vs commlib.c, on real hardware
 telnet-audit/    a real telnetd, so the telnet port has an independent check
 ssh-audit/       Stage 0 spike 5 — russh vs legacy SSH algorithms and auth
-crates/          Rust core — tt-grid, tt-vt, tt-conn, tt-session, tt-ffi (see its README)
+ini-audit/       what GetPrivateProfile* really does, asked of Wine (see its README)
+crates/          Rust core — tt-grid, tt-vt, tt-conn, tt-session, tt-config,
+                 tt-ffi (see its README)
 crates/tt-fuzz/  the properties, and what they found (see its README)
 crates/fuzz/     the libFuzzer targets — nightly, weekly in CI
 bench/           the perf gate: a floor in CI, a baseline locally (see README)

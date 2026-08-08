@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 117
+**Last updated:** 2026-08-08 · **Stage:** 1 complete, 2 started · **Commits:** 123
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -360,6 +360,14 @@ the `CH340G_hw_flowctrl` case upstream carries, which needs a CH340 adapter.
 ### 🔵 Stage 1 — the Linux serial + SSH terminal (3–4 months, ~25–30k LOC)
 
 Must be shippable and genuinely useful, not a demo.
+
+**Every deliverable below is done as of 2026-08-08.** The stage is not
+*declared* finished, because its own test is not a checklist: "the Wine
+shortcut gets deleted and it's daily-driven for serial console work". That is
+the user's call and it needs a week of real use, not another commit. Stage 2
+has started in the meantime, at the settings schema — which is where the first
+thing daily driving will complain about lives (`keyboard.backspace`, still
+sending BS because that is what Tera Term does).
 
 - `tt-vt` + `tt-grid`: VT100/220 + core xterm, SGR/256/truecolor, scrollback,
   selection, BCE, wide + combining chars. Ported **against the oracle**.
@@ -1028,7 +1036,7 @@ immediately: it opens with `WILL AUTHENTICATION`, `WILL ENCRYPT`, `DO XDISPLOC`
 and `DO NEW-ENVIRON`, four options above `MaxTelOpt`, so the refusal path runs
 before anything else in every session.
 
-### ⬜ Stage 2 — the differentiators (3–4 months, ~20k LOC)
+### 🔵 Stage 2 — the differentiators (3–4 months, ~20k LOC)
 
 - **File transfer**: FFI to the vendored C, all six protocols, interop-tested
   against `lrzsz` and `gkermit`.
@@ -1038,8 +1046,65 @@ before anything else in every session.
 - **Lua via `mlua`** over the same `ScriptHost` command table (~500 LOC glue).
 - `ttctl` JSON-RPC control socket replacing DDE. Keep a `ttpmacro script.ttl`
   CLI entry point so existing shortcuts and `.bat` wrappers keep working.
-- **Settings schema + generated dialogs**, first pass.
-- `TERATERM.INI` and `KEYBOARD.CNF` readers.
+- **Settings schema + generated dialogs**, first pass. 🔵 **the schema and the
+  INI layer are built** — `crates/tt-config/`, 39 settings, 2026-08-08. What
+  remains is wiring it to the running terminal and building the dialog from
+  the metadata. See below.
+- `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
+  against a real Win32 rather than against a reading of the documentation;
+  `KEYBOARD.CNF` is an INI and reads with the same layer.
+
+#### The settings schema, and an oracle for a file format
+
+Started with the leverage point rather than with file transfer, because
+`PLAN.md` has said since Stage 0 that this is "the difference between the
+project finishing and not" and that it should be built while morale is high.
+
+**The INI layer needed an oracle of its own, and the existing one could not
+help.** Upstream calls Win32's `GetPrivateProfile*` directly — `ttpset/ttset.c`
+and `common/inifile_com.cpp`, with no portable implementation anywhere in the
+157k lines — so the headless oracle stubs those calls and takes every default,
+which is exactly right for comparing *parsers* and useless for comparing *file
+handling*. And "bug-compatible with `GetPrivateProfile*`" is a claim that has
+to be true of a file the user already has: the first thing this code does on a
+new machine is read their `TERATERM.INI` and write it back.
+
+So `ini-audit/`: a battery of 104 cases as **data**, a mingw-w64 exerciser
+compiled against the real API, run under Wine, and the answers recorded.
+`crates/tt-config/tests/win32.rs` puts the same battery to the Rust
+implementation and diffs. **98 match byte for byte**; the six that do not are
+in `ini-audit/divergences.txt` with a reason each, and the gate fails in both
+directions so a reason cannot outlive the behaviour it describes.
+
+It corrected the plan on its first run. **This document said "no quote
+stripping" and that is wrong** — a matched pair, single or double, is
+discarded, which MSDN documents. Four more findings are in `CLAUDE.md`, and one
+of them is the same shape as every settings trap already there: **`GetOnOff` is
+default-biased** (`ttset.c:344`), so `Key=1` means *on* for a setting that ships
+on and *off* for one that ships off. It also reads into a four-byte buffer, so
+`offline` is `off`.
+
+Wine is not Windows, and the writeup says so rather than hoping: two recorded
+answers — that a write rewrites every line ending in the file, and normalises
+`[ s ]` — are Wine's alone and are deliberately *not* reproduced. Re-run the
+battery on Windows in Stage 3; `exercise.exe` compiles there natively.
+
+**The schema itself is one line per setting** and generates the struct, the
+defaults, the reader, the writer, name-addressed accessors and a metadata
+table. `FIELDS` is the point of it: the dialog builds itself from that table,
+`setsetting`/`getsetting` resolve through it, and the docs are printed from it,
+so the list exists exactly once. A dialog *generated as C++* would be a second
+copy to keep in step across two build systems; one that reads the metadata over
+the C ABI has nothing to keep in step — which is a better answer than the one
+this document originally sketched.
+
+Every default carries the `ttset.c` line that proves it, because four of them
+are `else` branches or flag words and each already has a trap written about it.
+The generated file is committed and a test fails when it is stale, the same
+arrangement as `tt-ffi`'s header.
+
+39 settings of roughly 600. The machinery was the expensive part; adding a row
+is a line and a citation.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
@@ -1084,11 +1149,16 @@ learn from rewriting them. Vendor the C, mark them best-effort.
 
 Adoption hinges on "my existing setup just works." Budget real time here.
 
-- **`TERATERM.INI`** — read *and write* natively, bug-compatible with
-  `GetPrivateProfile*` (duplicate-key semantics, no quote stripping, CRLF,
-  encoding fallback). ~600 LOC hand-rolled; **do not use a generic INI crate**.
-  New settings go in an additive section so round-tripping with real Tera Term
-  survives.
+- **`TERATERM.INI`** — ✅ **done 2026-08-08**, `crates/tt-config/`. Read *and*
+  written, and held bug-compatible with `GetPrivateProfile*` against a recorded
+  real implementation rather than against a reading of the documentation: 98 of
+  `ini-audit/`'s 104 cases match byte for byte and the six that do not are
+  deliberate, each with a reason on file. **This entry used to say "no quote
+  stripping", and that was wrong** — a matched pair is discarded. Hand-rolled,
+  as the plan said: a generic INI crate gets the duplicate-key rule, the quote
+  stripping, the empty-value rule and the comment rules wrong, and every one of
+  those is a setting the user never changed, changing. New settings go in an
+  additive section so round-tripping with real Tera Term survives.
 - **`KEYBOARD.CNF`** — it's an INI. Read as-is, 1–2 days.
 - **Hosts and keys** — read Tera Term's `ssh_known_hosts` *and*
   `~/.ssh/known_hosts`; read `~/.ssh/id_*` and `~/.ssh/config`; write OpenSSH
