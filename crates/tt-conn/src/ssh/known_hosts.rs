@@ -280,11 +280,7 @@ impl KnownHosts {
         } else {
             pattern
         };
-        let line = format!(
-            "{name} {} {}\n",
-            key.algorithm,
-            BASE64.encode(key.blob)
-        );
+        let line = format!("{name} {} {}\n", key.algorithm, BASE64.encode(key.blob));
 
         let existed = path.exists();
         let mut f = OpenOptions::new().create(true).append(true).open(path)?;
@@ -546,7 +542,10 @@ mod tests {
     #[test]
     fn an_absent_file_is_not_an_error() {
         let kh = KnownHosts::with_files(vec![PathBuf::from("/nonexistent/known_hosts")]);
-        assert_eq!(kh.check("host", 22, key(ED, b"k")).unwrap(), Verdict::Unknown);
+        assert_eq!(
+            kh.check("host", 22, key(ED, b"k")).unwrap(),
+            Verdict::Unknown
+        );
     }
 
     #[test]
@@ -730,10 +729,7 @@ mod tests {
         let kh = KnownHosts::with_files(vec![path]);
         kh.learn("host.example", 22, key(ED, b"key")).unwrap();
         assert_eq!(s.read().lines().count(), 2);
-        assert!(kh
-            .check("other", 22, key(ED, b"k"))
-            .unwrap()
-            .is_trusted());
+        assert!(kh.check("other", 22, key(ED, b"k")).unwrap().is_trusted());
         assert!(kh
             .check("host.example", 22, key(ED, b"key"))
             .unwrap()

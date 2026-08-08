@@ -9,6 +9,12 @@
 //! before the transport because the transport needs both to answer its first
 //! question, which is whether to trust the far end at all.
 
+mod conn;
 pub mod known_hosts;
+mod wakeup;
 
+pub use conn::{
+    default_identities, AuthPrompt, AuthPromptKind, HostKeyDecision, HostKeyPrompt, Prompt,
+    SshConn, SshConnect, SshParams, Step,
+};
 pub use known_hosts::{HostKey, HostKeyRef, KnownHosts, Verdict};

@@ -16,5 +16,11 @@ hmac = "0.13"
 sha1 = "0.11"
 sha2 = "0.11"
 
+# des: 3des-cbc is feature-gated, and it is what pre-2005 gear offers.
+# dsa: ssh-dss host keys, for the same reason. Both are reachable only with
+# `SshParams::legacy`; see spike 5's first finding.
+russh = { version = "0.62", features = ["des", "dsa"] }
+tokio = { version = "1", features = ["rt", "net", "io-util", "time", "sync", "macros"] }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

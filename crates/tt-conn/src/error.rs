@@ -31,6 +31,22 @@ pub enum Error {
     /// A setting this platform cannot express. Carries what was asked for, so
     /// the message can say so rather than "invalid argument".
     Unsupported(String),
+    /// The SSH protocol failed: the socket, the banner, key exchange, opening
+    /// the channel. Carries text because there is nothing structured a
+    /// frontend can do with it beyond showing it.
+    Ssh(String),
+    /// The far end is not who the files say it is, or is who they say must be
+    /// refused. Separate from [`Ssh`](Error::Ssh) because a frontend must
+    /// **not** offer to retry: this is the one failure where the right
+    /// affordance is no affordance.
+    HostKey(String),
+    /// Every authentication method either failed or was not on offer.
+    /// `offered` is what the server said it would still accept, which is the
+    /// only thing that makes the message actionable — "the server wants
+    /// publickey" beats "authentication failed".
+    Auth {
+        offered: Vec<String>,
+    },
     Io(std::io::Error),
 }
 
@@ -131,6 +147,21 @@ impl fmt::Display for Error {
             }
             Error::Open { path, source } => write!(f, "cannot open {path}: {source}"),
             Error::Unsupported(what) => write!(f, "not supported on this platform: {what}"),
+            Error::Ssh(what) => write!(f, "{what}"),
+            Error::HostKey(what) => write!(f, "{what}"),
+            Error::Auth { offered } if offered.is_empty() => {
+                write!(
+                    f,
+                    "authentication failed and the server offered no other method"
+                )
+            }
+            Error::Auth { offered } => {
+                write!(
+                    f,
+                    "authentication failed; the server accepts {}",
+                    offered.join(", ")
+                )
+            }
             Error::Io(e) => write!(f, "{e}"),
         }
     }
