@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 complete, 2 in progress · **Commits:** 138
+**Last updated:** 2026-08-08 · **Stage:** 1 complete, 2 in progress · **Commits:** 142
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1045,6 +1045,10 @@ before anything else in every session.
 - **TTL interpreter**: native Rust, **in-process on a thread** — deletes ~2,600
   LOC of DDE glue (`ttpmacro/ttmdde.c` + `teraterm/ttdde.c`) and a whole class
   of races. Target: the 53 `.ttl` scripts in `teraterm/tests/` pass.
+  🔵 **the language runs**, 2026-08-08 — `crates/tt-ttl/`: the tokeniser, the
+  variables, the eleven precedence levels, the control flow and the string and
+  integer commands. What is left is the commands that need a terminal, a
+  filesystem or a regex engine. See below.
 - **Lua via `mlua`** over the same `ScriptHost` command table (~500 LOC glue).
 - `ttctl` JSON-RPC control socket replacing DDE. Keep a `ttpmacro script.ttl`
   CLI entry point so existing shortcuts and `.bat` wrappers keep working.
@@ -1237,6 +1241,85 @@ compiler, both recorded in `CLAUDE.md`: upstream leans on `<windows.h>` for
 `<stdlib.h>` and for the `SetTimer`/`KillTimer` declarations, which GCC 13
 forgave and GCC 14 does not, and `ttcstd.h`'s `char8_t` guard is inverted so
 the C++ has to be pinned at `gnu++17`.
+
+#### The macro language, and the three decisions inside it
+
+`crates/tt-ttl/`, 2026-08-08. `ttl.cpp`, `ttmparse.cpp` and `ttmbuff.c` — about
+9,200 lines — ported far enough that a macro of arithmetic, strings and control
+flow runs to completion with no terminal attached at all.
+
+**The DDE deletion is the point, and it is structural rather than a line
+count.** Upstream's engine is a second process reaching the terminal by message
+passing; here it is a crate and the terminal is behind one trait. What that
+buys is not 2,600 fewer lines but the disappearance of a state machine:
+upstream's `wait` *cannot* block, because the macro and the window share a
+thread, so it parks the macro in `TTLStatus` and lets the message loop drive it
+back to life. The interpreter here has its own thread, a host call may simply
+block, and there is no state for waiting — only for having finished. Every
+`wait`-family command becomes an ordinary function that returns when it is done.
+
+**`ScriptHost` is wide and shallow on purpose** — one method per thing a command
+needs from outside, each with a refusing default. A host that implements half of
+it is useful, and the other half answers "Unknown command" rather than
+pretending to work. It is also what makes the tests possible: they are TTL source
+and an expected output, with no terminal in the loop.
+
+**File loading is the host's, including the encoding.** Upstream's `LoadFileU8W`
+sniffs a BOM and falls back to the ANSI codepage, and four of the 53 test scripts
+(`code_utf8.ttl`, `code_utf8-bom.ttl`, `code_utf16le-bom.ttl`, `code_cp932.ttl`)
+exist because that is a real decision with real files behind it. It does not
+belong in a parser.
+
+Faithfulness cost the usual. Six behaviours are reproduced because scripts were
+written against what TTL *does*:
+
+1. **A TTL string is bytes and is a C string.** `#255` is a legal escape, so it
+   need not be UTF-8 — and must not be, since `send` puts it on the wire
+   unchanged. It also stops at its first NUL, which is not trivia: `strspecial`'s
+   `\0` truncates the string it is in, and `code2str $01000041` is one byte long.
+   Doing the cut in the variable store makes that one rule instead of two
+   special cases.
+2. **A string operand short-circuits the whole expression grammar.** Every
+   precedence level returns immediately if its left operand is not an integer,
+   so in `a + b` with `a` a string the `+ b` is never looked at and the caller
+   reports a syntax error. That is why TTL has `strconcat` and no `+`.
+3. **An expression cannot build a string, only name one** — upstream returns the
+   variable id in the same `int` it returns numbers in.
+4. **A block is skipped by executing it, not by seeking past it.** A counter
+   suppresses the effect line by line, so a syntax error in a branch that never
+   runs is still an error. The subtle consequence: `ElseFlag` increments
+   *`EndIfFlag`* when it meets a nested `if`, because that `if`'s own `else`
+   must not end the outer skip.
+5. **`for` steps its variable *towards* the end value**, so a loop counts down as
+   readily as up and `for i 3 3` runs exactly once.
+6. **`strsplit` with no count answers 10 having stored 9.** The loop runs one
+   field past the limit to discard the remainder, and `result` is the count it
+   reached.
+
+Three upstream out-of-bounds accesses are **not** reproduced, because none has
+an observable result and all three are memory-safety bugs: `strtrim` indexes a
+256-byte table with a signed `char`, so a trim character above 0x7F reads before
+the start of it; `strsplit` reads one past its nine-element token array, handing
+the garbage to a lookup for `groupmatchstr10` that does not exist; and
+`GetFactor` returns a label's type beside an uninitialised value, which every
+caller rejects on the type before looking. None is worth reporting upstream on
+its own — they are not reachable as anything but a wrong answer nobody can see —
+but they are recorded here in case a fourth turns up that is.
+
+**What is left**, in the order it is likely to be built: the connection commands
+(`send`, `wait`, `connect`, the transfer protocols, which `tt-xfer` and
+`tt-session` already have underneath), the file commands, the dialogs, and the
+regex family. That last one is a decision, not a port: `sprintf` validates its
+format specifiers with **Oniguruma** and `strmatch`/`strreplace`/`waitregex`
+match with it, so *which regex dialect this speaks* is a compatibility question
+that wants answering deliberately rather than by whichever crate is reached for.
+
+And the conformance target needs its own harness. The 53 `.ttl` scripts are
+**not self-checking** — they report to a human through `messagebox`, several are
+deliberately full of errors so as to exercise the error dialog, and most are
+Shift-JIS. "They pass" has to mean a host that records dialogs and a golden per
+script, which is the same shape as `oracle/`'s suite and the same warning
+applies: never bless one you have not read.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 

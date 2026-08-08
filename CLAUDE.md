@@ -58,6 +58,7 @@ cargo test && cargo clippy --all-targets -- -D warnings
 cargo fmt -p tt-vt               # per package: --all rewrites generated.rs
 tt-ffi/run_abi.sh                # the C ABI, compiled and driven from C
 cargo test -p tt-xfer            # the protocols vs lrzsz and gkermit, over a pty
+cargo test -p tt-ttl             # the macro language, with no terminal attached
 ../vendor/ttpfile/sync.sh --check   # ...and that the vendored C has not drifted
 cargo run -p tt-config --bin gen-settings   # after editing the settings schema
 TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \

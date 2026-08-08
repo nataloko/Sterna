@@ -1,6 +1,6 @@
 # termitta core
 
-The Rust side. Eight of the crates `PLAN.md` describes, plus three CLIs that
+The Rust side. Nine of the crates `PLAN.md` describes, plus three CLIs that
 exist so the engine can be measured against something.
 
 | Crate | What it is |
@@ -11,6 +11,7 @@ exist so the engine can be measured against something.
 | `tt-conn` | The connection layer — serial, SSH, telnet and a local pty, all four built. The serial half is written against `commlib.c`'s requirement; see [its README](tt-conn/README.md). |
 | `tt-config` | `TERATERM.INI`, and the settings schema everything else reads its list of settings from. Held against a real Win32 by `ini-audit/`. |
 | `tt-xfer` | X/Y/ZMODEM, Kermit, B-Plus and Quick-VAN — Tera Term's own protocol C, vendored under `vendor/ttpfile/` and driven from Rust. See [its README](tt-xfer/README.md). |
+| `tt-ttl` | Tera Term's macro language, ported from `ttpmacro/`, with the terminal behind a trait instead of behind DDE. See [its README](tt-ttl/README.md). |
 | `tt-session` | A terminal attached to a connection: the loop between `tt-vt` and `tt-conn`, and what the C ABI exports. See [its README](tt-session/README.md). |
 | `tt-ffi` | The flat C ABI over `tt-session` — the whole core/frontend seam, and what the Qt shell links. See [its README](tt-ffi/README.md). |
 | `tt-dump` | A CLI that drives `tt-vt` over a byte stream and prints the oracle's dump format. Exists for the differential harness. |
