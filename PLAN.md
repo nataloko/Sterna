@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 46
+**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 47
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -153,6 +153,7 @@ sees a flat C ABI over POD types.
 │  tt-grid     cells, scrollback, selection, BCE, wide/combining        │
 │  tt-charset  DEC sets + line drawing (CJK tables deferred)            │
 │  tt-conn     serial | ssh (russh) | telnet | pty | pipe    [tokio]    │
+│  tt-session  the loop between the two, and the ABI's surface          │
 │  tt-xfer     FFI → vendored C: x/y/zmodem, kermit, bplus, quickvan    │
 │  tt-script   TTL interpreter + mlua over one shared command table     │
 │  tt-config   INI (GetPrivateProfile-compatible) + KEYBOARD.CNF        │
@@ -365,8 +366,12 @@ Must be shippable and genuinely useful, not a demo.
   layer spike 4 specified is built and green on the loopback rig: `CMSPAR`
   parity, `PARMRK` break detection, `VSTART`/`VSTOP`, a userspace DSR-flow
   shim, and by-path port identity. See `crates/tt-conn/README.md`.
+- `tt-session`: the loop between engine and transport, and what the C ABI
+  exports. ✅ **done** — 20 tests, three of them over the real wire. See
+  `crates/tt-session/README.md`.
 - Qt shell: one window, grid painter, clipboard, font/colour config,
-  connect dialog, serial-port picker with live enumeration.
+  connect dialog, serial-port picker with live enumeration. **Next**, and it
+  needs the C ABI (`cbindgen` over `tt-session`) first.
 - **`~/.ssh/config`, `~/.ssh/known_hosts`, `~/.ssh/id_*`** — Tera Term lacks
   this and it is a major Linux adoption lever.
 - Session logging (timestamped, rotation).

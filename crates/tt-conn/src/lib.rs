@@ -27,5 +27,7 @@
 
 pub mod error;
 pub mod serial;
+pub mod transport;
 
 pub use error::{Error, Result};
+pub use transport::{Transport, TransportEvent};

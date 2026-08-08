@@ -1,0 +1,11 @@
+[package]
+name = "tt-session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tt-conn.workspace = true
+tt-grid.workspace = true
+tt-vt.workspace = true

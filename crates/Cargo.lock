@@ -212,6 +212,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tt-session"
+version = "0.0.0"
+dependencies = [
+ "tt-conn",
+ "tt-grid",
+ "tt-vt",
+]
+
+[[package]]
 name = "tt-vt"
 version = "0.0.0"
 dependencies = [

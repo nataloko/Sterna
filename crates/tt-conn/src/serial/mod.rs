@@ -458,6 +458,38 @@ impl SerialConn {
     }
 }
 
+impl crate::transport::Transport for SerialConn {
+    fn read(
+        &mut self,
+        data: &mut Vec<u8>,
+        events: &mut Vec<crate::transport::TransportEvent>,
+    ) -> Result<usize> {
+        // The decoder speaks SerialEvent; widening happens here rather than
+        // in the decoder, so the serial layer stays usable on its own.
+        let mut raw = Vec::new();
+        let n = SerialConn::read(self, data, &mut raw)?;
+        events.extend(raw.into_iter().map(crate::transport::TransportEvent::from));
+        Ok(n)
+    }
+
+    fn write(&mut self, data: &[u8], timeout: Duration) -> Result<usize> {
+        SerialConn::write(self, data, timeout)
+    }
+
+    fn send_break(&mut self, dur: Duration) -> Result<()> {
+        SerialConn::send_break(self, dur)
+    }
+
+    /// A serial line has no idea how big the window is, and nothing to tell.
+    fn resize(&mut self, _cols: u16, _rows: u16) -> Result<()> {
+        Ok(())
+    }
+
+    fn describe(&self) -> String {
+        format!("{} {}", self.path, self.params.baud)
+    }
+}
+
 impl Drop for SerialConn {
     /// `CommClose` drops DTR on the way out (`commlib.c:848`), which is how a
     /// modem is told to hang up. Errors are ignored because the usual reason

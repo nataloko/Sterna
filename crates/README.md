@@ -1,6 +1,6 @@
 # termitta core
 
-The Rust side. Five crates so far, of the eight `PLAN.md` describes.
+The Rust side. Six crates so far, of the eight `PLAN.md` describes.
 
 | Crate | What it is |
 |---|---|
@@ -8,14 +8,15 @@ The Rust side. Five crates so far, of the eight `PLAN.md` describes.
 | `tt-charset` | ISO-2022 designation and invocation, and whether a byte is DEC special graphics. |
 | `tt-vt` | The escape-sequence state machine. Byte-level parsing is the `vte` crate; the semantics are ported from Tera Term. |
 | `tt-conn` | The connection layer — serial so far. Built against `commlib.c`'s requirement; see [its README](tt-conn/README.md). |
+| `tt-session` | A terminal attached to a connection: the loop between `tt-vt` and `tt-conn`, and what the C ABI will export. See [its README](tt-session/README.md). |
 | `tt-dump` | A CLI that drives `tt-vt` over a byte stream and prints the oracle's dump format. Exists for the differential harness. |
 
-`tt-conn`'s hardware tests need two serial ports wired back-to-back and skip
-without them:
+`tt-conn`'s and `tt-session`'s hardware tests need two serial ports wired
+back-to-back and skip without them:
 
 ```sh
 TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
-  cargo test -p tt-conn -- --test-threads=1
+  cargo test -- --test-threads=1
 ```
 
 ```sh
