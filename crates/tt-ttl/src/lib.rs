@@ -14,6 +14,7 @@
 //! choice was open, `PLAN.md` and the comments here say which way it went.
 
 pub mod buffer;
+pub mod conncmds;
 pub mod error;
 pub mod expr;
 pub mod host;
@@ -22,6 +23,7 @@ pub mod lexer;
 pub mod rsv;
 pub mod strcmds;
 pub mod vars;
+pub mod wait;
 
 pub use error::{TtlError, TtlResult};
 pub use host::{ErrorReport, RecordingHost, ScriptHost};

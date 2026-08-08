@@ -11,6 +11,8 @@
 //! is what makes a host that implements half of it useful, and what makes the
 //! interpreter testable with no terminal at all.
 
+use std::time::Duration;
+
 use crate::error::TtlError;
 
 /// What `DispErr` needs to draw its dialog.
@@ -58,6 +60,43 @@ pub trait ScriptHost {
         let _ = code;
     }
 
+    /// Whether there is a connection — upstream's `Linked`.
+    ///
+    /// Every command that touches the far end asks first and answers
+    /// `ErrLinkFirst` if not, which is why a macro run against no window fails
+    /// loudly at its first `send` rather than quietly doing nothing.
+    fn linked(&mut self) -> bool {
+        false
+    }
+
+    /// `send` and `sendln` — bytes out of the connection, unchanged.
+    fn send(&mut self, bytes: &[u8]) -> Result<(), TtlError> {
+        let _ = bytes;
+        Err(TtlError::NotSupported)
+    }
+
+    /// One byte in, blocking up to `timeout` — or for ever when it is `None`.
+    ///
+    /// `None` back means the wait is over without a byte: the deadline passed,
+    /// or the connection went away. Upstream tells those apart and then treats
+    /// them identically in every arm, so they are one answer here. A host that
+    /// never returns `None` for a dead line will hang a macro that has no
+    /// timeout set, which is upstream's behaviour too.
+    fn read_byte(&mut self, timeout: Option<Duration>) -> Option<u8> {
+        let _ = timeout;
+        None
+    }
+
+    /// `flushrecv` — throw away whatever has arrived and not been read.
+    fn flush_recv(&mut self) {}
+
+    /// `pause` and `mpause`. Upstream's `pause` is a timer the window can
+    /// interrupt and its `mpause` is a hard `Sleep`; both are here so that a
+    /// frontend can make either cancellable.
+    fn sleep(&mut self, d: Duration) {
+        let _ = d;
+    }
+
     /// `random`'s entropy. Upstream seeds SFMT from the clock; the rejection
     /// loop that makes the result uniform stays in the interpreter, so a host
     /// that wants a repeatable run only has to make this repeatable.
@@ -92,6 +131,15 @@ pub struct RecordingHost {
     pub stop_on_error: bool,
     /// A counter rather than entropy, so `random` is repeatable in a test.
     pub random_seq: u32,
+    /// Whether the connection commands should believe there is a connection.
+    pub linked: bool,
+    /// What the far end has to say, consumed a byte at a time.
+    pub input: std::collections::VecDeque<u8>,
+    /// What the macro sent.
+    pub sent: Vec<u8>,
+    /// How long it asked to sleep for, in total.
+    pub slept: Duration,
+    pub flushes: usize,
 }
 
 impl RecordingHost {
@@ -125,5 +173,29 @@ impl ScriptHost for RecordingHost {
     fn random_u32(&mut self) -> u32 {
         self.random_seq = self.random_seq.wrapping_add(1);
         self.random_seq
+    }
+
+    fn linked(&mut self) -> bool {
+        self.linked
+    }
+
+    fn send(&mut self, bytes: &[u8]) -> Result<(), TtlError> {
+        self.sent.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    /// The recorded input, then `None` for ever — which stands in for both a
+    /// timeout and a closed line, and is what keeps a test from blocking.
+    fn read_byte(&mut self, _timeout: Option<Duration>) -> Option<u8> {
+        self.input.pop_front()
+    }
+
+    fn flush_recv(&mut self) {
+        self.flushes += 1;
+        self.input.clear();
+    }
+
+    fn sleep(&mut self, d: Duration) {
+        self.slept += d;
     }
 }

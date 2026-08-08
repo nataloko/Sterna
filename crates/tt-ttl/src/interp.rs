@@ -20,6 +20,7 @@ use crate::host::{ErrorReport, ScriptHost};
 use crate::lexer::{check_reserved, Lexer};
 use crate::rsv::Rsv;
 use crate::vars::{VarRef, VarType, Vars};
+use crate::wait::{RecvLine, WaitSet};
 
 /// A guard where upstream leans on `calloc` failing.
 ///
@@ -44,6 +45,9 @@ pub struct Interp {
     parse_again: bool,
     /// `TTLStatus == IdTTLEnd`.
     ended: bool,
+    /// The `wait` patterns, and the line the far end is part-way through.
+    pub(crate) waits: WaitSet,
+    pub(crate) recv_line: RecvLine,
 }
 
 impl Interp {
@@ -58,6 +62,8 @@ impl Interp {
             end_if_flag: 0,
             parse_again: false,
             ended: false,
+            waits: WaitSet::new(),
+            recv_line: RecvLine::new(),
         };
         it.buf.open(name.into(), body);
         it.define_system_variables(&[]);
@@ -426,6 +432,9 @@ impl Interp {
     /// says so with the code upstream uses for a word it does not know.
     fn command(&mut self, host: &mut dyn ScriptHost, w: Rsv) -> TtlResult<()> {
         if let Some(r) = self.string_command(host, w) {
+            return r;
+        }
+        if let Some(r) = self.connection_command(host, w) {
             return r;
         }
         match w {

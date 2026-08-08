@@ -89,13 +89,30 @@ files behind it. It does not belong in a parser.
 | `buffer.rs` | `ttmbuff.c` — the include stack, the control stack, the line reader |
 | `interp.rs` | `ExecCmnd` — the four skip flags, assignment, and control flow |
 | `strcmds.rs` | the string and integer commands |
+| `wait.rs` | `ttmdde.c`'s matchers — `Wait`, `Wait2`, `WaitN` and the line buffer |
+| `conncmds.rs` | `send`, the `wait` family, `pause`, `flushrecv` |
 | `host.rs` | the seam, and a host that records |
 
-Still to come: the connection commands (`send`, `wait`, `connect`, the transfer
-protocols), the file commands, the dialogs, and the regex family — `sprintf`,
-`strmatch`, `strreplace` and `waitregex`. Upstream validates `sprintf`'s format
-specifiers with Oniguruma and matches with it too, so **which regex dialect this
-speaks is a compatibility decision of its own** and is not made yet.
+Still to come: the rest of the connection commands (`connect`, `disconnect`,
+`testlink`, the transfer protocols, the serial control lines), the file
+commands, the dialogs, and the regex family — `sprintf`, `strmatch`,
+`strreplace` and `waitregex`. Upstream validates `sprintf`'s format specifiers
+with Oniguruma and matches with it too, so **which regex dialect this speaks is
+a compatibility decision of its own** and is not made yet.
+
+## An upstream defect, reproduced
+
+`waitn` turns off the line buffer's clear-on-newline so that it can count bytes
+across line breaks, and turns it back on again **only on the success path**.
+`ttmmain.cpp`'s timeout arm sets `result` and `inputstr` and never calls
+`ClearWaitN`, so after a `waitn` that timed out, every later `inputstr` in that
+run accumulates across lines instead of holding one.
+
+It is reproduced, because the rule here is fidelity and because a script cannot
+sensibly depend on it either way. It is **not** in `docs/upstream-bugs.md`: that
+file holds defects proven by running the two engines against each other, and
+this one is a reading of the source that has not been demonstrated against a
+real `ttpmacro.exe`. Demonstrate it on Windows in Stage 3 before filing it.
 
 ## Tests
 
