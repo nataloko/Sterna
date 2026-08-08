@@ -154,10 +154,17 @@ static void settings_defaults(int cols, int rows, const char *term_id, int cr_re
 	ts.TermFlag = TF_ACCEPT8BITCTRL | TF_CTRLINKANJI | TF_ENABLESLINE |
 	              TF_ALTSCR | TF_LOCKTUID | TF_REMOTECLEARSBUFF;
 
-	/* ttset.c:1653 WindowCtrlSequence=on, :1661 WindowReportSequence=on.
-	 * CursorCtrlSequence defaults off; TitleReportSequence defaults "Empty",
-	 * which sets no WF_TITLEREPORT bit. */
-	ts.WindowFlag = WF_WINDOWCHANGE | WF_WINDOWREPORT;
+	/* ttset.c:1653 WindowCtrlSequence=on, :1661 WindowReportSequence=on,
+	 * :1664 TitleReportSequence="Empty". CursorCtrlSequence defaults off.
+	 *
+	 * IdTitleReportEmpty is 24, which is WF_TITLEREPORT entire (8|16) — so
+	 * the default sets BOTH bits and `WindowFlag & WF_TITLEREPORT` lands on
+	 * the `default:` arm, where CSI 20 t and CSI 21 t answer with an empty
+	 * OSC string. This line used to say the default set no bit, which made
+	 * the oracle a Tera Term with title reporting switched off: the same
+	 * "an initialiser is not a default" trap as the flag words, in a
+	 * constant whose name reads like zero and is not. */
+	ts.WindowFlag = WF_WINDOWCHANGE | WF_WINDOWREPORT | IdTitleReportEmpty;
 
 	/* ttset.c:1537 DecSpMappingDir defaults to IdDecSpecialDoNot, not the
 	 * IdDecSpecialUniToDec that a zeroed struct produces. :1546

@@ -101,6 +101,22 @@ pub struct Config {
     /// `WF_WINDOWREPORT` (`ttset.c:1661`, key default on). Gates the ones that
     /// answer back.
     pub window_report: bool,
+    /// `WF_TITLEREPORT` (`ttset.c:1664`). Three-valued upstream and shipped as
+    /// **`Empty`**: `CSI 20 t` and `CSI 21 t` are answered, but with an empty
+    /// OSC string rather than with the title. That is a deliberate mitigation —
+    /// a terminal that echoes its own title into the input stream lets anything
+    /// that can write to the screen put text in front of the shell — and it is
+    /// what this models when true. False is upstream's `ignore`, which answers
+    /// nothing at all.
+    ///
+    /// The third mode, `accept`, reports the real title, and its four spellings
+    /// interleave `ts.Title` from the INI with the remote one. That needs the
+    /// settings surface, so it is not offered here rather than being guessed at.
+    pub title_report: bool,
+    /// `ts.AcceptTitleChangeRequest`, as the boolean the title stack uses it as
+    /// (`vtterm.c:2758`). Upstream's default is `overwrite`, so: on. The full
+    /// four-way enum is `TERATERM.INI`'s and belongs to Stage 2's schema.
+    pub accept_title_change: bool,
     /// DECRQCRA, the rectangular-area checksum — **and the one thing here that
     /// is not upstream's**. Tera Term has no `CSI * y` at all; `vtterm.c` never
     /// mentions a checksum, so the faithful answer to the request is silence,
@@ -216,6 +232,8 @@ impl Default for Config {
             remote_clears_buffer: true,
             window_change: true,
             window_report: true,
+            title_report: true,
+            accept_title_change: true,
             decrqcra: false,
             send_8bit_ctrl: false,
             cursor_shape: 1,
@@ -654,6 +672,9 @@ struct State {
     alt_screen: bool,
     reply: Vec<u8>,
     title: String,
+    /// `TitleStack` (`vtterm.c:2757`) — what `CSI 22 t` puts away and
+    /// `CSI 23 t` brings back.
+    title_stack: Vec<String>,
     /// `ts.CRReceive == Auto` keeps one byte of history to collapse CR+LF.
     prev_was_cr: bool,
     prev_was_lf: bool,
@@ -695,6 +716,7 @@ impl State {
             alt_screen: false,
             reply: Vec::new(),
             title: String::new(),
+            title_stack: Vec::new(),
             prev_was_cr: false,
             prev_was_lf: false,
             auto_generated_crlf: false,
@@ -1377,6 +1399,20 @@ impl State {
 
     /// `vtterm.c:SendDCSstr` — `ESC P … ESC \`, or the 8-bit `DCS … ST` when
     /// the terminal has been told it may.
+    /// `vtterm.c:SendOSCstr` — `ESC ] … ST`, terminated with ST rather than
+    /// BEL because that is what the title reports pass.
+    fn send_osc(&mut self, body: &str) {
+        if self.send_8bit {
+            self.send(&[0x9d]);
+            self.send(body.as_bytes());
+            self.send(&[0x9c]);
+        } else {
+            self.send(b"\x1b]");
+            self.send(body.as_bytes());
+            self.send(b"\x1b\\");
+        }
+    }
+
     fn send_dcs(&mut self, body: &str) {
         if self.send_8bit {
             self.send(&[0x90]);
@@ -1521,6 +1557,27 @@ impl State {
             18 if self.config.window_report => {
                 let body = format!("8;{};{}t", self.grid.rows(), self.grid.cols());
                 self.send_csi(&body);
+            }
+            // Report icon label and window title. Gated on the *title* setting,
+            // not on `WF_WINDOWREPORT`, and answered empty — see
+            // `Config::title_report`.
+            20 if self.config.title_report => self.send_osc("L"),
+            21 if self.config.title_report => self.send_osc("l"),
+            // Push and pop the title — `vtterm.c:2751`. The parameter names
+            // which of icon and window title to stack, and all three values
+            // do the same thing upstream because there is only one title.
+            22 if self.config.accept_title_change => {
+                if matches!(arg0(params, 1), 0..=2) {
+                    let title = self.title.clone();
+                    self.title_stack.push(title);
+                }
+            }
+            23 if self.config.accept_title_change => {
+                if matches!(arg0(params, 1), 0..=2) {
+                    if let Some(title) = self.title_stack.pop() {
+                        self.title = title;
+                    }
+                }
             }
             _ => {}
         }
@@ -2337,6 +2394,7 @@ impl Perform for State {
                 self.charset.reset();
                 self.saved_charset = [None, None];
                 self.title.clear();
+                self.title_stack.clear();
                 self.rect_mode = false;
                 self.lr_margin_mode = false;
                 // `ResetTerminal` ends with `ChangeTerminalID()`
