@@ -1,9 +1,9 @@
 // The window, connecting over SSH, against a real server.
 //
-// Copyright (c) the termitta authors. 3-clause BSD; see LICENSE.
+// Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 //
 //   cd ssh-audit && ./servers.sh start
-//   D=$XDG_RUNTIME_DIR/termitta-ssh-audit
+//   D=$XDG_RUNTIME_DIR/sterna-ssh-audit
 //   TT_SSH_HOST=127.0.0.1 TT_SSH_PORT=2222 TT_SSH_USER=$USER
 //   TT_SSH_KEY=$D/id_ed25519 QT_QPA_PLATFORM=offscreen ./build/ssh_test
 //   cd ssh-audit && ./servers.sh stop

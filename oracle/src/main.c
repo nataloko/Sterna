@@ -1,5 +1,5 @@
 /*
- * termitta oracle — runner.
+ * Sterna oracle — runner.
  *
  * Reads a byte stream, drives Tera Term's real VT state machine over it, and
  * writes a stable textual dump of the resulting screen. The dump is the
@@ -262,7 +262,7 @@ static void dump(FILE *out, int cols, int rows, const char *term_id, int want_at
 	const char *title;
 	int y;
 
-	fprintf(out, "# termitta-oracle 1\n");
+	fprintf(out, "# sterna-oracle 1\n");
 	fprintf(out, "# term %s %dx%d\n", term_id, cols, rows);
 	fprintf(out, "# cursor %d,%d\n", CursorX, CursorY);
 

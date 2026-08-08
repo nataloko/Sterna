@@ -1,6 +1,6 @@
 // The window, running a local shell.
 //
-// Copyright (c) the termitta authors. 3-clause BSD; see LICENSE.
+// Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 //
 //   QT_QPA_PLATFORM=offscreen ./build/pty_test
 //
@@ -165,7 +165,7 @@ void test_a_program_that_does_not_exist_reports_rather_than_connects()
 {
     Session session(40, 10);
     QString error;
-    CHECK(!session.connectPty({QStringLiteral("termitta-no-such-program")}, &error));
+    CHECK(!session.connectPty({QStringLiteral("sterna-no-such-program")}, &error));
     CHECK(!error.isEmpty());
     CHECK(!session.isConnected());
 }

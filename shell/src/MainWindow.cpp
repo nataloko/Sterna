@@ -1,4 +1,4 @@
-// Copyright (c) the termitta authors. 3-clause BSD; see LICENSE.
+// Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 
 #include "MainWindow.h"
 
@@ -109,7 +109,7 @@ QString MainWindow::settingsPath()
 {
     const QString dir =
         QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    return QDir(dir).filePath(QStringLiteral("termitta.ini"));
+    return QDir(dir).filePath(QStringLiteral("sterna.ini"));
 }
 
 void MainWindow::onSettingsChanged()

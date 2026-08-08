@@ -1,6 +1,6 @@
 // What the painter actually puts on screen.
 //
-// Copyright (c) the termitta authors. 3-clause BSD; see LICENSE.
+// Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 //
 // `QWidget::grab()` re-renders the widget offscreen, which is exactly the
 // question here — and it is also the only screenshot that works in this
@@ -813,7 +813,7 @@ int main(int argc, char **argv)
     for (int i = 1; i + 1 < argc; i++) {
         if (strcmp(argv[i], "--write") == 0) {
             Harness h;
-            h.feed("\033[2J\033[H\033[1;32mtermitta\033[0m on \033[31mserial\033[0m\r\n"
+            h.feed("\033[2J\033[H\033[1;32msterna\033[0m on \033[31mserial\033[0m\r\n"
                    "\033[4munderline\033[0m \033[7mreverse\033[0m \033[44;93mcolour\033[0m\r\n"
                    "\033(0lqqqk\033(B box  \xe5\x8c\x97\xe4\xba\xac wide  e\xcc\x81 combining\r\n");
             h.render();

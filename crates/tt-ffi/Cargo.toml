@@ -6,11 +6,11 @@ license.workspace = true
 repository.workspace = true
 description = "The flat C ABI over tt-session — what a frontend links against."
 
-# `termitta`, not `tt_ffi`: this is the shared library the Qt shell links, and
-# `-ltermitta` is what its CMakeLists will say. The rlib is here so Rust tests
+# `sterna`, not `tt_ffi`: this is the shared library the Qt shell links, and
+# `-lsterna` is what its CMakeLists will say. The rlib is here so Rust tests
 # can call the ABI without dlopen.
 [lib]
-name = "termitta"
+name = "sterna"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]

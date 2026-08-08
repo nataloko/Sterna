@@ -1,13 +1,13 @@
 // Colours and font metrics for the grid painter.
 //
-// Copyright (c) the termitta authors. 3-clause BSD; see LICENSE.
+// Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 
 #pragma once
 
 #include <QColor>
 #include <QFont>
 
-#include "termitta.h"
+#include "sterna.h"
 
 /// How a cell's attributes become two colours, and how big a character cell
 /// is.

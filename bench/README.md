@@ -13,13 +13,13 @@ crates/target/release/tt-bench   # the core half, on its own
 shell/build-release/bench_shell  # the shell half, on its own
 ```
 
-The Qt half needs the `termitta-fedora` container and its `$HOME/.local/bin` on
+The Qt half needs the `sterna-fedora` container and its `$HOME/.local/bin` on
 `PATH` for `uv`:
 
 ```sh
-distrobox-host-exec distrobox enter termitta-fedora --no-tty -- bash -lc '
+distrobox-host-exec distrobox enter sterna-fedora --no-tty -- bash -lc '
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-  cd ~/Projects/termitta
+  cd ~/Projects/Sterna
   cmake -S shell -B shell/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
   cmake --build shell/build-release --target bench_shell
   ./bench/bench.py'
@@ -39,7 +39,7 @@ shared runner had a bad minute.
 so is a **local** gate and never a CI one. Qt 6.4.2 in the Ubuntu container is
 seven releases behind the desktop's 6.11.1 and has already produced one false
 finding and one set of numbers flattering by 2x (see `CLAUDE.md`). Build it in
-`termitta-fedora`, in Release, and run it on the real desktop.
+`sterna-fedora`, in Release, and run it on the real desktop.
 
 ## What is measured
 

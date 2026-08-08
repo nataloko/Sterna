@@ -20,7 +20,7 @@
 #include <string.h>
 #include <time.h>
 
-#include <termitta.h>
+#include <sterna.h>
 
 /* Wait for the connection's descriptor, exactly as a frontend's event loop
  * does. A timeout is not a failure: readable is a wakeup, not a promise. */
@@ -576,7 +576,7 @@ static void test_settings(void)
     CHECK(tt_session_rows(s) == 40);
     CHECK(strcmp(tt_session_setting(s, "terminal.id"), "VT100") == 0);
 
-    CHECK_OK(tt_session_set_setting(s, "terminal.title", "termitta"));
+    CHECK_OK(tt_session_set_setting(s, "terminal.title", "sterna"));
     CHECK_OK(tt_session_settings_save(s, path));
     f2 = fopen(path, "rb");
     CHECK(f2 != NULL);
@@ -587,7 +587,7 @@ static void test_settings(void)
         CHECK(got > 0);
         CHECK(strstr(buf, "; a comment") != NULL);
         CHECK(strstr(buf, "SomethingElse=kept") != NULL);
-        CHECK(strstr(buf, "Title=termitta") != NULL);
+        CHECK(strstr(buf, "Title=sterna") != NULL);
         remove(path);
     }
 
@@ -1126,7 +1126,7 @@ static void test_transfer(void)
 
 int main(void)
 {
-    printf("termitta core %s\n", tt_version());
+    printf("Sterna core %s\n", tt_version());
     test_screen();
     test_attributes();
     test_scrollback_viewport();

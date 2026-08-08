@@ -25,7 +25,7 @@ Clamp in BuffEraseCharsInLine() rather than at the call site, so every caller
 is covered and Count stays consistent with the redraw range computed from it
 further down.
 
-Reproduction, via the termitta oracle (which runs vtterm.c + buffer.c headless).
+Reproduction, via the Sterna oracle (which runs vtterm.c + buffer.c headless).
 Eleven characters, then erase to end of line -- row 4 is never written to:
 
     printf 'ECH line\033[999X' | oracle --cols 40 --rows 6 --attrs

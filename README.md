@@ -53,7 +53,7 @@ replaceable because it only ever sees POD types.
 ┌─ Qt 6 Widgets (C++) ──── swappable: Tauri / TUI / headless ─┐
 │  grid painter · .ui dialogs · clipboard · menus              │
 └──────────────────── C ABI (cbindgen) ───────────────────────┘
-┌─ termitta-core (Rust) ──────────────────────────────────────┐
+┌─ Sterna core (Rust) ────────────────────────────────────────┐
 │  vt · grid · charset · conn · xfer · script · config · i18n │
 └─────────────────────────────────────────────────────────────┘
 ```

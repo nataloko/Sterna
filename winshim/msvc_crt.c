@@ -1,5 +1,5 @@
 /*
- * termitta oracle — MSVC Secure CRT / locale shim for POSIX. See msvc_crt.h.
+ * Sterna oracle — MSVC Secure CRT / locale shim for POSIX. See msvc_crt.h.
  */
 #define _GNU_SOURCE
 #include <time.h>

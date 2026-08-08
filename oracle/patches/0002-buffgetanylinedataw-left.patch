@@ -25,7 +25,7 @@ sole caller (filesys_log.cpp:443): **session logging silently truncates lines**.
 0001 truncates at the first full-width character; this one truncates any line
 carrying combining marks, at about half the terminal width.
 
-Reproduction, via the termitta oracle (which runs vtterm.c + buffer.c headless).
+Reproduction, via the Sterna oracle (which runs vtterm.c + buffer.c headless).
 Eight copies of "A U+3099 SPACE" into a 12-column terminal -- the cursor
 arithmetic proves the buffer holds six of them on the first row:
 

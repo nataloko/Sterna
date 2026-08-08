@@ -8,10 +8,10 @@ the host is Bluefin, an image-based Fedora where layering an rpm is the awkward
 path and a self-contained binary is the ordinary one.
 
 ```sh
-# Qt work happens in the termitta-fedora container. See CLAUDE.md for why.
-distrobox-host-exec distrobox enter termitta-fedora --no-tty -- bash -lc '
-  cd ~/Projects/termitta/packaging/appimage
-  ./build.sh              # → build/termitta-x86_64.AppImage
+# Qt work happens in the sterna-fedora container. See CLAUDE.md for why.
+distrobox-host-exec distrobox enter sterna-fedora --no-tty -- bash -lc '
+  cd ~/Projects/Sterna/packaging/appimage
+  ./build.sh              # → build/sterna-x86_64.AppImage
   ./build.sh --clean      # ...from scratch
   ./build.sh --run        # ...and start it
 '
@@ -25,7 +25,7 @@ tree does not pay.
 ## The base is the decision, and it is not settled
 
 An AppImage's floor is the glibc it was linked against. This one is built in
-`termitta-fedora`, so:
+`sterna-fedora`, so:
 
 | | |
 |---|---|
@@ -62,7 +62,7 @@ distribution's Qt, which costs nothing. An AppImage bundles it, so Linux now
 carries the same LGPLv3 obligations Windows does, and `build.sh` discharges
 them: Qt stays dynamically linked as separate shared libraries, `LGPL-3.0.txt`
 and `GPL-3.0.txt` and `QT-LGPL-NOTICE.md` go **inside** the image under
-`usr/share/doc/termitta/`, and `BUILD-INFO.txt` records the exact Qt version and
+`usr/share/doc/sterna/`, and `BUILD-INFO.txt` records the exact Qt version and
 base so the offer of source points at something specific.
 
 Substituting your own Qt is `--appimage-extract`, drop the library in, repack —
@@ -116,15 +116,15 @@ The three checks worth running, because two of the failures above are silent:
 
 ```sh
 # 1. it starts on the HOST, where no build tree and no Qt devel exist
-QT_QPA_PLATFORM=offscreen timeout 8 ./termitta-x86_64.AppImage --shell -- /bin/echo hi
+QT_QPA_PLATFORM=offscreen timeout 8 ./sterna-x86_64.AppImage --shell -- /bin/echo hi
 
 # 2. a window really maps — not just "the process stayed alive"
-WAYLAND_DEBUG=1 timeout 8 ./termitta-x86_64.AppImage --shell -- /bin/echo hi 2>&1 |
+WAYLAND_DEBUG=1 timeout 8 ./sterna-x86_64.AppImage --shell -- /bin/echo hi 2>&1 |
     grep -E 'get_xdg_surface|set_title'
 
 # 3. it is OUR Qt that loaded, not the host's
-./termitta-x86_64.AppImage --shell -- /bin/sleep 30 & sleep 3
-grep -o '/[^ ]*libQt6Core[^ ]*' /proc/$(pgrep -n -f usr/bin/termitta)/maps | sort -u
+./sterna-x86_64.AppImage --shell -- /bin/sleep 30 & sleep 3
+grep -o '/[^ ]*libQt6Core[^ ]*' /proc/$(pgrep -n -f usr/bin/sterna)/maps | sort -u
 #   → /tmp/.mount_termit*/usr/lib/libQt6Core.so.6, not /usr/lib64/...
 ```
 

@@ -1,4 +1,4 @@
-# Working notes for termitta
+# Working notes for Sterna
 
 Read `PLAN.md` for the roadmap and current stage. This file is the working
 agreements and the traps.
@@ -9,8 +9,8 @@ A cross-platform Tera Term successor: Rust core + flat C ABI + Qt 6 Widgets
 shell, Linux and Windows. **Not** a fork of Tera Term and **not** aiming at
 parity — see `PLAN.md` for scope.
 
-`termitta` is a working name; the real one is still undecided (the current one is
-already taken in the wild).
+Sterna is the settled project name. The mark is a banked tern tracing an
+S-shaped flight path.
 
 ## Ground rules
 
@@ -66,9 +66,9 @@ TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
 TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
   cargo test -p tt-session -- --test-threads=1   # one package at a time
 cd ../ssh-audit && ./servers.sh start            # + the SSH tests need a server
-D=$XDG_RUNTIME_DIR/termitta-ssh-audit
+D=$XDG_RUNTIME_DIR/sterna-ssh-audit
 TT_SSH_HOST=127.0.0.1 TT_SSH_PORT=2222 TT_SSH_USER=$USER \
-  TT_SSH_KEY=$D/id_ed25519 TT_SSH_PW_USER=termitta-test \
+  TT_SSH_KEY=$D/id_ed25519 TT_SSH_PW_USER=sterna-test \
   TT_SSH_PASS=spike5-not-a-secret \
   cargo test -p tt-conn --test ssh -- --test-threads=1   # ...and PORT=2223
 cd ../telnet-audit && ./servers.sh start          # needs no sudo, no accounts
@@ -83,7 +83,7 @@ cargo +nightly fuzz run telnet       # ...and the decoder that reads a server
 cargo +nightly fuzz tmin vt_stream artifacts/vt_stream/<file>
 
 cd shell                         # the Qt 6 frontend — build it in
-                                 # termitta-fedora, never here
+                                 # sterna-fedora, never here
 cmake -S . -B build -G Ninja && cmake --build build
 ./build/render_test              # the painter, asserted against grabbed pixels
 ./build/render_test --write /tmp # ...and dumped as a PNG to look at
@@ -93,18 +93,18 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/pty_test                 # ...and over a local shell, which needs nothing
 ./build/xfer_test                # a ZMODEM send, driven by the event loop
 ./build/xfer_test --write /tmp   # ...and the transfer dialogs, as PNGs
-./build/termitta --port /dev/ttyUSB0 --baud 115200
-./build/termitta myrouter        # an alias out of ~/.ssh/config
-./build/termitta --shell         # a local login shell
+./build/sterna --port /dev/ttyUSB0 --baud 115200
+./build/sterna myrouter        # an alias out of ~/.ssh/config
+./build/sterna --shell         # a local login shell
 
 ./bench/bench.py --core          # the perf gate's half that runs anywhere
-./bench/bench.py                 # ...and the Qt half, in termitta-fedora only
+./bench/bench.py                 # ...and the Qt half, in sterna-fedora only
 ./bench/bench.py --update        # re-record baseline.json, on a QUIET machine
 cmake --build shell/build-release --target bench_shell   # it is EXCLUDE_FROM_ALL
 
 cd packaging/appimage            # the only Linux artifact — build it in
-                                 # termitta-fedora, never here
-./build.sh                       # → build/termitta-x86_64.AppImage
+                                 # sterna-fedora, never here
+./build.sh                       # → build/sterna-x86_64.AppImage
 ./build.sh --clean               # ...from scratch
 ./build.sh --run                 # ...and start it
 
@@ -150,7 +150,7 @@ and drops into interactive mode instead of speaking the protocol.
 `$HOME/.cargo/bin` first or `cargo: command not found` will look like a missing
 toolchain. It isn't; don't reinstall it.
 
-`termitta-fedora` needs **`lrzsz`** too, for `shell/build/xfer_test` (added
+`sterna-fedora` needs **`lrzsz`** too, for `shell/build/xfer_test` (added
 2026-08-08).
 
 Two packages were added on 2026-08-07 and a rebuilt container will need them
@@ -183,14 +183,14 @@ no new hardware. Confirmed working: data both directions, DTR→DSR, RTS→CTS,
 break visible in-stream as a NUL, 9600 through 3000000 baud clean, and RTS/CTS
 hardware flow control. Only a physical unplug/replug still needs the user.
 
-### Qt work goes in the `termitta-fedora` container, not this one
+### Qt work goes in the `sterna-fedora` container, not this one
 
 This container has Qt **6.4.2**; the desktop runs **6.11.1**. That gap has
 already manufactured one false finding — see the traps. So there is a second
 distrobox, created 2026-08-07:
 
 ```sh
-distrobox-host-exec distrobox enter termitta-fedora --no-tty -- <command>
+distrobox-host-exec distrobox enter sterna-fedora --no-tty -- <command>
 ```
 
 Fedora 44, Qt **6.11.1** — an exact match for the host — plus `gcc-c++`,
@@ -525,7 +525,7 @@ And for SSH:
   A test that asserts a configured terminal size has to `resize(sizeHint())`
   first, or it is measuring the screen rather than the code.
 - **Anything that constructs a `MainWindow` now reads the developer's own
-  settings**, because the window loads `termitta.ini` — and the terminal's
+  settings**, because the window loads `sterna.ini` — and the terminal's
   *size* is in it. `bench_shell` calls `QStandardPaths::setTestModeEnabled`
   before `QApplication` for that reason: otherwise a 132x50 in somebody's file
   silently benchmarks a different window from the baseline's, consistently, for
@@ -733,7 +733,7 @@ And for the desktop side:
   `QT_WAYLAND_CLIENT_BUFFER_INTEGRATION` appears to fix it. **On Qt 6.11.1 none
   of that is true** — Mesa is never mapped, Wayland costs 3 MB more than X11,
   and the variable does nothing. Startup and RSS were also flattering by ~2x.
-  A whole false optimisation, from one version gap. Use `termitta-fedora`.
+  A whole false optimisation, from one version gap. Use `sterna-fedora`.
 - **You can screenshot your own widgets, not the desktop.**
   `org.gnome.Shell.Screenshot` returns `AccessDenied` (locked down since
   GNOME 45), `QScreen::grabWindow(0)` is uniform-blank under xcb — host windows
@@ -743,8 +743,8 @@ And for the desktop side:
   Full-desktop capture needs the xdg-desktop-portal Screenshot API, which
   prompts the user every time.
 - **Cargo does not give a cdylib a `DT_SONAME`.** So whatever links against
-  `libtermitta.so` records the path it was *handed*, and the shell built out of
-  tree got a relative `DT_NEEDED` of `cargo/debug/libtermitta.so` — it ran from
+  `libsterna.so` records the path it was *handed*, and the shell built out of
+  tree got a relative `DT_NEEDED` of `cargo/debug/libsterna.so` — it ran from
   the build directory and nowhere else, reporting a missing file that plainly
   exists. Fixed in `tt-ffi/build.rs` with `rustc-cdylib-link-arg`, which
   applies to the cdylib alone; the same flag through `RUSTFLAGS` would attach a
@@ -862,7 +862,7 @@ regression suites for `tt-xfer` and `tt-conn`, and every claim in `PLAN.md`'s
 spike sections is reproducible from them.
 
 `ssh-audit/servers.sh` needs `sudo`: it runs sshd and dropbear on localhost
-ports and creates a throwaway `termitta-test` account. **Run `./servers.sh stop`
+ports and creates a throwaway `sterna-test` account. **Run `./servers.sh stop`
 when done** — that is what removes the account.
 
 **`winshim/` is shared by three consumers** — `oracle/`, `xfer/` and

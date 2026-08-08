@@ -1,7 +1,7 @@
 # Qt in this AppImage, and what that obliges
 
 This image bundles **Qt 6** under the **GNU Lesser General Public License,
-version 3**. termitta itself is 3-clause BSD (`LICENSE`); Qt is not ours and is
+version 3**. Sterna itself is 3-clause BSD (`LICENSE`); Qt is not ours and is
 carried here under different terms, which this file exists to honour rather
 than to summarise.
 
@@ -19,9 +19,9 @@ packaging.
 SquashFS with the runtime in front of it, so the substitution is:
 
 ```sh
-./termitta-x86_64.AppImage --appimage-extract    # gives ./squashfs-root
+./sterna-x86_64.AppImage --appimage-extract    # gives ./squashfs-root
 cp /path/to/your/libQt6Widgets.so.6 squashfs-root/usr/lib/
-appimagetool squashfs-root termitta-x86_64.AppImage
+appimagetool squashfs-root sterna-x86_64.AppImage
 ```
 
 `squashfs-root/AppRun` also runs directly, so a modified tree needs no repacking
@@ -33,11 +33,11 @@ packaged by the distribution named in `BUILD-INFO.txt`, which records the exact
 version and the source it came from. Complete corresponding source for those
 libraries is available from that distribution's source archive, and from
 <https://download.qt.io/official_releases/qt/>. If neither is reachable to you,
-ask via <https://github.com/nataloko/termitta/issues> and it will be provided.
+ask via <https://github.com/nataloko/Sterna/issues> and it will be provided.
 
 ## What is *not* under the LGPL
 
-Everything in `usr/bin/termitta` and `usr/lib/libtermitta.so` is termitta's own
+Everything in `usr/bin/sterna` and `usr/lib/libsterna.so` is Sterna's own
 code, 3-clause BSD, including the parts derived from Tera Term — which is BSD
 too, so the shipped image carries one licence text for all of it rather than
 two. See `ATTRIBUTION.md` in the source tree for what came from where.

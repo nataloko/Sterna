@@ -1,16 +1,16 @@
-// Copyright (c) the termitta authors. 3-clause BSD; see LICENSE.
+// Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QIcon>
 
 #include "MainWindow.h"
-#include "termitta.h"
+#include "sterna.h"
 
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
-    QCoreApplication::setApplicationName(QStringLiteral("termitta"));
+    QCoreApplication::setApplicationName(QStringLiteral("sterna"));
     QGuiApplication::setApplicationDisplayName(QStringLiteral("Sterna"));
     QCoreApplication::setApplicationVersion(QString::fromUtf8(tt_version()));
     app.setWindowIcon(QIcon(QStringLiteral(":/branding/sterna.svg")));
@@ -44,7 +44,7 @@ int main(int argc, char **argv)
                        "auto-detected elsewhere, which is what a terminal "
                        "server's per-line port needs."));
     // A local shell takes no argument, so the positional list is free for the
-    // command to run — `termitta --shell -- journalctl -f` — the same spelling
+    // command to run — `sterna --shell -- journalctl -f` — the same spelling
     // `xterm -e` and `gnome-terminal --` use.
     QCommandLineOption shellOption(
         {QStringLiteral("s"), QStringLiteral("shell")},

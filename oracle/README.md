@@ -1,4 +1,4 @@
-# termitta oracle
+# Sterna oracle
 
 Builds Tera Term's **real** VT engine headless on Linux, so the Rust
 reimplementation can be diffed against ground truth on every commit.
@@ -7,7 +7,7 @@ reimplementation can be diffed against ground truth on every commit.
 printf 'Hi\033[3;5HThere' | ./build/oracle --cols 20 --rows 4
 ```
 ```
-# termitta-oracle 1
+# sterna-oracle 1
 # term vt100 20x4
 # cursor 9,2
   0 |Hi                  |

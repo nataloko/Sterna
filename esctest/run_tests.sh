@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# termitta conformance suite: iTerm2's esctest, run against the Rust engine.
+# Sterna conformance suite: iTerm2's esctest, run against the Rust engine.
 #
 # esctest is not a recording. It runs as an ordinary program on a pty, writes an
 # escape sequence and then *reads the answer back* — cursor position, mode

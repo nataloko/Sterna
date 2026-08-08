@@ -256,7 +256,7 @@ async fn auth_cases(user: &str, pass: &str) -> Vec<(String, Result<String, Strin
 #[tokio::main]
 async fn main() {
     let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or("/tmp".into())
-        + "/termitta-ssh-audit";
+        + "/sterna-ssh-audit";
     let keyfile = format!("{dir}/id_rsa");
     let user = std::env::var("USER").unwrap_or("nata".into());
 
@@ -287,7 +287,7 @@ async fn main() {
     }
 
     println!();
-    for (label, r) in auth_cases("termitta-test", "spike5-not-a-secret").await {
+    for (label, r) in auth_cases("sterna-test", "spike5-not-a-secret").await {
         match r {
             Ok(note) => { println!("  ok   openssh   {label:<38} {note}"); pass += 1; }
             Err(e) => {

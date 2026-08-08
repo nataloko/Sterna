@@ -8,17 +8,17 @@ trait object or an allocator — and nothing Win32- or Qt-shaped comes back the
 other way. No `HWND`, no `QWidget`, no fonts, no glyphs, and no pixels beyond
 `cell_w`/`cell_h`.
 
-Builds as `libtermitta.so` / `termitta.a` (and an rlib), with the header at
-`include/termitta.h`.
+Builds as `libsterna.so` / `sterna.a` (and an rlib), with the header at
+`include/sterna.h`.
 
 ```sh
-cargo build -p tt-ffi     # also regenerates include/termitta.h
+cargo build -p tt-ffi     # also regenerates include/sterna.h
 ./run_abi.sh              # compile the header and drive it from C and C++
 ```
 
 ## The header is generated, committed, and gated
 
-`build.rs` runs cbindgen on every build and writes `include/termitta.h`. The
+`build.rs` runs cbindgen on every build and writes `include/sterna.h`. The
 generated file is **committed**, and CI fails if regenerating it produces a
 diff.
 

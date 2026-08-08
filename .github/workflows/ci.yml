@@ -38,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          path: termitta
+          path: Sterna
       - uses: actions/checkout@v4
         with:
           repository: TeraTermProject/teraterm
@@ -51,9 +51,9 @@ jobs:
         with:
           version: latest
       - name: Build
-        run: make -C termitta/oracle
+        run: make -C Sterna/oracle
       - name: Regression suite
-        run: make -C termitta/oracle test
+        run: make -C Sterna/oracle test
 
   xfer:
     name: xfer — file-transfer protocol interop
@@ -61,7 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          path: termitta
+          path: Sterna
       - uses: actions/checkout@v4
         with:
           repository: TeraTermProject/teraterm
@@ -72,9 +72,9 @@ jobs:
         # interactive mode instead of speaking the protocol.
         run: sudo apt-get update && sudo apt-get install -y lrzsz gkermit
       - name: Build
-        run: make -C termitta/xfer
+        run: make -C Sterna/xfer
       - name: Interop suite
-        run: cd termitta/xfer && ./run_tests.sh
+        run: cd Sterna/xfer && ./run_tests.sh
 
   rust:
     name: rust — audits build and lint
@@ -103,7 +103,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          path: termitta
+          path: Sterna
       - uses: actions/checkout@v4
         with:
           repository: TeraTermProject/teraterm
@@ -117,7 +117,7 @@ jobs:
           version: latest
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: termitta/crates -> target
+          workspaces: Sterna/crates -> target
       # tt-conn depends on serialport, which needs libudev to enumerate.
       # Without this the whole core job fails to build, not just tt-conn.
       #
@@ -130,11 +130,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libudev-dev dropbear-bin openssh-server \
               inetutils-telnetd
-          cd termitta/ssh-audit && ./servers.sh start
+          cd Sterna/ssh-audit && ./servers.sh start
           cd ../telnet-audit && ./servers.sh start
       - name: Lint
         run: |
-          cd termitta/crates
+          cd Sterna/crates
           cargo fmt --check
           cargo clippy --all-targets --locked -- -D warnings
       # tt-conn's serial tests need two ports wired back-to-back and skip
@@ -146,7 +146,7 @@ jobs:
       # stable tests, so they gate every push. The libFuzzer half needs nightly
       # and minutes, and has a job of its own below.
       - name: Unit tests
-        run: cd termitta/crates && cargo test --locked
+        run: cd Sterna/crates && cargo test --locked
       # And again with the servers named, which is what turns the eleven
       # skipped SSH cases into eleven that ran. Both servers, because spike 5's
       # second finding was that embedded implementations are narrow in
@@ -154,12 +154,12 @@ jobs:
       - name: SSH transport, against OpenSSH and dropbear
         env:
           TT_SSH_HOST: 127.0.0.1
-          TT_SSH_PW_USER: termitta-test
+          TT_SSH_PW_USER: sterna-test
           TT_SSH_PASS: spike5-not-a-secret
         run: |
-          cd termitta/crates
+          cd Sterna/crates
           export TT_SSH_USER=$USER
-          export TT_SSH_KEY=${XDG_RUNTIME_DIR:-/tmp}/termitta-ssh-audit/id_ed25519
+          export TT_SSH_KEY=${XDG_RUNTIME_DIR:-/tmp}/sterna-ssh-audit/id_ed25519
           # One thread: the servers refuse concurrent unauthenticated
           # connections above their own limits (OpenSSH's MaxStartups is
           # 10:30:100, dropbear's is lower), and the refusals look like
@@ -178,14 +178,14 @@ jobs:
           TT_TELNET_HOST: 127.0.0.1
           TT_TELNET_PORT: 2323
         run: |
-          cd termitta/crates
+          cd Sterna/crates
           export TT_SSH_USER=$USER
-          export TT_SSH_KEY=${XDG_RUNTIME_DIR:-/tmp}/termitta-ssh-audit/id_ed25519
+          export TT_SSH_KEY=${XDG_RUNTIME_DIR:-/tmp}/sterna-ssh-audit/id_ed25519
           ./tt-ffi/run_abi.sh
       - name: The committed header matches the source
         run: |
-          cd termitta
-          git diff --exit-code -- crates/tt-ffi/include/termitta.h
+          cd Sterna
+          git diff --exit-code -- crates/tt-ffi/include/sterna.h
       # The gate that matters: every case in oracle/cases/ is fed to BOTH the
       # Rust engine and Tera Term's real one, and the two dumps must be
       # identical. No golden files are involved — the oracle is the expectation.
@@ -196,13 +196,13 @@ jobs:
       # allocation, a scrollback that copies. `--runs 1` because a floor an
       # order of magnitude down does not need the minimum of five.
       - name: Engine throughput, against the floor
-        run: cd termitta/crates && cargo run --release --locked -p tt-bench -- --check --runs 1
+        run: cd Sterna/crates && cargo run --release --locked -p tt-bench -- --check --runs 1
       - name: Differential suite vs the oracle
-        run: cd termitta && ./run_diff.sh
+        run: cd Sterna && ./run_diff.sh
       # And the same diff over Tera Term's own escape-sequence exercisers,
       # executed out of the pinned checkout rather than copied into the repo.
       - name: Differential suite over upstream's exercisers
-        run: cd termitta && ./run_upstream.sh
+        run: cd Sterna && ./run_upstream.sh
       # Removes the throwaway account the servers created. `always` because a
       # failed test must not leave it behind.
       - name: Telnet transport, against a real telnetd
@@ -210,11 +210,11 @@ jobs:
           TT_TELNET_HOST: 127.0.0.1
           TT_TELNET_PORT: 2323
           TT_TELNET_RAW_PORT: 2324
-        run: cd termitta/crates && cargo test --locked -p tt-conn --test telnet
+        run: cd Sterna/crates && cargo test --locked -p tt-conn --test telnet
       - name: Stop the servers
         if: always()
         run: |
-          cd termitta/ssh-audit && ./servers.sh stop
+          cd Sterna/ssh-audit && ./servers.sh stop
           cd ../telnet-audit && ./servers.sh stop
 
   esctest:
@@ -270,7 +270,7 @@ jobs:
       # qt6-base-dev is Qt 6.4.2 here and the desktop runs 6.11.1 — a gap that
       # has already produced one false finding, so this job's job is "does it
       # compile and does the painter still agree", NOT anything about
-      # behaviour or footprint. Measure those in the termitta-fedora
+      # behaviour or footprint. Measure those in the sterna-fedora
       # container; see CLAUDE.md.
       #
       # fonts-dejavu-core is not decoration: the render test compares a box
@@ -306,7 +306,7 @@ jobs:
         run: |
           cd shell
           export TT_SSH_USER=$USER
-          export TT_SSH_KEY=${XDG_RUNTIME_DIR:-/tmp}/termitta-ssh-audit/id_ed25519
+          export TT_SSH_KEY=${XDG_RUNTIME_DIR:-/tmp}/sterna-ssh-audit/id_ed25519
           ./build/ssh_test
       - name: Telnet, through the window's event loop
         env:

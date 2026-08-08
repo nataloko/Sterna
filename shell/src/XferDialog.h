@@ -1,6 +1,6 @@
 // The file-transfer dialogs: what to run, and how it is going.
 //
-// Copyright (c) the termitta authors. 3-clause BSD; see LICENSE.
+// Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 
 #pragma once
 
@@ -9,7 +9,7 @@
 #include <QStringList>
 
 #include "Session.h"
-#include "termitta.h"
+#include "sterna.h"
 
 class QCheckBox;
 class QComboBox;

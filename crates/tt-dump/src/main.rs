@@ -11,7 +11,7 @@
 //! them against each other. Nothing here is a golden file: the oracle *is* the
 //! expected output, so a new case needs an input and no blessing.
 //!
-//! The `# termitta-oracle 1` banner names the *format*, not the producer, so
+//! The `# sterna-oracle 1` banner names the *format*, not the producer, so
 //! both engines emit it unchanged — otherwise every diff would start with a
 //! spurious first-line mismatch.
 
@@ -255,7 +255,7 @@ fn parse_args() -> Result<Option<Args>, String> {
 fn dump(out: &mut impl Write, vt: &Vt, args: &Args) -> std::io::Result<()> {
     let grid = vt.grid();
 
-    writeln!(out, "# termitta-oracle 1")?;
+    writeln!(out, "# sterna-oracle 1")?;
     // The terminal id is echoed as it was spelled on the command line, which is
     // what the oracle does with its argv string.
     writeln!(out, "# term {} {}x{}", args.term, grid.cols(), grid.rows())?;

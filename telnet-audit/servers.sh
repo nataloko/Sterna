@@ -16,7 +16,7 @@
 # run as the invoking user on loopback ports.
 
 set -u
-DIR="${XDG_RUNTIME_DIR:-/tmp}/termitta-telnet-audit"
+DIR="${XDG_RUNTIME_DIR:-/tmp}/sterna-telnet-audit"
 TELNET_PORT=2323
 RAW_PORT=2324
 HERE="$(cd "$(dirname "$0")" && pwd)"

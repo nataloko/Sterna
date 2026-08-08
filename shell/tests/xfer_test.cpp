@@ -1,6 +1,6 @@
 // A file transfer, driven by the window's own event loop.
 //
-// Copyright (c) the termitta authors. 3-clause BSD; see LICENSE.
+// Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 //
 //   ./build/xfer_test
 //   ./build/xfer_test --write /tmp    # ...and the two dialogs, as PNGs

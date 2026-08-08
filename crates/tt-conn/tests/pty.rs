@@ -164,12 +164,12 @@ fn a_resize_reaches_the_child() {
 #[test]
 fn term_is_ours_rather_than_the_parents() {
     let params = PtyParams {
-        term: "vt220-termitta-test".into(),
+        term: "vt220-sterna-test".into(),
         ..sh("printf '[%s]' \"$TERM\"")
     };
     let mut conn = PtyConn::open(&params).expect("open");
     let (data, _) = drain(&mut conn, |d| d.ends_with(b"]"));
-    assert_eq!(text(&data), "[vt220-termitta-test]");
+    assert_eq!(text(&data), "[vt220-sterna-test]");
 }
 
 #[test]
@@ -213,7 +213,7 @@ fn a_burst_arrives_whole_and_then_ends() {
 #[test]
 fn a_program_that_does_not_exist_fails_at_open() {
     let params = PtyParams {
-        argv: vec!["termitta-no-such-program".into()],
+        argv: vec!["sterna-no-such-program".into()],
         ..PtyParams::default()
     };
     assert!(PtyConn::open(&params).is_err());

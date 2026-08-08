@@ -1,15 +1,15 @@
 # shell
 
-The Qt 6 Widgets frontend. It links `libtermitta.so` and includes exactly one
-header — `crates/tt-ffi/include/termitta.h` — and that is the whole of what it
+The Qt 6 Widgets frontend. It links `libsterna.so` and includes exactly one
+header — `crates/tt-ffi/include/sterna.h` — and that is the whole of what it
 knows about the core.
 
 ```sh
-# Qt work goes in the termitta-fedora container: Qt 6.11.1, matching the
+# Qt work goes in the sterna-fedora container: Qt 6.11.1, matching the
 # desktop. See CLAUDE.md for why the Ubuntu container's 6.4.2 does not count.
-distrobox-host-exec distrobox enter termitta-fedora --no-tty -- bash -lc '
+distrobox-host-exec distrobox enter sterna-fedora --no-tty -- bash -lc '
   export PATH="$HOME/.cargo/bin:$PATH"
-  cd ~/Projects/termitta/shell
+  cd ~/Projects/Sterna/shell
   cmake -S . -B build -G Ninja && cmake --build build
   ./build/render_test            # the painter, against grabbed pixels
   ./build/ssh_test               # the window's event loop, against a real server
@@ -18,11 +18,11 @@ distrobox-host-exec distrobox enter termitta-fedora --no-tty -- bash -lc '
   ./build/pty_test               # ...and over a local shell, which never skips
   ./build/xfer_test              # a ZMODEM send, driven by the event loop
   ./build/xfer_test --write /tmp # ...and the transfer dialogs, as PNGs
-  ./build/termitta --port /dev/ttyUSB0 --baud 115200
-  ./build/termitta myrouter      # an alias out of ~/.ssh/config
-  ./build/termitta --telnet console-server:2001
-  ./build/termitta --shell       # a local login shell
-  ./build/termitta --shell -- journalctl -f
+  ./build/sterna --port /dev/ttyUSB0 --baud 115200
+  ./build/sterna myrouter      # an alias out of ~/.ssh/config
+  ./build/sterna --telnet console-server:2001
+  ./build/sterna --shell       # a local login shell
+  ./build/sterna --shell -- journalctl -f
 '
 ```
 
@@ -377,7 +377,7 @@ allocation nobody asked for.
 the shell, the size and the environment are all already known, and a dialog
 whose only button is OK is one nobody wants twice. From the command line it is
 `--shell`, with the positional arguments taken as the command to run instead —
-`termitta --shell -- journalctl -f`, the spelling `xterm -e` and
+`sterna --shell -- journalctl -f`, the spelling `xterm -e` and
 `gnome-terminal --` already use.
 
 The half worth recording is what it did to the *disconnect* path. Every other
@@ -420,7 +420,7 @@ the view fits the terminal to it, the same path a remote NAWS resize takes.
 `Setup > Save setup` writes the file, which is upstream's bargain — a change
 applies now and outlives the session only if it is saved.
 
-The file is `$XDG_CONFIG_HOME/termitta/termitta.ini`: Tera Term's *format*, in
+The file is `$XDG_CONFIG_HOME/sterna/sterna.ini`: Tera Term's *format*, in
 the place a Linux configuration file belongs, since the executable may be
 inside a read-only AppImage. Pointing it at a real `TERATERM.INI` is a
 supported thing to do and `--ini` is how it will be spelled.

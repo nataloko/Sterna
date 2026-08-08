@@ -1,5 +1,5 @@
 /*
- * termitta oracle — public interface of the harness around Tera Term's
+ * Sterna oracle — public interface of the harness around Tera Term's
  * vtterm.c / buffer.c.
  */
 #pragma once

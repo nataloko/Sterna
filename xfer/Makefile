@@ -1,4 +1,4 @@
-# termitta xfer — Tera Term's real file-transfer protocols, running on Linux.
+# Sterna xfer — Tera Term's real file-transfer protocols, running on Linux.
 #
 # Shares ../winshim: the Win32 surface these protocols need is a subset of
 # what the VT engine already needed. See README.md.

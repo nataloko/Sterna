@@ -1,6 +1,6 @@
 // The window, connecting over telnet, against a real telnetd.
 //
-// Copyright (c) the termitta authors. 3-clause BSD; see LICENSE.
+// Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 //
 //   cd telnet-audit && ./servers.sh start
 //   TT_TELNET_HOST=127.0.0.1 TT_TELNET_PORT=2323

@@ -1,5 +1,5 @@
 /*
- * termitta oracle — Tera Term's real key table, driven headless.
+ * Sterna oracle — Tera Term's real key table, driven headless.
  *
  * The frontend seam has two halves. Bytes in are the escape parser; bytes out
  * are the keyboard, and this is that half: given a key and the terminal's

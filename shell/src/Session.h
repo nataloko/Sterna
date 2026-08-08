@@ -1,6 +1,6 @@
 // The C ABI, wrapped in something Qt can connect to.
 //
-// Copyright (c) the termitta authors. 3-clause BSD; see LICENSE.
+// Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 
 #pragma once
 
@@ -8,7 +8,7 @@
 #include <QString>
 #include <QVector>
 
-#include "termitta.h"
+#include "sterna.h"
 
 class QSocketNotifier;
 class QTimer;

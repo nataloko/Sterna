@@ -1,4 +1,4 @@
-# termitta core
+# Sterna core
 
 The Rust side. Nine of the crates `PLAN.md` describes, plus three CLIs that
 exist so the engine can be measured against something.

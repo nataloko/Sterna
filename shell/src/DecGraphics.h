@@ -1,6 +1,6 @@
 // DEC Special Graphics, byte to Unicode.
 //
-// Copyright (c) the termitta authors. 3-clause BSD; see LICENSE.
+// Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 
 #pragma once
 

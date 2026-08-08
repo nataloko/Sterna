@@ -1,4 +1,4 @@
-# termitta xfer — Stage 0 spike 2
+# Sterna xfer — Stage 0 spike 2
 
 Runs Tera Term's **real** file-transfer protocols on Linux, and proves they
 interoperate with the reference Unix implementations.

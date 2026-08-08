@@ -13,9 +13,9 @@ TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
   cargo test -p tt-conn -- --test-threads=1              # and the hardware ones
 
 cd ../../ssh-audit && ./servers.sh start                 # :2222 sshd, :2223 dropbear
-D=$XDG_RUNTIME_DIR/termitta-ssh-audit
+D=$XDG_RUNTIME_DIR/sterna-ssh-audit
 TT_SSH_HOST=127.0.0.1 TT_SSH_PORT=2222 TT_SSH_USER=$USER TT_SSH_KEY=$D/id_ed25519 \
-  TT_SSH_PW_USER=termitta-test TT_SSH_PASS=spike5-not-a-secret \
+  TT_SSH_PW_USER=sterna-test TT_SSH_PASS=spike5-not-a-secret \
   cargo test -p tt-conn --test ssh -- --test-threads=1   # and the SSH ones
 cd ../../ssh-audit && ./servers.sh stop                  # removes the account
 ```

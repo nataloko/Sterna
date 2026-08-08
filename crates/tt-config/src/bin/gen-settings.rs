@@ -2,7 +2,7 @@
 //!
 //! The work is in `tt_config::gen`; this is the part that touches the disk.
 //!
-//! Copyright (c) the termitta authors. 3-clause BSD; see LICENSE.
+//! Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 
 use tt_config::gen;
 

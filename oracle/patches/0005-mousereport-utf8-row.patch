@@ -24,7 +24,7 @@ survive and the row is wrong by a multiple of 64 -- or, when the column is
 small enough that `(x >> 6) & 0x1f` is zero, the report contains the byte 0xC0,
 which is not valid UTF-8 at all and cannot be decoded by a conforming reader.
 
-Reproduction, via the termitta oracle (which runs vtterm.c headless and can
+Reproduction, via the Sterna oracle (which runs vtterm.c headless and can
 inject mouse events). A press at window pixel (8, 1600) on a 300x200 terminal
 is column 2, row 101; 101 + 32 = 133, so the row needs two bytes:
 

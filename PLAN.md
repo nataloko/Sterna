@@ -1,4 +1,4 @@
-# termitta — plan and status
+# Sterna — plan and status
 
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
@@ -106,11 +106,11 @@ the trigger to watch — not CJK, and not toolkit fashion.
 
 ### Settled 2026-08-07 — nothing open
 
-- **Project name: `termitta`.** The working name `qtterm` collided with an
-  existing Qt terminal and with `qtermwidget`, and tied the project to a toolkit
-  the architecture deliberately treats as swappable. Upstream is
-  <https://github.com/nataloko/termitta>. Accepted cost: `termite` is a known
-  (archived) VTE terminal one letter away, so search results will mix a little.
+- **Project name: Sterna.** The working name `qtterm` collided with an existing
+  Qt terminal and with `qtermwidget`, and tied the project to a toolkit the
+  architecture deliberately treats as swappable. Sterna names the tern mascot
+  and stays independent of the implementation. Upstream is
+  <https://github.com/nataloko/Sterna>.
 - **Licence: 3-clause BSD.** See `LICENSE`. It matches the vendored Tera Term
   code, so the shipped distribution carries one licence text rather than two,
   and it keeps the no-endorsement clause — the live one for a project that is
@@ -153,7 +153,7 @@ sees a flat C ABI over POD types.
 │  QWidget grid + QPainter glyph atlas · .ui dialogs                    │
 │  key + mouse events · menus · clipboard · font/colour config          │
 └──────────────────────── C ABI (cbindgen) ─────────────────────────────┘
-┌─ termitta-core (Rust cdylib) ───────────────────────────────────────────┐
+┌─ Sterna core (Rust cdylib) ───────────────────────────────────────────┐
 │  tt-vt       VT100/220/320/525 + xterm state machine (over `vte`)     │
 │  tt-grid     cells, scrollback, selection, BCE, wide/combining        │
 │  tt-charset  DEC sets + line drawing (CJK tables deferred)            │
@@ -390,7 +390,7 @@ sending BS because that is what Tera Term does).
   exports. ✅ **done** — 20 tests, three of them over the real wire. See
   `crates/tt-session/README.md`.
 - `tt-ffi`: the flat C ABI, `cbindgen` over `tt-session`. ✅ **done** —
-  `libtermitta.so` plus a generated, committed, CI-gated header, exercised from
+  `libsterna.so` plus a generated, committed, CI-gated header, exercised from
   C and C++ rather than from Rust. See `crates/tt-ffi/README.md` and below.
 - Qt shell: one window, grid painter, clipboard, font/colour config,
   connect dialog, serial-port picker with live enumeration. ✅ **done for
@@ -428,7 +428,7 @@ sending BS because that is what Tera Term does).
   **Measured from the image on the desktop:** 37 MB on disk, 43 MB RSS / 33 MB
   PSS with a shell attached under Wayland, ~144 ms from exec to a mapped window
   — the last of which includes mounting the SquashFS, a cost the build tree does
-  not pay. The base is `termitta-fedora`, so the **glibc floor is 2.43**: this
+  not pay. The base is `sterna-fedora`, so the **glibc floor is 2.43**: this
   image runs on Fedora 44 and not much else yet, which is deliberate and
   temporary. Reaching older distributions needs an older base *and* a Qt fetched
   separately, because the distributions that give reach also ship old Qt — the
@@ -455,8 +455,8 @@ Deliberately absent: file transfer, macros, tabs, Windows build, most settings.
 
 #### The C ABI is the seam, and it is now real
 
-`crates/tt-ffi/`, 2026-08-08. `libtermitta.so` and a generated
-`include/termitta.h`: session lifecycle, zero-copy row reads, the key and mouse
+`crates/tt-ffi/`, 2026-08-08. `libsterna.so` and a generated
+`include/sterna.h`: session lifecycle, zero-copy row reads, the key and mouse
 input paths, serial connect with live port enumeration, and the drained event
 queue. Roughly forty functions, which is the whole of what a terminal window
 needs.
@@ -502,7 +502,7 @@ them now would be work done twice, the second time as a deletion),
 
 `shell/`, 2026-08-08. One window on the C ABI — grid painter, keyboard, mouse,
 selection, clipboard, a serial connect dialog whose port list refreshes while
-it is open, and a status line. Built and run in the `termitta-fedora`
+it is open, and a status line. Built and run in the `sterna-fedora`
 container, so the Qt is 6.11.1, the one the desktop runs.
 
 **The design decision worth recording is the event loop.** `tt_session_pump`
@@ -1716,7 +1716,7 @@ Adoption hinges on "my existing setup just works." Budget real time here.
   those is a setting the user never changed, changing. New settings go in an
   additive section so round-tripping with real Tera Term survives. **Wired to
   the running terminal and to a dialog on the same day**: the shell reads
-  `$XDG_CONFIG_HOME/termitta/termitta.ini` — Tera Term's format, in the place a
+  `$XDG_CONFIG_HOME/sterna/sterna.ini` — Tera Term's format, in the place a
   Linux configuration file belongs, since the executable may be inside a
   read-only AppImage — and `Setup > Save setup` writes it back, touching only
   the keys the schema owns.
@@ -1920,7 +1920,7 @@ be asked microseconds too early and the window said "Disconnected" instead of
 A bare `QWidget` painting an 80x24 grid with `QPainter` — no GPU, no damage
 tracking, no glyph atlas, per-cell `drawText`. A floor, not a ceiling.
 **Measured on Qt 6.11.1 / Fedora 44, which is what the desktop actually runs**
-(the `termitta-fedora` distrobox, see `CLAUDE.md`).
+(the `sterna-fedora` distrobox, see `CLAUDE.md`).
 
 | | X11 | Wayland |
 |---|---|---|
@@ -1998,7 +1998,7 @@ batching can only help.
    which makes it tempting to trust it for everything — don't. **This has already
    produced one false finding and one set of flattering-by-2x numbers**, both
    caught only by re-measuring; see the baseline above. Mitigation exists: the
-   `termitta-fedora` distrobox runs Qt 6.11.1, matching the host exactly. Use it
+   `sterna-fedora` distrobox runs Qt 6.11.1, matching the host exactly. Use it
    for anything the shell's behaviour or footprint depends on.
 
 Dropped from this list: **IME/CJK**, formerly risk 3 and the item most likely to

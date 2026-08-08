@@ -1,12 +1,12 @@
 // The shell half of the performance gate: what the window costs.
 //
-// Copyright (c) the termitta authors. 3-clause BSD; see LICENSE.
+// Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 //
 //   ./build/bench_shell            # a table
 //   ./build/bench_shell --json     # the same, for bench/bench.py
 //   ./build/bench_shell --runs 3
 //
-// **Build this in `termitta-fedora`, in Release, and run it on the desktop.**
+// **Build this in `sterna-fedora`, in Release, and run it on the desktop.**
 // Qt 6.4.2 in the Ubuntu container is seven releases behind what the desktop
 // runs and has already produced one false finding and one set of numbers
 // flattering by 2x — see `CLAUDE.md`. A Debug build measures `-O0` Qt calls.
@@ -339,7 +339,7 @@ int main(int argc, char **argv)
 {
     // Before anything constructs a window, because a `MainWindow` reads the
     // settings and the settings decide the terminal's size. A developer with a
-    // 132x50 in their own `termitta.ini` would otherwise be benchmarking a
+    // 132x50 in their own `sterna.ini` would otherwise be benchmarking a
     // different window from the baseline's, and nothing downstream could tell:
     // the numbers would simply be worse, consistently, for a reason nobody
     // would think to look for.

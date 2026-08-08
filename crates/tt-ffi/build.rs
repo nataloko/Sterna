@@ -1,4 +1,4 @@
-//! Generate `include/termitta.h` from the source, and keep the committed copy
+//! Generate `include/sterna.h` from the source, and keep the committed copy
 //! honest.
 //!
 //! The header is committed rather than generated into `OUT_DIR` because the Qt
@@ -59,7 +59,7 @@ fn main() {
         }
     };
 
-    let header = crate_dir.join("include/termitta.h");
+    let header = crate_dir.join("include/sterna.h");
     std::fs::create_dir_all(header.parent().expect("has a parent"))
         .expect("cannot create include/");
     // `write_to_file` already skips an identical write, which keeps the source
@@ -72,7 +72,7 @@ fn main() {
 ///
 /// Without one, whatever links against it records the path it was *handed* at
 /// link time. Build the shell out of tree and the executable ends up with a
-/// `DT_NEEDED` of `cargo/debug/libtermitta.so`, relative — so it runs from the
+/// `DT_NEEDED` of `cargo/debug/libsterna.so`, relative — so it runs from the
 /// build directory and nowhere else, and the failure is a loader message about
 /// a missing file that plainly exists.
 ///
@@ -81,7 +81,7 @@ fn main() {
 /// every test binary in the workspace as well.
 fn soname() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
-        println!("cargo:rustc-cdylib-link-arg=-Wl,-soname,libtermitta.so");
+        println!("cargo:rustc-cdylib-link-arg=-Wl,-soname,libsterna.so");
     }
 }
 

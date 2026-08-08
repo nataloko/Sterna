@@ -1,5 +1,5 @@
 [package]
-name = "termitta-fuzz"
+name = "sterna-fuzz"
 version = "0.0.0"
 edition = "2021"
 license = "BSD-3-Clause"

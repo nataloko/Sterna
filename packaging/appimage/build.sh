@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build termitta as an AppImage — the only Linux artifact there is going to be.
+# Build Sterna as an AppImage — the only Linux artifact there is going to be.
 #
 #   ./build.sh              build it into build/
 #   ./build.sh --run        ...and then start it, to prove it does
@@ -9,10 +9,10 @@
 # the whole question.** An AppImage's floor is the glibc it was linked against,
 # so the base decides who can run the result:
 #
-#   termitta-fedora   glibc 2.43, Qt 6.11.1   Fedora 44+ and not much else
+#   sterna-fedora   glibc 2.43, Qt 6.11.1   Fedora 44+ and not much else
 #   the agents box    glibc 2.39, Qt 6.4.2    wide reach, old Qt — see below
 #
-# Built in `termitta-fedora` today (decision 2026-08-08): it matches the desktop
+# Built in `sterna-fedora` today (decision 2026-08-08): it matches the desktop
 # this is being written for, and everything below except the base is what a
 # portable build will need anyway. The Ubuntu box was considered and rejected as
 # a base: its Qt 6.4.2 loads Mesa's gallium driver under Wayland and costs 62 MB
@@ -93,13 +93,13 @@ echo "appimage: building" >&2
 cmake -S "$root/shell" -B "$build/cmake" -G Ninja \
 	-DCMAKE_BUILD_TYPE=Release \
 	-DCMAKE_INSTALL_PREFIX="$appdir/usr" >/dev/null || exit 2
-cmake --build "$build/cmake" --target termitta || exit 2
+cmake --build "$build/cmake" --target sterna || exit 2
 
 rm -rf "$appdir"
 cmake --install "$build/cmake" >/dev/null || exit 2
 
 # --- what the licences oblige ------------------------------------------------
-docs=$appdir/usr/share/doc/termitta
+docs=$appdir/usr/share/doc/sterna
 mkdir -p "$docs"
 cp "$root/LICENSE" "$docs/LICENSE"
 cp "$root/ATTRIBUTION.md" "$docs/ATTRIBUTION.md"
@@ -165,9 +165,9 @@ done
 echo "appimage: bundling ($want)" >&2
 "$tools/linuxdeploy" \
 	--appdir "$appdir" \
-	--executable "$appdir/usr/bin/termitta" \
-	--library "$appdir/usr/lib/libtermitta.so" \
-	--desktop-file termitta.desktop \
+	--executable "$appdir/usr/bin/sterna" \
+	--library "$appdir/usr/lib/libsterna.so" \
+	--desktop-file sterna.desktop \
 	"${icon_args[@]}" \
 	--plugin qt || exit 2
 
@@ -241,8 +241,8 @@ restored=0
 for f in "$appdir"/usr/lib/*.so*; do
 	[ -f "$f" ] || continue
 	b=$(basename "$f")
-	# libtermitta.so is ours and is not on the system to restore from.
-	[ "$b" = "libtermitta.so" ] && continue
+	# libsterna.so is ours and is not on the system to restore from.
+	[ "$b" = "libsterna.so" ] && continue
 	for d in "$qt_libs" /usr/lib64 /usr/lib /lib64; do
 		if [ -f "$d/$b" ]; then
 			cp -f "$d/$b" "$f"
@@ -274,14 +274,14 @@ export LD_LIBRARY_PATH="$here/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 for hook in "$here"/apprun-hooks/*.sh; do
 	[ -e "$hook" ] && . "$hook"
 done
-exec "$here/usr/bin/termitta" "$@"
+exec "$here/usr/bin/sterna" "$@"
 APPRUN
 chmod +x "$appdir/AppRun"
 rm -f "$appdir/AppRun.wrapped"
 
 # --- pack --------------------------------------------------------------------
 echo "appimage: packing" >&2
-out=termitta-x86_64.AppImage
+out=sterna-x86_64.AppImage
 rm -f "$build/$out"
 "$tools/appimagetool" "$appdir" "$build/$out" >/dev/null 2>&1 || {
 	echo "appimage: appimagetool failed" >&2; exit 2; }

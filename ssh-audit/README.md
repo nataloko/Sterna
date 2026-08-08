@@ -39,7 +39,7 @@ than insurance.
 | `:2223` | Dropbear 2022.83 — a genuinely different codebase, and the implementation actually found on console servers and embedded kit. |
 
 Both bind `127.0.0.1` only. `servers.sh start` also creates a throwaway
-`termitta-test` account for the password cases; `stop` removes it.
+`sterna-test` account for the password cases; `stop` removes it.
 
 ## Results
 

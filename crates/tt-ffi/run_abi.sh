@@ -16,7 +16,7 @@ cxx=${CXX:-c++}
 cargo build -p tt-ffi ${PROFILE:+--profile "$PROFILE"}
 
 lib=$target/$profile
-[ -f "$lib/libtermitta.so" ] || { echo "no $lib/libtermitta.so" >&2; exit 1; }
+[ -f "$lib/libsterna.so" ] || { echo "no $lib/libsterna.so" >&2; exit 1; }
 
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
@@ -26,15 +26,15 @@ trap 'rm -rf "$out"' EXIT
 # include us will just stop including the warnings.
 "$cc" -std=c11 -Wall -Wextra -Werror -pedantic \
     -I include tests/abi.c -o "$out/abi" \
-    -L "$lib" -ltermitta -Wl,-rpath,"$lib"
+    -L "$lib" -lsterna -Wl,-rpath,"$lib"
 
 # And again as C++, because that is what actually includes it. `cpp_compat`
 # in cbindgen.toml is what makes this work; without it the enums collide with
 # C++'s stricter scoping rules and nobody finds out until the shell exists.
-printf '#include <termitta.h>\nint main() { return tt_version() == nullptr; }\n' \
+printf '#include <sterna.h>\nint main() { return tt_version() == nullptr; }\n' \
     > "$out/compat.cpp"
 "$cxx" -std=c++17 -Wall -Wextra -Werror -I include "$out/compat.cpp" \
-    -o "$out/compat" -L "$lib" -ltermitta -Wl,-rpath,"$lib"
+    -o "$out/compat" -L "$lib" -lsterna -Wl,-rpath,"$lib"
 "$out/compat"
 
 "$out/abi"

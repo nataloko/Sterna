@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(termitta-shell VERSION 0.0.0 LANGUAGES CXX)
+project(sterna-shell VERSION 0.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,7 +18,7 @@ find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets)
 # and its target directory is *inside the CMake build tree* rather than the
 # workspace's own `crates/target`.
 #
-# That is not tidiness. The Qt work happens in the `termitta-fedora` container
+# That is not tidiness. The Qt work happens in the `sterna-fedora` container
 # (Qt 6.11.1, matching the desktop) while the core's tests run in the Ubuntu
 # one, and the two share a home directory — so a shared target directory would
 # hand a library linked against one distribution's glibc to a binary built on
@@ -45,7 +45,7 @@ else()
     set(TT_CARGO_SUBDIR release)
 endif()
 
-set(TT_CORE_LIB "${TT_CARGO_DIR}/${TT_CARGO_SUBDIR}/${CMAKE_SHARED_LIBRARY_PREFIX}termitta${CMAKE_SHARED_LIBRARY_SUFFIX}")
+set(TT_CORE_LIB "${TT_CARGO_DIR}/${TT_CARGO_SUBDIR}/${CMAKE_SHARED_LIBRARY_PREFIX}sterna${CMAKE_SHARED_LIBRARY_SUFFIX}")
 
 # Always run: cargo does its own dependency tracking and is a no-op when
 # nothing changed, which is cheaper and more correct than globbing the
@@ -58,14 +58,14 @@ add_custom_target(tt_core ALL
     COMMENT "cargo build -p tt-ffi"
     USES_TERMINAL VERBATIM)
 
-add_library(termitta_core SHARED IMPORTED GLOBAL)
-set_target_properties(termitta_core PROPERTIES
+add_library(sterna_core SHARED IMPORTED GLOBAL)
+set_target_properties(sterna_core PROPERTIES
     IMPORTED_LOCATION "${TT_CORE_LIB}"
     INTERFACE_INCLUDE_DIRECTORIES "${TT_CORE_ROOT}/tt-ffi/include")
 
 # --- the shell ---------------------------------------------------------------
 
-add_library(termitta_shell STATIC
+add_library(sterna_shell STATIC
     src/MainWindow.cpp
     src/TerminalView.cpp
     src/Session.cpp
@@ -77,20 +77,20 @@ add_library(termitta_shell STATIC
     src/TelnetDialog.cpp
     src/XferDialog.cpp)
 
-add_dependencies(termitta_shell tt_core)
-target_link_libraries(termitta_shell PUBLIC Qt6::Widgets termitta_core)
-target_include_directories(termitta_shell PUBLIC src)
-target_compile_options(termitta_shell PRIVATE -Wall -Wextra)
+add_dependencies(sterna_shell tt_core)
+target_link_libraries(sterna_shell PUBLIC Qt6::Widgets sterna_core)
+target_include_directories(sterna_shell PUBLIC src)
+target_compile_options(sterna_shell PRIVATE -Wall -Wextra)
 
-add_executable(termitta
+add_executable(sterna
     src/main.cpp
     resources/branding.qrc)
 if(WIN32)
     enable_language(RC)
-    target_sources(termitta PRIVATE resources/sterna.rc)
+    target_sources(sterna PRIVATE resources/sterna.rc)
 endif()
-target_link_libraries(termitta PRIVATE termitta_shell)
-target_compile_options(termitta PRIVATE -Wall -Wextra)
+target_link_libraries(sterna PRIVATE sterna_shell)
+target_compile_options(sterna PRIVATE -Wall -Wextra)
 
 # --- tests -------------------------------------------------------------------
 #
@@ -104,26 +104,26 @@ target_compile_options(termitta PRIVATE -Wall -Wextra)
 enable_testing()
 
 add_executable(render_test tests/render_test.cpp)
-target_link_libraries(render_test PRIVATE termitta_shell)
+target_link_libraries(render_test PRIVATE sterna_shell)
 target_compile_options(render_test PRIVATE -Wall -Wextra)
 add_test(NAME render COMMAND render_test)
 
 # The only thing that exercises the *window's* event loop against a real
 # server. Skips loudly without TT_SSH_HOST, so it is safe to leave in ctest.
 add_executable(ssh_test tests/ssh_test.cpp)
-target_link_libraries(ssh_test PRIVATE termitta_shell)
+target_link_libraries(ssh_test PRIVATE sterna_shell)
 target_compile_options(ssh_test PRIVATE -Wall -Wextra)
 add_test(NAME ssh COMMAND ssh_test)
 
 add_executable(telnet_test tests/telnet_test.cpp)
-target_link_libraries(telnet_test PRIVATE termitta_shell)
+target_link_libraries(telnet_test PRIVATE sterna_shell)
 target_compile_options(telnet_test PRIVATE -Wall -Wextra)
 add_test(NAME telnet COMMAND telnet_test)
 
 # The only connection test here that skips nothing — a pty needs no server and
 # no hardware — so it is what actually runs in CI.
 add_executable(pty_test tests/pty_test.cpp)
-target_link_libraries(pty_test PRIVATE termitta_shell)
+target_link_libraries(pty_test PRIVATE sterna_shell)
 target_compile_options(pty_test PRIVATE -Wall -Wextra)
 add_test(NAME pty COMMAND pty_test)
 
@@ -131,7 +131,7 @@ add_test(NAME pty COMMAND pty_test)
 # loop. It needs `lrzsz` for the transfer itself and skips loudly without it;
 # the cancel case and the dialogs need nothing.
 add_executable(xfer_test tests/xfer_test.cpp)
-target_link_libraries(xfer_test PRIVATE termitta_shell)
+target_link_libraries(xfer_test PRIVATE sterna_shell)
 target_compile_options(xfer_test PRIVATE -Wall -Wextra)
 add_test(NAME xfer COMMAND xfer_test)
 
@@ -164,7 +164,7 @@ add_custom_target(tt_bench_emitter
 #   cmake --build build-release --target bench_shell
 add_executable(bench_shell EXCLUDE_FROM_ALL tests/bench_shell.cpp)
 add_dependencies(bench_shell tt_bench_emitter)
-target_link_libraries(bench_shell PRIVATE termitta_shell)
+target_link_libraries(bench_shell PRIVATE sterna_shell)
 target_compile_options(bench_shell PRIVATE -Wall -Wextra)
 target_compile_definitions(bench_shell PRIVATE TT_BENCH_EXE="${TT_BENCH_EXE}")
 
@@ -176,7 +176,7 @@ target_compile_definitions(bench_shell PRIVATE TT_BENCH_EXE="${TT_BENCH_EXE}")
 # cdylib no `DT_SONAME` (see `tt-ffi/build.rs`), so what the binary records is
 # whatever path the linker was handed — which out of tree is *relative*, and ran
 # only from the build directory until that was fixed.
-set_target_properties(termitta render_test ssh_test telnet_test pty_test bench_shell PROPERTIES
+set_target_properties(sterna render_test ssh_test telnet_test pty_test bench_shell PROPERTIES
     BUILD_RPATH "${TT_CARGO_DIR}/${TT_CARGO_SUBDIR}"
     INSTALL_RPATH "$ORIGIN/../lib")
 
@@ -186,5 +186,5 @@ set_target_properties(termitta render_test ssh_test telnet_test pty_test bench_s
 # prefix is an AppDir, not a system one, and on Fedora GNUInstallDirs would say
 # `lib64` while everything downstream — linuxdeploy, the AppRun it writes —
 # expects `usr/lib`. A packaging layout is not a distribution layout.
-install(TARGETS termitta RUNTIME DESTINATION bin)
+install(TARGETS sterna RUNTIME DESTINATION bin)
 install(FILES "${TT_CORE_LIB}" DESTINATION lib)

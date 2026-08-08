@@ -155,7 +155,7 @@ impl PtyConn {
 
         cmd.env("TERM", &params.term);
         cmd.env("COLORTERM", "truecolor");
-        cmd.env("TERM_PROGRAM", "termitta");
+        cmd.env("TERM_PROGRAM", "sterna");
         cmd.env_remove("LINES");
         cmd.env_remove("COLUMNS");
         for (k, v) in &params.env {

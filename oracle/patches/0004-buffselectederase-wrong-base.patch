@@ -50,7 +50,7 @@ of NumOfColumns - CursorX, and covers nothing at all once the cursor is past
 the middle of the screen. `offset` is zeroed for every later line, so only the
 first is affected.
 
-Reproduction, via the termitta oracle (vtterm.c + buffer.c headless). Four
+Reproduction, via the Sterna oracle (vtterm.c + buffer.c headless). Four
 lines of "aaaaPPPPcccc" where PPPP is written under DECSCA 1, then DECSED 0
 from row 2 column 7:
 
@@ -80,7 +80,7 @@ And under AddressSanitizer, with the page scrolled down the ring first
 
 CSI ? 1 J reaches the same overflow with other cursor positions.
 
-Found by diffing DECSED against a reimplementation with the termitta
+Found by diffing DECSED against a reimplementation with the sterna
 differential harness. Tera Term 5.7.0-dev (commit 827a35b05).
 
 --- a/teraterm/teraterm/buffer.c

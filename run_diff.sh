@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# termitta differential suite: the Rust VT engine against Tera Term's real one.
+# Sterna differential suite: the Rust VT engine against Tera Term's real one.
 #
 # For every case in oracle/cases/ this runs BOTH engines with the same arguments
 # and diffs their output against each other. There is no golden file in the

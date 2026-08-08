@@ -10,13 +10,13 @@
 # Usage: ./servers.sh start | stop | status
 
 set -u
-DIR="${XDG_RUNTIME_DIR:-/tmp}/termitta-ssh-audit"
+DIR="${XDG_RUNTIME_DIR:-/tmp}/sterna-ssh-audit"
 OPENSSH_PORT=2222
 DROPBEAR_PORT=2223
 # Throwaway account for the password / keyboard-interactive cases. Old gear
 # rarely does public keys, so those auth paths need covering. Both servers
 # listen on 127.0.0.1 only and the account is removed by `stop`.
-TESTUSER=termitta-test
+TESTUSER=sterna-test
 TESTPASS=spike5-not-a-secret
 
 setup_keys() {

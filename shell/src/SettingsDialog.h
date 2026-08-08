@@ -1,6 +1,6 @@
 // The settings dialog, which has no list of settings in it.
 //
-// Copyright (c) the termitta authors. 3-clause BSD; see LICENSE.
+// Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 
 #pragma once
 
@@ -10,7 +10,7 @@
 
 #include <functional>
 
-#include "termitta.h"
+#include "sterna.h"
 
 class QLabel;
 class QLineEdit;

@@ -2,10 +2,10 @@
 //!
 //! ```sh
 //! cd ssh-audit && ./servers.sh start        # :2222 OpenSSH, :2223 dropbear
-//! D=$XDG_RUNTIME_DIR/termitta-ssh-audit
+//! D=$XDG_RUNTIME_DIR/sterna-ssh-audit
 //! TT_SSH_HOST=127.0.0.1 TT_SSH_PORT=2222 \
 //!   TT_SSH_USER=$USER TT_SSH_KEY=$D/id_ed25519 \
-//!   TT_SSH_PW_USER=termitta-test TT_SSH_PASS=spike5-not-a-secret \
+//!   TT_SSH_PW_USER=sterna-test TT_SSH_PASS=spike5-not-a-secret \
 //!   cargo test -p tt-conn --test ssh -- --test-threads=1
 //! cd ssh-audit && ./servers.sh stop         # removes the throwaway account
 //! ```
@@ -21,7 +21,7 @@
 //!
 //! **Two accounts, and that is the rig rather than a quirk of these tests.**
 //! `servers.sh` appends the client keys to the *invoking* user's
-//! `authorized_keys`, and creates a throwaway `termitta-test` account with a
+//! `authorized_keys`, and creates a throwaway `sterna-test` account with a
 //! password because old gear rarely does public keys. So the key cases
 //! authenticate as whoever is running them and the password cases do not.
 //!

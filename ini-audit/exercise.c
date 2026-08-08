@@ -16,7 +16,7 @@
  * the Rust implementation can be fed the *same* battery and the two diffed.
  * The battery is data, not code, precisely so there is one copy of it.
  *
- * Copyright (c) the termitta authors. 3-clause BSD; see LICENSE.
+ * Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
  */
 
 #include <windows.h>

@@ -19,7 +19,7 @@ than against this baseline -- see `tt-bench`'s own `FLOOR_MB_S`.
 
 The **shell** half (`shell/build*/bench_shell`) needs Qt 6.11.1 and a real
 compositor, so it is a local gate and never a CI one. Build it in
-`termitta-fedora` with `-DCMAKE_BUILD_TYPE=Release`; measured on the container's
+`sterna-fedora` with `-DCMAKE_BUILD_TYPE=Release`; measured on the container's
 Qt 6.4.2 or in a Debug build the numbers are wrong in ways that have already
 fooled this project once (see CLAUDE.md).
 
@@ -156,7 +156,7 @@ def measure(args) -> dict | None:
     if not shell_exe:
         sys.stderr.write(
             "bench: no bench_shell -- the Qt half is skipped.\n"
-            "       build it in termitta-fedora:\n"
+            "       build it in sterna-fedora:\n"
             "         cmake -S shell -B shell/build-release -G Ninja "
             "-DCMAKE_BUILD_TYPE=Release\n"
             "         cmake --build shell/build-release --target bench_shell\n")
@@ -167,10 +167,10 @@ def measure(args) -> dict | None:
         # The likeliest cause by far, and the loader's own message ("version
         # `Qt_6.11' not found") does not say it: `shell/build-release` is a
         # directory both containers can see and only one of them built. Run
-        # this in termitta-fedora, or with --core.
+        # this in sterna-fedora, or with --core.
         sys.stderr.write(
             f"       {shell_exe.relative_to(ROOT)} may have been built in the "
-            "other container.\n       The Qt half belongs in termitta-fedora; "
+            "other container.\n       The Qt half belongs in sterna-fedora; "
             "elsewhere use --core.\n")
         return None
     if shell.get("failed_probes"):

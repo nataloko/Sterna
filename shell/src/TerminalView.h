@@ -1,6 +1,6 @@
 // The grid: painting, keyboard, mouse, selection.
 //
-// Copyright (c) the termitta authors. 3-clause BSD; see LICENSE.
+// Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 
 #pragma once
 
@@ -9,7 +9,7 @@
 #include <QWidget>
 
 #include "Theme.h"
-#include "termitta.h"
+#include "sterna.h"
 
 class QTimer;
 class Session;

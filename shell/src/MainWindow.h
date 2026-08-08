@@ -1,11 +1,11 @@
-// Copyright (c) the termitta authors. 3-clause BSD; see LICENSE.
+// Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 
 #pragma once
 
 #include <QMainWindow>
 #include <QString>
 
-#include "termitta.h"
+#include "sterna.h"
 
 #include "Session.h"
 
@@ -45,7 +45,7 @@ public:
 
     /// Where the settings are read from and written to.
     ///
-    /// `$XDG_CONFIG_HOME/termitta/termitta.ini` rather than a `TERATERM.INI`
+    /// `$XDG_CONFIG_HOME/sterna/sterna.ini` rather than a `TERATERM.INI`
     /// beside the executable, because on Linux that is where a configuration
     /// file belongs and the executable may be inside a read-only AppImage. The
     /// *format* is Tera Term's, which is the part that matters: pointing this
