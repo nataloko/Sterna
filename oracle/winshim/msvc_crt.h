@@ -53,9 +53,12 @@ int sscanf_s(const char *buffer, const char *format, ...);
 int ctime_s(char *buf, size_t size, const time_t *t);
 int localtime_s(struct tm *tm, const time_t *t);
 int memmove_s(void *dest, size_t destsz, const void *src, size_t count);
+int memcpy_s(void *dest, size_t destsz, const void *src, size_t count);
 long long _atoi64(const char *s);
 
 int strncpy_s(char *dest, size_t destsz, const char *src, size_t count);
+int wcsncpy_s(wchar_t *dest, size_t destsz, const wchar_t *src, size_t count);
+int wmemcpy_s(wchar_t *dest, size_t destsz, const wchar_t *src, size_t count);
 int strncat_s(char *dest, size_t destsz, const char *src, size_t count);
 
 /* Return chars written excluding NUL, or -1 on truncation/error. */

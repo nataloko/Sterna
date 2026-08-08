@@ -24,7 +24,8 @@ TT_CXX  := $(TT)/teraterm/charset.cpp \
 TT_PATCHED := buffer.c vtterm.c
 
 SHIM    := winshim/winshim.c winshim/msvc_crt.c winshim/swscanf_s.c
-HARNESS := src/stubs_manual.c src/codeconv_min.c src/stubs_generated.c src/main.c
+HARNESS := src/stubs_manual.c src/codeconv_min.c src/keys.c \
+           src/stubs_generated.c src/main.c
 
 INCLUDES := -include winshim/msvc_compat.h -Iwinshim -Isrc \
             -I$(TT)/common -I$(TT)/teraterm

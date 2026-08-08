@@ -396,6 +396,12 @@ static void dump(FILE *out, int cols, int rows, const char *term_id, int want_at
  *   ESC _ tt.mouse <down|up|move|wheel|stat> <button> <x> <y> ESC \
  *   ESC _ tt.mods  [shift] [ctrl] [alt]                       ESC \
  *   ESC _ tt.focus <in|out>                                   ESC \
+ *   ESC _ tt.key   <name>                                     ESC \
+ *
+ * tt.key runs Tera Term's real key table (keyboard.c:GetKeyStr, reached via
+ * src/keys.c) and puts the result in the reply stream, under whatever modes
+ * the preceding bytes left the terminal in -- so `CSI ? 1 h` then
+ * `tt.key up` is the application-cursor form. See oracle_key_id() for names.
  *
  * x and y are window pixels (ORACLE_CELL_W x ORACLE_CELL_H per cell), because
  * that is what vtterm.c's MouseReport takes and what SGR-pixel mode reports
@@ -479,6 +485,19 @@ static void run_directive(const char *body, size_t len)
 		if (token_eq(tok[1], toklen[1], "in")) FocusReport(TRUE);
 		else if (token_eq(tok[1], toklen[1], "out")) FocusReport(FALSE);
 		else { fprintf(stderr, "oracle: tt.focus wants in|out\n"); exit(2); }
+		return;
+	}
+
+	if (token_eq(tok[0], toklen[0], "tt.key")) {
+		char name[32];
+		int id;
+		if (n != 2) { fprintf(stderr, "oracle: tt.key wants a key name\n"); exit(2); }
+		if (toklen[1] >= sizeof(name)) { fprintf(stderr, "oracle: tt.key name too long\n"); exit(2); }
+		memcpy(name, tok[1], toklen[1]);
+		name[toklen[1]] = '\0';
+		id = oracle_key_id(name);
+		if (id == 0) { fprintf(stderr, "oracle: unknown key '%s'\n", name); exit(2); }
+		oracle_key_send(id);
 		return;
 	}
 

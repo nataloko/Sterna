@@ -21,7 +21,7 @@ use tt_grid::{
     char_width, ATTR2_BACK, ATTR2_FORE, ATTR2_PROTECT, ATTR_BLINK, ATTR_BOLD, ATTR_REVERSE,
     ATTR_SPECIAL, ATTR_UNDER, WIDTH_PAD,
 };
-use tt_vt::{Config, CrReceive, Modifiers, MouseEvent, TermId, Vt};
+use tt_vt::{Config, CrReceive, Key, Modifiers, MouseEvent, TermId, Vt};
 
 const USAGE: &str = "usage: tt-dump [--cols N] [--rows N] [--term ID] [--attrs]\n\
                      \x20              [--crreceive cr|lf|crlf|auto] [FILE]\n";
@@ -99,6 +99,7 @@ fn main() {
 /// ESC _ tt.mouse <down|up|move|wheel|stat> <button> <x> <y> ESC \
 /// ESC _ tt.mods  [shift] [ctrl] [alt]                       ESC \
 /// ESC _ tt.focus <in|out>                                   ESC \
+/// ESC _ tt.key   <name>                                     ESC \
 /// ```
 ///
 /// `x`/`y` are window pixels, on the nominal 8x16 cell both engines use. The
@@ -154,6 +155,19 @@ fn run_directive(vt: &mut Vt, mods: &mut Modifiers, body: &[u8]) {
                     "alt" => mods.alt = true,
                     _ => fail("unknown modifier in tt.mods"),
                 }
+            }
+        }
+        "tt.key" => {
+            let Some(name) = tok.get(1) else {
+                fail("tt.key wants a key name")
+            };
+            let Some(key) = Key::parse(name) else {
+                fail(&format!("unknown key '{name}'"))
+            };
+            // Straight into the reply stream, where the oracle's
+            // CommBinaryOut puts it too, so the dumps line up.
+            if let Some(bytes) = vt.key(key) {
+                vt.push_reply(&bytes);
             }
         }
         "tt.focus" => match tok.get(1) {

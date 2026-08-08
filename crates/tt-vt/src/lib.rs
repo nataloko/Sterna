@@ -16,9 +16,11 @@ use tt_grid::{
 };
 use vte::{Params, Perform};
 
+pub mod keys;
 pub mod mouse;
 pub mod palette;
 pub mod term_id;
+pub use keys::{CrSend, Key, KeyModes};
 pub use mouse::{Encoding, Modifiers, MouseEvent, Tracking};
 pub use term_id::TermId;
 
@@ -132,10 +134,18 @@ pub struct Config {
     pub cursor_ctrl_sequence: bool,
     /// `ts.LocalEcho` (`ttset.c:660`, key default off). SRM writes it.
     pub local_echo: bool,
-    /// `ts.CRSend == IdCRLF` (`ttset.c:657`, default `IdCR`). It seeds LNM.
-    pub cr_send_crlf: bool,
+    /// `ts.CRSend` (`ttset.c:657`, default `IdCR`). LNM overwrites it at
+    /// runtime, so this is only the starting value.
+    pub cr_send: CrSend,
     /// `ts.BSKey == IdBS` (`ttset.c:882`, the else branch). DECBKM writes it.
     pub bs_key_is_bs: bool,
+    /// `ts.DisableAppKeypad` (`ttset.c:903`, key default off). Vetoes DECNKM
+    /// for key encoding while leaving the mode itself set, which is what
+    /// DECRQM keeps reporting.
+    pub disable_app_keypad: bool,
+    /// `ts.DisableAppCursor` (`ttset.c:907`, key default off). Same veto for
+    /// DECCKM.
+    pub disable_app_cursor: bool,
 }
 
 /// The private and ANSI modes that are one flag each. Grouped so a reset can
@@ -170,8 +180,11 @@ struct Modes {
     /// SRM, mirroring `ts.LocalEcho`. Note the sense: `SM 12` turns local echo
     /// *off*.
     local_echo: bool,
-    /// LNM. Also rewrites what a CR sends, which is why it is not just a flag.
+    /// LNM. It also rewrites `cv.CRSend`, which is why the pair moves
+    /// together — `SM 20` means CR LF, `RM 20` means bare CR, and neither
+    /// leaves an `IdLF` from the config in place.
     lf_mode: bool,
+    cr_send: CrSend,
     /// DECBKM, mirroring `ts.BSKey`.
     bs_key_is_bs: bool,
 }
@@ -206,8 +219,10 @@ impl Default for Config {
             translate_wheel_to_cursor: true,
             cursor_ctrl_sequence: false,
             local_echo: false,
-            cr_send_crlf: false,
+            cr_send: CrSend::Cr,
             bs_key_is_bs: true,
+            disable_app_keypad: false,
+            disable_app_cursor: false,
         }
     }
 }
@@ -232,7 +247,8 @@ impl Modes {
             reverse_video: false,
             keyb_enabled: self.keyb_enabled,
             local_echo: self.local_echo,
-            lf_mode: config.cr_send_crlf,
+            lf_mode: self.lf_mode,
+            cr_send: self.cr_send,
             bs_key_is_bs: self.bs_key_is_bs,
         }
     }
@@ -261,7 +277,8 @@ impl Modes {
             reverse_video: false,
             keyb_enabled: true,
             local_echo: config.local_echo,
-            lf_mode: config.cr_send_crlf,
+            lf_mode: config.cr_send == CrSend::CrLf,
+            cr_send: config.cr_send,
             bs_key_is_bs: config.bs_key_is_bs,
         }
     }
@@ -375,6 +392,14 @@ impl Vt {
         std::mem::take(&mut self.state.reply)
     }
 
+    /// Append bytes to the host-bound stream, for input the terminal did not
+    /// generate itself — a key, or a paste. Upstream's keyboard writes
+    /// through the same `CommBinaryOut` the escape replies use, so keeping
+    /// them in one stream is what makes the two engines comparable.
+    pub fn push_reply(&mut self, bytes: &[u8]) {
+        self.state.send(bytes);
+    }
+
     /// The last title set by OSC 0 / OSC 2. Empty if never set.
     pub fn title(&self) -> &str {
         &self.state.title
@@ -477,6 +502,28 @@ impl Vt {
     /// application cursor mode is on.
     pub fn wheel_to_cursor(&self) -> bool {
         self.state.modes.wheel_to_cursor
+    }
+
+    /// The modes [`Key::encode`] reads, as the terminal currently stands.
+    ///
+    /// The two `Disable*` settings veto their mode *here* rather than at
+    /// DECSET time, matching `keyboard.c:KeyCodeSend` — so a host can set
+    /// DECCKM, have DECRQM confirm it, and still get the normal cursor keys.
+    pub fn key_modes(&self) -> KeyModes {
+        let m = &self.state.modes;
+        KeyModes {
+            application_cursor: m.appli_cursor && !self.state.config.disable_app_cursor,
+            application_keypad: m.appli_key && !self.state.config.disable_app_keypad,
+            eight_bit: self.state.send_8bit,
+            cr_send: m.cr_send,
+        }
+    }
+
+    /// What `key` puts on the wire right now, or `None` for a key that is a
+    /// local command. The core owns this because the encoding depends on
+    /// terminal state the frontend never sees.
+    pub fn key(&self, key: Key) -> Option<Vec<u8>> {
+        key.encode(self.key_modes())
     }
 }
 
@@ -1024,7 +1071,10 @@ impl State {
                     // SRM inverts too: `SM 12` means "send/receive", which is
                     // local echo off.
                     12 => self.modes.local_echo = !on,
-                    20 => self.modes.lf_mode = on,
+                    20 => {
+                        self.modes.lf_mode = on;
+                        self.modes.cr_send = if on { CrSend::CrLf } else { CrSend::Cr };
+                    }
                     _ => {}
                 }
             }

@@ -43,31 +43,62 @@ TCharAttr DefCharAttr;
 
 BOOL AdjustSize = FALSE, DontChangeSize = FALSE;
 BOOL IMEstat = FALSE, IMECompositionState = FALSE;
-BOOL AppliKeyMode = FALSE, AppliCursorMode = FALSE, AppliEscapeMode = FALSE;
-BOOL AutoRepeatMode = TRUE;
-BOOL Send8BitMode = FALSE;
+/*
+ * AutoRepeatMode, AppliKeyMode, AppliCursorMode, AppliEscapeMode and
+ * Send8BitMode are NOT here: keyboard.c:54 owns them, and it is compiled now
+ * (see keys.c). They used to be stood in for, which meant vtterm.c set a mode
+ * and the real key table would never have seen it -- and AppliEscapeMode was
+ * declared BOOL here against upstream's int, a type mismatch that links
+ * silently in C and would have truncated on a big-endian target.
+ *
+ * Their initial values come from ResetTerminal(), which the runner calls at
+ * startup; that is also where AutoRepeatMode gets its TRUE.
+ */
 BOOL KeybEnabled = TRUE;
 BOOL DDELog = FALSE;
 
 /*
- * keyboard.h declares these as FUNCTIONS -- BOOL ShiftKey(); -- and vtterm.c
- * calls them as such, in MouseReport's modifier computation and in
- * WheelToCursorMode. They used to be defined here as BOOL *variables*, which
- * links (C has no cross-TU type check for this) and then jumps into the data
- * section the first time anything calls one. Nothing did, because no headless
- * run reached the mouse path; injecting a mouse event reaches it immediately.
+ * ShiftKey()/ControlKey()/AltKey() are NOT defined here.
+ *
+ * They used to be, as BOOL *variables* while keyboard.h declares them as
+ * functions -- which links, C having no cross-TU type check for it, and then
+ * jumps into the data section the first time anything calls one. Nothing did,
+ * because no headless run reached the mouse path.
+ *
+ * They now come from keyboard.c itself (compiled in keys.c), which is
+ * strictly better: upstream's own definitions, including MetaKey()'s
+ * left/right variants, all resting on one Win32 primitive. So the settable
+ * thing here is GetAsyncKeyState, and everything above it is real code.
  */
-static BOOL g_shift, g_control, g_alt;
+static BYTE g_key_state[256];
 
-BOOL ShiftKey(void)   { return g_shift; }
-BOOL ControlKey(void) { return g_control; }
-BOOL AltKey(void)     { return g_alt; }
+SHORT GetAsyncKeyState(int vk)
+{
+	/* Bit 15 is "down now". ShiftKey() and friends test & 0xFFFFFF80, so
+	 * anything above bit 6 does; the high bit is the honest one. */
+	if (vk < 0 || vk > 255) {
+		return 0;
+	}
+	return g_key_state[vk] ? (SHORT)0x8000 : 0;
+}
+
+BOOL SetKeyboardState(PBYTE state)
+{
+	if (state != NULL) {
+		memcpy(g_key_state, state, sizeof(g_key_state));
+	}
+	return TRUE;
+}
 
 void oracle_set_modifiers(int shift, int control, int alt)
 {
-	g_shift = shift ? TRUE : FALSE;
-	g_control = control ? TRUE : FALSE;
-	g_alt = alt ? TRUE : FALSE;
+	memset(g_key_state, 0, sizeof(g_key_state));
+	g_key_state[VK_SHIFT] = shift ? 1 : 0;
+	g_key_state[VK_CONTROL] = control ? 1 : 0;
+	/* VK_MENU is Alt. Set the left variant too, so MetaKey(IdMetaLeft)
+	 * answers consistently with AltKey(). */
+	g_key_state[VK_MENU] = alt ? 1 : 0;
+	g_key_state[VK_LMENU] = alt ? 1 : 0;
 }
 
 
@@ -173,14 +204,37 @@ int WINAPI CommBinaryOut(PComVar pcv, PCHAR B, int C)
 	return C;
 }
 
+/*
+ * The TEXT output path, as opposed to the binary one.
+ *
+ * The difference is not cosmetic: text goes through MakeOutputString and its
+ * OutControl callback (ttcmn.c:800), which expands a CR according to
+ * cv.CRSend -- bare CR, CR LF, or a lone LF. That is what makes LNM
+ * (`CSI 20 h`, which sets cv.CRSend = IdCRLF) reach the keypad Enter key, the
+ * one key whose numeric form upstream marks IdText for exactly this reason.
+ *
+ * ttcmn.c is a whole DLL and is not compiled here, so this reproduces the CR
+ * arm of OutControl and nothing else. The other two arms it has -- BS and
+ * ctrl-U -- only differ under TelLineMode, which needs a telnet session.
+ */
 int WINAPI CommTextOutW(PComVar pcv, const wchar_t *B, int C)
 {
 	/* The oracle transcript is UTF-8; vtterm hands us UTF-16-ish wchar_t. */
 	int i;
-	(void)pcv;
 	for (i = 0; i < C; i++) {
 		char buf[8];
-		int n = WideCharToMultiByte(CP_UTF8, 0, &B[i], 1, buf, sizeof(buf), NULL, NULL);
+		int n;
+		if (B[i] == 0x0d) {
+			if (pcv != NULL && pcv->CRSend == IdCRLF) {
+				reply_push("\r\n", 2);
+			} else if (pcv != NULL && pcv->CRSend == IdLF) {
+				reply_push("\n", 1);
+			} else {
+				reply_push("\r", 1);
+			}
+			continue;
+		}
+		n = WideCharToMultiByte(CP_UTF8, 0, &B[i], 1, buf, sizeof(buf), NULL, NULL);
 		if (n > 0) {
 			reply_push(buf, (size_t)n);
 		}

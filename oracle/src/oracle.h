@@ -26,6 +26,11 @@ int  oracle_feed_remaining(void);
 /* Modifier keys, as ShiftKey()/ControlKey()/AltKey() report them. */
 void oracle_set_modifiers(int shift, int control, int alt);
 
+/* Tera Term's real key table. Sends what GetKeyStr() produces for `key_code`
+ * under the terminal's current modes; `oracle_key_id` resolves a case name. */
+void oracle_key_send(int key_code);
+int  oracle_key_id(const char *name);
+
 /* Everything the terminal sent back to the host, as UTF-8 bytes. */
 const unsigned char *oracle_reply(size_t *len);
 void oracle_reply_reset(void);

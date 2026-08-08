@@ -217,3 +217,76 @@ int MessageBoxA(HWND hWnd, const char *text, const char *caption, UINT type)
 	        caption ? caption : "(no caption)", text ? text : "");
 	return IDOK;
 }
+
+/* ---- the keyboard's message pump ----------------------------------------
+ *
+ * Reached only by paths the oracle does not drive. keyboard.c uses
+ * PeekMessage to discard a WM_CHAR that a key has already been handled
+ * without, and PostMessage to deliver an accelerator; the oracle calls
+ * KeyCodeSend, which reaches neither. They exist so the translation unit
+ * links, and they are honest about having no queue: PeekMessage reports that
+ * nothing is waiting, which is true.
+ */
+BOOL PeekMessageA(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterMin, UINT wMsgFilterMax, UINT wRemoveMsg)
+{
+	(void)hWnd; (void)wMsgFilterMin; (void)wMsgFilterMax; (void)wRemoveMsg;
+	if (lpMsg != NULL) {
+		memset(lpMsg, 0, sizeof(*lpMsg));
+	}
+	return FALSE;
+}
+
+BOOL PostMessageA(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
+{
+	(void)hWnd; (void)Msg; (void)wParam; (void)lParam;
+	return TRUE;
+}
+
+BOOL GetMessageA(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterMin, UINT wMsgFilterMax)
+{
+	(void)hWnd; (void)wMsgFilterMin; (void)wMsgFilterMax;
+	if (lpMsg != NULL) {
+		memset(lpMsg, 0, sizeof(*lpMsg));
+	}
+	return FALSE;
+}
+
+/*
+ * The scan-code and keyboard-layout calls. There is no keyboard here and no
+ * layout to consult, so these report "unmapped" rather than inventing an
+ * answer -- a wrong mapping would be a stub lying about ground truth, which
+ * is the failure mode this harness exists to avoid. The consequence is that
+ * KeyDown() and the OemKeyScan fallback in KeyCodeSend() do nothing headless;
+ * GetKeyStr, which owns the key table, does not use them.
+ */
+UINT MapVirtualKeyA(UINT uCode, UINT uMapType)
+{
+	(void)uCode; (void)uMapType;
+	return 0;
+}
+
+DWORD OemKeyScan(WORD wOemChar)
+{
+	(void)wOemChar;
+	return 0xFFFFFFFFu;     /* the documented "no translation" result */
+}
+
+SHORT VkKeyScanA(char ch)
+{
+	(void)ch;
+	return -1;              /* documented: no key translates to this char */
+}
+
+SHORT GetKeyState(int nVirtKey)
+{
+	(void)nVirtKey;
+	return 0;
+}
+
+BOOL GetKeyboardState(PBYTE lpKeyState)
+{
+	if (lpKeyState != NULL) {
+		memset(lpKeyState, 0, 256);
+	}
+	return TRUE;
+}

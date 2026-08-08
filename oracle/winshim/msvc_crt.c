@@ -258,3 +258,65 @@ long long _atoi64(const char *s)
 {
 	return strtoll(s, NULL, 10);
 }
+
+/* ---- the wide and memory halves of the Secure CRT, for keyboard.c --------
+ *
+ * wcsncpy_s is LOAD-BEARING: GetKeyStr() writes every one of its 74 key
+ * strings through it, so a wrong truncation rule here would corrupt the key
+ * table the differential suite treats as ground truth. Same rules as
+ * strncpy_s above, in wide characters.
+ */
+int wcsncpy_s(wchar_t *dest, size_t destsz, const wchar_t *src, size_t count)
+{
+	size_t n;
+
+	if (dest == NULL || destsz == 0) {
+		return EINVAL;
+	}
+	if (src == NULL) {
+		dest[0] = L'\0';
+		return EINVAL;
+	}
+
+	if (count == _TRUNCATE) {
+		n = wcsnlen(src, destsz - 1);
+		wmemcpy(dest, src, n);
+		dest[n] = L'\0';
+		return src[n] != L'\0' ? STRUNCATE : 0;
+	}
+
+	n = wcsnlen(src, count);
+	if (n >= destsz) {
+		dest[0] = L'\0';
+		return ERANGE;
+	}
+	wmemcpy(dest, src, n);
+	dest[n] = L'\0';
+	return 0;
+}
+
+int memcpy_s(void *dest, size_t destsz, const void *src, size_t count)
+{
+	if (dest == NULL) {
+		return EINVAL;
+	}
+	if (src == NULL || destsz < count) {
+		memset(dest, 0, destsz);
+		return src == NULL ? EINVAL : ERANGE;
+	}
+	memcpy(dest, src, count);
+	return 0;
+}
+
+int wmemcpy_s(wchar_t *dest, size_t destsz, const wchar_t *src, size_t count)
+{
+	if (dest == NULL) {
+		return EINVAL;
+	}
+	if (src == NULL || destsz < count) {
+		wmemset(dest, L'\0', destsz);
+		return src == NULL ? EINVAL : ERANGE;
+	}
+	wmemcpy(dest, src, count);
+	return 0;
+}

@@ -249,6 +249,102 @@ int   MultiByteToWideChar(UINT CodePage, DWORD dwFlags,
                           const char *lpMultiByteStr, int cbMultiByte,
                           wchar_t *lpWideCharStr, int cchWideChar);
 
+
+/* ---- the keyboard's Win32 surface ----
+ *
+ * keyboard.c is compiled whole so the key table is ground truth rather than a
+ * transcription; see oracle/README.md. Almost all of what it needs from Win32
+ * is *constants*, which have fixed documented values and cannot be got subtly
+ * wrong. The message-pump calls below are genuine stubs, and they are only
+ * reached on paths the oracle does not drive: PeekMessage discards a pending
+ * WM_CHAR after a key has been handled another way, and PostMessage delivers
+ * an accelerator to the window. GetKeyStr, which is the part that matters,
+ * touches neither.
+ */
+#define WM_USER      0x0400
+#define WM_COMMAND   0x0111
+#define WM_CHAR      0x0102
+#define WM_SYSCHAR   0x0106
+#define WM_TIMER     0x0113
+#define PM_NOREMOVE  0x0000
+#define PM_REMOVE    0x0001
+
+typedef struct tagMSG {
+	HWND   hwnd;
+	UINT   message;
+	WPARAM wParam;
+	LPARAM lParam;
+	DWORD  time;
+} MSG, *LPMSG, *PMSG;
+
+typedef BYTE *PBYTE;
+
+BOOL PeekMessageA(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterMin, UINT wMsgFilterMax, UINT wRemoveMsg);
+#define PeekMessage PeekMessageA
+BOOL PostMessageA(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
+#define PostMessage PostMessageA
+BOOL GetMessageA(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterMin, UINT wMsgFilterMax);
+#define GetMessage GetMessageA
+
+UINT  MapVirtualKeyA(UINT uCode, UINT uMapType);
+#define MapVirtualKey MapVirtualKeyA
+DWORD OemKeyScan(WORD wOemChar);
+SHORT VkKeyScanA(char ch);
+#define VkKeyScan VkKeyScanA
+SHORT GetKeyState(int nVirtKey);
+BOOL  GetKeyboardState(PBYTE lpKeyState);
+
+/* Virtual-key codes. Fixed by the Win32 API since 1993. */
+#define VK_BACK      0x08
+#define VK_TAB       0x09
+#define VK_RETURN    0x0D
+#define VK_SHIFT     0x10
+#define VK_CONTROL   0x11
+#define VK_MENU      0x12
+#define VK_PAUSE     0x13
+#define VK_ESCAPE    0x1B
+#define VK_SPACE     0x20
+#define VK_PRIOR     0x21
+#define VK_NEXT      0x22
+#define VK_END       0x23
+#define VK_HOME      0x24
+#define VK_LEFT      0x25
+#define VK_UP        0x26
+#define VK_RIGHT     0x27
+#define VK_DOWN      0x28
+#define VK_INSERT    0x2D
+#define VK_DELETE    0x2E
+#define VK_NUMLOCK   0x90
+#define VK_SCROLL    0x91
+#define VK_LSHIFT    0xA0
+#define VK_RSHIFT    0xA1
+#define VK_LCONTROL  0xA2
+#define VK_RCONTROL  0xA3
+#define VK_LMENU     0xA4
+#define VK_RMENU     0xA5
+#define VK_OEM_2     0xBF
+#define VK_OEM_102   0xE2
+#define VK_F1        0x70
+#define VK_F2        0x71
+#define VK_F3        0x72
+#define VK_F4        0x73
+#define VK_F5        0x74
+#define VK_F6        0x75
+#define VK_F7        0x76
+#define VK_F8        0x77
+#define VK_F9        0x78
+#define VK_F10       0x79
+#define VK_F11       0x7A
+#define VK_F12       0x7B
+#define VK_F13       0x7C
+#define VK_F14       0x7D
+#define VK_F15       0x7E
+#define VK_F16       0x7F
+#define VK_F17       0x80
+#define VK_F18       0x81
+#define VK_F19       0x82
+#define VK_F20       0x83
+
 #ifdef __cplusplus
 }
 #endif

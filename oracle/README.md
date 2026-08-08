@@ -108,6 +108,7 @@ strips before the terminal sees it:
 ESC _ tt.mouse <down|up|move|wheel|stat> <button> <x> <y> ESC \
 ESC _ tt.mods  [shift] [ctrl] [alt]                       ESC \
 ESC _ tt.focus <in|out>                                   ESC \
+ESC _ tt.key   <name>                                     ESC \
 ```
 
 Bytes on either side are fed and fully parsed first, so a directive sees exactly
@@ -126,8 +127,40 @@ printf '\033[?1000h\033[?1006h\033_tt.mouse down 0 24 80\033\\' | oracle --cols 
 # reply <ESC>[<0;4;6M
 ```
 
-Two things had to be fixed before this worked, both of them the "stubs lie"
-failure mode:
+### `tt.key` — the real key table
+
+`tt.key` runs Tera Term's own `keyboard.c:GetKeyStr()` and puts the result in
+the reply stream, under whatever modes the preceding bytes left the terminal
+in. So `CSI ? 1 h` then `tt.key up` is the application-cursor form, and the
+Rust engine has to agree.
+
+`keyboard.c` is compiled whole, in `src/keys.c` — which `#include`s it, and
+that is deliberate. The table lives in `GetKeyStr()`, which is `static`, and it
+is 74 key cases each spelling out its sequence three times over for
+application-cursor, application-keypad and 8-bit-controls mode. Including the
+translation unit reaches it without editing upstream (ground rule 1) and
+without retyping 200-odd escape sequences into a stub (ground rule 2).
+`keyboard.c` must therefore **not** also appear in the Makefile's `TT_C`.
+
+Driving the public `KeyCodeSend()` instead would have been the obvious move and
+is worse: it routes through `SendMemBinary`/`SendMemStart`, the delayed-send
+queue, so it drags an async subsystem and its stubs into an answer that is
+decided before any of that.
+
+Compiling it turned up two more stand-ins that had quietly been wrong:
+
+- **`keyboard.c` owns `AutoRepeatMode`, `AppliKeyMode`, `AppliCursorMode`,
+  `AppliEscapeMode` and `Send8BitMode`**, and `stubs_manual.c` had been
+  defining them. So `vtterm.c` set a mode and the real key table would never
+  have seen it. `AppliEscapeMode` was declared `BOOL` here against upstream's
+  `int`, too — a type mismatch that links silently in C.
+- **`ShiftKey`/`ControlKey`/`AltKey` are upstream's**, resting on
+  `GetAsyncKeyState`. The oracle now sets a key-state array and lets
+  upstream's own definitions run, `MetaKey`'s left/right variants included,
+  instead of substituting three booleans.
+
+Two things had to be fixed before mouse injection worked, both of them the
+"stubs lie" failure mode:
 
 - `ShiftKey`/`ControlKey`/`AltKey` are **functions** in `keyboard.h`, and were
   defined here as `BOOL` variables. That links, and jumps into the data section

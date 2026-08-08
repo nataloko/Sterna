@@ -17,6 +17,14 @@
 #include "tttypes.h"
 #include "buffer.h"
 #include "vtdisp.h"
+#include "ttsetup.h"
+#include "sendmem.h"
+
+/* ---- data ---- */
+int ActiveWin;
+HWND HTEKWin;
+PReadKeyboardCnf ReadKeyboardCnf;
+IdTalk TalkStatus;
 
 /* ---- functions ---- */
 int b64decode(PCHAR dst, int dsize, PCHAR src)
@@ -55,10 +63,6 @@ void ChangeCaret(vtdraw_t *vt)
 {
 }
 
-void ClearUserKey()
-{
-}
-
 void ClosePrnFile(PrintFile *handle, void (*finish_callback)(PrintFile *handle))
 {
 }
@@ -78,6 +82,16 @@ WORD CodeConvSJIS2JIS(WORD KCode)
 	return 0;
 }
 
+int CommBinaryBuffOut(PComVar cv, PCHAR B, int C)
+{
+	return 0;
+}
+
+int CommBinaryEcho(PComVar cv, PCHAR B, int C)
+{
+	return 0;
+}
+
 void CommResetSerial(PTTSet ts, PComVar cv, BOOL ClearBuffer)
 {
 }
@@ -93,10 +107,6 @@ int DDEGetCount(void)
 }
 
 void DDEPut1(BYTE b)
-{
-}
-
-void DefineUserKey(int NewKeyId, PCHAR NewKeyStr, int NewKeyLen)
 {
 }
 
@@ -226,6 +236,10 @@ wchar_t* FLogTimeStampStrW(enum LogTimestampType timestamp_type, const wchar_t* 
 	return NULL;
 }
 
+void FreeTTSET()
+{
+}
+
 size_t GetI18nStrWW(const char *section, const char *key, const wchar_t *def, const wchar_t *iniFile, wchar_t **buf)
 {
 	return 0;
@@ -239,6 +253,11 @@ BOOL GetIMEOpenStatus(HWND hWnd)
 DWORD GetPrivateProfileOnOffW(const wchar_t *section, const wchar_t *key, const wchar_t *filenameW, BOOL def, BOOL *val)
 {
 	return 0;
+}
+
+wchar_t *Hex2StrW(const wchar_t *Hex, size_t MaxLen)
+{
+	return NULL;
 }
 
 DWORD hGetPrivateProfileStringW(const wchar_t *section, const wchar_t *key, const wchar_t *def, const wchar_t *ini, wchar_t **str)
@@ -266,6 +285,11 @@ BOOL IsRelativePathW(const wchar_t *path)
 	return 0;
 }
 
+BOOL LoadTTSET()
+{
+	return 0;
+}
+
 unsigned int MBCP_UTF32(unsigned short mb_code, int code_page)
 {
 	return 0;
@@ -283,6 +307,33 @@ BOOL PrnCheckAbort()
 
 void PrnFinish(PrintFile *handle)
 {
+}
+
+void RunMacroW(const wchar_t *FNameW, BOOL Startup)
+{
+}
+
+SendMem *SendMemBinary(void *ptr, size_t len)
+{
+	return NULL;
+}
+
+void SendMemInitDelay(SendMem *sm, SendMemDelayType delay_type, DWORD delay_tick, size_t send_max)
+{
+}
+
+void SendMemInitEcho(SendMem *sm, BOOL echo)
+{
+}
+
+BOOL SendMemStart(SendMem *sm)
+{
+	return 0;
+}
+
+SendMem *SendMemTextW(wchar_t *ptr, size_t len)
+{
+	return NULL;
 }
 
 void SetIMEOpenStatus(HWND hWnd, BOOL stat)

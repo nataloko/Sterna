@@ -185,6 +185,33 @@ The corners worth knowing, all upstream's:
 - **`DECSET 8200` makes `ED 2` home the cursor**, to the region origin, or the
   screen origin under origin mode.
 
+### The key table
+
+`Vt::key(Key) -> Option<Vec<u8>>`, and the core owns it for the same reason it
+owns the mouse encoding: which form a key takes is terminal state the frontend
+never sees. What the frontend supplies is a [`Key`], not a keysym — mapping a
+physical key onto one is platform work, and on Windows it is what
+`KEYBOARD.CNF` does.
+
+Verified rather than transcribed: the oracle compiles `keyboard.c` itself and
+one case sweeps **55 keys across 10 mode combinations** — application cursor,
+application keypad, 8-bit controls, every pairing, and LNM. See
+`oracle/README.md` for how a `.c` file with a `static` table became testable.
+
+Worth knowing:
+
+- **PF1-PF4 are `SS3` in every mode.** They have no printed character to fall
+  back to, so application-keypad mode changes nothing about them — an easy
+  place to over-generalise from the other keypad keys.
+- **Keypad Enter is the only key newline mode reaches.** Upstream marks its
+  numeric form `IdText` rather than `IdBinary` precisely so the CR goes through
+  `OutControl`'s conversion, which is why `SM 20` turns it into CR LF.
+- **`ts.DisableAppKeypad`/`DisableAppCursor` veto at encode time, not at
+  DECSET time.** A host can set DECCKM, have DECRQM confirm it is set, and
+  still get the normal cursor keys.
+- Hold, Print and Break have key ids so `KEYBOARD.CNF` can bind them, and put
+  nothing on the wire.
+
 ### Mouse and focus reporting
 
 Six wire formats and eight tracking modes, all of them upstream's, and all of

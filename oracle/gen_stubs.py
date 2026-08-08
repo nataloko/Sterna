@@ -166,6 +166,12 @@ def main() -> int:
         '#include "tttypes.h"',
         '#include "buffer.h"',
         '#include "vtdisp.h"',
+        # keyboard.c is compiled (in src/keys.c) for its key table, and drags
+        # in the settings loader's function-pointer types and the delayed-send
+        # queue. Without these two the generated stubs do not name their own
+        # parameter types.
+        '#include "ttsetup.h"',
+        '#include "sendmem.h"',
         "",
     ]
 
