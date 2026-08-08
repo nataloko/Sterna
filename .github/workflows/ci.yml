@@ -111,8 +111,16 @@ jobs:
           workspaces: termitta/crates -> target
       # tt-conn depends on serialport, which needs libudev to enumerate.
       # Without this the whole core job fails to build, not just tt-conn.
-      - name: serialport dependency
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      #
+      # The two SSH servers are `ssh-audit`'s, reused: the SSH transport's
+      # tests skip loudly without a server, and a green run that quietly
+      # exercised none of key exchange, authentication or the pty is exactly
+      # the kind of test suite this project does not want.
+      - name: Dependencies, and the SSH servers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev dropbear-bin openssh-server
+          cd termitta/ssh-audit && ./servers.sh start
       - name: Lint
         run: |
           cd termitta/crates
@@ -123,13 +131,39 @@ jobs:
       # so what runs here is the decoders and the enumeration.
       - name: Unit tests
         run: cd termitta/crates && cargo test --locked
+      # And again with the servers named, which is what turns the eleven
+      # skipped SSH cases into eleven that ran. Both servers, because spike 5's
+      # second finding was that embedded implementations are narrow in
+      # different directions from OpenSSH.
+      - name: SSH transport, against OpenSSH and dropbear
+        env:
+          TT_SSH_HOST: 127.0.0.1
+          TT_SSH_PW_USER: termitta-test
+          TT_SSH_PASS: spike5-not-a-secret
+        run: |
+          cd termitta/crates
+          export TT_SSH_USER=$USER
+          export TT_SSH_KEY=${XDG_RUNTIME_DIR:-/tmp}/termitta-ssh-audit/id_ed25519
+          # One thread: the servers refuse concurrent unauthenticated
+          # connections above their own limits (OpenSSH's MaxStartups is
+          # 10:30:100, dropbear's is lower), and the refusals look like
+          # connection bugs.
+          TT_SSH_PORT=2222 cargo test --locked -p tt-conn --test ssh -- --test-threads=1
+          TT_SSH_PORT=2223 cargo test --locked -p tt-conn --test ssh -- --test-threads=1
       # The C ABI has to be compiled and linked from C to mean anything: a
       # Rust test never touches the header. This also regenerates it, so the
       # check below is what keeps the committed copy honest — the ABI takes
       # its enums straight from the core crates, and a reordered variant is
       # invisible anywhere else.
       - name: C ABI, from C
-        run: cd termitta/crates && ./tt-ffi/run_abi.sh
+        env:
+          TT_SSH_HOST: 127.0.0.1
+          TT_SSH_PORT: 2222
+        run: |
+          cd termitta/crates
+          export TT_SSH_USER=$USER
+          export TT_SSH_KEY=${XDG_RUNTIME_DIR:-/tmp}/termitta-ssh-audit/id_ed25519
+          ./tt-ffi/run_abi.sh
       - name: The committed header matches the source
         run: |
           cd termitta
@@ -143,6 +177,11 @@ jobs:
       # executed out of the pinned checkout rather than copied into the repo.
       - name: Differential suite over upstream's exercisers
         run: cd termitta && ./run_upstream.sh
+      # Removes the throwaway account the servers created. `always` because a
+      # failed test must not leave it behind.
+      - name: Stop the SSH servers
+        if: always()
+        run: cd termitta/ssh-audit && ./servers.sh stop
 
   core-windows:
     name: core — builds and tests on Windows
@@ -183,7 +222,9 @@ jobs:
       - name: Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y qt6-base-dev ninja-build libudev-dev fonts-dejavu-core
+          sudo apt-get install -y qt6-base-dev ninja-build libudev-dev \
+              fonts-dejavu-core dropbear-bin openssh-server
+          cd ssh-audit && ./servers.sh start
       - name: Build
         run: |
           cd shell
@@ -194,6 +235,24 @@ jobs:
       # only reason the painter is testable without a display at all.
       - name: Render tests
         run: cd shell && ./build/render_test
+      # The only thing that drives the *window's* event loop against a real
+      # server. The core's own SSH tests poll in a busy loop; this is what
+      # would notice a QSocketNotifier on the wrong descriptor, or the
+      # handover from connection to session losing a wakeup — a window that
+      # connects and then shows nothing.
+      - name: SSH, through the window's event loop
+        env:
+          TT_SSH_HOST: 127.0.0.1
+          TT_SSH_PORT: 2222
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          cd shell
+          export TT_SSH_USER=$USER
+          export TT_SSH_KEY=${XDG_RUNTIME_DIR:-/tmp}/termitta-ssh-audit/id_ed25519
+          ./build/ssh_test
+      - name: Stop the SSH servers
+        if: always()
+        run: cd ssh-audit && ./servers.sh stop
 
   ssh-audit:
     name: ssh-audit — russh vs legacy algorithms

@@ -10,7 +10,19 @@ telnet and a local pty follow.
 cargo test -p tt-conn                                    # unit tests only
 TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
   cargo test -p tt-conn -- --test-threads=1              # and the hardware ones
+
+cd ../../ssh-audit && ./servers.sh start                 # :2222 sshd, :2223 dropbear
+D=$XDG_RUNTIME_DIR/termitta-ssh-audit
+TT_SSH_HOST=127.0.0.1 TT_SSH_PORT=2222 TT_SSH_USER=$USER TT_SSH_KEY=$D/id_ed25519 \
+  TT_SSH_PW_USER=termitta-test TT_SSH_PASS=spike5-not-a-secret \
+  cargo test -p tt-conn --test ssh -- --test-threads=1   # and the SSH ones
+cd ../../ssh-audit && ./servers.sh stop                  # removes the account
 ```
+
+`--test-threads=1` for the SSH ones too, but for a different reason: nothing is
+shared, the *server* simply refuses to be hammered. OpenSSH's `MaxStartups`
+defaults to `10:30:100` and dropbear's ceiling is lower, so running them in
+parallel produces a scatter of unrelated failures that all pass on their own.
 
 Without those two variables the hardware tests **skip loudly** rather than pass
 quietly, so a machine with no rig still gets a green `cargo test` without
@@ -128,3 +140,70 @@ that is Stage 3's problem.
 Async. `PLAN.md` puts `tokio` under `tt-conn`, and `russh` will require it, but
 inventing the async shape before the second transport exists would be guessing.
 The seam is the byte-stream API above; a runtime goes behind it.
+
+## SSH
+
+`russh` on a worker thread, behind the same synchronous `Transport` a serial
+port presents. Two shapes had to be decided here, and `PLAN.md` deferred both
+until there was a second transport to decide them against.
+
+**Async lives inside `tt-conn`, not above it.** The terminal core, the C ABI and
+the Qt shell are all synchronous, and a terminal wants nothing from a connection
+but bytes. So the tokio runtime is private to `ssh/conn.rs`: one thread, one
+current-thread runtime, and a self-pipe (`ssh/wakeup.rs`) so a frontend can wait
+on SSH exactly the way it waits on a serial port. The alternative — an async
+shell, or polling on a timer — would have spread `russh`'s runtime through three
+layers with no use for it.
+
+**Connecting is a state machine the caller drives.** `SshConnect::poll` returns
+the question — host key, password, keyboard-interactive challenge, key
+passphrase — and the worker waits for an answer. A callback would have to be
+`Send`, would run on the worker thread, and would leave a Qt frontend trying to
+raise a modal dialog from the wrong one.
+
+Authentication follows the server's `remaining_methods` rather than a fixed
+list: agent, then key files, then what has to be typed. A device that only does
+`keyboard-interactive` is never asked for a password it will reject.
+
+`SshParams::legacy` is spike 5's first finding as a switch. russh keeps SHA-1
+key exchange, CBC ciphers and `ssh-rsa` host keys out of its default preference
+list — correct posture, and the reason a console server from 2012 will not
+answer. It *widens* the offer rather than replacing it, because spike 5's second
+finding was that embedded servers are narrow in different directions from each
+other.
+
+### `known_hosts` and `ssh_config` are written here, not adopted
+
+Both existing implementations get `known_hosts` wrong in ways that are invisible
+until they matter, and both fail in the same direction — reporting what an
+untouched file reports, *unknown host*:
+
+- **`russh::keys::known_hosts` splits the line on one space and reads the second
+  field as the key type**, so an `@revoked` entry parses as a host named
+  `@revoked` and matches nothing. A key the user explicitly revoked comes back
+  as unknown and the prompt offers to accept it. No wildcards either.
+- **Tera Term's `hosts.c` has the wildcards and the negation** but no hashed
+  entries at all — `|1|` appears nowhere in it — which on Debian and Ubuntu is
+  every line in the file. Its matcher is also case-sensitive.
+
+`ssh_config` has no adoptable reader at all, and one trap of its own: **the
+first value wins, not the last.** Nearly every other config format does the
+opposite, and getting it backwards does not fail loudly — it silently applies
+the wrong user or key to hosts that had a perfectly good specific block.
+`IdentityFile` is the exception and accumulates.
+
+`Match exec` never matches, deliberately. Resolving a config would otherwise run
+an arbitrary shell command every time a connect dialog enumerates hosts.
+Keywords that are not acted on are *reported* through `Resolved::unsupported`
+rather than dropped, because a silently ignored `ProxyJump` is a connection to
+the wrong machine.
+
+### What is not here
+
+- **A line break.** RFC 4335 defines a `break` channel request and `russh` does
+  not implement it, so `send_break` returns `Unsupported` and `supports_break`
+  is false. Returning `Ok(())` would be worse: on a console server reached over
+  SSH a break is a real function, and silently not sending one looks like the
+  far end ignoring it.
+- Port forwarding, agent forwarding, X11, `ProxyJump`, certificates, and SSH-1
+  — the last permanently, per `PLAN.md`.

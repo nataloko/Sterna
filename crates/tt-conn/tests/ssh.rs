@@ -6,9 +6,18 @@
 //! TT_SSH_HOST=127.0.0.1 TT_SSH_PORT=2222 \
 //!   TT_SSH_USER=$USER TT_SSH_KEY=$D/id_ed25519 \
 //!   TT_SSH_PW_USER=termitta-test TT_SSH_PASS=spike5-not-a-secret \
-//!   cargo test -p tt-conn --test ssh
+//!   cargo test -p tt-conn --test ssh -- --test-threads=1
 //! cd ssh-audit && ./servers.sh stop         # removes the throwaway account
 //! ```
+//!
+//! **`--test-threads=1`, and for a different reason from the serial rig.**
+//! There is no shared device here — the limit is the *server's*. OpenSSH's
+//! `MaxStartups` defaults to `10:30:100` and starts randomly refusing above
+//! ten concurrent unauthenticated connections; dropbear's ceiling is lower
+//! still. Run these in parallel and a handful fail with what looks like a
+//! connection bug and is actually the server declining to be hammered — the
+//! symptom is a scatter of unrelated failures that all pass on their own,
+//! and on dropbear it is most of the file.
 //!
 //! **Two accounts, and that is the rig rather than a quirk of these tests.**
 //! `servers.sh` appends the client keys to the *invoking* user's

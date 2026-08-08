@@ -60,13 +60,22 @@ TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
   cargo test -p tt-conn -- --test-threads=1   # + the serial hardware tests
 TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
   cargo test -p tt-session -- --test-threads=1   # one package at a time
+cd ../ssh-audit && ./servers.sh start            # + the SSH tests need a server
+D=$XDG_RUNTIME_DIR/termitta-ssh-audit
+TT_SSH_HOST=127.0.0.1 TT_SSH_PORT=2222 TT_SSH_USER=$USER \
+  TT_SSH_KEY=$D/id_ed25519 TT_SSH_PW_USER=termitta-test \
+  TT_SSH_PASS=spike5-not-a-secret \
+  cargo test -p tt-conn --test ssh -- --test-threads=1   # ...and PORT=2223
 
 cd shell                         # the Qt 6 frontend — build it in
                                  # termitta-fedora, never here
 cmake -S . -B build -G Ninja && cmake --build build
 ./build/render_test              # the painter, asserted against grabbed pixels
 ./build/render_test --write /tmp # ...and dumped as a PNG to look at
+./build/ssh_test                 # the window's event loop, against a real server
+./build/ssh_test --write /tmp    # ...and the four SSH dialogs, as PNGs
 ./build/termitta --port /dev/ttyUSB0 --baud 115200
+./build/termitta myrouter        # an alias out of ~/.ssh/config
 
 cd oracle
 make            # build build/oracle
@@ -267,6 +276,50 @@ something other than what it is.
   flip the real one applies, so every truecolor SGR resolved to the wrong
   index. When a manual stub reimplements upstream logic, diff it against the
   original — `vtdisp.c` is not compiled into the oracle, so nothing else will.
+
+And for SSH:
+
+- **The SSH tests need `--test-threads=1`, and not for the rig's reason.**
+  Nothing is shared; the *server* declines. OpenSSH's `MaxStartups` defaults to
+  `10:30:100` and starts randomly refusing above ten concurrent unauthenticated
+  connections, and dropbear's ceiling is lower — so in parallel a handful fail
+  with what looks like a connection bug, all of them pass in isolation, and on
+  dropbear it is ten of fifteen.
+
+- **`~/.ssh/config` takes the FIRST value for a keyword, not the last.** The
+  opposite of nearly every other config format, and it does not fail loudly: a
+  `Host *` block at the *top* of a file silently overrides every specific block
+  below it, so the user gets the wrong account or the wrong key and their setup
+  "just doesn't work". `IdentityFile` is the single exception and accumulates.
+- **The algorithm name for `known_hosts` comes out of the key blob, not from
+  `PublicKey::algorithm()`.** A host key verified with `rsa-sha2-512`
+  signatures is written down as `ssh-rsa` — RFC 8332 leaves the blob's own type
+  string alone — so taking the negotiated name reports every RSA host in the
+  file as unknown.
+- **`check` has to read every file to the end.** Returning at the first
+  accepting line is faster and wrong: an `@revoked` entry further down, or in
+  the second file, has to be able to overrule it.
+- **`best_supported_rsa_hash()` returns `Result<Option<Option<HashAlg>>>`** and
+  each layer means something different. All three collapse to the same
+  fallback — plain `ssh-rsa` — but `.ok().flatten()` type-checks against the
+  wrong one.
+- **`tt_session_pump` returns the moment the line is quiet**, which is the
+  point of it. So a C or Qt caller that "waits" by pumping in a loop spins
+  through a thousand iterations in a millisecond and concludes the far end
+  never answered. Wait on the descriptor. This cost a debugging round in
+  `abi.c`.
+- **A Qt dialog spins a nested event loop**, so the `QSocketNotifier` fires
+  again while a host-key prompt is open. Without `Session::m_sshWaiting` the
+  poll re-enters, invalidates the borrowed strings the open dialog is showing,
+  and asks the same question twice.
+- **A test that connects to `127.0.0.1:2222` reads the developer's own
+  `~/.ssh/known_hosts`** unless told otherwise, and a hashed entry left over
+  from some earlier session turns `Unknown` into `NewAlgorithm`. Point
+  `TtSshParams::known_hosts` at a scratch file.
+- **`QWidget::grab()` on a dialog that has never been shown renders it before
+  layout**, so wrapped labels overlap in the image and nowhere else. One
+  `adjustSize()` removes the discrepancy — otherwise a perfectly good dialog
+  looks broken in its own screenshot.
 
 And for the serial side:
 

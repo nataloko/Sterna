@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 60
+**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 64
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -362,10 +362,13 @@ Must be shippable and genuinely useful, not a demo.
   remains is selection, which is a frontend concept the grid only has to
   support.
 - `tt-conn`: **serial first** (the differentiator), then SSH2 via `russh`, then
-  telnet, then local PTY via `portable-pty`. 🔵 **serial done** — the patch
-  layer spike 4 specified is built and green on the loopback rig: `CMSPAR`
-  parity, `PARMRK` break detection, `VSTART`/`VSTOP`, a userspace DSR-flow
-  shim, and by-path port identity. See `crates/tt-conn/README.md`.
+  telnet, then local PTY via `portable-pty`. 🔵 **serial and SSH done** — the
+  patch layer spike 4 specified is built and green on the loopback rig
+  (`CMSPAR` parity, `PARMRK` break detection, `VSTART`/`VSTOP`, a userspace
+  DSR-flow shim, by-path port identity), and SSH is built on `russh` with a
+  caller-driven prompt lifecycle, 15 integration tests against real OpenSSH and
+  real dropbear, and its own `known_hosts` and `ssh_config` readers. Telnet and
+  pty remain. See `crates/tt-conn/README.md` and below.
 - `tt-session`: the loop between engine and transport, and what the C ABI
   exports. ✅ **done** — 20 tests, three of them over the real wire. See
   `crates/tt-session/README.md`.
@@ -375,9 +378,14 @@ Must be shippable and genuinely useful, not a demo.
 - Qt shell: one window, grid painter, clipboard, font/colour config,
   connect dialog, serial-port picker with live enumeration. ✅ **done for
   Stage 1's purposes** — all of that, plus scrollback with a scrollbar, wheel
-  and `Shift+PageUp`. See `shell/README.md` and below.
+  and `Shift+PageUp`, and the SSH connect path with its host-key and
+  authentication dialogs. See `shell/README.md` and below.
 - **`~/.ssh/config`, `~/.ssh/known_hosts`, `~/.ssh/id_*`** — Tera Term lacks
-  this and it is a major Linux adoption lever.
+  this and it is a major Linux adoption lever. ✅ **done** — an alias typed into
+  the connect dialog, or given on the command line, brings its user, port, key,
+  `StrictHostKeyChecking` and legacy-algorithm settings with it. Both files are
+  read and written to OpenSSH's own semantics, which meant writing both readers;
+  see below.
 - Session logging (timestamped, rotation). ✅ **done** — raw and text modes,
   `[time] ` line prefixes, generation rotation, and a live indicator in the
   window. The text tap is inside `tt-vt` at upstream's `FLogPutUTF32` seam
@@ -720,6 +728,82 @@ the byte stream before `vte` sees it — a small scanner, not a redesign — and
 is the first thing to reach for if a real device turns out to emit the same
 shape.
 
+#### SSH, and the two decisions this stage had deferred
+
+`crates/tt-conn/src/ssh/`, 2026-08-08. `PLAN.md` deliberately left the async
+shape open — "inventing it before the second transport exists would be guessing
+at a seam that is currently a byte-stream API." The second transport exists now,
+and it answered both questions the same way: **keep it inside `tt-conn`.**
+
+**The tokio runtime is private to one module.** One thread, one current-thread
+runtime, and a self-pipe so a frontend waits on SSH with the same
+`QSocketNotifier` it uses for a serial port. The core, the C ABI and the shell
+stay synchronous, which is what they wanted to be; the alternative was spreading
+`russh`'s runtime through three layers that have no use for it. The descriptor
+is the *same one* the session hands out afterwards, so the shell registers its
+notifier once and keeps it across the handover.
+
+**Connecting is a state machine the caller drives, not a callback.** `poll`
+returns the question — host key, password, keyboard-interactive challenge, key
+passphrase — and the worker waits. A callback would have to be `Send`, would run
+on the worker thread, and would leave a Qt frontend raising a modal dialog from
+the wrong one. This is the same drained-event shape `tt-session` already uses,
+for the same reason, and it is now the pattern for anything interactive that
+crosses the ABI.
+
+Authentication follows the server's `remaining_methods` rather than a fixed
+order: agent, then key files, then what has to be typed. Spike 5's two findings
+are both load-bearing — legacy algorithms are a per-connection switch (finding
+1), and it *widens* the offer rather than replacing it because embedded servers
+are narrow in different directions (finding 2).
+
+Fifteen integration tests run against real OpenSSH and real dropbear, plus the
+C ABI driven from C and the shell's own event loop driven under `offscreen`.
+All three are in CI, reusing `ssh-audit`'s servers.
+
+**One capability is missing and says so: a line break.** RFC 4335 defines the
+channel request and `russh` does not implement it, so `send_break` reports
+`Unsupported` and a new `supports_break` keeps the menu item disabled. Returning
+success would be worse — on a console server reached over SSH a break is a real
+function, and it is what someone reaches for when the console has stopped
+answering.
+
+#### Both `known_hosts` readers on offer are wrong, in the same direction
+
+Writing our own was not the plan. It became the plan after reading the two
+candidates, because both fail *silently* and both fail as "unknown host" —
+which is precisely the answer an untouched file gives, so a caller cannot tell.
+
+- **`russh::keys::known_hosts` splits the line on a single space and reads the
+  second field as the key type.** An `@revoked` or `@cert-authority` line
+  therefore parses as a host pattern named `@revoked` and matches nothing. A key
+  the user explicitly revoked comes back as unknown and the prompt offers to
+  accept it. It has no wildcard or negation matching either.
+- **Tera Term's `hosts.c:check_host_key` has the wildcards and the negation**
+  (`:389`, over `matcher.c`) but **no hashed entries at all** — `|1|` appears
+  nowhere in the file. Debian and Ubuntu ship `HashKnownHosts yes`, so on those
+  machines that is every line. Its matcher is also case-sensitive, so a host
+  reached by a differently-cased name is a host it has never seen.
+
+Ours implements OpenSSH's semantics: comma-separated patterns with `*`/`?` and
+`!`, hashed entries, both markers, `[host]:port`, several files in order. Five
+verdicts rather than a bool, because the frontend has five things to say and
+three of them are not "do you want to continue" — and because *revoked* must
+outrank *trusted*, which means reading every file to the end rather than
+stopping at the first accepting line.
+
+`ssh_config` had no adoptable reader at all. Its own trap is worth recording
+because it is the opposite of every intuition: **the first value wins, not the
+last.** A `Host *` block at the top of a file overrides everything below it.
+Getting it backwards does not fail loudly — it applies the wrong user or key to
+hosts that had a perfectly good specific block, and the user's setup "just
+doesn't work". `IdentityFile` is the one exception and accumulates.
+
+`Match exec` never matches, deliberately: resolving a config would otherwise run
+an arbitrary shell command every time the connect dialog enumerates hosts.
+Keywords that are not acted on are *reported* rather than dropped, because a
+silently ignored `ProxyJump` is a connection to the wrong machine.
+
 ### ⬜ Stage 2 — the differentiators (3–4 months, ~20k LOC)
 
 - **File transfer**: FFI to the vendored C, all six protocols, interop-tested
@@ -910,7 +994,12 @@ batching can only help.
    is no old device to test against. Non-RFC banners, hang-ups on unexpected
    packets, 30-second key exchange on weak CPUs: all still unknown. **The
    mitigation is the trait seam plus a `libssh2` fallback, which is now the plan
-   rather than insurance.** Do not let a green spike 5 read as "SSH is done".
+   rather than insurance.** Unchanged by the transport landing: 15 green tests
+   against OpenSSH and dropbear say nothing about a 2008 console server, and a
+   green suite must not be read as "SSH is done". What the transport did add is
+   the two things a real device is most likely to need — a legacy-algorithm
+   switch and a generous connect timeout — and a `Transport` seam narrow enough
+   that swapping the implementation is one file.
 4. ~~**`serialport-rs` gaps**~~ — **measured and downgraded 2026-08-07.** Break,
    modem lines and hotplug all work; the real gaps are four small ones, three
    patchable through the raw fd and one (DSR flow control) that Linux does not
