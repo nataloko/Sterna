@@ -10,6 +10,7 @@ members = [
     "tt-dump",
     "tt-host",
     "tt-fuzz",
+    "tt-bench",
 ]
 
 # This workspace is `crates/`, not the repository root, on purpose: the Stage 0
