@@ -1436,9 +1436,18 @@ impl Grid {
         }
 
         if self.insert_mode {
-            let cols = self.cols;
-            for _ in 0..w.min(cols - x) {
-                self.lines[y].remove(cols - 1);
+            // `buffer.c:3278` — the shift ends at the **right margin**, not at
+            // the screen edge, and only a cursor that has got outside the
+            // margins entirely may push the whole line. Using the edge
+            // unconditionally lets a character typed inside a left/right margin
+            // pair shove text out through the right one.
+            let end = if x > self.right {
+                self.cols - 1
+            } else {
+                self.right
+            };
+            for _ in 0..w.min(end + 1 - x) {
+                self.lines[y].remove(end);
                 self.lines[y].insert(x, Cell::erased(pen));
             }
         }

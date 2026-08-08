@@ -975,31 +975,57 @@ impl State {
         }
     }
 
+    /// `vtterm.c:AnswerTerminalType` — Primary DA, and DECID (`ESC Z`), which
+    /// upstream answers with the same function.
+    ///
+    /// It does *not* use `SendCSIstr`. It writes its own introducer, and gates
+    /// the 8-bit form on `ts.TerminalID >= IdVT320` as well as on
+    /// `Send8BitMode` — so a VT220 told S8C1T answers DSR with `9B` and this
+    /// with `ESC [`. Note the test is the terminal *id*, not the VT level, so
+    /// DECSCL cannot change it.
+    fn primary_da(&mut self) {
+        let da = self.config.term_id.primary_da();
+        if self.send_8bit && self.config.term_id.ordinal() >= TermId::Vt320.ordinal() {
+            self.send(&[0x9b, b'?']);
+        } else {
+            self.send(b"\x1b[?");
+        }
+        self.send(da.as_bytes());
+        self.send(b"c");
+    }
+
+    /// `vtterm.c:LineFeed` — the whole of it, which is what IND and NEL call
+    /// as well as the LF byte.
+    ///
+    /// The tail is the one that surprises: with LNM set, a line feed **returns
+    /// the carriage too**, and that is the *receive* side of a mode everything
+    /// else treats as being about what the keyboard sends. Upstream does it
+    /// after the vertical move, not before (`vtterm.c:706`).
+    fn line_feed(&mut self) {
+        self.grid.line_feed();
+        if self.modes.lf_mode {
+            self.grid.carriage_return();
+        }
+    }
+
     /// `vtterm.c:747`.
     fn process_lf(&mut self) {
         match self.config.cr_receive {
             CrReceive::Lf => {
                 // "the server sends LF alone" — so LF means CR+LF.
                 self.grid.carriage_return();
-                self.grid.line_feed();
+                self.line_feed();
             }
             CrReceive::Auto => {
                 if !self.prev_was_cr || !self.auto_generated_crlf {
                     self.grid.carriage_return();
-                    self.grid.line_feed();
+                    self.line_feed();
                     self.auto_generated_crlf = true;
                 } else {
                     self.auto_generated_crlf = false;
                 }
             }
-            _ => self.grid.line_feed(),
-        }
-        // `vtterm.c:706`, and it is the *receive* side of LNM rather than the
-        // send side everything else about mode 20 is about: with it set, a bare
-        // LF from the far end returns the carriage as well. Upstream does it
-        // after the vertical move, not before.
-        if self.modes.lf_mode {
-            self.grid.carriage_return();
+            _ => self.line_feed(),
         }
     }
 
@@ -1895,20 +1921,7 @@ impl State {
                     // Secondary DA: VT382(>32) + xterm rev 331 (vtterm.c:2841).
                     self.send_csi(">32;331;0c");
                 } else if !private {
-                    // `vtterm.c:AnswerTerminalType` does *not* use SendCSIstr.
-                    // It writes its own introducer, and gates the 8-bit form on
-                    // `ts.TerminalID >= IdVT320` as well as on Send8BitMode —
-                    // so a VT220 told S8C1T answers DSR with `9B` and Primary
-                    // DA with `ESC [`. Note the test is the terminal *id*, not
-                    // the VT level, so DECSCL cannot change it.
-                    let da = self.config.term_id.primary_da();
-                    if self.send_8bit && self.config.term_id.ordinal() >= TermId::Vt320.ordinal() {
-                        self.send(&[0x9b, b'?']);
-                    } else {
-                        self.send(b"\x1b[?");
-                    }
-                    self.send(da.as_bytes());
-                    self.send(b"c");
+                    self.primary_da();
                 }
             }
             // HPR and VPR — `vtterm.c:4096` and `:4100`. The same motion as CUF
@@ -2277,11 +2290,18 @@ impl Perform for State {
         match byte {
             b'7' => self.save_cursor(),
             b'8' => self.restore_cursor(),
-            b'D' => self.grid.line_feed(),
+            // IND. The full `LineFeed`, LNM tail included.
+            b'D' => self.line_feed(),
+            // NEL. `MoveCursor(0, CursorY)` and then a line feed
+            // (`vtterm.c:1508`) — **column zero**, not the left margin and not
+            // `CarriageReturn`, which is the one place the two differ.
             b'E' => {
-                self.grid.carriage_return();
-                self.grid.line_feed();
+                self.grid.move_cursor(0, self.grid.cursor.y);
+                self.line_feed();
             }
+            // DECID, the obsolete spelling of Primary DA — `vtterm.c:1539`
+            // hands it to the same `AnswerTerminalType`.
+            b'Z' => self.primary_da(),
             b'H' => self.grid.set_tab(),
             b'M' => self.grid.reverse_index(),
             // DECBI / DECFI (vtterm.c:1482, :1493). Both are no-ops when the
