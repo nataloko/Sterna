@@ -48,6 +48,25 @@ impl From<SerialEvent> for TransportEvent {
     }
 }
 
+/// What is underneath a connection, in the only terms anything above it needs.
+///
+/// Not "which transport" — that would be a list to extend every time one is
+/// added. It is the two properties a protocol running over the link actually
+/// branches on: whether delivery is already guaranteed, and how fast the line
+/// is. See [`Transport::link_kind`] for who asks and why.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinkKind {
+    /// A real serial port: bytes can be lost, and the rate is known.
+    Serial { baud: u32, seven_bit: bool },
+    /// Telnet, SSH — something that retransmits for us, and where a stalled
+    /// link is the socket's problem to notice.
+    Network,
+    /// A local pty. Reliable like a network link, but with no socket
+    /// underneath to notice a dead child, so a transfer over it still wants a
+    /// timeout.
+    LocalPty,
+}
+
 /// A byte stream the terminal can talk over.
 ///
 /// `Send` because the frontend will drive this from somewhere other than its
@@ -118,6 +137,25 @@ pub trait Transport: Send {
     #[cfg(unix)]
     fn poll_fd(&self) -> Option<std::os::unix::io::RawFd> {
         None
+    }
+
+    /// What kind of link this is, for the one caller that has to know.
+    ///
+    /// This is the exception the rest of this trait argues against, and it
+    /// earns its place: Tera Term's file-transfer protocols branch on it
+    /// directly. `xmodem.c:347`, `ymodem.c:417` and `zmodem.c:788` each pick a
+    /// different timeout set from `cv->PortType`, ZMODEM caps its block size
+    /// at 1 KB on a network link and scales it off the baud rate otherwise,
+    /// and `kermit.c:1213` uses it to decide whether the eighth bit needs
+    /// quoting. Getting it wrong is not cosmetic — the network branch means
+    /// "no timeout at all", which on a link that can go quiet is a transfer
+    /// that hangs for ever.
+    ///
+    /// One question, answered by every transport, rather than a method per
+    /// protocol. The session cannot reach the concrete type: it holds a
+    /// `Box<dyn Transport>` from the moment it is connected.
+    fn link_kind(&self) -> LinkKind {
+        LinkKind::Network
     }
 
     /// A short name for the status line — `/dev/ttyUSB0`, `user@host`.

@@ -318,6 +318,10 @@ impl PtyConn {
 }
 
 impl Transport for PtyConn {
+    fn link_kind(&self) -> crate::transport::LinkKind {
+        crate::transport::LinkKind::LocalPty
+    }
+
     fn read(&mut self, data: &mut Vec<u8>, _events: &mut Vec<TransportEvent>) -> Result<usize> {
         if self.dead {
             return Err(Error::Disconnected);

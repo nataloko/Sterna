@@ -47,10 +47,17 @@ struct TtXfer {
 	int send_index;
 	char *recv_dir;
 
-	/* FTSetTimeOut's deadline and the protocol's own 500 ms cancel timer,
-	 * both CLOCK_MONOTONIC seconds; 0 means unarmed. */
+	/* The one timer, in CLOCK_MONOTONIC seconds; 0 means unarmed.
+	 *
+	 * One, not two, because upstream has one: `FTSetTimeOut` is literally
+	 * `KillTimer(IdProtoTimer)` followed by `SetTimer(IdProtoTimer, T*1000)`
+	 * (`filesys_proto.cpp:176`), and ZMODEM's cancel arms the *same*
+	 * `IdProtoTimer` at 500 ms — deliberately replacing whatever the protocol
+	 * was waiting on. Both expire into `ProtoDlgTimeOut`, which calls
+	 * `TimeOutProc`. Keeping them apart looked tidier and was wrong: a cancel
+	 * would not have displaced a ten-second read timeout, so the user would
+	 * have waited it out before the transfer noticed. */
 	double deadline;
-	double timer_at;
 
 	TtXferProgress prog;
 	double start;
@@ -305,7 +312,7 @@ UINT_PTR SetTimer(HWND hWnd, UINT_PTR nIDEvent, UINT uElapse, void *lpTimerFunc)
 {
 	(void)hWnd; (void)lpTimerFunc;
 	if (current != NULL)
-		current->timer_at = now_sec() + uElapse / 1000.0;
+		current->deadline = now_sec() + uElapse / 1000.0;
 	return nIDEvent;
 }
 
@@ -313,7 +320,7 @@ BOOL KillTimer(HWND hWnd, UINT_PTR uIDEvent)
 {
 	(void)hWnd; (void)uIDEvent;
 	if (current != NULL)
-		current->timer_at = 0;
+		current->deadline = 0;
 	return TRUE;
 }
 
@@ -669,17 +676,15 @@ unsigned tt_xfer_state(const TtXfer *x)
 
 double tt_xfer_timeout_remaining(const TtXfer *x)
 {
-	double soonest = 0;
+	double left;
 
-	if (x == NULL)
+	if (x == NULL || x->deadline == 0)
 		return -1;
-	if (x->deadline > 0)
-		soonest = x->deadline;
-	if (x->timer_at > 0 && (soonest == 0 || x->timer_at < soonest))
-		soonest = x->timer_at;
-	if (soonest == 0)
-		return -1;
-	return soonest - now_sec();
+	/* Overdue is 0, not negative: negative is reserved for "nothing armed",
+	 * and a caller that cannot tell the two apart sleeps for ever on a
+	 * timeout that has already passed. */
+	left = x->deadline - now_sec();
+	return left > 0 ? left : 0;
 }
 
 size_t tt_xfer_push_rx(TtXfer *x, const uint8_t *data, size_t len)

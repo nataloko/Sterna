@@ -597,6 +597,13 @@ And for the settings, all of which came out of `ini-audit/`:
   write rewrites every line ending in the file, and normalises `[ s ]` to
   `[s]`. Both are in `ini-audit/divergences.txt` as *not* reproduced. Re-run
   the battery on Windows in Stage 3 before trusting either.
+- **`cargo fmt --all` rewrites `tt-config/src/generated.rs` and breaks its own
+  staleness test.** The generator does not emit rustfmt-clean code, so `--all`
+  reformats the committed file and `the_generated_file_is_current` then fails
+  with "src/generated.rs is stale", which is the opposite of what happened.
+  Loud rather than silent, and self-healing — re-run `cargo run -p tt-config
+  --bin gen-settings` — but format per package (`cargo fmt -p tt-vt`) and it
+  cannot arise. `rustfmt.toml`'s `ignore` would fix it and is nightly-only.
 - **`TerminalID` is `strcmp`; every other enumerated setting is `_stricmp`.**
   `tttypes_termid.cpp:60`. And `TermIDGetID` never fails, so `TerminalID=vt320`
   is not an error — it is a VT100, silently, for ever. That is why the schema

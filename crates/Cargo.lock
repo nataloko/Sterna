@@ -2163,6 +2163,7 @@ dependencies = [
  "tt-grid",
  "tt-session",
  "tt-vt",
+ "tt-xfer",
 ]
 
 [[package]]
@@ -2198,10 +2199,12 @@ name = "tt-session"
 version = "0.0.0"
 dependencies = [
  "libc",
+ "tempfile",
  "tt-config",
  "tt-conn",
  "tt-grid",
  "tt-vt",
+ "tt-xfer",
 ]
 
 [[package]]

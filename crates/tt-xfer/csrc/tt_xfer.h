@@ -122,7 +122,9 @@ void tt_xfer_cancel(TtXfer *x);    /* Op->Cancel */
 unsigned tt_xfer_state(const TtXfer *x);
 
 /*
- * Seconds until the armed timeout fires; negative when none is armed.
+ * Seconds until the armed timeout fires. **Zero means it is already due** and
+ * negative means nothing is armed — a caller that reads an overdue deadline as
+ * "nothing armed" sleeps for ever on a timeout that has already passed.
  *
  * FTSetTimeOut re-arms a deadline and is called with the *same* number on
  * every packet for exactly that reason. Reading it as a change-of-value

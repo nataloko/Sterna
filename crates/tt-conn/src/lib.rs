@@ -33,4 +33,4 @@ pub mod telnet;
 pub mod transport;
 
 pub use error::{Error, Result};
-pub use transport::{Transport, TransportEvent};
+pub use transport::{LinkKind, Transport, TransportEvent};

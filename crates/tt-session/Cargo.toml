@@ -10,6 +10,7 @@ tt-conn.workspace = true
 tt-config.workspace = true
 tt-grid.workspace = true
 tt-vt.workspace = true
+tt-xfer.workspace = true
 
 # Two things, both unix-only: `localtime_r`, for the local offset a log
 # timestamp needs and which nothing in std can answer, and `poll(2)` in the
@@ -18,3 +19,6 @@ tt-vt.workspace = true
 # then wakes is the whole contract.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

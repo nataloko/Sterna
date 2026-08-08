@@ -465,6 +465,13 @@ impl SerialConn {
 }
 
 impl crate::transport::Transport for SerialConn {
+    fn link_kind(&self) -> crate::transport::LinkKind {
+        crate::transport::LinkKind::Serial {
+            baud: self.params.baud,
+            seven_bit: self.params.data_bits == DataBits::Seven,
+        }
+    }
+
     fn read(
         &mut self,
         data: &mut Vec<u8>,

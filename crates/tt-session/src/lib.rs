@@ -35,9 +35,11 @@ use std::time::{Duration, Instant};
 
 pub mod log;
 pub mod settings;
+pub mod xfer;
 
 pub use log::{LogMode, LogOptions, SessionLog, Timestamp};
 pub use settings::vt_config;
+pub use xfer::{xfer_options, TransferError, TransferOutcome, TransferStatus};
 // Re-exported rather than reached for directly, so that a frontend — the C ABI
 // above all — takes the settings and the metadata that describes them from the
 // same place it takes the session they belong to.
@@ -80,6 +82,16 @@ pub enum Event {
     /// once: a disk that filled up will not un-fill, and retrying on every
     /// pump turns one problem into a stall.
     LogFailed(String),
+    /// A file transfer moved. Emitted once per pump while one is running,
+    /// which is as often as anything changes.
+    ///
+    /// Boxed because it is much the largest variant and every other event
+    /// would otherwise carry its footprint — and `Damage`, the one that costs
+    /// nothing to produce, is the one produced most.
+    TransferProgress(Box<TransferStatus>),
+    /// A file transfer ended, for any reason: finished, cancelled, refused by
+    /// the peer, or cut off by the connection going away.
+    TransferDone(Box<TransferOutcome>),
 }
 
 /// A terminal, and optionally something for it to talk to.
@@ -109,6 +121,8 @@ pub struct Session {
     /// Every setting, including the ones this layer does not act on — see
     /// [`Session::settings`].
     settings: Settings,
+    /// The file transfer that owns the byte stream, if one is running.
+    xfer: Option<xfer::Running>,
 }
 
 impl Session {
@@ -129,6 +143,7 @@ impl Session {
             seen_size: (0, 0),
             close_note: None,
             settings: Settings::default(),
+            xfer: None,
         }
     }
 
@@ -217,9 +232,14 @@ impl Session {
     pub fn disconnect(&mut self) {
         self.conn = None;
         self.pending.clear();
-        // Deliberately not cleared: the user disconnecting is not a reason to
-        // forget why the *last* connection ended, and the note is what the
-        // status line is showing.
+        // A transfer has to be told here rather than on the next pump: with no
+        // connection left, `pump` returns before it reaches anything, so the
+        // transfer would sit "running" for ever with a progress dialog on top
+        // of it and no way to reach the end.
+        self.transfer_disconnected();
+        // `close_note` is deliberately not cleared: the user disconnecting is
+        // not a reason to forget why the *last* connection ended, and the note
+        // is what the status line is showing.
     }
 
     /// Why the last connection ended, when the transport had something to add
@@ -465,6 +485,7 @@ impl Session {
                     // child handle.
                     self.close_note = conn.closing_note();
                     self.conn = None;
+                    self.transfer_disconnected();
                     self.events.push(Event::Disconnected);
                     return Ok(total);
                 }
@@ -477,6 +498,24 @@ impl Session {
                     TransportEvent::BadByte(b) => Event::BadByte(b),
                     TransportEvent::Resize { cols, rows } => Event::Resize { cols, rows },
                 });
+            }
+
+            // A running transfer owns the byte stream: its traffic must not
+            // reach the parser, and the parser's replies must not reach the
+            // peer. The empty-input call still matters — the protocols make
+            // progress on their own, and a sender does nothing else.
+            if self.xfer.is_some() {
+                total += n;
+                let bytes = std::mem::take(&mut self.rx);
+                let finished = self.pump_transfer(&bytes)?;
+                self.rx = bytes;
+                if finished || Instant::now() >= deadline {
+                    break;
+                }
+                if n == 0 {
+                    break;
+                }
+                continue;
             }
 
             if n > 0 {
@@ -517,6 +556,9 @@ impl Session {
     /// Returns whether anything went out: a key bound to a local command —
     /// Hold, Print, Break — produces no bytes.
     pub fn send_key(&mut self, key: Key) -> Result<bool> {
+        if self.xfer.is_some() {
+            return Ok(false);
+        }
         match self.vt.key(key) {
             Some(bytes) => {
                 self.queue(&bytes);
@@ -534,6 +576,9 @@ impl Session {
     /// either, so a frontend sends `"\r"` and the core decides whether a line
     /// feed follows.
     pub fn send_text(&mut self, text: &str) -> Result<()> {
+        if self.xfer.is_some() {
+            return Ok(());
+        }
         let bytes = self.vt.encode_text(text);
         self.queue(&bytes);
         self.flush_pending()
@@ -545,6 +590,12 @@ impl Session {
     /// the pasted text as a command, which is a well-known way to lose data
     /// to a copied trailing newline.
     pub fn paste(&mut self, text: &str) -> Result<()> {
+        // Everything the user could type is refused while a transfer is up —
+        // a stray byte in the middle of a packet is a corrupted file, and a
+        // paste is the largest stray byte there is.
+        if self.xfer.is_some() {
+            return Ok(());
+        }
         if self.vt.bracketed_paste() {
             self.queue(b"\x1b[200~");
             self.queue(text.as_bytes());
