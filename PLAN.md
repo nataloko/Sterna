@@ -1045,10 +1045,12 @@ before anything else in every session.
 - **TTL interpreter**: native Rust, **in-process on a thread** — deletes ~2,600
   LOC of DDE glue (`ttpmacro/ttmdde.c` + `teraterm/ttdde.c`) and a whole class
   of races. Target: the 53 `.ttl` scripts in `teraterm/tests/` pass.
-  🔵 **the language runs**, 2026-08-08 — `crates/tt-ttl/`: the tokeniser, the
-  variables, the eleven precedence levels, the control flow and the string and
-  integer commands. What is left is the commands that need a terminal, a
-  filesystem or a regex engine. See below.
+  🔵 **the language runs, and it can hold a conversation**, 2026-08-08 —
+  `crates/tt-ttl/`: the tokeniser, the variables, the eleven precedence levels,
+  the control flow, the string and integer commands, and `send`/`wait`/
+  `waitln`/`waitn`/`waitrecv`/`recvln`/`pause`/`flushrecv`. What is left is the
+  session commands, the file commands, the dialogs and the regex family. See
+  below.
 - **Lua via `mlua`** over the same `ScriptHost` command table (~500 LOC glue).
 - `ttctl` JSON-RPC control socket replacing DDE. Keep a `ttpmacro script.ttl`
   CLI entry point so existing shortcuts and `.bat` wrappers keep working.
@@ -1306,10 +1308,37 @@ caller rejects on the type before looking. None is worth reporting upstream on
 its own — they are not reachable as anything but a wrong answer nobody can see —
 but they are recorded here in case a fourth turns up that is.
 
-**What is left**, in the order it is likely to be built: the connection commands
-(`send`, `wait`, `connect`, the transfer protocols, which `tt-xfer` and
-`tt-session` already have underneath), the file commands, the dialogs, and the
-regex family. That last one is a decision, not a port: `sprintf` validates its
+**The wait family is where the thread pays for itself.** Upstream's `wait` sets
+`TTLStatus = IdTTLWait` and returns; the window's message loop calls `Wait()`
+on every timer tick, so the command, the answer, the `inputstr` handling and
+the timeout arm each live somewhere else. Here each is a function that reads
+bytes until it is done, and four states became four loops. The matchers
+themselves came over unchanged — they are in `ttmdde.c`, the *macro* side of the
+DDE conversation, not in the terminal.
+
+Three of their behaviours are upstream's and none is guessable: the pattern
+scan runs from the tenth string down to the first and overwrites its answer, so
+the **lowest-numbered pattern wins a tie**; a `waitln` that matched but never
+saw the end of its line reports **0**, because the second phase's timeout
+overwrites the result; and `waitrecv` succeeds only when its window is *full*,
+with the position measured inside the last `len` bytes rather than from the
+start of the stream.
+
+It also turned up a sixth upstream defect, in `ttpmacro` this time rather than
+the VT engine. `waitn` suppresses the received-line buffer's clear-on-newline so
+that it can count bytes across line breaks, and restores it **only on the
+success path** — `ttmmain.cpp`'s timeout arm sets `result` and `inputstr` and
+never calls `ClearWaitN`. So after a `waitn` that times out, every later
+`inputstr` in that run accumulates across lines instead of holding one. It is
+reproduced, and it is deliberately *not* in `docs/upstream-bugs.md`: that file
+holds defects proven by running two engines against each other, and this is a
+reading of the source. Demonstrate it against a real `ttpmacro.exe` in Stage 3
+before filing it.
+
+**What is left**, in the order it is likely to be built: the session commands
+(`connect`, `disconnect`, `testlink`, the transfer protocols, the serial control
+lines — which `tt-xfer` and `tt-session` already have underneath), the file
+commands, the dialogs, and the regex family. That last one is a decision, not a port: `sprintf` validates its
 format specifiers with **Oniguruma** and `strmatch`/`strreplace`/`waitregex`
 match with it, so *which regex dialect this speaks* is a compatibility question
 that wants answering deliberately rather than by whichever crate is reached for.
