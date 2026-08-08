@@ -34,6 +34,13 @@ int main(int argc, char **argv)
     parser.addPositionalArgument(
         QStringLiteral("[user@]host[:port]"),
         QStringLiteral("Connect over SSH. May be an alias from ~/.ssh/config."));
+    QCommandLineOption telnetOption(
+        {QStringLiteral("t"), QStringLiteral("telnet")},
+        QStringLiteral("Treat the positional argument as telnet rather than SSH. "
+                       "The protocol follows the port: negotiated on 23, "
+                       "auto-detected elsewhere, which is what a terminal "
+                       "server's per-line port needs."));
+    parser.addOption(telnetOption);
     parser.addOption(portOption);
     parser.addOption(baudOption);
     parser.process(app);
@@ -65,7 +72,11 @@ int main(int argc, char **argv)
             port = target.mid(colon + 1).toInt();
             target = target.left(colon);
         }
-        window.connectSsh(target, user, port);
+        if (parser.isSet(telnetOption)) {
+            window.connectTelnet(target, static_cast<quint16>(port ? port : 23));
+        } else {
+            window.connectSsh(target, user, port);
+        }
     }
 
     return app.exec();

@@ -110,6 +110,10 @@ public:
     bool connectSerial(const QString &path, const TtSerialParams &params,
                        QString *outError);
     void disconnectPort();
+    /// Open a telnet (or raw TCP) connection. Synchronous, unlike SSH: telnet
+    /// asks no questions — a login prompt is terminal output, not a dialog.
+    bool connectTelnet(const QString &host, quint16 port,
+                       const TtTelnetParams &params, QString *outError);
 
     // --- ssh ----------------------------------------------------------------
     //
@@ -183,6 +187,11 @@ signals:
     /// The attempt is over and did not succeed. Success arrives as
     /// `connectionChanged` instead.
     void sshFailed(const QString &error);
+
+    /// The **far end** says the terminal should be this size — telnet's NAWS,
+    /// arriving backwards from a console server describing the equipment
+    /// behind it. Nothing has resized yet: the window owns its own size.
+    void remoteResize(int cols, int rows);
 
 private slots:
     void onReadable();

@@ -297,6 +297,11 @@ void TerminalView::paintEvent(QPaintEvent *)
 
 // --- geometry ----------------------------------------------------------------
 
+QSize TerminalView::sizeForCells(int cols, int rows) const
+{
+    return QSize(cols * m_theme.cellWidth(), rows * m_theme.cellHeight());
+}
+
 void TerminalView::resizeEvent(QResizeEvent *)
 {
     refit();

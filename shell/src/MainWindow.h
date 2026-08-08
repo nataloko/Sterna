@@ -32,6 +32,8 @@ public:
     /// `~/.ssh/config`; a blank `user` or a zero `port` means "whatever the
     /// config says".
     void connectSsh(const QString &host, const QString &user, int port);
+    /// Connect at startup, for the command line.
+    void connectTelnet(const QString &host, quint16 port);
 
     /// The window's session. Exposed so a test can drive it, and because a
     /// control socket will want it long before tabs make "which session"
@@ -41,12 +43,16 @@ public:
 private slots:
     void showConnectDialog();
     void showSshDialog();
+    void showTelnetDialog();
     void disconnectPort();
     /// Ask about a host key. Raised from the session's poll, which means a
     /// nested event loop — see `Session::pollSsh` for why that is safe.
     void onSshHostKeyWanted(const HostKeyRequest &request);
     void onSshAuthWanted(const AuthRequest &request);
     void onSshFailed(const QString &error);
+    /// The far end asked for a terminal size. Honoured, because a console
+    /// server saying 132x43 is describing equipment the user cannot see.
+    void onRemoteResize(int cols, int rows);
     void sendBreak();
     void toggleLogging();
     void chooseFont();
@@ -85,4 +91,7 @@ private:
     int m_lastSshPort = 0;
     QString m_lastSshIdentity;
     bool m_lastSshLegacy = false;
+    QString m_lastTelnetHost;
+    quint16 m_lastTelnetPort = 23;
+    TtTelnetMode m_lastTelnetMode = TT_TELNET_NEGOTIATE;
 };

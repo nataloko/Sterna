@@ -14,8 +14,10 @@ distrobox-host-exec distrobox enter termitta-fedora --no-tty -- bash -lc '
   ./build/render_test            # the painter, against grabbed pixels
   ./build/ssh_test               # the window's event loop, against a real server
   ./build/ssh_test --write /tmp  # ...and the four SSH dialogs, as PNGs
+  ./build/telnet_test            # the same, over telnet
   ./build/termitta --port /dev/ttyUSB0 --baud 115200
   ./build/termitta myrouter      # an alias out of ~/.ssh/config
+  ./build/termitta --telnet console-server:2001
 '
 ```
 
@@ -255,6 +257,33 @@ and `russh` does not implement it, and a break is what someone reaches for when
 a console has stopped answering — the worst possible moment to find out the
 menu item was decorative.
 
+## Telnet is one call, and one setting worth understanding
+
+`Session::connectTelnet` is synchronous where the SSH path is a state machine,
+and that is not an inconsistency: telnet asks no questions. A login prompt is
+terminal output, typed into like any other.
+
+The one field that matters in the dialog is the protocol mode, and it **follows
+the port** — negotiated on 23, auto-detected elsewhere — until the user changes
+it, at which point it stops following. That rule is upstream's and it is asked
+of the core rather than reimplemented here, because getting it wrong is silent:
+a terminal server's per-line port is not a telnet server, and opening at one
+with a negotiation puts protocol bytes into somebody's serial console.
+
+### A resize can arrive from the far end
+
+Telnet's NAWS is defined client-to-server, and a console server sends it the
+other way to say what the equipment behind it actually is. Upstream honours it,
+so this does too — by resizing the **window**, not the grid. Setting the grid
+directly would leave the painter drawing 132 columns into an 80-column widget
+until the next resize event undid it. A window manager that refuses the resize
+leaves the size where it was, and the status-bar notice is then the only record
+that anything was asked.
+
+The request is bounded before it is honoured. It comes off the wire, and an
+800x600 terminal from a confused server is a window nobody wants and a grid
+allocation nobody asked for.
+
 ## Not here yet
 
 - **Word and line selection on double and triple click**, which wants the same
@@ -266,7 +295,7 @@ menu item was decorative.
   having one.
 - **Session profiles.** The dialog remembers the last port and settings for the
   lifetime of the window. Saving them is Stage 2's, with the INI reader.
-- **Telnet and pty**, each of which adds one connect path.
+- **A local pty**, which is the last transport Stage 1 names.
 - **A host-key manager.** Removing a changed key still means editing
   `~/.ssh/known_hosts` by hand — the dialog says which file and which line, and
   that is as far as it goes.

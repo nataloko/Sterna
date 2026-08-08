@@ -125,6 +125,22 @@ bool Session::connectSerial(const QString &path, const TtSerialParams &params,
     return true;
 }
 
+bool Session::connectTelnet(const QString &host, quint16 port,
+                            const TtTelnetParams &params, QString *outError)
+{
+    cancelSsh();
+    const QByteArray utf8 = host.toUtf8();
+    if (tt_session_connect_telnet(m_session, utf8.constData(), port, &params) != TT_OK) {
+        if (outError) {
+            *outError = QString::fromUtf8(tt_last_error());
+        }
+        return false;
+    }
+    rearm();
+    emit connectionChanged();
+    return true;
+}
+
 void Session::disconnectPort()
 {
     // A connection still being set up is a connection: "Disconnect" while a
@@ -471,6 +487,13 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
             break;
         case TT_EVENT_KIND_DISCONNECTED:
             connectionEnded = true;
+            break;
+        case TT_EVENT_KIND_RESIZE:
+            // Passed on rather than acted on. The core does not resize itself
+            // either — the window owns its size, and a grid that changed
+            // underneath the painter would leave it drawing the wrong number
+            // of cells.
+            emit remoteResize(events[i].cols, events[i].rows);
             break;
         case TT_EVENT_KIND_LOG_FAILED:
             // The log is already closed, so this is the one chance to say so.

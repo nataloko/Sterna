@@ -18,6 +18,7 @@
 #include "Session.h"
 #include "SshDialog.h"
 #include "SshPrompts.h"
+#include "TelnetDialog.h"
 #include "TerminalView.h"
 
 namespace {
@@ -72,6 +73,7 @@ MainWindow::MainWindow()
             &MainWindow::onSshHostKeyWanted);
     connect(m_session, &Session::sshAuthWanted, this, &MainWindow::onSshAuthWanted);
     connect(m_session, &Session::sshFailed, this, &MainWindow::onSshFailed);
+    connect(m_session, &Session::remoteResize, this, &MainWindow::onRemoteResize);
 
     buildMenus();
     updateStatus();
@@ -89,6 +91,7 @@ void MainWindow::buildMenus()
     file->addAction(tr("Connect to serial port..."), QKeySequence(Qt::ALT | Qt::Key_N),
                     this, &MainWindow::showConnectDialog);
     file->addAction(tr("Connect over SSH..."), this, &MainWindow::showSshDialog);
+    file->addAction(tr("Connect over telnet..."), this, &MainWindow::showTelnetDialog);
     m_disconnectAction = file->addAction(tr("Disconnect"), this,
                                          &MainWindow::disconnectPort);
     file->addSeparator();
@@ -211,6 +214,66 @@ void MainWindow::onSshAuthWanted(const AuthRequest &request)
         return;
     }
     m_session->answerAuth(dialog.answers());
+}
+
+void MainWindow::showTelnetDialog()
+{
+    TelnetDialog dialog(this);
+    dialog.setInitial(m_lastTelnetHost, m_lastTelnetPort, m_lastTelnetMode);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    if (dialog.host().isEmpty()) {
+        QMessageBox::warning(this, tr("Telnet"), tr("Enter a host to connect to."));
+        return;
+    }
+    TtTelnetParams params;
+    dialog.fill(&params);
+    connectTelnet(dialog.host(), dialog.port());
+    m_lastTelnetMode = params.mode;
+}
+
+void MainWindow::connectTelnet(const QString &host, quint16 port)
+{
+    TtTelnetParams params;
+    tt_telnet_params_default(&params, port);
+    params.mode = m_lastTelnetMode;
+    QString error;
+    if (!m_session->connectTelnet(host, port, params, &error)) {
+        QMessageBox::critical(this, tr("Telnet"),
+                              tr("Could not connect to %1:%2.\n\n%3")
+                                  .arg(host)
+                                  .arg(port)
+                                  .arg(error));
+        return;
+    }
+    m_lastTelnetHost = host;
+    m_lastTelnetPort = port;
+    updateStatus();
+}
+
+void MainWindow::onRemoteResize(int cols, int rows)
+{
+    // A console server is describing equipment the user cannot see, so this is
+    // honoured rather than offered. Bounded because it arrives off the wire:
+    // an 800x600 terminal from a confused server is a window nobody wants and
+    // a grid allocation nobody asked for.
+    if (cols < 8 || rows < 2 || cols > 500 || rows > 300) {
+        onNotice(tr("Ignoring a remote request for a %1x%2 terminal").arg(cols).arg(rows));
+        return;
+    }
+    if (cols == m_session->cols() && rows == m_session->rows()) {
+        return;
+    }
+    // The *window* is resized, not the grid: the view fits the terminal to
+    // whatever space it has, so setting the grid directly would leave the
+    // painter drawing 132 columns into an 80-column widget until the next
+    // resize event undid it. A window manager that refuses — tiled, maximised
+    // — leaves the size where it was, and the notice below is then the only
+    // record that anything was asked.
+    const QSize want = m_view->sizeForCells(cols, rows);
+    resize(size() + (want - m_view->size()));
+    onNotice(tr("The far end asked for %1x%2").arg(cols).arg(rows));
 }
 
 void MainWindow::onSshFailed(const QString &error)

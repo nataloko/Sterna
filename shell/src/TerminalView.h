@@ -31,6 +31,8 @@ public:
     void applyFont(const QFont &font);
 
     QSize sizeHint() const override;
+    /// The pixel size this many cells needs, at the current font.
+    QSize sizeForCells(int cols, int rows) const;
 
     /// Copy the selection, if there is one.
     void copySelection() const;
