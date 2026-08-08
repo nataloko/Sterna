@@ -1,0 +1,18 @@
+[package]
+name = "tt-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A headless terminal that runs a program on a pty"
+
+[dependencies]
+tt-conn.workspace = true
+tt-grid.workspace = true
+tt-session.workspace = true
+tt-vt.workspace = true
+
+# poll(2) on the descriptor the session hands out — the same wait the Qt shell
+# does with a QSocketNotifier, minus Qt.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

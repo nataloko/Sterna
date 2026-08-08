@@ -1,6 +1,15 @@
 [workspace]
 resolver = "2"
-members = ["tt-grid", "tt-charset", "tt-vt", "tt-conn", "tt-session", "tt-ffi", "tt-dump"]
+members = [
+    "tt-grid",
+    "tt-charset",
+    "tt-vt",
+    "tt-conn",
+    "tt-session",
+    "tt-ffi",
+    "tt-dump",
+    "tt-host",
+]
 
 # This workspace is `crates/`, not the repository root, on purpose: the Stage 0
 # spikes (serial-audit/, ssh-audit/) are standalone crates with their own
