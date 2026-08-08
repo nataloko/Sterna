@@ -66,6 +66,9 @@ TT_SSH_HOST=127.0.0.1 TT_SSH_PORT=2222 TT_SSH_USER=$USER \
   TT_SSH_KEY=$D/id_ed25519 TT_SSH_PW_USER=termitta-test \
   TT_SSH_PASS=spike5-not-a-secret \
   cargo test -p tt-conn --test ssh -- --test-threads=1   # ...and PORT=2223
+cd ../telnet-audit && ./servers.sh start          # needs no sudo, no accounts
+TT_TELNET_HOST=127.0.0.1 TT_TELNET_PORT=2323 TT_TELNET_RAW_PORT=2324 \
+  cargo test -p tt-conn --test telnet
 
 cd shell                         # the Qt 6 frontend — build it in
                                  # termitta-fedora, never here
@@ -74,6 +77,7 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/render_test --write /tmp # ...and dumped as a PNG to look at
 ./build/ssh_test                 # the window's event loop, against a real server
 ./build/ssh_test --write /tmp    # ...and the four SSH dialogs, as PNGs
+./build/telnet_test              # the same, over telnet
 ./build/termitta --port /dev/ttyUSB0 --baud 115200
 ./build/termitta myrouter        # an alias out of ~/.ssh/config
 
@@ -87,6 +91,9 @@ make && ./run_tests.sh           # 10 interop cases vs lrzsz and gkermit
 
 cd ssh-audit                     # Stage 0 spike 5
 ./servers.sh start && cargo run && ./servers.sh stop
+
+cd telnet-audit                  # a real telnetd for the transport's interop
+./servers.sh start && ./servers.sh stop
 
 cd serial-audit                  # Stage 0 spike 4, needs the FTDI loopback rig
 cargo run --bin serial-audit     # capability audit vs commlib.c
@@ -276,6 +283,33 @@ something other than what it is.
   flip the real one applies, so every truecolor SGR resolved to the wrong
   index. When a manual stub reimplements upstream logic, diff it against the
   original — `vtdisp.c` is not compiled into the oracle, so nothing else will.
+
+And for telnet:
+
+- **The framing and the negotiation are two files upstream, and the framing
+  runs first.** `ttcmn.c` unescapes `IAC IAC`, swallows the `NUL` after a `CR`
+  and only then hands bytes to `telnet.c`. Reading `telnet.c` alone gives a
+  parser that doubles every `0xFF` and passes `CR NUL` through to the terminal.
+- **`ttcmn.c` clears its CR flag whatever the next byte is** (`:572`), so only
+  a `NUL` is lost after a `CR`. Clearing it only on the `NUL` path drops the
+  `IAC` in `CR IAC …` and leaves the negotiation one byte out of step for the
+  rest of the session.
+- **The opening burst goes out only when the port is 23** (`vtwin.cpp:3666`,
+  `ts.TCPPort == ts.TelPort`). This looks like an oversight and is not: a
+  terminal server's per-line port is not a telnet server, and opening at one
+  with `WILL TERMINAL-TYPE` puts five bytes of protocol into somebody's serial
+  console.
+- **`MaxTelOpt` is 34 and everything above it is refused flat.** Reproduced
+  rather than widened — a real `telnetd` opens with `WILL AUTHENTICATION`,
+  `WILL ENCRYPT`, `DO XDISPLOC` and `DO NEW-ENVIRON`, all above it, so the
+  refusal path runs before anything else in every session.
+- **NAWS arrives backwards and upstream acts on it anyway.** `telnet.c:299`
+  has the "did we negotiate this" test commented out, so a server's NAWS
+  resizes the terminal whether or not NAWS was agreed. That is a console
+  server describing the equipment behind it, and it is reproduced including
+  the laxity.
+- **Telnet has a break and SSH does not**, which is why `supports_break` is on
+  the transport rather than assumed.
 
 And for SSH:
 

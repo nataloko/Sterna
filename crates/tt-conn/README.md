@@ -141,6 +141,37 @@ Async. `PLAN.md` puts `tokio` under `tt-conn`, and `russh` will require it, but
 inventing the async shape before the second transport exists would be guessing.
 The seam is the byte-stream API above; a runtime goes behind it.
 
+## Telnet
+
+Third transport, and after serial the one that matters most: a terminal server
+puts one TCP port on each serial line, so reaching those ports is the same job
+as reaching the cable.
+
+That shapes the modes, and `TelnetMode::Raw` is a **first-class choice rather
+than a degraded one**. An `0xFF` in a firmware upload is data; a client that
+eats it corrupts the transfer. `Auto` is upstream's `TelAutoDetect` — raw until
+the first `IAC`. `Negotiate` opens with upstream's burst, and upstream sends it
+only when the port is 23 (`vtwin.cpp:3666`), which is not an oversight: opening
+at a console server with `WILL TERMINAL-TYPE` puts five bytes of protocol into
+somebody's serial console.
+
+The protocol is in `telnet/protocol.rs` with no socket in it, so the parts that
+break — option negotiation, IAC framing, a command split across two reads — are
+tested against byte strings. **The framing and the negotiation are two files
+upstream and the framing runs first**: `ttcmn.c` unescapes `IAC IAC` and
+swallows the `NUL` after a `CR` before `telnet.c` sees anything. Reading
+`telnet.c` alone gives a parser that doubles every `0xFF`.
+
+Two things upstream has are absent, and both are **opt-in settings there too**,
+so neither is a default behaviour difference: local echo (`ts.TelEcho`, off)
+and LINEMODE (`ts.EnableLineMode`, off).
+
+Those unit tests prove the port matches upstream's C and nothing about whether
+upstream matches the world. `telnet-audit/` is what closes that: GNU inetutils'
+`telnetd` behind a fifteen-line inetd, plus a raw echo. It opens with four
+options above upstream's `MaxTelOpt`, so the refusal path runs first in every
+session.
+
 ## SSH
 
 `russh` on a worker thread, behind the same synchronous `Transport` a serial
