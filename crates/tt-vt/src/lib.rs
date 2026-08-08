@@ -305,6 +305,10 @@ pub struct Vt {
     /// `[0xC2]` then `[0x8D]` would print a replacement character where a
     /// single call would have produced a carriage return.
     pending_c2: bool,
+    /// Continuation bytes still owed by a UTF-8 sequence in progress, across
+    /// chunk boundaries for the same reason. A byte in `80..=9F` is a C1
+    /// control only when nothing is expecting it.
+    utf8_left: u8,
 }
 
 impl Vt {
@@ -325,14 +329,16 @@ impl Vt {
                 ..State::empty()
             },
             pending_c2: false,
+            utf8_left: 0,
         }
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
-        // 0xC2 is the only lead byte that can produce a C1 codepoint, so a
-        // stream without one needs no rewriting at all — which is almost all
-        // of them.
-        if !self.pending_c2 && !bytes.contains(&0xc2) {
+        // Pure ASCII needs no rewriting at all, and almost every chunk is. The
+        // test cannot be narrower than this: the walk has to see whole UTF-8
+        // sequences to know a continuation byte from a bare one, so any byte
+        // over 0x7F puts it back in play.
+        if !self.pending_c2 && self.utf8_left == 0 && !bytes.iter().any(|&b| b >= 0x80) {
             self.parser.advance(&mut self.state, bytes);
             return;
         }
@@ -356,6 +362,14 @@ impl Vt {
     /// This runs over the whole stream, including OSC and DCS payloads. Tera
     /// Term decodes UTF-8 before its escape parser too, so it has the same
     /// property; a C1 inside a string is mangled by both.
+    ///
+    /// The other half of the job is a byte in `80..=9F` that is **not** part of
+    /// any sequence. `vte` executes it as a C1 control; Tera Term's decoder
+    /// never sees a control at all, because a lone continuation byte is invalid
+    /// UTF-8 and comes out as U+FFFD. Telling the two apart is the whole reason
+    /// this walk has to track sequence lengths rather than look at bytes one at
+    /// a time — the `80` in an em dash's `E2 80 94` is a continuation byte, and
+    /// replacing it would eat the character.
     fn rewrite_c1(&mut self, bytes: &[u8]) -> Vec<u8> {
         let accept = self.state.config.accept_8bit_ctrl;
         let level = self.state.vt_level;
@@ -378,11 +392,40 @@ impl Vt {
                 // Not a C1 after all — put the lead byte back and fall through
                 // so this byte is handled normally.
                 out.push(0xc2);
+            } else if self.utf8_left > 0 {
+                if (0x80..=0xbf).contains(&b) {
+                    self.utf8_left -= 1;
+                    out.push(b);
+                    continue;
+                }
+                // The sequence was cut short. Whatever this byte is, it starts
+                // something new rather than continuing what came before.
+                self.utf8_left = 0;
             }
-            if b == 0xc2 {
-                self.pending_c2 = true;
-            } else {
-                out.push(b);
+
+            match b {
+                // The only lead byte that can produce a C1 codepoint, and so
+                // the only one worth holding back.
+                0xc2 => self.pending_c2 = true,
+                0xc0..=0xdf => {
+                    self.utf8_left = 1;
+                    out.push(b);
+                }
+                0xe0..=0xef => {
+                    self.utf8_left = 2;
+                    out.push(b);
+                }
+                0xf0..=0xf7 => {
+                    self.utf8_left = 3;
+                    out.push(b);
+                }
+                // A bare C1 byte. Invisible until a line is not 8-bit clean or
+                // the baud rate is wrong, and then it is the whole difference
+                // between a screen full of replacement characters — which says
+                // *something is arriving and it is wrong* — and a screen that
+                // stays blank, which says the far end is dead.
+                0x80..=0x9f => out.extend_from_slice("\u{fffd}".as_bytes()),
+                _ => out.push(b),
             }
         }
         out
@@ -1885,6 +1928,15 @@ impl State {
                     self.sgr(params)
                 }
             }
+            // DECDSR, the private form — `vtterm.c:CSQ_n_Mode`. Two requests
+            // and no more: everything else under `?` is left alone, *including*
+            // 5 and 6. Answering those here would be answering DSR to a
+            // question that was not DSR, and a host that asked `CSI ? 6 n`
+            // (DECXCPR) wants a page number in the reply.
+            'n' if private => match arg0(params, 0) {
+                53 | 55 => self.send_csi("?50n"),
+                _ => {}
+            },
             'n' => match arg0(params, 0) {
                 5 => self.send_csi("0n"),
                 6 => {
