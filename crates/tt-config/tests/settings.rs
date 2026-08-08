@@ -1,5 +1,6 @@
 //! The schema, and the claim that a round trip changes nothing.
 
+use tt_config::gen;
 use tt_config::{Ini, Kind, KeyboardBackspace, Settings, TerminalCrReceive, TerminalId, FIELDS};
 
 #[test]
@@ -133,14 +134,13 @@ fn the_metadata_describes_what_is_really_there() {
 fn the_generated_file_is_current() {
     // Same arrangement as `tt-ffi`'s committed header: the generator is not
     // wired into either build system, so this is what stops the schema and the
-    // code drifting apart.
-    let status = std::process::Command::new(env!("CARGO"))
-        .args(["run", "-q", "-p", "tt-config", "--bin", "gen-settings", "--", "--check"])
-        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
-        .status()
-        .expect("cargo run");
-    assert!(
-        status.success(),
+    // code drifting apart. In-process rather than a nested `cargo run` —
+    // that is the package-cache-lock trap `tt-ffi/build.rs` documents.
+    let schema = std::fs::read_to_string(gen::schema_path()).expect("the schema");
+    let committed = std::fs::read_to_string(gen::generated_path()).expect("the generated file");
+    assert_eq!(
+        gen::generate(&schema),
+        committed,
         "src/generated.rs is stale — run `cargo run -p tt-config --bin gen-settings`"
     );
 }

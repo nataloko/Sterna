@@ -11,6 +11,7 @@
 //! cargo run -p tt-config --bin gen-settings   # after editing the schema
 //! ```
 
+pub mod gen;
 pub mod ini;
 pub mod schema;
 
