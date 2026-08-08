@@ -217,15 +217,47 @@ impl Session {
     /// the retained ones — `Grid::resize` refits the scrollback alongside the
     /// page.
     pub fn row(&self, y: usize) -> &[Cell] {
+        self.line(self.line_at(y)).unwrap_or(&[])
+    }
+
+    /// The absolute line number of the top of the *live* page.
+    ///
+    /// Which is exactly [`Grid::scrolled_off`], and true by construction: every
+    /// scroll pushes one line off the top and increments it by one. That makes
+    /// it the origin the whole numbering below is measured from.
+    pub fn top_line(&self) -> u64 {
+        self.vt.grid().scrolled_off()
+    }
+
+    /// The absolute line number shown at viewport row `y`.
+    ///
+    /// This is the name a frontend needs for anything it wants to *keep* across
+    /// output — a selection, most obviously. Viewport rows and grid rows both
+    /// mean "wherever this line has slid to since", so a highlight held in
+    /// either walks up the screen as the host prints.
+    pub fn line_at(&self, y: usize) -> u64 {
+        // `view_offset` is clamped to the scrollback, which the grid asserts is
+        // never longer than `scrolled_off`, so this cannot go negative.
+        self.top_line() - self.view_offset() as u64 + y as u64
+    }
+
+    /// One line of the buffer by absolute number, scrollback and page alike.
+    ///
+    /// `None` once the line has been evicted from the scrollback, or for one
+    /// that has not been printed yet — both of which a frontend holding an old
+    /// number has to be able to ask about without guessing at the range first.
+    pub fn line(&self, line: u64) -> Option<&[Cell]> {
         let grid = self.vt.grid();
-        let offset = self.view_offset();
         let back = grid.scrollback_len();
-        // Viewport row `y` sits at absolute index `back - offset + y`, counting
-        // the scrollback first and then the page.
-        match (back + y).checked_sub(offset) {
-            Some(abs) if abs < back => grid.scrollback_line(abs).unwrap_or(&[]),
-            Some(abs) => grid.line(abs - back),
-            None => &[],
+        // The oldest line still held, one page-worth of scrollback below the
+        // top of the page.
+        let first = self.top_line() - back as u64;
+        let i = usize::try_from(line.checked_sub(first)?).ok()?;
+        if i < back {
+            grid.scrollback_line(i)
+        } else {
+            let y = i - back;
+            (y < grid.rows()).then(|| grid.line(y))
         }
     }
 

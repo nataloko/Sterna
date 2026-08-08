@@ -190,3 +190,109 @@ fn a_terminal_with_no_scrollback_configured_has_no_viewport() {
     assert_eq!(s.view_offset(), 0);
     assert_eq!(row(&s, 3), "");
 }
+
+// --- naming a line so it can be kept ----------------------------------------
+//
+// Everything above is about where a line is *now*. A frontend that wants to
+// hold on to one — a selection is the only thing that does — needs a name that
+// survives the host printing another screenful, and neither a viewport row nor
+// a grid row is one.
+
+fn line(s: &Session, n: u64) -> Option<String> {
+    s.line(n).map(|cells| {
+        let mut out = String::new();
+        for cell in cells {
+            match cell.codepoints().next() {
+                Some(0) | None => out.push(' '),
+                Some(cp) => out.push(char::from_u32(cp).unwrap_or(' ')),
+            }
+        }
+        out.trim_end().to_string()
+    })
+}
+
+#[test]
+fn a_lines_number_does_not_change_when_the_host_talks() {
+    let (mut s, _h) = session(20, 4, 100);
+    s.feed(&lines(0, 10));
+    // Whatever "line3" is called now, it is still called that afterwards —
+    // which is the entire property, and the one a viewport row does not have.
+    let n = s.line_at(0);
+    assert_eq!(line(&s, n).as_deref(), Some("line7"));
+    let row0_before = row(&s, 0);
+
+    s.feed(&lines(10, 30));
+    assert_eq!(line(&s, n).as_deref(), Some("line7"), "same line, same number");
+    assert_ne!(row(&s, 0), row0_before, "...while viewport row 0 moved on");
+}
+
+#[test]
+fn the_top_of_the_page_is_the_origin() {
+    let (mut s, _h) = session(20, 4, 100);
+    assert_eq!(s.top_line(), 0, "nothing has left the page yet");
+    assert_eq!(s.line_at(0), 0);
+
+    s.feed(&lines(0, 10));
+    // Seven lines left the page, so the top of it is line seven.
+    assert_eq!(s.top_line(), 7);
+    assert_eq!(line(&s, 7).as_deref(), Some("line7"));
+    assert_eq!(line(&s, 0).as_deref(), Some("line0"), "the oldest still held");
+}
+
+#[test]
+fn scrolling_back_renumbers_nothing() {
+    let (mut s, _h) = session(20, 4, 100);
+    s.feed(&lines(0, 10));
+    s.set_view_offset(5);
+    // Viewport row 0 now shows line2, and `line_at` says so — the offset moves
+    // which line a row shows, not what that line is called.
+    assert_eq!(s.line_at(0), 2);
+    assert_eq!(row(&s, 0), "line2");
+    assert_eq!(line(&s, 2).as_deref(), Some("line2"));
+}
+
+#[test]
+fn a_line_that_has_been_evicted_is_gone_rather_than_wrong() {
+    // Three lines of history, so the fourth pushes the first out.
+    let (mut s, _h) = session(20, 4, 3);
+    s.feed(&lines(0, 12));
+    assert_eq!(s.scrollback_len(), 3);
+    assert_eq!(line(&s, 0), None, "evicted, and says so");
+    assert_eq!(line(&s, u64::MAX), None, "not printed yet either");
+    // The oldest line still held is one scrollback-worth above the page.
+    let oldest = s.top_line() - 3;
+    assert_eq!(line(&s, oldest).as_deref(), Some("line6"));
+}
+
+#[test]
+fn dropping_the_scrollback_leaves_the_page_numbered_as_it_was() {
+    let (mut s, _h) = session(20, 4, 100);
+    s.feed(&lines(0, 10));
+    let top = s.line_at(0);
+    // `ED 3` is `ClearBuffer`: the history goes and the page is blanked, so
+    // the numbering has to survive `scrollback_len` collapsing underneath it.
+    // The page keeps its numbers — those rows are still there, just empty —
+    // and everything above them is unreachable rather than misread.
+    s.feed(b"\x1b[3J");
+    assert_eq!(s.scrollback_len(), 0);
+    assert_eq!(line(&s, top).as_deref(), Some(""));
+    assert_eq!(line(&s, top - 1), None);
+    assert_eq!(line(&s, top + 3).as_deref(), Some(""), "the last page row");
+    assert_eq!(line(&s, top + 4), None, "and one past it");
+}
+
+#[test]
+fn every_viewport_row_is_the_line_it_is_named_after() {
+    let (mut s, _h) = session(20, 6, 100);
+    s.feed(&lines(0, 40));
+    for offset in [0, 1, 7, 30] {
+        s.set_view_offset(offset);
+        for y in 0..6 {
+            assert_eq!(
+                line(&s, s.line_at(y)).as_deref(),
+                Some(row(&s, y).as_str()),
+                "offset {offset}, row {y}"
+            );
+        }
+    }
+}

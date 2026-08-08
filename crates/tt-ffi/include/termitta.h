@@ -1260,6 +1260,49 @@ void tt_session_set_view_offset(TtSession *session, size_t offset);
  */
 bool tt_session_cursor_view_row(const TtSession *session, size_t *out);
 
+/**
+ * The absolute number of the line shown at viewport row `y`.
+ *
+ * A viewport row says *where* a line is, and that changes every time the host
+ * prints. This says *which* line it is, and that never changes — which is what
+ * a frontend needs to hold on to one across output. A selection is the thing
+ * that needs it: highlighting rows 3 to 5 means a highlight that walks up the
+ * screen as the device talks, and a copy that takes whatever slid underneath.
+ *
+ * The numbering starts at zero on the first line the terminal ever showed and
+ * counts every line that has scrolled off since, so the top of the live page
+ * is always [`tt_session_top_line`]. `y` is not range-checked: a row past the
+ * bottom of the page names a line that has not been printed yet, which
+ * [`tt_session_line`] then reports as absent.
+ */
+uint64_t tt_session_line_at(const TtSession *session,
+                            size_t y);
+
+/**
+ * The absolute number of the line at the top of the **live** page.
+ *
+ * Equivalently: how many lines have ever scrolled off it. The difference
+ * between two readings is how far the content moved.
+ */
+uint64_t tt_session_top_line(const TtSession *session);
+
+/**
+ * One line by absolute number — the scrollback and the page alike, and
+ * **without regard to what is currently in view**.
+ *
+ * [`tt_session_row`] is the painter's call and this is the one for anything
+ * that outlived a scroll. Null when the line has been evicted from the
+ * scrollback or has not been printed yet, which a caller holding an old number
+ * has to be able to ask about rather than range-check first. Sets no error:
+ * asking about a line that has aged out is ordinary.
+ *
+ * Borrowed on the same terms as [`tt_session_row`] — valid until the next call
+ * that can change the grid.
+ */
+const TtCell *tt_session_line(const TtSession *session,
+                              uint64_t line,
+                              size_t *out_len);
+
 void tt_session_cursor(const TtSession *session, TtCursor *out);
 
 /**

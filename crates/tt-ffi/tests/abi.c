@@ -171,6 +171,72 @@ static void test_scrollback_viewport(void)
     tt_session_free(s);
 }
 
+static void expect_line(const TtSession *s, uint64_t n, char want)
+{
+    size_t len = 0;
+    const TtCell *line = tt_session_line(s, n, &len);
+    CHECK(line != NULL);
+    if (!line)
+        return;
+    CHECK(len == tt_session_cols(s));
+    if (base(&line[0]) != (uint32_t)want) {
+        fprintf(stderr, "line %llu: want '%c', got U+%04X\n",
+                (unsigned long long)n, want, base(&line[0]));
+        failures++;
+    }
+}
+
+/* Naming a line, which is what a selection has to hold rather than a row. */
+static void test_absolute_lines(void)
+{
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    cfg.cols = 20;
+    cfg.rows = 4;
+    TtSession *s = tt_session_new(&cfg);
+
+    static const char feed[] = "a\r\nb\r\nc\r\nd\r\ne\r\nf\r\n";
+    tt_session_feed(s, (const uint8_t *)feed, sizeof feed - 1);
+    /* Six lines through four rows: three have left the page, so the page
+     * starts at line 3 and viewport row 0 is the same thing. */
+    CHECK(tt_session_top_line(s) == 3);
+    CHECK(tt_session_line_at(s, 0) == 3);
+    expect_line(s, 0, 'a');
+    expect_line(s, 3, 'd');
+
+    /* The number outlives the row: 'b' is line 1 before and after. */
+    uint64_t b = tt_session_line_at(s, 0) - 2;
+    expect_line(s, b, 'b');
+    static const char more[] = "g\r\nh\r\n";
+    tt_session_feed(s, (const uint8_t *)more, sizeof more - 1);
+    CHECK(tt_session_line_at(s, 0) == 5);
+    expect_line(s, b, 'b');
+
+    /* Scrolling the view renumbers nothing either. */
+    tt_session_set_view_offset(s, 3);
+    CHECK(tt_session_line_at(s, 0) == 2);
+    expect_line(s, b, 'b');
+
+    /* A line that has not been printed yet is absent rather than wrong, and
+     * `out_len` is left alone — there is nothing to describe. */
+    size_t len = 99;
+    CHECK(tt_session_line(s, UINT64_MAX, &len) == NULL);
+    CHECK(len == 99);
+    CHECK(tt_session_line(s, tt_session_top_line(s) + 4, NULL) == NULL);
+
+    tt_session_free(s);
+
+    /* And one that has aged out of the scrollback, which is the case that
+     * would otherwise read off the front of the buffer. */
+    cfg.scrollback = 2;
+    s = tt_session_new(&cfg);
+    tt_session_feed(s, (const uint8_t *)feed, sizeof feed - 1);
+    CHECK(tt_session_scrollback_len(s) == 2);
+    CHECK(tt_session_line(s, 0, NULL) == NULL);
+    expect_line(s, tt_session_top_line(s) - 2, 'b');
+    tt_session_free(s);
+}
+
 static void test_logging(void)
 {
     TtConfig cfg;
@@ -432,6 +498,9 @@ static void test_null_safety(void)
     CHECK(tt_session_view_offset(NULL) == 0);
     tt_session_set_view_offset(NULL, 5);
     CHECK(!tt_session_cursor_view_row(NULL, NULL));
+    CHECK(tt_session_line_at(NULL, 0) == 0);
+    CHECK(tt_session_top_line(NULL) == 0);
+    CHECK(tt_session_line(NULL, 0, NULL) == NULL);
     CHECK(tt_session_pending_out(NULL) == 0);
     /* Null answers false, which happens to be the non-default — a frontend
      * that lost its session sends DEL rather than reading through a null. */
@@ -829,6 +898,7 @@ int main(void)
     test_screen();
     test_attributes();
     test_scrollback_viewport();
+    test_absolute_lines();
     test_logging();
     test_input();
     test_palette();

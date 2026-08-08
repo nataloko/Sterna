@@ -567,6 +567,60 @@ pub extern "C" fn tt_session_cursor_view_row(session: *const TtSession, out: *mu
     }
 }
 
+/// The absolute number of the line shown at viewport row `y`.
+///
+/// A viewport row says *where* a line is, and that changes every time the host
+/// prints. This says *which* line it is, and that never changes — which is what
+/// a frontend needs to hold on to one across output. A selection is the thing
+/// that needs it: highlighting rows 3 to 5 means a highlight that walks up the
+/// screen as the device talks, and a copy that takes whatever slid underneath.
+///
+/// The numbering starts at zero on the first line the terminal ever showed and
+/// counts every line that has scrolled off since, so the top of the live page
+/// is always [`tt_session_top_line`]. `y` is not range-checked: a row past the
+/// bottom of the page names a line that has not been printed yet, which
+/// [`tt_session_line`] then reports as absent.
+#[no_mangle]
+pub extern "C" fn tt_session_line_at(session: *const TtSession, y: usize) -> u64 {
+    session_ref!(session, 0).session.line_at(y)
+}
+
+/// The absolute number of the line at the top of the **live** page.
+///
+/// Equivalently: how many lines have ever scrolled off it. The difference
+/// between two readings is how far the content moved.
+#[no_mangle]
+pub extern "C" fn tt_session_top_line(session: *const TtSession) -> u64 {
+    session_ref!(session, 0).session.top_line()
+}
+
+/// One line by absolute number — the scrollback and the page alike, and
+/// **without regard to what is currently in view**.
+///
+/// [`tt_session_row`] is the painter's call and this is the one for anything
+/// that outlived a scroll. Null when the line has been evicted from the
+/// scrollback or has not been printed yet, which a caller holding an old number
+/// has to be able to ask about rather than range-check first. Sets no error:
+/// asking about a line that has aged out is ordinary.
+///
+/// Borrowed on the same terms as [`tt_session_row`] — valid until the next call
+/// that can change the grid.
+#[no_mangle]
+pub extern "C" fn tt_session_line(
+    session: *const TtSession,
+    line: u64,
+    out_len: *mut usize,
+) -> *const Cell {
+    let s = session_ref!(session, ptr::null());
+    let Some(cells) = s.session.line(line) else {
+        return ptr::null();
+    };
+    if let Some(len) = unsafe { out_len.as_mut() } {
+        *len = cells.len();
+    }
+    cells.as_ptr()
+}
+
 /// Where the cursor is and whether to draw it.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
