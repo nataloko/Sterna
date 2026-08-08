@@ -13,13 +13,18 @@
 //! depends on them. Those are reproduced and commented, not fixed; where a
 //! choice was open, `PLAN.md` and the comments here say which way it went.
 
+pub mod buffer;
 pub mod error;
 pub mod expr;
+pub mod host;
+pub mod interp;
 pub mod lexer;
 pub mod rsv;
 pub mod vars;
 
 pub use error::{TtlError, TtlResult};
+pub use host::{ErrorReport, RecordingHost, ScriptHost};
+pub use interp::Interp;
 pub use lexer::Lexer;
 pub use rsv::Rsv;
 pub use vars::{Value, VarRef, VarType, Vars};
