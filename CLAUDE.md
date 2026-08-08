@@ -70,6 +70,13 @@ cd ../telnet-audit && ./servers.sh start          # needs no sudo, no accounts
 TT_TELNET_HOST=127.0.0.1 TT_TELNET_PORT=2323 TT_TELNET_RAW_PORT=2324 \
   cargo test -p tt-conn --test telnet
 
+cd crates/fuzz                   # the fuzzers — nightly only
+./seed.sh                        # corpus out of oracle/cases/
+cargo +nightly fuzz run vt_stream -- -max_total_time=300
+cargo +nightly fuzz run vt_chunks    # ...where the chunk boundaries fall
+cargo +nightly fuzz run telnet       # ...and the decoder that reads a server
+cargo +nightly fuzz tmin vt_stream artifacts/vt_stream/<file>
+
 cd shell                         # the Qt 6 frontend — build it in
                                  # termitta-fedora, never here
 cmake -S . -B build -G Ninja && cmake --build build
@@ -330,6 +337,36 @@ And for the AppImage, where two of the three failures are silent:
   test byte by byte and the `80` inside an em dash's `E2 80 94` is eaten too —
   and no differential case caught it, because none of them had a multi-byte
   character whose continuation byte fell in that range. Case 97 does now.
+- **`vte` must never be handed a partial UTF-8 sequence, and `Vt::held` is what
+  stops it.** `vte` 0.15.0's `advance_partial_utf8` prints only the *first*
+  character of what it decoded and then returns `valid_up_to()` as the bytes it
+  consumed, so a complete character in between is dropped in silence. It takes
+  a two-byte sequence cut by a read boundary, then exactly one ASCII byte, then
+  another multi-byte lead — which on a UTF-8 console is an ordinary Tuesday.
+  Every test in this repository except `crates/tt-fuzz/` feeds whole files, so
+  nothing else can see it. **A chunking bug is invisible to the differential
+  suite by construction**; if you touch `rewrite_c1`, the property to run is
+  `vt_chunking`.
+- **The differential dump cannot see width classes, so it will call a broken
+  grid `ok`.** A wide character whose halves have come apart still prints as one
+  glyph in two columns, and an orphaned padding cell prints as nothing, so a row
+  that has lost half a character renders identically to one that has not. Three
+  divergences hid behind this in one session and two were real bugs. Dumping
+  upstream's `AttrKanji` does **not** rescue it: the bit is set on the
+  non-insert write path and not the insert one (`Attr_Attr` is the pen's byte
+  alone) and `BuffSetChar` never clears it, so upstream's own copy is
+  incoherent and the two engines would be compared on a quantity neither
+  renders from. `Grid::check_wide_pairs` is the only check that covers this,
+  and it is deliberately *not* an invariant — Tera Term breaks the pairing in
+  three places itself, all listed on that function.
+- **A parked space goes through the whole write path, not straight into the
+  cell.** With one column left for a double-width glyph, upstream parks a space
+  and retries by calling `BuffPutUnicode(0x20, …)` recursively
+  (`vtterm.c:896`), so the space triggers the two crushes at the top of that
+  function — and the cursor is standing on a padding cell rather often here,
+  since a wide glyph at the right margin leaves it there by design. Writing the
+  cell directly leaves a wide character with its right half replaced by a
+  space, which is the one thing the branch exists to prevent.
 - **DECRQCRA is not upstream's**, which is why `Config::decrqcra` exists and
   defaults off. It is the only way to read a cell back over the wire and
   `esctest/` asserts on nothing else; a real connection stays byte-for-byte
@@ -557,10 +594,18 @@ And for the desktop side:
 
 ## Bugs found upstream, not yet reported
 
-Five — four in `buffer.c` and one in `vtterm.c` — all found by diffing the two
-engines. Patches in `oracle/patches/`, reports drafted in
+Five in Tera Term — four in `buffer.c` and one in `vtterm.c` — all found by
+diffing the two engines. Patches in `oracle/patches/`, reports drafted in
 `docs/upstream-bugs.md`. Filing needs a GitHub account and is an open item in
 `PLAN.md`.
+
+**And one in `vte`**, which is a dependency rather than the specification, so it
+is not in that file: `vte` 0.15.0's `advance_partial_utf8` (`lib.rs:687`) prints
+only the first character of what it decoded across a chunk boundary and then
+reports `valid_up_to()` as the bytes it consumed, dropping anything complete in
+between. `[.. C3] [A9 'a' E4 B8 80]` prints `é一` and eats the `a`. Worked
+around in `tt-vt` rather than waited on — see the trap below — but it wants
+filing too, and it needs the same GitHub account.
 
 1. **`BuffGetAnyLineDataW` does not advance past padding cells** (`:5832`), so
    it parks on the padding after a full-width character and drops the rest of
@@ -599,6 +644,8 @@ serial-audit/    Stage 0 spike 4 — serialport-rs vs commlib.c, on real hardwar
 telnet-audit/    a real telnetd, so the telnet port has an independent check
 ssh-audit/       Stage 0 spike 5 — russh vs legacy SSH algorithms and auth
 crates/          Rust core — tt-grid, tt-vt, tt-conn, tt-session, tt-ffi (see its README)
+crates/tt-fuzz/  the properties, and what they found (see its README)
+crates/fuzz/     the libFuzzer targets — nightly, weekly in CI
 run_diff.sh      the differential gate: Rust engine vs Tera Term, every case
 shell/           Qt 6 shell — one window on the C ABI (see its README)
 vendor/          vendored Tera Term subsystems — empty, see ATTRIBUTION.md first

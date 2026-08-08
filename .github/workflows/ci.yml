@@ -20,6 +20,9 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # The fuzz job, and only the fuzz job — see its `if:` below.
+  schedule:
+    - cron: '0 5 * * 1'
 
 permissions:
   contents: read
@@ -138,6 +141,10 @@ jobs:
       # without TT_SERIAL_A/TT_SERIAL_B. Only the dev container has the rig,
       # so what runs here is the decoders, the enumeration — and the pty,
       # which is the one transport whose whole suite runs anywhere.
+      # This is also where `tt-fuzz` runs: its property tests and its replay of
+      # the differential corpus and every committed crash artifact are ordinary
+      # stable tests, so they gate every push. The libFuzzer half needs nightly
+      # and minutes, and has a job of its own below.
       - name: Unit tests
         run: cd termitta/crates && cargo test --locked
       # And again with the servers named, which is what turns the eleven
@@ -311,6 +318,50 @@ jobs:
         run: |
           cd ssh-audit && ./servers.sh stop
           cd ../telnet-audit && ./servers.sh stop
+
+  # NOT on every push, for two reasons. cargo-fuzz needs nightly, so a bad
+  # nightly would turn the gate red with no change on our side — the same
+  # reason the oracle and esctest are pinned to a SHA. And a useful fuzz run
+  # costs minutes per target, against a push gate that is already a few.
+  #
+  # What every push *does* get is the other half: `tt-fuzz`'s property tests,
+  # and its replay of the corpus and of every crash the fuzzer has ever found,
+  # both on stable in the `core` job. The fuzzer explores; that replay is what
+  # stops a fixed bug coming back. This job is the exploring, weekly.
+  fuzz:
+    name: fuzz — libFuzzer over the parser
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: crates/fuzz -> target
+      # tt-fuzz reaches the telnet decoder through tt-conn, which needs libudev
+      # to build at all. Nothing here opens a port.
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - name: cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      # Seeded from oracle/cases/, so it starts from 106 streams already aimed
+      # at the engine's corners rather than rediscovering that ESC [ introduces
+      # a sequence.
+      - name: Seed the corpora
+        run: cd crates/fuzz && ./seed.sh
+      - name: vt_stream
+        run: cd crates/fuzz && cargo fuzz run vt_stream -- -max_total_time=600
+      - name: vt_chunks
+        run: cd crates/fuzz && cargo fuzz run vt_chunks -- -max_total_time=600
+      - name: telnet
+        run: cd crates/fuzz && cargo fuzz run telnet -- -max_total_time=300
+      # The crash file is the whole finding. Without this it dies with the
+      # runner and the log has only a byte array to retype by hand.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-artifacts
+          path: crates/fuzz/artifacts/
 
   ssh-audit:
     name: ssh-audit — russh vs legacy algorithms

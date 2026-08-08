@@ -1117,9 +1117,37 @@ file/dir 1k, connection/terminal 2k, dialogs 0.8k, misc 1k — **~9.3k Rust vs
    CJK. **Two of the nine original xfail notes named the wrong cause** — a
    reminder that an xfail reason is a hypothesis until something re-tests it.
    Still to do: the 53 `.ttl` files as the TTL conformance suite, in Stage 2.
-5. **⬜ Fuzzing and property tests.** `cargo-fuzz` on the parser — it eats
-   untrusted network bytes. `proptest` invariants: cursor in bounds, wide-char
-   pairs never split, scrollback monotonic, no attribute leaks across BCE.
+5. **✅ Fuzzing and property tests** — `crates/tt-fuzz/`, 2026-08-08. All four
+   named invariants are asserted, `cargo-fuzz` runs three targets over the
+   parser and the telnet decoder, and the whole thing found **five real bugs on
+   the day it was written**, in an engine that had been passing every other gate
+   for a week. See `crates/tt-fuzz/README.md`.
+
+   **The property worth recording is not on the plan's list: where the chunk
+   boundaries fall must not change the result.** It is not a theoretical
+   property — bytes arrive from a socket or a serial port in whatever sizes the
+   kernel felt like, so *every* stream is already a chunked stream, and every
+   other test in this repository feeds a whole file. That one property found two
+   of the five, including the worst: **`vte` 0.15.0 silently drops a byte when
+   it resumes a partial UTF-8 sequence.** Its `advance_partial_utf8` prints only
+   the first character it decoded and then reports `valid_up_to()` as consumed,
+   so anything complete in between is lost. `tt-vt` now holds partial sequences
+   back and `vte` never sees one — which is where that decision belonged anyway,
+   since `rewrite_c1` already has to know where sequences begin and end.
+
+   The other finding worth carrying forward is a **limit of the differential
+   gate**, and it is the first one found: **the dump cannot see width classes.**
+   A wide character whose halves have come apart renders exactly like one whose
+   have not, so `run_diff.sh` answers `ok` to a broken grid. Dumping upstream's
+   `AttrKanji` does not fix it — the bit is set on one write path and not the
+   other and is never cleared by a crush, so upstream's own copy is incoherent.
+   `Grid::check_wide_pairs` is the only check covering that ground, and it
+   caught a real bug there that nothing else could.
+
+   Split deliberately: the **libFuzzer half needs nightly** and runs weekly,
+   while the properties and the replay of the corpus and of every committed
+   crash artifact are ordinary stable tests gating every push. The fuzzer
+   explores; the replay is what stops a fixed bug coming back.
 6. **✅ Protocol interop** over a pty: `sz`/`rz`, `sb`/`rb`, `sx`/`rx` (lrzsz)
    for x/y/zmodem, `gkermit` for kermit. Built and green — `xfer/run_tests.sh`,
    10/10 both directions. Use **G-Kermit, not C-Kermit**: C-Kermit sees a pty as

@@ -13,6 +13,7 @@ that exist so the engine can be measured against something.
 | `tt-ffi` | The flat C ABI over `tt-session` — the whole core/frontend seam, and what the Qt shell links. See [its README](tt-ffi/README.md). |
 | `tt-dump` | A CLI that drives `tt-vt` over a byte stream and prints the oracle's dump format. Exists for the differential harness. |
 | `tt-host` | A terminal with no window: runs a program on a pty and is the terminal on the other end of it. Exists for `esctest/`, which cannot be a recording. |
+| `tt-fuzz` | The engine's properties — no panic, the grid stays consistent, and the chunk boundaries do not matter — shared by the stable test suite and the libFuzzer targets in `fuzz/`. See [its README](tt-fuzz/README.md). |
 
 ```sh
 cargo build && cargo test
