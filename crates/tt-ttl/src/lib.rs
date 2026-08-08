@@ -20,6 +20,7 @@ pub mod host;
 pub mod interp;
 pub mod lexer;
 pub mod rsv;
+pub mod strcmds;
 pub mod vars;
 
 pub use error::{TtlError, TtlResult};

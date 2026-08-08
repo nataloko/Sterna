@@ -425,6 +425,9 @@ impl Interp {
     /// The big `switch`. Everything not listed here is not implemented yet and
     /// says so with the code upstream uses for a word it does not know.
     fn command(&mut self, host: &mut dyn ScriptHost, w: Rsv) -> TtlResult<()> {
+        if let Some(r) = self.string_command(host, w) {
+            return r;
+        }
         match w {
             // --- control flow ---
             Rsv::If => self.cmd_if(host),
@@ -474,13 +477,13 @@ impl Interp {
     /// `SetResult` — write `result`, but only if it is still an integer. A
     /// macro that assigns a string to `result` silently stops being told
     /// anything, which is upstream's behaviour and not obviously wrong.
-    fn set_result(&mut self, code: i32) {
+    pub(crate) fn set_result(&mut self, code: i32) {
         if let Some((id, VarType::Integer)) = self.vars.find(b"result") {
             self.vars.set_int(VarRef::Scalar(id), code);
         }
     }
 
-    fn end_of_line(&mut self) -> TtlResult<()> {
+    pub(crate) fn end_of_line(&mut self) -> TtlResult<()> {
         if self.lx.first_char() != 0 {
             Err(TtlError::Syntax)
         } else {

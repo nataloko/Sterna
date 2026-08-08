@@ -42,6 +42,20 @@ pub enum VarRef {
     Elem(usize, usize),
 }
 
+/// Cut a value at its first NUL.
+///
+/// Every store upstream goes through `_strdup`, so a TTL string is a C string
+/// and cannot contain a zero byte. It matters in two places: `strspecial`'s
+/// `\\0` escape truncates the string it is in, and `code2str` of a number with
+/// a zero byte in the middle keeps only what came before it. Doing it here
+/// rather than at each of them is one rule instead of two exceptions.
+fn as_c_string(s: &[u8]) -> &[u8] {
+    match s.iter().position(|&b| b == 0) {
+        Some(i) => &s[..i],
+        None => s,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     Int(i32),
@@ -129,7 +143,7 @@ impl Vars {
 
     /// `NewStrVar`.
     pub fn new_str(&mut self, name: &[u8], val: &[u8]) -> usize {
-        self.push(name, Value::Str(val.to_vec()))
+        self.push(name, Value::Str(as_c_string(val).to_vec()))
     }
 
     /// `NewLabVar`.
@@ -236,6 +250,7 @@ impl Vars {
 
     /// `SetStrVal`.
     pub fn set_str(&mut self, r: VarRef, val: &[u8]) {
+        let val = as_c_string(val);
         match r {
             VarRef::Scalar(i) => {
                 if let Value::Str(v) = &mut self.vars[i].value {
@@ -285,6 +300,15 @@ mod tests {
         assert_eq!(v.elem(id, 2), Ok(VarRef::Elem(id, 2)));
         assert_eq!(v.elem(id, 3), Err(TtlError::OutOfRange));
         assert_eq!(v.elem(id, -1), Err(TtlError::OutOfRange));
+    }
+
+    #[test]
+    fn a_stored_string_stops_at_its_first_nul() {
+        let mut v = Vars::new();
+        let id = v.new_str(b"s", b"ab\0cd");
+        assert_eq!(v.str_at(VarRef::Scalar(id)), b"ab");
+        v.set_str(VarRef::Scalar(id), b"\0x");
+        assert_eq!(v.str_at(VarRef::Scalar(id)), b"");
     }
 
     #[test]

@@ -58,6 +58,13 @@ pub trait ScriptHost {
         let _ = code;
     }
 
+    /// `random`'s entropy. Upstream seeds SFMT from the clock; the rejection
+    /// loop that makes the result uniform stays in the interpreter, so a host
+    /// that wants a repeatable run only has to make this repeatable.
+    fn random_u32(&mut self) -> u32 {
+        0
+    }
+
     /// Whether the run has been cancelled from outside.
     ///
     /// The interpreter runs on its own thread and blocks in `wait` and `pause`,
@@ -83,6 +90,8 @@ pub struct RecordingHost {
     /// Whether an error ends the run. Upstream's dialog decides; here it is a
     /// field so a test can assert on what happens after one.
     pub stop_on_error: bool,
+    /// A counter rather than entropy, so `random` is repeatable in a test.
+    pub random_seq: u32,
 }
 
 impl RecordingHost {
@@ -111,5 +120,10 @@ impl ScriptHost for RecordingHost {
 
     fn set_exit_code(&mut self, code: i32) {
         self.exit_code = code;
+    }
+
+    fn random_u32(&mut self) -> u32 {
+        self.random_seq = self.random_seq.wrapping_add(1);
+        self.random_seq
     }
 }
