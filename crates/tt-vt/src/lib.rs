@@ -525,6 +525,39 @@ impl Vt {
     pub fn key(&self, key: Key) -> Option<Vec<u8>> {
         key.encode(self.key_modes())
     }
+
+    /// Encode typed text — `ttcmn.c:OutControl`, which every `IdText` byte
+    /// goes through on its way out.
+    ///
+    /// The only thing it does today is expand CR by [`CrSend`], and that one
+    /// thing is why the function exists: the main Return key is **not** in
+    /// [`Key`], because upstream handles `VK_RETURN` in `KeyDown` rather than
+    /// in the key table, marking it `IdText` precisely so this conversion
+    /// applies (`keyboard.c:908`). A frontend sending a bare `\r` would
+    /// otherwise have to know about LNM, and the keymap is the core's.
+    ///
+    /// Not applied to a paste: bracketed paste means "send this verbatim",
+    /// and rewriting newlines inside pasted text is how a heredoc or a YAML
+    /// block arrives corrupted.
+    ///
+    /// Telnet adds an arm here — `IdCR` with the connection not in binary
+    /// mode appends a NUL — which is `cv->TelFlag` and belongs with the
+    /// transport that has it.
+    pub fn encode_text(&self, text: &str) -> Vec<u8> {
+        let cr_send = self.state.modes.cr_send;
+        if cr_send == CrSend::Cr || !text.contains('\r') {
+            return text.as_bytes().to_vec();
+        }
+        let mut out = Vec::with_capacity(text.len() + 8);
+        for b in text.bytes() {
+            match (b, cr_send) {
+                (0x0d, CrSend::CrLf) => out.extend_from_slice(&[0x0d, 0x0a]),
+                (0x0d, CrSend::Lf) => out.push(0x0a),
+                _ => out.push(b),
+            }
+        }
+        out
+    }
 }
 
 struct State {

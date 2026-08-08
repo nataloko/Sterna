@@ -758,6 +758,21 @@ const char *tt_session_title(TtSession *session);
 bool tt_session_reverse_video(const TtSession *session);
 
 /**
+ * Whether the Backspace key should send `BS` (0x08) rather than `DEL`
+ * (0x7F) — `ts.BSKey`, which `DECSET 67` (DECBKM) sets and resets.
+ *
+ * One of the two keys a frontend has to encode itself, because upstream
+ * handles them in `KeyDown` rather than in the key table and so they are not
+ * [`Key`]s. The other is Return, which needs nothing: send `"\r"` through
+ * [`tt_session_send_text`] and LNM is applied there.
+ *
+ * Getting this backwards is not cosmetic. A host expecting DEL and receiving
+ * BS erases nothing and the line editor beeps, which reads as a broken
+ * keyboard rather than as a mode.
+ */
+bool tt_session_backspace_sends_bs(const TtSession *session);
+
+/**
  * Whether the frontend should be tracking the mouse at all, and therefore
  * whether a drag belongs to the host or to text selection.
  */

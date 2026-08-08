@@ -180,6 +180,13 @@ static void test_input(void)
                               mods, &consumed));
     CHECK(consumed);
 
+    /* Backspace is one of the two keys a frontend encodes itself, so its mode
+     * has to be readable. DECBKM flips it and DECSTR does not clear it. */
+    CHECK(!tt_session_backspace_sends_bs(s));
+    static const char bkm[] = "\033[?67h";
+    tt_session_feed(s, (const uint8_t *)bkm, sizeof bkm - 1);
+    CHECK(tt_session_backspace_sends_bs(s));
+
     CHECK_OK(tt_session_resize(s, 132, 43));
     CHECK(tt_session_cols(s) == 132);
     CHECK(tt_session_rows(s) == 43);
@@ -294,6 +301,7 @@ static void test_null_safety(void)
     CHECK(tt_session_pump(NULL, 0, NULL) == TT_ERR_INVALID);
     CHECK(tt_session_poll_fd(NULL) == -1);
     CHECK(tt_session_pending_out(NULL) == 0);
+    CHECK(!tt_session_backspace_sends_bs(NULL));
     CHECK(tt_session_send_text(NULL, "x", 1) == TT_ERR_INVALID);
     CHECK(tt_session_focus(NULL, true) == TT_ERR_INVALID);
     CHECK(tt_session_send_break(NULL, 1) == TT_ERR_INVALID);

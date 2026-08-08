@@ -254,6 +254,29 @@ fn a_short_write_keeps_the_rest_for_the_next_pump() {
 }
 
 #[test]
+fn a_typed_cr_is_expanded_by_newline_mode() {
+    // The main Return key is not a `Key` — upstream handles VK_RETURN outside
+    // the key table, marking it `IdText` so `OutControl` converts it. So the
+    // frontend sends "\r" and this is where LNM has to be applied; a shell
+    // that had to check the mode itself would be holding a piece of the keymap
+    // the core is supposed to own.
+    let (mut s, h) = connected(20, 4);
+
+    s.send_text("a\r").unwrap();
+    assert_eq!(h.outbound(), b"a\r", "LNM off: a CR stays a CR");
+
+    h.with(|st| st.outbound.clear());
+    s.feed(b"\x1b[20h"); // SM 20 — LNM
+    s.send_text("b\r").unwrap();
+    assert_eq!(h.outbound(), b"b\r\n");
+
+    // And a paste is left alone, because bracketed paste means verbatim.
+    h.with(|st| st.outbound.clear());
+    s.paste("x\ry").unwrap();
+    assert_eq!(h.outbound(), b"x\ry");
+}
+
+#[test]
 fn a_write_that_fails_hard_is_an_error_not_a_disconnect() {
     let (mut s, h) = connected(20, 4);
     h.with(|st| st.write_error = Some("write"));

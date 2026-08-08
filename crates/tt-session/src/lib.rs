@@ -251,8 +251,13 @@ impl Session {
     }
 
     /// Send typed text. Ordinary characters do not go through the key table.
+    ///
+    /// A CR in it is expanded by LNM — see [`Vt::encode_text`]. That is how
+    /// the main Return key works: it is not a [`Key`], because upstream is not
+    /// either, so a frontend sends `"\r"` and the core decides whether a line
+    /// feed follows.
     pub fn send_text(&mut self, text: &str) -> Result<()> {
-        let bytes = text.as_bytes().to_vec();
+        let bytes = self.vt.encode_text(text);
         self.queue(&bytes);
         self.flush_pending()
     }
