@@ -50,10 +50,18 @@ pub const DEFAULT_BG: u32 = 0;
 
 // --- cell width ----------------------------------------------------------
 
-/// `BuffXMax` (`buffer.c:82`), which is `TermWidthMax`. There is no matching
-/// row cap on the resize path — `BuffChangeTerminalSize` clamps the height to
-/// `ts.ScrollBuffMax` instead, so a very tall terminal is legal.
-pub const BUFF_X_MAX: usize = 500;
+/// `BuffXMax` (`buffer.c:82`), which is `TermWidthMax` — **1000**, not the 500
+/// this used to say. 500 is `TermHeightMax`, one line below it in
+/// `tttypes.h:633`, and taking the wrong one made a 640-column terminal
+/// silently half the width it asked for.
+pub const BUFF_X_MAX: usize = 1000;
+
+/// `ts.ScrollBuffMax`'s default (`ttset.c:1213`, key `MaxBuffSize`), which is
+/// the cap `BuffChangeTerminalSize` puts on the *height* (`buffer.c:4977`) —
+/// a different quantity from [`Grid::scrollback_max`], which is how deep the
+/// history actually goes. Conflating them means a terminal with its scroll
+/// buffer turned off can only be one row tall.
+pub const MAX_ROWS_DEFAULT: usize = 10_000;
 
 /// One column.
 pub const WIDTH_NARROW: u8 = 0;
@@ -225,6 +233,10 @@ pub struct Grid {
     lines: Vec<Line>,
     scrollback: VecDeque<Line>,
     scrollback_max: usize,
+    /// `ts.ScrollBuffMax` — the ceiling on the *page* height, which upstream
+    /// applies at `buffer.c:4977` and which has nothing to do with how much
+    /// history is kept. See [`MAX_ROWS_DEFAULT`].
+    max_rows: usize,
     /// Monotonic count of lines pushed into the scrollback — see
     /// [`Grid::scrolled_off`]. Not derivable from the length, which stops
     /// moving once the buffer is full.
@@ -263,6 +275,7 @@ impl Grid {
             lines: vec![vec![Cell::blank(pen); cols]; rows],
             scrollback: VecDeque::new(),
             scrollback_max,
+            max_rows: MAX_ROWS_DEFAULT,
             scrolled_off: 0,
             cursor: Cursor::default(),
             pen,
@@ -357,6 +370,31 @@ impl Grid {
 
     pub fn scrollback_len(&self) -> usize {
         self.scrollback.len()
+    }
+
+    /// How deep the history goes, in lines beyond the page.
+    pub fn scrollback_max(&self) -> usize {
+        self.scrollback_max
+    }
+
+    /// Change it — the settings dialog's `ScrollBuffSize`, applied to a
+    /// running terminal.
+    ///
+    /// Shrinking drops the **oldest** lines, which is upstream's
+    /// `ChangeBuffer` (`buffer.c:545`): it keeps the end of the buffer and
+    /// throws the start away. Nothing here touches `scrolled_off` — the lines
+    /// evicted were still printed, and the numbering has to stay monotonic or
+    /// every held line number shifts at once.
+    pub fn set_scrollback_max(&mut self, max: usize) {
+        self.scrollback_max = max;
+        while self.scrollback.len() > max {
+            self.scrollback.pop_front();
+        }
+    }
+
+    /// The ceiling on the page height — `ts.ScrollBuffMax`, `buffer.c:4977`.
+    pub fn set_max_rows(&mut self, max: usize) {
+        self.max_rows = max.max(1);
     }
 
     /// One retained line, oldest first. Always [`cols`](Grid::cols) wide —
@@ -538,7 +576,7 @@ impl Grid {
     ///   rows, and only extends downward once the scrollback runs out.
     pub fn resize(&mut self, cols: usize, rows: usize) {
         let cols = cols.clamp(1, BUFF_X_MAX);
-        let rows = rows.clamp(1, self.scrollback_max.max(1));
+        let rows = rows.clamp(1, self.max_rows.max(1));
         if cols == self.cols && rows == self.rows {
             return;
         }
@@ -1049,6 +1087,12 @@ impl Grid {
     }
 
     fn push_scrollback(&mut self, line: Line) {
+        // Counted before the early return, because `scrolled_off` names lines
+        // rather than storage: `Session` measures every absolute line number
+        // from it. A grid with no history that did not count would call every
+        // line zero, and a selection holding a line number would follow the
+        // wrong row for the rest of the session.
+        self.scrolled_off += 1;
         if self.scrollback_max == 0 {
             return;
         }
@@ -1056,7 +1100,6 @@ impl Grid {
             self.scrollback.pop_front();
         }
         self.scrollback.push_back(line);
-        self.scrolled_off += 1;
     }
 
     // --- editing ---------------------------------------------------------
@@ -1922,5 +1965,49 @@ mod tests {
             g.line_feed();
         }
         assert_eq!(g.cursor.y, 3);
+    }
+
+    /// `EnableScrollBuff=off` is a terminal with no history, not a terminal
+    /// one row tall — the height's ceiling is `ts.ScrollBuffMax`, a different
+    /// setting entirely.
+    #[test]
+    fn height_is_not_bounded_by_the_history() {
+        let mut g = Grid::new(80, 24, 0);
+        g.resize(80, 40);
+        assert_eq!(g.rows(), 40);
+        g.set_max_rows(30);
+        g.resize(80, 40);
+        assert_eq!(g.rows(), 30);
+    }
+
+    /// Lines are counted as they leave the page whether or not anything keeps
+    /// them, because the count is what every absolute line number is measured
+    /// from.
+    #[test]
+    fn lines_are_counted_off_the_page_with_no_history_to_keep_them() {
+        let mut g = Grid::new(4, 2, 0);
+        for _ in 0..5 {
+            g.line_feed();
+        }
+        assert_eq!(g.scrollback_len(), 0);
+        assert_eq!(g.scrolled_off(), 4);
+        g.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn shrinking_the_history_drops_the_oldest_lines() {
+        let mut g = Grid::new(8, 1, 10);
+        for c in "abcdef".chars() {
+            g.cursor.x = 0;
+            g.put(c as u32);
+            g.line_feed();
+        }
+        assert_eq!(g.scrollback_len(), 6);
+        g.set_scrollback_max(2);
+        assert_eq!(g.scrollback_len(), 2);
+        assert_eq!(g.scrollback_line(0).unwrap()[0].text[0], 'e' as u32);
+        // The numbering does not move under a line somebody is holding on to.
+        assert_eq!(g.scrolled_off(), 6);
+        g.check_invariants().unwrap();
     }
 }
