@@ -18,8 +18,10 @@
 // codepoints rendering blank.
 
 #include <QApplication>
+#include <QClipboard>
 #include <QColor>
 #include <QImage>
+#include <QMouseEvent>
 #include <QPixmap>
 
 #include <cstdio>
@@ -66,6 +68,43 @@ struct Harness {
         view.activateWindow();
         view.setFocus();
         qApp->processEvents();
+    }
+
+    /// A pixel `frac` of the way across a column — 0 is its left edge, and
+    /// anything past 0.5 rounds the selection boundary to the next character.
+    int px(int col, double frac = 0.0) const
+    {
+        return static_cast<int>((col + frac) * view.theme().cellWidth());
+    }
+    int py(int row, double frac = 0.5) const
+    {
+        return static_cast<int>((row + frac) * view.theme().cellHeight());
+    }
+
+    /// Post a mouse event the way a real one arrives, so the widget's own
+    /// handlers run — a test that called them directly would not be testing
+    /// the click counting, which is where the triple click lives.
+    void mouse(QEvent::Type type, int x, int y)
+    {
+        const Qt::MouseButtons held =
+            type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton;
+        QMouseEvent ev(type, QPointF(x, y), QPointF(x, y), Qt::LeftButton, held,
+                       Qt::NoModifier);
+        QCoreApplication::sendEvent(&view, &ev);
+    }
+
+    void drag(int fromX, int fromY, int toX, int toY)
+    {
+        mouse(QEvent::MouseButtonPress, fromX, fromY);
+        mouse(QEvent::MouseMove, toX, toY);
+        mouse(QEvent::MouseButtonRelease, toX, toY);
+    }
+
+    QString copied()
+    {
+        QApplication::clipboard()->clear(QClipboard::Clipboard);
+        view.copySelection();
+        return QApplication::clipboard()->text(QClipboard::Clipboard);
     }
 
     /// The middle of a cell. Unambiguous for a blank or a solid fill; for a
@@ -384,6 +423,198 @@ void test_output_does_not_move_a_scrolled_back_view()
     CHECK(h.bgAt(0, 0) == held);
 }
 
+// --- selection ---------------------------------------------------------------
+//
+// A selected cell is drawn in reverse, so on the default white background a
+// highlighted column reads black at its corner. That is the whole assertion
+// for *where* the selection is; `copied()` is the assertion for *what* it is.
+
+void test_a_drag_selects_the_characters_it_covers()
+{
+    Harness h;
+    h.feed("hello world");
+
+    // From the left edge of `h` to past the middle of `o`. The endpoint is the
+    // nearest boundary between characters, which is what makes this select
+    // `hello` rather than `hell` — upstream rounds the same way.
+    h.drag(h.px(0), h.py(0), h.px(4, 0.7), h.py(0));
+    h.render();
+    CHECK(h.bgAt(0, 0) == kBlack);
+    CHECK(h.bgAt(4, 0) == kBlack);
+    CHECK(h.bgAt(5, 0) == kWhite);
+    CHECK(h.copied() == QStringLiteral("hello"));
+
+    // Stopping short of the middle of `o` leaves it out.
+    h.drag(h.px(0), h.py(0), h.px(4, 0.2), h.py(0));
+    h.render();
+    CHECK(h.bgAt(4, 0) == kWhite);
+    CHECK(h.copied() == QStringLiteral("hell"));
+
+    // A click on its own selects nothing, and clears what there was.
+    h.mouse(QEvent::MouseButtonPress, h.px(2), h.py(0));
+    h.mouse(QEvent::MouseButtonRelease, h.px(2), h.py(0));
+    h.render();
+    CHECK(!h.view.hasSelection());
+    CHECK(h.bgAt(0, 0) == kWhite);
+}
+
+void test_a_double_click_selects_a_word()
+{
+    Harness h;
+    h.feed("foo bar_baz-qux");
+
+    // Underscore is not a delimiter and hyphen is — upstream's `DelimList`
+    // default, which is what makes a path or a flag break at the hyphen.
+    h.mouse(QEvent::MouseButtonPress, h.px(5), h.py(0));
+    h.mouse(QEvent::MouseButtonDblClick, h.px(5), h.py(0));
+    h.render();
+    CHECK(h.copied() == QStringLiteral("bar_baz"));
+    CHECK(h.bgAt(3, 0) == kWhite);
+    CHECK(h.bgAt(4, 0) == kBlack);
+    CHECK(h.bgAt(10, 0) == kBlack);
+    CHECK(h.bgAt(11, 0) == kWhite);
+
+    // Dragging *leftwards* out of a double-clicked word keeps that word's far
+    // edge, which is why the anchor is the whole unit rather than the point
+    // the drag began at.
+    h.mouse(QEvent::MouseMove, h.px(0), h.py(0));
+    CHECK(h.copied() == QStringLiteral("foo bar_baz"));
+    h.mouse(QEvent::MouseButtonRelease, h.px(0), h.py(0));
+
+    // A double click on a delimiter takes the run of *that* character, so the
+    // gap between two columns of output selects as the gap.
+    h.mouse(QEvent::MouseButtonPress, h.px(3), h.py(0));
+    h.mouse(QEvent::MouseButtonDblClick, h.px(3), h.py(0));
+    CHECK(h.copied() == QString());  // one space, trimmed as trailing padding
+    CHECK(h.view.hasSelection());
+    h.render();
+    CHECK(h.bgAt(3, 0) == kBlack);
+    CHECK(h.bgAt(2, 0) == kWhite);
+
+    // A change of character width is itself a break — upstream's `DelimDBCS`,
+    // on by default — and a wide character is taken whole from either half.
+    h.feed("\033[2J\033[Habc\xe5\x8c\x97\xe4\xba\xac""def");
+    for (int col : {3, 4}) {
+        h.mouse(QEvent::MouseButtonPress, h.px(col), h.py(0));
+        h.mouse(QEvent::MouseButtonDblClick, h.px(col), h.py(0));
+        h.mouse(QEvent::MouseButtonRelease, h.px(col), h.py(0));
+        CHECK(h.copied() == QString::fromUtf8("\xe5\x8c\x97\xe4\xba\xac"));
+    }
+    h.mouse(QEvent::MouseButtonPress, h.px(8), h.py(0));
+    h.mouse(QEvent::MouseButtonDblClick, h.px(8), h.py(0));
+    CHECK(h.copied() == QStringLiteral("def"));
+}
+
+void test_a_triple_click_selects_the_line()
+{
+    Harness h;
+    h.feed("first line\r\nsecond line");
+
+    // Qt has no triple-click event: the third press arrives as an ordinary one
+    // and the run is counted in the widget, so this is what proves the count.
+    h.mouse(QEvent::MouseButtonPress, h.px(3), h.py(0));
+    h.mouse(QEvent::MouseButtonDblClick, h.px(3), h.py(0));
+    h.mouse(QEvent::MouseButtonRelease, h.px(3), h.py(0));
+    h.mouse(QEvent::MouseButtonPress, h.px(3), h.py(0));
+    h.render();
+    CHECK(h.copied() == QStringLiteral("first line"));
+    CHECK(h.bgAt(0, 0) == kBlack);
+    CHECK(h.bgAt(79, 0) == kBlack);
+    CHECK(h.bgAt(0, 1) == kWhite);
+
+    // And it extends by whole lines.
+    h.mouse(QEvent::MouseMove, h.px(3), h.py(1));
+    h.mouse(QEvent::MouseButtonRelease, h.px(3), h.py(1));
+    CHECK(h.copied() == QStringLiteral("first line\nsecond line"));
+}
+
+/// `n` lines of ordinary text, so a copy has something in it to compare.
+void feedTextLines(Harness &h, int n)
+{
+    QByteArray out;
+    for (int i = 0; i < n; i++) {
+        out += "line" + QByteArray::number(i) + "\r\n";
+    }
+    h.session.feed(out);
+}
+
+void test_a_selection_holds_on_to_its_text_not_its_place()
+{
+    // The reason the core numbers lines at all. Held as rows, a selection
+    // stays put while the text walks up the screen underneath it — which is
+    // precisely the case someone copies in: a line off a device that is still
+    // printing.
+    Harness h;
+    h.feed("keep me\r\n");
+    h.drag(h.px(0), h.py(0), h.px(6, 0.7), h.py(0));
+    CHECK(h.copied() == QStringLiteral("keep me"));
+    h.render();
+    CHECK(h.bgAt(0, 0) == kBlack);
+
+    // Thirty lines through a 24-row screen: the selected line is now up in the
+    // history and nothing on screen should be highlighted.
+    feedTextLines(h, 30);
+    h.render();
+    CHECK(h.copied() == QStringLiteral("keep me"));
+    for (int y = 0; y < 24; y++) {
+        // Except the cursor's row: unfocused, it is an outline, and the corner
+        // `bgAt` samples is on it.
+        if (y != h.session.cursorViewRow()) {
+            CHECK(h.bgAt(0, y) == kWhite);
+        }
+    }
+
+    // Scroll back to it — `topLine` is how far, since the selected line is the
+    // first one the terminal ever showed — and the highlight is on it, not on
+    // where it used to be.
+    h.view.setViewOffset(static_cast<int>(h.session.topLine()));
+    h.render();
+    CHECK(h.bgAt(0, 0) == kBlack);
+    CHECK(h.bgAt(0, 1) == kWhite);
+}
+
+void test_a_selection_survives_scrolling_back()
+{
+    Harness h;
+    feedTextLines(h, 40);
+    h.view.setViewOffset(10);
+    h.drag(h.px(0), h.py(2), h.px(5, 0.7), h.py(2));
+    const QString text = h.copied();
+    CHECK(text.startsWith(QStringLiteral("line")));
+
+    // Live, the selected line is not on screen at all — and the copy is still
+    // the line that was selected rather than whatever now sits in that row.
+    h.view.setViewOffset(0);
+    CHECK(h.copied() == text);
+    h.render();
+    CHECK(h.bgAt(0, 2) == kWhite);
+
+    h.view.setViewOffset(10);
+    CHECK(h.copied() == text);
+    h.render();
+    CHECK(h.bgAt(0, 2) == kBlack);
+}
+
+void test_dragging_off_the_edge_scrolls_the_view()
+{
+    Harness h;
+    feedNumberedLines(h, 60);
+    h.view.setViewOffset(20);
+    const int before = h.session.viewOffset();
+
+    // Held above the top of the widget, a drag has to keep going or a
+    // selection can never be longer than one screen.
+    h.mouse(QEvent::MouseButtonPress, h.px(0), h.py(0));
+    h.mouse(QEvent::MouseMove, h.px(0), -5);
+    CHECK(h.session.viewOffset() == before + 1);
+    h.mouse(QEvent::MouseButtonRelease, h.px(0), -5);
+
+    // ...and it stops when the button comes up, rather than scrolling on.
+    const int after = h.session.viewOffset();
+    QCoreApplication::processEvents();
+    CHECK(h.session.viewOffset() == after);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -409,6 +640,12 @@ int main(int argc, char **argv)
     test_scrolling_back_paints_the_history();
     test_the_cursor_is_not_painted_onto_the_history();
     test_output_does_not_move_a_scrolled_back_view();
+    test_a_drag_selects_the_characters_it_covers();
+    test_a_double_click_selects_a_word();
+    test_a_triple_click_selects_the_line();
+    test_a_selection_holds_on_to_its_text_not_its_place();
+    test_a_selection_survives_scrolling_back();
+    test_dragging_off_the_edge_scrolls_the_view();
 
     // `--write <dir>` dumps what was rendered, for looking at a failure rather
     // than guessing at it.

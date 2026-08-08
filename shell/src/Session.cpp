@@ -59,6 +59,18 @@ const TtCell *Session::row(int y, size_t *outLen) const
     return tt_session_row(m_session, static_cast<size_t>(y), outLen);
 }
 
+const TtCell *Session::line(quint64 n, size_t *outLen) const
+{
+    return tt_session_line(m_session, n, outLen);
+}
+
+quint64 Session::lineAt(int y) const
+{
+    return tt_session_line_at(m_session, static_cast<size_t>(qMax(0, y)));
+}
+
+quint64 Session::topLine() const { return tt_session_top_line(m_session); }
+
 TtCursor Session::cursor() const
 {
     TtCursor c {};

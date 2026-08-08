@@ -14,6 +14,25 @@
 class QTimer;
 class Session;
 
+/// One end of a selection.
+///
+/// An absolute line number rather than a row, because a selection has to
+/// survive the host printing underneath it — a row number means "wherever this
+/// has slid to by now". And a column *boundary* rather than a cell, because
+/// that is what makes dragging across `abc` select `abc` rather than `ab`:
+/// the endpoint is the nearest edge between characters, which is how upstream
+/// rounds it too (`buffer.c:GetCharCell`).
+struct SelPoint {
+    quint64 line = 0;
+    int x = 0;
+
+    bool operator<(const SelPoint &o) const
+    {
+        return line != o.line ? line < o.line : x < o.x;
+    }
+    bool operator==(const SelPoint &o) const { return line == o.line && x == o.x; }
+};
+
 /// The terminal screen.
 ///
 /// A plain `QWidget` with a `QPainter`, no GPU. The measured baseline on the
@@ -70,11 +89,30 @@ private:
     /// (selection, focus, a new font) still call `update` directly, because
     /// they happen at the speed a hand moves.
     void requestRepaint();
-    /// Cell under a widget position, clamped to the grid.
-    QPoint cellAt(const QPointF &pos) const;
-    bool isSelected(int x, int y) const;
+    /// The character boundary nearest a widget position — one end of a
+    /// selection. Clamped to the grid, and never inside a wide character.
+    SelPoint boundaryAt(const QPointF &pos) const;
+    /// The character *under* a widget position, named by its leading cell.
+    /// What a double or triple click acts on, where rounding to the nearest
+    /// edge would sometimes pick the next word along.
+    SelPoint cellAt(const QPointF &pos) const;
+    /// Start a drag whose anchor covers the whole unit around `at`.
+    void startSelection(SelPoint at, const QPointF &pos);
+    /// The selection as an ordered pair, expanded to whole words or lines when
+    /// that is the unit. False when there is nothing selected.
+    bool selectionRange(SelPoint *from, SelPoint *to) const;
+    /// The start of the unit the character *at* `p` belongs to, and the end of
+    /// the one *before* `p` — `p` being a boundary, so which character it
+    /// refers to depends on which side of the selection it is.
+    SelPoint unitStart(SelPoint p) const;
+    SelPoint unitEnd(SelPoint p) const;
+    /// The columns of `line` that are selected, as `[from, to)`. False when
+    /// none are.
+    bool selectionSpan(quint64 line, int *from, int *to) const;
     QString selectedText() const;
     void clearSelection();
+    /// Extend the drag to a widget position, scrolling if it is off the edge.
+    void dragTo(const QPointF &pos);
     /// Re-fit the terminal to the widget, in whole cells.
     void refit();
 
@@ -86,11 +124,40 @@ private:
     /// The deferred repaint, alive only while output outruns that floor.
     QTimer *m_repaint;
 
-    // Selection is a frontend concept — the core only has to support it — and
-    // it lives on the visible screen because there is no scrollback viewport
-    // to select into yet.
+    // Selection is a frontend concept — the core only has to support it, and
+    // what it supports is naming a line (`Session::line`) so that a highlight
+    // can outlive the output that scrolls under it.
+    //
+    // What a click selects: a character, the word under it, or the line.
+    enum class SelUnit { Char, Word, Line };
+
     bool m_hasSelection = false;
     bool m_selecting = false;
-    QPoint m_selAnchor;
-    QPoint m_selHead;
+    SelUnit m_selUnit = SelUnit::Char;
+    /// The unit the drag started on, already expanded — both ends of it,
+    /// because a word dragged *leftwards* still has to keep its right edge.
+    /// Upstream keeps the same pair (`DblClkStart`/`DblClkEnd`).
+    SelPoint m_selAnchor;
+    SelPoint m_selAnchorEnd;
+    /// The boundary the pointer is at now. The selection is this reaching out
+    /// of the anchor unit in whichever direction it has gone.
+    SelPoint m_selHead;
+    /// The terminal size the selection was made at. A resize re-flows every
+    /// line, so the numbers stop meaning what they meant.
+    QSize m_selSize;
+
+    // Qt has no triple-click event, so the run is counted here: the second
+    // press arrives as `mouseDoubleClickEvent` and the third as an ordinary
+    // press soon after it.
+    QElapsedTimer m_sinceClick;
+    int m_clicks = 0;
+    QPoint m_clickPos;
+
+    /// Scrolls the view while a drag is held outside the widget, and exists
+    /// only for as long as that is true — same shape as the repaint floor.
+    QTimer *m_autoScroll;
+    /// Where the drag was last seen, in widget coordinates. The autoscroll
+    /// re-reads the boundary from it after each scroll, so the head follows
+    /// the edge the pointer is past.
+    QPointF m_dragPos;
 };

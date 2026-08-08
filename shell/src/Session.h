@@ -79,6 +79,17 @@ public:
     /// One row of what is *shown* — the live screen until something scrolls
     /// back, and then history.
     const TtCell *row(int y, size_t *outLen) const;
+    /// One line by absolute number, in view or not. Null once it has been
+    /// evicted from the scrollback, or before it has been printed.
+    ///
+    /// A row number is where a line *is* and changes with every line the host
+    /// prints; this is which line it *is*, and does not. Anything that has to
+    /// survive output — the selection — holds one of these.
+    const TtCell *line(quint64 n, size_t *outLen) const;
+    /// The absolute number of the line at viewport row `y`.
+    quint64 lineAt(int y) const;
+    /// The absolute number of the top line of the *live* page.
+    quint64 topLine() const;
     TtCursor cursor() const;
     /// Which viewport row to paint the cursor on, or -1 when the view has
     /// scrolled far enough back that the cursor is off the bottom.

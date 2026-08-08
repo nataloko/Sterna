@@ -2,6 +2,8 @@
 
 #include "TerminalView.h"
 
+#include <cstring>
+
 #include <QApplication>
 #include <QClipboard>
 #include <QKeyEvent>
@@ -18,6 +20,17 @@ namespace {
 /// The shortest gap between frames, in milliseconds — 125 a second, which is
 /// above every display refresh rate this will meet. See `requestRepaint`.
 constexpr qint64 kMinFrameMs = 8;
+
+/// How often a drag held outside the window scrolls it, in milliseconds.
+constexpr int kAutoScrollMs = 40;
+
+/// What ends a word, for double-click selection.
+///
+/// Upstream's `ts.DelimList` default, verbatim (`ttset.c:1167`): a space and
+/// every ASCII punctuation mark **except** underscore. So `some_name` is one
+/// word and `some-name` is three, which looks arbitrary until you notice that
+/// a path, a flag and a hostname all want the hyphen to break.
+constexpr const char *kDelimiters = " !\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~";
 
 /// The text one cell draws: the base character plus its combining marks.
 QString cellText(const TtCell &cell)
@@ -154,7 +167,21 @@ TerminalView::TerminalView(Session *session, QWidget *parent)
     m_repaint->setSingleShot(true);
     connect(m_repaint, &QTimer::timeout, this, [this] { update(); });
 
+    // Alive only while a drag is held outside the window, which is the only
+    // way to select more than a screenful.
+    m_autoScroll = new QTimer(this);
+    m_autoScroll->setInterval(kAutoScrollMs);
+    connect(m_autoScroll, &QTimer::timeout, this, [this] { dragTo(m_dragPos); });
+
     connect(m_session, &Session::damaged, this, [this] {
+        // A resize that arrived in the byte stream — DECCOLM, or a telnet
+        // NAWS from the far end — re-flows every line, so a selection made
+        // against the old width is pointing at text that has moved. The
+        // frontend's own resize path clears it in `refit`; this is the half
+        // that arrives without the widget changing size.
+        if (m_hasSelection && m_selSize != QSize(m_session->cols(), m_session->rows())) {
+            clearSelection();
+        }
         requestRepaint();
         // Output can move the offset — the core keeps a scrolled-back view on
         // the same lines — so the scrollbar has to hear about every pump, not
@@ -232,6 +259,13 @@ void TerminalView::paintEvent(QPaintEvent *)
             continue;
         }
 
+        // Once per row, not once per cell: the selection is held in absolute
+        // line numbers, so asking per cell would be a call into the core for
+        // every character on the screen.
+        int selFrom = 0;
+        int selTo = 0;
+        selectionSpan(m_session->lineAt(y), &selFrom, &selTo);
+
         // One `drawText` per run of cells that look alike. Real console output
         // is mostly long runs of one colour, so this is a large win over a
         // call per cell — and it is only safe because the font was given
@@ -276,7 +310,7 @@ void TerminalView::paintEvent(QPaintEvent *)
 
             QColor fg;
             QColor bg;
-            m_theme.resolve(cell, isSelected(x, y), screenReverse, &fg, &bg);
+            m_theme.resolve(cell, x >= selFrom && x < selTo, screenReverse, &fg, &bg);
             const bool bold = (cell.attrs & TT_ATTR_BOLD) != 0;
             const bool under = (cell.attrs & TT_ATTR_UNDER) != 0;
             const int width = cellWidthClass(cell);
@@ -362,13 +396,49 @@ void TerminalView::refit()
     }
 }
 
-QPoint TerminalView::cellAt(const QPointF &pos) const
+/// The character boundary nearest a widget position.
+///
+/// `buffer.c:GetCharCell` with the wide-character arm folded in: the pointer
+/// snaps to the start of the character it is over, or past its end once it is
+/// beyond the middle of it. Selecting `abc` therefore means dragging from
+/// before the `a` to after the `c`, rather than one character further, and a
+/// wide character is taken or left whole.
+SelPoint TerminalView::cellAt(const QPointF &pos) const
 {
-    const int x = qBound(0, static_cast<int>(pos.x()) / m_theme.cellWidth(),
-                         m_session->cols() - 1);
-    const int y = qBound(0, static_cast<int>(pos.y()) / m_theme.cellHeight(),
-                         m_session->rows() - 1);
-    return QPoint(x, y);
+    const int cols = m_session->cols();
+    const int row = qBound(0, static_cast<int>(pos.y()) / m_theme.cellHeight(),
+                           m_session->rows() - 1);
+    int x = qBound(0, static_cast<int>(pos.x()) / m_theme.cellWidth(), cols - 1);
+
+    size_t len = 0;
+    const TtCell *cells = m_session->row(row, &len);
+    // Step back off the padding half, so a click anywhere in a wide character
+    // is a decision about that character rather than about the cell it landed
+    // in.
+    if (cells && x < static_cast<int>(len) && cells[x].width_class == TT_WIDTH_PAD &&
+        x > 0) {
+        x--;
+    }
+    return SelPoint {m_session->lineAt(row), x};
+}
+
+SelPoint TerminalView::boundaryAt(const QPointF &pos) const
+{
+    const int cw = m_theme.cellWidth();
+    const int cols = m_session->cols();
+    SelPoint out = cellAt(pos);
+
+    size_t len = 0;
+    const TtCell *cells = m_session->line(out.line, &len);
+    const int width = (cells && out.x < static_cast<int>(len) &&
+                       cells[out.x].width_class == TT_WIDTH_WIDE)
+                          ? 2
+                          : 1;
+    const int px = qBound(0, static_cast<int>(pos.x()), cols * cw - 1);
+    if (px >= out.x * cw + width * cw / 2) {
+        out.x = qMin(out.x + width, cols);
+    }
+    return out;
 }
 
 // --- keyboard ----------------------------------------------------------------
@@ -489,24 +559,41 @@ void TerminalView::mousePressEvent(QMouseEvent *event)
     }
 
     if (event->button() == Qt::LeftButton) {
-        m_selecting = true;
-        m_hasSelection = false;
-        m_selAnchor = cellAt(p);
-        m_selHead = m_selAnchor;
-        update();
+        // A third press soon after a double click is a triple click, which Qt
+        // does not deliver as an event of its own.
+        const QPoint cell(static_cast<int>(p.x()) / m_theme.cellWidth(),
+                          static_cast<int>(p.y()) / m_theme.cellHeight());
+        const bool run = m_sinceClick.isValid() && cell == m_clickPos &&
+                         m_sinceClick.elapsed() < QApplication::doubleClickInterval();
+        m_clicks = (run && m_clicks == 2) ? 3 : 1;
+        m_clickPos = cell;
+        m_sinceClick.restart();
+
+        m_selUnit = m_clicks == 3 ? SelUnit::Line : SelUnit::Char;
+        startSelection(m_clicks == 3 ? cellAt(p) : boundaryAt(p), p);
     }
+}
+
+/// Begin a drag at `at`, with the anchor covering the whole unit around it.
+void TerminalView::startSelection(SelPoint at, const QPointF &pos)
+{
+    m_selecting = true;
+    m_selSize = QSize(m_session->cols(), m_session->rows());
+    m_selAnchor = unitStart(at);
+    m_selAnchorEnd = unitEnd(m_selUnit == SelUnit::Char ? at : SelPoint {at.line, at.x + 1});
+    m_selHead = m_selAnchorEnd;
+    // A single click selects nothing until it moves; a double or triple click
+    // has already selected the word or the line under it.
+    m_hasSelection = m_selUnit != SelUnit::Char;
+    m_dragPos = pos;
+    update();
 }
 
 void TerminalView::mouseMoveEvent(QMouseEvent *event)
 {
     const QPointF p = event->position();
     if (m_selecting) {
-        const QPoint head = cellAt(p);
-        if (head != m_selHead) {
-            m_selHead = head;
-            m_hasSelection = head != m_selAnchor;
-            update();
-        }
+        dragTo(p);
         return;
     }
 
@@ -526,6 +613,7 @@ void TerminalView::mouseReleaseEvent(QMouseEvent *event)
 {
     if (m_selecting) {
         m_selecting = false;
+        m_autoScroll->stop();
         if (m_hasSelection) {
             // Copy to the primary selection on release, so middle-click paste
             // works between this window and every other X11 application.
@@ -550,10 +638,22 @@ void TerminalView::mouseReleaseEvent(QMouseEvent *event)
 
 void TerminalView::mouseDoubleClickEvent(QMouseEvent *event)
 {
-    // Word selection wants the same word-boundary rules the eventual
-    // scrollback selection will use, so it is left until there is one thing to
-    // write rather than two. A double click starts a fresh drag meanwhile.
-    mousePressEvent(event);
+    const QPointF p = event->position();
+    if (event->button() != Qt::LeftButton ||
+        m_session->mouse(TT_MOUSE_EVENT_PRESS, TT_BUTTON_LEFT, static_cast<int>(p.x()),
+                         static_cast<int>(p.y()), modifiersOf(event->modifiers()))) {
+        return;
+    }
+
+    // The second press of the run. Qt sends this *instead of* a press, so the
+    // counter has to be advanced here or a triple click never reaches three.
+    m_clicks = 2;
+    m_clickPos = QPoint(static_cast<int>(p.x()) / m_theme.cellWidth(),
+                        static_cast<int>(p.y()) / m_theme.cellHeight());
+    m_sinceClick.restart();
+
+    m_selUnit = SelUnit::Word;
+    startSelection(cellAt(p), p);
 }
 
 void TerminalView::wheelEvent(QWheelEvent *event)
@@ -581,6 +681,37 @@ void TerminalView::wheelEvent(QWheelEvent *event)
     event->accept();
 }
 
+/// Extend the drag, scrolling the view while the pointer is off the edge.
+///
+/// Held outside the window it keeps scrolling, which is the only way to select
+/// more than one screenful. The head is re-read from the pointer position each
+/// time rather than moved by a line, so it stays on the edge the pointer is
+/// past while the text underneath it moves.
+void TerminalView::dragTo(const QPointF &pos)
+{
+    m_dragPos = pos;
+
+    const int step = pos.y() < 0 ? 1 : (pos.y() >= height() ? -1 : 0);
+    if (step != 0) {
+        setViewOffset(m_session->viewOffset() + step);
+        if (!m_autoScroll->isActive()) {
+            m_autoScroll->start();
+        }
+    } else {
+        m_autoScroll->stop();
+    }
+
+    const SelPoint head = boundaryAt(pos);
+    if (head == m_selHead) {
+        return;
+    }
+    m_selHead = head;
+    if (m_selUnit == SelUnit::Char) {
+        m_hasSelection = !(head == m_selAnchor);
+    }
+    update();
+}
+
 void TerminalView::setViewOffset(int offset)
 {
     const int before = m_session->viewOffset();
@@ -588,11 +719,9 @@ void TerminalView::setViewOffset(int offset)
     if (m_session->viewOffset() == before) {
         return;
     }
-    // The selection is held in viewport coordinates, so scrolling would leave
-    // the highlight sitting on whatever text moved under it. Dropping it is
-    // the honest minimum; anchoring a selection to the history is a refinement
-    // that wants the same work as selecting *across* a scroll.
-    clearSelection();
+    // The selection is *not* dropped here. It is held in absolute line
+    // numbers, so scrolling moves the text and the highlight together — which
+    // is the whole reason the core can name a line at all.
     update();
     emit viewChanged();
 }
@@ -613,44 +742,160 @@ void TerminalView::focusOutEvent(QFocusEvent *event)
 
 // --- selection ---------------------------------------------------------------
 
-bool TerminalView::isSelected(int x, int y) const
+namespace {
+
+/// Whether a cell ends a word. An erased cell holds nothing and counts as the
+/// space it is drawn as.
+bool isDelimiter(const TtCell &cell)
+{
+    const uint32_t cp = cell.text[0];
+    if (cp >= 0x80) {
+        return false;
+    }
+    const char c = cp == 0 ? ' ' : static_cast<char>(cp);
+    return std::strchr(kDelimiters, c) != nullptr;
+}
+
+/// Widen `[from, to)` to the word under `at` on `cells`.
+///
+/// `buffer.c:CheckDelimiterChar`, which has two rules rather than one. Starting
+/// on a delimiter takes the run of *that same character* — so double-clicking
+/// the gap between two columns of a table selects the gap, not the table.
+/// Starting anywhere else takes the run of non-delimiters, and stops as well
+/// where the character width changes, which is upstream's `DelimDBCS` and is on
+/// by default.
+void wordAt(const TtCell *cells, int len, int at, int *from, int *to)
+{
+    at = qBound(0, at, len - 1);
+    if (cells[at].width_class == TT_WIDTH_PAD && at > 0) {
+        at--;
+    }
+    const bool delim = isDelimiter(cells[at]);
+    // Erased cells hold nothing and are drawn as spaces, so they compare as
+    // one — otherwise the run of blanks after a line stops at the first cell
+    // the host never wrote to.
+    const auto glyph = [](const TtCell &c) { return c.text[0] == 0 ? uint32_t(' ') : c.text[0]; };
+    const uint32_t start = glyph(cells[at]);
+    const bool startWide = cells[at].width_class == TT_WIDTH_WIDE;
+
+    auto joins = [&](int x) {
+        if (cells[x].width_class == TT_WIDTH_PAD) {
+            return true;
+        }
+        if (delim) {
+            return glyph(cells[x]) == start;
+        }
+        return !isDelimiter(cells[x]) &&
+               (cells[x].width_class == TT_WIDTH_WIDE) == startWide;
+    };
+
+    *from = at;
+    while (*from > 0 && joins(*from - 1)) {
+        (*from)--;
+    }
+    // Padding always joins, so the walk can stop on the padding half of a wide
+    // character whose lead it then refused. Step over it: half a character is
+    // not a word boundary.
+    if (cells[*from].width_class == TT_WIDTH_PAD) {
+        (*from)++;
+    }
+    *to = at + 1;
+    while (*to < len && joins(*to)) {
+        (*to)++;
+    }
+}
+
+} // namespace
+
+SelPoint TerminalView::unitStart(SelPoint p) const
+{
+    if (m_selUnit == SelUnit::Line) {
+        p.x = 0;
+        return p;
+    }
+    size_t len = 0;
+    const TtCell *cells = m_session->line(p.line, &len);
+    if (m_selUnit == SelUnit::Char || !cells || len == 0) {
+        return p;
+    }
+    int from = 0;
+    int to = 0;
+    wordAt(cells, static_cast<int>(len), p.x, &from, &to);
+    p.x = from;
+    return p;
+}
+
+SelPoint TerminalView::unitEnd(SelPoint p) const
+{
+    if (m_selUnit == SelUnit::Line) {
+        p.x = m_session->cols();
+        return p;
+    }
+    size_t len = 0;
+    const TtCell *cells = m_session->line(p.line, &len);
+    if (m_selUnit == SelUnit::Char || !cells || len == 0) {
+        return p;
+    }
+    int from = 0;
+    int to = 0;
+    // A boundary at `x` ends the character at `x - 1`.
+    wordAt(cells, static_cast<int>(len), qMax(0, p.x - 1), &from, &to);
+    p.x = to;
+    return p;
+}
+
+/// The selection as an ordered pair.
+///
+/// The anchor is kept as the *whole* unit the drag started on rather than as
+/// the point it started at, which is what makes dragging leftwards out of a
+/// double-clicked word keep the right-hand edge of that word. Upstream keeps
+/// the same pair for the same reason (`DblClkStart`/`DblClkEnd`).
+bool TerminalView::selectionRange(SelPoint *from, SelPoint *to) const
 {
     if (!m_hasSelection) {
         return false;
     }
-    QPoint a = m_selAnchor;
-    QPoint b = m_selHead;
-    if (a.y() > b.y() || (a.y() == b.y() && a.x() > b.x())) {
-        std::swap(a, b);
+    *from = m_selAnchor;
+    *to = m_selAnchorEnd;
+    if (m_selHead < *from) {
+        *from = unitStart(m_selHead);
+    } else if (*to < m_selHead) {
+        *to = unitEnd(m_selHead);
     }
-    if (y < a.y() || y > b.y()) {
+    return true;
+}
+
+bool TerminalView::selectionSpan(quint64 line, int *from, int *to) const
+{
+    SelPoint a;
+    SelPoint b;
+    if (!selectionRange(&a, &b) || line < a.line || line > b.line) {
         return false;
     }
-    const int from = (y == a.y()) ? a.x() : 0;
-    const int to = (y == b.y()) ? b.x() : m_session->cols();
-    return x >= from && x < to;
+    *from = (line == a.line) ? a.x : 0;
+    *to = (line == b.line) ? b.x : m_session->cols();
+    return *to > *from;
 }
 
 QString TerminalView::selectedText() const
 {
-    if (!m_hasSelection) {
+    SelPoint a;
+    SelPoint b;
+    if (!selectionRange(&a, &b)) {
         return QString();
-    }
-    QPoint a = m_selAnchor;
-    QPoint b = m_selHead;
-    if (a.y() > b.y() || (a.y() == b.y() && a.x() > b.x())) {
-        std::swap(a, b);
     }
 
     QStringList lines;
-    for (int y = a.y(); y <= b.y() && y < m_session->rows(); y++) {
+    for (quint64 n = a.line; n <= b.line; n++) {
         size_t len = 0;
-        const TtCell *cells = m_session->row(y, &len);
+        const TtCell *cells = m_session->line(n, &len);
         if (!cells) {
+            // Aged out of the scrollback while it was selected. Skipping it
+            // beats inventing a blank line where text used to be.
             continue;
         }
-        const int from = (y == a.y()) ? a.x() : 0;
-        const int to = qMin((y == b.y()) ? b.x() : static_cast<int>(len),
+        const int from = (n == a.line) ? a.x : 0;
+        const int to = qMin((n == b.line) ? b.x : static_cast<int>(len),
                             static_cast<int>(len));
         QString line;
         for (int x = from; x < to; x++) {
@@ -675,6 +920,7 @@ void TerminalView::clearSelection()
     if (m_hasSelection || m_selecting) {
         m_hasSelection = false;
         m_selecting = false;
+        m_autoScroll->stop();
         update();
     }
 }
