@@ -1,0 +1,456 @@
+//! The serial transport — the differentiator, and the first one built.
+//!
+//! Written against the requirement in Tera Term's
+//! `teraterm/teraterm/commlib.c` (the DCB fields it sets, the
+//! `EscapeCommFunction` calls it makes) rather than against a generic
+//! wishlist. That is why MARK/SPACE parity and DSR flow control are here at
+//! all: nothing else on Linux offers them, and they are why people still keep
+//! a Windows VM for console work.
+
+pub mod parmrk;
+pub use parmrk::SerialEvent;
+
+#[cfg(unix)]
+mod linux;
+
+mod enumerate;
+pub use enumerate::{enumerate, PortInfo, UsbInfo};
+
+use std::io::{Read, Write};
+use std::time::{Duration, Instant};
+
+use serialport::{SerialPort, TTYPort};
+
+use crate::error::{Error, Result};
+
+/// `ts.DataBit`, widened. Tera Term's dialog offers 7 and 8; the hardware
+/// does 5 and 6 as well and old teletype gear needs them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DataBits {
+    Five,
+    Six,
+    Seven,
+    Eight,
+}
+
+/// `ts.Parity` — `commlib.c:182`, all five values including the two Linux
+/// needs `CMSPAR` for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Parity {
+    #[default]
+    None,
+    Odd,
+    Even,
+    /// The parity bit is always 1.
+    Mark,
+    /// The parity bit is always 0.
+    Space,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum StopBits {
+    #[default]
+    One,
+    Two,
+}
+
+/// `ts.Flow` — `commlib.c:204`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum FlowControl {
+    #[default]
+    None,
+    /// `IdFlowX`. The characters are configurable; the thresholds are not,
+    /// on Linux.
+    XonXoff,
+    /// `IdFlowHard`, `fOutxCtsFlow`.
+    RtsCts,
+    /// `IdFlowHardDsrDtr`, `fOutxDsrFlow`. **Linux has no such termios bit**,
+    /// so writes are gated in userspace — see [`SerialConn::write`].
+    DsrDtr,
+}
+
+/// `dcb.fDtrControl` / `dcb.fRtsControl`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PinControl {
+    /// `*_CONTROL_DISABLE` — hold the line low.
+    Disable,
+    /// `*_CONTROL_ENABLE` — hold it high. Most devices expect this.
+    #[default]
+    Enable,
+    /// `*_CONTROL_HANDSHAKE` — the driver raises and lowers it as its buffer
+    /// fills. On Linux only RTS can do this, and only as part of `CRTSCTS`.
+    Handshake,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SerialParams {
+    pub baud: u32,
+    pub data_bits: DataBits,
+    pub parity: Parity,
+    pub stop_bits: StopBits,
+    pub flow: FlowControl,
+    /// `dcb.XonChar` / `dcb.XoffChar`. Tera Term hardcodes the standard pair
+    /// in `CommResetSerial`, but `TTTSet` carries them, so they are settable.
+    pub xon: u8,
+    pub xoff: u8,
+    pub dtr: PinControl,
+    pub rts: PinControl,
+    /// Escape the input stream so a line break arrives as a
+    /// [`SerialEvent::Break`] instead of a `0x00`. Costs one `FF`-doubling
+    /// pass over the input; without it a break and a NUL are the same byte.
+    pub detect_break: bool,
+    /// How long a read waits before returning empty. Short enough that a
+    /// disconnect is noticed promptly, long enough not to spin.
+    pub read_timeout: Duration,
+}
+
+impl Default for SerialParams {
+    /// Tera Term's own defaults where it has them: 9600 8N1, no flow control,
+    /// DTR and RTS asserted, and the standard XON/XOFF pair.
+    fn default() -> Self {
+        SerialParams {
+            baud: 9600,
+            data_bits: DataBits::Eight,
+            parity: Parity::None,
+            stop_bits: StopBits::One,
+            flow: FlowControl::None,
+            xon: 0x11,
+            xoff: 0x13,
+            dtr: PinControl::Enable,
+            rts: PinControl::Enable,
+            detect_break: true,
+            read_timeout: Duration::from_millis(50),
+        }
+    }
+}
+
+/// The modem status lines, as one snapshot. `GetCommModemStatus` returns all
+/// four at once and so does `TIOCMGET`; reading them one at a time can catch
+/// a device mid-transition.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ModemLines {
+    pub cts: bool,
+    pub dsr: bool,
+    /// Ring indicator.
+    pub ri: bool,
+    /// Carrier detect.
+    pub cd: bool,
+}
+
+/// An open serial port.
+///
+/// Concrete rather than `Box<dyn SerialPort>` on purpose: the raw-fd patch
+/// layer needs `AsRawFd`, which the trait object does not provide, and
+/// pretending otherwise would mean discovering it at the point where MARK
+/// parity has to work.
+pub struct SerialConn {
+    port: TTYPort,
+    params: SerialParams,
+    decoder: parmrk::Parmrk,
+    path: String,
+    /// Set once a read or write has reported the device gone, so later calls
+    /// fail the same way instead of returning a confusing second error.
+    dead: bool,
+}
+
+impl SerialConn {
+    /// Open `path` and apply `params`.
+    ///
+    /// `path` may be a `/dev/serial/by-path/…` symlink, and for anything on
+    /// USB it should be: `ttyUSB<n>` is assigned in attach order, so
+    /// reconnecting by that name can land on a different physical port.
+    pub fn open(path: &str, params: &SerialParams) -> Result<Self> {
+        let builder = serialport::new(path, params.baud).timeout(params.read_timeout);
+        let port = TTYPort::open(&builder).map_err(|e| Error::from_open(path, e))?;
+
+        let mut conn = SerialConn {
+            port,
+            params: *params,
+            decoder: parmrk::Parmrk::new(),
+            path: path.to_string(),
+            dead: false,
+        };
+        conn.apply(params)?;
+        Ok(conn)
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn params(&self) -> &SerialParams {
+        &self.params
+    }
+
+    /// Apply a full parameter set to an already-open port — the settings
+    /// dialog's "OK", and `CommResetSerial`'s job.
+    ///
+    /// Order matters: the crate's setters are applied first, then the raw-fd
+    /// patches, because the crate rewrites the fields it owns and would
+    /// otherwise clear `CMSPAR` on the way past. It does *not* touch the
+    /// fields it does not own, which is what makes the second half stick.
+    pub fn apply(&mut self, params: &SerialParams) -> Result<()> {
+        self.port.set_baud_rate(params.baud)?;
+        self.port.set_stop_bits(match params.stop_bits {
+            StopBits::One => serialport::StopBits::One,
+            StopBits::Two => serialport::StopBits::Two,
+        })?;
+        self.port.set_parity(match params.parity {
+            Parity::Odd | Parity::Mark => serialport::Parity::Odd,
+            Parity::Even | Parity::Space => serialport::Parity::Even,
+            // MARK and SPACE are set through CMSPAR below; asking the crate
+            // for Odd/Even first gets PARENB on and the bit in the right
+            // place, and CMSPAR then overrides what it means.
+            Parity::None => serialport::Parity::None,
+        })?;
+        self.port.set_flow_control(match params.flow {
+            FlowControl::RtsCts => serialport::FlowControl::Hardware,
+            FlowControl::XonXoff => serialport::FlowControl::Software,
+            // DSR/DTR gets no kernel help at all; the gating is in `write`.
+            FlowControl::None | FlowControl::DsrDtr => serialport::FlowControl::None,
+        })?;
+        self.port.set_timeout(params.read_timeout)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            let fd = self.port.as_raw_fd();
+            linux::set_data_bits(
+                fd,
+                match params.data_bits {
+                    DataBits::Five => 5,
+                    DataBits::Six => 6,
+                    DataBits::Seven => 7,
+                    DataBits::Eight => 8,
+                },
+            )?;
+            linux::set_stick_parity(
+                fd,
+                match params.parity {
+                    Parity::Mark => Some(true),
+                    Parity::Space => Some(false),
+                    _ => None,
+                },
+            )?;
+            linux::set_parmrk(fd, params.detect_break)?;
+            linux::set_xon_xoff_chars(fd, params.xon, params.xoff)?;
+        }
+        #[cfg(not(unix))]
+        {
+            if matches!(params.parity, Parity::Mark | Parity::Space) {
+                return Err(Error::Unsupported("MARK/SPACE parity".into()));
+            }
+        }
+
+        // RTS is the driver's while CRTSCTS is on, so only drive it by hand
+        // when it is ours to drive.
+        if params.rts != PinControl::Handshake && params.flow != FlowControl::RtsCts {
+            self.port
+                .write_request_to_send(params.rts == PinControl::Enable)?;
+        }
+        self.port
+            .write_data_terminal_ready(params.dtr == PinControl::Enable)?;
+
+        self.params = *params;
+        Ok(())
+    }
+
+    /// Read whatever is available, appending decoded bytes to `data` and
+    /// out-of-band events to `events`.
+    ///
+    /// Returns the number of **data** bytes appended. A timeout is not an
+    /// error — it is the normal way a quiet line reports itself — so it comes
+    /// back as `Ok(0)`.
+    pub fn read(&mut self, data: &mut Vec<u8>, events: &mut Vec<SerialEvent>) -> Result<usize> {
+        if self.dead {
+            return Err(Error::Disconnected);
+        }
+        let mut buf = [0u8; 4096];
+        let n = match self.port.read(&mut buf) {
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => return Ok(0),
+            Err(e) => {
+                let e = Error::from_io(e);
+                self.dead = e.is_disconnected();
+                return Err(e);
+            }
+        };
+        // A zero-length read on a character device is EOF, which for a serial
+        // port means the far end is gone.
+        if n == 0 {
+            self.dead = true;
+            return Err(Error::Disconnected);
+        }
+
+        let before = data.len();
+        if self.params.detect_break {
+            self.decoder.feed(&buf[..n], data, events);
+        } else {
+            data.extend_from_slice(&buf[..n]);
+        }
+        Ok(data.len() - before)
+    }
+
+    /// Write `data`, honouring DSR flow control if it is on.
+    ///
+    /// Linux has `CRTSCTS` and `IXON`/`IXOFF` and **no DSR flow-control bit at
+    /// all** — `commlib.c:219`'s `fOutxDsrFlow` has no kernel equivalent, and
+    /// that is a kernel limitation rather than a missing crate feature. So
+    /// when the mode is on, the write is gated in userspace: poll DSR, send
+    /// only while it is asserted, and give up after `timeout` rather than
+    /// blocking a UI thread forever.
+    pub fn write(&mut self, data: &[u8], timeout: Duration) -> Result<usize> {
+        if self.dead {
+            return Err(Error::Disconnected);
+        }
+        if self.params.flow != FlowControl::DsrDtr {
+            return self.write_raw(data);
+        }
+
+        let deadline = Instant::now() + timeout;
+        let mut sent = 0;
+        while sent < data.len() {
+            if self.modem_lines()?.dsr {
+                // One chunk at a time, so DSR is re-checked often enough to
+                // stop within a buffer of the far end deasserting it.
+                let end = (sent + 64).min(data.len());
+                sent += self.write_raw(&data[sent..end])?;
+                continue;
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
+            // 2 ms is well under a character time at any baud rate a DSR-flow
+            // device runs at, and cheap enough to poll.
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        Ok(sent)
+    }
+
+    fn write_raw(&mut self, data: &[u8]) -> Result<usize> {
+        match self.port.write(data) {
+            Ok(n) => Ok(n),
+            Err(e) => {
+                let e = Error::from_io(e);
+                self.dead = e.is_disconnected();
+                Err(e)
+            }
+        }
+    }
+
+    /// Wait for the driver to finish sending, for at most `timeout`. Returns
+    /// whether the queue actually emptied.
+    ///
+    /// **This takes a timeout because the obvious implementation hangs.**
+    /// `tcdrain` — which is what `serialport-rs`'s `flush` calls — waits for
+    /// the output queue to empty, and flow control can hold that off
+    /// indefinitely: drop CTS on the far end and a flush never returns. On a
+    /// GUI thread that is a frozen application, and it is not a rare state,
+    /// it is what a device asserting backpressure looks like. So the queue
+    /// depth is polled instead, and the caller decides how long to care.
+    pub fn flush(&mut self, timeout: Duration) -> Result<bool> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            let fd = self.port.as_raw_fd();
+            let deadline = Instant::now() + timeout;
+            loop {
+                if linux::output_queue_len(fd)? == 0 {
+                    return Ok(true);
+                }
+                if Instant::now() >= deadline {
+                    return Ok(false);
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = timeout;
+            self.port.flush().map_err(Error::from_io)?;
+            Ok(true)
+        }
+    }
+
+    /// `CommSendBreak` — hold the line at space for `dur`, then release it.
+    ///
+    /// Latched, matching `SetCommBreak`/`ClearCommBreak` rather than
+    /// `tcsendbreak`'s fixed quarter-second, because Tera Term's macro
+    /// language exposes the duration and devices differ on what they want.
+    pub fn send_break(&mut self, dur: Duration) -> Result<()> {
+        self.port.set_break()?;
+        std::thread::sleep(dur);
+        self.port.clear_break()?;
+        Ok(())
+    }
+
+    pub fn modem_lines(&mut self) -> Result<ModemLines> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            let bits = linux::modem_bits(self.port.as_raw_fd())?;
+            Ok(ModemLines {
+                cts: bits & libc::TIOCM_CTS != 0,
+                dsr: bits & libc::TIOCM_DSR != 0,
+                ri: bits & libc::TIOCM_RI != 0,
+                cd: bits & libc::TIOCM_CD != 0,
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            Ok(ModemLines {
+                cts: self.port.read_clear_to_send()?,
+                dsr: self.port.read_data_set_ready()?,
+                ri: self.port.read_ring_indicator()?,
+                cd: self.port.read_carrier_detect()?,
+            })
+        }
+    }
+
+    pub fn set_dtr(&mut self, on: bool) -> Result<()> {
+        self.port.write_data_terminal_ready(on).map_err(Error::from)
+    }
+
+    pub fn set_rts(&mut self, on: bool) -> Result<()> {
+        self.port.write_request_to_send(on).map_err(Error::from)
+    }
+
+    /// `CommLock` — tell the far end to stop or start sending, by whichever
+    /// means the current flow control implies (`commlib.c:1186`).
+    ///
+    /// Note it is *not* symmetric with the flow-control setting: with no flow
+    /// control at all Tera Term still sends the XOFF byte, on the theory that
+    /// a device which ignores it is no worse off.
+    pub fn lock(&mut self, lock: bool) -> Result<()> {
+        match self.params.flow {
+            FlowControl::RtsCts => self.set_rts(!lock),
+            FlowControl::DsrDtr => self.set_dtr(!lock),
+            FlowControl::None | FlowControl::XonXoff => {
+                let b = if lock { self.params.xoff } else { self.params.xon };
+                self.write_raw(&[b])?;
+                self.flush(Duration::from_millis(500)).map(|_| ())
+            }
+        }
+    }
+
+    /// Discard whatever the driver has buffered in either direction —
+    /// `PurgeComm`'s `PURGE_*CLEAR`.
+    pub fn clear(&mut self, input: bool, output: bool) -> Result<()> {
+        let what = match (input, output) {
+            (true, true) => serialport::ClearBuffer::All,
+            (true, false) => serialport::ClearBuffer::Input,
+            (false, true) => serialport::ClearBuffer::Output,
+            (false, false) => return Ok(()),
+        };
+        self.port.clear(what).map_err(Error::from)
+    }
+}
+
+impl Drop for SerialConn {
+    /// `CommClose` drops DTR on the way out (`commlib.c:848`), which is how a
+    /// modem is told to hang up. Errors are ignored because the usual reason
+    /// for one here is the adapter having already been unplugged.
+    fn drop(&mut self) {
+        let _ = self.port.write_data_terminal_ready(false);
+    }
+}

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["tt-grid", "tt-charset", "tt-vt", "tt-dump"]
+members = ["tt-grid", "tt-charset", "tt-vt", "tt-conn", "tt-dump"]
 
 # This workspace is `crates/`, not the repository root, on purpose: the Stage 0
 # spikes (serial-audit/, ssh-audit/) are standalone crates with their own
@@ -17,3 +17,4 @@ repository = "https://github.com/nataloko/termitta"
 tt-grid = { path = "tt-grid" }
 tt-charset = { path = "tt-charset" }
 tt-vt = { path = "tt-vt" }
+tt-conn = { path = "tt-conn" }

@@ -273,12 +273,22 @@ shaped.
 Audited 2026-08-07 against an FTDI Quad RS232-HS with two ports wired
 back-to-back, and — this is the point — **against the requirement in
 `commlib.c`**, not a generic wishlist. What Stage 1 needs works: enumeration
-with USB vid/pid/manufacturer, 5–8 data bits, 1/2 stop bits, none/odd/even
+with USB vid/pid/manufacturer, 7/8 data bits, 1/2 stop bits, none/odd/even
 parity, both flow-control modes, latched `set_break`/`clear_break` matching
 `SetCommBreak` semantics, DTR→DSR and RTS→CTS both observable, honest timeouts,
 and every baud rate exact on readback from 300 to 3000000 including a
 non-standard 250000. Hotplug: removal and re-attach both seen by
 re-enumeration.
+
+**Correction (2026-08-08, while building `tt-conn`): this originally said "5–8
+data bits", and that was an API claim wearing a hardware result's clothes.** The
+audit checked that `serialport-rs`'s `DataBits` enum has four values, not that
+any of them reached the wire. Measured properly against the same adapter: `CS6`
+is refused with `EINVAL`, and **`CS5` is accepted by `tcsetattr` and then
+ignored**, with eight bits still going out. `tcsetattr` reports success if it
+could apply *any* of what it was asked, so `tt-conn` reads the setting back and
+refuses rather than lying to the settings dialog. Seven and eight are real and
+proven on the wire.
 
 Five gaps, and how each lands:
 
