@@ -45,6 +45,12 @@ pub enum CrReceive {
 pub struct ColorFlags {
     pub xterm256: bool,
     pub aixterm16: bool,
+    /// `CF_PCBOLD16` (`ttset.c` key `PcBoldColor`, default off). Bold plus a
+    /// colour below 8 means the bright version of it.
+    pub pc_bold16: bool,
+    /// `CF_ANSICOLOR` (key `EnableANSIColor`, default on). Without it DECRQSS
+    /// reports no colour at all, whatever the pen holds.
+    pub ansi_color: bool,
 }
 
 impl ColorFlags {
@@ -52,7 +58,7 @@ impl ColorFlags {
     /// the bright/dim flip in the nearest-colour search, so 256-colour being on
     /// by default means the flip is on by default too.
     pub fn full_color(self) -> bool {
-        self.xterm256 || self.aixterm16
+        self.xterm256 || self.aixterm16 || self.pc_bold16
     }
 }
 
@@ -61,6 +67,8 @@ impl Default for ColorFlags {
         ColorFlags {
             xterm256: true,
             aixterm16: false,
+            pc_bold16: false,
+            ansi_color: true,
         }
     }
 }
@@ -89,6 +97,17 @@ pub struct Config {
     /// `WF_WINDOWREPORT` (`ttset.c:1661`, key default on). Gates the ones that
     /// answer back.
     pub window_report: bool,
+    /// `ts.Send8BitCtrl` (`ttset.c:1283`, key default off). Above VT level 1 it
+    /// decides whether replies use 8-bit C1 introducers; DECSCL can turn it on
+    /// as well.
+    pub send_8bit_ctrl: bool,
+    /// `ts.CursorShape` in DECSCUSR's numbering — 1 block, 3 underline, 5 bar.
+    /// `ttset.c:725`'s else branch is `IdBlkCur`. Only DECRQSS reads it; the
+    /// shape itself is the frontend's business.
+    pub cursor_shape: u16,
+    /// `ts.NonblinkingCursor` (`ttset.c:1227`, key default off). Adds one to
+    /// the DECSCUSR value.
+    pub nonblinking_cursor: bool,
     pub scrollback_max: usize,
 }
 
@@ -107,6 +126,9 @@ impl Default for Config {
             remote_clears_buffer: true,
             window_change: true,
             window_report: true,
+            send_8bit_ctrl: false,
+            cursor_shape: 1,
+            nonblinking_cursor: false,
             // ttset.c:1213 MaxBuffSize. Not ttset.c:750's ScrollBuffSize (100),
             // which is the *initial* depth the user can grow up to this.
             scrollback_max: 10_000,
@@ -127,11 +149,17 @@ pub struct Vt {
 impl Vt {
     pub fn new(config: Config) -> Self {
         let grid = Grid::new(config.cols, config.rows, config.scrollback_max);
+        // `vtterm.c:ChangeTerminalID` — level 1 never sends 8-bit controls,
+        // whatever the setting says.
+        let vt_level = config.term_id.vt_level();
+        let send_8bit = vt_level >= 2 && config.send_8bit_ctrl;
         Vt {
             parser: vte::Parser::new(),
             state: State {
                 grid,
                 config,
+                vt_level,
+                send_8bit,
                 ..State::empty()
             },
             pending_c2: false,
@@ -168,7 +196,7 @@ impl Vt {
     /// property; a C1 inside a string is mangled by both.
     fn rewrite_c1(&mut self, bytes: &[u8]) -> Vec<u8> {
         let accept = self.state.config.accept_8bit_ctrl;
-        let level = self.state.config.term_id.vt_level();
+        let level = self.state.vt_level;
         let mut out = Vec::with_capacity(bytes.len());
 
         for &b in bytes {
@@ -243,6 +271,16 @@ struct State {
     /// is SCP (save cursor) rather than DECSLRM, and there are no margins to
     /// set — which is why the mode exists at all.
     lr_margin_mode: bool,
+    /// `VTlevel`. Starts at the terminal id's level and can only be *lowered*
+    /// by DECSCL, never raised past what the id claims.
+    vt_level: u8,
+    /// `Send8BitMode`. Only ever true above level 1, and only when the setting
+    /// or DECSCL says so.
+    send_8bit: bool,
+    /// The intermediate and final byte of the DCS being collected, and its
+    /// payload. `None` when no DCS is open.
+    dcs: Option<(Option<u8>, char)>,
+    dcs_buf: Vec<u8>,
 }
 
 impl State {
@@ -261,6 +299,10 @@ impl State {
             last_printed: None,
             rect_mode: false,
             lr_margin_mode: false,
+            vt_level: 1,
+            send_8bit: false,
+            dcs: None,
+            dcs_buf: Vec::new(),
         }
     }
 
@@ -527,6 +569,135 @@ impl State {
             x1: right as usize - 1,
             y1: bottom as usize - 1,
         })
+    }
+
+    /// `vtterm.c:SoftReset` — DECSTR (`CSI ! p`), and the first half of
+    /// DECSCL.
+    fn soft_reset(&mut self) {
+        self.grid.soft_reset();
+        self.charset.reset();
+        self.saved_charset = Some(self.charset.save());
+    }
+
+    /// `vtterm.c:SendDCSstr` — `ESC P … ESC \`, or the 8-bit `DCS … ST` when
+    /// the terminal has been told it may.
+    fn send_dcs(&mut self, body: &str) {
+        if self.send_8bit {
+            self.send(&[0x90]);
+            self.send(body.as_bytes());
+            self.send(&[0x9c]);
+        } else {
+            self.send(b"\x1bP");
+            self.send(body.as_bytes());
+            self.send(b"\x1b\\");
+        }
+    }
+
+    /// DECRQSS — `vtterm.c:RequestStatusString`. The request names a setting
+    /// by its own final bytes; the reply is `1$r<value><those same bytes>`,
+    /// or a bare `0$r` for anything not recognised.
+    fn decrqss(&mut self, req: &[u8]) {
+        let body = match req {
+            [b' ', b'q', ..] => {
+                // DECSCUSR. Non-blinking is the odd numbering's +1.
+                let n = self.config.cursor_shape + u16::from(self.config.nonblinking_cursor);
+                Some(format!("1$r{n} q"))
+            }
+            [b'"', b'p', ..] => {
+                let eight = if self.vt_level > 1 && self.send_8bit {
+                    0
+                } else {
+                    1
+                };
+                Some(format!("1$r6{};{}\"p", self.vt_level, eight))
+            }
+            [b'"', b'q', ..] => {
+                let on = u8::from(self.grid.pen.attrs & ATTR2_PROTECT != 0);
+                Some(format!("1$r{on}\"q"))
+            }
+            [b'*', b'x', ..] => Some(format!("1$r{}*x", if self.rect_mode { 2 } else { 0 })),
+            // These three insist on being the whole request, unlike the four
+            // above, which only look at their first two bytes.
+            [b'm'] => Some(self.sgr_report()),
+            [b'r'] => {
+                let (top, bottom) = self.grid.scroll_region();
+                Some(format!("1$r{};{}r", top + 1, bottom + 1))
+            }
+            [b's'] => {
+                let (left, right) = self.grid.margins();
+                Some(format!("1$r{};{}s", left + 1, right + 1))
+            }
+            _ => None,
+        };
+        let body = body.unwrap_or_else(|| "0$r".to_string());
+        self.send_dcs(&body);
+    }
+
+    /// The SGR half of DECRQSS, which rebuilds a parameter string from the
+    /// pen. Every colour branch is gated on a different `ColorFlag`, so the
+    /// same pen reports differently depending on which of them are on.
+    fn sgr_report(&self) -> String {
+        let pen = self.grid.pen;
+        let cf = self.config.color_flags;
+        let mut out = String::from("1$r0");
+        for (bit, code) in [
+            (ATTR_BOLD, "1"),
+            (ATTR_UNDER, "4"),
+            (ATTR_BLINK, "5"),
+            (ATTR_REVERSE, "7"),
+        ] {
+            if pen.attrs & bit != 0 {
+                out.push(';');
+                out.push_str(code);
+            }
+        }
+
+        let colour = |set: bool, mut c: u32, brighten: bool, low: u32, high: u32, ext: u32| {
+            if !set || !cf.ansi_color {
+                return String::new();
+            }
+            if c <= 7 && brighten && cf.pc_bold16 {
+                c += 8;
+            }
+            if c <= 7 {
+                format!(";{}", low + c)
+            } else if c <= 15 {
+                if cf.aixterm16 {
+                    format!(";{}", high + c - 8)
+                } else if cf.xterm256 {
+                    format!(";{ext};5;{c}")
+                } else if cf.pc_bold16 {
+                    format!(";{}", low + c - 8)
+                } else {
+                    String::new()
+                }
+            } else if cf.xterm256 {
+                format!(";{ext};5;{c}")
+            } else {
+                String::new()
+            }
+        };
+
+        // Bold brightens the foreground, blink the background — upstream's
+        // pairing, and it is not a typo.
+        out.push_str(&colour(
+            pen.attrs & ATTR2_FORE != 0,
+            pen.fg,
+            pen.attrs & ATTR_BOLD != 0,
+            30,
+            90,
+            38,
+        ));
+        out.push_str(&colour(
+            pen.attrs & ATTR2_BACK != 0,
+            pen.bg,
+            pen.attrs & ATTR_BLINK != 0,
+            40,
+            100,
+            48,
+        ));
+        out.push('m');
+        out
     }
 
     /// `vtterm.c:CSSunSequence` — XTWINOPS, `CSI Ps ; ... t`.
@@ -1007,6 +1178,25 @@ impl Perform for State {
                 2 => self.rect_mode = true,
                 _ => {}
             },
+            // DECSTR, the soft reset.
+            (Some(b'!'), 'p') => self.soft_reset(),
+            // DECSCL. It soft-resets, re-reads the terminal id's level, and
+            // can then only *lower* it — `CSI 61"p` forces level 1.
+            (Some(b'"'), 'p') => {
+                self.soft_reset();
+                self.vt_level = self.config.term_id.vt_level();
+                self.send_8bit = self.vt_level >= 2 && self.config.send_8bit_ctrl;
+                match arg0(params, 0) {
+                    p @ 61..=65 => {
+                        let want = (p - 60) as u8;
+                        if self.vt_level > want {
+                            self.vt_level = want;
+                        }
+                    }
+                    _ => self.vt_level = 1,
+                }
+                self.send_8bit = !(self.vt_level < 2 || arg0(params, 1) == 1);
+            }
             (Some(b'$'), _) => self.csi_dollar(params, action),
             _ => self.csi_plain(params, private, gt, inter, action),
         }
@@ -1089,6 +1279,32 @@ impl Perform for State {
                 self.lr_margin_mode = false;
             }
             _ => {}
+        }
+    }
+
+    fn hook(&mut self, _params: &Params, intermediates: &[u8], _ignore: bool, action: char) {
+        self.dcs = Some((intermediates.first().copied(), action));
+        self.dcs_buf.clear();
+    }
+
+    fn put(&mut self, byte: u8) {
+        // `ts.MaxOSCBufferSize` bounds the OSC buffer upstream; the DCS one is
+        // a fixed 256 in `DeviceControl`. Either way an unterminated DCS must
+        // not be able to grow without limit.
+        if self.dcs.is_some() && self.dcs_buf.len() < 256 {
+            self.dcs_buf.push(byte);
+        }
+    }
+
+    fn unhook(&mut self) {
+        let Some((inter, action)) = self.dcs.take() else {
+            return;
+        };
+        // `+q` is xterm's termcap query and `!{` is DECSTUI; neither is
+        // implemented, and both are dropped rather than answered wrongly.
+        if inter == Some(b'$') && action == 'q' {
+            let req = std::mem::take(&mut self.dcs_buf);
+            self.decrqss(&req);
         }
     }
 
@@ -1185,7 +1401,7 @@ mod tests {
             rows: 2,
             color_flags: ColorFlags {
                 xterm256: false,
-                aixterm16: false,
+                ..ColorFlags::default()
             },
             ..Config::default()
         });
@@ -1319,6 +1535,23 @@ mod tests {
         assert_eq!(vt.grid().line(0)[0].attrs & ATTR_BOLD, ATTR_BOLD);
         let vt = run(b"\x1b[1mA\x1b[1;1H\x1b[2K", 4, 1);
         assert_eq!(vt.grid().line(0)[0].attrs & ATTR_BOLD, 0);
+    }
+
+    #[test]
+    fn decrqss_answers_for_a_known_setting_and_refuses_an_unknown_one() {
+        let vt = run(b"\x1b[2;5r\x1bP$qr\x1b\\", 20, 8);
+        assert_eq!(vt.reply(), b"\x1bP1$r2;5r\x1b\\");
+        let vt = run(b"\x1bP$qZ\x1b\\", 20, 4);
+        assert_eq!(vt.reply(), b"\x1bP0$r\x1b\\");
+    }
+
+    #[test]
+    fn decstr_reloads_the_saved_cursor_with_the_origin() {
+        // SoftReset saves the cursor at 0,0 rather than where it is, so a
+        // DECRC straight afterwards homes it. Surprising, and upstream's.
+        let vt = run(b"\x1b[3;3Hx\x1b[!p\x1b8X", 12, 4);
+        assert_eq!(row(&vt, 0), "X");
+        assert_eq!(vt.grid().margins(), (0, 11));
     }
 
     #[test]

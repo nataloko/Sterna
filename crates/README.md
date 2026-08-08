@@ -123,6 +123,16 @@ behaviour looks like a bug until you check. Reproduced deliberately:
   copies the rows below the region down to keep them in place, so the top rows
   leave the page rather than being discarded. Only a later resize can see the
   difference, which is how case 69 reads it back.
+- **A soft reset reloads DECSC's slot with the origin.** `SoftReset` saves the
+  cursor at 0,0 rather than where it is, so a DECRC straight after `CSI ! p`
+  homes the cursor. It also leaves the screen, the cursor position and autowrap
+  alone while resetting both margin pairs, insert mode, origin mode and the
+  pen. Case 72.
+- **DECRQSS reports colours through whichever `ColorFlag` happens to be on.**
+  The same pen answers `;33`, `;93`, `;38;5;n` or nothing at all depending on
+  `CF_ANSICOLOR`, `CF_PCBOLD16`, `CF_AIXTERM16` and `CF_XTERM256` — and bold
+  brightens the *foreground* while blink brightens the *background*, which is
+  upstream's pairing and not a typo. Case 71.
 - **Resizing truncates; it never reflows.** `ChangeBuffer` copies each line's
   first `cols` cells and drops the rest, crushing a wide character cut by the
   new right edge. Height is expressed by sliding the page over the scrollback
@@ -166,4 +176,7 @@ behaviour looks like a bug until you check. Reproduced deliberately:
   window is or moves it, so in a headless diff the answers would come from the
   oracle's *stubs* rather than from Tera Term, and matching them would be
   matching a stub.
-- Not yet implemented at all: mouse reporting and DCS.
+- Of DCS, only DECRQSS (`DCS $ q … ST`) is implemented. `DCS + q` — xterm's
+  termcap query — and `DCS ! {` (DECSTUI) are collected and dropped rather than
+  answered wrongly.
+- Not yet implemented at all: mouse reporting.

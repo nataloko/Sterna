@@ -1,0 +1,10 @@
+# termitta-oracle 1
+# term vt100 20x6
+# cursor 0,0
+  0 |                    |
+  1 |                    |
+  2 |                    |
+  3 |                    |
+  4 |                    |
+  5 |                    |
+# reply <ESC>P1$r0;1;4;7;31;44m<ESC>\<ESC>P1$r2;5r<ESC>\<ESC>P1$r3;12s<ESC>\<ESC>P1$r1 q<ESC>\<ESC>P1$r61;1"p<ESC>\<ESC>P1$r0"q<ESC>\<ESC>P1$r0*x<ESC>\<ESC>P1$r1"q<ESC>\<ESC>P1$r2*x<ESC>\<ESC>P0$r<ESC>\

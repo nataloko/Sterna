@@ -410,6 +410,27 @@ impl Grid {
         self.cursor.y = self.cursor.y.min(rows - 1);
     }
 
+    /// DECSTR — `vtterm.c:SoftReset`, the grid's share of it.
+    ///
+    /// Note what it does *not* do: the screen is not cleared, the cursor does
+    /// not move, and autowrap is left alone. What it does do that looks odd is
+    /// reload DECSC's slot with the **origin** rather than the current
+    /// position, so a DECRC straight after a soft reset homes the cursor.
+    pub fn soft_reset(&mut self) {
+        self.insert_mode = false;
+        self.origin_mode = false;
+        self.top = 0;
+        self.bottom = self.rows - 1;
+        self.left = 0;
+        self.right = self.cols - 1;
+        self.pen = Pen::default();
+
+        let cursor = self.cursor;
+        self.cursor = Cursor::default();
+        self.save_cursor();
+        self.cursor = cursor;
+    }
+
     /// RIS. Everything except the scrollback, which survives a reset in Tera
     /// Term as it does in xterm.
     pub fn reset(&mut self) {
