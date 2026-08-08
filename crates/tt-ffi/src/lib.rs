@@ -70,6 +70,7 @@ use std::ptr;
 use std::slice;
 use std::time::Duration;
 
+use tt_conn::pty::{PtyConn, PtyParams};
 use tt_conn::serial::{
     DataBits, FlowControl, Parity, PinControl, SerialConn, SerialParams, StopBits,
 };
@@ -77,7 +78,6 @@ use tt_conn::ssh::{
     AuthPromptKind, HostKeyDecision, HostKeyPolicy, KnownHosts, SshConfig, SshConnect, SshParams,
     Step, Verdict,
 };
-use tt_conn::pty::{PtyConn, PtyParams};
 use tt_conn::telnet::{TelnetConn, TelnetMode, TelnetParams};
 use tt_conn::Error;
 use tt_grid::Cell;

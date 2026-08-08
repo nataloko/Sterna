@@ -138,14 +138,16 @@ impl PtyConn {
             .openpty(size)
             .map_err(|e| Error::Unsupported(format!("cannot open a pty: {e}")))?;
 
+        let shell = shell_for(params);
         let mut cmd = if params.argv.is_empty() {
             if params.login_shell {
                 // `new_default_prog` is the only route to a `-bash` argv[0],
                 // because an explicit argv[0] is also what gets looked up on
-                // PATH.
+                // PATH. It resolves the shell from the builder's own `SHELL`,
+                // which is `shell_for`'s answer by the time it is read.
                 CommandBuilder::new_default_prog()
             } else {
-                CommandBuilder::new(default_shell())
+                CommandBuilder::new(&shell)
             }
         } else {
             CommandBuilder::from_argv(params.argv.iter().map(Into::into).collect())
@@ -164,7 +166,7 @@ impl PtyConn {
         }
 
         let child = pair.slave.spawn_command(cmd).map_err(|e| Error::Open {
-            path: describe_argv(&params.argv),
+            path: describe_argv(&params.argv, &shell),
             source: std::io::Error::other(e.to_string()),
         })?;
 
@@ -193,7 +195,7 @@ impl PtyConn {
             child,
             #[cfg(unix)]
             fd,
-            describe: describe_argv(&params.argv),
+            describe: describe_argv(&params.argv, &shell),
             tty_name,
             exit: None,
             dead: false,
@@ -441,10 +443,15 @@ impl PtyConn {
     }
 }
 
-/// `$SHELL`, or the password database, or `/bin/sh`. The same order
-/// `cygterm.cfg`'s `SHELL = auto` means, and the same one every terminal uses.
-fn default_shell() -> String {
-    CommandBuilder::new_default_prog().get_shell()
+/// Which shell to run: `params.env`'s `SHELL` if the caller set one, then the
+/// process's, then the password database. The same order `cygterm.cfg`'s
+/// `SHELL = auto` means, with the caller's override in front of it — asking
+/// for a shell in `env` and getting a different one would be a quiet lie.
+fn shell_for(params: &PtyParams) -> String {
+    match params.env.iter().find(|(k, _)| k == "SHELL") {
+        Some((_, v)) => v.clone(),
+        None => CommandBuilder::new_default_prog().get_shell(),
+    }
 }
 
 /// What the status line calls this connection.
@@ -452,9 +459,9 @@ fn default_shell() -> String {
 /// The basename for a plain shell — a status line reading `bash` beats one
 /// reading `/usr/bin/bash` — and the whole command line when there is one,
 /// because `sh -c 'journalctl -f'` and `sh` are not the same session.
-fn describe_argv(argv: &[String]) -> String {
+fn describe_argv(argv: &[String], shell: &str) -> String {
     match argv.split_first() {
-        None => basename(&default_shell()),
+        None => basename(shell),
         Some((prog, [])) => basename(prog),
         Some((prog, args)) => format!("{} {}", basename(prog), args.join(" ")),
     }
@@ -482,20 +489,31 @@ mod tests {
 
     #[test]
     fn a_bare_shell_is_named_by_its_basename() {
-        assert!(!describe_argv(&[]).contains('/'));
-        assert_eq!(describe_argv(&["/bin/bash".into()]), "bash");
+        assert_eq!(describe_argv(&[], "/usr/bin/bash"), "bash");
+        assert_eq!(describe_argv(&["/bin/bash".into()], "/bin/sh"), "bash");
     }
 
     #[test]
     fn a_command_keeps_its_arguments() {
         assert_eq!(
-            describe_argv(&["/bin/sh".into(), "-c".into(), "true".into()]),
+            describe_argv(&["/bin/sh".into(), "-c".into(), "true".into()], "/bin/sh"),
             "sh -c true"
         );
     }
 
     #[test]
     fn the_default_shell_is_a_path() {
-        assert!(default_shell().starts_with('/'));
+        assert!(shell_for(&PtyParams::default()).starts_with('/'));
+    }
+
+    /// A caller that names a shell in `env` gets that shell, rather than the
+    /// one the process happens to have been launched from.
+    #[test]
+    fn an_explicit_shell_wins() {
+        let params = PtyParams {
+            env: vec![("SHELL".into(), "/bin/zsh".into())],
+            ..PtyParams::default()
+        };
+        assert_eq!(shell_for(&params), "/bin/zsh");
     }
 }
