@@ -8,6 +8,7 @@
 #include "termitta.h"
 
 class QLabel;
+class QScrollBar;
 class Session;
 class TerminalView;
 
@@ -35,6 +36,10 @@ private slots:
     void onTitleChanged(const QString &title);
     void onNotice(const QString &text);
     void onConnectionChanged();
+    /// Track the viewport: the core moves the offset itself to keep a
+    /// scrolled-back view on the same lines, so the scrollbar follows the
+    /// session rather than the session following the scrollbar.
+    void syncScrollBar();
 
 private:
     void buildMenus();
@@ -42,6 +47,7 @@ private:
 
     Session *m_session;
     TerminalView *m_view;
+    QScrollBar *m_scroll;
     QLabel *m_status;
     QAction *m_disconnectAction = nullptr;
     QAction *m_breakAction = nullptr;

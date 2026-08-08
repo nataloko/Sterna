@@ -62,6 +62,27 @@ TtCursor Session::cursor() const
     return c;
 }
 
+int Session::cursorViewRow() const
+{
+    size_t y = 0;
+    return tt_session_cursor_view_row(m_session, &y) ? static_cast<int>(y) : -1;
+}
+
+int Session::scrollbackLen() const
+{
+    return static_cast<int>(tt_session_scrollback_len(m_session));
+}
+
+int Session::viewOffset() const
+{
+    return static_cast<int>(tt_session_view_offset(m_session));
+}
+
+void Session::setViewOffset(int offset)
+{
+    tt_session_set_view_offset(m_session, static_cast<size_t>(qMax(0, offset)));
+}
+
 bool Session::reverseVideo() const { return tt_session_reverse_video(m_session); }
 
 TtTracking Session::mouseTracking() const { return tt_session_mouse_tracking(m_session); }

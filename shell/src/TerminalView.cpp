@@ -142,8 +142,13 @@ TerminalView::TerminalView(Session *session, QWidget *parent)
     // startup time and a preedit that cannot be committed.
     setAttribute(Qt::WA_InputMethodEnabled, false);
 
-    connect(m_session, &Session::damaged, this,
-            QOverload<>::of(&TerminalView::update));
+    connect(m_session, &Session::damaged, this, [this] {
+        // Output can move the offset — the core keeps a scrolled-back view on
+        // the same lines — so the scrollbar has to hear about every pump, not
+        // only about the scrolls this widget made.
+        update();
+        emit viewChanged();
+    });
 
     m_session->setCellPixels(m_theme.cellWidth(), m_theme.cellHeight());
 }
@@ -255,15 +260,21 @@ void TerminalView::paintEvent(QPaintEvent *)
     }
 
     // The cursor last, so it is never painted over by the row it sits on.
+    //
+    // Its row comes from the core rather than from `cur.y`: the cursor belongs
+    // to the live screen, so scrolling back moves it down and eventually off
+    // the bottom, and painting `cur.y` would stamp a cursor onto a line of
+    // history it has nothing to do with.
     const TtCursor cur = m_session->cursor();
-    if (cur.visible && static_cast<int>(cur.y) < rows) {
+    const int cursorRow = m_session->cursorViewRow();
+    if (cur.visible && cursorRow >= 0) {
         size_t len = 0;
-        const TtCell *cells = m_session->row(static_cast<int>(cur.y), &len);
+        const TtCell *cells = m_session->row(cursorRow, &len);
         const int cx = static_cast<int>(cur.x);
         if (cells && cx < static_cast<int>(len)) {
             const TtCell &cell = cells[cx];
             const int width = cellWidthClass(cell);
-            const QRect box(cx * cw, static_cast<int>(cur.y) * ch, width * cw, ch);
+            const QRect box(cx * cw, cursorRow * ch, width * cw, ch);
             if (hasFocus()) {
                 QColor fg;
                 QColor bg;
@@ -271,8 +282,7 @@ void TerminalView::paintEvent(QPaintEvent *)
                 p.fillRect(box, fg);
                 p.setPen(bg);
                 p.setFont((cell.attrs & TT_ATTR_BOLD) ? m_theme.boldFont() : m_theme.font());
-                p.drawText(QPoint(box.left(),
-                                  static_cast<int>(cur.y) * ch + m_theme.baseline()),
+                p.drawText(QPoint(box.left(), cursorRow * ch + m_theme.baseline()),
                            cellText(cell));
             } else {
                 // Hollow when the window is not focused, which is the
@@ -316,6 +326,27 @@ QPoint TerminalView::cellAt(const QPointF &pos) const
 void TerminalView::keyPressEvent(QKeyEvent *event)
 {
     const Qt::KeyboardModifiers mods = event->modifiers();
+
+    // Scrolling the history, before anything else looks at these keys —
+    // PageUp is otherwise a `TtKey` and would go to the host.
+    if (mods.testFlag(Qt::ShiftModifier)) {
+        const int page = qMax(1, m_session->rows() - 1);
+        if (event->key() == Qt::Key_PageUp) {
+            setViewOffset(m_session->viewOffset() + page);
+            return;
+        }
+        if (event->key() == Qt::Key_PageDown) {
+            setViewOffset(m_session->viewOffset() - page);
+            return;
+        }
+    }
+
+    // Typing goes to the live screen, so show it. Every terminal does this,
+    // and the alternative — typing blind into a screen you cannot see — is
+    // worse than losing your place in the history.
+    if (m_session->viewOffset() != 0 && !mods.testFlag(Qt::ControlModifier)) {
+        setViewOffset(0);
+    }
 
     // The two clipboard bindings, which have to be checked before anything
     // sends: Ctrl+C on its own is an interrupt and must stay one.
@@ -485,13 +516,35 @@ void TerminalView::wheelEvent(QWheelEvent *event)
     // `vtwin.cpp:2542` passes `zDelta < 0`, so 0 is up and 1 is down.
     const uint8_t button = delta > 0 ? 0 : 1;
     const QPointF p = event->position();
+    // Offered to the terminal first: a full-screen application that asked for
+    // mouse tracking wants the wheel, and `less` scrolling its own buffer is
+    // not the same thing as us scrolling ours.
     if (m_session->mouse(TT_MOUSE_EVENT_WHEEL, button, static_cast<int>(p.x()),
                          static_cast<int>(p.y()), modifiersOf(event->modifiers()))) {
         event->accept();
         return;
     }
-    // Nothing else to do with it until there is a scrollback viewport.
-    event->ignore();
+
+    const int lines = qMax(1, QApplication::wheelScrollLines());
+    const int steps = delta / 120 != 0 ? delta / 120 : (delta > 0 ? 1 : -1);
+    setViewOffset(m_session->viewOffset() + steps * lines);
+    event->accept();
+}
+
+void TerminalView::setViewOffset(int offset)
+{
+    const int before = m_session->viewOffset();
+    m_session->setViewOffset(offset);
+    if (m_session->viewOffset() == before) {
+        return;
+    }
+    // The selection is held in viewport coordinates, so scrolling would leave
+    // the highlight sitting on whatever text moved under it. Dropping it is
+    // the honest minimum; anchoring a selection to the history is a refinement
+    // that wants the same work as selecting *across* a scroll.
+    clearSelection();
+    update();
+    emit viewChanged();
 }
 
 void TerminalView::focusInEvent(QFocusEvent *event)

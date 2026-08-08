@@ -38,6 +38,16 @@ public:
     void pasteClipboard();
     bool hasSelection() const { return m_hasSelection; }
 
+public slots:
+    /// Scroll the view back by `offset` lines; 0 is the live screen.
+    void setViewOffset(int offset);
+
+signals:
+    /// The viewport moved, or the history grew. A scrollbar watches this
+    /// rather than assuming its own last write is still current — the core
+    /// moves the offset itself to keep a scrolled-back view on the same lines.
+    void viewChanged();
+
 protected:
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;

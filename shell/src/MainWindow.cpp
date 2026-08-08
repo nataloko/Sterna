@@ -5,8 +5,11 @@
 #include <QAction>
 #include <QFontDialog>
 #include <QLabel>
+#include <QHBoxLayout>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QScrollBar>
+#include <QSignalBlocker>
 #include <QStatusBar>
 
 #include "SerialDialog.h"
@@ -25,7 +28,27 @@ MainWindow::MainWindow()
 {
     m_session = new Session(80, 24, this);
     m_view = new TerminalView(m_session, this);
-    setCentralWidget(m_view);
+
+    // A plain QWidget plus a scrollbar rather than a QAbstractScrollArea: the
+    // painter draws straight onto the widget in cell coordinates, and a scroll
+    // area would add a viewport child and a coordinate translation to hold a
+    // scrollbar we can place in a layout for nothing.
+    m_scroll = new QScrollBar(Qt::Vertical, this);
+    auto *central = new QWidget(this);
+    auto *layout = new QHBoxLayout(central);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    layout->addWidget(m_view, 1);
+    layout->addWidget(m_scroll);
+    setCentralWidget(central);
+
+    connect(m_view, &TerminalView::viewChanged, this, &MainWindow::syncScrollBar);
+    connect(m_scroll, &QScrollBar::valueChanged, this, [this](int value) {
+        // The scrollbar counts down from the top of the history; the session
+        // counts back from the live screen. One subtraction, in one place.
+        m_view->setViewOffset(m_scroll->maximum() - value);
+    });
+    syncScrollBar();
 
     tt_serial_params_default(&m_lastParams);
 
@@ -137,6 +160,23 @@ void MainWindow::onNotice(const QString &text)
 void MainWindow::onConnectionChanged()
 {
     updateStatus();
+}
+
+void MainWindow::syncScrollBar()
+{
+    const int history = m_session->scrollbackLen();
+    const int offset = m_session->viewOffset();
+    // Blocked because this is a *reaction* to the session moving: letting it
+    // emit would turn every pump into a write back into the session, and the
+    // rounding would fight the offset the core just chose.
+    const QSignalBlocker block(m_scroll);
+    m_scroll->setRange(0, history);
+    m_scroll->setPageStep(qMax(1, m_session->rows()));
+    m_scroll->setSingleStep(1);
+    m_scroll->setValue(history - offset);
+    // Hidden when there is nothing to scroll, so an 80x24 window is not
+    // permanently a few pixels narrower than the terminal in it.
+    m_scroll->setVisible(history > 0);
 }
 
 void MainWindow::updateStatus()

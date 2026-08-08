@@ -42,8 +42,23 @@ public:
 
     int cols() const;
     int rows() const;
+    /// One row of what is *shown* — the live screen until something scrolls
+    /// back, and then history.
     const TtCell *row(int y, size_t *outLen) const;
     TtCursor cursor() const;
+    /// Which viewport row to paint the cursor on, or -1 when the view has
+    /// scrolled far enough back that the cursor is off the bottom.
+    int cursorViewRow() const;
+
+    // --- the viewport -------------------------------------------------------
+
+    int scrollbackLen() const;
+    /// Lines scrolled back; 0 is live. **Re-read after every pump** — the core
+    /// moves it so a scrolled-back view stays on the same lines.
+    int viewOffset() const;
+    void setViewOffset(int offset);
+    void scrollToBottom() { setViewOffset(0); }
+
     bool reverseVideo() const;
     TtTracking mouseTracking() const;
     QString title() const;

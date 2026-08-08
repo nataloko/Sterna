@@ -304,6 +304,86 @@ void test_an_unfocused_cursor_is_hollow()
     CHECK(h.ink(8, 4) == 0);
 }
 
+/// Feed `n` lines, each a single space on its own background colour, so a
+/// rendered row says exactly which line of history it is.
+void feedNumberedLines(Harness &h, int n)
+{
+    QByteArray out;
+    for (int i = 0; i < n; i++) {
+        out += QByteArray("\033[48;5;") + QByteArray::number(16 + i) + "m \033[0m\r\n";
+    }
+    h.session.feed(out);
+}
+
+QColor paletteColour(int index)
+{
+    uint8_t r = 0, g = 0, b = 0;
+    tt_palette_rgb(static_cast<uint32_t>(index), &r, &g, &b);
+    return QColor(r, g, b);
+}
+
+void test_scrolling_back_paints_the_history()
+{
+    Harness h;
+    feedNumberedLines(h, 60);
+    const int history = h.session.scrollbackLen();
+    CHECK(history > 0);
+
+    // Live: the top visible row is the first line still on the page.
+    h.render();
+    CHECK(h.bgAt(0, 0) == paletteColour(16 + history));
+
+    // Scrolled back by five, it is five lines earlier — and the painter reads
+    // it through the same `row()` it uses for the live screen, which is why
+    // there is no second code path to get wrong.
+    h.view.setViewOffset(5);
+    h.render();
+    CHECK(h.session.viewOffset() == 5);
+    CHECK(h.bgAt(0, 0) == paletteColour(16 + history - 5));
+
+    // All the way back is the oldest line retained.
+    h.view.setViewOffset(1 << 20);
+    h.render();
+    CHECK(h.session.viewOffset() == history);
+    CHECK(h.bgAt(0, 0) == paletteColour(16 + 0));
+}
+
+void test_the_cursor_is_not_painted_onto_the_history()
+{
+    Harness h;
+    h.activate();
+    feedNumberedLines(h, 60);
+    h.render();
+    const int cursorRow = h.session.cursorViewRow();
+    CHECK(cursorRow >= 0);
+    // A focused cursor is a filled block, so the cell reads as the foreground.
+    CHECK(h.at(0, cursorRow) == kBlack);
+
+    // Scroll back past the whole screen and the cursor has no row to be on.
+    // Painting `TtCursor::y` regardless would stamp a block onto a line of
+    // history, which looks like a prompt that is not there.
+    h.view.setViewOffset(30);
+    h.render();
+    CHECK(h.session.cursorViewRow() < 0);
+    CHECK(h.at(0, cursorRow) != kBlack);
+}
+
+void test_output_does_not_move_a_scrolled_back_view()
+{
+    // The same claim `tt-session` tests, but through the painter — because
+    // this is the one the user sees, and a frontend that re-read the offset
+    // wrongly would undo it without any core test noticing.
+    Harness h;
+    feedNumberedLines(h, 60);
+    h.view.setViewOffset(5);
+    h.render();
+    const QColor held = h.bgAt(0, 0);
+
+    feedNumberedLines(h, 3);
+    h.render();
+    CHECK(h.bgAt(0, 0) == held);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -326,6 +406,9 @@ int main(int argc, char **argv)
     test_dec_special_graphics_draws_a_line();
     test_the_cursor_is_drawn_where_the_core_says();
     test_an_unfocused_cursor_is_hollow();
+    test_scrolling_back_paints_the_history();
+    test_the_cursor_is_not_painted_onto_the_history();
+    test_output_does_not_move_a_scrolled_back_view();
 
     // `--write <dir>` dumps what was rendered, for looking at a failure rather
     // than guessing at it.
