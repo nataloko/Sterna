@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 complete, 2 in progress · **Commits:** 142
+**Last updated:** 2026-08-08 · **Stage:** 1 complete, 2 in progress · **Commits:** 148
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1045,12 +1045,14 @@ before anything else in every session.
 - **TTL interpreter**: native Rust, **in-process on a thread** — deletes ~2,600
   LOC of DDE glue (`ttpmacro/ttmdde.c` + `teraterm/ttdde.c`) and a whole class
   of races. Target: the 53 `.ttl` scripts in `teraterm/tests/` pass.
-  🔵 **the language runs, and it can hold a conversation**, 2026-08-08 —
-  `crates/tt-ttl/`: the tokeniser, the variables, the eleven precedence levels,
-  the control flow, the string and integer commands, and `send`/`wait`/
-  `waitln`/`waitn`/`waitrecv`/`recvln`/`pause`/`flushrecv`. What is left is the
-  session commands, the file commands, the dialogs and the regex family. See
-  below.
+  🔵 **the language runs, holds a conversation, and drives a session**,
+  2026-08-08 — `crates/tt-ttl/`: the tokeniser, the variables, the eleven
+  precedence levels, the control flow, the string and integer commands,
+  `send`/`wait`/`waitln`/`waitn`/`waitrecv`/`recvln`/`pause`/`flushrecv`, the
+  link and the connection, the serial control lines, all sixteen transfer
+  commands, and the whole file family. What is left is the dialogs, the
+  logging commands, the environment and clipboard odds and ends, and the regex
+  family. See below.
 - **Lua via `mlua`** over the same `ScriptHost` command table (~500 LOC glue).
 - `ttctl` JSON-RPC control socket replacing DDE. Keep a `ttpmacro script.ttl`
   CLI entry point so existing shortcuts and `.bat` wrappers keep working.
@@ -1335,10 +1337,145 @@ holds defects proven by running two engines against each other, and this is a
 reading of the source. Demonstrate it against a real `ttpmacro.exe` in Stage 3
 before filing it.
 
-**What is left**, in the order it is likely to be built: the session commands
-(`connect`, `disconnect`, `testlink`, the transfer protocols, the serial control
-lines — which `tt-xfer` and `tt-session` already have underneath), the file
-commands, the dialogs, and the regex family. That last one is a decision, not a port: `sprintf` validates its
+#### The session, and where the process boundary was
+
+`crates/tt-ttl/src/sesscmds.rs`, 2026-08-08. `connect`, `cygconnect`,
+`disconnect`, `testlink`, `unlink`, `closett`, `setsync`, the six serial
+control-line commands and all sixteen transfer commands.
+
+Upstream these are the *thin* ones: `TTLCommCmd`, `TTLCommCmdInt` and
+`TTLCommCmdFile` are three or four lines each, hand a one-byte opcode to
+`SendCmnd`, and every scrap of behaviour is on the other side of the DDE
+conversation in `teraterm/ttdde.c`. The thinness is the trap, and it hides
+three things that are visible from a macro:
+
+- **`SendCmnd` owns the link check**, so a command whose own body never
+  mentions `Linked` still fails with `ErrLinkFirst`. It also runs *after* the
+  arguments are parsed, so `sendbreak junk` is a syntax error where `send 'x'`
+  with no terminal is a link error. Both orders are upstream's and both are
+  reproduced.
+- **`IdTTLWaitCmndEnd` and `IdTTLWaitCmndResult` are not the same wait.**
+  `sendfile` takes the first, so it blocks until the file has gone and then
+  writes **no `result` at all** — a macro that tests `result` after a
+  `sendfile` is reading whatever the command before it left there.
+- **`DDE_FNOTPROCESSED` reads to the macro as success.** It is what the
+  terminal answers when the port is not serial, so `setdtr`, `setrts`,
+  `setbaud` and `setflowctrl` are all silent no-ops over SSH rather than
+  errors. The host declining quietly is that shape.
+
+The one thing not reproduced is the process boundary. `TTLConnect` either
+tells an existing Tera Term to connect or spawns a fresh `ttermpro.exe` and
+links to it over DDE; in-process there is nothing to spawn, because the
+terminal is the caller. What a macro observes is unchanged — `result` is read
+back off the link and the connection afterwards, which is exactly the
+three-value table `testlink` documents.
+
+The XMODEM option folds in two different directions and neither is guessable:
+on send only 1K survives and **everything else becomes CRC**, including a
+literal 1 for checksum, because the checksum-or-CRC choice belongs to the
+receiver; on receive 1K *means* CRC — upstream comments the arm "for
+compatibility" — and anything unrecognised falls back to checksum rather than
+to CRC.
+
+**A seventh upstream defect**, and like the `waitn` one it is a reading of the
+source rather than two engines disagreeing, so it is not in
+`docs/upstream-bugs.md` either. `getmodemstatus`'s `result` is **always 0**,
+including when it failed. The documentation promises 1 on failure and
+`TTLGetModemStatus` has the arm that would set it, but the arm fires on a
+non-zero return from `GetTTParam`, which returns `ErrLinkFirst` or nothing else
+— and the `ErrLinkFirst` case was already taken three lines earlier. When the
+terminal declines, `GetTTParam` leaves the caller's buffer alone and returns 0;
+the buffer was `memset` to zero, `atoi("")` is 0, and the macro is told all
+four control lines are low. `GetTTParam`'s own comment at `ttmdde.c:1067` says
+the transaction failing *should* be an error and the `return 0` under it says
+it is not. Reproduced; demonstrate it against a real `ttpmacro.exe` in Stage 3
+before filing.
+
+#### The file family, and the Windows underneath it
+
+`crates/tt-ttl/src/files.rs`, `filecmds.rs` and `pathcmds.rs`, 2026-08-08.
+Thirty-three commands: the sixteen handles and everything they do, the path
+operations, the directory walk, and `basename`/`dirname`/`makepath`.
+
+**None of it goes through `ScriptHost`.** The handle table is the macro's own
+state — four file-scope arrays in `ttl.cpp` — and reading bytes out of a file
+is not the decision that loading a *macro* is, where a BOM and a fallback
+codepage have to be sniffed. The one seam that was needed is `format_time`,
+because a wall clock is not in the standard library: no time zones and no
+`strftime`, and this crate still has no dependencies. The default answers in
+UTC by Hinnant's `civil_from_days`; a frontend that knows the user's zone
+overrides it, and `getdate`/`gettime` will want the same seam.
+
+Three answers are the platform's rather than upstream's, each argued at the
+command:
+
+1. **File attributes are a Win32 bit field** and `getfileattr` hands
+   `GetFileAttributes`'s return value straight to `result`, so the values a
+   script tests are `FILE_ATTRIBUTE_*`. `READONLY`, `HIDDEN` (a leading dot,
+   which is this platform's own word for the same idea), `DIRECTORY` and
+   `NORMAL` are answered from a POSIX stat; the NTFS bookkeeping bits never
+   set. `setfileattr` can act on `READONLY` and accepts the rest silently,
+   which is what `SetFileAttributes` does with a bit the filesystem does not
+   keep.
+2. **`basename` and `dirname` use this platform's separator.** Upstream's
+   `DeleteSlash` strips backslashes only, so a literal port would answer
+   differently for `/a/b/` and `c:\a\b\` for no reason but the character. The
+   documented examples all hold with `/` for `\`; the two places the answers
+   differ are at the root and on a trailing separator, and both are POSIX's.
+3. **The same-file tests compare exactly**, where upstream uses `_stricmp`,
+   because here two spellings that differ in case are two files.
+
+`FindFirstFile`'s glob *is* reproduced, Win32 trivia included: `*.*` matches
+every name whether or not it has a dot — an 8.3 leftover, and the reason
+`findfirst` with an empty pattern works at all — and the walk yields `.` and
+`..`. A script that loops over `*.*` was written against both.
+
+`GetFileNamePosU8` rejects any path containing a colon (`ttlib_static_cpp.cpp:741`),
+which makes `GetAbsPath` fail and the command report a path error. Not
+reproduced: a colon is a drive separator and an alternate-data-stream marker on
+Windows and an ordinary character here, so it would make `/tmp/a:b` unopenable
+for no reason a user of this port could discover.
+
+Two behaviours that look like bugs and are kept:
+
+- **`filestrseek`'s matcher is not `wait`'s.** `wait` backs off to the longest
+  prefix of the pattern that is also a suffix of what it has seen; this one
+  backs off to nothing and then takes the current byte as a possible first
+  character, so it cannot find a pattern that overlaps itself — `aab` is not
+  found in `aaab`, though it plainly is there.
+- **`fileconcat` calls a missing source a success.** It opens it with
+  `OPEN_EXISTING`, and when that fails it skips the copy loop with `result`
+  still 0.
+
+**`filelock` is the one command in the port with deliberate divergences**, and
+they are upstream's arithmetic rather than a preference. `timeoutI` is never
+initialised, so a bare `filelock fh` — the form the documentation calls the way
+to wait for ever — spins for however long a stale stack slot says; and the loop
+then compares against `timeout * 1000` having already multiplied by 1000 when
+it assigned it, so `filelock fh 5` waits five *million* seconds. The line above
+both reads `timeout = -1;  // 無限大`, and the documentation's table agrees with
+that intent. Implemented as documented: no argument waits for ever, 0 returns at
+once, N waits N seconds. Reproducing an uninitialised read is not possible in
+safe Rust and there is nothing to be faithful to; the 1000× is the same
+expression and goes with it. Note also that a POSIX lock is advisory where a
+Windows one is mandatory, so `filelock` keeps well-behaved programs out and
+nothing else.
+
+**Three more upstream out-of-bounds accesses**, all in the handle table, none
+reproduced — same class and same reason as the three in `strtrim`, `strsplit`
+and `GetFactor`. `HandleGet` tests `_countof(FHandle) < fhi` where it means
+`<=`, so handle 16 reads one element past the array; `HandleFree` tests nothing
+at all, so `fileclose 99999` writes `INVALID_HANDLE_VALUE` at an index the
+script chose; and `FPointer[fhi]` is unchecked the same way in `filemarkptr`
+and `fileseekback`. That makes six found by reading, and the tally is the point:
+`ttl.cpp` bounds-checks its handle arrays in about half the places it indexes
+them.
+
+**What is left**, in the order it is likely to be built: the dialogs
+(`messagebox`, `inputbox`, `listbox`, the status box and the rest of the
+`ttmdlg.cpp` family, all of which want a host method each), the logging
+commands, the environment/clipboard/`exec` odds and ends, and the regex family.
+That last one is a decision, not a port: `sprintf` validates its
 format specifiers with **Oniguruma** and `strmatch`/`strreplace`/`waitregex`
 match with it, so *which regex dialect this speaks* is a compatibility question
 that wants answering deliberately rather than by whichever crate is reached for.

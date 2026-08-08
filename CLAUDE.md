@@ -658,6 +658,31 @@ And for the settings, all of which came out of `ini-audit/`:
   `AcceptWheelToCursor`, which upstream *does* keep separately and
   `CVTWindow::SetupTerm` does not touch.
 
+And for the macro language:
+
+- **Every TTL argument is a whole expression, so a space is not a separator.**
+  `fileseek fh -3 2` is `fileseek (fh - 3) 2` and then runs out of parameters;
+  `recvfile 'f' 0 -5` is `recvfile 'f' (0 - 5)` and does the same. The report
+  is `Syntax error` on a line that looks obviously right, and it happens to
+  every command that takes two integers in a row. Write the negative one in
+  brackets. Upstream parses identically — this is the language, not the port.
+- **`SendCmnd` is where the link check lives**, so a command whose body never
+  mentions `Linked` still fails with `ErrLinkFirst` — and *after* its arguments
+  are parsed, so `sendbreak junk` is a syntax error where `send 'x'` with no
+  terminal is a link error. Porting one of the thin `TTLCommCmd*` commands by
+  reading only its own four lines gives a command that quietly works with no
+  connection.
+- **`DDE_FNOTPROCESSED` reads to a macro as success.** It is what the terminal
+  answers when the port is not serial, so `setdtr`, `setrts`, `setbaud` and
+  `setflowctrl` are silent no-ops over SSH and not errors. A host that refuses
+  them loudly is not faithful.
+- **`ttl.cpp` bounds-checks its handle arrays in about half the places it
+  indexes them**, and the halves are not the obvious ones — `HandleGet` has a
+  check that is off by one, `HandleFree` and `FPointer[fhi]` have none. Six
+  out-of-bounds accesses have been found in `ttpmacro` by reading; none is
+  reproduced, all are listed in `PLAN.md`. Assume the next array is unchecked
+  until you have looked.
+
 And for the C ABI:
 
 - **cbindgen parses files, not crates, so it cannot see `pub(crate)` or a
@@ -744,6 +769,15 @@ Five in Tera Term — four in `buffer.c` and one in `vtterm.c` — all found by
 diffing the two engines. Patches in `oracle/patches/`, reports drafted in
 `docs/upstream-bugs.md`. Filing needs a GitHub account and is an open item in
 `PLAN.md`.
+
+**Eight more are in `ttpmacro` and none of them is in that file**, because they
+were found by reading the source rather than by two engines disagreeing, and
+`docs/upstream-bugs.md` holds only what a differential run proved. They are
+written up in `PLAN.md`'s TTL sections: `waitn`'s timeout arm leaving the
+received-line buffer in the wrong mode, `getmodemstatus` never reporting
+failure, and six out-of-bounds accesses (`strtrim`, `strsplit`, `GetFactor`,
+`HandleGet`, `HandleFree`, `FPointer`). Demonstrate each against a real
+`ttpmacro.exe` in Stage 3 before filing.
 
 **And one in `vte`**, which is a dependency rather than the specification, so it
 is not in that file: `vte` 0.15.0's `advance_partial_utf8` (`lib.rs:687`) prints
