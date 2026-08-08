@@ -83,6 +83,13 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/termitta myrouter        # an alias out of ~/.ssh/config
 ./build/termitta --shell         # a local login shell
 
+cd esctest                       # conformance, from inside our own terminal
+./run_tests.sh                   # 568 cases; gates on drift from `expected`
+./run_tests.sh CUPTests          # just the ones matching (a regex)
+./run_tests.sh --bless           # rewrite `expected`, then write the reasons
+./run_diff.sh                    # whose decision is a failure? ask the oracle
+./run_diff.sh -v DECIC           # ...and print the diff
+
 cd oracle
 make            # build build/oracle
 make test       # 72 regression cases
@@ -280,6 +287,29 @@ something other than what it is.
   mouse mode and made DECRQM answer "permanently reset" for all of them. When
   adding a setting, the rule is the same as for the flag words: find the key,
   not the initialiser.
+- **A named constant can be a flag word too, and `IdTitleReportEmpty` is.** It
+  is **24**, which is `WF_TITLEREPORT` entire (8|16) — so
+  `TitleReportSequence`'s "Empty" default sets *both* bits and lands on the
+  `default:` arm, where `CSI 20 t` and `CSI 21 t` answer with an empty OSC
+  string. The oracle read the name as "no bits" and was a Tera Term with title
+  reporting switched off. Same trap as `ISO2022Flag` and friends, one level
+  further disguised: here the wrong value is not a zero initialiser but a
+  constant whose *name* sounds like one.
+- **`rewrite_c1` has to know where UTF-8 sequences begin and end.** It replaces
+  a bare `80..=9F` byte with U+FFFD, because that is what Tera Term's decoder
+  does with invalid UTF-8 while `vte` would execute it as a C1 control. Do that
+  test byte by byte and the `80` inside an em dash's `E2 80 94` is eaten too —
+  and no differential case caught it, because none of them had a multi-byte
+  character whose continuation byte fell in that range. Case 97 does now.
+- **DECRQCRA is not upstream's**, which is why `Config::decrqcra` exists and
+  defaults off. It is the only way to read a cell back over the wire and
+  `esctest/` asserts on nothing else; a real connection stays byte-for-byte
+  Tera Term because only the conformance harness turns it on.
+- **esctest's `--test-case-dir` recordings do not include its reset preamble.**
+  The side channel is attached *after* `reset()`, so a replayed stream starts
+  from the engines' own defaults rather than from esctest's 80x25 soft-reset
+  state. Fine for `esctest/run_diff.sh`, which only asks whether the two
+  engines agree; not fine as a way to reproduce a specific test's verdict.
 - **Stubs lie, and `DispFindClosestColor` did.** It lived in `stubs_manual.c`
   with *xterm's* palette rather than Tera Term's, and without the bright/dim
   flip the real one applies, so every truecolor SGR resolved to the wrong
@@ -533,6 +563,7 @@ engines. Patches in `oracle/patches/`, reports drafted in
 PLAN.md          roadmap + status — read first
 ATTRIBUTION.md   licensing, and what still needs clearing before vendoring
 oracle/          Tera Term's real VT engine, headless on Linux (see its README)
+esctest/         the conformance suite, run inside our own terminal (see its README)
 xfer/            Stage 0 spike 2 — ttpfile's protocols, running and interoperating
 serial-audit/    Stage 0 spike 4 — serialport-rs vs commlib.c, on real hardware
 telnet-audit/    a real telnetd, so the telnet port has an independent check

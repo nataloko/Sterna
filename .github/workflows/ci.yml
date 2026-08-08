@@ -1,5 +1,11 @@
 # Runs what exists: the oracle, the Rust core diffed against it, the
-# file-transfer interop suite, and the two Stage 0 audits.
+# conformance suite, the file-transfer interop suite, and the two Stage 0
+# audits.
+#
+# Two suites are pinned to somebody else's SHA — Tera Term for the oracle, and
+# esctest2 for the conformance job — for the same reason in both cases: they
+# are the expectation, so tracking a branch would let a commit elsewhere turn
+# the gate red with no change on our side.
 #
 # Everything here builds against a SIBLING CHECKOUT of upstream Tera Term at
 # ../teraterm, exactly as the local layout does. That checkout is PINNED to a
@@ -195,6 +201,29 @@ jobs:
         run: |
           cd termitta/ssh-audit && ./servers.sh stop
           cd ../telnet-audit && ./servers.sh stop
+
+  esctest:
+    name: esctest — conformance, run inside our own terminal
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: crates -> target
+      # tt-host links tt-conn for its pty, and tt-conn needs libudev to build
+      # at all. Nothing here touches a serial port.
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      # esctest runs as a program on a pty and reads the terminal's answers
+      # back, so this needs no server, no hardware and no display — only the
+      # pinned esctest2 checkout, which run_tests.sh fetches by SHA.
+      #
+      # The gate is drift from `expected`, not a pass rate: a test that starts
+      # failing and a test that starts passing are both diffs, because a stale
+      # entry must not outlive the thing it describes.
+      - name: Conformance suite
+        run: cd esctest && ./run_tests.sh
 
   core-windows:
     name: core — builds and tests on Windows

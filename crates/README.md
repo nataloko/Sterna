@@ -1,6 +1,7 @@
 # termitta core
 
-The Rust side. Seven crates so far, of the eight `PLAN.md` describes.
+The Rust side. Seven of the eight crates `PLAN.md` describes, plus two CLIs
+that exist so the engine can be measured against something.
 
 | Crate | What it is |
 |---|---|
@@ -11,12 +12,14 @@ The Rust side. Seven crates so far, of the eight `PLAN.md` describes.
 | `tt-session` | A terminal attached to a connection: the loop between `tt-vt` and `tt-conn`, and what the C ABI exports. See [its README](tt-session/README.md). |
 | `tt-ffi` | The flat C ABI over `tt-session` — the whole core/frontend seam, and what the Qt shell links. See [its README](tt-ffi/README.md). |
 | `tt-dump` | A CLI that drives `tt-vt` over a byte stream and prints the oracle's dump format. Exists for the differential harness. |
+| `tt-host` | A terminal with no window: runs a program on a pty and is the terminal on the other end of it. Exists for `esctest/`, which cannot be a recording. |
 
 ```sh
 cargo build && cargo test
 cargo clippy --all-targets -- -D warnings
 tt-ffi/run_abi.sh              # the C ABI, compiled and driven from C
 ../run_diff.sh                 # the gate that actually matters
+../esctest/run_tests.sh        # ...and conformance, from inside our own terminal
 ```
 
 The pty suites in both crates need nothing and always run, so a bare
@@ -286,11 +289,18 @@ Things that look wrong in isolation and are upstream's:
   that spelling, which is how this surfaced; it carries the XFAIL in
   `oracle/upstream.cases`. Fixing it means normalising the byte stream before
   `vte` sees it, which has not been worth the scanner so far.
-- Of XTWINOPS, only `CSI 8;h;w t` (set terminal size) and `CSI 18 t` (report
-  it) are implemented. The rest of that switch asks the display layer where the
-  window is or moves it, so in a headless diff the answers would come from the
+- Of XTWINOPS, `CSI 8;h;w t` (set terminal size), `CSI 18 t` (report it),
+  `CSI 20/21 t` (the title reports) and `CSI 22/23 t` (the title stack) are
+  implemented. The rest of that switch asks the display layer where the window
+  is or moves it, so in a headless diff the answers would come from the
   oracle's *stubs* rather than from Tera Term, and matching them would be
-  matching a stub.
+  matching a stub. Note the title reports answer with an **empty** OSC string:
+  that is `TitleReportSequence`'s shipped default and an answerback mitigation,
+  not a hole.
+- **The colour palette is not in the engine.** Upstream's OSC 4/5/10-19/104/105
+  go through `vtdisp.c`'s `DispGetColor`/`DispSetColor`, so the palette is the
+  display layer's there and the frontend's here. Nothing answers a colour
+  query; `esctest/expected` records the 47 tests that want one.
 - **DECSCNM, DECPEX and `DECSET 12` are tracked but do nothing**, because what
   they change belongs to the renderer or the printer. They are here so DECRQM
   answers honestly and so the shell can read `reverse_video` when it paints.

@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 86
+**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 92
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -358,7 +358,8 @@ Must be shippable and genuinely useful, not a demo.
 
 - `tt-vt` + `tt-grid`: VT100/220 + core xterm, SGR/256/truecolor, scrollback,
   selection, BCE, wide + combining chars. Ported **against the oracle**.
-  ✅ **done for Stage 1's purposes** — 92 differential cases, see below. What
+  ✅ **done for Stage 1's purposes** — 102 differential cases and 365 of
+  esctest's 568, see below. What
   remains is selection, which is a frontend concept the grid only has to
   support.
 - `tt-conn`: **serial first** (the differentiator), then SSH2 via `russh`, then
@@ -550,8 +551,8 @@ would undo the whole thing with no core test noticing.
 screen), `tt-charset` (ISO-2022 and DEC special graphics), `tt-vt` (the state
 machine, `vte` for byte-level parsing), and `tt-dump` (a CLI that speaks the
 oracle's argument set and dump format). `./run_diff.sh` feeds every case to
-**both** engines and diffs them against each other. **93 cases: 92 matching and
-one known divergence.**
+**both** engines and diffs them against each other. **103 cases: 102 matching
+and one known divergence.**
 
 **The design decision worth recording: the differential suite has no golden
 files.** The oracle *is* the expectation, so a new case is an input file and
@@ -578,6 +579,57 @@ all eight tracking modes and all five encodings, including DEC's locator.
 deliberate: Tek, printing, Japanese charset designations, and the XTWINOPS
 operations that ask the display layer where the window is. See
 `crates/README.md` for the list and the reason for each.
+
+#### And what a second opinion found, once there was one
+
+`esctest/`, 2026-08-08. The differential suite proves the port matches Tera
+Term **on the cases somebody wrote**. It cannot say anything about ground the
+cases never covered, and 93 hand-written cases is not much ground. esctest is
+568 scenarios nobody here chose, and it found **ten real gaps** in an engine
+that had been passing every gate for a week.
+
+The method matters more than the list, because esctest measures against xterm
+and this is a port of Tera Term. A failure is a question, not a verdict. So
+`esctest/run_diff.sh` records each test's byte stream — esctest will write them
+out — and feeds every one to **both** engines: if they agree, the failure is
+Tera Term not being xterm and gets a written reason; if they disagree, it is
+ours. **510 of 568 stimuli now produce identical output from both engines**,
+and the 58 that do not are all colour or window queries the oracle answers from
+a stub, so it cannot arbitrate them either way.
+
+What that turned up, in order of how badly it would have bitten:
+
+1. **HPR, VPR, HPB and VPB were missing entirely** (`CSI a`, `e`, `j`, `k`).
+   Upstream has all four; they are the cursor moves measured against the *page*
+   rather than the margins.
+2. **VPA had lost origin mode.** `CSMoveToLineN` counts from the top margin;
+   ours counted from the screen.
+3. **A bare C1 byte was being swallowed.** In UTF-8 a lone `80..=9F` is invalid
+   and Tera Term shows U+FFFD; `vte` executes it as a control and we dropped it.
+   On a line that is not 8-bit clean this is the difference between a screen
+   full of replacement characters and a screen that stays blank.
+4. **DECSC did not save autowrap**, and **the alternate screen shared the main
+   screen's save slot** — so a full-screen editor's `ESC 7` overwrote the
+   position the shell underneath was going to come back to.
+5. **LNM did nothing on receive.** With it set, a line feed returns the
+   carriage as well (`vtterm.c:706`).
+6. **`CSI ? Ps n` was answering the plain DSR reports.** Upstream reserves the
+   private form for the locator (53 and 55) and ignores the rest.
+7. **NEL went to the left margin** instead of to column zero.
+8. **DECID (`ESC Z`) answered nothing**; it is Primary DA under another name.
+9. **Insert mode shifted to the screen edge**, not to the right margin, so a
+   character typed inside a margin pair shoved text out through it.
+10. **The title reports and the title stack were absent** (`CSI 20`–`23 t`).
+
+And an eleventh in the oracle, which is the same shape as the finding that
+started this whole file: **`IdTitleReportEmpty` is 24, the whole
+`WF_TITLEREPORT` mask**, so the shipped default sets both bits. The oracle had
+read the name as "no bits" and had been standing in for a Tera Term with title
+reporting switched off. The flag-word trap again, this time wearing a named
+constant instead of a zero.
+
+Each fix landed with a case in `oracle/cases/`, so the differential gate now
+covers the ground esctest pointed at — 93 cases became 103.
 
 #### Mouse reporting turned out to be differential-testable after all
 
@@ -992,13 +1044,29 @@ file/dir 1k, connection/terminal 2k, dialogs 0.8k, misc 1k — **~9.3k Rust vs
 1. **✅ Differential testing against real Tera Term** — `oracle/` built and
    green, and as of Stage 1 actually wired up: `./run_diff.sh` feeds identical
    byte streams to it and to the Rust engine and diffs the grid dumps *and the
-   replies*, in CI on every commit. 93 cases. Since the oracle also takes
+   replies*, in CI on every commit. 103 cases. Since the oracle also takes
    injected mouse, focus and **key** events — and compiles `keyboard.c` for the
    last of those — this covers both halves of the frontend seam. **This is
    the asset the whole project rests on**, and it is now a gate rather than a
    promise.
-2. **⬜ esctest2** (iTerm2) — ~1000 automated DEC/xterm conformance assertions
-   over a pty, read back via DSR/DECRQSS. Wire into CI in Stage 1.
+2. **✅ esctest2** (Dickey's fork of iTerm2's) — 568 conformance assertions over
+   a pty, in CI as of 2026-08-08. **365 pass**; every one of the other 203 has a
+   written reason in `esctest/expected`, and the gate is *drift* from that file
+   rather than a pass rate — a test that starts passing is as much a diff as one
+   that starts failing, so a stale entry cannot outlive what it describes.
+   See `esctest/README.md`.
+
+   Two things had to be built first, and the second is a decision. **`tt-host`**
+   is a terminal with no window — the same `tt-session`-over-pty loop the Qt
+   shell runs — because esctest is not a recording: it runs *inside* the
+   terminal and reads answers back. And **DECRQCRA**, the rectangular-area
+   checksum, which is the only way to read a cell over the wire and **the one
+   sequence in `tt-vt` that is not upstream's**: `vtterm.c` has no `CSI * y` at
+   all, so it is off by default and only the harness turns it on.
+
+   The plan's guess about the mechanism was wrong in a way worth recording:
+   this reads the screen through DECRQCRA, not "via DSR/DECRQSS". Had that been
+   checked earlier, the DECRQCRA prerequisite would not have been a surprise.
 3. **⬜ vttest** (Dickey) — interactive; manual gate plus screenshot diffing at
    each stage boundary.
 4. **🔵 Tera Term's own corpus** — `./run_upstream.sh` runs the escape-sequence
