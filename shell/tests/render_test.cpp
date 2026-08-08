@@ -28,9 +28,14 @@
 #include <cstring>
 
 #include <QComboBox>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QLineEdit>
+#include <QStandardPaths>
 #include <QTabWidget>
 
+#include "MainWindow.h"
 #include "Session.h"
 #include "SettingsDialog.h"
 #include "TerminalView.h"
@@ -726,6 +731,47 @@ void test_the_dialog_writes_only_what_changed()
           == QStringLiteral("before"));
 }
 
+
+/// A configured terminal size has to be the size the window *opens* at, not a
+/// resize the user watches happen — which means it reaches `sizeHint` before
+/// the first layout rather than a `resize()` afterwards.
+///
+/// Test mode moves `settingsPath()` into `~/.qttest`, so this neither reads
+/// nor writes the developer's own settings.
+void test_the_window_opens_at_the_configured_size()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const QString path = MainWindow::settingsPath();
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    {
+        QFile file(path);
+        CHECK(file.open(QIODevice::WriteOnly));
+        file.write("[Tera Term]\r\nTerminalSize=100,30\r\nVTColor=200,200,200,20,20,20\r\n");
+    }
+
+    {
+        MainWindow window;
+        // Straight out of the file, before anything has been laid out.
+        CHECK(window.session()->cols() == 100);
+        CHECK(window.session()->rows() == 30);
+
+        // Qt caps a window's *initial* size at two thirds of the screen
+        // (`QWidgetPrivate::adjustedSize`), which on the 800x800 offscreen
+        // screen is smaller than 100x30 cells — and then the terminal follows
+        // the window, as it does whenever a user drags an edge. So this asks
+        // for the size a big-enough screen would have given and checks that
+        // the layout lands exactly on the configured grid.
+        window.resize(window.sizeHint());
+        window.show();
+        qApp->processEvents();
+        CHECK(window.session()->cols() == 100);
+        CHECK(window.session()->rows() == 30);
+    }
+
+    QFile::remove(path);
+    QStandardPaths::setTestModeEnabled(false);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -760,6 +806,7 @@ int main(int argc, char **argv)
     test_settings_change_the_painted_colours();
     test_the_settings_dialog_is_built_from_the_schema();
     test_the_dialog_writes_only_what_changed();
+    test_the_window_opens_at_the_configured_size();
 
     // `--write <dir>` dumps what was rendered, for looking at a failure rather
     // than guessing at it.
