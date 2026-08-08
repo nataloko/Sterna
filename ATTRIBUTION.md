@@ -29,8 +29,20 @@ points to
 | Compiled unmodified as a protocol harness | `xfer/` | **Not redistributed.** Same sibling checkout. |
 | One local bug fix, applied to a build copy | `oracle/patches/` | Fix only; upstream source unmodified. |
 | Behavioural specification for the Rust port | `crates/` | No code copied. |
+| **Vendored and shipped** — the file-transfer protocols | `vendor/ttpfile/` | **Redistributed**, verbatim, notices retained. See below. |
 
-Nothing under `vendor/` yet.
+### `vendor/ttpfile/` — what is shipped
+
+33 files, 11,568 lines, copied unmodified from upstream revision
+`827a35b050c974b0fdf2a77ef73ed882301eb6c4` (`v5.6.0-496-g827a35b05`,
+2026-08-06) and compiled into `crates/tt-xfer`. **Every one carries the
+3-clause BSD notice inline**, checked file by file rather than assumed, and the
+notices are retained unaltered. `vendor/ttpfile/sync.sh --check` proves the
+copies are still byte-identical to that revision.
+
+This is the only Tera Term code the distribution contains. Because our own
+licence is the same 3-clause BSD, the shipped tree needs one licence text
+rather than two — which is why `LICENSE` says what it says.
 
 ## Vendoring clearance
 
