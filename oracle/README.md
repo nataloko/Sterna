@@ -97,6 +97,46 @@ the 67 `ts.*` fields `vtterm.c` and `buffer.c` read. **These are load-bearing.**
 reading the surrounding code. With `IdCR`, a bare CR is a carriage return, so
 `"Hello, world!\rSecond line"` correctly yields `Second lined!`.
 
+## Injected input events
+
+A screen dump has no mouse, so mouse reporting would be the one part of the VT
+engine with no differential coverage. Instead of hand-checking it, a case can
+put directives **in the byte stream**, wrapped in an APC string the runner
+strips before the terminal sees it:
+
+```
+ESC _ tt.mouse <down|up|move|wheel|stat> <button> <x> <y> ESC \
+ESC _ tt.mods  [shift] [ctrl] [alt]                       ESC \
+ESC _ tt.focus <in|out>                                   ESC \
+```
+
+Bytes on either side are fed and fully parsed first, so a directive sees exactly
+the terminal state the preceding bytes produced — modes can be changed between
+clicks. Anything after `ESC _` that does not start `tt.` is passed straight
+through.
+
+`x` and `y` are **window pixels**, not cells: that is what `MouseReport` takes,
+and SGR-pixel mode (`DECSET 1016`) reports them back unconverted. The cell is a
+nominal 8x16 (`ORACLE_CELL_W`/`_H` in `oracle.h`), so cell (3,5) is `24,80`.
+Buttons are upstream's numbering — 0 left, 1 middle, 2 right, 3 release — and
+for a wheel event 0 is up and 1 is down.
+
+```sh
+printf '\033[?1000h\033[?1006h\033_tt.mouse down 0 24 80\033\\' | oracle --cols 10 --rows 8
+# reply <ESC>[<0;4;6M
+```
+
+Two things had to be fixed before this worked, both of them the "stubs lie"
+failure mode:
+
+- `ShiftKey`/`ControlKey`/`AltKey` are **functions** in `keyboard.h`, and were
+  defined here as `BOOL` variables. That links, and jumps into the data section
+  the first time anything calls one. Nothing ever did, because no headless run
+  reached the mouse path.
+- `DispConvWinToScreen`/`DispConvScreenToWin` were empty generated stubs that
+  never stored through their out-parameters, so `MouseReport` read an
+  uninitialised position off the stack. Both now follow `vtdisp.c`.
+
 ## Bug found in Tera Term
 
 `BuffGetAnyLineDataW()` (`buffer.c:5832`) advances its cell pointer `b` only on

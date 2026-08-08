@@ -47,8 +47,28 @@ BOOL AppliKeyMode = FALSE, AppliCursorMode = FALSE, AppliEscapeMode = FALSE;
 BOOL AutoRepeatMode = TRUE;
 BOOL Send8BitMode = FALSE;
 BOOL KeybEnabled = TRUE;
-BOOL AltKey = FALSE, ControlKey = FALSE, ShiftKey = FALSE;
 BOOL DDELog = FALSE;
+
+/*
+ * keyboard.h declares these as FUNCTIONS -- BOOL ShiftKey(); -- and vtterm.c
+ * calls them as such, in MouseReport's modifier computation and in
+ * WheelToCursorMode. They used to be defined here as BOOL *variables*, which
+ * links (C has no cross-TU type check for this) and then jumps into the data
+ * section the first time anything calls one. Nothing did, because no headless
+ * run reached the mouse path; injecting a mouse event reaches it immediately.
+ */
+static BOOL g_shift, g_control, g_alt;
+
+BOOL ShiftKey(void)   { return g_shift; }
+BOOL ControlKey(void) { return g_control; }
+BOOL AltKey(void)     { return g_alt; }
+
+void oracle_set_modifiers(int shift, int control, int alt)
+{
+	g_shift = shift ? TRUE : FALSE;
+	g_control = control ? TRUE : FALSE;
+	g_alt = alt ? TRUE : FALSE;
+}
 
 
 /* ---- input feed --------------------------------------------------------- */
@@ -218,10 +238,42 @@ void DispGetCellSize(vtdraw_t *vt, int *width, int *height)
 	 * fixing it makes those reports reproducible. */
 	(void)vt;
 	if (width != NULL) {
-		*width = 8;
+		*width = ORACLE_CELL_W;
 	}
 	if (height != NULL) {
-		*height = 16;
+		*height = ORACLE_CELL_H;
+	}
+}
+
+/*
+ * vtdisp.c:1719 / :1735, with the nominal cell above in place of the real
+ * font metrics. The generated stubs left both of these empty -- they did not
+ * even store through their out-parameters, so MouseReport read an
+ * uninitialised x and y off the stack. That is invisible until a mouse event
+ * arrives, which is exactly the shape of stub CLAUDE.md warns about.
+ */
+void DispConvWinToScreen(vtdraw_t *vt, int Xw, int Yw, int *Xs, int *Ys, PBOOL Right)
+{
+	(void)vt;
+	if (Xs != NULL) {
+		*Xs = Xw / ORACLE_CELL_W + WinOrgX;
+	}
+	if (Ys != NULL) {
+		*Ys = Yw / ORACLE_CELL_H + WinOrgY;
+	}
+	if (Xs != NULL && Right != NULL) {
+		*Right = (Xw - (*Xs - WinOrgX) * ORACLE_CELL_W) >= ORACLE_CELL_W / 2;
+	}
+}
+
+void DispConvScreenToWin(vtdraw_t *vt, int Xs, int Ys, int *Xw, int *Yw)
+{
+	(void)vt;
+	if (Xw != NULL) {
+		*Xw = (Xs - WinOrgX) * ORACLE_CELL_W;
+	}
+	if (Yw != NULL) {
+		*Yw = (Ys - WinOrgY) * ORACLE_CELL_H;
 	}
 }
 

@@ -106,6 +106,16 @@ static void settings_defaults(int cols, int rows, const char *term_id, int cr_re
 	ts.Beep = IdBeepOff;            /* silence, and keeps runs deterministic */
 	ts.CursorShape = IdBlkCur;      /* ttset.c:725, the else branch */
 	ts.BSKey = IdBS;                /* ttset.c:882, the else branch */
+	/* ttset.c:1523 and :1515, both GetOnOff(..., TRUE). Zero here disabled
+	 * every mouse tracking mode outright -- DECSET 9/1000..1016 became
+	 * no-ops and DECRQM answered 4 ("permanently reset") for all of them --
+	 * and disabled wheel-to-cursor translation. Same trap as the flag words
+	 * below, just in a plain WORD. */
+	ts.MouseEventTracking = TRUE;
+	ts.TranslateWheelToCursor = TRUE;
+	/* ttset.c:1591, GetOnOff(..., TRUE). Ctrl suppresses mouse reporting, so
+	 * this is only inert while no injected event holds Ctrl down. */
+	ts.DisableMouseTrackingByCtrl = TRUE;
 	ts.AutoWinResize = FALSE;
 	ts.EnableScrollBuff = 1;
 	ts.SelectStartDelay = 0;
@@ -375,6 +385,174 @@ static void dump(FILE *out, int cols, int rows, const char *term_id, int want_at
 	free(line);
 }
 
+/* ---- injected input events ---------------------------------------------- */
+
+/*
+ * A dump has no mouse, so mouse reporting would be the one part of the VT
+ * engine with no differential coverage. Rather than leave it hand-checked, a
+ * case can carry directives *in the byte stream*, wrapped in an APC string
+ * that the runner strips before the terminal ever sees it:
+ *
+ *   ESC _ tt.mouse <down|up|move|wheel|stat> <button> <x> <y> ESC \
+ *   ESC _ tt.mods  [shift] [ctrl] [alt]                       ESC \
+ *   ESC _ tt.focus <in|out>                                   ESC \
+ *
+ * x and y are window pixels (ORACLE_CELL_W x ORACLE_CELL_H per cell), because
+ * that is what vtterm.c's MouseReport takes and what SGR-pixel mode reports
+ * back unconverted. Button numbering is upstream's: 0 left, 1 middle,
+ * 2 right, 3 release; for a wheel event 0 is up and 1 is down.
+ *
+ * Anything after ESC _ that does not begin "tt." is passed through untouched.
+ */
+static void drain_parser(void)
+{
+	int guard = 0;
+
+	while (oracle_feed_remaining() > 0) {
+		if (VTParse() == 0 && oracle_feed_remaining() > 0) {
+			if (++guard > 1000) {
+				fprintf(stderr, "oracle: parser stalled with %d bytes left\n",
+				        oracle_feed_remaining());
+				exit(3);
+			}
+		} else {
+			guard = 0;
+		}
+	}
+}
+
+static int token_eq(const char *p, size_t len, const char *word)
+{
+	return len == strlen(word) && memcmp(p, word, len) == 0;
+}
+
+/* Splits on spaces; returns the number of tokens found, up to max. */
+static int split_tokens(const char *s, size_t len, const char **tok, size_t *toklen, int max)
+{
+	int n = 0;
+	size_t i = 0;
+
+	while (i < len && n < max) {
+		size_t start;
+		while (i < len && s[i] == ' ') {
+			i++;
+		}
+		start = i;
+		while (i < len && s[i] != ' ') {
+			i++;
+		}
+		if (i > start) {
+			tok[n] = s + start;
+			toklen[n] = i - start;
+			n++;
+		}
+	}
+	return n;
+}
+
+static void run_directive(const char *body, size_t len)
+{
+	const char *tok[8];
+	size_t toklen[8];
+	int n = split_tokens(body, len, tok, toklen, 8);
+	char num[16];
+	int i;
+
+	if (n == 0) {
+		return;
+	}
+
+	if (token_eq(tok[0], toklen[0], "tt.mods")) {
+		int shift = 0, control = 0, alt = 0;
+		for (i = 1; i < n; i++) {
+			if (token_eq(tok[i], toklen[i], "shift")) shift = 1;
+			else if (token_eq(tok[i], toklen[i], "ctrl")) control = 1;
+			else if (token_eq(tok[i], toklen[i], "alt")) alt = 1;
+			else { fprintf(stderr, "oracle: unknown modifier in tt.mods\n"); exit(2); }
+		}
+		oracle_set_modifiers(shift, control, alt);
+		return;
+	}
+
+	if (token_eq(tok[0], toklen[0], "tt.focus")) {
+		if (n != 2) { fprintf(stderr, "oracle: tt.focus wants in|out\n"); exit(2); }
+		if (token_eq(tok[1], toklen[1], "in")) FocusReport(TRUE);
+		else if (token_eq(tok[1], toklen[1], "out")) FocusReport(FALSE);
+		else { fprintf(stderr, "oracle: tt.focus wants in|out\n"); exit(2); }
+		return;
+	}
+
+	if (token_eq(tok[0], toklen[0], "tt.mouse")) {
+		int event, button, x, y;
+		if (n != 5) { fprintf(stderr, "oracle: tt.mouse wants event button x y\n"); exit(2); }
+		if      (token_eq(tok[1], toklen[1], "stat"))  event = IdMouseEventCurStat;
+		else if (token_eq(tok[1], toklen[1], "down"))  event = IdMouseEventBtnDown;
+		else if (token_eq(tok[1], toklen[1], "up"))    event = IdMouseEventBtnUp;
+		else if (token_eq(tok[1], toklen[1], "move"))  event = IdMouseEventMove;
+		else if (token_eq(tok[1], toklen[1], "wheel")) event = IdMouseEventWheel;
+		else { fprintf(stderr, "oracle: unknown tt.mouse event\n"); exit(2); }
+
+		for (i = 2; i < 5; i++) {
+			if (toklen[i] >= sizeof(num)) { fprintf(stderr, "oracle: tt.mouse number too long\n"); exit(2); }
+			memcpy(num, tok[i], toklen[i]);
+			num[toklen[i]] = '\0';
+			if (i == 2) button = atoi(num);
+			else if (i == 3) x = atoi(num);
+			else y = atoi(num);
+		}
+		MouseReport(event, button, x, y);
+		return;
+	}
+
+	fprintf(stderr, "oracle: unknown tt. directive\n");
+	exit(2);
+}
+
+/*
+ * Feeds the stream, executing directives at the point they appear. Everything
+ * between directives goes to the parser and is fully drained first, so a
+ * directive observes exactly the terminal state the preceding bytes produced.
+ */
+static void run_stream(const unsigned char *input, size_t len)
+{
+	size_t i = 0, seg = 0;
+
+	while (i + 1 < len) {
+		size_t body, end;
+
+		if (!(input[i] == 0x1b && input[i + 1] == '_')) {
+			i++;
+			continue;
+		}
+		body = i + 2;
+		if (body + 3 > len || memcmp(input + body, "tt.", 3) != 0) {
+			i++;
+			continue;
+		}
+		for (end = body; end + 1 < len; end++) {
+			if (input[end] == 0x1b && input[end + 1] == '\\') {
+				break;
+			}
+		}
+		if (end + 1 >= len) {
+			fprintf(stderr, "oracle: unterminated tt. directive\n");
+			exit(2);
+		}
+
+		if (i > seg) {
+			oracle_feed(input + seg, i - seg);
+			drain_parser();
+		}
+		run_directive((const char *)input + body, end - body);
+		i = seg = end + 2;
+	}
+
+	if (len > seg) {
+		oracle_feed(input + seg, len - seg);
+		drain_parser();
+	}
+}
+
 /* ---- main --------------------------------------------------------------- */
 
 int main(int argc, char **argv)
@@ -385,7 +563,7 @@ int main(int argc, char **argv)
 	unsigned char *input;
 	size_t len = 0, cap = 1 << 16;
 	FILE *in;
-	int i, guard;
+	int i;
 
 	for (i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--cols") == 0 && i + 1 < argc) {
@@ -458,23 +636,7 @@ int main(int argc, char **argv)
 	ResetTerminal();
 	BuffChangeTerminalSize(cols, rows);
 
-	oracle_feed(input, len);
-
-	/* VTParse consumes what it can per call and returns 0 when the input is
-	 * exhausted; the guard is a backstop against a state machine that stops
-	 * making progress rather than a normal exit path. */
-	guard = 0;
-	while (oracle_feed_remaining() > 0) {
-		if (VTParse() == 0 && oracle_feed_remaining() > 0) {
-			if (++guard > 1000) {
-				fprintf(stderr, "oracle: parser stalled with %d bytes left\n",
-				        oracle_feed_remaining());
-				return 3;
-			}
-		} else {
-			guard = 0;
-		}
-	}
+	run_stream(input, len);
 
 	/*
 	 * The LIVE size, not the one from argv: XTWINOPS `CSI 8;h;w t` changes

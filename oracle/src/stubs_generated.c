@@ -112,14 +112,6 @@ void DispClearWin(vtdraw_t *vt)
 {
 }
 
-void DispConvScreenToWin(vtdraw_t *vt, int Xs, int Ys, int *Xw, int *Yw)
-{
-}
-
-void DispConvWinToScreen(vtdraw_t *vt, int Xw, int Yw, int *Xs, int *Ys, PBOOL Right)
-{
-}
-
 void DispCountScroll(vtdraw_t *vt, int n)
 {
 }

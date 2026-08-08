@@ -10,9 +10,21 @@
 extern "C" {
 #endif
 
+/*
+ * The nominal character cell, in pixels. vtterm.c converts between window and
+ * screen coordinates for every mouse report, so a headless oracle still needs
+ * a cell size; 8x16 is arbitrary but fixed, and case files that inject mouse
+ * events give their positions in these pixels.
+ */
+#define ORACLE_CELL_W 8
+#define ORACLE_CELL_H 16
+
 /* Input feed. CommRead1Byte() serves bytes from here. */
 void oracle_feed(const void *bytes, size_t len);
 int  oracle_feed_remaining(void);
+
+/* Modifier keys, as ShiftKey()/ControlKey()/AltKey() report them. */
+void oracle_set_modifiers(int shift, int control, int alt);
 
 /* Everything the terminal sent back to the host, as UTF-8 bytes. */
 const unsigned char *oracle_reply(size_t *len);
