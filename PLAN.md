@@ -136,7 +136,10 @@ the trigger to watch — not CJK, and not toolkit fashion.
   output measured from patched and unpatched builds rather than asserted. See
   `docs/upstream-bugs.md`. **Filing needs a GitHub account**, so it is the one
   Stage 0 item that still needs the user. One of the three is an
-  attacker-controlled out-of-bounds write and should go first.
+  attacker-controlled out-of-bounds write and should go first. **A sixth report
+  has since been drafted against `vte`** rather than Tera Term —
+  `docs/vte-bug.md`, silent data loss when a UTF-8 sequence is split across a
+  read — and needs the same account.
 
 ---
 

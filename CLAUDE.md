@@ -605,7 +605,7 @@ only the first character of what it decoded across a chunk boundary and then
 reports `valid_up_to()` as the bytes it consumed, dropping anything complete in
 between. `[.. C3] [A9 'a' E4 B8 80]` prints `é一` and eats the `a`. Worked
 around in `tt-vt` rather than waited on — see the trap below — but it wants
-filing too, and it needs the same GitHub account.
+filing too, drafted in `docs/vte-bug.md`, and it needs the same GitHub account.
 
 1. **`BuffGetAnyLineDataW` does not advance past padding cells** (`:5832`), so
    it parks on the padding after a full-width character and drops the rest of
