@@ -27,6 +27,8 @@ const DEP_SOURCES: &[&str] = &[
 fn main() {
     let crate_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("set by cargo"));
 
+    soname();
+
     println!("cargo:rerun-if-changed=src/lib.rs");
     println!("cargo:rerun-if-changed=cbindgen.toml");
     for src in DEP_SOURCES {
@@ -63,6 +65,23 @@ fn main() {
     // tree's mtimes still and stops a rebuild loop.
     bindings.write_to_file(&header);
     announce(&header);
+}
+
+/// Give the shared library a `DT_SONAME`, which Cargo does not.
+///
+/// Without one, whatever links against it records the path it was *handed* at
+/// link time. Build the shell out of tree and the executable ends up with a
+/// `DT_NEEDED` of `cargo/debug/libtermitta.so`, relative — so it runs from the
+/// build directory and nowhere else, and the failure is a loader message about
+/// a missing file that plainly exists.
+///
+/// `rustc-cdylib-link-arg` rather than `RUSTFLAGS` because it applies to the
+/// cdylib alone; the same flag through the environment would attach a soname to
+/// every test binary in the workspace as well.
+fn soname() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        println!("cargo:rustc-cdylib-link-arg=-Wl,-soname,libtermitta.so");
+    }
 }
 
 /// Tell dependents where the header is, so a `cc`- or CMake-driven consumer
