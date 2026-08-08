@@ -1,0 +1,30 @@
+# termitta-oracle 1
+# term vt100 16x6
+# cursor 6,4
+  0 |aXXXXfghijklmnop|
+  1 |aXXXXfghijklmnop|
+  2 |ab        klmnop|
+  3 |abcdefghijklmnop|
+  4 |  QQ  ghijklmnop|
+  5 |adAAAAAAAAAAAAAA|
+# attrs
+  0 |.BBBB...........|
+  1 |.BBBB...........|
+  2 |..BbbbbbbB......|
+  3 |................|
+  4 |BBBBBB..........|
+  5 |BBBBBBBBBBBBBBBB|
+# colors
+  0 |................|
+  1 |................|
+  2 |..00000000......|
+  3 |................|
+  4 |000000..........|
+  5 |..00000000000000|
+# protect
+  0 |................|
+  1 |................|
+  2 |................|
+  3 |................|
+  4 |..PP............|
+  5 |................|

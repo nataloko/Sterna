@@ -210,10 +210,22 @@ static char attr_char(const TCharAttr *a)
  */
 static int disp_width(unsigned int cp)
 {
+	char p;
+
 	if (UnicodeIsCombiningCharacter(cp)) {
 		return 0;
 	}
-	return UnicodeGetWidthProperty(cp) == 'W' ? 2 : 1;
+	p = UnicodeGetWidthProperty(cp);
+	/*
+	 * BOTH 'W' (Wide) and 'F' (Fullwidth) are full-width -- that is what
+	 * buffer.c:BuffIsHalfWidthFromPropery() says, and the buffer lays cells
+	 * out accordingly. Testing only for 'W' here made the dump count every
+	 * fullwidth form (U+FF01 onward) as one column while the buffer had
+	 * given it two, so the row was padded past its own width and every
+	 * comparison against it was wrong. 'A' (Ambiguous) is narrow because
+	 * ts.UnicodeAmbiguousWidth is not 2.
+	 */
+	return (p == 'W' || p == 'F') ? 2 : 1;
 }
 
 static void dump(FILE *out, int cols, int rows, const char *term_id, int want_attrs)

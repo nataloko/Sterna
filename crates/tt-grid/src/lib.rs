@@ -177,6 +177,17 @@ impl Cell {
     }
 }
 
+/// An inclusive, 0-based rectangle — how the `$`-intermediate operations name
+/// the area they act on. On the wire it arrives 1-based as top, left, bottom,
+/// right; `tt-vt` does the conversion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rect {
+    pub x0: usize,
+    pub y0: usize,
+    pub x1: usize,
+    pub y1: usize,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Cursor {
     pub x: usize,
@@ -767,6 +778,161 @@ impl Grid {
         self.cursor = Cursor::default();
         self.top = 0;
         self.bottom = self.rows - 1;
+    }
+
+    // --- rectangular areas (DECSACE / DECCARA / DECRARA / DECFRA / ...) --
+
+    /// The cells an area covers, one `(row, start, end)` span per row with
+    /// `end` exclusive, clamped the way `buffer.c` clamps.
+    ///
+    /// `rect` is DECSACE's `RectangleMode`: true gives the same column range on
+    /// every row, false gives a stream that runs from the start column to the
+    /// end of its row, through whole rows, and stops at the end column.
+    fn area_spans(&self, rect: bool, area: Rect) -> Vec<(usize, usize, usize)> {
+        let Rect { x0, y0, .. } = area;
+        let x1 = area.x1.min(self.cols - 1);
+        let y1 = area.y1.min(self.rows - 1);
+        if x0 > x1 || y0 > y1 || y0 >= self.rows {
+            return Vec::new();
+        }
+        (y0..=y1)
+            .map(|y| {
+                if rect || y0 == y1 {
+                    (y, x0, x1 + 1)
+                } else if y == y0 {
+                    (y, x0, self.cols)
+                } else if y == y1 {
+                    (y, 0, x1 + 1)
+                } else {
+                    (y, 0, self.cols)
+                }
+            })
+            .collect()
+    }
+
+    /// The two cells an area operation touches *outside* its span because a
+    /// wide character straddles the edge. `buffer.c` spells this out at every
+    /// call site; it is the same rule each time.
+    fn span_edges(&self, y: usize, start: usize, end: usize) -> (Option<usize>, Option<usize>) {
+        let left =
+            (start > 0 && self.lines[y][start - 1].width_class == WIDTH_WIDE).then(|| start - 1);
+        let right =
+            (end < self.cols && end > 0 && self.lines[y][end - 1].width_class == WIDTH_WIDE)
+                .then_some(end);
+        (left, right)
+    }
+
+    /// DECCARA (`mask` = `Some`) and DECRARA (`mask` = `None`), over either a
+    /// rectangle or a stream — `buffer.c:BuffChangeAttrBox` /
+    /// `BuffChangeAttrStream`.
+    ///
+    /// With a mask, each named bit is replaced and the rest left alone; the
+    /// colour indices move only when their `Attr2` bit is in the mask. Without
+    /// one, DECRARA **toggles** the named attributes and touches nothing else.
+    /// Either way a wide character straddling an edge is changed with the cells
+    /// it overlaps, so a half never ends up a different colour from its other
+    /// half.
+    pub fn change_attr_area(&mut self, rect: bool, area: Rect, attr: Pen, mask: Option<u32>) {
+        for (y, start, end) in self.area_spans(rect, area) {
+            let (left, right) = self.span_edges(y, start, end);
+            for x in left.into_iter().chain(start..end).chain(right) {
+                let cell = &mut self.lines[y][x];
+                match mask {
+                    Some(m) => {
+                        cell.attrs = (cell.attrs & !m) | attr.attrs;
+                        if m & ATTR2_FORE != 0 {
+                            cell.fg = attr.fg;
+                        }
+                        if m & ATTR2_BACK != 0 {
+                            cell.bg = attr.bg;
+                        }
+                    }
+                    None => cell.attrs ^= attr.attrs & ATTR_MASK,
+                }
+            }
+        }
+    }
+
+    /// DECFRA — `buffer.c:BuffFillBox`. Fills with the **whole** pen, not the
+    /// erase subset, so bold and the protect bit come along.
+    pub fn fill_box(&mut self, cp: u32, area: Rect) {
+        let pen = self.pen;
+        for (y, start, end) in self.area_spans(true, area) {
+            let (left, right) = self.span_edges(y, start, end);
+            if let Some(x) = left {
+                self.lines[y][x].crush();
+            }
+            if let Some(x) = right {
+                self.lines[y][x].crush();
+            }
+            for x in start..end {
+                self.lines[y][x] = Cell {
+                    text: [cp, 0, 0, 0],
+                    fg: pen.fg,
+                    bg: pen.bg,
+                    attrs: pen.attrs,
+                    width_class: WIDTH_NARROW,
+                };
+            }
+        }
+    }
+
+    /// DECERA — `buffer.c:BuffEraseBox`. The straddling halves are blanked with
+    /// the *full* pen, the interior with the erase subset, exactly as the two
+    /// different helpers upstream uses imply.
+    pub fn erase_box(&mut self, area: Rect) {
+        let pen = self.pen;
+        for (y, start, end) in self.area_spans(true, area) {
+            let (left, right) = self.span_edges(y, start, end);
+            for x in left.into_iter().chain(right) {
+                self.lines[y][x] = Cell::blank(pen);
+            }
+            for x in start..end {
+                self.lines[y][x] = Cell::erased(pen);
+            }
+        }
+    }
+
+    /// DECSERA — `buffer.c:BuffSelectiveEraseBox`.
+    pub fn selective_erase_box(&mut self, area: Rect) {
+        for (y, start, end) in self.area_spans(true, area) {
+            let (left, right) = self.span_edges(y, start, end);
+            // The straddling halves are skipped when *they* are protected,
+            // which is a different test from the interior's.
+            for x in left.into_iter().chain(right) {
+                self.selective_erase_cell(y, x);
+            }
+            for x in start..end {
+                self.selective_erase_cell(y, x);
+            }
+        }
+    }
+
+    /// DECCRA — `buffer.c:BuffCopyBox`. Cells are copied whole, attributes and
+    /// width class included, with no wide-character fixup at either edge.
+    pub fn copy_box(&mut self, src: Rect, dx: usize, dy: usize) {
+        let (sx0, sy0) = (src.x0, src.y0);
+        let sx1 = src.x1.min(self.cols - 1);
+        let sy1 = src.y1.min(self.rows - 1);
+        if sx0 > sx1 || sy0 > sy1 || dx > self.cols - 1 || dy > self.rows - 1 {
+            return;
+        }
+        let cols = (sx1 - sx0 + 1).min(self.cols - dx);
+        let rows = (sy1 - sy0 + 1).min(self.rows - dy);
+
+        // Copy away from the overlap: downward when the destination is above
+        // the source, upward when it is below. Upstream branches on the
+        // *column* comparison and only falls back to a row-safe move when the
+        // columns are equal; the row order below is what that amounts to.
+        let order: Vec<usize> = if dy <= sy0 {
+            (0..rows).collect()
+        } else {
+            (0..rows).rev().collect()
+        };
+        for i in order {
+            let src = self.lines[sy0 + i][sx0..sx0 + cols].to_vec();
+            self.lines[dy + i][dx..dx + cols].copy_from_slice(&src);
+        }
     }
 
     // --- writing ---------------------------------------------------------

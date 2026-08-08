@@ -11,8 +11,8 @@
 
 use tt_charset::{gset_from_intermediate, sbcs_final, Iso2022, Iso2022State, Shift, ShiftFlags};
 use tt_grid::{
-    Grid, Pen, ATTR2_BACK, ATTR2_COLOR_MASK, ATTR2_FORE, ATTR2_PROTECT, ATTR_BLINK, ATTR_BOLD,
-    ATTR_REVERSE, ATTR_SPECIAL, ATTR_UNDER, DEFAULT_BG, DEFAULT_FG,
+    Grid, Pen, Rect, ATTR2_BACK, ATTR2_COLOR_MASK, ATTR2_FORE, ATTR2_PROTECT, ATTR_BLINK,
+    ATTR_BOLD, ATTR_REVERSE, ATTR_SGR_MASK, ATTR_SPECIAL, ATTR_UNDER, DEFAULT_BG, DEFAULT_FG,
 };
 use vte::{Params, Perform};
 
@@ -228,6 +228,9 @@ struct State {
     auto_generated_crlf: bool,
     /// The last printable codepoint, for REP.
     last_printed: Option<u32>,
+    /// DECSACE's `RectangleMode` (`vtterm.c:113`). False — stream — out of
+    /// reset, and it decides how DECCARA and DECRARA read their rectangle.
+    rect_mode: bool,
 }
 
 impl State {
@@ -244,6 +247,7 @@ impl State {
             prev_was_lf: false,
             auto_generated_crlf: false,
             last_printed: None,
+            rect_mode: false,
         }
     }
 
@@ -317,17 +321,23 @@ impl State {
 
     // --- SGR -------------------------------------------------------------
 
+    /// SGR — `ParseSGRParams` applied to the pen, with no mask.
+    fn sgr(&mut self, params: &Params) {
+        let groups = sgr_groups(params);
+        let mut pen = self.grid.pen;
+        self.parse_sgr_params(&groups, 0, &mut pen, &mut 0);
+        self.grid.pen = pen;
+    }
+
     /// `vtterm.c:ParseSGRParams`, including the parameter-consumption quirk
     /// described on [`ColorFlags`].
-    fn sgr(&mut self, params: &Params) {
-        let groups: Vec<Vec<u16>> = params.iter().map(|g| g.to_vec()).collect();
-        let groups = if groups.is_empty() {
-            vec![vec![0u16]]
-        } else {
-            groups
-        };
-
-        let mut i = 0;
+    ///
+    /// `attr` accumulates onto whatever it starts as — the pen for SGR, a
+    /// cleared attribute for DECCARA — and `mask` gathers the bits the
+    /// parameters actually *named*, which is what tells DECCARA which of them
+    /// to write over the cells it covers and which to leave.
+    fn parse_sgr_params(&self, groups: &[Vec<u16>], start: usize, attr: &mut Pen, mask: &mut u32) {
+        let mut i = start;
         while i < groups.len() {
             let p = groups[i].first().copied().unwrap_or(0);
             match p {
@@ -335,32 +345,34 @@ impl State {
                     // The protect bit survives SGR 0 — `vtterm.c:2178` ORs it
                     // back in explicitly, so DECSCA outlives an attribute
                     // reset and only another DECSCA clears it.
-                    let protect = self.grid.pen.attrs & ATTR2_PROTECT;
-                    self.grid.pen = Pen::default();
-                    self.grid.pen.attrs |= protect;
+                    let protect = attr.attrs & ATTR2_PROTECT;
+                    *attr = Pen::default();
+                    attr.attrs |= protect;
+                    // Assignment, not an OR: SGR 0 resets the mask too.
+                    *mask = ATTR_SGR_MASK | ATTR2_COLOR_MASK;
                 }
-                1 => self.grid.pen.attrs |= ATTR_BOLD,
-                4 => self.grid.pen.attrs |= ATTR_UNDER,
-                5 => self.grid.pen.attrs |= ATTR_BLINK,
-                7 => self.grid.pen.attrs |= ATTR_REVERSE,
-                22 => self.grid.pen.attrs &= !ATTR_BOLD,
-                24 => self.grid.pen.attrs &= !ATTR_UNDER,
-                25 => self.grid.pen.attrs &= !ATTR_BLINK,
-                27 => self.grid.pen.attrs &= !ATTR_REVERSE,
+                1 => set(attr, mask, ATTR_BOLD, true),
+                4 => set(attr, mask, ATTR_UNDER, true),
+                5 => set(attr, mask, ATTR_BLINK, true),
+                7 => set(attr, mask, ATTR_REVERSE, true),
+                22 => set(attr, mask, ATTR_BOLD, false),
+                24 => set(attr, mask, ATTR_UNDER, false),
+                25 => set(attr, mask, ATTR_BLINK, false),
+                27 => set(attr, mask, ATTR_REVERSE, false),
                 30..=37 => {
-                    self.grid.pen.attrs |= ATTR2_FORE;
-                    self.grid.pen.fg = (p - 30) as u32;
+                    set(attr, mask, ATTR2_FORE, true);
+                    attr.fg = (p - 30) as u32;
                 }
                 38 | 48 => {
                     if self.config.color_flags.xterm256 {
                         let full = self.config.color_flags.full_color();
-                        if let Some((color, consumed)) = extended_color(&groups, i, full) {
+                        if let Some((color, consumed)) = extended_color(groups, i, full) {
                             if p == 38 {
-                                self.grid.pen.attrs |= ATTR2_FORE;
-                                self.grid.pen.fg = color;
+                                set(attr, mask, ATTR2_FORE, true);
+                                attr.fg = color;
                             } else {
-                                self.grid.pen.attrs |= ATTR2_BACK;
-                                self.grid.pen.bg = color;
+                                set(attr, mask, ATTR2_BACK, true);
+                                attr.bg = color;
                             }
                             i += consumed;
                         }
@@ -370,32 +382,32 @@ impl State {
                     // as further SGR parameters. Reproduced deliberately.
                 }
                 39 => {
-                    self.grid.pen.attrs &= !ATTR2_FORE;
-                    self.grid.pen.fg = DEFAULT_FG;
+                    set(attr, mask, ATTR2_FORE, false);
+                    attr.fg = DEFAULT_FG;
                 }
                 40..=47 => {
-                    self.grid.pen.attrs |= ATTR2_BACK;
-                    self.grid.pen.bg = (p - 40) as u32;
+                    set(attr, mask, ATTR2_BACK, true);
+                    attr.bg = (p - 40) as u32;
                 }
                 49 => {
-                    self.grid.pen.attrs &= !ATTR2_BACK;
-                    self.grid.pen.bg = DEFAULT_BG;
+                    set(attr, mask, ATTR2_BACK, false);
+                    attr.bg = DEFAULT_BG;
                 }
                 90..=97 if self.config.color_flags.aixterm16 => {
-                    self.grid.pen.attrs |= ATTR2_FORE;
-                    self.grid.pen.fg = (p - 90 + 8) as u32;
+                    set(attr, mask, ATTR2_FORE, true);
+                    attr.fg = (p - 90 + 8) as u32;
                 }
                 // Order matters: with aixterm16 off, 100 resets both colours;
                 // with it on, 100 is bright-black background and falls to the
                 // arm below. That fall-through is upstream's, comment and all.
                 100 if !self.config.color_flags.aixterm16 => {
-                    self.grid.pen.attrs &= !ATTR2_COLOR_MASK;
-                    self.grid.pen.fg = DEFAULT_FG;
-                    self.grid.pen.bg = DEFAULT_BG;
+                    set(attr, mask, ATTR2_COLOR_MASK, false);
+                    attr.fg = DEFAULT_FG;
+                    attr.bg = DEFAULT_BG;
                 }
                 100..=107 if self.config.color_flags.aixterm16 => {
-                    self.grid.pen.attrs |= ATTR2_BACK;
-                    self.grid.pen.bg = (p - 100 + 8) as u32;
+                    set(attr, mask, ATTR2_BACK, true);
+                    attr.bg = (p - 100 + 8) as u32;
                 }
                 _ => {}
             }
@@ -460,6 +472,126 @@ impl State {
                 self.grid.restore_screen();
                 self.alt_screen = false;
                 self.restore_cursor();
+            }
+            _ => {}
+        }
+    }
+
+    /// The `top, left, bottom, right` quadruple every rectangular operation
+    /// opens with: 1-based and inclusive on the wire, 0-based here. `None`
+    /// means the rectangle is inside out, which upstream treats as "do
+    /// nothing" rather than as an empty region.
+    ///
+    /// Note the two clamps differ. The top-left corner uses `CheckParamVal`,
+    /// where an omitted parameter means 1; the bottom-right uses
+    /// `CheckParamValMax`, where it means the far edge.
+    fn area_rect(&self, params: &Params, first: usize) -> Option<Rect> {
+        let rows = self.grid.rows() as u16;
+        let cols = self.grid.cols() as u16;
+        let mut top = check_param_val(arg0(params, first), rows);
+        let left = check_param_val(arg0(params, first + 1), cols);
+        let mut bottom = check_param_val_max(arg0(params, first + 2), rows);
+        let right = check_param_val_max(arg0(params, first + 3), cols);
+        if top > bottom || left > right {
+            return None;
+        }
+        if self.grid.origin_mode {
+            let (region_top, region_bottom) = self.grid.scroll_region();
+            top = origin_shift(top, region_top, region_bottom);
+            bottom = origin_shift(bottom, region_top, region_bottom);
+        }
+        Some(Rect {
+            x0: left as usize - 1,
+            y0: top as usize - 1,
+            x1: right as usize - 1,
+            y1: bottom as usize - 1,
+        })
+    }
+
+    /// `vtterm.c:CSDol` — the `$`-intermediate family, which is every
+    /// rectangular area operation.
+    fn csi_dollar(&mut self, params: &Params, action: char) {
+        match action {
+            // DECCARA (change) and DECRARA (toggle). Both take the SGR
+            // parameters that follow the rectangle, from the fifth onward.
+            'r' | 't' => {
+                let Some(area) = self.area_rect(params, 0) else {
+                    return;
+                };
+                let groups = sgr_groups(params);
+                let mut attr = Pen {
+                    fg: DEFAULT_FG,
+                    bg: DEFAULT_BG,
+                    attrs: 0,
+                };
+                let mut mask = 0u32;
+                self.parse_sgr_params(&groups, 4, &mut attr, &mut mask);
+                let keep = ATTR_SGR_MASK | ATTR2_COLOR_MASK;
+                attr.attrs &= keep;
+                let rect = self.rect_mode;
+                if action == 'r' {
+                    self.grid
+                        .change_attr_area(rect, area, attr, Some(mask & keep));
+                } else {
+                    self.grid.change_attr_area(rect, area, attr, None);
+                }
+            }
+            // DECCRA. Eight parameters, of which the two page numbers are
+            // parsed and ignored — there is only ever one page.
+            'v' => {
+                let rows = self.grid.rows() as u16;
+                let cols = self.grid.cols() as u16;
+                let mut sy0 = check_param_val(arg0(params, 0), rows);
+                let sx0 = check_param_val(arg0(params, 1), cols);
+                let mut sy1 = check_param_val_max(arg0(params, 2), rows);
+                let sx1 = check_param_val_max(arg0(params, 3), cols);
+                let mut dy = check_param_val(arg0(params, 5), rows);
+                let dx = check_param_val(arg0(params, 6), cols);
+                if sy0 > sy1 || sx0 > sx1 {
+                    return;
+                }
+                if self.grid.origin_mode {
+                    let (top, bottom) = self.grid.scroll_region();
+                    sy0 = origin_shift(sy0, top, bottom);
+                    sy1 = origin_shift(sy1, top, bottom);
+                    dy = origin_shift(dy, top, bottom);
+                    // Trim the source rather than the destination, so the copy
+                    // stops at the bottom margin instead of crossing it.
+                    if (dy + sy1 - sy0) as usize > bottom {
+                        sy1 = sy0 + bottom as u16 - dy + 1;
+                    }
+                }
+                let src = Rect {
+                    x0: sx0 as usize - 1,
+                    y0: sy0 as usize - 1,
+                    x1: sx1 as usize - 1,
+                    y1: sy1 as usize - 1,
+                };
+                self.grid.copy_box(src, dx as usize - 1, dy as usize - 1);
+            }
+            // DECFRA. The fill character comes first and is rejected outright
+            // if it is a control code — including the C1 range, which is why
+            // the test has a hole in the middle.
+            'x' => {
+                let ch = arg0(params, 0);
+                if !((32..=127).contains(&ch) || (160..=255).contains(&ch)) {
+                    return;
+                }
+                let Some(area) = self.area_rect(params, 1) else {
+                    return;
+                };
+                self.grid.fill_box(ch as u32, area);
+            }
+            // DECERA and DECSERA.
+            'z' | '{' => {
+                let Some(area) = self.area_rect(params, 0) else {
+                    return;
+                };
+                if action == 'z' {
+                    self.grid.erase_box(area);
+                } else {
+                    self.grid.selective_erase_box(area);
+                }
             }
             _ => {}
         }
@@ -642,6 +774,63 @@ fn extended_color(groups: &[Vec<u16>], i: usize, full_color: bool) -> Option<(u3
     }
 }
 
+/// Set or clear `bits` on the attribute and record them in the mask either way
+/// — upstream's `attr->Attr |= X; mask->Attr |= X` pair, which is what makes
+/// "bold off" and "bold on" both *mention* bold as far as DECCARA cares.
+fn set(attr: &mut Pen, mask: &mut u32, bits: u32, on: bool) {
+    if on {
+        attr.attrs |= bits;
+    } else {
+        attr.attrs &= !bits;
+    }
+    *mask |= bits;
+}
+
+/// The parameter list as groups, with an absent list standing in for a bare
+/// `0` the way `CSI m` does.
+fn sgr_groups(params: &Params) -> Vec<Vec<u16>> {
+    let groups: Vec<Vec<u16>> = params.iter().map(|g| g.to_vec()).collect();
+    if groups.is_empty() {
+        vec![vec![0u16]]
+    } else {
+        groups
+    }
+}
+
+/// Origin mode moves a rectangle's row down to the scroll region, and parks it
+/// one past the bottom margin rather than on it when it would overshoot —
+/// which is upstream's arithmetic, 1-based row against 0-based margin and all.
+fn origin_shift(row: u16, region_top: usize, region_bottom: usize) -> u16 {
+    let shifted = row + region_top as u16;
+    if shifted as usize > region_bottom {
+        region_bottom as u16 + 1
+    } else {
+        shifted
+    }
+}
+
+/// `vtterm.c:CheckParamVal` — zero means one, out of range means the maximum.
+fn check_param_val(p: u16, max: u16) -> u16 {
+    if p == 0 {
+        1
+    } else if p > max {
+        max
+    } else {
+        p
+    }
+}
+
+/// `vtterm.c:CheckParamValMax` — zero means the *maximum*, not one. The
+/// difference is what makes an omitted bottom-right corner mean "the far
+/// corner" while an omitted top-left means "the origin".
+fn check_param_val_max(p: u16, max: u16) -> u16 {
+    if p == 0 || p > max {
+        max
+    } else {
+        p
+    }
+}
+
 fn arg(params: &Params, n: usize, default: u16) -> u16 {
     match params.iter().nth(n).and_then(|g| g.first().copied()) {
         Some(0) | None => default,
@@ -724,6 +913,14 @@ impl Perform for State {
                 1 => self.grid.pen.attrs |= ATTR2_PROTECT,
                 _ => {}
             },
+            // DECSACE — `vtterm.c:CSAster`. Anything but 0, 1 and 2 leaves the
+            // mode alone rather than resetting it.
+            (Some(b'*'), 'x') => match arg0(params, 0) {
+                0 | 1 => self.rect_mode = false,
+                2 => self.rect_mode = true,
+                _ => {}
+            },
+            (Some(b'$'), _) => self.csi_dollar(params, action),
             _ => self.csi_plain(params, private, gt, inter, action),
         }
     }

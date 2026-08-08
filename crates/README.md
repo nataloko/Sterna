@@ -99,6 +99,13 @@ behaviour looks like a bug until you check. Reproduced deliberately:
   an erase: `BuffSelectedEraseCharsInLine` masks the cell's own attributes to
   `AttrSgrMask` rather than painting the pen, so bold and underline outlive
   DECSEL where they would not outlive EL.
+- **DECFRA fills with the whole pen; DECERA erases with a subset of it; and the
+  wide-character halves they cut at the edges of a rectangle get a *third*
+  treatment again.** `BuffFillBox` passes `CurCharAttr.Attr`, `BuffEraseBox`
+  passes `AttrDefault` with only the colour bits of `Attr2` — and the straddling
+  halves outside the range are written with the full pen either way. So a
+  DECERA under a bold pen leaves a bold cell on each edge and unbold cells
+  between them. Case 56 pins it.
 - **`ED 3` is not an erase either.** It is `ClearBuffer`, which drops the
   scrollback, homes the cursor and resets the scroll region — and only runs at
   all because `TF_REMOTECLEARSBUFF` ships on (`ttset.c:1950`).
@@ -122,7 +129,14 @@ behaviour looks like a bug until you check. Reproduced deliberately:
   *and* advance the cursor, are not modelled — only nonspacing marks are.
 - **Kanji and Katakana designations** (`ESC $ ...`, `ESC ( I`) are parsed and
   dropped. Deferred with CJK, and inert on a UTF-8 terminal anyway.
-- Not yet implemented at all: DECLRMM, mouse reporting, DCS, the rectangular
-  area operations (DECSACE, DECCARA, DECRARA, DECFRA, DECERA, DECSERA, DECCRA),
-  and the window control and report sequences `WF_WINDOWCHANGE` /
-  `WF_WINDOWREPORT` enable — including the `CSI 8;h;w t` resize.
+- **Tera Term's CSI parser takes intermediates and parameters in any order; the
+  `vte` crate does not.** `ControlSequence()` dispatches each byte on its range
+  alone, so `ESC [ * 2 x` is a perfectly good DECSACE upstream. `vte` follows
+  ECMA-48, where an intermediate ends the parameter string, and drops the
+  sequence. Upstream's own `tests/#38168-deccara-range.sh` opens with exactly
+  that spelling, which is how this surfaced; it carries the XFAIL in
+  `oracle/upstream.cases`. Fixing it means normalising the byte stream before
+  `vte` sees it, which has not been worth the scanner so far.
+- Not yet implemented at all: DECLRMM, mouse reporting, DCS, and the window
+  control and report sequences `WF_WINDOWCHANGE` / `WF_WINDOWREPORT` enable —
+  including the `CSI 8;h;w t` resize.

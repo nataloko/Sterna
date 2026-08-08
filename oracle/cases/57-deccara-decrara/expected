@@ -1,0 +1,23 @@
+# termitta-oracle 1
+# term vt100 16x6
+# cursor 15,5
+  0 |abcdefghijklmnop|
+  1 |abcdefghijklmnop|
+  2 |abcdefghijklmnop|
+  3 |abcdefghijklmnop|
+  4 |abcdefghijklmnop|
+  5 |abcdefghijklmnop|
+# attrs
+  0 |...BBBBBbbbbbbbb|
+  1 |bbbBBBBBbbbbbbbb|
+  2 |bbbBBBBB........|
+  3 |...bbbbb........|
+  4 |...bbbbb........|
+  5 |...bbbbb........|
+# colors
+  0 |...0000000000000|
+  1 |0000000000000000|
+  2 |00000000........|
+  3 |...00000........|
+  4 |...00000........|
+  5 |...00000........|
