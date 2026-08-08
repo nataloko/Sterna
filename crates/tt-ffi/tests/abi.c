@@ -103,6 +103,52 @@ static void test_screen(void)
     tt_session_free(s);
 }
 
+static void test_scrollback_viewport(void)
+{
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    cfg.cols = 20;
+    cfg.rows = 4;
+    TtSession *s = tt_session_new(&cfg);
+
+    static const char feed[] = "a\r\nb\r\nc\r\nd\r\ne\r\nf\r\n";
+    tt_session_feed(s, (const uint8_t *)feed, sizeof feed - 1);
+    CHECK(tt_session_scrollback_len(s) == 3);
+    CHECK(tt_session_view_offset(s) == 0);
+    expect_row(s, 0, "d");
+
+    /* Scrolling back is what `tt_session_row` reports — there is no second
+     * row function to pick wrongly between. */
+    tt_session_set_view_offset(s, 2);
+    CHECK(tt_session_view_offset(s) == 2);
+    expect_row(s, 0, "b");
+
+    /* SIZE_MAX means "as far back as it goes", because the core clamps. */
+    tt_session_set_view_offset(s, SIZE_MAX);
+    CHECK(tt_session_view_offset(s) == 3);
+    expect_row(s, 0, "a");
+
+    /* The cursor is on the live screen, so scrolling back moves it off the
+     * bottom rather than dragging it into the history. */
+    size_t crow = 999;
+    tt_session_set_view_offset(s, 0);
+    CHECK(tt_session_cursor_view_row(s, &crow));
+    CHECK(crow == 3);
+    tt_session_set_view_offset(s, 1);
+    CHECK(!tt_session_cursor_view_row(s, &crow));
+
+    /* And the core moves the offset itself so the view stays on the same
+     * lines — which is why a frontend has to re-read it rather than trusting
+     * what it last wrote. */
+    tt_session_set_view_offset(s, 2);
+    static const char more[] = "g\r\nh\r\n";
+    tt_session_feed(s, (const uint8_t *)more, sizeof more - 1);
+    CHECK(tt_session_view_offset(s) == 4);
+    expect_row(s, 0, "b");
+
+    tt_session_free(s);
+}
+
 static void test_attributes(void)
 {
     TtConfig cfg;
@@ -306,6 +352,10 @@ static void test_null_safety(void)
     CHECK(tt_session_drain_events(NULL, NULL) == 0);
     CHECK(tt_session_pump(NULL, 0, NULL) == TT_ERR_INVALID);
     CHECK(tt_session_poll_fd(NULL) == -1);
+    CHECK(tt_session_scrollback_len(NULL) == 0);
+    CHECK(tt_session_view_offset(NULL) == 0);
+    tt_session_set_view_offset(NULL, 5);
+    CHECK(!tt_session_cursor_view_row(NULL, NULL));
     CHECK(tt_session_pending_out(NULL) == 0);
     /* Null answers false, which happens to be the non-default — a frontend
      * that lost its session sends DEL rather than reading through a null. */
@@ -339,6 +389,7 @@ int main(void)
     printf("termitta core %s\n", tt_version());
     test_screen();
     test_attributes();
+    test_scrollback_viewport();
     test_input();
     test_palette();
     test_serial();

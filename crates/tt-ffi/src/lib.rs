@@ -348,15 +348,20 @@ pub extern "C" fn tt_session_rows(session: *const TtSession) -> usize {
     session_ref!(session, 0).session.grid().rows()
 }
 
-/// One row of cells, borrowed straight out of the grid — no copy and no
-/// allocation, which is the point of a POD [`Cell`].
+/// One row of what the window is **showing**, borrowed straight out of the
+/// grid — no copy and no allocation, which is the point of a POD [`Cell`].
+///
+/// `y` runs over the viewport, not over the grid. With
+/// [`tt_session_view_offset`] at zero — which it is until something scrolls
+/// back — the two are the same thing and this is the live screen. Otherwise
+/// row 0 is that many lines up in the scrollback.
 ///
 /// `out_len` receives the row's length, which is always
-/// [`tt_session_cols`]. Null on an out-of-range `y`.
+/// [`tt_session_cols`], history included. Null on an out-of-range `y`.
 ///
 /// **Valid until the next call that can change the grid** — a pump, a feed, a
-/// resize, or anything that sends. In practice: read every row you are about
-/// to paint, paint, then pump.
+/// resize, a scroll, or anything that sends. In practice: read every row you
+/// are about to paint, paint, then pump.
 #[no_mangle]
 pub extern "C" fn tt_session_row(
     session: *const TtSession,
@@ -375,11 +380,59 @@ pub extern "C" fn tt_session_row(
     row.as_ptr()
 }
 
+/// How many lines of history there are to scroll through.
+#[no_mangle]
+pub extern "C" fn tt_session_scrollback_len(session: *const TtSession) -> usize {
+    session_ref!(session, 0).session.scrollback_len()
+}
+
+/// How far back the view is, in lines. Zero is the live screen.
+///
+/// **Read it again after every pump.** It is not a value the frontend owns:
+/// the core moves it so that a scrolled-back view stays on the same *lines*
+/// while the host keeps printing. A scrollbar that assumed its own last write
+/// was still current would fight the terminal for the thumb.
+#[no_mangle]
+pub extern "C" fn tt_session_view_offset(session: *const TtSession) -> usize {
+    session_ref!(session, 0).session.view_offset()
+}
+
+/// Scroll the view back by `offset` lines, or to the live screen with zero.
+///
+/// Clamped to the history that exists, so `SIZE_MAX` means "as far back as it
+/// goes" and needs no separate call.
+#[no_mangle]
+pub extern "C" fn tt_session_set_view_offset(session: *mut TtSession, offset: usize) {
+    let s = session!(session);
+    s.session.set_view_offset(offset);
+}
+
+/// Which viewport row the cursor is on, or false when it is not in view.
+///
+/// The cursor belongs to the live screen, so scrolling back moves it *down*
+/// and eventually off the bottom. A painter that used [`TtCursor::y`] directly
+/// would draw a cursor onto a line of history it has nothing to do with.
+#[no_mangle]
+pub extern "C" fn tt_session_cursor_view_row(session: *const TtSession, out: *mut usize) -> bool {
+    let s = session_ref!(session, false);
+    match s.session.cursor_view_row() {
+        Some(y) => {
+            if let Some(out) = unsafe { out.as_mut() } {
+                *out = y;
+            }
+            true
+        }
+        None => false,
+    }
+}
+
 /// Where the cursor is and whether to draw it.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct TtCursor {
     pub x: usize,
+    /// The row on the **live screen**, which is not where to paint it once the
+    /// view has scrolled back — [`tt_session_cursor_view_row`] is.
     pub y: usize,
     /// DECTCEM. A hidden cursor is still *somewhere*, so the position stays
     /// meaningful — `x`/`y` are not zeroed when this is false.

@@ -69,6 +69,11 @@ pub struct Session {
     pending: Vec<u8>,
     last_title: String,
     write_timeout: Duration,
+    /// Lines scrolled back from the live screen; 0 is live.
+    view_offset: usize,
+    /// `Grid::scrolled_off` as of the last time the view was reconciled. The
+    /// difference is how far the content moved under a scrolled-back viewer.
+    seen_scrolled_off: u64,
 }
 
 impl Session {
@@ -83,6 +88,8 @@ impl Session {
             rx_events: Vec::new(),
             pending: Vec::new(),
             write_timeout: Duration::from_millis(200),
+            view_offset: 0,
+            seen_scrolled_off: 0,
         }
     }
 
@@ -157,9 +164,54 @@ impl Session {
         &self.vt
     }
 
-    /// One row of cells, for a renderer. Borrowed, not copied.
+    /// One row of what the window is *showing*, which is the live screen until
+    /// something scrolls back. Borrowed, not copied.
+    ///
+    /// `y` runs 0..rows over the viewport, not over the grid: with an offset of
+    /// `n`, row 0 is `n` lines up in the scrollback and the bottom `n` rows of
+    /// the live screen are off the bottom. Every line is `cols` wide, including
+    /// the retained ones — `Grid::resize` refits the scrollback alongside the
+    /// page.
     pub fn row(&self, y: usize) -> &[Cell] {
-        self.vt.grid().line(y)
+        let grid = self.vt.grid();
+        let offset = self.view_offset();
+        let back = grid.scrollback_len();
+        // Viewport row `y` sits at absolute index `back - offset + y`, counting
+        // the scrollback first and then the page.
+        match (back + y).checked_sub(offset) {
+            Some(abs) if abs < back => grid.scrollback_line(abs).unwrap_or(&[]),
+            Some(abs) => grid.line(abs - back),
+            None => &[],
+        }
+    }
+
+    /// How many lines of history there are to scroll through.
+    pub fn scrollback_len(&self) -> usize {
+        self.vt.grid().scrollback_len()
+    }
+
+    /// How far back the view is, in lines. Zero is the live screen.
+    ///
+    /// Clamped on read rather than only on write, because the scrollback can
+    /// shrink under a view that was legal when it was set — `ED 3` drops the
+    /// whole history, and a resize moves lines between the page and it.
+    pub fn view_offset(&self) -> usize {
+        self.view_offset.min(self.vt.grid().scrollback_len())
+    }
+
+    /// Scroll the view. Clamped to the history that exists.
+    pub fn set_view_offset(&mut self, offset: usize) {
+        self.view_offset = offset.min(self.vt.grid().scrollback_len());
+    }
+
+    /// Whether the cursor's row is in view, and where — the frontend needs
+    /// both, since a scrolled-back window must not paint a cursor that belongs
+    /// to a screen it is not showing.
+    ///
+    /// Live screen row `y` appears at viewport row `y + offset`.
+    pub fn cursor_view_row(&self) -> Option<usize> {
+        let y = self.vt.grid().cursor.y + self.view_offset();
+        (y < self.vt.grid().rows()).then_some(y)
     }
 
     pub fn drain_events(&mut self) -> Vec<Event> {
@@ -209,6 +261,7 @@ impl Session {
                 let bytes = std::mem::take(&mut self.rx);
                 self.vt.feed(&bytes);
                 self.rx = bytes;
+                self.follow_scroll();
                 self.events.push(Event::Damage);
                 // Anything the parser answered — DA, DSR, DECRQSS — goes back
                 // now rather than waiting for the next pump, because a host
@@ -329,6 +382,11 @@ impl Session {
     /// ioctl.
     pub fn resize(&mut self, cols: usize, rows: usize) -> Result<()> {
         self.vt.grid_mut().resize(cols, rows);
+        // A resize moves lines between the page and the scrollback in both
+        // directions, so whatever the view was anchored to has moved and the
+        // honest answer is to stop guessing and go live.
+        self.view_offset = 0;
+        self.seen_scrolled_off = self.vt.grid().scrolled_off();
         self.events.push(Event::Damage);
         if let Some(c) = self.conn.as_mut() {
             c.resize(cols as u16, rows as u16)?;
@@ -349,8 +407,29 @@ impl Session {
     /// and for tests; it is also how a replayed session log would work.
     pub fn feed(&mut self, bytes: &[u8]) {
         self.vt.feed(bytes);
+        self.follow_scroll();
         self.events.push(Event::Damage);
         self.collect_title();
+    }
+
+    /// Keep a scrolled-back view on the same lines as new output arrives.
+    ///
+    /// Without this the view is anchored to the bottom, so every line the host
+    /// prints slides what the user is reading up by one — which is worst
+    /// exactly when it matters, scrolling back through a boot log while the
+    /// device is still talking.
+    ///
+    /// The offset moves by however many lines left the page, and that is the
+    /// right number whether the scrollback grew or was already full and
+    /// evicted: both shift the content by the same amount. Clamping is left to
+    /// the accessors, so a view pushed off the top lands on the oldest line
+    /// rather than being reset.
+    fn follow_scroll(&mut self) {
+        let now = self.vt.grid().scrolled_off();
+        if self.view_offset > 0 {
+            self.view_offset += (now - self.seen_scrolled_off) as usize;
+        }
+        self.seen_scrolled_off = now;
     }
 
     fn queue(&mut self, bytes: &[u8]) {

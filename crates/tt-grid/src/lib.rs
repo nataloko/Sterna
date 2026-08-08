@@ -220,6 +220,10 @@ pub struct Grid {
     lines: Vec<Line>,
     scrollback: VecDeque<Line>,
     scrollback_max: usize,
+    /// Monotonic count of lines pushed into the scrollback — see
+    /// [`Grid::scrolled_off`]. Not derivable from the length, which stops
+    /// moving once the buffer is full.
+    scrolled_off: u64,
     pub cursor: Cursor,
     pub pen: Pen,
     /// Scroll region, 0-based and inclusive. Tera Term's `CursorTop`/`CursorBottom`.
@@ -253,6 +257,7 @@ impl Grid {
             lines: vec![vec![Cell::blank(pen); cols]; rows],
             scrollback: VecDeque::new(),
             scrollback_max,
+            scrolled_off: 0,
             cursor: Cursor::default(),
             pen,
             top: 0,
@@ -320,6 +325,35 @@ impl Grid {
 
     pub fn scrollback(&self) -> impl Iterator<Item = &Line> {
         self.scrollback.iter()
+    }
+
+    pub fn scrollback_len(&self) -> usize {
+        self.scrollback.len()
+    }
+
+    /// One retained line, oldest first. Always [`cols`](Grid::cols) wide —
+    /// `resize` refits the scrollback alongside the page, so a viewport never
+    /// has to deal with a ragged history.
+    pub fn scrollback_line(&self, i: usize) -> Option<&[Cell]> {
+        self.scrollback.get(i).map(|l| l.as_slice())
+    }
+
+    /// How many lines have ever left the page into the scrollback.
+    ///
+    /// Monotonic, and deliberately not the same thing as
+    /// [`scrollback_len`](Grid::scrollback_len): it keeps counting once the
+    /// buffer is full and starts evicting, which is exactly when the length
+    /// stops changing.
+    ///
+    /// A viewport needs this because it has to be anchored to *content*.
+    /// Counting back from the bottom means the view slides whenever output
+    /// arrives, so a user reading a stack trace watches it walk off the
+    /// screen. The difference between two readings is how far to move the
+    /// offset to hold still — and it is the right answer whether the
+    /// scrollback grew or evicted, since both shift the content by the same
+    /// number of lines.
+    pub fn scrolled_off(&self) -> u64 {
+        self.scrolled_off
     }
 
     /// `buffer.c:BuffChangeTerminalSize` — the resize behind XTWINOPS
@@ -821,6 +855,7 @@ impl Grid {
             self.scrollback.pop_front();
         }
         self.scrollback.push_back(line);
+        self.scrolled_off += 1;
     }
 
     // --- editing ---------------------------------------------------------
