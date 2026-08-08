@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 153
+**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 156
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1050,9 +1050,11 @@ before anything else in every session.
   eleven precedence levels, the control flow, the string and integer commands,
   `send`/`wait`/`waitln`/`waitn`/`waitrecv`/`recvln`/`pause`/`flushrecv`, the
   link and the connection, the serial control lines, all sixteen transfer
-  commands, the whole file family, the eleven dialogs and the eight logging
-  commands. What is left is the environment and clipboard odds and ends, the
-  checksums, the clock, and the regex family. See below.
+  commands, the whole file family, the eleven dialogs, the eight logging
+  commands, the ten checksums and the terminal's odds and ends — 171 of the
+  214 reserved words. What is left is the environment and clipboard, the
+  clock, `scp` and the `send*` variants, the password family and the regex
+  family. See below.
 - **Lua via `mlua`** over the same `ScriptHost` command table (~500 LOC glue).
 - `ttctl` JSON-RPC control socket replacing DDE. Keep a `ttpmacro script.ttl`
   CLI entry point so existing shortcuts and `.bat` wrappers keep working.
@@ -1590,10 +1592,65 @@ That is **twelve** found in `ttpmacro` by reading: `waitn`'s timeout arm,
 `filenamebox`'s swapped flags, `inputbox`'s uninitialised buffer, and seven
 out-of-bounds accesses.
 
+#### The checksums, and the terminal's odds and ends
+
+`crates/tt-ttl/src/cksumcmds.rs` and `termcmds.rs`, 2026-08-09. Ten checksum
+commands and seventeen thin ones.
+
+The checksums are the only family in the language with **no host at all** —
+twenty lines of arithmetic each, with the C for `crc32` printed verbatim on its
+own documentation page, which is as close to a specification as TTL gets. Three
+things fall out of transcribing them:
+
+- **`crc16` is not the CRC-16-CCITT its comment claims.** The reflected 0x8408
+  with an inverted output is CRC-16/X-25; CCITT-FALSE runs the other way and
+  does not invert. The arithmetic is reproduced and the name is upstream's.
+  Both CRCs are checked against the standard `"123456789"` vectors, which is
+  the first oracle this port has had that is not Tera Term itself.
+- **The answer is stored in a signed integer**, so any `crc32` above
+  0x7FFFFFFF is negative in the variable. The documentation's own example
+  prints it with `sprintf '0x%08X'`, which reinterprets the bits and hides it.
+- **A zero-length file reports failure.** `CreateFileMapping` of an empty file
+  returns `ERROR_FILE_INVALID`, so upstream's `goto error` runs, `result` is -1
+  and the variable is untouched. Reproduced: a script that tests `result` is
+  entitled to the same answer for the same file on either engine.
+
+The seventeen thin ones — `beep`, `callmenu`, `changedir`, `clearscreen`,
+`enablekeyb`, `loadkeymap`, `restoresetup`, `setdebug`, `setecho`, `settitle`,
+`gettitle`, `showtt`, `show`, `getttpos`, `getttdir` and the two serial delays
+— are where reading `ttl.cpp` alone is least sufficient, since every one of
+them is two lines there and all the behaviour is in `ttdde.c`. Four things that
+are not visible from the macro side:
+
+1. **Three of these arguments are switched on their first character.**
+   `CmdShowTT` (`ttdde.c:847`), `CmdClearScreen` (`:593`) and `CmdSetDebug`
+   (`:834`) each read `ParamFileName[0]` of the decimal rendering, so
+   `showtt 100` is `showtt 1`, `clearscreen 25` is `clearscreen 2`, and every
+   negative value is the same `'-'` arm — which `showtt` has and the other two
+   do not. A value with no arm does nothing and reports nothing. Reproduced, in
+   the `from_code` on each enum so that exactly one place knows it.
+2. **`changedir` and `setdir` move different directories**, and the names are
+   the wrong way round for guessing: `changedir` is the *file transfer*
+   directory that `sendfile` and `zmodemrecv` resolve against, `setdir` is the
+   macro's own working directory.
+3. **`show` is the macro's window and `showtt` is the terminal's.** Upstream's
+   `show` is local rather than a DDE command for exactly that reason, and it is
+   three-way on the sign where `showtt` is a ten-way table.
+4. **`beep` and `getttdir` need no terminal**, alone in the family — both run
+   inside `ttpmacro.exe`. `beep` also validates its argument properly, which
+   the character-switched three do not: an unknown sound is `ErrSyntax`.
+
+`getttdir` needs no host method either. Upstream reads
+`GetModuleFileName(NULL)`, which is the running executable, and
+`std::env::current_exe` is that exactly — a frontend gets its installation
+directory and a test binary gets its own, which is the same answer upstream
+would give in the same position.
+
 **What is left**, in the order it is likely to be built: the
-environment/clipboard/`exec` odds and ends, the checksum family, the
-`getdate`/`gettime`/`uptime` clock commands, and the regex family. That last
-one is a decision, not a port: `sprintf` validates its
+environment/clipboard/`exec` odds and ends, the `getdate`/`gettime`/`uptime`
+clock commands, the `send*` variants and `scp`, the password family — which
+needs `ttmenc.c`'s obfuscation, and a decision about whether to keep it — and
+the regex family. That last one is a decision, not a port: `sprintf` validates its
 format specifiers with **Oniguruma** and `strmatch`/`strreplace`/`waitregex`
 match with it, so *which regex dialect this speaks* is a compatibility question
 that wants answering deliberately rather than by whichever crate is reached for.
