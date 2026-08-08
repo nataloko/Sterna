@@ -1198,33 +1198,50 @@ Release build out of the build tree.
 
 The synthetic spike below predicted the shape of all of this and was right about
 the important part — ~60 MB is Qt's floor and the no-GPU decision holds. What it
-could not predict is the one number that turned into a finding.
+could not predict is the one number that turned into a finding, on the day the
+gate was written.
 
-**Throughput through the window is dominated by how many frames get painted,
-and on X11 that is 8x too many.** The same binary, the same machine, the same
-ten megabytes:
+**Throughput through the window was dominated by how many frames got painted,
+and on X11 that was 8x too many.** The session pumps once per wake of its
+notifier, so a burst arrives as one damage per 8 KB read, each on its own turn
+of the event loop — one frame per read, and a frame costs about what parsing
+8 KB does. Wayland's frame callbacks were already coalescing about eight reads
+into a frame; X11 has no such brake and neither has the offscreen platform, so
+the same code measured 4 MB/s and 39 MB/s on one machine.
 
-| platform | frames | throughput |
-|---|---:|---:|
-| wayland | ~390 | 27–39 MB/s |
-| offscreen | ~2900 | 7 MB/s |
-| xcb | ~3000 | 4 MB/s |
+`TerminalView::requestRepaint` now puts a floor of 8 ms under the frame
+interval — 125 a second, above any display refresh this will meet:
 
-Wayland's frame callbacks throttle repainting to the compositor, so several
-8 KB reads coalesce into one frame. X11 has no such brake, and the session
-pumps once per notifier wake — so every read is its own turn of the event loop
-and its own frame, and a burst is absorbed 6–9x more slowly.
+| platform | frames before | before | frames after | after |
+|---|---:|---:|---:|---:|
+| wayland | 389 | 27 MB/s | 399 | 40 MB/s |
+| xcb | 3006 | 4 MB/s | 431 | 36 MB/s |
+| offscreen | 2914 | 7 MB/s | 332 | 42 MB/s |
 
-**The fix is in the shell, not in the engine**, and it is the one the event
-loop's design deliberately left open: `pump` takes a budget, the shell passes
-zero, and zero means "read once and repaint". A small time budget would let a
-burst coalesce on every platform while still repainting at well over 100 fps.
-Worth doing before Stage 1 ships, and worth measuring rather than assuming —
-the harness that found it is the harness that can prove it.
+**It is a floor, not a timer in the idle path**, which matters because the
+absence of one is this event loop's whole design. An idle window has not
+painted for a long time, so a keystroke still repaints on the spot — 1.03 ms
+before, 1.05 after — and the timer exists only while output is outrunning the
+floor, in the same way the pending-out retry does.
 
-It also means **a headless CI number would understate the desktop by 4x**,
-which is the opposite of the usual assumption about offscreen being the fast
-case. One more reason the shell half of the gate is local.
+The obvious alternative was rejected: giving `tt_session_pump` a time budget so
+that one wake consumes several reads. It reads until the line is quiet, and on
+a transport whose reads *block* — serial and telnet both use a 50 ms timeout —
+the second read of a burst can block the UI thread for 50 ms. Coalescing the
+frames costs nothing and does not care what the transport is.
+
+Two things survive from before the fix. **A headless number understated the
+desktop by 4x**, the opposite of the usual assumption about offscreen being the
+fast case, which is one more reason the shell half of the gate is local. And
+the spread across platforms is now 15% rather than 9x, so a throughput figure
+still has to name its platform — just not as loudly.
+
+**And it turned up a second bug by retiming the shell.** `pty_test` began
+failing intermittently on the assertion that a dead shell explains itself: the
+kernel closes a dying process's file descriptors — which is what makes the pty
+master read `EIO` — *before* it makes the process waitable, so `try_wait` could
+be asked microseconds too early and the window said "Disconnected" instead of
+"bash exited with status 4". It had been passing over that race for a week.
 
 ### Measured baseline — Qt 6 Widgets, 2026-08-07
 

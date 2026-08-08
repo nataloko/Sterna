@@ -112,21 +112,39 @@ Measured 2026-08-08 on an AMD Ryzen 7 7840HS, Fedora 44, Qt 6.11.1, Wayland —
 | shell, 10 MB out of a pty | 39 MB/s, in ~390 frames |
 
 **Throughput through the window is dominated by how many frames get painted,
-and that is a platform property, not a code one.** The same binary on the same
-machine over the same 10 MB:
+and on X11 that was 8x too many.** The session pumps once per wake of its
+notifier, so a burst arrives as one damage per 8 KB read, each on its own turn
+of the event loop — which without a floor is one frame per read, and a frame
+costs about what parsing 8 KB does. Wayland's frame callbacks were already
+coalescing about eight reads into a frame; X11 has no such brake, and neither
+has the offscreen platform.
 
-| platform | frames | throughput |
-|---|---:|---:|
-| wayland | ~390 | 27–39 MB/s |
-| offscreen | ~2900 | 7 MB/s |
-| xcb | ~3000 | 4 MB/s |
+`TerminalView::requestRepaint` now puts a floor of 8 ms under the frame
+interval — 125 a second, above any display refresh rate this will meet. The
+same binary, the same machine, the same ten megabytes:
 
-Wayland's frame callbacks throttle repainting to the compositor, so several
-8 KB reads coalesce into one frame. X11 and the offscreen platform have no such
-brake and paint once per read — the session pumps once per notifier wake, so
-each read is its own turn of the event loop and its own frame. **X11 is
-therefore 6–9x slower at absorbing a burst**, which is a real finding about the
-shell rather than about the benchmark, and it is on `PLAN.md`'s list.
+| platform | frames before | before | frames after | after |
+|---|---:|---:|---:|---:|
+| wayland | 389 | 27 MB/s | 399 | **40 MB/s** |
+| xcb | 3006 | 4 MB/s | 431 | **36 MB/s** |
+| offscreen | 2914 | 7 MB/s | 332 | **42 MB/s** |
 
-It also means a headless CI number would understate the desktop's by 4x, in the
-opposite direction from the usual assumption about offscreen being faster.
+It is a floor, not a timer in the idle path: an idle window has not painted for
+a long time, so a keystroke still repaints on the spot — 1.03 ms before and
+1.05 after — and the timer exists only while output outruns the floor.
+
+Two things worth keeping from before the fix. **A headless number understated
+the desktop by 4x**, which is the opposite of the usual assumption about
+offscreen being the fast case, and it is one more reason the shell half of the
+gate is local. And the spread across platforms is now 15% rather than 9x, so a
+throughput figure still has to name its platform — just not as loudly.
+
+## One caveat, on Wayland
+
+The latency probe sends 24 keystrokes and reports the fastest. Under Wayland
+only about five of them produce a frame inside the two-second wait; under xcb
+all 24 do. The compositor stops sending frame callbacks to a surface it
+considers hidden — and a probe window that opens, measures and exits does not
+stay in front for long. The number is sound (it agrees with xcb's to within a
+few percent) but it comes from the samples the compositor allowed, which is why
+the probe insists on at least four of them rather than trusting one.

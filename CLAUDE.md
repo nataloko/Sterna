@@ -498,15 +498,25 @@ And for measuring anything:
   once, the field is never found, and the measurement comes out as a confident
   `0.0 MB`. Which is exactly what a window using no memory would look like.
   `bench_shell` uses stdio, which has no opinion about size.
-- **How fast the shell absorbs a burst is mostly a platform property.** Ten
-  megabytes out of a pty: ~390 frames and 39 MB/s under Wayland, ~3000 frames
-  and 4 MB/s under xcb, ~2900 and 7 MB/s offscreen. Wayland's frame callbacks
-  coalesce repaints; X11 has none and the session pumps once per notifier wake,
-  so every 8 KB read gets its own frame. Two consequences: a headless number
-  **understates** the desktop by 4x rather than flattering it, and a throughput
-  measurement is meaningless without naming the platform — which is why
+- **`TerminalView`'s 8 ms frame floor is load-bearing, and only Wayland hides
+  its absence.** The session pumps once per wake of its notifier, so a burst is
+  one damage per 8 KB read on its own turn of the event loop — one frame per
+  read, and a frame costs about what parsing 8 KB does. Wayland's frame
+  callbacks coalesce about eight reads into a frame; X11 and the offscreen
+  platform do not. Removing the floor takes xcb from 36 MB/s back to 4, and a
+  Wayland desktop would never show it. The related consequence: **a headless
+  measurement understates the desktop by 4x** rather than flattering it, and a
+  throughput figure has to name its platform — which is why
   `bench/baseline.json` records the platform *and* the Qt version, since 6.4.2
   and 6.11.1 both answer `"wayland"`.
+- **Do not "fix" this by giving `tt_session_pump` a budget instead.** It reads
+  until the line is quiet, and serial and telnet both read with a 50 ms
+  timeout — so the second read of a burst blocks the UI thread for 50 ms.
+  Coalescing the frames costs nothing and does not care what the transport is.
+- **A Wayland compositor stops sending frame callbacks to a surface it thinks
+  is hidden**, so a short-lived probe window gets ~5 of 24 keystrokes painted
+  inside a two-second wait where xcb gets 24. Not a bug in the shell — but any
+  Qt measurement that waits for a paint has to tolerate it.
 - **The calibration loop corrects for a slower machine, not a busier one.** The
   first baseline here was recorded while a `cmake` build was finishing: the
   fixed CPU loop was 1.5% slow and the engine was 14% slow, so nothing flagged

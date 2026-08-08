@@ -85,6 +85,28 @@ pump that never comes, because a device asserting backpressure is not sending
 anything to wake us with. `tt_session_pending_out` makes that visible, and
 `Session` runs a 20 ms retry timer **only while it is non-zero**.
 
+### One frame per read is one frame too many
+
+"A burst arrives over several turns of the event loop" has a cost the design
+did not account for: each of those turns ends in a repaint, so ten megabytes of
+`cat` was painted three thousand times — and a frame costs about what parsing
+8 KB does. Wayland's frame callbacks were coalescing about eight reads into a
+frame and hiding it; X11 has no such brake, and measured **4 MB/s against
+Wayland's 39 on the same machine**.
+
+`TerminalView::requestRepaint` puts a floor of 8 ms under the frame interval —
+125 a second, above any display refresh this will meet. X11 went to 36 MB/s and
+the keystroke latency did not move (1.03 ms to 1.05), because a floor is not a
+timer in the idle path: an idle window has not painted for a long time, so a
+keystroke still repaints on the spot, and the timer exists only while output
+outruns the floor. Same shape as the pending-out retry above.
+
+The alternative — a time budget on `tt_session_pump`, so one wake consumes
+several reads — is the wrong one. The pump reads until the line is quiet, and
+serial and telnet both read with a 50 ms timeout, so the second read of a burst
+would block the UI thread for 50 ms. Coalescing the frames costs nothing and
+does not care what the transport is. See `bench/README.md` for the table.
+
 ## The colour model is ported, not invented
 
 `Theme::resolve` is `vtdisp.c:GetDrawAttr`. It is more elaborate than a

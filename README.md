@@ -92,12 +92,14 @@ Qt 6.11.1 under Wayland, 2026-08-08:
 | 10 MB out of a pty, painted | 39 MB/s |
 | the VT engine alone, 10 MB | 67–84 MB/s |
 
-Two of those are worth stating plainly rather than meeting in a review.
-**~60 MB is Qt's floor** — mid-pack among modern terminals, well above Tera
-Term on Windows, and imposed by the toolkit rather than by anything the code
-can optimise away. And **throughput through the window is 6–9x better under
-Wayland than under X11**, because Wayland's frame callbacks coalesce repaints
-and X11 has no such brake.
+**~60 MB is Qt's floor**, and that is worth stating plainly rather than meeting
+in a review: mid-pack among modern terminals, well above Tera Term on Windows,
+and imposed by the toolkit rather than by anything the code can optimise away.
+
+The gate earned its keep on the day it was written. It found the window
+painting a frame for every 8 KB read — which Wayland's frame callbacks were
+hiding and X11 was not — and a floor under the frame interval took X11 from
+4 MB/s to 36 with no change to keystroke latency.
 
 CI enforces an absolute floor on the engine half — the shell half depends on a
 Qt version no CI runner has, so it is a local gate against a recorded baseline.
