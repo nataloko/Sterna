@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1020" height="620" viewBox="0 0 1020 620">
+<rect width="1020" height="620" fill="#f7f5f0"/>
+<text x="20" y="44" font-family="DejaVu Sans" font-size="26" fill="#14181d">the mascot: an arctic tern</text>
+<text x="20" y="66" font-family="DejaVu Sans" font-size="13" fill="#8a8478">black cap, coral bill, forked tail — pole to pole, the longest migration of any animal</text>
+<rect x="20" y="86" width="230" height="230" fill="#fff" stroke="#e2ded6"/>
+<g transform="translate(45,111) scale(1.8000)">
+  <path d="M 26,50 L 2,40 L 13,58 L 2,74 Z" fill="#f7f5f0" stroke="#14181d"
+        stroke-width="2.6" stroke-linejoin="round"/>
+  <path d="M 44,78 L 44,92" stroke="#e35336" stroke-width="3.4" stroke-linecap="round"/>
+  <path d="M 54,78 L 54,92" stroke="#e35336" stroke-width="3.4" stroke-linecap="round"/>
+  <path d="M 38,93 L 50,93 M 48,93 L 60,93" stroke="#e35336" stroke-width="3.4"
+        stroke-linecap="round"/>
+  <ellipse cx="45" cy="58" rx="26" ry="22" fill="#f7f5f0" stroke="#14181d" stroke-width="2.6"/>
+  <path d="M 32,52 Q 50,48 60,58 Q 48,70 30,66 Z" fill="#b9c2cc" stroke="#14181d" stroke-width="2.4" stroke-linejoin="round"/>
+  <circle cx="59" cy="33" r="17" fill="#f7f5f0" stroke="#14181d" stroke-width="2.6"/>
+  <path d="M 42.6,29 A 17,17 0 0 1 75.4,29 Z" fill="#14181d"/>
+  <path d="M 42.6,29 L 42.6,33 Q 50,31 58,31 Z" fill="#14181d"/>
+  <circle cx="68" cy="30" r="3.6" fill="#f7f5f0"/><circle cx="69" cy="30" r="1.9" fill="#14181d"/>
+  <path d="M 74,31 L 97,35 L 74,40 Z" fill="#e35336"/>
+</g>
+<text x="20" y="344" font-family="DejaVu Sans" font-size="18" fill="#14181d">idle</text>
+<text x="20" y="364" font-family="DejaVu Sans" font-size="12" fill="#8a8478">sits on the prompt</text>
+<rect x="270" y="86" width="230" height="230" fill="#fff" stroke="#e2ded6"/>
+<g transform="translate(295,111) scale(1.8000)">
+  <path d="M 26,50 L 2,40 L 13,58 L 2,74 Z" fill="#f7f5f0" stroke="#14181d"
+        stroke-width="2.6" stroke-linejoin="round"/>
+  <path d="M 44,78 L 44,92" stroke="#e35336" stroke-width="3.4" stroke-linecap="round"/>
+  <path d="M 54,78 L 54,92" stroke="#e35336" stroke-width="3.4" stroke-linecap="round"/>
+  <path d="M 38,93 L 50,93 M 48,93 L 60,93" stroke="#e35336" stroke-width="3.4"
+        stroke-linecap="round"/>
+  <ellipse cx="45" cy="58" rx="26" ry="22" fill="#f7f5f0" stroke="#14181d" stroke-width="2.6"/>
+  <path d="M 33,48 Q 50,40 60,50 Q 48,58 30,58 Z" fill="#b9c2cc" stroke="#14181d" stroke-width="2.4" stroke-linejoin="round"/>
+  <circle cx="59" cy="33" r="17" fill="#f7f5f0" stroke="#14181d" stroke-width="2.6"/>
+  <path d="M 42.6,29 A 17,17 0 0 1 75.4,29 Z" fill="#14181d"/>
+  <path d="M 42.6,29 L 42.6,33 Q 50,31 58,31 Z" fill="#14181d"/>
+  <circle cx="68" cy="30" r="3.6" fill="#f7f5f0"/><circle cx="69" cy="30" r="1.9" fill="#14181d"/>
+  <path d="M 74,31 L 97,35 L 74,40 Z" fill="#e35336"/>
+</g>
+<text x="270" y="344" font-family="DejaVu Sans" font-size="18" fill="#14181d">wing up</text>
+<text x="270" y="364" font-family="DejaVu Sans" font-size="12" fill="#8a8478">connected / sending</text>
+<rect x="520" y="86" width="230" height="230" fill="#fff" stroke="#e2ded6"/>
+<g transform="translate(545,111) scale(1.8000)">
+  <path d="M 26,50 L 2,40 L 13,58 L 2,74 Z" fill="#f7f5f0" stroke="#14181d"
+        stroke-width="2.6" stroke-linejoin="round"/>
+  <path d="M 44,78 L 44,92" stroke="#e35336" stroke-width="3.4" stroke-linecap="round"/>
+  <path d="M 54,78 L 54,92" stroke="#e35336" stroke-width="3.4" stroke-linecap="round"/>
+  <path d="M 38,93 L 50,93 M 48,93 L 60,93" stroke="#e35336" stroke-width="3.4"
+        stroke-linecap="round"/>
+  <ellipse cx="45" cy="58" rx="26" ry="22" fill="#f7f5f0" stroke="#14181d" stroke-width="2.6"/>
+  <path d="M 32,52 Q 50,48 60,58 Q 48,70 30,66 Z" fill="#b9c2cc" stroke="#14181d" stroke-width="2.4" stroke-linejoin="round"/>
+  <circle cx="59" cy="33" r="17" fill="#f7f5f0" stroke="#14181d" stroke-width="2.6"/>
+  <path d="M 42.6,29 A 17,17 0 0 1 75.4,29 Z" fill="#14181d"/>
+  <path d="M 42.6,29 L 42.6,33 Q 50,31 58,31 Z" fill="#14181d"/>
+  <path d="M 64,31 Q 68,34 72,31" fill="none" stroke="#f7f5f0" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M 74,31 L 97,35 L 74,40 Z" fill="#e35336"/>
+</g>
+<text x="520" y="344" font-family="DejaVu Sans" font-size="18" fill="#14181d">sleepy</text>
+<text x="520" y="364" font-family="DejaVu Sans" font-size="12" fill="#8a8478">idle session, no traffic</text>
+<rect x="770" y="86" width="230" height="230" fill="#fff" stroke="#e2ded6"/>
+<g transform="translate(795,111) scale(1.8000)">
+  <path d="M 22,52 L 0,42 L 10,58 L 0,72 Z" fill="#f7f5f0" stroke="#14181d"
+        stroke-width="2.6" stroke-linejoin="round"/>
+  <path d="M 40,54 Q 34,28 20,10 Q 46,20 54,48 Z" fill="#b9c2cc" stroke="#14181d"
+        stroke-width="2.4" stroke-linejoin="round"/>
+  <ellipse cx="44" cy="58" rx="24" ry="14" fill="#f7f5f0" stroke="#14181d" stroke-width="2.6"/>
+  <path d="M 44,60 Q 40,80 30,94 Q 58,84 60,62 Z" fill="#b9c2cc" stroke="#14181d"
+        stroke-width="2.4" stroke-linejoin="round"/>
+  <circle cx="63" cy="46" r="14" fill="#f7f5f0" stroke="#14181d" stroke-width="2.6"/>
+  <path d="M 49.5,42 A 14,14 0 0 1 76.5,42 Z" fill="#14181d"/>
+  <circle cx="70" cy="43" r="3" fill="#f7f5f0"/>
+  <circle cx="71" cy="43" r="1.6" fill="#14181d"/>
+  <path d="M 76,44 L 97,47 L 76,52 Z" fill="#e35336"/>
+</g>
+<text x="770" y="344" font-family="DejaVu Sans" font-size="18" fill="#14181d">in flight</text>
+<text x="770" y="364" font-family="DejaVu Sans" font-size="12" fill="#8a8478">transfer in progress</text>
+<rect x="20" y="392" width="980" height="200" rx="8" fill="#14181d"/>
+<text x="48" y="432" font-family="DejaVu Sans Mono" font-size="17" fill="#eceff3">$ sterna myrouter</text>
+<text x="48" y="462" font-family="DejaVu Sans Mono" font-size="17" fill="#7d8894">connecting 10.0.0.1:22 ...</text>
+<g transform="translate(44,480) scale(0.5400)">
+  <path d="M 22,52 L 0,42 L 10,58 L 0,72 Z" fill="#f7f5f0" stroke="#14181d"
+        stroke-width="2.6" stroke-linejoin="round"/>
+  <path d="M 40,54 Q 34,28 20,10 Q 46,20 54,48 Z" fill="#b9c2cc" stroke="#14181d"
+        stroke-width="2.4" stroke-linejoin="round"/>
+  <ellipse cx="44" cy="58" rx="24" ry="14" fill="#f7f5f0" stroke="#14181d" stroke-width="2.6"/>
+  <path d="M 44,60 Q 40,80 30,94 Q 58,84 60,62 Z" fill="#b9c2cc" stroke="#14181d"
+        stroke-width="2.4" stroke-linejoin="round"/>
+  <circle cx="63" cy="46" r="14" fill="#f7f5f0" stroke="#14181d" stroke-width="2.6"/>
+  <path d="M 49.5,42 A 14,14 0 0 1 76.5,42 Z" fill="#14181d"/>
+  <circle cx="70" cy="43" r="3" fill="#f7f5f0"/>
+  <circle cx="71" cy="43" r="1.6" fill="#14181d"/>
+  <path d="M 76,44 L 97,47 L 76,52 Z" fill="#e35336"/>
+</g>
+<text x="110" y="522" font-family="DejaVu Sans Mono" font-size="17" fill="#eceff3">sending  firmware.bin   64%  ▓▓▓▓▓▓▓▓░░░░</text>
+<text x="48" y="562" font-family="DejaVu Sans Mono" font-size="17" fill="#eceff3">$</text>
+<g transform="translate(66,540) scale(0.3000)">
+  <path d="M 26,50 L 2,40 L 13,58 L 2,74 Z" fill="#f7f5f0" stroke="#14181d"
+        stroke-width="2.6" stroke-linejoin="round"/>
+  <path d="M 44,78 L 44,92" stroke="#e35336" stroke-width="3.4" stroke-linecap="round"/>
+  <path d="M 54,78 L 54,92" stroke="#e35336" stroke-width="3.4" stroke-linecap="round"/>
+  <path d="M 38,93 L 50,93 M 48,93 L 60,93" stroke="#e35336" stroke-width="3.4"
+        stroke-linecap="round"/>
+  <ellipse cx="45" cy="58" rx="26" ry="22" fill="#f7f5f0" stroke="#14181d" stroke-width="2.6"/>
+  <path d="M 32,52 Q 50,48 60,58 Q 48,70 30,66 Z" fill="#b9c2cc" stroke="#14181d" stroke-width="2.4" stroke-linejoin="round"/>
+  <circle cx="59" cy="33" r="17" fill="#f7f5f0" stroke="#14181d" stroke-width="2.6"/>
+  <path d="M 42.6,29 A 17,17 0 0 1 75.4,29 Z" fill="#14181d"/>
+  <path d="M 42.6,29 L 42.6,33 Q 50,31 58,31 Z" fill="#14181d"/>
+  <path d="M 64,31 Q 68,34 72,31" fill="none" stroke="#f7f5f0" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M 74,31 L 97,35 L 74,40 Z" fill="#e35336"/>
+</g>
+<rect x="104" y="548" width="11" height="20" fill="#e35336"/>
+</svg>
