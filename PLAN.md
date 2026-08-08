@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 106
+**Last updated:** 2026-08-08 · **Stage:** 1 in progress · **Commits:** 111
 
 | | Stage 0 spike | Status |
 |---|---|---|
