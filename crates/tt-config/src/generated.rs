@@ -11,9 +11,12 @@ use crate::ini::Ini;
 use crate::schema::{Field, Kind};
 
 /// `ts.TerminalID`. `ttset.c:709` reads the key with an empty default and hands
-/// it to `TermIDGetID`, which is a case-sensitive `strcmp` against an UPPERCASE
-/// table that returns `IdVT100` for anything it does not recognise — so it never
-/// fails, and a typo silently runs as a VT100.
+/// it to `TermIDGetID`, which is a case-sensitive `strcmp`
+/// (`tttypes_termid.cpp:60`) against the table above it, returning `IdVT100` for
+/// anything it does not recognise — so it never fails, a typo silently runs as a
+/// VT100, and so does `TerminalID=vt320` in the wrong case. The one enumerated
+/// setting here that is not `_stricmp`, hence `enum_exact`. Note `dumb` is
+/// lower-case in upstream's own table while every other spelling is upper.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TerminalId {
     /// `VT100`
@@ -26,6 +29,8 @@ pub enum TerminalId {
     Vt102,
     /// `VT102J`
     Vt102J,
+    /// `VT220`
+    Vt220,
     /// `VT220J`
     Vt220J,
     /// `VT282`
@@ -40,6 +45,8 @@ pub enum TerminalId {
     Vt520,
     /// `VT525`
     Vt525,
+    /// `dumb`
+    Dumb,
 }
 
 impl TerminalId {
@@ -51,6 +58,7 @@ impl TerminalId {
             Self::Vt101 => "VT101",
             Self::Vt102 => "VT102",
             Self::Vt102J => "VT102J",
+            Self::Vt220 => "VT220",
             Self::Vt220J => "VT220J",
             Self::Vt282 => "VT282",
             Self::Vt320 => "VT320",
@@ -58,26 +66,30 @@ impl TerminalId {
             Self::Vt420 => "VT420",
             Self::Vt520 => "VT520",
             Self::Vt525 => "VT525",
+            Self::Dumb => "dumb",
         }
     }
 
-    /// Case-insensitive, and **anything unrecognised takes the default**
-    /// rather than failing — which is how upstream spells most of its
-    /// defaults, as the `else` branch of a chain of comparisons.
+    /// Case-**sensitive**, because upstream compares this one with
+    /// `strcmp` rather than `_stricmp` — and **anything unrecognised
+    /// takes the default** rather than failing, so a lower-case
+    /// spelling silently reads as that default.
     pub fn from_ini(s: &str) -> Self {
         let s = s.trim();
-        if s.eq_ignore_ascii_case("VT100") { return Self::Vt100; }
-        if s.eq_ignore_ascii_case("VT100J") { return Self::Vt100J; }
-        if s.eq_ignore_ascii_case("VT101") { return Self::Vt101; }
-        if s.eq_ignore_ascii_case("VT102") { return Self::Vt102; }
-        if s.eq_ignore_ascii_case("VT102J") { return Self::Vt102J; }
-        if s.eq_ignore_ascii_case("VT220J") { return Self::Vt220J; }
-        if s.eq_ignore_ascii_case("VT282") { return Self::Vt282; }
-        if s.eq_ignore_ascii_case("VT320") { return Self::Vt320; }
-        if s.eq_ignore_ascii_case("VT382") { return Self::Vt382; }
-        if s.eq_ignore_ascii_case("VT420") { return Self::Vt420; }
-        if s.eq_ignore_ascii_case("VT520") { return Self::Vt520; }
-        if s.eq_ignore_ascii_case("VT525") { return Self::Vt525; }
+        if s == "VT100" { return Self::Vt100; }
+        if s == "VT100J" { return Self::Vt100J; }
+        if s == "VT101" { return Self::Vt101; }
+        if s == "VT102" { return Self::Vt102; }
+        if s == "VT102J" { return Self::Vt102J; }
+        if s == "VT220" { return Self::Vt220; }
+        if s == "VT220J" { return Self::Vt220J; }
+        if s == "VT282" { return Self::Vt282; }
+        if s == "VT320" { return Self::Vt320; }
+        if s == "VT382" { return Self::Vt382; }
+        if s == "VT420" { return Self::Vt420; }
+        if s == "VT520" { return Self::Vt520; }
+        if s == "VT525" { return Self::Vt525; }
+        if s == "dumb" { return Self::Dumb; }
         Self::default()
     }
 }
@@ -292,15 +304,20 @@ impl Default for CursorShape {
 /// disagree.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
-    /// `ttset.c:611`. Clamped to 1..500 on read, as upstream clamps to
-    /// `TermWidthMax`.
+    /// `ttset.c:615`, bounded by `TermWidthMax` — which is **1000**, not the 500
+    /// this used to say; 500 is `TermHeightMax`, the next line of `tttypes.h:633`.
+    /// Zero or less takes the default rather than the floor, which is what the range
+    /// means here.
     pub terminal_cols: i32,
-    /// `ttset.c:611`, the second half of the same key.
+    /// `ttset.c:619`, the second half of the same key, bounded by `TermHeightMax`.
     pub terminal_rows: i32,
     /// `ts.TerminalID`. `ttset.c:709` reads the key with an empty default and hands
-    /// it to `TermIDGetID`, which is a case-sensitive `strcmp` against an UPPERCASE
-    /// table that returns `IdVT100` for anything it does not recognise — so it never
-    /// fails, and a typo silently runs as a VT100.
+    /// it to `TermIDGetID`, which is a case-sensitive `strcmp`
+    /// (`tttypes_termid.cpp:60`) against the table above it, returning `IdVT100` for
+    /// anything it does not recognise — so it never fails, a typo silently runs as a
+    /// VT100, and so does `TerminalID=vt320` in the wrong case. The one enumerated
+    /// setting here that is not `_stricmp`, hence `enum_exact`. Note `dumb` is
+    /// lower-case in upstream's own table while every other spelling is upper.
     pub terminal_id: TerminalId,
     /// **`ttset.c:631`, and the default is the `else` branch.** A bare CR is a
     /// carriage *return*, not a newline, so `"Hello\rWorld"` overwrites the line.
@@ -456,8 +473,8 @@ impl Settings {
     pub fn load(ini: &Ini) -> Settings {
         let d = Settings::default();
         Settings {
-            terminal_cols: crate::schema::nth_int(ini.get("Tera Term", "TerminalSize"), 0, d.terminal_cols),
-            terminal_rows: crate::schema::nth_int(ini.get("Tera Term", "TerminalSize"), 1, d.terminal_rows),
+            terminal_cols: crate::schema::ranged(crate::schema::nth_int(ini.get("Tera Term", "TerminalSize"), 0, d.terminal_cols), d.terminal_cols, 1, 1000),
+            terminal_rows: crate::schema::ranged(crate::schema::nth_int(ini.get("Tera Term", "TerminalSize"), 1, d.terminal_rows), d.terminal_rows, 1, 500),
             terminal_id: match ini.get("Tera Term", "TerminalID") { Some(v) => TerminalId::from_ini(v), None => d.terminal_id },
             terminal_cr_receive: match ini.get("Tera Term", "CRReceive") { Some(v) => TerminalCrReceive::from_ini(v), None => d.terminal_cr_receive },
             terminal_cr_send: match ini.get("Tera Term", "CRSend") { Some(v) => TerminalCrSend::from_ini(v), None => d.terminal_cr_send },
@@ -591,8 +608,8 @@ impl Settings {
     /// False when the name is not one of ours.
     pub fn set_str(&mut self, name: &str, value: &str) -> bool {
         match name {
-            "terminal.cols" => self.terminal_cols = crate::schema::int(value, self.terminal_cols),
-            "terminal.rows" => self.terminal_rows = crate::schema::int(value, self.terminal_rows),
+            "terminal.cols" => self.terminal_cols = crate::schema::ranged(crate::schema::int(value, self.terminal_cols), 80, 1, 1000),
+            "terminal.rows" => self.terminal_rows = crate::schema::ranged(crate::schema::int(value, self.terminal_rows), 24, 1, 500),
             "terminal.id" => self.terminal_id = TerminalId::from_ini(value),
             "terminal.cr_receive" => self.terminal_cr_receive = TerminalCrReceive::from_ini(value),
             "terminal.cr_send" => self.terminal_cr_send = TerminalCrSend::from_ini(value),
@@ -646,30 +663,30 @@ pub const FIELDS: &[Field] = &[
         page: "terminal",
         section: "Tera Term",
         key: "TerminalSize",
-        kind: Kind::Int,
+        kind: Kind::IntRange(1, 1000),
         default: "80",
         label: Some("DLG_TABSHEET_TITLE_TERM"),
-        doc: "`ttset.c:611`. Clamped to 1..500 on read, as upstream clamps to `TermWidthMax`.",
+        doc: "`ttset.c:615`, bounded by `TermWidthMax` — which is **1000**, not the 500 this used to say; 500 is `TermHeightMax`, the next line of `tttypes.h:633`. Zero or less takes the default rather than the floor, which is what the range means here.",
     },
     Field {
         name: "terminal.rows",
         page: "terminal",
         section: "Tera Term",
         key: "TerminalSize",
-        kind: Kind::Int,
+        kind: Kind::IntRange(1, 500),
         default: "24",
         label: Some("DLG_TABSHEET_TITLE_TERM"),
-        doc: "`ttset.c:611`, the second half of the same key.",
+        doc: "`ttset.c:619`, the second half of the same key, bounded by `TermHeightMax`.",
     },
     Field {
         name: "terminal.id",
         page: "terminal",
         section: "Tera Term",
         key: "TerminalID",
-        kind: Kind::Enum(&["VT100", "VT100J", "VT101", "VT102", "VT102J", "VT220J", "VT282", "VT320", "VT382", "VT420", "VT520", "VT525"]),
+        kind: Kind::Enum(&["VT100", "VT100J", "VT101", "VT102", "VT102J", "VT220", "VT220J", "VT282", "VT320", "VT382", "VT420", "VT520", "VT525", "dumb"]),
         default: "VT100",
         label: Some("DLG_TERM_TERMID"),
-        doc: "`ts.TerminalID`. `ttset.c:709` reads the key with an empty default and hands it to `TermIDGetID`, which is a case-sensitive `strcmp` against an UPPERCASE table that returns `IdVT100` for anything it does not recognise — so it never fails, and a typo silently runs as a VT100.",
+        doc: "`ts.TerminalID`. `ttset.c:709` reads the key with an empty default and hands it to `TermIDGetID`, which is a case-sensitive `strcmp` (`tttypes_termid.cpp:60`) against the table above it, returning `IdVT100` for anything it does not recognise — so it never fails, a typo silently runs as a VT100, and so does `TerminalID=vt320` in the wrong case. The one enumerated setting here that is not `_stricmp`, hence `enum_exact`. Note `dumb` is lower-case in upstream's own table while every other spelling is upper.",
     },
     Field {
         name: "terminal.cr_receive",

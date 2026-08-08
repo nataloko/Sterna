@@ -144,3 +144,49 @@ fn the_generated_file_is_current() {
         "src/generated.rs is stale — run `cargo run -p tt-config --bin gen-settings`"
     );
 }
+
+/// `TerminalID` is the one enumerated setting upstream compares with `strcmp`
+/// rather than `_stricmp`, and it never fails — so the wrong case is not an
+/// error, it is a VT100.
+#[test]
+fn the_terminal_id_is_case_sensitive_and_never_fails() {
+    let load = |v: &str| {
+        Settings::load(&Ini::parse(
+            format!("[Tera Term]\r\nTerminalID={v}\r\n").as_bytes(),
+        ))
+        .terminal_id
+    };
+    assert_eq!(load("VT320"), TerminalId::Vt320);
+    assert_eq!(load("vt320"), TerminalId::Vt100, "strcmp, not _stricmp");
+    assert_eq!(load("VT220"), TerminalId::Vt220, "and it is in the table");
+    // `dumb` is the one lower-case spelling upstream ships, so `DUMB` is not it.
+    assert_eq!(load("dumb"), TerminalId::Dumb);
+    assert_eq!(load("DUMB"), TerminalId::Vt100);
+    // ...while a setting read with `_stricmp` does not care.
+    let ini = Ini::parse(b"[Tera Term]\r\nCRReceive=crlf\r\n");
+    assert_eq!(Settings::load(&ini).terminal_cr_receive, TerminalCrReceive::CrLf);
+}
+
+/// `ttset.c:615` is not a clamp in both directions: too small takes the
+/// default, too large takes the ceiling.
+#[test]
+fn a_size_outside_the_range_takes_the_default_below_and_the_ceiling_above() {
+    let load = |v: &str| {
+        let s = Settings::load(&Ini::parse(
+            format!("[Tera Term]\r\nTerminalSize={v}\r\n").as_bytes(),
+        ));
+        (s.terminal_cols, s.terminal_rows)
+    };
+    assert_eq!(load("132,50"), (132, 50));
+    assert_eq!(load("0,0"), (80, 24), "a window nobody could use, otherwise");
+    assert_eq!(load("-5,-5"), (80, 24));
+    assert_eq!(load("9999,9999"), (1000, 500), "TermWidthMax, TermHeightMax");
+
+    // A script goes through the same rule, because a value that a file and a
+    // `setsetting` disagree about is a setting nobody can reason about.
+    let mut s = Settings::default();
+    assert!(s.set_str("terminal.cols", "0"));
+    assert_eq!(s.terminal_cols, 80);
+    assert!(s.set_str("terminal.cols", "4000"));
+    assert_eq!(s.terminal_cols, 1000);
+}

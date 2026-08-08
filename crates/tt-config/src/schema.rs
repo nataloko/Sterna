@@ -11,6 +11,10 @@
 pub enum Kind {
     Bool,
     Int,
+    /// An int upstream bounds on read — the pair a spin box needs. See
+    /// [`ranged`] for what happens to a value outside it, which is not a
+    /// clamp in both directions.
+    IntRange(i32, i32),
     Str,
     /// The spellings the file accepts, in order. Anything else reads as the
     /// default, which is upstream's convention rather than an oversight.
@@ -73,6 +77,29 @@ pub fn int(value: &str, default: i32) -> i32 {
         return default;
     }
     crate::ini::parse_int_public(value.trim()) as i32
+}
+
+/// Upstream's bounds check on an int, which is **not** a clamp in both
+/// directions: `ttset.c:615` takes the *default* for anything at or below the
+/// floor and the *ceiling* for anything above it.
+///
+/// ```text
+/// if (ts->TerminalWidth <= 0)            ts->TerminalWidth = 80;
+/// else if (ts->TerminalWidth > TermWidthMax) ts->TerminalWidth = TermWidthMax;
+/// ```
+///
+/// So `TerminalSize=0,0` is an 80x24 terminal and `TerminalSize=9999,9999` is
+/// 1000x500. Clamping the low end to the floor instead would give a
+/// one-column terminal, which is a window nobody can use out of a file
+/// somebody's Tera Term opens fine.
+pub fn ranged(value: i32, default: i32, lo: i32, hi: i32) -> i32 {
+    if value < lo {
+        default
+    } else if value > hi {
+        hi
+    } else {
+        value
+    }
 }
 
 /// The `n`th comma-separated number of a value that holds several —

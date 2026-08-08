@@ -35,10 +35,18 @@ enum Kind {
     Bool,
     /// `Key` or `Key.N`, the latter being the Nth comma-separated field of a
     /// value that holds several — `TerminalSize` is `80,24`.
-    Int { field: Option<usize> },
+    Int {
+        field: Option<usize>,
+        range: Option<(i32, i32)>,
+    },
     Str,
-    /// `spelling => Variant`, in the order they were written.
-    Enum(Vec<(String, String)>),
+    /// `spelling => Variant`, in the order they were written, and whether the
+    /// comparison is case-sensitive. Almost every enumerated setting upstream
+    /// is read with `_stricmp`; `TerminalID` alone uses `strcmp`.
+    Enum {
+        variants: Vec<(String, String)>,
+        exact: bool,
+    },
     /// Two RGB triples in one value.
     Color2,
 }
@@ -49,7 +57,7 @@ impl Kind {
             Kind::Bool => "bool".into(),
             Kind::Int { .. } => "i32".into(),
             Kind::Str => "String".into(),
-            Kind::Enum(_) => type_name(&setting.name),
+            Kind::Enum { .. } => type_name(&setting.name),
             Kind::Color2 => "[u8; 6]".into(),
         }
     }
@@ -114,7 +122,10 @@ fn parse(text: &str) -> Vec<Setting> {
 }
 
 fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
-    if let Some(body) = spec.strip_prefix("enum(").and_then(|s| s.strip_suffix(')')) {
+    for (prefix, exact) in [("enum(", false), ("enum_exact(", true)] {
+        let Some(body) = spec.strip_prefix(prefix).and_then(|s| s.strip_suffix(')')) else {
+            continue;
+        };
         let variants = body
             .split(',')
             .map(|pair| {
@@ -122,8 +133,20 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
                 (spelling.trim().to_string(), variant.trim().to_string())
             })
             .collect();
-        return (key.to_string(), Kind::Enum(variants));
+        return (key.to_string(), Kind::Enum { variants, exact });
     }
+    // `int` or `int(min..max)`.
+    let (spec, range) = match spec.strip_prefix("int(").and_then(|s| s.strip_suffix(')')) {
+        Some(body) => {
+            let (lo, hi) = body.split_once("..").expect("a range is `min..max`");
+            let bounds = (
+                lo.trim().parse::<i32>().expect("a number"),
+                hi.trim().parse::<i32>().expect("a number"),
+            );
+            ("int", Some(bounds))
+        }
+        None => (spec, None),
+    };
     match spec {
         "bool" => (key.to_string(), Kind::Bool),
         "string" => (key.to_string(), Kind::Str),
@@ -133,9 +156,10 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
                 base.to_string(),
                 Kind::Int {
                     field: Some(n.parse::<usize>().expect("a digit") - 1),
+                    range,
                 },
             ),
-            _ => (key.to_string(), Kind::Int { field: None }),
+            _ => (key.to_string(), Kind::Int { field: None, range }),
         },
         other => panic!("unknown type {other}"),
     }
@@ -162,7 +186,7 @@ fn emit(settings: &[Setting]) -> String {
     // the schema stays a description of a *file* and the wiring that maps it
     // onto a running terminal lives one layer up.
     for s in settings {
-        let Kind::Enum(variants) = &s.kind else {
+        let Kind::Enum { variants, exact } = &s.kind else {
             continue;
         };
         for line in &s.doc {
@@ -188,27 +212,42 @@ fn emit(settings: &[Setting]) -> String {
             .expect("string");
         }
         out.push_str("        }\n    }\n\n");
-        out.push_str(
-            "    /// Case-insensitive, and **anything unrecognised takes the default**\n\
-             \x20   /// rather than failing — which is how upstream spells most of its\n\
-             \x20   /// defaults, as the `else` branch of a chain of comparisons.\n",
-        );
+        if *exact {
+            out.push_str(
+                "    /// Case-**sensitive**, because upstream compares this one with\n\
+                 \x20   /// `strcmp` rather than `_stricmp` — and **anything unrecognised\n\
+                 \x20   /// takes the default** rather than failing, so a lower-case\n\
+                 \x20   /// spelling silently reads as that default.\n",
+            );
+        } else {
+            out.push_str(
+                "    /// Case-insensitive, and **anything unrecognised takes the default**\n\
+                 \x20   /// rather than failing — which is how upstream spells most of its\n\
+                 \x20   /// defaults, as the `else` branch of a chain of comparisons.\n",
+            );
+        }
         writeln!(out, "    pub fn from_ini(s: &str) -> Self {{").expect("string");
         out.push_str("        let s = s.trim();\n");
         for (spelling, variant) in variants {
-            writeln!(
-                out,
-                "        if s.eq_ignore_ascii_case(\"{}\") {{ return Self::{variant}; }}",
-                escape(spelling)
-            )
-            .expect("string");
+            let test = if *exact {
+                format!("s == \"{}\"", escape(spelling))
+            } else {
+                format!("s.eq_ignore_ascii_case(\"{}\")", escape(spelling))
+            };
+            writeln!(out, "        if {test} {{ return Self::{variant}; }}").expect("string");
         }
         writeln!(out, "        Self::default()").expect("string");
         out.push_str("    }\n}\n\n");
 
         let default_variant = variants
             .iter()
-            .find(|(spelling, _)| spelling.eq_ignore_ascii_case(&s.default))
+            .find(|(spelling, _)| {
+                if *exact {
+                    *spelling == s.default
+                } else {
+                    spelling.eq_ignore_ascii_case(&s.default)
+                }
+            })
             .map(|(_, v)| v.clone())
             .unwrap_or_else(|| panic!("{}: default {} is not a spelling", s.name, s.default));
         writeln!(out, "impl Default for {} {{", type_name(&s.name)).expect("string");
@@ -251,7 +290,7 @@ fn emit(settings: &[Setting]) -> String {
             Kind::Bool => on_off_literal(&s.default).to_string(),
             Kind::Int { .. } => format!("{}", s.default.parse::<i32>().expect("a number")),
             Kind::Str => format!("String::from(\"{}\")", escape(&s.default)),
-            Kind::Enum(_) => format!("{}::default()", type_name(&s.name)),
+            Kind::Enum { .. } => format!("{}::default()", type_name(&s.name)),
             Kind::Color2 => color2_literal(&s.default),
         };
         writeln!(out, "            {field}: {value},").expect("string");
@@ -274,14 +313,22 @@ fn emit(settings: &[Setting]) -> String {
                 "crate::schema::on_off(ini.get(\"{section}\", \"{key}\"), {})",
                 on_off_literal(&s.default)
             ),
-            Kind::Int { field: None } => {
-                format!("ini.get_int(\"{section}\", \"{key}\", d.{field}) as i32")
+            Kind::Int { field: nth, range } => {
+                let read = match nth {
+                    None => format!("ini.get_int(\"{section}\", \"{key}\", d.{field}) as i32"),
+                    Some(n) => format!(
+                        "crate::schema::nth_int(ini.get(\"{section}\", \"{key}\"), {n}, d.{field})"
+                    ),
+                };
+                match range {
+                    None => read,
+                    Some((lo, hi)) => {
+                        format!("crate::schema::ranged({read}, d.{field}, {lo}, {hi})")
+                    }
+                }
             }
-            Kind::Int { field: Some(n) } => format!(
-                "crate::schema::nth_int(ini.get(\"{section}\", \"{key}\"), {n}, d.{field})"
-            ),
             Kind::Str => format!("ini.get_or(\"{section}\", \"{key}\", &d.{field}).to_string()"),
-            Kind::Enum(_) => format!(
+            Kind::Enum { .. } => format!(
                 "match ini.get(\"{section}\", \"{key}\") {{ \
                  Some(v) => {}::from_ini(v), None => d.{field} }}",
                 type_name(&s.name)
@@ -303,12 +350,14 @@ fn emit(settings: &[Setting]) -> String {
         let (section, key) = (escape(&s.section), escape(&s.key));
         let expr = match &s.kind {
             Kind::Bool => format!("if self.{field} {{ \"on\" }} else {{ \"off\" }}.to_string()"),
-            Kind::Int { field: None } => format!("self.{field}.to_string()"),
-            Kind::Int { field: Some(n) } => format!(
+            Kind::Int { field: None, .. } => format!("self.{field}.to_string()"),
+            Kind::Int {
+                field: Some(n), ..
+            } => format!(
                 "crate::schema::with_nth(ini.get(\"{section}\", \"{key}\"), {n}, self.{field})"
             ),
             Kind::Str => format!("self.{field}.clone()"),
-            Kind::Enum(_) => format!("self.{field}.as_ini().to_string()"),
+            Kind::Enum { .. } => format!("self.{field}.as_ini().to_string()"),
             Kind::Color2 => format!("crate::schema::color2_str(&self.{field})"),
         };
         writeln!(out, "        ini.set(\"{section}\", \"{key}\", &{expr});").expect("string");
@@ -328,7 +377,7 @@ fn emit(settings: &[Setting]) -> String {
             Kind::Bool => format!("if self.{field} {{ \"on\" }} else {{ \"off\" }}.to_string()"),
             Kind::Int { .. } => format!("self.{field}.to_string()"),
             Kind::Str => format!("self.{field}.clone()"),
-            Kind::Enum(_) => format!("self.{field}.as_ini().to_string()"),
+            Kind::Enum { .. } => format!("self.{field}.as_ini().to_string()"),
             Kind::Color2 => format!("crate::schema::color2_str(&self.{field})"),
         };
         writeln!(out, "            \"{}\" => {expr},", escape(&s.name)).expect("string");
@@ -348,11 +397,21 @@ fn emit(settings: &[Setting]) -> String {
                 "self.{field} = crate::schema::on_off(Some(value), {})",
                 on_off_literal(&s.default)
             ),
-            Kind::Int { .. } => format!(
-                "self.{field} = crate::schema::int(value, self.{field})"
-            ),
+            Kind::Int { range, .. } => {
+                let read = format!("crate::schema::int(value, self.{field})");
+                match range {
+                    None => format!("self.{field} = {read}"),
+                    // The same rule the file gets: below the range takes the
+                    // default, above it takes the ceiling. A script and a
+                    // hand-edited INI must not disagree about a value.
+                    Some((lo, hi)) => format!(
+                        "self.{field} = crate::schema::ranged({read}, {}, {lo}, {hi})",
+                        s.default.parse::<i32>().expect("a number")
+                    ),
+                }
+            }
             Kind::Str => format!("self.{field} = value.to_string()"),
-            Kind::Enum(_) => format!("self.{field} = {}::from_ini(value)", type_name(&s.name)),
+            Kind::Enum { .. } => format!("self.{field} = {}::from_ini(value)", type_name(&s.name)),
             Kind::Color2 => {
                 format!("self.{field} = crate::schema::color2(Some(value), self.{field})")
             }
@@ -372,10 +431,16 @@ fn emit(settings: &[Setting]) -> String {
     for s in settings {
         let kind = match &s.kind {
             Kind::Bool => "Kind::Bool".to_string(),
-            Kind::Int { .. } => "Kind::Int".to_string(),
+            Kind::Int { range: None, .. } => "Kind::Int".to_string(),
+            // The dialog needs the bounds to build a spin box, and it must not
+            // hold its own copy of them.
+            Kind::Int {
+                range: Some((lo, hi)),
+                ..
+            } => format!("Kind::IntRange({lo}, {hi})"),
             Kind::Str => "Kind::Str".to_string(),
             Kind::Color2 => "Kind::Color2".to_string(),
-            Kind::Enum(variants) => {
+            Kind::Enum { variants, .. } => {
                 let list: Vec<String> = variants
                     .iter()
                     .map(|(spelling, _)| format!("\"{}\"", escape(spelling)))

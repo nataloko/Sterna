@@ -21,11 +21,19 @@
 # Types:
 #   bool          `GetOnOff`, which is **not** a symmetric parse. See below.
 #   int           `GetPrivateProfileInt`
+#   int(lo..hi)   ...bounded the way `ttset.c` bounds one: **at or below `lo`
+#                 takes the default, above `hi` takes `hi`.** Not a clamp in
+#                 both directions — `TerminalSize=0,0` is 80x24, not 1x1. The
+#                 pair is also what the dialog builds a spin box from.
 #   string        the raw value
-#   enum(...)     `spelling=Variant`, compared case-insensitively; anything
-#                 that matches nothing takes the *default*, which is how
-#                 upstream spells most of its defaults and why several of them
-#                 are an `else` branch rather than a value
+#   enum(...)     `spelling=Variant`, compared case-insensitively (`_stricmp`,
+#                 which is what upstream uses for all but one of these);
+#                 anything that matches nothing takes the *default*, which is
+#                 how upstream spells most of its defaults and why several of
+#                 them are an `else` branch rather than a value
+#   enum_exact()  the same, compared with `strcmp`. Only `TerminalID` is, and
+#                 the consequence is that a lower-case spelling reads as the
+#                 default instead of failing
 #   color2        two RGB triples, `fg_r,fg_g,fg_b,bg_r,bg_g,bg_b`
 #
 # **`GetOnOff` is default-biased** (`ttset.c:344`) and this is a trap worth
@@ -42,18 +50,23 @@
 
 # --- terminal ---------------------------------------------------------------
 
-# `ttset.c:611`. Clamped to 1..500 on read, as upstream clamps to
-# `TermWidthMax`.
-terminal.cols | int | Tera Term | TerminalSize.1 | 80 | DLG_TABSHEET_TITLE_TERM
+# `ttset.c:615`, bounded by `TermWidthMax` — which is **1000**, not the 500
+# this used to say; 500 is `TermHeightMax`, the next line of `tttypes.h:633`.
+# Zero or less takes the default rather than the floor, which is what the range
+# means here.
+terminal.cols | int(1..1000) | Tera Term | TerminalSize.1 | 80 | DLG_TABSHEET_TITLE_TERM
 
-# `ttset.c:611`, the second half of the same key.
-terminal.rows | int | Tera Term | TerminalSize.2 | 24 | DLG_TABSHEET_TITLE_TERM
+# `ttset.c:619`, the second half of the same key, bounded by `TermHeightMax`.
+terminal.rows | int(1..500) | Tera Term | TerminalSize.2 | 24 | DLG_TABSHEET_TITLE_TERM
 
 # `ts.TerminalID`. `ttset.c:709` reads the key with an empty default and hands
-# it to `TermIDGetID`, which is a case-sensitive `strcmp` against an UPPERCASE
-# table that returns `IdVT100` for anything it does not recognise — so it never
-# fails, and a typo silently runs as a VT100.
-terminal.id | enum(VT100=Vt100,VT100J=Vt100J,VT101=Vt101,VT102=Vt102,VT102J=Vt102J,VT220J=Vt220J,VT282=Vt282,VT320=Vt320,VT382=Vt382,VT420=Vt420,VT520=Vt520,VT525=Vt525) | Tera Term | TerminalID | VT100 | DLG_TERM_TERMID
+# it to `TermIDGetID`, which is a case-sensitive `strcmp`
+# (`tttypes_termid.cpp:60`) against the table above it, returning `IdVT100` for
+# anything it does not recognise — so it never fails, a typo silently runs as a
+# VT100, and so does `TerminalID=vt320` in the wrong case. The one enumerated
+# setting here that is not `_stricmp`, hence `enum_exact`. Note `dumb` is
+# lower-case in upstream's own table while every other spelling is upper.
+terminal.id | enum_exact(VT100=Vt100,VT100J=Vt100J,VT101=Vt101,VT102=Vt102,VT102J=Vt102J,VT220=Vt220,VT220J=Vt220J,VT282=Vt282,VT320=Vt320,VT382=Vt382,VT420=Vt420,VT520=Vt520,VT525=Vt525,dumb=Dumb) | Tera Term | TerminalID | VT100 | DLG_TERM_TERMID
 
 # **`ttset.c:631`, and the default is the `else` branch.** A bare CR is a
 # carriage *return*, not a newline, so `"Hello\rWorld"` overwrites the line.
