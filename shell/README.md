@@ -125,6 +125,15 @@ handles them in `KeyDown` rather than in the table `GetKeyStr` walks:
   DEL. The wrong one erases nothing and the host beeps, which reads as a broken
   keyboard rather than as a mode.
 
+  **It defaults to BS (0x08), which is Tera Term's default and is probably not
+  what you want on Linux.** `ttset.c:877` reads `BSKey` with an empty fallback
+  and only the literal string `DEL` takes the other arm, so an absent key means
+  BS. A Linux `getty` usually has `stty erase` set to `^?`, so backspace at a
+  login prompt will echo rather than erase until the host sets DECBKM.
+  Deliberately left faithful rather than quietly changed — it is the `BSKey`
+  INI key, so the fix belongs in Stage 2's settings schema, and it is the first
+  thing to make configurable there.
+
 F1-F5 map to xterm's `XF1`-`XF5`, not to DEC's PF1-PF4. DEC put PF1-PF4 where a
 PC keyboard has F1-F4, which is why two numbering schemes exist; every host
 this will meet on Linux expects xterm's.

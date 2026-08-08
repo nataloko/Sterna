@@ -187,6 +187,13 @@ something other than what it is.
   `"Hello, world!\rSecond line"` correctly yields `Second lined!`.
 - **`AcceptTitleChangeRequest` defaults to `overwrite`**, not off
   (`ttset.c:1568`). Zero means OSC title changes are silently ignored.
+- **`ts.BSKey` defaults to `IdBS`** — `ttset.c:877` reads the key with an empty
+  fallback and only the literal `"DEL"` takes the DEL arm, so an absent key
+  means BS. **This is the third setting whose real default is an `else`
+  branch**, after `CRReceive` and the flag words. When a setting is read as a
+  *string* and compared, look at what an empty string does; when it is read as
+  a flag word, find the key rather than the initialiser. Reading either wrong
+  gives a terminal that is subtly not Tera Term.
 - **`buffer.c:134` hardcodes `CodePage = 932`** (Shift-JIS). Call
   `BuffSetDispCodePage()`.
 - **`WinWidth`/`WinHeight` ≠ `NumOfColumns`/`NumOfLines`.** The first pair is
