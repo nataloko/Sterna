@@ -15,6 +15,10 @@ pub enum Kind {
     /// [`ranged`] for what happens to a value outside it, which is not a
     /// clamp in both directions.
     IntRange(i32, i32),
+    /// An int with a floor and no ceiling. A different rule from
+    /// [`IntRange`](Kind::IntRange) and not a special case of it — see
+    /// [`floored`].
+    IntMin(i32),
     Str,
     /// The spellings the file accepts, in order. Anything else reads as the
     /// default, which is upstream's convention rather than an oversight.
@@ -100,6 +104,24 @@ pub fn ranged(value: i32, default: i32, lo: i32, hi: i32) -> i32 {
     } else {
         value
     }
+}
+
+/// Upstream's *other* bounds check, which really is a clamp — and the two must
+/// not be confused, because they disagree about exactly the values a
+/// hand-edited file is likely to hold.
+///
+/// ```text
+/// ts->XmodemTimeOutInit = GetNthNum2(Temp, 1, 10);
+/// if (ts->XmodemTimeOutInit < 1) ts->XmodemTimeOutInit = 1;
+/// ```
+///
+/// `ttset.c:1822` onward. So `XmodemTimeouts=0,0,0,0,0` is five **one-second**
+/// timeouts, where [`ranged`] would have given upstream's `10,3,10,20,60`. The
+/// transfer timeouts are the only settings read this way, and `ZmodemTimeouts`'
+/// second field floors at 0 rather than 1 because 0 is meaningful there: it is
+/// what "never time out" is spelt as on a network link.
+pub fn floored(value: i32, lo: i32) -> i32 {
+    value.max(lo)
 }
 
 /// The `n`th comma-separated number of a value that holds several —

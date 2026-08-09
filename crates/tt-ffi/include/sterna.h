@@ -852,17 +852,22 @@ typedef struct {
     bool sending;
     /**
      * XMODEM: 1 = checksum, 2 = CRC, 3 = 1K CRC, 4 = 1K checksum.
-     * YMODEM: 1 = 1K, 2 = G, 3 = single. Zero takes the sensible default,
-     * which for YMODEM is the *only* value its packet builder handles.
+     * YMODEM: 1 = 1K, 2 = G, 3 = single. Zero takes the setting's default,
+     * which for XMODEM is **checksum** (`ttset.c:1039`'s `else` branch, not
+     * the CRC a reader would expect) and for YMODEM is the *only* value its
+     * packet builder handles. Call [`tt_session_xfer_defaults`] rather than
+     * leaving this zero: it answers from the user's own file.
      */
     int32_t option;
     /**
-     * XMODEM only: CRLF translation and `^Z` padding.
+     * XMODEM only: CRLF translation and `^Z` padding. The inverse of
+     * `XmodemBin`, which is its own setting and not `binary` below.
      */
     bool text;
     /**
-     * ZMODEM only, and on by default. Clearing it asks for end-of-line
-     * translation, which is almost never wanted.
+     * ZMODEM only. Clearing it asks for end-of-line translation, which is
+     * almost never wanted — but upstream's `TransBin` ships **off**, so a
+     * struct seeded by [`tt_session_xfer_defaults`] starts with it clear.
      */
     bool binary;
     /**
@@ -2400,6 +2405,21 @@ TtStatus tt_session_settings_save(const TtSession *session, const char *path);
  * is exactly what a UI toolkit cannot take.
  */
 size_t tt_session_drain_events(TtSession *session, const TtEvent **out);
+
+/**
+ * Fill `job` with what this session's settings say a transfer should start
+ * as, leaving `protocol`, `sending` and `kermit_mode` alone — those are the
+ * user's choice and nothing in the file describes them.
+ *
+ * A frontend calls this to seed its dialog. Without it the dialog invents the
+ * values, which is how three of them ended up hardcoded here: `binary` was
+ * always on, the XMODEM block format was always CRC — where upstream's own
+ * default is plain **checksum**, `ttset.c:1039`'s `else` branch — and a raw
+ * capture never stopped, because its wait was zero.
+ *
+ * Does nothing on a null pointer.
+ */
+void tt_session_xfer_defaults(TtSession *session, TtXferJob *job);
 
 /**
  * Start sending files. `paths` is `count` UTF-8 paths.

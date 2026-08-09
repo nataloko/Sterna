@@ -668,6 +668,63 @@ impl Default for LogTimestampType {
     }
 }
 
+/// **`ttset.c:1039`, and the default is the `else` branch again** — plain
+/// checksum, not CRC, which is the older and slower of the two and the one a
+/// modern peer is least likely to want. The reader has arms for `crc`, `1k` and
+/// `1ksum` only; the writer emits `checksum` (`ttset.c:2594`), a spelling the
+/// reader has no arm for and which round-trips solely because anything
+/// unmatched takes the default. Kept here as the default spelling for that
+/// reason.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransferXmodemOpt {
+    /// `checksum`
+    Checksum,
+    /// `crc`
+    Crc,
+    /// `1k`
+    Crc1K,
+    /// `1ksum`
+    Checksum1K,
+}
+
+impl TransferXmodemOpt {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Checksum => "checksum",
+            Self::Crc => "crc",
+            Self::Crc1K => "1k",
+            Self::Checksum1K => "1ksum",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised takes the default**
+    /// rather than failing — which is how upstream spells most of its
+    /// defaults, as the `else` branch of a chain of comparisons.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("checksum") {
+            return Self::Checksum;
+        }
+        if s.eq_ignore_ascii_case("crc") {
+            return Self::Crc;
+        }
+        if s.eq_ignore_ascii_case("1k") {
+            return Self::Crc1K;
+        }
+        if s.eq_ignore_ascii_case("1ksum") {
+            return Self::Checksum1K;
+        }
+        Self::default()
+    }
+}
+
+impl Default for TransferXmodemOpt {
+    fn default() -> Self {
+        Self::Checksum
+    }
+}
+
 /// Every setting this project reads out of `TERATERM.INI`.
 ///
 /// Generated from the schema, so the field, its default, its INI key and
@@ -960,6 +1017,116 @@ pub struct Settings {
     /// that names its own file puts it — `GetRecievePath`. `/FD=` sets it, but only
     /// if the directory exists.
     pub transfer_dir: String,
+    /// `ttset.c:975`. The Binary checkbox both file dialogs carry, remembered
+    /// between transfers — `filesys.cpp:231` copies it into `fv->BinaryMode` and
+    /// `:454` uses it to decide whether a send translates line endings. Off, so a
+    /// send is text by default and CR becomes CRLF.
+    pub transfer_binary: bool,
+    /// `ttset.c:1097`, part of `FTFlag`. On receive, never overwrite: add `.1`,
+    /// `.2`. Off, so upstream ships willing to replace a file it already has.
+    pub transfer_auto_rename: bool,
+    /// `ttset.c:1014`. Upstream's transfer progress window; this port has a status
+    /// bar for it, so the setting is read and written and acts on nothing — the same
+    /// arrangement as `log.hide_dialog`.
+    pub transfer_hide_dialog: bool,
+    /// **`ttset.c:1039`, and the default is the `else` branch again** — plain
+    /// checksum, not CRC, which is the older and slower of the two and the one a
+    /// modern peer is least likely to want. The reader has arms for `crc`, `1k` and
+    /// `1ksum` only; the writer emits `checksum` (`ttset.c:2594`), a spelling the
+    /// reader has no arm for and which round-trips solely because anything
+    /// unmatched takes the default. Kept here as the default spelling for that
+    /// reason.
+    pub transfer_xmodem_opt: TransferXmodemOpt,
+    /// `ttset.c:1051`. **On** — so XMODEM's own binary flag defaults the opposite
+    /// way to `TransBin` above, which is the flag every other protocol uses.
+    pub transfer_xmodem_binary: bool,
+    /// `ttset.c:1054`. What upstream sends to the host to start a receive. Read and
+    /// written; this port has no "send a command, then receive" path yet, and the
+    /// empty default is upstream's, so nothing is lost by an empty one here.
+    pub transfer_xmodem_rcv_command: String,
+    /// `ttset.c:1384`, part of `LogFlag`. A per-protocol transfer log, which is
+    /// `ttpfile`'s own diagnostic and not the session log.
+    pub transfer_xmodem_log: bool,
+    /// `ttset.c:1820`, and **these five floor at 1 rather than taking the default**
+    /// — `int_min`, not `int`. `XmodemTimeouts=0,0,0,0,0` is five one-second
+    /// timeouts. Field 1: how long to wait for the first block.
+    pub transfer_xmodem_timeout_init: i32,
+    /// `ttset.c:1824`. Field 2: the same, while still asking for CRC mode.
+    pub transfer_xmodem_timeout_init_crc: i32,
+    /// `ttset.c:1827`. Field 3.
+    pub transfer_xmodem_timeout_short: i32,
+    /// `ttset.c:1830`. Field 4.
+    pub transfer_xmodem_timeout_long: i32,
+    /// `ttset.c:1833`. Field 5.
+    pub transfer_xmodem_timeout_vlong: i32,
+    /// `ttset.c:1392`, and unlike XMODEM's this one ships with a value: `rb`.
+    pub transfer_ymodem_rcv_command: String,
+    /// `ttset.c:1388`.
+    pub transfer_ymodem_log: bool,
+    /// `ttset.c:1838`, the same five fields and the same floor as XMODEM's.
+    pub transfer_ymodem_timeout_init: i32,
+    /// `ttset.c:1842`.
+    pub transfer_ymodem_timeout_init_crc: i32,
+    /// `ttset.c:1845`.
+    pub transfer_ymodem_timeout_short: i32,
+    /// `ttset.c:1848`.
+    pub transfer_ymodem_timeout_long: i32,
+    /// `ttset.c:1851`.
+    pub transfer_ymodem_timeout_vlong: i32,
+    /// `ttset.c:1396`, part of `FTFlag`. Whether the terminal watches the stream for
+    /// a peer's `ZRQINIT` and starts a receive by itself.
+    pub transfer_zmodem_auto: bool,
+    /// `ttset.c:1400`. The subpacket size when sending; `zmodem.c:780` floors it at
+    /// 64 and caps it against the block-size ladder, so this is an upper bound
+    /// rather than the value used.
+    pub transfer_zmodem_data_len: i32,
+    /// `ttset.c:1403`. How far ahead the sender may run before an ACK.
+    pub transfer_zmodem_win_size: i32,
+    /// `ttset.c:1407`, part of `FTFlag`. Escape control characters, for a link that
+    /// eats them — a telnet server that has not been told `binary`, or a modem with
+    /// software flow control in the path.
+    pub transfer_zmodem_escape_ctl: bool,
+    /// `ttset.c:1411`.
+    pub transfer_zmodem_log: bool,
+    /// `ttset.c:1415`.
+    pub transfer_zmodem_rcv_command: String,
+    /// `ttset.c:1857`. Four fields rather than five, and **the second floors at 0
+    /// rather than 1** because 0 is meaningful there: it is how "never time out" is
+    /// spelt. Field 1, the normal timeout on a serial link.
+    pub transfer_zmodem_timeout_normal: i32,
+    /// `ttset.c:1861`. Field 2, and **0 by default**: on a network link a stalled
+    /// ZMODEM waits for the socket to notice rather than timing out itself.
+    pub transfer_zmodem_timeout_tcpip: i32,
+    /// `ttset.c:1865`. Field 3.
+    pub transfer_zmodem_timeout_init: i32,
+    /// `ttset.c:1868`. Field 4.
+    pub transfer_zmodem_timeout_fin: i32,
+    /// `ttset.c:1206`, part of `KermitOpt`. Long packets, which every Kermit written
+    /// this century supports and which upstream still ships off.
+    pub transfer_kermit_long_packet: bool,
+    /// `ttset.c:1208`. Send the file's attributes in an `A` packet.
+    pub transfer_kermit_file_attr: bool,
+    /// `ttset.c:1204`.
+    pub transfer_kermit_log: bool,
+    /// **`ttset.c:1130`, and turning this on rewrites `Answerback`** — the arm below
+    /// it sets the terminal's answerback to `DLE + + DLE 0`, which is B-Plus's own
+    /// trigger, so a setting on the transfer page silently changes what the terminal
+    /// replies to ENQ. Not reproduced: this port's answerback is not wired to it,
+    /// and doing so from a settings load would be a surprise a user cannot see.
+    pub transfer_bplus_auto: bool,
+    /// `ttset.c:1139`, part of `FTFlag`.
+    pub transfer_bplus_escape_ctl: bool,
+    /// `ttset.c:1143`.
+    pub transfer_bplus_log: bool,
+    /// `ttset.c:1270`.
+    pub transfer_quickvan_win_size: i32,
+    /// `ttset.c:1266`.
+    pub transfer_quickvan_log: bool,
+    /// `ttset.c:2031`, in seconds. How long a `recvfile` capture waits for the line
+    /// to go quiet before stopping — and **the clock starts at the first byte**
+    /// (`raw.c:168`), so a capture the host never answers waits for ever whatever
+    /// this says.
+    pub transfer_raw_autostop: i32,
     /// `ttset.c:728`. No title bar, which `/H` also asks for. `/I` and `/V` —
     /// minimised and invisible — have no keys at all: `_ReadIniFile` zeroes both at
     /// `:554` and never reads one, so they are command-line-only.
@@ -1045,6 +1212,44 @@ impl Default for Settings {
             log_lock_exclusive: true,
             log_deferred_write: true,
             transfer_dir: String::from(""),
+            transfer_binary: false,
+            transfer_auto_rename: false,
+            transfer_hide_dialog: false,
+            transfer_xmodem_opt: TransferXmodemOpt::default(),
+            transfer_xmodem_binary: true,
+            transfer_xmodem_rcv_command: String::from(""),
+            transfer_xmodem_log: false,
+            transfer_xmodem_timeout_init: 10,
+            transfer_xmodem_timeout_init_crc: 3,
+            transfer_xmodem_timeout_short: 10,
+            transfer_xmodem_timeout_long: 20,
+            transfer_xmodem_timeout_vlong: 60,
+            transfer_ymodem_rcv_command: String::from("rb"),
+            transfer_ymodem_log: false,
+            transfer_ymodem_timeout_init: 10,
+            transfer_ymodem_timeout_init_crc: 3,
+            transfer_ymodem_timeout_short: 10,
+            transfer_ymodem_timeout_long: 20,
+            transfer_ymodem_timeout_vlong: 60,
+            transfer_zmodem_auto: false,
+            transfer_zmodem_data_len: 1024,
+            transfer_zmodem_win_size: 32767,
+            transfer_zmodem_escape_ctl: false,
+            transfer_zmodem_log: false,
+            transfer_zmodem_rcv_command: String::from("rz"),
+            transfer_zmodem_timeout_normal: 10,
+            transfer_zmodem_timeout_tcpip: 0,
+            transfer_zmodem_timeout_init: 10,
+            transfer_zmodem_timeout_fin: 3,
+            transfer_kermit_long_packet: false,
+            transfer_kermit_file_attr: false,
+            transfer_kermit_log: false,
+            transfer_bplus_auto: false,
+            transfer_bplus_escape_ctl: false,
+            transfer_bplus_log: false,
+            transfer_quickvan_win_size: 8,
+            transfer_quickvan_log: false,
+            transfer_raw_autostop: 5,
             window_hide_title: false,
         }
     }
@@ -1284,6 +1489,197 @@ impl Settings {
             transfer_dir: ini
                 .get_or("Tera Term", "FileDir", &d.transfer_dir)
                 .to_string(),
+            transfer_binary: crate::schema::on_off(ini.get("Tera Term", "TransBin"), false),
+            transfer_auto_rename: crate::schema::on_off(
+                ini.get("Tera Term", "AutoFileRename"),
+                false,
+            ),
+            transfer_hide_dialog: crate::schema::on_off(
+                ini.get("Tera Term", "FTHideDialog"),
+                false,
+            ),
+            transfer_xmodem_opt: match ini.get("Tera Term", "XmodemOpt") {
+                Some(v) => TransferXmodemOpt::from_ini(v),
+                None => d.transfer_xmodem_opt,
+            },
+            transfer_xmodem_binary: crate::schema::on_off(ini.get("Tera Term", "XmodemBin"), true),
+            transfer_xmodem_rcv_command: ini
+                .get_or(
+                    "Tera Term",
+                    "XModemRcvCommand",
+                    &d.transfer_xmodem_rcv_command,
+                )
+                .to_string(),
+            transfer_xmodem_log: crate::schema::on_off(ini.get("Tera Term", "XmodemLog"), false),
+            transfer_xmodem_timeout_init: crate::schema::floored(
+                crate::schema::nth_int(
+                    ini.get("Tera Term", "XmodemTimeouts"),
+                    0,
+                    d.transfer_xmodem_timeout_init,
+                ),
+                1,
+            ),
+            transfer_xmodem_timeout_init_crc: crate::schema::floored(
+                crate::schema::nth_int(
+                    ini.get("Tera Term", "XmodemTimeouts"),
+                    1,
+                    d.transfer_xmodem_timeout_init_crc,
+                ),
+                1,
+            ),
+            transfer_xmodem_timeout_short: crate::schema::floored(
+                crate::schema::nth_int(
+                    ini.get("Tera Term", "XmodemTimeouts"),
+                    2,
+                    d.transfer_xmodem_timeout_short,
+                ),
+                1,
+            ),
+            transfer_xmodem_timeout_long: crate::schema::floored(
+                crate::schema::nth_int(
+                    ini.get("Tera Term", "XmodemTimeouts"),
+                    3,
+                    d.transfer_xmodem_timeout_long,
+                ),
+                1,
+            ),
+            transfer_xmodem_timeout_vlong: crate::schema::floored(
+                crate::schema::nth_int(
+                    ini.get("Tera Term", "XmodemTimeouts"),
+                    4,
+                    d.transfer_xmodem_timeout_vlong,
+                ),
+                1,
+            ),
+            transfer_ymodem_rcv_command: ini
+                .get_or(
+                    "Tera Term",
+                    "YModemRcvCommand",
+                    &d.transfer_ymodem_rcv_command,
+                )
+                .to_string(),
+            transfer_ymodem_log: crate::schema::on_off(ini.get("Tera Term", "YmodemLog"), false),
+            transfer_ymodem_timeout_init: crate::schema::floored(
+                crate::schema::nth_int(
+                    ini.get("Tera Term", "YmodemTimeouts"),
+                    0,
+                    d.transfer_ymodem_timeout_init,
+                ),
+                1,
+            ),
+            transfer_ymodem_timeout_init_crc: crate::schema::floored(
+                crate::schema::nth_int(
+                    ini.get("Tera Term", "YmodemTimeouts"),
+                    1,
+                    d.transfer_ymodem_timeout_init_crc,
+                ),
+                1,
+            ),
+            transfer_ymodem_timeout_short: crate::schema::floored(
+                crate::schema::nth_int(
+                    ini.get("Tera Term", "YmodemTimeouts"),
+                    2,
+                    d.transfer_ymodem_timeout_short,
+                ),
+                1,
+            ),
+            transfer_ymodem_timeout_long: crate::schema::floored(
+                crate::schema::nth_int(
+                    ini.get("Tera Term", "YmodemTimeouts"),
+                    3,
+                    d.transfer_ymodem_timeout_long,
+                ),
+                1,
+            ),
+            transfer_ymodem_timeout_vlong: crate::schema::floored(
+                crate::schema::nth_int(
+                    ini.get("Tera Term", "YmodemTimeouts"),
+                    4,
+                    d.transfer_ymodem_timeout_vlong,
+                ),
+                1,
+            ),
+            transfer_zmodem_auto: crate::schema::on_off(ini.get("Tera Term", "ZmodemAuto"), false),
+            transfer_zmodem_data_len: ini.get_int(
+                "Tera Term",
+                "ZmodemDataLen",
+                d.transfer_zmodem_data_len,
+            ) as i32,
+            transfer_zmodem_win_size: ini.get_int(
+                "Tera Term",
+                "ZmodemWinSize",
+                d.transfer_zmodem_win_size,
+            ) as i32,
+            transfer_zmodem_escape_ctl: crate::schema::on_off(
+                ini.get("Tera Term", "ZmodemEscCtl"),
+                false,
+            ),
+            transfer_zmodem_log: crate::schema::on_off(ini.get("Tera Term", "ZmodemLog"), false),
+            transfer_zmodem_rcv_command: ini
+                .get_or(
+                    "Tera Term",
+                    "ZModemRcvCommand",
+                    &d.transfer_zmodem_rcv_command,
+                )
+                .to_string(),
+            transfer_zmodem_timeout_normal: crate::schema::floored(
+                crate::schema::nth_int(
+                    ini.get("Tera Term", "ZmodemTimeouts"),
+                    0,
+                    d.transfer_zmodem_timeout_normal,
+                ),
+                1,
+            ),
+            transfer_zmodem_timeout_tcpip: crate::schema::floored(
+                crate::schema::nth_int(
+                    ini.get("Tera Term", "ZmodemTimeouts"),
+                    1,
+                    d.transfer_zmodem_timeout_tcpip,
+                ),
+                0,
+            ),
+            transfer_zmodem_timeout_init: crate::schema::floored(
+                crate::schema::nth_int(
+                    ini.get("Tera Term", "ZmodemTimeouts"),
+                    2,
+                    d.transfer_zmodem_timeout_init,
+                ),
+                1,
+            ),
+            transfer_zmodem_timeout_fin: crate::schema::floored(
+                crate::schema::nth_int(
+                    ini.get("Tera Term", "ZmodemTimeouts"),
+                    3,
+                    d.transfer_zmodem_timeout_fin,
+                ),
+                1,
+            ),
+            transfer_kermit_long_packet: crate::schema::on_off(
+                ini.get("Tera Term", "KmtLongPacket"),
+                false,
+            ),
+            transfer_kermit_file_attr: crate::schema::on_off(
+                ini.get("Tera Term", "KmtFileAttr"),
+                false,
+            ),
+            transfer_kermit_log: crate::schema::on_off(ini.get("Tera Term", "KmtLog"), false),
+            transfer_bplus_auto: crate::schema::on_off(ini.get("Tera Term", "BPAuto"), false),
+            transfer_bplus_escape_ctl: crate::schema::on_off(
+                ini.get("Tera Term", "BPEscCtl"),
+                false,
+            ),
+            transfer_bplus_log: crate::schema::on_off(ini.get("Tera Term", "BPLog"), false),
+            transfer_quickvan_win_size: ini.get_int(
+                "Tera Term",
+                "QVWinSize",
+                d.transfer_quickvan_win_size,
+            ) as i32,
+            transfer_quickvan_log: crate::schema::on_off(ini.get("Tera Term", "QVLog"), false),
+            transfer_raw_autostop: ini.get_int(
+                "Tera Term",
+                "ReceivefileAutoStopWaitTime",
+                d.transfer_raw_autostop,
+            ) as i32,
             window_hide_title: crate::schema::on_off(ini.get("Tera Term", "HideTitle"), false),
         }
     }
@@ -1752,6 +2148,322 @@ impl Settings {
         ini.set("Tera Term", "FileDir", &self.transfer_dir.clone());
         ini.set(
             "Tera Term",
+            "TransBin",
+            &if self.transfer_binary { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "AutoFileRename",
+            &if self.transfer_auto_rename {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "FTHideDialog",
+            &if self.transfer_hide_dialog {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "XmodemOpt",
+            &self.transfer_xmodem_opt.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "XmodemBin",
+            &if self.transfer_xmodem_binary {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "XModemRcvCommand",
+            &self.transfer_xmodem_rcv_command.clone(),
+        );
+        ini.set(
+            "Tera Term",
+            "XmodemLog",
+            &if self.transfer_xmodem_log {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "XmodemTimeouts",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "XmodemTimeouts"),
+                0,
+                self.transfer_xmodem_timeout_init,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "XmodemTimeouts",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "XmodemTimeouts"),
+                1,
+                self.transfer_xmodem_timeout_init_crc,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "XmodemTimeouts",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "XmodemTimeouts"),
+                2,
+                self.transfer_xmodem_timeout_short,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "XmodemTimeouts",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "XmodemTimeouts"),
+                3,
+                self.transfer_xmodem_timeout_long,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "XmodemTimeouts",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "XmodemTimeouts"),
+                4,
+                self.transfer_xmodem_timeout_vlong,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "YModemRcvCommand",
+            &self.transfer_ymodem_rcv_command.clone(),
+        );
+        ini.set(
+            "Tera Term",
+            "YmodemLog",
+            &if self.transfer_ymodem_log {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "YmodemTimeouts",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "YmodemTimeouts"),
+                0,
+                self.transfer_ymodem_timeout_init,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "YmodemTimeouts",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "YmodemTimeouts"),
+                1,
+                self.transfer_ymodem_timeout_init_crc,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "YmodemTimeouts",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "YmodemTimeouts"),
+                2,
+                self.transfer_ymodem_timeout_short,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "YmodemTimeouts",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "YmodemTimeouts"),
+                3,
+                self.transfer_ymodem_timeout_long,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "YmodemTimeouts",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "YmodemTimeouts"),
+                4,
+                self.transfer_ymodem_timeout_vlong,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "ZmodemAuto",
+            &if self.transfer_zmodem_auto {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "ZmodemDataLen",
+            &self.transfer_zmodem_data_len.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "ZmodemWinSize",
+            &self.transfer_zmodem_win_size.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "ZmodemEscCtl",
+            &if self.transfer_zmodem_escape_ctl {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "ZmodemLog",
+            &if self.transfer_zmodem_log {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "ZModemRcvCommand",
+            &self.transfer_zmodem_rcv_command.clone(),
+        );
+        ini.set(
+            "Tera Term",
+            "ZmodemTimeouts",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "ZmodemTimeouts"),
+                0,
+                self.transfer_zmodem_timeout_normal,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "ZmodemTimeouts",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "ZmodemTimeouts"),
+                1,
+                self.transfer_zmodem_timeout_tcpip,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "ZmodemTimeouts",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "ZmodemTimeouts"),
+                2,
+                self.transfer_zmodem_timeout_init,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "ZmodemTimeouts",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "ZmodemTimeouts"),
+                3,
+                self.transfer_zmodem_timeout_fin,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "KmtLongPacket",
+            &if self.transfer_kermit_long_packet {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "KmtFileAttr",
+            &if self.transfer_kermit_file_attr {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "KmtLog",
+            &if self.transfer_kermit_log {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "BPAuto",
+            &if self.transfer_bplus_auto {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "BPEscCtl",
+            &if self.transfer_bplus_escape_ctl {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "BPLog",
+            &if self.transfer_bplus_log { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "QVWinSize",
+            &self.transfer_quickvan_win_size.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "QVLog",
+            &if self.transfer_quickvan_log {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "ReceivefileAutoStopWaitTime",
+            &self.transfer_raw_autostop.to_string(),
+        );
+        ini.set(
+            "Tera Term",
             "HideTitle",
             &if self.window_hide_title { "on" } else { "off" }.to_string(),
         );
@@ -1936,6 +2648,114 @@ impl Settings {
             "log.lock_exclusive" => if self.log_lock_exclusive { "on" } else { "off" }.to_string(),
             "log.deferred_write" => if self.log_deferred_write { "on" } else { "off" }.to_string(),
             "transfer.dir" => self.transfer_dir.clone(),
+            "transfer.binary" => if self.transfer_binary { "on" } else { "off" }.to_string(),
+            "transfer.auto_rename" => if self.transfer_auto_rename {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "transfer.hide_dialog" => if self.transfer_hide_dialog {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "transfer.xmodem_opt" => self.transfer_xmodem_opt.as_ini().to_string(),
+            "transfer.xmodem_binary" => if self.transfer_xmodem_binary {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "transfer.xmodem_rcv_command" => self.transfer_xmodem_rcv_command.clone(),
+            "transfer.xmodem_log" => if self.transfer_xmodem_log {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "transfer.xmodem_timeout_init" => self.transfer_xmodem_timeout_init.to_string(),
+            "transfer.xmodem_timeout_init_crc" => self.transfer_xmodem_timeout_init_crc.to_string(),
+            "transfer.xmodem_timeout_short" => self.transfer_xmodem_timeout_short.to_string(),
+            "transfer.xmodem_timeout_long" => self.transfer_xmodem_timeout_long.to_string(),
+            "transfer.xmodem_timeout_vlong" => self.transfer_xmodem_timeout_vlong.to_string(),
+            "transfer.ymodem_rcv_command" => self.transfer_ymodem_rcv_command.clone(),
+            "transfer.ymodem_log" => if self.transfer_ymodem_log {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "transfer.ymodem_timeout_init" => self.transfer_ymodem_timeout_init.to_string(),
+            "transfer.ymodem_timeout_init_crc" => self.transfer_ymodem_timeout_init_crc.to_string(),
+            "transfer.ymodem_timeout_short" => self.transfer_ymodem_timeout_short.to_string(),
+            "transfer.ymodem_timeout_long" => self.transfer_ymodem_timeout_long.to_string(),
+            "transfer.ymodem_timeout_vlong" => self.transfer_ymodem_timeout_vlong.to_string(),
+            "transfer.zmodem_auto" => if self.transfer_zmodem_auto {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "transfer.zmodem_data_len" => self.transfer_zmodem_data_len.to_string(),
+            "transfer.zmodem_win_size" => self.transfer_zmodem_win_size.to_string(),
+            "transfer.zmodem_escape_ctl" => if self.transfer_zmodem_escape_ctl {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "transfer.zmodem_log" => if self.transfer_zmodem_log {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "transfer.zmodem_rcv_command" => self.transfer_zmodem_rcv_command.clone(),
+            "transfer.zmodem_timeout_normal" => self.transfer_zmodem_timeout_normal.to_string(),
+            "transfer.zmodem_timeout_tcpip" => self.transfer_zmodem_timeout_tcpip.to_string(),
+            "transfer.zmodem_timeout_init" => self.transfer_zmodem_timeout_init.to_string(),
+            "transfer.zmodem_timeout_fin" => self.transfer_zmodem_timeout_fin.to_string(),
+            "transfer.kermit_long_packet" => if self.transfer_kermit_long_packet {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "transfer.kermit_file_attr" => if self.transfer_kermit_file_attr {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "transfer.kermit_log" => if self.transfer_kermit_log {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "transfer.bplus_auto" => if self.transfer_bplus_auto {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "transfer.bplus_escape_ctl" => if self.transfer_bplus_escape_ctl {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "transfer.bplus_log" => if self.transfer_bplus_log { "on" } else { "off" }.to_string(),
+            "transfer.quickvan_win_size" => self.transfer_quickvan_win_size.to_string(),
+            "transfer.quickvan_log" => if self.transfer_quickvan_log {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "transfer.raw_autostop" => self.transfer_raw_autostop.to_string(),
             "window.hide_title" => if self.window_hide_title { "on" } else { "off" }.to_string(),
             _ => return None,
         })
@@ -2123,6 +2943,155 @@ impl Settings {
                 self.log_deferred_write = crate::schema::on_off(Some(value), true)
             }
             "transfer.dir" => self.transfer_dir = value.to_string(),
+            "transfer.binary" => self.transfer_binary = crate::schema::on_off(Some(value), false),
+            "transfer.auto_rename" => {
+                self.transfer_auto_rename = crate::schema::on_off(Some(value), false)
+            }
+            "transfer.hide_dialog" => {
+                self.transfer_hide_dialog = crate::schema::on_off(Some(value), false)
+            }
+            "transfer.xmodem_opt" => self.transfer_xmodem_opt = TransferXmodemOpt::from_ini(value),
+            "transfer.xmodem_binary" => {
+                self.transfer_xmodem_binary = crate::schema::on_off(Some(value), true)
+            }
+            "transfer.xmodem_rcv_command" => self.transfer_xmodem_rcv_command = value.to_string(),
+            "transfer.xmodem_log" => {
+                self.transfer_xmodem_log = crate::schema::on_off(Some(value), false)
+            }
+            "transfer.xmodem_timeout_init" => {
+                self.transfer_xmodem_timeout_init = crate::schema::floored(
+                    crate::schema::int(value, self.transfer_xmodem_timeout_init),
+                    1,
+                )
+            }
+            "transfer.xmodem_timeout_init_crc" => {
+                self.transfer_xmodem_timeout_init_crc = crate::schema::floored(
+                    crate::schema::int(value, self.transfer_xmodem_timeout_init_crc),
+                    1,
+                )
+            }
+            "transfer.xmodem_timeout_short" => {
+                self.transfer_xmodem_timeout_short = crate::schema::floored(
+                    crate::schema::int(value, self.transfer_xmodem_timeout_short),
+                    1,
+                )
+            }
+            "transfer.xmodem_timeout_long" => {
+                self.transfer_xmodem_timeout_long = crate::schema::floored(
+                    crate::schema::int(value, self.transfer_xmodem_timeout_long),
+                    1,
+                )
+            }
+            "transfer.xmodem_timeout_vlong" => {
+                self.transfer_xmodem_timeout_vlong = crate::schema::floored(
+                    crate::schema::int(value, self.transfer_xmodem_timeout_vlong),
+                    1,
+                )
+            }
+            "transfer.ymodem_rcv_command" => self.transfer_ymodem_rcv_command = value.to_string(),
+            "transfer.ymodem_log" => {
+                self.transfer_ymodem_log = crate::schema::on_off(Some(value), false)
+            }
+            "transfer.ymodem_timeout_init" => {
+                self.transfer_ymodem_timeout_init = crate::schema::floored(
+                    crate::schema::int(value, self.transfer_ymodem_timeout_init),
+                    1,
+                )
+            }
+            "transfer.ymodem_timeout_init_crc" => {
+                self.transfer_ymodem_timeout_init_crc = crate::schema::floored(
+                    crate::schema::int(value, self.transfer_ymodem_timeout_init_crc),
+                    1,
+                )
+            }
+            "transfer.ymodem_timeout_short" => {
+                self.transfer_ymodem_timeout_short = crate::schema::floored(
+                    crate::schema::int(value, self.transfer_ymodem_timeout_short),
+                    1,
+                )
+            }
+            "transfer.ymodem_timeout_long" => {
+                self.transfer_ymodem_timeout_long = crate::schema::floored(
+                    crate::schema::int(value, self.transfer_ymodem_timeout_long),
+                    1,
+                )
+            }
+            "transfer.ymodem_timeout_vlong" => {
+                self.transfer_ymodem_timeout_vlong = crate::schema::floored(
+                    crate::schema::int(value, self.transfer_ymodem_timeout_vlong),
+                    1,
+                )
+            }
+            "transfer.zmodem_auto" => {
+                self.transfer_zmodem_auto = crate::schema::on_off(Some(value), false)
+            }
+            "transfer.zmodem_data_len" => {
+                self.transfer_zmodem_data_len =
+                    crate::schema::int(value, self.transfer_zmodem_data_len)
+            }
+            "transfer.zmodem_win_size" => {
+                self.transfer_zmodem_win_size =
+                    crate::schema::int(value, self.transfer_zmodem_win_size)
+            }
+            "transfer.zmodem_escape_ctl" => {
+                self.transfer_zmodem_escape_ctl = crate::schema::on_off(Some(value), false)
+            }
+            "transfer.zmodem_log" => {
+                self.transfer_zmodem_log = crate::schema::on_off(Some(value), false)
+            }
+            "transfer.zmodem_rcv_command" => self.transfer_zmodem_rcv_command = value.to_string(),
+            "transfer.zmodem_timeout_normal" => {
+                self.transfer_zmodem_timeout_normal = crate::schema::floored(
+                    crate::schema::int(value, self.transfer_zmodem_timeout_normal),
+                    1,
+                )
+            }
+            "transfer.zmodem_timeout_tcpip" => {
+                self.transfer_zmodem_timeout_tcpip = crate::schema::floored(
+                    crate::schema::int(value, self.transfer_zmodem_timeout_tcpip),
+                    0,
+                )
+            }
+            "transfer.zmodem_timeout_init" => {
+                self.transfer_zmodem_timeout_init = crate::schema::floored(
+                    crate::schema::int(value, self.transfer_zmodem_timeout_init),
+                    1,
+                )
+            }
+            "transfer.zmodem_timeout_fin" => {
+                self.transfer_zmodem_timeout_fin = crate::schema::floored(
+                    crate::schema::int(value, self.transfer_zmodem_timeout_fin),
+                    1,
+                )
+            }
+            "transfer.kermit_long_packet" => {
+                self.transfer_kermit_long_packet = crate::schema::on_off(Some(value), false)
+            }
+            "transfer.kermit_file_attr" => {
+                self.transfer_kermit_file_attr = crate::schema::on_off(Some(value), false)
+            }
+            "transfer.kermit_log" => {
+                self.transfer_kermit_log = crate::schema::on_off(Some(value), false)
+            }
+            "transfer.bplus_auto" => {
+                self.transfer_bplus_auto = crate::schema::on_off(Some(value), false)
+            }
+            "transfer.bplus_escape_ctl" => {
+                self.transfer_bplus_escape_ctl = crate::schema::on_off(Some(value), false)
+            }
+            "transfer.bplus_log" => {
+                self.transfer_bplus_log = crate::schema::on_off(Some(value), false)
+            }
+            "transfer.quickvan_win_size" => {
+                self.transfer_quickvan_win_size =
+                    crate::schema::int(value, self.transfer_quickvan_win_size)
+            }
+            "transfer.quickvan_log" => {
+                self.transfer_quickvan_log = crate::schema::on_off(Some(value), false)
+            }
+            "transfer.raw_autostop" => {
+                self.transfer_raw_autostop = crate::schema::int(value, self.transfer_raw_autostop)
+            }
             "window.hide_title" => {
                 self.window_hide_title = crate::schema::on_off(Some(value), false)
             }
@@ -2896,6 +3865,386 @@ pub const FIELDS: &[Field] = &[
         default: "",
         label: None,
         doc: "`ttset.c:1060`. Where a file transfer starts looking, and where a protocol that names its own file puts it — `GetRecievePath`. `/FD=` sets it, but only if the directory exists.",
+    },
+    Field {
+        name: "transfer.binary",
+        page: "transfer",
+        section: "Tera Term",
+        key: "TransBin",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:975`. The Binary checkbox both file dialogs carry, remembered between transfers — `filesys.cpp:231` copies it into `fv->BinaryMode` and `:454` uses it to decide whether a send translates line endings. Off, so a send is text by default and CR becomes CRLF.",
+    },
+    Field {
+        name: "transfer.auto_rename",
+        page: "transfer",
+        section: "Tera Term",
+        key: "AutoFileRename",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1097`, part of `FTFlag`. On receive, never overwrite: add `.1`, `.2`. Off, so upstream ships willing to replace a file it already has.",
+    },
+    Field {
+        name: "transfer.hide_dialog",
+        page: "transfer",
+        section: "Tera Term",
+        key: "FTHideDialog",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1014`. Upstream's transfer progress window; this port has a status bar for it, so the setting is read and written and acts on nothing — the same arrangement as `log.hide_dialog`.",
+    },
+    Field {
+        name: "transfer.xmodem_opt",
+        page: "transfer",
+        section: "Tera Term",
+        key: "XmodemOpt",
+        kind: Kind::Enum(&["checksum", "crc", "1k", "1ksum"]),
+        default: "checksum",
+        label: None,
+        doc: "**`ttset.c:1039`, and the default is the `else` branch again** — plain checksum, not CRC, which is the older and slower of the two and the one a modern peer is least likely to want. The reader has arms for `crc`, `1k` and `1ksum` only; the writer emits `checksum` (`ttset.c:2594`), a spelling the reader has no arm for and which round-trips solely because anything unmatched takes the default. Kept here as the default spelling for that reason.",
+    },
+    Field {
+        name: "transfer.xmodem_binary",
+        page: "transfer",
+        section: "Tera Term",
+        key: "XmodemBin",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1051`. **On** — so XMODEM's own binary flag defaults the opposite way to `TransBin` above, which is the flag every other protocol uses.",
+    },
+    Field {
+        name: "transfer.xmodem_rcv_command",
+        page: "transfer",
+        section: "Tera Term",
+        key: "XModemRcvCommand",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "`ttset.c:1054`. What upstream sends to the host to start a receive. Read and written; this port has no \"send a command, then receive\" path yet, and the empty default is upstream's, so nothing is lost by an empty one here.",
+    },
+    Field {
+        name: "transfer.xmodem_log",
+        page: "transfer",
+        section: "Tera Term",
+        key: "XmodemLog",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1384`, part of `LogFlag`. A per-protocol transfer log, which is `ttpfile`'s own diagnostic and not the session log.",
+    },
+    Field {
+        name: "transfer.xmodem_timeout_init",
+        page: "transfer",
+        section: "Tera Term",
+        key: "XmodemTimeouts",
+        kind: Kind::IntMin(1),
+        default: "10",
+        label: None,
+        doc: "`ttset.c:1820`, and **these five floor at 1 rather than taking the default** — `int_min`, not `int`. `XmodemTimeouts=0,0,0,0,0` is five one-second timeouts. Field 1: how long to wait for the first block.",
+    },
+    Field {
+        name: "transfer.xmodem_timeout_init_crc",
+        page: "transfer",
+        section: "Tera Term",
+        key: "XmodemTimeouts",
+        kind: Kind::IntMin(1),
+        default: "3",
+        label: None,
+        doc: "`ttset.c:1824`. Field 2: the same, while still asking for CRC mode.",
+    },
+    Field {
+        name: "transfer.xmodem_timeout_short",
+        page: "transfer",
+        section: "Tera Term",
+        key: "XmodemTimeouts",
+        kind: Kind::IntMin(1),
+        default: "10",
+        label: None,
+        doc: "`ttset.c:1827`. Field 3.",
+    },
+    Field {
+        name: "transfer.xmodem_timeout_long",
+        page: "transfer",
+        section: "Tera Term",
+        key: "XmodemTimeouts",
+        kind: Kind::IntMin(1),
+        default: "20",
+        label: None,
+        doc: "`ttset.c:1830`. Field 4.",
+    },
+    Field {
+        name: "transfer.xmodem_timeout_vlong",
+        page: "transfer",
+        section: "Tera Term",
+        key: "XmodemTimeouts",
+        kind: Kind::IntMin(1),
+        default: "60",
+        label: None,
+        doc: "`ttset.c:1833`. Field 5.",
+    },
+    Field {
+        name: "transfer.ymodem_rcv_command",
+        page: "transfer",
+        section: "Tera Term",
+        key: "YModemRcvCommand",
+        kind: Kind::Str,
+        default: "rb",
+        label: None,
+        doc: "`ttset.c:1392`, and unlike XMODEM's this one ships with a value: `rb`.",
+    },
+    Field {
+        name: "transfer.ymodem_log",
+        page: "transfer",
+        section: "Tera Term",
+        key: "YmodemLog",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1388`.",
+    },
+    Field {
+        name: "transfer.ymodem_timeout_init",
+        page: "transfer",
+        section: "Tera Term",
+        key: "YmodemTimeouts",
+        kind: Kind::IntMin(1),
+        default: "10",
+        label: None,
+        doc: "`ttset.c:1838`, the same five fields and the same floor as XMODEM's.",
+    },
+    Field {
+        name: "transfer.ymodem_timeout_init_crc",
+        page: "transfer",
+        section: "Tera Term",
+        key: "YmodemTimeouts",
+        kind: Kind::IntMin(1),
+        default: "3",
+        label: None,
+        doc: "`ttset.c:1842`.",
+    },
+    Field {
+        name: "transfer.ymodem_timeout_short",
+        page: "transfer",
+        section: "Tera Term",
+        key: "YmodemTimeouts",
+        kind: Kind::IntMin(1),
+        default: "10",
+        label: None,
+        doc: "`ttset.c:1845`.",
+    },
+    Field {
+        name: "transfer.ymodem_timeout_long",
+        page: "transfer",
+        section: "Tera Term",
+        key: "YmodemTimeouts",
+        kind: Kind::IntMin(1),
+        default: "20",
+        label: None,
+        doc: "`ttset.c:1848`.",
+    },
+    Field {
+        name: "transfer.ymodem_timeout_vlong",
+        page: "transfer",
+        section: "Tera Term",
+        key: "YmodemTimeouts",
+        kind: Kind::IntMin(1),
+        default: "60",
+        label: None,
+        doc: "`ttset.c:1851`.",
+    },
+    Field {
+        name: "transfer.zmodem_auto",
+        page: "transfer",
+        section: "Tera Term",
+        key: "ZmodemAuto",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1396`, part of `FTFlag`. Whether the terminal watches the stream for a peer's `ZRQINIT` and starts a receive by itself.",
+    },
+    Field {
+        name: "transfer.zmodem_data_len",
+        page: "transfer",
+        section: "Tera Term",
+        key: "ZmodemDataLen",
+        kind: Kind::Int,
+        default: "1024",
+        label: None,
+        doc: "`ttset.c:1400`. The subpacket size when sending; `zmodem.c:780` floors it at 64 and caps it against the block-size ladder, so this is an upper bound rather than the value used.",
+    },
+    Field {
+        name: "transfer.zmodem_win_size",
+        page: "transfer",
+        section: "Tera Term",
+        key: "ZmodemWinSize",
+        kind: Kind::Int,
+        default: "32767",
+        label: None,
+        doc: "`ttset.c:1403`. How far ahead the sender may run before an ACK.",
+    },
+    Field {
+        name: "transfer.zmodem_escape_ctl",
+        page: "transfer",
+        section: "Tera Term",
+        key: "ZmodemEscCtl",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1407`, part of `FTFlag`. Escape control characters, for a link that eats them — a telnet server that has not been told `binary`, or a modem with software flow control in the path.",
+    },
+    Field {
+        name: "transfer.zmodem_log",
+        page: "transfer",
+        section: "Tera Term",
+        key: "ZmodemLog",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1411`.",
+    },
+    Field {
+        name: "transfer.zmodem_rcv_command",
+        page: "transfer",
+        section: "Tera Term",
+        key: "ZModemRcvCommand",
+        kind: Kind::Str,
+        default: "rz",
+        label: None,
+        doc: "`ttset.c:1415`.",
+    },
+    Field {
+        name: "transfer.zmodem_timeout_normal",
+        page: "transfer",
+        section: "Tera Term",
+        key: "ZmodemTimeouts",
+        kind: Kind::IntMin(1),
+        default: "10",
+        label: None,
+        doc: "`ttset.c:1857`. Four fields rather than five, and **the second floors at 0 rather than 1** because 0 is meaningful there: it is how \"never time out\" is spelt. Field 1, the normal timeout on a serial link.",
+    },
+    Field {
+        name: "transfer.zmodem_timeout_tcpip",
+        page: "transfer",
+        section: "Tera Term",
+        key: "ZmodemTimeouts",
+        kind: Kind::IntMin(0),
+        default: "0",
+        label: None,
+        doc: "`ttset.c:1861`. Field 2, and **0 by default**: on a network link a stalled ZMODEM waits for the socket to notice rather than timing out itself.",
+    },
+    Field {
+        name: "transfer.zmodem_timeout_init",
+        page: "transfer",
+        section: "Tera Term",
+        key: "ZmodemTimeouts",
+        kind: Kind::IntMin(1),
+        default: "10",
+        label: None,
+        doc: "`ttset.c:1865`. Field 3.",
+    },
+    Field {
+        name: "transfer.zmodem_timeout_fin",
+        page: "transfer",
+        section: "Tera Term",
+        key: "ZmodemTimeouts",
+        kind: Kind::IntMin(1),
+        default: "3",
+        label: None,
+        doc: "`ttset.c:1868`. Field 4.",
+    },
+    Field {
+        name: "transfer.kermit_long_packet",
+        page: "transfer",
+        section: "Tera Term",
+        key: "KmtLongPacket",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1206`, part of `KermitOpt`. Long packets, which every Kermit written this century supports and which upstream still ships off.",
+    },
+    Field {
+        name: "transfer.kermit_file_attr",
+        page: "transfer",
+        section: "Tera Term",
+        key: "KmtFileAttr",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1208`. Send the file's attributes in an `A` packet.",
+    },
+    Field {
+        name: "transfer.kermit_log",
+        page: "transfer",
+        section: "Tera Term",
+        key: "KmtLog",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1204`.",
+    },
+    Field {
+        name: "transfer.bplus_auto",
+        page: "transfer",
+        section: "Tera Term",
+        key: "BPAuto",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "**`ttset.c:1130`, and turning this on rewrites `Answerback`** — the arm below it sets the terminal's answerback to `DLE + + DLE 0`, which is B-Plus's own trigger, so a setting on the transfer page silently changes what the terminal replies to ENQ. Not reproduced: this port's answerback is not wired to it, and doing so from a settings load would be a surprise a user cannot see.",
+    },
+    Field {
+        name: "transfer.bplus_escape_ctl",
+        page: "transfer",
+        section: "Tera Term",
+        key: "BPEscCtl",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1139`, part of `FTFlag`.",
+    },
+    Field {
+        name: "transfer.bplus_log",
+        page: "transfer",
+        section: "Tera Term",
+        key: "BPLog",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1143`.",
+    },
+    Field {
+        name: "transfer.quickvan_win_size",
+        page: "transfer",
+        section: "Tera Term",
+        key: "QVWinSize",
+        kind: Kind::Int,
+        default: "8",
+        label: None,
+        doc: "`ttset.c:1270`.",
+    },
+    Field {
+        name: "transfer.quickvan_log",
+        page: "transfer",
+        section: "Tera Term",
+        key: "QVLog",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1266`.",
+    },
+    Field {
+        name: "transfer.raw_autostop",
+        page: "transfer",
+        section: "Tera Term",
+        key: "ReceivefileAutoStopWaitTime",
+        kind: Kind::Int,
+        default: "5",
+        label: None,
+        doc: "`ttset.c:2031`, in seconds. How long a `recvfile` capture waits for the line to go quiet before stopping — and **the clock starts at the first byte** (`raw.c:168`), so a capture the host never answers waits for ever whatever this says.",
     },
     Field {
         name: "window.hide_title",

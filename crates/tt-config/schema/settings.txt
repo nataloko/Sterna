@@ -454,6 +454,164 @@ log.deferred_write | bool | Tera Term | DeferredLogWriteMode | on | -
 # if the directory exists.
 transfer.dir | string | Tera Term | FileDir |  | -
 
+# `ttset.c:975`. The Binary checkbox both file dialogs carry, remembered
+# between transfers — `filesys.cpp:231` copies it into `fv->BinaryMode` and
+# `:454` uses it to decide whether a send translates line endings. Off, so a
+# send is text by default and CR becomes CRLF.
+transfer.binary | bool | Tera Term | TransBin | off | -
+
+# `ttset.c:1097`, part of `FTFlag`. On receive, never overwrite: add `.1`,
+# `.2`. Off, so upstream ships willing to replace a file it already has.
+transfer.auto_rename | bool | Tera Term | AutoFileRename | off | -
+
+# `ttset.c:1014`. Upstream's transfer progress window; this port has a status
+# bar for it, so the setting is read and written and acts on nothing — the same
+# arrangement as `log.hide_dialog`.
+transfer.hide_dialog | bool | Tera Term | FTHideDialog | off | -
+
+# --- transfer: XMODEM ---------------------------------------------------------
+
+# **`ttset.c:1039`, and the default is the `else` branch again** — plain
+# checksum, not CRC, which is the older and slower of the two and the one a
+# modern peer is least likely to want. The reader has arms for `crc`, `1k` and
+# `1ksum` only; the writer emits `checksum` (`ttset.c:2594`), a spelling the
+# reader has no arm for and which round-trips solely because anything
+# unmatched takes the default. Kept here as the default spelling for that
+# reason.
+transfer.xmodem_opt | enum(checksum=Checksum,crc=Crc,1k=Crc1K,1ksum=Checksum1K) | Tera Term | XmodemOpt | checksum | -
+
+# `ttset.c:1051`. **On** — so XMODEM's own binary flag defaults the opposite
+# way to `TransBin` above, which is the flag every other protocol uses.
+transfer.xmodem_binary | bool | Tera Term | XmodemBin | on | -
+
+# `ttset.c:1054`. What upstream sends to the host to start a receive. Read and
+# written; this port has no "send a command, then receive" path yet, and the
+# empty default is upstream's, so nothing is lost by an empty one here.
+transfer.xmodem_rcv_command | string | Tera Term | XModemRcvCommand |  | -
+
+# `ttset.c:1384`, part of `LogFlag`. A per-protocol transfer log, which is
+# `ttpfile`'s own diagnostic and not the session log.
+transfer.xmodem_log | bool | Tera Term | XmodemLog | off | -
+
+# `ttset.c:1820`, and **these five floor at 1 rather than taking the default**
+# — `int_min`, not `int`. `XmodemTimeouts=0,0,0,0,0` is five one-second
+# timeouts. Field 1: how long to wait for the first block.
+transfer.xmodem_timeout_init | int_min(1) | Tera Term | XmodemTimeouts.1 | 10 | -
+
+# `ttset.c:1824`. Field 2: the same, while still asking for CRC mode.
+transfer.xmodem_timeout_init_crc | int_min(1) | Tera Term | XmodemTimeouts.2 | 3 | -
+
+# `ttset.c:1827`. Field 3.
+transfer.xmodem_timeout_short | int_min(1) | Tera Term | XmodemTimeouts.3 | 10 | -
+
+# `ttset.c:1830`. Field 4.
+transfer.xmodem_timeout_long | int_min(1) | Tera Term | XmodemTimeouts.4 | 20 | -
+
+# `ttset.c:1833`. Field 5.
+transfer.xmodem_timeout_vlong | int_min(1) | Tera Term | XmodemTimeouts.5 | 60 | -
+
+# --- transfer: YMODEM ---------------------------------------------------------
+
+# `ttset.c:1392`, and unlike XMODEM's this one ships with a value: `rb`.
+transfer.ymodem_rcv_command | string | Tera Term | YModemRcvCommand | rb | -
+
+# `ttset.c:1388`.
+transfer.ymodem_log | bool | Tera Term | YmodemLog | off | -
+
+# `ttset.c:1838`, the same five fields and the same floor as XMODEM's.
+transfer.ymodem_timeout_init | int_min(1) | Tera Term | YmodemTimeouts.1 | 10 | -
+
+# `ttset.c:1842`.
+transfer.ymodem_timeout_init_crc | int_min(1) | Tera Term | YmodemTimeouts.2 | 3 | -
+
+# `ttset.c:1845`.
+transfer.ymodem_timeout_short | int_min(1) | Tera Term | YmodemTimeouts.3 | 10 | -
+
+# `ttset.c:1848`.
+transfer.ymodem_timeout_long | int_min(1) | Tera Term | YmodemTimeouts.4 | 20 | -
+
+# `ttset.c:1851`.
+transfer.ymodem_timeout_vlong | int_min(1) | Tera Term | YmodemTimeouts.5 | 60 | -
+
+# --- transfer: ZMODEM ---------------------------------------------------------
+
+# `ttset.c:1396`, part of `FTFlag`. Whether the terminal watches the stream for
+# a peer's `ZRQINIT` and starts a receive by itself.
+transfer.zmodem_auto | bool | Tera Term | ZmodemAuto | off | -
+
+# `ttset.c:1400`. The subpacket size when sending; `zmodem.c:780` floors it at
+# 64 and caps it against the block-size ladder, so this is an upper bound
+# rather than the value used.
+transfer.zmodem_data_len | int | Tera Term | ZmodemDataLen | 1024 | -
+
+# `ttset.c:1403`. How far ahead the sender may run before an ACK.
+transfer.zmodem_win_size | int | Tera Term | ZmodemWinSize | 32767 | -
+
+# `ttset.c:1407`, part of `FTFlag`. Escape control characters, for a link that
+# eats them — a telnet server that has not been told `binary`, or a modem with
+# software flow control in the path.
+transfer.zmodem_escape_ctl | bool | Tera Term | ZmodemEscCtl | off | -
+
+# `ttset.c:1411`.
+transfer.zmodem_log | bool | Tera Term | ZmodemLog | off | -
+
+# `ttset.c:1415`.
+transfer.zmodem_rcv_command | string | Tera Term | ZModemRcvCommand | rz | -
+
+# `ttset.c:1857`. Four fields rather than five, and **the second floors at 0
+# rather than 1** because 0 is meaningful there: it is how "never time out" is
+# spelt. Field 1, the normal timeout on a serial link.
+transfer.zmodem_timeout_normal | int_min(1) | Tera Term | ZmodemTimeouts.1 | 10 | -
+
+# `ttset.c:1861`. Field 2, and **0 by default**: on a network link a stalled
+# ZMODEM waits for the socket to notice rather than timing out itself.
+transfer.zmodem_timeout_tcpip | int_min(0) | Tera Term | ZmodemTimeouts.2 | 0 | -
+
+# `ttset.c:1865`. Field 3.
+transfer.zmodem_timeout_init | int_min(1) | Tera Term | ZmodemTimeouts.3 | 10 | -
+
+# `ttset.c:1868`. Field 4.
+transfer.zmodem_timeout_fin | int_min(1) | Tera Term | ZmodemTimeouts.4 | 3 | -
+
+# --- transfer: Kermit, B-Plus, Quick-VAN --------------------------------------
+
+# `ttset.c:1206`, part of `KermitOpt`. Long packets, which every Kermit written
+# this century supports and which upstream still ships off.
+transfer.kermit_long_packet | bool | Tera Term | KmtLongPacket | off | -
+
+# `ttset.c:1208`. Send the file's attributes in an `A` packet.
+transfer.kermit_file_attr | bool | Tera Term | KmtFileAttr | off | -
+
+# `ttset.c:1204`.
+transfer.kermit_log | bool | Tera Term | KmtLog | off | -
+
+# **`ttset.c:1130`, and turning this on rewrites `Answerback`** — the arm below
+# it sets the terminal's answerback to `DLE + + DLE 0`, which is B-Plus's own
+# trigger, so a setting on the transfer page silently changes what the terminal
+# replies to ENQ. Not reproduced: this port's answerback is not wired to it,
+# and doing so from a settings load would be a surprise a user cannot see.
+transfer.bplus_auto | bool | Tera Term | BPAuto | off | -
+
+# `ttset.c:1139`, part of `FTFlag`.
+transfer.bplus_escape_ctl | bool | Tera Term | BPEscCtl | off | -
+
+# `ttset.c:1143`.
+transfer.bplus_log | bool | Tera Term | BPLog | off | -
+
+# `ttset.c:1270`.
+transfer.quickvan_win_size | int | Tera Term | QVWinSize | 8 | -
+
+# `ttset.c:1266`.
+transfer.quickvan_log | bool | Tera Term | QVLog | off | -
+
+# --- transfer: the raw capture ------------------------------------------------
+
+# `ttset.c:2031`, in seconds. How long a `recvfile` capture waits for the line
+# to go quiet before stopping — and **the clock starts at the first byte**
+# (`raw.c:168`), so a capture the host never answers waits for ever whatever
+# this says.
+transfer.raw_autostop | int | Tera Term | ReceivefileAutoStopWaitTime | 5 | -
+
 # --- window ------------------------------------------------------------------
 
 # `ttset.c:728`. No title bar, which `/H` also asks for. `/I` and `/V` —

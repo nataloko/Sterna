@@ -29,8 +29,8 @@ QString humanBytes(qint64 n)
 
 // --- picking a protocol ------------------------------------------------------
 
-XferOptionsDialog::XferOptionsDialog(bool sending, QWidget *parent)
-    : QDialog(parent), m_sending(sending)
+XferOptionsDialog::XferOptionsDialog(bool sending, Session *session, QWidget *parent)
+    : QDialog(parent), m_sending(sending), m_session(session)
 {
     setWindowTitle(sending ? tr("Send file") : tr("Receive file"));
 
@@ -107,6 +107,33 @@ void XferOptionsDialog::protocolChanged()
     m_option->setVisible(hasOption);
     m_optionLabel->setVisible(hasOption);
     m_text->setVisible(proto == TT_XFER_PROTOCOL_X_MODEM);
+
+    // Seed from the settings rather than from the list order. Upstream's
+    // XMODEM default is plain checksum — the `else` branch of `ttset.c:1039` —
+    // so "whichever we listed first" is a different answer from "what the file
+    // says", and the file is the one the user can change.
+    const TtXferJob d = defaults();
+    const int i = m_option->findData(d.option);
+    if (i >= 0) {
+        m_option->setCurrentIndex(i);
+    }
+    m_text->setChecked(d.text);
+}
+
+TtXferJob XferOptionsDialog::defaults() const
+{
+    TtXferJob job = {};
+    job.protocol = static_cast<TtXferProtocol>(m_protocol->currentData().toInt());
+    job.sending = m_sending;
+    if (m_session != nullptr && m_session->handle() != nullptr) {
+        tt_session_xfer_defaults(m_session->handle(), &job);
+    } else {
+        // The same values the core would give, for a dialog with no session
+        // behind it — `xfer_test` builds one that way.
+        job.option = 1;
+        job.binary = true;
+    }
+    return job;
 }
 
 void XferOptionsDialog::setProtocol(TtXferProtocol protocol)
@@ -131,17 +158,15 @@ bool XferOptionsDialog::needsReceiveName() const
 
 TtXferJob XferOptionsDialog::job() const
 {
-    TtXferJob job = {};
-    job.protocol = static_cast<TtXferProtocol>(m_protocol->currentData().toInt());
-    job.sending = m_sending;
+    TtXferJob job = defaults();
     job.option = m_option->count() > 0 ? m_option->currentData().toInt() : 0;
     job.text = m_text->isVisible() && m_text->isChecked();
-    // Binary is the ZMODEM default and the only sane one for a file; the
-    // alternative rewrites line endings inside what the user asked to copy.
-    job.binary = true;
-    job.auto_start = false;
     job.kermit_mode = m_sending ? 3 : 1;
-    job.autostop_sec = 0;
+    // Not offered: the auto-start flag says the peer's trigger has already
+    // gone past in the terminal stream, which is true of a transfer the
+    // terminal started by itself and never of one a user asked for from a
+    // menu. `transfer.zmodem_auto` is about the watching, not about this.
+    job.auto_start = false;
     return job;
 }
 

@@ -29,7 +29,13 @@ class XferOptionsDialog : public QDialog {
     Q_OBJECT
 
 public:
-    XferOptionsDialog(bool sending, QWidget *parent = nullptr);
+    /// `session` is what the starting values come from. Null is allowed and
+    /// means the core's own defaults — a dialog put up with nothing open is
+    /// still a dialog — but a real one seeds `TransBin`, `XmodemOpt`,
+    /// `XmodemBin`, `ZmodemAuto` and the raw capture's wait from the settings
+    /// file, which is where the user put them.
+    XferOptionsDialog(bool sending, Session *session = nullptr,
+                      QWidget *parent = nullptr);
 
     /// The job as configured. Ready to hand to `Session::sendFiles`.
     TtXferJob job() const;
@@ -46,7 +52,13 @@ private slots:
     void protocolChanged();
 
 private:
+    /// What the settings say a job of the currently selected protocol starts
+    /// as. Re-asked whenever the protocol changes, because three of its fields
+    /// are per-protocol.
+    TtXferJob defaults() const;
+
     bool m_sending;
+    Session *m_session;
     QComboBox *m_protocol;
     QComboBox *m_option;
     QCheckBox *m_text;

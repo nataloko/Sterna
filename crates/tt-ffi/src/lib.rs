@@ -919,6 +919,13 @@ fn schema() -> &'static Schema {
                 tt_session::Kind::Bool => (TtSettingKind::Bool, 0, 0),
                 tt_session::Kind::Int => (TtSettingKind::Int, i32::MIN, i32::MAX),
                 tt_session::Kind::IntRange(lo, hi) => (TtSettingKind::IntRange, lo, hi),
+                // A floor with no ceiling is still the pair a spin box needs,
+                // so it does not earn a `TtSettingKind` of its own. What the
+                // two kinds disagree about is what happens to a value *below*
+                // the bound — the default for one, the bound itself for the
+                // other — and that is settled in the core before a dialog ever
+                // sees the number.
+                tt_session::Kind::IntMin(lo) => (TtSettingKind::IntRange, lo, i32::MAX),
                 tt_session::Kind::Str => (TtSettingKind::Str, 0, 0),
                 tt_session::Kind::Enum(_) => (TtSettingKind::Enum, 0, 0),
                 tt_session::Kind::Color2 => (TtSettingKind::Color2, 0, 0),
@@ -1251,13 +1258,18 @@ pub struct TtXferJob {
     /// Ignored by Kermit, which takes `kermit_mode` instead, and by Raw.
     pub sending: bool,
     /// XMODEM: 1 = checksum, 2 = CRC, 3 = 1K CRC, 4 = 1K checksum.
-    /// YMODEM: 1 = 1K, 2 = G, 3 = single. Zero takes the sensible default,
-    /// which for YMODEM is the *only* value its packet builder handles.
+    /// YMODEM: 1 = 1K, 2 = G, 3 = single. Zero takes the setting's default,
+    /// which for XMODEM is **checksum** (`ttset.c:1039`'s `else` branch, not
+    /// the CRC a reader would expect) and for YMODEM is the *only* value its
+    /// packet builder handles. Call [`tt_session_xfer_defaults`] rather than
+    /// leaving this zero: it answers from the user's own file.
     pub option: i32,
-    /// XMODEM only: CRLF translation and `^Z` padding.
+    /// XMODEM only: CRLF translation and `^Z` padding. The inverse of
+    /// `XmodemBin`, which is its own setting and not `binary` below.
     pub text: bool,
-    /// ZMODEM only, and on by default. Clearing it asks for end-of-line
-    /// translation, which is almost never wanted.
+    /// ZMODEM only. Clearing it asks for end-of-line translation, which is
+    /// almost never wanted — but upstream's `TransBin` ships **off**, so a
+    /// struct seeded by [`tt_session_xfer_defaults`] starts with it clear.
     pub binary: bool,
     /// ZMODEM and B-Plus: the peer's trigger has already gone past in the
     /// terminal stream, so the protocol pushes it back and reads it itself.
@@ -1322,9 +1334,13 @@ fn job_from(j: &TtXferJob) -> tt_xfer::Job {
             dir,
             opt: match j.option {
                 1 => XmodemOpt::Checksum,
+                2 => XmodemOpt::Crc,
                 3 => XmodemOpt::Crc1K,
                 4 => XmodemOpt::Checksum1K,
-                _ => XmodemOpt::Crc,
+                // Deliberately `Default` rather than a fourth spelling of
+                // upstream's default: one answer to "what is XMODEM's block
+                // format when nobody said", in one place.
+                _ => XmodemOpt::default(),
             },
             text: j.text,
         },
@@ -1358,6 +1374,47 @@ fn job_from(j: &TtXferJob) -> tt_xfer::Job {
             autostop: Duration::from_secs(j.autostop_sec.max(0) as u64),
         },
     }
+}
+
+/// Fill `job` with what this session's settings say a transfer should start
+/// as, leaving `protocol`, `sending` and `kermit_mode` alone — those are the
+/// user's choice and nothing in the file describes them.
+///
+/// A frontend calls this to seed its dialog. Without it the dialog invents the
+/// values, which is how three of them ended up hardcoded here: `binary` was
+/// always on, the XMODEM block format was always CRC — where upstream's own
+/// default is plain **checksum**, `ttset.c:1039`'s `else` branch — and a raw
+/// capture never stopped, because its wait was zero.
+///
+/// Does nothing on a null pointer.
+#[no_mangle]
+pub extern "C" fn tt_session_xfer_defaults(session: *mut TtSession, job: *mut TtXferJob) {
+    let (Some(s), Some(job)) = (unsafe { session.as_ref() }, unsafe { job.as_mut() }) else {
+        set_error("null session or TtXferJob");
+        return;
+    };
+    let d = tt_session::job_defaults(s.session.settings());
+    // `option` is per-protocol and the caller has already chosen one, so only
+    // XMODEM's is answerable from the file. YMODEM's is the one value its
+    // packet builder handles, which `job_from` supplies for a zero.
+    if job.protocol == TtXferProtocol::XModem {
+        job.option = match d.xmodem_opt {
+            tt_xfer::XmodemOpt::Checksum => 1,
+            tt_xfer::XmodemOpt::Crc => 2,
+            tt_xfer::XmodemOpt::Crc1K => 3,
+            tt_xfer::XmodemOpt::Checksum1K => 4,
+        };
+    }
+    // XMODEM keeps its own binary flag and upstream ships the two disagreeing
+    // — `XmodemBin` on, `TransBin` off — so the text flag is not `!binary`.
+    job.text = !d.xmodem_binary;
+    job.binary = d.binary;
+    job.auto_start = match job.protocol {
+        TtXferProtocol::ZModem => d.zmodem_auto,
+        TtXferProtocol::BPlus => d.bplus_auto,
+        _ => false,
+    };
+    job.autostop_sec = d.raw_autostop.as_secs() as i32;
 }
 
 /// Start sending files. `paths` is `count` UTF-8 paths.

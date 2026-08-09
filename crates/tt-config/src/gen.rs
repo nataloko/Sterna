@@ -31,13 +31,26 @@ struct Setting {
     doc: Vec<String>,
 }
 
+/// How upstream bounds an int on read. The two shapes are genuinely different
+/// and the difference is visible in a file somebody already has.
+enum Bound {
+    /// `int(lo..hi)`, `ttset.c:615`: at or below `lo` takes the **default**,
+    /// above `hi` takes `hi`. Not a clamp in both directions.
+    Ranged(i32, i32),
+    /// `int_min(lo)`, `ttset.c:1822` onward: below `lo` takes `lo`. A real
+    /// clamp, and the transfer timeouts are the only settings read this way —
+    /// `XmodemTimeouts=0,0,0,0,0` is five one-second timeouts rather than
+    /// upstream's `10,3,10,20,60`.
+    Floor(i32),
+}
+
 enum Kind {
     Bool,
     /// `Key` or `Key.N`, the latter being the Nth comma-separated field of a
     /// value that holds several — `TerminalSize` is `80,24`.
     Int {
         field: Option<usize>,
-        range: Option<(i32, i32)>,
+        bound: Option<Bound>,
     },
     Str,
     /// `spelling => Variant`, in the order they were written, and whether the
@@ -143,18 +156,26 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
             .collect();
         return (key.to_string(), Kind::Enum { variants, exact });
     }
-    // `int` or `int(min..max)`.
-    let (spec, range) = match spec.strip_prefix("int(").and_then(|s| s.strip_suffix(')')) {
-        Some(body) => {
+    // `int`, `int(min..max)` or `int_min(floor)`.
+    let (spec, bound) =
+        if let Some(body) = spec.strip_prefix("int(").and_then(|s| s.strip_suffix(')')) {
             let (lo, hi) = body.split_once("..").expect("a range is `min..max`");
-            let bounds = (
+            let bound = Bound::Ranged(
                 lo.trim().parse::<i32>().expect("a number"),
                 hi.trim().parse::<i32>().expect("a number"),
             );
-            ("int", Some(bounds))
-        }
-        None => (spec, None),
-    };
+            ("int", Some(bound))
+        } else if let Some(body) = spec
+            .strip_prefix("int_min(")
+            .and_then(|s| s.strip_suffix(')'))
+        {
+            (
+                "int",
+                Some(Bound::Floor(body.trim().parse::<i32>().expect("a number"))),
+            )
+        } else {
+            (spec, None)
+        };
     match spec {
         "bool" => (key.to_string(), Kind::Bool),
         "string" => (key.to_string(), Kind::Str),
@@ -164,10 +185,10 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
                 base.to_string(),
                 Kind::Int {
                     field: Some(n.parse::<usize>().expect("a digit") - 1),
-                    range,
+                    bound,
                 },
             ),
-            _ => (key.to_string(), Kind::Int { field: None, range }),
+            _ => (key.to_string(), Kind::Int { field: None, bound }),
         },
         other => panic!("unknown type {other}"),
     }
@@ -337,18 +358,19 @@ fn emit(settings: &[Setting]) -> String {
                 "crate::schema::on_off(ini.get(\"{section}\", \"{key}\"), {})",
                 on_off_literal(&s.default)
             ),
-            Kind::Int { field: nth, range } => {
+            Kind::Int { field: nth, bound } => {
                 let read = match nth {
                     None => format!("ini.get_int(\"{section}\", \"{key}\", d.{field}) as i32"),
                     Some(n) => format!(
                         "crate::schema::nth_int(ini.get(\"{section}\", \"{key}\"), {n}, d.{field})"
                     ),
                 };
-                match range {
+                match bound {
                     None => read,
-                    Some((lo, hi)) => {
+                    Some(Bound::Ranged(lo, hi)) => {
                         format!("crate::schema::ranged({read}, d.{field}, {lo}, {hi})")
                     }
+                    Some(Bound::Floor(lo)) => format!("crate::schema::floored({read}, {lo})"),
                 }
             }
             Kind::Str => format!("ini.get_or(\"{section}\", \"{key}\", &d.{field}).to_string()"),
@@ -419,17 +441,20 @@ fn emit(settings: &[Setting]) -> String {
                 "self.{field} = crate::schema::on_off(Some(value), {})",
                 on_off_literal(&s.default)
             ),
-            Kind::Int { range, .. } => {
+            Kind::Int { bound, .. } => {
                 let read = format!("crate::schema::int(value, self.{field})");
-                match range {
+                match bound {
                     None => format!("self.{field} = {read}"),
                     // The same rule the file gets: below the range takes the
                     // default, above it takes the ceiling. A script and a
                     // hand-edited INI must not disagree about a value.
-                    Some((lo, hi)) => format!(
+                    Some(Bound::Ranged(lo, hi)) => format!(
                         "self.{field} = crate::schema::ranged({read}, {}, {lo}, {hi})",
                         s.default.parse::<i32>().expect("a number")
                     ),
+                    Some(Bound::Floor(lo)) => {
+                        format!("self.{field} = crate::schema::floored({read}, {lo})")
+                    }
                 }
             }
             Kind::Str => format!("self.{field} = value.to_string()"),
@@ -453,13 +478,17 @@ fn emit(settings: &[Setting]) -> String {
     for s in settings {
         let kind = match &s.kind {
             Kind::Bool => "Kind::Bool".to_string(),
-            Kind::Int { range: None, .. } => "Kind::Int".to_string(),
+            Kind::Int { bound: None, .. } => "Kind::Int".to_string(),
             // The dialog needs the bounds to build a spin box, and it must not
             // hold its own copy of them.
             Kind::Int {
-                range: Some((lo, hi)),
+                bound: Some(Bound::Ranged(lo, hi)),
                 ..
             } => format!("Kind::IntRange({lo}, {hi})"),
+            Kind::Int {
+                bound: Some(Bound::Floor(lo)),
+                ..
+            } => format!("Kind::IntMin({lo})"),
             Kind::Str => "Kind::Str".to_string(),
             Kind::Color2 => "Kind::Color2".to_string(),
             Kind::Enum { variants, .. } => {

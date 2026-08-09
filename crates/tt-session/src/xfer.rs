@@ -16,9 +16,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use tt_config::Settings;
+use tt_config::{Settings, TransferXmodemOpt};
 use tt_conn::{LinkKind, Result};
-use tt_xfer::{Job, Link, Options, Progress, Transfer};
+use tt_xfer::{Job, Link, LogFlags, Options, Progress, Quirks, Timeouts, Transfer, XmodemOpt};
 
 /// What a frontend needs to draw a progress dialog.
 ///
@@ -133,10 +133,104 @@ impl Running {
 /// `tt-xfer`'s defaults, which are upstream's with a `ttset.c` citation each —
 /// so a value is never invented here, only sourced from one place or the
 /// other.
-pub fn xfer_options(_settings: &Settings, link: Link) -> Options {
+///
+/// `link` is not a setting and cannot be: upstream rebuilds its whole
+/// `TTTSet` from the file because the port was opened from the file, while
+/// here a session can be over anything. It is the same argument
+/// `Session::reset_serial` makes about the live serial parameters.
+pub fn xfer_options(s: &Settings, link: Link) -> Options {
     Options {
         link,
-        ..Options::default()
+        timeouts: Timeouts {
+            xmodem: [
+                s.transfer_xmodem_timeout_init,
+                s.transfer_xmodem_timeout_init_crc,
+                s.transfer_xmodem_timeout_short,
+                s.transfer_xmodem_timeout_long,
+                s.transfer_xmodem_timeout_vlong,
+            ],
+            ymodem: [
+                s.transfer_ymodem_timeout_init,
+                s.transfer_ymodem_timeout_init_crc,
+                s.transfer_ymodem_timeout_short,
+                s.transfer_ymodem_timeout_long,
+                s.transfer_ymodem_timeout_vlong,
+            ],
+            zmodem: [
+                s.transfer_zmodem_timeout_normal,
+                s.transfer_zmodem_timeout_tcpip,
+                s.transfer_zmodem_timeout_init,
+                s.transfer_zmodem_timeout_fin,
+            ],
+        },
+        zmodem_data_len: s.transfer_zmodem_data_len,
+        zmodem_win_size: s.transfer_zmodem_win_size,
+        quickvan_win_size: s.transfer_quickvan_win_size,
+        kermit_long_packet: s.transfer_kermit_long_packet,
+        kermit_file_attr: s.transfer_kermit_file_attr,
+        quirks: Quirks {
+            zmodem_escape_ctl: s.transfer_zmodem_escape_ctl,
+            bplus_escape_ctl: s.transfer_bplus_escape_ctl,
+            auto_rename: s.transfer_auto_rename,
+        },
+        log: LogFlags {
+            kermit: s.transfer_kermit_log,
+            xmodem: s.transfer_xmodem_log,
+            zmodem: s.transfer_zmodem_log,
+            bplus: s.transfer_bplus_log,
+            quickvan: s.transfer_quickvan_log,
+            ymodem: s.transfer_ymodem_log,
+        },
+        // Upstream writes a protocol log beside the *transfer* directory, and
+        // `transfer.dir` is allowed to be empty — which is upstream's default
+        // and means the working directory, which is what `None` says here.
+        log_dir: Some(PathBuf::from(&s.transfer_dir)).filter(|p| !p.as_os_str().is_empty()),
+        // Not a setting: it is the receive dialog's own checkbox, and
+        // `transfer.auto_rename` is the setting that makes the answer moot.
+        overwrite: Options::default().overwrite,
+    }
+}
+
+/// The job options a settings file implies, for the three a dialog would
+/// otherwise have to invent.
+///
+/// Separate from [`xfer_options`] because these belong to the [`Job`] rather
+/// than to the transfer — which is `tt-xfer`'s own division and the reason
+/// XMODEM's block format is not a field of [`Options`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct JobDefaults {
+    /// `XmodemOpt`. **Checksum**, not CRC — the default is the `else` branch
+    /// of `ttset.c:1039`'s `_stricmp` chain.
+    pub xmodem_opt: XmodemOpt,
+    /// `XmodemBin`, which is **on** where `TransBin` below is off. XMODEM
+    /// keeps its own flag and upstream ships the two disagreeing.
+    pub xmodem_binary: bool,
+    /// `TransBin`, the Binary checkbox every other protocol's dialog carries.
+    pub binary: bool,
+    /// `ZmodemAuto`: whether the terminal starts a receive on seeing a peer's
+    /// `ZRQINIT` go past.
+    pub zmodem_auto: bool,
+    /// `BPAuto`, the same for B-Plus.
+    pub bplus_auto: bool,
+    /// `ReceivefileAutoStopWaitTime`, for [`Job::Raw`].
+    pub raw_autostop: Duration,
+}
+
+pub fn job_defaults(s: &Settings) -> JobDefaults {
+    JobDefaults {
+        xmodem_opt: match s.transfer_xmodem_opt {
+            TransferXmodemOpt::Checksum => XmodemOpt::Checksum,
+            TransferXmodemOpt::Crc => XmodemOpt::Crc,
+            TransferXmodemOpt::Crc1K => XmodemOpt::Crc1K,
+            TransferXmodemOpt::Checksum1K => XmodemOpt::Checksum1K,
+        },
+        xmodem_binary: s.transfer_xmodem_binary,
+        binary: s.transfer_binary,
+        zmodem_auto: s.transfer_zmodem_auto,
+        bplus_auto: s.transfer_bplus_auto,
+        // Upstream's is in whole seconds and its own clock only starts at the
+        // first byte received — see `Job::Raw`.
+        raw_autostop: Duration::from_secs(s.transfer_raw_autostop.max(0) as u64),
     }
 }
 
@@ -410,5 +504,108 @@ mod tests {
         // on its own timeout would be visible.
         let got = r.wait(Duration::from_secs(10));
         assert_eq!(got, Some(outcome(false)));
+    }
+
+    // --- the options a file implies ---------------------------------------
+
+    fn from_ini(body: &str) -> Settings {
+        Settings::load(&tt_config::Ini::parse(
+            format!("[Tera Term]\r\n{body}").as_bytes(),
+        ))
+    }
+
+    /// With nothing in the file, what comes out is what `tt-xfer` would have
+    /// used anyway — which is the check that the two lists of upstream
+    /// defaults still agree. They are transcribed independently, so this is
+    /// the only thing that would notice one of them drifting.
+    #[test]
+    fn an_empty_file_gives_the_crates_own_defaults() {
+        let link = Link::Network;
+        assert_eq!(
+            xfer_options(&Settings::default(), link),
+            Options {
+                link,
+                ..Options::default()
+            }
+        );
+    }
+
+    #[test]
+    fn the_file_decides_the_timeouts_and_the_window() {
+        let s = from_ini(
+            "XmodemTimeouts=1,2,3,4,5\r\n\
+             ZmodemTimeouts=7,8,9,11\r\n\
+             ZmodemWinSize=4096\r\n\
+             ZmodemEscCtl=on\r\n\
+             KmtLongPacket=on\r\n\
+             ZmodemLog=on\r\n",
+        );
+        let o = xfer_options(&s, Link::Network);
+        assert_eq!(o.timeouts.xmodem, [1, 2, 3, 4, 5]);
+        assert_eq!(o.timeouts.zmodem, [7, 8, 9, 11]);
+        assert_eq!(o.zmodem_win_size, 4096);
+        assert!(o.quirks.zmodem_escape_ctl);
+        assert!(o.kermit_long_packet);
+        assert!(o.log.zmodem && !o.log.xmodem);
+    }
+
+    /// **A timeout floors at 1 rather than taking the default**, which is the
+    /// opposite of what every other bounded int in the file does — and
+    /// `ZmodemTimeouts`' second field floors at 0, because 0 is how "never
+    /// time out" is spelt on a network link.
+    #[test]
+    fn a_zero_timeout_is_one_second_and_not_the_default() {
+        let s = from_ini("XmodemTimeouts=0,0,0,0,0\r\nZmodemTimeouts=0,0,0,0\r\n");
+        let o = xfer_options(&s, Link::Network);
+        assert_eq!(o.timeouts.xmodem, [1, 1, 1, 1, 1], "ttset.c:1822");
+        assert_eq!(o.timeouts.zmodem, [1, 0, 1, 1], "ttset.c:1861 floors at 0");
+    }
+
+    /// The XMODEM block format's default is the `else` branch of
+    /// `ttset.c:1039`'s `_stricmp` chain — plain checksum — and the writer's
+    /// own spelling for it, `checksum`, is not one the reader has an arm for.
+    #[test]
+    fn the_xmodem_default_is_checksum_and_its_spelling_round_trips() {
+        assert_eq!(
+            job_defaults(&Settings::default()).xmodem_opt,
+            XmodemOpt::Checksum
+        );
+        assert_eq!(
+            job_defaults(&from_ini("XmodemOpt=1k\r\n")).xmodem_opt,
+            XmodemOpt::Crc1K
+        );
+        // What upstream writes, read back.
+        assert_eq!(
+            job_defaults(&from_ini("XmodemOpt=checksum\r\n")).xmodem_opt,
+            XmodemOpt::Checksum
+        );
+        // ...and so does anything else, which is how it round-trips at all.
+        assert_eq!(
+            job_defaults(&from_ini("XmodemOpt=nonsense\r\n")).xmodem_opt,
+            XmodemOpt::Checksum
+        );
+    }
+
+    /// XMODEM's binary flag and everyone else's are two settings, and upstream
+    /// ships them disagreeing: `XmodemBin` on, `TransBin` off.
+    #[test]
+    fn the_two_binary_flags_are_not_one_setting() {
+        let d = job_defaults(&Settings::default());
+        assert!(d.xmodem_binary, "ttset.c:1051");
+        assert!(!d.binary, "ttset.c:975");
+    }
+
+    /// `transfer.dir` is empty by default, and an empty log directory means
+    /// the working directory rather than a path of `""`.
+    #[test]
+    fn an_empty_transfer_dir_is_no_directory_at_all() {
+        assert_eq!(
+            xfer_options(&Settings::default(), Link::Network).log_dir,
+            None
+        );
+        assert_eq!(
+            xfer_options(&from_ini("FileDir=/tmp\r\n"), Link::Network).log_dir,
+            Some(PathBuf::from("/tmp"))
+        );
     }
 }

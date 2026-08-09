@@ -44,7 +44,10 @@ pub mod xfer;
 pub use log::{LogMode, LogOptions, SessionLog, Timestamp};
 pub use macros::{MacroLink, MACRO_BUF_SIZE};
 pub use settings::{log_options, vt_config};
-pub use xfer::{xfer_options, TransferError, TransferOutcome, TransferReply, TransferStatus};
+pub use xfer::{
+    job_defaults, xfer_options, JobDefaults, TransferError, TransferOutcome, TransferReply,
+    TransferStatus,
+};
 // Re-exported rather than reached for directly, so that a frontend — the C ABI
 // above all — takes the settings and the metadata that describes them from the
 // same place it takes the session they belong to.

@@ -182,13 +182,22 @@ impl Default for Options {
 }
 
 /// XMODEM's block format. `xmodem.h`.
+///
+/// **The default is checksum**, which is upstream's and is not the obvious
+/// choice: `ttset.c:1039` reads `XmodemOpt` with an *empty* default and tests
+/// it against `crc`, `1k` and `1ksum`, so anything else — including the
+/// `checksum` its own writer emits — falls to the `else` arm. Picking CRC here
+/// because it is the better format would give a `Job` built from
+/// `Default::default()` a different block size from one built from an
+/// untouched `TERATERM.INI`, which is the kind of disagreement nobody finds
+/// until a peer that only speaks checksum refuses the transfer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum XmodemOpt {
     /// 128-byte blocks with an 8-bit checksum: the original, and the only
     /// thing some very old peers understand.
+    #[default]
     Checksum,
     /// 128-byte blocks with a CRC. What a receiver asks for by sending `C`.
-    #[default]
     Crc,
     /// 1K blocks with a CRC.
     Crc1K,

@@ -669,7 +669,7 @@ void MainWindow::sendBreak()
 
 void MainWindow::sendFile()
 {
-    XferOptionsDialog options(true, this);
+    XferOptionsDialog options(true, m_session, this);
     if (options.exec() != QDialog::Accepted) {
         return;
     }
@@ -703,7 +703,7 @@ void MainWindow::sendFile()
 
 void MainWindow::receiveFile()
 {
-    XferOptionsDialog options(false, this);
+    XferOptionsDialog options(false, m_session, this);
     if (options.exec() != QDialog::Accepted) {
         return;
     }
