@@ -2815,7 +2815,9 @@ size_t tt_macro_service(TtMacro *m, TtSession *session);
  *
  * **Service it before believing a false**: a macro that has just ended may
  * have left a last job — the error dialog it stopped at, for one — which is
- * only run by [`tt_macro_service`].
+ * only run by [`tt_macro_service`]. And the end of a macro always produces one
+ * wakeup of its own, so asking this after every service is enough; there is
+ * nothing to poll for.
  */
 bool tt_macro_running(const TtMacro *m);
 

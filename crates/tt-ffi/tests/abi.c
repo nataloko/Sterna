@@ -1600,6 +1600,37 @@ static void test_macro_without_a_frontend(void)
     remove_macro();
 }
 
+/* A macro that ends without asking for anything still has to wake its
+ * frontend, because a frontend has no timer to fall back on. */
+static void test_macro_ends_quietly(void)
+{
+    /* `pause` sleeps on the macro's own thread and posts no job, so nothing
+     * this side hears a word until the thread knocks on its way out. */
+    const char *path = write_macro("pause 1\n");
+    CHECK(path != NULL);
+    if (!path)
+        return;
+
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+    const char *argv[] = {path, NULL};
+    TtMacro *m = tt_macro_start(s, argv, NULL);
+    CHECK(m != NULL);
+    if (m) {
+        struct pollfd pfd = {tt_macro_poll_fd(m), POLLIN, 0};
+        /* Five seconds against a one-second sleep: a pass here is the wakeup
+         * arriving, and a timeout is the bug this test exists for. */
+        CHECK(poll(&pfd, 1, 5000) > 0);
+        tt_macro_service(m, s);
+        CHECK(!tt_macro_running(m));
+        tt_macro_free(m);
+        tt_session_unlink_macro(s);
+    }
+    tt_session_free(s);
+    remove_macro();
+}
+
 /* Freeing a macro that is still running is the window closing on a script,
  * and it has to end rather than deadlock against the join. */
 static void test_macro_cancelled(void)
@@ -1645,6 +1676,7 @@ int main(void)
     test_transfer();
     test_macro();
     test_macro_without_a_frontend();
+    test_macro_ends_quietly();
     test_macro_cancelled();
     test_null_safety();
 

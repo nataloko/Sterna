@@ -3942,6 +3942,9 @@ fn status(v: TtStatus) -> Result<(), TtlError> {
 pub struct TtMacro {
     rx: MacroReceiver,
     thread: Option<std::thread::JoinHandle<()>>,
+    /// Set by the macro's thread as its last act but one, before the wakeup
+    /// below. See [`tt_macro_start`] for why this is not `JoinHandle::is_finished`.
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ui: CUi,
 }
 
@@ -4002,12 +4005,27 @@ pub extern "C" fn tt_macro_start(
         }
     };
     let link = s.session.link_macro();
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = done.clone();
     let thread = std::thread::Builder::new()
         .name("ttl".into())
         .spawn(move || {
-            let mut host = SessionHost::new(tx, link);
+            let mut host = SessionHost::new(tx.clone(), link);
             let mut it = Interp::with_cmdline(&cmd, body, &mut host);
             it.run(&mut host);
+            // A macro that ends without asking for anything would otherwise
+            // never be noticed: the frontend only looks when its descriptor
+            // wakes it, and the last thing a script does is usually a `sendln`
+            // whose job it has already serviced. So the thread knocks once on
+            // its way out.
+            //
+            // The flag is set *first*, and it is what [`tt_macro_running`]
+            // reads. `JoinHandle::is_finished` is false until the closure has
+            // actually returned — which is after this line — so a frontend
+            // servicing the wakeup would find the macro still running and go
+            // back to waiting for a knock that has already happened.
+            flag.store(true, std::sync::atomic::Ordering::Release);
+            let _ = tx.post(Box::new(|_, _| {}));
         });
     let thread = match thread {
         Ok(t) => t,
@@ -4023,6 +4041,7 @@ pub extern "C" fn tt_macro_start(
     Box::into_raw(Box::new(TtMacro {
         rx,
         thread: Some(thread),
+        done,
         ui: CUi {
             vt: match unsafe { ui.as_ref() } {
                 Some(vt) => *vt,
@@ -4098,11 +4117,13 @@ pub extern "C" fn tt_macro_service(m: *mut TtMacro, session: *mut TtSession) -> 
 ///
 /// **Service it before believing a false**: a macro that has just ended may
 /// have left a last job — the error dialog it stopped at, for one — which is
-/// only run by [`tt_macro_service`].
+/// only run by [`tt_macro_service`]. And the end of a macro always produces one
+/// wakeup of its own, so asking this after every service is enough; there is
+/// nothing to poll for.
 #[no_mangle]
 pub extern "C" fn tt_macro_running(m: *const TtMacro) -> bool {
     match unsafe { m.as_ref() } {
-        Some(m) => m.thread.as_ref().is_some_and(|t| !t.is_finished()),
+        Some(m) => !m.done.load(std::sync::atomic::Ordering::Acquire),
         None => false,
     }
 }
