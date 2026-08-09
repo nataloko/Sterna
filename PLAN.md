@@ -1088,14 +1088,14 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (121 settings over 109 keys: 39 for the terminal,
+  `crates/tt-config/` (122 settings over 110 keys: 39 for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
   writes into, 2026-08-09, plus the whole log family, then the whole
-  file-transfer family, then the six the terminal was already honouring with no
-  key to read, 2026-08-09), the map onto a running terminal in
+  file-transfer family, then the seven the terminal was already honouring with
+  no key to read, 2026-08-09), the map onto a running terminal in
   `tt-session`, the schema as data over the C ABI, and a Qt dialog that builds
   itself from it. What remains is the *rest of the settings*, which is a line
-  and a citation each — 156 keys as of 2026-08-09, and `tests/upstream.rs`
+  and a citation each — 155 keys as of 2026-08-09, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -2958,7 +2958,7 @@ is the whole of what a value in the file means (`ttset.c:344`). Every other
 default in the schema was already right, `TCPPort`'s deliberate initialiser
 trap included.
 
-It also prints how far the transcription has got — 121 settings over 109 keys,
+It also prints how far the transcription has got — 122 settings over 110 keys,
 against the 256 `ttset.c` reads — so "the rest of the settings" has a number
 that cannot go stale in a comment.
 
@@ -3014,14 +3014,16 @@ why: it means "the peer's trigger has already gone past in the stream", which
 is true of a transfer the terminal started by itself and never of one a person
 picked from a menu.
 
-#### And six the terminal was already honouring with no key to read
+#### And seven the terminal was already honouring with no key to read
 
 `crates/tt-config/`, `tt-vt`, `tt-session/src/settings.rs` and the shell,
 2026-08-09. A different way of choosing what to transcribe next: rather than
 taking the next family out of `ttset.c`, take the fields of `tt-vt::Config`
 that `vt_config` was leaving at whatever `Config::default()` held, because the
-schema had no key for them. There were six, and three of them carried a comment
-saying so.
+schema had no key for them. There were seven, and three of them carried a
+comment saying so. `vt_config` now names every field the schema can reach: what
+is left taking `base` is the cell size the frontend measured, `decrqcra` for
+the conformance harness, and `japanese`, none of which is a `ttset.c` key.
 
 **Four were a line each.** `EnableANSIColor`, `DisableAppKeypad`,
 `DisableAppCursor` and `MaxBuffSize`. Two of them have a shape worth knowing:
@@ -3040,6 +3042,17 @@ saying so.
   gives no history rather than negative history. It also needed an open-ended
   range: `ttset.c:1214` takes the default below 24 and has no ceiling of its
   own, which is `int(24..)`.
+
+**One was a list, and it stayed a string.** `ISO2022ShiftFunction` is the only
+key in `ttset.c` shaped this way — comma-separated names with `+`/`-` prefixes,
+plus `on`/`all` and `off`/`none`, which assign the whole word — so a
+`flags(...)` type in the generator would have served one row. `ShiftFlags`
+already holds the nine names and their bits, and `parse_ini`/`to_ini` went
+there. **The list starts from nothing whatever the default says**: the `"on"`
+at `ttset.c:1875` is the string used when the key is *absent*, and a key that
+is present starts the loop at `ISO2022_SHIFT_NONE`, so
+`ISO2022ShiftFunction=-SS2` is a terminal with every shift disabled rather than
+all but one.
 
 **Two needed the schema to grow a spelling first.** `AcceptTitleChangeRequest`
 and `TitleReportSequence` were booleans in `Config`, each with a doc comment

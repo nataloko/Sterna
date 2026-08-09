@@ -783,6 +783,12 @@ And for the settings, all of which came out of `ini-audit/`:
   round gives negative history on a small ceiling. And it is `ttset.c:615`'s
   bound with no ceiling of its own — under 24 takes the *default* of 10000, so
   `MaxBuffSize=1` is not a one-line buffer.
+- **`ISO2022ShiftFunction`'s list starts from nothing, not from its default.**
+  `ttset.c:1875` reads the key with a default string of `"on"` and then runs a
+  loop from `ISO2022_SHIFT_NONE`, so the default applies only when the key is
+  *absent*. `ISO2022ShiftFunction=-SS2` therefore disables **every** shift
+  rather than all but one — which is precisely what somebody writing that line
+  means by it, and the `-` prefix exists to make them think it works.
 - **`EnableANSIColor` is a rendering gate, not a parse gate**, unlike the three
   colour flags read beside it. `SGR 30-37` still stores the colour in the cell
   and `vtdisp.c:2417` declines to draw with it, so the screen is the normal
