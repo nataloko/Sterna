@@ -1,6 +1,6 @@
 # Sterna core
 
-The Rust side. Ten of the crates `PLAN.md` describes, plus three CLIs that
+The Rust side. Eleven of the crates `PLAN.md` describes, plus three CLIs that
 exist so the engine can be measured against something and two that drive a
 running window from outside it.
 
@@ -13,6 +13,7 @@ running window from outside it.
 | `tt-config` | `TERATERM.INI`, the settings schema everything else reads its list of settings from, and the Tera Term command line — `_ParseParam` and TTSSH's hook over it, which is what `connect` and a `ttermpro`-compatible entry point both need. Held against a real Win32 by `ini-audit/`. |
 | `tt-xfer` | X/Y/ZMODEM, Kermit, B-Plus and Quick-VAN — Tera Term's own protocol C, vendored under `vendor/ttpfile/` and driven from Rust. See [its README](tt-xfer/README.md). |
 | `tt-ttl` | Tera Term's macro language, ported from `ttpmacro/`, with the terminal behind a trait instead of behind DDE. See [its README](tt-ttl/README.md). |
+| `tt-lua` | Lua over the same `ScriptHost` the macro language uses — the second scripting language, chosen rather than inherited. See [its README](tt-lua/README.md). |
 | `tt-session` | A terminal attached to a connection: the loop between `tt-vt` and `tt-conn`, and what the C ABI exports. See [its README](tt-session/README.md). |
 | `tt-macro` | The join: a `tt-ttl` script on its own thread, driving a `tt-session` on the frontend's. See [its README](tt-macro/README.md). |
 | `tt-ctl` | The control socket that replaces DDE — JSON-RPC over a Unix socket, and the `ttctl` and `ttpmacro` clients. See [its README](tt-ctl/README.md). |

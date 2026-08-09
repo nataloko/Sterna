@@ -9,6 +9,7 @@ members = [
     "tt-config",
     "tt-xfer",
     "tt-ttl",
+    "tt-lua",
     "tt-macro",
     "tt-ctl",
     "tt-ffi",
@@ -38,6 +39,7 @@ tt-session = { path = "tt-session" }
 tt-config = { path = "tt-config" }
 tt-xfer = { path = "tt-xfer" }
 tt-ttl = { path = "tt-ttl" }
+tt-lua = { path = "tt-lua" }
 tt-macro = { path = "tt-macro" }
 tt-ctl = { path = "tt-ctl" }
 tt-ffi = { path = "tt-ffi" }
