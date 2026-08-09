@@ -6,7 +6,8 @@
  * differential-test contract between Tera Term and the Rust reimplementation,
  * so the format is deliberately line-oriented and diff-friendly.
  *
- *   oracle [--cols N] [--rows N] [--term ID] [--attrs] [--scrollback] [FILE]
+ *   oracle [--cols N] [--rows N] [--term ID] [--attrs] [--scrollback]
+ *          [--crreceive cr|lf|crlf|auto] [FILE]
  *
  * With no FILE, reads stdin. Output goes to stdout.
  */
@@ -253,16 +254,62 @@ static int disp_width(unsigned int cp)
 	return (p == 'W' || p == 'F') ? 2 : 1;
 }
 
-static void dump(FILE *out, int cols, int rows, const char *term_id, int want_attrs)
+/*
+ * One row, by ABSOLUTE buffer index and under its own row label.
+ *
+ * BuffGetAnyLineDataW takes an absolute index (it calls GetLinePtr(offset_y)
+ * directly), unlike BuffGetCursorCharAttr which is screen-relative; PageStart
+ * maps one to the other. It also returns a STRING rather than one wchar_t per
+ * column -- a surrogate pair is two units, combining marks add more, and the
+ * padding cell behind a wide character is skipped entirely -- so `line` is
+ * sized for the worst case and the padding below counts DISPLAY COLUMNS rather
+ * than array indices. Getting that wrong truncates the row and overruns the
+ * buffer.
+ */
+static void dump_row(FILE *out, int index, int label, int cols,
+                     wchar_t *line, size_t line_cap)
 {
-	/*
-	 * BuffGetAnyLineDataW returns a STRING, not one wchar_t per column: a
-	 * surrogate pair is two units, combining marks add more, and the padding
-	 * cell behind a wide character is skipped entirely. So the buffer must be
-	 * sized for the worst case, and the dump must pad by DISPLAY COLUMN
-	 * rather than by array index. Getting this wrong truncates the line and
-	 * overruns the buffer.
-	 */
+	int n, x, col;
+
+	memset(line, 0, line_cap * sizeof(wchar_t));
+	n = BuffGetAnyLineDataW(index, line, line_cap);
+	if (n < 0) {
+		n = 0;
+	}
+	fprintf(out, "%3d |", label);
+	col = 0;
+	for (x = 0; x < n && col < cols; x++) {
+		unsigned int cp = (unsigned int)line[x];
+		int w;
+
+		if (cp == 0) {
+			break;
+		}
+		/* Recombine surrogates: wchar_t is 32-bit here, but buffer.c
+		 * stores the UTF-16 form, so pairs arrive as two units. */
+		if (cp >= 0xD800 && cp <= 0xDBFF && x + 1 < n) {
+			unsigned int lo = (unsigned int)line[x + 1];
+			if (lo >= 0xDC00 && lo <= 0xDFFF) {
+				cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+				x++;
+			}
+		}
+		w = disp_width(cp);
+		if (col + w > cols) {
+			break;
+		}
+		put_utf8(out, cp);
+		col += w;
+	}
+	for (; col < cols; col++) {
+		fputc(' ', out);
+	}
+	fprintf(out, "|\n");
+}
+
+static void dump(FILE *out, int cols, int rows, const char *term_id,
+                 int want_attrs, int want_scrollback)
+{
 	size_t line_cap = (size_t)cols * 8 + 8;
 	wchar_t *line = (wchar_t *)malloc(line_cap * sizeof(wchar_t));
 	size_t reply_len;
@@ -279,46 +326,24 @@ static void dump(FILE *out, int cols, int rows, const char *term_id, int want_at
 		fprintf(out, "# title %s\n", title);
 	}
 
+	/*
+	 * The lines that have left the page, oldest first and numbered backwards
+	 * from it, so -1 is the row directly above row 0. Off by default: it is
+	 * the answer to a question most cases do not ask, and turning it on for
+	 * everything would churn every dump in the suite.
+	 *
+	 * Absolute index 0 is the OLDEST line in the ring -- GetLinePtr adds
+	 * BuffStartAbs -- so the history is [0, PageStart).
+	 */
+	if (want_scrollback) {
+		fprintf(out, "# scrollback %d\n", PageStart);
+		for (y = 0; y < PageStart; y++) {
+			dump_row(out, y, y - PageStart, cols, line, line_cap);
+		}
+	}
+
 	for (y = 0; y < rows; y++) {
-		int n, x, col;
-
-		memset(line, 0, line_cap * sizeof(wchar_t));
-		/* BuffGetAnyLineDataW takes an ABSOLUTE buffer index (it calls
-		 * GetLinePtr(offset_y) directly), unlike BuffGetCursorCharAttr which
-		 * is screen-relative. PageStart maps one to the other. */
-		n = BuffGetAnyLineDataW(PageStart + y, line, line_cap);
-		if (n < 0) {
-			n = 0;
-		}
-		fprintf(out, "%3d |", y);
-		col = 0;
-		for (x = 0; x < n && col < cols; x++) {
-			unsigned int cp = (unsigned int)line[x];
-			int w;
-
-			if (cp == 0) {
-				break;
-			}
-			/* Recombine surrogates: wchar_t is 32-bit here, but buffer.c
-			 * stores the UTF-16 form, so pairs arrive as two units. */
-			if (cp >= 0xD800 && cp <= 0xDBFF && x + 1 < n) {
-				unsigned int lo = (unsigned int)line[x + 1];
-				if (lo >= 0xDC00 && lo <= 0xDFFF) {
-					cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-					x++;
-				}
-			}
-			w = disp_width(cp);
-			if (col + w > cols) {
-				break;
-			}
-			put_utf8(out, cp);
-			col += w;
-		}
-		for (; col < cols; col++) {
-			fputc(' ', out);
-		}
-		fprintf(out, "|\n");
+		dump_row(out, PageStart + y, y, cols, line, line_cap);
 	}
 
 	if (want_attrs) {
@@ -591,7 +616,7 @@ static void run_stream(const unsigned char *input, size_t len)
 
 int main(int argc, char **argv)
 {
-	int cols = 80, rows = 24, want_attrs = 0, cr_receive = IdCR;
+	int cols = 80, rows = 24, want_attrs = 0, want_scrollback = 0, cr_receive = IdCR;
 	const char *term_id = "vt100";
 	const char *path = NULL;
 	unsigned char *input;
@@ -608,6 +633,8 @@ int main(int argc, char **argv)
 			term_id = argv[++i];
 		} else if (strcmp(argv[i], "--attrs") == 0) {
 			want_attrs = 1;
+		} else if (strcmp(argv[i], "--scrollback") == 0) {
+			want_scrollback = 1;
 		} else if (strcmp(argv[i], "--crreceive") == 0 && i + 1 < argc) {
 			const char *v = argv[++i];
 			if (strcmp(v, "cr") == 0)        cr_receive = IdCR;
@@ -618,7 +645,7 @@ int main(int argc, char **argv)
 		} else if (strcmp(argv[i], "--help") == 0) {
 			fprintf(stderr,
 			        "usage: oracle [--cols N] [--rows N] [--term ID] [--attrs]\n"
-			        "              [--crreceive cr|lf|crlf|auto] [FILE]\n");
+			        "              [--scrollback] [--crreceive cr|lf|crlf|auto] [FILE]\n");
 			return 0;
 		} else if (argv[i][0] != '-') {
 			path = argv[i];
@@ -678,7 +705,7 @@ int main(int argc, char **argv)
 	 * that pads every row past its own width and reports a header the terminal
 	 * has outgrown.
 	 */
-	dump(stdout, NumOfColumns, NumOfLines, term_id, want_attrs);
+	dump(stdout, NumOfColumns, NumOfLines, term_id, want_attrs, want_scrollback);
 
 	free(input);
 	return 0;

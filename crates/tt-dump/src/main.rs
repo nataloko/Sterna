@@ -3,7 +3,7 @@
 //! Same arguments as `oracle/build/oracle`, same output format, byte for byte:
 //!
 //! ```text
-//! tt-dump [--cols N] [--rows N] [--term ID] [--attrs]
+//! tt-dump [--cols N] [--rows N] [--term ID] [--attrs] [--scrollback]
 //!         [--crreceive cr|lf|crlf|auto] [FILE]
 //! ```
 //!
@@ -18,13 +18,13 @@
 use std::io::{Read, Write};
 
 use tt_grid::{
-    char_width, ATTR2_BACK, ATTR2_FORE, ATTR2_PROTECT, ATTR_BLINK, ATTR_BOLD, ATTR_REVERSE,
+    char_width, Cell, ATTR2_BACK, ATTR2_FORE, ATTR2_PROTECT, ATTR_BLINK, ATTR_BOLD, ATTR_REVERSE,
     ATTR_SPECIAL, ATTR_UNDER, WIDTH_PAD,
 };
 use tt_vt::{Config, CrReceive, Key, Modifiers, MouseEvent, TermId, Vt};
 
 const USAGE: &str = "usage: tt-dump [--cols N] [--rows N] [--term ID] [--attrs]\n\
-                     \x20              [--crreceive cr|lf|crlf|auto] [FILE]\n";
+                     \x20              [--scrollback] [--crreceive cr|lf|crlf|auto] [FILE]\n";
 
 /// `TermWidthMax` / `TermHeightMax` from Tera Term's `ttcommon.h`, so the two
 /// engines reject the same sizes.
@@ -36,9 +36,20 @@ struct Args {
     rows: usize,
     term: String,
     attrs: bool,
+    scrollback: bool,
     cr_receive: CrReceive,
     path: Option<String>,
 }
+
+/// `ts.ScrollBuffSize`, which the oracle sets to upstream's default of 100
+/// (`ttset.c:750`) and which is the **whole** buffer, page included. The grid
+/// counts the lines beyond the page instead, so the conversion is upstream's
+/// own — `buffer.c:641` grows the buffer to hold the page rather than shrinking
+/// the page to the buffer.
+///
+/// Both engines have to agree on it or a case that scrolls past the history
+/// and then grows the page diverges on what came back out of it.
+const SCROLL_BUFF_SIZE: usize = 100;
 
 fn main() {
     let args = match parse_args() {
@@ -78,6 +89,7 @@ fn main() {
         rows: args.rows,
         term_id,
         cr_receive: args.cr_receive,
+        scrollback_max: SCROLL_BUFF_SIZE.saturating_sub(args.rows),
         ..Config::default()
     });
     run_stream(&mut vt, &input);
@@ -203,6 +215,7 @@ fn parse_args() -> Result<Option<Args>, String> {
         rows: 24,
         term: "vt100".to_string(),
         attrs: false,
+        scrollback: false,
         cr_receive: CrReceive::Cr,
         path: None,
     };
@@ -230,6 +243,7 @@ fn parse_args() -> Result<Option<Args>, String> {
             }
             "--term" => args.term = next(&mut i)?,
             "--attrs" => args.attrs = true,
+            "--scrollback" => args.scrollback = true,
             "--crreceive" => {
                 let v = next(&mut i)?;
                 args.cr_receive = match v.as_str() {
@@ -265,42 +279,19 @@ fn dump(out: &mut impl Write, vt: &Vt, args: &Args) -> std::io::Result<()> {
         writeln!(out, "# title {}", vt.remote_title())?;
     }
 
+    // The lines that have left the page, oldest first and numbered backwards
+    // from it — `oracle/src/main.c:dump`'s section, and off by default for the
+    // same reason: it answers a question most cases do not ask.
+    if args.scrollback {
+        let history = grid.scrollback_len();
+        writeln!(out, "# scrollback {history}")?;
+        for (i, line) in grid.scrollback().enumerate() {
+            dump_row(out, line, i as isize - history as isize, grid.cols())?;
+        }
+    }
+
     for y in 0..grid.rows() {
-        write!(out, "{y:3} |")?;
-        let mut col = 0;
-        for cell in grid.line(y) {
-            if col >= grid.cols() {
-                break;
-            }
-            if cell.width_class == WIDTH_PAD {
-                continue;
-            }
-            let base = cell.text[0];
-            let w = if base == 0 {
-                1
-            } else {
-                char_width(base).max(1)
-            };
-            if col + w > grid.cols() {
-                break;
-            }
-            if base == 0 {
-                out.write_all(b" ")?;
-            } else {
-                for cp in cell.codepoints() {
-                    let mut buf = [0u8; 4];
-                    let s = char::from_u32(cp)
-                        .unwrap_or('\u{fffd}')
-                        .encode_utf8(&mut buf);
-                    out.write_all(s.as_bytes())?;
-                }
-            }
-            col += w;
-        }
-        for _ in col..grid.cols() {
-            out.write_all(b" ")?;
-        }
-        writeln!(out, "|")?;
+        dump_row(out, grid.line(y), y as isize, grid.cols())?;
     }
 
     if args.attrs {
@@ -360,6 +351,49 @@ fn dump(out: &mut impl Write, vt: &Vt, args: &Args) -> std::io::Result<()> {
     }
 
     out.flush()
+}
+
+/// One row, under its own label — `oracle/src/main.c:dump_row`.
+///
+/// Padding cells are skipped rather than printed, and the trailing fill counts
+/// **display columns** rather than array indices, because a wide character
+/// occupies two of the second and one of the first.
+fn dump_row(out: &mut impl Write, line: &[Cell], label: isize, cols: usize) -> std::io::Result<()> {
+    write!(out, "{label:3} |")?;
+    let mut col = 0;
+    for cell in line {
+        if col >= cols {
+            break;
+        }
+        if cell.width_class == WIDTH_PAD {
+            continue;
+        }
+        let base = cell.text[0];
+        let w = if base == 0 {
+            1
+        } else {
+            char_width(base).max(1)
+        };
+        if col + w > cols {
+            break;
+        }
+        if base == 0 {
+            out.write_all(b" ")?;
+        } else {
+            for cp in cell.codepoints() {
+                let mut buf = [0u8; 4];
+                let s = char::from_u32(cp)
+                    .unwrap_or('\u{fffd}')
+                    .encode_utf8(&mut buf);
+                out.write_all(s.as_bytes())?;
+            }
+        }
+        col += w;
+    }
+    for _ in col..cols {
+        out.write_all(b" ")?;
+    }
+    writeln!(out, "|")
 }
 
 /// `oracle/src/main.c:attr_char` — one character per cell, most significant
