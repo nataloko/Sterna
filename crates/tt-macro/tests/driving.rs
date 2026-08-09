@@ -17,10 +17,12 @@ use tt_vt::Config;
 /// How long a test will wait for a macro before calling it hung.
 const LIMIT: Duration = Duration::from_secs(10);
 
-/// What a run produced: the bytes the far end received, and the screen.
+/// What a run produced: the bytes the far end received, the screen, and the
+/// terminal itself for the things a macro changes that neither of those shows.
 struct Run {
     sent: Vec<u8>,
     screen: Vec<String>,
+    session: Session,
 }
 
 /// Run a script against a session with a far end.
@@ -84,10 +86,11 @@ fn drive(script: &str, mut respond: impl FnMut(&[u8]) -> Vec<u8>) -> Run {
     thread.join().unwrap();
 
     Run {
-        sent,
         screen: (0..session.grid().rows())
             .map(|y| row(&session, y))
             .collect(),
+        sent,
+        session,
     }
 }
 
@@ -247,6 +250,25 @@ fn settitle_reaches_the_terminal() {
         Vec::new()
     });
     assert_eq!(r.sent, b"from a macro\r");
+}
+
+/// `setecho` changes a setting *and* a mode, because upstream's are one
+/// variable: `ts.LocalEcho` is what SRM assigns (`vtterm.c:2053`), so a macro
+/// setting it is indistinguishable from the host setting it.
+///
+/// It is asserted against the terminal rather than against the screen or the
+/// wire because nothing else can see it yet — and that is exactly how this
+/// went wrong: the write named the *INI key* where `Settings::set_str` wants
+/// the dotted name, so it resolved to nothing, answered `false`, and left
+/// `setecho` a command that ran and did nothing at all.
+#[test]
+fn setecho_reaches_the_terminals_own_mode() {
+    let r = drive("setecho 1\nsendln 'done'", |_| Vec::new());
+    assert_eq!(r.sent, b"done\r");
+    assert!(r.session.vt().local_echo(), "setecho 1 left the mode off");
+
+    let r = drive("setecho 1\nsetecho 0\nsendln 'done'", |_| Vec::new());
+    assert!(!r.session.vt().local_echo(), "setecho 0 left the mode on");
 }
 
 /// `clearscreen` is a terminal operation and not a wire one — nothing goes

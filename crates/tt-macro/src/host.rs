@@ -294,8 +294,16 @@ impl ScriptHost for SessionHost {
     }
 
     fn set_local_echo(&mut self, on: bool) -> Result<(), TtlError> {
+        // The **dotted** name, which is what `Settings::set_str` matches on.
+        // The INI key is `LocalEcho` and naming it that here is what this did
+        // first: `set_str` has no arm for it, so it answered `false` and
+        // `setecho` was a command that parsed, reported nothing and changed
+        // nothing. Every write through this seam wants the schema's name.
         self.ask(move |s| {
-            let _ = s.set_setting("LocalEcho", if on { "on" } else { "off" });
+            // The error is the transport's — a resize on a line that has gone
+            // — and is not this command's to report. `Ok(false)` is the typo.
+            let r = s.set_setting("terminal.local_echo", if on { "on" } else { "off" });
+            debug_assert!(!matches!(r, Ok(false)), "no setting by that name");
         })
     }
 
