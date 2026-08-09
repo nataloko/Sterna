@@ -14,9 +14,11 @@ pub mod protocol;
 
 pub use protocol::{TelnetEvent, TelnetMode, TelnetParams};
 
+use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::time::Duration;
+use std::path::Path;
+use std::time::{Duration, Instant};
 
 use crate::error::{Error, Result};
 use crate::transport::{Transport, TransportEvent};
@@ -29,6 +31,18 @@ pub struct TelnetConn {
     describe: String,
     /// Read scratch, kept so a busy line does not allocate per read.
     buf: Vec<u8>,
+    /// `cv.LastSendTime` — when anything last went out, which is what the
+    /// keepalive measures against. Stamped by every send including the NOP,
+    /// exactly as `commlib.c:1062` stamps it inside `CommSend`.
+    last_send: Instant,
+    /// `ts.TelKeepAliveInterval`, and `None` where upstream would not have
+    /// started the thread at all. See [`TelnetConn::poll_keepalive`].
+    keepalive: Option<Duration>,
+    /// Which of the four [`TelnetMode`]s this opened in, kept because two
+    /// settings above depend on it after the negotiation is under way.
+    mode: TelnetMode,
+    /// `TELNET.LOG`, open only when `TelLog` asked for it.
+    log: Option<File>,
 }
 
 impl TelnetConn {
@@ -85,6 +99,22 @@ impl TelnetConn {
 
         let mut conn = TelnetConn {
             socket,
+            // `CREATE_ALWAYS` (`telnet.c:129`) — the log is this connection's,
+            // not a running one, so a failure to open it is not a failure to
+            // connect. Upstream does not check either.
+            log: params.log.as_deref().and_then(open_log),
+            // Upstream starts the keepalive thread inside the arm that sends
+            // the opening burst (`vtwin.cpp:3688`), so a telnet-framed session
+            // at a port that is not the telnet port gets no NOPs however the
+            // interval is set. Reproduced rather than tidied: the setting is
+            // about a telnet server, and a console server's per-line port has
+            // its own idea of what an idle line means.
+            keepalive: match params.mode {
+                TelnetMode::Negotiate => params.keepalive.filter(|d| !d.is_zero()),
+                _ => None,
+            },
+            last_send: Instant::now(),
+            mode: params.mode,
             telnet: Telnet::new(params.clone()),
             describe: if port == 23 {
                 host.to_string()
@@ -98,10 +128,47 @@ impl TelnetConn {
         Ok(conn)
     }
 
-    /// Whether the far end agreed to echo. See [`protocol`] for why nothing
-    /// here acts on it.
+    /// Whether the far end agreed to echo.
+    ///
+    /// The negotiated state, always tracked. What acts on it is
+    /// [`TransportEvent::LocalEcho`], and only when `TelEcho` is on — see
+    /// [`TelnetParams::echo_negotiates`].
     pub fn server_echoes(&self) -> bool {
         self.telnet.server_echoes()
+    }
+
+    /// `TelKeepAliveThread` (`telnet.c:904`), without the thread.
+    ///
+    /// Upstream polls this every 100 ms from a thread of its own and sends an
+    /// `IAC NOP` when the line has been quiet for the interval. Here the caller
+    /// owns the clock, because a socket that nothing is arriving on wakes
+    /// nothing: the frontend's read notifier never fires on an idle link, which
+    /// is exactly the link a keepalive exists for. Call it from a timer.
+    ///
+    /// **The interval is a quiet period, not a period.** The comparison is
+    /// against the last time anything went out — `cv.LastSendTime`, which
+    /// `commlib.c:1062` stamps inside `CommSend` for every telnet send, the NOP
+    /// included — so a session being typed at sends none at all, and one that
+    /// is idle sends one every interval.
+    pub fn poll_keepalive(&mut self) -> Result<()> {
+        let Some(interval) = self.keepalive else {
+            return Ok(());
+        };
+        if self.last_send.elapsed() < interval {
+            return Ok(());
+        }
+        self.telnet.queue_nop();
+        self.flush_reply()
+    }
+
+    fn write_log(&mut self) {
+        let Some(file) = self.log.as_mut() else {
+            return;
+        };
+        let text = self.telnet.take_log();
+        if !text.is_empty() {
+            let _ = file.write_all(text.as_bytes());
+        }
     }
 
     /// `IAC AYT` — "are you there". Upstream binds it to a menu item, and it
@@ -112,15 +179,23 @@ impl TelnetConn {
     }
 
     fn flush_reply(&mut self) -> Result<()> {
+        self.write_log();
         if !self.telnet.has_reply() {
             return Ok(());
         }
         let reply = self.telnet.take_reply();
+        self.last_send = Instant::now();
         // Protocol replies are tiny and must not be half-written: a truncated
         // subnegotiation desynchronises the far end for the rest of the
         // session. `write_all` is right here and wrong for terminal output.
         self.socket.write_all(&reply).map_err(Error::from_io)
     }
+}
+
+/// `TELNET.LOG`, truncated. `None` if it cannot be opened, which is not an
+/// error anybody is told about — upstream ignores the handle's value too.
+fn open_log(path: &Path) -> Option<File> {
+    File::create(path).ok()
 }
 
 impl Transport for TelnetConn {
@@ -141,6 +216,7 @@ impl Transport for TelnetConn {
             events.push(match e {
                 TelnetEvent::Break => TransportEvent::Break,
                 TelnetEvent::Resize { cols, rows } => TransportEvent::Resize { cols, rows },
+                TelnetEvent::LocalEcho(on) => TransportEvent::LocalEcho(on),
             });
         }
         // Negotiation replies go out here rather than waiting for the caller
@@ -154,6 +230,11 @@ impl Transport for TelnetConn {
         let mut escaped = Vec::with_capacity(data.len());
         self.telnet.encode(data, &mut escaped);
         let _ = self.socket.set_write_timeout(Some(timeout));
+        // Stamped before the write rather than after it, and unconditionally:
+        // `CommSend` stamps `cv.LastSendTime` at the top of the function, ahead
+        // of the send that may fail (`commlib.c:1062`). A keepalive is about
+        // the line having gone quiet, and an attempt is not quiet.
+        self.last_send = Instant::now();
         match self.socket.write(&escaped) {
             // Reporting *escaped* bytes written would be a lie the caller
             // would act on — it retries from the count. A partial write of an
@@ -175,6 +256,16 @@ impl Transport for TelnetConn {
 
     fn supports_break(&self) -> bool {
         true
+    }
+
+    fn tick(&mut self) -> Result<()> {
+        self.poll_keepalive()
+    }
+
+    /// True for everything but a session that opened with the burst — which is
+    /// upstream's `else`, not a separate test.
+    fn tcp_without_telnet(&self) -> bool {
+        self.mode != TelnetMode::Negotiate
     }
 
     fn resize(&mut self, cols: u16, rows: u16) -> Result<()> {

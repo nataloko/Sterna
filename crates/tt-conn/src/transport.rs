@@ -37,6 +37,16 @@ pub enum TransportEvent {
     /// (`telnet.c:298`), so a window that ignores it is a window drawing 80
     /// columns at a device that said 132.
     Resize { cols: u16, rows: u16 },
+    /// The link negotiated who echoes, and the terminal should now do this.
+    ///
+    /// Telnet's alone, and only when `TelEcho` is on — see
+    /// [`TelnetParams::echo_negotiates`](crate::telnet::TelnetParams::echo_negotiates).
+    /// It is an event rather than a state to poll because upstream *assigns*
+    /// `ts.LocalEcho` at the two points the option settles, and SRM assigns the
+    /// same variable from the wire (`vtterm.c:2053`); a transport that
+    /// re-asserted its answer on every read would undo a host's `ESC [ 12 h`
+    /// a moment after it arrived.
+    LocalEcho(bool),
 }
 
 impl From<SerialEvent> for TransportEvent {
@@ -107,6 +117,34 @@ pub trait Transport: Send {
     /// need it.
     fn resize(&mut self, _cols: u16, _rows: u16) -> Result<()> {
         Ok(())
+    }
+
+    /// A chance to do something the clock asks for rather than the wire.
+    ///
+    /// Called from a timer, not from the read loop, and that is the point: a
+    /// transport whose only wakeup is "bytes arrived" cannot act on a link
+    /// having gone *quiet*. Telnet's keepalive is the one caller so far, and an
+    /// idle link is exactly the link it exists for.
+    ///
+    /// Cheap enough to call at any rate the frontend likes; upstream's own
+    /// keepalive thread wakes ten times a second.
+    fn tick(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Whether `TCPLocalEcho` and `TCPCRSend` apply to this connection.
+    ///
+    /// Upstream's condition is the `else` of the arm that sends telnet's
+    /// opening burst (`vtwin.cpp:3690`): a TCP session that is **not** a telnet
+    /// session, which is a raw socket or a telnet-framed console port, and not
+    /// SSH — TTSSH sets `ts.DisableTCPEchoCR` on the way in (`ttxssh.c:971`)
+    /// precisely so its sessions are excluded.
+    ///
+    /// It is on the trait rather than resolved by the caller because the two
+    /// settings are applied where the connection is attached, and by then the
+    /// concrete type is gone.
+    fn tcp_without_telnet(&self) -> bool {
+        false
     }
 
     /// A descriptor that becomes readable when there is something to

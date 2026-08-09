@@ -9,21 +9,23 @@
 //! at a time. Reading `telnet.c` alone gives a parser that doubles `0xFF` and
 //! passes `CR NUL` through.
 //!
-//! What is here is what a console server needs. Two things upstream has are
-//! deliberately absent, and both are **opt-in settings there too**, so their
+//! What is here is what a console server needs. One thing upstream has is
+//! deliberately absent, and it is an **opt-in setting there too**, so its
 //! absence is not a behaviour difference by default:
 //!
-//! - **Local echo.** `ParseTelWill` only touches `ts.LocalEcho` when
-//!   `ts.TelEcho` is set, and `ttset.c:1304` defaults it off. So a stock Tera
-//!   Term typing at a server that never says `WILL ECHO` shows nothing either.
-//!   The negotiated state is exposed ([`Telnet::server_echoes`]) so a settings
-//!   layer can act on it without this module guessing.
 //! - **LINEMODE.** `cv->TelLineMode` is gated by `ts->EnableLineMode`
 //!   (`commlib.c:341`) and starts false. Local line editing is a terminal's
 //!   job rather than a byte buffer's, and the buffer upstream uses would have
 //!   to be re-decided against the grid.
+//!
+//! Local echo *is* here, and it is one of the places a setting and a protocol
+//! state turn out to be the same variable — see
+//! [`TelnetParams::echo_negotiates`], which is off by default, so a stock Tera
+//! Term typing at a server that never says `WILL ECHO` shows nothing either.
 
 use std::fmt::Write as _;
+use std::path::PathBuf;
+use std::time::Duration;
 
 // Commands. RFC 854's names, which are also upstream's except that its
 // `WILLTEL`/`DOTEL` spellings exist only to dodge Win32 macros.
@@ -70,41 +72,91 @@ pub enum TelnetEvent {
     /// never agreed. That is how a console server tells a client what size the
     /// far end really is, and it is reproduced including the laxity.
     Resize { cols: u16, rows: u16 },
+    /// The `ECHO` negotiation moved, and [`TelnetParams::echo_negotiates`] says
+    /// it decides local echo. True means *the terminal* should echo.
+    ///
+    /// Emitted only where upstream assigns `ts.LocalEcho`: the tail of
+    /// `ParseTelWill` and of `ParseTelWont` (`telnet.c:411`, `:497`), on `ECHO`
+    /// alone, and only when the option settled at Yes or No — a half-negotiated
+    /// `WantYes` leaves the setting where it was.
+    LocalEcho(bool),
 }
 
 /// How much of the protocol to speak.
 ///
-/// Upstream spells this as two settings and a rule: `ts.Telnet` turns IAC
-/// processing on, `ts.TelAutoDetect` turns it on at the first `0xFF`
-/// (`ttcmn.c:590`), and the opening burst is sent **only when the port is 23**
-/// (`vtwin.cpp:3666`, `ts.TCPPort == ts.TelPort`). The rule matters: a console
-/// server with one TCP port per serial line is not a telnet server, and
-/// opening at it with `WILL TERMTYPE` puts five bytes of protocol into
-/// somebody's serial console.
+/// Upstream spells this as two settings and a rule, and the three of them make
+/// **four** states rather than two:
+///
+/// - `ts.Telnet` becomes `cv->TelFlag` at open (`commlib.c:340`), which is what
+///   turns IAC framing on. It says nothing about the negotiation.
+/// - `ts.TelAutoDetect` becomes `cv->TelAutoDetect` beside it (`:323`),
+///   unconditionally, and `ttcmn.c:590` turns the framing on at the first
+///   `0xFF` when `TelFlag` is clear. So it only matters when `Telnet=off`.
+/// - The opening burst goes out **only when the port is the telnet port**
+///   (`vtwin.cpp:3666`, `ts.TCPPort == ts.TelPort`). That rule matters: a
+///   console server with one TCP port per serial line is not a telnet server,
+///   and opening at it with `WILL TERMTYPE` puts five bytes of protocol into
+///   somebody's serial console.
+///
+/// Use [`TelnetMode::of`] rather than assembling it by hand.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TelnetMode {
     /// Every byte is data, `0xFF` included. What a port that streams binary
     /// needs, and the only mode that cannot corrupt one.
+    ///
+    /// `Telnet=off` **and** `TelAutoDetect=off`, which is two keys away from
+    /// the shipped defaults.
     Raw,
-    /// Data until the first `IAC` arrives, and telnet from then on. Upstream's
-    /// `TelAutoDetect`, which defaults on, and the right default for a port
-    /// that is not 23.
+    /// Data until the first `IAC` arrives, and telnet from then on.
+    ///
+    /// `Telnet=off` with `TelAutoDetect` left alone — so it is what `/T=0`
+    /// really gets, not [`Raw`](TelnetMode::Raw).
     #[default]
     Auto,
+    /// Telnet from the first byte, and not a word offered.
+    ///
+    /// `Telnet=on` at a port that is not the telnet port. Framing without
+    /// negotiation looks like a contradiction and is the common case on a
+    /// terminal server: the framing has to be on for `IAC IAC` and `CR NUL` to
+    /// mean what the far end intends by them, while the burst would be noise
+    /// on a line that is really a serial cable.
+    Framed,
     /// Telnet from the first byte, opening with the negotiation upstream
-    /// opens with.
+    /// opens with. `Telnet=on` at the telnet port.
     Negotiate,
 }
 
 impl TelnetMode {
-    /// What upstream would do for `port`: negotiate on 23, auto-detect
-    /// elsewhere.
-    pub fn for_port(port: u16) -> TelnetMode {
-        if port == 23 {
-            TelnetMode::Negotiate
-        } else {
-            TelnetMode::Auto
+    /// The four states, from the two settings and the port test.
+    ///
+    /// `telnet` is `ts.Telnet`, `auto_detect` is `ts.TelAutoDetect`, and
+    /// `telnet_port` is `ts.TCPPort == ts.TelPort` — the same comparison
+    /// `vtwin.cpp:3666` makes, which is a test of whether a port was chosen for
+    /// a protocol rather than a literal 23.
+    pub fn of(telnet: bool, auto_detect: bool, telnet_port: bool) -> TelnetMode {
+        match (telnet, auto_detect, telnet_port) {
+            (true, _, true) => TelnetMode::Negotiate,
+            (true, _, false) => TelnetMode::Framed,
+            (false, true, _) => TelnetMode::Auto,
+            (false, false, _) => TelnetMode::Raw,
         }
+    }
+
+    /// What upstream's shipped settings would do at `port`: negotiate on 23,
+    /// frame everywhere else.
+    ///
+    /// Both keys default on, so this is `of(true, true, port == 23)` — and the
+    /// answer for a port that is not 23 is [`Framed`](TelnetMode::Framed),
+    /// **not** [`Auto`](TelnetMode::Auto). It used to be `Auto` here, which
+    /// silently passed a `CR NUL` through to the terminal for as long as a host
+    /// went without sending an `IAC`.
+    pub fn for_port(port: u16) -> TelnetMode {
+        TelnetMode::of(true, true, port == 23)
+    }
+
+    /// Whether IAC framing is on from the first byte.
+    fn active_at_open(self) -> bool {
+        matches!(self, TelnetMode::Framed | TelnetMode::Negotiate)
     }
 }
 
@@ -167,6 +219,32 @@ pub struct TelnetParams {
     /// defaults **off** (`ttset.c:1301`) — it will agree if asked, but it does
     /// not ask.
     pub binary: bool,
+    /// `ts.TelEcho` (`ttset.c:1304`), off by default. Whether the `ECHO`
+    /// option and the local-echo setting are one variable.
+    ///
+    /// Off — the shipped state — means the burst asks the server to echo and
+    /// the answer changes nothing locally, so a server that declines leaves a
+    /// terminal that shows nothing as you type. On makes the negotiation drive
+    /// local echo ([`TelnetEvent::LocalEcho`]) and makes the burst ask
+    /// according to [`local_echo`](TelnetParams::local_echo) rather than
+    /// asking flat.
+    pub echo_negotiates: bool,
+    /// `ts.LocalEcho` as the terminal currently has it, read only by
+    /// `TelChangeEcho` (`telnet.c:845`) and so only when
+    /// [`echo_negotiates`](TelnetParams::echo_negotiates) is on.
+    pub local_echo: bool,
+    /// `ts.TelKeepAliveInterval` (`ttset.c:1314`), 300 seconds by default, zero
+    /// meaning none. See [`TelnetConn::poll_keepalive`](super::TelnetConn::poll_keepalive)
+    /// — nothing in this module has a clock.
+    pub keepalive: Option<Duration>,
+    /// `TelLog` (`ttset.c:1307`), as the file it names rather than as a flag:
+    /// upstream's `TELNET.LOG` in `ts.LogDirW`, truncated at every connection
+    /// (`telnet.c:127`, `CREATE_ALWAYS`).
+    ///
+    /// One field rather than a bool and a path, so there is no state where the
+    /// log is on and has nowhere to go. Nothing here opens it — the transcript
+    /// accumulates and [`TelnetConn`](super::TelnetConn) writes it.
+    pub log: Option<PathBuf>,
 }
 
 impl Default for TelnetParams {
@@ -178,6 +256,10 @@ impl Default for TelnetParams {
             cols: 80,
             rows: 24,
             binary: false,
+            echo_negotiates: false,
+            local_echo: false,
+            keepalive: Some(Duration::from_secs(300)),
+            log: None,
         }
     }
 }
@@ -188,6 +270,8 @@ pub struct Telnet {
     /// False in [`TelnetMode::Raw`], and in [`TelnetMode::Auto`] until the
     /// first `IAC`.
     active: bool,
+    /// The transcript `TelLog` asks for, drained by [`Telnet::take_log`].
+    log: String,
     state: State,
     /// `ttcmn.c`'s `TelCRFlag`: a `NUL` immediately after a `CR` is the
     /// line-ending escape and not data.
@@ -207,7 +291,8 @@ pub struct Telnet {
 impl Telnet {
     pub fn new(params: TelnetParams) -> Telnet {
         let mut t = Telnet {
-            active: params.mode == TelnetMode::Negotiate,
+            active: params.mode.active_at_open(),
+            log: String::new(),
             state: State::Data,
             after_cr: false,
             sub: Vec::new(),
@@ -246,9 +331,16 @@ impl Telnet {
         self.enable_mine(OPT_TERMTYPE);
         self.enable_his(OPT_SGA);
         self.enable_mine(OPT_SGA);
-        // `ts.TelEcho` defaults off, which takes the `else` — asking the
-        // server to echo rather than echoing locally.
-        self.enable_his(OPT_ECHO);
+        // `vtwin.cpp:3675`. `ts.TelEcho` defaults off, which takes the `else`
+        // — asking the server to echo, flat. On, it is `TelChangeEcho`
+        // (`telnet.c:845`): ask the server to echo only if the terminal is not
+        // already doing it, and ask it to **stop** if the terminal is. The two
+        // ends of one variable, so a `LocalEcho=on` file opens with
+        // `DONT ECHO`, which is the opposite request from the default's.
+        match (self.params.echo_negotiates, self.params.local_echo) {
+            (true, true) => self.disable_his(OPT_ECHO),
+            _ => self.enable_his(OPT_ECHO),
+        }
         self.enable_mine(OPT_NAWS);
         if self.params.binary {
             self.enable_mine(OPT_BINARY);
@@ -344,10 +436,12 @@ impl Telnet {
             State::Sub => self.sub_byte(b, events),
             State::Will => {
                 self.will(b);
+                self.echo_settled(b, events);
                 self.state = State::Data;
             }
             State::Wont => {
                 self.wont(b);
+                self.echo_settled(b, events);
                 self.state = State::Data;
             }
             State::Do => {
@@ -409,7 +503,7 @@ impl Telnet {
                     let mut reply = vec![IAC, SB, OPT_TERMTYPE, 0];
                     reply.extend_from_slice(self.params.term_type.as_bytes());
                     reply.extend_from_slice(&[IAC, SE]);
-                    self.out.extend_from_slice(&reply);
+                    self.emit(&reply);
                 }
             }
             OPT_TERMSPEED if self.mine[OPT_TERMSPEED as usize].state == OptState::Yes => {
@@ -419,7 +513,7 @@ impl Telnet {
                     let _ = write!(text, "{},{}", self.params.speed.0, self.params.speed.1);
                     reply.extend_from_slice(text.as_bytes());
                     reply.extend_from_slice(&[IAC, SE]);
-                    self.out.extend_from_slice(&reply);
+                    self.emit(&reply);
                 }
             }
             // No status check, which is upstream's — the test is commented
@@ -436,7 +530,34 @@ impl Telnet {
     }
 
     fn send(&mut self, command: u8, option: u8) {
-        self.out.extend_from_slice(&[IAC, command, option]);
+        self.emit(&[IAC, command, option]);
+    }
+
+    /// Queue a protocol record, and log it if `TelLog` asked.
+    ///
+    /// One function because upstream's `TelWriteLog` sits directly after a
+    /// `CommRawOut` at all eight of its call sites and never anywhere else —
+    /// which is the whole reason `TELNET.LOG` holds only what Tera Term said.
+    /// Data written by the terminal does not come through here.
+    fn emit(&mut self, bytes: &[u8]) {
+        self.out.extend_from_slice(bytes);
+        if self.params.log.is_none() {
+            return;
+        }
+        // `TelWriteLog` (`telnet.c:169`): CRLF, a `>`, then each byte as a
+        // space and two upper-case hex digits. There is no trailing newline —
+        // the next record's own CRLF ends the line, so the file has a blank
+        // first line and no final one.
+        self.log.push_str("\r\n>");
+        for b in bytes {
+            let _ = write!(self.log, " {b:02X}");
+        }
+    }
+
+    /// Take the `TELNET.LOG` transcript accumulated so far. Empty unless
+    /// [`TelnetParams::log`] is on.
+    pub fn take_log(&mut self) -> String {
+        std::mem::take(&mut self.log)
     }
 
     // --- the Q method -------------------------------------------------------
@@ -611,6 +732,46 @@ impl Telnet {
         }
     }
 
+    /// The `case ECHO:` that ends both `ParseTelWill` and `ParseTelWont`
+    /// (`telnet.c:411`, `:497`) — identical in the two, and outside the
+    /// `b <= MaxTelOpt` guard above it, so it runs on the option's state
+    /// whatever the state machine did with it.
+    fn echo_settled(&mut self, o: u8, events: &mut Vec<TelnetEvent>) {
+        if o != OPT_ECHO || !self.params.echo_negotiates {
+            return;
+        }
+        match self.his[OPT_ECHO as usize].state {
+            // The far end echoes, so the terminal must not.
+            OptState::Yes => events.push(TelnetEvent::LocalEcho(false)),
+            OptState::No => events.push(TelnetEvent::LocalEcho(true)),
+            // Mid-negotiation. Upstream's `default:` leaves `ts.LocalEcho`
+            // alone rather than guessing at the answer.
+            _ => {}
+        }
+    }
+
+    /// `TelDisableHisOpt` (`telnet.c:735`), the mirror of [`Telnet::enable_his`]
+    /// and reached from one caller: `TelChangeEcho` when local echo is already
+    /// on.
+    fn disable_his(&mut self, o: u8) {
+        if o > MAX_OPTION {
+            return;
+        }
+        match self.his[o as usize].state {
+            OptState::Yes => {
+                self.his[o as usize].state = OptState::WantNo;
+                self.send(DONT, o);
+            }
+            OptState::WantNo if self.his[o as usize].queue == Queue::Opposite => {
+                self.his[o as usize].queue = Queue::Empty
+            }
+            OptState::WantYes if self.his[o as usize].queue == Queue::Empty => {
+                self.his[o as usize].queue = Queue::Opposite
+            }
+            _ => {}
+        }
+    }
+
     // --- what we send -------------------------------------------------------
 
     /// Tell the far end the window changed size, if it agreed to hear it.
@@ -630,34 +791,35 @@ impl Telnet {
 
     fn send_size(&mut self) {
         let (cols, rows) = (self.params.cols, self.params.rows);
-        self.out.extend_from_slice(&[IAC, SB, OPT_NAWS]);
+        let mut record = vec![IAC, SB, OPT_NAWS];
         // Each byte of the size is escaped on its own: a terminal 255 columns
         // wide would otherwise put a bare IAC inside the subnegotiation and
         // end it early.
         for byte in [(cols >> 8) as u8, cols as u8, (rows >> 8) as u8, rows as u8] {
             if byte == IAC {
-                self.out.push(IAC);
+                record.push(IAC);
             }
-            self.out.push(byte);
+            record.push(byte);
         }
-        self.out.extend_from_slice(&[IAC, SE]);
+        record.extend_from_slice(&[IAC, SE]);
+        self.emit(&record);
         self.sent_size = Some((cols, rows));
     }
 
     /// `IAC BRK`, which is what a telnet console server turns into a real
     /// line break on the serial port behind it.
     pub fn queue_break(&mut self) {
-        self.out.extend_from_slice(&[IAC, BRK]);
+        self.emit(&[IAC, BRK]);
     }
 
     /// `IAC AYT`.
     pub fn queue_are_you_there(&mut self) {
-        self.out.extend_from_slice(&[IAC, AYT]);
+        self.emit(&[IAC, AYT]);
     }
 
     /// `IAC NOP`, upstream's keepalive.
     pub fn queue_nop(&mut self) {
-        self.out.extend_from_slice(&[IAC, NOP]);
+        self.emit(&[IAC, NOP]);
     }
 
     /// Escape outbound data: `CommBinaryOut`, `ttcmn.c:633`.
@@ -717,6 +879,7 @@ mod tests {
             cols: 80,
             rows: 24,
             binary: false,
+            ..TelnetParams::default()
         });
         t.take_reply(); // discard the opening burst
         t
@@ -1067,5 +1230,141 @@ mod tests {
         // ...and his direction stopped treating CR NUL as an escape.
         let (data, _, _) = run(&mut t, b"\x0d\x00");
         assert_eq!(data, b"\x0d\x00");
+    }
+
+    // --- the four modes -----------------------------------------------------
+
+    #[test]
+    fn the_two_keys_and_the_port_make_four_modes() {
+        use TelnetMode::*;
+        // The shipped file, at the telnet port and away from it.
+        assert_eq!(TelnetMode::of(true, true, true), Negotiate);
+        assert_eq!(TelnetMode::of(true, true, false), Framed);
+        // `Telnet=off` is not raw — `TelAutoDetect` is a separate key and it
+        // ships on, so the framing still arrives with the first `IAC`.
+        assert_eq!(TelnetMode::of(false, true, true), Auto);
+        assert_eq!(TelnetMode::of(false, false, true), Raw);
+        // Auto-detect is dead once the framing is on from byte one.
+        assert_eq!(TelnetMode::of(true, false, false), Framed);
+    }
+
+    #[test]
+    fn framed_swallows_the_nul_after_a_cr_with_no_iac_in_sight() {
+        // The whole difference between `Framed` and `Auto`, and the reason
+        // `for_port` no longer answers `Auto` for a port that is not 23: a host
+        // that has not yet sent an `IAC` is still a host whose `CR NUL` is a
+        // line ending rather than two characters.
+        let mut framed = Telnet::new(TelnetParams {
+            mode: TelnetMode::Framed,
+            ..TelnetParams::default()
+        });
+        assert!(framed.take_reply().is_empty(), "and not a word offered");
+        let (data, _, _) = run(&mut framed, b"a\x0d\x00b");
+        assert_eq!(data, b"a\x0db");
+
+        let mut auto = Telnet::new(TelnetParams::default());
+        let (data, _, _) = run(&mut auto, b"a\x0d\x00b");
+        assert_eq!(data, b"a\x0d\x00b", "still plain data");
+    }
+
+    // --- TelEcho ------------------------------------------------------------
+
+    /// `TelEcho` on, so the option and the setting are one variable.
+    fn echoing(local_echo: bool) -> Telnet {
+        let mut t = Telnet::new(TelnetParams {
+            mode: TelnetMode::Negotiate,
+            echo_negotiates: true,
+            local_echo,
+            ..TelnetParams::default()
+        });
+        t.take_reply();
+        t
+    }
+
+    #[test]
+    fn tel_echo_off_leaves_local_echo_alone() {
+        // `ttset.c:1304` ships it off, and then `WILL ECHO` changes nothing
+        // locally — the burst asked the server to echo and the answer is the
+        // server's business.
+        let mut t = negotiating();
+        let (_, events, _) = run(&mut t, &[IAC, WILL, OPT_ECHO]);
+        assert!(t.server_echoes());
+        assert_eq!(events, vec![], "no LocalEcho without TelEcho");
+    }
+
+    #[test]
+    fn tel_echo_on_makes_the_negotiation_decide() {
+        let mut t = echoing(false);
+        let (_, events, _) = run(&mut t, &[IAC, WILL, OPT_ECHO]);
+        assert_eq!(events, vec![TelnetEvent::LocalEcho(false)], "he echoes");
+        let (_, events, _) = run(&mut t, &[IAC, WONT, OPT_ECHO]);
+        assert_eq!(events, vec![TelnetEvent::LocalEcho(true)], "so we must");
+    }
+
+    #[test]
+    fn tel_echo_reverses_the_bursts_echo_request() {
+        // `TelChangeEcho` (`telnet.c:845`): with local echo already on, the
+        // opening burst asks the server **not** to echo. Nothing else in the
+        // burst moves, so this is one byte's difference in five records and
+        // the opposite request.
+        let ask = Telnet::new(TelnetParams {
+            mode: TelnetMode::Negotiate,
+            echo_negotiates: true,
+            local_echo: false,
+            ..TelnetParams::default()
+        })
+        .take_reply();
+        assert!(window(&ask, &[IAC, DO, OPT_ECHO]));
+
+        let refuse = Telnet::new(TelnetParams {
+            mode: TelnetMode::Negotiate,
+            echo_negotiates: true,
+            local_echo: true,
+            ..TelnetParams::default()
+        })
+        .take_reply();
+        assert!(!window(&refuse, &[IAC, DO, OPT_ECHO]));
+        // ...and `DONT` on an option that was never `Yes` is silent, which is
+        // the Q method: `TelDisableHisOpt`'s only arm that sends is `Yes`.
+        assert!(!window(&refuse, &[IAC, DONT, OPT_ECHO]));
+        assert_eq!(refuse.len(), ask.len() - 3, "exactly the ECHO record short");
+    }
+
+    fn window(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack.windows(needle.len()).any(|w| w == needle)
+    }
+
+    // --- TelLog -------------------------------------------------------------
+
+    #[test]
+    fn the_log_records_what_was_sent_and_nothing_that_arrived() {
+        // Every `TelWriteLog` call sits after a `CommRawOut`, so the file is
+        // one half of the conversation — a `>` per record and no inbound line
+        // to pair it with. Reading it as a negotiation trace is the mistake it
+        // invites.
+        let mut t = Telnet::new(TelnetParams {
+            mode: TelnetMode::Negotiate,
+            log: Some(PathBuf::from("TELNET.LOG")),
+            ..TelnetParams::default()
+        });
+        t.take_reply();
+        let burst = t.take_log();
+        assert!(burst.starts_with("\r\n> FF FB 18"), "{burst:?}");
+        assert_eq!(burst.matches(">").count(), 6, "six records in the burst");
+
+        // A `DO` we refuse logs the `WONT` that goes back and not the `DO`.
+        run(&mut t, &[IAC, DO, OPT_ECHO]);
+        assert_eq!(t.take_log(), "\r\n> FF FC 01");
+        // A `WILL` that completes an option we already asked for sends
+        // nothing, so it logs nothing either.
+        run(&mut t, &[IAC, WILL, OPT_SGA]);
+        assert_eq!(t.take_log(), "");
+    }
+
+    #[test]
+    fn the_log_is_empty_unless_it_was_asked_for() {
+        let mut t = negotiating();
+        run(&mut t, &[IAC, DO, OPT_ECHO]);
+        assert_eq!(t.take_log(), "");
     }
 }
