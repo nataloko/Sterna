@@ -103,7 +103,9 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/xfer_test --write /tmp   # ...and the transfer dialogs, as PNGs
 ./build/macro_test               # a TTL macro, driven by the event loop
 ./build/macro_test --write /tmp  # ...and the dialogs it raises, as PNGs
-./build/cmdline_test             # a Tera Term command line, argv to connected
+QT_QPA_PLATFORM=offscreen \
+  ./build/cmdline_test           # a Tera Term command line, argv to connected
+                                 # — NOT under Wayland; see the traps
 ./build/control_test             # the control socket, against the window's loop
 ./build/sterna --port /dev/ttyUSB0 --baud 115200
 ./build/sterna myrouter        # an alias out of ~/.ssh/config
@@ -584,6 +586,14 @@ And for measuring anything:
   until the line is quiet, and serial and telnet both read with a 50 ms
   timeout — so the second read of a burst blocks the UI thread for 50 ms.
   Coalescing the frames costs nothing and does not care what the transport is.
+- **A Wayland client cannot place its own window, and `cmdline_test` is where
+  that shows up.** There is no set-position request in `xdg_shell` — placement
+  is the compositor's — so `QWidget::move()` is silently ignored and `/X=120`
+  reports `pos().x() == 0`. It is one failing check out of the suite, in the
+  test named after the option, which reads as a command-line parsing bug: the
+  option *was* parsed, and the window manager declined. Run that one under
+  `QT_QPA_PLATFORM=offscreen` or `xcb`, which is what CI does. The same limit
+  applies to anything else asserting a window's position.
 - **A Wayland compositor stops sending frame callbacks to a surface it thinks
   is hidden**, so a short-lived probe window gets ~5 of 24 keystrokes painted
   inside a two-second wait where xcb gets 24. Not a bug in the shell — but any
