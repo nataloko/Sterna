@@ -34,8 +34,11 @@ struct Setting {
 /// How upstream bounds an int on read. The two shapes are genuinely different
 /// and the difference is visible in a file somebody already has.
 enum Bound {
-    /// `int(lo..hi)`, `ttset.c:615`: at or below `lo` takes the **default**,
-    /// above `hi` takes `hi`. Not a clamp in both directions.
+    /// `int(lo..hi)`, `ttset.c:615`: below `lo` takes the **default**, above
+    /// `hi` takes `hi`. Not a clamp in both directions. `int(lo..)` is the
+    /// same test with no ceiling, which is how `MaxBuffSize` is read
+    /// (`ttset.c:1214`) — upstream caps that one against a compile-time
+    /// constant in `buffer.c` rather than on the way in.
     Ranged(i32, i32),
     /// `int_min(lo)`, `ttset.c:1822` onward: below `lo` takes `lo`. A real
     /// clamp, and the transfer timeouts are the only settings read this way —
@@ -160,9 +163,18 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
     let (spec, bound) =
         if let Some(body) = spec.strip_prefix("int(").and_then(|s| s.strip_suffix(')')) {
             let (lo, hi) = body.split_once("..").expect("a range is `min..max`");
+            let hi = hi.trim();
             let bound = Bound::Ranged(
                 lo.trim().parse::<i32>().expect("a number"),
-                hi.trim().parse::<i32>().expect("a number"),
+                // `int(lo..)` has no ceiling. Reading it as `i32::MAX` rather
+                // than as a second shape of bound keeps one code path: the
+                // comparison is then never true, which is what "no ceiling"
+                // means.
+                if hi.is_empty() {
+                    i32::MAX
+                } else {
+                    hi.parse::<i32>().expect("a number")
+                },
             );
             ("int", Some(bound))
         } else if let Some(body) = spec

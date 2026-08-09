@@ -82,6 +82,11 @@ void Theme::applySettings(const Session &session)
     readPair(session, "color.underline", m_underline);
     readPair(session, "color.reverse", m_reverse);
 
+    // The master switch, and the one flag here the core also reads: with it
+    // off `SGR 30-37` still lands in the cell and `vtdisp.c:2417` declines to
+    // draw with it, so the screen is `color.normal` while the buffer says
+    // otherwise. Everything below is this one's business.
+    m_ansiColor = readFlag(session, "color.ansi_enabled", m_ansiColor);
     m_boldColor = readFlag(session, "color.bold_enabled", m_boldColor);
     m_blinkColor = readFlag(session, "color.blink_enabled", m_blinkColor);
     m_underlineColor = readFlag(session, "color.underline_enabled", m_underlineColor);

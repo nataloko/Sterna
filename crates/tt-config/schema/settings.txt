@@ -92,6 +92,14 @@ terminal.scrollback_enabled | bool | Tera Term | EnableScrollBuff | on | DLG_TER
 # log; it is a setting rather than a constant precisely so it can be raised.
 terminal.scrollback_lines | int | Tera Term | ScrollBuffSize | 100 | DLG_TERM_SCROLLBUFF
 
+# `ttset.c:1212`, and upstream's comment on it is "special option" — there is
+# no dialog. It is the ceiling `ScrollBuffSize` is held under, not a second
+# depth: `buffer.c:511` caps the buffer's line count with it and `:4977` caps
+# the *terminal's row count* with it too, so `MaxBuffSize=10` is a ten-row
+# terminal however big the window is. Below 24 takes the default rather than
+# the floor, which is the `TerminalSize` bound with no ceiling on it.
+terminal.buffer_max_lines | int(24..) | Tera Term | MaxBuffSize | 10000 | -
+
 # `ts.Title`, `ttset.c:713`. The window title before the host sends one.
 terminal.title | string | Tera Term | Title | Tera Term | DLG_TERM_TITLE
 
@@ -114,6 +122,16 @@ keyboard.meta | enum(off=Off,on=On,left=Left,right=Right) | Tera Term | MetaKey 
 # `ttset.c:882`. Whether the Delete key sends DEL rather than the VT220
 # Remove sequence.
 keyboard.delete_sends_del | bool | Tera Term | DeleteKey | off | DLG_KEYB_DELKEY
+
+# `ttset.c:903`, and a **veto rather than a mode**: DECNKM still sets, and
+# DECRQM still reports it set, but the key encoding ignores it. So a host that
+# switches the keypad to application mode gets the numeric one anyway and is
+# not told. Named the way upstream names it, negation included, because a row
+# called `app_keypad` would mean the opposite of the key it is written from.
+keyboard.disable_app_keypad | bool | Tera Term | DisableAppKeypad | off | -
+
+# `ttset.c:907`. The same veto for DECCKM and the cursor keys.
+keyboard.disable_app_cursor | bool | Tera Term | DisableAppCursor | off | -
 
 # `ttset.c:1167`, and the value is **hex-escaped** (`Hex2StrW`): `$20` is a
 # space. The default is a space plus every ASCII punctuation mark except
@@ -172,6 +190,14 @@ color.aixterm_16 | bool | Tera Term | Aixterm16Color | off | -
 
 # `ttset.c:735`. PC-style bold colour mapping.
 color.pc_bold_16 | bool | Tera Term | PcBoldColor | off | -
+
+# `ttset.c:856`, and the last of the four `ColorFlag` bits. **On**, and it is
+# not a parse gate like the three above it: `SGR 30-37` still stores its colour
+# in the cell, and `vtdisp.c:2417` then declines to draw with it, so the screen
+# is `color.normal` while the buffer says otherwise. The two reports that name
+# a colour — DECRQSS' SGR (`vtterm.c:4332`) and `Co` in the termcap query
+# (`:4451`) — go quiet with it, which is how a host is told.
+color.ansi_enabled | bool | Tera Term | EnableANSIColor | on | -
 
 # --- cursor ------------------------------------------------------------------
 

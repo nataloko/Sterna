@@ -764,6 +764,13 @@ pub struct Settings {
     /// `ttset.c:751`. Upstream ships **100** lines, which is small for a console
     /// log; it is a setting rather than a constant precisely so it can be raised.
     pub terminal_scrollback_lines: i32,
+    /// `ttset.c:1212`, and upstream's comment on it is "special option" — there is
+    /// no dialog. It is the ceiling `ScrollBuffSize` is held under, not a second
+    /// depth: `buffer.c:511` caps the buffer's line count with it and `:4977` caps
+    /// the *terminal's row count* with it too, so `MaxBuffSize=10` is a ten-row
+    /// terminal however big the window is. Below 24 takes the default rather than
+    /// the floor, which is the `TerminalSize` bound with no ceiling on it.
+    pub terminal_buffer_max_lines: i32,
     /// `ts.Title`, `ttset.c:713`. The window title before the host sends one.
     pub terminal_title: String,
     /// **`ttset.c:877` reads this with an empty fallback and only the literal `DEL`
@@ -781,6 +788,14 @@ pub struct Settings {
     /// `ttset.c:882`. Whether the Delete key sends DEL rather than the VT220
     /// Remove sequence.
     pub keyboard_delete_sends_del: bool,
+    /// `ttset.c:903`, and a **veto rather than a mode**: DECNKM still sets, and
+    /// DECRQM still reports it set, but the key encoding ignores it. So a host that
+    /// switches the keypad to application mode gets the numeric one anyway and is
+    /// not told. Named the way upstream names it, negation included, because a row
+    /// called `app_keypad` would mean the opposite of the key it is written from.
+    pub keyboard_disable_app_keypad: bool,
+    /// `ttset.c:907`. The same veto for DECCKM and the cursor keys.
+    pub keyboard_disable_app_cursor: bool,
     /// `ttset.c:1167`, and the value is **hex-escaped** (`Hex2StrW`): `$20` is a
     /// space. The default is a space plus every ASCII punctuation mark except
     /// underscore, which is what makes `some_name` one word and `some-name` three
@@ -819,6 +834,13 @@ pub struct Settings {
     pub color_aixterm_16: bool,
     /// `ttset.c:735`. PC-style bold colour mapping.
     pub color_pc_bold_16: bool,
+    /// `ttset.c:856`, and the last of the four `ColorFlag` bits. **On**, and it is
+    /// not a parse gate like the three above it: `SGR 30-37` still stores its colour
+    /// in the cell, and `vtdisp.c:2417` then declines to draw with it, so the screen
+    /// is `color.normal` while the buffer says otherwise. The two reports that name
+    /// a colour — DECRQSS' SGR (`vtterm.c:4332`) and `Co` in the termcap query
+    /// (`:4451`) — go quiet with it, which is how a host is told.
+    pub color_ansi_enabled: bool,
     /// `ttset.c:718`, and the default is again the `else` branch.
     pub cursor_shape: CursorShape,
     /// `ttset.c:1227`.
@@ -1146,10 +1168,13 @@ impl Default for Settings {
             terminal_auto_win_resize: false,
             terminal_scrollback_enabled: true,
             terminal_scrollback_lines: 100,
+            terminal_buffer_max_lines: 10000,
             terminal_title: String::from("Tera Term"),
             keyboard_backspace: KeyboardBackspace::default(),
             keyboard_meta: KeyboardMeta::default(),
             keyboard_delete_sends_del: false,
+            keyboard_disable_app_keypad: false,
+            keyboard_disable_app_cursor: false,
             keyboard_word_delimiters: String::from("$20!\"#$24%&'()*+,-./:;<=>?@[\\]^`{|}~"),
             color_normal: [0, 0, 0, 255, 255, 255],
             color_bold: [0, 0, 255, 255, 255, 255],
@@ -1163,6 +1188,7 @@ impl Default for Settings {
             color_xterm_256: true,
             color_aixterm_16: false,
             color_pc_bold_16: false,
+            color_ansi_enabled: true,
             cursor_shape: CursorShape::default(),
             cursor_nonblinking: false,
             window_change_allowed: true,
@@ -1302,6 +1328,12 @@ impl Settings {
                 "ScrollBuffSize",
                 d.terminal_scrollback_lines,
             ) as i32,
+            terminal_buffer_max_lines: crate::schema::ranged(
+                ini.get_int("Tera Term", "MaxBuffSize", d.terminal_buffer_max_lines) as i32,
+                d.terminal_buffer_max_lines,
+                24,
+                2147483647,
+            ),
             terminal_title: ini
                 .get_or("Tera Term", "Title", &d.terminal_title)
                 .to_string(),
@@ -1315,6 +1347,14 @@ impl Settings {
             },
             keyboard_delete_sends_del: crate::schema::on_off(
                 ini.get("Tera Term", "DeleteKey"),
+                false,
+            ),
+            keyboard_disable_app_keypad: crate::schema::on_off(
+                ini.get("Tera Term", "DisableAppKeypad"),
+                false,
+            ),
+            keyboard_disable_app_cursor: crate::schema::on_off(
+                ini.get("Tera Term", "DisableAppCursor"),
                 false,
             ),
             keyboard_word_delimiters: ini
@@ -1350,6 +1390,10 @@ impl Settings {
             color_xterm_256: crate::schema::on_off(ini.get("Tera Term", "Xterm256Color"), true),
             color_aixterm_16: crate::schema::on_off(ini.get("Tera Term", "Aixterm16Color"), false),
             color_pc_bold_16: crate::schema::on_off(ini.get("Tera Term", "PcBoldColor"), false),
+            color_ansi_enabled: crate::schema::on_off(
+                ini.get("Tera Term", "EnableANSIColor"),
+                true,
+            ),
             cursor_shape: match ini.get("Tera Term", "CursorShape") {
                 Some(v) => CursorShape::from_ini(v),
                 None => d.cursor_shape,
@@ -1756,6 +1800,11 @@ impl Settings {
             "ScrollBuffSize",
             &self.terminal_scrollback_lines.to_string(),
         );
+        ini.set(
+            "Tera Term",
+            "MaxBuffSize",
+            &self.terminal_buffer_max_lines.to_string(),
+        );
         ini.set("Tera Term", "Title", &self.terminal_title.clone());
         ini.set(
             "Tera Term",
@@ -1771,6 +1820,26 @@ impl Settings {
             "Tera Term",
             "DeleteKey",
             &if self.keyboard_delete_sends_del {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "DisableAppKeypad",
+            &if self.keyboard_disable_app_keypad {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "DisableAppCursor",
+            &if self.keyboard_disable_app_cursor {
                 "on"
             } else {
                 "off"
@@ -1856,6 +1925,11 @@ impl Settings {
             "Tera Term",
             "PcBoldColor",
             &if self.color_pc_bold_16 { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "EnableANSIColor",
+            &if self.color_ansi_enabled { "on" } else { "off" }.to_string(),
         );
         ini.set(
             "Tera Term",
@@ -2502,10 +2576,23 @@ impl Settings {
             }
             .to_string(),
             "terminal.scrollback_lines" => self.terminal_scrollback_lines.to_string(),
+            "terminal.buffer_max_lines" => self.terminal_buffer_max_lines.to_string(),
             "terminal.title" => self.terminal_title.clone(),
             "keyboard.backspace" => self.keyboard_backspace.as_ini().to_string(),
             "keyboard.meta" => self.keyboard_meta.as_ini().to_string(),
             "keyboard.delete_sends_del" => if self.keyboard_delete_sends_del {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "keyboard.disable_app_keypad" => if self.keyboard_disable_app_keypad {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "keyboard.disable_app_cursor" => if self.keyboard_disable_app_cursor {
                 "on"
             } else {
                 "off"
@@ -2539,6 +2626,7 @@ impl Settings {
             "color.xterm_256" => if self.color_xterm_256 { "on" } else { "off" }.to_string(),
             "color.aixterm_16" => if self.color_aixterm_16 { "on" } else { "off" }.to_string(),
             "color.pc_bold_16" => if self.color_pc_bold_16 { "on" } else { "off" }.to_string(),
+            "color.ansi_enabled" => if self.color_ansi_enabled { "on" } else { "off" }.to_string(),
             "cursor.shape" => self.cursor_shape.as_ini().to_string(),
             "cursor.nonblinking" => if self.cursor_nonblinking { "on" } else { "off" }.to_string(),
             "window.change_allowed" => if self.window_change_allowed {
@@ -2796,11 +2884,25 @@ impl Settings {
                 self.terminal_scrollback_lines =
                     crate::schema::int(value, self.terminal_scrollback_lines)
             }
+            "terminal.buffer_max_lines" => {
+                self.terminal_buffer_max_lines = crate::schema::ranged(
+                    crate::schema::int(value, self.terminal_buffer_max_lines),
+                    10000,
+                    24,
+                    2147483647,
+                )
+            }
             "terminal.title" => self.terminal_title = value.to_string(),
             "keyboard.backspace" => self.keyboard_backspace = KeyboardBackspace::from_ini(value),
             "keyboard.meta" => self.keyboard_meta = KeyboardMeta::from_ini(value),
             "keyboard.delete_sends_del" => {
                 self.keyboard_delete_sends_del = crate::schema::on_off(Some(value), false)
+            }
+            "keyboard.disable_app_keypad" => {
+                self.keyboard_disable_app_keypad = crate::schema::on_off(Some(value), false)
+            }
+            "keyboard.disable_app_cursor" => {
+                self.keyboard_disable_app_cursor = crate::schema::on_off(Some(value), false)
             }
             "keyboard.word_delimiters" => self.keyboard_word_delimiters = value.to_string(),
             "color.normal" => {
@@ -2831,6 +2933,9 @@ impl Settings {
             "color.xterm_256" => self.color_xterm_256 = crate::schema::on_off(Some(value), true),
             "color.aixterm_16" => self.color_aixterm_16 = crate::schema::on_off(Some(value), false),
             "color.pc_bold_16" => self.color_pc_bold_16 = crate::schema::on_off(Some(value), false),
+            "color.ansi_enabled" => {
+                self.color_ansi_enabled = crate::schema::on_off(Some(value), true)
+            }
             "cursor.shape" => self.cursor_shape = CursorShape::from_ini(value),
             "cursor.nonblinking" => {
                 self.cursor_nonblinking = crate::schema::on_off(Some(value), false)
@@ -3207,6 +3312,16 @@ pub const FIELDS: &[Field] = &[
         doc: "`ttset.c:751`. Upstream ships **100** lines, which is small for a console log; it is a setting rather than a constant precisely so it can be raised.",
     },
     Field {
+        name: "terminal.buffer_max_lines",
+        page: "terminal",
+        section: "Tera Term",
+        key: "MaxBuffSize",
+        kind: Kind::IntRange(24, 2147483647),
+        default: "10000",
+        label: None,
+        doc: "`ttset.c:1212`, and upstream's comment on it is \"special option\" — there is no dialog. It is the ceiling `ScrollBuffSize` is held under, not a second depth: `buffer.c:511` caps the buffer's line count with it and `:4977` caps the *terminal's row count* with it too, so `MaxBuffSize=10` is a ten-row terminal however big the window is. Below 24 takes the default rather than the floor, which is the `TerminalSize` bound with no ceiling on it.",
+    },
+    Field {
         name: "terminal.title",
         page: "terminal",
         section: "Tera Term",
@@ -3245,6 +3360,26 @@ pub const FIELDS: &[Field] = &[
         default: "off",
         label: Some("DLG_KEYB_DELKEY"),
         doc: "`ttset.c:882`. Whether the Delete key sends DEL rather than the VT220 Remove sequence.",
+    },
+    Field {
+        name: "keyboard.disable_app_keypad",
+        page: "keyboard",
+        section: "Tera Term",
+        key: "DisableAppKeypad",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:903`, and a **veto rather than a mode**: DECNKM still sets, and DECRQM still reports it set, but the key encoding ignores it. So a host that switches the keypad to application mode gets the numeric one anyway and is not told. Named the way upstream names it, negation included, because a row called `app_keypad` would mean the opposite of the key it is written from.",
+    },
+    Field {
+        name: "keyboard.disable_app_cursor",
+        page: "keyboard",
+        section: "Tera Term",
+        key: "DisableAppCursor",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:907`. The same veto for DECCKM and the cursor keys.",
     },
     Field {
         name: "keyboard.word_delimiters",
@@ -3375,6 +3510,16 @@ pub const FIELDS: &[Field] = &[
         default: "off",
         label: None,
         doc: "`ttset.c:735`. PC-style bold colour mapping.",
+    },
+    Field {
+        name: "color.ansi_enabled",
+        page: "color",
+        section: "Tera Term",
+        key: "EnableANSIColor",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:856`, and the last of the four `ColorFlag` bits. **On**, and it is not a parse gate like the three above it: `SGR 30-37` still stores its colour in the cell, and `vtdisp.c:2417` then declines to draw with it, so the screen is `color.normal` while the buffer says otherwise. The two reports that name a colour — DECRQSS' SGR (`vtterm.c:4332`) and `Co` in the termcap query (`:4451`) — go quiet with it, which is how a host is told.",
     },
     Field {
         name: "cursor.shape",

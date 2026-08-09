@@ -35,7 +35,7 @@ use tt_vt::{ColorFlags, Config, CrReceive, CrSend, TermId};
 pub fn vt_config(s: &Settings, base: &Config) -> Config {
     Config {
         cols: s.terminal_cols.max(1) as usize,
-        rows: s.terminal_rows.max(1) as usize,
+        rows: rows(s),
         scrollback_max: scrollback_max(s),
         term_id: term_id(s),
         cr_receive: match s.terminal_cr_receive {
@@ -51,13 +51,13 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
         },
         local_echo: s.terminal_local_echo,
         bs_key_is_bs: s.keyboard_backspace == KeyboardBackspace::Bs,
+        disable_app_keypad: s.keyboard_disable_app_keypad,
+        disable_app_cursor: s.keyboard_disable_app_cursor,
         color_flags: ColorFlags {
             xterm256: s.color_xterm_256,
             aixterm16: s.color_aixterm_16,
             pc_bold16: s.color_pc_bold_16,
-            // `EnableANSIColor` has no schema row yet, so it keeps whatever it
-            // had rather than being invented here.
-            ansi_color: base.color_flags.ansi_color,
+            ansi_color: s.color_ansi_enabled,
         },
         // DECSCUSR's numbering, which is what `Config::cursor_shape` holds and
         // what DECRQSS answers with: `vtterm.c:4270` maps IdBlkCur to 1,
@@ -180,19 +180,45 @@ fn term_id(s: &Settings) -> TermId {
     TermId::parse(s.terminal_id.as_ini()).unwrap_or_default()
 }
 
+/// How many rows the page has, which `MaxBuffSize` can cut down.
+///
+/// `buffer.c:4977` caps `BuffChangeTerminalSize`'s own `Ny` with
+/// `ts.ScrollBuffMax` before it does anything else, so the ceiling on the
+/// *buffer* is a ceiling on the terminal too: `MaxBuffSize=10` is a ten-row
+/// terminal in a window of any size. It only bites below `TermHeightMax`'s
+/// 500, and the key ships at 10000, so this is a cap nobody meets by accident
+/// — which is exactly why it has to be here rather than assumed away.
+fn rows(s: &Settings) -> usize {
+    let rows = s.terminal_rows.max(1) as usize;
+    rows.min(buffer_max(s))
+}
+
 /// How deep the history goes, which is **not** what `ScrollBuffSize` says.
 ///
 /// Upstream's is the whole buffer, page included, and it is clamped up to the
 /// page rather than the page being clamped down to it (`buffer.c:641`, and
 /// again at `:4983`). With `EnableScrollBuff` off the buffer *is* the page.
 /// `Grid` counts the lines beyond the page, so the page comes back off.
+///
+/// `MaxBuffSize` is the ceiling over the whole thing (`buffer.c:511`), applied
+/// to the page and the buffer separately because that is the order upstream
+/// applies it in — the rows are cut first and the total after, so a small
+/// ceiling gives no history rather than negative history.
 fn scrollback_max(s: &Settings) -> usize {
     if !s.terminal_scrollback_enabled {
         return 0;
     }
-    let rows = s.terminal_rows.max(1) as usize;
-    let lines = s.terminal_scrollback_lines.max(0) as usize;
-    lines.saturating_sub(rows)
+    let lines = (s.terminal_scrollback_lines.max(0) as usize).min(buffer_max(s));
+    lines.saturating_sub(rows(s))
+}
+
+/// `ts.ScrollBuffMax`, as a number of lines that is never zero.
+///
+/// The schema already refuses anything under 24 on the way in — `ttset.c:1214`
+/// takes the *default* below that rather than the floor — so this only guards
+/// the `Settings` a caller built by hand.
+fn buffer_max(s: &Settings) -> usize {
+    s.terminal_buffer_max_lines.max(1) as usize
 }
 
 #[cfg(test)]
@@ -250,6 +276,58 @@ mod tests {
         s.terminal_scrollback_lines = 1000;
         s.terminal_scrollback_enabled = false;
         assert_eq!(scrollback_max(&s), 0);
+    }
+
+    /// `MaxBuffSize` is a ceiling over both halves, and it is the row count
+    /// that makes it worth having: a file can ask for a terminal upstream will
+    /// not give it, and the window has to agree about the size.
+    #[test]
+    fn the_buffer_ceiling_cuts_the_page_as_well_as_the_history() {
+        let of = |bytes: &[u8]| vt_config(&Settings::load(&Ini::parse(bytes)), &Config::default());
+
+        // Nothing set: the shipped 10000 is far above both, so neither moves.
+        let plain = of(b"[Tera Term]\r\nTerminalSize=80,50\r\nScrollBuffSize=2000\r\n");
+        assert_eq!((plain.rows, plain.scrollback_max), (50, 1950));
+
+        // A ceiling between the two: the history is cut to it and the page is
+        // not, which is the whole of what the setting normally does.
+        let capped =
+            of(b"[Tera Term]\r\nTerminalSize=80,50\r\nScrollBuffSize=2000\r\nMaxBuffSize=500\r\n");
+        assert_eq!((capped.rows, capped.scrollback_max), (50, 450));
+
+        // ...and below the page, where it takes the terminal down with it.
+        // `buffer.c:4977` cuts `Ny` before the buffer is sized at all.
+        let tiny =
+            of(b"[Tera Term]\r\nTerminalSize=80,50\r\nScrollBuffSize=2000\r\nMaxBuffSize=30\r\n");
+        assert_eq!((tiny.rows, tiny.scrollback_max), (30, 0));
+
+        // Under 24 is not a floor — `ttset.c:1214` takes the default — so this
+        // is a 50-row terminal and not a one-row one.
+        let refused =
+            of(b"[Tera Term]\r\nTerminalSize=80,50\r\nScrollBuffSize=2000\r\nMaxBuffSize=1\r\n");
+        assert_eq!((refused.rows, refused.scrollback_max), (50, 1950));
+    }
+
+    /// Four settings the terminal already honoured and the file could not say.
+    #[test]
+    fn the_four_that_had_no_key_have_one() {
+        let d = vt_config(&Settings::default(), &Config::default());
+        assert!(d.color_flags.ansi_color);
+        assert!(!d.disable_app_keypad);
+        assert!(!d.disable_app_cursor);
+
+        let c = vt_config(
+            &Settings::load(&Ini::parse(
+                b"[Tera Term]\r\n\
+                  EnableANSIColor=off\r\n\
+                  DisableAppKeypad=on\r\n\
+                  DisableAppCursor=on\r\n",
+            )),
+            &Config::default(),
+        );
+        assert!(!c.color_flags.ansi_color);
+        assert!(c.disable_app_keypad);
+        assert!(c.disable_app_cursor);
     }
 
     /// The timestamp is two keys, and which one answers depends on whether the

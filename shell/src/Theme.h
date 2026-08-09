@@ -80,8 +80,8 @@ private:
     QColor m_cursor;
 
     // `ts.ColorFlag` bits, and `ts.UseNormalBGColor`. Upstream's defaults
-    // until `applySettings` reads the file; `EnableANSIColor` and
-    // `UseNormalBGColor` have no schema row yet and so stay put.
+    // until `applySettings` reads the file; `UseNormalBGColor` has no schema
+    // row yet and so stays put.
     bool m_ansiColor = true;
     bool m_boldColor = true;
     bool m_blinkColor = true;
