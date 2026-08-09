@@ -101,12 +101,61 @@ fn a_reply_the_parser_owes_goes_out_on_the_same_pump() {
 fn paste_is_bracketed_only_when_the_host_asked() {
     let (mut s, h) = connected(20, 4);
 
+    // ...and the LF has become a CR on the way, which is `NormalizeLineBreakCR`
+    // and is what the Return key would have sent.
     s.paste("plain\n").unwrap();
-    assert_eq!(h.outbound(), b"plain\n");
+    assert_eq!(h.outbound(), b"plain\r");
 
     s.feed(b"\x1b[?2004h");
     s.paste("x").unwrap();
-    assert_eq!(h.outbound(), b"plain\n\x1b[200~x\x1b[201~");
+    assert_eq!(h.outbound(), b"plain\r\x1b[200~x\x1b[201~");
+}
+
+/// `NormalizeLineBreakCR` (`ttlib_static_cpp.cpp:535`): a terminal sends what
+/// the keyboard sends, and the Return key is a CR whatever the clipboard holds.
+#[test]
+fn a_paste_puts_one_cr_on_the_wire_for_every_line_break() {
+    let (mut s, h) = connected(20, 4);
+    s.paste("a\r\nb\nc\rd").unwrap();
+    assert_eq!(h.outbound(), b"a\rb\rc\rd");
+}
+
+/// The two settings that gate the brackets on top of `DECSET 2004`, and the
+/// one that decides what a trailing newline is worth.
+#[test]
+fn the_clipboard_settings_decide_what_a_paste_looks_like() {
+    let with = |edit: fn(&mut tt_session::Settings), text: &str| {
+        let (mut s, h) = connected(20, 4);
+        let mut settings = s.settings().clone();
+        edit(&mut settings);
+        s.set_settings(settings).unwrap();
+        s.feed(b"\x1b[?2004h");
+        s.paste(text).unwrap();
+        h.outbound()
+    };
+
+    // `BracketedSupport=off` refuses the mode the host asked for.
+    assert_eq!(
+        with(|s| s.clipboard_bracketed = false, "x\ny"),
+        b"x\ry".to_vec()
+    );
+    // `BracketedControlOnly` brackets a block and not a word.
+    assert_eq!(
+        with(|s| s.clipboard_bracketed_control_only = true, "word"),
+        b"word".to_vec()
+    );
+    assert_eq!(
+        with(|s| s.clipboard_bracketed_control_only = true, "two\nlines"),
+        b"\x1b[200~two\rlines\x1b[201~".to_vec()
+    );
+    // `TrimTrailingNLonPaste` cuts every trailing break, not one.
+    assert_eq!(
+        with(|s| s.clipboard_trim_trailing_newline = true, "cmd\r\n\r\n"),
+        b"\x1b[200~cmd\x1b[201~".to_vec()
+    );
+    // ...and off, which is how it ships, the newline goes and the shell runs
+    // the line.
+    assert_eq!(with(|_| {}, "cmd\r\n"), b"\x1b[200~cmd\r\x1b[201~".to_vec());
 }
 
 #[test]

@@ -1096,8 +1096,9 @@ pub struct Settings {
     pub clipboard_bracketed: bool,
     /// `ttset.c:2003`. Brackets only a paste that **contains a control character**
     /// (`iswcntrl`, `clipboar.c:270`) — so a pasted word goes bare and a pasted
-    /// block is bracketed. Note the test runs after the line breaks have been
-    /// normalised to CR, so any multi-line paste qualifies.
+    /// block is bracketed. The test runs while the line breaks are still CR LF and
+    /// again gives the same answer once they are CR, so any multi-line paste
+    /// qualifies either way.
     pub clipboard_bracketed_control_only: bool,
     /// `ttset.c:589`, and the default is the `else` branch: a `Port=` that says
     /// anything but `serial` is TCP/IP, including `Port=tcp` and `Port=`.
@@ -4539,7 +4540,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "off",
         label: None,
-        doc: "`ttset.c:2003`. Brackets only a paste that **contains a control character** (`iswcntrl`, `clipboar.c:270`) — so a pasted word goes bare and a pasted block is bracketed. Note the test runs after the line breaks have been normalised to CR, so any multi-line paste qualifies.",
+        doc: "`ttset.c:2003`. Brackets only a paste that **contains a control character** (`iswcntrl`, `clipboar.c:270`) — so a pasted word goes bare and a pasted block is bracketed. The test runs while the line breaks are still CR LF and again gives the same answer once they are CR, so any multi-line paste qualifies either way.",
     },
     Field {
         name: "connection.port_type",

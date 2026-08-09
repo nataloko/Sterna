@@ -397,8 +397,9 @@ clipboard.bracketed | bool | Tera Term | BracketedSupport | on | -
 
 # `ttset.c:2003`. Brackets only a paste that **contains a control character**
 # (`iswcntrl`, `clipboar.c:270`) — so a pasted word goes bare and a pasted
-# block is bracketed. Note the test runs after the line breaks have been
-# normalised to CR, so any multi-line paste qualifies.
+# block is bracketed. The test runs while the line breaks are still CR LF and
+# again gives the same answer once they are CR, so any multi-line paste
+# qualifies either way.
 clipboard.bracketed_control_only | bool | Tera Term | BracketedControlOnly | off | -
 
 # --- connection --------------------------------------------------------------

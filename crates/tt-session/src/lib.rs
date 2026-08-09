@@ -809,11 +809,25 @@ impl Session {
         self.flush_pending()
     }
 
-    /// Paste, bracketed when the host asked for it (`DECSET 2004`).
+    /// Paste, the way `CBPreparePaste` prepares one (`clipboar.c:216`).
     ///
-    /// The brackets are the point: without them a shell runs every newline in
-    /// the pasted text as a command, which is a well-known way to lose data
-    /// to a copied trailing newline.
+    /// Three things happen to the text on the way, and only the third is the
+    /// one everybody knows about:
+    ///
+    /// 1. `TrimTrailingNLonPaste` cuts **every** trailing CR and LF, not one
+    ///    (`clipboar.c:55`). Off by default, so a copied line still ends in a
+    ///    newline and the shell still runs it.
+    /// 2. **Every line break becomes a single CR** — `NormalizeLineBreakCR`
+    ///    (`ttlib_static_cpp.cpp:535`) maps `LF` and `CR LF` alike onto `CR`.
+    ///    A terminal sends what a keyboard sends, and the Return key is a CR;
+    ///    passing the clipboard's own LFs through is the obvious build and
+    ///    puts a byte on the wire that no key on the keyboard produces.
+    /// 3. The brackets, which need the host's `DECSET 2004` **and** the two
+    ///    settings — see [`Settings::clipboard_bracketed`].
+    ///
+    /// The confirmation dialog between 1 and 2 is the frontend's: it is modal,
+    /// it can edit the text, and a core that blocked on it would be a core
+    /// that owned a window.
     pub fn paste(&mut self, text: &str) -> Result<()> {
         // Everything the user could type is refused while a transfer is up —
         // a stray byte in the middle of a packet is a corrupted file, and a
@@ -821,7 +835,15 @@ impl Session {
         if self.xfer.is_some() {
             return Ok(());
         }
-        if self.vt.bracketed_paste() {
+        let text = paste_text(text, &self.settings);
+        // Upstream decides this before normalising to CR and after normalising
+        // to CRLF, so `iswcntrl` sees the line breaks either way; doing it on
+        // the normalised text is the same answer for one fewer copy.
+        let bracket = self.vt.bracketed_paste()
+            && self.settings.clipboard_bracketed
+            && (!self.settings.clipboard_bracketed_control_only
+                || text.chars().any(|c| c.is_control()));
+        if bracket {
             self.queue(b"\x1b[200~");
             self.queue(text.as_bytes());
             self.queue(b"\x1b[201~");
@@ -1014,6 +1036,38 @@ impl Session {
     pub fn set_write_timeout(&mut self, d: Duration) {
         self.write_timeout = d;
     }
+}
+
+/// What a paste puts on the wire, before the brackets: `TrimTrailingNLW` and
+/// then `NormalizeLineBreakCR` (`clipboar.c:241`, `:289`).
+///
+/// Public because the confirmation dialog is the frontend's, and it has to be
+/// able to show the text the terminal is really about to send rather than what
+/// the clipboard happened to hold.
+pub fn paste_text(text: &str, s: &Settings) -> String {
+    // "Trim the trailing newline" is every one of them: the loop walks back
+    // over CR and LF alike until it finds something else (`clipboar.c:55`).
+    let text = if s.clipboard_trim_trailing_newline {
+        text.trim_end_matches(['\r', '\n'])
+    } else {
+        text
+    };
+    // `CR LF` and a bare `LF` both become one `CR`; a bare `CR` stays one. The
+    // pair has to be collapsed rather than mapped byte by byte, or a file
+    // copied out of an editor arrives as two line endings for every line.
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\r' => {
+                chars.next_if_eq(&'\n');
+                out.push('\r');
+            }
+            '\n' => out.push('\r'),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// A [`Transport`] over two byte queues, for tests.
