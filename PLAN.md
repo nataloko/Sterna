@@ -1055,11 +1055,15 @@ before anything else in every session.
   and clipboard, the clock, the `send*` variants, `scp`, the passwords and the
   regex family — **every one of the 231 reserved words has an arm**, and
   `crates/tt-ttl/tests/scripts.rs` runs upstream's own 53 macros against a
-  golden transcript each. What is left is not the language: it is the
-  `ttpmacro` command line, which is what `params[]` needs. See below.
+  golden transcript each — including the `ttpmacro` command line, so the three
+  scripts that check their own answers now do it against real arguments. See
+  below. What is left is not in the crate: a host that is a terminal rather
+  than a recorder, and a way to reach one from outside the process.
 - **Lua via `mlua`** over the same `ScriptHost` command table (~500 LOC glue).
 - `ttctl` JSON-RPC control socket replacing DDE. Keep a `ttpmacro script.ttl`
   CLI entry point so existing shortcuts and `.bat` wrappers keep working.
+  ✅ **the argument parsing is done**, 2026-08-09 — `crates/tt-ttl/src/cmdline.rs`.
+  What the entry point still needs is the host behind it.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
   `crates/tt-config/` (39 settings), the map onto a running terminal in
   `tt-session`, the schema as data over the C ABI, and a Qt dialog that builds
@@ -1597,7 +1601,10 @@ below, for **fifteen**: `getspecialfolder`'s always-1 result, the NULL it
 hands `strncpy_s` for a folder type it does not know, and `gettime`'s
 timezone argument leaking into the process environment when the line has
 trailing junk. Six more came with the passwords and one with the regular
-expressions, for **twenty-two** — see those sections.
+expressions, for **twenty-two**, and one with the command line, for
+**twenty-three** — see those sections. The last is the only one that is
+reachable from outside the macro: every other is a wrong answer or a read of
+memory nobody chose.
 
 #### The checksums, and the terminal's odds and ends
 
@@ -2038,13 +2045,14 @@ an identifier not followed by `=` gets. The rest are platform: `makepath` joins
 with `/`, a `z:\name` argument is a filename containing a backslash, and
 `filetruncate 'aa:\...'` succeeds here where Windows calls it an invalid path.
 
-**What is left is not the language.** `macroparam.ttl` and `params_array.ttl`
-are about `params[]`, and the `.bat` files beside them run `ttpmacro.exe` with
-`/V`, `/i` and `/vxx` switches that the **launcher** eats before the macro sees
-what is left. Which arguments reach `params[]` is `ttmacro.cpp`'s parser, and
-this port has not built the `ttpmacro` command line yet — so both scripts run
-their `paramcnt == 1` arm and stop, and wiring the real command lines is a
-follow-up on the CLI entry point that is already on Stage 2's list.
+**Two of the 53 were not about the language and had nothing to run against.**
+`macroparam.ttl` and `params_array.ttl` are about `params[]`, and the `.bat`
+files beside them run `ttpmacro.exe` with `/V`, `/i` and `/vxx` switches that
+the **launcher** eats before the macro sees what is left. Which arguments reach
+`params[]` is `ttmdlg.cpp`'s `ParseParam`, so until that was ported both scripts
+ran their `paramcnt == 1` arm and the golden recorded that they did. Done a
+commit later — see the section after next — which turns them into the second and
+third scripts here that check their own answers.
 
 #### The macro file's own encoding, which is the machine's on Windows
 
@@ -2069,6 +2077,77 @@ ANSI code page on Linux to be faithful to. A file with no BOM is passed through
 unchanged, which is right for UTF-8 and leaves a Shift-JIS macro's bytes to
 reach the host as they were written — visible in `code_cp932.txt`. Stage 3 puts
 the code-page branch back on Windows, where it means something.
+
+#### And the command line, which is the last thing the 53 were waiting for
+
+`crates/tt-ttl/src/cmdline.rs`, 2026-08-09. `ParseParam` (`ttmdlg.cpp:82`) and
+the tokeniser under it. Two of the 53 scripts — `macroparam.ttl` and
+`params_array.ttl` — are not about TTL at all: they are about how `ttpmacro.exe`
+reads its own arguments, and the `.bat` files beside them are a specification
+written as five command lines and the `paramcnt` each should produce. Until this
+landed both ran their "no parameters" arm and the suite recorded that they did.
+They now run their real arms and come out clean, which makes them the second and
+third scripts in the 53 that check their own answers rather than showing them to
+a person.
+
+**A switch is a switch only before the macro's name**, and that is the whole
+content of the two scripts. `ParseParam` tests for `/D=`, `/I`, `/S` and `/V`
+inside `if (ParamCnt == 0)` and nowhere else, so `ttpmacro m.ttl /V` passes `/V`
+to the macro and `ttpmacro /V m.ttl` does not — same word, same case, opposite
+meaning, decided by which side of the filename it fell on. There is no `--` and
+no escape; putting the filename first is how a macro is given a `/V` of its own.
+
+**`params[0]` is the whole command line**, which no documentation says and the
+`param1`..`param9` form cannot express. `NewStrAryVar("params", ParamCnt+1)`
+gives an array indexed from zero, `ttmmain.cpp:297` fills index 1 with the
+macro's short name, and `ttl.cpp:243`'s loop starts at **0** and skips only
+index 1 — so `Params[0]`, which `ParseParam` set to `GetCommandLineW()` before
+tokenising anything, lands in `params[0]`. It is the only way a macro can see
+the switches the launcher ate. The port had it as an unwritten hole with a
+comment explaining why; the comment was wrong.
+
+**And `param1` is `ShortName`, not the path.** `FitTTLFileName` cuts the
+directory off and appends `.TTL` to a name with no dot anywhere in it — so
+`ttpmacro /tmp/x/m` opens `/tmp/x/m.TTL` and tells the macro it is called
+`m.TTL`. This port had been handing the whole path to `param1`, which showed up
+in exactly one golden, as a dialog title.
+
+**The tokeniser is upstream's own and is not `CommandLineToArgvW`.** A backslash
+is an ordinary character, which it has to be for Windows paths; a `""` inside a
+quoted run is one literal quote; and an unquoted `;` **ends the command line**,
+with everything after it discarded as a comment. That last one is not a
+plausible guess — it is `GetParam` returning NULL at `ttlib.c:888` — and it is
+why `params_array.bat`'s `""` argument arrives as an empty string rather than as
+two quote characters.
+
+**Which leaves the platform question.** Upstream is handed one string and splits
+it; Unix hands us `argv`, already split and unquoted by the shell. Running the
+tokeniser over a joined `argv` would quote-process the text twice and turn
+`'param 7'` back into two parameters, so there are two entry points instead:
+`CmdLine::parse` for a whole command line, which is what Stage 3 and the `.bat`
+transcriptions use, and `CmdLine::from_args` for `argv`, which runs only the
+half of `ParseParam` that is left — the switch scan and the counting. What that
+costs is `params[0]`: the original spacing and quoting do not survive `execve`,
+so on Unix it holds the arguments joined by a space, which is
+`/proc/self/cmdline` with its NULs replaced.
+
+**A twenty-third defect in `ttpmacro`, and this one is reachable from outside.**
+`ParseParam`'s loop calls `GetParam(Temp, sizeof(Temp), cur)` where `Temp` is
+`wchar_t[512]` — the size is passed in *bytes* to a function that counts
+`wchar_t`, so an argument longer than 511 characters is written up to 511
+`wchar_t` (1022 bytes) past the end of a stack array. The call immediately above
+the loop, for the executable's own name, passes `_countof` and is correct, which
+is what makes it look like a typo rather than a pattern. It is a stack buffer
+overflow driven by the command line, so it is reachable from a shortcut, a
+`.bat` file or anything else that launches `ttpmacro.exe` — file it with the
+rest in Stage 3. Not reproduced: the port truncates at 511, which is what the
+code meant.
+
+`GetParam` also has a trailing-`;` trim (`ttlib.c:909`) that cannot fire — a `;`
+only reaches the buffer while `quoted`, and nothing between that copy and the
+loop test can clear the flag — and which reads `buff[-1]` if the function is
+ever called with a size of 1. Recorded rather than reported: neither is
+reachable from any caller in the tree.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 

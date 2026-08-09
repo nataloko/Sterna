@@ -736,6 +736,30 @@ And for the macro language:
   upstream pushes all three through the same cipher BIO. Deriving from the
   plaintext salt, or restarting the counter per field, produces a file that
   round-trips perfectly here and nowhere else.
+- **A `/V` before the macro's name and a `/V` after it are different things**,
+  and `ParseParam` is the only place that says so — the switch tests live inside
+  `if (ParamCnt == 0)` (`ttmdlg.cpp:112`), so the first non-switch argument
+  closes the door and everything after it is a parameter whatever it looks like.
+  `macroparam.bat` is four command lines that differ only in where the filename
+  sits, and it is the specification. There is no `--`.
+- **`params[0]` is the whole command line and `params[1]` is not the path.**
+  The array is indexed from zero and `ttl.cpp:243`'s loop skips only index 1, so
+  `Params[0]` — set to `GetCommandLineW()` before anything was tokenised — is
+  visible to the macro; and index 1 holds `ShortName`, the basename with `.TTL`
+  appended if it has no dot at all, not the path the launcher was given. Reading
+  `params[0]` as an unused hole and `param1` as the path is what this port did
+  first, and only one golden line disagreed.
+- **`GetParam` is not `CommandLineToArgvW` and guessing costs a path.** A
+  backslash is ordinary, `""` inside a quoted run is one literal quote, and an
+  unquoted **`;` ends the command line** — everything after it is a comment
+  (`ttlib.c:888`). Quotes survive tokenising and come off afterwards in
+  `DequoteParam`, which is what makes the doubled-quote rule work at all.
+- **The shell has already done half of `ParseParam` on Unix.** Joining `argv`
+  back into a string and running the real tokeniser over it quote-processes
+  everything twice, so `"param 7"` becomes two parameters. `CmdLine::from_args`
+  takes the tokens as given and skips both `GetParam` and `DequoteParam`;
+  `CmdLine::parse` is for a genuine command line, which is Stage 3 and the
+  `.bat` transcriptions in `tests/scripts.rs`.
 
 And for the C ABI:
 
@@ -824,7 +848,7 @@ diffing the two engines. Patches in `oracle/patches/`, reports drafted in
 `docs/upstream-bugs.md`. Filing needs a GitHub account and is an open item in
 `PLAN.md`.
 
-**Twenty-two more are in `ttpmacro` and none of them is in that file**, because
+**Twenty-three more are in `ttpmacro` and none of them is in that file**, because
 they were found by reading the source rather than by two engines disagreeing,
 and `docs/upstream-bugs.md` holds only what a differential run proved. They are
 written up in `PLAN.md`'s TTL sections: `waitn`'s timeout arm leaving the
@@ -838,10 +862,14 @@ out-of-bounds accesses (`strtrim`, `strsplit`, `GetFactor`, `HandleGet`,
 `HandleFree`, `FPointer`, `logrotate`) and six in the password family — two
 stack overflows in the v1 codec, two uninitialised reads and a wild `free()`
 in the v2 one, and a v1 record that is silently unreadable when the INI layer
-strips a matching pair of quotes off it — and one in the regex matcher, which
+strips a matching pair of quotes off it — one in the regex matcher, which
 indexes the target with a non-participating group's -1 and writes a NUL before
-the buffer. Demonstrate each against a real `ttpmacro.exe` in Stage 3 before
-filing.
+the buffer, and one in `ParseParam`, which passes `sizeof` where `GetParam`
+counts `wchar_t` and so overflows a 512-element stack array by up to 1022 bytes
+on an argument longer than 511 characters. **That last one is the only one an
+attacker reaches without already running a macro** — it is the command line, so
+a shortcut or a `.bat` file is enough. Demonstrate each against a real
+`ttpmacro.exe` in Stage 3 before filing, and file that one first.
 
 **And one in `vte`**, which is a dependency rather than the specification, so it
 is not in that file: `vte` 0.15.0's `advance_partial_utf8` (`lib.rs:687`) prints

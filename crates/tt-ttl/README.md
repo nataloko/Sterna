@@ -91,6 +91,7 @@ files behind it. It does not belong in a parser.
 | `vars.rs` | the variable table — integers, strings, arrays and labels in one namespace |
 | `expr.rs` | the eleven precedence levels, `GetFactor` through `GetExpression` |
 | `source.rs` | `fileread.cpp`'s `LoadFileU8C` — the macro file's own encoding |
+| `cmdline.rs` | `ttmdlg.cpp`'s `ParseParam` — the switches, and what reaches `params[]` |
 | `buffer.rs` | `ttmbuff.c` — the include stack, the control stack, the line reader |
 | `interp.rs` | `ExecCmnd` — the four skip flags, assignment, and control flow |
 | `strcmds.rs`, `sprintf.rs` | the string and integer commands, and C's `printf` |
@@ -102,8 +103,9 @@ files behind it. It does not belong in a parser.
 | `envcmds.rs`, `clockcmds.rs`, `cksumcmds.rs`, `pwd.rs`, `pwdcmds.rs` | the environment, the clock, the checksums, the passwords |
 | `host.rs` | the seam, and a host that records |
 
-What is left is not the language: `params[]` needs the `ttpmacro` command
-line's switch parser, which is a Stage 2 item of its own.
+The language is complete. What is left is not in this crate: a host that is a
+real terminal rather than a recorder, and the `ttctl` control socket that lets
+one be reached from outside the process.
 
 ## An upstream defect, reproduced
 
