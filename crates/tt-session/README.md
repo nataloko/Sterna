@@ -103,6 +103,30 @@ One deliberate divergence: upstream writes CR LF for each logged line
 artefact is a text file read in a pager on Linux. `LogOptions::crlf` gets a
 byte-identical Tera Term log back.
 
+Everything else about a log is a `TERATERM.INI` key, and `settings::log_options`
+is where they are read — the mode, the timestamp, appending and the three
+rotation keys. Two of those are traps worth knowing before touching them:
+`LogRotateSize` is in **bytes** whatever `LogRotateSizeType` says, and a
+`LogRotateStep` of zero is **ten thousand** generations rather than none. The
+timestamp is two keys, because an absent `LogTimestampType` consults Tera
+Term 4's `LogTimestampUTC` and a present `Local` does not.
+
+## A log's name is a template, and there are two `strftime`s
+
+`logname.rs`. `LogDefaultName` ships as `teraterm.log` and looks like a plain
+name; `FLogGetLogFilename` puts it through four passes — `strftime`, then `&h`,
+`&p` and `&u` for the connection, then a sweep for characters a file name
+cannot hold, then a join against the log directory (`LogDefaultPath`, or the
+*file-transfer* directory if that exists, or a per-user one).
+
+The part that decided this module's shape: **a file name and a timestamp go
+through different expanders**. A name is validated against Visual Studio 2005's
+table and handed to the C runtime; a timestamp goes through upstream's own
+twelve-conversion `ttstrftime`. `%N` works in one and vanishes from the other,
+`%e` is the other way round, and ten more work in a name and come back as
+literal text in a timestamp. Both are reproduced, and the module header lists
+them.
+
 ## The viewport, and why a line has a number
 
 Scrolling back lives here rather than in the frontend because it has to be

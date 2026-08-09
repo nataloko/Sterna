@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 226
+**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 234
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1088,11 +1088,12 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (60 settings: 39 for the terminal, 2026-08-08, plus the
-  connection, serial, log and transfer ones the command line writes into,
-  2026-08-09), the map onto a running terminal in `tt-session`, the schema as
-  data over the C ABI, and a Qt dialog that builds itself from it. What remains
-  is the *rest of the settings*, which is a line and a citation each. See below.
+  `crates/tt-config/` (77 settings: 39 for the terminal, 2026-08-08, plus the
+  connection, serial and transfer ones the command line writes into, 2026-08-09,
+  plus the whole log family, 2026-08-09), the map onto a running terminal in
+  `tt-session`, the schema as data over the C ABI, and a Qt dialog that builds
+  itself from it. What remains is the *rest of the settings*, which is a line
+  and a citation each. See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
   against a real Win32 rather than against a reading of the documentation;
   `KEYBOARD.CNF` is an INI and reads with the same layer.
@@ -1147,7 +1148,9 @@ The generated file is committed and a test fails when it is stale, the same
 arrangement as `tt-ffi`'s header.
 
 39 settings of roughly 600. The machinery was the expensive part; adding a row
-is a line and a citation.
+is a line and a citation — and the log family, added later the same week, is
+what that claim was tested against: seventeen rows, and the work was reading
+`ttset.c` and `filesys_log.cpp` rather than anything to do with the schema.
 
 #### And then it was wired, which is where the schema paid for itself
 
@@ -2867,6 +2870,65 @@ because Lua has no uncatchable error.
 with `cc` rather than probed for with `pkg-config` — the two containers here do
 not have the same packages, and a build that depends on which one it is in is
 the thing this tree spends the most effort avoiding.
+
+#### And then the log stopped being three hardcoded choices
+
+`crates/tt-config/schema/settings.txt`, `tt-session/src/settings.rs`,
+`tt-session/src/logname.rs` and the shell, 2026-08-09. Seventeen settings, 60
+to 77, and the first family added since the machinery was built — which was the
+point of building it, so the interesting part is what the *citations* turned up
+rather than the rows themselves.
+
+**The window had been assembling its own options and getting six keys wrong.**
+`MainWindow` set `TT_LOG_TIMESTAMP_ELAPSED` in two places with a comment saying
+those were `TERATERM.INI` keys and would become choices when the schema
+existed. The schema existed. So `tt_session_log_start` now takes a **null
+`options`** to mean "however the settings say", which is the only thing the
+window has ever wanted, and the struct stays for whoever wants to override one
+field. `LogTimestampFormat` is the reason a null is better than a filled-in
+struct rather than merely tidier: it is a string, and a `#[repr(C)]` struct a
+caller allocates cannot hold one.
+
+**`LogDefaultName` is a template, and `teraterm.log` is what a template looks
+like when nobody has edited it.** `FLogGetLogFilename` runs four passes over a
+name before opening it — `strftime`, then `&h`/`&p`/`&u` for the connection,
+then a sweep for characters a file name cannot hold, then a join against the
+log directory. Anybody logging more than one console ends up with a
+`&h-%Y%m%d.log`, and a port that took the name literally would put every
+session in one file. `logname.rs` is that, and it is what makes `LogAutoStart`
+possible at all: a log that starts by itself needs a name from somewhere.
+
+**The finding that cost the most thought: there are two `strftime`s upstream
+and they are not the same one.** A log *file name* is validated against
+`IsValidStrftimeCode`'s Visual Studio 2005 table and handed to the C runtime; a
+log *timestamp* goes through `ttstrftime`, which is Tera Term's own
+twelve-conversion implementation. They disagree in **both** directions —
+upstream's own `%N` works in a timestamp and is deleted from a file name, `%e`
+is the other way round, and ten conversions (`%j`, `%p`, `%U`, `%W`, `%x`,
+`%X`, `%z`, `%Z`, `%A`, `%c`, `%I`) work in a name and come back as literal
+text in a timestamp. The shipped `LogTimestampFormat` ends in `%N`, so pasting
+it into `LogDefaultName` silently loses the milliseconds. Both reproduced;
+neither is documented upstream.
+
+**Four more of the settings-trap family**, all now in `CLAUDE.md`:
+`LogRotateSize` is in bytes whatever `LogRotateSizeType` says, so scaling it
+turns 1 MB into a terabyte; a `LogRotateStep` of zero is **ten thousand**
+generations rather than none; `LogTypePlainText` is one byte and it is a BS,
+which means the setting named after the log also decides what a macro's `wait`
+matches; and `LogTimestampType`'s *empty* value consults a second key,
+`LogTimestampUTC`, which is why the schema gives the empty string a variant of
+its own.
+
+`TIMESTAMP_ELAPSED_CONNECTED` became a variant rather than being folded into
+the log's own clock. Upstream reads `cv.ConnectedTime` at every stamp, so a
+log left open across a reconnect restarts its count — and the elapsed layout
+gained `strelapsedW`'s leading days field, which had been quietly dropped.
+
+Three of the seventeen are read and written and act on nothing, each saying so
+where it is declared: `LogHideDialog` (this port has a status-bar indicator
+rather than a progress window), `LogIncludeScreenBuffer` (the function upstream
+does it with is two of the five upstream bugs on file) and `LogLockExclusive`
+plus `DeferredLogWriteMode` (Win32 share modes and a writer thread).
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 

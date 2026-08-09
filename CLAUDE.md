@@ -1000,6 +1000,59 @@ Lua's escape hatches are not the interpreter's:
   the reader is told the wrong thing about where the code is. One character,
   and nothing warns.
 
+And for the session log, whose settings are the same family of trap as all the
+others plus one of their own:
+
+- **There are two `strftime` expanders upstream and they are not the same
+  one.** A log *file name* is checked against `IsValidStrftimeCode`'s Visual
+  Studio 2005 table (`ttlib_static_cpp.cpp:1881`) and then handed to the C
+  runtime; a log *timestamp* goes through `ttstrftime`
+  (`ttlib_static.c:380`), which is Tera Term's own implementation of twelve
+  conversions. They disagree **in both directions**: `%N` — upstream's own
+  milliseconds, and the last thing in the shipped `LogTimestampFormat` —
+  works in a timestamp and is silently *deleted* from a file name; `%e` is
+  implemented in a timestamp and rejected from a name; and `%j`, `%p`, `%U`,
+  `%W`, `%x`, `%X`, `%z`, `%Z`, `%A`, `%c` and `%I` all work in a name and
+  come back as **literal text** in a timestamp, because `ttstrftime`'s
+  `default` arm emits the `%` and does not consume the letter. Writing one
+  expander for both is the obvious thing and is wrong twice over.
+- **`LogRotateSize` is in bytes whatever `LogRotateSizeType` says.** The
+  dialog multiplies by 1024 per unit *before* storing (`log_pp.cpp:471`), so
+  the type is a display unit and nothing else. Scaling the stored value by it
+  turns the 1 MB somebody asked for into a terabyte, and their log never
+  rotates — which presents as rotation being broken rather than as a unit bug.
+- **A `LogRotateStep` of zero is ten thousand generations, not none.**
+  `filesys_log.cpp:507` leaves `loopmax` at a hardcoded 10000 when the step is
+  unset. Reading the zero as "off" is the natural mistake and disables the
+  feature for every file that does not mention it.
+- **`LogRotate` is not a bool and must not be given a range.** 0 is none and 1
+  is by-size (`tttypes.h:106`), and `filesys_log.cpp:513` treats anything else
+  as "do not rotate" — so an `int(0..1)` in the schema would clamp a 2 to a 1
+  and switch rotation *on* for a file that had it off.
+- **`LogTimestampType`'s empty value is a value, because a second key answers
+  for it.** `ttset.c:1007`: an absent or empty `LogTimestampType` consults
+  `LogTimestampUTC`, Tera Term 4's key, while a present `Local` does not — and
+  a Tera Term 5 that saves a Tera Term 4 file writes the new key and leaves
+  the old one behind, so both are in real files. That is why the schema gives
+  the empty spelling a variant of its own. The cost is the one divergence, in
+  `settings.txt` and asserted in `tests/settings.rs`: a *misspelt* value falls
+  to local time upstream and to the empty spelling here, since the schema has
+  one fallback and it is the default.
+- **`LogTypePlainText` is one byte, and it is not only the log's.**
+  `vtterm.c:666` and `:671` gate the tapped BS on it — that is the whole of
+  what the setting does — and the tap is shared with the macro language's
+  received-line buffer, so a setting named after the log changes what every
+  `wait` in every script matches against.
+- **The file-*transfer* directory decides where a log goes.**
+  `GetTermLogDir` (`ttlib_types.cpp:63`) falls back to `FileDir` when
+  `LogDefaultPath` is empty *and* that directory exists, before reaching the
+  per-user one. Nobody would guess the relationship, and it means a `/FD=` on
+  the command line moves the log.
+- **A relative `/L=` does not land in the working directory.** Only an
+  absolute request escapes the log directory (`filesys_log.cpp:964`), so
+  `ttermpro /L=out.log` writes into `LogDefaultPath` and the file is not next
+  to the shortcut that asked for it.
+
 And for a macro reached from outside the process:
 
 - **A macro that ends without asking for anything never wakes its frontend.**
