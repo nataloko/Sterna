@@ -34,6 +34,20 @@
 #define TT_ATTR_REVERSE 16
 
 /**
+ * `AttrLineContinued` (`buffer.h:50`), whose own comment says it is "valid
+ * only at the beggining or end of a line" — an automatic line break sets it
+ * on the last cell of the row it left and on the first cell of the row it
+ * landed on, and nothing else ever does.
+ *
+ * It is not drawn. Its readers are `ts.EnableContinuedLineCopy`'s: a
+ * selection starting at column 0 of a continued row reaches back into the row
+ * above it (`buffer.c:1094`), a copy joins the two rather than putting a
+ * newline between them, and the terminal stops feeding the log and the macro
+ * tap a `CR LF` for a break the host never sent.
+ */
+#define TT_ATTR_LINE_CONTINUED 32
+
+/**
  * `AttrSgrMask` (`buffer.h:58`) — the four attributes SGR itself can set, and
  * the only ones a selective erase leaves behind.
  */

@@ -99,6 +99,11 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
         // upstream reads it: the tap it gates is `vtterm.c`'s, and it feeds a
         // macro's received-line buffer as well as the log.
         log_plain_text: s.log_plain_text,
+        // And a clipboard setting in it, for the same reason: the half of it
+        // upstream spends in `vtterm.c` is the `logFlag` on `CarriageReturn`
+        // and `LineFeed`, which decides whether a wrapped line reaches the log
+        // and a macro as one line or as two.
+        continued_line_copy: s.clipboard_continued_line_copy,
         ..*base
     }
 }

@@ -244,6 +244,20 @@ pub struct Config {
     /// this changes what `wait` matches against, and both taps here are gated
     /// with it for that reason.
     pub log_plain_text: bool,
+    /// `ts.EnableContinuedLineCopy` (`ttset.c:1419`, key default off), and the
+    /// half of it that lives in the terminal rather than in the frontend.
+    ///
+    /// It is upstream's `logFlag`, threaded through `CarriageReturn` and
+    /// `LineFeed` (`vtterm.c:675`, `:688`): TRUE for a CR or an LF that came
+    /// off the wire, FALSE for the pair the terminal generates when a line
+    /// wraps. With this on, only the generated pair is kept out of the log and
+    /// the macro tap — so `wait` matches a wrapped line as the one line the
+    /// host meant to send, instead of two.
+    ///
+    /// The other half is [`ATTR_LINE_CONTINUED`](tt_grid::ATTR_LINE_CONTINUED),
+    /// which the grid maintains whatever this says because nothing reads it
+    /// when the setting is off.
+    pub continued_line_copy: bool,
 }
 
 /// The private and ANSI modes that are one flag each. Grouped so a reset can
@@ -330,6 +344,7 @@ impl Default for Config {
             disable_app_keypad: false,
             disable_app_cursor: false,
             log_plain_text: false,
+            continued_line_copy: false,
         }
     }
 }
@@ -1296,11 +1311,14 @@ impl State {
     /// it. Used at the sites that call that function and not at every cursor
     /// motion to column zero: `ESC E` moves with `MoveCursor` and so is silent.
     ///
-    /// The `logFlag` argument is not carried. It only matters when
-    /// `ts.EnableContinuedLineCopy` is on, which it is not by default
-    /// (`ttset.c:1419`), and this port has not adopted that setting.
-    fn carriage_return(&mut self) {
-        self.tap(0x0d);
+    /// `log_flag` is upstream's argument of the same name, and the only thing
+    /// it decides is whether `ts.EnableContinuedLineCopy` may suppress the
+    /// tap: TRUE for a CR that arrived on the wire, FALSE for one the wrap
+    /// generated. See [`Config::continued_line_copy`].
+    fn carriage_return(&mut self, log_flag: bool) {
+        if log_flag || !self.config.continued_line_copy {
+            self.tap(0x0d);
+        }
         self.grid.carriage_return();
     }
 
@@ -1309,7 +1327,7 @@ impl State {
         match self.config.cr_receive {
             CrReceive::Auto => {
                 if !self.prev_was_lf || !self.auto_generated_crlf {
-                    self.carriage_return();
+                    self.carriage_return(true);
                     // Upstream's `LineFeed(CR, TRUE)`, minus the LNM tail —
                     // see the note on `line_feed`, which this deliberately does
                     // not call.
@@ -1321,7 +1339,7 @@ impl State {
                 }
             }
             CrReceive::CrLf => {
-                self.carriage_return();
+                self.carriage_return(true);
                 // Upstream returns here and pushes an LF back into the input
                 // stream instead (`CommInsert1Byte`), which arrives as an
                 // ordinary line feed a moment later. The grid ends up the same
@@ -1329,7 +1347,7 @@ impl State {
                 self.tap(0x0a);
                 self.grid.line_feed();
             }
-            _ => self.carriage_return(),
+            _ => self.carriage_return(true),
         }
     }
 
@@ -1363,7 +1381,11 @@ impl State {
         self.tap(0x0a);
         self.grid.line_feed();
         if self.modes.lf_mode {
-            self.carriage_return();
+            // Upstream passes its own `logFlag` down here (`vtterm.c:706`).
+            // Every caller of this function is one of the wire's, so it is
+            // always TRUE — the wrap does its break inline rather than through
+            // `LineFeed`, which is where the FALSE arm lives.
+            self.carriage_return(true);
         }
     }
 
@@ -1372,12 +1394,12 @@ impl State {
         match self.config.cr_receive {
             CrReceive::Lf => {
                 // "the server sends LF alone" — so LF means CR+LF.
-                self.carriage_return();
+                self.carriage_return(true);
                 self.line_feed();
             }
             CrReceive::Auto => {
                 if !self.prev_was_cr || !self.auto_generated_crlf {
-                    self.carriage_return();
+                    self.carriage_return(true);
                     self.line_feed();
                     self.auto_generated_crlf = true;
                 } else {
@@ -2564,7 +2586,11 @@ impl Perform for State {
         // two lines — which is the whole reason `Grid::put` reports it. The
         // taps go in *before* the character, which is the order upstream
         // reaches them in: the break happens, then the character lands.
-        if wrapped {
+        //
+        // Both calls pass `logFlag` FALSE, so this is one of the two places
+        // `ts.EnableContinuedLineCopy` suppresses the pair and a macro sees
+        // the host's line whole.
+        if wrapped && !self.config.continued_line_copy {
             self.tap(0x0d);
             self.tap(0x0a);
         }
@@ -2600,9 +2626,20 @@ impl Perform for State {
                 // `CursorForwardTab` directly. `ts.VTCompatTab` would suppress
                 // it, but it is off by default.
                 if self.grid.cursor.pending_wrap {
-                    self.carriage_return();
-                    self.tap(0x0a);
+                    // `CarriageReturn(FALSE); LineFeed(LF,FALSE);` — the second
+                    // of the two places the wrap generates a line break, and
+                    // so the second `ts.EnableContinuedLineCopy` suppresses.
+                    self.carriage_return(false);
+                    if !self.config.continued_line_copy {
+                        self.tap(0x0a);
+                    }
                     self.grid.line_feed();
+                    // `SetLineContinued()` (`vtterm.c:717`). Unlike the
+                    // character path, a tab writes nothing on the new row to
+                    // carry the bit, so upstream sets it on the row itself —
+                    // and only here does it gate that on the setting, which
+                    // makes no difference to anything that reads it.
+                    self.grid.set_line_continued(true);
                     self.grid.cursor.pending_wrap = false;
                 }
                 self.grid.forward_tab(1);
@@ -3560,6 +3597,52 @@ mod tests {
         );
         // With autowrap off there is no break, and upstream taps nothing.
         assert_eq!(tapped(b"\x1b[?7labcde", 4, 5), b"abcde");
+    }
+
+    /// ...unless `ts.EnableContinuedLineCopy` is on, which is the whole of
+    /// what upstream's `logFlag` argument decides. A break the *host* sent
+    /// still reaches the tap; only the one the wrap invented is dropped.
+    #[test]
+    fn continued_line_copy_keeps_the_wrap_out_of_the_tap() {
+        fn with(input: &[u8], cols: usize) -> String {
+            let mut vt = Vt::new(Config {
+                cols,
+                rows: 5,
+                continued_line_copy: true,
+                ..Config::default()
+            });
+            vt.set_macro_tap_enabled(true);
+            vt.feed(input);
+            String::from_utf8(vt.take_macro_bytes()).unwrap()
+        }
+        assert_eq!(with(b"abcde", 4), "abcde", "one line, as the host sent it");
+        assert_eq!(with("abc\u{4f60}".as_bytes(), 4), "abc\u{4f60}");
+        // The tab's wrap is the second of the two `logFlag`-FALSE sites.
+        assert_eq!(with(b"abcd\te", 4), "abcd\te");
+        // And a CR LF off the wire is untouched, which is the distinction the
+        // argument exists to make.
+        assert_eq!(with(b"ab\r\ncd", 20), "ab\r\ncd");
+    }
+
+    /// The other half of the same setting, which the frontend reads: a row
+    /// that a wrap landed on says so, and one a line feed landed on does not.
+    #[test]
+    fn a_wrapped_row_is_marked_continued() {
+        let vt = run(b"abcde", 4, 5);
+        assert!(!vt.grid().line_continued(0));
+        assert!(vt.grid().line_continued(1), "the row `e` landed on");
+        // The last cell of the row that was left carries it too, which is what
+        // a selection walking backwards off column 0 looks for.
+        assert_ne!(vt.grid().line(0)[3].attrs & tt_grid::ATTR_LINE_CONTINUED, 0);
+
+        // A host's own line break is not a continuation.
+        let vt = run(b"ab\r\ncd", 20, 5);
+        assert!(!vt.grid().line_continued(1));
+
+        // ...and it clears the mark left by an earlier wrap, so a row written
+        // over does not go on claiming to continue anything.
+        let vt = run(b"abcde\x1b[H\r\n\r\nxy", 4, 5);
+        assert!(!vt.grid().line_continued(1));
     }
 
     /// Nothing is collected while no macro is linked, and unlinking throws

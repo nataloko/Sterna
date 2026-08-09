@@ -28,6 +28,17 @@ pub const ATTR_UNDER: u32 = 0x0002;
 pub const ATTR_SPECIAL: u32 = 0x0004;
 pub const ATTR_BLINK: u32 = 0x0008;
 pub const ATTR_REVERSE: u32 = 0x0010;
+/// `AttrLineContinued` (`buffer.h:50`), whose own comment says it is "valid
+/// only at the beggining or end of a line" — an automatic line break sets it
+/// on the last cell of the row it left and on the first cell of the row it
+/// landed on, and nothing else ever does.
+///
+/// It is not drawn. Its readers are `ts.EnableContinuedLineCopy`'s: a
+/// selection starting at column 0 of a continued row reaches back into the row
+/// above it (`buffer.c:1094`), a copy joins the two rather than putting a
+/// newline between them, and the terminal stops feeding the log and the macro
+/// tap a `CR LF` for a break the host never sent.
+pub const ATTR_LINE_CONTINUED: u32 = 0x0020;
 
 /// `AttrSgrMask` (`buffer.h:58`) — the four attributes SGR itself can set, and
 /// the only ones a selective erase leaves behind.
@@ -810,6 +821,37 @@ impl Grid {
         } else if self.cursor.y + 1 < self.rows {
             self.move_cursor(self.cursor.x, self.cursor.y + 1);
         }
+        // `ClearLineContinued()` (`vtterm.c:704`): a row a line feed lands on
+        // is no longer the continuation of anything, and without this a row
+        // that wrapped once keeps saying so after it has been written over.
+        //
+        // Upstream gates it on `ts.EnableContinuedLineCopy` (`buffer.c:5368`)
+        // and sets the bit in the wrap path without gating on anything, which
+        // leaves the flag stale in exactly the case where nothing reads it.
+        // Clearing unconditionally is the same terminal and a coherent grid.
+        let y = self.cursor.y;
+        self.lines[y][0].attrs &= !ATTR_LINE_CONTINUED;
+    }
+
+    /// `BuffLineContinued` (`buffer.c:5366`) — mark the cursor's row as
+    /// continuing the one above it, or stop marking it.
+    ///
+    /// The character write path sets the bit for itself; this is for the one
+    /// caller that wraps without writing anything, which is a tab arriving on
+    /// a full row (`vtterm.c:717`).
+    pub fn set_line_continued(&mut self, on: bool) {
+        let y = self.cursor.y;
+        if on {
+            self.lines[y][0].attrs |= ATTR_LINE_CONTINUED;
+        } else {
+            self.lines[y][0].attrs &= !ATTR_LINE_CONTINUED;
+        }
+    }
+
+    /// Whether row `y` of the page continues the row above it — the frontend's
+    /// half of `ts.EnableContinuedLineCopy`, which joins the two when copying.
+    pub fn line_continued(&self, y: usize) -> bool {
+        self.lines[y][0].attrs & ATTR_LINE_CONTINUED != 0
     }
 
     /// RI. Mirror image of `line_feed`.
@@ -1587,6 +1629,14 @@ impl Grid {
         let mut wrapped = false;
 
         if self.cursor.pending_wrap {
+            // The row being left keeps `AttrLineContinued` on the cell the
+            // cursor is standing on, which is its last (`vtterm.c:859`), and
+            // the character about to land carries it onto the first cell of
+            // the next row — upstream through `CharAttrTmp`, here by setting
+            // it on the destination after `place`, since the pen must not
+            // acquire a bit that would then spread down the row.
+            let (x, y) = (self.cursor.x, self.cursor.y);
+            self.lines[y][x].attrs |= ATTR_LINE_CONTINUED;
             self.carriage_return();
             self.line_feed();
             self.cursor.pending_wrap = false;
@@ -1616,6 +1666,11 @@ impl Grid {
                 let pen = self.pen;
                 self.split_wide_at(y, x);
                 self.lines[y][x] = Cell::blank(pen);
+                // The parked space is the last cell of the row, and upstream
+                // writes it with `AttrLineContinued` already in `CharAttrTmp`
+                // (`vtterm.c:888`) — so it carries the bit, and so does the
+                // wide glyph that lands on the next row.
+                self.lines[y][x].attrs |= ATTR_LINE_CONTINUED;
                 self.carriage_return();
                 self.line_feed();
                 wrapped = true;
@@ -1625,6 +1680,14 @@ impl Grid {
         }
 
         self.place(cp, w);
+        if wrapped {
+            // The other end of the pair set above: the first cell of the row
+            // the break landed on. `line_feed` has just cleared it, which is
+            // upstream's order too — `LineFeed` clears and the character write
+            // that follows puts it back.
+            let (x, y) = (self.cursor.x, self.cursor.y);
+            self.lines[y][x].attrs |= ATTR_LINE_CONTINUED;
+        }
 
         let x = self.cursor.x;
         if w == 1 {
