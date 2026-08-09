@@ -321,6 +321,22 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: cd shell && ./build/pty_test
+      # The other three that need nothing either, and were not gated: a macro
+      # against the window's loop, a Tera Term command line from argv to a
+      # connected window, and the control socket. `xfer_test` is deliberately
+      # still out — it wants `lrzsz`, which this job does not install.
+      - name: A macro, through the window's event loop
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: cd shell && ./build/macro_test
+      - name: A command line, from argv to a connected window
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: cd shell && ./build/cmdline_test
+      - name: The control socket, against the window's event loop
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: cd shell && ./build/control_test
       - name: Stop the servers
         if: always()
         run: |
