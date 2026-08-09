@@ -55,7 +55,7 @@ S-shaped flight path.
 
 cd crates                        # the Rust core
 cargo test && cargo clippy --all-targets -- -D warnings
-cargo fmt -p tt-vt               # per package: --all rewrites generated.rs
+cargo fmt --all                  # the whole workspace, generated.rs included
 tt-ffi/run_abi.sh                # the C ABI, compiled and driven from C
 cargo test -p tt-xfer            # the protocols vs lrzsz and gkermit, over a pty
 cargo test -p tt-ttl             # the macro language, with no terminal attached
@@ -679,17 +679,19 @@ And for the settings, all of which came out of `ini-audit/`:
   write rewrites every line ending in the file, and normalises `[ s ]` to
   `[s]`. Both are in `ini-audit/divergences.txt` as *not* reproduced. Re-run
   the battery on Windows in Stage 3 before trusting either.
-- **`cargo fmt --all` rewrites `tt-config/src/generated.rs` and breaks its own
-  staleness test.** The generator does not emit rustfmt-clean code, so `--all`
-  reformats the committed file and `the_generated_file_is_current` then fails
-  with "src/generated.rs is stale", which is the opposite of what happened.
-  Loud rather than silent, and self-healing — re-run `cargo run -p tt-config
-  --bin gen-settings`. **Per-package is not enough**, which this note used to
-  say it was: `cargo fmt -p tt-config` reformats that package's own generated
-  file, and on the way it silently reflows five hand-written files that were
-  never rustfmt-clean either, so the diff to review is 800 lines wide. In this
-  one crate, format the files you touched — `rustfmt --edition 2021 <file>`.
-  `rustfmt.toml`'s `ignore` would fix it and is nightly-only.
+- **`gen-settings` pipes its output through `rustfmt`, and that is load-bearing
+  rather than tidy.** `cargo fmt --check` covers every file in the workspace,
+  a generated one included, so an emitter rustfmt disagrees with makes the lint
+  gate permanently red — and reformatting the file by hand is not the fix, it
+  just moves the failure to `the_generated_file_is_current`, which then says
+  "src/generated.rs is stale", the opposite of what happened. That pair had
+  main red for a while and cost a session to unpick. **Do not "simplify" the
+  generator by emitting pre-formatted text instead:** the one-line `if` bodies
+  are easy, but where a call or a match arm wraps depends on the *width of a
+  setting's name*, so the emitter would start losing to the gate the first time
+  somebody added a long one, with no warning. The consequence to know about is
+  that `cargo test -p tt-config` now needs `rustfmt` on `PATH` — it says so if
+  it is missing, rather than reporting a stale file.
 - **`TerminalID` is `strcmp`; every other enumerated setting is `_stricmp`.**
   `tttypes_termid.cpp:60`. And `TermIDGetID` never fails, so `TerminalID=vt320`
   is not an error — it is a VT100, silently, for ever. That is why the schema

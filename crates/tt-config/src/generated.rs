@@ -76,26 +76,56 @@ impl TerminalId {
     /// spelling silently reads as that default.
     pub fn from_ini(s: &str) -> Self {
         let s = s.trim();
-        if s == "VT100" { return Self::Vt100; }
-        if s == "VT100J" { return Self::Vt100J; }
-        if s == "VT101" { return Self::Vt101; }
-        if s == "VT102" { return Self::Vt102; }
-        if s == "VT102J" { return Self::Vt102J; }
-        if s == "VT220" { return Self::Vt220; }
-        if s == "VT220J" { return Self::Vt220J; }
-        if s == "VT282" { return Self::Vt282; }
-        if s == "VT320" { return Self::Vt320; }
-        if s == "VT382" { return Self::Vt382; }
-        if s == "VT420" { return Self::Vt420; }
-        if s == "VT520" { return Self::Vt520; }
-        if s == "VT525" { return Self::Vt525; }
-        if s == "dumb" { return Self::Dumb; }
+        if s == "VT100" {
+            return Self::Vt100;
+        }
+        if s == "VT100J" {
+            return Self::Vt100J;
+        }
+        if s == "VT101" {
+            return Self::Vt101;
+        }
+        if s == "VT102" {
+            return Self::Vt102;
+        }
+        if s == "VT102J" {
+            return Self::Vt102J;
+        }
+        if s == "VT220" {
+            return Self::Vt220;
+        }
+        if s == "VT220J" {
+            return Self::Vt220J;
+        }
+        if s == "VT282" {
+            return Self::Vt282;
+        }
+        if s == "VT320" {
+            return Self::Vt320;
+        }
+        if s == "VT382" {
+            return Self::Vt382;
+        }
+        if s == "VT420" {
+            return Self::Vt420;
+        }
+        if s == "VT520" {
+            return Self::Vt520;
+        }
+        if s == "VT525" {
+            return Self::Vt525;
+        }
+        if s == "dumb" {
+            return Self::Dumb;
+        }
         Self::default()
     }
 }
 
 impl Default for TerminalId {
-    fn default() -> Self { Self::Vt100 }
+    fn default() -> Self {
+        Self::Vt100
+    }
 }
 
 /// **`ttset.c:631`, and the default is the `else` branch.** A bare CR is a
@@ -129,16 +159,26 @@ impl TerminalCrReceive {
     /// defaults, as the `else` branch of a chain of comparisons.
     pub fn from_ini(s: &str) -> Self {
         let s = s.trim();
-        if s.eq_ignore_ascii_case("CR") { return Self::Cr; }
-        if s.eq_ignore_ascii_case("CRLF") { return Self::CrLf; }
-        if s.eq_ignore_ascii_case("LF") { return Self::Lf; }
-        if s.eq_ignore_ascii_case("AUTO") { return Self::Auto; }
+        if s.eq_ignore_ascii_case("CR") {
+            return Self::Cr;
+        }
+        if s.eq_ignore_ascii_case("CRLF") {
+            return Self::CrLf;
+        }
+        if s.eq_ignore_ascii_case("LF") {
+            return Self::Lf;
+        }
+        if s.eq_ignore_ascii_case("AUTO") {
+            return Self::Auto;
+        }
         Self::default()
     }
 }
 
 impl Default for TerminalCrReceive {
-    fn default() -> Self { Self::Cr }
+    fn default() -> Self {
+        Self::Cr
+    }
 }
 
 /// `ttset.c:646`, the same shape, one variant short — there is no AUTO on send.
@@ -167,15 +207,23 @@ impl TerminalCrSend {
     /// defaults, as the `else` branch of a chain of comparisons.
     pub fn from_ini(s: &str) -> Self {
         let s = s.trim();
-        if s.eq_ignore_ascii_case("CR") { return Self::Cr; }
-        if s.eq_ignore_ascii_case("CRLF") { return Self::CrLf; }
-        if s.eq_ignore_ascii_case("LF") { return Self::Lf; }
+        if s.eq_ignore_ascii_case("CR") {
+            return Self::Cr;
+        }
+        if s.eq_ignore_ascii_case("CRLF") {
+            return Self::CrLf;
+        }
+        if s.eq_ignore_ascii_case("LF") {
+            return Self::Lf;
+        }
         Self::default()
     }
 }
 
 impl Default for TerminalCrSend {
-    fn default() -> Self { Self::Cr }
+    fn default() -> Self {
+        Self::Cr
+    }
 }
 
 /// **`ttset.c:877` reads this with an empty fallback and only the literal `DEL`
@@ -206,14 +254,20 @@ impl KeyboardBackspace {
     /// defaults, as the `else` branch of a chain of comparisons.
     pub fn from_ini(s: &str) -> Self {
         let s = s.trim();
-        if s.eq_ignore_ascii_case("BS") { return Self::Bs; }
-        if s.eq_ignore_ascii_case("DEL") { return Self::Del; }
+        if s.eq_ignore_ascii_case("BS") {
+            return Self::Bs;
+        }
+        if s.eq_ignore_ascii_case("DEL") {
+            return Self::Del;
+        }
         Self::default()
     }
 }
 
 impl Default for KeyboardBackspace {
-    fn default() -> Self { Self::Bs }
+    fn default() -> Self {
+        Self::Bs
+    }
 }
 
 /// `ttset.c:887`. Upstream ships this **off**, and every Linux line editor and
@@ -248,16 +302,26 @@ impl KeyboardMeta {
     /// defaults, as the `else` branch of a chain of comparisons.
     pub fn from_ini(s: &str) -> Self {
         let s = s.trim();
-        if s.eq_ignore_ascii_case("off") { return Self::Off; }
-        if s.eq_ignore_ascii_case("on") { return Self::On; }
-        if s.eq_ignore_ascii_case("left") { return Self::Left; }
-        if s.eq_ignore_ascii_case("right") { return Self::Right; }
+        if s.eq_ignore_ascii_case("off") {
+            return Self::Off;
+        }
+        if s.eq_ignore_ascii_case("on") {
+            return Self::On;
+        }
+        if s.eq_ignore_ascii_case("left") {
+            return Self::Left;
+        }
+        if s.eq_ignore_ascii_case("right") {
+            return Self::Right;
+        }
         Self::default()
     }
 }
 
 impl Default for KeyboardMeta {
-    fn default() -> Self { Self::Off }
+    fn default() -> Self {
+        Self::Off
+    }
 }
 
 /// `ttset.c:718`, and the default is again the `else` branch.
@@ -286,15 +350,23 @@ impl CursorShape {
     /// defaults, as the `else` branch of a chain of comparisons.
     pub fn from_ini(s: &str) -> Self {
         let s = s.trim();
-        if s.eq_ignore_ascii_case("block") { return Self::Block; }
-        if s.eq_ignore_ascii_case("vertical") { return Self::Vertical; }
-        if s.eq_ignore_ascii_case("horizontal") { return Self::Horizontal; }
+        if s.eq_ignore_ascii_case("block") {
+            return Self::Block;
+        }
+        if s.eq_ignore_ascii_case("vertical") {
+            return Self::Vertical;
+        }
+        if s.eq_ignore_ascii_case("horizontal") {
+            return Self::Horizontal;
+        }
         Self::default()
     }
 }
 
 impl Default for CursorShape {
-    fn default() -> Self { Self::Block }
+    fn default() -> Self {
+        Self::Block
+    }
 }
 
 /// `ttset.c:589`, and the default is the `else` branch: a `Port=` that says
@@ -321,14 +393,20 @@ impl ConnectionPortType {
     /// defaults, as the `else` branch of a chain of comparisons.
     pub fn from_ini(s: &str) -> Self {
         let s = s.trim();
-        if s.eq_ignore_ascii_case("serial") { return Self::Serial; }
-        if s.eq_ignore_ascii_case("tcpip") { return Self::TcpIp; }
+        if s.eq_ignore_ascii_case("serial") {
+            return Self::Serial;
+        }
+        if s.eq_ignore_ascii_case("tcpip") {
+            return Self::TcpIp;
+        }
         Self::default()
     }
 }
 
 impl Default for ConnectionPortType {
-    fn default() -> Self { Self::TcpIp }
+    fn default() -> Self {
+        Self::TcpIp
+    }
 }
 
 /// `ttset.c:929`, default `IdDataBit8` from the `if (!…)` arm. Upstream's dialog
@@ -356,14 +434,20 @@ impl SerialDataBits {
     /// defaults, as the `else` branch of a chain of comparisons.
     pub fn from_ini(s: &str) -> Self {
         let s = s.trim();
-        if s.eq_ignore_ascii_case("8") { return Self::Eight; }
-        if s.eq_ignore_ascii_case("7") { return Self::Seven; }
+        if s.eq_ignore_ascii_case("8") {
+            return Self::Eight;
+        }
+        if s.eq_ignore_ascii_case("7") {
+            return Self::Seven;
+        }
         Self::default()
     }
 }
 
 impl Default for SerialDataBits {
-    fn default() -> Self { Self::Eight }
+    fn default() -> Self {
+        Self::Eight
+    }
 }
 
 /// `ttset.c:922`, default `IdParityNone`.
@@ -398,17 +482,29 @@ impl SerialParity {
     /// defaults, as the `else` branch of a chain of comparisons.
     pub fn from_ini(s: &str) -> Self {
         let s = s.trim();
-        if s.eq_ignore_ascii_case("none") { return Self::None; }
-        if s.eq_ignore_ascii_case("odd") { return Self::Odd; }
-        if s.eq_ignore_ascii_case("even") { return Self::Even; }
-        if s.eq_ignore_ascii_case("mark") { return Self::Mark; }
-        if s.eq_ignore_ascii_case("space") { return Self::Space; }
+        if s.eq_ignore_ascii_case("none") {
+            return Self::None;
+        }
+        if s.eq_ignore_ascii_case("odd") {
+            return Self::Odd;
+        }
+        if s.eq_ignore_ascii_case("even") {
+            return Self::Even;
+        }
+        if s.eq_ignore_ascii_case("mark") {
+            return Self::Mark;
+        }
+        if s.eq_ignore_ascii_case("space") {
+            return Self::Space;
+        }
         Self::default()
     }
 }
 
 impl Default for SerialParity {
-    fn default() -> Self { Self::None }
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 /// `ttset.c:936`, default `IdStopBit1`.
@@ -434,14 +530,20 @@ impl SerialStopBits {
     /// defaults, as the `else` branch of a chain of comparisons.
     pub fn from_ini(s: &str) -> Self {
         let s = s.trim();
-        if s.eq_ignore_ascii_case("1") { return Self::One; }
-        if s.eq_ignore_ascii_case("2") { return Self::Two; }
+        if s.eq_ignore_ascii_case("1") {
+            return Self::One;
+        }
+        if s.eq_ignore_ascii_case("2") {
+            return Self::Two;
+        }
         Self::default()
     }
 }
 
 impl Default for SerialStopBits {
-    fn default() -> Self { Self::One }
+    fn default() -> Self {
+        Self::One
+    }
 }
 
 /// `ttset.c:943`, default `IdFlowNone`. `rtscts` is a second spelling of `hard`
@@ -476,16 +578,26 @@ impl SerialFlow {
     /// defaults, as the `else` branch of a chain of comparisons.
     pub fn from_ini(s: &str) -> Self {
         let s = s.trim();
-        if s.eq_ignore_ascii_case("none") { return Self::None; }
-        if s.eq_ignore_ascii_case("x") { return Self::XonXoff; }
-        if s.eq_ignore_ascii_case("hard") || s.eq_ignore_ascii_case("rtscts") { return Self::Hardware; }
-        if s.eq_ignore_ascii_case("dsrdtr") { return Self::DsrDtr; }
+        if s.eq_ignore_ascii_case("none") {
+            return Self::None;
+        }
+        if s.eq_ignore_ascii_case("x") {
+            return Self::XonXoff;
+        }
+        if s.eq_ignore_ascii_case("hard") || s.eq_ignore_ascii_case("rtscts") {
+            return Self::Hardware;
+        }
+        if s.eq_ignore_ascii_case("dsrdtr") {
+            return Self::DsrDtr;
+        }
         Self::default()
     }
 }
 
 impl Default for SerialFlow {
-    fn default() -> Self { Self::None }
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 /// Every setting this project reads out of `TERATERM.INI`.
@@ -647,7 +759,7 @@ pub struct Settings {
     /// is read at `:1218` — after this key but before the check. Left as a plain int
     /// here because the schema has no way to say "bounded by that other setting",
     /// and `PLAN.md` carries it as an open item.
-    /// 
+    ///
     /// What a number means on Linux is also open: this port opens a device path, and
     /// `/C=1` has to be resolved against enumeration rather than against `COM1`.
     pub serial_com_port: i32,
@@ -765,131 +877,575 @@ impl Settings {
     pub fn load(ini: &Ini) -> Settings {
         let d = Settings::default();
         Settings {
-            terminal_cols: crate::schema::ranged(crate::schema::nth_int(ini.get("Tera Term", "TerminalSize"), 0, d.terminal_cols), d.terminal_cols, 1, 1000),
-            terminal_rows: crate::schema::ranged(crate::schema::nth_int(ini.get("Tera Term", "TerminalSize"), 1, d.terminal_rows), d.terminal_rows, 1, 500),
-            terminal_id: match ini.get("Tera Term", "TerminalID") { Some(v) => TerminalId::from_ini(v), None => d.terminal_id },
-            terminal_cr_receive: match ini.get("Tera Term", "CRReceive") { Some(v) => TerminalCrReceive::from_ini(v), None => d.terminal_cr_receive },
-            terminal_cr_send: match ini.get("Tera Term", "CRSend") { Some(v) => TerminalCrSend::from_ini(v), None => d.terminal_cr_send },
+            terminal_cols: crate::schema::ranged(
+                crate::schema::nth_int(ini.get("Tera Term", "TerminalSize"), 0, d.terminal_cols),
+                d.terminal_cols,
+                1,
+                1000,
+            ),
+            terminal_rows: crate::schema::ranged(
+                crate::schema::nth_int(ini.get("Tera Term", "TerminalSize"), 1, d.terminal_rows),
+                d.terminal_rows,
+                1,
+                500,
+            ),
+            terminal_id: match ini.get("Tera Term", "TerminalID") {
+                Some(v) => TerminalId::from_ini(v),
+                None => d.terminal_id,
+            },
+            terminal_cr_receive: match ini.get("Tera Term", "CRReceive") {
+                Some(v) => TerminalCrReceive::from_ini(v),
+                None => d.terminal_cr_receive,
+            },
+            terminal_cr_send: match ini.get("Tera Term", "CRSend") {
+                Some(v) => TerminalCrSend::from_ini(v),
+                None => d.terminal_cr_send,
+            },
             terminal_local_echo: crate::schema::on_off(ini.get("Tera Term", "LocalEcho"), false),
-            terminal_size_follows_window: crate::schema::on_off(ini.get("Tera Term", "TermIsWin"), false),
-            terminal_auto_win_resize: crate::schema::on_off(ini.get("Tera Term", "AutoWinResize"), false),
-            terminal_scrollback_enabled: crate::schema::on_off(ini.get("Tera Term", "EnableScrollBuff"), true),
-            terminal_scrollback_lines: ini.get_int("Tera Term", "ScrollBuffSize", d.terminal_scrollback_lines) as i32,
-            terminal_title: ini.get_or("Tera Term", "Title", &d.terminal_title).to_string(),
-            keyboard_backspace: match ini.get("Tera Term", "BSKey") { Some(v) => KeyboardBackspace::from_ini(v), None => d.keyboard_backspace },
-            keyboard_meta: match ini.get("Tera Term", "MetaKey") { Some(v) => KeyboardMeta::from_ini(v), None => d.keyboard_meta },
-            keyboard_delete_sends_del: crate::schema::on_off(ini.get("Tera Term", "DeleteKey"), false),
-            keyboard_word_delimiters: ini.get_or("Tera Term", "DelimList", &d.keyboard_word_delimiters).to_string(),
+            terminal_size_follows_window: crate::schema::on_off(
+                ini.get("Tera Term", "TermIsWin"),
+                false,
+            ),
+            terminal_auto_win_resize: crate::schema::on_off(
+                ini.get("Tera Term", "AutoWinResize"),
+                false,
+            ),
+            terminal_scrollback_enabled: crate::schema::on_off(
+                ini.get("Tera Term", "EnableScrollBuff"),
+                true,
+            ),
+            terminal_scrollback_lines: ini.get_int(
+                "Tera Term",
+                "ScrollBuffSize",
+                d.terminal_scrollback_lines,
+            ) as i32,
+            terminal_title: ini
+                .get_or("Tera Term", "Title", &d.terminal_title)
+                .to_string(),
+            keyboard_backspace: match ini.get("Tera Term", "BSKey") {
+                Some(v) => KeyboardBackspace::from_ini(v),
+                None => d.keyboard_backspace,
+            },
+            keyboard_meta: match ini.get("Tera Term", "MetaKey") {
+                Some(v) => KeyboardMeta::from_ini(v),
+                None => d.keyboard_meta,
+            },
+            keyboard_delete_sends_del: crate::schema::on_off(
+                ini.get("Tera Term", "DeleteKey"),
+                false,
+            ),
+            keyboard_word_delimiters: ini
+                .get_or("Tera Term", "DelimList", &d.keyboard_word_delimiters)
+                .to_string(),
             color_normal: crate::schema::color2(ini.get("Tera Term", "VTColor"), d.color_normal),
             color_bold: crate::schema::color2(ini.get("Tera Term", "VTBoldColor"), d.color_bold),
             color_blink: crate::schema::color2(ini.get("Tera Term", "VTBlinkColor"), d.color_blink),
-            color_underline: crate::schema::color2(ini.get("Tera Term", "VTUnderlineColor"), d.color_underline),
-            color_reverse: crate::schema::color2(ini.get("Tera Term", "VTReverseColor"), d.color_reverse),
-            color_bold_enabled: crate::schema::on_off(ini.get("Tera Term", "EnableBoldAttrColor"), true),
-            color_blink_enabled: crate::schema::on_off(ini.get("Tera Term", "EnableBlinkAttrColor"), true),
-            color_reverse_enabled: crate::schema::on_off(ini.get("Tera Term", "EnableReverseAttrColor"), false),
-            color_underline_enabled: crate::schema::on_off(ini.get("Tera Term", "EnableUnderlineAttrColor"), false),
+            color_underline: crate::schema::color2(
+                ini.get("Tera Term", "VTUnderlineColor"),
+                d.color_underline,
+            ),
+            color_reverse: crate::schema::color2(
+                ini.get("Tera Term", "VTReverseColor"),
+                d.color_reverse,
+            ),
+            color_bold_enabled: crate::schema::on_off(
+                ini.get("Tera Term", "EnableBoldAttrColor"),
+                true,
+            ),
+            color_blink_enabled: crate::schema::on_off(
+                ini.get("Tera Term", "EnableBlinkAttrColor"),
+                true,
+            ),
+            color_reverse_enabled: crate::schema::on_off(
+                ini.get("Tera Term", "EnableReverseAttrColor"),
+                false,
+            ),
+            color_underline_enabled: crate::schema::on_off(
+                ini.get("Tera Term", "EnableUnderlineAttrColor"),
+                false,
+            ),
             color_xterm_256: crate::schema::on_off(ini.get("Tera Term", "Xterm256Color"), true),
             color_aixterm_16: crate::schema::on_off(ini.get("Tera Term", "Aixterm16Color"), false),
             color_pc_bold_16: crate::schema::on_off(ini.get("Tera Term", "PcBoldColor"), false),
-            cursor_shape: match ini.get("Tera Term", "CursorShape") { Some(v) => CursorShape::from_ini(v), None => d.cursor_shape },
-            cursor_nonblinking: crate::schema::on_off(ini.get("Tera Term", "NonblinkingCursor"), false),
-            window_change_allowed: crate::schema::on_off(ini.get("Tera Term", "WindowChangeSequence"), true),
-            window_report_allowed: crate::schema::on_off(ini.get("Tera Term", "WindowReportSequence"), true),
-            window_cursor_ctrl_allowed: crate::schema::on_off(ini.get("Tera Term", "CursorCtrlSequence"), false),
-            window_accept_8bit_ctrl: crate::schema::on_off(ini.get("Tera Term", "Accept8BitCtrl"), true),
-            window_send_8bit_ctrl: crate::schema::on_off(ini.get("Tera Term", "Send8BitCtrl"), false),
+            cursor_shape: match ini.get("Tera Term", "CursorShape") {
+                Some(v) => CursorShape::from_ini(v),
+                None => d.cursor_shape,
+            },
+            cursor_nonblinking: crate::schema::on_off(
+                ini.get("Tera Term", "NonblinkingCursor"),
+                false,
+            ),
+            window_change_allowed: crate::schema::on_off(
+                ini.get("Tera Term", "WindowChangeSequence"),
+                true,
+            ),
+            window_report_allowed: crate::schema::on_off(
+                ini.get("Tera Term", "WindowReportSequence"),
+                true,
+            ),
+            window_cursor_ctrl_allowed: crate::schema::on_off(
+                ini.get("Tera Term", "CursorCtrlSequence"),
+                false,
+            ),
+            window_accept_8bit_ctrl: crate::schema::on_off(
+                ini.get("Tera Term", "Accept8BitCtrl"),
+                true,
+            ),
+            window_send_8bit_ctrl: crate::schema::on_off(
+                ini.get("Tera Term", "Send8BitCtrl"),
+                false,
+            ),
             window_alt_screen: crate::schema::on_off(ini.get("Tera Term", "AltScreenBuffer"), true),
-            window_remote_clears_buffer: crate::schema::on_off(ini.get("Tera Term", "RemoteClearsBuffer"), true),
+            window_remote_clears_buffer: crate::schema::on_off(
+                ini.get("Tera Term", "RemoteClearsBuffer"),
+                true,
+            ),
             mouse_tracking: crate::schema::on_off(ini.get("Tera Term", "MouseEventTracking"), true),
-            mouse_ctrl_disables_tracking: crate::schema::on_off(ini.get("Tera Term", "DisableMouseTrackingByCtrl"), true),
-            mouse_wheel_to_cursor: crate::schema::on_off(ini.get("Tera Term", "TranslateWheelToCursor"), true),
-            connection_port_type: match ini.get("Tera Term", "Port") { Some(v) => ConnectionPortType::from_ini(v), None => d.connection_port_type },
+            mouse_ctrl_disables_tracking: crate::schema::on_off(
+                ini.get("Tera Term", "DisableMouseTrackingByCtrl"),
+                true,
+            ),
+            mouse_wheel_to_cursor: crate::schema::on_off(
+                ini.get("Tera Term", "TranslateWheelToCursor"),
+                true,
+            ),
+            connection_port_type: match ini.get("Tera Term", "Port") {
+                Some(v) => ConnectionPortType::from_ini(v),
+                None => d.connection_port_type,
+            },
             connection_tcp_port: ini.get_int("Tera Term", "TCPPort", d.connection_tcp_port) as i32,
             connection_telnet: crate::schema::on_off(ini.get("Tera Term", "Telnet"), true),
-            connection_telnet_port: ini.get_int("Tera Term", "TelPort", d.connection_telnet_port) as i32,
+            connection_telnet_port: ini.get_int("Tera Term", "TelPort", d.connection_telnet_port)
+                as i32,
             connection_telnet_binary: crate::schema::on_off(ini.get("Tera Term", "TelBin"), false),
-            connection_auto_win_close: crate::schema::on_off(ini.get("Tera Term", "AutoWinClose"), true),
-            connection_timeout: ini.get_int("Tera Term", "ConnectingTimeout", d.connection_timeout) as i32,
-            connection_host_dialog_on_startup: crate::schema::on_off(ini.get("Tera Term", "HostDialogOnStartup"), true),
+            connection_auto_win_close: crate::schema::on_off(
+                ini.get("Tera Term", "AutoWinClose"),
+                true,
+            ),
+            connection_timeout: ini.get_int("Tera Term", "ConnectingTimeout", d.connection_timeout)
+                as i32,
+            connection_host_dialog_on_startup: crate::schema::on_off(
+                ini.get("Tera Term", "HostDialogOnStartup"),
+                true,
+            ),
             serial_com_port: ini.get_int("Tera Term", "ComPort", d.serial_com_port) as i32,
             serial_baud: ini.get_int("Tera Term", "BaudRate", d.serial_baud) as i32,
-            serial_data_bits: match ini.get("Tera Term", "DataBit") { Some(v) => SerialDataBits::from_ini(v), None => d.serial_data_bits },
-            serial_parity: match ini.get("Tera Term", "Parity") { Some(v) => SerialParity::from_ini(v), None => d.serial_parity },
-            serial_stop_bits: match ini.get("Tera Term", "StopBit") { Some(v) => SerialStopBits::from_ini(v), None => d.serial_stop_bits },
-            serial_flow: match ini.get("Tera Term", "FlowCtrl") { Some(v) => SerialFlow::from_ini(v), None => d.serial_flow },
-            serial_delay_per_char: ini.get_int("Tera Term", "DelayPerChar", d.serial_delay_per_char) as i32,
-            serial_delay_per_line: ini.get_int("Tera Term", "DelayPerLine", d.serial_delay_per_line) as i32,
+            serial_data_bits: match ini.get("Tera Term", "DataBit") {
+                Some(v) => SerialDataBits::from_ini(v),
+                None => d.serial_data_bits,
+            },
+            serial_parity: match ini.get("Tera Term", "Parity") {
+                Some(v) => SerialParity::from_ini(v),
+                None => d.serial_parity,
+            },
+            serial_stop_bits: match ini.get("Tera Term", "StopBit") {
+                Some(v) => SerialStopBits::from_ini(v),
+                None => d.serial_stop_bits,
+            },
+            serial_flow: match ini.get("Tera Term", "FlowCtrl") {
+                Some(v) => SerialFlow::from_ini(v),
+                None => d.serial_flow,
+            },
+            serial_delay_per_char: ini.get_int("Tera Term", "DelayPerChar", d.serial_delay_per_char)
+                as i32,
+            serial_delay_per_line: ini.get_int("Tera Term", "DelayPerLine", d.serial_delay_per_line)
+                as i32,
             serial_wait_com: crate::schema::on_off(ini.get("Tera Term", "WaitCom"), false),
-            serial_max_com_port: crate::schema::ranged(ini.get_int("Tera Term", "MaxComPort", d.serial_max_com_port) as i32, d.serial_max_com_port, 4, 4096),
+            serial_max_com_port: crate::schema::ranged(
+                ini.get_int("Tera Term", "MaxComPort", d.serial_max_com_port) as i32,
+                d.serial_max_com_port,
+                4,
+                4096,
+            ),
             log_auto_start: crate::schema::on_off(ini.get("Tera Term", "LogAutoStart"), false),
-            transfer_dir: ini.get_or("Tera Term", "FileDir", &d.transfer_dir).to_string(),
+            transfer_dir: ini
+                .get_or("Tera Term", "FileDir", &d.transfer_dir)
+                .to_string(),
             window_hide_title: crate::schema::on_off(ini.get("Tera Term", "HideTitle"), false),
         }
     }
 
     /// Write every setting back, leaving the rest of the file alone.
     pub fn store(&self, ini: &mut Ini) {
-        ini.set("Tera Term", "TerminalSize", &crate::schema::with_nth(ini.get("Tera Term", "TerminalSize"), 0, self.terminal_cols));
-        ini.set("Tera Term", "TerminalSize", &crate::schema::with_nth(ini.get("Tera Term", "TerminalSize"), 1, self.terminal_rows));
-        ini.set("Tera Term", "TerminalID", &self.terminal_id.as_ini().to_string());
-        ini.set("Tera Term", "CRReceive", &self.terminal_cr_receive.as_ini().to_string());
-        ini.set("Tera Term", "CRSend", &self.terminal_cr_send.as_ini().to_string());
-        ini.set("Tera Term", "LocalEcho", &if self.terminal_local_echo { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "TermIsWin", &if self.terminal_size_follows_window { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "AutoWinResize", &if self.terminal_auto_win_resize { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "EnableScrollBuff", &if self.terminal_scrollback_enabled { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "ScrollBuffSize", &self.terminal_scrollback_lines.to_string());
+        ini.set(
+            "Tera Term",
+            "TerminalSize",
+            &crate::schema::with_nth(ini.get("Tera Term", "TerminalSize"), 0, self.terminal_cols),
+        );
+        ini.set(
+            "Tera Term",
+            "TerminalSize",
+            &crate::schema::with_nth(ini.get("Tera Term", "TerminalSize"), 1, self.terminal_rows),
+        );
+        ini.set(
+            "Tera Term",
+            "TerminalID",
+            &self.terminal_id.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "CRReceive",
+            &self.terminal_cr_receive.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "CRSend",
+            &self.terminal_cr_send.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "LocalEcho",
+            &if self.terminal_local_echo {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "TermIsWin",
+            &if self.terminal_size_follows_window {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "AutoWinResize",
+            &if self.terminal_auto_win_resize {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "EnableScrollBuff",
+            &if self.terminal_scrollback_enabled {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "ScrollBuffSize",
+            &self.terminal_scrollback_lines.to_string(),
+        );
         ini.set("Tera Term", "Title", &self.terminal_title.clone());
-        ini.set("Tera Term", "BSKey", &self.keyboard_backspace.as_ini().to_string());
-        ini.set("Tera Term", "MetaKey", &self.keyboard_meta.as_ini().to_string());
-        ini.set("Tera Term", "DeleteKey", &if self.keyboard_delete_sends_del { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "DelimList", &self.keyboard_word_delimiters.clone());
-        ini.set("Tera Term", "VTColor", &crate::schema::color2_str(&self.color_normal));
-        ini.set("Tera Term", "VTBoldColor", &crate::schema::color2_str(&self.color_bold));
-        ini.set("Tera Term", "VTBlinkColor", &crate::schema::color2_str(&self.color_blink));
-        ini.set("Tera Term", "VTUnderlineColor", &crate::schema::color2_str(&self.color_underline));
-        ini.set("Tera Term", "VTReverseColor", &crate::schema::color2_str(&self.color_reverse));
-        ini.set("Tera Term", "EnableBoldAttrColor", &if self.color_bold_enabled { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "EnableBlinkAttrColor", &if self.color_blink_enabled { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "EnableReverseAttrColor", &if self.color_reverse_enabled { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "EnableUnderlineAttrColor", &if self.color_underline_enabled { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "Xterm256Color", &if self.color_xterm_256 { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "Aixterm16Color", &if self.color_aixterm_16 { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "PcBoldColor", &if self.color_pc_bold_16 { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "CursorShape", &self.cursor_shape.as_ini().to_string());
-        ini.set("Tera Term", "NonblinkingCursor", &if self.cursor_nonblinking { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "WindowChangeSequence", &if self.window_change_allowed { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "WindowReportSequence", &if self.window_report_allowed { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "CursorCtrlSequence", &if self.window_cursor_ctrl_allowed { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "Accept8BitCtrl", &if self.window_accept_8bit_ctrl { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "Send8BitCtrl", &if self.window_send_8bit_ctrl { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "AltScreenBuffer", &if self.window_alt_screen { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "RemoteClearsBuffer", &if self.window_remote_clears_buffer { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "MouseEventTracking", &if self.mouse_tracking { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "DisableMouseTrackingByCtrl", &if self.mouse_ctrl_disables_tracking { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "TranslateWheelToCursor", &if self.mouse_wheel_to_cursor { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "Port", &self.connection_port_type.as_ini().to_string());
-        ini.set("Tera Term", "TCPPort", &self.connection_tcp_port.to_string());
-        ini.set("Tera Term", "Telnet", &if self.connection_telnet { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "TelPort", &self.connection_telnet_port.to_string());
-        ini.set("Tera Term", "TelBin", &if self.connection_telnet_binary { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "AutoWinClose", &if self.connection_auto_win_close { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "ConnectingTimeout", &self.connection_timeout.to_string());
-        ini.set("Tera Term", "HostDialogOnStartup", &if self.connection_host_dialog_on_startup { "on" } else { "off" }.to_string());
+        ini.set(
+            "Tera Term",
+            "BSKey",
+            &self.keyboard_backspace.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "MetaKey",
+            &self.keyboard_meta.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "DeleteKey",
+            &if self.keyboard_delete_sends_del {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "DelimList",
+            &self.keyboard_word_delimiters.clone(),
+        );
+        ini.set(
+            "Tera Term",
+            "VTColor",
+            &crate::schema::color2_str(&self.color_normal),
+        );
+        ini.set(
+            "Tera Term",
+            "VTBoldColor",
+            &crate::schema::color2_str(&self.color_bold),
+        );
+        ini.set(
+            "Tera Term",
+            "VTBlinkColor",
+            &crate::schema::color2_str(&self.color_blink),
+        );
+        ini.set(
+            "Tera Term",
+            "VTUnderlineColor",
+            &crate::schema::color2_str(&self.color_underline),
+        );
+        ini.set(
+            "Tera Term",
+            "VTReverseColor",
+            &crate::schema::color2_str(&self.color_reverse),
+        );
+        ini.set(
+            "Tera Term",
+            "EnableBoldAttrColor",
+            &if self.color_bold_enabled { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "EnableBlinkAttrColor",
+            &if self.color_blink_enabled {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "EnableReverseAttrColor",
+            &if self.color_reverse_enabled {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "EnableUnderlineAttrColor",
+            &if self.color_underline_enabled {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "Xterm256Color",
+            &if self.color_xterm_256 { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "Aixterm16Color",
+            &if self.color_aixterm_16 { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "PcBoldColor",
+            &if self.color_pc_bold_16 { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "CursorShape",
+            &self.cursor_shape.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "NonblinkingCursor",
+            &if self.cursor_nonblinking { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "WindowChangeSequence",
+            &if self.window_change_allowed {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "WindowReportSequence",
+            &if self.window_report_allowed {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "CursorCtrlSequence",
+            &if self.window_cursor_ctrl_allowed {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "Accept8BitCtrl",
+            &if self.window_accept_8bit_ctrl {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "Send8BitCtrl",
+            &if self.window_send_8bit_ctrl {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "AltScreenBuffer",
+            &if self.window_alt_screen { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "RemoteClearsBuffer",
+            &if self.window_remote_clears_buffer {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "MouseEventTracking",
+            &if self.mouse_tracking { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "DisableMouseTrackingByCtrl",
+            &if self.mouse_ctrl_disables_tracking {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "TranslateWheelToCursor",
+            &if self.mouse_wheel_to_cursor {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "Port",
+            &self.connection_port_type.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "TCPPort",
+            &self.connection_tcp_port.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "Telnet",
+            &if self.connection_telnet { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "TelPort",
+            &self.connection_telnet_port.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "TelBin",
+            &if self.connection_telnet_binary {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "AutoWinClose",
+            &if self.connection_auto_win_close {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "ConnectingTimeout",
+            &self.connection_timeout.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "HostDialogOnStartup",
+            &if self.connection_host_dialog_on_startup {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
         ini.set("Tera Term", "ComPort", &self.serial_com_port.to_string());
         ini.set("Tera Term", "BaudRate", &self.serial_baud.to_string());
-        ini.set("Tera Term", "DataBit", &self.serial_data_bits.as_ini().to_string());
-        ini.set("Tera Term", "Parity", &self.serial_parity.as_ini().to_string());
-        ini.set("Tera Term", "StopBit", &self.serial_stop_bits.as_ini().to_string());
-        ini.set("Tera Term", "FlowCtrl", &self.serial_flow.as_ini().to_string());
-        ini.set("Tera Term", "DelayPerChar", &self.serial_delay_per_char.to_string());
-        ini.set("Tera Term", "DelayPerLine", &self.serial_delay_per_line.to_string());
-        ini.set("Tera Term", "WaitCom", &if self.serial_wait_com { "on" } else { "off" }.to_string());
-        ini.set("Tera Term", "MaxComPort", &self.serial_max_com_port.to_string());
-        ini.set("Tera Term", "LogAutoStart", &if self.log_auto_start { "on" } else { "off" }.to_string());
+        ini.set(
+            "Tera Term",
+            "DataBit",
+            &self.serial_data_bits.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "Parity",
+            &self.serial_parity.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "StopBit",
+            &self.serial_stop_bits.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "FlowCtrl",
+            &self.serial_flow.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "DelayPerChar",
+            &self.serial_delay_per_char.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "DelayPerLine",
+            &self.serial_delay_per_line.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "WaitCom",
+            &if self.serial_wait_com { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "MaxComPort",
+            &self.serial_max_com_port.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "LogAutoStart",
+            &if self.log_auto_start { "on" } else { "off" }.to_string(),
+        );
         ini.set("Tera Term", "FileDir", &self.transfer_dir.clone());
-        ini.set("Tera Term", "HideTitle", &if self.window_hide_title { "on" } else { "off" }.to_string());
+        ini.set(
+            "Tera Term",
+            "HideTitle",
+            &if self.window_hide_title { "on" } else { "off" }.to_string(),
+        );
     }
 
     /// One setting by its dotted name, in the INI's own spelling.
@@ -900,15 +1456,40 @@ impl Settings {
             "terminal.id" => self.terminal_id.as_ini().to_string(),
             "terminal.cr_receive" => self.terminal_cr_receive.as_ini().to_string(),
             "terminal.cr_send" => self.terminal_cr_send.as_ini().to_string(),
-            "terminal.local_echo" => if self.terminal_local_echo { "on" } else { "off" }.to_string(),
-            "terminal.size_follows_window" => if self.terminal_size_follows_window { "on" } else { "off" }.to_string(),
-            "terminal.auto_win_resize" => if self.terminal_auto_win_resize { "on" } else { "off" }.to_string(),
-            "terminal.scrollback_enabled" => if self.terminal_scrollback_enabled { "on" } else { "off" }.to_string(),
+            "terminal.local_echo" => if self.terminal_local_echo {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "terminal.size_follows_window" => if self.terminal_size_follows_window {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "terminal.auto_win_resize" => if self.terminal_auto_win_resize {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "terminal.scrollback_enabled" => if self.terminal_scrollback_enabled {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "terminal.scrollback_lines" => self.terminal_scrollback_lines.to_string(),
             "terminal.title" => self.terminal_title.clone(),
             "keyboard.backspace" => self.keyboard_backspace.as_ini().to_string(),
             "keyboard.meta" => self.keyboard_meta.as_ini().to_string(),
-            "keyboard.delete_sends_del" => if self.keyboard_delete_sends_del { "on" } else { "off" }.to_string(),
+            "keyboard.delete_sends_del" => if self.keyboard_delete_sends_del {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "keyboard.word_delimiters" => self.keyboard_word_delimiters.clone(),
             "color.normal" => crate::schema::color2_str(&self.color_normal),
             "color.bold" => crate::schema::color2_str(&self.color_bold),
@@ -916,32 +1497,102 @@ impl Settings {
             "color.underline" => crate::schema::color2_str(&self.color_underline),
             "color.reverse" => crate::schema::color2_str(&self.color_reverse),
             "color.bold_enabled" => if self.color_bold_enabled { "on" } else { "off" }.to_string(),
-            "color.blink_enabled" => if self.color_blink_enabled { "on" } else { "off" }.to_string(),
-            "color.reverse_enabled" => if self.color_reverse_enabled { "on" } else { "off" }.to_string(),
-            "color.underline_enabled" => if self.color_underline_enabled { "on" } else { "off" }.to_string(),
+            "color.blink_enabled" => if self.color_blink_enabled {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "color.reverse_enabled" => if self.color_reverse_enabled {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "color.underline_enabled" => if self.color_underline_enabled {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "color.xterm_256" => if self.color_xterm_256 { "on" } else { "off" }.to_string(),
             "color.aixterm_16" => if self.color_aixterm_16 { "on" } else { "off" }.to_string(),
             "color.pc_bold_16" => if self.color_pc_bold_16 { "on" } else { "off" }.to_string(),
             "cursor.shape" => self.cursor_shape.as_ini().to_string(),
             "cursor.nonblinking" => if self.cursor_nonblinking { "on" } else { "off" }.to_string(),
-            "window.change_allowed" => if self.window_change_allowed { "on" } else { "off" }.to_string(),
-            "window.report_allowed" => if self.window_report_allowed { "on" } else { "off" }.to_string(),
-            "window.cursor_ctrl_allowed" => if self.window_cursor_ctrl_allowed { "on" } else { "off" }.to_string(),
-            "window.accept_8bit_ctrl" => if self.window_accept_8bit_ctrl { "on" } else { "off" }.to_string(),
-            "window.send_8bit_ctrl" => if self.window_send_8bit_ctrl { "on" } else { "off" }.to_string(),
+            "window.change_allowed" => if self.window_change_allowed {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "window.report_allowed" => if self.window_report_allowed {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "window.cursor_ctrl_allowed" => if self.window_cursor_ctrl_allowed {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "window.accept_8bit_ctrl" => if self.window_accept_8bit_ctrl {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "window.send_8bit_ctrl" => if self.window_send_8bit_ctrl {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "window.alt_screen" => if self.window_alt_screen { "on" } else { "off" }.to_string(),
-            "window.remote_clears_buffer" => if self.window_remote_clears_buffer { "on" } else { "off" }.to_string(),
+            "window.remote_clears_buffer" => if self.window_remote_clears_buffer {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "mouse.tracking" => if self.mouse_tracking { "on" } else { "off" }.to_string(),
-            "mouse.ctrl_disables_tracking" => if self.mouse_ctrl_disables_tracking { "on" } else { "off" }.to_string(),
-            "mouse.wheel_to_cursor" => if self.mouse_wheel_to_cursor { "on" } else { "off" }.to_string(),
+            "mouse.ctrl_disables_tracking" => if self.mouse_ctrl_disables_tracking {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "mouse.wheel_to_cursor" => if self.mouse_wheel_to_cursor {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "connection.port_type" => self.connection_port_type.as_ini().to_string(),
             "connection.tcp_port" => self.connection_tcp_port.to_string(),
             "connection.telnet" => if self.connection_telnet { "on" } else { "off" }.to_string(),
             "connection.telnet_port" => self.connection_telnet_port.to_string(),
-            "connection.telnet_binary" => if self.connection_telnet_binary { "on" } else { "off" }.to_string(),
-            "connection.auto_win_close" => if self.connection_auto_win_close { "on" } else { "off" }.to_string(),
+            "connection.telnet_binary" => if self.connection_telnet_binary {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "connection.auto_win_close" => if self.connection_auto_win_close {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "connection.timeout" => self.connection_timeout.to_string(),
-            "connection.host_dialog_on_startup" => if self.connection_host_dialog_on_startup { "on" } else { "off" }.to_string(),
+            "connection.host_dialog_on_startup" => if self.connection_host_dialog_on_startup {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "serial.com_port" => self.serial_com_port.to_string(),
             "serial.baud" => self.serial_baud.to_string(),
             "serial.data_bits" => self.serial_data_bits.as_ini().to_string(),
@@ -963,66 +1614,156 @@ impl Settings {
     /// False when the name is not one of ours.
     pub fn set_str(&mut self, name: &str, value: &str) -> bool {
         match name {
-            "terminal.cols" => self.terminal_cols = crate::schema::ranged(crate::schema::int(value, self.terminal_cols), 80, 1, 1000),
-            "terminal.rows" => self.terminal_rows = crate::schema::ranged(crate::schema::int(value, self.terminal_rows), 24, 1, 500),
+            "terminal.cols" => {
+                self.terminal_cols = crate::schema::ranged(
+                    crate::schema::int(value, self.terminal_cols),
+                    80,
+                    1,
+                    1000,
+                )
+            }
+            "terminal.rows" => {
+                self.terminal_rows =
+                    crate::schema::ranged(crate::schema::int(value, self.terminal_rows), 24, 1, 500)
+            }
             "terminal.id" => self.terminal_id = TerminalId::from_ini(value),
             "terminal.cr_receive" => self.terminal_cr_receive = TerminalCrReceive::from_ini(value),
             "terminal.cr_send" => self.terminal_cr_send = TerminalCrSend::from_ini(value),
-            "terminal.local_echo" => self.terminal_local_echo = crate::schema::on_off(Some(value), false),
-            "terminal.size_follows_window" => self.terminal_size_follows_window = crate::schema::on_off(Some(value), false),
-            "terminal.auto_win_resize" => self.terminal_auto_win_resize = crate::schema::on_off(Some(value), false),
-            "terminal.scrollback_enabled" => self.terminal_scrollback_enabled = crate::schema::on_off(Some(value), true),
-            "terminal.scrollback_lines" => self.terminal_scrollback_lines = crate::schema::int(value, self.terminal_scrollback_lines),
+            "terminal.local_echo" => {
+                self.terminal_local_echo = crate::schema::on_off(Some(value), false)
+            }
+            "terminal.size_follows_window" => {
+                self.terminal_size_follows_window = crate::schema::on_off(Some(value), false)
+            }
+            "terminal.auto_win_resize" => {
+                self.terminal_auto_win_resize = crate::schema::on_off(Some(value), false)
+            }
+            "terminal.scrollback_enabled" => {
+                self.terminal_scrollback_enabled = crate::schema::on_off(Some(value), true)
+            }
+            "terminal.scrollback_lines" => {
+                self.terminal_scrollback_lines =
+                    crate::schema::int(value, self.terminal_scrollback_lines)
+            }
             "terminal.title" => self.terminal_title = value.to_string(),
             "keyboard.backspace" => self.keyboard_backspace = KeyboardBackspace::from_ini(value),
             "keyboard.meta" => self.keyboard_meta = KeyboardMeta::from_ini(value),
-            "keyboard.delete_sends_del" => self.keyboard_delete_sends_del = crate::schema::on_off(Some(value), false),
+            "keyboard.delete_sends_del" => {
+                self.keyboard_delete_sends_del = crate::schema::on_off(Some(value), false)
+            }
             "keyboard.word_delimiters" => self.keyboard_word_delimiters = value.to_string(),
-            "color.normal" => self.color_normal = crate::schema::color2(Some(value), self.color_normal),
+            "color.normal" => {
+                self.color_normal = crate::schema::color2(Some(value), self.color_normal)
+            }
             "color.bold" => self.color_bold = crate::schema::color2(Some(value), self.color_bold),
-            "color.blink" => self.color_blink = crate::schema::color2(Some(value), self.color_blink),
-            "color.underline" => self.color_underline = crate::schema::color2(Some(value), self.color_underline),
-            "color.reverse" => self.color_reverse = crate::schema::color2(Some(value), self.color_reverse),
-            "color.bold_enabled" => self.color_bold_enabled = crate::schema::on_off(Some(value), true),
-            "color.blink_enabled" => self.color_blink_enabled = crate::schema::on_off(Some(value), true),
-            "color.reverse_enabled" => self.color_reverse_enabled = crate::schema::on_off(Some(value), false),
-            "color.underline_enabled" => self.color_underline_enabled = crate::schema::on_off(Some(value), false),
+            "color.blink" => {
+                self.color_blink = crate::schema::color2(Some(value), self.color_blink)
+            }
+            "color.underline" => {
+                self.color_underline = crate::schema::color2(Some(value), self.color_underline)
+            }
+            "color.reverse" => {
+                self.color_reverse = crate::schema::color2(Some(value), self.color_reverse)
+            }
+            "color.bold_enabled" => {
+                self.color_bold_enabled = crate::schema::on_off(Some(value), true)
+            }
+            "color.blink_enabled" => {
+                self.color_blink_enabled = crate::schema::on_off(Some(value), true)
+            }
+            "color.reverse_enabled" => {
+                self.color_reverse_enabled = crate::schema::on_off(Some(value), false)
+            }
+            "color.underline_enabled" => {
+                self.color_underline_enabled = crate::schema::on_off(Some(value), false)
+            }
             "color.xterm_256" => self.color_xterm_256 = crate::schema::on_off(Some(value), true),
             "color.aixterm_16" => self.color_aixterm_16 = crate::schema::on_off(Some(value), false),
             "color.pc_bold_16" => self.color_pc_bold_16 = crate::schema::on_off(Some(value), false),
             "cursor.shape" => self.cursor_shape = CursorShape::from_ini(value),
-            "cursor.nonblinking" => self.cursor_nonblinking = crate::schema::on_off(Some(value), false),
-            "window.change_allowed" => self.window_change_allowed = crate::schema::on_off(Some(value), true),
-            "window.report_allowed" => self.window_report_allowed = crate::schema::on_off(Some(value), true),
-            "window.cursor_ctrl_allowed" => self.window_cursor_ctrl_allowed = crate::schema::on_off(Some(value), false),
-            "window.accept_8bit_ctrl" => self.window_accept_8bit_ctrl = crate::schema::on_off(Some(value), true),
-            "window.send_8bit_ctrl" => self.window_send_8bit_ctrl = crate::schema::on_off(Some(value), false),
-            "window.alt_screen" => self.window_alt_screen = crate::schema::on_off(Some(value), true),
-            "window.remote_clears_buffer" => self.window_remote_clears_buffer = crate::schema::on_off(Some(value), true),
+            "cursor.nonblinking" => {
+                self.cursor_nonblinking = crate::schema::on_off(Some(value), false)
+            }
+            "window.change_allowed" => {
+                self.window_change_allowed = crate::schema::on_off(Some(value), true)
+            }
+            "window.report_allowed" => {
+                self.window_report_allowed = crate::schema::on_off(Some(value), true)
+            }
+            "window.cursor_ctrl_allowed" => {
+                self.window_cursor_ctrl_allowed = crate::schema::on_off(Some(value), false)
+            }
+            "window.accept_8bit_ctrl" => {
+                self.window_accept_8bit_ctrl = crate::schema::on_off(Some(value), true)
+            }
+            "window.send_8bit_ctrl" => {
+                self.window_send_8bit_ctrl = crate::schema::on_off(Some(value), false)
+            }
+            "window.alt_screen" => {
+                self.window_alt_screen = crate::schema::on_off(Some(value), true)
+            }
+            "window.remote_clears_buffer" => {
+                self.window_remote_clears_buffer = crate::schema::on_off(Some(value), true)
+            }
             "mouse.tracking" => self.mouse_tracking = crate::schema::on_off(Some(value), true),
-            "mouse.ctrl_disables_tracking" => self.mouse_ctrl_disables_tracking = crate::schema::on_off(Some(value), true),
-            "mouse.wheel_to_cursor" => self.mouse_wheel_to_cursor = crate::schema::on_off(Some(value), true),
-            "connection.port_type" => self.connection_port_type = ConnectionPortType::from_ini(value),
-            "connection.tcp_port" => self.connection_tcp_port = crate::schema::int(value, self.connection_tcp_port),
-            "connection.telnet" => self.connection_telnet = crate::schema::on_off(Some(value), true),
-            "connection.telnet_port" => self.connection_telnet_port = crate::schema::int(value, self.connection_telnet_port),
-            "connection.telnet_binary" => self.connection_telnet_binary = crate::schema::on_off(Some(value), false),
-            "connection.auto_win_close" => self.connection_auto_win_close = crate::schema::on_off(Some(value), true),
-            "connection.timeout" => self.connection_timeout = crate::schema::int(value, self.connection_timeout),
-            "connection.host_dialog_on_startup" => self.connection_host_dialog_on_startup = crate::schema::on_off(Some(value), true),
-            "serial.com_port" => self.serial_com_port = crate::schema::int(value, self.serial_com_port),
+            "mouse.ctrl_disables_tracking" => {
+                self.mouse_ctrl_disables_tracking = crate::schema::on_off(Some(value), true)
+            }
+            "mouse.wheel_to_cursor" => {
+                self.mouse_wheel_to_cursor = crate::schema::on_off(Some(value), true)
+            }
+            "connection.port_type" => {
+                self.connection_port_type = ConnectionPortType::from_ini(value)
+            }
+            "connection.tcp_port" => {
+                self.connection_tcp_port = crate::schema::int(value, self.connection_tcp_port)
+            }
+            "connection.telnet" => {
+                self.connection_telnet = crate::schema::on_off(Some(value), true)
+            }
+            "connection.telnet_port" => {
+                self.connection_telnet_port = crate::schema::int(value, self.connection_telnet_port)
+            }
+            "connection.telnet_binary" => {
+                self.connection_telnet_binary = crate::schema::on_off(Some(value), false)
+            }
+            "connection.auto_win_close" => {
+                self.connection_auto_win_close = crate::schema::on_off(Some(value), true)
+            }
+            "connection.timeout" => {
+                self.connection_timeout = crate::schema::int(value, self.connection_timeout)
+            }
+            "connection.host_dialog_on_startup" => {
+                self.connection_host_dialog_on_startup = crate::schema::on_off(Some(value), true)
+            }
+            "serial.com_port" => {
+                self.serial_com_port = crate::schema::int(value, self.serial_com_port)
+            }
             "serial.baud" => self.serial_baud = crate::schema::int(value, self.serial_baud),
             "serial.data_bits" => self.serial_data_bits = SerialDataBits::from_ini(value),
             "serial.parity" => self.serial_parity = SerialParity::from_ini(value),
             "serial.stop_bits" => self.serial_stop_bits = SerialStopBits::from_ini(value),
             "serial.flow" => self.serial_flow = SerialFlow::from_ini(value),
-            "serial.delay_per_char" => self.serial_delay_per_char = crate::schema::int(value, self.serial_delay_per_char),
-            "serial.delay_per_line" => self.serial_delay_per_line = crate::schema::int(value, self.serial_delay_per_line),
+            "serial.delay_per_char" => {
+                self.serial_delay_per_char = crate::schema::int(value, self.serial_delay_per_char)
+            }
+            "serial.delay_per_line" => {
+                self.serial_delay_per_line = crate::schema::int(value, self.serial_delay_per_line)
+            }
             "serial.wait_com" => self.serial_wait_com = crate::schema::on_off(Some(value), false),
-            "serial.max_com_port" => self.serial_max_com_port = crate::schema::ranged(crate::schema::int(value, self.serial_max_com_port), 256, 4, 4096),
+            "serial.max_com_port" => {
+                self.serial_max_com_port = crate::schema::ranged(
+                    crate::schema::int(value, self.serial_max_com_port),
+                    256,
+                    4,
+                    4096,
+                )
+            }
             "log.auto_start" => self.log_auto_start = crate::schema::on_off(Some(value), false),
             "transfer.dir" => self.transfer_dir = value.to_string(),
-            "window.hide_title" => self.window_hide_title = crate::schema::on_off(Some(value), false),
+            "window.hide_title" => {
+                self.window_hide_title = crate::schema::on_off(Some(value), false)
+            }
             _ => return false,
         }
         true

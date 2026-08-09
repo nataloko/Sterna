@@ -7,15 +7,17 @@
 use tt_config::gen;
 
 fn main() {
-    let schema = std::fs::read_to_string(gen::schema_path())
-        .expect("schema/settings.txt is readable");
+    let schema =
+        std::fs::read_to_string(gen::schema_path()).expect("schema/settings.txt is readable");
     let generated = gen::generate(&schema);
     let target = gen::generated_path();
 
     if std::env::args().any(|a| a == "--check") {
         let existing = std::fs::read_to_string(&target).unwrap_or_default();
         if existing != generated {
-            eprintln!("src/generated.rs is stale — run `cargo run -p tt-config --bin gen-settings`");
+            eprintln!(
+                "src/generated.rs is stale — run `cargo run -p tt-config --bin gen-settings`"
+            );
             std::process::exit(1);
         }
         println!("generated file is current");

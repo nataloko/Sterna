@@ -522,7 +522,45 @@ fn escape(s: &str) -> String {
 pub fn generate(schema: &str) -> String {
     let settings = parse(schema);
     assert!(!settings.is_empty(), "the schema is empty");
-    emit(&settings)
+    rustfmt(emit(&settings))
+}
+
+/// The last step, and it is not cosmetic.
+///
+/// `cargo fmt --check` covers every file in the workspace, this one included,
+/// so a generated file rustfmt disagrees with makes the lint gate permanently
+/// red — and the fix is not to reformat it by hand, because then the staleness
+/// test fails instead and says "stale", which is the opposite of what happened.
+///
+/// The alternative is emitting code rustfmt would not touch, and that was
+/// tried: the one-line `if` bodies are easy, but where a call or a match arm
+/// wraps depends on the *width of a setting's name*, so the emitter would
+/// silently start losing to the gate the first time somebody added a long one.
+/// Formatting the output removes the whole class instead of chasing it.
+///
+/// Panics rather than falling back to the unformatted text, because the
+/// fallback is worse than the failure: the staleness test would compare
+/// unformatted output against the formatted file and report a schema that had
+/// not changed as out of date.
+fn rustfmt(src: String) -> String {
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("rustfmt")
+        .args(["--edition", "2021", "--emit", "stdout"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("rustfmt on PATH — `rustup component add rustfmt`");
+    child
+        .stdin
+        .take()
+        .expect("a pipe")
+        .write_all(src.as_bytes())
+        .expect("rustfmt takes the source");
+    let out = child.wait_with_output().expect("rustfmt finishes");
+    assert!(out.status.success(), "rustfmt rejected the generated code");
+    String::from_utf8(out.stdout).expect("rustfmt writes UTF-8")
 }
 
 /// Where the two files live, so the binary and the test agree about it.

@@ -109,7 +109,11 @@ fn answer(fields: &[&str]) -> String {
                 .get(&arg(fields[3]), &arg(fields[4]))
                 .map(str::to_string)
                 .unwrap_or_else(|| arg(fields[5]));
-            format!("len={} str={}", value.chars().count(), escape(value.as_bytes()))
+            format!(
+                "len={} str={}",
+                value.chars().count(),
+                escape(value.as_bytes())
+            )
         }
         "int" => {
             let default: i32 = arg(fields[5]).parse().expect("a number");

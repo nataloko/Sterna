@@ -84,7 +84,10 @@ fn a_missing_file_reads_as_an_empty_one() {
     ini.save(&path).expect("save");
     let written = std::fs::read(&path).expect("read back");
     assert!(written.starts_with(&[0xEF, 0xBB, 0xBF]));
-    assert_eq!(Ini::load(&path).expect("reload").get("Tera Term", "VTFlag"), Some("1"));
+    assert_eq!(
+        Ini::load(&path).expect("reload").get("Tera Term", "VTFlag"),
+        Some("1")
+    );
 
     // Nothing left behind from the temporary the save wrote through.
     let strays: Vec<_> = std::fs::read_dir(&dir)
