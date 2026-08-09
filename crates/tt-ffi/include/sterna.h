@@ -586,6 +586,15 @@ typedef uint8_t TtPinControl;
 #endif // __cplusplus
 
 /**
+ * A parsed command line, both halves of it: TTSSH's hook and `_ParseParam`.
+ *
+ * Opaque because it holds the parse rather than a copy of the arguments, and
+ * because the strings it lends out have to outlive the call that produced
+ * them. Free it with [`tt_cmdline_free`].
+ */
+typedef struct TtCmdLine TtCmdLine;
+
+/**
  * An owned list of ports. Free it with [`tt_port_list_free`].
  */
 typedef struct TtPortList TtPortList;
@@ -1205,6 +1214,158 @@ typedef struct {
     size_t prompt_count;
 } TtSshAuthPrompt;
 
+/**
+ * `ts.MacroFNW` after a command line has had its say — three states, not two.
+ */
+typedef uint32_t TtMacroArg;
+
+/**
+ * The options a window has to act on itself, none of which is a setting.
+ *
+ * Everything that *is* a setting — the title (`/W=`), the hidden title bar
+ * (`/H`), the port, the speed, the timeout — is applied by
+ * [`tt_cmdline_apply`] and read back with [`tt_session_setting`], because
+ * that is upstream's order too: `_ParseParam` writes into `ts` and everything
+ * downstream reads `ts`.
+ */
+typedef struct {
+    /**
+     * `/F=`, **as given**. Null when there was none.
+     *
+     * Resolving it is the frontend's, which knows where its own settings
+     * live. Upstream would prepend `ts.HomeDirW` to a relative name and
+     * append `.INI` to one with no dot in it; the extension half is dropped
+     * here on purpose, because on a case-sensitive filesystem `work.INI` is
+     * not the `work.ini` the user has.
+     */
+    const char *setup_file;
+    /**
+     * `/L=`, as given, and **null when `/NOLOG` was there too**.
+     *
+     * That is the port's second documented divergence from upstream's code
+     * and its second agreement with upstream's manual: `ttset.c:3850` clears
+     * only the ANSI copy of the name while `vtwin.cpp:3631` starts logging
+     * from the wide one, so `ttermpro /L=out.log /NOLOG` writes `out.log` —
+     * the one thing the option exists to prevent.
+     */
+    const char *log_file;
+    /**
+     * Which of [`TT_MACRO_UNSET`], [`TT_MACRO_CLEARED`], [`TT_MACRO_PROMPT`]
+     * and [`TT_MACRO_FILE`].
+     */
+    TtMacroArg macro_kind;
+    /**
+     * The `/M=<name>`, for [`TT_MACRO_FILE`]. Null otherwise.
+     */
+    const char *macro_file;
+    /**
+     * `/I` — start minimised.
+     */
+    bool minimize;
+    /**
+     * `/V` — no window at all, for a session driven entirely by a macro.
+     */
+    bool hide_window;
+    /**
+     * `/X=` and `/Y=`, each given or not.
+     *
+     * Upstream pairs them: setting one puts the other at 0 **if it is still
+     * `CW_USEDEFAULT`** (`ttset.c:3917`), because a real coordinate in one
+     * axis and "wherever you like" in the other is not a position Windows
+     * will take. With no saved window position — which is this port, since
+     * the schema has no `VTPos` — that reduces to "the axis that was not
+     * given is 0".
+     */
+    bool has_x;
+    bool has_y;
+    int32_t x;
+    int32_t y;
+    /**
+     * How many options beginning with `/ssh` matched nothing, for
+     * [`tt_cmdline_unknown`]. Upstream puts these in a message box, and it is
+     * the only diagnostic in either parser.
+     */
+    size_t unknown_count;
+} TtCmdLineInfo;
+
+/**
+ * What [`tt_cmdline_startup`] decided — `OnCommStart` (`vtwin.cpp:3708`),
+ * whose single `if` has two arms that open nothing.
+ */
+typedef uint32_t TtStartupKind;
+
+/**
+ * Which transport a [`TT_STARTUP_OPEN`] means.
+ */
+typedef uint32_t TtTargetKind;
+
+/**
+ * Where to connect, in the terms the `tt_session_connect_*` family takes.
+ *
+ * Every pointer is borrowed from the [`TtCmdLine`] and is valid until the
+ * next [`tt_cmdline_startup`] on it, or until it is freed — the same contract
+ * [`TtSshHostKeyPrompt`] has. Only the fields belonging to `target` are set;
+ * the rest are null or zero.
+ */
+typedef struct {
+    TtStartupKind kind;
+    /**
+     * Meaningful only when `kind` is [`TT_STARTUP_OPEN`].
+     */
+    TtTargetKind target;
+    /**
+     * Why there is nothing to open, for [`TT_STARTUP_UNSUPPORTED`].
+     */
+    const char *reason;
+    /**
+     * [`TT_TARGET_SERIAL`]: the device, resolved from `/C=<n>` through
+     * enumeration — the *n*th port, which is what a `COM<n>` in a shortcut
+     * converted from Windows means, rather than `/dev/ttyS<n-1>`.
+     */
+    const char *path;
+    TtSerialParams serial;
+    /**
+     * [`TT_TARGET_TELNET`]: where to connect. For [`TT_TARGET_SSH`] the host
+     * and port are in `ssh` instead, where the connect call wants them.
+     */
+    const char *host;
+    uint16_t port;
+    TtTelnetParams telnet;
+    /**
+     * [`TT_TARGET_SSH`]: for [`tt_ssh_connect`], because an SSH connection
+     * has prompts and therefore belongs to whoever owns a window.
+     *
+     * `port` is 0 when the line asked for none, which means `~/.ssh/config`'s
+     * `Port` and then 22 — **not** the `TCPPort=` in the settings file, which
+     * on a fresh install is 23. That divergence is upstream's own bug: TTSSH
+     * never assigns `ts.TCPPort` (only its half of the New Connection dialog
+     * does, `ttxssh.c:1347`), so `ttermpro /ssh myhost` is an SSH client
+     * pointed at the telnet port.
+     */
+    TtSshParams ssh;
+    /**
+     * `/passwd=`, or a URL's. Handed over rather than used: whether an
+     * automatic login may skip a prompt is the frontend's policy.
+     */
+    const char *password;
+    /**
+     * `/ask4passwd` — ask even though a password was given.
+     */
+    bool ask_password;
+    /**
+     * `/nosecuritywarning`, which is **already folded into
+     * `ssh.host_key_policy`** as [`TT_HOST_KEY_POLICY_ACCEPT_ANY`]. It is
+     * here as well so a frontend can say out loud that the `known_hosts`
+     * check was skipped, which upstream calls a hidden option for a reason.
+     */
+    bool no_known_hosts_check;
+    /**
+     * [`TT_TARGET_SHELL`]: see [`TT_TARGET_SHELL`] for why nothing produces
+     * this yet.
+     */
+    TtPtyParams pty;
+} TtStartup;
+
 #define TT_OK 0
 
 /**
@@ -1359,6 +1520,72 @@ typedef struct {
  * Over. [`tt_last_error`] says why.
  */
 #define TT_SSH_FAILED 4
+
+/**
+ * No `/M`, so whatever the settings file said stands.
+ */
+#define TT_MACRO_UNSET 0
+
+/**
+ * A `/D=` topic was given, which **frees the name unconditionally**
+ * (`ttset.c:3963`) — so a terminal launched by a macro does not also run the
+ * startup macro from the settings file.
+ */
+#define TT_MACRO_CLEARED 1
+
+/**
+ * `/M`, or `/M=` with nothing or a `*` after it: ask which macro to run.
+ */
+#define TT_MACRO_PROMPT 2
+
+/**
+ * `/M=<name>`, which is in `TtCmdLineInfo::macro_file`.
+ */
+#define TT_MACRO_FILE 3
+
+/**
+ * `CommOpen` — connect to the target in the same [`TtStartup`].
+ */
+#define TT_STARTUP_OPEN 0
+
+/**
+ * `OnFileNewConnection` — nothing was named and `HostDialogOnStartup` is on,
+ * so put the New Connection dialog up.
+ */
+#define TT_STARTUP_DIALOG 1
+
+/**
+ * `SetDdeComReady(0)` — nothing was named and the dialog is suppressed, so
+ * open a terminal with no connection. `/DS` is how a session that will
+ * `connect` for itself starts up.
+ */
+#define TT_STARTUP_IDLE 2
+
+/**
+ * The line named a transport this port does not have.
+ * `TtStartup::reason` says which; upstream would have opened it, and saying
+ * so beats opening something else.
+ */
+#define TT_STARTUP_UNSUPPORTED 3
+
+/**
+ * The arguments could not be resolved into anything — a null handle, or a
+ * `/C=` naming a serial port that is not there. [`tt_last_error`] says why.
+ */
+#define TT_STARTUP_ERROR 4
+
+#define TT_TARGET_SERIAL 0
+
+#define TT_TARGET_TELNET 1
+
+#define TT_TARGET_SSH 2
+
+/**
+ * A local shell. **No Tera Term command line produces one** — upstream
+ * launches `cyglaunch.exe` for that — and it is here so the conversion is
+ * total rather than so it can be reached.
+ */
+#define TT_TARGET_SHELL 3
 
 #ifdef __cplusplus
 extern "C" {
@@ -2099,6 +2326,82 @@ size_t tt_string_list_len(const TtStringList *list);
 const char *tt_string_list_at(const TtStringList *list, size_t index);
 
 void tt_string_list_free(TtStringList *list);
+
+/**
+ * Parse a Tera Term command line — TTSSH's hook first, then `_ParseParam`
+ * over what is left, which is how the two compose on Windows too.
+ *
+ * `argv` is the arguments **without the program name**, as the platform split
+ * them: `argv + 1` from `main`, after Qt has taken its own out. There is no
+ * tokenising and no dequoting here, because the shell did both — running
+ * upstream's tokeniser over a rejoined line would quote-process everything
+ * twice and turn `/W="My Session"`, which arrives as one argument, into a
+ * `/W=My` and a stray `Session`.
+ *
+ * `max_com_port` bounds `/C=`, and out of range is **dropped rather than
+ * clamped** — `/C=300` on a default setup selects the serial transport with
+ * no port and puts the New Connection dialog up. Pass 0 for upstream's
+ * default of 256. It is a setting (`MaxComPort=`), and a settings file cannot
+ * be read until `/F=` has been, which is why upstream parses twice: parse
+ * with 0, read `TtCmdLineInfo::setup_file`, load it, and parse again with
+ * `serial.max_com_port` if it is not 256.
+ *
+ * Null only if `argv` holds a null entry. Free with [`tt_cmdline_free`].
+ */
+TtCmdLine *tt_cmdline_parse(const char *const *argv,
+                            size_t argc,
+                            uint16_t max_com_port);
+
+void tt_cmdline_free(TtCmdLine *cmd);
+
+/**
+ * The options a window acts on itself. False on a null argument.
+ */
+bool tt_cmdline_info(const TtCmdLine *cmd, TtCmdLineInfo *out);
+
+/**
+ * One unrecognised `/ssh…` option. Null when `index` is out of range; valid
+ * until the command line is freed.
+ */
+const char *tt_cmdline_unknown(const TtCmdLine *cmd, size_t index);
+
+/**
+ * Write the command line into the session's settings — `_ParseParam`'s effect
+ * on `ts`.
+ *
+ * **Call this before [`tt_cmdline_startup`] and after loading the settings
+ * file**, which is upstream's order: the line is applied over the file, and
+ * everything downstream then reads one place. A setting the line did not
+ * mention is left alone, so this is safe to call over settings a user has
+ * already changed.
+ *
+ * It applies to the running terminal too, exactly as
+ * [`tt_session_settings_load`] does — so a `/W=` is in `terminal.title` and a
+ * `/H` in `window.hide_title` immediately afterwards.
+ */
+TtStatus tt_cmdline_apply(const TtCmdLine *cmd,
+                          TtSession *session);
+
+/**
+ * What to open — `OnCommStart`, over a command line that
+ * [`tt_cmdline_apply`] has already been called with.
+ *
+ * The answer is one of five, and the two that open nothing are the ones a
+ * reimplementation drops: a TCP session is decided by whether there is a
+ * **host name** rather than by the port type, and a serial one by
+ * `ComAutoConnect`, which `/M` turns off and an in-range `/C=` turns back on
+ * in either order. So `myhost /M=x` connects and `/C=1 /M=x` connects, while
+ * `/M=x` alone opens the dialog — or nothing at all under `/DS`.
+ *
+ * The terminal's size goes into the target, so call it on a session whose
+ * window has settled: a serial console that opens at 80x24 and resizes is one
+ * wrong prompt for the user to read.
+ *
+ * The return is also written to `out->kind`, so a caller may ignore either.
+ */
+TtStartupKind tt_cmdline_startup(TtCmdLine *cmd,
+                                 const TtSession *session,
+                                 TtStartup *out);
 
 #ifdef __cplusplus
 }  // extern "C"

@@ -2181,6 +2181,7 @@ name = "tt-ffi"
 version = "0.0.0"
 dependencies = [
  "cbindgen",
+ "tt-config",
  "tt-conn",
  "tt-grid",
  "tt-session",

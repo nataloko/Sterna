@@ -71,6 +71,8 @@ use std::slice;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use tt_config::cmdline::ssh::SshOptions;
+use tt_config::cmdline::{self, CommandLine, MacroArg};
 use tt_conn::pty::{PtyConn, PtyParams};
 use tt_conn::serial::{
     DataBits, FlowControl, Parity, PinControl, SerialConn, SerialParams, StopBits,
@@ -82,6 +84,7 @@ use tt_conn::ssh::{
 use tt_conn::telnet::{TelnetConn, TelnetMode, TelnetParams};
 use tt_conn::Error;
 use tt_grid::Cell;
+use tt_session::open::{Startup, Target};
 use tt_session::{Event, Ini, LogMode, LogOptions, Session, Settings, Timestamp};
 use tt_vt::{Config, Key, Modifiers, MouseEvent, TermId, Tracking};
 
@@ -2810,4 +2813,538 @@ pub extern "C" fn tt_string_list_free(list: *mut TtStringList) {
     if !list.is_null() {
         drop(unsafe { Box::from_raw(list) });
     }
+}
+
+// --- the command line -----------------------------------------------------
+
+/// `ts.MacroFNW` after a command line has had its say — three states, not two.
+pub type TtMacroArg = u32;
+
+/// No `/M`, so whatever the settings file said stands.
+pub const TT_MACRO_UNSET: TtMacroArg = 0;
+/// A `/D=` topic was given, which **frees the name unconditionally**
+/// (`ttset.c:3963`) — so a terminal launched by a macro does not also run the
+/// startup macro from the settings file.
+pub const TT_MACRO_CLEARED: TtMacroArg = 1;
+/// `/M`, or `/M=` with nothing or a `*` after it: ask which macro to run.
+pub const TT_MACRO_PROMPT: TtMacroArg = 2;
+/// `/M=<name>`, which is in `TtCmdLineInfo::macro_file`.
+pub const TT_MACRO_FILE: TtMacroArg = 3;
+
+/// What [`tt_cmdline_startup`] decided — `OnCommStart` (`vtwin.cpp:3708`),
+/// whose single `if` has two arms that open nothing.
+pub type TtStartupKind = u32;
+
+/// `CommOpen` — connect to the target in the same [`TtStartup`].
+pub const TT_STARTUP_OPEN: TtStartupKind = 0;
+/// `OnFileNewConnection` — nothing was named and `HostDialogOnStartup` is on,
+/// so put the New Connection dialog up.
+pub const TT_STARTUP_DIALOG: TtStartupKind = 1;
+/// `SetDdeComReady(0)` — nothing was named and the dialog is suppressed, so
+/// open a terminal with no connection. `/DS` is how a session that will
+/// `connect` for itself starts up.
+pub const TT_STARTUP_IDLE: TtStartupKind = 2;
+/// The line named a transport this port does not have.
+/// `TtStartup::reason` says which; upstream would have opened it, and saying
+/// so beats opening something else.
+pub const TT_STARTUP_UNSUPPORTED: TtStartupKind = 3;
+/// The arguments could not be resolved into anything — a null handle, or a
+/// `/C=` naming a serial port that is not there. [`tt_last_error`] says why.
+pub const TT_STARTUP_ERROR: TtStartupKind = 4;
+
+/// Which transport a [`TT_STARTUP_OPEN`] means.
+pub type TtTargetKind = u32;
+
+pub const TT_TARGET_SERIAL: TtTargetKind = 0;
+pub const TT_TARGET_TELNET: TtTargetKind = 1;
+pub const TT_TARGET_SSH: TtTargetKind = 2;
+/// A local shell. **No Tera Term command line produces one** — upstream
+/// launches `cyglaunch.exe` for that — and it is here so the conversion is
+/// total rather than so it can be reached.
+pub const TT_TARGET_SHELL: TtTargetKind = 3;
+
+/// A parsed command line, both halves of it: TTSSH's hook and `_ParseParam`.
+///
+/// Opaque because it holds the parse rather than a copy of the arguments, and
+/// because the strings it lends out have to outlive the call that produced
+/// them. Free it with [`tt_cmdline_free`].
+pub struct TtCmdLine {
+    cmd: CommandLine,
+    ssh: SshOptions,
+    /// Backing store for what [`tt_cmdline_info`] hands out. Built once at
+    /// parse time, so those pointers are good for the handle's whole life.
+    setup_file: Option<CString>,
+    log_file: Option<CString>,
+    macro_file: Option<CString>,
+    unknown: Vec<CString>,
+    /// Backing store for what the **last** [`tt_cmdline_startup`] handed out,
+    /// and only that one: resolving again replaces these.
+    resolved: Vec<CString>,
+    /// The null-terminated array `TtSshParams::identities` points at, pointing
+    /// in turn into `resolved`.
+    identities: Vec<*const c_char>,
+    argv: Vec<*const c_char>,
+}
+
+/// The options a window has to act on itself, none of which is a setting.
+///
+/// Everything that *is* a setting — the title (`/W=`), the hidden title bar
+/// (`/H`), the port, the speed, the timeout — is applied by
+/// [`tt_cmdline_apply`] and read back with [`tt_session_setting`], because
+/// that is upstream's order too: `_ParseParam` writes into `ts` and everything
+/// downstream reads `ts`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtCmdLineInfo {
+    /// `/F=`, **as given**. Null when there was none.
+    ///
+    /// Resolving it is the frontend's, which knows where its own settings
+    /// live. Upstream would prepend `ts.HomeDirW` to a relative name and
+    /// append `.INI` to one with no dot in it; the extension half is dropped
+    /// here on purpose, because on a case-sensitive filesystem `work.INI` is
+    /// not the `work.ini` the user has.
+    pub setup_file: *const c_char,
+    /// `/L=`, as given, and **null when `/NOLOG` was there too**.
+    ///
+    /// That is the port's second documented divergence from upstream's code
+    /// and its second agreement with upstream's manual: `ttset.c:3850` clears
+    /// only the ANSI copy of the name while `vtwin.cpp:3631` starts logging
+    /// from the wide one, so `ttermpro /L=out.log /NOLOG` writes `out.log` —
+    /// the one thing the option exists to prevent.
+    pub log_file: *const c_char,
+    /// Which of [`TT_MACRO_UNSET`], [`TT_MACRO_CLEARED`], [`TT_MACRO_PROMPT`]
+    /// and [`TT_MACRO_FILE`].
+    pub macro_kind: TtMacroArg,
+    /// The `/M=<name>`, for [`TT_MACRO_FILE`]. Null otherwise.
+    pub macro_file: *const c_char,
+    /// `/I` — start minimised.
+    pub minimize: bool,
+    /// `/V` — no window at all, for a session driven entirely by a macro.
+    pub hide_window: bool,
+    /// `/X=` and `/Y=`, each given or not.
+    ///
+    /// Upstream pairs them: setting one puts the other at 0 **if it is still
+    /// `CW_USEDEFAULT`** (`ttset.c:3917`), because a real coordinate in one
+    /// axis and "wherever you like" in the other is not a position Windows
+    /// will take. With no saved window position — which is this port, since
+    /// the schema has no `VTPos` — that reduces to "the axis that was not
+    /// given is 0".
+    pub has_x: bool,
+    pub has_y: bool,
+    pub x: i32,
+    pub y: i32,
+    /// How many options beginning with `/ssh` matched nothing, for
+    /// [`tt_cmdline_unknown`]. Upstream puts these in a message box, and it is
+    /// the only diagnostic in either parser.
+    pub unknown_count: usize,
+}
+
+/// Where to connect, in the terms the `tt_session_connect_*` family takes.
+///
+/// Every pointer is borrowed from the [`TtCmdLine`] and is valid until the
+/// next [`tt_cmdline_startup`] on it, or until it is freed — the same contract
+/// [`TtSshHostKeyPrompt`] has. Only the fields belonging to `target` are set;
+/// the rest are null or zero.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtStartup {
+    pub kind: TtStartupKind,
+    /// Meaningful only when `kind` is [`TT_STARTUP_OPEN`].
+    pub target: TtTargetKind,
+    /// Why there is nothing to open, for [`TT_STARTUP_UNSUPPORTED`].
+    pub reason: *const c_char,
+
+    /// [`TT_TARGET_SERIAL`]: the device, resolved from `/C=<n>` through
+    /// enumeration — the *n*th port, which is what a `COM<n>` in a shortcut
+    /// converted from Windows means, rather than `/dev/ttyS<n-1>`.
+    pub path: *const c_char,
+    pub serial: TtSerialParams,
+
+    /// [`TT_TARGET_TELNET`]: where to connect. For [`TT_TARGET_SSH`] the host
+    /// and port are in `ssh` instead, where the connect call wants them.
+    pub host: *const c_char,
+    pub port: u16,
+    pub telnet: TtTelnetParams,
+
+    /// [`TT_TARGET_SSH`]: for [`tt_ssh_connect`], because an SSH connection
+    /// has prompts and therefore belongs to whoever owns a window.
+    ///
+    /// `port` is 0 when the line asked for none, which means `~/.ssh/config`'s
+    /// `Port` and then 22 — **not** the `TCPPort=` in the settings file, which
+    /// on a fresh install is 23. That divergence is upstream's own bug: TTSSH
+    /// never assigns `ts.TCPPort` (only its half of the New Connection dialog
+    /// does, `ttxssh.c:1347`), so `ttermpro /ssh myhost` is an SSH client
+    /// pointed at the telnet port.
+    pub ssh: TtSshParams,
+    /// `/passwd=`, or a URL's. Handed over rather than used: whether an
+    /// automatic login may skip a prompt is the frontend's policy.
+    pub password: *const c_char,
+    /// `/ask4passwd` — ask even though a password was given.
+    pub ask_password: bool,
+    /// `/nosecuritywarning`, which is **already folded into
+    /// `ssh.host_key_policy`** as [`TT_HOST_KEY_POLICY_ACCEPT_ANY`]. It is
+    /// here as well so a frontend can say out loud that the `known_hosts`
+    /// check was skipped, which upstream calls a hidden option for a reason.
+    pub no_known_hosts_check: bool,
+
+    /// [`TT_TARGET_SHELL`]: see [`TT_TARGET_SHELL`] for why nothing produces
+    /// this yet.
+    pub pty: TtPtyParams,
+}
+
+/// Parse a Tera Term command line — TTSSH's hook first, then `_ParseParam`
+/// over what is left, which is how the two compose on Windows too.
+///
+/// `argv` is the arguments **without the program name**, as the platform split
+/// them: `argv + 1` from `main`, after Qt has taken its own out. There is no
+/// tokenising and no dequoting here, because the shell did both — running
+/// upstream's tokeniser over a rejoined line would quote-process everything
+/// twice and turn `/W="My Session"`, which arrives as one argument, into a
+/// `/W=My` and a stray `Session`.
+///
+/// `max_com_port` bounds `/C=`, and out of range is **dropped rather than
+/// clamped** — `/C=300` on a default setup selects the serial transport with
+/// no port and puts the New Connection dialog up. Pass 0 for upstream's
+/// default of 256. It is a setting (`MaxComPort=`), and a settings file cannot
+/// be read until `/F=` has been, which is why upstream parses twice: parse
+/// with 0, read `TtCmdLineInfo::setup_file`, load it, and parse again with
+/// `serial.max_com_port` if it is not 256.
+///
+/// Null only if `argv` holds a null entry. Free with [`tt_cmdline_free`].
+#[no_mangle]
+pub extern "C" fn tt_cmdline_parse(
+    argv: *const *const c_char,
+    argc: usize,
+    max_com_port: u16,
+) -> *mut TtCmdLine {
+    let mut args: Vec<Vec<u8>> = Vec::with_capacity(argc);
+    if !argv.is_null() {
+        for i in 0..argc {
+            let entry = unsafe { *argv.add(i) };
+            if entry.is_null() {
+                fail(TT_ERR_INVALID, format!("argv[{i}] is null"));
+                return ptr::null_mut();
+            }
+            // Bytes, not `str`: a command line carries paths, and a path is
+            // not required to be UTF-8 on this platform.
+            args.push(unsafe { CStr::from_ptr(entry) }.to_bytes().to_vec());
+        }
+    }
+
+    let (ssh, rest) = cmdline::ssh::parse_args(&args);
+    let cmd = CommandLine::from_args(
+        &rest,
+        match max_com_port {
+            0 => cmdline::DEFAULT_MAX_COM_PORT,
+            n => n,
+        },
+    );
+
+    Box::into_raw(Box::new(TtCmdLine {
+        setup_file: cmd.setup_file.as_deref().map(cbytes),
+        // `/NOLOG` wins over `/L=`, which is the manual's answer and not the
+        // code's — see `TtCmdLineInfo::log_file`.
+        log_file: cmd.log_file.as_deref().filter(|_| !cmd.no_log).map(cbytes),
+        macro_file: match &cmd.macro_file {
+            MacroArg::File(f) => Some(cbytes(f)),
+            _ => None,
+        },
+        unknown: ssh.unknown.iter().map(|u| cbytes(u)).collect(),
+        cmd,
+        ssh,
+        resolved: Vec::new(),
+        identities: Vec::new(),
+        argv: Vec::new(),
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn tt_cmdline_free(cmd: *mut TtCmdLine) {
+    if !cmd.is_null() {
+        drop(unsafe { Box::from_raw(cmd) });
+    }
+}
+
+/// The options a window acts on itself. False on a null argument.
+#[no_mangle]
+pub extern "C" fn tt_cmdline_info(cmd: *const TtCmdLine, out: *mut TtCmdLineInfo) -> bool {
+    let (Some(c), Some(out)) = (unsafe { cmd.as_ref() }, unsafe { out.as_mut() }) else {
+        return false;
+    };
+    *out = TtCmdLineInfo {
+        setup_file: cptr(&c.setup_file),
+        log_file: cptr(&c.log_file),
+        macro_kind: match c.cmd.macro_file {
+            MacroArg::Unset => TT_MACRO_UNSET,
+            MacroArg::Cleared => TT_MACRO_CLEARED,
+            MacroArg::Prompt => TT_MACRO_PROMPT,
+            MacroArg::File(_) => TT_MACRO_FILE,
+        },
+        macro_file: cptr(&c.macro_file),
+        minimize: c.cmd.minimize,
+        hide_window: c.cmd.hide_window,
+        has_x: c.cmd.window_x.is_some(),
+        has_y: c.cmd.window_y.is_some(),
+        x: c.cmd.window_x.unwrap_or(0),
+        y: c.cmd.window_y.unwrap_or(0),
+        unknown_count: c.unknown.len(),
+    };
+    true
+}
+
+/// One unrecognised `/ssh…` option. Null when `index` is out of range; valid
+/// until the command line is freed.
+#[no_mangle]
+pub extern "C" fn tt_cmdline_unknown(cmd: *const TtCmdLine, index: usize) -> *const c_char {
+    match unsafe { cmd.as_ref() } {
+        Some(c) => c.unknown.get(index).map_or(ptr::null(), |s| s.as_ptr()),
+        None => ptr::null(),
+    }
+}
+
+/// Write the command line into the session's settings — `_ParseParam`'s effect
+/// on `ts`.
+///
+/// **Call this before [`tt_cmdline_startup`] and after loading the settings
+/// file**, which is upstream's order: the line is applied over the file, and
+/// everything downstream then reads one place. A setting the line did not
+/// mention is left alone, so this is safe to call over settings a user has
+/// already changed.
+///
+/// It applies to the running terminal too, exactly as
+/// [`tt_session_settings_load`] does — so a `/W=` is in `terminal.title` and a
+/// `/H` in `window.hide_title` immediately afterwards.
+#[no_mangle]
+pub extern "C" fn tt_cmdline_apply(cmd: *const TtCmdLine, session: *mut TtSession) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    let Some(c) = (unsafe { cmd.as_ref() }) else {
+        return fail(TT_ERR_INVALID, "null TtCmdLine");
+    };
+    let mut settings = s.session.settings().clone();
+    c.cmd.apply(&mut settings);
+    match s.session.set_settings(settings) {
+        Ok(()) => TT_OK,
+        Err(e) => report(e),
+    }
+}
+
+/// What to open — `OnCommStart`, over a command line that
+/// [`tt_cmdline_apply`] has already been called with.
+///
+/// The answer is one of five, and the two that open nothing are the ones a
+/// reimplementation drops: a TCP session is decided by whether there is a
+/// **host name** rather than by the port type, and a serial one by
+/// `ComAutoConnect`, which `/M` turns off and an in-range `/C=` turns back on
+/// in either order. So `myhost /M=x` connects and `/C=1 /M=x` connects, while
+/// `/M=x` alone opens the dialog — or nothing at all under `/DS`.
+///
+/// The terminal's size goes into the target, so call it on a session whose
+/// window has settled: a serial console that opens at 80x24 and resizes is one
+/// wrong prompt for the user to read.
+///
+/// The return is also written to `out->kind`, so a caller may ignore either.
+#[no_mangle]
+pub extern "C" fn tt_cmdline_startup(
+    cmd: *mut TtCmdLine,
+    session: *const TtSession,
+    out: *mut TtStartup,
+) -> TtStartupKind {
+    // Zeroed and then filled by the same `_default` writers a C caller would
+    // use. Sound rather than merely conventional: every field of the four is a
+    // pointer, an integer, a `bool` or one of `tt-conn`'s three `repr(u8)`
+    // serial enums, and each of those has a variant at discriminant zero.
+    let mut answer: TtStartup = unsafe { std::mem::zeroed() };
+    answer.kind = TT_STARTUP_ERROR;
+    tt_serial_params_default(&mut answer.serial);
+    tt_telnet_params_default(&mut answer.telnet, 0);
+    tt_ssh_params_default(&mut answer.ssh);
+    tt_pty_params_default(&mut answer.pty);
+
+    let write = |answer: &TtStartup| {
+        if let Some(out) = unsafe { out.as_mut() } {
+            *out = *answer;
+        }
+        answer.kind
+    };
+
+    let Some(c) = (unsafe { cmd.as_mut() }) else {
+        fail(TT_ERR_INVALID, "null TtCmdLine");
+        return write(&answer);
+    };
+    let Some(s) = (unsafe { session.as_ref() }) else {
+        fail(TT_ERR_INVALID, "null TtSession");
+        return write(&answer);
+    };
+    // The previous resolution's strings die here, which is the contract on
+    // `TtStartup`: one live answer per command line.
+    c.resolved.clear();
+    c.identities.clear();
+    c.argv.clear();
+
+    let startup = Startup::of(
+        &c.cmd,
+        &c.ssh,
+        s.session.settings(),
+        s.session.grid().cols() as u16,
+        s.session.grid().rows() as u16,
+    );
+    let target = match startup {
+        Startup::Dialog => {
+            answer.kind = TT_STARTUP_DIALOG;
+            return write(&answer);
+        }
+        Startup::Idle => {
+            answer.kind = TT_STARTUP_IDLE;
+            return write(&answer);
+        }
+        Startup::Unsupported(why) => {
+            answer.kind = TT_STARTUP_UNSUPPORTED;
+            c.resolved.push(cstring(why));
+            answer.reason = c.resolved[0].as_ptr();
+            // Also in the error slot, so a caller that only checks
+            // `tt_last_error` is not left guessing.
+            fail(TT_ERR_UNSUPPORTED, why);
+            return write(&answer);
+        }
+        Startup::Open(t) => t,
+    };
+
+    answer.kind = TT_STARTUP_OPEN;
+    match target {
+        Target::Serial { path, params } => {
+            answer.target = TT_TARGET_SERIAL;
+            c.resolved.push(cstring(&path));
+            answer.path = c.resolved[0].as_ptr();
+            answer.serial = serial_params_c(&params);
+        }
+        Target::Telnet {
+            host,
+            port,
+            params,
+            timeout,
+        } => {
+            answer.target = TT_TARGET_TELNET;
+            c.resolved.push(cstring(&host));
+            c.resolved.push(cstring(&params.term_type));
+            answer.host = c.resolved[0].as_ptr();
+            answer.port = port;
+            answer.telnet = TtTelnetParams {
+                mode: match params.mode {
+                    TelnetMode::Raw => TT_TELNET_RAW,
+                    TelnetMode::Auto => TT_TELNET_AUTO,
+                    TelnetMode::Negotiate => TT_TELNET_NEGOTIATE,
+                },
+                term_type: c.resolved[1].as_ptr(),
+                input_speed: params.speed.0,
+                output_speed: params.speed.1,
+                binary: params.binary,
+                connect_timeout_ms: ms(timeout),
+            };
+        }
+        Target::Ssh {
+            params,
+            port_chosen,
+            password,
+            method: _,
+            ask_password,
+            no_known_hosts_check,
+        } => {
+            answer.target = TT_TARGET_SSH;
+            c.resolved.push(cstring(&params.host));
+            answer.host = c.resolved[0].as_ptr();
+            answer.ssh.host = c.resolved[0].as_ptr();
+            // Zero means `~/.ssh/config`'s `Port`, then 22 — a better answer
+            // than this crate's own fallback, and the reason `port_chosen`
+            // exists rather than a bare port number.
+            answer.ssh.port = match port_chosen {
+                true => params.port,
+                false => 0,
+            };
+            answer.port = params.port;
+            // Null is not the empty string here: it means "whatever the
+            // config says", which is what a line with no `/user=` wants.
+            if !params.user.is_empty() {
+                c.resolved.push(cstring(&params.user));
+                answer.ssh.user = c.resolved.last().expect("just pushed").as_ptr();
+            }
+            for key in &params.identities {
+                c.resolved.push(cbytes(key.to_string_lossy().as_bytes()));
+                let p = c.resolved.last().expect("just pushed").as_ptr();
+                c.identities.push(p);
+            }
+            if !c.identities.is_empty() {
+                c.identities.push(ptr::null());
+                answer.ssh.identities = c.identities.as_ptr();
+            }
+            answer.ssh.use_agent = params.use_agent;
+            answer.ssh.legacy = params.legacy;
+            answer.ssh.connect_timeout_ms = ms(params.connect_timeout);
+            answer.ssh.keepalive_ms = params.keepalive.map_or(0, ms);
+            if no_known_hosts_check {
+                answer.ssh.host_key_policy = TT_HOST_KEY_POLICY_ACCEPT_ANY;
+            }
+            if let Some(pw) = password {
+                c.resolved.push(cstring(&pw));
+                answer.password = c.resolved.last().expect("just pushed").as_ptr();
+            }
+            answer.ask_password = ask_password;
+            answer.no_known_hosts_check = no_known_hosts_check;
+        }
+        Target::Shell(params) => {
+            answer.target = TT_TARGET_SHELL;
+            for arg in &params.argv {
+                c.resolved.push(cstring(arg));
+                let p = c.resolved.last().expect("just pushed").as_ptr();
+                c.argv.push(p);
+            }
+            answer.pty.argv = c.argv.as_ptr();
+            answer.pty.argc = c.argv.len();
+            answer.pty.login_shell = params.login_shell;
+        }
+    }
+    write(&answer)
+}
+
+/// [`SerialParams`] the other way round — [`TtSerialParams::to_rust`]'s
+/// inverse, for handing a resolved target back to C.
+fn serial_params_c(p: &SerialParams) -> TtSerialParams {
+    TtSerialParams {
+        baud: p.baud,
+        data_bits: match p.data_bits {
+            DataBits::Five => 5,
+            DataBits::Six => 6,
+            DataBits::Seven => 7,
+            DataBits::Eight => 8,
+        },
+        parity: p.parity,
+        stop_bits: match p.stop_bits {
+            StopBits::One => 1,
+            StopBits::Two => 2,
+        },
+        flow: p.flow,
+        xon: p.xon,
+        xoff: p.xoff,
+        dtr: p.dtr,
+        rts: p.rts,
+        detect_break: p.detect_break,
+        read_timeout_ms: ms(p.read_timeout),
+    }
+}
+
+/// A duration in milliseconds, saturating — the ABI counts them in a `u32`,
+/// and 49 days is not a timeout anybody meant.
+fn ms(d: Duration) -> u32 {
+    d.as_millis().min(u128::from(u32::MAX)) as u32
+}
+
+/// [`cstring`] for bytes that are not required to be UTF-8 — a path off a
+/// command line.
+fn cbytes(v: &[u8]) -> CString {
+    let mut bytes = v.to_vec();
+    bytes.retain(|&b| b != 0);
+    CString::new(bytes).expect("NULs removed above")
+}
+
+fn cptr(s: &Option<CString>) -> *const c_char {
+    s.as_ref().map_or(ptr::null(), |s| s.as_ptr())
 }

@@ -598,6 +598,225 @@ static void test_settings(void)
     tt_session_free(s);
 }
 
+/* Parse, apply, resolve — the three calls a frontend makes at startup, in the
+ * order it has to make them.
+ *
+ * The settings are reloaded first, and that is the sequence rather than a
+ * convenience: applying writes *into* the settings and nothing takes it back
+ * out, so a second line over the first would see the first one's port. A
+ * frontend loads its file once and applies once; a test that reuses a session
+ * has to say so. */
+static TtStartupKind startup(const char *const *argv, size_t argc, TtSession *s,
+                             TtStartup *out)
+{
+    CHECK_OK(tt_session_settings_load(s, "/tmp/tt-ffi-abi-no-such.ini"));
+    TtCmdLine *cmd = tt_cmdline_parse(argv, argc, 0);
+    CHECK(cmd != NULL);
+    if (!cmd)
+        return TT_STARTUP_ERROR;
+    CHECK_OK(tt_cmdline_apply(cmd, s));
+    TtStartupKind kind = tt_cmdline_startup(cmd, s, out);
+    /* Deliberately freed before the caller looks at `out`: every string in it
+     * is borrowed from the handle, so a use-after-free here would show up as
+     * a wrong answer under ASan rather than as a passing test. Copy first. */
+    if (out->host)
+        out->host = strdup(out->host);
+    if (out->path)
+        out->path = strdup(out->path);
+    if (out->reason)
+        out->reason = strdup(out->reason);
+    if (out->ssh.host)
+        out->ssh.host = out->host;
+    if (out->ssh.user)
+        out->ssh.user = strdup(out->ssh.user);
+    tt_cmdline_free(cmd);
+    return kind;
+}
+
+static void free_startup(TtStartup *st)
+{
+    free((void *)st->path);
+    free((void *)st->host);
+    free((void *)st->reason);
+    free((void *)st->ssh.user);
+}
+
+static void test_cmdline(void)
+{
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+    TtStartup st;
+
+    /* Nothing named: the New Connection dialog, which is upstream's first
+     * arm and the one a reimplementation forgets. */
+    const char *none[] = {""};
+    CHECK(startup(none, 0, s, &st) == TT_STARTUP_DIALOG);
+    free_startup(&st);
+
+    /* `/DS` suppresses it, which is how a session that will `connect` for
+     * itself starts up. */
+    const char *ds[] = {"/DS"};
+    CHECK(startup(ds, 1, s, &st) == TT_STARTUP_IDLE);
+    free_startup(&st);
+
+    /* A bare host name is telnet, and the port decides the protocol: 23
+     * negotiates, anything else auto-detects, because a terminal server's
+     * per-line port is not a telnet server. */
+    const char *host[] = {"myhost"};
+    CHECK(startup(host, 1, s, &st) == TT_STARTUP_OPEN);
+    CHECK(st.target == TT_TARGET_TELNET);
+    CHECK(st.host && strcmp(st.host, "myhost") == 0);
+    CHECK(st.port == 23);
+    CHECK(st.telnet.mode == TT_TELNET_NEGOTIATE);
+    CHECK(st.telnet.term_type != NULL);
+    free_startup(&st);
+
+    const char *hostport[] = {"myhost:2323", "/T=1"};
+    CHECK(startup(hostport, 2, s, &st) == TT_STARTUP_OPEN);
+    CHECK(st.port == 2323);
+    CHECK(st.telnet.mode == TT_TELNET_AUTO);
+    free_startup(&st);
+
+    /* SSH, which is not opened here: it has prompts, so it goes to
+     * `tt_ssh_connect` and the window drives it. Port 0 means the config's,
+     * then 22 — upstream would send it to `TCPPort=`, which is 23. */
+    const char *ssh[] = {"/ssh", "/user=me", "/keyfile=/tmp/k", "myhost"};
+    CHECK(startup(ssh, 4, s, &st) == TT_STARTUP_OPEN);
+    CHECK(st.target == TT_TARGET_SSH);
+    CHECK(st.ssh.host && strcmp(st.ssh.host, "myhost") == 0);
+    CHECK(st.ssh.port == 0);
+    CHECK(st.ssh.user && strcmp(st.ssh.user, "me") == 0);
+    CHECK(st.ssh.use_ssh_config);
+    CHECK(st.ssh.host_key_policy == TT_HOST_KEY_POLICY_ASK);
+    CHECK(!st.no_known_hosts_check);
+    free_startup(&st);
+
+    /* A port that was asked for survives, and the hidden option that skips
+     * the `known_hosts` check is folded into the policy rather than left for
+     * the frontend to interpret. */
+    const char *ssh2[] = {"/ssh", "/nosecuritywarning", "myhost:2222"};
+    CHECK(startup(ssh2, 3, s, &st) == TT_STARTUP_OPEN);
+    CHECK(st.ssh.port == 2222);
+    CHECK(st.ssh.host_key_policy == TT_HOST_KEY_POLICY_ACCEPT_ANY);
+    CHECK(st.no_known_hosts_check);
+    /* No `/user=`, so null rather than "" — the difference between "whatever
+     * ~/.ssh/config says" and "an empty user name". */
+    CHECK(st.ssh.user == NULL);
+    free_startup(&st);
+
+    /* A serial line resolves `/C=1` through enumeration. Whether there is a
+     * first port is the machine's business; the answer must be one of the two
+     * and never a silently different device. */
+    const char *com[] = {"/C=1", "/SPEED=115200", "/CPARITY=even"};
+    TtStartupKind kind = startup(com, 3, s, &st);
+    CHECK(kind == TT_STARTUP_OPEN || kind == TT_STARTUP_UNSUPPORTED);
+    if (kind == TT_STARTUP_OPEN) {
+        CHECK(st.target == TT_TARGET_SERIAL);
+        CHECK(st.path && strncmp(st.path, "/dev/", 5) == 0);
+        CHECK(st.serial.baud == 115200);
+        CHECK(st.serial.parity == TT_PARITY_EVEN);
+    } else {
+        CHECK(st.reason && strstr(st.reason, "serial port") != NULL);
+    }
+    free_startup(&st);
+
+    /* An out-of-range `/C=` is **dropped rather than clamped**: the port
+     * stays whatever the settings file said, so the same shortcut opens a
+     * different port here from the one it opens on a machine whose
+     * `MaxComPort=1024`. It does not become 999, and it does not become 256.
+     *
+     * It still selects the serial transport, and `ComAutoConnect` starts true
+     * on every call — so this connects rather than asking, which is why the
+     * two cases below both need a `/M=` to reach the dialog at all. */
+    const char *com999[] = {"/C=999", "/M=x", "/DS"};
+    CHECK(startup(com999, 3, s, &st) == TT_STARTUP_IDLE);
+    CHECK(strcmp(tt_session_setting(s, "serial.com_port"), "1") == 0);
+    free_startup(&st);
+
+    /* ...and an in-range one turns `ComAutoConnect` back on, after the option
+     * loop rather than inside it, so the order of the two does not matter. */
+    const char *com1m[] = {"/C=1", "/M=x", "/DS"};
+    CHECK(startup(com1m, 3, s, &st) != TT_STARTUP_IDLE);
+    free_startup(&st);
+
+    /* Two transports upstream has and this does not say which, rather than
+     * opening something else. */
+    const char *replay[] = {"/R=session.log"};
+    CHECK(startup(replay, 1, s, &st) == TT_STARTUP_UNSUPPORTED);
+    CHECK(st.reason && strstr(st.reason, "replaying") != NULL);
+    free_startup(&st);
+
+    /* Applying reaches the settings, and through them the running terminal —
+     * `/W=` is a title and `/H` is a window without one. */
+    const char *win[] = {"/W=My Session", "/H", "/TIMEOUT=7", "/DS"};
+    CHECK(startup(win, 4, s, &st) == TT_STARTUP_IDLE);
+    CHECK(strcmp(tt_session_setting(s, "terminal.title"), "My Session") == 0);
+    CHECK(strcmp(tt_session_setting(s, "window.hide_title"), "on") == 0);
+    CHECK(strcmp(tt_session_setting(s, "connection.timeout"), "7") == 0);
+    free_startup(&st);
+
+    /* The options a window acts on itself, none of which is a setting. */
+    const char *opts[] = {"/F=other.ini", "/L=out.log", "/M=setup.ttl",
+                          "/I",           "/X=100",     "/DS"};
+    TtCmdLine *cmd = tt_cmdline_parse(opts, 6, 0);
+    CHECK(cmd != NULL);
+    TtCmdLineInfo info;
+    CHECK(tt_cmdline_info(cmd, &info));
+    CHECK(info.setup_file && strcmp(info.setup_file, "other.ini") == 0);
+    CHECK(info.log_file && strcmp(info.log_file, "out.log") == 0);
+    CHECK(info.macro_kind == TT_MACRO_FILE);
+    CHECK(info.macro_file && strcmp(info.macro_file, "setup.ttl") == 0);
+    CHECK(info.minimize && !info.hide_window);
+    /* `/X=` alone: upstream pairs them, so the axis that was not given is 0
+     * and the window does not land wherever the manager felt like. */
+    CHECK(info.has_x && info.x == 100);
+    CHECK(!info.has_y);
+    CHECK(info.unknown_count == 0);
+    tt_cmdline_free(cmd);
+
+    /* `/NOLOG` wins over `/L=`, which is what the manual says and what
+     * upstream's own code does not do. */
+    const char *nolog[] = {"/L=out.log", "/NOLOG"};
+    cmd = tt_cmdline_parse(nolog, 2, 0);
+    CHECK(cmd != NULL);
+    CHECK(tt_cmdline_info(cmd, &info));
+    CHECK(info.log_file == NULL);
+    tt_cmdline_free(cmd);
+
+    /* A `/D=` topic frees the startup macro name unconditionally, which is
+     * the third state and the one that is easy to miss. */
+    const char *dde[] = {"/D=topic"};
+    cmd = tt_cmdline_parse(dde, 1, 0);
+    CHECK(cmd != NULL);
+    CHECK(tt_cmdline_info(cmd, &info));
+    CHECK(info.macro_kind == TT_MACRO_CLEARED);
+    CHECK(info.macro_file == NULL);
+    tt_cmdline_free(cmd);
+
+    /* A mistyped `/ssh` option is the only diagnostic in either parser. */
+    const char *typo[] = {"/ssh", "/ssh-nosuchthing", "myhost"};
+    cmd = tt_cmdline_parse(typo, 3, 0);
+    CHECK(cmd != NULL);
+    CHECK(tt_cmdline_info(cmd, &info));
+    CHECK(info.unknown_count == 1);
+    CHECK(tt_cmdline_unknown(cmd, 0) != NULL);
+    CHECK(tt_cmdline_unknown(cmd, 1) == NULL);
+    tt_cmdline_free(cmd);
+
+    /* `max_com_port` bounds `/C=`, which is why it is a parameter: the same
+     * line opens a port on a machine whose `MaxComPort=1024` and puts the
+     * dialog up on one that took the default. */
+    const char *com300[] = {"/C=300", "/DS"};
+    cmd = tt_cmdline_parse(com300, 2, 1024);
+    CHECK(cmd != NULL);
+    CHECK_OK(tt_cmdline_apply(cmd, s));
+    CHECK(strcmp(tt_session_setting(s, "serial.com_port"), "300") == 0);
+    tt_cmdline_free(cmd);
+
+    tt_session_free(s);
+}
+
 static void test_null_safety(void)
 {
     tt_config_default(NULL);
@@ -661,6 +880,26 @@ static void test_null_safety(void)
     CHECK(tt_session_set_setting(NULL, "terminal.cols", "80") == TT_ERR_INVALID);
     CHECK(tt_session_settings_load(NULL, "/tmp/x.ini") == TT_ERR_INVALID);
     CHECK(tt_session_settings_save(NULL, "/tmp/x.ini") == TT_ERR_INVALID);
+
+    /* A command line with no arguments is a valid one — it is what a bare
+     * `sterna` has — so a null `argv` parses rather than failing. */
+    TtCmdLine *empty = tt_cmdline_parse(NULL, 0, 0);
+    CHECK(empty != NULL);
+    TtStartup st_null;
+    CHECK(tt_cmdline_startup(empty, NULL, &st_null) == TT_STARTUP_ERROR);
+    CHECK(tt_cmdline_startup(empty, NULL, NULL) == TT_STARTUP_ERROR);
+    CHECK(tt_cmdline_apply(empty, NULL) == TT_ERR_INVALID);
+    CHECK(!tt_cmdline_info(empty, NULL));
+    tt_cmdline_free(empty);
+    /* And a null entry in a real argv is a caller bug, reported rather than
+     * dereferenced. */
+    const char *holed[] = {"/DS", NULL};
+    CHECK(tt_cmdline_parse(holed, 2, 0) == NULL);
+    CHECK(tt_cmdline_startup(NULL, NULL, NULL) == TT_STARTUP_ERROR);
+    CHECK(tt_cmdline_apply(NULL, NULL) == TT_ERR_INVALID);
+    CHECK(!tt_cmdline_info(NULL, NULL));
+    CHECK(tt_cmdline_unknown(NULL, 0) == NULL);
+    tt_cmdline_free(NULL);
     CHECK(!tt_settings_field(0, NULL));
     CHECK(tt_last_error() != NULL);
 
@@ -1133,6 +1372,7 @@ int main(void)
     test_absolute_lines();
     test_logging();
     test_settings();
+    test_cmdline();
     test_input();
     test_palette();
     test_serial();
