@@ -14,7 +14,7 @@ pub use parmrk::SerialEvent;
 mod linux;
 
 mod enumerate;
-pub use enumerate::{enumerate, PortInfo, UsbInfo};
+pub use enumerate::{enumerate, number_of_port, port_by_number, PortInfo, UsbInfo};
 
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};

@@ -96,6 +96,44 @@ pub fn enumerate() -> Result<Vec<PortInfo>> {
     Ok(out)
 }
 
+/// `ts.ComPort` — a Tera Term command line's `/C=<n>`, resolved to a port.
+///
+/// **A decision, not a translation** (2026-08-09, recorded in `PLAN.md`): the
+/// number is a 1-based index into [`enumerate`], so `/C=1` is the first entry
+/// the port picker shows. The alternative was a literal `COM<n>` →
+/// `/dev/ttyS<n-1>` map, which is stable and useless on a machine whose only
+/// ports are USB adapters — this one owns four of them and no `ttyS0` worth
+/// opening.
+///
+/// What that inherits is the instability already documented above: enumeration
+/// is sorted by device node and `ttyUSB<n>` is assigned in attach order, so
+/// replugging two adapters can swap which one is `/C=1`. Anything that wants to
+/// *remember* a port must store [`PortInfo::stable_id`]; a number on a command
+/// line is a choice made afresh each time, which is what it is upstream too.
+///
+/// `None` when there are fewer ports than that, which is upstream's own answer
+/// to a `/C=` it cannot honour — the port is dropped and the New Connection
+/// dialog opens.
+pub fn port_by_number(n: u16) -> Result<Option<PortInfo>> {
+    if n == 0 {
+        return Ok(None);
+    }
+    Ok(enumerate()?.into_iter().nth(usize::from(n) - 1))
+}
+
+/// The other direction, for writing a command line or a settings file back:
+/// which `/C=` would name this device, if any.
+///
+/// Matches on the device node *or* the stable path, because either may be what
+/// the caller has in hand — a session opened from a profile knows only the
+/// `by-path` name.
+pub fn number_of_port(path: &str) -> Result<Option<u16>> {
+    Ok(enumerate()?
+        .iter()
+        .position(|p| p.device == path || p.stable_id.as_deref() == Some(path))
+        .map(|i| (i + 1) as u16))
+}
+
 fn canonical(path: &str) -> Option<PathBuf> {
     std::fs::canonicalize(path).ok()
 }
@@ -143,5 +181,33 @@ mod tests {
             assert!(!p.device.is_empty());
             assert!(p.open_path() == p.device || p.open_path().contains("by-path"));
         }
+    }
+
+    /// `/C=<n>` and back again, on whatever this machine has — including a
+    /// machine with nothing, where every answer is `None` rather than an error.
+    #[test]
+    fn a_com_number_is_an_index_into_the_picker() {
+        let ports = enumerate().expect("enumeration");
+        // Zero is not a port: upstream's own bound is `1 <= n <= MaxComPort`.
+        assert_eq!(port_by_number(0).expect("zero").map(|p| p.device), None);
+        for (i, p) in ports.iter().enumerate() {
+            let n = (i + 1) as u16;
+            assert_eq!(
+                port_by_number(n).expect("by number").map(|p| p.device),
+                Some(p.device.clone())
+            );
+            // The round trip, from either name the caller might hold.
+            assert_eq!(number_of_port(&p.device).expect("by device"), Some(n));
+            if let Some(id) = &p.stable_id {
+                assert_eq!(number_of_port(id).expect("by stable id"), Some(n));
+            }
+        }
+        // One past the end is "no such port", which is what makes a `/C=` that
+        // cannot be honoured open the dialog instead of failing.
+        let past = (ports.len() + 1) as u16;
+        assert!(port_by_number(past).expect("past the end").is_none());
+        assert!(number_of_port("/dev/nonexistent")
+            .expect("unknown")
+            .is_none());
     }
 }

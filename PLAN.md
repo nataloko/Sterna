@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 187
+**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 189
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -2297,13 +2297,23 @@ and for the same reason: reproducing it would mean writing a file the user
 explicitly asked not to have. Reachable from a shortcut, so it wants filing with
 the rest.
 
-Two open items, both about `ComPort` and both wanting a decision rather than
-code. Its bound is a *different setting* and is a reset to 1 rather than a clamp
-(`ttset.c:1223`), which the schema has no way to express — so an out-of-range
-`ComPort=` in a file survives here where upstream would reset it. And **what
-`/C=1` means on Linux is undecided**: this port opens a device path, so a number
-has to be resolved against enumeration, and `COM1` is not `/dev/ttyS0` on a
-machine whose only port is a USB adapter.
+**`/C=<n>` is the nth port the picker shows** — decided 2026-08-09, implemented
+as `tt_conn::serial::port_by_number`. A number is a 1-based index into
+`enumerate()`, which is sorted by device node, so `/C=1` on a command line and
+the first entry in the port menu are the same thing. The alternative was a
+literal `COM<n>` → `/dev/ttyS<n-1>` map: stable, and useless on the machine this
+is developed on, which has four USB ports and no `ttyS0` worth opening.
+
+It inherits the instability `enumerate`'s own docs already carry — `ttyUSB<n>` is
+assigned in attach order, so replugging two adapters can swap which is `/C=1`.
+That is the right trade for a *command line*, which chooses afresh every time;
+anything that **remembers** a port still has to store the `by-path` id, and
+`number_of_port` goes the other way for writing one back.
+
+One open item left, and it is about the schema rather than about Linux:
+`ComPort`'s bound is a *different setting* and is a reset to 1 rather than a
+clamp (`ttset.c:1223`), which the schema has no way to express — so an
+out-of-range `ComPort=` in a file survives here where upstream would reset it.
 
 What is still not wired: nothing consumes a `CommandLine` yet. `connect` in
 `tt-macro` needs a transport built from one, which means a factory that can open
