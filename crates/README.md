@@ -9,7 +9,7 @@ exist so the engine can be measured against something.
 | `tt-charset` | ISO-2022 designation and invocation, and whether a byte is DEC special graphics. |
 | `tt-vt` | The escape-sequence state machine. Byte-level parsing is the `vte` crate; the semantics are ported from Tera Term. |
 | `tt-conn` | The connection layer — serial, SSH, telnet and a local pty, all four built. The serial half is written against `commlib.c`'s requirement; see [its README](tt-conn/README.md). |
-| `tt-config` | `TERATERM.INI`, and the settings schema everything else reads its list of settings from. Held against a real Win32 by `ini-audit/`. |
+| `tt-config` | `TERATERM.INI`, the settings schema everything else reads its list of settings from, and the Tera Term command line — `_ParseParam` and TTSSH's hook over it, which is what `connect` and a `ttermpro`-compatible entry point both need. Held against a real Win32 by `ini-audit/`. |
 | `tt-xfer` | X/Y/ZMODEM, Kermit, B-Plus and Quick-VAN — Tera Term's own protocol C, vendored under `vendor/ttpfile/` and driven from Rust. See [its README](tt-xfer/README.md). |
 | `tt-ttl` | Tera Term's macro language, ported from `ttpmacro/`, with the terminal behind a trait instead of behind DDE. See [its README](tt-ttl/README.md). |
 | `tt-session` | A terminal attached to a connection: the loop between `tt-vt` and `tt-conn`, and what the C ABI exports. See [its README](tt-session/README.md). |

@@ -633,8 +633,12 @@ And for the settings, all of which came out of `ini-audit/`:
   reformats the committed file and `the_generated_file_is_current` then fails
   with "src/generated.rs is stale", which is the opposite of what happened.
   Loud rather than silent, and self-healing — re-run `cargo run -p tt-config
-  --bin gen-settings` — but format per package (`cargo fmt -p tt-vt`) and it
-  cannot arise. `rustfmt.toml`'s `ignore` would fix it and is nightly-only.
+  --bin gen-settings`. **Per-package is not enough**, which this note used to
+  say it was: `cargo fmt -p tt-config` reformats that package's own generated
+  file, and on the way it silently reflows five hand-written files that were
+  never rustfmt-clean either, so the diff to review is 800 lines wide. In this
+  one crate, format the files you touched — `rustfmt --edition 2021 <file>`.
+  `rustfmt.toml`'s `ignore` would fix it and is nightly-only.
 - **`TerminalID` is `strcmp`; every other enumerated setting is `_stricmp`.**
   `tttypes_termid.cpp:60`. And `TermIDGetID` never fails, so `TerminalID=vt320`
   is not an error — it is a VT100, silently, for ever. That is why the schema
@@ -663,6 +667,57 @@ And for the settings, all of which came out of `ini-audit/`:
   refreshes exactly those and deliberately leaves `LFMode` and
   `AcceptWheelToCursor`, which upstream *does* keep separately and
   `CVTWindow::SetupTerm` does not touch.
+- **`TCPPort`'s default is another setting's *initialiser*, and this is the
+  initialiser trap the other way up.** `ttset.c:966` reads
+  `GetPrivateProfileInt(…, "TCPPort", ts->TelPort, …)`, which looks like "the
+  file's `TelPort`" and is not: `TelPort=` is read at `:1311`, four hundred
+  lines later, so the value in hand is the hardcoded `ts->TelPort = 23` from
+  `:566` — sitting with the very flag-word initialisers that lie about
+  everything else. So a file with `TelPort=2323` and no `TCPPort=` opens port
+  **23**. When a default is another field, check the read *order*: for the flag
+  words the initialiser at the top is a lie, and here it is the answer.
+
+And for the command line, which is two parsers and one of them is a plugin:
+
+- **A bare host name cancels `/C=`.** Its arm assigns `ParamPort = IdTCPIP`
+  outright (`ttset.c:3954`), so `ttermpro /C=1 myhost` is a **TCP session with
+  no COM port** and `ttermpro myhost /C=1` is a serial one whose host name still
+  has the colon in it. Word order decides, nothing warns, and a launcher script
+  written the wrong way round opens the wrong kind of session.
+- **`/AUTOWINCLOSE=1` means off.** That arm is an `_wcsicmp` against `on` with
+  an `else` (`ttset.c:3716`), *not* `GetOnOff` — so the same `1` that means on
+  for `AutoWinClose=` in the file means off on the command line. Sixth member of
+  the family that already holds `CRReceive`, `BSKey`, the flag words and
+  `GetOnOff` itself.
+- **`/C=` is bounded against a setting, and out of range is dropped rather than
+  clamped.** `ts.MaxComPort` defaults to 256, so `/C=300` selects the serial
+  transport with *no port* and puts the New Connection dialog up. The same line
+  works on a machine whose `MaxComPort=1024`.
+- **`_ParseParam` discards its first token**, so `connect 'myhost'` connects to
+  nothing unless something is in front of it. `ttdde.c:617` prepends a literal
+  `"a "` — "`a` = dummy exe name" — and passes **NULL** for the DDE topic, which
+  is why a `/D=` inside a `connect` string neither sets a topic nor cancels the
+  startup macro. Both facts are `CommandLine::parse_argument`.
+- **A `/D=` topic frees `ts.MacroFNW` unconditionally** (`ttset.c:3963`), and
+  `StartupMacro` is an INI setting — so a terminal launched by a macro does not
+  run the startup macro. Reading `/D=` as "just a DDE name" gives a window that
+  launches a second macro on every `connect`.
+- **`/ssh` and friends are not in `ttset.c` at all.** TTSSH hooks the parser,
+  runs first, and **blanks the options it consumed out of the line**
+  (`ttxssh.c:1521`) — so the two halves compose through a string, and
+  `ssh://user@host/` is rewritten *into* a bare `host:22` token, which is the
+  only reason Tera Term's own parser can find a host in an SSH URL. A port that
+  reads only `ttset.c` has a command line that cannot open an SSH session.
+- **In TTSSH `-` leads a switch and `ssh` is case-sensitive.** `-ssh` works
+  where `-nolog` reaches nobody, and `/SSH` matches nothing, is left in the
+  line, and is then ignored by Tera Term too — it does nothing, in silence.
+  `/t=2` is consumed as TTSSH's own and `/t=0` is deliberately left behind.
+- **A forwarding letter is given once for the whole list.** `option2[0]` is
+  written before the loop and the index resets to 1 rather than 0
+  (`ttxssh.c:1556`), so `/ssh-L1:h:2,3:h:4` is two `L` specs and
+  `/ssh-L1:h:2,L3:h:4` makes the second one `LL3:h:4`. The `;` separator the
+  documentation offers only works **quoted**, because an unquoted `;` is where
+  the tokeniser stops reading the line.
 
 And for the macro language:
 
@@ -932,6 +987,17 @@ paused (`:647`). So the note a script writes to explain a gap in the log falls
 into the gap. **This is the one place the port follows the manual instead** —
 see `SessionLog::write_str` — because reproducing it would mean implementing
 the sentence the manual does not say. It wants filing with the rest.
+
+**And a second of the same kind, in the command line: `/NOLOG` does not stop a
+log that `/L=` named.** Its arm clears `ts.LogAutoStart` and the *ANSI* copy of
+the filename, `ts.LogFN` (`ttset.c:3850`), but the wide `ts.LogFNW` is the one
+that counts and `vtwin.cpp:3631` starts logging when
+`ts.LogAutoStart || ts.LogFNW != NULL`. So `ttermpro /L=out.log /NOLOG` writes
+`out.log` — the one thing the option exists to prevent — while
+`teraterm.html` says only "start Tera Term without logging". The port lets
+`/NOLOG` win, which is the second place it follows the manual; it is the
+twenty-fifth defect on file and the second outside `ttpmacro`. Reachable from a
+shortcut, and it *creates a file* the user asked not to have.
 
 **And one in `vte`**, which is a dependency rather than the specification, so it
 is not in that file: `vte` 0.15.0's `advance_partial_utf8` (`lib.rs:687`) prints

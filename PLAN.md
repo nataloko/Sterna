@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 182
+**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 187
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1065,13 +1065,17 @@ before anything else in every session.
 - **Lua via `mlua`** over the same `ScriptHost` command table (~500 LOC glue).
 - `ttctl` JSON-RPC control socket replacing DDE. Keep a `ttpmacro script.ttl`
   CLI entry point so existing shortcuts and `.bat` wrappers keep working.
-  ✅ **the argument parsing is done**, 2026-08-09 — `crates/tt-ttl/src/cmdline.rs`.
-  What the entry point still needs is the host behind it.
+  ✅ **both command lines are parsed**, 2026-08-09 —
+  `crates/tt-ttl/src/cmdline.rs` for `ttpmacro`'s and
+  `crates/tt-config/src/cmdline/` for `ttermpro`'s, the second including TTSSH's
+  plugin half. What either entry point still needs is the host behind it: a
+  transport built from a `CommandLine`, and the frontend reading one.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (39 settings), the map onto a running terminal in
-  `tt-session`, the schema as data over the C ABI, and a Qt dialog that builds
-  itself from it, 2026-08-08. What remains is the *rest of the settings*, which
-  is a line and a citation each. See below.
+  `crates/tt-config/` (60 settings: 39 for the terminal, 2026-08-08, plus the
+  connection, serial, log and transfer ones the command line writes into,
+  2026-08-09), the map onto a running terminal in `tt-session`, the schema as
+  data over the C ABI, and a Qt dialog that builds itself from it. What remains
+  is the *rest of the settings*, which is a line and a citation each. See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
   against a real Win32 rather than against a reading of the documentation;
   `KEYBOARD.CNF` is an INI and reads with the same layer.
@@ -2243,6 +2247,70 @@ silently drops half its input. `GetParam` and `DequoteParam` are already ported
 in `tt-ttl/src/cmdline.rs` and would move to `tt-config` first — they are
 `ttlib.c`'s, and upstream puts `_ParseParam` in the same DLL as the INI reader
 for the same reason this port would.
+
+#### And then the command line, both halves of it
+
+`crates/tt-config/src/cmdline/`, 2026-08-09. All of the above, in the shape that
+paragraph predicted: the tokeniser moved, `_ParseParam`'s 39 options over its two
+passes, TTXSSH's 30 more, `ParseHostName`, `ParsePortName`, `GetFilePath`, and 21
+new settings with `CommandLine::apply` to write into them. 66 tests.
+
+**The two halves compose through a string, not a struct**, and that is the thing
+a design would get wrong first. TTSSH hooks the parser, runs *first*, and blanks
+what it consumed out of the line — so `ssh://user@host/` is rewritten **into** a
+bare `host:22` token, and that is the only reason Tera Term's own parser can find
+a host in an SSH URL. `ssh::parse` therefore returns the options *and the line it
+left behind*; `ssh::parse_both` runs the pair in upstream's order.
+
+`connect`'s argument needed one more thing: `ttdde.c:617` prepends a literal
+`"a "` — "`a` = dummy exe name" — because `_ParseParam` discards its first token.
+It also passes NULL for the DDE topic, which is not a detail either: with no
+buffer, `/D=` is ignored *and* the startup macro survives. `parse_argument` is
+those two facts.
+
+Six things read as bugs and are the specification. **A bare host name cancels
+`/C=`**, because its arm assigns `IdTCPIP` outright — so `/C=1 myhost` is a TCP
+session with no COM port and reversing the two words changes the answer.
+`/C=` is bounded against `ts.MaxComPort`, a *setting*, and out of range is
+dropped rather than clamped, leaving serial selected with no port.
+`/AUTOWINCLOSE=1` means **off**, because that arm is an `_wcsicmp` against `on`
+with an `else` rather than `GetOnOff`. `/OSC52=off` and `/OSC52=nonsense` are the
+same state. A `/D=` topic frees the startup macro, INI setting and all, so a
+terminal a macro opened does not open another macro. And in TTSSH, **`-` leads a
+switch** while `ssh` is matched case-*sensitively*, so `-ssh` works and `/SSH`
+does nothing at all, silently, in both parsers.
+
+The service-name table is transcribed from `servicenames.c` rather than left to
+`getservbyname`: `/P=telnet` has to be 23 on Linux, on Windows and in 2003.
+`ATTRIBUTION.md` records it as the second thing this distribution ships from
+upstream.
+
+**And a twenty-fifth upstream defect, the second where the code and the
+documentation disagree rather than the code and this port.** `/NOLOG`'s arm
+clears `ts.LogAutoStart` and the *ANSI* copy of the log filename, `ts.LogFN`
+(`ttset.c:3850`) — but the wide `ts.LogFNW` is the one everything uses, and
+`vtwin.cpp:3631` starts logging when `ts.LogAutoStart || ts.LogFNW != NULL`. So
+`ttermpro /L=out.log /NOLOG` **logs to `out.log`**, which is the single thing the
+option exists to prevent, and `teraterm.html` says only "start Tera Term without
+logging". The port lets `/NOLOG` win — the same call as `logwrite`-while-paused,
+and for the same reason: reproducing it would mean writing a file the user
+explicitly asked not to have. Reachable from a shortcut, so it wants filing with
+the rest.
+
+Two open items, both about `ComPort` and both wanting a decision rather than
+code. Its bound is a *different setting* and is a reset to 1 rather than a clamp
+(`ttset.c:1223`), which the schema has no way to express — so an out-of-range
+`ComPort=` in a file survives here where upstream would reset it. And **what
+`/C=1` means on Linux is undecided**: this port opens a device path, so a number
+has to be resolved against enumeration, and `COM1` is not `/dev/ttyS0` on a
+machine whose only port is a USB adapter.
+
+What is still not wired: nothing consumes a `CommandLine` yet. `connect` in
+`tt-macro` needs a transport built from one, which means a factory that can open
+serial, telnet or SSH — and for SSH the host-key and password prompts have to
+reach the frontend's dialogs, which is the `ScriptHost` blocking-call pattern
+again. The frontend needs the parser over the C ABI to accept a Tera Term command
+line of its own. Those are the next two pieces, in that order.
 
 #### And then it could move a file, which needed something to wait on
 

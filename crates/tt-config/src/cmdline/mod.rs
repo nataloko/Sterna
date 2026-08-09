@@ -358,10 +358,19 @@ pub struct CommandLine {
     /// `/L=` — the log file, resolved against the *log* directory rather than
     /// the home one, and with no default extension.
     pub log_file: Option<Vec<u8>>,
-    /// `/NOLOG` — no automatic logging. Upstream clears the ANSI `ts.LogFN`
-    /// and leaves `ts.LogFNW`, which is the name everything actually uses; see
-    /// `PLAN.md` for why that is being treated as an upstream defect rather
-    /// than reproduced.
+    /// `/NOLOG` — no automatic logging, and **a deliberate divergence when
+    /// `/L=` is given too.**
+    ///
+    /// Upstream's arm clears `LogAutoStart` and the *ANSI* copy of the name,
+    /// `ts.LogFN` (`ttset.c:3850`) — but the wide `ts.LogFNW` is the one that
+    /// counts, and `vtwin.cpp:3631` starts logging when
+    /// `ts.LogAutoStart || ts.LogFNW != NULL`. So
+    /// `ttermpro /L=out.log /NOLOG` **logs to `out.log`**, which is the one
+    /// thing the option exists to prevent; `teraterm.html` says only "start
+    /// Tera Term without logging". Here `/NOLOG` wins, as the manual says, and
+    /// a consumer that has both must let it — the twenty-fifth upstream defect
+    /// on file, and the second where the code and the documentation disagree
+    /// rather than the code and this port.
     pub no_log: bool,
     /// `/MN=` — the name this window answers to for `sendmulticast`.
     pub multicast_name: Option<Vec<u8>>,
@@ -1305,6 +1314,20 @@ mod tests {
         };
         parse("tt /NOLOG").apply(&mut s);
         assert!(!s.log_auto_start);
+
+        // **`/L=` with `/NOLOG` is where this port follows the manual instead.**
+        // Both are visible here, so a consumer can see the conflict; upstream
+        // resolves it the wrong way — `/NOLOG` clears the ANSI copy of the name
+        // and `vtwin.cpp:3631` tests the wide one, so it logs anyway.
+        let cmd = parse("tt /L=out.log /NOLOG");
+        assert!(cmd.no_log);
+        assert_eq!(text(&cmd.log_file), "out.log");
+        let mut s = Settings {
+            log_auto_start: true,
+            ..Default::default()
+        };
+        cmd.apply(&mut s);
+        assert!(!s.log_auto_start, "the manual: `without logging`");
 
         // `/FD=` is applied only if the folder is there, which is upstream's
         // `DoesFolderExistW` and is why this one arm reads the filesystem.
