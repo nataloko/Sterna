@@ -359,6 +359,23 @@ enum TtEventKind
      * event*, because the next transfer replaces it.
      */
     TT_EVENT_KIND_TRANSFER_DONE = 8,
+    /**
+     * Make a noise. Already governed — the core has thinned a runaway host
+     * down to the bells Tera Term would have sounded — so a frontend should
+     * beep on every one of these and needs no rate limit of its own.
+     */
+    TT_EVENT_KIND_BELL = 9,
+    /**
+     * Flash the screen instead, which is what `Beep=visual` asks for. Invert
+     * it for `bell.visual_wait_ms` milliseconds; the setting is read by name
+     * through [`tt_settings_field`] like every other one the window draws
+     * with.
+     *
+     * A second kind rather than a flag on [`TtEventKind::Bell`] because the
+     * two are different actions, and because a frontend with no way to flash
+     * can ignore this one and still be honest about it.
+     */
+    TT_EVENT_KIND_VISUAL_BELL = 10,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L

@@ -1149,6 +1149,19 @@ pub enum TtEventKind {
     /// [`tt_session_transfer_result`] for how it went — and read it *on this
     /// event*, because the next transfer replaces it.
     TransferDone = 8,
+    /// Make a noise. Already governed — the core has thinned a runaway host
+    /// down to the bells Tera Term would have sounded — so a frontend should
+    /// beep on every one of these and needs no rate limit of its own.
+    Bell = 9,
+    /// Flash the screen instead, which is what `Beep=visual` asks for. Invert
+    /// it for `bell.visual_wait_ms` milliseconds; the setting is read by name
+    /// through [`tt_settings_field`] like every other one the window draws
+    /// with.
+    ///
+    /// A second kind rather than a flag on [`TtEventKind::Bell`] because the
+    /// two are different actions, and because a frontend with no way to flash
+    /// can ignore this one and still be honest about it.
+    VisualBell = 10,
 }
 
 #[repr(C)]
@@ -1212,6 +1225,8 @@ pub extern "C" fn tt_session_drain_events(
                 s.transfer_result = Some(*outcome);
                 (TtEventKind::TransferDone, 0, ptr::null())
             }
+            Event::Bell { visual: false } => (TtEventKind::Bell, 0, ptr::null()),
+            Event::Bell { visual: true } => (TtEventKind::VisualBell, 0, ptr::null()),
         };
         s.events.push(TtEvent {
             kind,
