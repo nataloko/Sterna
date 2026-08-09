@@ -636,6 +636,13 @@ QString Session::setting(const QString &name) const
     return value ? QString::fromUtf8(value) : QString();
 }
 
+QString Session::wordDelimiters() const
+{
+    // Cached on the core side and valid until the next call, like every other
+    // borrowed string here.
+    return QString::fromUtf8(tt_session_word_delimiters(const_cast<TtSession *>(m_session)));
+}
+
 bool Session::setSetting(const QString &name, const QString &value, QString *outError)
 {
     const QByteArray n = name.toUtf8();

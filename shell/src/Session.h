@@ -276,6 +276,10 @@ public:
     /// One setting, in the INI's own spelling. Empty for a name the schema
     /// does not have.
     QString setting(const QString &name) const;
+    /// What a double-click stops at — `DelimList`, decoded out of the `$xx`
+    /// escape it is stored in. Not reachable through `setting`, which gives
+    /// the file's own spelling and would hand back a list with no space in it.
+    QString wordDelimiters() const;
     /// Set one and apply it to the running terminal. The value is parsed the
     /// way the file would parse it, so an out-of-range number is corrected
     /// rather than refused.

@@ -161,6 +161,16 @@ private:
         int dialogHeight = 220;
     } m_clipboard;
 
+    /// `DelimList`, decoded — what a double-click stops at. Refreshed by
+    /// `applySettings` like the block above.
+    ///
+    /// The default is upstream's and two things about it are worth knowing:
+    /// it holds a space and every ASCII punctuation mark **except**
+    /// underscore, so `some_name` is one word and `some-name` is three; and
+    /// it is stored in `Hex2StrW`'s escape, so the raw setting reads
+    /// `$20!"#$24%…` and only the core knows what that means.
+    QString m_delimiters = QStringLiteral(" !\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~");
+
     /// Since the last frame was painted, for the floor in `requestRepaint`.
     QElapsedTimer m_sincePaint;
     /// The deferred repaint, alive only while output outruns that floor.

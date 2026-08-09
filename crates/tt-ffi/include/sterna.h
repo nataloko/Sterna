@@ -2386,6 +2386,20 @@ const char *tt_settings_choice(size_t index,
 const char *tt_session_setting(TtSession *session, const char *name);
 
 /**
+ * What ends a word, for a double-click — `DelimList`, decoded.
+ *
+ * Not reachable through [`tt_session_setting`], deliberately: that returns the
+ * file's own spelling, and this setting's spelling is `Hex2StrW`'s `$xx`
+ * escape. Its default *opens* with one — `$20!"#$24%…` — so a frontend that
+ * read the raw string would have a list with no space in it and every word
+ * running into the next. UTF-8, and characters rather than bytes, because it
+ * is compared against what is on the screen.
+ *
+ * Borrowed, and valid until the next call to this function on this session.
+ */
+const char *tt_session_word_delimiters(TtSession *session);
+
+/**
  * Set one setting by name and apply it to the running terminal.
  *
  * The value is parsed exactly as the file would parse it — bounds, quote

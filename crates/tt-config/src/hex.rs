@@ -60,6 +60,39 @@ pub fn hex_decode(s: &str, max: usize) -> Vec<u8> {
     out
 }
 
+/// `Hex2StrW` (`ttlib_static_cpp.cpp:837`) — the same escape decoded to *text*
+/// rather than to bytes.
+///
+/// Upstream has two of these and the difference is not cosmetic: `Answerback`
+/// goes on the wire and is bytes, while `DelimList` is compared against what is
+/// on the screen and is characters. `$41` is the letter A either way; `$E9` is
+/// one byte here and the character U+00E9 there, and there is no length cap
+/// because upstream allocates instead of filling a fixed buffer.
+///
+/// That allocation is where its own defect is — see `PLAN.md`.
+pub fn hex_decode_str(s: &str) -> String {
+    let src: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < src.len() {
+        let mut c = src[i];
+        if c == '$' {
+            i += 1;
+            let hi = if i < src.len() { src[i] } else { '0' };
+            i += 1;
+            let lo = if i < src.len() { src[i] } else { '0' };
+            let v = (hex_digit(hi as u32 as u8) as u32) << 4 | hex_digit(lo as u32 as u8) as u32;
+            // Always below 0x100, so this cannot be a surrogate or out of
+            // range — `expect` rather than a fallback that would hide a
+            // change to `hex_digit`.
+            c = char::from_u32(v).expect("a byte is always a codepoint");
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,6 +131,24 @@ mod tests {
         // at all: the list has to start with a space and to contain a `$`.
         let d = hex_decode("$20!\"#$24%&'()*+,-./:;<=>?@[\\]^`{|}~", usize::MAX);
         assert_eq!(d, b" !\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~");
+    }
+
+    /// The wide decoder is the same escape and a different result type, which
+    /// is the whole of why upstream has two.
+    #[test]
+    fn the_wide_decoder_gives_characters_not_bytes() {
+        assert_eq!(hex_decode_str("$20!\"#$24%"), " !\"#$%");
+        // One byte in the answerback, one *character* here.
+        assert_eq!(hex_decode_str("$E9"), "\u{e9}");
+        assert_eq!(hex_decode("$E9", 32), b"\xe9");
+        // The same borrowing at the end, and the same zero for a bad digit.
+        assert_eq!(hex_decode_str("$"), "\0");
+        assert_eq!(hex_decode_str("$ZZ"), "\0");
+        // ...and no cap, because upstream allocates rather than filling a
+        // buffer.
+        assert_eq!(hex_decode_str(&"a".repeat(600)).len(), 600);
+        // Text on either side of an escape survives as text.
+        assert_eq!(hex_decode_str("日$20本"), "日 本");
     }
 
     #[test]

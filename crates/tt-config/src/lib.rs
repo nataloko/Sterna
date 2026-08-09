@@ -26,6 +26,6 @@ pub mod services;
 mod generated;
 
 pub use generated::*;
-pub use hex::hex_decode;
+pub use hex::{hex_decode, hex_decode_str};
 pub use ini::{Encoding, Ini};
 pub use schema::{Field, Kind};

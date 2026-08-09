@@ -324,6 +324,9 @@ pub struct TtSession {
     log_name: CString,
     close_note: CString,
     setting: CString,
+    /// The decoded `DelimList`, which is not the file's own spelling and so
+    /// cannot share the buffer above.
+    delimiters: CString,
     /// The strings the last `TtTransferStatus` handed out, and the outcome of
     /// the last transfer to finish. Kept on the session because the C caller
     /// has nowhere to put them.
@@ -366,6 +369,7 @@ pub extern "C" fn tt_session_new(config: *const TtConfig) -> *mut TtSession {
         log_name: CString::default(),
         close_note: CString::default(),
         setting: CString::default(),
+        delimiters: CString::default(),
         xfer_protocol: CString::default(),
         xfer_file: CString::default(),
         xfer_message: CString::default(),
@@ -1020,6 +1024,23 @@ pub extern "C" fn tt_session_setting(
             ptr::null()
         }
     }
+}
+
+/// What ends a word, for a double-click — `DelimList`, decoded.
+///
+/// Not reachable through [`tt_session_setting`], deliberately: that returns the
+/// file's own spelling, and this setting's spelling is `Hex2StrW`'s `$xx`
+/// escape. Its default *opens* with one — `$20!"#$24%…` — so a frontend that
+/// read the raw string would have a list with no space in it and every word
+/// running into the next. UTF-8, and characters rather than bytes, because it
+/// is compared against what is on the screen.
+///
+/// Borrowed, and valid until the next call to this function on this session.
+#[no_mangle]
+pub extern "C" fn tt_session_word_delimiters(session: *mut TtSession) -> *const c_char {
+    let s = session!(session, ptr::null());
+    s.delimiters = cstring(&s.session.word_delimiters());
+    s.delimiters.as_ptr()
 }
 
 /// Set one setting by name and apply it to the running terminal.

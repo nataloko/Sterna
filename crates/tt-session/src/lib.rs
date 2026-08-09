@@ -239,6 +239,21 @@ impl Session {
         Ok(())
     }
 
+    /// What ends a word, for a double-click — `ts.DelimListW` (`ttset.c:1171`).
+    ///
+    /// Decoded here rather than read by name, because `DelimList` is stored in
+    /// `Hex2StrW`'s `$xx` escape and its own default *opens* with one: the raw
+    /// value begins `$20!"#$24%`, so a frontend that took the string as it
+    /// stands would have a list with no space in it, a literal `$`, `2` and
+    /// `0`, and every word running into the next.
+    ///
+    /// Characters rather than bytes: this is compared against what is on the
+    /// screen. See [`tt_config::hex_decode_str`] for why upstream has two
+    /// decoders.
+    pub fn word_delimiters(&self) -> String {
+        tt_config::hex_decode_str(&self.settings.keyboard_word_delimiters)
+    }
+
     /// One setting by name, in the INI's own spelling. `None` for a name that
     /// is not in the schema.
     pub fn setting(&self, name: &str) -> Option<String> {

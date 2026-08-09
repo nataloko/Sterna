@@ -556,6 +556,32 @@ void test_a_double_click_selects_a_word()
     CHECK(h.copied() == QStringLiteral("def"));
 }
 
+/// `DelimList` is a setting, and it is stored in `Hex2StrW`'s escape — so this
+/// is as much about the decoding as about the wiring. A list written the way a
+/// user would write it puts a `$20` at the front for the space.
+void test_the_delimiter_list_is_the_setting_and_not_a_constant()
+{
+    Harness h;
+    QString error;
+    // Underscore in, hyphen out — the opposite of upstream's default, and the
+    // thing somebody editing this setting is usually after.
+    CHECK(h.session.setSetting(QStringLiteral("keyboard.word_delimiters"),
+                               QStringLiteral("$20_"), &error));
+    h.view.applySettings();
+
+    h.feed("foo bar_baz-qux");
+    h.mouse(QEvent::MouseButtonPress, h.px(9), h.py(0));
+    h.mouse(QEvent::MouseButtonDblClick, h.px(9), h.py(0));
+    CHECK(h.copied() == QStringLiteral("baz-qux"));
+    h.mouse(QEvent::MouseButtonRelease, h.px(9), h.py(0));
+
+    // The `$20` really is a space: without the decoding the list would be the
+    // four characters `$`, `2`, `0` and `_`, and the space would join.
+    h.mouse(QEvent::MouseButtonPress, h.px(1), h.py(0));
+    h.mouse(QEvent::MouseButtonDblClick, h.px(1), h.py(0));
+    CHECK(h.copied() == QStringLiteral("foo"));
+}
+
 void test_a_triple_click_selects_the_line()
 {
     Harness h;
@@ -940,6 +966,7 @@ int main(int argc, char **argv)
     test_output_does_not_move_a_scrolled_back_view();
     test_a_drag_selects_the_characters_it_covers();
     test_a_double_click_selects_a_word();
+    test_the_delimiter_list_is_the_setting_and_not_a_constant();
     test_a_triple_click_selects_the_line();
     test_a_selection_holds_on_to_its_text_not_its_place();
     test_a_selection_survives_scrolling_back();

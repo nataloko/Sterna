@@ -25,13 +25,6 @@ constexpr qint64 kMinFrameMs = 8;
 /// How often a drag held outside the window scrolls it, in milliseconds.
 constexpr int kAutoScrollMs = 40;
 
-/// What ends a word, for double-click selection.
-///
-/// Upstream's `ts.DelimList` default, verbatim (`ttset.c:1167`): a space and
-/// every ASCII punctuation mark **except** underscore. So `some_name` is one
-/// word and `some-name` is three, which looks arbitrary until you notice that
-/// a path, a flag and a hostname all want the hyphen to break.
-constexpr const char *kDelimiters = " !\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~";
 
 /// The text one cell draws: the base character plus its combining marks.
 QString cellText(const TtCell &cell)
@@ -246,6 +239,11 @@ void TerminalView::applySettings()
     };
     m_clipboard.dialogWidth = number("clipboard.paste_dialog_width", m_clipboard.dialogWidth);
     m_clipboard.dialogHeight = number("clipboard.paste_dialog_height", m_clipboard.dialogHeight);
+
+    // Decoded by the core rather than read by name: `DelimList` is stored in
+    // `Hex2StrW`'s `$xx` escape and its own default opens with one, so the raw
+    // string has no space in it and every word runs into the next.
+    m_delimiters = m_session->wordDelimiters();
 
     update();
 }
@@ -862,16 +860,20 @@ void TerminalView::focusOutEvent(QFocusEvent *event)
 
 namespace {
 
-/// Whether a cell ends a word. An erased cell holds nothing and counts as the
-/// space it is drawn as.
-bool isDelimiter(const TtCell &cell)
+/// Whether a cell ends a word, against the decoded `DelimList`.
+///
+/// The list is `ts.DelimListW` — characters, not bytes, which is why it can
+/// hold anything the screen can. Upstream searches it with `wcsstr` for the
+/// cell's *whole* text, combining marks included (`buffer.c:4060`); this
+/// tests the base character, which differs only for a cell whose accents are
+/// themselves in the list.
+///
+/// An erased cell holds nothing and counts as the space it is drawn as.
+bool isDelimiter(const QString &delimiters, const TtCell &cell)
 {
     const uint32_t cp = cell.text[0];
-    if (cp >= 0x80) {
-        return false;
-    }
-    const char c = cp == 0 ? ' ' : static_cast<char>(cp);
-    return std::strchr(kDelimiters, c) != nullptr;
+    const uint32_t c = cp == 0 ? uint32_t(' ') : cp;
+    return delimiters.contains(QString::fromUcs4(reinterpret_cast<const char32_t *>(&c), 1));
 }
 
 /// Widen `[from, to)` to the word under `at` on `cells`.
@@ -882,13 +884,14 @@ bool isDelimiter(const TtCell &cell)
 /// Starting anywhere else takes the run of non-delimiters, and stops as well
 /// where the character width changes, which is upstream's `DelimDBCS` and is on
 /// by default.
-void wordAt(const TtCell *cells, int len, int at, int *from, int *to)
+void wordAt(const QString &delimiters, const TtCell *cells, int len, int at,
+            int *from, int *to)
 {
     at = qBound(0, at, len - 1);
     if (cells[at].width_class == TT_WIDTH_PAD && at > 0) {
         at--;
     }
-    const bool delim = isDelimiter(cells[at]);
+    const bool delim = isDelimiter(delimiters, cells[at]);
     // Erased cells hold nothing and are drawn as spaces, so they compare as
     // one — otherwise the run of blanks after a line stops at the first cell
     // the host never wrote to.
@@ -903,7 +906,7 @@ void wordAt(const TtCell *cells, int len, int at, int *from, int *to)
         if (delim) {
             return glyph(cells[x]) == start;
         }
-        return !isDelimiter(cells[x]) &&
+        return !isDelimiter(delimiters, cells[x]) &&
                (cells[x].width_class == TT_WIDTH_WIDE) == startWide;
     };
 
@@ -938,7 +941,7 @@ SelPoint TerminalView::unitStart(SelPoint p) const
     }
     int from = 0;
     int to = 0;
-    wordAt(cells, static_cast<int>(len), p.x, &from, &to);
+    wordAt(m_delimiters, cells, static_cast<int>(len), p.x, &from, &to);
     p.x = from;
     return p;
 }
@@ -957,7 +960,7 @@ SelPoint TerminalView::unitEnd(SelPoint p) const
     int from = 0;
     int to = 0;
     // A boundary at `x` ends the character at `x - 1`.
-    wordAt(cells, static_cast<int>(len), qMax(0, p.x - 1), &from, &to);
+    wordAt(m_delimiters, cells, static_cast<int>(len), qMax(0, p.x - 1), &from, &to);
     p.x = to;
     return p;
 }
