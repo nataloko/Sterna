@@ -329,6 +329,25 @@ connection.telnet_port | int | Tera Term | TelPort | 23 | DLG_TCPIP_PORT
 # which is the opposite of what the same value means for `Telnet=` above.
 connection.telnet_binary | bool | Tera Term | TelBin | off | -
 
+# `ttset.c:961`. What `TERMINAL-TYPE` answers with, and what an SSH session
+# sends as `TERM`. Upstream ships plain **`xterm`**, which this port had been
+# diverging from with a hardcoded `xterm-256color` — a defensible choice and
+# not one a hardcoded string should be making, since the answer decides what
+# every curses program on the far end believes about the terminal.
+connection.term_type | string | Tera Term | TermType | xterm | -
+
+# `ttset.c:1936`. One number or two, `input,output`, for `TERMINAL-SPEED`.
+#
+# A string rather than an `int` pair, because **the second field's default is
+# the first field's value** and the schema has no way to say that: `GetNthNum`
+# gives 0 for a field that is not there (`ttlib_static_cpp.cpp:1182`) and
+# `ttset.c:1946` then assigns the input speed. Two `int` rows would have to
+# default the second to something, and any constant makes `TerminalSpeed=57600`
+# a terminal claiming two different speeds. Zero or less takes 38400 for the
+# first field and the first field for the second, so `TerminalSpeed=0,0` is
+# 38400 both ways.
+connection.terminal_speed | string | Tera Term | TerminalSpeed | 38400 | -
+
 # `ttset.c:969`, on by default. Whether the window closes when the connection
 # does. `/AUTOWINCLOSE=` on a command line is **not** `GetOnOff`: it tests for
 # `on` and everything else is off, so the two readers disagree about `1`.

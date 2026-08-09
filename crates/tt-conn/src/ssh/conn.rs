@@ -58,9 +58,14 @@ pub struct SshParams {
     pub host: String,
     pub port: u16,
     pub user: String,
-    /// `$TERM` for the remote side. `xterm-256color` matches what the engine
+    /// `$TERM` for the remote side — `ts.TermType`, which TTSSH puts straight
+    /// into the `pty-req` (`ssh.c:8593`) rather than keeping one of its own.
+    ///
+    /// The default here is `xterm-256color`, which matches what the engine
     /// actually implements; claiming more is how a remote `vim` ends up
-    /// drawing sequences nothing here parses.
+    /// drawing sequences nothing here parses. **Upstream's own default is
+    /// plain `xterm`** (`ttset.c:961`), and a session opened from settings
+    /// gets that instead — this constant is for a caller with no file.
     pub term: String,
     pub cols: u16,
     pub rows: u16,

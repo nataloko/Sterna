@@ -1038,6 +1038,23 @@ pub struct Settings {
     /// `ttset.c:1301`, `GetOnOff(…, FALSE)` — so here `TelBin=1` reads as **off**,
     /// which is the opposite of what the same value means for `Telnet=` above.
     pub connection_telnet_binary: bool,
+    /// `ttset.c:961`. What `TERMINAL-TYPE` answers with, and what an SSH session
+    /// sends as `TERM`. Upstream ships plain **`xterm`**, which this port had been
+    /// diverging from with a hardcoded `xterm-256color` — a defensible choice and
+    /// not one a hardcoded string should be making, since the answer decides what
+    /// every curses program on the far end believes about the terminal.
+    pub connection_term_type: String,
+    /// `ttset.c:1936`. One number or two, `input,output`, for `TERMINAL-SPEED`.
+    ///
+    /// A string rather than an `int` pair, because **the second field's default is
+    /// the first field's value** and the schema has no way to say that: `GetNthNum`
+    /// gives 0 for a field that is not there (`ttlib_static_cpp.cpp:1182`) and
+    /// `ttset.c:1946` then assigns the input speed. Two `int` rows would have to
+    /// default the second to something, and any constant makes `TerminalSpeed=57600`
+    /// a terminal claiming two different speeds. Zero or less takes 38400 for the
+    /// first field and the first field for the second, so `TerminalSpeed=0,0` is
+    /// 38400 both ways.
+    pub connection_terminal_speed: String,
     /// `ttset.c:969`, on by default. Whether the window closes when the connection
     /// does. `/AUTOWINCLOSE=` on a command line is **not** `GetOnOff`: it tests for
     /// `on` and everything else is off, so the two readers disagree about `1`.
@@ -1354,6 +1371,8 @@ impl Default for Settings {
             connection_telnet: true,
             connection_telnet_port: 23,
             connection_telnet_binary: false,
+            connection_term_type: String::from("xterm"),
+            connection_terminal_speed: String::from("38400"),
             connection_auto_win_close: true,
             connection_timeout: 0,
             connection_host_dialog_on_startup: true,
@@ -1611,6 +1630,12 @@ impl Settings {
             connection_telnet_port: ini.get_int("Tera Term", "TelPort", d.connection_telnet_port)
                 as i32,
             connection_telnet_binary: crate::schema::on_off(ini.get("Tera Term", "TelBin"), false),
+            connection_term_type: ini
+                .get_or("Tera Term", "TermType", &d.connection_term_type)
+                .to_string(),
+            connection_terminal_speed: ini
+                .get_or("Tera Term", "TerminalSpeed", &d.connection_terminal_speed)
+                .to_string(),
             connection_auto_win_close: crate::schema::on_off(
                 ini.get("Tera Term", "AutoWinClose"),
                 true,
@@ -2238,6 +2263,12 @@ impl Settings {
                 "off"
             }
             .to_string(),
+        );
+        ini.set("Tera Term", "TermType", &self.connection_term_type.clone());
+        ini.set(
+            "Tera Term",
+            "TerminalSpeed",
+            &self.connection_terminal_speed.clone(),
         );
         ini.set(
             "Tera Term",
@@ -2870,6 +2901,8 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "connection.term_type" => self.connection_term_type.clone(),
+            "connection.terminal_speed" => self.connection_terminal_speed.clone(),
             "connection.auto_win_close" => if self.connection_auto_win_close {
                 "on"
             } else {
@@ -3167,6 +3200,8 @@ impl Settings {
             "connection.telnet_binary" => {
                 self.connection_telnet_binary = crate::schema::on_off(Some(value), false)
             }
+            "connection.term_type" => self.connection_term_type = value.to_string(),
+            "connection.terminal_speed" => self.connection_terminal_speed = value.to_string(),
             "connection.auto_win_close" => {
                 self.connection_auto_win_close = crate::schema::on_off(Some(value), true)
             }
@@ -3904,6 +3939,26 @@ pub const FIELDS: &[Field] = &[
         default: "off",
         label: None,
         doc: "`ttset.c:1301`, `GetOnOff(…, FALSE)` — so here `TelBin=1` reads as **off**, which is the opposite of what the same value means for `Telnet=` above.",
+    },
+    Field {
+        name: "connection.term_type",
+        page: "connection",
+        section: "Tera Term",
+        key: "TermType",
+        kind: Kind::Str,
+        default: "xterm",
+        label: None,
+        doc: "`ttset.c:961`. What `TERMINAL-TYPE` answers with, and what an SSH session sends as `TERM`. Upstream ships plain **`xterm`**, which this port had been diverging from with a hardcoded `xterm-256color` — a defensible choice and not one a hardcoded string should be making, since the answer decides what every curses program on the far end believes about the terminal.",
+    },
+    Field {
+        name: "connection.terminal_speed",
+        page: "connection",
+        section: "Tera Term",
+        key: "TerminalSpeed",
+        kind: Kind::Str,
+        default: "38400",
+        label: None,
+        doc: "`ttset.c:1936`. One number or two, `input,output`, for `TERMINAL-SPEED`.  A string rather than an `int` pair, because **the second field's default is the first field's value** and the schema has no way to say that: `GetNthNum` gives 0 for a field that is not there (`ttlib_static_cpp.cpp:1182`) and `ttset.c:1946` then assigns the input speed. Two `int` rows would have to default the second to something, and any constant makes `TerminalSpeed=57600` a terminal claiming two different speeds. Zero or less takes 38400 for the first field and the first field for the second, so `TerminalSpeed=0,0` is 38400 both ways.",
     },
     Field {
         name: "connection.auto_win_close",

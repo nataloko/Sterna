@@ -152,10 +152,14 @@ enum State {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TelnetParams {
     pub mode: TelnetMode,
-    /// `ts.TermType`, sent for `TERMINAL-TYPE`.
+    /// `ts.TermType`, sent for `TERMINAL-TYPE`. **Upstream's default is plain
+    /// `xterm`** (`ttset.c:961`); the one below is this crate's, for a caller
+    /// with no settings behind it.
     pub term_type: String,
     /// `ts.TerminalInputSpeed` / `OutputSpeed`, sent for `TERMINAL-SPEED`.
-    /// Upstream defaults both to 38400 (`ttset.c:1941`).
+    /// Upstream defaults both to 38400 (`ttset.c:1941`), and the *output*
+    /// speed's real default is the input one — see
+    /// `tt_session::open::terminal_speed`.
     pub speed: (u32, u32),
     pub cols: u16,
     pub rows: u16,

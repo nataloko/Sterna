@@ -421,10 +421,42 @@ pub fn telnet_params(s: &Settings, port: u16, cols: u16, rows: u16) -> TelnetPar
             false => TelnetMode::Raw,
         },
         binary: s.connection_telnet_binary,
+        term_type: s.connection_term_type.clone(),
+        speed: terminal_speed(s),
         cols,
         rows,
-        ..TelnetParams::default()
+        // Every field is named now, and there is no `..default()` to fall
+        // through to — so a field added to `TelnetParams` is a compile error
+        // here rather than a setting the file silently cannot reach.
     }
+}
+
+/// `TerminalSpeed` — `ttset.c:1937`, which is one number or two.
+///
+/// **The output speed's default is the input speed, not 38400.** `GetNthNum`
+/// answers 0 for a field that is not there (`ttlib_static_cpp.cpp:1182`) and
+/// the `i > 0` below it then assigns `ts->TerminalInputSpeed`, so
+/// `TerminalSpeed=57600` is 57600 in both directions rather than 57600 one way
+/// and the default the other. That relationship is why the schema holds this
+/// as a string: it has no way to spell "the default is the other field".
+fn terminal_speed(s: &Settings) -> (u32, u32) {
+    let field = |n: usize| -> i32 {
+        s.connection_terminal_speed
+            .split(',')
+            .nth(n)
+            .map(str::trim)
+            .and_then(|f| f.parse::<i32>().ok())
+            .unwrap_or(0)
+    };
+    let input = match field(0) {
+        n if n > 0 => n as u32,
+        _ => 38400,
+    };
+    let output = match field(1) {
+        n if n > 0 => n as u32,
+        _ => input,
+    };
+    (input, output)
 }
 
 /// `ts` plus TTSSH's options → [`SshParams`].
@@ -438,6 +470,12 @@ pub fn ssh_params(ssh: &SshOptions, s: &Settings, host: &str, cols: u16, rows: u
     let mut p = SshParams {
         cols,
         rows,
+        // The same key telnet answers `TERMINAL-TYPE` with: TTSSH puts
+        // `ts.TermType` straight into the `pty-req` (`ssh.c:8593`) rather than
+        // having one of its own, so a user who sets it gets it on both
+        // transports — which is the reason it is on `connection` and not on a
+        // telnet page.
+        term: s.connection_term_type.clone(),
         identities: ssh
             .key_file
             .as_ref()
@@ -671,6 +709,42 @@ mod tests {
             Startup::Unsupported(why) => assert!(why.contains("no serial port")),
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    /// What the terminal claims to be, on both transports — and the speed's
+    /// second field, whose default is its first.
+    #[test]
+    fn the_terminal_type_and_speed_come_out_of_the_file() {
+        let of = |bytes: &[u8]| Settings::load(&tt_config::Ini::parse(bytes));
+
+        let d = telnet_params(&Settings::default(), 23, 80, 24);
+        assert_eq!(d.term_type, "xterm", "upstream's, not this crate's");
+        assert_eq!(d.speed, (38400, 38400));
+
+        let s = of(b"[Tera Term]\r\nTermType=vt220\r\nTerminalSpeed=57600\r\n");
+        let p = telnet_params(&s, 23, 80, 24);
+        assert_eq!(p.term_type, "vt220");
+        assert_eq!(
+            p.speed,
+            (57600, 57600),
+            "the output speed's default is the input speed"
+        );
+        // ...and the same key reaches SSH, because TTSSH has none of its own.
+        let ssh = ssh_params(&SshOptions::default(), &s, "h", 80, 24);
+        assert_eq!(ssh.term, "vt220");
+
+        let two = telnet_params(
+            &of(b"[Tera Term]\r\nTerminalSpeed=57600,19200\r\n"),
+            23,
+            80,
+            24,
+        );
+        assert_eq!(two.speed, (57600, 19200));
+
+        // Zero or less is the default for the first field and the first field
+        // for the second, so this is not a terminal at 0 baud.
+        let zero = telnet_params(&of(b"[Tera Term]\r\nTerminalSpeed=0,0\r\n"), 23, 80, 24);
+        assert_eq!(zero.speed, (38400, 38400));
     }
 
     /// The two transports upstream has and this does not say so, rather than
