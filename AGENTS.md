@@ -894,7 +894,13 @@ And for the bell, where the surprise is that a beep is a state machine:
   each one it is missing — so `$ZZ` is a NUL, a trailing `$` is a NUL, and `$A`
   is `0xA0`. Reading the value literally puts three characters on the wire
   where one byte belongs, and a word-delimiter list that begins `$20` then has
-  no space in it.
+  no space in it. **There are two decoders and the difference is not
+  cosmetic**: the answerback goes on the wire and is bytes, the delimiter list
+  is compared against the screen and is *characters* (`Hex2StrW`), so `$E9` is
+  one byte in the first and U+00E9 in the second. `hex_decode` and
+  `hex_decode_str`. And a setting stored this way must not be read through
+  `tt_session_setting`, which gives the file's own spelling — that is why
+  `tt_session_word_delimiters` exists.
 - **`BPAuto=on` silently discards `Answerback=`.** `ttset.c:1132` overwrites
   `ts.Answerback` with B Plus's five-byte activation string, four hundred lines
   after reading the key. It is the only setting in the file that another
@@ -1463,6 +1469,14 @@ Tera Term sees. Its documentation has a defect of its own that is not the same
 one: `teraterm-term.html` says five bells are permitted where six sound, and
 describes the suppression as a fixed delay when it is a *quiet* period that
 every further bell extends.
+
+**And a thirtieth, a two-byte heap overflow in `Hex2StrW`**
+(`ttlib_static_cpp.cpp:837`), which is the decoder `DelimList` and the
+user-defined key strings both go through. It grows its buffer in 512-`wchar_t`
+steps under a `wp + 1 > str_len` test and then writes its NUL terminator at
+`Str[wp]` *after* the loop, so a decoded length that is an exact multiple of
+512 lands one `wchar_t` past the allocation. Reachable from a `TERATERM.INI`
+and from `keyboard.c:856`.
 
 **And one in `vte`**, which is a dependency rather than the specification, so it
 is not in that file: `vte` 0.15.0's `advance_partial_utf8` (`lib.rs:687`) prints

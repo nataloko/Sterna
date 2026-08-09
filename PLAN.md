@@ -3267,10 +3267,30 @@ is an error: a digit that is not hexadecimal is **0**, so `$ZZ` is a NUL; a `$`
 with fewer than two characters behind it borrows `'0'` for each one it is
 missing, so a trailing `$` is a NUL and `$A` is `0xA0`; and `$` is the only
 escape, which is why upstream's own `DelimList` default opens `$20!"#$24%…`.
+
 That second reader is why `hex_decode` is in `tt-config` rather than beside the
-answerback — **`keyboard.word_delimiters` is the same escape and the shell is
-still using a hardcoded constant for it**, which is the next thing in this
-area.
+answerback, and it turned up a setting that was already in the schema and
+reaching nobody: **`keyboard.word_delimiters` was a hardcoded constant in
+`TerminalView`**, decoded by hand into the source. So a user who changed the
+key got the old list, and one who read the raw value got `$`, `2` and `0` as
+three delimiters and no space among them. `Session::word_delimiters` decodes it
+and `tt_session_word_delimiters` is its own ABI call for that reason — the
+generic `tt_session_setting` hands back the file's spelling, which is exactly
+what a frontend must not use here.
+
+Upstream has **two** decoders and the difference is not cosmetic:
+`Answerback` goes on the wire and is bytes, `DelimList` is compared against
+what is on the screen and is characters (`Hex2StrW`,
+`ttlib_static_cpp.cpp:837`). `$E9` is one byte in the first and U+00E9 in the
+second. `hex_decode` and `hex_decode_str` are that pair.
+
+**And a thirtieth defect, in the second of them.** `Hex2StrW` grows its buffer
+in 512-`wchar_t` steps under a `wp + 1 > str_len` test and then writes its
+terminator at `Str[wp]` *after* the loop — so a value whose decoded length is
+an exact multiple of 512 puts a NUL two bytes past the allocation. Reachable
+from `DelimList` and from `keyboard.c:856`, which runs user-defined key strings
+through the same function. Found by reading, like the `ttpmacro` list, so it is
+in this file rather than in `docs/upstream-bugs.md`.
 
 The value is held in the file's own spelling and decoded at the point of use.
 Upstream re-encodes on write (`Str2Hex`, `ttset.c:2156`), so a file saying
