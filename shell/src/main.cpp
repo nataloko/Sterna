@@ -97,10 +97,19 @@ int runTeraTerm(QApplication &app, const QStringList &args)
     // Upstream parses twice, and this is why: `/F=` names the settings file,
     // and `MaxComPort=` — which is what bounds `/C=` — is *in* that file. The
     // first parse is only there to find the name.
-    TtCmdLineInfo info = {};
-    tt_cmdline_info(cmd, &info);
-    MainWindow window(info.setup_file ? settingsFile(info.setup_file)
-                                      : QString());
+    //
+    // Everything read out of it is copied here, because a `TtCmdLineInfo`'s
+    // strings are borrowed from the handle and the handle may be replaced
+    // below.
+    QString ini;
+    {
+        TtCmdLineInfo info = {};
+        tt_cmdline_info(cmd, &info);
+        if (info.setup_file) {
+            ini = settingsFile(info.setup_file);
+        }
+    }
+    MainWindow window(ini);
     const int maxComPort =
         window.session()->setting(QStringLiteral("serial.max_com_port")).toInt();
     if (maxComPort > 0 && maxComPort != 256) {
