@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 212
+**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 226
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -160,7 +160,8 @@ sees a flat C ABI over POD types.
 │  tt-conn     serial | ssh (russh) | telnet | pty | pipe    [tokio]    │
 │  tt-session  the loop between the two, and the ABI's surface          │
 │  tt-xfer     FFI → vendored C: x/y/zmodem, kermit, bplus, quickvan    │
-│  tt-script   TTL interpreter + mlua over one shared command table     │
+│  tt-ttl      TTL interpreter, and `ScriptHost` — the shared table     │
+│  tt-lua      mlua over the same one, which is why it is glue          │
 │  tt-config   INI (GetPrivateProfile-compatible) + KEYBOARD.CNF        │
 │  tt-i18n     .lng loader                                              │
 └───────────────────────────────────────────────────────────────────────┘
@@ -1067,6 +1068,11 @@ before anything else in every session.
   built. **The way in that is not a person clicking a menu now exists**: see
   the `ttctl` bullet above.
 - **Lua via `mlua`** over the same `ScriptHost` command table (~500 LOC glue).
+  ✅ **done**, 2026-08-09 — `crates/tt-lua/`: the whole of `ScriptHost` behind a
+  `tt` table, with the wait family over `tt-ttl`'s own matcher. The extension
+  picks the language at `tt_macro_start`, so every way in that already existed
+  — Control > Run macro, `/M=`, `ttpmacro`, the control socket — runs a `.lua`
+  with no further wiring. See below.
 - `ttctl` JSON-RPC control socket replacing DDE. Keep a `ttpmacro script.ttl`
   CLI entry point so existing shortcuts and `.bat` wrappers keep working.
   ✅ **done**, 2026-08-09 — `crates/tt-ctl/`: the wire, the address, the
@@ -2784,6 +2790,84 @@ as this suite gets to the shell script the design is for; and
 loop, which is the only place the notifier, the nested loops and the window's
 own four callbacks meet.
 
+#### And then a second language, which is what the trait was shaped for
+
+`crates/tt-lua/`, 2026-08-09. The last Stage 2 item, and the cheapest of them:
+about 1,700 lines including its tests, because `ScriptHost` had already been
+built wide and shallow — one method per command that needs the world — and
+that is exactly the shape a second language binds to. Nothing in `tt-macro`
+knows Lua exists; the host written for the macro language carries it unchanged,
+which `crates/tt-macro/tests/lua.rs` is there to prove.
+
+**Lua is not a second TTL, and the reasoning is `PLAN.md`'s own reasoning
+inverted.** The TTL section above refuses to transpile TTL *into* Lua because
+you cannot shim `goto` honestly and the moment a real `.ttl` fails you have lost
+the only reason to care. The same argument says a Lua binding must not be TTL
+wearing Lua's syntax: there is no `result`, no `inputstr`, no 1-based string
+indexing. A function returns its answer and a refusal raises, which `pcall`
+catches — so `if tt.wait('$ ') then` replaces `wait '$ '` / `if result = 1`.
+Anyone who needs TTL's exact behaviour has TTL, and it is a port.
+
+**Only the terminal is exposed.** Roughly half of TTL's 231 reserved words
+exist because the language had no standard library — `strlen`, `sprintf`,
+`fileopen`, `getenv`, `int2str`, the ten checksums, the regex family. Lua has
+those or has `string`/`io` to build them from, and shadowing them with worse
+versions would be the wrong half of the trade. What is bound is every
+`ScriptHost` method but two: `error`, because a Lua traceback is not one of
+`ttmparse.h`'s twenty-one numbered codes, and `random_u32`, because
+`math.random` is better and `math.randomseed` makes a test repeatable without a
+host having to.
+
+**Eight places it answers something upstream could not**, each stated where it
+happens. `getmodemstatus` gives a table or `nil` rather than a bit mask, so
+"the port could not be asked" is distinguishable from "all four lines low" —
+upstream reports 0 for both and `result` 0 for both, because the arm that would
+say otherwise is unreachable. `yesnobox` tells No from the close box.
+`logopen` reports `true` for success, where TTL's `result` is 0 for success and
+1 for failure and is the only command in the language that way round.
+`setbaud 0` and `setflowctrl 7` are refused instead of dropped in silence. A
+dialog does not end the script — upstream's `messagebox` halts the macro when
+the window is closed because that dialog is the only control a person has over
+a running `ttpmacro.exe`, and there is an End button here. And the three
+commands that switch on the *first character* of a decimal argument take names,
+since the fold already lives in the host's enums.
+
+**Success is one value**, which is the convention that makes the rest compose:
+Lua expands a call's last argument to all of its results, so a function
+answering `line, nil` would put a `nil` into the argument list of whatever it
+is nested in. `io.open`'s shape — one value when it worked, `nil` plus the
+detail when it did not — is what makes `tt.send(tt.recvln())` mean what it
+looks like. `tt.waitln` is the single exception and returns `line, index`.
+
+**One entry point, and the extension picks the language.** `tt_macro_start`
+runs `.lua` through `tt-lua` and everything else through `tt-ttl`, which
+includes every extensionless name because `FitTTLFileName` has already made
+those `.TTL`. So Control > Run macro, `/M=`, `ttpmacro` and the control
+socket's `macro.run` all took Lua with no change: a frontend that had to know
+which language a file was in would be asking the user a question the file
+already answers. `MacroError` grew a `message` and a `code`, and `code` 0 is
+"not one of upstream's" — the shell's error dialog drops the position for those,
+because a Lua error carries its own `file:line:` in the message.
+
+**Three things Lua needed changed about itself**, and the third is the one that
+cost thought. `print` writes on the *terminal* through `disp_str`, with `\n`
+expanded to `CR LF`, because stdout from a window launched off a desktop menu
+is nowhere — the same silent-diagnostic trap as `qWarning` under journald.
+`os.exit` is removed, since the script is a thread inside the terminal. And a
+runaway loop still answers End: TTL checks `cancelled` once per line and Lua
+has no such seam, so a debug hook does it every few thousand instructions. That
+hook must be `'static` — `mlua` stores it in the `Lua` — so it cannot capture
+the borrowed host every other callback here does, and it calls a *scoped*
+function out of the registry instead. `pcall` catches an error raised from a
+hook as readily as any other, so `Script::run` asks the host again at the
+boundary; that makes the answer honest and cannot make the script stop sooner,
+because Lua has no uncatchable error.
+
+`mlua` is vendored (`lua54` + `vendored`), so Lua 5.4 is compiled from source
+with `cc` rather than probed for with `pkg-config` — the two containers here do
+not have the same packages, and a build that depends on which one it is in is
+the thing this tree spends the most effort avoiding.
+
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
 Windows build, ConPTY, Win32 serial edge cases, NSIS installer. All 14 `.lng`
@@ -2854,6 +2938,9 @@ Adoption hinges on "my existing setup just works." Budget real time here.
   **Lua plugin API** — menu items, key bindings, connect/disconnect hooks,
   byte-stream filters, settings pages, covering what the 17 samples in
   `TTXSamples/` actually do; (3) WASM component plugins only if someone asks.
+  The Lua is already here as of Stage 2 (`crates/tt-lua/`); what a plugin API
+  adds is the *hooks*, which is a different question from the command surface
+  and a much smaller one now that the surface exists.
 - **Docs** — 751 HTML files / 97k lines, 214 of them macro reference. Convert to
   Markdown mechanically; **generate** the settings and macro references from the
   schema and command table.

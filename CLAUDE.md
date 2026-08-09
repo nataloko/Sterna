@@ -60,7 +60,9 @@ tt-ffi/run_abi.sh                # the C ABI, compiled and driven from C
 cargo test -p tt-xfer            # the protocols vs lrzsz and gkermit, over a pty
 cargo test -p tt-ttl             # the macro language, with no terminal attached
 cargo test -p tt-ttl --test scripts          # ...and upstream's own 53 macros
+cargo test -p tt-lua             # the other language, over the same host
 cargo test -p tt-macro           # ...and one driving a real session, threaded
+cargo test -p tt-macro --test lua   # ...in either language, same host
 cargo test -p tt-ctl             # the control socket, the wire and the address
 cargo test -p tt-ctl --test cli  # ...and `ttctl`/`ttpmacro`, as subprocesses
 TTL_BLESS=1 cargo test -p tt-ttl --test scripts   # rewrite the transcripts,
@@ -956,6 +958,36 @@ And for the macro language:
   `tt-macro/src/host.rs` is a quarter-second knock on the door, and it is there
   for that and nothing else.
 
+And for the other language, where three of the four are about the fact that
+Lua's escape hatches are not the interpreter's:
+
+- **`pcall` catches an error raised from a debug hook**, so a script can
+  swallow its own cancellation. The hook is how `while true do end` answers
+  End at all — Lua has no per-line seam the way `ExecCmnd` does — and it stops
+  the script by raising, which `pcall(function() while true do end end)` then
+  absorbs. Nothing can fix that: Lua has no uncatchable error. `Script::run`
+  asks the host again at the boundary so the *answer* is honest, and the
+  distinction matters — a run reported as finished cleanly leaves the frontend
+  thinking a script it stopped ran to the end.
+- **The hook cannot see the host, and the way round it is not obvious.**
+  `mlua` stores the callback in the `Lua`, so it must be `'static` and cannot
+  capture the `&mut dyn ScriptHost` that every other callback here borrows
+  through a `RefCell`. It calls a **scoped** function out of the registry
+  instead, which can. Safe because Lua clears its own `allowhook` while a hook
+  runs, so the nested call cannot re-enter it.
+- **A success that returns two values breaks nesting, silently.** Lua expands
+  a call's *last* argument to all of its results, so `tt.recvln()` answering
+  `line, nil` makes `tt.send(tt.recvln())` a two-argument call whose second
+  argument is `nil` — an error from `tt.send`, on a line that looks obviously
+  right. Every function here returns one value on success and `nil` plus the
+  detail on failure, which is `io.open`'s shape and the reason it composes.
+  `tt.waitln` is the deliberate exception.
+- **`set_name` without a leading `@` makes every error say
+  `[string "login.lua"]:12:`.** That is Lua's rendering for a chunk compiled
+  from a *string*, so an editor asked to jump to it does not find the file and
+  the reader is told the wrong thing about where the code is. One character,
+  and nothing warns.
+
 And for a macro reached from outside the process:
 
 - **A macro that ends without asking for anything never wakes its frontend.**
@@ -1220,7 +1252,8 @@ ini-audit/       what GetPrivateProfile* really does, asked of Wine (see its REA
 vendor/ttpfile/  Tera Term's file-transfer protocols, verbatim — the only
                  upstream code the distribution ships (see its README)
 crates/          Rust core — tt-grid, tt-vt, tt-conn, tt-session, tt-config,
-                 tt-xfer, tt-ttl, tt-macro, tt-ctl, tt-ffi (see its README)
+                 tt-xfer, tt-ttl, tt-lua, tt-macro, tt-ctl, tt-ffi (see its
+                 README)
 crates/tt-fuzz/  the properties, and what they found (see its README)
 crates/fuzz/     the libFuzzer targets — nightly, weekly in CI
 bench/           the perf gate: a floor in CI, a baseline locally (see README)
