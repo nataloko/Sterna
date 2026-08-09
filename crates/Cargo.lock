@@ -2197,6 +2197,7 @@ dependencies = [
  "cbindgen",
  "tt-config",
  "tt-conn",
+ "tt-ctl",
  "tt-grid",
  "tt-macro",
  "tt-session",

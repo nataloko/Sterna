@@ -66,7 +66,7 @@
 
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::ptr;
 use std::slice;
 use std::sync::OnceLock;
@@ -84,6 +84,7 @@ use tt_conn::ssh::{
 };
 use tt_conn::telnet::{TelnetConn, TelnetMode, TelnetParams};
 use tt_conn::Error;
+use tt_ctl::{CtlHost, MacroStatus, NullHost, RunError, Server as CtlServer};
 use tt_grid::Cell;
 use tt_macro::{MacroError, MacroReceiver, MacroUi, NullUi, SessionHost};
 use tt_session::open::{Startup, Target};
@@ -4229,4 +4230,257 @@ fn cbytes(v: &[u8]) -> CString {
 
 fn cptr(s: &Option<CString>) -> *const c_char {
     s.as_ref().map_or(ptr::null(), |s| s.as_ptr())
+}
+
+// --- the control socket ---------------------------------------------------
+
+/// The window, as the control socket asks about it.
+///
+/// The **second** place the ABI calls back into C, and the reasoning is the
+/// same as [`TtMacroUi`]'s: these fire from inside [`tt_ctl_service`], on the
+/// thread that called it, which is the frontend's own. So `connect` can raise
+/// an SSH host-key dialog and `run_macro` can put an error box up, and the
+/// client on the other end of the socket is parked on its own thread until
+/// they close — which is what its own request already promised it.
+///
+/// **Zero-initialise it and fill in what you have.** A null pointer is not a
+/// crash and not a silent success: the client is told
+/// `-32003` — "this build cannot" — which it can tell apart from "no such
+/// method". A window that answers `status` and nothing else is useful.
+///
+/// Everything a callback is handed is borrowed and dies when it returns.
+/// Everything it hands *back* is copied before it returns, so a member
+/// `QByteArray` is enough.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct TtCtlHost {
+    /// Passed back to every callback below and never touched here.
+    pub user: *mut std::ffi::c_void,
+
+    /// Start a macro. `argv` is `[path, param...]`, null-terminated — the same
+    /// array [`tt_macro_start`] takes, because it is the same call.
+    ///
+    /// Return [`TT_OK`], or [`TT_ERR_BUSY`] when one is already running — the
+    /// client tells those apart, since one is worth retrying. `error` may be
+    /// filled in with a message; it is copied before this returns.
+    pub run_macro: Option<
+        extern "C" fn(
+            user: *mut std::ffi::c_void,
+            argv: *const *const c_char,
+            error: *mut *const c_char,
+        ) -> TtStatus,
+    >,
+    /// Whether a macro is running. See [`tt_macro_running`] for why a frontend
+    /// must service before believing a false.
+    pub macro_running: Option<extern "C" fn(user: *mut std::ffi::c_void) -> bool>,
+    /// The last `setexitcode` — [`tt_macro_exit_code`].
+    pub macro_exit_code: Option<extern "C" fn(user: *mut std::ffi::c_void) -> i32>,
+    /// The End button — [`tt_macro_cancel`].
+    pub stop_macro: Option<extern "C" fn(user: *mut std::ffi::c_void)>,
+
+    /// Open what a Tera Term command line describes, through whatever path the
+    /// frontend's own command line and its SSH dialog already use. Answering
+    /// means the attempt has *started*.
+    pub connect: Option<
+        extern "C" fn(
+            user: *mut std::ffi::c_void,
+            line: *const c_char,
+            error: *mut *const c_char,
+        ) -> TtStatus,
+    >,
+    /// Close the window — `CmdCloseWin`, the macro language's `closett`.
+    /// `false` is a frontend that will not.
+    pub close_window: Option<extern "C" fn(user: *mut std::ffi::c_void) -> bool>,
+    /// The window's own title, when it is not simply the terminal's OSC one.
+    /// Null falls back to the session's.
+    pub title: Option<extern "C" fn(user: *mut std::ffi::c_void) -> *const c_char>,
+}
+
+/// [`TtCtlHost`] on the Rust side of the seam.
+///
+/// Where a callback is null this falls through to [`NullHost`] rather than to
+/// a hand-written refusal, so "not implemented" stays the trait's own
+/// documented default and cannot drift from it.
+struct CCtlHost {
+    vt: TtCtlHost,
+}
+
+impl CtlHost for CCtlHost {
+    fn run_macro(&mut self, path: &Path, params: &[String]) -> Result<(), RunError> {
+        let Some(f) = self.vt.run_macro else {
+            return CtlHost::run_macro(&mut NullHost, path, params);
+        };
+        // `[path, param...]`, which is the array `tt_macro_start` parses back
+        // into a `CmdLine` — so a parameter that looks like a switch is a
+        // parameter, exactly as it would be on `ttpmacro`'s own line.
+        let mut owned = vec![cbytes(path.as_os_str().as_encoded_bytes())];
+        owned.extend(params.iter().map(|p| cbytes(p.as_bytes())));
+        let mut argv: Vec<*const c_char> = owned.iter().map(|s| s.as_ptr()).collect();
+        argv.push(ptr::null());
+
+        let mut err: *const c_char = ptr::null();
+        let status = f(self.vt.user, argv.as_ptr(), &mut err);
+        if status == TT_OK {
+            return Ok(());
+        }
+        let message = unsafe { taken(err) }
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_else(|| "the macro would not start".into());
+        match status {
+            TT_ERR_BUSY => Err(RunError::Busy(message)),
+            _ => Err(RunError::Failed(message)),
+        }
+    }
+
+    fn macro_status(&mut self) -> MacroStatus {
+        MacroStatus {
+            running: self.vt.macro_running.is_some_and(|f| f(self.vt.user)),
+            exit: self.vt.macro_exit_code.map_or(0, |f| f(self.vt.user)),
+        }
+    }
+
+    fn stop_macro(&mut self) {
+        if let Some(f) = self.vt.stop_macro {
+            f(self.vt.user);
+        }
+    }
+
+    fn connect(&mut self, line: &[u8]) -> Result<(), String> {
+        let Some(f) = self.vt.connect else {
+            return CtlHost::connect(&mut NullHost, line);
+        };
+        let mut err: *const c_char = ptr::null();
+        if f(self.vt.user, cbytes(line).as_ptr(), &mut err) == TT_OK {
+            return Ok(());
+        }
+        Err(unsafe { taken(err) }
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_else(|| "the connection would not open".into()))
+    }
+
+    fn close_window(&mut self) -> bool {
+        self.vt.close_window.is_some_and(|f| f(self.vt.user))
+    }
+
+    fn title(&mut self) -> Option<String> {
+        let f = self.vt.title?;
+        let p = f(self.vt.user);
+        unsafe { taken(p) }.map(|b| String::from_utf8_lossy(&b).into_owned())
+    }
+}
+
+/// A bound control socket, and the threads behind it.
+///
+/// Free it with [`tt_ctl_free`], which is also what unlinks the socket file.
+pub struct TtCtl {
+    server: CtlServer,
+    host: CCtlHost,
+    path: CString,
+}
+
+/// Bind this window's control socket and start listening.
+///
+/// `name` is the socket's name in the runtime directory — a `/D=` topic, or
+/// null for this process's pid, which is what a window with no `/D=` uses.
+/// Letters, digits, `-` and `_`, at most twenty; anything else is refused
+/// rather than turned into a path.
+///
+/// Null on failure, with [`tt_last_error`] set. The failure worth handling
+/// separately is a name another window already has: that is the user's `/D=`
+/// rather than the machine's, and it is reported as such.
+///
+/// `host` may be null, which is every callback refused. It is **copied**, so
+/// the struct need not outlive this call; the `user` pointer inside it must
+/// outlive the socket.
+#[no_mangle]
+pub extern "C" fn tt_ctl_start(name: *const c_char, host: *const TtCtlHost) -> *mut TtCtl {
+    let name = match unsafe { name.as_ref() } {
+        Some(_) => match unsafe { CStr::from_ptr(name) }.to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => {
+                fail(TT_ERR_INVALID, "socket name is not UTF-8");
+                return ptr::null_mut();
+            }
+        },
+        None => tt_ctl::addr::default_name(),
+    };
+    let server = match CtlServer::start(&name) {
+        Ok(s) => s,
+        Err(e) => {
+            fail(TT_ERR_IO, format!("control socket: {e}"));
+            return ptr::null_mut();
+        }
+    };
+    let path = cbytes(server.path().as_os_str().as_encoded_bytes());
+    Box::into_raw(Box::new(TtCtl {
+        server,
+        host: CCtlHost {
+            vt: match unsafe { host.as_ref() } {
+                Some(vt) => *vt,
+                None => unsafe { std::mem::zeroed() },
+            },
+        },
+        path,
+    }))
+}
+
+/// Where it is listening.
+///
+/// Borrowed and valid until [`tt_ctl_free`]. Worth putting in `$STERNA_CTL`
+/// for anything the window starts — the local shell above all, so that a
+/// script running *inside* the terminal can drive the window it is running in.
+#[no_mangle]
+pub extern "C" fn tt_ctl_path(ctl: *const TtCtl) -> *const c_char {
+    match unsafe { ctl.as_ref() } {
+        Some(c) => c.path.as_ptr(),
+        None => ptr::null(),
+    }
+}
+
+/// A descriptor that becomes readable when a client wants something.
+///
+/// The same bargain as [`tt_session_poll_fd`] and [`tt_macro_poll_fd`]: wait
+/// on it and call [`tt_ctl_service`] when it fires. A window nobody is talking
+/// to costs nothing, so there is no timer.
+#[no_mangle]
+pub extern "C" fn tt_ctl_poll_fd(ctl: *const TtCtl) -> c_int {
+    match unsafe { ctl.as_ref() } {
+        #[cfg(unix)]
+        Some(c) => c.server.poll_fd(),
+        #[cfg(not(unix))]
+        Some(_) => -1,
+        None => -1,
+    }
+}
+
+/// Run whatever the clients have asked for, against `session`. Returns how
+/// many ran; never blocks on a client.
+///
+/// **This is where the [`TtCtlHost`] callbacks fire**, so it can take as long
+/// as the user does — and it can close the window, which means the caller must
+/// not touch anything it owns afterwards without checking.
+///
+/// The same re-entrancy rule as [`tt_macro_service`]: a descriptor watched by
+/// a level-triggered notifier fires again inside a dialog's nested event loop,
+/// so disable the notifier across this call.
+#[no_mangle]
+pub extern "C" fn tt_ctl_service(ctl: *mut TtCtl, session: *mut TtSession) -> usize {
+    let Some(c) = (unsafe { ctl.as_mut() }) else {
+        set_error("null TtCtl");
+        return 0;
+    };
+    let s = session!(session, 0);
+    c.server.service(&mut s.session, &mut c.host)
+}
+
+/// Stop listening, hang up on every client, and unlink the socket.
+///
+/// A client blocked on an answer is released rather than left waiting: it is
+/// told the window has gone, which is the one error every request can return.
+#[no_mangle]
+pub extern "C" fn tt_ctl_free(ctl: *mut TtCtl) {
+    if ctl.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(ctl) });
 }

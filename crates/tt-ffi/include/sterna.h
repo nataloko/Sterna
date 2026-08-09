@@ -595,6 +595,13 @@ typedef uint8_t TtPinControl;
 typedef struct TtCmdLine TtCmdLine;
 
 /**
+ * A bound control socket, and the threads behind it.
+ *
+ * Free it with [`tt_ctl_free`], which is also what unlinks the socket file.
+ */
+typedef struct TtCtl TtCtl;
+
+/**
  * A macro running against a session, on a thread of its own.
  *
  * Free it with [`tt_macro_free`] whether or not it has finished.
@@ -1655,6 +1662,72 @@ typedef struct {
      */
     void (*set_exit_code)(void *user, int32_t code);
 } TtMacroUi;
+
+/**
+ * The window, as the control socket asks about it.
+ *
+ * The **second** place the ABI calls back into C, and the reasoning is the
+ * same as [`TtMacroUi`]'s: these fire from inside [`tt_ctl_service`], on the
+ * thread that called it, which is the frontend's own. So `connect` can raise
+ * an SSH host-key dialog and `run_macro` can put an error box up, and the
+ * client on the other end of the socket is parked on its own thread until
+ * they close — which is what its own request already promised it.
+ *
+ * **Zero-initialise it and fill in what you have.** A null pointer is not a
+ * crash and not a silent success: the client is told
+ * `-32003` — "this build cannot" — which it can tell apart from "no such
+ * method". A window that answers `status` and nothing else is useful.
+ *
+ * Everything a callback is handed is borrowed and dies when it returns.
+ * Everything it hands *back* is copied before it returns, so a member
+ * `QByteArray` is enough.
+ */
+typedef struct {
+    /**
+     * Passed back to every callback below and never touched here.
+     */
+    void *user;
+    /**
+     * Start a macro. `argv` is `[path, param...]`, null-terminated — the same
+     * array [`tt_macro_start`] takes, because it is the same call.
+     *
+     * Return [`TT_OK`], or [`TT_ERR_BUSY`] when one is already running — the
+     * client tells those apart, since one is worth retrying. `error` may be
+     * filled in with a message; it is copied before this returns.
+     */
+    TtStatus (*run_macro)(void *user,
+                          const char *const *argv,
+                          const char **error);
+    /**
+     * Whether a macro is running. See [`tt_macro_running`] for why a frontend
+     * must service before believing a false.
+     */
+    bool (*macro_running)(void *user);
+    /**
+     * The last `setexitcode` — [`tt_macro_exit_code`].
+     */
+    int32_t (*macro_exit_code)(void *user);
+    /**
+     * The End button — [`tt_macro_cancel`].
+     */
+    void (*stop_macro)(void *user);
+    /**
+     * Open what a Tera Term command line describes, through whatever path the
+     * frontend's own command line and its SSH dialog already use. Answering
+     * means the attempt has *started*.
+     */
+    TtStatus (*connect)(void *user, const char *line, const char **error);
+    /**
+     * Close the window — `CmdCloseWin`, the macro language's `closett`.
+     * `false` is a frontend that will not.
+     */
+    bool (*close_window)(void *user);
+    /**
+     * The window's own title, when it is not simply the terminal's OSC one.
+     * Null falls back to the session's.
+     */
+    const char *(*title)(void *user);
+} TtCtlHost;
 
 #define TT_OK 0
 
@@ -2857,6 +2930,65 @@ void tt_session_unlink_macro(TtSession *session);
  * never return.
  */
 void tt_macro_free(TtMacro *m);
+
+/**
+ * Bind this window's control socket and start listening.
+ *
+ * `name` is the socket's name in the runtime directory — a `/D=` topic, or
+ * null for this process's pid, which is what a window with no `/D=` uses.
+ * Letters, digits, `-` and `_`, at most twenty; anything else is refused
+ * rather than turned into a path.
+ *
+ * Null on failure, with [`tt_last_error`] set. The failure worth handling
+ * separately is a name another window already has: that is the user's `/D=`
+ * rather than the machine's, and it is reported as such.
+ *
+ * `host` may be null, which is every callback refused. It is **copied**, so
+ * the struct need not outlive this call; the `user` pointer inside it must
+ * outlive the socket.
+ */
+TtCtl *tt_ctl_start(const char *name, const TtCtlHost *host);
+
+/**
+ * Where it is listening.
+ *
+ * Borrowed and valid until [`tt_ctl_free`]. Worth putting in `$STERNA_CTL`
+ * for anything the window starts — the local shell above all, so that a
+ * script running *inside* the terminal can drive the window it is running in.
+ */
+const char *tt_ctl_path(const TtCtl *ctl);
+
+/**
+ * A descriptor that becomes readable when a client wants something.
+ *
+ * The same bargain as [`tt_session_poll_fd`] and [`tt_macro_poll_fd`]: wait
+ * on it and call [`tt_ctl_service`] when it fires. A window nobody is talking
+ * to costs nothing, so there is no timer.
+ */
+int tt_ctl_poll_fd(const TtCtl *ctl);
+
+/**
+ * Run whatever the clients have asked for, against `session`. Returns how
+ * many ran; never blocks on a client.
+ *
+ * **This is where the [`TtCtlHost`] callbacks fire**, so it can take as long
+ * as the user does — and it can close the window, which means the caller must
+ * not touch anything it owns afterwards without checking.
+ *
+ * The same re-entrancy rule as [`tt_macro_service`]: a descriptor watched by
+ * a level-triggered notifier fires again inside a dialog's nested event loop,
+ * so disable the notifier across this call.
+ */
+size_t tt_ctl_service(TtCtl *ctl,
+                      TtSession *session);
+
+/**
+ * Stop listening, hang up on every client, and unlink the socket.
+ *
+ * A client blocked on an answer is released rather than left waiting: it is
+ * told the window has gone, which is the one error every request can return.
+ */
+void tt_ctl_free(TtCtl *ctl);
 
 #ifdef __cplusplus
 }  // extern "C"

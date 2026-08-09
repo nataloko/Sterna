@@ -16,6 +16,9 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 [dependencies]
 tt-config.workspace = true
 tt-conn.workspace = true
+# The control socket, whose half of the ABI is the same shape as the macro's:
+# a descriptor to wait on, a service call, and callbacks that fire inside it.
+tt-ctl.workspace = true
 tt-grid.workspace = true
 tt-macro.workspace = true
 tt-session.workspace = true

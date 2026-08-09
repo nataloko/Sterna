@@ -20,6 +20,11 @@
 #include <string.h>
 #include <time.h>
 
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <unistd.h>
+
 #include <sterna.h>
 
 /* Wait for the connection's descriptor, exactly as a frontend's event loop
@@ -1657,6 +1662,269 @@ static void test_macro_cancelled(void)
     remove_macro();
 }
 
+
+/* --- the control socket -------------------------------------------------
+ *
+ * The half of the ABI that DDE used to be. A frontend fills in TtCtlHost,
+ * waits on tt_ctl_poll_fd and calls tt_ctl_service; this drives the other end
+ * too, with a raw socket and sprintf, because "a shell script can do this" is
+ * the claim the whole design rests on and a C test is the closest thing to it
+ * in this suite.
+ */
+
+struct ctl_log {
+    int macros;
+    char last_macro[512];
+    char last_param[128];
+    int connects;
+    char last_line[256];
+    int closed;
+    int running_left;
+};
+
+static TtStatus on_ctl_run_macro(void *user, const char *const *argv,
+                                 const char **error)
+{
+    struct ctl_log *log = user;
+    if (!argv || !argv[0]) {
+        *error = "no macro named";
+        return TT_ERR_INVALID;
+    }
+    if (log->running_left > 0) {
+        /* Upstream raises the running macro's window instead; a socket has no
+         * window to raise, so the client is told to try again. */
+        *error = "a macro is already running";
+        return TT_ERR_BUSY;
+    }
+    log->macros++;
+    snprintf(log->last_macro, sizeof log->last_macro, "%s", argv[0]);
+    snprintf(log->last_param, sizeof log->last_param, "%s",
+             argv[1] ? argv[1] : "");
+    log->running_left = 1;
+    return TT_OK;
+}
+
+static bool on_ctl_macro_running(void *user)
+{
+    struct ctl_log *log = user;
+    bool running = log->running_left > 0;
+    if (log->running_left > 0)
+        log->running_left--;
+    return running;
+}
+
+static int32_t on_ctl_macro_exit_code(void *user)
+{
+    (void)user;
+    return 5;
+}
+
+static TtStatus on_ctl_connect(void *user, const char *line,
+                               const char **error)
+{
+    struct ctl_log *log = user;
+    if (!line || !*line) {
+        *error = "nothing to connect to";
+        return TT_ERR_INVALID;
+    }
+    log->connects++;
+    snprintf(log->last_line, sizeof log->last_line, "%s", line);
+    return TT_OK;
+}
+
+static bool on_ctl_close(void *user)
+{
+    struct ctl_log *log = user;
+    log->closed++;
+    return true;
+}
+
+static const char *on_ctl_title(void *user)
+{
+    (void)user;
+    return "a window";
+}
+
+/* Send one request and pump until its answer arrives, which is what a
+ * frontend's event loop does for it. Returns 0 on success. */
+static int ctl_call(TtCtl *c, TtSession *s, int fd, const char *req, char *out,
+                    size_t out_len)
+{
+    if (write(fd, req, strlen(req)) < 0)
+        return -1;
+    size_t got = 0;
+    long deadline = now_ms() + 10000;
+    for (;;) {
+        tt_ctl_service(c, s);
+        struct pollfd pfd = {fd, POLLIN, 0};
+        if (poll(&pfd, 1, 10) > 0) {
+            ssize_t n = read(fd, out + got, out_len - got - 1);
+            if (n <= 0)
+                return -1;
+            got += (size_t)n;
+            out[got] = 0;
+            if (memchr(out, '\n', got))
+                return 0;
+        }
+        if (now_ms() > deadline)
+            return -1;
+    }
+}
+
+static void test_ctl(void)
+{
+    /* Its own runtime directory, so this cannot find — or prune — a window the
+     * developer has open. */
+    char dir[] = "/tmp/sterna-abi-XXXXXX";
+    CHECK(mkdtemp(dir) != NULL);
+    setenv("XDG_RUNTIME_DIR", dir, 1);
+
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+    tt_session_feed(s, (const uint8_t *)"hello", 5);
+
+    struct ctl_log log = {0};
+    TtCtlHost host = {0};
+    host.user = &log;
+    host.run_macro = on_ctl_run_macro;
+    host.macro_running = on_ctl_macro_running;
+    host.macro_exit_code = on_ctl_macro_exit_code;
+    host.connect = on_ctl_connect;
+    host.close_window = on_ctl_close;
+    host.title = on_ctl_title;
+
+    TtCtl *c = tt_ctl_start("abitest", &host);
+    CHECK(c != NULL);
+    if (!c) {
+        fprintf(stderr, "  %s\n", tt_last_error());
+        tt_session_free(s);
+        return;
+    }
+    const char *path = tt_ctl_path(c);
+    CHECK(path != NULL && strstr(path, "abitest.sock") != NULL);
+    CHECK(tt_ctl_poll_fd(c) >= 0);
+
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    CHECK(fd >= 0);
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof addr);
+    addr.sun_family = AF_UNIX;
+    snprintf(addr.sun_path, sizeof addr.sun_path, "%s", path);
+    CHECK(connect(fd, (struct sockaddr *)&addr, sizeof addr) == 0);
+
+    char buf[8192];
+    /* The window's own title comes from the callback rather than from the
+     * terminal, which is what `title` is for. */
+    CHECK(ctl_call(c, s, fd,
+                   "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"status\"}\n",
+                   buf, sizeof buf) == 0);
+    CHECK(strstr(buf, "\"title\":\"a window\"") != NULL);
+    CHECK(strstr(buf, "\"connected\":false") != NULL);
+
+    /* The terminal itself, read back as text. */
+    CHECK(ctl_call(c, s, fd,
+                   "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"screen\"}\n",
+                   buf, sizeof buf) == 0);
+    CHECK(strstr(buf, "\"hello\"") != NULL);
+
+    CHECK(ctl_call(c, s, fd,
+                   "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"connect\","
+                   "\"params\":{\"line\":\"myhost /ssh\"}}\n",
+                   buf, sizeof buf) == 0);
+    CHECK(strstr(buf, "\"started\":true") != NULL);
+    CHECK(log.connects == 1);
+    CHECK(strcmp(log.last_line, "myhost /ssh") == 0);
+
+    /* A macro, waited for: the callback reports it running once and then
+     * finished, and the exit code comes back to the client. */
+    CHECK(ctl_call(c, s, fd,
+                   "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"macro.run\","
+                   "\"params\":{\"path\":\"/tmp/x.ttl\","
+                   "\"params\":[\"one\"],\"wait\":true}}\n",
+                   buf, sizeof buf) == 0);
+    CHECK(strstr(buf, "\"exit\":5") != NULL);
+    CHECK(log.macros == 1);
+    CHECK(strcmp(log.last_macro, "/tmp/x.ttl") == 0);
+    CHECK(strcmp(log.last_param, "one") == 0);
+
+    /* And a second one while the first is up, which is its own error code
+     * because a client retries that one and not the others. */
+    log.running_left = 1;
+    CHECK(ctl_call(c, s, fd,
+                   "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"macro.run\","
+                   "\"params\":{\"path\":\"/tmp/x.ttl\"}}\n",
+                   buf, sizeof buf) == 0);
+    CHECK(strstr(buf, "-32002") != NULL);
+    CHECK(strstr(buf, "already running") != NULL);
+
+    CHECK(ctl_call(c, s, fd,
+                   "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"close\"}\n",
+                   buf, sizeof buf) == 0);
+    CHECK(log.closed == 1);
+
+    close(fd);
+    /* Copied before the free, because the path is borrowed from the handle. */
+    char socket_path[256];
+    snprintf(socket_path, sizeof socket_path, "%s", path);
+    tt_ctl_free(c);
+    /* Freeing unlinks it, so the directory does not fill with the names of
+     * windows that have closed. */
+    struct stat st;
+    CHECK(stat(socket_path, &st) != 0);
+    tt_session_free(s);
+    rmdir(dir);
+}
+
+/* A window with no callbacks at all: every method that needs one is refused
+ * with -32003, and the ones that only need the session still work. */
+static void test_ctl_without_a_frontend(void)
+{
+    char dir[] = "/tmp/sterna-abi-XXXXXX";
+    CHECK(mkdtemp(dir) != NULL);
+    setenv("XDG_RUNTIME_DIR", dir, 1);
+
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+
+    TtCtl *c = tt_ctl_start(NULL, NULL);
+    CHECK(c != NULL);
+    if (!c) {
+        tt_session_free(s);
+        return;
+    }
+    /* A null name is this process's pid, which is what a window with no `/D=`
+     * uses. */
+    char want[64];
+    snprintf(want, sizeof want, "%d.sock", (int)getpid());
+    CHECK(strstr(tt_ctl_path(c), want) != NULL);
+
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof addr);
+    addr.sun_family = AF_UNIX;
+    snprintf(addr.sun_path, sizeof addr.sun_path, "%s", tt_ctl_path(c));
+    CHECK(connect(fd, (struct sockaddr *)&addr, sizeof addr) == 0);
+
+    char buf[4096];
+    CHECK(ctl_call(c, s, fd,
+                   "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"close\"}\n",
+                   buf, sizeof buf) == 0);
+    CHECK(strstr(buf, "-32003") != NULL);
+
+    /* ...and `status` still answers, because it needs nothing of the window. */
+    CHECK(ctl_call(c, s, fd,
+                   "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"status\"}\n",
+                   buf, sizeof buf) == 0);
+    CHECK(strstr(buf, "\"cols\":80") != NULL);
+
+    close(fd);
+    tt_ctl_free(c);
+    tt_session_free(s);
+    rmdir(dir);
+}
+
 int main(void)
 {
     printf("Sterna core %s\n", tt_version());
@@ -1678,6 +1946,8 @@ int main(void)
     test_macro_without_a_frontend();
     test_macro_ends_quietly();
     test_macro_cancelled();
+    test_ctl();
+    test_ctl_without_a_frontend();
     test_null_safety();
 
     if (failures) {
