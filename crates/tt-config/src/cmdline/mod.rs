@@ -15,6 +15,7 @@
 //! `CommandLineToArgvW` semantics gives a parser that agrees on every example
 //! in the documentation and disagrees on the first path with a space in it.
 
+pub mod cygterm;
 pub mod ssh;
 
 use crate::{
