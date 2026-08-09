@@ -1017,6 +1017,88 @@ pub struct Settings {
     pub mouse_ctrl_disables_tracking: bool,
     /// `ttset.c:1515`. Gates `DECSET 7786`, and is what a reset restores it to.
     pub mouse_wheel_to_cursor: bool,
+    /// `ttset.c:1419`. Two things at once, and the second is not about copying.
+    /// With it on a wrapped line is marked continued, so selecting from column 0
+    /// takes the whole logical line and copying it joins the rows — **and the `CR`
+    /// and `LF` that the wrap feeds to the log and the macro tap are suppressed**.
+    /// That is the `logFlag` argument threaded through `CarriageReturn` and
+    /// `LineFeed` (`vtterm.c:677`, `:695`): it is TRUE for a CR or LF that came off
+    /// the wire and FALSE for the pair the terminal generated itself, and only the
+    /// generated pair is dropped. So a macro's `wait` matches a wrapped line as one
+    /// line, which is the whole point of the setting.
+    pub clipboard_continued_line_copy: bool,
+    /// `ttset.c:1105`. Copy the selection the moment the button comes up, with no
+    /// Ctrl-Insert — which is what this shell has always done to the X11 primary
+    /// selection, and now does from a key rather than from an opinion.
+    pub clipboard_auto_copy: bool,
+    /// `ttset.c:1280`, `ts.SelOnActive`. Off **eats** the click that activates the
+    /// window (`vtwin.cpp:2387` returns `MA_ACTIVATEANDEAT`), so bringing the
+    /// terminal forward cannot start a selection by accident.
+    pub clipboard_select_on_activate: bool,
+    /// `ttset.c:1449`. On, only the left button starts a selection — and a middle
+    /// or right button coming up over a standing selection does **not** copy it
+    /// (`vtwin.cpp:819`), which is the half of the setting its name does not say
+    /// and the bug it was added to fix.
+    pub clipboard_select_only_by_lbutton: bool,
+    /// `ttset.c:1954`, `ts.SelectStartDelay`, in milliseconds. How long the button
+    /// is held before a drag counts as a selection rather than as a click.
+    pub clipboard_select_start_delay: i32,
+    /// `ttset.c:1422`, `CPF_DISABLE_RBUTTON`. **Upstream pastes on the right button
+    /// by default** — the arm is the `else` of this test (`vtwin.cpp:2645`), so a
+    /// right-click over the terminal puts the clipboard on the wire.
+    pub clipboard_paste_rbutton_disabled: bool,
+    /// `ttset.c:1425`, `CPF_DISABLE_MBUTTON`, and the **on** is upstream's: Tera
+    /// Term does not paste on the middle button, because on a wheel mouse that is
+    /// the wheel. This shell did, on the X11 convention, and the divergence ends
+    /// here the way `keyboard.meta`'s did — faithful by default and one line in the
+    /// file away from the other behaviour. Note the two buttons ship opposite ways
+    /// round from what a Linux user expects of either.
+    pub clipboard_paste_mbutton_disabled: bool,
+    /// `ttset.c:1428`, `CPF_CONFIRM_RBUTTON`. The right button raises a menu with
+    /// Paste on it instead of pasting, and the button-up paste is then suppressed
+    /// as well (`vtwin.cpp:2645` tests both bits).
+    pub clipboard_confirm_paste_rbutton: bool,
+    /// `ttset.c:1431`, `CPF_CONFIRM_CHANGEPASTE`. **On.** A paste holding a line
+    /// break is shown in a dialog first and can be edited there
+    /// (`clipboar.c:126`), because a newline pasted into a shell runs whatever
+    /// came before it.
+    pub clipboard_confirm_paste: bool,
+    /// `ttset.c:1434`, `CPF_CONFIRM_CHANGEPASTE_CR`. The same confirmation for
+    /// "paste and send a CR", where the newline is the one being *added* rather
+    /// than one already in the text. Only consulted on that path, so a plain paste
+    /// of text with no break is never confirmed by it.
+    pub clipboard_confirm_paste_cr: bool,
+    /// `ttset.c:1437`. A file of strings, one per line: a paste containing any of
+    /// them is confirmed even with no line break in it. Resolved against the home
+    /// directory rather than the working one (`GetFullPathW(ts.HomeDirW, …)`), and
+    /// consulted only when `clipboard.confirm_paste` is on.
+    pub clipboard_confirm_paste_dictionary: String,
+    /// `ttset.c:1871`, `CPF_TRIM_TRAILING_NL`. Off, so the newline on the end of a
+    /// copied line is pasted and the shell runs the line.
+    pub clipboard_trim_trailing_newline: bool,
+    /// `ttset.c:1633`, milliseconds between the lines of a paste — for a host with
+    /// no flow control that drops what arrives while it is still echoing. The only
+    /// setting in the file clamped at **both** ends; see `int_clamp` above for why
+    /// that is a third bound rather than one of the other two.
+    pub clipboard_paste_delay_per_line: i32,
+    /// `ttset.c:1580`. Upstream writes the size back when the confirmation dialog
+    /// is resized, which is the whole reason it is a setting. Below zero takes the
+    /// default and there is no ceiling, so it is the `TerminalSize` bound rather
+    /// than a clamp.
+    pub clipboard_paste_dialog_width: i32,
+    /// The second half of the same key, with a default of its own.
+    pub clipboard_paste_dialog_height: i32,
+    /// `ttset.c:2002`. **A second gate on `DECSET 2004`**, and the one to know
+    /// about: `clipboar.c:265` tests the setting *and* the mode, so a host that has
+    /// asked for bracketed paste gets an unbracketed one when this is off. It ships
+    /// on, so the mode alone is usually the answer — which is exactly why a port
+    /// that omits the key looks right until somebody turns it off.
+    pub clipboard_bracketed: bool,
+    /// `ttset.c:2003`. Brackets only a paste that **contains a control character**
+    /// (`iswcntrl`, `clipboar.c:270`) — so a pasted word goes bare and a pasted
+    /// block is bracketed. Note the test runs after the line breaks have been
+    /// normalised to CR, so any multi-line paste qualifies.
+    pub clipboard_bracketed_control_only: bool,
     /// `ttset.c:589`, and the default is the `else` branch: a `Port=` that says
     /// anything but `serial` is TCP/IP, including `Port=tcp` and `Port=`.
     pub connection_port_type: ConnectionPortType,
@@ -1366,6 +1448,23 @@ impl Default for Settings {
             mouse_tracking: true,
             mouse_ctrl_disables_tracking: true,
             mouse_wheel_to_cursor: true,
+            clipboard_continued_line_copy: false,
+            clipboard_auto_copy: true,
+            clipboard_select_on_activate: true,
+            clipboard_select_only_by_lbutton: true,
+            clipboard_select_start_delay: 0,
+            clipboard_paste_rbutton_disabled: false,
+            clipboard_paste_mbutton_disabled: true,
+            clipboard_confirm_paste_rbutton: false,
+            clipboard_confirm_paste: true,
+            clipboard_confirm_paste_cr: true,
+            clipboard_confirm_paste_dictionary: String::from(""),
+            clipboard_trim_trailing_newline: false,
+            clipboard_paste_delay_per_line: 10,
+            clipboard_paste_dialog_width: 330,
+            clipboard_paste_dialog_height: 220,
+            clipboard_bracketed: true,
+            clipboard_bracketed_control_only: false,
             connection_port_type: ConnectionPortType::default(),
             connection_tcp_port: 23,
             connection_telnet: true,
@@ -1620,6 +1719,92 @@ impl Settings {
             mouse_wheel_to_cursor: crate::schema::on_off(
                 ini.get("Tera Term", "TranslateWheelToCursor"),
                 true,
+            ),
+            clipboard_continued_line_copy: crate::schema::on_off(
+                ini.get("Tera Term", "EnableContinuedLineCopy"),
+                false,
+            ),
+            clipboard_auto_copy: crate::schema::on_off(ini.get("Tera Term", "AutoTextCopy"), true),
+            clipboard_select_on_activate: crate::schema::on_off(
+                ini.get("Tera Term", "SelectOnActivate"),
+                true,
+            ),
+            clipboard_select_only_by_lbutton: crate::schema::on_off(
+                ini.get("Tera Term", "SelectOnlyByLButton"),
+                true,
+            ),
+            clipboard_select_start_delay: ini.get_int(
+                "Tera Term",
+                "MouseSelectStartDelay",
+                d.clipboard_select_start_delay,
+            ) as i32,
+            clipboard_paste_rbutton_disabled: crate::schema::on_off(
+                ini.get("Tera Term", "DisablePasteMouseRButton"),
+                false,
+            ),
+            clipboard_paste_mbutton_disabled: crate::schema::on_off(
+                ini.get("Tera Term", "DisablePasteMouseMButton"),
+                true,
+            ),
+            clipboard_confirm_paste_rbutton: crate::schema::on_off(
+                ini.get("Tera Term", "ConfirmPasteMouseRButton"),
+                false,
+            ),
+            clipboard_confirm_paste: crate::schema::on_off(
+                ini.get("Tera Term", "ConfirmChangePaste"),
+                true,
+            ),
+            clipboard_confirm_paste_cr: crate::schema::on_off(
+                ini.get("Tera Term", "ConfirmChangePasteCR"),
+                true,
+            ),
+            clipboard_confirm_paste_dictionary: ini
+                .get_or(
+                    "Tera Term",
+                    "ConfirmChangePasteStringFile",
+                    &d.clipboard_confirm_paste_dictionary,
+                )
+                .to_string(),
+            clipboard_trim_trailing_newline: crate::schema::on_off(
+                ini.get("Tera Term", "TrimTrailingNLonPaste"),
+                false,
+            ),
+            clipboard_paste_delay_per_line: crate::schema::clamped(
+                ini.get_int(
+                    "Tera Term",
+                    "PasteDelayPerLine",
+                    d.clipboard_paste_delay_per_line,
+                ) as i32,
+                0,
+                5000,
+            ),
+            clipboard_paste_dialog_width: crate::schema::ranged(
+                crate::schema::nth_int(
+                    ini.get("Tera Term", "PasteDialogSize"),
+                    0,
+                    d.clipboard_paste_dialog_width,
+                ),
+                d.clipboard_paste_dialog_width,
+                0,
+                2147483647,
+            ),
+            clipboard_paste_dialog_height: crate::schema::ranged(
+                crate::schema::nth_int(
+                    ini.get("Tera Term", "PasteDialogSize"),
+                    1,
+                    d.clipboard_paste_dialog_height,
+                ),
+                d.clipboard_paste_dialog_height,
+                0,
+                2147483647,
+            ),
+            clipboard_bracketed: crate::schema::on_off(
+                ini.get("Tera Term", "BracketedSupport"),
+                true,
+            ),
+            clipboard_bracketed_control_only: crate::schema::on_off(
+                ini.get("Tera Term", "BracketedControlOnly"),
+                false,
             ),
             connection_port_type: match ini.get("Tera Term", "Port") {
                 Some(v) => ConnectionPortType::from_ini(v),
@@ -2228,6 +2413,159 @@ impl Settings {
             "Tera Term",
             "TranslateWheelToCursor",
             &if self.mouse_wheel_to_cursor {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "EnableContinuedLineCopy",
+            &if self.clipboard_continued_line_copy {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "AutoTextCopy",
+            &if self.clipboard_auto_copy {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "SelectOnActivate",
+            &if self.clipboard_select_on_activate {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "SelectOnlyByLButton",
+            &if self.clipboard_select_only_by_lbutton {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "MouseSelectStartDelay",
+            &self.clipboard_select_start_delay.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "DisablePasteMouseRButton",
+            &if self.clipboard_paste_rbutton_disabled {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "DisablePasteMouseMButton",
+            &if self.clipboard_paste_mbutton_disabled {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "ConfirmPasteMouseRButton",
+            &if self.clipboard_confirm_paste_rbutton {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "ConfirmChangePaste",
+            &if self.clipboard_confirm_paste {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "ConfirmChangePasteCR",
+            &if self.clipboard_confirm_paste_cr {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "ConfirmChangePasteStringFile",
+            &self.clipboard_confirm_paste_dictionary.clone(),
+        );
+        ini.set(
+            "Tera Term",
+            "TrimTrailingNLonPaste",
+            &if self.clipboard_trim_trailing_newline {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "PasteDelayPerLine",
+            &self.clipboard_paste_delay_per_line.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "PasteDialogSize",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "PasteDialogSize"),
+                0,
+                self.clipboard_paste_dialog_width,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "PasteDialogSize",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "PasteDialogSize"),
+                1,
+                self.clipboard_paste_dialog_height,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "BracketedSupport",
+            &if self.clipboard_bracketed {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "BracketedControlOnly",
+            &if self.clipboard_bracketed_control_only {
                 "on"
             } else {
                 "off"
@@ -2891,6 +3229,83 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "clipboard.continued_line_copy" => if self.clipboard_continued_line_copy {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "clipboard.auto_copy" => if self.clipboard_auto_copy {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "clipboard.select_on_activate" => if self.clipboard_select_on_activate {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "clipboard.select_only_by_lbutton" => if self.clipboard_select_only_by_lbutton {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "clipboard.select_start_delay" => self.clipboard_select_start_delay.to_string(),
+            "clipboard.paste_rbutton_disabled" => if self.clipboard_paste_rbutton_disabled {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "clipboard.paste_mbutton_disabled" => if self.clipboard_paste_mbutton_disabled {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "clipboard.confirm_paste_rbutton" => if self.clipboard_confirm_paste_rbutton {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "clipboard.confirm_paste" => if self.clipboard_confirm_paste {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "clipboard.confirm_paste_cr" => if self.clipboard_confirm_paste_cr {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "clipboard.confirm_paste_dictionary" => self.clipboard_confirm_paste_dictionary.clone(),
+            "clipboard.trim_trailing_newline" => if self.clipboard_trim_trailing_newline {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "clipboard.paste_delay_per_line" => self.clipboard_paste_delay_per_line.to_string(),
+            "clipboard.paste_dialog_width" => self.clipboard_paste_dialog_width.to_string(),
+            "clipboard.paste_dialog_height" => self.clipboard_paste_dialog_height.to_string(),
+            "clipboard.bracketed" => if self.clipboard_bracketed {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "clipboard.bracketed_control_only" => if self.clipboard_bracketed_control_only {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "connection.port_type" => self.connection_port_type.as_ini().to_string(),
             "connection.tcp_port" => self.connection_tcp_port.to_string(),
             "connection.telnet" => if self.connection_telnet { "on" } else { "off" }.to_string(),
@@ -3184,6 +3599,72 @@ impl Settings {
             }
             "mouse.wheel_to_cursor" => {
                 self.mouse_wheel_to_cursor = crate::schema::on_off(Some(value), true)
+            }
+            "clipboard.continued_line_copy" => {
+                self.clipboard_continued_line_copy = crate::schema::on_off(Some(value), false)
+            }
+            "clipboard.auto_copy" => {
+                self.clipboard_auto_copy = crate::schema::on_off(Some(value), true)
+            }
+            "clipboard.select_on_activate" => {
+                self.clipboard_select_on_activate = crate::schema::on_off(Some(value), true)
+            }
+            "clipboard.select_only_by_lbutton" => {
+                self.clipboard_select_only_by_lbutton = crate::schema::on_off(Some(value), true)
+            }
+            "clipboard.select_start_delay" => {
+                self.clipboard_select_start_delay =
+                    crate::schema::int(value, self.clipboard_select_start_delay)
+            }
+            "clipboard.paste_rbutton_disabled" => {
+                self.clipboard_paste_rbutton_disabled = crate::schema::on_off(Some(value), false)
+            }
+            "clipboard.paste_mbutton_disabled" => {
+                self.clipboard_paste_mbutton_disabled = crate::schema::on_off(Some(value), true)
+            }
+            "clipboard.confirm_paste_rbutton" => {
+                self.clipboard_confirm_paste_rbutton = crate::schema::on_off(Some(value), false)
+            }
+            "clipboard.confirm_paste" => {
+                self.clipboard_confirm_paste = crate::schema::on_off(Some(value), true)
+            }
+            "clipboard.confirm_paste_cr" => {
+                self.clipboard_confirm_paste_cr = crate::schema::on_off(Some(value), true)
+            }
+            "clipboard.confirm_paste_dictionary" => {
+                self.clipboard_confirm_paste_dictionary = value.to_string()
+            }
+            "clipboard.trim_trailing_newline" => {
+                self.clipboard_trim_trailing_newline = crate::schema::on_off(Some(value), false)
+            }
+            "clipboard.paste_delay_per_line" => {
+                self.clipboard_paste_delay_per_line = crate::schema::clamped(
+                    crate::schema::int(value, self.clipboard_paste_delay_per_line),
+                    0,
+                    5000,
+                )
+            }
+            "clipboard.paste_dialog_width" => {
+                self.clipboard_paste_dialog_width = crate::schema::ranged(
+                    crate::schema::int(value, self.clipboard_paste_dialog_width),
+                    330,
+                    0,
+                    2147483647,
+                )
+            }
+            "clipboard.paste_dialog_height" => {
+                self.clipboard_paste_dialog_height = crate::schema::ranged(
+                    crate::schema::int(value, self.clipboard_paste_dialog_height),
+                    220,
+                    0,
+                    2147483647,
+                )
+            }
+            "clipboard.bracketed" => {
+                self.clipboard_bracketed = crate::schema::on_off(Some(value), true)
+            }
+            "clipboard.bracketed_control_only" => {
+                self.clipboard_bracketed_control_only = crate::schema::on_off(Some(value), false)
             }
             "connection.port_type" => {
                 self.connection_port_type = ConnectionPortType::from_ini(value)
@@ -3889,6 +4370,176 @@ pub const FIELDS: &[Field] = &[
         default: "on",
         label: None,
         doc: "`ttset.c:1515`. Gates `DECSET 7786`, and is what a reset restores it to.",
+    },
+    Field {
+        name: "clipboard.continued_line_copy",
+        page: "clipboard",
+        section: "Tera Term",
+        key: "EnableContinuedLineCopy",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1419`. Two things at once, and the second is not about copying. With it on a wrapped line is marked continued, so selecting from column 0 takes the whole logical line and copying it joins the rows — **and the `CR` and `LF` that the wrap feeds to the log and the macro tap are suppressed**. That is the `logFlag` argument threaded through `CarriageReturn` and `LineFeed` (`vtterm.c:677`, `:695`): it is TRUE for a CR or LF that came off the wire and FALSE for the pair the terminal generated itself, and only the generated pair is dropped. So a macro's `wait` matches a wrapped line as one line, which is the whole point of the setting.",
+    },
+    Field {
+        name: "clipboard.auto_copy",
+        page: "clipboard",
+        section: "Tera Term",
+        key: "AutoTextCopy",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1105`. Copy the selection the moment the button comes up, with no Ctrl-Insert — which is what this shell has always done to the X11 primary selection, and now does from a key rather than from an opinion.",
+    },
+    Field {
+        name: "clipboard.select_on_activate",
+        page: "clipboard",
+        section: "Tera Term",
+        key: "SelectOnActivate",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1280`, `ts.SelOnActive`. Off **eats** the click that activates the window (`vtwin.cpp:2387` returns `MA_ACTIVATEANDEAT`), so bringing the terminal forward cannot start a selection by accident.",
+    },
+    Field {
+        name: "clipboard.select_only_by_lbutton",
+        page: "clipboard",
+        section: "Tera Term",
+        key: "SelectOnlyByLButton",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1449`. On, only the left button starts a selection — and a middle or right button coming up over a standing selection does **not** copy it (`vtwin.cpp:819`), which is the half of the setting its name does not say and the bug it was added to fix.",
+    },
+    Field {
+        name: "clipboard.select_start_delay",
+        page: "clipboard",
+        section: "Tera Term",
+        key: "MouseSelectStartDelay",
+        kind: Kind::Int,
+        default: "0",
+        label: None,
+        doc: "`ttset.c:1954`, `ts.SelectStartDelay`, in milliseconds. How long the button is held before a drag counts as a selection rather than as a click.",
+    },
+    Field {
+        name: "clipboard.paste_rbutton_disabled",
+        page: "clipboard",
+        section: "Tera Term",
+        key: "DisablePasteMouseRButton",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1422`, `CPF_DISABLE_RBUTTON`. **Upstream pastes on the right button by default** — the arm is the `else` of this test (`vtwin.cpp:2645`), so a right-click over the terminal puts the clipboard on the wire.",
+    },
+    Field {
+        name: "clipboard.paste_mbutton_disabled",
+        page: "clipboard",
+        section: "Tera Term",
+        key: "DisablePasteMouseMButton",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1425`, `CPF_DISABLE_MBUTTON`, and the **on** is upstream's: Tera Term does not paste on the middle button, because on a wheel mouse that is the wheel. This shell did, on the X11 convention, and the divergence ends here the way `keyboard.meta`'s did — faithful by default and one line in the file away from the other behaviour. Note the two buttons ship opposite ways round from what a Linux user expects of either.",
+    },
+    Field {
+        name: "clipboard.confirm_paste_rbutton",
+        page: "clipboard",
+        section: "Tera Term",
+        key: "ConfirmPasteMouseRButton",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1428`, `CPF_CONFIRM_RBUTTON`. The right button raises a menu with Paste on it instead of pasting, and the button-up paste is then suppressed as well (`vtwin.cpp:2645` tests both bits).",
+    },
+    Field {
+        name: "clipboard.confirm_paste",
+        page: "clipboard",
+        section: "Tera Term",
+        key: "ConfirmChangePaste",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1431`, `CPF_CONFIRM_CHANGEPASTE`. **On.** A paste holding a line break is shown in a dialog first and can be edited there (`clipboar.c:126`), because a newline pasted into a shell runs whatever came before it.",
+    },
+    Field {
+        name: "clipboard.confirm_paste_cr",
+        page: "clipboard",
+        section: "Tera Term",
+        key: "ConfirmChangePasteCR",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1434`, `CPF_CONFIRM_CHANGEPASTE_CR`. The same confirmation for \"paste and send a CR\", where the newline is the one being *added* rather than one already in the text. Only consulted on that path, so a plain paste of text with no break is never confirmed by it.",
+    },
+    Field {
+        name: "clipboard.confirm_paste_dictionary",
+        page: "clipboard",
+        section: "Tera Term",
+        key: "ConfirmChangePasteStringFile",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "`ttset.c:1437`. A file of strings, one per line: a paste containing any of them is confirmed even with no line break in it. Resolved against the home directory rather than the working one (`GetFullPathW(ts.HomeDirW, …)`), and consulted only when `clipboard.confirm_paste` is on.",
+    },
+    Field {
+        name: "clipboard.trim_trailing_newline",
+        page: "clipboard",
+        section: "Tera Term",
+        key: "TrimTrailingNLonPaste",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1871`, `CPF_TRIM_TRAILING_NL`. Off, so the newline on the end of a copied line is pasted and the shell runs the line.",
+    },
+    Field {
+        name: "clipboard.paste_delay_per_line",
+        page: "clipboard",
+        section: "Tera Term",
+        key: "PasteDelayPerLine",
+        kind: Kind::IntClamp(0, 5000),
+        default: "10",
+        label: None,
+        doc: "`ttset.c:1633`, milliseconds between the lines of a paste — for a host with no flow control that drops what arrives while it is still echoing. The only setting in the file clamped at **both** ends; see `int_clamp` above for why that is a third bound rather than one of the other two.",
+    },
+    Field {
+        name: "clipboard.paste_dialog_width",
+        page: "clipboard",
+        section: "Tera Term",
+        key: "PasteDialogSize",
+        kind: Kind::IntRange(0, 2147483647),
+        default: "330",
+        label: None,
+        doc: "`ttset.c:1580`. Upstream writes the size back when the confirmation dialog is resized, which is the whole reason it is a setting. Below zero takes the default and there is no ceiling, so it is the `TerminalSize` bound rather than a clamp.",
+    },
+    Field {
+        name: "clipboard.paste_dialog_height",
+        page: "clipboard",
+        section: "Tera Term",
+        key: "PasteDialogSize",
+        kind: Kind::IntRange(0, 2147483647),
+        default: "220",
+        label: None,
+        doc: "The second half of the same key, with a default of its own.",
+    },
+    Field {
+        name: "clipboard.bracketed",
+        page: "clipboard",
+        section: "Tera Term",
+        key: "BracketedSupport",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:2002`. **A second gate on `DECSET 2004`**, and the one to know about: `clipboar.c:265` tests the setting *and* the mode, so a host that has asked for bracketed paste gets an unbracketed one when this is off. It ships on, so the mode alone is usually the answer — which is exactly why a port that omits the key looks right until somebody turns it off.",
+    },
+    Field {
+        name: "clipboard.bracketed_control_only",
+        page: "clipboard",
+        section: "Tera Term",
+        key: "BracketedControlOnly",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:2003`. Brackets only a paste that **contains a control character** (`iswcntrl`, `clipboar.c:270`) — so a pasted word goes bare and a pasted block is bracketed. Note the test runs after the line breaks have been normalised to CR, so any multi-line paste qualifies.",
     },
     Field {
         name: "connection.port_type",

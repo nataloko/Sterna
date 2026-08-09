@@ -19,6 +19,9 @@ pub enum Kind {
     /// [`IntRange`](Kind::IntRange) and not a special case of it — see
     /// [`floored`].
     IntMin(i32),
+    /// An int clamped at both ends — the third of the three, and see
+    /// [`clamped`] for why it is not either of the others.
+    IntClamp(i32, i32),
     Str,
     /// The spellings the file accepts, in order. Anything else reads as the
     /// default, which is upstream's convention rather than an oversight.
@@ -122,6 +125,22 @@ pub fn ranged(value: i32, default: i32, lo: i32, hi: i32) -> i32 {
 /// what "never time out" is spelt as on a network link.
 pub fn floored(value: i32, lo: i32) -> i32 {
     value.max(lo)
+}
+
+/// And upstream's third, which clamps at both ends.
+///
+/// ```text
+/// int tmp = min(max(0, ts->PasteDelayPerLine), 5000);
+/// ```
+///
+/// `ttset.c:1633`. `PasteDelayPerLine` is the only setting read this way, and
+/// it is neither of the two above: [`ranged`] would give the *default* for a
+/// negative value where upstream gives the floor — and a negative value is
+/// reachable, since `GetPrivateProfileInt` answers `Key=-5` with `(UINT)-5`,
+/// which lands in an `int` field as -5 — while [`floored`] would leave
+/// `PasteDelayPerLine=60000` at a minute a line on a paste nobody could stop.
+pub fn clamped(value: i32, lo: i32, hi: i32) -> i32 {
+    value.clamp(lo, hi)
 }
 
 /// The `n`th comma-separated number of a value that holds several —

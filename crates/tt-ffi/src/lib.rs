@@ -927,6 +927,9 @@ fn schema() -> &'static Schema {
                 // other — and that is settled in the core before a dialog ever
                 // sees the number.
                 tt_session::Kind::IntMin(lo) => (TtSettingKind::IntRange, lo, i32::MAX),
+                // Same argument for the third bound: the spin box wants the
+                // pair and nothing else.
+                tt_session::Kind::IntClamp(lo, hi) => (TtSettingKind::IntRange, lo, hi),
                 tt_session::Kind::Str => (TtSettingKind::Str, 0, 0),
                 tt_session::Kind::Enum(_) => (TtSettingKind::Enum, 0, 0),
                 tt_session::Kind::Color2 => (TtSettingKind::Color2, 0, 0),

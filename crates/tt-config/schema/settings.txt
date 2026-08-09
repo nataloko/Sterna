@@ -28,6 +28,11 @@
 #   int(lo..)     the same with no ceiling, which is how `MaxBuffSize` is read
 #                 (`ttset.c:1214`) — upstream caps that one against a
 #                 compile-time constant in `buffer.c` rather than on the way in
+#   int_clamp(lo..hi)
+#                 clamped at **both** ends, `min(max(lo, v), hi)`. The third of
+#                 three bounds and a special case of neither: `int(lo..hi)`
+#                 would give the default below the floor, `int_min(lo)` has no
+#                 ceiling. Only `PasteDelayPerLine` is read this way
 #   string        the raw value
 #   enum(...)     `spelling=Variant`, compared case-insensitively (`_stricmp`,
 #                 which is what upstream uses for all but one of these);
@@ -287,6 +292,114 @@ mouse.ctrl_disables_tracking | bool | Tera Term | DisableMouseTrackingByCtrl | o
 
 # `ttset.c:1515`. Gates `DECSET 7786`, and is what a reset restores it to.
 mouse.wheel_to_cursor | bool | Tera Term | TranslateWheelToCursor | on | -
+
+# --- clipboard ---------------------------------------------------------------
+#
+# Upstream's "Copy and Paste" page. Six of these are bits in one word,
+# `ts.PasteFlag` (`tttypes.h:237`), ORed together from six `GetOnOff` calls in
+# the usual way — but a flag word is upstream's *storage* rather than its
+# meaning, and each bit is a setting with its own key, its own default and its
+# own dialog checkbox. They are six rows here for the same reason
+# `ISO2022ShiftFunction` is one: the file's shape is what the schema copies.
+
+# `ttset.c:1419`. Two things at once, and the second is not about copying.
+# With it on a wrapped line is marked continued, so selecting from column 0
+# takes the whole logical line and copying it joins the rows — **and the `CR`
+# and `LF` that the wrap feeds to the log and the macro tap are suppressed**.
+# That is the `logFlag` argument threaded through `CarriageReturn` and
+# `LineFeed` (`vtterm.c:677`, `:695`): it is TRUE for a CR or LF that came off
+# the wire and FALSE for the pair the terminal generated itself, and only the
+# generated pair is dropped. So a macro's `wait` matches a wrapped line as one
+# line, which is the whole point of the setting.
+clipboard.continued_line_copy | bool | Tera Term | EnableContinuedLineCopy | off | -
+
+# `ttset.c:1105`. Copy the selection the moment the button comes up, with no
+# Ctrl-Insert — which is what this shell has always done to the X11 primary
+# selection, and now does from a key rather than from an opinion.
+clipboard.auto_copy | bool | Tera Term | AutoTextCopy | on | -
+
+# `ttset.c:1280`, `ts.SelOnActive`. Off **eats** the click that activates the
+# window (`vtwin.cpp:2387` returns `MA_ACTIVATEANDEAT`), so bringing the
+# terminal forward cannot start a selection by accident.
+clipboard.select_on_activate | bool | Tera Term | SelectOnActivate | on | -
+
+# `ttset.c:1449`. On, only the left button starts a selection — and a middle
+# or right button coming up over a standing selection does **not** copy it
+# (`vtwin.cpp:819`), which is the half of the setting its name does not say
+# and the bug it was added to fix.
+clipboard.select_only_by_lbutton | bool | Tera Term | SelectOnlyByLButton | on | -
+
+# `ttset.c:1954`, `ts.SelectStartDelay`, in milliseconds. How long the button
+# is held before a drag counts as a selection rather than as a click.
+clipboard.select_start_delay | int | Tera Term | MouseSelectStartDelay | 0 | -
+
+# `ttset.c:1422`, `CPF_DISABLE_RBUTTON`. **Upstream pastes on the right button
+# by default** — the arm is the `else` of this test (`vtwin.cpp:2645`), so a
+# right-click over the terminal puts the clipboard on the wire.
+clipboard.paste_rbutton_disabled | bool | Tera Term | DisablePasteMouseRButton | off | -
+
+# `ttset.c:1425`, `CPF_DISABLE_MBUTTON`, and the **on** is upstream's: Tera
+# Term does not paste on the middle button, because on a wheel mouse that is
+# the wheel. This shell did, on the X11 convention, and the divergence ends
+# here the way `keyboard.meta`'s did — faithful by default and one line in the
+# file away from the other behaviour. Note the two buttons ship opposite ways
+# round from what a Linux user expects of either.
+clipboard.paste_mbutton_disabled | bool | Tera Term | DisablePasteMouseMButton | on | -
+
+# `ttset.c:1428`, `CPF_CONFIRM_RBUTTON`. The right button raises a menu with
+# Paste on it instead of pasting, and the button-up paste is then suppressed
+# as well (`vtwin.cpp:2645` tests both bits).
+clipboard.confirm_paste_rbutton | bool | Tera Term | ConfirmPasteMouseRButton | off | -
+
+# `ttset.c:1431`, `CPF_CONFIRM_CHANGEPASTE`. **On.** A paste holding a line
+# break is shown in a dialog first and can be edited there
+# (`clipboar.c:126`), because a newline pasted into a shell runs whatever
+# came before it.
+clipboard.confirm_paste | bool | Tera Term | ConfirmChangePaste | on | -
+
+# `ttset.c:1434`, `CPF_CONFIRM_CHANGEPASTE_CR`. The same confirmation for
+# "paste and send a CR", where the newline is the one being *added* rather
+# than one already in the text. Only consulted on that path, so a plain paste
+# of text with no break is never confirmed by it.
+clipboard.confirm_paste_cr | bool | Tera Term | ConfirmChangePasteCR | on | -
+
+# `ttset.c:1437`. A file of strings, one per line: a paste containing any of
+# them is confirmed even with no line break in it. Resolved against the home
+# directory rather than the working one (`GetFullPathW(ts.HomeDirW, …)`), and
+# consulted only when `clipboard.confirm_paste` is on.
+clipboard.confirm_paste_dictionary | string | Tera Term | ConfirmChangePasteStringFile |  | -
+
+# `ttset.c:1871`, `CPF_TRIM_TRAILING_NL`. Off, so the newline on the end of a
+# copied line is pasted and the shell runs the line.
+clipboard.trim_trailing_newline | bool | Tera Term | TrimTrailingNLonPaste | off | -
+
+# `ttset.c:1633`, milliseconds between the lines of a paste — for a host with
+# no flow control that drops what arrives while it is still echoing. The only
+# setting in the file clamped at **both** ends; see `int_clamp` above for why
+# that is a third bound rather than one of the other two.
+clipboard.paste_delay_per_line | int_clamp(0..5000) | Tera Term | PasteDelayPerLine | 10 | -
+
+# `ttset.c:1580`. Upstream writes the size back when the confirmation dialog
+# is resized, which is the whole reason it is a setting. Below zero takes the
+# default and there is no ceiling, so it is the `TerminalSize` bound rather
+# than a clamp.
+clipboard.paste_dialog_width | int(0..) | Tera Term | PasteDialogSize.1 | 330 | -
+
+# The second half of the same key, with a default of its own.
+clipboard.paste_dialog_height | int(0..) | Tera Term | PasteDialogSize.2 | 220 | -
+
+# `ttset.c:2002`. **A second gate on `DECSET 2004`**, and the one to know
+# about: `clipboar.c:265` tests the setting *and* the mode, so a host that has
+# asked for bracketed paste gets an unbracketed one when this is off. It ships
+# on, so the mode alone is usually the answer — which is exactly why a port
+# that omits the key looks right until somebody turns it off.
+clipboard.bracketed | bool | Tera Term | BracketedSupport | on | -
+
+# `ttset.c:2003`. Brackets only a paste that **contains a control character**
+# (`iswcntrl`, `clipboar.c:270`) — so a pasted word goes bare and a pasted
+# block is bracketed. Note the test runs after the line breaks have been
+# normalised to CR, so any multi-line paste qualifies.
+clipboard.bracketed_control_only | bool | Tera Term | BracketedControlOnly | off | -
 
 # --- connection --------------------------------------------------------------
 #

@@ -45,6 +45,12 @@ enum Bound {
     /// `XmodemTimeouts=0,0,0,0,0` is five one-second timeouts rather than
     /// upstream's `10,3,10,20,60`.
     Floor(i32),
+    /// `int_clamp(lo..hi)`, `ttset.c:1633`: `min(max(lo, v), hi)`, which is a
+    /// clamp at *both* ends. `PasteDelayPerLine` is the only setting written
+    /// this way, and it is neither of the two above — `Ranged` would give the
+    /// default for a negative value where upstream gives the floor, and
+    /// `Floor` would leave a `PasteDelayPerLine=60000` at a minute a line.
+    Clamped(i32, i32),
 }
 
 enum Kind {
@@ -193,35 +199,46 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
             },
         );
     }
-    // `int`, `int(min..max)` or `int_min(floor)`.
-    let (spec, bound) =
-        if let Some(body) = spec.strip_prefix("int(").and_then(|s| s.strip_suffix(')')) {
-            let (lo, hi) = body.split_once("..").expect("a range is `min..max`");
-            let hi = hi.trim();
-            let bound = Bound::Ranged(
+    // `int`, `int(min..max)`, `int_min(floor)` or `int_clamp(min..max)`.
+    let (spec, bound) = if let Some(body) = spec
+        .strip_prefix("int_clamp(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        let (lo, hi) = body.split_once("..").expect("a range is `min..max`");
+        (
+            "int",
+            Some(Bound::Clamped(
                 lo.trim().parse::<i32>().expect("a number"),
-                // `int(lo..)` has no ceiling. Reading it as `i32::MAX` rather
-                // than as a second shape of bound keeps one code path: the
-                // comparison is then never true, which is what "no ceiling"
-                // means.
-                if hi.is_empty() {
-                    i32::MAX
-                } else {
-                    hi.parse::<i32>().expect("a number")
-                },
-            );
-            ("int", Some(bound))
-        } else if let Some(body) = spec
-            .strip_prefix("int_min(")
-            .and_then(|s| s.strip_suffix(')'))
-        {
-            (
-                "int",
-                Some(Bound::Floor(body.trim().parse::<i32>().expect("a number"))),
-            )
-        } else {
-            (spec, None)
-        };
+                hi.trim().parse::<i32>().expect("a number"),
+            )),
+        )
+    } else if let Some(body) = spec.strip_prefix("int(").and_then(|s| s.strip_suffix(')')) {
+        let (lo, hi) = body.split_once("..").expect("a range is `min..max`");
+        let hi = hi.trim();
+        let bound = Bound::Ranged(
+            lo.trim().parse::<i32>().expect("a number"),
+            // `int(lo..)` has no ceiling. Reading it as `i32::MAX` rather
+            // than as a second shape of bound keeps one code path: the
+            // comparison is then never true, which is what "no ceiling"
+            // means.
+            if hi.is_empty() {
+                i32::MAX
+            } else {
+                hi.parse::<i32>().expect("a number")
+            },
+        );
+        ("int", Some(bound))
+    } else if let Some(body) = spec
+        .strip_prefix("int_min(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        (
+            "int",
+            Some(Bound::Floor(body.trim().parse::<i32>().expect("a number"))),
+        )
+    } else {
+        (spec, None)
+    };
     match spec {
         "bool" => (key.to_string(), Kind::Bool),
         "string" => (key.to_string(), Kind::Str),
@@ -433,6 +450,9 @@ fn emit(settings: &[Setting]) -> String {
                         format!("crate::schema::ranged({read}, d.{field}, {lo}, {hi})")
                     }
                     Some(Bound::Floor(lo)) => format!("crate::schema::floored({read}, {lo})"),
+                    Some(Bound::Clamped(lo, hi)) => {
+                        format!("crate::schema::clamped({read}, {lo}, {hi})")
+                    }
                 }
             }
             Kind::Str => format!("ini.get_or(\"{section}\", \"{key}\", &d.{field}).to_string()"),
@@ -517,6 +537,9 @@ fn emit(settings: &[Setting]) -> String {
                     Some(Bound::Floor(lo)) => {
                         format!("self.{field} = crate::schema::floored({read}, {lo})")
                     }
+                    Some(Bound::Clamped(lo, hi)) => {
+                        format!("self.{field} = crate::schema::clamped({read}, {lo}, {hi})")
+                    }
                 }
             }
             Kind::Str => format!("self.{field} = value.to_string()"),
@@ -551,6 +574,10 @@ fn emit(settings: &[Setting]) -> String {
                 bound: Some(Bound::Floor(lo)),
                 ..
             } => format!("Kind::IntMin({lo})"),
+            Kind::Int {
+                bound: Some(Bound::Clamped(lo, hi)),
+                ..
+            } => format!("Kind::IntClamp({lo}, {hi})"),
             Kind::Str => "Kind::Str".to_string(),
             Kind::Color2 => "Kind::Color2".to_string(),
             Kind::Enum { variants, .. } => {

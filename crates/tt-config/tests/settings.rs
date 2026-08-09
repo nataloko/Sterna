@@ -313,6 +313,60 @@ fn max_com_port_has_a_floor_of_its_own() {
     assert_eq!(Settings::load(&ini).serial_max_com_port, 4096);
 }
 
+/// The third bound, and the reason it is a third rather than one of the other
+/// two: `min(max(0, v), 5000)` (`ttset.c:1633`) clamps at both ends, so it
+/// disagrees with `int(lo..hi)` below the floor and with `int_min(lo)` above
+/// the ceiling. `PasteDelayPerLine` is the only setting in the file read this
+/// way.
+#[test]
+fn the_paste_delay_is_clamped_at_both_ends() {
+    let load = |v: &str| {
+        Settings::load(&Ini::parse(
+            format!("[Tera Term]\r\nPasteDelayPerLine={v}\r\n").as_bytes(),
+        ))
+        .clipboard_paste_delay_per_line
+    };
+    assert_eq!(load("250"), 250);
+    // `ranged` would give the default of 10 here. `GetPrivateProfileInt`
+    // answers `-5` with `(UINT)-5`, which lands in upstream's `int` field as
+    // -5 and is then floored.
+    assert_eq!(load("-5"), 0, "the floor, not the default");
+    // ...and `floored` would leave this alone, which is a minute a line.
+    assert_eq!(load("60000"), 5000, "the ceiling");
+
+    // A script takes the same rule, as it does for the other two bounds.
+    let mut s = Settings::default();
+    assert!(s.set_str("clipboard.paste_delay_per_line", "-1"));
+    assert_eq!(s.clipboard_paste_delay_per_line, 0);
+    assert!(s.set_str("clipboard.paste_delay_per_line", "9999"));
+    assert_eq!(s.clipboard_paste_delay_per_line, 5000);
+}
+
+/// The clipboard family's defaults, which are the interesting half of it: two
+/// of them decide what a mouse button does and ship opposite ways round, and
+/// one is a second gate on a mode the host asked for.
+#[test]
+fn the_clipboard_defaults_are_upstreams() {
+    let d = Settings::default();
+    assert!(
+        !d.clipboard_paste_rbutton_disabled,
+        "ttset.c:1422 — the right button pastes"
+    );
+    assert!(
+        d.clipboard_paste_mbutton_disabled,
+        "ttset.c:1425 — and the middle button does not"
+    );
+    assert!(d.clipboard_confirm_paste, "ttset.c:1431");
+    assert!(!d.clipboard_trim_trailing_newline, "ttset.c:1871");
+    assert!(!d.clipboard_continued_line_copy, "ttset.c:1419");
+    assert!(d.clipboard_auto_copy, "ttset.c:1105");
+    assert!(d.clipboard_select_only_by_lbutton, "ttset.c:1449");
+    assert!(d.clipboard_bracketed, "ttset.c:2002");
+    assert!(!d.clipboard_bracketed_control_only, "ttset.c:2003");
+    assert_eq!(d.clipboard_paste_dialog_width, 330);
+    assert_eq!(d.clipboard_paste_dialog_height, 220);
+}
+
 /// `LogTimestampType` is the one setting whose *absence* is a value, because a
 /// second key answers for it — so the schema gives the empty spelling a variant
 /// of its own rather than folding it into the default.
