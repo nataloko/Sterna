@@ -2713,9 +2713,12 @@ impl Perform for State {
         let Ok(kind) = std::str::from_utf8(kind).unwrap_or("").parse::<u32>() else {
             return;
         };
-        // 0 sets both icon name and window title, 2 the window title. Only the
-        // window title reaches `cv.TitleRemoteW`, which is what the oracle dumps.
-        if kind == 0 || kind == 2 {
+        // **All three set the window title**, icon name included: `vtterm.c`'s
+        // `case 0: case 1: case 2:` fall into one arm (`:5109`), which writes
+        // `cv.TitleRemoteW` and calls `ChangeTitle`. There is one title here as
+        // there is upstream, so an icon name set with OSC 1 lands in the title
+        // bar — which reads like a bug and is what Tera Term does.
+        if matches!(kind, 0 | 1 | 2) {
             if let Some(text) = params.get(1) {
                 self.title = String::from_utf8_lossy(text).into_owned();
             }
