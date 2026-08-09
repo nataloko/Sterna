@@ -60,6 +60,7 @@ tt-ffi/run_abi.sh                # the C ABI, compiled and driven from C
 cargo test -p tt-xfer            # the protocols vs lrzsz and gkermit, over a pty
 cargo test -p tt-ttl             # the macro language, with no terminal attached
 cargo test -p tt-ttl --test scripts          # ...and upstream's own 53 macros
+cargo test -p tt-macro           # ...and one driving a real session, threaded
 TTL_BLESS=1 cargo test -p tt-ttl --test scripts   # rewrite the transcripts,
                                              # then read every one you changed
 ../vendor/ttpfile/sync.sh --check   # ...and that the vendored C has not drifted
@@ -754,6 +755,35 @@ And for the macro language:
   unquoted **`;` ends the command line** — everything after it is a comment
   (`ttlib.c:888`). Quotes survive tokenising and come off afterwards in
   `DequoteParam`, which is what makes the doubled-quote rule work at all.
+- **A macro does not read the wire, and building the obvious thing gets it
+  wrong.** `wait`, `waitln`, `waitregex` and `recvln` match against
+  `DDEPut1`'s buffer, which is fed from `OutputLogUTF32` (`vtterm.c:448`) —
+  the *text session log's* tap. So a macro sees the characters the parser
+  **printed**, re-encoded UTF-8, plus `CR`/`LF`/`BS`/`HT` where those controls
+  executed and a `CR LF` where a line wrapped, and **no escape sequences at
+  all**. Teeing the transport's bytes instead is what anyone would build and it
+  is wrong on every host that emits a colour code. `Vt::set_macro_tap_enabled`
+  is the seam.
+- **`CheckEOLCheckLog` drops a lone CR** (`checkeol.cpp:105`), so `abc\rdef`
+  reaches a macro as `abcdef` while the screen shows `def` — and a `CR LF`
+  survives whole, which is the mechanism behind the `waitregex` `$` trap above.
+  The parked space before a wrapped wide glyph is **not** in the stream:
+  `vtterm.c:896` writes it with `BuffPutUnicode`, not `PutU32`.
+- **The macro ring drops the OLDEST byte when it is full** (`ttdde.c:107`, 64
+  KiB). Backwards from a queue and deliberate: a macro that has fallen behind
+  wants the prompt that just arrived, and blocking the parser instead lets a
+  stalled script freeze the window.
+- **The macro thread must not hold a lock on the session, which is why
+  `tt-macro` posts closures instead.** A `Mutex<Session>` works until a macro
+  holds it through a modal dialog and the window stops repainting. Everything
+  crossing the boundary is owned — see the `Session::m_sshWaiting` trap for
+  what borrowing across a nested event loop costs.
+- **`sendln` puts a bare CR on the wire by default**, because `ts.CRSend` is CR
+  and the *text* send path expands the newline by it (`ttcmn.c:814`) while the
+  binary path does not. So `send`'s mode is load-bearing: `Session::send_bytes`
+  and `Session::send_text` are two paths and picking one for both breaks half
+  the world. `looks_like_text` decides which, and its last-byte quirk is
+  upstream counting a NUL terminator rather than an off-by-one.
 - **The shell has already done half of `ParseParam` on Unix.** Joining `argv`
   back into a string and running the real tokeniser over it quote-processes
   everything twice, so `"param 7"` becomes two parameters. `CmdLine::from_args`
@@ -919,7 +949,7 @@ ini-audit/       what GetPrivateProfile* really does, asked of Wine (see its REA
 vendor/ttpfile/  Tera Term's file-transfer protocols, verbatim — the only
                  upstream code the distribution ships (see its README)
 crates/          Rust core — tt-grid, tt-vt, tt-conn, tt-session, tt-config,
-                 tt-xfer, tt-ffi (see its README)
+                 tt-xfer, tt-ttl, tt-macro, tt-ffi (see its README)
 crates/tt-fuzz/  the properties, and what they found (see its README)
 crates/fuzz/     the libFuzzer targets — nightly, weekly in CI
 bench/           the perf gate: a floor in CI, a baseline locally (see README)

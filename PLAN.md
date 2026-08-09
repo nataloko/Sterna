@@ -2149,6 +2149,85 @@ loop test can clear the flag — and which reads `buff[-1]` if the function is
 ever called with a size of 1. Recorded rather than reported: neither is
 reachable from any caller in the tree.
 
+#### And then it was joined to a terminal, which changed what "wait" means
+
+`crates/tt-macro/`, 2026-08-09, plus the tap in `tt-vt` and the ring in
+`tt-session`. The language had been complete since the day before and had
+nothing to drive; this is the join, and it turned up the largest single
+surprise in the macro language.
+
+**A macro does not read the wire.** `wait`, `waitln`, `waitregex` and `recvln`
+match against `DDEPut1`'s buffer, and `DDEPut1` is fed from `OutputLogUTF32`
+(`vtterm.c:448`) — *the same function that feeds the text session log*. What
+reaches a macro is the characters the parser decided to **print**, re-encoded as
+UTF-8, plus `CR`, `LF`, `BS` and `HT` at the moment those controls executed and
+a `CR LF` where a line wrapped. Nothing else. So `wait 'ESC['` cannot match, a
+character that was printed and then erased is in the stream anyway, and a
+prompt dressed in colour is matched by a pattern written against the plain
+text. A port that teed the transport's bytes — which is the obvious thing to
+build, and was the plan — would have been wrong in a way no single test would
+have caught, because the difference only shows on a host that emits escape
+sequences, which is all of them.
+
+Three details of it are worth having written down. `CheckEOLCheckLog`
+(`checkeol.cpp:105`) **drops a lone CR** and turns `CR LF` into one `CR LF`, so
+`abc\rdef` reaches a macro as `abcdef` while the screen shows `def`; that is
+also the mechanism behind the `waitregex` trap already on file, since a line
+arrives with its CR still attached. The parked space upstream writes in the last
+column before a wide glyph wraps is **not** in the stream, because `vtterm.c:896`
+writes it with `BuffPutUnicode` rather than `PutU32` — so a macro's copy of that
+line is one column narrower than the screen's. And the tap is fed by
+`CarriageReturn` and `LineFeed` themselves, which means `ts.CRReceive` changes
+what a macro sees and not only what the screen does.
+
+**The ring is 64 KiB and full drops the *oldest* byte** (`ttdde.c:107`,
+`InBuffSize`). The opposite of what a queue usually does and the right way
+round: a macro that has fallen behind wants the prompt that just arrived, and
+blocking the parser until a script gets around to reading would let a stalled
+macro freeze the window.
+
+**The thread boundary is a job queue, not a mutex, and that was the decision.**
+Upstream's macro is a second process and every host call is a DDE transaction;
+the port keeps two properties of that and drops the rest. A host call blocks the
+macro and nothing else — which is why the interpreter has a thread at all, and
+why `wait` is an ordinary function here where upstream had to park itself in
+`TTLStatus`. And the terminal is only ever touched from the thread that owns it:
+an `Arc<Mutex<Session>>` would have worked until the day a macro held the lock
+through a modal dialog and the window stopped repainting, which is a frame rate
+decided by a script. So the macro thread sends a closure taking
+`(&mut Session, &mut dyn MacroUi)` and blocks on the answer, the frontend runs
+it in its own event loop, and **nothing is borrowed across the boundary** — the
+rule the SSH host-key prompt already pays for breaking. Bytes bypass the queue
+entirely through the ring, because a `wait` asks for one thousands of times a
+second and none of those should wait behind a repaint.
+
+Two things fell out of building it. `Session` needed a **raw** write
+(`send_bytes`) beside `send_text`, because a TTL string is bytes and `send` is
+documented to put them on the line unchanged — and the mode is not decoration:
+upstream's text path runs them through `OutControl` (`ttcmn.c:800`), where a CR
+becomes CR, CRLF, LF or `CR NUL` depending on `ts.CRSend` and on telnet's binary
+mode, while the binary path writes what it was given. So `sendln 'go'` puts
+`go\r` on the wire with the shipping default and `go\r\n` with `CRSend=CRLF`,
+and `sendbinary` of the same string always puts `go\r`. Choosing one path for
+both would break whichever half of the world the choice went against.
+
+**And the text session log is now known to be missing three things.** Upstream
+feeds it and the macro from one call, so a text log gets the `HT`, the `BS` and
+the wrap's line break as well; this port's log tap predates the macro one and
+has none of them. Deliberately left alone in the same commit — the log is an
+artefact a user reads, changing it wants its own justification and its own
+tests — but it is a divergence rather than a choice, and it is `LogOptions`'s
+neighbourhood when somebody gets to it.
+
+Twelve integration tests drive a real interpreter on a real thread against a
+real session over a `MemoryTransport`, including the two that matter most: a
+`waitregex` anchored with `$` failing where `\r$` succeeds, driven end to end
+for the first time, and End releasing a macro blocked in a `wait` with no
+timeout. What the host still refuses is listed at the bottom of
+`crates/tt-macro/src/host.rs` with a reason each; the two that block real use
+are `connect`, which wants the Tera Term command-line parser the CLI entry point
+also wants, and `transfer`, which wants a completion the channel can wait on.
+
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
 Windows build, ConPTY, Win32 serial edge cases, NSIS installer. All 14 `.lng`
