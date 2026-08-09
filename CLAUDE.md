@@ -718,6 +718,19 @@ And for the command line, which is two parsers and one of them is a plugin:
   `/ssh-L1:h:2,L3:h:4` makes the second one `LL3:h:4`. The `;` separator the
   documentation offers only works **quoted**, because an unquoted `;` is where
   the tokeniser stops reading the line.
+- **Nothing sets the SSH port, so upstream sends SSH to port 23.** TTSSH never
+  assigns `ts.TCPPort` — only its half of the New Connection dialog does
+  (`ttxssh.c:1347`) — so `ttermpro /ssh myhost` connects to whatever `TCPPort=`
+  holds, which on a fresh install is 23. `Target::of` diverges and uses 22 when
+  no port was asked for; the test for that is upstream's own `TCPPort ==
+  TelPort`, the same comparison `vtwin.cpp:3666` uses to decide whether a port
+  was chosen for a protocol. A user whose file already says 22 sees no change.
+- **Two of `OnCommStart`'s three arms open nothing** (`vtwin.cpp:3708`), and
+  which test goes with which transport is not the obvious pairing: a **host
+  name** decides for anything that is not serial, and `ComAutoConnect` decides
+  for serial. So `myhost /M=x` connects and `/C=1 /M=x` also connects — an
+  in-range `/C=` re-enables auto-connect *after* the option loop, in either
+  order — while `/M=x` alone opens the dialog, or nothing at all under `/DS`.
 
 And for the macro language:
 

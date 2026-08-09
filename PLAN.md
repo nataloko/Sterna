@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 189
+**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 192
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -2315,12 +2315,52 @@ One open item left, and it is about the schema rather than about Linux:
 clamp (`ttset.c:1223`), which the schema has no way to express — so an
 out-of-range `ComPort=` in a file survives here where upstream would reset it.
 
-What is still not wired: nothing consumes a `CommandLine` yet. `connect` in
-`tt-macro` needs a transport built from one, which means a factory that can open
-serial, telnet or SSH — and for SSH the host-key and password prompts have to
-reach the frontend's dialogs, which is the `ScriptHost` blocking-call pattern
-again. The frontend needs the parser over the C ABI to accept a Tera Term command
-line of its own. Those are the next two pieces, in that order.
+#### And what a command line says to open, which is three answers
+
+`crates/tt-session/src/open.rs`, 2026-08-09 — `OnCommStart` (`vtwin.cpp:3708`),
+the join between the parser and the transports, and the half both consumers
+share.
+
+**Upstream's startup is one `if` whose other two arms open nothing**, and that is
+the part a reimplementation drops on the floor. A TCP session is decided by
+whether there is a *host name* — not by the port type — and a serial one by
+`ComAutoConnect`, which `/M` turns off and an in-range `/C=` turns back on in
+either order, because that runs after the option loop rather than inside it.
+`/DS` and `/ES` then choose between the New Connection dialog and an empty
+window, which is how a session that will `connect` for itself starts up.
+`Startup` is those three answers plus a fourth: the two transports upstream has
+and this port does not — a replay file and a named pipe — say which, rather than
+opening something else.
+
+Everything but three things comes from the settings, *after* `apply`, which is
+upstream's order since `_ParseParam` writes `ts` and `CommOpen` reads it back.
+The three are the host name (no INI key at all), the port type (the file holds
+two of its four values) and TTSSH's options.
+
+`Target::open` does serial, telnet and a local shell. **SSH deliberately does
+not**: a host key or a password is a prompt, so it stays a state machine the
+caller pumps while it owns a window — `tt_ssh_connect` and the Qt shell's four
+dialogs already do exactly that, and upstream agrees about where the prompt goes,
+since TTSSH raises its dialogs on the terminal's thread while the macro that
+asked sleeps.
+
+**And one deliberate divergence, which is a port number.** TTSSH never assigns
+`ts.TCPPort` — only its half of the New Connection dialog does (`ttxssh.c:1347`)
+— so `ttermpro /ssh myhost` connects to whatever `TCPPort=` holds, and on a fresh
+install that is **23**: an SSH client on the telnet port, a connection that cannot
+succeed. SSH with no port asked for is 22 here. The test for "no port was asked
+for" is upstream's own idiom rather than a new one — `TCPPort == TelPort` is how
+`vtwin.cpp:3666` decides whether a port was chosen for a protocol or merely
+inherited, and it is why the telnet opening burst is not sent to a terminal
+server's per-line port — so a user who has ever connected by SSH from the dialog
+already has 22 in their file and sees no change. Overruling this is a one-line
+change in `Target::of`.
+
+What is still not wired, in the order chosen 2026-08-09: **the frontend entry
+point** — `CommandLine` over the C ABI plus `main.cpp`, so `sterna` accepts a
+Tera Term command line and existing shortcuts work — and then **`connect` in a
+macro**, which is the same `Startup` and `Target` with the request posted to
+whoever owns the window.
 
 #### And then it could move a file, which needed something to wait on
 
