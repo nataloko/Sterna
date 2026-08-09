@@ -606,6 +606,23 @@ And for the serial side:
   stop bytes already handed to the adapter; they turn up in the next test's
   first read and look like a bug in whatever it measures. `loopback.rs`
   settles the rig between tests.
+- **Applying a settings-derived parameter set changes what the caller did not
+  ask about, and the settings need not describe the open port.** Upstream can
+  rebuild the whole `DCB` from `ts` because the port was opened from `ts`;
+  here `Session::connect` takes any transport and the shell's `--baud` opens
+  one from a `SerialParams` the settings never saw. A `setbaud 19200` built
+  that way moved a 115200 port to the schema's default 9600 and took the
+  parity with it — and reported itself as a *flow control* failure, because
+  the test that noticed was the one where XOFF stopped mattering. The live
+  parameters are the truth about the port; edit one field of them
+  (`Session::reset_serial`).
+- **A test that changes the line speed must settle the rig, and the garbage it
+  leaves is invisible.** Bytes at the wrong baud arrive as framing errors,
+  which `detect_break` turns into `BadByte` *events* rather than characters —
+  so a row that lost its first four letters looks like a truncation bug, and a
+  stray `ESC ]` in the noise opens an OSC string that silently eats the rest of
+  the test. Assert at the far end's bytes rather than on the screen when a
+  speed changes.
 - **`--test-threads=1` is per test *binary*, and cargo runs the binaries
   concurrently anyway.** So `cargo test -p tt-conn -p tt-session --
   --test-threads=1` puts two hardware suites on the same two ports at the same
@@ -693,6 +710,13 @@ And for the settings, all of which came out of `ini-audit/`:
   everything else. So a file with `TelPort=2323` and no `TCPPort=` opens port
   **23**. When a default is another field, check the read *order*: for the flag
   words the initialiser at the top is a lie, and here it is the answer.
+- **`Session::set_setting` takes the schema's *dotted* name and answers
+  `false` for anything else**, which is a silent no-op wherever the `false` is
+  dropped. `setecho` wrote `LocalEcho` — the INI key, which is the obvious
+  thing to reach for and is what the whole rest of the port calls it — so the
+  command parsed, reported nothing and changed nothing for four commits. The
+  key belongs to the *file*; `terminal.local_echo` is what everything above
+  the file says.
 
 And for the command line, which is two parsers and one of them is a plugin:
 
@@ -1033,9 +1057,10 @@ string "can be written even while logging is paused", and `FLogWriteStr`
 (`filesys_log.cpp:833`) cannot: it puts the characters in the ring the tap
 fills and then drains it, and the drain loop discards everything it pulls while
 paused (`:647`). So the note a script writes to explain a gap in the log falls
-into the gap. **This is the one place the port follows the manual instead** —
-see `SessionLog::write_str` — because reproducing it would mean implementing
-the sentence the manual does not say. It wants filing with the rest.
+into the gap. **This is the first of the three places the port follows the
+manual instead** — see `SessionLog::write_str` — because reproducing it would
+mean implementing the sentence the manual does not say. It wants filing with
+the rest.
 
 **And a second of the same kind, in the command line: `/NOLOG` does not stop a
 log that `/L=` named.** Its arm clears `ts.LogAutoStart` and the *ANSI* copy of
@@ -1057,6 +1082,16 @@ and both are reachable from a macro: `cygconnect '-v FOO'` — a variable with n
 assigns `pr_data->envp = e` without carrying `e->next` across. So
 `-v A=1 -v B=2 -v A=3` loses `B`. Neither is reproduced;
 `cmdline::cygterm::add_env` says so where it declines to.
+
+**And a twenty-eighth, which is the third where the code and the documentation
+disagree: `setflowctrl` changes the setting and not the port.** `ttdde.c:1002`
+assigns `ts.Flow` and stops — no `CommResetSerial` under it, unlike `setbaud`
+one case arm away — so upstream's flow control does not take effect until
+something else resets the port, while `setflowctrl.html` says the command
+changes flow control. **The third place the port follows the manual instead**,
+and for the same reason as the other two: the harm is dropped bytes on a real
+cable, and a `setdtr` whose "flow control is none" guard opens while the driver
+still has `CRTSCTS`. `Session::set_flow_control` says so where it diverges.
 
 **And one in `vte`**, which is a dependency rather than the specification, so it
 is not in that file: `vte` 0.15.0's `advance_partial_utf8` (`lib.rs:687`) prints

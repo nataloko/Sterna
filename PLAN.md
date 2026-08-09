@@ -1058,10 +1058,10 @@ before anything else in every session.
   golden transcript each — including the `ttpmacro` command line, so the three
   scripts that check their own answers now do it against real arguments. See
   below. `crates/tt-macro/` is the host that is a terminal rather than a
-  recorder, 2026-08-09, including the transfers and `connect`/`cygconnect` —
-  what is left is a way to reach one from outside the process, and the commands
-  listed at the bottom of `tt-macro/src/host.rs` that want subsystems this port
-  has not built.
+  recorder, 2026-08-09, including the transfers, `connect`/`cygconnect` and the
+  serial control lines — what is left is a way to reach one from outside the
+  process, and the commands listed at the bottom of `tt-macro/src/host.rs` that
+  want subsystems this port has not built.
 - **Lua via `mlua`** over the same `ScriptHost` command table (~500 LOC glue).
 - `ttctl` JSON-RPC control socket replacing DDE. Keep a `ttpmacro script.ttl`
   CLI entry point so existing shortcuts and `.bat` wrappers keep working.
@@ -2563,6 +2563,82 @@ normalised the line ending — that is `FLogPutUTF32_` and it is why upstream's
 own examples pass `#13#10`. And none of the family is an error with no log
 open: `FLogPause` and the three rotation setters all return on a NULL `LogVar`,
 so a macro cannot tell.
+
+#### And the control lines, which are a modem script's first four commands
+
+`crates/tt-session/src/serial.rs`, 2026-08-09. `setdtr`, `setrts`,
+`setbaud`/`setspeed`, `setflowctrl` and `getmodemstatus` — five commands that
+had been refused since the language landed, for a structural reason rather than
+a behavioural one: a `Session` holds a `Box<dyn Transport>`, and DTR is on
+`SerialConn`.
+
+**`Transport::as_serial` is the trait's one downcast, and it is upstream's
+guard as well as the escape hatch.** Every one of these arms in `ttdde.c` opens
+with `!cv.Open || cv.PortType != IdSerial`, and both halves of that are `None`
+here. The alternative was four more trait methods that three transports out of
+four would implement only to decline. What the guard rejects is not an error —
+the terminal answers `DDE_FNOTPROCESSED`, which a macro reads as success — so a
+login script written for a modem runs to the end over SSH, doing nothing, which
+is what it does upstream.
+
+Two divergences, both deliberate.
+
+**`setflowctrl` is applied to the port, and upstream's is not.**
+`CmdSetFlowCtrl` assigns `ts.Flow` and stops there (`ttdde.c:1002`): there is no
+`CommResetSerial` under it, and no other path applies one, so upstream's
+`setflowctrl 2` leaves the port running with whatever it was opened with until
+something *else* resets it — a `setbaud`, or the serial dialog's OK. The
+neighbouring `setbaud` remembers to call it, one case arm away, which is what
+makes this an omission rather than a design. `setflowctrl.html` says flatly that
+the command changes flow control. **Third place the port follows the manual
+instead of the code**, after `logwrite` while paused and `/NOLOG`, and the
+twenty-eighth defect on file: a script that turns handshaking on before a large
+paste and does not get it drops bytes on a real cable, and the documented idiom
+for its neighbours — `setflowctrl 3` so that `setdtr` passes its "flow control
+is none" guard — otherwise opens the guard while the driver still has
+`CRTSCTS`, leaving the pin driven by two things at once. Measured on the rig:
+the by-hand clear does move RTS under `CRTSCTS`, so that is a fight rather than
+a silent failure.
+
+**And the reset edits the live parameters rather than rebuilding them from the
+settings.** `CommResetSerial` builds the whole `DCB` out of `ts`, which is
+correct upstream because the port was opened from that same struct. Here the two
+can disagree: `Session::connect` takes any transport, and the shell's
+`--port`/`--baud` line opens one from a `SerialParams` the settings never saw.
+Rebuilding from the settings meant a `setbaud 19200` on a 115200 port also
+quietly moving the parity, the data bits and the flow control to whatever the
+file said — which is exactly how the first version failed its own test, by
+resetting the line to the schema's default 9600 and then reporting that XON/XOFF
+had not been applied. The upstream *shape* is kept: it is still one whole
+`tcsetattr`, so DTR and RTS are re-asserted on the way past and a `setdtr 0`
+before a `setbaud` does not survive it, which is `dcb.fDtrControl` doing the
+same thing.
+
+The rig is what makes this checkable, and four new cases in
+`tt-session/tests/serial_loopback.rs` use all of it: DTR is wired to the other
+port's DSR and RTS to its CTS, so the pins are asserted at the far end rather
+than at the ioctl; `setbaud` is shown by a speed *mismatch*, because a test that
+read the setting back could not tell it from a no-op; and `setflowctrl` is shown
+by the far end sending XOFF and the near end's transmitter stopping until the
+XON. `getmodemstatus` reads the far end's DTR back through the session.
+
+Three things are still refused, and the list at the bottom of
+`tt-macro/src/host.rs` says so. `setserialdelaychar` and `setserialdelayline`
+pace what is *sent*, and upstream paces it in `SendMem` — a queue between the
+macro and the wire that this port does not have, with three other callers
+waiting on it (a paste, `sendfile`, the File menu's send), so it wants building
+once for all of them. And a `setbaud` does not repaint the status line: upstream
+posts `WM_USER_CHANGETITLE` because the speed is in the title, `Session::
+describe` carries the speed here too, and nothing asks it again — there is no
+frontend running macros yet to notice, and it wants an event when there is.
+
+**One bug fixed on the way past, in this port rather than upstream's.**
+`setecho` wrote `LocalEcho` through `Session::set_setting`, which matches the
+schema's *dotted* name — so it resolved to nothing, answered `false`, and the
+command parsed, reported nothing and changed nothing. Every write through that
+seam wants `terminal.local_echo`; a `debug_assert` on the `false` now says so,
+and the test asserts against the terminal's mode, which is the only place it
+shows.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
