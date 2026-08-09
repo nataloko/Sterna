@@ -174,6 +174,17 @@ pub struct Config {
     /// `ts.DisableAppCursor` (`ttset.c:907`, key default off). Same veto for
     /// DECCKM.
     pub disable_app_cursor: bool,
+    /// `ts.LogTypePlainText` (`ttset.c:984`, key default off), and it is one
+    /// byte rather than a mode: `vtterm.c:666` and `:671` put a BS into the
+    /// tap when a backspace moved the cursor, and this suppresses it — so a
+    /// line the host corrected is logged as the correction rather than as the
+    /// keystrokes that made it.
+    ///
+    /// **It is not only the log.** The tap upstream gates here feeds the
+    /// macro language's received-line buffer as well (`NeedsOutputBufs`), so
+    /// this changes what `wait` matches against, and both taps here are gated
+    /// with it for that reason.
+    pub log_plain_text: bool,
 }
 
 /// The private and ANSI modes that are one flag each. Grouped so a reset can
@@ -254,6 +265,7 @@ impl Default for Config {
             bs_key_is_bs: true,
             disable_app_keypad: false,
             disable_app_cursor: false,
+            log_plain_text: false,
         }
     }
 }
@@ -2447,10 +2459,13 @@ impl Perform for State {
             0x08 => {
                 // `BackSpace()` taps a BS in each of its two moving arms and
                 // not in the arm that does nothing, so the test is whether the
-                // cursor moved rather than whether a BS arrived.
+                // cursor moved rather than whether a BS arrived — and both
+                // arms carry `!ts.LogTypePlainText`, which is the whole of
+                // what that setting does.
                 let before = (self.grid.cursor.x, self.grid.cursor.y);
                 self.grid.backspace();
-                if (self.grid.cursor.x, self.grid.cursor.y) != before {
+                if (self.grid.cursor.x, self.grid.cursor.y) != before && !self.config.log_plain_text
+                {
                     self.tap(0x08);
                 }
             }
@@ -3266,6 +3281,25 @@ mod tests {
         // A backspace that could not move taps nothing.
         assert_eq!(tapped_str(b"\x08a"), "a");
         assert_eq!(tapped_str(b"a\tb"), "a\tb");
+    }
+
+    /// `LogTypePlainText` is one byte, and the byte is that one — so the
+    /// setting named after the log also decides what a macro's `wait` sees.
+    #[test]
+    fn plain_text_drops_the_backspace_and_nothing_else() {
+        let mut vt = Vt::new(Config {
+            log_plain_text: true,
+            ..Config::default()
+        });
+        vt.set_macro_tap_enabled(true);
+        vt.feed(b"ab\x08c\td\r\n");
+        assert_eq!(
+            String::from_utf8(vt.take_macro_bytes()).unwrap(),
+            "abc\td\r\n",
+            "the tab and the line ending stay; only the BS goes"
+        );
+        // The cursor still moved: this is about the tap, not about the grid.
+        assert_eq!(row(&vt, 0).trim_end(), "ac      d");
     }
 
     /// A wrapped line reaches a macro as two lines, which is what makes
