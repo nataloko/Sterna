@@ -21,10 +21,12 @@
 
 use crate::log::{LogMode, LogOptions, Timestamp};
 use tt_config::{
-    CursorShape, KeyboardBackspace, LogTimestampType, Settings, TerminalCrReceive, TerminalCrSend,
-    WindowTitleChange, WindowTitleReport,
+    hex_decode, BellMode, CursorShape, KeyboardBackspace, LogTimestampType, Settings,
+    TerminalCrReceive, TerminalCrSend, WindowTitleChange, WindowTitleReport,
 };
-use tt_vt::{ColorFlags, Config, CrReceive, CrSend, ShiftFlags, TermId, TitleChange, TitleReport};
+use tt_vt::{
+    Beep, ColorFlags, Config, CrReceive, CrSend, ShiftFlags, TermId, TitleChange, TitleReport,
+};
 
 /// Build the terminal's configuration from the settings.
 ///
@@ -104,6 +106,19 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
         // and `LineFeed`, which decides whether a wrapped line reaches the log
         // and a macro as one line or as two.
         continued_line_copy: s.clipboard_continued_line_copy,
+        // The terminal's whole share of the bell family: whether BEL asks for
+        // one at all. The governor in front of it is four more settings and a
+        // clock, and it lives in [`crate::Session`] for want of the clock.
+        beep: match s.bell_mode {
+            BellMode::Off => Beep::Off,
+            BellMode::On => Beep::On,
+            BellMode::Visual => Beep::Visual,
+        },
+        // Decoded here rather than held decoded, because `$xx` is the *file's*
+        // spelling of the bytes and the round-trip has to give the user back
+        // what they wrote. 32 is the C buffer this filled (`tttypes.h:350`),
+        // and it truncates rather than refusing, as it does there.
+        answerback: hex_decode(&s.terminal_answerback, 32),
         ..*base
     }
 }

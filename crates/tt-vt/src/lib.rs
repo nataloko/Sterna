@@ -41,6 +41,28 @@ pub enum CrReceive {
     Auto,
 }
 
+/// What a BEL does. Tera Term's `ts.Beep`.
+///
+/// The default is [`Beep::On`], and it is another `else` branch: `ttset.c:1112`
+/// reads the key with an empty default and tests only `off` and `visual`, so
+/// both an absent key and a misspelt value ring the bell.
+///
+/// The terminal decides *whether* there is a bell and never makes a sound
+/// itself. [`Vt::take_bells`] is the whole of the engine's part; the governor
+/// that thins a runaway out needs a clock, and the noise and the flash both
+/// need a frontend.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Beep {
+    Off,
+    #[default]
+    On,
+    /// The screen inverts for `BeepVBellWait` milliseconds. Upstream does it by
+    /// toggling the DECSCNM flag either side of a `Sleep` on the parser's own
+    /// thread (`vtterm.c:5784`), which is why a visual bell there stops the
+    /// terminal for as long as it lasts.
+    Visual,
+}
+
 /// Tera Term's `ts.ColorFlag`, or the two bits of it that change how SGR parses.
 ///
 /// `Xterm256Color` defaults to **on** (`ttset.c:743`) and `Aixterm16Color` to
@@ -258,6 +280,17 @@ pub struct Config {
     /// which the grid maintains whatever this says because nothing reads it
     /// when the setting is off.
     pub continued_line_copy: bool,
+    /// `ts.Beep` (`ttset.c:1112`). The terminal needs it for one thing: BEL
+    /// does not even ask for a bell when this is [`Beep::Off`]
+    /// (`vtterm.c:1077`), so the governor above it never advances either.
+    pub beep: Beep,
+    /// `ts.Answerback` (`ttset.c:663`), already decoded out of its `$xx` form.
+    ///
+    /// ENQ sends these bytes verbatim — `vtterm.c:1075` uses `CommBinaryOut`,
+    /// so no CR translation, no local echo, and no length limit beyond the 32
+    /// bytes upstream's buffer holds. Empty by default, which is a terminal
+    /// that answers ENQ with nothing at all.
+    pub answerback: Vec<u8>,
 }
 
 /// The private and ANSI modes that are one flag each. Grouped so a reset can
@@ -345,6 +378,8 @@ impl Default for Config {
             disable_app_cursor: false,
             log_plain_text: false,
             continued_line_copy: false,
+            beep: Beep::On,
+            answerback: Vec::new(),
         }
     }
 }
@@ -653,6 +688,21 @@ impl Vt {
         self.state.send(bytes);
     }
 
+    /// How many bells the host has asked for since this was last called.
+    ///
+    /// A count rather than an event, and not one bell rather than a count,
+    /// because upstream's governor (`vtterm.c:5791`) is a state machine that
+    /// every request steps whether or not it makes a sound. Collapsing a burst
+    /// here would leave the terminal audible through the next one.
+    ///
+    /// The governor itself is deliberately **not** in the engine: it is four
+    /// settings and a clock, and `Vt` has no clock — which is what lets the
+    /// differential suite and the fuzzers treat it as a function of its bytes.
+    /// `tt_session` runs it, one step per count, against a single `Instant`.
+    pub fn take_bells(&mut self) -> u32 {
+        std::mem::take(&mut self.state.bells)
+    }
+
     /// The last title the *host* set, with OSC 0, 1 or 2 — `cv.TitleRemoteW`.
     /// Empty if it has never set one, or if [`TitleChange::Off`] is discarding
     /// them.
@@ -958,6 +1008,8 @@ struct State {
     dcs_buf: Vec<u8>,
     mouse: mouse::MouseState,
     modes: Modes,
+    /// Bells asked for and not yet collected. See [`Vt::take_bells`].
+    bells: u32,
 }
 
 /// What a linked macro sees of the session — `ttdde.c`'s `DDEPut1` sink, and
@@ -1048,6 +1100,7 @@ impl State {
             dcs_buf: Vec::new(),
             mouse: mouse::MouseState::default(),
             modes: Modes::from_config(&Config::default()),
+            bells: 0,
         }
     }
 
@@ -2605,7 +2658,25 @@ impl Perform for State {
 
     fn execute(&mut self, byte: u8) {
         match byte {
-            0x07 => {} // BEL — the oracle silences it (IdBeepOff)
+            // ENQ. `vtterm.c:1075` writes `ts.Answerback` with `CommBinaryOut`
+            // — the binary path, so the bytes go out exactly as the file spelt
+            // them, with no CR translation and no echo. The default is empty,
+            // which answers nothing.
+            0x05 => {
+                if !self.config.answerback.is_empty() {
+                    let answer = self.config.answerback.clone();
+                    self.send(&answer);
+                }
+            }
+            // BEL. `vtterm.c:1077` tests the setting *before* calling
+            // `RingBell`, so with the bell off nothing is asked for and the
+            // governor's clock never moves — which is not true of `ESC g`, the
+            // other way in.
+            0x07 => {
+                if self.config.beep != Beep::Off {
+                    self.bells = self.bells.saturating_add(1);
+                }
+            }
             0x08 => {
                 // `BackSpace()` taps a BS in each of its two moving arms and
                 // not in the arm that does nothing, so the test is whether the
@@ -2813,6 +2884,14 @@ impl Perform for State {
                     }
                 }
             }
+            // `ESC g` — GNU screen's visual bell, and the one place upstream
+            // asks for a bell without consulting the setting first
+            // (`vtterm.c:1561`). It passes `IdBeepVisual` to say which kind it
+            // wants and `RingBell` never reads its argument, so what actually
+            // happens is whatever `ts.Beep` says: an audible beep by default,
+            // and nothing at all when the bell is off. Reproduced, because it
+            // is what a user of Tera Term sees; written up as a defect.
+            b'g' => self.bells = self.bells.saturating_add(1),
             b'N' => self.shift(Shift::Ss2),
             b'O' => self.shift(Shift::Ss3),
             b'n' => self.shift(Shift::Ls2),
@@ -3681,5 +3760,90 @@ mod tests {
     fn the_tap_is_utf8_whatever_the_terminal_decoded() {
         assert_eq!(tapped_str("héllo".as_bytes()), "héllo");
         assert_eq!(tapped_str("日本".as_bytes()), "日本");
+    }
+
+    #[test]
+    fn enq_answers_with_nothing_by_default() {
+        // `Answerback=` is empty out of the box, so the host asking who is
+        // there gets silence rather than a terminal name.
+        let vt = run(b"\x05", 20, 2);
+        assert!(vt.reply().is_empty());
+    }
+
+    #[test]
+    fn enq_sends_the_answerback_verbatim() {
+        let mut vt = Vt::new(Config {
+            // What `Answerback=sterna$0D` decodes to.
+            answerback: b"sterna\r".to_vec(),
+            ..Config::default()
+        });
+        vt.feed(b"\x05");
+        assert_eq!(vt.reply(), b"sterna\r");
+        // It is not a one-shot: every ENQ answers.
+        vt.feed(b"\x05");
+        assert_eq!(vt.reply(), b"sterna\rsterna\r");
+        // And nothing of it reaches the screen.
+        assert_eq!(row(&vt, 0), "");
+    }
+
+    /// `CommBinaryOut`, not the text path — so a `CRSend` of CRLF does not turn
+    /// the answerback's own CR into two bytes.
+    #[test]
+    fn the_answerback_is_binary_whatever_cr_send_says() {
+        let mut vt = Vt::new(Config {
+            answerback: b"\r".to_vec(),
+            cr_send: CrSend::CrLf,
+            ..Config::default()
+        });
+        vt.feed(b"\x05");
+        assert_eq!(vt.reply(), b"\r");
+    }
+
+    #[test]
+    fn bel_asks_for_a_bell_and_prints_nothing() {
+        let mut vt = run(b"a\x07b", 20, 2);
+        assert_eq!(vt.take_bells(), 1);
+        assert_eq!(row(&vt, 0), "ab");
+        // Drained, so a second call sees none.
+        assert_eq!(vt.take_bells(), 0);
+    }
+
+    /// Every BEL is counted. The engine does not thin a burst out — that is the
+    /// governor's job, one layer up, and it needs each request to step it.
+    #[test]
+    fn a_burst_of_bels_is_a_burst_of_requests() {
+        let mut vt = run(b"\x07\x07\x07\x07\x07", 20, 2);
+        assert_eq!(vt.take_bells(), 5);
+    }
+
+    #[test]
+    fn the_bell_being_off_stops_bel_before_the_governor() {
+        // `vtterm.c:1077` tests the setting before calling `RingBell`, so with
+        // it off there is not even a request to count.
+        let mut vt = Vt::new(Config {
+            beep: Beep::Off,
+            ..Config::default()
+        });
+        vt.feed(b"\x07\x07");
+        assert_eq!(vt.take_bells(), 0);
+    }
+
+    /// `ESC g` is screen's visual bell, and it does **not** consult the
+    /// setting — `vtterm.c:1561` calls `RingBell(IdBeepVisual)` outright, and
+    /// `RingBell` then ignores the argument it was given. So with the bell off
+    /// it still steps the governor and still makes no sound, and with the bell
+    /// on it is an ordinary beep rather than a flash.
+    #[test]
+    fn esc_g_asks_for_a_bell_whatever_the_setting_says() {
+        let mut vt = run(b"\x1bg", 20, 2);
+        assert_eq!(vt.take_bells(), 1);
+        assert_eq!(row(&vt, 0), "");
+
+        let mut off = Vt::new(Config {
+            beep: Beep::Off,
+            ..Config::default()
+        });
+        off.feed(b"\x1bg");
+        assert_eq!(off.take_bells(), 1);
     }
 }
