@@ -1,0 +1,25 @@
+[package]
+name = "tt-macro"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A running TTL macro, joined to a running session"
+
+# The join, and the reason it is a crate of its own rather than a module in
+# either half. `tt-ttl` is the language and knows nothing about terminals;
+# `tt-session` is a terminal and should not make everyone who wants one compile
+# Oniguruma. Upstream draws the same line and calls it a process boundary.
+[dependencies]
+tt-conn.workspace = true
+tt-session.workspace = true
+tt-ttl.workspace = true
+
+[dev-dependencies]
+tt-grid.workspace = true
+tt-vt.workspace = true
+
+# One `poll(2)`, to assert that the wakeup descriptor goes quiet and then
+# wakes. Asserting it is *returned* would prove nothing.
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"

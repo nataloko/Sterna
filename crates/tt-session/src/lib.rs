@@ -641,6 +641,26 @@ impl Session {
         self.flush_pending()
     }
 
+    /// Put bytes on the wire exactly as given — no key table, no LNM, no
+    /// encoding.
+    ///
+    /// For a macro's `send`, and only for that. A TTL string is bytes rather
+    /// than text — `#255` is a legal escape and `send` is documented to put
+    /// what it was given on the line unchanged — so routing it through
+    /// [`send_text`](Session::send_text) would re-encode a byte the script
+    /// chose. Upstream keeps the same distinction one layer up: `SendData`
+    /// sniffs and `SendBinary` does not (`ttdde.c:368`).
+    ///
+    /// Refused during a transfer, like everything else that could put a stray
+    /// byte in the middle of a packet.
+    pub fn send_bytes(&mut self, bytes: &[u8]) -> Result<()> {
+        if self.xfer.is_some() {
+            return Ok(());
+        }
+        self.queue(bytes);
+        self.flush_pending()
+    }
+
     /// Paste, bracketed when the host asked for it (`DECSET 2004`).
     ///
     /// The brackets are the point: without them a shell runs every newline in

@@ -2217,6 +2217,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tt-macro"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "tt-conn",
+ "tt-grid",
+ "tt-session",
+ "tt-ttl",
+ "tt-vt",
+]
+
+[[package]]
 name = "tt-session"
 version = "0.0.0"
 dependencies = [
