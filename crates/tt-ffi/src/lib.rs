@@ -482,6 +482,15 @@ pub extern "C" fn tt_log_options_default(out: *mut TtLogOptions) {
 
 /// Start writing a session log to `path`, replacing any log already open.
 ///
+/// **`options` may be null, and that is the ordinary call**: it means "however
+/// the settings say", which is what a menu item and `LogAutoStart` both want
+/// and what keeps a frontend from having to know that `LogBinary` and
+/// `LogTimestampType` exist. Pass a struct only to override one.
+///
+/// `LogTimestampFormat` is a string and does not fit in a `#[repr(C)]` struct
+/// that a caller allocates, so it always comes from the settings — an override
+/// changes which clock is printed, never how.
+///
 /// Nothing is logged retroactively — the capture starts here. (Upstream can
 /// prepend the scrollback; the function it uses to do that is one of the
 /// upstream bugs on file, since it truncates every line at its first wide
@@ -497,17 +506,18 @@ pub extern "C" fn tt_session_log_start(
         Ok(p) => p,
         Err(e) => return e,
     };
-    let Some(o) = (unsafe { options.as_ref() }) else {
-        set_error("null TtLogOptions");
-        return TT_ERR_INVALID;
-    };
-    let opts = LogOptions {
-        mode: if o.raw { LogMode::Raw } else { LogMode::Text },
-        timestamp: o.timestamp,
-        append: o.append,
-        rotate_size: o.rotate_size,
-        rotate_keep: o.rotate_keep,
-        crlf: o.crlf,
+    let from_settings = tt_session::log_options(s.session.settings());
+    let opts = match unsafe { options.as_ref() } {
+        None => from_settings,
+        Some(o) => LogOptions {
+            mode: if o.raw { LogMode::Raw } else { LogMode::Text },
+            timestamp: o.timestamp,
+            append: o.append,
+            rotate_size: o.rotate_size,
+            rotate_keep: o.rotate_keep,
+            crlf: o.crlf,
+            format: from_settings.format,
+        },
     };
     match s.session.start_log(std::path::Path::new(path), opts) {
         Ok(()) => TT_OK,

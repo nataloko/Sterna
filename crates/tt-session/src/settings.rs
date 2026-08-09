@@ -109,6 +109,7 @@ pub fn log_options(s: &Settings) -> LogOptions {
         append: s.log_append,
         rotate_size: rotate_size(s),
         rotate_keep: rotate_keep(s),
+        format: s.log_timestamp_format.clone(),
         // Upstream's text log always writes CR LF (`vtterm.c:361` sets
         // `log_cr_type` to 0) and has no key for it, so this is the one field
         // here the schema does not decide. See `LogOptions::crlf` for why the

@@ -11,7 +11,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 /// What goes in the file.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -44,7 +44,8 @@ pub enum Timestamp {
     /// No prefix.
     #[default]
     None,
-    /// `%Y-%m-%d %H:%M:%S.%N` in local time — upstream's default format.
+    /// A wall clock in local time, formatted by [`LogOptions::format`] —
+    /// `%Y-%m-%d %H:%M:%S.%N` unless the settings say otherwise.
     Local,
     /// The same, in UTC.
     Utc,
@@ -84,6 +85,15 @@ pub struct LogOptions {
     /// a pager and `^M` at every line end has no upside off Windows. Set it to
     /// CR LF for a byte-identical Tera Term log.
     pub crlf: bool,
+    /// `ts.LogTimestampFormat`, for the two timestamps that are a wall clock.
+    /// The elapsed pair ignore it — they have no date in them to format.
+    ///
+    /// Expanded by [`logname::timestamp_format`](crate::logname::timestamp_format),
+    /// which is upstream's own `ttstrftime` and **not** the C library's: it
+    /// knows twelve conversions, `%N` for milliseconds among them, and hands
+    /// back anything else as literal text. This is the one field of the
+    /// options that does not cross the C ABI — see `tt_session_log_start`.
+    pub format: String,
 }
 
 impl Default for LogOptions {
@@ -95,9 +105,14 @@ impl Default for LogOptions {
             rotate_size: 0,
             rotate_keep: 0,
             crlf: false,
+            format: String::from(DEFAULT_TIMESTAMP_FORMAT),
         }
     }
 }
+
+/// `ttset.c:996`, and the `%N` on the end is upstream's own conversion rather
+/// than a strftime one.
+pub const DEFAULT_TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S.%N";
 
 /// An open session log.
 pub struct SessionLog {
@@ -322,9 +337,17 @@ impl SessionLog {
                     d.subsec_millis()
                 )
             }
-            Timestamp::Local => format!("[{}] ", civil_now(local_offset())),
-            Timestamp::Utc => format!("[{}] ", civil_now(Duration::ZERO)),
+            Timestamp::Local => self.civil_stamp(local_offset()),
+            Timestamp::Utc => self.civil_stamp(Duration::ZERO),
         }
+    }
+
+    fn civil_stamp(&self, offset: Duration) -> String {
+        let now = crate::logname::Civil::now(offset);
+        format!(
+            "[{}] ",
+            crate::logname::timestamp_format(&self.opts.format, now)
+        )
     }
 
     /// Shift the generations along and start a new file — upstream's
@@ -381,7 +404,7 @@ impl Drop for SessionLog {
 /// to ask libc, because the offset depends on the date *and* on the zone
 /// database, and nothing in std reads either.
 #[cfg(unix)]
-fn local_offset() -> Duration {
+pub(crate) fn local_offset() -> Duration {
     // `Duration` is unsigned, so a west-of-Greenwich offset is expressed by
     // wrapping: the caller adds it to a UTC timestamp modulo a day, which is
     // what a fixed-offset clock display needs and all it needs.
@@ -401,44 +424,6 @@ fn local_offset() -> Duration {
 /// UTC, which is wrong but not *silently* wrong — it is written down here and
 /// the UTC option says the same thing honestly.
 #[cfg(not(unix))]
-fn local_offset() -> Duration {
+pub(crate) fn local_offset() -> Duration {
     Duration::ZERO
-}
-
-/// `%Y-%m-%d %H:%M:%S.%N` — upstream's default `LogTimestampFormat`.
-///
-/// Hand-rolled rather than pulling in a date crate, because the whole
-/// requirement is one fixed format: an arbitrary strftime string is a
-/// `TERATERM.INI` key and belongs to the settings schema, and a dependency
-/// bought for a format nobody has asked for yet is a dependency to carry.
-fn civil_now(offset: Duration) -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
-        + offset;
-    let millis = now.subsec_millis();
-    let secs = now.as_secs();
-    let (days, rem) = (secs / 86_400, secs % 86_400);
-    let (y, m, d) = civil_from_days(days as i64);
-    format!(
-        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}.{millis:03}",
-        rem / 3600,
-        (rem / 60) % 60,
-        rem % 60
-    )
-}
-
-/// Howard Hinnant's `civil_from_days`, which is the standard way to do this
-/// without a table and is exact for every date this will ever see.
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
 }

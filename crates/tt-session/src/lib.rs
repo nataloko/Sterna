@@ -34,6 +34,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub mod log;
+pub mod logname;
 pub mod macros;
 pub mod open;
 mod serial;

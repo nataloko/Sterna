@@ -122,6 +122,35 @@ fn timestamps_go_at_the_head_of_each_line_and_only_there() {
     );
 }
 
+/// `LogTimestampFormat` reaches the file, and it is expanded by upstream's own
+/// `ttstrftime` rather than the C library's — which is visible from the outside
+/// because a conversion that one does not implement comes back as text.
+#[test]
+fn the_timestamp_format_is_the_settings_and_the_expander_is_upstreams() {
+    let dir = Scratch::new("tsformat");
+    let path = dir.path("session.log");
+    let mut s = session();
+    s.start_log(
+        &path,
+        LogOptions {
+            timestamp: Timestamp::Utc,
+            format: String::from("%Y%m%d %A"),
+            ..LogOptions::default()
+        },
+    )
+    .unwrap();
+    s.feed(b"x\r\n");
+    s.stop_log();
+
+    let text = fs::read_to_string(&path).unwrap();
+    let stamp = text.split_once("] ").expect("a stamp").0;
+    assert_eq!(stamp.len(), "[20260809 %A".len(), "{stamp:?}");
+    assert!(
+        stamp.ends_with(" %A"),
+        "`%A` is not one of ttstrftime's twelve, so it stays as text: {stamp:?}"
+    );
+}
+
 /// The other elapsed clock, which counts from the *connection*. Upstream reads
 /// `cv.ConnectedTime` at every stamp, so a reconnect restarts it — and a log
 /// opened before anything connected falls back to its own start rather than

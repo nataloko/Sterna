@@ -154,7 +154,8 @@ enum TtLogTimestamp
      */
     TT_LOG_TIMESTAMP_NONE,
     /**
-     * `%Y-%m-%d %H:%M:%S.%N` in local time — upstream's default format.
+     * A wall clock in local time, formatted by [`LogOptions::format`] —
+     * `%Y-%m-%d %H:%M:%S.%N` unless the settings say otherwise.
      */
     TT_LOG_TIMESTAMP_LOCAL,
     /**
@@ -2121,6 +2122,15 @@ void tt_log_options_default(TtLogOptions *out);
 
 /**
  * Start writing a session log to `path`, replacing any log already open.
+ *
+ * **`options` may be null, and that is the ordinary call**: it means "however
+ * the settings say", which is what a menu item and `LogAutoStart` both want
+ * and what keeps a frontend from having to know that `LogBinary` and
+ * `LogTimestampType` exist. Pass a struct only to override one.
+ *
+ * `LogTimestampFormat` is a string and does not fit in a `#[repr(C)]` struct
+ * that a caller allocates, so it always comes from the settings — an override
+ * changes which clock is printed, never how.
  *
  * Nothing is logged retroactively — the capture starts here. (Upstream can
  * prepend the scrollback; the function it uses to do that is one of the
