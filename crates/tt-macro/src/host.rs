@@ -628,7 +628,11 @@ fn open(s: &mut Session, ui: &mut dyn crate::ui::MacroUi, arg: &[u8], cygwin: bo
         Startup::Open(Target::cygterm(arg, cols, rows))
     } else {
         let mut settings = s.settings().clone();
-        let (startup, _cmd) = Startup::of_connect(arg, &mut settings, cols, rows);
+        // The parsed line is dropped: what this needs from it is already in
+        // `startup` and in `settings`, and the two things it still holds —
+        // `/F=` and `/L=` — are the frontend's, for the reasons at the bottom
+        // of the list above.
+        let (startup, _) = Startup::of_connect(arg, &mut settings, cols, rows);
         // Only when the line actually said something. Upstream writes `ts` and
         // does **not** re-apply it to the running terminal — only a `/F=` that
         // changed the settings file does that, through `IdCmdRestoreSetup` —
