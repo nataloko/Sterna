@@ -923,6 +923,16 @@ attacker reaches without already running a macro** — it is the command line, s
 a shortcut or a `.bat` file is enough. Demonstrate each against a real
 `ttpmacro.exe` in Stage 3 before filing, and file that one first.
 
+**And one in the terminal rather than in `ttpmacro`, which is the only one so
+far where the code and the *documentation* disagree.** `logwrite.html` says the
+string "can be written even while logging is paused", and `FLogWriteStr`
+(`filesys_log.cpp:833`) cannot: it puts the characters in the ring the tap
+fills and then drains it, and the drain loop discards everything it pulls while
+paused (`:647`). So the note a script writes to explain a gap in the log falls
+into the gap. **This is the one place the port follows the manual instead** —
+see `SessionLog::write_str` — because reproducing it would mean implementing
+the sentence the manual does not say. It wants filing with the rest.
+
 **And one in `vte`**, which is a dependency rather than the specification, so it
 is not in that file: `vte` 0.15.0's `advance_partial_utf8` (`lib.rs:687`) prints
 only the first character of what it decoded across a chunk boundary and then

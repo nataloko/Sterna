@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 180
+**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 182
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -2231,6 +2231,19 @@ timeout. What the host still refuses is listed at the bottom of
 is `connect`, which wants the Tera Term command-line parser the CLI entry point
 also wants.
 
+**That parser is the next substantial piece, and it is bigger than it looks.**
+`ttset.c`'s `_ParseParam` is 357 lines over two passes — the first finds `/F=`
+and stops, because the settings file has to be read before anything is applied
+on top of it — and TTXSSH adds another 389 in a plugin hook that *blanks* the
+options it consumed before Tera Term sees them, which is where `/ssh`, `/user=`
+and `/auth=` live. It also writes into about twenty settings this schema does
+not have yet, so the honest shape is a `CommandLine` that parses everything and
+an `apply` that changes what the schema can hold, rather than a parser that
+silently drops half its input. `GetParam` and `DequoteParam` are already ported
+in `tt-ttl/src/cmdline.rs` and would move to `tt-config` first — they are
+`ttlib.c`'s, and upstream puts `_ParseParam` in the same DLL as the INI reader
+for the same reason this port would.
+
 #### And then it could move a file, which needed something to wait on
 
 `crates/tt-macro/src/host.rs`'s `Plan`, plus `TransferReply` in `tt-session`,
@@ -2288,6 +2301,36 @@ second, and the `result` the script sends afterwards could not have been sent
 before. The other three are the auto-stop that never fires, the cancel, and a
 transfer that fails to start — which is `result` 0 rather than an error, and
 returns at once.
+
+#### The log a script drives, and the one place the manual won
+
+`crates/tt-session/src/log.rs`, 2026-08-09. `logpause`, `logstart`, `logwrite`
+and `logrotate` — four commands that were refused for want of a `SessionLog`
+that could pause or take a write from anywhere but the tap. `loginfo` also
+stopped answering every flag as false and reads the log's own options instead.
+
+A pause **discards** rather than buffers, which is `logpause.html` and is
+upstream in two places at once: `Log1Bin` drops the byte at the input for a
+binary log (`filesys_log.cpp:1038`) and `LogToFile`'s drain loop drops it on
+the way out for a text one (`:647`). Here there is no ring between the tap and
+the file, so both are one test.
+
+**`logwrite` while paused is a deliberate divergence, and it is the first one
+where the code and the documentation disagree rather than the code and this
+port.** `logwrite.html` says the string "can be written even while logging is
+paused". `FLogWriteStr` (`:833`) puts the characters in the same ring the tap
+fills and then calls `LogToFile`, whose drain loop is discarding — so upstream's
+note falls into the gap it was written to explain. Following the code would
+mean implementing the sentence the manual does not say, so this one follows the
+manual and says so in three places. It is the twenty-fourth upstream defect on
+file and the first outside `ttpmacro`; file it with the rest in Stage 3.
+
+Two smaller things fell out. `logwrite` writes the string character for
+character, so a `#13#10` puts a real CR in a log whose tap would have
+normalised the line ending — that is `FLogPutUTF32_` and it is why upstream's
+own examples pass `#13#10`. And none of the family is an error with no log
+open: `FLogPause` and the three rotation setters all return on a NULL `LogVar`,
+so a macro cannot tell.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
