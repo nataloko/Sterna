@@ -94,12 +94,33 @@ dialogs is useful and the rest report "Unknown command" instead of pretending.
 `NullUi` is that state made explicit, and it is what the tests here run
 against — so everything they prove is about the session half.
 
+**One method is not a dialog and does not refuse**: `connect_ssh`. A macro's
+`connect` opens serial, telnet and a local shell for itself, and SSH is the one
+target it cannot — a host key or a password is a prompt, and a prompt belongs to
+whoever owns a window. Its default answers "the connection did not come up",
+which is `result` 1 and an outcome the documentation already promises; a
+`connect` reporting "Unknown command" would be the larger lie.
+
+## What a macro's `connect` does
+
+The argument is a command line, and *which* command line depends on the
+spelling. `connect` takes Tera Term's, through both parsers — TTSSH's hook and
+then `_ParseParam`, which is the order upstream's own DDE arm gets by calling
+through a re-hooked function pointer — and ends at the same `OnCommStart` a
+startup line does. `cygconnect` takes **CygTerm's**, a different program's, and
+that maps onto a local shell on a pty: `-s` is the command, `-ls` the login
+dash, `-v` the environment, `-d`/`-cd` the directory.
+
+What the line sets it keeps: the parse writes into the session's settings, the
+way `ParseParam(commandline, &ts, NULL)` writes into `ts`, so a `/BAUD=` given
+once outlives the connection it was given for.
+
 ## What is not answered yet
 
 Listed at the bottom of `src/host.rs` with a reason each, because a macro that
-is quietly lied to is worse than one that is refused. In short: `connect` needs
-the Tera Term command-line parser that the CLI entry point also needs; the
-serial control lines are on `SerialConn` rather than on `Transport`, so a
-`Session` cannot reach them through the box it holds; `transfer` needs a
-completion the channel can wait on; the broadcasts and `wait4all` are about the
-*other* sessions and belong to whatever owns the tab bar.
+is quietly lied to is worse than one that is refused. In short: the serial
+control lines are on `SerialConn` rather than on `Transport`, so a `Session`
+cannot reach them through the box it holds; `sendfile` is the File menu's path
+rather than a protocol; `scp` wants an SSH channel `tt-conn` does not open; the
+key-map commands want `KEYBOARD.CNF`; and the broadcasts and `wait4all` are
+about the *other* sessions and belong to whatever owns the tab bar.

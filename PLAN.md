@@ -1058,10 +1058,10 @@ before anything else in every session.
   golden transcript each — including the `ttpmacro` command line, so the three
   scripts that check their own answers now do it against real arguments. See
   below. `crates/tt-macro/` is the host that is a terminal rather than a
-  recorder, 2026-08-09, including the transfers — what is left is a way to
-  reach one from outside the process, and the three commands listed at the
-  bottom of `tt-macro/src/host.rs` that want subsystems this port has not
-  built.
+  recorder, 2026-08-09, including the transfers and `connect`/`cygconnect` —
+  what is left is a way to reach one from outside the process, and the commands
+  listed at the bottom of `tt-macro/src/host.rs` that want subsystems this port
+  has not built.
 - **Lua via `mlua`** over the same `ScriptHost` command table (~500 LOC glue).
 - `ttctl` JSON-RPC control socket replacing DDE. Keep a `ttpmacro script.ttl`
   CLI entry point so existing shortcuts and `.bat` wrappers keep working.
@@ -1071,7 +1071,9 @@ before anything else in every session.
   plugin half; `tt-session`'s `open.rs` for what a line says to open, the
   command-line half of the C ABI, and `shell/src/main.cpp`, so
   `sterna /ssh /auth=publickey myhost` works as the shortcut it was converted
-  from did. What is left is the `ttctl` socket itself.
+  from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
+  two parsers plus CygTerm's for `cygconnect`. What is left is the `ttctl`
+  socket itself.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
   `crates/tt-config/` (60 settings: 39 for the terminal, 2026-08-08, plus the
   connection, serial, log and transfer ones the command line writes into,
@@ -2401,9 +2403,78 @@ with its own errors.
 its own listening socket — so argv to a live connection is checked end to end
 in CI.
 
-What is still not wired: **`connect` in a macro**, which is the same `Startup`
-and `Target` with the request posted to whoever owns the window, and then the
-`ttctl` socket that lets one be reached from outside the process.
+What is still not wired: the `ttctl` socket that lets one of these be reached
+from outside the process.
+
+#### And then a macro opened one, which is the same line through a third parser
+
+`Startup::of_connect` and `Target::cygterm` in `tt-session`, `connect` and
+`cygconnect` in `crates/tt-macro/src/host.rs`, 2026-08-09. A macro can now open
+its own connection, which is the command every login script starts with.
+
+**`connect`'s argument is a Tera Term command line and `cygconnect`'s is not.**
+The first goes through both parsers and then through the same `OnCommStart` a
+startup line ends at — upstream is literally that, `ttdde.c:608` parsing the
+string into `ts` and posting `WM_USER_COMMSTART` to the window. The second is
+**CygTerm's** command line (`ttl.cpp:73` spells the launcher `cyglaunch -o`),
+which is a tenth parser's worth of options describing a shell to spawn on a
+pty — so it maps onto `PtyParams` field for field rather than being ignored.
+`crates/tt-config/src/cmdline/cygterm.rs` is that parser, and
+`cygterm.cpp:905`'s `exec_shell` is what it is transcribed against: `-s` is the
+command, `-ls` is the leading `-` on `argv[0]`, `-v` is the environment, and
+`-d`/`-cd` are the working directory.
+
+Three things were only findable by reading past the obvious file:
+
+- **TTSSH's half runs for a `connect` too**, so `connect 'myhost /ssh'` works.
+  `ttdde.c` calls through a *function pointer*, and `LoadTTSET`
+  (`ttsetup.c:47`) re-installs `_ParseParam` and then calls `TTXGetSetupHooks`,
+  which lets the plugin hook it again. Reading `ttdde.c` alone gives a `connect`
+  that cannot open an SSH session, which is most of what the command is for.
+- **CygTerm's default is the launcher's directory, not the user's home.**
+  `home_chdir` is false with no `-cd`, and the shipped `cygterm.cfg` has no key
+  for it, so an unqualified `cygconnect` inherits where the terminal was
+  started. `PtyParams::cwd`'s `None` means *home*, so taking the default there
+  would have been a divergence in the one case nobody writes an option for.
+- **The line and the `-s` string are split by different rules**, upstream as
+  well as here: the line is split by cygwin's C runtime, where a backslash is
+  ordinary, and the shell string by `get_argv` in `cygterm.cpp` itself, where a
+  backslash escapes. Using one splitter for both is tidier and gets the
+  manual's own `-d C:\ -nocd -nols` example wrong — it becomes two options and
+  a directory called `C: -nocd`.
+
+**SSH is the one target that leaves the crate**, for the reason `Target::open`
+already had: a host key or a password is a prompt and a prompt belongs to
+whoever owns a window. `MacroUi::connect_ssh` is the seam, and its default is
+`Ok(None)` rather than the refusal every other method there makes — a `connect`
+that answered "Unknown command" would be the larger lie, where "the connection
+did not come up" is an outcome the documentation already promises. Nothing else
+about failure is reported either: `result` is 0, 1 or 2 and covers a refused
+port, a name that does not resolve, a frontend with no SSH dialogs and a line
+that named nothing.
+
+Two gaps, both deliberate and both written down where the code is.
+`Startup::Dialog` — `connect ''`, which upstream answers with the New
+Connection dialog — is treated as the other arm of that same `if`,
+`SetDdeComReady(0)`, because the dialog this wants is the whole four-transport
+one and the shell's own is serial-only. And a `/L=` on a `connect` line does not
+start a log: that is `OnCommOpen`'s (`vtwin.cpp:3631`), it is the frontend's
+there and the frontend's here, and a second implementation behind `connect`
+would be two of them.
+
+`crates/tt-macro/tests/connect.rs` is nine tests that need nothing installed:
+`cygconnect` opens a real `/bin/echo` on a real pty and the macro waits for what
+it printed, and `connect` opens a TCP listener the test binds itself.
+
+**And two more upstream defects, for twenty-seven** — both in CygTerm's
+`env_add` (`cygterm_cfg.cpp:42`), both found by reading, neither reproduced.
+`cygconnect '-v FOO'` — a variable with no `=` — reaches `strdup(NULL)`, because
+`env_add1` passes NULL for the value and nothing checks it; and replacing the
+*first* variable drops every variable after it, since the same-name arm assigns
+`pr_data->envp = e` without carrying `e->next` over, so `-v A=1 -v B=2 -v A=3`
+loses `B`. They are in a Cygwin-only program this port does not ship, which is
+why they are here rather than in `docs/upstream-bugs.md`, and they want the
+same demonstration in Stage 3 as the rest.
 
 #### And then it could move a file, which needed something to wait on
 

@@ -748,6 +748,25 @@ And for the command line, which is two parsers and one of them is a plugin:
   for serial. So `myhost /M=x` connects and `/C=1 /M=x` also connects — an
   in-range `/C=` re-enables auto-connect *after* the option loop, in either
   order — while `/M=x` alone opens the dialog, or nothing at all under `/DS`.
+- **A macro's `connect` gets TTSSH's half too, and `ttdde.c` does not show
+  it.** `(*ParseParam)(commandline, &ts, NULL)` (`:620`) is a call through a
+  *function pointer*, and the `LoadTTSET()` two lines above it re-installs
+  `_ParseParam` and then calls `TTXGetSetupHooks` (`ttsetup.c:47`) — which is
+  where the plugin hooks it again. Read the DDE arm alone and `connect 'myhost
+  /ssh'` cannot work, which is most of what the command is used for.
+- **`cygconnect`'s argument is a third program's command line.** `ttl.cpp:73`
+  spells the launcher `cyglaunch -o`, so the string is CygTerm's — ten options
+  describing a shell to spawn (`cygterm.cpp:317`), not Tera Term's. And it is
+  split by **two** rules, upstream as well as here: the line by cygwin's C
+  runtime, where a backslash is ordinary, and `-s`'s shell string by `get_argv`
+  in `cygterm.cpp` itself, where a backslash escapes. One splitter for both is
+  tidier and turns the manual's own `-d C:\ -nocd -nols` into two options and a
+  directory called `C: -nocd`.
+- **CygTerm's default directory is the launcher's, not the user's home.**
+  `home_chdir` is false with no `-cd`, the shipped `cygterm.cfg` has no key for
+  it, and `exec_shell` calls `chdir` in neither case. `PtyParams::cwd`'s `None`
+  means *home*, so passing the default straight through diverges in exactly the
+  case nobody writes an option for.
 
 And for the macro language:
 
@@ -1028,6 +1047,16 @@ that counts and `vtwin.cpp:3631` starts logging when
 `/NOLOG` win, which is the second place it follows the manual; it is the
 twenty-fifth defect on file and the second outside `ttpmacro`. Reachable from a
 shortcut, and it *creates a file* the user asked not to have.
+
+**And two in CygTerm, which is a Cygwin program this distribution does not
+ship** — so they are here and in `PLAN.md` rather than in that file, and they
+bring the count to twenty-seven. Both are in `env_add` (`cygterm_cfg.cpp:42`)
+and both are reachable from a macro: `cygconnect '-v FOO'` — a variable with no
+`=` — hands it a NULL value that goes straight into `strdup`, and replacing the
+**first** variable drops every variable after it, because the same-name arm
+assigns `pr_data->envp = e` without carrying `e->next` across. So
+`-v A=1 -v B=2 -v A=3` loses `B`. Neither is reproduced;
+`cmdline::cygterm::add_env` says so where it declines to.
 
 **And one in `vte`**, which is a dependency rather than the specification, so it
 is not in that file: `vte` 0.15.0's `advance_partial_utf8` (`lib.rs:687`) prints
