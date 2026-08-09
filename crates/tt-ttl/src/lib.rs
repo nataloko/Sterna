@@ -35,6 +35,7 @@ pub mod regexcmds;
 pub mod rsv;
 pub mod sendcmds;
 pub mod sesscmds;
+pub mod source;
 pub mod sprintf;
 pub mod strcmds;
 pub mod strftime;

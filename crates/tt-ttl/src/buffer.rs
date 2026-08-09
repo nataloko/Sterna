@@ -46,6 +46,12 @@ struct Source {
 
 impl Source {
     fn new(name: String, body: Vec<u8>) -> Self {
+        // `LoadMacroFile` decodes before it fills `Buff[]` and before it builds
+        // the line-number index, so the byte offsets a label remembers and the
+        // line numbers an error reports are both in the *decoded* text. Doing
+        // it here rather than in the caller is also what makes `include` obey
+        // the same rules as the file the user named.
+        let body = crate::source::decode(&body);
         let mut line_starts = vec![0usize];
         for (i, b) in body.iter().enumerate() {
             if *b == b'\n' && i != body.len() - 1 {
