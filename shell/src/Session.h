@@ -238,6 +238,26 @@ public:
     /// Feed bytes as though they had arrived from the far end.
     void feed(const QByteArray &bytes);
 
+    // --- macros -------------------------------------------------------------
+
+    /// The ABI handle, for the one caller that needs it directly.
+    ///
+    /// `tt_macro_service` takes the session rather than remembering it — the
+    /// same rule `tt_ssh_connect_poll` follows and for the same reason — so a
+    /// macro has to be handed the pointer this class owns. Nothing else should
+    /// want this; everything else here is a method.
+    TtSession *handle() const { return m_session; }
+    /// Detach a macro from the terminal, so it stops collecting output for a
+    /// ring nobody reads.
+    void unlinkMacro();
+    /// Pump once and turn what came out into signals — what the notifier does,
+    /// exposed for the one thing that changes the session from outside its own
+    /// descriptor. A macro's `send`, `connect` and `dispstr` happen on the
+    /// *macro's* wakeup, and without this nothing would repaint, nothing would
+    /// notice the transport had changed, and the notifier would still be
+    /// watching the descriptor of a connection that has gone.
+    void poll();
+
     // --- settings -----------------------------------------------------------
     //
     // Addressed by name, because the list of settings lives in the core's

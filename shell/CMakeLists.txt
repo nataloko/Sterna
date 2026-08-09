@@ -69,6 +69,7 @@ add_library(sterna_shell STATIC
     src/MainWindow.cpp
     src/TerminalView.cpp
     src/Session.cpp
+    src/Macro.cpp
     src/Theme.cpp
     src/SerialDialog.cpp
     src/SettingsDialog.cpp
@@ -134,6 +135,14 @@ add_executable(xfer_test tests/xfer_test.cpp)
 target_link_libraries(xfer_test PRIVATE sterna_shell)
 target_compile_options(xfer_test PRIVATE -Wall -Wextra)
 add_test(NAME xfer COMMAND xfer_test)
+
+# A TTL macro against the window's event loop rather than a pump loop, which
+# is where a re-entered modal dialog or an unserviced notifier shows up. Needs
+# nothing: the one connected case forks `/bin/sh`.
+add_executable(macro_test tests/macro_test.cpp)
+target_link_libraries(macro_test PRIVATE sterna_shell)
+target_compile_options(macro_test PRIVATE -Wall -Wextra)
+add_test(NAME macro COMMAND macro_test)
 
 # A Tera Term command line, from `argv` to a window that has connected. Needs
 # nothing either: the one case that connects does so to a listening socket it

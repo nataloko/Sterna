@@ -9,6 +9,7 @@
 
 #include "Session.h"
 
+class Macro;
 class QLabel;
 class QScrollBar;
 class TerminalView;
@@ -91,6 +92,12 @@ private slots:
     void onTransferProgressed(const TransferProgress &progress);
     void onTransferFinished(const TransferResult &result);
     void toggleLogging();
+    /// Ask for a `.ttl` and run it. Upstream's Control > Macro.
+    void runMacro();
+    /// Upstream's End button, which is on `ttpmacro.exe`'s own control window
+    /// there and has to be somewhere here.
+    void stopMacro();
+    void onMacroFinished(int exitCode);
     void chooseFont();
     void showSettingsDialog();
     /// Write the settings out — upstream's `Setup > Save setup`, and the same
@@ -111,6 +118,10 @@ private slots:
 private:
     void buildMenus();
     void updateStatus();
+    /// Start `args`' macro and complain in a box if it will not start. The one
+    /// place a macro is launched, whichever of the two asked: the menu, or a
+    /// `/M=` on the command line.
+    void startMacro(const QStringList &args);
     /// Connect what a command line resolved to. The SSH arm goes through the
     /// same state machine the SSH dialog uses, because it has the same
     /// prompts to answer.
@@ -143,6 +154,14 @@ private:
     QAction *m_logAction = nullptr;
     QAction *m_sendAction = nullptr;
     QAction *m_receiveAction = nullptr;
+    QAction *m_stopMacroAction = nullptr;
+    /// The macro runner, for this window's lifetime. One at a time — which is
+    /// upstream's rule too, since linking a second macro takes the terminal
+    /// from the first.
+    Macro *m_macro = nullptr;
+    /// Where the last macro was chosen from, so the dialog does not start at
+    /// the process's working directory every time.
+    QString m_lastMacroDir;
     QLabel *m_logStatus = nullptr;
     /// The progress dialog, while one is up. Modeless, and owned here rather
     /// than on the stack: the transfer is driven by this window's event loop,

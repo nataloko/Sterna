@@ -574,6 +574,10 @@ void Session::feed(const QByteArray &bytes)
     pumpAndDispatch(0);
 }
 
+void Session::unlinkMacro() { tt_session_unlink_macro(m_session); }
+
+void Session::poll() { pumpAndDispatch(0); }
+
 // --- settings ----------------------------------------------------------------
 
 QString Session::setting(const QString &name) const

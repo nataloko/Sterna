@@ -502,6 +502,13 @@ void TerminalView::keyPressEvent(QKeyEvent *event)
         }
     }
 
+    // `enablekeyb 0`, and here rather than at the top of the function: a
+    // locked keyboard still scrolls the history and still copies, because
+    // neither puts anything on the wire. Everything below this line does.
+    if (!m_keyboardEnabled) {
+        return;
+    }
+
     TtKey key;
     if (mapKey(event, &key)) {
         m_session->sendKey(key);
@@ -932,6 +939,17 @@ void TerminalView::clearSelection()
         m_autoScroll->stop();
         update();
     }
+}
+
+void TerminalView::setKeyboardEnabled(bool on)
+{
+    if (m_keyboardEnabled == on) {
+        return;
+    }
+    m_keyboardEnabled = on;
+    // The cursor is drawn from focus, not from this, so there is nothing to
+    // repaint — a locked keyboard looks exactly like an unlocked one, which
+    // is upstream's behaviour and is why the status bar says so instead.
 }
 
 void TerminalView::copySelection() const

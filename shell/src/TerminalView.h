@@ -58,6 +58,15 @@ public:
     /// The pixel size this many cells needs, at the current font.
     QSize sizeForCells(int cols, int rows) const;
 
+    /// `enablekeyb` — swallow keystrokes instead of sending them, so a macro's
+    /// own prompts are not typed over.
+    ///
+    /// The keyboard alone, which is upstream's `KeybEnabled`: scrolling the
+    /// history, copying and pasting still work, because none of those puts
+    /// anything on the wire.
+    void setKeyboardEnabled(bool on);
+    bool keyboardEnabled() const { return m_keyboardEnabled; }
+
     /// Copy the selection, if there is one.
     void copySelection() const;
     /// Paste the system clipboard.
@@ -118,6 +127,9 @@ private:
 
     Session *m_session;
     Theme m_theme;
+
+    /// `KeybEnabled`. A macro's `enablekeyb 0` clears it.
+    bool m_keyboardEnabled = true;
 
     /// Since the last frame was painted, for the floor in `requestRepaint`.
     QElapsedTimer m_sincePaint;

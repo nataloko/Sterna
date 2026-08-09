@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "Macro.h"
 #include "SerialDialog.h"
 #include "Session.h"
 #include "SettingsDialog.h"
@@ -106,6 +107,12 @@ MainWindow::MainWindow(const QString &settingsPath)
             &MainWindow::onTransferProgressed);
     connect(m_session, &Session::transferFinished, this,
             &MainWindow::onTransferFinished);
+
+    m_macro = new Macro(m_session, this, this);
+    connect(m_macro, &Macro::finished, this, &MainWindow::onMacroFinished);
+    connect(m_macro, &Macro::keyboardEnabled, m_view,
+            &TerminalView::setKeyboardEnabled);
+    connect(m_macro, &Macro::notice, this, &MainWindow::onNotice);
 
     buildMenus();
 
@@ -250,6 +257,16 @@ void MainWindow::buildMenus()
     terminal->addSeparator();
     m_logAction = terminal->addAction(tr("Start logging..."), this,
                                       &MainWindow::toggleLogging);
+
+    // Upstream's Control menu, which is where a macro is started and stopped.
+    // Stop is upstream's End button, which lives on `ttpmacro.exe`'s own
+    // control window — there is no second window here, so it belongs on the
+    // one there is.
+    QMenu *control = menuBar()->addMenu(tr("Control"));
+    control->addAction(tr("Run macro..."), this, &MainWindow::runMacro);
+    m_stopMacroAction = control->addAction(tr("Stop macro"), this,
+                                           &MainWindow::stopMacro);
+    m_stopMacroAction->setEnabled(false);
     // "Setup", which is Tera Term's own name for this menu, so that someone
     // arriving from it looks in the right place.
     QMenu *setup = menuBar()->addMenu(tr("Setup"));
@@ -342,18 +359,24 @@ void MainWindow::startFrom(TtCmdLine *cmd)
         break;
     }
 
-    // The two things a command line can ask for that this port has not built
-    // yet. Said out loud rather than ignored: a shortcut whose macro silently
-    // does not run is a shortcut whose user thinks the terminal is broken.
-    if (info.macro_kind != TT_MACRO_UNSET && info.macro_kind != TT_MACRO_CLEARED) {
-        const QString which = info.macro_file
-                                  ? QString::fromUtf8(info.macro_file)
-                                  : tr("(one to be chosen)");
-        note(tr("Macros"),
-             tr("This command line asks for a macro, %1, and macros cannot yet "
-                "be started from the window. The language itself is "
-                "implemented.")
-                 .arg(which));
+    // Last, and after the connection: a startup macro's first line is
+    // usually a `wait` for the prompt of the session the same command line
+    // opened. Upstream starts it from `OnCommStart` for the same reason.
+    switch (info.macro_kind) {
+    case TT_MACRO_UNSET:
+    case TT_MACRO_CLEARED:
+        // `/M=` with nothing after it cancels the settings file's
+        // `StartupMacro`, which is the whole of what `TT_MACRO_CLEARED` means.
+        break;
+    case TT_MACRO_PROMPT:
+        // `/M` on its own, or `/M=*`: upstream puts its file dialog up.
+        runMacro();
+        break;
+    default:
+        if (info.macro_file) {
+            startMacro({QString::fromUtf8(info.macro_file)});
+        }
+        break;
     }
     if (info.unknown_count > 0) {
         QStringList bad;
@@ -698,6 +721,66 @@ void MainWindow::onTransferFinished(const TransferResult &result)
                                                          .arg(result.message));
     }
     updateStatus();
+}
+
+void MainWindow::runMacro()
+{
+    if (m_macro->running()) {
+        // Upstream's rule, and not an arbitrary one: linking a second macro
+        // takes the terminal from the first, so the first would go on running
+        // against a session it can no longer reach.
+        QMessageBox::information(this, tr("Macro"),
+                                 tr("%1 is still running. Stop it first.")
+                                     .arg(m_macro->name()));
+        return;
+    }
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Run macro"), m_lastMacroDir,
+        tr("Macros (*.ttl *.TTL);;All files (*)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    m_lastMacroDir = QFileInfo(path).absolutePath();
+    startMacro({path});
+}
+
+void MainWindow::startMacro(const QStringList &args)
+{
+    QString error;
+    if (!m_macro->start(args, &error)) {
+        note(tr("Macro"), tr("Could not start the macro.\n\n%1").arg(error));
+        return;
+    }
+    // Not `updateStatus`: the macro may already have finished — a two-line
+    // script does — and `onMacroFinished` has then already run.
+    if (m_stopMacroAction) {
+        m_stopMacroAction->setEnabled(m_macro->running());
+    }
+    if (m_macro->running()) {
+        onNotice(tr("Running %1").arg(m_macro->name()));
+    }
+}
+
+void MainWindow::stopMacro()
+{
+    if (m_macro->running()) {
+        m_macro->cancel();
+        // It stops at its next line rather than here, so this is the only
+        // acknowledgement there is until it does.
+        onNotice(tr("Stopping the macro..."));
+    }
+}
+
+void MainWindow::onMacroFinished(int exitCode)
+{
+    if (m_stopMacroAction) {
+        m_stopMacroAction->setEnabled(false);
+    }
+    // The exit code is what `setexitcode` asked the *process* to exit with.
+    // Nothing here exits on a macro's word — this window outlives its scripts
+    // — so it is worth a line and nothing more.
+    onNotice(exitCode == 0 ? tr("Macro finished")
+                           : tr("Macro finished, exit code %1").arg(exitCode));
 }
 
 void MainWindow::toggleLogging()
