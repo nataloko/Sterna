@@ -21,16 +21,22 @@
 # Types:
 #   bool          `GetOnOff`, which is **not** a symmetric parse. See below.
 #   int           `GetPrivateProfileInt`
-#   int(lo..hi)   ...bounded the way `ttset.c` bounds one: **at or below `lo`
-#                 takes the default, above `hi` takes `hi`.** Not a clamp in
-#                 both directions — `TerminalSize=0,0` is 80x24, not 1x1. The
-#                 pair is also what the dialog builds a spin box from.
+#   int(lo..hi)   ...bounded the way `ttset.c` bounds one: **below `lo` takes
+#                 the default, above `hi` takes `hi`.** Not a clamp in both
+#                 directions — `TerminalSize=0,0` is 80x24, not 1x1. The pair is
+#                 also what the dialog builds a spin box from.
+#   int(lo..)     the same with no ceiling, which is how `MaxBuffSize` is read
+#                 (`ttset.c:1214`) — upstream caps that one against a
+#                 compile-time constant in `buffer.c` rather than on the way in
 #   string        the raw value
 #   enum(...)     `spelling=Variant`, compared case-insensitively (`_stricmp`,
 #                 which is what upstream uses for all but one of these);
 #                 anything that matches nothing takes the *default*, which is
 #                 how upstream spells most of its defaults and why several of
-#                 them are an `else` branch rather than a value
+#                 them are an `else` branch rather than a value. A spelling of
+#                 `*` overrides that: it names the variant an unrecognised
+#                 value takes, for the one setting whose `else` and whose
+#                 default are **not the same arm** — see `window.title_change`
 #   enum_exact()  the same, compared with `strcmp`. Only `TerminalID` is, and
 #                 the consequence is that a lower-case spelling reads as the
 #                 default instead of failing
@@ -99,6 +105,20 @@ terminal.scrollback_lines | int | Tera Term | ScrollBuffSize | 100 | DLG_TERM_SC
 # terminal however big the window is. Below 24 takes the default rather than
 # the floor, which is the `TerminalSize` bound with no ceiling on it.
 terminal.buffer_max_lines | int(24..) | Tera Term | MaxBuffSize | 10000 | -
+
+# `ttset.c:1875`. Which ISO-2022 shifts the terminal honours, as a
+# comma-separated list — `SI`, `SO` (`LS0` and `LS1` are read-only aliases for
+# those two), `LS2`, `LS3`, `LS1R`, `LS2R`, `LS3R`, `SS2`, `SS3` — each
+# optionally led by `+` or `-`, plus `on`/`all` and `off`/`none`, which assign
+# the whole word rather than one bit.
+#
+# A `string` rather than a type of its own: it is the only key in `ttset.c`
+# shaped this way, and `ShiftFlags::parse_ini` already lives beside the bits it
+# names. **The list starts from nothing whatever this default says** — the
+# `"on"` is what upstream uses when the key is *absent*, and a key that is
+# present starts at `ISO2022_SHIFT_NONE`, so `ISO2022ShiftFunction=-SS2` is a
+# terminal with every shift disabled rather than all but one.
+terminal.iso2022_shifts | string | Tera Term | ISO2022ShiftFunction | on | -
 
 # `ts.Title`, `ttset.c:713`. The window title before the host sends one.
 terminal.title | string | Tera Term | Title | Tera Term | DLG_TERM_TITLE

@@ -24,15 +24,18 @@ use tt_config::{
     CursorShape, KeyboardBackspace, LogTimestampType, Settings, TerminalCrReceive, TerminalCrSend,
     WindowTitleChange, WindowTitleReport,
 };
-use tt_vt::{ColorFlags, Config, CrReceive, CrSend, TermId, TitleChange, TitleReport};
+use tt_vt::{ColorFlags, Config, CrReceive, CrSend, ShiftFlags, TermId, TitleChange, TitleReport};
 
 /// Build the terminal's configuration from the settings.
 ///
 /// `base` supplies everything the schema has no key for — the cell size the
-/// frontend measured, `decrqcra` for the conformance harness, the ISO-2022
-/// shift flags — so that applying settings to a running terminal does not
-/// quietly reset what nobody asked about. Pass `&Config::default()` at
-/// startup and `vt.config()` afterwards.
+/// frontend measured, `decrqcra` for the conformance harness, and `japanese`,
+/// which is a Stage 4 question — so that applying settings to a running
+/// terminal does not quietly reset what nobody asked about. Pass
+/// `&Config::default()` at startup and `vt.config()` afterwards.
+///
+/// That list is the whole of it: every other field below is named, and a field
+/// that stops being named is a setting the file can no longer reach.
 pub fn vt_config(s: &Settings, base: &Config) -> Config {
     Config {
         cols: s.terminal_cols.max(1) as usize,
@@ -72,6 +75,7 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
         window_change: s.window_change_allowed,
         window_report: s.window_report_allowed,
         title: s.terminal_title.clone(),
+        iso2022_flags: ShiftFlags::parse_ini(&s.terminal_iso2022_shifts),
         title_report: match s.window_title_report {
             WindowTitleReport::Ignore => TitleReport::Ignore,
             WindowTitleReport::Accept => TitleReport::Accept,
@@ -325,6 +329,22 @@ mod tests {
         let refused =
             of(b"[Tera Term]\r\nTerminalSize=80,50\r\nScrollBuffSize=2000\r\nMaxBuffSize=1\r\n");
         assert_eq!((refused.rows, refused.scrollback_max), (50, 1950));
+    }
+
+    /// The shift list is a string in the schema and a bitmask in the terminal,
+    /// and the conversion is the one place that can be wrong.
+    #[test]
+    fn the_shift_list_reaches_the_terminal() {
+        let of = |bytes: &[u8]| vt_config(&Settings::load(&Ini::parse(bytes)), &Config::default());
+        assert_eq!(of(b"[Tera Term]\r\n").iso2022_flags, ShiftFlags::ALL);
+        assert_eq!(
+            of(b"[Tera Term]\r\nISO2022ShiftFunction=off\r\n").iso2022_flags,
+            ShiftFlags::NONE
+        );
+        assert_eq!(
+            of(b"[Tera Term]\r\nISO2022ShiftFunction=SI,SO\r\n").iso2022_flags,
+            ShiftFlags(ShiftFlags::SI | ShiftFlags::SO)
+        );
     }
 
     /// Four settings the terminal already honoured and the file could not say.

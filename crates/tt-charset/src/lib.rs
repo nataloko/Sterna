@@ -83,6 +83,81 @@ impl ShiftFlags {
             | Self::SS3,
     );
 
+    /// The nine names the INI spells, each with its bit — `ttset.c:1902`, and
+    /// the order the writer emits them in (`:3227`).
+    ///
+    /// `LS0` and `LS1` are read-only aliases for `SI` and `SO`: upstream's
+    /// reader takes either and its writer emits only the first.
+    const NAMES: [(&'static str, u16); 11] = [
+        ("SI", Self::SI),
+        ("LS0", Self::SI),
+        ("SO", Self::SO),
+        ("LS1", Self::SO),
+        ("LS2", Self::LS2),
+        ("LS3", Self::LS3),
+        ("LS1R", Self::LS1R),
+        ("LS2R", Self::LS2R),
+        ("LS3R", Self::LS3R),
+        ("SS2", Self::SS2),
+        ("SS3", Self::SS3),
+    ];
+
+    /// `ISO2022ShiftFunction`'s value — `ttset.c:1877`'s loop.
+    ///
+    /// A comma-separated list, each item optionally led by `+` or `-`, where
+    /// `on`/`all` and `off`/`none` **assign** the whole word rather than
+    /// setting one bit. Anything unrecognised is ignored, since upstream's
+    /// chain leaves `mask` at 0 and the `if (mask)` below it declines.
+    ///
+    /// **It starts from nothing, not from the default**, which is the trap
+    /// here: the `"on"` at the top of that call is the string used when the key
+    /// is *absent*, and a key that is present starts the loop at
+    /// `ISO2022_SHIFT_NONE`. So `ISO2022ShiftFunction=-SS2` is not "all but
+    /// SS2" — it is a terminal with **every shift disabled**, which is a
+    /// perfectly reasonable thing to write and the opposite of what it does.
+    pub fn parse_ini(value: &str) -> ShiftFlags {
+        let mut out = ShiftFlags::NONE;
+        for item in value.split(',') {
+            let item = item.trim();
+            let (add, name) = match item.strip_prefix('-') {
+                Some(rest) => (false, rest.trim()),
+                None => (true, item.strip_prefix('+').unwrap_or(item).trim()),
+            };
+            if name.eq_ignore_ascii_case("on") || name.eq_ignore_ascii_case("all") {
+                out = ShiftFlags::ALL;
+            } else if name.eq_ignore_ascii_case("off") || name.eq_ignore_ascii_case("none") {
+                out = ShiftFlags::NONE;
+            } else if let Some(&(_, bit)) = Self::NAMES
+                .iter()
+                .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            {
+                match add {
+                    true => out.0 |= bit,
+                    false => out.0 &= !bit,
+                }
+            }
+        }
+        out
+    }
+
+    /// The spelling upstream's writer produces — `ttset.c:3222`. Every bit set
+    /// is `on` rather than the list, and none is `off` rather than the empty
+    /// string.
+    pub fn to_ini(self) -> String {
+        if self == ShiftFlags::ALL {
+            return "on".into();
+        }
+        let names: Vec<&str> = Self::NAMES
+            .iter()
+            .filter(|(n, bit)| self.0 & bit != 0 && !matches!(*n, "LS0" | "LS1"))
+            .map(|(n, _)| *n)
+            .collect();
+        match names.is_empty() {
+            true => "off".into(),
+            false => names.join(","),
+        }
+    }
+
     pub fn allows(self, shift: Shift) -> bool {
         let bit = match shift {
             Shift::Ls0 => Self::SI,
@@ -256,6 +331,50 @@ pub fn gset_from_intermediate(b: u8) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The list, the two whole-word assignments, and the trap in the middle.
+    #[test]
+    fn the_shift_list_starts_from_nothing_whatever_the_default_is() {
+        let of = ShiftFlags::parse_ini;
+        assert_eq!(of("on"), ShiftFlags::ALL);
+        assert_eq!(of("all"), ShiftFlags::ALL);
+        assert_eq!(of("off"), ShiftFlags::NONE);
+        assert_eq!(of(""), ShiftFlags::NONE);
+
+        assert_eq!(of("SI,SO").0, ShiftFlags::SI | ShiftFlags::SO);
+        assert_eq!(of("LS0, LS1").0, ShiftFlags::SI | ShiftFlags::SO, "aliases");
+        assert_eq!(of("si,+so,-si").0, ShiftFlags::SO, "case, and the prefixes");
+        assert_eq!(of("SI,nonsense,SO").0, ShiftFlags::SI | ShiftFlags::SO);
+
+        // The whole-word arms assign rather than merge, wherever they appear.
+        assert_eq!(
+            of("on,-SS2"),
+            ShiftFlags(ShiftFlags::ALL.0 & !ShiftFlags::SS2)
+        );
+        assert_eq!(of("SI,SO,off"), ShiftFlags::NONE);
+
+        // ...and this is the one somebody would write meaning the line above
+        // it. The loop starts at NONE, so removing a bit removes it from
+        // nothing: every shift is off, not all but SS2.
+        assert_eq!(of("-SS2"), ShiftFlags::NONE);
+    }
+
+    #[test]
+    fn the_writers_spelling_round_trips() {
+        for value in [
+            "on",
+            "off",
+            "SI,SO",
+            "LS2,SS3",
+            "SI,SO,LS2,LS3,LS1R,LS2R,LS3R,SS2",
+        ] {
+            let f = ShiftFlags::parse_ini(value);
+            assert_eq!(f.to_ini(), value, "{value}");
+            assert_eq!(ShiftFlags::parse_ini(&f.to_ini()), f);
+        }
+        // The aliases are read and not written, which is upstream's writer.
+        assert_eq!(ShiftFlags::parse_ini("LS0,LS1").to_ini(), "SI,SO");
+    }
 
     #[test]
     fn g1_defaults_to_special_so_a_bare_so_draws_lines() {

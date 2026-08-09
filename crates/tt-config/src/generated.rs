@@ -885,6 +885,19 @@ pub struct Settings {
     /// terminal however big the window is. Below 24 takes the default rather than
     /// the floor, which is the `TerminalSize` bound with no ceiling on it.
     pub terminal_buffer_max_lines: i32,
+    /// `ttset.c:1875`. Which ISO-2022 shifts the terminal honours, as a
+    /// comma-separated list — `SI`, `SO` (`LS0` and `LS1` are read-only aliases for
+    /// those two), `LS2`, `LS3`, `LS1R`, `LS2R`, `LS3R`, `SS2`, `SS3` — each
+    /// optionally led by `+` or `-`, plus `on`/`all` and `off`/`none`, which assign
+    /// the whole word rather than one bit.
+    ///
+    /// A `string` rather than a type of its own: it is the only key in `ttset.c`
+    /// shaped this way, and `ShiftFlags::parse_ini` already lives beside the bits it
+    /// names. **The list starts from nothing whatever this default says** — the
+    /// `"on"` is what upstream uses when the key is *absent*, and a key that is
+    /// present starts at `ISO2022_SHIFT_NONE`, so `ISO2022ShiftFunction=-SS2` is a
+    /// terminal with every shift disabled rather than all but one.
+    pub terminal_iso2022_shifts: String,
     /// `ts.Title`, `ttset.c:713`. The window title before the host sends one.
     pub terminal_title: String,
     /// **`ttset.c:877` reads this with an empty fallback and only the literal `DEL`
@@ -1301,6 +1314,7 @@ impl Default for Settings {
             terminal_scrollback_enabled: true,
             terminal_scrollback_lines: 100,
             terminal_buffer_max_lines: 10000,
+            terminal_iso2022_shifts: String::from("on"),
             terminal_title: String::from("Tera Term"),
             keyboard_backspace: KeyboardBackspace::default(),
             keyboard_meta: KeyboardMeta::default(),
@@ -1468,6 +1482,13 @@ impl Settings {
                 24,
                 2147483647,
             ),
+            terminal_iso2022_shifts: ini
+                .get_or(
+                    "Tera Term",
+                    "ISO2022ShiftFunction",
+                    &d.terminal_iso2022_shifts,
+                )
+                .to_string(),
             terminal_title: ini
                 .get_or("Tera Term", "Title", &d.terminal_title)
                 .to_string(),
@@ -1946,6 +1967,11 @@ impl Settings {
             "Tera Term",
             "MaxBuffSize",
             &self.terminal_buffer_max_lines.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "ISO2022ShiftFunction",
+            &self.terminal_iso2022_shifts.clone(),
         );
         ini.set("Tera Term", "Title", &self.terminal_title.clone());
         ini.set(
@@ -2729,6 +2755,7 @@ impl Settings {
             .to_string(),
             "terminal.scrollback_lines" => self.terminal_scrollback_lines.to_string(),
             "terminal.buffer_max_lines" => self.terminal_buffer_max_lines.to_string(),
+            "terminal.iso2022_shifts" => self.terminal_iso2022_shifts.clone(),
             "terminal.title" => self.terminal_title.clone(),
             "keyboard.backspace" => self.keyboard_backspace.as_ini().to_string(),
             "keyboard.meta" => self.keyboard_meta.as_ini().to_string(),
@@ -3046,6 +3073,7 @@ impl Settings {
                     2147483647,
                 )
             }
+            "terminal.iso2022_shifts" => self.terminal_iso2022_shifts = value.to_string(),
             "terminal.title" => self.terminal_title = value.to_string(),
             "keyboard.backspace" => self.keyboard_backspace = KeyboardBackspace::from_ini(value),
             "keyboard.meta" => self.keyboard_meta = KeyboardMeta::from_ini(value),
@@ -3476,6 +3504,16 @@ pub const FIELDS: &[Field] = &[
         default: "10000",
         label: None,
         doc: "`ttset.c:1212`, and upstream's comment on it is \"special option\" — there is no dialog. It is the ceiling `ScrollBuffSize` is held under, not a second depth: `buffer.c:511` caps the buffer's line count with it and `:4977` caps the *terminal's row count* with it too, so `MaxBuffSize=10` is a ten-row terminal however big the window is. Below 24 takes the default rather than the floor, which is the `TerminalSize` bound with no ceiling on it.",
+    },
+    Field {
+        name: "terminal.iso2022_shifts",
+        page: "terminal",
+        section: "Tera Term",
+        key: "ISO2022ShiftFunction",
+        kind: Kind::Str,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1875`. Which ISO-2022 shifts the terminal honours, as a comma-separated list — `SI`, `SO` (`LS0` and `LS1` are read-only aliases for those two), `LS2`, `LS3`, `LS1R`, `LS2R`, `LS3R`, `SS2`, `SS3` — each optionally led by `+` or `-`, plus `on`/`all` and `off`/`none`, which assign the whole word rather than one bit.  A `string` rather than a type of its own: it is the only key in `ttset.c` shaped this way, and `ShiftFlags::parse_ini` already lives beside the bits it names. **The list starts from nothing whatever this default says** — the `\"on\"` is what upstream uses when the key is *absent*, and a key that is present starts at `ISO2022_SHIFT_NONE`, so `ISO2022ShiftFunction=-SS2` is a terminal with every shift disabled rather than all but one.",
     },
     Field {
         name: "terminal.title",

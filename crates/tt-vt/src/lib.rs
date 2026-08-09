@@ -9,7 +9,7 @@
 //! Comments citing `vtterm.c` line numbers refer to the pinned upstream SHA in
 //! `.github/workflows/ci.yml`.
 
-use tt_charset::{gset_from_intermediate, sbcs_final, Iso2022, Iso2022State, Shift, ShiftFlags};
+use tt_charset::{gset_from_intermediate, sbcs_final, Iso2022, Iso2022State, Shift};
 use tt_grid::{
     Grid, Pen, Rect, ATTR2_BACK, ATTR2_COLOR_MASK, ATTR2_FORE, ATTR2_PROTECT, ATTR_BLINK,
     ATTR_BOLD, ATTR_REVERSE, ATTR_SGR_MASK, ATTR_SPECIAL, ATTR_UNDER, DEFAULT_BG, DEFAULT_FG,
@@ -23,6 +23,9 @@ pub mod term_id;
 pub use keys::{CrSend, Key, KeyModes};
 pub use mouse::{Encoding, Modifiers, MouseEvent, Tracking};
 pub use term_id::TermId;
+/// Re-exported because [`Config`] has a field of this type, so a caller that
+/// builds one needs to be able to name it without depending on `tt-charset`.
+pub use tt_charset::ShiftFlags;
 
 /// What an incoming CR and LF mean. Tera Term's `ts.CRReceive`.
 ///
