@@ -341,7 +341,9 @@ And for the AppImage, where two of the three failures are silent:
 - **The desktop has Qt 6.11.1 installed, so an AppImage that quietly used the
   host's Qt would pass every obvious test.** Check
   `/proc/<pid>/maps` for where `libQt6Core.so.6` actually came from; it must be
-  the `/tmp/.mount_termit*` path.
+  the `/tmp/.mount_sterna*` path. That prefix is the AppImage's own filename,
+  so it followed the rename — grepping for the old one finds nothing and reads
+  exactly like the failure this check exists to catch.
 - **A named constant can be a flag word too, and `IdTitleReportEmpty` is.** It
   is **24**, which is `WF_TITLEREPORT` entire (8|16) — so
   `TitleReportSequence`'s "Empty" default sets *both* bits and lands on the

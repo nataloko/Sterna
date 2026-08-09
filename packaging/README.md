@@ -125,7 +125,7 @@ WAYLAND_DEBUG=1 timeout 8 ./sterna-x86_64.AppImage --shell -- /bin/echo hi 2>&1 
 # 3. it is OUR Qt that loaded, not the host's
 ./sterna-x86_64.AppImage --shell -- /bin/sleep 30 & sleep 3
 grep -o '/[^ ]*libQt6Core[^ ]*' /proc/$(pgrep -n -f usr/bin/sterna)/maps | sort -u
-#   → /tmp/.mount_termit*/usr/lib/libQt6Core.so.6, not /usr/lib64/...
+#   → /tmp/.mount_sterna*/usr/lib/libQt6Core.so.6, not /usr/lib64/...
 ```
 
 Check 3 matters because the desktop this is developed on *has* Qt 6.11.1
