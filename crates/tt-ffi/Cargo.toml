@@ -17,7 +17,9 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 tt-config.workspace = true
 tt-conn.workspace = true
 tt-grid.workspace = true
+tt-macro.workspace = true
 tt-session.workspace = true
+tt-ttl.workspace = true
 tt-vt.workspace = true
 tt-xfer.workspace = true
 

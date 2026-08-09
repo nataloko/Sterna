@@ -900,6 +900,13 @@ static void test_null_safety(void)
     CHECK(!tt_cmdline_info(NULL, NULL));
     CHECK(tt_cmdline_unknown(NULL, 0) == NULL);
     tt_cmdline_free(NULL);
+    CHECK(tt_macro_start(NULL, NULL, NULL) == NULL);
+    CHECK(tt_macro_poll_fd(NULL) == -1);
+    CHECK(tt_macro_service(NULL, NULL) == 0);
+    CHECK(!tt_macro_running(NULL));
+    CHECK(tt_macro_exit_code(NULL) == 0);
+    tt_macro_cancel(NULL);
+    tt_macro_free(NULL);
     CHECK(!tt_settings_field(0, NULL));
     CHECK(tt_last_error() != NULL);
 
@@ -919,6 +926,13 @@ static void test_null_safety(void)
     CHECK(tt_session_set_setting(s, NULL, "1") == TT_ERR_INVALID);
     CHECK(tt_session_settings_load(s, NULL) == TT_ERR_INVALID);
     CHECK(tt_session_close_note(s) == NULL);
+    /* A null argv is a caller bug; a `/M` that named nothing is the command
+     * line's to report, and both refuse here rather than opening a file. */
+    CHECK(tt_macro_start(s, NULL, NULL) == NULL);
+    const char *no_name[] = {"/V", NULL};
+    CHECK(tt_macro_start(s, no_name, NULL) == NULL);
+    const char *missing[] = {"/tmp/tt-abi-no-such-macro.ttl", NULL};
+    CHECK(tt_macro_start(s, missing, NULL) == NULL);
     tt_session_free(s);
 }
 
@@ -1363,6 +1377,253 @@ static void test_transfer(void)
     CHECK(system(cmd) == 0);
 }
 
+static char macro_dir[64];
+
+/* Write a macro out and hand back its path.
+ *
+ * A directory with a named file in it rather than `mkstemp`, because the name
+ * matters: upstream fits `.TTL` onto a filename that has no extension at all
+ * (`FitTTLFileName`), so a `tt-abi-macro-XXXXXX` template names a macro that
+ * is not the file just written — which is right, and was the first thing this
+ * test found.
+ */
+static const char *write_macro(const char *body)
+{
+    static char path[128];
+    snprintf(macro_dir, sizeof macro_dir, "/tmp/tt-abi-macro-XXXXXX");
+    if (mkdtemp(macro_dir) == NULL)
+        return NULL;
+    snprintf(path, sizeof path, "%s/m.ttl", macro_dir);
+    FILE *f = fopen(path, "w");
+    if (!f)
+        return NULL;
+    fputs(body, f);
+    fclose(f);
+    return path;
+}
+
+static void remove_macro(void)
+{
+    char cmd[128];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", macro_dir);
+    CHECK(system(cmd) == 0);
+}
+
+/* What the macro below asked of its frontend, so the test can check that each
+ * callback fired with what the script wrote. */
+struct ui_log {
+    int messages;
+    char last_text[128];
+    char last_title[128];
+    int inputs;
+    int list_choice;
+    int exit_code;
+    int errors;
+};
+
+static TtDialogEnd on_message(void *user, const char *text, const char *title)
+{
+    struct ui_log *log = user;
+    log->messages++;
+    snprintf(log->last_text, sizeof log->last_text, "%s", text);
+    snprintf(log->last_title, sizeof log->last_title, "%s", title);
+    return TT_DIALOG_OK;
+}
+
+static TtDialogEnd on_input(void *user, const char *text, const char *title,
+                            const char *initial, bool password,
+                            const char **out_text)
+{
+    struct ui_log *log = user;
+    (void)text;
+    (void)title;
+    (void)initial;
+    log->inputs++;
+    /* Static rather than stack: the contract is only that it survives the
+     * callback, but a frontend will use a QByteArray member and this is the
+     * C equivalent. */
+    static char answer[32];
+    snprintf(answer, sizeof answer, password ? "hunter2" : "typed");
+    *out_text = answer;
+    return TT_DIALOG_OK;
+}
+
+static TtDialogEnd on_list(void *user, const char *text, const char *title,
+                           const char *const *items, size_t count,
+                           size_t selected, const TtListBoxOpts *opts,
+                           size_t *out_index)
+{
+    struct ui_log *log = user;
+    (void)text;
+    (void)title;
+    (void)selected;
+    /* The macro asked for three items and a size; both should have arrived. */
+    if (count == 3 && strcmp(items[2], "third") == 0 && opts->width == 40)
+        log->list_choice = 1;
+    *out_index = 2;
+    return TT_DIALOG_OK;
+}
+
+static void on_exit_code(void *user, int32_t code)
+{
+    struct ui_log *log = user;
+    log->exit_code = code;
+}
+
+static bool on_error(void *user, const TtMacroError *err)
+{
+    struct ui_log *log = user;
+    log->errors++;
+    fprintf(stderr, "  macro error: %s:%zu: %s\n", err->file, err->line_no,
+            err->message);
+    return true;
+}
+
+/* A macro against a real session, driven the way the shell's event loop will
+ * drive it: wait on both descriptors, service the macro, pump the line. */
+static void test_macro(void)
+{
+    const char *path = write_macro(
+        "msg = 'hello '\n"
+        "strconcat msg param2\n"
+        "messagebox msg 'title'\n"
+        "inputbox 'who' 'ask'\n"
+        "strdim items 3\n"
+        "items[0] = 'first'\n"
+        "items[1] = 'second'\n"
+        "items[2] = 'third'\n"
+        /* The keyword is quoted because every TTL argument is an expression:
+         * bare, `listboxsize` is a variable nobody defined. */
+        "listbox 'pick' 'choose' items 'listboxsize=40x10'\n"
+        "dispstr 'chose ' items[result] ' as ' inputstr\n"
+        "setexitcode 7\n");
+    CHECK(path != NULL);
+    if (!path)
+        return;
+
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+
+    struct ui_log log = {0};
+    TtMacroUi ui = {0};
+    ui.user = &log;
+    ui.message_box = on_message;
+    ui.input_box = on_input;
+    ui.list_box = on_list;
+    ui.set_exit_code = on_exit_code;
+    ui.error = on_error;
+
+    /* The second argument is a parameter, which the script reads as `param2`
+     * — the whole point of taking a command line rather than a path. */
+    const char *argv[] = {path, "world", NULL};
+    TtMacro *m = tt_macro_start(s, argv, &ui);
+    CHECK(m != NULL);
+    if (!m) {
+        fprintf(stderr, "  %s\n", tt_last_error());
+        tt_session_free(s);
+        return;
+    }
+
+    int mfd = tt_macro_poll_fd(m);
+    CHECK(mfd >= 0);
+    long deadline = now_ms() + 10000;
+    for (;;) {
+        tt_macro_service(m, s);
+        size_t n = 0;
+        tt_session_pump(s, 0, &n);
+        if (!tt_macro_running(m)) {
+            /* Once more, for whatever the last line left behind. */
+            tt_macro_service(m, s);
+            break;
+        }
+        if (now_ms() > deadline) {
+            CHECK(0);
+            break;
+        }
+        wait_readable(mfd, 10);
+    }
+
+    CHECK(log.errors == 0);
+    CHECK(log.messages == 1);
+    CHECK(strcmp(log.last_text, "hello world") == 0);
+    CHECK(strcmp(log.last_title, "title") == 0);
+    CHECK(log.inputs == 1);
+    CHECK(log.list_choice == 1);
+    CHECK(log.exit_code == 7);
+    CHECK(tt_macro_exit_code(m) == 7);
+    /* Both answers came back the other way: `listbox` puts the chosen index in
+     * `result` and `inputbox` puts its text in `inputstr`, so the line the
+     * macro printed locally is what the two callbacks returned. */
+    expect_row(s, 0, "chose third as typed");
+
+    tt_macro_free(m);
+    tt_session_free(s);
+    remove_macro();
+}
+
+/* A macro with no dialogs at all: every callback null, which the header says
+ * is "Unknown command" rather than a crash or a silent success. */
+static void test_macro_without_a_frontend(void)
+{
+    /* The error dialog is refused too, and a null `error` stops the macro —
+     * so the `dispstr` below never runs. */
+    const char *path = write_macro("messagebox 'x' 'y'\ndispstr 'ran on'\n");
+    CHECK(path != NULL);
+    if (!path)
+        return;
+
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+
+    const char *argv[] = {path, NULL};
+    TtMacro *m = tt_macro_start(s, argv, NULL);
+    CHECK(m != NULL);
+    if (m) {
+        long deadline = now_ms() + 10000;
+        while (tt_macro_running(m) && now_ms() < deadline) {
+            tt_macro_service(m, s);
+            wait_readable(tt_macro_poll_fd(m), 10);
+        }
+        tt_macro_service(m, s);
+        CHECK(!tt_macro_running(m));
+        CHECK(tt_macro_exit_code(m) == 0);
+        tt_macro_free(m);
+    }
+    /* Nothing was printed: the macro stopped at the refused `messagebox`. */
+    CHECK(base(&tt_session_row(s, 0, NULL)[0]) == ' ');
+
+    tt_session_free(s);
+    remove_macro();
+}
+
+/* Freeing a macro that is still running is the window closing on a script,
+ * and it has to end rather than deadlock against the join. */
+static void test_macro_cancelled(void)
+{
+    const char *path = write_macro(":top\npause 3600\ngoto top\n");
+    CHECK(path != NULL);
+    if (!path)
+        return;
+
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+    const char *argv[] = {path, NULL};
+    TtMacro *m = tt_macro_start(s, argv, NULL);
+    CHECK(m != NULL);
+    if (m) {
+        CHECK(tt_macro_running(m));
+        long start = now_ms();
+        tt_macro_free(m); /* cancels, drops the channel, joins */
+        /* `pause` is broken into polls precisely so this is milliseconds. */
+        CHECK(now_ms() - start < 2000);
+    }
+    tt_session_free(s);
+    remove_macro();
+}
+
 int main(void)
 {
     printf("Sterna core %s\n", tt_version());
@@ -1380,6 +1641,9 @@ int main(void)
     test_telnet();
     test_pty();
     test_transfer();
+    test_macro();
+    test_macro_without_a_frontend();
+    test_macro_cancelled();
     test_null_safety();
 
     if (failures) {

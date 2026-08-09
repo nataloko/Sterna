@@ -66,6 +66,7 @@
 
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
+use std::path::PathBuf;
 use std::ptr;
 use std::slice;
 use std::sync::OnceLock;
@@ -84,8 +85,14 @@ use tt_conn::ssh::{
 use tt_conn::telnet::{TelnetConn, TelnetMode, TelnetParams};
 use tt_conn::Error;
 use tt_grid::Cell;
+use tt_macro::{MacroError, MacroReceiver, MacroUi, NullUi, SessionHost};
 use tt_session::open::{Startup, Target};
 use tt_session::{Event, Ini, LogMode, LogOptions, Session, Settings, Timestamp};
+use tt_ttl::host::{
+    BeepSound, DialogAnchor, DialogEnd, DialogOrigin, DialogPos, ListBoxOpts, MacroWindow,
+    ShowWindow, WindowGeometry, WindowState,
+};
+use tt_ttl::{CmdLine, Interp, TtlError};
 use tt_vt::{Config, Key, Modifiers, MouseEvent, TermId, Tracking};
 
 // --- status ---------------------------------------------------------------
@@ -3303,6 +3310,846 @@ pub extern "C" fn tt_cmdline_startup(
         }
     }
     write(&answer)
+}
+
+// --- macros ---------------------------------------------------------------
+
+/// How a dialog ended.
+///
+/// Three answers rather than a bool because upstream distinguishes the close
+/// box from Cancel, and a macro can test for it.
+pub type TtDialogEnd = i32;
+/// OK, or Yes.
+pub const TT_DIALOG_OK: TtDialogEnd = 0;
+/// Cancel, or No.
+pub const TT_DIALOG_CANCEL: TtDialogEnd = 1;
+/// The window's close box.
+pub const TT_DIALOG_CLOSED: TtDialogEnd = 2;
+
+/// `beep`'s argument.
+pub type TtBeepSound = u32;
+pub const TT_BEEP_SIMPLE: TtBeepSound = 0;
+pub const TT_BEEP_ASTERISK: TtBeepSound = 1;
+pub const TT_BEEP_EXCLAMATION: TtBeepSound = 2;
+pub const TT_BEEP_CRITICAL_STOP: TtBeepSound = 3;
+pub const TT_BEEP_QUESTION: TtBeepSound = 4;
+/// What a bare `beep` plays.
+pub const TT_BEEP_DEFAULT: TtBeepSound = 5;
+
+/// `showtt`'s ten arms. The four TEK ones exist because the command has them;
+/// a port with no TEK window refuses them, which is honest.
+pub type TtShowWindow = u32;
+pub const TT_SHOW_VT_HIDE: TtShowWindow = 0;
+pub const TT_SHOW_VT_MINIMIZE: TtShowWindow = 1;
+pub const TT_SHOW_VT_RESTORE: TtShowWindow = 2;
+pub const TT_SHOW_TEK_HIDE: TtShowWindow = 3;
+pub const TT_SHOW_TEK_MINIMIZE: TtShowWindow = 4;
+pub const TT_SHOW_TEK_OPEN: TtShowWindow = 5;
+pub const TT_SHOW_TEK_CLOSE: TtShowWindow = 6;
+pub const TT_SHOW_LOG_HIDE: TtShowWindow = 7;
+pub const TT_SHOW_LOG_MINIMIZE: TtShowWindow = 8;
+pub const TT_SHOW_LOG_RESTORE: TtShowWindow = 9;
+
+/// `show` — the macro's own control window, which this port does not draw.
+pub type TtMacroWindow = u32;
+pub const TT_MACRO_WINDOW_HIDE: TtMacroWindow = 0;
+pub const TT_MACRO_WINDOW_MINIMIZE: TtMacroWindow = 1;
+/// Anything positive, which also raises it.
+pub const TT_MACRO_WINDOW_RESTORE: TtMacroWindow = 2;
+
+/// `getttpos`'s first output. Upstream tests iconic, then zoomed, then
+/// visible, so a minimised window reports [`TT_WINDOW_MINIMIZED`] whether or
+/// not it is also maximised.
+pub type TtWindowState = u32;
+pub const TT_WINDOW_NORMAL: TtWindowState = 0;
+pub const TT_WINDOW_MINIMIZED: TtWindowState = 1;
+pub const TT_WINDOW_MAXIMIZED: TtWindowState = 2;
+pub const TT_WINDOW_HIDDEN: TtWindowState = 3;
+
+/// What a macro's `DispErr` dialog says.
+///
+/// Every string is borrowed and dies when the callback returns.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtMacroError {
+    /// `ttmparse.h`'s number for it — 11 is a syntax error.
+    pub code: u32,
+    /// The sentence upstream puts in the dialog, verbatim, spelling included.
+    pub message: *const c_char,
+    /// The macro the error is in. Not always the one that was launched:
+    /// `include` opens another.
+    pub file: *const c_char,
+    /// The source line, whole.
+    pub line: *const c_char,
+    /// Counting from 1.
+    pub line_no: usize,
+    /// Byte offsets into `line` bounding what the interpreter was reading when
+    /// it gave up. `start == end` is possible and means "at that point".
+    pub start: usize,
+    pub end: usize,
+}
+
+/// `listbox`'s keyword parameters (`ttl_gui.cpp:476`).
+///
+/// All of them are hints about the window rather than about the choice, so a
+/// frontend that ignores the lot still implements `listbox` correctly.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtListBoxOpts {
+    /// `dblclick=on` — a double click chooses the item under it.
+    pub double_click: bool,
+    /// `minmaxbutton=on`.
+    pub min_max_button: bool,
+    /// `minimize=on`. Exclusive with `maximized`: each keyword clears the
+    /// other, so the last one written wins.
+    pub minimized: bool,
+    /// `maximize=on`.
+    pub maximized: bool,
+    /// `listboxsize=WxH`, in characters. **Both zero when the macro did not
+    /// ask**, which is the only way this struct spells "absent".
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Where `setdlgpos` wants the dialogs, in pixels.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtDialogPos {
+    /// The top-left corner, from the primary display's origin.
+    pub x: i32,
+    pub y: i32,
+    /// The `<position>` argument as the macro wrote it: 1-5 anchors against
+    /// the display and 6-10 against the terminal window, each in the order
+    /// top-left, top-right, bottom-left, bottom-right, centre. **Zero is the
+    /// two-argument form**, where the coordinates alone decide.
+    pub position: i32,
+    /// Added to the anchored position, and zero unless a `position` was given.
+    pub offset_x: i32,
+    pub offset_y: i32,
+}
+
+/// What `getttpos` reports (`ttdde.c:1136`) — the frame, then the text area
+/// inside it, both in screen pixels.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtWindowGeometry {
+    pub state: TtWindowState,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub client_x: i32,
+    pub client_y: i32,
+    pub client_width: i32,
+    pub client_height: i32,
+}
+
+/// The window a running macro asks things of.
+///
+/// **This is the one place the ABI calls back into C**, and the reason is the
+/// mirror image of why SSH does not: `tt_ssh_connect_poll` refuses a callback
+/// because it would fire on a worker thread, which is exactly where a Qt
+/// frontend cannot raise a dialog. These fire from inside
+/// [`tt_macro_service`], on the thread that called it, which is the frontend's
+/// own — so a modal dialog spinning a nested event loop is an ordinary modal
+/// dialog. The macro is blocked on another thread while it is up, which is the
+/// whole point of putting it there.
+///
+/// **Zero-initialise it and fill in what you have.** A null function pointer
+/// is not a crash and not a silent success: the command reports "Unknown
+/// command" to the macro, exactly as though this port had never implemented
+/// it. A frontend with three dialogs is useful.
+///
+/// Every `const char *` handed to a callback is borrowed and dies when it
+/// returns; every one handed *back* is copied before the callback returns, so
+/// a `static` buffer or a `QByteArray` that lives to the end of the function
+/// is enough. All of them are UTF-8.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct TtMacroUi {
+    /// Passed back to every callback below and never touched here.
+    pub user: *mut std::ffi::c_void,
+
+    /// `DispErr` — the error dialog. **Returning true stops the macro**;
+    /// upstream's two buttons are Stop and Continue, and Continue is the one
+    /// that is not the default. A null pointer stops it, because a script that
+    /// has hit a syntax error and cannot say so is better stopped than left
+    /// running.
+    pub error: Option<extern "C" fn(user: *mut std::ffi::c_void, err: *const TtMacroError) -> bool>,
+
+    /// `messagebox` — one OK button.
+    pub message_box: Option<
+        extern "C" fn(
+            user: *mut std::ffi::c_void,
+            text: *const c_char,
+            title: *const c_char,
+        ) -> TtDialogEnd,
+    >,
+    /// `yesnobox`.
+    pub yes_no_box: Option<
+        extern "C" fn(
+            user: *mut std::ffi::c_void,
+            text: *const c_char,
+            title: *const c_char,
+        ) -> TtDialogEnd,
+    >,
+    /// `statusbox` — a *modeless* box the macro updates as it goes. Called
+    /// again with one already up, it replaces the text rather than opening a
+    /// second. Return [`TT_OK`] or a negative status.
+    pub status_box: Option<
+        extern "C" fn(
+            user: *mut std::ffi::c_void,
+            text: *const c_char,
+            title: *const c_char,
+        ) -> TtStatus,
+    >,
+    /// `closesbox`. Closing one that is not open is not an error.
+    pub close_status_box: Option<extern "C" fn(user: *mut std::ffi::c_void) -> TtStatus>,
+    /// `bringupbox` — raise it.
+    pub bringup_status_box: Option<extern "C" fn(user: *mut std::ffi::c_void) -> TtStatus>,
+
+    /// `listbox`. `items` is `count` strings; `selected` is the one to start
+    /// on. Write the chosen index through `out_index` when returning
+    /// [`TT_DIALOG_OK`].
+    pub list_box: Option<
+        extern "C" fn(
+            user: *mut std::ffi::c_void,
+            text: *const c_char,
+            title: *const c_char,
+            items: *const *const c_char,
+            count: usize,
+            selected: usize,
+            opts: *const TtListBoxOpts,
+            out_index: *mut usize,
+        ) -> TtDialogEnd,
+    >,
+    /// `inputbox`, and `passwordbox` when `password` is set — which is the
+    /// only difference between them and means "do not echo what is typed".
+    /// Write the answer through `out_text` when returning [`TT_DIALOG_OK`]; a
+    /// null there is an empty string.
+    pub input_box: Option<
+        extern "C" fn(
+            user: *mut std::ffi::c_void,
+            text: *const c_char,
+            title: *const c_char,
+            initial: *const c_char,
+            password: bool,
+            out_text: *mut *const c_char,
+        ) -> TtDialogEnd,
+    >,
+    /// `filenamebox` — **null is cancelled**, which is why this returns a
+    /// string rather than a [`TtDialogEnd`]. A frontend that cannot show one
+    /// leaves the pointer null instead, and the macro is told so.
+    pub filename_box: Option<
+        extern "C" fn(
+            user: *mut std::ffi::c_void,
+            title: *const c_char,
+            save: bool,
+            init_dir: *const c_char,
+        ) -> *const c_char,
+    >,
+    /// `dirnamebox`. Null is cancelled, as above.
+    pub dirname_box: Option<
+        extern "C" fn(
+            user: *mut std::ffi::c_void,
+            title: *const c_char,
+            init_dir: *const c_char,
+        ) -> *const c_char,
+    >,
+    /// `setdlgpos`. A null `pos` clears it back to wherever the frontend puts
+    /// dialogs by default. A preference with no user in it, so it cannot fail.
+    pub set_dialog_pos: Option<extern "C" fn(user: *mut std::ffi::c_void, pos: *const TtDialogPos)>,
+
+    /// `beep`.
+    pub beep: Option<extern "C" fn(user: *mut std::ffi::c_void, sound: TtBeepSound) -> TtStatus>,
+    /// `callmenu` — invoke a menu item by `teraterm.rc`'s command id. There
+    /// are about ninety; answer the ones this build has a menu item for and
+    /// refuse the rest.
+    pub call_menu: Option<extern "C" fn(user: *mut std::ffi::c_void, id: i32) -> TtStatus>,
+    /// `showtt`.
+    pub show_window:
+        Option<extern "C" fn(user: *mut std::ffi::c_void, which: TtShowWindow) -> TtStatus>,
+    /// `show` — the macro's own control window.
+    pub show_macro_window:
+        Option<extern "C" fn(user: *mut std::ffi::c_void, how: TtMacroWindow) -> TtStatus>,
+    /// `getttpos`. Return false for "there is no window to measure", which the
+    /// macro reads as a failure rather than as an unknown command.
+    pub terminal_geometry:
+        Option<extern "C" fn(user: *mut std::ffi::c_void, out: *mut TtWindowGeometry) -> bool>,
+    /// `enablekeyb` — lock the keyboard so a script's prompts are not typed
+    /// over.
+    pub enable_keyboard: Option<extern "C" fn(user: *mut std::ffi::c_void, on: bool) -> TtStatus>,
+
+    /// `clipb2var` — null when the clipboard holds no text.
+    pub clipboard_text: Option<extern "C" fn(user: *mut std::ffi::c_void) -> *const c_char>,
+    /// `var2clipb`. False is a failure the command reports.
+    pub set_clipboard_text:
+        Option<extern "C" fn(user: *mut std::ffi::c_void, text: *const c_char) -> bool>,
+    /// `setexitcode` — what the process should exit with once the macro ends.
+    /// [`tt_macro_exit_code`] reports the last one set, so a frontend that
+    /// only wants it at the end can leave this null.
+    pub set_exit_code: Option<extern "C" fn(user: *mut std::ffi::c_void, code: i32)>,
+}
+
+/// [`TtMacroUi`] on the Rust side of the seam.
+///
+/// Where a callback is null this falls back to [`NullUi`] rather than to a
+/// hand-written refusal, so the "not implemented" behaviour is the trait's own
+/// documented default and cannot drift from it.
+struct CUi {
+    vt: TtMacroUi,
+    /// The last `setexitcode`, for [`tt_macro_exit_code`].
+    exit_code: i32,
+}
+
+/// Borrow a `const char *` a callback handed back, as owned bytes. Null is
+/// `None`; anything else is copied before the callback's storage can die.
+unsafe fn taken(p: *const c_char) -> Option<Vec<u8>> {
+    (!p.is_null()).then(|| CStr::from_ptr(p).to_bytes().to_vec())
+}
+
+impl MacroUi for CUi {
+    fn error(&mut self, err: &MacroError) -> bool {
+        let Some(f) = self.vt.error else {
+            return MacroUi::error(&mut NullUi, err);
+        };
+        let message = cstring(err.error.message());
+        let file = cstring(&err.file);
+        let line = cbytes(&err.line);
+        let c = TtMacroError {
+            code: err.error.code().into(),
+            message: message.as_ptr(),
+            file: file.as_ptr(),
+            line: line.as_ptr(),
+            line_no: err.line_no,
+            start: err.start,
+            end: err.end,
+        };
+        f(self.vt.user, &c)
+    }
+
+    fn message_box(&mut self, text: &[u8], title: &[u8]) -> Result<DialogEnd, TtlError> {
+        match self.vt.message_box {
+            Some(f) => Ok(dialog_end(f(
+                self.vt.user,
+                cbytes(text).as_ptr(),
+                cbytes(title).as_ptr(),
+            ))),
+            None => MacroUi::message_box(&mut NullUi, text, title),
+        }
+    }
+
+    fn yes_no_box(&mut self, text: &[u8], title: &[u8]) -> Result<DialogEnd, TtlError> {
+        match self.vt.yes_no_box {
+            Some(f) => Ok(dialog_end(f(
+                self.vt.user,
+                cbytes(text).as_ptr(),
+                cbytes(title).as_ptr(),
+            ))),
+            None => MacroUi::yes_no_box(&mut NullUi, text, title),
+        }
+    }
+
+    fn status_box(&mut self, text: &[u8], title: &[u8]) -> Result<(), TtlError> {
+        match self.vt.status_box {
+            Some(f) => status(f(
+                self.vt.user,
+                cbytes(text).as_ptr(),
+                cbytes(title).as_ptr(),
+            )),
+            None => MacroUi::status_box(&mut NullUi, text, title),
+        }
+    }
+
+    fn close_status_box(&mut self) -> Result<(), TtlError> {
+        match self.vt.close_status_box {
+            Some(f) => status(f(self.vt.user)),
+            None => MacroUi::close_status_box(&mut NullUi),
+        }
+    }
+
+    fn bringup_status_box(&mut self) -> Result<(), TtlError> {
+        match self.vt.bringup_status_box {
+            Some(f) => status(f(self.vt.user)),
+            None => MacroUi::bringup_status_box(&mut NullUi),
+        }
+    }
+
+    fn list_box(
+        &mut self,
+        text: &[u8],
+        title: &[u8],
+        items: &[Vec<u8>],
+        selected: usize,
+        opts: &ListBoxOpts,
+    ) -> Result<DialogEnd<usize>, TtlError> {
+        let Some(f) = self.vt.list_box else {
+            return MacroUi::list_box(&mut NullUi, text, title, items, selected, opts);
+        };
+        let owned: Vec<CString> = items.iter().map(|i| cbytes(i)).collect();
+        let ptrs: Vec<*const c_char> = owned.iter().map(|s| s.as_ptr()).collect();
+        let (width, height) = opts.size.unwrap_or((0, 0));
+        let c = TtListBoxOpts {
+            double_click: opts.double_click,
+            min_max_button: opts.min_max_button,
+            minimized: opts.minimized,
+            maximized: opts.maximized,
+            width,
+            height,
+        };
+        let mut index = selected;
+        let end = f(
+            self.vt.user,
+            cbytes(text).as_ptr(),
+            cbytes(title).as_ptr(),
+            ptrs.as_ptr(),
+            ptrs.len(),
+            selected,
+            &c,
+            &mut index,
+        );
+        Ok(match dialog_end(end) {
+            // A frontend that answers with an index it was never offered would
+            // otherwise index somebody's array with it.
+            DialogEnd::Ok(()) => DialogEnd::Ok(index.min(items.len().saturating_sub(1))),
+            DialogEnd::Cancel => DialogEnd::Cancel,
+            DialogEnd::Closed => DialogEnd::Closed,
+        })
+    }
+
+    fn input_box(
+        &mut self,
+        text: &[u8],
+        title: &[u8],
+        default: &[u8],
+        password: bool,
+    ) -> Result<DialogEnd<Vec<u8>>, TtlError> {
+        let Some(f) = self.vt.input_box else {
+            return MacroUi::input_box(&mut NullUi, text, title, default, password);
+        };
+        let mut answer: *const c_char = ptr::null();
+        let end = f(
+            self.vt.user,
+            cbytes(text).as_ptr(),
+            cbytes(title).as_ptr(),
+            cbytes(default).as_ptr(),
+            password,
+            &mut answer,
+        );
+        Ok(match dialog_end(end) {
+            DialogEnd::Ok(()) => DialogEnd::Ok(unsafe { taken(answer) }.unwrap_or_default()),
+            DialogEnd::Cancel => DialogEnd::Cancel,
+            DialogEnd::Closed => DialogEnd::Closed,
+        })
+    }
+
+    fn filename_box(
+        &mut self,
+        title: &[u8],
+        save: bool,
+        init_dir: &[u8],
+    ) -> Result<Option<Vec<u8>>, TtlError> {
+        match self.vt.filename_box {
+            Some(f) => Ok(unsafe {
+                taken(f(
+                    self.vt.user,
+                    cbytes(title).as_ptr(),
+                    save,
+                    cbytes(init_dir).as_ptr(),
+                ))
+            }),
+            None => MacroUi::filename_box(&mut NullUi, title, save, init_dir),
+        }
+    }
+
+    fn dirname_box(&mut self, title: &[u8], init_dir: &[u8]) -> Result<Option<Vec<u8>>, TtlError> {
+        match self.vt.dirname_box {
+            Some(f) => Ok(unsafe {
+                taken(f(
+                    self.vt.user,
+                    cbytes(title).as_ptr(),
+                    cbytes(init_dir).as_ptr(),
+                ))
+            }),
+            None => MacroUi::dirname_box(&mut NullUi, title, init_dir),
+        }
+    }
+
+    fn set_dialog_pos(&mut self, pos: Option<DialogPos>) {
+        let Some(f) = self.vt.set_dialog_pos else {
+            return MacroUi::set_dialog_pos(&mut NullUi, pos);
+        };
+        match pos {
+            Some(p) => {
+                let c = TtDialogPos {
+                    x: p.x,
+                    y: p.y,
+                    position: p.anchor.map_or(0, |(a, o)| anchor_code(a, o)),
+                    offset_x: p.offset_x,
+                    offset_y: p.offset_y,
+                };
+                f(self.vt.user, &c)
+            }
+            None => f(self.vt.user, ptr::null()),
+        }
+    }
+
+    fn beep(&mut self, sound: BeepSound) -> Result<(), TtlError> {
+        match self.vt.beep {
+            Some(f) => status(f(
+                self.vt.user,
+                match sound {
+                    BeepSound::Simple => TT_BEEP_SIMPLE,
+                    BeepSound::Asterisk => TT_BEEP_ASTERISK,
+                    BeepSound::Exclamation => TT_BEEP_EXCLAMATION,
+                    BeepSound::CriticalStop => TT_BEEP_CRITICAL_STOP,
+                    BeepSound::Question => TT_BEEP_QUESTION,
+                    BeepSound::Default => TT_BEEP_DEFAULT,
+                },
+            )),
+            None => MacroUi::beep(&mut NullUi, sound),
+        }
+    }
+
+    fn call_menu(&mut self, id: i32) -> Result<(), TtlError> {
+        match self.vt.call_menu {
+            Some(f) => status(f(self.vt.user, id)),
+            None => MacroUi::call_menu(&mut NullUi, id),
+        }
+    }
+
+    fn show_window(&mut self, which: ShowWindow) -> Result<(), TtlError> {
+        match self.vt.show_window {
+            Some(f) => status(f(
+                self.vt.user,
+                match which {
+                    ShowWindow::VtHide => TT_SHOW_VT_HIDE,
+                    ShowWindow::VtMinimize => TT_SHOW_VT_MINIMIZE,
+                    ShowWindow::VtRestore => TT_SHOW_VT_RESTORE,
+                    ShowWindow::TekHide => TT_SHOW_TEK_HIDE,
+                    ShowWindow::TekMinimize => TT_SHOW_TEK_MINIMIZE,
+                    ShowWindow::TekOpen => TT_SHOW_TEK_OPEN,
+                    ShowWindow::TekClose => TT_SHOW_TEK_CLOSE,
+                    ShowWindow::LogHide => TT_SHOW_LOG_HIDE,
+                    ShowWindow::LogMinimize => TT_SHOW_LOG_MINIMIZE,
+                    ShowWindow::LogRestore => TT_SHOW_LOG_RESTORE,
+                },
+            )),
+            None => MacroUi::show_window(&mut NullUi, which),
+        }
+    }
+
+    fn show_macro_window(&mut self, how: MacroWindow) -> Result<(), TtlError> {
+        match self.vt.show_macro_window {
+            Some(f) => status(f(
+                self.vt.user,
+                match how {
+                    MacroWindow::Hide => TT_MACRO_WINDOW_HIDE,
+                    MacroWindow::Minimize => TT_MACRO_WINDOW_MINIMIZE,
+                    MacroWindow::Restore => TT_MACRO_WINDOW_RESTORE,
+                },
+            )),
+            None => MacroUi::show_macro_window(&mut NullUi, how),
+        }
+    }
+
+    fn terminal_geometry(&mut self) -> Result<Option<WindowGeometry>, TtlError> {
+        let Some(f) = self.vt.terminal_geometry else {
+            return MacroUi::terminal_geometry(&mut NullUi);
+        };
+        let mut g: TtWindowGeometry = unsafe { std::mem::zeroed() };
+        if !f(self.vt.user, &mut g) {
+            return Ok(None);
+        }
+        Ok(Some(WindowGeometry {
+            state: match g.state {
+                TT_WINDOW_MINIMIZED => WindowState::Minimized,
+                TT_WINDOW_MAXIMIZED => WindowState::Maximized,
+                TT_WINDOW_HIDDEN => WindowState::Hidden,
+                _ => WindowState::Normal,
+            },
+            window: (g.x, g.y, g.width, g.height),
+            client: (g.client_x, g.client_y, g.client_width, g.client_height),
+        }))
+    }
+
+    fn enable_keyboard(&mut self, on: bool) -> Result<(), TtlError> {
+        match self.vt.enable_keyboard {
+            Some(f) => status(f(self.vt.user, on)),
+            None => MacroUi::enable_keyboard(&mut NullUi, on),
+        }
+    }
+
+    fn clipboard_text(&mut self) -> Option<Vec<u8>> {
+        match self.vt.clipboard_text {
+            Some(f) => unsafe { taken(f(self.vt.user)) },
+            None => MacroUi::clipboard_text(&mut NullUi),
+        }
+    }
+
+    fn set_clipboard_text(&mut self, text: &[u8]) -> bool {
+        match self.vt.set_clipboard_text {
+            Some(f) => f(self.vt.user, cbytes(text).as_ptr()),
+            None => MacroUi::set_clipboard_text(&mut NullUi, text),
+        }
+    }
+
+    fn set_exit_code(&mut self, code: i32) {
+        self.exit_code = code;
+        if let Some(f) = self.vt.set_exit_code {
+            f(self.vt.user, code);
+        }
+    }
+}
+
+/// `setdlgpos`'s `<position>`, rebuilt from what the interpreter parsed out of
+/// it — 1-5 against the display and 6-10 against the terminal window.
+fn anchor_code(anchor: DialogAnchor, origin: DialogOrigin) -> i32 {
+    let base = match anchor {
+        DialogAnchor::TopLeft => 1,
+        DialogAnchor::TopRight => 2,
+        DialogAnchor::BottomLeft => 3,
+        DialogAnchor::BottomRight => 4,
+        DialogAnchor::Center => 5,
+    };
+    match origin {
+        DialogOrigin::Display => base,
+        DialogOrigin::VtWindow => base + 5,
+    }
+}
+
+fn dialog_end(v: TtDialogEnd) -> DialogEnd {
+    match v {
+        TT_DIALOG_CANCEL => DialogEnd::Cancel,
+        TT_DIALOG_CLOSED => DialogEnd::Closed,
+        _ => DialogEnd::Ok(()),
+    }
+}
+
+/// A callback's [`TtStatus`] as the answer a command wants. Anything negative
+/// is the command refusing; the macro is told "Unknown command", which is the
+/// only refusal the language has.
+fn status(v: TtStatus) -> Result<(), TtlError> {
+    match v < 0 {
+        true => Err(TtlError::NotSupported),
+        false => Ok(()),
+    }
+}
+
+/// A macro running against a session, on a thread of its own.
+///
+/// Free it with [`tt_macro_free`] whether or not it has finished.
+pub struct TtMacro {
+    rx: MacroReceiver,
+    thread: Option<std::thread::JoinHandle<()>>,
+    ui: CUi,
+}
+
+/// Start `args`' macro against `session`, on a new thread.
+///
+/// `args` is `ttpmacro`'s command line **already split** — a null-terminated
+/// array, without the program name. The first word that is not a switch names
+/// the file, `.TTL` is fitted onto it if it has no extension, and everything
+/// after it reaches the macro as `param2`..`param9` and `params[]`. So the
+/// simplest call is a one-element array holding a path.
+///
+/// Returns null if there is no macro named, if the file cannot be read, or if
+/// the thread or its pipe could not be created; [`tt_last_error`] says which.
+/// **A `/M` that named nothing is not this function's to report** — the
+/// command line already said so as `TT_MACRO_ASK`, and the answer to it is a
+/// file dialog.
+///
+/// `ui` may be null, which is every dialog refused. It is **copied**, so the
+/// struct itself need not outlive this call; the `user` pointer inside it must
+/// outlive the macro.
+///
+/// The session is linked to the macro here — upstream's `DDELog = TRUE` — and
+/// anything a previous macro had collected is thrown away. Starting a second
+/// macro takes the terminal from the first, which is upstream's rule as well.
+#[no_mangle]
+pub extern "C" fn tt_macro_start(
+    session: *mut TtSession,
+    args: *const *const c_char,
+    ui: *const TtMacroUi,
+) -> *mut TtMacro {
+    let s = session!(session, ptr::null_mut());
+    let argv = match unsafe { byte_array(args) } {
+        Some(a) => a,
+        None => {
+            fail(TT_ERR_INVALID, "null argument array");
+            return ptr::null_mut();
+        }
+    };
+    let cmd = CmdLine::from_args(argv);
+    if cmd.needs_prompt() {
+        fail(TT_ERR_INVALID, "no macro file named");
+        return ptr::null_mut();
+    }
+    let path = PathBuf::from(String::from_utf8_lossy(&cmd.fitted_file_name()).into_owned());
+    let body = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) => {
+            fail(TT_ERR_IO, format!("{}: {e}", path.display()));
+            return ptr::null_mut();
+        }
+    };
+
+    let (tx, rx) = match tt_macro::channel() {
+        Ok(pair) => pair,
+        Err(e) => {
+            fail(TT_ERR_IO, format!("cannot start a macro: {e}"));
+            return ptr::null_mut();
+        }
+    };
+    let link = s.session.link_macro();
+    let thread = std::thread::Builder::new()
+        .name("ttl".into())
+        .spawn(move || {
+            let mut host = SessionHost::new(tx, link);
+            let mut it = Interp::with_cmdline(&cmd, body, &mut host);
+            it.run(&mut host);
+        });
+    let thread = match thread {
+        Ok(t) => t,
+        Err(e) => {
+            // The link is already on; take it back off rather than leave the
+            // terminal collecting for a macro that never started.
+            s.session.unlink_macro();
+            fail(TT_ERR_IO, format!("cannot start a macro: {e}"));
+            return ptr::null_mut();
+        }
+    };
+
+    Box::into_raw(Box::new(TtMacro {
+        rx,
+        thread: Some(thread),
+        ui: CUi {
+            vt: match unsafe { ui.as_ref() } {
+                Some(vt) => *vt,
+                None => unsafe { std::mem::zeroed() },
+            },
+            exit_code: 0,
+        },
+    }))
+}
+
+/// A null-terminated array of `const char *` as owned bytes.
+///
+/// Null-terminated rather than pointer-plus-count for the same reason
+/// [`path_array`] is, and bytes rather than `&str` because a macro's arguments
+/// are paths: a filename that is not UTF-8 is still a filename.
+///
+/// # Safety
+/// `array`, if non-null, must be a null-terminated array of NUL-terminated
+/// strings.
+unsafe fn byte_array(array: *const *const c_char) -> Option<Vec<Vec<u8>>> {
+    if array.is_null() {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut i = 0isize;
+    loop {
+        let entry = *array.offset(i);
+        if entry.is_null() {
+            return Some(out);
+        }
+        out.push(CStr::from_ptr(entry).to_bytes().to_vec());
+        i += 1;
+    }
+}
+
+/// A descriptor that becomes readable when the macro wants something.
+///
+/// The same bargain as [`tt_session_poll_fd`]: wait on it, and call
+/// [`tt_macro_service`] when it fires. A quiet macro — one in a `wait`, which
+/// polls a ring this side fills — costs nothing, so there is no timer to run.
+/// **Both descriptors want watching**; they are not the same one.
+#[no_mangle]
+pub extern "C" fn tt_macro_poll_fd(m: *const TtMacro) -> c_int {
+    match unsafe { m.as_ref() } {
+        #[cfg(unix)]
+        Some(m) => m.rx.poll_fd(),
+        #[cfg(not(unix))]
+        Some(_) => -1,
+        None => -1,
+    }
+}
+
+/// Run whatever the macro is waiting on, against `session`. Returns how many
+/// jobs ran; never blocks on the macro.
+///
+/// **This is where the [`TtMacroUi`] callbacks fire**, so it can take as long
+/// as the user does — a `messagebox` is a job like any other, and the event
+/// loop it spins is the frontend's own.
+///
+/// `session` must be the one [`tt_macro_start`] was given. It is not stored
+/// between calls, which is why it is passed again rather than remembered.
+#[no_mangle]
+pub extern "C" fn tt_macro_service(m: *mut TtMacro, session: *mut TtSession) -> usize {
+    let Some(m) = (unsafe { m.as_mut() }) else {
+        set_error("null TtMacro");
+        return 0;
+    };
+    let s = session!(session, 0);
+    m.rx.service(&mut s.session, &mut m.ui)
+}
+
+/// Whether the macro is still running.
+///
+/// **Service it before believing a false**: a macro that has just ended may
+/// have left a last job — the error dialog it stopped at, for one — which is
+/// only run by [`tt_macro_service`].
+#[no_mangle]
+pub extern "C" fn tt_macro_running(m: *const TtMacro) -> bool {
+    match unsafe { m.as_ref() } {
+        Some(m) => m.thread.as_ref().is_some_and(|t| !t.is_finished()),
+        None => false,
+    }
+}
+
+/// Ask it to stop — the End button on upstream's macro control window, and
+/// what closing the window should do.
+///
+/// It stops at the next line rather than immediately, and a `pause 3600` ends
+/// in milliseconds rather than in an hour. It does not by itself end a dialog
+/// that is already up; that is the frontend's own.
+#[no_mangle]
+pub extern "C" fn tt_macro_cancel(m: *mut TtMacro) {
+    if let Some(m) = unsafe { m.as_mut() } {
+        m.rx.cancel();
+    }
+}
+
+/// The last `setexitcode`, and zero if the macro never set one.
+#[no_mangle]
+pub extern "C" fn tt_macro_exit_code(m: *const TtMacro) -> i32 {
+    match unsafe { m.as_ref() } {
+        Some(m) => m.ui.exit_code,
+        None => 0,
+    }
+}
+
+/// Stop it and wait for the thread, then free the handle.
+///
+/// Safe to call on a macro that is still running: it is cancelled first, and
+/// the channel is dropped before the join so that anything blocked waiting for
+/// this frontend is released rather than deadlocked against a join that would
+/// never return.
+#[no_mangle]
+pub extern "C" fn tt_macro_free(m: *mut TtMacro) {
+    if m.is_null() {
+        return;
+    }
+    let mut m = unsafe { Box::from_raw(m) };
+    m.rx.cancel();
+    let thread = m.thread.take();
+    // The order matters: dropping the receiver turns a macro blocked on an
+    // answer from this side into a macro whose frontend has gone, which is the
+    // one thing it treats as the end of the run.
+    drop(m);
+    if let Some(t) = thread {
+        let _ = t.join();
+    }
 }
 
 /// [`SerialParams`] the other way round — [`TtSerialParams::to_rust`]'s

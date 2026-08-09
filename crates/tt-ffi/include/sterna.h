@@ -595,6 +595,13 @@ typedef uint8_t TtPinControl;
 typedef struct TtCmdLine TtCmdLine;
 
 /**
+ * A macro running against a session, on a thread of its own.
+ *
+ * Free it with [`tt_macro_free`] whether or not it has finished.
+ */
+typedef struct TtMacro TtMacro;
+
+/**
  * An owned list of ports. Free it with [`tt_port_list_free`].
  */
 typedef struct TtPortList TtPortList;
@@ -1366,6 +1373,289 @@ typedef struct {
     TtPtyParams pty;
 } TtStartup;
 
+/**
+ * What a macro's `DispErr` dialog says.
+ *
+ * Every string is borrowed and dies when the callback returns.
+ */
+typedef struct {
+    /**
+     * `ttmparse.h`'s number for it — 11 is a syntax error.
+     */
+    uint32_t code;
+    /**
+     * The sentence upstream puts in the dialog, verbatim, spelling included.
+     */
+    const char *message;
+    /**
+     * The macro the error is in. Not always the one that was launched:
+     * `include` opens another.
+     */
+    const char *file;
+    /**
+     * The source line, whole.
+     */
+    const char *line;
+    /**
+     * Counting from 1.
+     */
+    size_t line_no;
+    /**
+     * Byte offsets into `line` bounding what the interpreter was reading when
+     * it gave up. `start == end` is possible and means "at that point".
+     */
+    size_t start;
+    size_t end;
+} TtMacroError;
+
+/**
+ * How a dialog ended.
+ *
+ * Three answers rather than a bool because upstream distinguishes the close
+ * box from Cancel, and a macro can test for it.
+ */
+typedef int32_t TtDialogEnd;
+
+/**
+ * `listbox`'s keyword parameters (`ttl_gui.cpp:476`).
+ *
+ * All of them are hints about the window rather than about the choice, so a
+ * frontend that ignores the lot still implements `listbox` correctly.
+ */
+typedef struct {
+    /**
+     * `dblclick=on` — a double click chooses the item under it.
+     */
+    bool double_click;
+    /**
+     * `minmaxbutton=on`.
+     */
+    bool min_max_button;
+    /**
+     * `minimize=on`. Exclusive with `maximized`: each keyword clears the
+     * other, so the last one written wins.
+     */
+    bool minimized;
+    /**
+     * `maximize=on`.
+     */
+    bool maximized;
+    /**
+     * `listboxsize=WxH`, in characters. **Both zero when the macro did not
+     * ask**, which is the only way this struct spells "absent".
+     */
+    uint32_t width;
+    uint32_t height;
+} TtListBoxOpts;
+
+/**
+ * Where `setdlgpos` wants the dialogs, in pixels.
+ */
+typedef struct {
+    /**
+     * The top-left corner, from the primary display's origin.
+     */
+    int32_t x;
+    int32_t y;
+    /**
+     * The `<position>` argument as the macro wrote it: 1-5 anchors against
+     * the display and 6-10 against the terminal window, each in the order
+     * top-left, top-right, bottom-left, bottom-right, centre. **Zero is the
+     * two-argument form**, where the coordinates alone decide.
+     */
+    int32_t position;
+    /**
+     * Added to the anchored position, and zero unless a `position` was given.
+     */
+    int32_t offset_x;
+    int32_t offset_y;
+} TtDialogPos;
+
+/**
+ * `beep`'s argument.
+ */
+typedef uint32_t TtBeepSound;
+
+/**
+ * `showtt`'s ten arms. The four TEK ones exist because the command has them;
+ * a port with no TEK window refuses them, which is honest.
+ */
+typedef uint32_t TtShowWindow;
+
+/**
+ * `show` — the macro's own control window, which this port does not draw.
+ */
+typedef uint32_t TtMacroWindow;
+
+/**
+ * `getttpos`'s first output. Upstream tests iconic, then zoomed, then
+ * visible, so a minimised window reports [`TT_WINDOW_MINIMIZED`] whether or
+ * not it is also maximised.
+ */
+typedef uint32_t TtWindowState;
+
+/**
+ * What `getttpos` reports (`ttdde.c:1136`) — the frame, then the text area
+ * inside it, both in screen pixels.
+ */
+typedef struct {
+    TtWindowState state;
+    int32_t x;
+    int32_t y;
+    int32_t width;
+    int32_t height;
+    int32_t client_x;
+    int32_t client_y;
+    int32_t client_width;
+    int32_t client_height;
+} TtWindowGeometry;
+
+/**
+ * The window a running macro asks things of.
+ *
+ * **This is the one place the ABI calls back into C**, and the reason is the
+ * mirror image of why SSH does not: `tt_ssh_connect_poll` refuses a callback
+ * because it would fire on a worker thread, which is exactly where a Qt
+ * frontend cannot raise a dialog. These fire from inside
+ * [`tt_macro_service`], on the thread that called it, which is the frontend's
+ * own — so a modal dialog spinning a nested event loop is an ordinary modal
+ * dialog. The macro is blocked on another thread while it is up, which is the
+ * whole point of putting it there.
+ *
+ * **Zero-initialise it and fill in what you have.** A null function pointer
+ * is not a crash and not a silent success: the command reports "Unknown
+ * command" to the macro, exactly as though this port had never implemented
+ * it. A frontend with three dialogs is useful.
+ *
+ * Every `const char *` handed to a callback is borrowed and dies when it
+ * returns; every one handed *back* is copied before the callback returns, so
+ * a `static` buffer or a `QByteArray` that lives to the end of the function
+ * is enough. All of them are UTF-8.
+ */
+typedef struct {
+    /**
+     * Passed back to every callback below and never touched here.
+     */
+    void *user;
+    /**
+     * `DispErr` — the error dialog. **Returning true stops the macro**;
+     * upstream's two buttons are Stop and Continue, and Continue is the one
+     * that is not the default. A null pointer stops it, because a script that
+     * has hit a syntax error and cannot say so is better stopped than left
+     * running.
+     */
+    bool (*error)(void *user, const TtMacroError *err);
+    /**
+     * `messagebox` — one OK button.
+     */
+    TtDialogEnd (*message_box)(void *user, const char *text, const char *title);
+    /**
+     * `yesnobox`.
+     */
+    TtDialogEnd (*yes_no_box)(void *user, const char *text, const char *title);
+    /**
+     * `statusbox` — a *modeless* box the macro updates as it goes. Called
+     * again with one already up, it replaces the text rather than opening a
+     * second. Return [`TT_OK`] or a negative status.
+     */
+    TtStatus (*status_box)(void *user, const char *text, const char *title);
+    /**
+     * `closesbox`. Closing one that is not open is not an error.
+     */
+    TtStatus (*close_status_box)(void *user);
+    /**
+     * `bringupbox` — raise it.
+     */
+    TtStatus (*bringup_status_box)(void *user);
+    /**
+     * `listbox`. `items` is `count` strings; `selected` is the one to start
+     * on. Write the chosen index through `out_index` when returning
+     * [`TT_DIALOG_OK`].
+     */
+    TtDialogEnd (*list_box)(void *user,
+                            const char *text,
+                            const char *title,
+                            const char *const *items,
+                            size_t count,
+                            size_t selected,
+                            const TtListBoxOpts *opts,
+                            size_t *out_index);
+    /**
+     * `inputbox`, and `passwordbox` when `password` is set — which is the
+     * only difference between them and means "do not echo what is typed".
+     * Write the answer through `out_text` when returning [`TT_DIALOG_OK`]; a
+     * null there is an empty string.
+     */
+    TtDialogEnd (*input_box)(void *user,
+                             const char *text,
+                             const char *title,
+                             const char *initial,
+                             bool password,
+                             const char **out_text);
+    /**
+     * `filenamebox` — **null is cancelled**, which is why this returns a
+     * string rather than a [`TtDialogEnd`]. A frontend that cannot show one
+     * leaves the pointer null instead, and the macro is told so.
+     */
+    const char *(*filename_box)(void *user,
+                                const char *title,
+                                bool save,
+                                const char *init_dir);
+    /**
+     * `dirnamebox`. Null is cancelled, as above.
+     */
+    const char *(*dirname_box)(void *user,
+                               const char *title,
+                               const char *init_dir);
+    /**
+     * `setdlgpos`. A null `pos` clears it back to wherever the frontend puts
+     * dialogs by default. A preference with no user in it, so it cannot fail.
+     */
+    void (*set_dialog_pos)(void *user, const TtDialogPos *pos);
+    /**
+     * `beep`.
+     */
+    TtStatus (*beep)(void *user, TtBeepSound sound);
+    /**
+     * `callmenu` — invoke a menu item by `teraterm.rc`'s command id. There
+     * are about ninety; answer the ones this build has a menu item for and
+     * refuse the rest.
+     */
+    TtStatus (*call_menu)(void *user, int32_t id);
+    /**
+     * `showtt`.
+     */
+    TtStatus (*show_window)(void *user, TtShowWindow which);
+    /**
+     * `show` — the macro's own control window.
+     */
+    TtStatus (*show_macro_window)(void *user, TtMacroWindow how);
+    /**
+     * `getttpos`. Return false for "there is no window to measure", which the
+     * macro reads as a failure rather than as an unknown command.
+     */
+    bool (*terminal_geometry)(void *user, TtWindowGeometry *out);
+    /**
+     * `enablekeyb` — lock the keyboard so a script's prompts are not typed
+     * over.
+     */
+    TtStatus (*enable_keyboard)(void *user, bool on);
+    /**
+     * `clipb2var` — null when the clipboard holds no text.
+     */
+    const char *(*clipboard_text)(void *user);
+    /**
+     * `var2clipb`. False is a failure the command reports.
+     */
+    bool (*set_clipboard_text)(void *user, const char *text);
+    /**
+     * `setexitcode` — what the process should exit with once the macro ends.
+     * [`tt_macro_exit_code`] reports the last one set, so a frontend that
+     * only wants it at the end can leave this null.
+     */
+    void (*set_exit_code)(void *user, int32_t code);
+} TtMacroUi;
+
 #define TT_OK 0
 
 /**
@@ -1586,6 +1876,73 @@ typedef struct {
  * total rather than so it can be reached.
  */
 #define TT_TARGET_SHELL 3
+
+/**
+ * OK, or Yes.
+ */
+#define TT_DIALOG_OK 0
+
+/**
+ * Cancel, or No.
+ */
+#define TT_DIALOG_CANCEL 1
+
+/**
+ * The window's close box.
+ */
+#define TT_DIALOG_CLOSED 2
+
+#define TT_BEEP_SIMPLE 0
+
+#define TT_BEEP_ASTERISK 1
+
+#define TT_BEEP_EXCLAMATION 2
+
+#define TT_BEEP_CRITICAL_STOP 3
+
+#define TT_BEEP_QUESTION 4
+
+/**
+ * What a bare `beep` plays.
+ */
+#define TT_BEEP_DEFAULT 5
+
+#define TT_SHOW_VT_HIDE 0
+
+#define TT_SHOW_VT_MINIMIZE 1
+
+#define TT_SHOW_VT_RESTORE 2
+
+#define TT_SHOW_TEK_HIDE 3
+
+#define TT_SHOW_TEK_MINIMIZE 4
+
+#define TT_SHOW_TEK_OPEN 5
+
+#define TT_SHOW_TEK_CLOSE 6
+
+#define TT_SHOW_LOG_HIDE 7
+
+#define TT_SHOW_LOG_MINIMIZE 8
+
+#define TT_SHOW_LOG_RESTORE 9
+
+#define TT_MACRO_WINDOW_HIDE 0
+
+#define TT_MACRO_WINDOW_MINIMIZE 1
+
+/**
+ * Anything positive, which also raises it.
+ */
+#define TT_MACRO_WINDOW_RESTORE 2
+
+#define TT_WINDOW_NORMAL 0
+
+#define TT_WINDOW_MINIMIZED 1
+
+#define TT_WINDOW_MAXIMIZED 2
+
+#define TT_WINDOW_HIDDEN 3
 
 #ifdef __cplusplus
 extern "C" {
@@ -2402,6 +2759,90 @@ TtStatus tt_cmdline_apply(const TtCmdLine *cmd,
 TtStartupKind tt_cmdline_startup(TtCmdLine *cmd,
                                  const TtSession *session,
                                  TtStartup *out);
+
+/**
+ * Start `args`' macro against `session`, on a new thread.
+ *
+ * `args` is `ttpmacro`'s command line **already split** — a null-terminated
+ * array, without the program name. The first word that is not a switch names
+ * the file, `.TTL` is fitted onto it if it has no extension, and everything
+ * after it reaches the macro as `param2`..`param9` and `params[]`. So the
+ * simplest call is a one-element array holding a path.
+ *
+ * Returns null if there is no macro named, if the file cannot be read, or if
+ * the thread or its pipe could not be created; [`tt_last_error`] says which.
+ * **A `/M` that named nothing is not this function's to report** — the
+ * command line already said so as `TT_MACRO_ASK`, and the answer to it is a
+ * file dialog.
+ *
+ * `ui` may be null, which is every dialog refused. It is **copied**, so the
+ * struct itself need not outlive this call; the `user` pointer inside it must
+ * outlive the macro.
+ *
+ * The session is linked to the macro here — upstream's `DDELog = TRUE` — and
+ * anything a previous macro had collected is thrown away. Starting a second
+ * macro takes the terminal from the first, which is upstream's rule as well.
+ */
+TtMacro *tt_macro_start(TtSession *session,
+                        const char *const *args,
+                        const TtMacroUi *ui);
+
+/**
+ * A descriptor that becomes readable when the macro wants something.
+ *
+ * The same bargain as [`tt_session_poll_fd`]: wait on it, and call
+ * [`tt_macro_service`] when it fires. A quiet macro — one in a `wait`, which
+ * polls a ring this side fills — costs nothing, so there is no timer to run.
+ * **Both descriptors want watching**; they are not the same one.
+ */
+int tt_macro_poll_fd(const TtMacro *m);
+
+/**
+ * Run whatever the macro is waiting on, against `session`. Returns how many
+ * jobs ran; never blocks on the macro.
+ *
+ * **This is where the [`TtMacroUi`] callbacks fire**, so it can take as long
+ * as the user does — a `messagebox` is a job like any other, and the event
+ * loop it spins is the frontend's own.
+ *
+ * `session` must be the one [`tt_macro_start`] was given. It is not stored
+ * between calls, which is why it is passed again rather than remembered.
+ */
+size_t tt_macro_service(TtMacro *m, TtSession *session);
+
+/**
+ * Whether the macro is still running.
+ *
+ * **Service it before believing a false**: a macro that has just ended may
+ * have left a last job — the error dialog it stopped at, for one — which is
+ * only run by [`tt_macro_service`].
+ */
+bool tt_macro_running(const TtMacro *m);
+
+/**
+ * Ask it to stop — the End button on upstream's macro control window, and
+ * what closing the window should do.
+ *
+ * It stops at the next line rather than immediately, and a `pause 3600` ends
+ * in milliseconds rather than in an hour. It does not by itself end a dialog
+ * that is already up; that is the frontend's own.
+ */
+void tt_macro_cancel(TtMacro *m);
+
+/**
+ * The last `setexitcode`, and zero if the macro never set one.
+ */
+int32_t tt_macro_exit_code(const TtMacro *m);
+
+/**
+ * Stop it and wait for the thread, then free the handle.
+ *
+ * Safe to call on a macro that is still running: it is cancelled first, and
+ * the channel is dropped before the join so that anything blocked waiting for
+ * this frontend is released rather than deadlocked against a join that would
+ * never return.
+ */
+void tt_macro_free(TtMacro *m);
 
 #ifdef __cplusplus
 }  // extern "C"
