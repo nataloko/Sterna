@@ -783,6 +783,17 @@ And for the settings, all of which came out of `ini-audit/`:
   round gives negative history on a small ceiling. And it is `ttset.c:615`'s
   bound with no ceiling of its own — under 24 takes the *default* of 10000, so
   `MaxBuffSize=1` is not a one-line buffer.
+- **`TerminalSpeed`'s second field defaults to its first, which no schema type
+  can say.** `GetNthNum` answers 0 for a field that is not there
+  (`ttlib_static_cpp.cpp:1182`) and `ttset.c:1946` assigns the input speed, so
+  `TerminalSpeed=57600` is 57600 in *both* directions. Two `int` rows with any
+  constant default make that line a terminal claiming two different speeds, so
+  it is held as a string and parsed in `tt-session::open`.
+- **`TermType`'s default is plain `xterm`** (`ttset.c:961`), and TTSSH has none
+  of its own — `ssh.c:8593` puts `ts.TermType` into the `pty-req` — so one key
+  decides what every curses program on the far end believes, over telnet *and*
+  over SSH. This port had `xterm-256color` hardcoded in two crates; both now
+  say which default is whose.
 - **`ISO2022ShiftFunction`'s list starts from nothing, not from its default.**
   `ttset.c:1875` reads the key with a default string of `"on"` and then runs a
   loop from `ISO2022_SHIFT_NONE`, so the default applies only when the key is

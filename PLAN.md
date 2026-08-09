@@ -1088,14 +1088,14 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (122 settings over 110 keys: 39 for the terminal,
+  `crates/tt-config/` (124 settings over 112 keys: 39 for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
   writes into, 2026-08-09, plus the whole log family, then the whole
-  file-transfer family, then the seven the terminal was already honouring with
-  no key to read, 2026-08-09), the map onto a running terminal in
+  file-transfer family, then the seven the terminal and the two the *transports*
+  were already honouring with no key to read, 2026-08-09), the map onto a running terminal in
   `tt-session`, the schema as data over the C ABI, and a Qt dialog that builds
   itself from it. What remains is the *rest of the settings*, which is a line
-  and a citation each — 155 keys as of 2026-08-09, and `tests/upstream.rs`
+  and a citation each — 153 keys as of 2026-08-09, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -2958,7 +2958,7 @@ is the whole of what a value in the file means (`ttset.c:344`). Every other
 default in the schema was already right, `TCPPort`'s deliberate initialiser
 trap included.
 
-It also prints how far the transcription has got — 122 settings over 110 keys,
+It also prints how far the transcription has got — 124 settings over 112 keys,
 against the 256 `ttset.c` reads — so "the rest of the settings" has a number
 that cannot go stale in a comment.
 
@@ -3014,7 +3014,7 @@ why: it means "the peer's trigger has already gone past in the stream", which
 is true of a transfer the terminal started by itself and never of one a person
 picked from a menu.
 
-#### And seven the terminal was already honouring with no key to read
+#### And nine the terminal and the transports were already honouring
 
 `crates/tt-config/`, `tt-vt`, `tt-session/src/settings.rs` and the shell,
 2026-08-09. A different way of choosing what to transcribe next: rather than
@@ -3092,6 +3092,26 @@ combination: the frontend wants the second, the differential dump wants the
 first, and `MainWindow` accordingly stops composing a title of its own. The one
 thing it still decides is that `Title=`'s default is upstream's *product name*
 and means "no opinion" rather than "Tera Term".
+
+**And two more, one layer out, where the transports were doing the same
+thing.** `TelnetParams::term_type` and `::speed` were `TelnetParams::default()`'s
+— `TermType` and `TerminalSpeed`. The first made a divergence visible rather
+than merely wiring it up: upstream ships plain **`xterm`** (`ttset.c:961`) and
+this port had hardcoded `xterm-256color`, which is a defensible answer and not
+one a constant should be giving, since it decides what every curses program on
+the far end believes about the terminal. TTSSH has no terminal type of its own
+— `ssh.c:8593` puts `ts.TermType` straight into the `pty-req` — so the one key
+reaches both transports.
+
+`TerminalSpeed` is a string in the schema for a reason no other multi-field key
+has: **the second field's default is the first field's value.** `GetNthNum`
+gives 0 for a field that is not there (`ttlib_static_cpp.cpp:1182`) and
+`ttset.c:1946` then assigns the input speed, so `TerminalSpeed=57600` is 57600
+in both directions. Two `int` rows would have to default the second to a
+constant, and any constant turns that line into a terminal claiming two
+different speeds. `telnet_params` has no `..default()` left either, so a field
+added to `TelnetParams` is a compile error rather than a setting the file
+cannot reach.
 
 **And one divergence found on the way, which is a genuine engine bug rather
 than a setting.** `vtterm.c:5109` is `case 0: case 1: case 2:` falling into one
