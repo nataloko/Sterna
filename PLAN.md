@@ -1088,12 +1088,15 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (77 settings: 39 for the terminal, 2026-08-08, plus the
-  connection, serial and transfer ones the command line writes into, 2026-08-09,
-  plus the whole log family, 2026-08-09), the map onto a running terminal in
+  `crates/tt-config/` (115 settings over 103 keys: 39 for the terminal,
+  2026-08-08, plus the connection, serial and transfer ones the command line
+  writes into, 2026-08-09, plus the whole log family and then the whole
+  file-transfer family, 2026-08-09), the map onto a running terminal in
   `tt-session`, the schema as data over the C ABI, and a Qt dialog that builds
   itself from it. What remains is the *rest of the settings*, which is a line
-  and a citation each. See below.
+  and a citation each — 162 keys as of 2026-08-09, and `tests/upstream.rs`
+  prints the count on every run rather than leaving it to a stale comment here.
+  See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
   against a real Win32 rather than against a reading of the documentation;
   `KEYBOARD.CNF` is an INI and reads with the same layer.
@@ -2929,6 +2932,86 @@ where it is declared: `LogHideDialog` (this port has a status-bar indicator
 rather than a progress window), `LogIncludeScreenBuffer` (the function upstream
 does it with is two of the five upstream bugs on file) and `LogLockExclusive`
 plus `DeferredLogWriteMode` (Win32 share modes and a writer thread).
+
+#### And four keys that were in no Tera Term
+
+`crates/tt-config/tests/upstream.rs`, 2026-08-09. The schema is a
+transcription of `ttset.c`, and `CLAUDE.md` already says that the way to check
+a transcription is to extract both lists and diff them rather than to read
+them. Nobody had done it for this one. Four of the first 77 keys —
+`AltScreenBuffer`, `EnableUnderlineAttrColor`, `RemoteClearsBuffer` and
+`WindowChangeSequence` — appear **nowhere in upstream's 157k lines**. The real
+spellings are `AlternateScreenBuffer`, `UnderlineAttrColor`,
+`ClearScrollBufferFromRemote` and `WindowCtrlSequence`.
+
+**A wrong key cannot fail loudly**, which is why they survived: reading one
+upstream never writes gives the default from a file that sets the setting, and
+writing it puts a line in somebody's `TERATERM.INI` that their own Tera Term
+ignores. Both halves are silent.
+
+One of the four had a second defect hiding behind the first.
+`UnderlineAttrColor` is `GetOnOff(..., TRUE)` and the schema said **off** — the
+invented name meant nobody had ever looked at the call. So the same test now
+checks every bool default against the last argument of its `GetOnOff`, which
+is the whole of what a value in the file means (`ttset.c:344`). Every other
+default in the schema was already right, `TCPPort`'s deliberate initialiser
+trap included.
+
+It also prints how far the transcription has got — 115 settings over 103 keys,
+against the 256 `ttset.c` reads — so "the rest of the settings" has a number
+that cannot go stale in a comment.
+
+#### And then the file-transfer family, and a bound the schema could not hold
+
+`crates/tt-config/schema/settings.txt`, `tt-session/src/xfer.rs`, the C ABI
+and `shell/src/XferDialog.cpp`, 2026-08-09. Forty settings, and the second
+family added since the machinery was built.
+
+`xfer_options` had had a `_settings` with an underscore on it since file
+transfer landed, and `tt-xfer::Options` carried upstream's defaults hardcoded
+with a `ttset.c` citation each. Those citations turned out to be worth having:
+the first test written here asserts that an *empty* file produces exactly
+`Options::default()`, which is the only thing that would ever notice the two
+independent transcriptions of upstream's defaults drifting apart.
+
+**The timeouts needed a bound the schema had no way to say.** Every bounded
+int in the file until now takes the *default* below its floor
+(`ttset.c:615`) — that is `int(lo..hi)`, and it is why `TerminalSize=0,0` is
+80x24 rather than 1x1. The three timeout sets do the opposite: `GetNthNum2`
+and then `if (v < 1) v = 1`, a real clamp, so `XmodemTimeouts=0,0,0,0,0` is
+five one-second timeouts rather than `10,3,10,20,60`. That is `int_min(lo)`
+and `schema::floored`, and it is a separate spelling rather than a special
+case of the other because the two disagree about exactly the values a
+hand-edited file is likely to hold. `ZmodemTimeouts`' second field floors at
+**0** rather than 1, because 0 is meaningful there: it is how "never time out"
+is spelt on a network link.
+
+**`XmodemOpt`'s default is plain checksum**, which is the `else` branch of an
+`_stricmp` chain against an empty default (`ttset.c:1039`) — the same trap as
+`CRReceive` and `BSKey`, and the eighth member of that family. Both this
+port's `XmodemOpt::default()` and its XMODEM dialog had assumed CRC, and they
+had assumed it *differently*, so a job built from `Default::default()` and one
+built from the dialog could disagree. Now there is one answer. Upstream's
+writer emits `checksum` (`ttset.c:2594`), a spelling its own reader has no arm
+for; the value round-trips solely because anything unmatched takes the
+default, and the schema keeps that spelling for that reason.
+
+**And XMODEM's binary flag is not everyone else's.** `XmodemBin` is on,
+`TransBin` is off, and `filesys_proto.cpp:324` derives XMODEM's *text* flag as
+`1 - XmodemBin`. A port that folded them into one setting would ship XMODEM
+translating line endings or ZMODEM not translating them, in silence.
+
+Two more of the family, neither reproduced and both saying so where they are
+declared: `BPAuto` rewrites `ts.Answerback` to B-Plus's own trigger from what
+is nominally a transfer setting (`ttset.c:1132`), and `FTHideDialog` asks for
+a progress window this port does not have.
+
+The dialog now seeds itself through `tt_session_xfer_defaults` instead of
+inventing `binary`, the block format and the raw capture's wait — the three
+values it had hardcoded. `job.auto_start` stays hardcoded false and now says
+why: it means "the peer's trigger has already gone past in the stream", which
+is true of a transfer the terminal started by itself and never of one a person
+picked from a menu.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 

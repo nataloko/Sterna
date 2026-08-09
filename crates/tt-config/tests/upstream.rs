@@ -66,6 +66,46 @@ fn every_key_is_one_upstream_reads() {
          from a file that sets them:\n  {}",
         invented.join("\n  ")
     );
+
+    // How far the transcription has got, printed rather than asserted: this
+    // number only ever goes up, and a test that pinned it would fail on every
+    // setting added. `PLAN.md`'s "the rest of the settings" is the difference.
+    let ours: std::collections::BTreeSet<&str> = FIELDS
+        .iter()
+        .map(|f| f.key.split('.').next().unwrap())
+        .collect();
+    let theirs = upstream_keys(&src);
+    eprintln!(
+        "schema: {} settings over {} keys; ttset.c reads {}, so {} to go",
+        FIELDS.len(),
+        ours.len(),
+        theirs.len(),
+        theirs.difference(&ours).count()
+    );
+}
+
+/// Every INI key `ttset.c` reads, however it reads it.
+///
+/// Four call shapes and two string widths, which is why this matches on the
+/// *second* quoted argument of any of them rather than trying to parse the
+/// call. Over-matching would only inflate the "to go" count it feeds.
+fn upstream_keys(src: &str) -> std::collections::BTreeSet<&str> {
+    let mut out = std::collections::BTreeSet::new();
+    for call in [
+        "GetPrivateProfileInt(Section, \"",
+        "GetPrivateProfileString(Section, \"",
+        "GetOnOff(Section, \"",
+        "GetPrivateProfileColor2(Section, \"",
+    ] {
+        let mut rest = src;
+        while let Some(at) = rest.find(call) {
+            rest = &rest[at + call.len()..];
+            if let Some(end) = rest.find('"') {
+                out.insert(&rest[..end]);
+            }
+        }
+    }
+    out
 }
 
 #[test]

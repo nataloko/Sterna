@@ -736,6 +736,37 @@ And for the settings, all of which came out of `ini-audit/`:
   command parsed, reported nothing and changed nothing for four commits. The
   key belongs to the *file*; `terminal.local_echo` is what everything above
   the file says.
+- **A key the schema invents cannot fail loudly, and four of the first 77
+  were.** `AltScreenBuffer`, `EnableUnderlineAttrColor`, `RemoteClearsBuffer`
+  and `WindowChangeSequence` appear nowhere in upstream — the real spellings
+  are `AlternateScreenBuffer`, `UnderlineAttrColor`,
+  `ClearScrollBufferFromRemote` and `WindowCtrlSequence`. Reading a key
+  upstream never writes gives the default from a file that *sets* the setting;
+  writing it puts a line in the user's `TERATERM.INI` that their own Tera Term
+  ignores. Both halves are silent, and the invented name also hides the
+  `GetOnOff` call that would have shown `UnderlineAttrColor`'s default is on
+  rather than off. `tt-config/tests/upstream.rs` diffs both lists, which is the
+  same rule this file already states for `CheckReservedWord`: **the way to
+  check a transcription is to extract both lists and diff them, not to read
+  them.**
+- **`int(lo..hi)` and `int_min(lo)` are not the same bound, and the difference
+  shows up on exactly the values people type.** Everything else in `ttset.c`
+  takes the *default* below its floor (`:615`); the three transfer timeout sets
+  clamp to the floor (`:1822`), so `XmodemTimeouts=0,0,0,0,0` is five
+  one-second timeouts rather than `10,3,10,20,60`. And `ZmodemTimeouts`' second
+  field floors at **0**, not 1, because 0 there means "never time out" on a
+  network link — floor it at 1 and a stalled ZMODEM over SSH gives up after a
+  second.
+- **`XmodemOpt`'s default is plain checksum**, the `else` branch of an
+  `_stricmp` chain read with an empty default (`ttset.c:1039`) — eighth member
+  of the family that holds `CRReceive`, `BSKey`, the flag words, `GetOnOff`,
+  `/AUTOWINCLOSE=1` and `IdTitleReportEmpty`. Upstream's *writer* emits
+  `checksum` (`:2594`), which its own reader has no arm for; the value
+  round-trips only because anything unmatched takes the default. **And XMODEM's
+  binary flag is not the one every other protocol uses**: `XmodemBin` ships on,
+  `TransBin` ships off, and `filesys_proto.cpp:324` derives the *text* flag as
+  `1 - XmodemBin`. Folding them into one setting ships XMODEM translating line
+  endings or ZMODEM not translating them, in silence.
 
 And for the command line, which is two parsers and one of them is a plugin:
 
