@@ -3339,6 +3339,97 @@ which does not exist here.
 
 149 settings over 136 keys, 129 to go.
 
+#### And the serial port, which is the transport this project exists for
+
+`crates/tt-config/`, `tt-conn`, `tt-session`, the C ABI and `shell/`,
+2026-08-09. Nine keys — the two control lines, the purge on open, the break's
+length, and the five-key reconnect state machine — and the family where the
+*settings* half was the missing half: `tt-conn` has modelled `fDtrControl` and
+`fRtsControl` since the serial spike and nothing could read them out of a file.
+
+**The default of a control line is a sentinel, and it is the `TCPPort` trap
+the right way up.** `FlowCtrlRTS` and `FlowCtrlDTR` are read with a default of
+`-1` (`ttset.c:2034`, `:2042`), which is not a `DCB` value: it means "derive
+from the flow control", RTS taking Handshake under `FlowCtrl=hard` and DTR
+under `FlowCtrl=dsrdtr`. Unlike `TCPPort`'s default of `ts->TelPort`, the
+derivation really does see the file — `FlowCtrl` is read at `:943`, eleven
+hundred lines earlier — so here the read *order* is the answer rather than the
+lie. The schema keeps the sentinel and `tt-session`'s `serial_params` resolves
+it, the same call `connection.terminal_speed` makes and for the same reason:
+the schema has no way to say "the default is another setting".
+
+One consequence is upstream's and is a step further on. Upstream resolves at
+load and its writer emits the concrete number, so **saving pins the line**: a
+file that derived RTS from `FlowCtrl=hard` comes back saying `FlowCtrlRTS=2`,
+and changing the flow control afterwards no longer moves it. This port keeps
+the `-1`, which a real Tera Term reads exactly as it reads an absent key — a
+divergence in the file's text that makes the file mean the same thing in both
+programs for longer.
+
+**And an out-of-range value discards every serial setting in the file, in
+silence.** `CommResetSerial` puts `ts->FlowCtrlRTS` straight into the `DCB` and
+never looks at what `SetCommState` said about it (`commlib.c:240`), so a
+hand-edited `FlowCtrlRTS=9` makes Windows refuse the whole structure and the
+port keeps the baud, parity, stop bits and flow control it already had. Not
+reproduced — `pin_control` reads anything it does not know as Enable — because
+the symptom is every other setting going missing at once and the cause is one
+line nobody would look at. It is the same shape as `TermIDGetID` never failing:
+upstream declines to error and the user gets a terminal that is quietly not the
+one they configured.
+
+RTS has a fourth value that DTR does not, and it is the one Linux cannot do
+through termios: `RTS_CONTROL_TOGGLE` is half-duplex RS-485 keying, which is
+`TIOCSRS485` rather than a `c_cflag` bit. **Probed on the rig rather than
+guessed**: the FTDI Quad RS232-HS answers `ENOTTY` to even `TIOCGRS485`, so
+there is no hardware here to test an implementation against and `PinControl`
+carries the variant while leaving the line where the kernel put it. The mapping
+is written down in the enum for whoever has an 8250.
+
+`ClearComBuffOnOpen` decides whether what the driver already had is the
+session's first bytes or is thrown away, and it is on. Off is a real choice on
+a console server — that buffer is what the far end said before anybody was
+watching, and often the only copy — which is why upstream marks the port
+readable instead when it is off (`commlib.c:477`'s `cv->RRQ`). It gates the
+purge on **open** only: Control > Reset port passes TRUE whatever the setting
+says (`vtwin.cpp:4913`), so it is not the answer to "does resetting the port
+clear it". The hardware test in `tt-session/tests/serial_loopback.rs` is the
+only kind that can settle this: the setting acts on a queue a memory transport
+does not have, and the two answers are otherwise identical from the session's
+side.
+
+**`SendBreakTime` found three durations in this port and none of them was the
+file's** — 300 ms in `MainWindow.cpp`, 250 in `tt-macro`'s host under a comment
+claiming that was upstream's, and whatever a caller of the ABI passed. Upstream
+has exactly one break length and every way of asking reaches it: the menu, the
+accelerator, and a macro's `sendbreak`, which posts the menu command through
+DDE (`ttdde.c:801`) rather than carrying a length. So `tt_session_send_break`
+lost its `ms` parameter — an argument no caller had a right answer for is the
+same defect as `RingBell`'s dead `type`, one layer up and in our own code. Same
+shape as the hardcoded word-delimiter list the previous pass found in
+`TerminalView`, and the second time in two sessions that a constant turned out
+to be a setting.
+
+The five reconnect keys are carried and not yet run, said plainly where they
+are declared: upstream drives the state machine from `WM_DEVICECHANGE`
+(`vtwin.cpp:311`) and the Linux half is a udev monitor this port has not
+built. Three things in them are worth knowing before it is:
+
+- **"Illegal" is about the notification, not about a value.** Some drivers send
+  `DBT_DEVTYP_DEVICEINTERFACE` and never the `DBT_DEVTYP_PORT` that would say
+  *which* port arrived, so `AutoComPortReconnectDelayIllegal` is the longer
+  wait taken when the port number is unknown and the reopen is a guess.
+- **`RetryCount` is retries and the name is honest**, unlike
+  `BeepOverUsedCount` — three is four tries. But an attempt where the port is
+  still absent costs a retry without opening anything (`vtwin.cpp:475`'s
+  `CheckComPort` guard), and the *last* attempt is the one allowed to raise the
+  error box, because the suppression tests `retry_left_ != 0` (`:481`).
+- The four `int`s are `WORD` in `tttypes.h:602`, so upstream truncates them to
+  16 bits and a two-minute retry interval written as `120000` is 54464 ms
+  there. Not reproduced; the schema has no type for it and the divergence only
+  exists for values nobody means.
+
+158 settings over 145 keys, 120 to go.
+
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
 Windows build, ConPTY, Win32 serial edge cases, NSIS installer. All 14 `.lng`

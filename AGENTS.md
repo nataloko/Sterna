@@ -653,6 +653,39 @@ And for the serial side:
   usually the one that reports it, which makes it look like a flaky `tt-conn`
   rather than an overbooked rig. Run one package at a time. There is no cargo
   flag for this; `--jobs` is about compilation.
+- **The two control lines default to a sentinel, and it is the `TCPPort` trap
+  the right way up.** `FlowCtrlRTS` and `FlowCtrlDTR` are read with a default of
+  `-1` (`ttset.c:2034`, `:2042`), which is not a `DCB` value — it means "derive
+  from `ts.Flow`", Handshake for RTS under `hard` and for DTR under `dsrdtr`.
+  Here the read *order* is the answer rather than the lie: `FlowCtrl` is read at
+  `:943`, eleven hundred lines earlier, so the derivation sees the file. Taking
+  `-1` as a value gives a port whose control lines are held low.
+- **One out-of-range number in the file discards every serial setting in it.**
+  `CommResetSerial` copies `ts->FlowCtrlRTS` into the `DCB` and never checks
+  `SetCommState`'s return (`commlib.c:240`), so `FlowCtrlRTS=9` makes Windows
+  refuse the whole structure and the port silently keeps the baud, parity and
+  stop bits it already had. Not reproduced — the symptom points at everything
+  except the cause.
+- **Upstream's save *pins* a derived control line.** It resolves the sentinel at
+  load and writes the concrete number back, so a file that derived RTS from
+  `FlowCtrl=hard` comes back saying `FlowCtrlRTS=2` and changing the flow
+  control no longer moves it. This port keeps the `-1`. Either file opens
+  correctly in either program; only the second keeps the derivation alive.
+- **`RTS_CONTROL_TOGGLE` is not a termios bit** — it is RS-485 keying, so on
+  Linux it is `TIOCSRS485`, and whether it exists is the *driver's* answer.
+  Measured: the FTDI Quad RS232-HS answers `ENOTTY` to even the get, so nothing
+  on the rig can test an implementation. `PinControl::Toggle` therefore leaves
+  the line where the kernel put it rather than pretending.
+- **`ClearComBuffOnOpen` gates the purge on open only.** Control > Reset port
+  purges whatever the setting says (`vtwin.cpp:4913` passes TRUE outright), so
+  it is not the answer to "does resetting the port clear it". And it is only
+  testable on real hardware: it acts on the driver's queue, which a memory
+  transport does not have, and both answers look identical from the session.
+- **`SendBreakTime` is the only break length there is**, and a parameter for it
+  is a parameter every caller has to invent. Upstream's menu, accelerator and
+  `sendbreak` all reach one value; this port had 300 ms in the window, 250 in
+  the macro host under a comment claiming it was upstream's, and an `ms`
+  argument on the ABI. Same defect as `RingBell`'s dead `type`, in our code.
 
 And for the settings, all of which came out of `ini-audit/`:
 
