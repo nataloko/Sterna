@@ -200,6 +200,14 @@ pub struct Config {
     pub alt_screen_enabled: bool,
     /// `TF_REMOTECLEARSBUFF` (`ttset.c:1950`, key default on). Gates `ED 3`.
     pub remote_clears_buffer: bool,
+    /// `TF_CLEARONRESIZE` (`ttset.c:1676`, key default **off**). With it on a
+    /// resize scrolls the page away and homes the cursor; with it off the
+    /// screen survives and only the page's position over the buffer moves.
+    pub clear_on_resize: bool,
+    /// `ts.ScrollWindowClearScreen` (`ttset.c:1444`, key default on). Whether
+    /// an `ED 0` with the cursor at the home position is treated as `ED 2`.
+    /// **Not** a gate on `ED 2`, which clears the screen either way.
+    pub home_erase_clears_screen: bool,
     /// `WF_WINDOWCHANGE` (`ttset.c:1653`, key default on). Gates the XTWINOPS
     /// operations that *change* something, including the resize.
     pub window_change: bool,
@@ -365,6 +373,8 @@ impl Default for Config {
             accept_8bit_ctrl: true,
             alt_screen_enabled: true,
             remote_clears_buffer: true,
+            clear_on_resize: false,
+            home_erase_clears_screen: true,
             window_change: true,
             window_report: true,
             title_report: TitleReport::default(),
@@ -493,7 +503,8 @@ pub struct Vt {
 
 impl Vt {
     pub fn new(config: Config) -> Self {
-        let grid = Grid::new(config.cols, config.rows, config.scrollback_max);
+        let mut grid = Grid::new(config.cols, config.rows, config.scrollback_max);
+        grid.set_clear_on_resize(config.clear_on_resize);
         // `vtterm.c:ChangeTerminalID` — level 1 never sends 8-bit controls,
         // whatever the setting says.
         let vt_level = config.term_id.vt_level();
@@ -681,6 +692,7 @@ impl Vt {
         s.modes.cr_send = s.config.cr_send;
 
         s.grid.set_scrollback_max(s.config.scrollback_max);
+        s.grid.set_clear_on_resize(s.config.clear_on_resize);
         s.grid.resize(s.config.cols, s.config.rows);
 
         // `SetupTerm` opens with `ResetCharSet()`, so a G1 designation made by
@@ -1733,13 +1745,19 @@ impl State {
     /// DECCOLM — `vtterm.c:CSQChangeColumnMode`. It is a resize, it throws the
     /// left/right margins away, and because `TF_CLEARONRESIZE` ships off it
     /// also clears the screen and homes the cursor by hand.
+    ///
+    /// The clear is skipped when the flag is *on*, and upstream says why in a
+    /// comment: `ChangeTerminalSize` has already scrolled the page out, and
+    /// doing it twice would put a second blank page in the history.
     fn dec_colm(&mut self, wide: bool) {
         let rows = self.grid.rows();
         self.grid.resize(if wide { 132 } else { 80 }, rows);
         self.lr_margin_mode = false;
         self.grid.reset_lr_margins();
-        self.grid.move_cursor(0, 0);
-        self.grid.clear_screen();
+        if !self.config.clear_on_resize {
+            self.grid.move_cursor(0, 0);
+            self.grid.clear_screen();
+        }
     }
 
     /// `vtterm.c:2970` / `:3030` / `:3144` / `:3194`.
@@ -2432,6 +2450,20 @@ impl State {
                     self.grid.selective_erase_to_end();
                 }
                 (true, _) => {}
+                // `ESC [ H ESC [ J` is what a good many programs send in
+                // place of `ESC [ 2 J`, and upstream promotes it to one so the
+                // screen goes into the history rather than being erased out of
+                // it (`vtterm.c:1728`). Gated on the setting, and on the
+                // cursor being at the *screen's* origin rather than the
+                // region's — `CursorX == 0 && CursorY == 0`, tested without
+                // reference to origin mode.
+                (false, 0)
+                    if self.config.home_erase_clears_screen
+                        && self.grid.cursor.x == 0
+                        && self.grid.cursor.y == 0 =>
+                {
+                    self.grid.clear_screen();
+                }
                 (false, mode) => {
                     self.grid.erase_display(mode);
                     // `DECSET 8200` homes the cursor after `ED 2` — to the

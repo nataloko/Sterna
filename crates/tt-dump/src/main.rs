@@ -4,7 +4,8 @@
 //!
 //! ```text
 //! tt-dump [--cols N] [--rows N] [--term ID] [--attrs] [--scrollback]
-//!         [--crreceive cr|lf|crlf|auto] [FILE]
+//!         [--crreceive cr|lf|crlf|auto] [--clearonresize]
+//!         [--noscrollwindowclear] [FILE]
 //! ```
 //!
 //! `run_diff.sh` runs both engines over every case in `oracle/cases/` and diffs
@@ -24,7 +25,8 @@ use tt_grid::{
 use tt_vt::{Config, CrReceive, Key, Modifiers, MouseEvent, TermId, Vt};
 
 const USAGE: &str = "usage: tt-dump [--cols N] [--rows N] [--term ID] [--attrs]\n\
-                     \x20              [--scrollback] [--crreceive cr|lf|crlf|auto] [FILE]\n";
+                     \x20              [--scrollback] [--crreceive cr|lf|crlf|auto]\n\
+                     \x20              [--clearonresize] [--noscrollwindowclear] [FILE]\n";
 
 /// `TermWidthMax` / `TermHeightMax` from Tera Term's `ttcommon.h`, so the two
 /// engines reject the same sizes.
@@ -37,6 +39,8 @@ struct Args {
     term: String,
     attrs: bool,
     scrollback: bool,
+    clear_on_resize: bool,
+    home_erase_clears_screen: bool,
     cr_receive: CrReceive,
     path: Option<String>,
 }
@@ -90,8 +94,18 @@ fn main() {
         term_id,
         cr_receive: args.cr_receive,
         scrollback_max: SCROLL_BUFF_SIZE.saturating_sub(args.rows),
+        clear_on_resize: args.clear_on_resize,
+        home_erase_clears_screen: args.home_erase_clears_screen,
         ..Config::default()
     });
+    // `oracle/src/main.c` opens with `BuffChangeTerminalSize(cols, rows)` after
+    // `ResetTerminal`, which is what a real Tera Term does on the way to its
+    // first screen. A no-op at the size the terminal already has — except
+    // under `--clearonresize`, where the scroll is outside the block that
+    // tests for a change and a blank page goes into the history before a byte
+    // has arrived. That is upstream's startup rather than upstream's parse,
+    // and the two engines have to make the same one.
+    vt.grid_mut().resize(args.cols, args.rows);
     run_stream(&mut vt, &input);
 
     let stdout = std::io::stdout();
@@ -216,6 +230,8 @@ fn parse_args() -> Result<Option<Args>, String> {
         term: "vt100".to_string(),
         attrs: false,
         scrollback: false,
+        clear_on_resize: false,
+        home_erase_clears_screen: true,
         cr_receive: CrReceive::Cr,
         path: None,
     };
@@ -244,6 +260,8 @@ fn parse_args() -> Result<Option<Args>, String> {
             "--term" => args.term = next(&mut i)?,
             "--attrs" => args.attrs = true,
             "--scrollback" => args.scrollback = true,
+            "--clearonresize" => args.clear_on_resize = true,
+            "--noscrollwindowclear" => args.home_erase_clears_screen = false,
             "--crreceive" => {
                 let v = next(&mut i)?;
                 args.cr_receive = match v.as_str() {

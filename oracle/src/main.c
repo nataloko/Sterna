@@ -7,7 +7,8 @@
  * so the format is deliberately line-oriented and diff-friendly.
  *
  *   oracle [--cols N] [--rows N] [--term ID] [--attrs] [--scrollback]
- *          [--crreceive cr|lf|crlf|auto] [FILE]
+ *          [--crreceive cr|lf|crlf|auto] [--clearonresize]
+ *          [--noscrollwindowclear] [FILE]
  *
  * With no FILE, reads stdin. Output goes to stdout.
  */
@@ -79,7 +80,8 @@ static int resolve_term_id(const char *name)
 	return 0;
 }
 
-static void settings_defaults(int cols, int rows, const char *term_id, int cr_receive)
+static void settings_defaults(int cols, int rows, const char *term_id, int cr_receive,
+                              int clear_on_resize, int scroll_window_clear_screen)
 {
 	memset(&ts, 0, sizeof(ts));
 	memset(&cv, 0, sizeof(cv));
@@ -128,7 +130,10 @@ static void settings_defaults(int cols, int rows, const char *term_id, int cr_re
 	ts.AutoWinResize = FALSE;
 	ts.EnableScrollBuff = 1;
 	ts.SelectStartDelay = 0;
-	ts.ScrollWindowClearScreen = TRUE;      /* ttset.c:1444 */
+	/* ttset.c:1444, GetOnOff(..., TRUE). Not a gate on ED 2 -- it decides
+	 * only whether an ED 0 at the home position is promoted to one
+	 * (vtterm.c:1728). Override with --noscrollwindowclear. */
+	ts.ScrollWindowClearScreen = scroll_window_clear_screen;
 	/* ttset.c:1568 defaults this to "overwrite", not off. */
 	ts.AcceptTitleChangeRequest = IdTitleChangeRequestOverwrite;
 
@@ -162,6 +167,11 @@ static void settings_defaults(int cols, int rows, const char *term_id, int cr_re
 	 * :1950 ClearScrollBufferFromRemote=on. */
 	ts.TermFlag = TF_ACCEPT8BITCTRL | TF_CTRLINKANJI | TF_ENABLESLINE |
 	              TF_ALTSCR | TF_LOCKTUID | TF_REMOTECLEARSBUFF;
+	/* ttset.c:1676 ClearOnResize=off, which is why it is not in the word
+	 * above. --clearonresize is the other half of that key. */
+	if (clear_on_resize) {
+		ts.TermFlag |= TF_CLEARONRESIZE;
+	}
 
 	/* ttset.c:1653 WindowCtrlSequence=on, :1661 WindowReportSequence=on,
 	 * :1664 TitleReportSequence="Empty". CursorCtrlSequence defaults off.
@@ -617,6 +627,7 @@ static void run_stream(const unsigned char *input, size_t len)
 int main(int argc, char **argv)
 {
 	int cols = 80, rows = 24, want_attrs = 0, want_scrollback = 0, cr_receive = IdCR;
+	int clear_on_resize = 0, scroll_window_clear_screen = 1;
 	const char *term_id = "vt100";
 	const char *path = NULL;
 	unsigned char *input;
@@ -635,6 +646,10 @@ int main(int argc, char **argv)
 			want_attrs = 1;
 		} else if (strcmp(argv[i], "--scrollback") == 0) {
 			want_scrollback = 1;
+		} else if (strcmp(argv[i], "--clearonresize") == 0) {
+			clear_on_resize = 1;
+		} else if (strcmp(argv[i], "--noscrollwindowclear") == 0) {
+			scroll_window_clear_screen = 0;
 		} else if (strcmp(argv[i], "--crreceive") == 0 && i + 1 < argc) {
 			const char *v = argv[++i];
 			if (strcmp(v, "cr") == 0)        cr_receive = IdCR;
@@ -645,7 +660,8 @@ int main(int argc, char **argv)
 		} else if (strcmp(argv[i], "--help") == 0) {
 			fprintf(stderr,
 			        "usage: oracle [--cols N] [--rows N] [--term ID] [--attrs]\n"
-			        "              [--scrollback] [--crreceive cr|lf|crlf|auto] [FILE]\n");
+			        "              [--scrollback] [--crreceive cr|lf|crlf|auto]\n"
+			        "              [--clearonresize] [--noscrollwindowclear] [FILE]\n");
 			return 0;
 		} else if (argv[i][0] != '-') {
 			path = argv[i];
@@ -682,7 +698,8 @@ int main(int argc, char **argv)
 		fclose(in);
 	}
 
-	settings_defaults(cols, rows, term_id, cr_receive);
+	settings_defaults(cols, rows, term_id, cr_receive, clear_on_resize,
+	                  scroll_window_clear_screen);
 	oracle_clock_set_frozen(1);
 
 	NumOfColumns = cols;

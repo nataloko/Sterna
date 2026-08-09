@@ -273,6 +273,11 @@ pub struct Grid {
     /// The main screen, parked here while the alternate screen is up.
     /// `buffer.c:BuffSaveScreen`/`BuffRestoreScreen`.
     stashed: Option<Vec<Line>>,
+    /// `TF_CLEARONRESIZE` — see [`Grid::resize`], which is the only reader.
+    /// Held here rather than passed in because all three callers of `resize`
+    /// are subject to it: upstream funnels the window, XTWINOPS and DECCOLM
+    /// through the one `BuffChangeTerminalSize`.
+    clear_on_resize: bool,
 }
 
 impl Grid {
@@ -301,7 +306,13 @@ impl Grid {
             tabs: default_tabs(cols),
             saved: [None, None],
             stashed: None,
+            clear_on_resize: false,
         }
+    }
+
+    /// `TF_CLEARONRESIZE` (`ttset.c:1676`, key default off).
+    pub fn set_clear_on_resize(&mut self, on: bool) {
+        self.clear_on_resize = on;
     }
 
     /// `BuffSaveScreen` — park a copy of the visible page.
@@ -597,10 +608,19 @@ impl Grid {
     ///   at the cursor's line and everything above it becomes scrollback.
     /// - **Growing** pulls lines back *out of the scrollback* to fill the new
     ///   rows, and only extends downward once the scrollback runs out.
+    ///
+    /// With `TF_CLEARONRESIZE` on none of that runs. The block that slides the
+    /// page is guarded on the flag (`buffer.c:5001`) and a `BuffScroll` of the
+    /// whole page follows it (`:5028`), which nets out to "everything on the
+    /// page goes into the history, the page comes back blank, the cursor
+    /// homes" whichever direction the size moved. That `BuffScroll` sits
+    /// **outside** the `if (size changed)` block, so it also runs for a resize
+    /// to the size the terminal already has — which is how `CSI 8 ; 24 ; 80 t`
+    /// clears a 80x24 terminal.
     pub fn resize(&mut self, cols: usize, rows: usize) {
         let cols = cols.clamp(1, BUFF_X_MAX);
         let rows = rows.clamp(1, self.max_rows.max(1));
-        if cols == self.cols && rows == self.rows {
+        if cols == self.cols && rows == self.rows && !self.clear_on_resize {
             return;
         }
         let pen = self.pen;
@@ -628,7 +648,13 @@ impl Grid {
 
         // 2. Height, as the page sliding over the scrollback.
         let cy = self.cursor.y;
-        if rows < self.rows {
+        if self.clear_on_resize {
+            for line in std::mem::take(&mut self.lines) {
+                self.push_scrollback(line);
+            }
+            self.lines = (0..rows).map(|_| vec![Cell::erased(pen); cols]).collect();
+            self.cursor = Cursor::default();
+        } else if rows < self.rows {
             if rows > cy + 1 {
                 self.lines.truncate(rows);
             } else {
