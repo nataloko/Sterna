@@ -320,7 +320,9 @@ clipboard.auto_copy | bool | Tera Term | AutoTextCopy | on | -
 
 # `ttset.c:1280`, `ts.SelOnActive`. Off **eats** the click that activates the
 # window (`vtwin.cpp:2387` returns `MA_ACTIVATEANDEAT`), so bringing the
-# terminal forward cannot start a selection by accident.
+# terminal forward cannot start a selection by accident. Read and written and
+# acting on nothing yet: Qt delivers no `WM_MOUSEACTIVATE`, so the equivalent
+# is a first-click filter the view does not have.
 clipboard.select_on_activate | bool | Tera Term | SelectOnActivate | on | -
 
 # `ttset.c:1449`. On, only the left button starts a selection — and a middle
@@ -330,7 +332,9 @@ clipboard.select_on_activate | bool | Tera Term | SelectOnActivate | on | -
 clipboard.select_only_by_lbutton | bool | Tera Term | SelectOnlyByLButton | on | -
 
 # `ttset.c:1954`, `ts.SelectStartDelay`, in milliseconds. How long the button
-# is held before a drag counts as a selection rather than as a click.
+# is held before a drag counts as a selection rather than as a click. Read and
+# written and acting on nothing yet; it ships at 0, which is what the view
+# does.
 clipboard.select_start_delay | int | Tera Term | MouseSelectStartDelay | 0 | -
 
 # `ttset.c:1422`, `CPF_DISABLE_RBUTTON`. **Upstream pastes on the right button
@@ -348,7 +352,9 @@ clipboard.paste_mbutton_disabled | bool | Tera Term | DisablePasteMouseMButton |
 
 # `ttset.c:1428`, `CPF_CONFIRM_RBUTTON`. The right button raises a menu with
 # Paste on it instead of pasting, and the button-up paste is then suppressed
-# as well (`vtwin.cpp:2645` tests both bits).
+# as well (`vtwin.cpp:2645` tests both bits). Half honoured: the suppression
+# is there and the menu is not, so setting this gives a right button that does
+# nothing rather than one that offers a choice.
 clipboard.confirm_paste_rbutton | bool | Tera Term | ConfirmPasteMouseRButton | off | -
 
 # `ttset.c:1431`, `CPF_CONFIRM_CHANGEPASTE`. **On.** A paste holding a line
@@ -360,7 +366,9 @@ clipboard.confirm_paste | bool | Tera Term | ConfirmChangePaste | on | -
 # `ttset.c:1434`, `CPF_CONFIRM_CHANGEPASTE_CR`. The same confirmation for
 # "paste and send a CR", where the newline is the one being *added* rather
 # than one already in the text. Only consulted on that path, so a plain paste
-# of text with no break is never confirmed by it.
+# of text with no break is never confirmed by it — and that path is upstream's
+# `Paste<CR>` menu item, which this shell has no command for, so the key is
+# read and written and acts on nothing yet.
 clipboard.confirm_paste_cr | bool | Tera Term | ConfirmChangePasteCR | on | -
 
 # `ttset.c:1437`. A file of strings, one per line: a paste containing any of
@@ -376,7 +384,9 @@ clipboard.trim_trailing_newline | bool | Tera Term | TrimTrailingNLonPaste | off
 # `ttset.c:1633`, milliseconds between the lines of a paste — for a host with
 # no flow control that drops what arrives while it is still echoing. The only
 # setting in the file clamped at **both** ends; see `int_clamp` above for why
-# that is a third bound rather than one of the other two.
+# that is a third bound rather than one of the other two. Read and written and
+# acting on nothing yet: pacing a paste means handing the send path a schedule,
+# and `Session::paste` queues the whole thing.
 clipboard.paste_delay_per_line | int_clamp(0..5000) | Tera Term | PasteDelayPerLine | 10 | -
 
 # `ttset.c:1580`. Upstream writes the size back when the confirmation dialog

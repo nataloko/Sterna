@@ -1088,14 +1088,15 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (124 settings over 112 keys: 39 for the terminal,
+  `crates/tt-config/` (141 settings over 128 keys: 39 for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
   writes into, 2026-08-09, plus the whole log family, then the whole
   file-transfer family, then the seven the terminal and the two the *transports*
-  were already honouring with no key to read, 2026-08-09), the map onto a running terminal in
+  were already honouring with no key to read, then the clipboard's sixteen,
+  2026-08-09), the map onto a running terminal in
   `tt-session`, the schema as data over the C ABI, and a Qt dialog that builds
   itself from it. What remains is the *rest of the settings*, which is a line
-  and a citation each — 153 keys as of 2026-08-09, and `tests/upstream.rs`
+  and a citation each — 137 keys as of 2026-08-09, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -3118,6 +3119,102 @@ than a setting.** `vtterm.c:5109` is `case 0: case 1: case 2:` falling into one
 arm, so **OSC 1 — "change icon name" — sets the window title**. This engine
 took only 0 and 2, with a comment asserting the opposite, and nothing caught it
 because no differential case had ever sent an OSC 1. Case 107 does.
+
+#### And the clipboard, where a line break is not what it looks like
+
+`crates/tt-config/`, `tt-grid`, `tt-vt`, `tt-session` and `shell/`,
+2026-08-09. Sixteen keys — upstream's "Copy and Paste" page — and the first
+family since the log where most of them had behaviour waiting for them rather
+than behaviour to be written.
+
+**The headline is one line of `clipboar.c` this port did not have.**
+`NormalizeLineBreakCR` (`ttlib_static_cpp.cpp:535`, called at `:289`) maps
+`LF` and `CR LF` alike onto a single **`CR`** before the brackets go on. A
+terminal sends what a keyboard sends and the Return key is a CR; queueing the
+clipboard's own bytes — which is what this did — puts a byte on the wire that
+no key produces, under every `CRSend` setting including the default. It reads
+as correct, because a newline is what a line ending is called everywhere else,
+and it is the same mistake `Vt::encode_text` already had one layer up in the
+control socket.
+
+`TrimTrailingNLonPaste` cuts **every** trailing break rather than one
+(`clipboar.c:55`), and it runs *before* the decision to confirm — so with it on
+a copied line with its newline still attached is pasted without a question,
+because by then there is no newline.
+
+**`BracketedSupport` is a second gate on `DECSET 2004`.** `clipboar.c:265`
+tests the setting and *then* the mode, so a host that asked for bracketed paste
+gets an unbracketed one when the key is off. It ships on, which is exactly why
+a port that omits it looks right until somebody turns it off.
+`BracketedControlOnly` narrows it to a paste holding a control character, so a
+pasted word goes bare and a pasted block does not.
+
+**`EnableContinuedLineCopy` is two things and only one of them is copying.**
+It is upstream's `logFlag`, the argument threaded through `CarriageReturn` and
+`LineFeed` (`vtterm.c:675`, `:688`): TRUE for a CR or LF off the wire, FALSE
+for the pair the terminal invents at a wrap, and with the setting on only the
+invented pair is kept out of the log and the macro tap. So the key named after
+*copying* decides whether a script's `wait` matches a wrapped line as the one
+line the host sent or as the two the terminal drew — the same shape as
+`LogTypePlainText`, which is named after the log and does the same thing to the
+same tap. `Vt::carriage_return` had carried a comment since it was written
+saying the argument was not needed because the port had not adopted the
+setting; that comment was the marker for this work, the way three fields in
+`Config` were for the last piece.
+
+The other half needed the grid to grow `ATTR_LINE_CONTINUED` — `buffer.h:50`'s
+own bit, set on the last cell of the row a break left and the first cell of the
+row it landed on. Nothing draws it; the frontend reads it to join two rows that
+are one line. Upstream gates the *clear* on the setting and sets the bit
+ungated, which leaves the flag stale precisely where nothing reads it; clearing
+always is the same terminal and a grid that means what it says.
+
+**Two defaults are the opposite way round from every Linux terminal**, and
+neither is a bug. `DisablePasteMouseMButton` ships **on** and
+`DisablePasteMouseRButton` ships off (`ttset.c:1425`, `:1422`), so Tera Term
+pastes on the right button and not on the middle. This shell had hardcoded the
+X11 convention with a comment defending it; that divergence ends the way
+`keyboard.meta`'s did — faithful by default, one line in the file away from the
+other behaviour. Both pastes also move onto the button coming *up*, where
+upstream does them. `SelectOnlyByLButton` carries a second half its name does
+not mention: with it on, a middle or right button coming up over a standing
+selection must **not** copy it (`vtwin.cpp:819`), which is the bug that arm was
+added for.
+
+**`ConfirmChangePaste` ships on and had nothing behind it, which is worse than
+a setting that does nothing** — a safety feature the file claims is enabled. A
+terminal cannot tell a host that what arrived was pasted, so a shell runs every
+line of a pasted block the moment it lands; showing it first is the only
+defence there is. `shell/src/PasteDialog.cpp` is that box, editable rather than
+yes/no because upstream's returns the edited string and the common use is
+deleting a trailing newline off something copied out of a wiki.
+`ConfirmChangePasteStringFile` is the dictionary of extra triggers — one
+substring per line, `wcsstr`, first hit wins — and `PasteDialogSize` is written
+back when the box closes, which is the whole reason upstream made it a setting.
+
+The first run of the new render tests **hung**, which was the feature working:
+a right-button release pasted a clipboard the previous test had left holding
+`one\ntwo`, and the dialog sat waiting for somebody to say yes. In a test that
+is not a failure, it is a hang — the same shape as the modal dialog inside
+`tt_ctl_service`.
+
+`PasteDelayPerLine` needed a bound the schema had no spelling for. Every other
+bounded int is `ttset.c:615`'s (below the floor takes the default) or
+`:1822`'s (below the floor takes the floor); this one is
+`min(max(0, v), 5000)`, a clamp at both ends, and it disagrees with the first
+below the floor and with the second above the ceiling. That is `int_clamp`,
+and it is the third of three rather than a special case of either.
+
+Five of the sixteen are read and written and act on nothing yet, each saying so
+where it is declared: `SelectOnActivate` (Qt delivers no `WM_MOUSEACTIVATE`),
+`MouseSelectStartDelay` (which ships at 0, the behaviour there already),
+`PasteDelayPerLine` (pacing means handing the send path a schedule),
+`ConfirmChangePasteCR` (there is no `Paste<CR>` command to confirm) and half of
+`ConfirmPasteMouseRButton` — the suppression is honoured and the menu it should
+raise instead does not exist, so setting it gives a right button that does
+nothing rather than one that offers a choice.
+
+141 settings over 128 keys, 137 to go.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 

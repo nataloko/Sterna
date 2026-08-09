@@ -1033,7 +1033,9 @@ pub struct Settings {
     pub clipboard_auto_copy: bool,
     /// `ttset.c:1280`, `ts.SelOnActive`. Off **eats** the click that activates the
     /// window (`vtwin.cpp:2387` returns `MA_ACTIVATEANDEAT`), so bringing the
-    /// terminal forward cannot start a selection by accident.
+    /// terminal forward cannot start a selection by accident. Read and written and
+    /// acting on nothing yet: Qt delivers no `WM_MOUSEACTIVATE`, so the equivalent
+    /// is a first-click filter the view does not have.
     pub clipboard_select_on_activate: bool,
     /// `ttset.c:1449`. On, only the left button starts a selection — and a middle
     /// or right button coming up over a standing selection does **not** copy it
@@ -1041,7 +1043,9 @@ pub struct Settings {
     /// and the bug it was added to fix.
     pub clipboard_select_only_by_lbutton: bool,
     /// `ttset.c:1954`, `ts.SelectStartDelay`, in milliseconds. How long the button
-    /// is held before a drag counts as a selection rather than as a click.
+    /// is held before a drag counts as a selection rather than as a click. Read and
+    /// written and acting on nothing yet; it ships at 0, which is what the view
+    /// does.
     pub clipboard_select_start_delay: i32,
     /// `ttset.c:1422`, `CPF_DISABLE_RBUTTON`. **Upstream pastes on the right button
     /// by default** — the arm is the `else` of this test (`vtwin.cpp:2645`), so a
@@ -1056,7 +1060,9 @@ pub struct Settings {
     pub clipboard_paste_mbutton_disabled: bool,
     /// `ttset.c:1428`, `CPF_CONFIRM_RBUTTON`. The right button raises a menu with
     /// Paste on it instead of pasting, and the button-up paste is then suppressed
-    /// as well (`vtwin.cpp:2645` tests both bits).
+    /// as well (`vtwin.cpp:2645` tests both bits). Half honoured: the suppression
+    /// is there and the menu is not, so setting this gives a right button that does
+    /// nothing rather than one that offers a choice.
     pub clipboard_confirm_paste_rbutton: bool,
     /// `ttset.c:1431`, `CPF_CONFIRM_CHANGEPASTE`. **On.** A paste holding a line
     /// break is shown in a dialog first and can be edited there
@@ -1066,7 +1072,9 @@ pub struct Settings {
     /// `ttset.c:1434`, `CPF_CONFIRM_CHANGEPASTE_CR`. The same confirmation for
     /// "paste and send a CR", where the newline is the one being *added* rather
     /// than one already in the text. Only consulted on that path, so a plain paste
-    /// of text with no break is never confirmed by it.
+    /// of text with no break is never confirmed by it — and that path is upstream's
+    /// `Paste<CR>` menu item, which this shell has no command for, so the key is
+    /// read and written and acts on nothing yet.
     pub clipboard_confirm_paste_cr: bool,
     /// `ttset.c:1437`. A file of strings, one per line: a paste containing any of
     /// them is confirmed even with no line break in it. Resolved against the home
@@ -1079,7 +1087,9 @@ pub struct Settings {
     /// `ttset.c:1633`, milliseconds between the lines of a paste — for a host with
     /// no flow control that drops what arrives while it is still echoing. The only
     /// setting in the file clamped at **both** ends; see `int_clamp` above for why
-    /// that is a third bound rather than one of the other two.
+    /// that is a third bound rather than one of the other two. Read and written and
+    /// acting on nothing yet: pacing a paste means handing the send path a schedule,
+    /// and `Session::paste` queues the whole thing.
     pub clipboard_paste_delay_per_line: i32,
     /// `ttset.c:1580`. Upstream writes the size back when the confirmation dialog
     /// is resized, which is the whole reason it is a setting. Below zero takes the
@@ -4400,7 +4410,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "on",
         label: None,
-        doc: "`ttset.c:1280`, `ts.SelOnActive`. Off **eats** the click that activates the window (`vtwin.cpp:2387` returns `MA_ACTIVATEANDEAT`), so bringing the terminal forward cannot start a selection by accident.",
+        doc: "`ttset.c:1280`, `ts.SelOnActive`. Off **eats** the click that activates the window (`vtwin.cpp:2387` returns `MA_ACTIVATEANDEAT`), so bringing the terminal forward cannot start a selection by accident. Read and written and acting on nothing yet: Qt delivers no `WM_MOUSEACTIVATE`, so the equivalent is a first-click filter the view does not have.",
     },
     Field {
         name: "clipboard.select_only_by_lbutton",
@@ -4420,7 +4430,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Int,
         default: "0",
         label: None,
-        doc: "`ttset.c:1954`, `ts.SelectStartDelay`, in milliseconds. How long the button is held before a drag counts as a selection rather than as a click.",
+        doc: "`ttset.c:1954`, `ts.SelectStartDelay`, in milliseconds. How long the button is held before a drag counts as a selection rather than as a click. Read and written and acting on nothing yet; it ships at 0, which is what the view does.",
     },
     Field {
         name: "clipboard.paste_rbutton_disabled",
@@ -4450,7 +4460,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "off",
         label: None,
-        doc: "`ttset.c:1428`, `CPF_CONFIRM_RBUTTON`. The right button raises a menu with Paste on it instead of pasting, and the button-up paste is then suppressed as well (`vtwin.cpp:2645` tests both bits).",
+        doc: "`ttset.c:1428`, `CPF_CONFIRM_RBUTTON`. The right button raises a menu with Paste on it instead of pasting, and the button-up paste is then suppressed as well (`vtwin.cpp:2645` tests both bits). Half honoured: the suppression is there and the menu is not, so setting this gives a right button that does nothing rather than one that offers a choice.",
     },
     Field {
         name: "clipboard.confirm_paste",
@@ -4470,7 +4480,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "on",
         label: None,
-        doc: "`ttset.c:1434`, `CPF_CONFIRM_CHANGEPASTE_CR`. The same confirmation for \"paste and send a CR\", where the newline is the one being *added* rather than one already in the text. Only consulted on that path, so a plain paste of text with no break is never confirmed by it.",
+        doc: "`ttset.c:1434`, `CPF_CONFIRM_CHANGEPASTE_CR`. The same confirmation for \"paste and send a CR\", where the newline is the one being *added* rather than one already in the text. Only consulted on that path, so a plain paste of text with no break is never confirmed by it — and that path is upstream's `Paste<CR>` menu item, which this shell has no command for, so the key is read and written and acts on nothing yet.",
     },
     Field {
         name: "clipboard.confirm_paste_dictionary",
@@ -4500,7 +4510,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::IntClamp(0, 5000),
         default: "10",
         label: None,
-        doc: "`ttset.c:1633`, milliseconds between the lines of a paste — for a host with no flow control that drops what arrives while it is still echoing. The only setting in the file clamped at **both** ends; see `int_clamp` above for why that is a third bound rather than one of the other two.",
+        doc: "`ttset.c:1633`, milliseconds between the lines of a paste — for a host with no flow control that drops what arrives while it is still echoing. The only setting in the file clamped at **both** ends; see `int_clamp` above for why that is a third bound rather than one of the other two. Read and written and acting on nothing yet: pacing a paste means handing the send path a schedule, and `Session::paste` queues the whole thing.",
     },
     Field {
         name: "clipboard.paste_dialog_width",

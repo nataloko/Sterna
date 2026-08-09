@@ -813,6 +813,47 @@ And for the settings, all of which came out of `ini-audit/`:
   outward sign is that DECRQSS' SGR (`vtterm.c:4332`) and the termcap `Co`
   query (`:4451`) stop naming a colour.
 
+And for the clipboard, where the surprise is what happens to a line break:
+
+- **A paste is a keyboard, so every line break goes on the wire as a single
+  `CR`.** `NormalizeLineBreakCR` (`ttlib_static_cpp.cpp:535`, called at
+  `clipboar.c:289`) maps `LF` and `CR LF` alike onto `CR` — the Return key's
+  byte — *before* the brackets are added. Queueing the clipboard's own bytes is
+  the obvious build and reads as correct, because a newline is what a line
+  ending is called everywhere else; it puts a byte on the wire that no key
+  produces, under every `CRSend` setting including the default. Same trap as
+  `Vt::encode_text` in the control socket, one layer up.
+- **`BracketedSupport` is a second gate on `DECSET 2004`.** `clipboar.c:265`
+  tests the *setting* and then the mode, so a host that asked for bracketed
+  paste gets an unbracketed one when the key is off. It ships on, so an engine
+  that omits it looks right until somebody turns it off — and
+  `BracketedControlOnly` narrows it further to a paste containing a control
+  character, which means a pasted word goes bare and a pasted block does not.
+- **`EnableContinuedLineCopy` is upstream's `logFlag`, and it changes what a
+  macro's `wait` sees.** The argument threaded through `CarriageReturn` and
+  `LineFeed` (`vtterm.c:675`, `:688`) is TRUE for a CR or LF off the wire and
+  FALSE for the pair the terminal invents at a wrap; with the setting on, only
+  the invented pair is kept out of the log and the macro tap. So the key named
+  after *copying* decides whether a script matches a wrapped line as one line
+  or as two — the same shape as `LogTypePlainText`, which is named after the
+  log and does the same thing to the same tap.
+- **The two mouse-paste keys ship the opposite way round from what a Linux user
+  expects of either.** `DisablePasteMouseMButton` is **on** and
+  `DisablePasteMouseRButton` is off (`ttset.c:1425`, `:1422`), so Tera Term
+  pastes on the right button and not on the middle one. Both are the file's to
+  change; neither default is a bug.
+- **A paste happens on the button coming *up*** (`vtwin.cpp:2375`, `:2645`),
+  and `AutoTextCopy`'s copy happens there too — with the extra condition that
+  `SelectOnlyByLButton` **suppresses the copy** when the button that came up
+  was the middle or the right one (`vtwin.cpp:819`). That second half is not in
+  the setting's name and is the bug it was added for.
+- **`PasteDelayPerLine` is the only setting in `ttset.c` clamped at both ends**
+  (`:1633`), which is why `int_clamp(lo..hi)` exists beside `int(lo..hi)` and
+  `int_min(lo)`. The three disagree on exactly the values a hand-edited file
+  holds: below the floor, `int(0..5000)` would give the default and this gives
+  0; above the ceiling, `int_min(0)` would leave `60000` alone and this gives
+  5000.
+
 And for the title, which is two strings in three places:
 
 - **OSC 1 sets the window title.** `vtterm.c:5109` is `case 0: case 1: case 2:`
