@@ -70,6 +70,7 @@ use mlua::{HookTriggers, Lua, LuaOptions, Scope, StdLib, Table, Value, VmState};
 use tt_ttl::{ScriptHost, TtlError};
 
 mod conn;
+mod dlg;
 mod serial;
 mod xfer;
 
@@ -171,6 +172,7 @@ impl Script {
             conn::install(scope, &tt, &cell, &recv)?;
             serial::install(scope, &tt, &cell)?;
             xfer::install(scope, &tt, &cell)?;
+            dlg::install(scope, &tt, &cell)?;
 
             let args = lua.create_table()?;
             for (i, a) in self.args.iter().enumerate() {
