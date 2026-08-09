@@ -252,6 +252,36 @@ fn settitle_reaches_the_terminal() {
     assert_eq!(r.sent, b"from a macro\r");
 }
 
+/// `getipv4addr` fills a string array and says how many there were, and the
+/// count is the *whole* answer while `result` says whether the array was big
+/// enough — which is how a script learns it has to ask again with a bigger
+/// one.
+///
+/// The addresses themselves are this machine's and change; what is asserted
+/// is the shape, and `tt-conn`'s own tests check the rendering.
+#[test]
+fn a_macro_can_read_this_machines_addresses() {
+    let r = drive(
+        "strdim a 8\ngetipv4addr a n\nint2str s result\nsendln s\n\
+         int2str c n\nsendln c\nsendln a[0]",
+        |_| Vec::new(),
+    );
+    let sent = String::from_utf8_lossy(&r.sent).into_owned();
+    let mut lines = sent.split('\r');
+    assert_eq!(lines.next(), Some("1"), "the array was big enough");
+    let count: usize = lines.next().unwrap().parse().expect("a count");
+    let first = lines.next().unwrap();
+    if count == 0 {
+        // A machine with no address up is not an error, and `a[0]` is then
+        // the empty string it was declared as.
+        assert_eq!(first, "");
+    } else {
+        first
+            .parse::<std::net::Ipv4Addr>()
+            .unwrap_or_else(|_| panic!("not an address: {first:?}"));
+    }
+}
+
 /// The serial control lines over something that has none.
 ///
 /// The assertion is that the script *finishes*: upstream's terminal answers

@@ -627,6 +627,13 @@ impl ScriptHost for SessionHost {
         Ok(())
     }
 
+    fn local_ip_addresses(&mut self, v6: bool) -> Option<Vec<Vec<u8>>> {
+        // Answered here rather than posted as a job: it is a property of the
+        // machine, not of the session, so making the frontend's thread look it
+        // up would only be a way to fail when the window has gone.
+        tt_conn::local_ip_addresses(v6).map(|v| v.into_iter().map(String::into_bytes).collect())
+    }
+
     fn random_u32(&mut self) -> u32 {
         // The interpreter's rejection loop makes this uniform; all it needs is
         // entropy, and the same crate `setpassword2` already uses supplies it.
@@ -660,7 +667,10 @@ impl ScriptHost for SessionHost {
     //   re-apply it (`ttdde.c:622`), and nothing here knows where the settings
     //   came from. The option is parsed and applied; the file is not re-read.
     // `set_debug_mode` — `ts.DebugMode` has no equivalent in `tt-vt` yet.
-    // `local_ip_addresses` — enumerating interfaces needs more than `std`.
+    //
+    // Everything left on that list now wants a subsystem rather than a
+    // method, which is the point of keeping it here: it is a list of what the
+    // port has not built, not of what has not been typed.
     //
     // And one thing `connect` does *not* do that upstream's does: a `/L=` on
     // the line starts a log when the connection comes up (`vtwin.cpp:3631`,

@@ -26,6 +26,7 @@
 //! ```
 
 pub mod error;
+pub mod netif;
 pub mod pty;
 pub mod serial;
 pub mod ssh;
@@ -33,4 +34,5 @@ pub mod telnet;
 pub mod transport;
 
 pub use error::{Error, Result};
+pub use netif::local_ip_addresses;
 pub use transport::{LinkKind, Transport, TransportEvent};
