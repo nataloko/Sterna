@@ -572,6 +572,57 @@ impl Default for ConnectionPortType {
     }
 }
 
+/// `ttset.c:1325`, the same override for the line ending, and the empty spelling
+/// is the one that means "do not override" — `Temp[0] = 0` is exactly what the
+/// writer emits for it (`:2820`), so the disabled state round-trips as an empty
+/// value rather than as a missing key.
+///
+/// The `else` and the default are the same arm here, unlike
+/// `window.title_change`: an unrecognised spelling is disabled too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnectionTcpCrSend {
+    /// ``
+    Disabled,
+    /// `CR`
+    Cr,
+    /// `CRLF`
+    CrLf,
+}
+
+impl ConnectionTcpCrSend {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Disabled => "",
+            Self::Cr => "CR",
+            Self::CrLf => "CRLF",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised takes the default**
+    /// rather than failing — which is how upstream spells most of its
+    /// defaults, as the `else` branch of a chain of comparisons.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("") {
+            return Self::Disabled;
+        }
+        if s.eq_ignore_ascii_case("CR") {
+            return Self::Cr;
+        }
+        if s.eq_ignore_ascii_case("CRLF") {
+            return Self::CrLf;
+        }
+        Self::default()
+    }
+}
+
+impl Default for ConnectionTcpCrSend {
+    fn default() -> Self {
+        Self::Disabled
+    }
+}
+
 /// `ttset.c:929`, default `IdDataBit8` from the `if (!…)` arm. Upstream's dialog
 /// offers only these two; `tt-conn` can do 5 and 6 as well, which is a widening
 /// and not a setting.
@@ -1238,6 +1289,82 @@ pub struct Settings {
     /// `ttset.c:1301`, `GetOnOff(…, FALSE)` — so here `TelBin=1` reads as **off**,
     /// which is the opposite of what the same value means for `Telnet=` above.
     pub connection_telnet_binary: bool,
+    /// **`ttset.c:1298`, and it is the reason `Telnet=off` is not a raw socket.**
+    /// `commlib.c:323` copies this onto the connection unconditionally, beside a
+    /// `cv->TelFlag` that comes from `Telnet=`; then `ttcmn.c:590` reads
+    /// `!cv->TelFlag && cv->TelAutoDetect` and turns the framing on at the first
+    /// `0xFF` byte. So the shipped defaults give a TCP session that starts as data
+    /// and becomes telnet the moment anything sends an `IAC`, whatever `Telnet=`
+    /// says — which is why TTSSH clears it by hand (`ttxssh.c:981`) with a comment
+    /// saying the line "should not be needed". It is: an SSH stream is full of
+    /// `0xFF`.
+    ///
+    /// The two keys together are four states rather than two, and `TelnetMode` in
+    /// `tt-conn` carries all four. See `tt_session::open::telnet_params`.
+    pub connection_telnet_auto_detect: bool,
+    /// `ttset.c:1304`. **Not "echo locally" — it is "let the ECHO option decide".**
+    /// With it off, `WILL ECHO` and `WONT ECHO` change nothing (`telnet.c:411`,
+    /// `:497` both test it first) and the opening burst simply asks the server to
+    /// echo. With it on, the negotiated state *assigns* `ts.LocalEcho` — server
+    /// echoing means local echo off — and the burst runs `TelChangeEcho` instead,
+    /// which asks the server to echo only if local echo is currently off and asks it
+    /// **not** to (`DONT ECHO`) if local echo is on. The setting and the mode are one
+    /// variable, the same shape as DECBKM and `ts.BSKey`.
+    pub connection_telnet_echo: bool,
+    /// `ttset.c:1307`, which ORs `LOG_TEL` into `ts.LogFlag` rather than keeping a
+    /// field of its own. `TELNET.LOG` in the log directory, truncated at every
+    /// connection (`telnet.c:127`, `CREATE_ALWAYS`).
+    ///
+    /// **It records only what Tera Term sends.** Every one of the eight
+    /// `TelWriteLog` calls sits directly after a `CommRawOut`, and nothing on the
+    /// receive path logs at all — so the `>` that leads each line has no inbound
+    /// counterpart and a file that looks like a negotiation trace is one half of the
+    /// conversation.
+    pub connection_telnet_log: bool,
+    /// `ttset.c:1314`, in **seconds**, zero meaning no keepalive. An `IAC NOP` for a
+    /// firewall that would otherwise drop an idle session.
+    ///
+    /// Two things the name does not say. It is a **quiet** period, not a period:
+    /// `telnet.c:913` compares against `cv.LastSendTime`, which `commlib.c:1062`
+    /// stamps on every telnet send including the NOP itself, so a session that is
+    /// being typed at never sends one. And it runs only where the opening burst ran
+    /// — `TelStartKeepAliveThread` is called inside `vtwin.cpp:3666`'s
+    /// `TCPPort == TelPort` arm — so a telnet-framed connection to a port that is not
+    /// the telnet port gets no keepalive at all.
+    pub connection_telnet_keepalive: i32,
+    /// `ttset.c:1322`. Local echo for a TCP connection that is **not** speaking
+    /// telnet, which is a separate key because the telnet one is negotiated and this
+    /// one cannot be.
+    ///
+    /// It does not sit beside `LocalEcho`; it *overwrites* it. `vtwin.cpp:3696`
+    /// assigns `ts.LocalEcho = ts.TCPLocalEcho` when the connection opens and
+    /// `:3589` puts `ts.LocalEcho_ini` back when it closes — upstream keeps a
+    /// pristine copy of the file's value precisely because the connection spends the
+    /// live one. Off means "leave the terminal's own setting alone", so this is one
+    /// of the settings where 0 is not a value.
+    pub connection_tcp_local_echo: bool,
+    /// `ttset.c:1325`, the same override for the line ending, and the empty spelling
+    /// is the one that means "do not override" — `Temp[0] = 0` is exactly what the
+    /// writer emits for it (`:2820`), so the disabled state round-trips as an empty
+    /// value rather than as a missing key.
+    ///
+    /// The `else` and the default are the same arm here, unlike
+    /// `window.title_change`: an unrecognised spelling is disabled too.
+    pub connection_tcp_cr_send: ConnectionTcpCrSend,
+    /// `ttset.c:1154`, on by default, and it is `PortFlag` rather than a field.
+    /// Whether closing the window or choosing Disconnect asks first. **TCP only** —
+    /// both tests are `cv.PortType==IdTCPIP` (`vtwin.cpp:1668`, `:4448`), so a serial
+    /// session closes without a word however this is set.
+    pub connection_confirm_disconnect: bool,
+    /// `ttset.c:972`, off by default. Whether a host that was connected to is
+    /// remembered in the New Connection dialog's list (`vtwin.cpp:3849`).
+    ///
+    /// Upstream's writer spells the key `Historylist` (`:2521`) where its reader
+    /// spells it `HistoryList`. Harmless — `GetPrivateProfile*` matches key names
+    /// case-insensitively, which `ini-audit/` measured rather than assumed — and it
+    /// is not the only one: `Metakey`, `XmodemRcvCommand`, `YmodemRcvCommand` and
+    /// `ZmodemRcvCommand` are written in a case their own readers do not use either.
+    pub connection_history_list: bool,
     /// `ttset.c:961`. What `TERMINAL-TYPE` answers with, and what an SSH session
     /// sends as `TERM`. Upstream ships plain **`xterm`**, which this port had been
     /// diverging from with a hardcoded `xterm-256color` — a defensible choice and
@@ -1677,6 +1804,14 @@ impl Default for Settings {
             connection_telnet: true,
             connection_telnet_port: 23,
             connection_telnet_binary: false,
+            connection_telnet_auto_detect: true,
+            connection_telnet_echo: false,
+            connection_telnet_log: false,
+            connection_telnet_keepalive: 300,
+            connection_tcp_local_echo: false,
+            connection_tcp_cr_send: ConnectionTcpCrSend::default(),
+            connection_confirm_disconnect: true,
+            connection_history_list: false,
             connection_term_type: String::from("xterm"),
             connection_terminal_speed: String::from("38400"),
             connection_auto_win_close: true,
@@ -2053,6 +2188,33 @@ impl Settings {
             connection_telnet_port: ini.get_int("Tera Term", "TelPort", d.connection_telnet_port)
                 as i32,
             connection_telnet_binary: crate::schema::on_off(ini.get("Tera Term", "TelBin"), false),
+            connection_telnet_auto_detect: crate::schema::on_off(
+                ini.get("Tera Term", "TelAutoDetect"),
+                true,
+            ),
+            connection_telnet_echo: crate::schema::on_off(ini.get("Tera Term", "TelEcho"), false),
+            connection_telnet_log: crate::schema::on_off(ini.get("Tera Term", "TelLog"), false),
+            connection_telnet_keepalive: ini.get_int(
+                "Tera Term",
+                "TelKeepAliveInterval",
+                d.connection_telnet_keepalive,
+            ) as i32,
+            connection_tcp_local_echo: crate::schema::on_off(
+                ini.get("Tera Term", "TCPLocalEcho"),
+                false,
+            ),
+            connection_tcp_cr_send: match ini.get("Tera Term", "TCPCRSend") {
+                Some(v) => ConnectionTcpCrSend::from_ini(v),
+                None => d.connection_tcp_cr_send,
+            },
+            connection_confirm_disconnect: crate::schema::on_off(
+                ini.get("Tera Term", "ConfirmDisconnect"),
+                true,
+            ),
+            connection_history_list: crate::schema::on_off(
+                ini.get("Tera Term", "HistoryList"),
+                false,
+            ),
             connection_term_type: ini
                 .get_or("Tera Term", "TermType", &d.connection_term_type)
                 .to_string(),
@@ -2904,6 +3066,76 @@ impl Settings {
             }
             .to_string(),
         );
+        ini.set(
+            "Tera Term",
+            "TelAutoDetect",
+            &if self.connection_telnet_auto_detect {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "TelEcho",
+            &if self.connection_telnet_echo {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "TelLog",
+            &if self.connection_telnet_log {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "TelKeepAliveInterval",
+            &self.connection_telnet_keepalive.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "TCPLocalEcho",
+            &if self.connection_tcp_local_echo {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "TCPCRSend",
+            &self.connection_tcp_cr_send.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "ConfirmDisconnect",
+            &if self.connection_confirm_disconnect {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "HistoryList",
+            &if self.connection_history_list {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
         ini.set("Tera Term", "TermType", &self.connection_term_type.clone());
         ini.set(
             "Tera Term",
@@ -3673,6 +3905,44 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "connection.telnet_auto_detect" => if self.connection_telnet_auto_detect {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "connection.telnet_echo" => if self.connection_telnet_echo {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "connection.telnet_log" => if self.connection_telnet_log {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "connection.telnet_keepalive" => self.connection_telnet_keepalive.to_string(),
+            "connection.tcp_local_echo" => if self.connection_tcp_local_echo {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "connection.tcp_cr_send" => self.connection_tcp_cr_send.as_ini().to_string(),
+            "connection.confirm_disconnect" => if self.connection_confirm_disconnect {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "connection.history_list" => if self.connection_history_list {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "connection.term_type" => self.connection_term_type.clone(),
             "connection.terminal_speed" => self.connection_terminal_speed.clone(),
             "connection.auto_win_close" => if self.connection_auto_win_close {
@@ -4079,6 +4349,31 @@ impl Settings {
             }
             "connection.telnet_binary" => {
                 self.connection_telnet_binary = crate::schema::on_off(Some(value), false)
+            }
+            "connection.telnet_auto_detect" => {
+                self.connection_telnet_auto_detect = crate::schema::on_off(Some(value), true)
+            }
+            "connection.telnet_echo" => {
+                self.connection_telnet_echo = crate::schema::on_off(Some(value), false)
+            }
+            "connection.telnet_log" => {
+                self.connection_telnet_log = crate::schema::on_off(Some(value), false)
+            }
+            "connection.telnet_keepalive" => {
+                self.connection_telnet_keepalive =
+                    crate::schema::int(value, self.connection_telnet_keepalive)
+            }
+            "connection.tcp_local_echo" => {
+                self.connection_tcp_local_echo = crate::schema::on_off(Some(value), false)
+            }
+            "connection.tcp_cr_send" => {
+                self.connection_tcp_cr_send = ConnectionTcpCrSend::from_ini(value)
+            }
+            "connection.confirm_disconnect" => {
+                self.connection_confirm_disconnect = crate::schema::on_off(Some(value), true)
+            }
+            "connection.history_list" => {
+                self.connection_history_list = crate::schema::on_off(Some(value), false)
             }
             "connection.term_type" => self.connection_term_type = value.to_string(),
             "connection.terminal_speed" => self.connection_terminal_speed = value.to_string(),
@@ -5096,6 +5391,86 @@ pub const FIELDS: &[Field] = &[
         default: "off",
         label: None,
         doc: "`ttset.c:1301`, `GetOnOff(…, FALSE)` — so here `TelBin=1` reads as **off**, which is the opposite of what the same value means for `Telnet=` above.",
+    },
+    Field {
+        name: "connection.telnet_auto_detect",
+        page: "connection",
+        section: "Tera Term",
+        key: "TelAutoDetect",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "**`ttset.c:1298`, and it is the reason `Telnet=off` is not a raw socket.** `commlib.c:323` copies this onto the connection unconditionally, beside a `cv->TelFlag` that comes from `Telnet=`; then `ttcmn.c:590` reads `!cv->TelFlag && cv->TelAutoDetect` and turns the framing on at the first `0xFF` byte. So the shipped defaults give a TCP session that starts as data and becomes telnet the moment anything sends an `IAC`, whatever `Telnet=` says — which is why TTSSH clears it by hand (`ttxssh.c:981`) with a comment saying the line \"should not be needed\". It is: an SSH stream is full of `0xFF`.  The two keys together are four states rather than two, and `TelnetMode` in `tt-conn` carries all four. See `tt_session::open::telnet_params`.",
+    },
+    Field {
+        name: "connection.telnet_echo",
+        page: "connection",
+        section: "Tera Term",
+        key: "TelEcho",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1304`. **Not \"echo locally\" — it is \"let the ECHO option decide\".** With it off, `WILL ECHO` and `WONT ECHO` change nothing (`telnet.c:411`, `:497` both test it first) and the opening burst simply asks the server to echo. With it on, the negotiated state *assigns* `ts.LocalEcho` — server echoing means local echo off — and the burst runs `TelChangeEcho` instead, which asks the server to echo only if local echo is currently off and asks it **not** to (`DONT ECHO`) if local echo is on. The setting and the mode are one variable, the same shape as DECBKM and `ts.BSKey`.",
+    },
+    Field {
+        name: "connection.telnet_log",
+        page: "connection",
+        section: "Tera Term",
+        key: "TelLog",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1307`, which ORs `LOG_TEL` into `ts.LogFlag` rather than keeping a field of its own. `TELNET.LOG` in the log directory, truncated at every connection (`telnet.c:127`, `CREATE_ALWAYS`).  **It records only what Tera Term sends.** Every one of the eight `TelWriteLog` calls sits directly after a `CommRawOut`, and nothing on the receive path logs at all — so the `>` that leads each line has no inbound counterpart and a file that looks like a negotiation trace is one half of the conversation.",
+    },
+    Field {
+        name: "connection.telnet_keepalive",
+        page: "connection",
+        section: "Tera Term",
+        key: "TelKeepAliveInterval",
+        kind: Kind::Int,
+        default: "300",
+        label: None,
+        doc: "`ttset.c:1314`, in **seconds**, zero meaning no keepalive. An `IAC NOP` for a firewall that would otherwise drop an idle session.  Two things the name does not say. It is a **quiet** period, not a period: `telnet.c:913` compares against `cv.LastSendTime`, which `commlib.c:1062` stamps on every telnet send including the NOP itself, so a session that is being typed at never sends one. And it runs only where the opening burst ran — `TelStartKeepAliveThread` is called inside `vtwin.cpp:3666`'s `TCPPort == TelPort` arm — so a telnet-framed connection to a port that is not the telnet port gets no keepalive at all.",
+    },
+    Field {
+        name: "connection.tcp_local_echo",
+        page: "connection",
+        section: "Tera Term",
+        key: "TCPLocalEcho",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1322`. Local echo for a TCP connection that is **not** speaking telnet, which is a separate key because the telnet one is negotiated and this one cannot be.  It does not sit beside `LocalEcho`; it *overwrites* it. `vtwin.cpp:3696` assigns `ts.LocalEcho = ts.TCPLocalEcho` when the connection opens and `:3589` puts `ts.LocalEcho_ini` back when it closes — upstream keeps a pristine copy of the file's value precisely because the connection spends the live one. Off means \"leave the terminal's own setting alone\", so this is one of the settings where 0 is not a value.",
+    },
+    Field {
+        name: "connection.tcp_cr_send",
+        page: "connection",
+        section: "Tera Term",
+        key: "TCPCRSend",
+        kind: Kind::Enum(&["", "CR", "CRLF"]),
+        default: "",
+        label: None,
+        doc: "`ttset.c:1325`, the same override for the line ending, and the empty spelling is the one that means \"do not override\" — `Temp[0] = 0` is exactly what the writer emits for it (`:2820`), so the disabled state round-trips as an empty value rather than as a missing key.  The `else` and the default are the same arm here, unlike `window.title_change`: an unrecognised spelling is disabled too.",
+    },
+    Field {
+        name: "connection.confirm_disconnect",
+        page: "connection",
+        section: "Tera Term",
+        key: "ConfirmDisconnect",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1154`, on by default, and it is `PortFlag` rather than a field. Whether closing the window or choosing Disconnect asks first. **TCP only** — both tests are `cv.PortType==IdTCPIP` (`vtwin.cpp:1668`, `:4448`), so a serial session closes without a word however this is set.",
+    },
+    Field {
+        name: "connection.history_list",
+        page: "connection",
+        section: "Tera Term",
+        key: "HistoryList",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:972`, off by default. Whether a host that was connected to is remembered in the New Connection dialog's list (`vtwin.cpp:3849`).  Upstream's writer spells the key `Historylist` (`:2521`) where its reader spells it `HistoryList`. Harmless — `GetPrivateProfile*` matches key names case-insensitively, which `ini-audit/` measured rather than assumed — and it is not the only one: `Metakey`, `XmodemRcvCommand`, `YmodemRcvCommand` and `ZmodemRcvCommand` are written in a case their own readers do not use either.",
     },
     Field {
         name: "connection.term_type",
