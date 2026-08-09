@@ -298,3 +298,156 @@ fn crlf_is_available_for_a_byte_identical_tera_term_log() {
 
     assert_eq!(fs::read(&path).unwrap(), b"one\r\ntwo\r\n");
 }
+
+/// A pause is a tap that closes, not a valve on a queue: what arrives while it
+/// is shut is **discarded** (`logpause.html`), so resuming does not bring it
+/// back.
+#[test]
+fn what_arrives_while_the_log_is_paused_is_lost_rather_than_held() {
+    let dir = Scratch::new("pause");
+    let path = dir.path("session.log");
+    let mut s = session();
+    s.start_log(&path, LogOptions::default()).unwrap();
+
+    s.feed(b"before\r\n");
+    s.pause_log(true);
+    assert!(s.log_paused());
+    s.feed(b"during\r\n");
+    s.pause_log(false);
+    s.feed(b"after\r\n");
+    s.stop_log();
+
+    assert_eq!(fs::read(&path).unwrap(), b"before\nafter\n");
+}
+
+/// The same for a raw log, where upstream drops the bytes at the *input*
+/// rather than while draining — two code paths there, one here.
+#[test]
+fn a_paused_raw_log_drops_its_bytes_too() {
+    let dir = Scratch::new("pause-raw");
+    let path = dir.path("session.log");
+    let mut s = session();
+    s.start_log(
+        &path,
+        LogOptions {
+            mode: LogMode::Raw,
+            ..LogOptions::default()
+        },
+    )
+    .unwrap();
+
+    s.feed(b"\x1b[31mA");
+    s.pause_log(true);
+    s.feed(b"\x1b[32mB");
+    s.pause_log(false);
+    s.feed(b"C");
+    s.stop_log();
+
+    assert_eq!(fs::read(&path).unwrap(), b"\x1b[31mAC");
+}
+
+/// `logwrite` puts a string in the log that did not come from the far end —
+/// **including while it is paused**, which is where this port and upstream
+/// part company. `logwrite.html` promises it; `FLogWriteStr` puts the
+/// characters in the ring the drain loop is discarding from, so upstream's
+/// note falls into the gap it was written to explain.
+#[test]
+fn a_written_note_lands_even_while_the_log_is_paused() {
+    let dir = Scratch::new("write");
+    let path = dir.path("session.log");
+    let mut s = session();
+    s.start_log(&path, LogOptions::default()).unwrap();
+
+    s.feed(b"boot\r\n");
+    s.pause_log(true);
+    s.write_log("-- reset the board --\n");
+    s.feed(b"noise\r\n");
+    s.pause_log(false);
+    s.feed(b"up\r\n");
+    s.stop_log();
+
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        b"boot\n-- reset the board --\nup\n"
+    );
+}
+
+/// It goes through the same line machinery as the tap, so a timestamped log
+/// stamps it — and it is flushed at once, which `FLogWriteStr` does by calling
+/// `LogToFile` itself.
+#[test]
+fn a_written_note_is_timestamped_and_readable_before_the_log_closes() {
+    let dir = Scratch::new("write-ts");
+    let path = dir.path("session.log");
+    let mut s = session();
+    s.start_log(
+        &path,
+        LogOptions {
+            timestamp: Timestamp::Elapsed,
+            ..LogOptions::default()
+        },
+    )
+    .unwrap();
+
+    s.write_log("note\n");
+    // Read with the log still open: nothing has closed or dropped it.
+    let body = String::from_utf8(fs::read(&path).unwrap()).unwrap();
+    s.stop_log();
+
+    assert!(body.starts_with('['), "no timestamp: {body:?}");
+    assert!(body.ends_with("] note\n"), "{body:?}");
+}
+
+/// `logrotate` reconfigures and rotates nothing now, which the documentation
+/// says twice — so the size it sets is measured against what comes *after*.
+#[test]
+fn rotation_can_be_reconfigured_while_the_log_is_open() {
+    let dir = Scratch::new("rotate-cfg");
+    let path = dir.path("session.log");
+    let mut s = session();
+    s.start_log(&path, LogOptions::default()).unwrap();
+
+    // Well past any size a later `logrotate size` could set, and nothing
+    // rotates, because rotation is off.
+    s.feed(&[b'x'; 500]);
+    s.feed(b"\r\n");
+    assert!(!path.with_extension("log.1").exists());
+
+    s.set_log_rotate_size(64);
+    s.set_log_rotate_keep(2);
+    s.feed(&[b'y'; 100]);
+    // The size is checked *after* writing, so the y's are in the generation
+    // that was rotated away rather than in the file that replaced it.
+    let rotated = fs::read(path.with_extension("log.1")).unwrap();
+    assert!(rotated.starts_with(b"x"), "the old file is not the x's");
+    assert!(rotated.ends_with(b"y"), "the y's should be in it too");
+    assert_eq!(fs::read(&path).unwrap(), b"");
+
+    s.feed(b"z\r\n");
+    s.stop_log();
+    assert_eq!(fs::read(&path).unwrap(), b"z\n");
+
+    // And halting forgets both numbers.
+    let mut s = session();
+    s.start_log(&path, LogOptions::default()).unwrap();
+    s.set_log_rotate_size(64);
+    s.set_log_rotate_keep(2);
+    s.halt_log_rotate();
+    let opts = s.log_options().unwrap();
+    assert_eq!((opts.rotate_size, opts.rotate_keep), (0, 0));
+}
+
+/// None of the five is an error with no log open: `FLogPause` and the rotation
+/// setters all return on a NULL `LogVar`, and a macro cannot tell.
+#[test]
+fn the_log_commands_are_quiet_when_there_is_no_log() {
+    let mut s = session();
+    s.pause_log(true);
+    s.write_log("into the void");
+    s.set_log_rotate_size(128);
+    s.set_log_rotate_keep(3);
+    s.halt_log_rotate();
+    assert!(!s.log_paused());
+    assert!(s.log_options().is_none());
+    assert!(s.drain_events().is_empty());
+}

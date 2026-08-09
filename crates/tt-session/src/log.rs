@@ -100,6 +100,8 @@ pub struct SessionLog {
     /// Whether the next character begins a line and so wants a timestamp.
     /// True at the start so the first line gets one.
     at_line_start: bool,
+    /// `logpause` — see [`set_paused`](SessionLog::set_paused).
+    paused: bool,
 }
 
 impl SessionLog {
@@ -130,6 +132,7 @@ impl SessionLog {
             total: 0,
             started: Instant::now(),
             at_line_start: true,
+            paused: false,
         })
     }
 
@@ -152,9 +155,25 @@ impl SessionLog {
         self.total
     }
 
+    /// Stop or resume writing — `logpause` and `logstart`.
+    ///
+    /// **What arrives while paused is discarded, not buffered**
+    /// (`logpause.html`), so this is a tap that closes rather than a valve on a
+    /// queue. Upstream does the discarding in two different places — at the
+    /// input for a binary log (`filesys_log.cpp:1038`) and while draining the
+    /// ring for a text one (`:647`) — and both amount to the same thing here,
+    /// where there is no ring between the tap and the file.
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused
+    }
+
     /// Raw bytes off the wire. Ignored unless the log is in [`LogMode::Raw`].
     pub fn write_raw(&mut self, bytes: &[u8]) -> std::io::Result<()> {
-        if self.opts.mode != LogMode::Raw || bytes.is_empty() {
+        if self.paused || self.opts.mode != LogMode::Raw || bytes.is_empty() {
             return Ok(());
         }
         self.put(bytes)?;
@@ -164,6 +183,66 @@ impl SessionLog {
     /// Displayed text, from the parser's tap. Ignored unless the log is in
     /// [`LogMode::Text`].
     pub fn write_text(&mut self, text: &str) -> std::io::Result<()> {
+        if self.paused {
+            return Ok(());
+        }
+        self.write_text_now(text)
+    }
+
+    /// `logwrite` — a string put into the log by something other than the far
+    /// end, **including while the log is paused**, and flushed at once.
+    ///
+    /// The pause is where this diverges, deliberately, and it is documentation
+    /// against code: `logwrite.html` says in as many words that the string "can
+    /// be written even while logging is paused", and upstream's cannot.
+    /// `FLogWriteStr` (`filesys_log.cpp:833`) puts the characters in the same
+    /// ring the tap fills and then drains it, and the drain loop discards
+    /// everything it pulls while paused (`:647`) — so the note a script writes
+    /// to explain the gap falls into the gap. Reproducing that would mean
+    /// implementing the sentence the manual does not say.
+    ///
+    /// In [`LogMode::Raw`] the string's own bytes go down verbatim, which is
+    /// upstream converting it to `ts.KanjiCode` first; here that is UTF-8.
+    pub fn write_str(&mut self, text: &str) -> std::io::Result<()> {
+        if text.is_empty() {
+            return Ok(());
+        }
+        match self.opts.mode {
+            LogMode::Text => self.write_text_now(text)?,
+            LogMode::Raw => {
+                self.put(text.as_bytes())?;
+                self.maybe_rotate()?;
+            }
+        }
+        // On the spot rather than at the next drain — `FLogWriteStr` calls
+        // `LogToFile` itself, so the note is in the file before the script's
+        // next line runs, which is what a script writing one wants.
+        self.flush()
+    }
+
+    /// `logrotate size` — rotate once the file passes this many bytes, or stop
+    /// measuring it at zero (`FLogRotateSize`).
+    ///
+    /// Reconfiguration only: none of the three rotates anything now, which the
+    /// documentation says twice.
+    pub fn set_rotate_size(&mut self, size: u64) {
+        self.opts.rotate_size = size;
+    }
+
+    /// `logrotate rotate` — how many generations to keep (`FLogRotateRotate`).
+    pub fn set_rotate_keep(&mut self, keep: u32) {
+        self.opts.rotate_keep = keep;
+    }
+
+    /// `logrotate halt` — stop rotating, and forget both numbers
+    /// (`FLogRotateHalt`, which clears the size and the step as well as the
+    /// mode).
+    pub fn halt_rotate(&mut self) {
+        self.opts.rotate_size = 0;
+        self.opts.rotate_keep = 0;
+    }
+
+    fn write_text_now(&mut self, text: &str) -> std::io::Result<()> {
         if self.opts.mode != LogMode::Text || text.is_empty() {
             return Ok(());
         }

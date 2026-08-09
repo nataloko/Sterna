@@ -21,7 +21,8 @@ use std::time::{Duration, Instant};
 use tt_session::{LogMode, LogOptions, MacroLink, Session, Timestamp, TransferReply};
 use tt_ttl::host::{
     BeepSound, ClearScreen, DialogEnd, DialogPos, ErrorReport, ListBoxOpts, LogClock, LogInfo,
-    LogOpen, MacroWindow, ScriptHost, SendMode, ShowWindow, WindowGeometry, Xfer, XmodemOpt,
+    LogOpen, LogRotate, MacroWindow, ScriptHost, SendMode, ShowWindow, WindowGeometry, Xfer,
+    XmodemOpt,
 };
 use tt_ttl::TtlError;
 // The sixteen transfer commands are the one place a macro reaches past the
@@ -328,14 +329,42 @@ impl ScriptHost for SessionHost {
         self.ask(|s| s.stop_log())
     }
 
+    fn log_pause(&mut self, paused: bool) -> Result<(), TtlError> {
+        self.ask(move |s| s.pause_log(paused))
+    }
+
+    fn log_write(&mut self, s: &[u8]) -> Result<(), TtlError> {
+        // Lossy, like every other string that crosses into a terminal here:
+        // the macro language's strings are bytes and the log's are characters.
+        let text = String::from_utf8_lossy(s).into_owned();
+        self.ask(move |sess| sess.write_log(&text))
+    }
+
+    fn log_rotate(&mut self, how: LogRotate) -> Result<(), TtlError> {
+        // The interpreter has already enforced the floors — 128 bytes and one
+        // generation — and multiplied out a `K` or `M` suffix.
+        self.ask(move |s| match how {
+            LogRotate::Size(n) => s.set_log_rotate_size(n.max(0) as u64),
+            LogRotate::Keep(n) => s.set_log_rotate_keep(n.max(0) as u32),
+            LogRotate::Halt => s.halt_log_rotate(),
+        })
+    }
+
     fn log_info(&mut self) -> Result<Option<LogInfo>, TtlError> {
         self.ask(|s| {
-            s.log_path().map(|p| LogInfo {
-                path: p.to_string_lossy().into_owned().into_bytes(),
-                binary: false,
-                append: false,
-                plain_text: false,
-                timestamp: false,
+            let opts = s.log_options()?.clone();
+            Some(LogInfo {
+                path: s.log_path()?.to_string_lossy().into_owned().into_bytes(),
+                binary: opts.mode == LogMode::Raw,
+                append: opts.append,
+                // One flag upstream, two here — `LogTypePlainText` is what a
+                // text log *is* in this port, because there is no mode that
+                // writes decoded text with the escape sequences left in. So it
+                // answers what the log does rather than what `logopen` was
+                // handed, which for `logopen` is the same thing.
+                plain_text: opts.mode == LogMode::Text,
+                timestamp: opts.timestamp != Timestamp::None,
+                // The log's progress window, which this port does not have.
                 hide_dialog: false,
             })
         })
@@ -538,8 +567,6 @@ impl ScriptHost for SessionHost {
     // `send_key_code` — needs `KEYBOARD.CNF`, which is Stage 2's other half.
     // `load_key_map`, `restore_setup` — the same file, and `TERATERM.INI`.
     // `set_debug_mode` — `ts.DebugMode` has no equivalent in `tt-vt` yet.
-    // `log_pause`, `log_write`, `log_rotate` — `SessionLog` has no pause and no
-    //   out-of-band write; small, and they want a test each.
     // `local_ip_addresses` — enumerating interfaces needs more than `std`.
 }
 

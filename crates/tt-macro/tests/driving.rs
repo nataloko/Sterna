@@ -315,3 +315,77 @@ fn a_macro_ends_when_the_frontend_does() {
     assert!(thread.is_finished(), "it hung waiting for a dead frontend");
     thread.join().unwrap();
 }
+
+/// A script driving the terminal's log, which is upstream's arrangement too:
+/// `logopen` from a macro and `File > Log` are one log, and everything a macro
+/// says about it goes to `filesys_log.cpp`.
+///
+/// The pause is the interesting part. What arrives while it is shut is thrown
+/// away rather than held, so the "during" line is not in the file — but the
+/// note the script writes to explain the gap is, which is where this port and
+/// upstream part company. See `SessionLog::write_str`.
+#[test]
+fn a_script_can_open_pause_annotate_and_close_the_terminals_log() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.log");
+    let script = format!(
+        "logopen '{}' 0 0\n\
+         sendln 'one'\n\
+         wait 'one'\n\
+         logpause\n\
+         sendln 'two'\n\
+         wait 'two'\n\
+         logwrite '-- quiet --'#13#10\n\
+         logstart\n\
+         sendln 'three'\n\
+         wait 'three'\n\
+         loginfo s\n\
+         logclose\n\
+         sendln s",
+        path.display()
+    );
+
+    // The host echoes each line back with an LF added, which is what puts it
+    // on the screen and so into a text log: `sendln` sends a bare CR, and a CR
+    // executes as a carriage return rather than as a line break.
+    let r = drive(&script, |out| {
+        let mut echo = out.to_vec();
+        echo.push(b'\n');
+        echo
+    });
+
+    // `'…'#13#10` has no space in it because a space would end the string
+    // expression: the pieces of a concatenation have to abut, and `logwrite`
+    // takes one string rather than a parameter list the way `sendln` does.
+    //
+    // The CR in the middle is not a mistake. The tap normalises the line
+    // ending it saw into one LF; `logwrite` writes the string it was given,
+    // character for character, which is `FLogPutUTF32_` and is why `#13#10` is
+    // what upstream's own examples pass it.
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "one\n-- quiet --\r\nthree\n"
+    );
+    // `loginfo` handed back the open log's path — read while it was still
+    // open, since `logclose` comes after it.
+    let sent = String::from_utf8_lossy(&r.sent).into_owned();
+    assert!(
+        sent.ends_with(&format!("{}\r", path.display())),
+        "loginfo did not report the path: {sent:?}"
+    );
+}
+
+/// `logrotate` reconfigures and rotates nothing now, and none of the family is
+/// an error with no log open — `FLogPause` and the three rotation setters all
+/// return on a NULL `LogVar`, so a macro cannot tell.
+#[test]
+fn the_log_commands_are_quiet_with_no_log_open() {
+    let r = drive(
+        "logpause\nlogwrite 'nowhere'\nlogrotate 'size' '1M'\nlogrotate 'halt'\n\
+         logstart\nloginfo s\nint2str n result\nsendln n",
+        |_| Vec::new(),
+    );
+    // -1 is `loginfo`'s answer for "not logging", and reaching the line at all
+    // is the assertion: any of the five refusing would have ended the script.
+    assert_eq!(r.sent, b"-1\r");
+}

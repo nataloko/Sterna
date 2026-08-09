@@ -415,6 +415,63 @@ impl Session {
         self.log.as_ref().map_or(0, |l| l.bytes())
     }
 
+    /// Stop or resume writing the log — `logpause` and `logstart`, and the
+    /// button on upstream's logging dialog.
+    ///
+    /// **Not an error with no log open**, in either direction: `FLogPause`
+    /// returns on a NULL `LogVar` and so do the other four of these. A macro
+    /// cannot tell the difference and upstream's dialog cannot get there.
+    pub fn pause_log(&mut self, paused: bool) {
+        if let Some(log) = self.log.as_mut() {
+            log.set_paused(paused);
+        }
+    }
+
+    pub fn log_paused(&self) -> bool {
+        self.log.as_ref().is_some_and(|l| l.is_paused())
+    }
+
+    /// `logwrite` — put a string in the log that did not come from the far
+    /// end. See [`SessionLog::write_str`], which is also where the one
+    /// deliberate divergence from upstream lives.
+    pub fn write_log(&mut self, text: &str) {
+        let Some(log) = self.log.as_mut() else {
+            return;
+        };
+        // The same shape as `log_bytes_in`, and for the same reason: a write
+        // that failed closes the log, and reporting it needs `self` back.
+        let r = log.write_str(text);
+        if let Err(e) = r {
+            self.events.push(Event::LogFailed(e.to_string()));
+            self.stop_log();
+        }
+    }
+
+    /// `logrotate size`, `logrotate rotate` and `logrotate halt` — upstream's
+    /// three setters, which reconfigure and rotate nothing now.
+    pub fn set_log_rotate_size(&mut self, size: u64) {
+        if let Some(log) = self.log.as_mut() {
+            log.set_rotate_size(size);
+        }
+    }
+
+    pub fn set_log_rotate_keep(&mut self, keep: u32) {
+        if let Some(log) = self.log.as_mut() {
+            log.set_rotate_keep(keep);
+        }
+    }
+
+    pub fn halt_log_rotate(&mut self) {
+        if let Some(log) = self.log.as_mut() {
+            log.halt_rotate();
+        }
+    }
+
+    /// The log's settings as they stand, for `loginfo` and a status line.
+    pub fn log_options(&self) -> Option<&LogOptions> {
+        self.log.as_ref().map(|l| l.options())
+    }
+
     /// Attach a macro, and hand back the ring it will read the session
     /// through.
     ///
