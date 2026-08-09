@@ -425,6 +425,12 @@ pub(crate) static RESERVED: &[(&str, Rsv)] = &[
     ("next", Rsv::Next),
     ("not", Rsv::BNot),
     ("or", Rsv::BOr),
+    // `#if defined(OUTPUTDEBUGSTRING_ENABLE)` (`ttmparse.cpp:328`), and it is
+    // commented out at `ttmparse.h:36`. Off, the word is not reserved at all
+    // and a macro using it fails as a syntax error on a line that reads
+    // perfectly well — see `rsv.rs`'s note about what a missing reserved word
+    // looks like.
+    #[cfg(feature = "outputdebugstring")]
     ("outputdebugstring", Rsv::OutputDebugString),
     ("passwordbox", Rsv::PasswordBox),
     ("pause", Rsv::Pause),
@@ -518,3 +524,23 @@ pub(crate) static RESERVED: &[(&str, Rsv)] = &[
     ("zmodemrecv", Rsv::ZmodemRecv),
     ("zmodemsend", Rsv::ZmodemSend),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::RESERVED;
+
+    #[test]
+    fn the_table_is_sorted_because_it_is_searched_by_halving() {
+        assert!(RESERVED.windows(2).all(|w| w[0].0 < w[1].0));
+    }
+
+    #[test]
+    fn outputdebugstring_is_not_a_word_unless_it_was_compiled_in() {
+        // `OUTPUTDEBUGSTRING_ENABLE` is commented out upstream, so a shipping
+        // `ttpmacro.exe` reads this as a *variable* and reports a syntax error
+        // on the rest of the line. Accepting it here would be this port
+        // quietly having a command Tera Term does not.
+        let found = RESERVED.iter().any(|(n, _)| *n == "outputdebugstring");
+        assert_eq!(found, cfg!(feature = "outputdebugstring"));
+    }
+}

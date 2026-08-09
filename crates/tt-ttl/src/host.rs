@@ -560,6 +560,64 @@ pub trait ScriptHost {
         let _ = on;
         Err(TtlError::NotSupported)
     }
+
+    // ---- the environment the macro process cannot reach on its own ----
+
+    /// `gethostname` — what the terminal is connected *to*.
+    ///
+    /// `ttdde.c:1125` answers `ts.HostName` for a TCP/IP connection and
+    /// `COM<n>` for a serial one, and writes nothing at all for any other
+    /// state — so a linked terminal with nothing open answers the empty
+    /// string. Reproduce that rather than refusing: `Linked` and `cv.Open`
+    /// are two different questions and the command only asks the first.
+    fn hostname(&mut self) -> Result<Vec<u8>, TtlError> {
+        Err(TtlError::NotSupported)
+    }
+
+    /// `clipb2var` — the clipboard as text, or `None` if it could not be read
+    /// or holds something that is not text. Both are `result` 0.
+    ///
+    /// The interpreter caches what this returns, because upstream does: the
+    /// offset argument reads out of a `static` buffer filled by the last call
+    /// with offset 0. See [`Interp::cmd_clipb2var`](crate::Interp).
+    fn clipboard_text(&mut self) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// `var2clipb` — `true` if the text reached the clipboard.
+    fn set_clipboard_text(&mut self, text: &[u8]) -> bool {
+        let _ = text;
+        false
+    }
+
+    /// `getipv4addr` / `getipv6addr` — this machine's own addresses, rendered.
+    ///
+    /// `None` is "could not retrieve", which the macro reads as `result` -1 —
+    /// the answer upstream gives when `WSAStartup` fails or, for IPv6, when
+    /// `GetAdaptersAddresses` is missing entirely. That is the default here
+    /// because enumerating interfaces is the one thing in this family that
+    /// needs more than `std`, and this crate has no dependencies.
+    ///
+    /// The renderings are upstream's, and the IPv6 one is not RFC 5952:
+    /// `myInetNtop` (`ttl.cpp:2499`) prints all sixteen bytes as `%02x` with a
+    /// colon after every second one, so `::1` is
+    /// `0000:0000:0000:0000:0000:0000:0000:0001`.
+    fn local_ip_addresses(&mut self, v6: bool) -> Option<Vec<Vec<u8>>> {
+        let _ = v6;
+        None
+    }
+
+    /// `getver` — the Tera Term version this port answers as, major and minor.
+    ///
+    /// **Deliberately Tera Term's and not Sterna's.** `getver`'s whole use is
+    /// feature gating — `getver v '4.56'` then `if result >= 0` — so a version
+    /// of its own would fail every gate ever written and silently take the old
+    /// branch. The default is the revision this port is written against
+    /// (`common/tt-version.h:31`); a frontend that wants to say something else
+    /// overrides it.
+    fn version(&mut self) -> (i32, i32) {
+        (5, 7)
+    }
 }
 
 /// `beep`'s optional argument (`ttl.cpp:TTLBeep`).
@@ -1144,6 +1202,21 @@ pub struct RecordingHost {
     pub log_open_fails: bool,
     /// What `loginfo` should find. `None` is a terminal that is not logging.
     pub log_info: Option<LogInfo>,
+
+    /// What `gethostname` should find.
+    pub hostname: Vec<u8>,
+    /// What `clipb2var` should find. `None` is a clipboard that could not be
+    /// read, or one holding something that is not text.
+    pub clipboard: Option<Vec<u8>>,
+    /// Whether `var2clipb` should report that it wrote.
+    pub clipboard_writable: bool,
+    /// What `getipv4addr` and `getipv6addr` should find. `None` is a machine
+    /// that cannot say, which is `result` -1.
+    pub ipv4: Option<Vec<Vec<u8>>>,
+    pub ipv6: Option<Vec<Vec<u8>>>,
+    /// What `getver` should answer. Zero means "use the port's own default",
+    /// so a test that does not care need not know the number.
+    pub version: (i32, i32),
 }
 
 impl RecordingHost {
@@ -1475,6 +1548,41 @@ impl ScriptHost for RecordingHost {
     fn log_auto_close(&mut self, on: bool) -> Result<(), TtlError> {
         self.logs.push(format!("logautoclosemode {}", on as u8));
         Ok(())
+    }
+
+    fn hostname(&mut self) -> Result<Vec<u8>, TtlError> {
+        Ok(self.hostname.clone())
+    }
+
+    fn clipboard_text(&mut self) -> Option<Vec<u8>> {
+        self.terminal.push("clipb2var".into());
+        self.clipboard.clone()
+    }
+
+    fn set_clipboard_text(&mut self, text: &[u8]) -> bool {
+        self.terminal.push(format!("var2clipb {}", show(text)));
+        if self.clipboard_writable {
+            self.clipboard = Some(text.to_vec());
+            true
+        } else {
+            false
+        }
+    }
+
+    fn local_ip_addresses(&mut self, v6: bool) -> Option<Vec<Vec<u8>>> {
+        if v6 {
+            self.ipv6.clone()
+        } else {
+            self.ipv4.clone()
+        }
+    }
+
+    fn version(&mut self) -> (i32, i32) {
+        if self.version == (0, 0) {
+            (5, 7)
+        } else {
+            self.version
+        }
     }
 }
 

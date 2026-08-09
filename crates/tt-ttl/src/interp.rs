@@ -58,6 +58,11 @@ pub struct Interp {
     /// here, which a macro can only tell apart by creating a file in a
     /// directory it is already walking.
     pub(crate) finds: [Option<Vec<Vec<u8>>>; NUM_DIR_HANDLE],
+    /// `clipb2var`'s copy of the clipboard — `cbbuff`/`cblen`, the two
+    /// `static`s in `ttl_gui.cpp:59`. Only an offset of 0 refills it; every
+    /// other offset reads out of it. `None` is upstream's NULL, which is what
+    /// a clipboard that could not be read leaves behind.
+    pub(crate) clipboard: Option<Vec<u8>>,
 }
 
 impl Interp {
@@ -83,6 +88,7 @@ impl Interp {
             recv_line: RecvLine::new(),
             files,
             finds: Default::default(),
+            clipboard: None,
         };
         it.buf.open(name, body);
         it.define_system_variables(&[]);
@@ -475,6 +481,9 @@ impl Interp {
             return r;
         }
         if let Some(r) = self.terminal_command(host, w) {
+            return r;
+        }
+        if let Some(r) = self.env_command(host, w) {
             return r;
         }
         match w {

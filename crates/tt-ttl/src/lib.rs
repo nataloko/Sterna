@@ -17,6 +17,7 @@ pub mod buffer;
 pub mod cksumcmds;
 pub mod conncmds;
 pub mod dlgcmds;
+pub mod envcmds;
 pub mod error;
 pub mod expr;
 pub mod filecmds;

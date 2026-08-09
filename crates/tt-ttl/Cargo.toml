@@ -7,3 +7,10 @@ repository.workspace = true
 description = "Tera Term's TTL macro language, as an interpreter with no window in it"
 
 [dependencies]
+
+# `OUTPUTDEBUGSTRING_ENABLE`, which is commented out at `ttmparse.h:36`. With
+# it off — as it is in every shipping Tera Term — `outputdebugstring` is not a
+# reserved word, so a macro using it gets the syntax error an unknown word
+# gets, and this port has to agree.
+[features]
+outputdebugstring = []
