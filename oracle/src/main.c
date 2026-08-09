@@ -103,7 +103,15 @@ static void settings_defaults(int cols, int rows, const char *term_id, int cr_re
 	ts.ScrollBuffMax = 10000;       /* ttset.c:1213 */
 	ts.MaxOSCBufferSize = 4096;     /* ttset.c:1789 */
 	ts.TabStopFlag = TABF_ALL;      /* ttset.c:1719, key default "on" */
-	ts.Beep = IdBeepOff;            /* silence, and keeps runs deterministic */
+	/* ttset.c:1112's real default is IdBeepOn -- the else branch of an
+	 * _stricmp chain that tests only "off" and "visual". IdBeepOff here is a
+	 * deliberate divergence rather than the initialiser trap: MessageBeep on
+	 * a headless build is a stub, a visual bell would Sleep(10) per BEL, and
+	 * the dump cannot see either. It changes nothing the differential suite
+	 * compares -- but do not read this line as ground truth for the setting. */
+	ts.Beep = IdBeepOff;
+	/* ts.Answerback stays empty, which is ttset.c:663's default: ENQ answers
+	 * with nothing until a file says otherwise. */
 	ts.CursorShape = IdBlkCur;      /* ttset.c:725, the else branch */
 	ts.BSKey = IdBS;                /* ttset.c:882, the else branch */
 	/* ttset.c:1523 and :1515, both GetOnOff(..., TRUE). Zero here disabled
