@@ -2622,6 +2622,18 @@ read the setting back could not tell it from a no-op; and `setflowctrl` is shown
 by the far end sending XOFF and the near end's transmitter stopping until the
 XON. `getmodemstatus` reads the far end's DTR back through the session.
 
+`getipv4addr` and `getipv6addr` went with them, since they were on the same
+list for the same kind of reason — `getifaddrs` in `tt-conn`, which already has
+`libc` and owns the socket layer. Both of upstream's filters are transcribed
+and they disagree with each other: IPv4 is one address per interface and drops
+anything down or loopback, because `SIO_GET_INTERFACE_LIST` answers one entry
+per interface; IPv6 takes every unicast address of every adapter with `::1`
+included, asking only for Windows' `DNS_ELIGIBLE` — the one thing here with no
+Linux equivalent, and so the one thing not reproduced. The rendering is
+`myInetNtop`'s (`ttl.cpp:2499`) rather than RFC 5952: sixteen bytes of `%02x`
+with a colon after every second one, always 39 characters, because a script has
+been comparing against that string for a decade.
+
 Three things are still refused, and the list at the bottom of
 `tt-macro/src/host.rs` says so. `setserialdelaychar` and `setserialdelayline`
 pace what is *sent*, and upstream paces it in `SendMem` — a queue between the
