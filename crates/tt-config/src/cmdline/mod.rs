@@ -17,6 +17,10 @@
 
 pub mod ssh;
 
+use crate::{
+    ConnectionPortType, SerialDataBits, SerialFlow, SerialParity, SerialStopBits, Settings,
+};
+
 /// `GetParam` (`ttlib.c:879`) — one token and what is left after it.
 ///
 /// Quotes are *kept*: upstream splits with them still in place and takes them
@@ -474,6 +478,127 @@ impl CommandLine {
         let mut line = b"a ".to_vec();
         line.extend_from_slice(arg);
         CommandLine::parse_inner(&line, max_com_port, false)
+    }
+
+    /// Write what was asked for into the settings, leaving the rest alone.
+    ///
+    /// This is the half of `_ParseParam` that is an assignment to `ts`, and it
+    /// is separate here for a reason upstream does not have: the schema does
+    /// not hold every setting the parser can name yet, and a parser that
+    /// silently dropped the difference would be indistinguishable from one with
+    /// a bug in those options. What [`CommandLine`] holds is the whole answer;
+    /// what this writes is the part the file can carry today.
+    ///
+    /// **Deliberately not applied**, each because the thing underneath does not
+    /// exist rather than because the option was ignored:
+    ///
+    /// - `host_name` and `tcp_port`'s companion — a host name is **not a
+    ///   setting**. `ts.HostName` has no INI key and `_ParseParam` clears it on
+    ///   every call, so where to connect is the session's and not the file's.
+    ///   `tcp_port` *is* a setting and is written.
+    /// - `/KR=`, `/KT=`, `/VTICON=`, `/TEKICON=`, `/THEME=`, `/K=`, `/MN=`,
+    ///   `/M`, `/D=`, `/L=`, `/R=` — no character-set identifiers, no icon
+    ///   table, no background themes, no `KEYBOARD.CNF`, no tab bar, no startup
+    ///   macro path, no DDE, and no `ts.LogFN` (which upstream has no key for
+    ///   either).
+    /// - `/4`, `/6`, `/I`, `/V`, `/DUPLICATE`, `/E` — upstream has no key for
+    ///   any of these. `ProtocolFamily` is command-line-only, and `Minimize`
+    ///   and `HideWindow` are zeroed at `ttset.c:554` and never read.
+    /// - `/X=` and `/Y=`, because their companion rule tests `ts.VTPos` against
+    ///   `CW_USEDEFAULT` and this schema has no window position yet.
+    /// - `/FD=` is applied **only if the directory exists**, which is upstream
+    ///   (`DoesFolderExistW`) and the one thing here that needs a filesystem.
+    pub fn apply(&self, settings: &mut Settings) {
+        if let Some(p) = self.port_type {
+            // The file holds two of the four, and a replay-file or named-pipe
+            // session is written down as `tcpip` — which is upstream's own
+            // writer, `(PortType==IdSerial)?"serial":"tcpip"`.
+            settings.connection_port_type = match p {
+                PortType::Serial => ConnectionPortType::Serial,
+                _ => ConnectionPortType::TcpIp,
+            };
+        }
+        if let Some(p) = self.tcp_port {
+            settings.connection_tcp_port = i32::from(p);
+        }
+        if let Some(t) = self.telnet {
+            settings.connection_telnet = t;
+        }
+        if let Some(b) = self.telnet_binary {
+            settings.connection_telnet_binary = b;
+        }
+        if let Some(c) = self.auto_win_close {
+            settings.connection_auto_win_close = c;
+        }
+        if let Some(t) = self.connecting_timeout {
+            settings.connection_timeout = t;
+        }
+        if let Some(d) = self.host_dialog_on_startup {
+            settings.connection_host_dialog_on_startup = d;
+        }
+
+        if let Some(c) = self.com_port {
+            settings.serial_com_port = i32::from(c);
+        }
+        if let Some(b) = self.baud {
+            settings.serial_baud = b as i32;
+        }
+        if let Some(d) = self.data_bits {
+            settings.serial_data_bits = match d {
+                DataBits::Seven => SerialDataBits::Seven,
+                DataBits::Eight => SerialDataBits::Eight,
+            };
+        }
+        if let Some(p) = self.parity {
+            settings.serial_parity = match p {
+                Parity::None => SerialParity::None,
+                Parity::Odd => SerialParity::Odd,
+                Parity::Even => SerialParity::Even,
+                Parity::Mark => SerialParity::Mark,
+                Parity::Space => SerialParity::Space,
+            };
+        }
+        if let Some(s) = self.stop_bits {
+            settings.serial_stop_bits = match s {
+                StopBits::One => SerialStopBits::One,
+                StopBits::Two => SerialStopBits::Two,
+            };
+        }
+        if let Some(f) = self.flow {
+            settings.serial_flow = match f {
+                FlowControl::None => SerialFlow::None,
+                FlowControl::XonXoff => SerialFlow::XonXoff,
+                FlowControl::Hardware => SerialFlow::Hardware,
+                FlowControl::DsrDtr => SerialFlow::DsrDtr,
+            };
+        }
+        if let Some(d) = self.delay_per_char {
+            settings.serial_delay_per_char = i32::from(d);
+        }
+        if let Some(d) = self.delay_per_line {
+            settings.serial_delay_per_line = i32::from(d);
+        }
+        if self.wait_com {
+            settings.serial_wait_com = true;
+        }
+
+        // `/NOLOG` clears `ts.LogFN` as well, which is not a setting — the
+        // caller has to forget the name it was given separately.
+        if self.no_log {
+            settings.log_auto_start = false;
+        }
+        if let Some(dir) = &self.file_dir {
+            let dir = String::from_utf8_lossy(dir).into_owned();
+            if std::path::Path::new(&dir).is_dir() {
+                settings.transfer_dir = dir;
+            }
+        }
+        if self.hide_title {
+            settings.window_hide_title = true;
+        }
+        if let Some(t) = &self.title {
+            settings.terminal_title = String::from_utf8_lossy(t).into_owned();
+        }
     }
 
     /// `_ParseParam(Param, ts, DDETopic)`, where `topic` is whether that third
@@ -1100,6 +1225,95 @@ mod tests {
         assert_eq!(cmd.port_type, Some(PortType::TcpIp));
         assert_eq!(parse("tt /B h").telnet_binary, Some(true));
         assert_eq!(parse("tt h").telnet_binary, None);
+    }
+
+    /// The other half: what `apply` puts into the settings, and what it
+    /// deliberately leaves for the caller.
+    #[test]
+    fn apply_writes_the_settings_the_file_can_hold() {
+        let cmd = parse(
+            "tt /C=3 /SPEED=115200 /CDATABIT=7 /CPARITY=odd /CSTOPBIT=2 \
+             /CFLOWCTRL=hard /CDELAYPERCHAR=5 /CDELAYPERLINE=50 /WAITCOM",
+        );
+        let mut s = Settings::default();
+        cmd.apply(&mut s);
+        assert_eq!(s.connection_port_type, ConnectionPortType::Serial);
+        assert_eq!((s.serial_com_port, s.serial_baud), (3, 115_200));
+        assert_eq!(s.serial_data_bits, SerialDataBits::Seven);
+        assert_eq!(s.serial_parity, SerialParity::Odd);
+        assert_eq!(s.serial_stop_bits, SerialStopBits::Two);
+        assert_eq!(s.serial_flow, SerialFlow::Hardware);
+        assert_eq!((s.serial_delay_per_char, s.serial_delay_per_line), (5, 50));
+        assert!(s.serial_wait_com);
+
+        let cmd = parse("tt /T=1 /B /AUTOWINCLOSE=off /TIMEOUT=30 /DS /H /W=Title myhost:2222");
+        let mut s = Settings::default();
+        cmd.apply(&mut s);
+        assert_eq!(s.connection_port_type, ConnectionPortType::TcpIp);
+        assert_eq!(s.connection_tcp_port, 2222);
+        assert!(s.connection_telnet && s.connection_telnet_binary);
+        assert!(!s.connection_auto_win_close);
+        assert_eq!(s.connection_timeout, 30);
+        assert!(!s.connection_host_dialog_on_startup);
+        assert!(s.window_hide_title);
+        assert_eq!(s.terminal_title, "Title");
+        // The host name is not a setting and never was: `ts.HostName` has no
+        // key, so where to connect stays on the command line.
+        assert_eq!(cmd.host_name, b"myhost");
+    }
+
+    /// An option that was not given must not overwrite the file's value, which
+    /// is the whole reason every field is an `Option`.
+    #[test]
+    fn apply_leaves_alone_what_the_line_did_not_mention() {
+        let mut s = Settings {
+            serial_baud: 4800,
+            connection_tcp_port: 2222,
+            serial_flow: SerialFlow::XonXoff,
+            ..Default::default()
+        };
+        let before = s.clone();
+        parse("tt /H").apply(&mut s);
+        assert_eq!(s.serial_baud, before.serial_baud);
+        assert_eq!(s.connection_tcp_port, before.connection_tcp_port);
+        assert_eq!(s.serial_flow, before.serial_flow);
+        // ...and a value the serial tables do not have is not a value.
+        parse("tt /CFLOWCTRL=maybe").apply(&mut s);
+        assert_eq!(s.serial_flow, SerialFlow::XonXoff);
+    }
+
+    /// The two transports the file cannot name are written down as `tcpip`,
+    /// which is upstream's own writer rather than a shortcut here.
+    #[test]
+    fn a_replay_or_pipe_session_is_recorded_as_tcpip() {
+        for line in ["tt /R=session.log", "tt /PIPE mypipe"] {
+            let cmd = parse(line);
+            let mut s = Settings::default();
+            cmd.apply(&mut s);
+            assert_eq!(s.connection_port_type, ConnectionPortType::TcpIp, "{line}");
+            // ...while the command line keeps the whole answer.
+            assert_ne!(cmd.port_type, Some(PortType::TcpIp), "{line}");
+        }
+    }
+
+    /// `/NOLOG` and `/FD=`, the two that are not a plain assignment.
+    #[test]
+    fn nolog_and_a_directory_that_has_to_exist() {
+        let mut s = Settings {
+            log_auto_start: true,
+            ..Default::default()
+        };
+        parse("tt /NOLOG").apply(&mut s);
+        assert!(!s.log_auto_start);
+
+        // `/FD=` is applied only if the folder is there, which is upstream's
+        // `DoesFolderExistW` and is why this one arm reads the filesystem.
+        let mut s = Settings::default();
+        parse("tt /FD=/nonexistent-directory-for-a-test").apply(&mut s);
+        assert_eq!(s.transfer_dir, "");
+        let tmp = std::env::temp_dir();
+        parse(&format!("tt /FD={}", tmp.display())).apply(&mut s);
+        assert_eq!(s.transfer_dir, tmp.display().to_string());
     }
 
     /// A `/D=` topic frees the startup macro, so a terminal opened by a macro

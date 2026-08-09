@@ -1,7 +1,10 @@
 //! The schema, and the claim that a round trip changes nothing.
 
 use tt_config::gen;
-use tt_config::{Ini, Kind, KeyboardBackspace, Settings, TerminalCrReceive, TerminalId, FIELDS};
+use tt_config::{
+    ConnectionPortType, Ini, KeyboardBackspace, Kind, SerialDataBits, SerialFlow, SerialParity,
+    SerialStopBits, Settings, TerminalCrReceive, TerminalId, FIELDS,
+};
 
 #[test]
 fn the_defaults_are_upstreams() {
@@ -12,7 +15,10 @@ fn the_defaults_are_upstreams() {
     assert_eq!(d.terminal_cr_receive, TerminalCrReceive::Cr, "ttset.c:643");
     assert_eq!(d.keyboard_backspace, KeyboardBackspace::Bs, "ttset.c:877");
     assert!(d.color_xterm_256, "ttset.c:741 — not the zeroed ColorFlag");
-    assert!(!d.color_aixterm_16, "ttset.c:738 — and this one really is off");
+    assert!(
+        !d.color_aixterm_16,
+        "ttset.c:738 — and this one really is off"
+    );
     assert_eq!(d.terminal_id, TerminalId::Vt100);
     assert_eq!(d.terminal_cols, 80);
     assert_eq!(d.terminal_rows, 24);
@@ -62,7 +68,11 @@ fn an_unrecognised_value_takes_the_default_rather_than_failing() {
     let ini = Ini::parse(b"[Tera Term]\r\nCRReceive=nonsense\r\nTerminalID=vt220\r\n");
     let s = Settings::load(&ini);
     assert_eq!(s.terminal_cr_receive, TerminalCrReceive::Cr);
-    assert_eq!(s.terminal_id, TerminalId::Vt100, "the table is case-sensitive");
+    assert_eq!(
+        s.terminal_id,
+        TerminalId::Vt100,
+        "the table is case-sensitive"
+    );
 }
 
 #[test]
@@ -75,8 +85,14 @@ fn writing_settings_leaves_the_rest_of_the_file_alone() {
     s.store(&mut ini);
     let text = String::from_utf8(ini.to_bytes()).expect("utf8");
     assert!(text.starts_with("; my notes\r\n"), "the comment went");
-    assert!(text.contains("[Extra]\r\nMine=1\r\n"), "someone else's section went");
-    assert!(text.contains("CRReceive=LF"), "the setting changed spelling");
+    assert!(
+        text.contains("[Extra]\r\nMine=1\r\n"),
+        "someone else's section went"
+    );
+    assert!(
+        text.contains("CRReceive=LF"),
+        "the setting changed spelling"
+    );
 }
 
 #[test]
@@ -101,7 +117,11 @@ fn every_setting_is_reachable_by_name() {
         let value = s
             .get_str(field.name)
             .unwrap_or_else(|| panic!("{} has no getter", field.name));
-        assert!(s.set_str(field.name, &value), "{} has no setter", field.name);
+        assert!(
+            s.set_str(field.name, &value),
+            "{} has no setter",
+            field.name
+        );
         assert_eq!(s.get_str(field.name).as_deref(), Some(value.as_str()));
     }
     assert!(s.get_str("no.such.setting").is_none());
@@ -121,7 +141,9 @@ fn the_metadata_describes_what_is_really_there() {
         // bug that would otherwise surface as a silently different value.
         if let Kind::Enum(spellings) = field.kind {
             assert!(
-                spellings.iter().any(|s| s.eq_ignore_ascii_case(field.default)),
+                spellings
+                    .iter()
+                    .any(|s| s.eq_ignore_ascii_case(field.default)),
                 "{}: default {} is not one of its spellings",
                 field.name,
                 field.default
@@ -164,7 +186,10 @@ fn the_terminal_id_is_case_sensitive_and_never_fails() {
     assert_eq!(load("DUMB"), TerminalId::Vt100);
     // ...while a setting read with `_stricmp` does not care.
     let ini = Ini::parse(b"[Tera Term]\r\nCRReceive=crlf\r\n");
-    assert_eq!(Settings::load(&ini).terminal_cr_receive, TerminalCrReceive::CrLf);
+    assert_eq!(
+        Settings::load(&ini).terminal_cr_receive,
+        TerminalCrReceive::CrLf
+    );
 }
 
 /// `ttset.c:615` is not a clamp in both directions: too small takes the
@@ -178,9 +203,17 @@ fn a_size_outside_the_range_takes_the_default_below_and_the_ceiling_above() {
         (s.terminal_cols, s.terminal_rows)
     };
     assert_eq!(load("132,50"), (132, 50));
-    assert_eq!(load("0,0"), (80, 24), "a window nobody could use, otherwise");
+    assert_eq!(
+        load("0,0"),
+        (80, 24),
+        "a window nobody could use, otherwise"
+    );
     assert_eq!(load("-5,-5"), (80, 24));
-    assert_eq!(load("9999,9999"), (1000, 500), "TermWidthMax, TermHeightMax");
+    assert_eq!(
+        load("9999,9999"),
+        (1000, 500),
+        "TermWidthMax, TermHeightMax"
+    );
 
     // A script goes through the same rule, because a value that a file and a
     // `setsetting` disagree about is a setting nobody can reason about.
@@ -189,4 +222,93 @@ fn a_size_outside_the_range_takes_the_default_below_and_the_ceiling_above() {
     assert_eq!(s.terminal_cols, 80);
     assert!(s.set_str("terminal.cols", "4000"));
     assert_eq!(s.terminal_cols, 1000);
+}
+
+/// The connection settings, and the one whose default is another setting's
+/// *initialiser*.
+#[test]
+fn tcp_ports_default_is_the_initialiser_and_not_the_file() {
+    let d = Settings::default();
+    assert_eq!(d.connection_tcp_port, 23);
+    assert_eq!(d.connection_telnet_port, 23);
+
+    // **`ttset.c:966` reads `TCPPort` with `ts->TelPort` as its default, and
+    // `TelPort=` is not read until `:1311`** — so the value in hand is the
+    // hardcoded 23 from `:566`, not the file's. A file that moves telnet to
+    // 2323 and says nothing about `TCPPort` still opens 23.
+    let ini = Ini::parse(b"[Tera Term]\r\nTelPort=2323\r\n");
+    let s = Settings::load(&ini);
+    assert_eq!(s.connection_telnet_port, 2323);
+    assert_eq!(s.connection_tcp_port, 23, "the initialiser, not TelPort=");
+}
+
+/// `Telnet=` and `TelBin=` differ only in their default, which is exactly the
+/// pair that makes `GetOnOff` dangerous.
+#[test]
+fn two_telnet_flags_read_the_same_value_two_ways() {
+    let ini = Ini::parse(b"[Tera Term]\r\nTelnet=1\r\nTelBin=1\r\n");
+    let s = Settings::load(&ini);
+    assert!(s.connection_telnet, "default on, so 1 is not `off`");
+    assert!(!s.connection_telnet_binary, "default off, so 1 is not `on`");
+}
+
+/// The port type holds two values in the file and four in memory, and upstream
+/// writes the other two down as `tcpip`.
+#[test]
+fn the_port_type_is_serial_or_everything_else() {
+    let ini = Ini::parse(b"[Tera Term]\r\nPort=serial\r\n");
+    assert_eq!(
+        Settings::load(&ini).connection_port_type,
+        ConnectionPortType::Serial
+    );
+    // `ttset.c:591` is an `_stricmp` against `serial` with an `else`, so
+    // anything else at all is TCP/IP.
+    for value in [&b"tcpip"[..], b"TCPIP", b"file", b"nonsense", b""] {
+        let mut ini = Ini::parse(b"[Tera Term]\r\n");
+        ini.set("Tera Term", "Port", &String::from_utf8_lossy(value));
+        assert_eq!(
+            Settings::load(&ini).connection_port_type,
+            ConnectionPortType::TcpIp,
+            "{}",
+            String::from_utf8_lossy(value)
+        );
+    }
+}
+
+/// The four serial tables are the command line's and the file's at once, and
+/// one value has two spellings.
+#[test]
+fn the_serial_tables_are_shared_with_the_command_line() {
+    let ini =
+        Ini::parse(b"[Tera Term]\r\nDataBit=7\r\nParity=EVEN\r\nStopBit=2\r\nFlowCtrl=rtscts\r\n");
+    let s = Settings::load(&ini);
+    assert_eq!(s.serial_data_bits, SerialDataBits::Seven);
+    assert_eq!(s.serial_parity, SerialParity::Even);
+    assert_eq!(s.serial_stop_bits, SerialStopBits::Two);
+    // `rtscts` and `hard` are one value (`ttset.c:111`); the canonical spelling
+    // is what gets written back.
+    assert_eq!(s.serial_flow, SerialFlow::Hardware);
+    let mut out = Ini::parse(b"");
+    s.store(&mut out);
+    assert_eq!(out.get("Tera Term", "FlowCtrl"), Some("hard"));
+
+    // A value none of the tables has takes the default, because only the file's
+    // reader has an `else` — `SerialPortConfconvertStr2Id` returns FALSE
+    // without storing.
+    let ini = Ini::parse(b"[Tera Term]\r\nParity=maybe\r\nDataBit=9\r\n");
+    let s = Settings::load(&ini);
+    assert_eq!(s.serial_parity, SerialParity::None);
+    assert_eq!(s.serial_data_bits, SerialDataBits::Eight);
+}
+
+/// `MaxComPort` is floored as well as capped, which is the range the schema
+/// carries.
+#[test]
+fn max_com_port_has_a_floor_of_its_own() {
+    let ini = Ini::parse(b"[Tera Term]\r\nMaxComPort=1\r\n");
+    // At or below the floor takes the *default*, which is what `ranged` means
+    // here and is not the same as clamping to 4.
+    assert_eq!(Settings::load(&ini).serial_max_com_port, 256);
+    let ini = Ini::parse(b"[Tera Term]\r\nMaxComPort=99999\r\n");
+    assert_eq!(Settings::load(&ini).serial_max_com_port, 4096);
 }

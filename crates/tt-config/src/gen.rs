@@ -43,8 +43,15 @@ enum Kind {
     /// `spelling => Variant`, in the order they were written, and whether the
     /// comparison is case-sensitive. Almost every enumerated setting upstream
     /// is read with `_stricmp`; `TerminalID` alone uses `strcmp`.
+    ///
+    /// A variant may have several spellings, written `hard/rtscts=Hardware`.
+    /// The first is what gets written back and what a dialog offers; the rest
+    /// are read-only aliases, because upstream's tables have them — `rtscts`
+    /// and `hard` are one flow-control value under two names (`ttset.c:111`),
+    /// and a file that says `rtscts` has to keep meaning what the user's own
+    /// Tera Term makes of it.
     Enum {
-        variants: Vec<(String, String)>,
+        variants: Vec<(Vec<String>, String)>,
         exact: bool,
     },
     /// Two RGB triples in one value.
@@ -130,7 +137,8 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
             .split(',')
             .map(|pair| {
                 let (spelling, variant) = pair.split_once('=').expect("spelling=Variant");
-                (spelling.trim().to_string(), variant.trim().to_string())
+                let spellings = spelling.split('/').map(|s| s.trim().to_string()).collect();
+                (spellings, variant.trim().to_string())
             })
             .collect();
         return (key.to_string(), Kind::Enum { variants, exact });
@@ -194,8 +202,18 @@ fn emit(settings: &[Setting]) -> String {
         }
         writeln!(out, "#[derive(Clone, Copy, Debug, PartialEq, Eq)]").expect("string");
         writeln!(out, "pub enum {} {{", type_name(&s.name)).expect("string");
-        for (spelling, variant) in variants {
-            writeln!(out, "    /// `{spelling}`").expect("string");
+        for (spellings, variant) in variants {
+            let list: Vec<String> = spellings.iter().map(|s| format!("`{s}`")).collect();
+            match list.len() {
+                1 => writeln!(out, "    /// {}", list[0]).expect("string"),
+                _ => writeln!(
+                    out,
+                    "    /// {} — the first is written back, the rest are aliases the\n\
+                     \x20   /// file may hold because upstream's own table has them.",
+                    list.join(", ")
+                )
+                .expect("string"),
+            }
             writeln!(out, "    {variant},").expect("string");
         }
         out.push_str("}\n\n");
@@ -203,11 +221,11 @@ fn emit(settings: &[Setting]) -> String {
         writeln!(out, "impl {} {{", type_name(&s.name)).expect("string");
         out.push_str("    /// The INI's own spelling, which is what gets written back.\n");
         out.push_str("    pub fn as_ini(&self) -> &'static str {\n        match self {\n");
-        for (spelling, variant) in variants {
+        for (spellings, variant) in variants {
             writeln!(
                 out,
                 "            Self::{variant} => \"{}\",",
-                escape(spelling)
+                escape(&spellings[0])
             )
             .expect("string");
         }
@@ -228,25 +246,31 @@ fn emit(settings: &[Setting]) -> String {
         }
         writeln!(out, "    pub fn from_ini(s: &str) -> Self {{").expect("string");
         out.push_str("        let s = s.trim();\n");
-        for (spelling, variant) in variants {
-            let test = if *exact {
-                format!("s == \"{}\"", escape(spelling))
-            } else {
-                format!("s.eq_ignore_ascii_case(\"{}\")", escape(spelling))
-            };
-            writeln!(out, "        if {test} {{ return Self::{variant}; }}").expect("string");
+        for (spellings, variant) in variants {
+            let tests: Vec<String> = spellings
+                .iter()
+                .map(|spelling| match exact {
+                    true => format!("s == \"{}\"", escape(spelling)),
+                    false => format!("s.eq_ignore_ascii_case(\"{}\")", escape(spelling)),
+                })
+                .collect();
+            writeln!(
+                out,
+                "        if {} {{ return Self::{variant}; }}",
+                tests.join(" || ")
+            )
+            .expect("string");
         }
         writeln!(out, "        Self::default()").expect("string");
         out.push_str("    }\n}\n\n");
 
         let default_variant = variants
             .iter()
-            .find(|(spelling, _)| {
-                if *exact {
-                    *spelling == s.default
-                } else {
-                    spelling.eq_ignore_ascii_case(&s.default)
-                }
+            .find(|(spellings, _)| {
+                spellings.iter().any(|spelling| match exact {
+                    true => *spelling == s.default,
+                    false => spelling.eq_ignore_ascii_case(&s.default),
+                })
             })
             .map(|(_, v)| v.clone())
             .unwrap_or_else(|| panic!("{}: default {} is not a spelling", s.name, s.default));
@@ -333,9 +357,9 @@ fn emit(settings: &[Setting]) -> String {
                  Some(v) => {}::from_ini(v), None => d.{field} }}",
                 type_name(&s.name)
             ),
-            Kind::Color2 => format!(
-                "crate::schema::color2(ini.get(\"{section}\", \"{key}\"), d.{field})"
-            ),
+            Kind::Color2 => {
+                format!("crate::schema::color2(ini.get(\"{section}\", \"{key}\"), d.{field})")
+            }
         };
         writeln!(out, "            {field}: {expr},").expect("string");
     }
@@ -351,9 +375,7 @@ fn emit(settings: &[Setting]) -> String {
         let expr = match &s.kind {
             Kind::Bool => format!("if self.{field} {{ \"on\" }} else {{ \"off\" }}.to_string()"),
             Kind::Int { field: None, .. } => format!("self.{field}.to_string()"),
-            Kind::Int {
-                field: Some(n), ..
-            } => format!(
+            Kind::Int { field: Some(n), .. } => format!(
                 "crate::schema::with_nth(ini.get(\"{section}\", \"{key}\"), {n}, self.{field})"
             ),
             Kind::Str => format!("self.{field}.clone()"),
@@ -441,9 +463,12 @@ fn emit(settings: &[Setting]) -> String {
             Kind::Str => "Kind::Str".to_string(),
             Kind::Color2 => "Kind::Color2".to_string(),
             Kind::Enum { variants, .. } => {
+                // The canonical spelling only: a dialog offers one item per
+                // value, and an alias is a second name for a value already
+                // there rather than a choice of its own.
                 let list: Vec<String> = variants
                     .iter()
-                    .map(|(spelling, _)| format!("\"{}\"", escape(spelling)))
+                    .map(|(spellings, _)| format!("\"{}\"", escape(&spellings[0])))
                     .collect();
                 format!("Kind::Enum(&[{}])", list.join(", "))
             }
@@ -492,7 +517,6 @@ fn color2_literal(default: &str) -> String {
 fn escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
-
 
 /// The whole of `src/generated.rs`, from the whole of `schema/settings.txt`.
 pub fn generate(schema: &str) -> String {

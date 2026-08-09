@@ -297,6 +297,197 @@ impl Default for CursorShape {
     fn default() -> Self { Self::Block }
 }
 
+/// `ttset.c:589`, and the default is the `else` branch: a `Port=` that says
+/// anything but `serial` is TCP/IP, including `Port=tcp` and `Port=`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnectionPortType {
+    /// `serial`
+    Serial,
+    /// `tcpip`
+    TcpIp,
+}
+
+impl ConnectionPortType {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Serial => "serial",
+            Self::TcpIp => "tcpip",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised takes the default**
+    /// rather than failing — which is how upstream spells most of its
+    /// defaults, as the `else` branch of a chain of comparisons.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("serial") { return Self::Serial; }
+        if s.eq_ignore_ascii_case("tcpip") { return Self::TcpIp; }
+        Self::default()
+    }
+}
+
+impl Default for ConnectionPortType {
+    fn default() -> Self { Self::TcpIp }
+}
+
+/// `ttset.c:929`, default `IdDataBit8` from the `if (!…)` arm. Upstream's dialog
+/// offers only these two; `tt-conn` can do 5 and 6 as well, which is a widening
+/// and not a setting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SerialDataBits {
+    /// `8`
+    Eight,
+    /// `7`
+    Seven,
+}
+
+impl SerialDataBits {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Eight => "8",
+            Self::Seven => "7",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised takes the default**
+    /// rather than failing — which is how upstream spells most of its
+    /// defaults, as the `else` branch of a chain of comparisons.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("8") { return Self::Eight; }
+        if s.eq_ignore_ascii_case("7") { return Self::Seven; }
+        Self::default()
+    }
+}
+
+impl Default for SerialDataBits {
+    fn default() -> Self { Self::Eight }
+}
+
+/// `ttset.c:922`, default `IdParityNone`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SerialParity {
+    /// `none`
+    None,
+    /// `odd`
+    Odd,
+    /// `even`
+    Even,
+    /// `mark`
+    Mark,
+    /// `space`
+    Space,
+}
+
+impl SerialParity {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Odd => "odd",
+            Self::Even => "even",
+            Self::Mark => "mark",
+            Self::Space => "space",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised takes the default**
+    /// rather than failing — which is how upstream spells most of its
+    /// defaults, as the `else` branch of a chain of comparisons.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("none") { return Self::None; }
+        if s.eq_ignore_ascii_case("odd") { return Self::Odd; }
+        if s.eq_ignore_ascii_case("even") { return Self::Even; }
+        if s.eq_ignore_ascii_case("mark") { return Self::Mark; }
+        if s.eq_ignore_ascii_case("space") { return Self::Space; }
+        Self::default()
+    }
+}
+
+impl Default for SerialParity {
+    fn default() -> Self { Self::None }
+}
+
+/// `ttset.c:936`, default `IdStopBit1`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SerialStopBits {
+    /// `1`
+    One,
+    /// `2`
+    Two,
+}
+
+impl SerialStopBits {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::One => "1",
+            Self::Two => "2",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised takes the default**
+    /// rather than failing — which is how upstream spells most of its
+    /// defaults, as the `else` branch of a chain of comparisons.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("1") { return Self::One; }
+        if s.eq_ignore_ascii_case("2") { return Self::Two; }
+        Self::default()
+    }
+}
+
+impl Default for SerialStopBits {
+    fn default() -> Self { Self::One }
+}
+
+/// `ttset.c:943`, default `IdFlowNone`. `rtscts` is a second spelling of `hard`
+/// and the only alias in any of the four tables (`ttset.c:111`); the schema lists
+/// the canonical one first, which is what gets written back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SerialFlow {
+    /// `none`
+    None,
+    /// `x`
+    XonXoff,
+    /// `hard`, `rtscts` — the first is written back, the rest are aliases the
+    /// file may hold because upstream's own table has them.
+    Hardware,
+    /// `dsrdtr`
+    DsrDtr,
+}
+
+impl SerialFlow {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::XonXoff => "x",
+            Self::Hardware => "hard",
+            Self::DsrDtr => "dsrdtr",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised takes the default**
+    /// rather than failing — which is how upstream spells most of its
+    /// defaults, as the `else` branch of a chain of comparisons.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("none") { return Self::None; }
+        if s.eq_ignore_ascii_case("x") { return Self::XonXoff; }
+        if s.eq_ignore_ascii_case("hard") || s.eq_ignore_ascii_case("rtscts") { return Self::Hardware; }
+        if s.eq_ignore_ascii_case("dsrdtr") { return Self::DsrDtr; }
+        Self::default()
+    }
+}
+
+impl Default for SerialFlow {
+    fn default() -> Self { Self::None }
+}
+
 /// Every setting this project reads out of `TERATERM.INI`.
 ///
 /// Generated from the schema, so the field, its default, its INI key and
@@ -420,6 +611,86 @@ pub struct Settings {
     pub mouse_ctrl_disables_tracking: bool,
     /// `ttset.c:1515`. Gates `DECSET 7786`, and is what a reset restores it to.
     pub mouse_wheel_to_cursor: bool,
+    /// `ttset.c:589`, and the default is the `else` branch: a `Port=` that says
+    /// anything but `serial` is TCP/IP, including `Port=tcp` and `Port=`.
+    pub connection_port_type: ConnectionPortType,
+    /// **`ttset.c:966`, and its default is an initialiser rather than the setting it
+    /// looks like.** The call is `GetPrivateProfileInt(…, "TCPPort", ts->TelPort, …)`
+    /// — but `TelPort=` is not read until `:1311`, four hundred lines later, so the
+    /// value in hand is the hardcoded `ts->TelPort = 23` from `:566`. A file with
+    /// `TelPort=2323` and no `TCPPort=` therefore opens port **23**, not 2323.
+    /// Reading the file's `TelPort` as the default here is the obvious thing and it
+    /// is wrong.
+    pub connection_tcp_port: i32,
+    /// `ttset.c:958`, `GetOnOff(…, TRUE)` — so `Telnet=1` is **on** and `Telnet=off`
+    /// is the only way to turn it off. See `schema.rs`'s `on_off` for why that is
+    /// not the same as `Telnet=0`.
+    pub connection_telnet: bool,
+    /// `ttset.c:1311`. What the New Connection dialog fills the port box with when
+    /// Telnet is chosen, and — as above — *not* what `TCPPort` defaults to.
+    pub connection_telnet_port: i32,
+    /// `ttset.c:1301`, `GetOnOff(…, FALSE)` — so here `TelBin=1` reads as **off**,
+    /// which is the opposite of what the same value means for `Telnet=` above.
+    pub connection_telnet_binary: bool,
+    /// `ttset.c:969`, on by default. Whether the window closes when the connection
+    /// does. `/AUTOWINCLOSE=` on a command line is **not** `GetOnOff`: it tests for
+    /// `on` and everything else is off, so the two readers disagree about `1`.
+    pub connection_auto_win_close: bool,
+    /// `ttset.c:1457`, in seconds, zero meaning the stack's own timeout. `/TIMEOUT=`
+    /// refuses a negative value rather than clamping it.
+    pub connection_timeout: i32,
+    /// `ttset.c:1520`, on by default — the New Connection dialog at startup, which
+    /// `/DS` suppresses and `/ES` asks for.
+    pub connection_host_dialog_on_startup: bool,
+    /// `ttset.c:916`. **The bound is a different setting and is not a clamp**:
+    /// `:1223` resets the port to 1 when it is below 1 or above `MaxComPort`, which
+    /// is read at `:1218` — after this key but before the check. Left as a plain int
+    /// here because the schema has no way to say "bounded by that other setting",
+    /// and `PLAN.md` carries it as an open item.
+    /// 
+    /// What a number means on Linux is also open: this port opens a device path, and
+    /// `/C=1` has to be resolved against enumeration rather than against `COM1`.
+    pub serial_com_port: i32,
+    /// `ttset.c:919`. Unbounded, and the hardware decides what it can do with it —
+    /// `tt-conn` reads the setting back after `tcsetattr` for exactly that reason.
+    pub serial_baud: i32,
+    /// `ttset.c:929`, default `IdDataBit8` from the `if (!…)` arm. Upstream's dialog
+    /// offers only these two; `tt-conn` can do 5 and 6 as well, which is a widening
+    /// and not a setting.
+    pub serial_data_bits: SerialDataBits,
+    /// `ttset.c:922`, default `IdParityNone`.
+    pub serial_parity: SerialParity,
+    /// `ttset.c:936`, default `IdStopBit1`.
+    pub serial_stop_bits: SerialStopBits,
+    /// `ttset.c:943`, default `IdFlowNone`. `rtscts` is a second spelling of `hard`
+    /// and the only alias in any of the four tables (`ttset.c:111`); the schema lists
+    /// the canonical one first, which is what gets written back.
+    pub serial_flow: SerialFlow,
+    /// `ttset.c:951`, milliseconds between characters — for a device that cannot
+    /// keep up with a paste.
+    pub serial_delay_per_char: i32,
+    /// `ttset.c:955`, milliseconds between lines.
+    pub serial_delay_per_line: i32,
+    /// `ttset.c:1151`. Wait for the port to appear instead of failing — a USB
+    /// adapter that has not been plugged in yet.
+    pub serial_wait_com: bool,
+    /// `ttset.c:1218`, floored at 4 and capped at `MAXCOMPORT` (4096, `tttypes.h:908`)
+    /// — so the range here is the *file's* and the floor is upstream's own. This is
+    /// the setting `/C=` is bounded against, which is why the parser takes it as an
+    /// argument.
+    pub serial_max_com_port: i32,
+    /// `ttset.c:1026`. Start logging as soon as the session opens. `/NOLOG` turns it
+    /// off; `/L=` names the file, which is **not** a setting — `ts.LogFN` has no key
+    /// of its own, only `LogDefaultName` for the dialog's suggestion.
+    pub log_auto_start: bool,
+    /// `ttset.c:1060`. Where a file transfer starts looking, and where a protocol
+    /// that names its own file puts it — `GetRecievePath`. `/FD=` sets it, but only
+    /// if the directory exists.
+    pub transfer_dir: String,
+    /// `ttset.c:728`. No title bar, which `/H` also asks for. `/I` and `/V` —
+    /// minimised and invisible — have no keys at all: `_ReadIniFile` zeroes both at
+    /// `:554` and never reads one, so they are command-line-only.
+    pub window_hide_title: bool,
 }
 
 impl Default for Settings {
@@ -464,6 +735,27 @@ impl Default for Settings {
             mouse_tracking: true,
             mouse_ctrl_disables_tracking: true,
             mouse_wheel_to_cursor: true,
+            connection_port_type: ConnectionPortType::default(),
+            connection_tcp_port: 23,
+            connection_telnet: true,
+            connection_telnet_port: 23,
+            connection_telnet_binary: false,
+            connection_auto_win_close: true,
+            connection_timeout: 0,
+            connection_host_dialog_on_startup: true,
+            serial_com_port: 1,
+            serial_baud: 9600,
+            serial_data_bits: SerialDataBits::default(),
+            serial_parity: SerialParity::default(),
+            serial_stop_bits: SerialStopBits::default(),
+            serial_flow: SerialFlow::default(),
+            serial_delay_per_char: 0,
+            serial_delay_per_line: 0,
+            serial_wait_com: false,
+            serial_max_com_port: 256,
+            log_auto_start: false,
+            transfer_dir: String::from(""),
+            window_hide_title: false,
         }
     }
 }
@@ -512,6 +804,27 @@ impl Settings {
             mouse_tracking: crate::schema::on_off(ini.get("Tera Term", "MouseEventTracking"), true),
             mouse_ctrl_disables_tracking: crate::schema::on_off(ini.get("Tera Term", "DisableMouseTrackingByCtrl"), true),
             mouse_wheel_to_cursor: crate::schema::on_off(ini.get("Tera Term", "TranslateWheelToCursor"), true),
+            connection_port_type: match ini.get("Tera Term", "Port") { Some(v) => ConnectionPortType::from_ini(v), None => d.connection_port_type },
+            connection_tcp_port: ini.get_int("Tera Term", "TCPPort", d.connection_tcp_port) as i32,
+            connection_telnet: crate::schema::on_off(ini.get("Tera Term", "Telnet"), true),
+            connection_telnet_port: ini.get_int("Tera Term", "TelPort", d.connection_telnet_port) as i32,
+            connection_telnet_binary: crate::schema::on_off(ini.get("Tera Term", "TelBin"), false),
+            connection_auto_win_close: crate::schema::on_off(ini.get("Tera Term", "AutoWinClose"), true),
+            connection_timeout: ini.get_int("Tera Term", "ConnectingTimeout", d.connection_timeout) as i32,
+            connection_host_dialog_on_startup: crate::schema::on_off(ini.get("Tera Term", "HostDialogOnStartup"), true),
+            serial_com_port: ini.get_int("Tera Term", "ComPort", d.serial_com_port) as i32,
+            serial_baud: ini.get_int("Tera Term", "BaudRate", d.serial_baud) as i32,
+            serial_data_bits: match ini.get("Tera Term", "DataBit") { Some(v) => SerialDataBits::from_ini(v), None => d.serial_data_bits },
+            serial_parity: match ini.get("Tera Term", "Parity") { Some(v) => SerialParity::from_ini(v), None => d.serial_parity },
+            serial_stop_bits: match ini.get("Tera Term", "StopBit") { Some(v) => SerialStopBits::from_ini(v), None => d.serial_stop_bits },
+            serial_flow: match ini.get("Tera Term", "FlowCtrl") { Some(v) => SerialFlow::from_ini(v), None => d.serial_flow },
+            serial_delay_per_char: ini.get_int("Tera Term", "DelayPerChar", d.serial_delay_per_char) as i32,
+            serial_delay_per_line: ini.get_int("Tera Term", "DelayPerLine", d.serial_delay_per_line) as i32,
+            serial_wait_com: crate::schema::on_off(ini.get("Tera Term", "WaitCom"), false),
+            serial_max_com_port: crate::schema::ranged(ini.get_int("Tera Term", "MaxComPort", d.serial_max_com_port) as i32, d.serial_max_com_port, 4, 4096),
+            log_auto_start: crate::schema::on_off(ini.get("Tera Term", "LogAutoStart"), false),
+            transfer_dir: ini.get_or("Tera Term", "FileDir", &d.transfer_dir).to_string(),
+            window_hide_title: crate::schema::on_off(ini.get("Tera Term", "HideTitle"), false),
         }
     }
 
@@ -556,6 +869,27 @@ impl Settings {
         ini.set("Tera Term", "MouseEventTracking", &if self.mouse_tracking { "on" } else { "off" }.to_string());
         ini.set("Tera Term", "DisableMouseTrackingByCtrl", &if self.mouse_ctrl_disables_tracking { "on" } else { "off" }.to_string());
         ini.set("Tera Term", "TranslateWheelToCursor", &if self.mouse_wheel_to_cursor { "on" } else { "off" }.to_string());
+        ini.set("Tera Term", "Port", &self.connection_port_type.as_ini().to_string());
+        ini.set("Tera Term", "TCPPort", &self.connection_tcp_port.to_string());
+        ini.set("Tera Term", "Telnet", &if self.connection_telnet { "on" } else { "off" }.to_string());
+        ini.set("Tera Term", "TelPort", &self.connection_telnet_port.to_string());
+        ini.set("Tera Term", "TelBin", &if self.connection_telnet_binary { "on" } else { "off" }.to_string());
+        ini.set("Tera Term", "AutoWinClose", &if self.connection_auto_win_close { "on" } else { "off" }.to_string());
+        ini.set("Tera Term", "ConnectingTimeout", &self.connection_timeout.to_string());
+        ini.set("Tera Term", "HostDialogOnStartup", &if self.connection_host_dialog_on_startup { "on" } else { "off" }.to_string());
+        ini.set("Tera Term", "ComPort", &self.serial_com_port.to_string());
+        ini.set("Tera Term", "BaudRate", &self.serial_baud.to_string());
+        ini.set("Tera Term", "DataBit", &self.serial_data_bits.as_ini().to_string());
+        ini.set("Tera Term", "Parity", &self.serial_parity.as_ini().to_string());
+        ini.set("Tera Term", "StopBit", &self.serial_stop_bits.as_ini().to_string());
+        ini.set("Tera Term", "FlowCtrl", &self.serial_flow.as_ini().to_string());
+        ini.set("Tera Term", "DelayPerChar", &self.serial_delay_per_char.to_string());
+        ini.set("Tera Term", "DelayPerLine", &self.serial_delay_per_line.to_string());
+        ini.set("Tera Term", "WaitCom", &if self.serial_wait_com { "on" } else { "off" }.to_string());
+        ini.set("Tera Term", "MaxComPort", &self.serial_max_com_port.to_string());
+        ini.set("Tera Term", "LogAutoStart", &if self.log_auto_start { "on" } else { "off" }.to_string());
+        ini.set("Tera Term", "FileDir", &self.transfer_dir.clone());
+        ini.set("Tera Term", "HideTitle", &if self.window_hide_title { "on" } else { "off" }.to_string());
     }
 
     /// One setting by its dotted name, in the INI's own spelling.
@@ -600,6 +934,27 @@ impl Settings {
             "mouse.tracking" => if self.mouse_tracking { "on" } else { "off" }.to_string(),
             "mouse.ctrl_disables_tracking" => if self.mouse_ctrl_disables_tracking { "on" } else { "off" }.to_string(),
             "mouse.wheel_to_cursor" => if self.mouse_wheel_to_cursor { "on" } else { "off" }.to_string(),
+            "connection.port_type" => self.connection_port_type.as_ini().to_string(),
+            "connection.tcp_port" => self.connection_tcp_port.to_string(),
+            "connection.telnet" => if self.connection_telnet { "on" } else { "off" }.to_string(),
+            "connection.telnet_port" => self.connection_telnet_port.to_string(),
+            "connection.telnet_binary" => if self.connection_telnet_binary { "on" } else { "off" }.to_string(),
+            "connection.auto_win_close" => if self.connection_auto_win_close { "on" } else { "off" }.to_string(),
+            "connection.timeout" => self.connection_timeout.to_string(),
+            "connection.host_dialog_on_startup" => if self.connection_host_dialog_on_startup { "on" } else { "off" }.to_string(),
+            "serial.com_port" => self.serial_com_port.to_string(),
+            "serial.baud" => self.serial_baud.to_string(),
+            "serial.data_bits" => self.serial_data_bits.as_ini().to_string(),
+            "serial.parity" => self.serial_parity.as_ini().to_string(),
+            "serial.stop_bits" => self.serial_stop_bits.as_ini().to_string(),
+            "serial.flow" => self.serial_flow.as_ini().to_string(),
+            "serial.delay_per_char" => self.serial_delay_per_char.to_string(),
+            "serial.delay_per_line" => self.serial_delay_per_line.to_string(),
+            "serial.wait_com" => if self.serial_wait_com { "on" } else { "off" }.to_string(),
+            "serial.max_com_port" => self.serial_max_com_port.to_string(),
+            "log.auto_start" => if self.log_auto_start { "on" } else { "off" }.to_string(),
+            "transfer.dir" => self.transfer_dir.clone(),
+            "window.hide_title" => if self.window_hide_title { "on" } else { "off" }.to_string(),
             _ => return None,
         })
     }
@@ -647,6 +1002,27 @@ impl Settings {
             "mouse.tracking" => self.mouse_tracking = crate::schema::on_off(Some(value), true),
             "mouse.ctrl_disables_tracking" => self.mouse_ctrl_disables_tracking = crate::schema::on_off(Some(value), true),
             "mouse.wheel_to_cursor" => self.mouse_wheel_to_cursor = crate::schema::on_off(Some(value), true),
+            "connection.port_type" => self.connection_port_type = ConnectionPortType::from_ini(value),
+            "connection.tcp_port" => self.connection_tcp_port = crate::schema::int(value, self.connection_tcp_port),
+            "connection.telnet" => self.connection_telnet = crate::schema::on_off(Some(value), true),
+            "connection.telnet_port" => self.connection_telnet_port = crate::schema::int(value, self.connection_telnet_port),
+            "connection.telnet_binary" => self.connection_telnet_binary = crate::schema::on_off(Some(value), false),
+            "connection.auto_win_close" => self.connection_auto_win_close = crate::schema::on_off(Some(value), true),
+            "connection.timeout" => self.connection_timeout = crate::schema::int(value, self.connection_timeout),
+            "connection.host_dialog_on_startup" => self.connection_host_dialog_on_startup = crate::schema::on_off(Some(value), true),
+            "serial.com_port" => self.serial_com_port = crate::schema::int(value, self.serial_com_port),
+            "serial.baud" => self.serial_baud = crate::schema::int(value, self.serial_baud),
+            "serial.data_bits" => self.serial_data_bits = SerialDataBits::from_ini(value),
+            "serial.parity" => self.serial_parity = SerialParity::from_ini(value),
+            "serial.stop_bits" => self.serial_stop_bits = SerialStopBits::from_ini(value),
+            "serial.flow" => self.serial_flow = SerialFlow::from_ini(value),
+            "serial.delay_per_char" => self.serial_delay_per_char = crate::schema::int(value, self.serial_delay_per_char),
+            "serial.delay_per_line" => self.serial_delay_per_line = crate::schema::int(value, self.serial_delay_per_line),
+            "serial.wait_com" => self.serial_wait_com = crate::schema::on_off(Some(value), false),
+            "serial.max_com_port" => self.serial_max_com_port = crate::schema::ranged(crate::schema::int(value, self.serial_max_com_port), 256, 4, 4096),
+            "log.auto_start" => self.log_auto_start = crate::schema::on_off(Some(value), false),
+            "transfer.dir" => self.transfer_dir = value.to_string(),
+            "window.hide_title" => self.window_hide_title = crate::schema::on_off(Some(value), false),
             _ => return false,
         }
         true
@@ -1047,5 +1423,215 @@ pub const FIELDS: &[Field] = &[
         default: "on",
         label: None,
         doc: "`ttset.c:1515`. Gates `DECSET 7786`, and is what a reset restores it to.",
+    },
+    Field {
+        name: "connection.port_type",
+        page: "connection",
+        section: "Tera Term",
+        key: "Port",
+        kind: Kind::Enum(&["serial", "tcpip"]),
+        default: "tcpip",
+        label: Some("DLG_HOST_TITLE"),
+        doc: "`ttset.c:589`, and the default is the `else` branch: a `Port=` that says anything but `serial` is TCP/IP, including `Port=tcp` and `Port=`.",
+    },
+    Field {
+        name: "connection.tcp_port",
+        page: "connection",
+        section: "Tera Term",
+        key: "TCPPort",
+        kind: Kind::Int,
+        default: "23",
+        label: Some("DLG_HOST_TCPIPPORT"),
+        doc: "**`ttset.c:966`, and its default is an initialiser rather than the setting it looks like.** The call is `GetPrivateProfileInt(…, \"TCPPort\", ts->TelPort, …)` — but `TelPort=` is not read until `:1311`, four hundred lines later, so the value in hand is the hardcoded `ts->TelPort = 23` from `:566`. A file with `TelPort=2323` and no `TCPPort=` therefore opens port **23**, not 2323. Reading the file's `TelPort` as the default here is the obvious thing and it is wrong.",
+    },
+    Field {
+        name: "connection.telnet",
+        page: "connection",
+        section: "Tera Term",
+        key: "Telnet",
+        kind: Kind::Bool,
+        default: "on",
+        label: Some("DLG_TCPIP_TELNET"),
+        doc: "`ttset.c:958`, `GetOnOff(…, TRUE)` — so `Telnet=1` is **on** and `Telnet=off` is the only way to turn it off. See `schema.rs`'s `on_off` for why that is not the same as `Telnet=0`.",
+    },
+    Field {
+        name: "connection.telnet_port",
+        page: "connection",
+        section: "Tera Term",
+        key: "TelPort",
+        kind: Kind::Int,
+        default: "23",
+        label: Some("DLG_TCPIP_PORT"),
+        doc: "`ttset.c:1311`. What the New Connection dialog fills the port box with when Telnet is chosen, and — as above — *not* what `TCPPort` defaults to.",
+    },
+    Field {
+        name: "connection.telnet_binary",
+        page: "connection",
+        section: "Tera Term",
+        key: "TelBin",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1301`, `GetOnOff(…, FALSE)` — so here `TelBin=1` reads as **off**, which is the opposite of what the same value means for `Telnet=` above.",
+    },
+    Field {
+        name: "connection.auto_win_close",
+        page: "connection",
+        section: "Tera Term",
+        key: "AutoWinClose",
+        kind: Kind::Bool,
+        default: "on",
+        label: Some("DLG_TCPIP_AUTOCLOSE"),
+        doc: "`ttset.c:969`, on by default. Whether the window closes when the connection does. `/AUTOWINCLOSE=` on a command line is **not** `GetOnOff`: it tests for `on` and everything else is off, so the two readers disagree about `1`.",
+    },
+    Field {
+        name: "connection.timeout",
+        page: "connection",
+        section: "Tera Term",
+        key: "ConnectingTimeout",
+        kind: Kind::Int,
+        default: "0",
+        label: None,
+        doc: "`ttset.c:1457`, in seconds, zero meaning the stack's own timeout. `/TIMEOUT=` refuses a negative value rather than clamping it.",
+    },
+    Field {
+        name: "connection.host_dialog_on_startup",
+        page: "connection",
+        section: "Tera Term",
+        key: "HostDialogOnStartup",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1520`, on by default — the New Connection dialog at startup, which `/DS` suppresses and `/ES` asks for.",
+    },
+    Field {
+        name: "serial.com_port",
+        page: "serial",
+        section: "Tera Term",
+        key: "ComPort",
+        kind: Kind::Int,
+        default: "1",
+        label: Some("DLG_SERIAL_PORT"),
+        doc: "`ttset.c:916`. **The bound is a different setting and is not a clamp**: `:1223` resets the port to 1 when it is below 1 or above `MaxComPort`, which is read at `:1218` — after this key but before the check. Left as a plain int here because the schema has no way to say \"bounded by that other setting\", and `PLAN.md` carries it as an open item.  What a number means on Linux is also open: this port opens a device path, and `/C=1` has to be resolved against enumeration rather than against `COM1`.",
+    },
+    Field {
+        name: "serial.baud",
+        page: "serial",
+        section: "Tera Term",
+        key: "BaudRate",
+        kind: Kind::Int,
+        default: "9600",
+        label: Some("DLG_SERIAL_BAUD"),
+        doc: "`ttset.c:919`. Unbounded, and the hardware decides what it can do with it — `tt-conn` reads the setting back after `tcsetattr` for exactly that reason.",
+    },
+    Field {
+        name: "serial.data_bits",
+        page: "serial",
+        section: "Tera Term",
+        key: "DataBit",
+        kind: Kind::Enum(&["8", "7"]),
+        default: "8",
+        label: Some("DLG_SERIAL_DATA"),
+        doc: "`ttset.c:929`, default `IdDataBit8` from the `if (!…)` arm. Upstream's dialog offers only these two; `tt-conn` can do 5 and 6 as well, which is a widening and not a setting.",
+    },
+    Field {
+        name: "serial.parity",
+        page: "serial",
+        section: "Tera Term",
+        key: "Parity",
+        kind: Kind::Enum(&["none", "odd", "even", "mark", "space"]),
+        default: "none",
+        label: Some("DLG_SERIAL_PARITY"),
+        doc: "`ttset.c:922`, default `IdParityNone`.",
+    },
+    Field {
+        name: "serial.stop_bits",
+        page: "serial",
+        section: "Tera Term",
+        key: "StopBit",
+        kind: Kind::Enum(&["1", "2"]),
+        default: "1",
+        label: Some("DLG_SERIAL_STOP"),
+        doc: "`ttset.c:936`, default `IdStopBit1`.",
+    },
+    Field {
+        name: "serial.flow",
+        page: "serial",
+        section: "Tera Term",
+        key: "FlowCtrl",
+        kind: Kind::Enum(&["none", "x", "hard", "dsrdtr"]),
+        default: "none",
+        label: Some("DLG_SERIAL_FLOW"),
+        doc: "`ttset.c:943`, default `IdFlowNone`. `rtscts` is a second spelling of `hard` and the only alias in any of the four tables (`ttset.c:111`); the schema lists the canonical one first, which is what gets written back.",
+    },
+    Field {
+        name: "serial.delay_per_char",
+        page: "serial",
+        section: "Tera Term",
+        key: "DelayPerChar",
+        kind: Kind::Int,
+        default: "0",
+        label: Some("DLG_SERIAL_DELAYCHAR"),
+        doc: "`ttset.c:951`, milliseconds between characters — for a device that cannot keep up with a paste.",
+    },
+    Field {
+        name: "serial.delay_per_line",
+        page: "serial",
+        section: "Tera Term",
+        key: "DelayPerLine",
+        kind: Kind::Int,
+        default: "0",
+        label: Some("DLG_SERIAL_DELAYLINE"),
+        doc: "`ttset.c:955`, milliseconds between lines.",
+    },
+    Field {
+        name: "serial.wait_com",
+        page: "serial",
+        section: "Tera Term",
+        key: "WaitCom",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1151`. Wait for the port to appear instead of failing — a USB adapter that has not been plugged in yet.",
+    },
+    Field {
+        name: "serial.max_com_port",
+        page: "serial",
+        section: "Tera Term",
+        key: "MaxComPort",
+        kind: Kind::IntRange(4, 4096),
+        default: "256",
+        label: None,
+        doc: "`ttset.c:1218`, floored at 4 and capped at `MAXCOMPORT` (4096, `tttypes.h:908`) — so the range here is the *file's* and the floor is upstream's own. This is the setting `/C=` is bounded against, which is why the parser takes it as an argument.",
+    },
+    Field {
+        name: "log.auto_start",
+        page: "log",
+        section: "Tera Term",
+        key: "LogAutoStart",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1026`. Start logging as soon as the session opens. `/NOLOG` turns it off; `/L=` names the file, which is **not** a setting — `ts.LogFN` has no key of its own, only `LogDefaultName` for the dialog's suggestion.",
+    },
+    Field {
+        name: "transfer.dir",
+        page: "transfer",
+        section: "Tera Term",
+        key: "FileDir",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "`ttset.c:1060`. Where a file transfer starts looking, and where a protocol that names its own file puts it — `GetRecievePath`. `/FD=` sets it, but only if the directory exists.",
+    },
+    Field {
+        name: "window.hide_title",
+        page: "window",
+        section: "Tera Term",
+        key: "HideTitle",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:728`. No title bar, which `/H` also asks for. `/I` and `/V` — minimised and invisible — have no keys at all: `_ReadIniFile` zeroes both at `:554` and never reads one, so they are command-line-only.",
     },
 ];
