@@ -767,6 +767,48 @@ And for the settings, all of which came out of `ini-audit/`:
   `TransBin` ships off, and `filesys_proto.cpp:324` derives the *text* flag as
   `1 - XmodemBin`. Folding them into one setting ships XMODEM translating line
   endings or ZMODEM not translating them, in silence.
+- **An absent key and a misspelt one can be two different settings, and the
+  schema needs `*` to say so.** `AcceptTitleChangeRequest` is read with a
+  default string of `overwrite` and then compared down an `_stricmp` chain
+  whose `else` is **off** (`ttset.c:1568`), so `AcceptTitleChangeRequest=ovewrite`
+  is a terminal that ignores every OSC title while an absent key is one that
+  accepts them. Every other enumerated setting here has the two coinciding —
+  which is why the schema had one fallback for four years of upstream and why
+  this looked like a rule rather than a coincidence. `off/*=Off` is the else
+  arm; a row without `*` still falls to its default.
+- **`MaxBuffSize` caps the terminal's rows, not only the buffer's lines.**
+  `buffer.c:511` and `:4977` apply `ts.ScrollBuffMax` to two different things
+  one line apart, so `MaxBuffSize=30` is a thirty-row terminal in a window of
+  any size. Rows are cut first and the total after; doing it the other way
+  round gives negative history on a small ceiling. And it is `ttset.c:615`'s
+  bound with no ceiling of its own — under 24 takes the *default* of 10000, so
+  `MaxBuffSize=1` is not a one-line buffer.
+- **`EnableANSIColor` is a rendering gate, not a parse gate**, unlike the three
+  colour flags read beside it. `SGR 30-37` still stores the colour in the cell
+  and `vtdisp.c:2417` declines to draw with it, so the screen is the normal
+  pair while the buffer disagrees — and `Grid`'s dump looks perfect. The only
+  outward sign is that DECRQSS' SGR (`vtterm.c:4332`) and the termcap `Co`
+  query (`:4451`) stop naming a colour.
+
+And for the title, which is two strings in three places:
+
+- **OSC 1 sets the window title.** `vtterm.c:5109` is `case 0: case 1: case 2:`
+  falling into one arm, so "change icon name" writes `cv.TitleRemoteW` and
+  repaints the caption like the other two. Reading the documentation, or the
+  `case` labels, gives an engine that ignores it — this one did, with a comment
+  asserting the opposite, until case 107 was written.
+- **`gettitle` cannot see the title the host set, and `settitle` does not set
+  it.** `CmdGetTitle` answers with `ts.Title` (`ttdde.c:646`) and `CmdSetTitle`
+  writes it (`:636`), while an OSC writes `cv.TitleRemoteW`; the window shows
+  the two combined. Implementing `settitle` as an `\e]2;…\a` through the parser
+  is the obvious build and puts the string in the other half — invisible under
+  `overwrite`, where they render the same, and wrong under `ahead` and `last`.
+- **The window title and the title *report* are two chains that disagree about
+  an empty host title.** `ttwinman.c:101` falls back to `ts.Title` whenever the
+  host's is empty, whatever the mode; `vtterm.c:2677` only does that under
+  `overwrite`, so `ahead` answers `CSI 21 t` with a **leading space**. Sharing
+  one function between them is the tidy thing and changes what goes on the
+  wire.
 
 And for the command line, which is two parsers and one of them is a plugin:
 

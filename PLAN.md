@@ -1088,13 +1088,14 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (115 settings over 103 keys: 39 for the terminal,
+  `crates/tt-config/` (121 settings over 109 keys: 39 for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
-  writes into, 2026-08-09, plus the whole log family and then the whole
-  file-transfer family, 2026-08-09), the map onto a running terminal in
+  writes into, 2026-08-09, plus the whole log family, then the whole
+  file-transfer family, then the six the terminal was already honouring with no
+  key to read, 2026-08-09), the map onto a running terminal in
   `tt-session`, the schema as data over the C ABI, and a Qt dialog that builds
   itself from it. What remains is the *rest of the settings*, which is a line
-  and a citation each — 162 keys as of 2026-08-09, and `tests/upstream.rs`
+  and a citation each — 156 keys as of 2026-08-09, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -2957,7 +2958,7 @@ is the whole of what a value in the file means (`ttset.c:344`). Every other
 default in the schema was already right, `TCPPort`'s deliberate initialiser
 trap included.
 
-It also prints how far the transcription has got — 115 settings over 103 keys,
+It also prints how far the transcription has got — 121 settings over 109 keys,
 against the 256 `ttset.c` reads — so "the rest of the settings" has a number
 that cannot go stale in a comment.
 
@@ -3012,6 +3013,78 @@ values it had hardcoded. `job.auto_start` stays hardcoded false and now says
 why: it means "the peer's trigger has already gone past in the stream", which
 is true of a transfer the terminal started by itself and never of one a person
 picked from a menu.
+
+#### And six the terminal was already honouring with no key to read
+
+`crates/tt-config/`, `tt-vt`, `tt-session/src/settings.rs` and the shell,
+2026-08-09. A different way of choosing what to transcribe next: rather than
+taking the next family out of `ttset.c`, take the fields of `tt-vt::Config`
+that `vt_config` was leaving at whatever `Config::default()` held, because the
+schema had no key for them. There were six, and three of them carried a comment
+saying so.
+
+**Four were a line each.** `EnableANSIColor`, `DisableAppKeypad`,
+`DisableAppCursor` and `MaxBuffSize`. Two of them have a shape worth knowing:
+
+- `EnableANSIColor` is **not** a parse gate like the three colour flags beside
+  it. `SGR 30-37` still stores its colour in the cell and `vtdisp.c:2417`
+  declines to draw with it, so the screen is the normal pair while the buffer
+  says otherwise. `Theme::applySettings` reads it for that reason — the flag
+  was already in `Theme` with a comment about having no key. The two reports
+  that would name a colour go quiet with it (`vtterm.c:4332`, `:4451`), which
+  is how a host is told.
+- `MaxBuffSize` is **two ceilings**. `buffer.c:511` caps the buffer's line
+  count with it and `:4977` caps the *terminal's row count* with the same
+  number, so `MaxBuffSize=30` is a thirty-row terminal in a window of any size.
+  It is applied in that order — rows first, total after — so a small ceiling
+  gives no history rather than negative history. It also needed an open-ended
+  range: `ttset.c:1214` takes the default below 24 and has no ceiling of its
+  own, which is `int(24..)`.
+
+**Two needed the schema to grow a spelling first.** `AcceptTitleChangeRequest`
+and `TitleReportSequence` were booleans in `Config`, each with a doc comment
+saying the real thing "needs the settings surface". `ttset.c:1568` reads the
+first with a default of `overwrite` and then compares down a chain whose `else`
+is **off** — so an absent key and a *misspelt* one are two different settings,
+and the schema had one fallback, the default. `*` is the else arm now, written
+`off/*=Off`, and `AcceptTitleChangeRequest=ovewrite` reads as a terminal that
+ignores every OSC title, which is what the user's own Tera Term does with it.
+
+That is the family this document keeps returning to — `CRReceive`, `BSKey`, the
+flag words, `GetOnOff`, `/AUTOWINCLOSE=1`, `IdTitleReportEmpty`, `XmodemOpt` —
+and the first member of it the schema could not express rather than merely get
+wrong.
+
+Three behaviours arrived with the enums, all of them upstream and none of them
+obvious:
+
+- `off` **discards** the host's title rather than hiding it (`vtterm.c:5112`
+  gates the arm before `cv.TitleRemoteW` is touched), and it takes `CSI 22 t`
+  and `CSI 23 t` down with it. So turning the setting on afterwards does not
+  reveal a title that arrived while it was off.
+- The window and the report disagree about an *empty* host title. The window
+  falls back to the file's under every mode (`ttwinman.c:101`); the report only
+  under `overwrite`, so `ahead` answers `CSI 21 t` with a **leading space**
+  (`vtterm.c:2683`). Reproduced rather than tidied — the reply goes on
+  somebody's wire.
+- **`gettitle` cannot see the title the host set.** `CmdGetTitle` answers with
+  `ts.Title` (`ttdde.c:646`) and `settitle` writes it (`:636`, clearing the
+  host's under `overwrite`), while an OSC writes `cv.TitleRemoteW`. This port
+  had both going through the parser, which is the obvious build and is wrong
+  under `ahead` and `last` — and the test that asserted it was asserting the
+  wrong thing.
+
+`Vt::title()` is `remote_title()` now, with `window_title()` for the
+combination: the frontend wants the second, the differential dump wants the
+first, and `MainWindow` accordingly stops composing a title of its own. The one
+thing it still decides is that `Title=`'s default is upstream's *product name*
+and means "no opinion" rather than "Tera Term".
+
+**And one divergence found on the way, which is a genuine engine bug rather
+than a setting.** `vtterm.c:5109` is `case 0: case 1: case 2:` falling into one
+arm, so **OSC 1 — "change icon name" — sets the window title**. This engine
+took only 0 and 2, with a comment asserting the opposite, and nothing caught it
+because no differential case had ever sent an OSC 1. Case 107 does.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
