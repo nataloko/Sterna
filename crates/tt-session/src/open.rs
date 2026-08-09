@@ -31,7 +31,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use tt_config::cmdline::ssh::{AuthMethod, SshOptions};
-use tt_config::cmdline::{CommandLine, PortType};
+use tt_config::cmdline::{cygterm, CommandLine, PortType};
 use tt_config::Settings;
 use tt_config::{ConnectionPortType, SerialDataBits, SerialFlow, SerialParity, SerialStopBits};
 use tt_conn::pty::PtyParams;
@@ -150,6 +150,45 @@ impl Startup {
             Err(why) => Startup::Unsupported(why),
         }
     }
+
+    /// The same for a macro's `connect` — `CmdConnect` (`ttdde.c:608`), which
+    /// is the startup path with a string in front of it.
+    ///
+    /// Upstream's terminal parses the macro's argument **into `ts`** and then
+    /// posts `WM_USER_COMMSTART`, which is the very message a startup command
+    /// line ends at. So this takes `settings` by `&mut`: the line's `/BAUD=`,
+    /// `/T=` and `/F=` are settings, they outlive the connection they were
+    /// given for, and a second `connect` with none of them keeps the first's.
+    ///
+    /// **Both parsers run, and TTSSH's runs first** — `LoadTTSET`
+    /// (`ttsetup.c:47`) re-installs `_ParseParam` and then calls
+    /// `TTXGetSetupHooks`, so the plugin re-hooks the pointer `ttdde.c` is
+    /// about to call through. Reading `ttdde.c` alone suggests a `connect`
+    /// cannot open an SSH session; it can, and that is most of what the
+    /// command is used for.
+    ///
+    /// Two things upstream does around this are **not** here, both because
+    /// they need something this port has not got:
+    ///
+    /// - A `/F=` that names a *different* settings file posts
+    ///   `IdCmdRestoreSetup`, which re-reads it and re-applies it to the
+    ///   display. Nothing here knows where the settings came from; the parse
+    ///   still records the file, so a caller that does can act on it.
+    /// - `cv.NoMsg = 1` suppresses the connection's error dialogs for the
+    ///   duration, because the macro is the one being told. There is no dialog
+    ///   here to suppress.
+    pub fn of_connect(
+        arg: &[u8],
+        settings: &mut Settings,
+        cols: u16,
+        rows: u16,
+    ) -> (Startup, CommandLine) {
+        let max = settings.serial_max_com_port.clamp(0, i32::from(u16::MAX)) as u16;
+        let (cmd, ssh) = tt_config::cmdline::ssh::parse_both_argument(arg, max);
+        cmd.apply(settings);
+        let startup = Startup::of(&cmd, &ssh, settings, cols, rows);
+        (startup, cmd)
+    }
 }
 
 impl Target {
@@ -222,6 +261,84 @@ impl Target {
 }
 
 impl Target {
+    /// `cygconnect`'s argument, which is **CygTerm's** command line rather than
+    /// Tera Term's — see [`tt_config::cmdline::cygterm`] for why, and for the
+    /// options themselves.
+    ///
+    /// A local shell is this port's answer to Cygwin, and the mapping is closer
+    /// than it looks: `exec_shell` (`cygterm.cpp:905`) forks, sets `$TERM` and
+    /// the `-v` variables, changes directory, and executes the shell with a
+    /// leading `-` on `argv[0]` for a login shell. That is [`PtyParams`] field
+    /// for field.
+    ///
+    /// **The default is the launcher's directory, not the user's home.** With
+    /// no `-cd` and no `-d`, `home_chdir` is false and CygTerm never calls
+    /// `chdir`, so the shell starts where the terminal was started — which is
+    /// the process's own directory here, and *not* what `PtyParams::cwd`'s
+    /// `None` means.
+    ///
+    /// `settings` supplies nothing: CygTerm is a separate program and reads
+    /// `cygterm.cfg`, not `TERATERM.INI`.
+    pub fn cygterm(arg: &[u8], cols: u16, rows: u16) -> Target {
+        let cfg = cygterm::parse(arg);
+        let base = PtyParams {
+            cols,
+            rows,
+            ..PtyParams::default()
+        };
+        let argv = match &cfg.shell {
+            // `get_argv(argv, 32, cmd_shell)` — the shell string is split by
+            // upstream's own splitter, and 32 is its cap.
+            Some(s) => cygterm::get_argv(s, 32)
+                .into_iter()
+                .map(|a| String::from_utf8_lossy(&a).into_owned())
+                .collect(),
+            // `AUTO`, or nothing said: the account's shell, which
+            // `get_username_and_shell` reads out of `/etc/passwd` and
+            // `PtyParams` answers with an empty `argv`.
+            None => Vec::new(),
+        };
+        let cwd = match (&cfg.change_dir, cfg.home_chdir) {
+            // `chdir` failing is reported and then ignored (`cygterm.cpp:962`),
+            // so a directory that is not there must not stop the shell — and
+            // it would, since the child cannot report a failed `chdir` back
+            // through a pty that is already open.
+            (Some(d), _) => {
+                let path = PathBuf::from(String::from_utf8_lossy(d).into_owned());
+                match path.is_dir() {
+                    true => Some(path),
+                    false => working_dir(),
+                }
+            }
+            (None, true) => None,
+            (None, false) => working_dir(),
+        };
+        Target::Shell(Box::new(PtyParams {
+            argv,
+            cwd,
+            env: cfg
+                .env
+                .iter()
+                .map(|(n, v)| {
+                    (
+                        String::from_utf8_lossy(n).into_owned(),
+                        String::from_utf8_lossy(v).into_owned(),
+                    )
+                })
+                .collect(),
+            // `-dumb` is the only thing that names a terminal type, and it
+            // names the one that turns the negotiation off. Anything else
+            // keeps ours: `cygterm.cfg`'s `TERM_TYPE = vt100` describes what
+            // *CygTerm's* telnet link can do, not what this terminal is.
+            term: match &cfg.term_type {
+                Some(t) => String::from_utf8_lossy(t).into_owned(),
+                None => base.term,
+            },
+            login_shell: cfg.login_shell,
+            ..base
+        }))
+    }
+
     /// Open it — `CommOpen`, for the three transports that can be opened
     /// without asking the user anything.
     ///
@@ -352,6 +469,13 @@ fn timeout(s: &Settings) -> Duration {
 
 fn text(v: &[u8]) -> String {
     String::from_utf8_lossy(v).into_owned()
+}
+
+/// Where the process is, or `None` — which [`PtyParams`] reads as the home
+/// directory, and which is the better answer when there is no current
+/// directory to inherit because it has been deleted underneath us.
+fn working_dir() -> Option<PathBuf> {
+    std::env::current_dir().ok()
 }
 
 #[cfg(test)]
@@ -605,5 +729,136 @@ mod tests {
             Startup::of(&cmd, &SshOptions::default(), &s, 80, 24),
             Startup::Dialog
         );
+    }
+
+    // ---- what a macro's `connect` opens ----
+
+    fn connect(arg: &str, s: &mut Settings) -> Startup {
+        Startup::of_connect(arg.as_bytes(), s, 80, 24).0
+    }
+
+    /// The whole point of the dummy first token: a macro's argument has no
+    /// program name in it, and `_ParseParam` throws its first token away.
+    #[test]
+    fn a_bare_host_name_is_a_host_name_and_not_a_discarded_program() {
+        let mut s = Settings::default();
+        let Startup::Open(Target::Telnet { host, port, .. }) = connect("myhost:2323", &mut s)
+        else {
+            panic!("expected telnet");
+        };
+        assert_eq!((host.as_str(), port), ("myhost", 2323));
+    }
+
+    /// TTSSH's half runs for a `connect` too, which reading `ttdde.c` alone
+    /// would not tell you — and it is what most of the documentation's own
+    /// examples for the command need.
+    #[test]
+    fn the_plugins_half_of_the_line_is_parsed_as_well() {
+        let mut s = Settings::default();
+        let Startup::Open(Target::Ssh { params, .. }) =
+            connect("myhost /ssh /auth=password /user=alice", &mut s)
+        else {
+            panic!("expected ssh");
+        };
+        assert_eq!((params.host.as_str(), params.port), ("myhost", 22));
+        assert_eq!(params.user, "alice");
+    }
+
+    /// The argument is written into the settings and stays there, which is
+    /// `ParseParam(commandline, &ts, NULL)` and is why this takes `&mut`.
+    #[test]
+    fn what_the_line_set_outlives_the_connection_it_was_given_for() {
+        let mut s = Settings::default();
+        assert_eq!(s.serial_baud, 9600);
+        // `/C=` with no port to open still applied the speed on its way past.
+        connect("/C=1 /BAUD=115200", &mut s);
+        assert_eq!(s.serial_baud, 115200);
+        // And a second `connect` that says nothing about it keeps it.
+        connect("myhost", &mut s);
+        assert_eq!(s.serial_baud, 115200);
+    }
+
+    /// `connect ''` names nothing, so it is the dialog or an idle terminal —
+    /// the same two arms a bare `ttermpro` gets, decided by the same setting.
+    #[test]
+    fn a_connect_with_nothing_in_it_asks_rather_than_opening() {
+        let mut s = Settings::default();
+        assert_eq!(connect("", &mut s), Startup::Dialog);
+        s.connection_host_dialog_on_startup = false;
+        assert_eq!(connect("", &mut s), Startup::Idle);
+    }
+
+    /// `MaxComPort` is the file's, so the same `connect` line opens a port on
+    /// one machine and nothing on another. Upstream reads it out of `ts` at the
+    /// same moment.
+    #[test]
+    fn the_com_port_bound_comes_from_the_settings() {
+        let mut s = Settings {
+            connection_host_dialog_on_startup: false,
+            ..Default::default()
+        };
+        // Above the default bound, so the option is dropped — and with it the
+        // auto-connect that an in-range `/C=` would have turned back on after
+        // the `/M=`.
+        assert_eq!(connect("/C=300 /M=x", &mut s), Startup::Idle);
+        s.serial_max_com_port = 512;
+        assert_ne!(connect("/C=300 /M=x", &mut s), Startup::Idle);
+    }
+
+    // ---- and what `cygconnect` opens ----
+
+    fn pty(arg: &str) -> PtyParams {
+        match Target::cygterm(arg.as_bytes(), 100, 30) {
+            Target::Shell(p) => *p,
+            other => panic!("expected a shell, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cygconnect_with_no_arguments_is_a_login_shell_where_we_are() {
+        let p = pty("");
+        assert!(p.argv.is_empty(), "the account's own shell");
+        assert!(p.login_shell, "cygterm.cfg ships LOGIN_SHELL = Yes");
+        assert_eq!(
+            p.cwd,
+            std::env::current_dir().ok(),
+            "not the home directory"
+        );
+        assert_eq!((p.cols, p.rows), (100, 30));
+    }
+
+    /// The two splitters, in the order they run: the line's takes the outer
+    /// quotes off and `get_argv` takes the inner ones, which is how a shell
+    /// command with an argument that has a space in it survives at all.
+    #[test]
+    fn the_shell_string_is_split_and_the_flags_are_carried() {
+        let p = pty("-s \"'/bin/sh' -c 'echo hi'\" -nols -dumb -v FOO=bar");
+        assert_eq!(p.argv, ["/bin/sh", "-c", "echo hi"]);
+        assert!(!p.login_shell);
+        assert_eq!(p.term, "dumb");
+        assert_eq!(p.env, [("FOO".to_string(), "bar".to_string())]);
+    }
+
+    /// `-cd` is the *only* way to ask for the home directory, and `-d` outranks
+    /// it. A directory that is not there is ignored rather than fatal, because
+    /// upstream's `chdir` failure is a message and not a refusal.
+    #[test]
+    fn the_directory_options_decide_where_the_shell_starts() {
+        assert_eq!(pty("-cd").cwd, None, "None is the home directory");
+        assert_eq!(pty("-d /tmp").cwd, Some(PathBuf::from("/tmp")));
+        assert_eq!(pty("-cd -d /tmp").cwd, Some(PathBuf::from("/tmp")));
+        assert_eq!(
+            pty("-d /no/such/directory").cwd,
+            std::env::current_dir().ok(),
+            "a directory that is not there is not a failed connection"
+        );
+    }
+
+    /// It opens, which is the thing a macro's `cygconnect` needs and the one
+    /// transport that needs nothing installed to prove it.
+    #[test]
+    fn what_cygconnect_produces_can_be_opened() {
+        let target = Target::cygterm(b"-s '/bin/sh -c :' -nols", 80, 24);
+        assert!(target.open().is_ok());
     }
 }
