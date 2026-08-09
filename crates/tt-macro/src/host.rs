@@ -18,12 +18,13 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use tt_conn::serial::FlowControl as ConnFlow;
 use tt_session::open::{Startup, Target};
 use tt_session::{LogMode, LogOptions, MacroLink, Session, Timestamp, TransferReply};
 use tt_ttl::host::{
-    BeepSound, ClearScreen, DialogEnd, DialogPos, ErrorReport, ListBoxOpts, LogClock, LogInfo,
-    LogOpen, LogRotate, MacroWindow, ScriptHost, SendMode, ShowWindow, WindowGeometry, Xfer,
-    XmodemOpt,
+    BeepSound, ClearScreen, DialogEnd, DialogPos, ErrorReport, FlowControl, ListBoxOpts, LogClock,
+    LogInfo, LogOpen, LogRotate, MacroWindow, ModemLines, ScriptHost, SendMode, ShowWindow,
+    WindowGeometry, Xfer, XmodemOpt,
 };
 use tt_ttl::TtlError;
 // The sixteen transfer commands are the one place a macro reaches past the
@@ -281,6 +282,57 @@ impl ScriptHost for SessionHost {
         // (`commlib.c`'s `SetCommBreak`/`Sleep`/`ClearCommBreak`).
         self.ask(|s| s.send_break(Duration::from_millis(250)))?
             .map_err(|_| TtlError::CantCall)
+    }
+
+    // ---- the control lines ----
+    //
+    // Five jobs and no reports. Each is guarded on the session's side by
+    // there being a serial port to guard — see `tt_session`'s `serial` module
+    // — and what the guard rejects is not an error here for the reason the
+    // trait's own defaults give: upstream answers `DDE_FNOTPROCESSED`, which
+    // a macro reads as success. So a script that says `setdtr 0` over SSH
+    // carries on, exactly as it does upstream.
+
+    fn set_dtr(&mut self, on: bool) {
+        let _ = self.ask(move |s| s.set_dtr(on));
+    }
+
+    fn set_rts(&mut self, on: bool) {
+        let _ = self.ask(move |s| s.set_rts(on));
+    }
+
+    fn set_baud(&mut self, baud: u32) {
+        let _ = self.ask(move |s| s.set_baud(baud));
+    }
+
+    fn set_flow_control(&mut self, flow: FlowControl) {
+        // Two enumerations of the same four things, one in the language and
+        // one in the port. Neither is the other's to import.
+        let flow = match flow {
+            FlowControl::None => ConnFlow::None,
+            FlowControl::XonXoff => ConnFlow::XonXoff,
+            FlowControl::RtsCts => ConnFlow::RtsCts,
+            FlowControl::DsrDtr => ConnFlow::DsrDtr,
+        };
+        let _ = self.ask(move |s| s.set_flow_control(flow));
+    }
+
+    fn modem_lines(&mut self) -> Option<ModemLines> {
+        // `None` twice over: the frontend is gone, or the connection has no
+        // control lines to read. The macro cannot tell either from all four
+        // being low, which is upstream's answer too — see
+        // `Interp::cmd_get_modem_status` for why `result` stays 0 regardless.
+        self.ask(|s| s.modem_lines()).ok().flatten().map(|m| {
+            ModemLines {
+                cts: m.cts,
+                dsr: m.dsr,
+                // `ri` and `cd` in the port, where they are pin names; `ring`
+                // and `carrier` in the language, where the documentation
+                // spells them out.
+                ring: m.ri,
+                carrier: m.cd,
+            }
+        })
     }
 
     fn hostname(&mut self) -> Result<Vec<u8>, TtlError> {
@@ -588,13 +640,13 @@ impl ScriptHost for SessionHost {
     // Everything not written above keeps the trait's own refusing default, and
     // each is refused for a reason rather than for want of typing:
     //
-    // `setdtr`, `setrts`, `setbaud`, `setflowctrl`, `getmodemstatus`,
-    //   `setserialdelay*` — the control lines are on `SerialConn` and not on
-    //   `Transport`, so a `Session` cannot reach them through the box it holds.
-    //   Refusing is *not* what a macro sees: the interpreter turns these into
-    //   silent successes because upstream's terminal answers
-    //   `DDE_FNOTPROCESSED` for a connection that is not serial, which is the
-    //   right answer for every transport this port has but one.
+    // `setserialdelaychar`, `setserialdelayline` — the two of the serial group
+    //   that are not a control line. They pace what is *sent*, and upstream
+    //   paces it in `SendMem`, a queue between the macro and the wire that
+    //   this port does not have: `send` writes straight through. One feature
+    //   with three other callers waiting on it — a paste, a `sendfile` and
+    //   the File menu's own send all go through the same queue — so it wants
+    //   building once, for all of them, rather than behind these two.
     // `sendfile` — the one of the sixteen transfer commands that is not a
     //   protocol; the reason is in `Plan::of`, where the other fifteen are.
     // `scp` — an SSH channel `tt-conn` does not open yet.

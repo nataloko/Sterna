@@ -252,6 +252,32 @@ fn settitle_reaches_the_terminal() {
     assert_eq!(r.sent, b"from a macro\r");
 }
 
+/// The serial control lines over something that has none.
+///
+/// The assertion is that the script *finishes*: upstream's terminal answers
+/// `DDE_FNOTPROCESSED` for a connection that is not serial and the macro
+/// reads that as success, so five commands in a row that do nothing must not
+/// stop a login script that was written for a modem and is being run over
+/// SSH. `getmodemstatus` is the one that reports, and it reports all four
+/// lines low and `result` 0 — which is upstream's answer too, for a reason
+/// `Interp::cmd_get_modem_status` spells out.
+///
+/// What the pins do when there *is* a port is in `tt-session`'s loopback
+/// tests, where there is a cable to watch.
+#[test]
+fn the_serial_commands_are_quiet_over_a_connection_that_has_no_lines() {
+    let r = drive(
+        "setflowctrl 3\nsetdtr 0\nsetrts 0\nsetbaud 19200\n\
+         getmodemstatus m\nint2str s m\nsendln s\nint2str n result\nsendln n",
+        |_| Vec::new(),
+    );
+    assert_eq!(r.sent, b"0\r0\r");
+    // And the settings are untouched, because the guard is ahead of the
+    // assignment: a `setbaud` over a memory transport must not leave 19200
+    // behind for the next serial connection.
+    assert_eq!(r.session.settings().serial_baud, 9600);
+}
+
 /// `setecho` changes a setting *and* a mode, because upstream's are one
 /// variable: `ts.LocalEcho` is what SRM assigns (`vtterm.c:2053`), so a macro
 /// setting it is indistinguishable from the host setting it.
