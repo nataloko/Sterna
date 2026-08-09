@@ -15,6 +15,8 @@
 //! `CommandLineToArgvW` semantics gives a parser that agrees on every example
 //! in the documentation and disagrees on the first path with a space in it.
 
+pub mod ssh;
+
 /// `GetParam` (`ttlib.c:879`) — one token and what is left after it.
 ///
 /// Quotes are *kept*: upstream splits with them still in place and takes them
@@ -106,14 +108,30 @@ pub fn dequote_param(src: &[u8]) -> Vec<u8> {
 /// above the untested `GetParam` that discards it. A line consisting of nothing
 /// but that term yields no tokens.
 pub fn tokens(line: &[u8], size: usize) -> Vec<Vec<u8>> {
+    token_spans(line, size)
+        .into_iter()
+        .map(|(_, t)| t)
+        .collect()
+}
+
+/// The same, each token paired with the span of the line it came out of —
+/// **including the whitespace in front of it**, because that is the span
+/// TTXSSH blanks when it takes an option away (`ttxssh.c:1521`).
+///
+/// `cur` in upstream's loop is where the *previous* token ended, not where this
+/// one begins, so `wmemset(cur, ' ', next-cur)` covers the separator too. That
+/// is what makes `OPTION_REPLACE` safe: it writes the new text at `cur + 1`,
+/// one character in, and relies on there having been at least one space.
+pub fn token_spans(line: &[u8], size: usize) -> Vec<(std::ops::Range<usize>, Vec<u8>)> {
     let mut out = Vec::new();
     let mut cur = match get_param(line, size) {
-        Some((_, rest)) => rest,
+        Some((_, rest)) => line.len() - rest.len(),
         None => return out,
     };
-    while let Some((tok, rest)) = get_param(cur, size) {
-        cur = rest;
-        out.push(dequote_param(&tok));
+    while let Some((tok, rest)) = get_param(&line[cur..], size) {
+        let next = line.len() - rest.len();
+        out.push((cur..next, dequote_param(&tok)));
+        cur = next;
     }
     out
 }
