@@ -109,7 +109,7 @@ fn read_byte(host: &Host<'_>, until: Option<Instant>) -> Option<u8> {
 /// rule for `send` and is worth keeping: `tt.send(27, '[2J')` is how a script
 /// writes an escape sequence, and coercing the 27 to `"27"` would silently
 /// send two digits. Anything else is an error rather than a `tostring`.
-fn bytes_of(args: &Variadic<Value>) -> mlua::Result<Vec<u8>> {
+pub(crate) fn bytes_of(args: &Variadic<Value>) -> mlua::Result<Vec<u8>> {
     let mut out = Vec::new();
     for (i, v) in args.iter().enumerate() {
         match v {

@@ -71,7 +71,9 @@ use tt_ttl::{ScriptHost, TtlError};
 
 mod conn;
 mod dlg;
+mod log;
 mod serial;
+mod term;
 mod xfer;
 
 pub use conn::Recv;
@@ -173,6 +175,8 @@ impl Script {
             serial::install(scope, &tt, &cell)?;
             xfer::install(scope, &tt, &cell)?;
             dlg::install(scope, &tt, &cell)?;
+            log::install(scope, &tt, &cell)?;
+            term::install(scope, &tt, &cell)?;
 
             let args = lua.create_table()?;
             for (i, a) in self.args.iter().enumerate() {
