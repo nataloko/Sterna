@@ -2835,6 +2835,18 @@ void tt_macro_cancel(TtMacro *m);
 int32_t tt_macro_exit_code(const TtMacro *m);
 
 /**
+ * Detach whatever macro is linked — upstream's `DDELog = FALSE`, and what
+ * closing a script's window should do.
+ *
+ * [`tt_macro_free`] cannot do this on its own: it is not given a session,
+ * deliberately, so that nothing here holds a `TtSession *` it does not own.
+ * Without it the terminal goes on collecting every character it prints into a
+ * ring nobody is reading — bounded, since the ring drops its oldest bytes, but
+ * paid for on every line of output for the rest of the session.
+ */
+void tt_session_unlink_macro(TtSession *session);
+
+/**
  * Stop it and wait for the thread, then free the handle.
  *
  * Safe to call on a macro that is still running: it is cancelled first, and

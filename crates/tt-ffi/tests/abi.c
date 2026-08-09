@@ -907,6 +907,7 @@ static void test_null_safety(void)
     CHECK(tt_macro_exit_code(NULL) == 0);
     tt_macro_cancel(NULL);
     tt_macro_free(NULL);
+    tt_session_unlink_macro(NULL);
     CHECK(!tt_settings_field(0, NULL));
     CHECK(tt_last_error() != NULL);
 
@@ -1558,6 +1559,7 @@ static void test_macro(void)
     expect_row(s, 0, "chose third as typed");
 
     tt_macro_free(m);
+    tt_session_unlink_macro(s);
     tt_session_free(s);
     remove_macro();
 }

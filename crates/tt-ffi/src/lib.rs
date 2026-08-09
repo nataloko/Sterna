@@ -4129,6 +4129,20 @@ pub extern "C" fn tt_macro_exit_code(m: *const TtMacro) -> i32 {
     }
 }
 
+/// Detach whatever macro is linked — upstream's `DDELog = FALSE`, and what
+/// closing a script's window should do.
+///
+/// [`tt_macro_free`] cannot do this on its own: it is not given a session,
+/// deliberately, so that nothing here holds a `TtSession *` it does not own.
+/// Without it the terminal goes on collecting every character it prints into a
+/// ring nobody is reading — bounded, since the ring drops its oldest bytes, but
+/// paid for on every line of output for the rest of the session.
+#[no_mangle]
+pub extern "C" fn tt_session_unlink_macro(session: *mut TtSession) {
+    let s = session!(session);
+    s.session.unlink_macro();
+}
+
 /// Stop it and wait for the thread, then free the handle.
 ///
 /// Safe to call on a macro that is still running: it is cancelled first, and
