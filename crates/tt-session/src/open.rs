@@ -82,6 +82,16 @@ pub enum Target {
     /// already drives that state machine; this only says what to drive it with.
     Ssh {
         params: SshParams,
+        /// Whether a port was *asked* for — `ts.TCPPort != ts.TelPort`, which
+        /// is upstream's own idiom and the test described on [`Target::of`].
+        ///
+        /// False means `params.port` is this port's fallback rather than
+        /// anybody's choice, so a consumer with a better answer should use it:
+        /// `~/.ssh/config`'s `Port` is one, and it is why `sterna myrouter`
+        /// reaches an alias on 2222 today. Nothing in `tt-conn` reads the
+        /// config, so the fallback stays a real 22 rather than a zero meaning
+        /// "ask somebody".
+        port_chosen: bool,
         /// `/passwd=`, or a URL's. Held rather than used, so a frontend can
         /// decide whether an automatic login is allowed to skip its own prompt.
         password: Option<String>,
@@ -187,6 +197,7 @@ impl Target {
                 if ssh.enabled == Some(true) {
                     return Ok(Target::Ssh {
                         params: ssh_params(ssh, s, &host, cols, rows),
+                        port_chosen: s.connection_tcp_port != s.connection_telnet_port,
                         password: ssh.password.as_ref().map(|p| text(p)),
                         method: ssh.auth_method,
                         ask_password: ssh.ask_password,
@@ -307,7 +318,7 @@ pub fn ssh_params(ssh: &SshOptions, s: &Settings, host: &str, cols: u16, rows: u
         false => s.connection_tcp_port.clamp(0, i32::from(u16::MAX)) as u16,
     };
     let user = ssh.username.as_ref().map(|u| text(u)).unwrap_or_default();
-    SshParams {
+    let mut p = SshParams {
         cols,
         rows,
         identities: ssh
@@ -316,7 +327,17 @@ pub fn ssh_params(ssh: &SshOptions, s: &Settings, host: &str, cols: u16, rows: u
             .map(|k| vec![PathBuf::from(text(k))])
             .unwrap_or_default(),
         ..SshParams::new(host, port, user)
+    };
+    // `/TIMEOUT=` is `ts.ConnectingTimeout`, and it is a *TCP connect* timeout
+    // rather than a telnet one — the socket is Tera Term's own however TTSSH
+    // uses it afterwards. Zero is "let the stack decide", which for telnet
+    // becomes a number longer than any SYN budget; here it leaves the
+    // transport's own, because 300 seconds of an unanswered key exchange is
+    // not what anybody meant by leaving the option out.
+    if s.connection_timeout > 0 {
+        p.connect_timeout = timeout(s);
     }
+    p
 }
 
 /// `ts.ConnectingTimeout`, in seconds, where **zero means "let the stack
@@ -432,12 +453,24 @@ mod tests {
             ("myhost", "me")
         );
 
-        // A port that *was* asked for wins, which is what keeps the divergence
-        // narrow: it only fires when nothing chose one.
-        let Startup::Open(Target::Ssh { params, .. }) = startup("ttermpro /ssh myhost:2222") else {
+        // ...and it says so, because a consumer that reads `~/.ssh/config` has
+        // a better fallback than this one and needs to know it may use it.
+        let Startup::Open(Target::Ssh { port_chosen, .. }) = startup("ttermpro /ssh myhost") else {
             panic!("expected ssh");
         };
-        assert_eq!(params.port, 2222);
+        assert!(!port_chosen);
+
+        // A port that *was* asked for wins, which is what keeps the divergence
+        // narrow: it only fires when nothing chose one.
+        let Startup::Open(Target::Ssh {
+            params,
+            port_chosen,
+            ..
+        }) = startup("ttermpro /ssh myhost:2222")
+        else {
+            panic!("expected ssh");
+        };
+        assert_eq!((params.port, port_chosen), (2222, true));
         let Startup::Open(Target::Ssh { params, .. }) = startup("ttermpro /ssh /P=2222 myhost")
         else {
             panic!("expected ssh");
@@ -459,6 +492,7 @@ mod tests {
             method,
             ask_password,
             no_known_hosts_check,
+            ..
         }) = startup(
             "ttermpro /ssh /auth=publickey /user=me /passwd=pw /keyfile=/tmp/k \
              /nosecuritywarning myhost",
@@ -471,6 +505,19 @@ mod tests {
         assert!(!ask_password && no_known_hosts_check);
         assert_eq!(params.identities, [PathBuf::from("/tmp/k")]);
         assert!(startup("ttermpro /ssh /ask4passwd h").eq(&startup("ttermpro /ssh /ask4passwd h")));
+
+        // `/TIMEOUT=` is a TCP connect timeout, so it reaches SSH too — and
+        // leaving it out leaves the transport's own rather than the five
+        // minutes "let the stack decide" means for telnet.
+        let Startup::Open(Target::Ssh { params, .. }) = startup("ttermpro /ssh /TIMEOUT=7 h")
+        else {
+            panic!("expected ssh");
+        };
+        assert_eq!(params.connect_timeout, Duration::from_secs(7));
+        let Startup::Open(Target::Ssh { params, .. }) = startup("ttermpro /ssh h") else {
+            panic!("expected ssh");
+        };
+        assert!(params.connect_timeout < Duration::from_secs(300));
     }
 
     /// The serial parameters come from the settings, which the command line has
