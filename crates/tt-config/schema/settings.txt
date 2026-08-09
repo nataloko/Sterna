@@ -332,10 +332,118 @@ serial.max_com_port | int(4..4096) | Tera Term | MaxComPort | 256 | -
 
 # --- log ---------------------------------------------------------------------
 
-# `ttset.c:1026`. Start logging as soon as the session opens. `/NOLOG` turns it
-# off; `/L=` names the file, which is **not** a setting — `ts.LogFN` has no key
-# of its own, only `LogDefaultName` for the dialog's suggestion.
+# `ttset.c:1026`. Start logging as soon as the session opens, under
+# `LogDefaultName` in `LogDefaultPath`. `/NOLOG` turns it off; `/L=` names the
+# file, which is **not** a setting — `ts.LogFN` has no key of its own.
 log.auto_start | bool | Tera Term | LogAutoStart | off | -
+
+# `ttset.c:978`. A byte-for-byte capture of what arrived, rather than the text
+# the terminal decided to display — the only mode that can be replayed back
+# through a terminal, and the only one that keeps what a corrupt line really
+# sent. `filesys_log.cpp:243` overrules `LogTypePlainText` and `LogTimestamp`
+# when this is on.
+log.binary | bool | Tera Term | LogBinary | off | -
+
+# `ttset.c:981`, and the key is not the field: it is `ts.Append`, which is why
+# grepping the struct for `LogAppend` finds nothing. Add to an existing file
+# rather than truncating it.
+log.append | bool | Tera Term | LogAppend | off | -
+
+# `ttset.c:984`, and it is **not** "strip the escape sequences" — a text log
+# never had any, because the tap is downstream of the parser. It is one byte:
+# `vtterm.c:666` and `:671` put a BS in the stream when a backspace moved the
+# cursor, and this suppresses it, so a line the host corrected reads as the
+# correction rather than as the keystrokes. The tap is shared with the macro
+# language's received-line buffer, so it changes what `wait` sees too.
+log.plain_text | bool | Tera Term | LogTypePlainText | off | -
+
+# `ttset.c:988`. A `[time] ` at the head of each line. Silently dropped for a
+# binary log (`filesys_log.cpp:243`), which is the right way round: a timestamp
+# in the middle of a byte capture makes it no longer a capture.
+log.timestamp | bool | Tera Term | LogTimestamp | off | -
+
+# `ttset.c:1000`, **and the empty spelling is load-bearing.** Four `_stricmp`s
+# with local time as the `else` — except that an *absent or empty* value
+# consults `LogTimestampUTC` instead (`:1007`), the Tera Term 4 key this one
+# replaced. So `LogTimestampType=Local` alongside `LogTimestampUTC=on` is local
+# time, while no `LogTimestampType=` at all alongside the same key is UTC — and
+# the first of those is exactly the file a Tera Term 5 leaves behind when it
+# saves a Tera Term 4 one, since it writes the new key and does not remove the
+# old. An enum that collapsed absent into `Local` would read that file as UTC.
+# The cost is the one divergence: a *misspelt* value falls to local time
+# upstream and to the empty spelling here, because the schema has one fallback
+# and it is the default. It differs only in a file that misspells this key and
+# carries `LogTimestampUTC=on` as well.
+log.timestamp_type | enum(=Unset,Local=Local,UTC=Utc,LoggingElapsed=LoggingElapsed,ConnectionElapsed=ConnectionElapsed) | Tera Term | LogTimestampType |  | -
+
+# `ttset.c:1007`. Tera Term 4's key, read only when `LogTimestampType` is absent
+# or empty — see that setting. Upstream reads it and never writes it back, so a
+# file keeps it until somebody deletes it by hand.
+log.timestamp_utc | bool | Tera Term | LogTimestampUTC | off | -
+
+# `ttset.c:996`, handed to `wcsftime` — plus `%N`, which is upstream's own
+# addition for fractional seconds and not a strftime conversion. Not applied to
+# an elapsed-time stamp, which has no date in it to format.
+log.timestamp_format | string | Tera Term | LogTimestampFormat | %Y-%m-%d %H:%M:%S.%N | -
+
+# `ttset.c:1018`, the name `LogAutoStart` and the log dialog both start from.
+# It is a **template**: `strftime` conversions, then `&h` for the host (`COMn`
+# on a serial line), `&p` for the TCP port and `&u` for the user name.
+log.default_name | string | Tera Term | LogDefaultName | teraterm.log | -
+
+# `ttset.c:1023`. Where a relative log name lands. Empty falls back to
+# `FileDir` if that exists and to the per-user log directory otherwise —
+# `GetTermLogDir` (`ttlib_types.cpp:63`), which is why the transfer directory
+# can decide where a log goes.
+log.default_path | string | Tera Term | LogDefaultPath |  | -
+
+# `ttset.c:1029`. `rotate_mode`: 0 none, 1 by size (`tttypes.h:106`). Read with
+# a plain `GetPrivateProfileInt` and **not bounded**, and `filesys_log.cpp:513`
+# takes anything that is neither of the two as "do not rotate" — so this is an
+# int here rather than a range, which would turn a 2 into a 1 and switch
+# rotation on for a file that had it off.
+log.rotate | int | Tera Term | LogRotate | 0 | -
+
+# `ttset.c:1030`, **in bytes whatever `LogRotateSizeType` says.** The dialog
+# multiplies by 1024 per unit before storing (`log_pp.cpp:471`), so a value
+# read back and scaled again turns the 1 MB the user asked for into a
+# terabyte. Zero disables rotation, as does a `LogRotate` of 0.
+log.rotate_size | int | Tera Term | LogRotateSize | 0 | -
+
+# `ttset.c:1031`. 0 bytes, 1 KB, 2 MB (`log_pp.cpp:72`) — the unit the *dialog*
+# shows `LogRotateSize` in, and nothing else. It is stored so that reopening
+# the dialog offers the number the user typed rather than its expansion.
+log.rotate_size_type | int | Tera Term | LogRotateSizeType | 0 | -
+
+# `ttset.c:1032`. How many generations to keep: `file.1` is the newest.
+# **Zero is not "none"** — `filesys_log.cpp:507` leaves `loopmax` at its
+# hardcoded 10000, so an unset step with rotation on keeps ten thousand files.
+log.rotate_step | int | Tera Term | LogRotateStep | 0 | -
+
+# `ttset.c:991`. Upstream puts a file-transfer-shaped progress window up for
+# the duration of a log; this port has a status-bar indicator instead, so the
+# setting is read and written and acts on nothing.
+log.hide_dialog | bool | Tera Term | LogHideDialog | off | -
+
+# `ttset.c:993`, and the field is `LogAllBuffIncludedInFirst`. Write the
+# scrollback into the log before starting on live output. Read and written and
+# **not acted on**: the function upstream does it with,
+# `BuffGetAnyLineDataW`, truncates any line at its first wide character and at
+# about half the width when a line holds combining marks — two of the five
+# upstream bugs on file. It waits on those reports being answered.
+log.include_screen_buffer | bool | Tera Term | LogIncludeScreenBuffer | off | -
+
+# `ttset.c:1766`, and a `GetOnOff` whose default is **on** — so `=1` reads as
+# on here where the same value reads as off for every setting above that ships
+# off. Win32 share modes; nothing on this side opens the file exclusively, so
+# it is read and written and acts on nothing.
+log.lock_exclusive | bool | Tera Term | LogLockExclusive | on | -
+
+# `ttset.c:1035`, default **on**, the same asymmetry as `LogLockExclusive`.
+# Upstream hands the write to a logging thread instead of blocking the one
+# parsing the stream; here the write is buffered and the terminal's own read
+# loop is not on the UI thread, so there is nothing to defer.
+log.deferred_write | bool | Tera Term | DeferredLogWriteMode | on | -
 
 # --- transfer ----------------------------------------------------------------
 

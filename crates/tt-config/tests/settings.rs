@@ -2,8 +2,8 @@
 
 use tt_config::gen;
 use tt_config::{
-    ConnectionPortType, Ini, KeyboardBackspace, Kind, SerialDataBits, SerialFlow, SerialParity,
-    SerialStopBits, Settings, TerminalCrReceive, TerminalId, FIELDS,
+    ConnectionPortType, Ini, KeyboardBackspace, Kind, LogTimestampType, SerialDataBits, SerialFlow,
+    SerialParity, SerialStopBits, Settings, TerminalCrReceive, TerminalId, FIELDS,
 };
 
 #[test]
@@ -311,4 +311,43 @@ fn max_com_port_has_a_floor_of_its_own() {
     assert_eq!(Settings::load(&ini).serial_max_com_port, 256);
     let ini = Ini::parse(b"[Tera Term]\r\nMaxComPort=99999\r\n");
     assert_eq!(Settings::load(&ini).serial_max_com_port, 4096);
+}
+
+/// `LogTimestampType` is the one setting whose *absence* is a value, because a
+/// second key answers for it — so the schema gives the empty spelling a variant
+/// of its own rather than folding it into the default.
+#[test]
+fn the_timestamp_type_keeps_absent_apart_from_local() {
+    let of = |bytes: &[u8]| Settings::load(&Ini::parse(bytes)).log_timestamp_type;
+
+    // Nothing said, which is what a Tera Term 4 file looks like.
+    assert_eq!(of(b"[Tera Term]\r\n"), LogTimestampType::Unset);
+    // `Key=` is an empty string and not the default, and here the two agree.
+    assert_eq!(
+        of(b"[Tera Term]\r\nLogTimestampType=\r\n"),
+        LogTimestampType::Unset
+    );
+    assert_eq!(
+        of(b"[Tera Term]\r\nLogTimestampType=local\r\n"),
+        LogTimestampType::Local
+    );
+    assert_eq!(
+        of(b"[Tera Term]\r\nLogTimestampType=utc\r\n"),
+        LogTimestampType::Utc
+    );
+    assert_eq!(
+        of(b"[Tera Term]\r\nLogTimestampType=ConnectionElapsed\r\n"),
+        LogTimestampType::ConnectionElapsed
+    );
+    // And the one place this diverges, asserted so that it cannot change by
+    // accident: upstream's chain falls to local time for a *typo* and to the
+    // compatibility key only for an empty value, while the schema has one
+    // fallback and it is the default. So `Locale` reads as absent here. It
+    // shows only in a file that misspells this key *and* still carries
+    // `LogTimestampUTC=on`; folding absent into `Local` instead would get the
+    // ordinary Tera Term 4 file wrong, which is the trade.
+    assert_eq!(
+        of(b"[Tera Term]\r\nLogTimestampType=Locale\r\n"),
+        LogTimestampType::Unset
+    );
 }

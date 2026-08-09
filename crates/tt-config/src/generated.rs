@@ -600,6 +600,74 @@ impl Default for SerialFlow {
     }
 }
 
+/// `ttset.c:1000`, **and the empty spelling is load-bearing.** Four `_stricmp`s
+/// with local time as the `else` — except that an *absent or empty* value
+/// consults `LogTimestampUTC` instead (`:1007`), the Tera Term 4 key this one
+/// replaced. So `LogTimestampType=Local` alongside `LogTimestampUTC=on` is local
+/// time, while no `LogTimestampType=` at all alongside the same key is UTC — and
+/// the first of those is exactly the file a Tera Term 5 leaves behind when it
+/// saves a Tera Term 4 one, since it writes the new key and does not remove the
+/// old. An enum that collapsed absent into `Local` would read that file as UTC.
+/// The cost is the one divergence: a *misspelt* value falls to local time
+/// upstream and to the empty spelling here, because the schema has one fallback
+/// and it is the default. It differs only in a file that misspells this key and
+/// carries `LogTimestampUTC=on` as well.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LogTimestampType {
+    /// ``
+    Unset,
+    /// `Local`
+    Local,
+    /// `UTC`
+    Utc,
+    /// `LoggingElapsed`
+    LoggingElapsed,
+    /// `ConnectionElapsed`
+    ConnectionElapsed,
+}
+
+impl LogTimestampType {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Unset => "",
+            Self::Local => "Local",
+            Self::Utc => "UTC",
+            Self::LoggingElapsed => "LoggingElapsed",
+            Self::ConnectionElapsed => "ConnectionElapsed",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised takes the default**
+    /// rather than failing — which is how upstream spells most of its
+    /// defaults, as the `else` branch of a chain of comparisons.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("") {
+            return Self::Unset;
+        }
+        if s.eq_ignore_ascii_case("Local") {
+            return Self::Local;
+        }
+        if s.eq_ignore_ascii_case("UTC") {
+            return Self::Utc;
+        }
+        if s.eq_ignore_ascii_case("LoggingElapsed") {
+            return Self::LoggingElapsed;
+        }
+        if s.eq_ignore_ascii_case("ConnectionElapsed") {
+            return Self::ConnectionElapsed;
+        }
+        Self::default()
+    }
+}
+
+impl Default for LogTimestampType {
+    fn default() -> Self {
+        Self::Unset
+    }
+}
+
 /// Every setting this project reads out of `TERATERM.INI`.
 ///
 /// Generated from the schema, so the field, its default, its INI key and
@@ -791,10 +859,101 @@ pub struct Settings {
     /// the setting `/C=` is bounded against, which is why the parser takes it as an
     /// argument.
     pub serial_max_com_port: i32,
-    /// `ttset.c:1026`. Start logging as soon as the session opens. `/NOLOG` turns it
-    /// off; `/L=` names the file, which is **not** a setting — `ts.LogFN` has no key
-    /// of its own, only `LogDefaultName` for the dialog's suggestion.
+    /// `ttset.c:1026`. Start logging as soon as the session opens, under
+    /// `LogDefaultName` in `LogDefaultPath`. `/NOLOG` turns it off; `/L=` names the
+    /// file, which is **not** a setting — `ts.LogFN` has no key of its own.
     pub log_auto_start: bool,
+    /// `ttset.c:978`. A byte-for-byte capture of what arrived, rather than the text
+    /// the terminal decided to display — the only mode that can be replayed back
+    /// through a terminal, and the only one that keeps what a corrupt line really
+    /// sent. `filesys_log.cpp:243` overrules `LogTypePlainText` and `LogTimestamp`
+    /// when this is on.
+    pub log_binary: bool,
+    /// `ttset.c:981`, and the key is not the field: it is `ts.Append`, which is why
+    /// grepping the struct for `LogAppend` finds nothing. Add to an existing file
+    /// rather than truncating it.
+    pub log_append: bool,
+    /// `ttset.c:984`, and it is **not** "strip the escape sequences" — a text log
+    /// never had any, because the tap is downstream of the parser. It is one byte:
+    /// `vtterm.c:666` and `:671` put a BS in the stream when a backspace moved the
+    /// cursor, and this suppresses it, so a line the host corrected reads as the
+    /// correction rather than as the keystrokes. The tap is shared with the macro
+    /// language's received-line buffer, so it changes what `wait` sees too.
+    pub log_plain_text: bool,
+    /// `ttset.c:988`. A `[time] ` at the head of each line. Silently dropped for a
+    /// binary log (`filesys_log.cpp:243`), which is the right way round: a timestamp
+    /// in the middle of a byte capture makes it no longer a capture.
+    pub log_timestamp: bool,
+    /// `ttset.c:1000`, **and the empty spelling is load-bearing.** Four `_stricmp`s
+    /// with local time as the `else` — except that an *absent or empty* value
+    /// consults `LogTimestampUTC` instead (`:1007`), the Tera Term 4 key this one
+    /// replaced. So `LogTimestampType=Local` alongside `LogTimestampUTC=on` is local
+    /// time, while no `LogTimestampType=` at all alongside the same key is UTC — and
+    /// the first of those is exactly the file a Tera Term 5 leaves behind when it
+    /// saves a Tera Term 4 one, since it writes the new key and does not remove the
+    /// old. An enum that collapsed absent into `Local` would read that file as UTC.
+    /// The cost is the one divergence: a *misspelt* value falls to local time
+    /// upstream and to the empty spelling here, because the schema has one fallback
+    /// and it is the default. It differs only in a file that misspells this key and
+    /// carries `LogTimestampUTC=on` as well.
+    pub log_timestamp_type: LogTimestampType,
+    /// `ttset.c:1007`. Tera Term 4's key, read only when `LogTimestampType` is absent
+    /// or empty — see that setting. Upstream reads it and never writes it back, so a
+    /// file keeps it until somebody deletes it by hand.
+    pub log_timestamp_utc: bool,
+    /// `ttset.c:996`, handed to `wcsftime` — plus `%N`, which is upstream's own
+    /// addition for fractional seconds and not a strftime conversion. Not applied to
+    /// an elapsed-time stamp, which has no date in it to format.
+    pub log_timestamp_format: String,
+    /// `ttset.c:1018`, the name `LogAutoStart` and the log dialog both start from.
+    /// It is a **template**: `strftime` conversions, then `&h` for the host (`COMn`
+    /// on a serial line), `&p` for the TCP port and `&u` for the user name.
+    pub log_default_name: String,
+    /// `ttset.c:1023`. Where a relative log name lands. Empty falls back to
+    /// `FileDir` if that exists and to the per-user log directory otherwise —
+    /// `GetTermLogDir` (`ttlib_types.cpp:63`), which is why the transfer directory
+    /// can decide where a log goes.
+    pub log_default_path: String,
+    /// `ttset.c:1029`. `rotate_mode`: 0 none, 1 by size (`tttypes.h:106`). Read with
+    /// a plain `GetPrivateProfileInt` and **not bounded**, and `filesys_log.cpp:513`
+    /// takes anything that is neither of the two as "do not rotate" — so this is an
+    /// int here rather than a range, which would turn a 2 into a 1 and switch
+    /// rotation on for a file that had it off.
+    pub log_rotate: i32,
+    /// `ttset.c:1030`, **in bytes whatever `LogRotateSizeType` says.** The dialog
+    /// multiplies by 1024 per unit before storing (`log_pp.cpp:471`), so a value
+    /// read back and scaled again turns the 1 MB the user asked for into a
+    /// terabyte. Zero disables rotation, as does a `LogRotate` of 0.
+    pub log_rotate_size: i32,
+    /// `ttset.c:1031`. 0 bytes, 1 KB, 2 MB (`log_pp.cpp:72`) — the unit the *dialog*
+    /// shows `LogRotateSize` in, and nothing else. It is stored so that reopening
+    /// the dialog offers the number the user typed rather than its expansion.
+    pub log_rotate_size_type: i32,
+    /// `ttset.c:1032`. How many generations to keep: `file.1` is the newest.
+    /// **Zero is not "none"** — `filesys_log.cpp:507` leaves `loopmax` at its
+    /// hardcoded 10000, so an unset step with rotation on keeps ten thousand files.
+    pub log_rotate_step: i32,
+    /// `ttset.c:991`. Upstream puts a file-transfer-shaped progress window up for
+    /// the duration of a log; this port has a status-bar indicator instead, so the
+    /// setting is read and written and acts on nothing.
+    pub log_hide_dialog: bool,
+    /// `ttset.c:993`, and the field is `LogAllBuffIncludedInFirst`. Write the
+    /// scrollback into the log before starting on live output. Read and written and
+    /// **not acted on**: the function upstream does it with,
+    /// `BuffGetAnyLineDataW`, truncates any line at its first wide character and at
+    /// about half the width when a line holds combining marks — two of the five
+    /// upstream bugs on file. It waits on those reports being answered.
+    pub log_include_screen_buffer: bool,
+    /// `ttset.c:1766`, and a `GetOnOff` whose default is **on** — so `=1` reads as
+    /// on here where the same value reads as off for every setting above that ships
+    /// off. Win32 share modes; nothing on this side opens the file exclusively, so
+    /// it is read and written and acts on nothing.
+    pub log_lock_exclusive: bool,
+    /// `ttset.c:1035`, default **on**, the same asymmetry as `LogLockExclusive`.
+    /// Upstream hands the write to a logging thread instead of blocking the one
+    /// parsing the stream; here the write is buffered and the terminal's own read
+    /// loop is not on the UI thread, so there is nothing to defer.
+    pub log_deferred_write: bool,
     /// `ttset.c:1060`. Where a file transfer starts looking, and where a protocol
     /// that names its own file puts it — `GetRecievePath`. `/FD=` sets it, but only
     /// if the directory exists.
@@ -866,6 +1025,23 @@ impl Default for Settings {
             serial_wait_com: false,
             serial_max_com_port: 256,
             log_auto_start: false,
+            log_binary: false,
+            log_append: false,
+            log_plain_text: false,
+            log_timestamp: false,
+            log_timestamp_type: LogTimestampType::default(),
+            log_timestamp_utc: false,
+            log_timestamp_format: String::from("%Y-%m-%d %H:%M:%S.%N"),
+            log_default_name: String::from("teraterm.log"),
+            log_default_path: String::from(""),
+            log_rotate: 0,
+            log_rotate_size: 0,
+            log_rotate_size_type: 0,
+            log_rotate_step: 0,
+            log_hide_dialog: false,
+            log_include_screen_buffer: false,
+            log_lock_exclusive: true,
+            log_deferred_write: true,
             transfer_dir: String::from(""),
             window_hide_title: false,
         }
@@ -1058,6 +1234,48 @@ impl Settings {
                 4096,
             ),
             log_auto_start: crate::schema::on_off(ini.get("Tera Term", "LogAutoStart"), false),
+            log_binary: crate::schema::on_off(ini.get("Tera Term", "LogBinary"), false),
+            log_append: crate::schema::on_off(ini.get("Tera Term", "LogAppend"), false),
+            log_plain_text: crate::schema::on_off(ini.get("Tera Term", "LogTypePlainText"), false),
+            log_timestamp: crate::schema::on_off(ini.get("Tera Term", "LogTimestamp"), false),
+            log_timestamp_type: match ini.get("Tera Term", "LogTimestampType") {
+                Some(v) => LogTimestampType::from_ini(v),
+                None => d.log_timestamp_type,
+            },
+            log_timestamp_utc: crate::schema::on_off(
+                ini.get("Tera Term", "LogTimestampUTC"),
+                false,
+            ),
+            log_timestamp_format: ini
+                .get_or("Tera Term", "LogTimestampFormat", &d.log_timestamp_format)
+                .to_string(),
+            log_default_name: ini
+                .get_or("Tera Term", "LogDefaultName", &d.log_default_name)
+                .to_string(),
+            log_default_path: ini
+                .get_or("Tera Term", "LogDefaultPath", &d.log_default_path)
+                .to_string(),
+            log_rotate: ini.get_int("Tera Term", "LogRotate", d.log_rotate) as i32,
+            log_rotate_size: ini.get_int("Tera Term", "LogRotateSize", d.log_rotate_size) as i32,
+            log_rotate_size_type: ini.get_int(
+                "Tera Term",
+                "LogRotateSizeType",
+                d.log_rotate_size_type,
+            ) as i32,
+            log_rotate_step: ini.get_int("Tera Term", "LogRotateStep", d.log_rotate_step) as i32,
+            log_hide_dialog: crate::schema::on_off(ini.get("Tera Term", "LogHideDialog"), false),
+            log_include_screen_buffer: crate::schema::on_off(
+                ini.get("Tera Term", "LogIncludeScreenBuffer"),
+                false,
+            ),
+            log_lock_exclusive: crate::schema::on_off(
+                ini.get("Tera Term", "LogLockExclusive"),
+                true,
+            ),
+            log_deferred_write: crate::schema::on_off(
+                ini.get("Tera Term", "DeferredLogWriteMode"),
+                true,
+            ),
             transfer_dir: ini
                 .get_or("Tera Term", "FileDir", &d.transfer_dir)
                 .to_string(),
@@ -1440,6 +1658,92 @@ impl Settings {
             "LogAutoStart",
             &if self.log_auto_start { "on" } else { "off" }.to_string(),
         );
+        ini.set(
+            "Tera Term",
+            "LogBinary",
+            &if self.log_binary { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "LogAppend",
+            &if self.log_append { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "LogTypePlainText",
+            &if self.log_plain_text { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "LogTimestamp",
+            &if self.log_timestamp { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "LogTimestampType",
+            &self.log_timestamp_type.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "LogTimestampUTC",
+            &if self.log_timestamp_utc { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "LogTimestampFormat",
+            &self.log_timestamp_format.clone(),
+        );
+        ini.set(
+            "Tera Term",
+            "LogDefaultName",
+            &self.log_default_name.clone(),
+        );
+        ini.set(
+            "Tera Term",
+            "LogDefaultPath",
+            &self.log_default_path.clone(),
+        );
+        ini.set("Tera Term", "LogRotate", &self.log_rotate.to_string());
+        ini.set(
+            "Tera Term",
+            "LogRotateSize",
+            &self.log_rotate_size.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "LogRotateSizeType",
+            &self.log_rotate_size_type.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "LogRotateStep",
+            &self.log_rotate_step.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "LogHideDialog",
+            &if self.log_hide_dialog { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "LogIncludeScreenBuffer",
+            &if self.log_include_screen_buffer {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "LogLockExclusive",
+            &if self.log_lock_exclusive { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "DeferredLogWriteMode",
+            &if self.log_deferred_write { "on" } else { "off" }.to_string(),
+        );
         ini.set("Tera Term", "FileDir", &self.transfer_dir.clone());
         ini.set(
             "Tera Term",
@@ -1604,6 +1908,28 @@ impl Settings {
             "serial.wait_com" => if self.serial_wait_com { "on" } else { "off" }.to_string(),
             "serial.max_com_port" => self.serial_max_com_port.to_string(),
             "log.auto_start" => if self.log_auto_start { "on" } else { "off" }.to_string(),
+            "log.binary" => if self.log_binary { "on" } else { "off" }.to_string(),
+            "log.append" => if self.log_append { "on" } else { "off" }.to_string(),
+            "log.plain_text" => if self.log_plain_text { "on" } else { "off" }.to_string(),
+            "log.timestamp" => if self.log_timestamp { "on" } else { "off" }.to_string(),
+            "log.timestamp_type" => self.log_timestamp_type.as_ini().to_string(),
+            "log.timestamp_utc" => if self.log_timestamp_utc { "on" } else { "off" }.to_string(),
+            "log.timestamp_format" => self.log_timestamp_format.clone(),
+            "log.default_name" => self.log_default_name.clone(),
+            "log.default_path" => self.log_default_path.clone(),
+            "log.rotate" => self.log_rotate.to_string(),
+            "log.rotate_size" => self.log_rotate_size.to_string(),
+            "log.rotate_size_type" => self.log_rotate_size_type.to_string(),
+            "log.rotate_step" => self.log_rotate_step.to_string(),
+            "log.hide_dialog" => if self.log_hide_dialog { "on" } else { "off" }.to_string(),
+            "log.include_screen_buffer" => if self.log_include_screen_buffer {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "log.lock_exclusive" => if self.log_lock_exclusive { "on" } else { "off" }.to_string(),
+            "log.deferred_write" => if self.log_deferred_write { "on" } else { "off" }.to_string(),
             "transfer.dir" => self.transfer_dir.clone(),
             "window.hide_title" => if self.window_hide_title { "on" } else { "off" }.to_string(),
             _ => return None,
@@ -1760,6 +2086,37 @@ impl Settings {
                 )
             }
             "log.auto_start" => self.log_auto_start = crate::schema::on_off(Some(value), false),
+            "log.binary" => self.log_binary = crate::schema::on_off(Some(value), false),
+            "log.append" => self.log_append = crate::schema::on_off(Some(value), false),
+            "log.plain_text" => self.log_plain_text = crate::schema::on_off(Some(value), false),
+            "log.timestamp" => self.log_timestamp = crate::schema::on_off(Some(value), false),
+            "log.timestamp_type" => self.log_timestamp_type = LogTimestampType::from_ini(value),
+            "log.timestamp_utc" => {
+                self.log_timestamp_utc = crate::schema::on_off(Some(value), false)
+            }
+            "log.timestamp_format" => self.log_timestamp_format = value.to_string(),
+            "log.default_name" => self.log_default_name = value.to_string(),
+            "log.default_path" => self.log_default_path = value.to_string(),
+            "log.rotate" => self.log_rotate = crate::schema::int(value, self.log_rotate),
+            "log.rotate_size" => {
+                self.log_rotate_size = crate::schema::int(value, self.log_rotate_size)
+            }
+            "log.rotate_size_type" => {
+                self.log_rotate_size_type = crate::schema::int(value, self.log_rotate_size_type)
+            }
+            "log.rotate_step" => {
+                self.log_rotate_step = crate::schema::int(value, self.log_rotate_step)
+            }
+            "log.hide_dialog" => self.log_hide_dialog = crate::schema::on_off(Some(value), false),
+            "log.include_screen_buffer" => {
+                self.log_include_screen_buffer = crate::schema::on_off(Some(value), false)
+            }
+            "log.lock_exclusive" => {
+                self.log_lock_exclusive = crate::schema::on_off(Some(value), true)
+            }
+            "log.deferred_write" => {
+                self.log_deferred_write = crate::schema::on_off(Some(value), true)
+            }
             "transfer.dir" => self.transfer_dir = value.to_string(),
             "window.hide_title" => {
                 self.window_hide_title = crate::schema::on_off(Some(value), false)
@@ -2353,7 +2710,177 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "off",
         label: None,
-        doc: "`ttset.c:1026`. Start logging as soon as the session opens. `/NOLOG` turns it off; `/L=` names the file, which is **not** a setting — `ts.LogFN` has no key of its own, only `LogDefaultName` for the dialog's suggestion.",
+        doc: "`ttset.c:1026`. Start logging as soon as the session opens, under `LogDefaultName` in `LogDefaultPath`. `/NOLOG` turns it off; `/L=` names the file, which is **not** a setting — `ts.LogFN` has no key of its own.",
+    },
+    Field {
+        name: "log.binary",
+        page: "log",
+        section: "Tera Term",
+        key: "LogBinary",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:978`. A byte-for-byte capture of what arrived, rather than the text the terminal decided to display — the only mode that can be replayed back through a terminal, and the only one that keeps what a corrupt line really sent. `filesys_log.cpp:243` overrules `LogTypePlainText` and `LogTimestamp` when this is on.",
+    },
+    Field {
+        name: "log.append",
+        page: "log",
+        section: "Tera Term",
+        key: "LogAppend",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:981`, and the key is not the field: it is `ts.Append`, which is why grepping the struct for `LogAppend` finds nothing. Add to an existing file rather than truncating it.",
+    },
+    Field {
+        name: "log.plain_text",
+        page: "log",
+        section: "Tera Term",
+        key: "LogTypePlainText",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:984`, and it is **not** \"strip the escape sequences\" — a text log never had any, because the tap is downstream of the parser. It is one byte: `vtterm.c:666` and `:671` put a BS in the stream when a backspace moved the cursor, and this suppresses it, so a line the host corrected reads as the correction rather than as the keystrokes. The tap is shared with the macro language's received-line buffer, so it changes what `wait` sees too.",
+    },
+    Field {
+        name: "log.timestamp",
+        page: "log",
+        section: "Tera Term",
+        key: "LogTimestamp",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:988`. A `[time] ` at the head of each line. Silently dropped for a binary log (`filesys_log.cpp:243`), which is the right way round: a timestamp in the middle of a byte capture makes it no longer a capture.",
+    },
+    Field {
+        name: "log.timestamp_type",
+        page: "log",
+        section: "Tera Term",
+        key: "LogTimestampType",
+        kind: Kind::Enum(&["", "Local", "UTC", "LoggingElapsed", "ConnectionElapsed"]),
+        default: "",
+        label: None,
+        doc: "`ttset.c:1000`, **and the empty spelling is load-bearing.** Four `_stricmp`s with local time as the `else` — except that an *absent or empty* value consults `LogTimestampUTC` instead (`:1007`), the Tera Term 4 key this one replaced. So `LogTimestampType=Local` alongside `LogTimestampUTC=on` is local time, while no `LogTimestampType=` at all alongside the same key is UTC — and the first of those is exactly the file a Tera Term 5 leaves behind when it saves a Tera Term 4 one, since it writes the new key and does not remove the old. An enum that collapsed absent into `Local` would read that file as UTC. The cost is the one divergence: a *misspelt* value falls to local time upstream and to the empty spelling here, because the schema has one fallback and it is the default. It differs only in a file that misspells this key and carries `LogTimestampUTC=on` as well.",
+    },
+    Field {
+        name: "log.timestamp_utc",
+        page: "log",
+        section: "Tera Term",
+        key: "LogTimestampUTC",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1007`. Tera Term 4's key, read only when `LogTimestampType` is absent or empty — see that setting. Upstream reads it and never writes it back, so a file keeps it until somebody deletes it by hand.",
+    },
+    Field {
+        name: "log.timestamp_format",
+        page: "log",
+        section: "Tera Term",
+        key: "LogTimestampFormat",
+        kind: Kind::Str,
+        default: "%Y-%m-%d %H:%M:%S.%N",
+        label: None,
+        doc: "`ttset.c:996`, handed to `wcsftime` — plus `%N`, which is upstream's own addition for fractional seconds and not a strftime conversion. Not applied to an elapsed-time stamp, which has no date in it to format.",
+    },
+    Field {
+        name: "log.default_name",
+        page: "log",
+        section: "Tera Term",
+        key: "LogDefaultName",
+        kind: Kind::Str,
+        default: "teraterm.log",
+        label: None,
+        doc: "`ttset.c:1018`, the name `LogAutoStart` and the log dialog both start from. It is a **template**: `strftime` conversions, then `&h` for the host (`COMn` on a serial line), `&p` for the TCP port and `&u` for the user name.",
+    },
+    Field {
+        name: "log.default_path",
+        page: "log",
+        section: "Tera Term",
+        key: "LogDefaultPath",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "`ttset.c:1023`. Where a relative log name lands. Empty falls back to `FileDir` if that exists and to the per-user log directory otherwise — `GetTermLogDir` (`ttlib_types.cpp:63`), which is why the transfer directory can decide where a log goes.",
+    },
+    Field {
+        name: "log.rotate",
+        page: "log",
+        section: "Tera Term",
+        key: "LogRotate",
+        kind: Kind::Int,
+        default: "0",
+        label: None,
+        doc: "`ttset.c:1029`. `rotate_mode`: 0 none, 1 by size (`tttypes.h:106`). Read with a plain `GetPrivateProfileInt` and **not bounded**, and `filesys_log.cpp:513` takes anything that is neither of the two as \"do not rotate\" — so this is an int here rather than a range, which would turn a 2 into a 1 and switch rotation on for a file that had it off.",
+    },
+    Field {
+        name: "log.rotate_size",
+        page: "log",
+        section: "Tera Term",
+        key: "LogRotateSize",
+        kind: Kind::Int,
+        default: "0",
+        label: None,
+        doc: "`ttset.c:1030`, **in bytes whatever `LogRotateSizeType` says.** The dialog multiplies by 1024 per unit before storing (`log_pp.cpp:471`), so a value read back and scaled again turns the 1 MB the user asked for into a terabyte. Zero disables rotation, as does a `LogRotate` of 0.",
+    },
+    Field {
+        name: "log.rotate_size_type",
+        page: "log",
+        section: "Tera Term",
+        key: "LogRotateSizeType",
+        kind: Kind::Int,
+        default: "0",
+        label: None,
+        doc: "`ttset.c:1031`. 0 bytes, 1 KB, 2 MB (`log_pp.cpp:72`) — the unit the *dialog* shows `LogRotateSize` in, and nothing else. It is stored so that reopening the dialog offers the number the user typed rather than its expansion.",
+    },
+    Field {
+        name: "log.rotate_step",
+        page: "log",
+        section: "Tera Term",
+        key: "LogRotateStep",
+        kind: Kind::Int,
+        default: "0",
+        label: None,
+        doc: "`ttset.c:1032`. How many generations to keep: `file.1` is the newest. **Zero is not \"none\"** — `filesys_log.cpp:507` leaves `loopmax` at its hardcoded 10000, so an unset step with rotation on keeps ten thousand files.",
+    },
+    Field {
+        name: "log.hide_dialog",
+        page: "log",
+        section: "Tera Term",
+        key: "LogHideDialog",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:991`. Upstream puts a file-transfer-shaped progress window up for the duration of a log; this port has a status-bar indicator instead, so the setting is read and written and acts on nothing.",
+    },
+    Field {
+        name: "log.include_screen_buffer",
+        page: "log",
+        section: "Tera Term",
+        key: "LogIncludeScreenBuffer",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:993`, and the field is `LogAllBuffIncludedInFirst`. Write the scrollback into the log before starting on live output. Read and written and **not acted on**: the function upstream does it with, `BuffGetAnyLineDataW`, truncates any line at its first wide character and at about half the width when a line holds combining marks — two of the five upstream bugs on file. It waits on those reports being answered.",
+    },
+    Field {
+        name: "log.lock_exclusive",
+        page: "log",
+        section: "Tera Term",
+        key: "LogLockExclusive",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1766`, and a `GetOnOff` whose default is **on** — so `=1` reads as on here where the same value reads as off for every setting above that ships off. Win32 share modes; nothing on this side opens the file exclusively, so it is read and written and acts on nothing.",
+    },
+    Field {
+        name: "log.deferred_write",
+        page: "log",
+        section: "Tera Term",
+        key: "DeferredLogWriteMode",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1035`, default **on**, the same asymmetry as `LogLockExclusive`. Upstream hands the write to a logging thread instead of blocking the one parsing the stream; here the write is buffered and the terminal's own read loop is not on the UI thread, so there is nothing to defer.",
     },
     Field {
         name: "transfer.dir",
