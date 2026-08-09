@@ -522,15 +522,7 @@ mod tests {
     /// survived into `argv` is one the user meant to keep.
     #[test]
     fn from_args_does_not_unquote_a_second_time() {
-        let cmd = CmdLine::from_args([
-            "/V",
-            "m.ttl",
-            "/V",
-            "param 7",
-            "",
-            r#""quoted""#,
-            "a;b",
-        ]);
+        let cmd = CmdLine::from_args(["/V", "m.ttl", "/V", "param 7", "", r#""quoted""#, "a;b"]);
         assert!(cmd.v_option);
         assert_eq!(name(&cmd), "m.ttl");
         assert_eq!(cmd.param_cnt(), 6);

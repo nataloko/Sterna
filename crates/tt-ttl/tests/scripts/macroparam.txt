@@ -1,2 +1,8 @@
-setexitcode 1
--- exit 1
+-- launch "ttpmacro.exe" "<dir>/macroparam.ttl" /vxx /ixx /V /i test1
+-- exit 0
+-- launch "ttpmacro.exe" /V /i "<dir>/macroparam.ttl" /v /I test2
+-- exit 0
+-- launch "ttpmacro.exe" /I "<dir>/macroparam.ttl" test3 /Vxx /ixx /V /i
+-- exit 0
+-- launch "ttpmacro.exe" /i "<dir>/macroparam.ttl" test4 /V /Vxx /ixx
+-- exit 0

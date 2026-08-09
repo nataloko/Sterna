@@ -2,11 +2,13 @@
 //!
 //! `PLAN.md` has said since Stage 2 that the target for the macro language is
 //! "the 53 `.ttl` scripts in `teraterm/tests/` pass", and that sentence needed
-//! unpacking before it could be a gate. **The scripts are not self-checking.**
-//! They report to a human through `messagebox`, several are deliberately full
-//! of errors so as to exercise the error dialog, one asks the user to pick a
-//! file and most are Shift-JIS. There is no exit code to test and no assertion
-//! in any of them.
+//! unpacking before it could be a gate. **Almost none of them is
+//! self-checking.** They report to a human through `messagebox`, several are
+//! deliberately full of errors so as to exercise the error dialog, one asks the
+//! user to pick a file and most are Shift-JIS. Three do assert —
+//! `test_file.ttl`, `macroparam.ttl` and `params_array.ttl` compare what they
+//! got against what they expected and set an exit code — and for the other
+//! fifty there is nothing to test.
 //!
 //! So "pass" here means what it means in `oracle/`: a **transcript** — every
 //! send, every dialog, every action the macro asked the world for, in order —
@@ -53,14 +55,14 @@
 //!    resolves there rather than into the repository. What it left behind is
 //!    part of the transcript, because otherwise the file-handling scripts
 //!    record nothing at all.
-//! 7. **No parameters.** `macroparam.ttl` and `params_array.ttl` are about
-//!    `params[]`, and the `.bat` files next to them run `ttpmacro.exe` with
-//!    switches — `/V`, `/i`, `/vxx` — that the **launcher** eats before the
-//!    macro sees the rest. Which of those reach `params[]` is `ttmacro.cpp`'s
-//!    argument parser, and this port has not built the `ttpmacro` command line
-//!    yet, so inventing a split here would be testing a guess. Both scripts run
-//!    their `paramcnt == 1` arm and stop; wiring the real command lines is a
-//!    follow-up on the CLI, not on the interpreter.
+//! 7. **The command line is upstream's own.** `macroparam.ttl` and
+//!    `params_array.ttl` are about `params[]` rather than about the language,
+//!    and the `.bat` files next to them are the specification — the switches
+//!    `/V`, `/i` and `/vxx` are eaten, kept or passed on depending only on
+//!    which side of the macro's name they fall. [`launches`] transcribes those
+//!    two files, so `macroparam.ttl` runs four times and each run is a separate
+//!    stretch of the same golden. Every other script is launched with its own
+//!    path and nothing else.
 //! 8. **`exec` is invisible.** It runs in the macro process upstream and does
 //!    here too, so there is no host method to record it — and the two scripts
 //!    that use it name Windows programs, so what the transcript shows is the
@@ -84,7 +86,7 @@ use tt_ttl::host::{
     LogInfo, LogOpen, LogRotate, MacroWindow, ModemLines, ScriptHost, SendMode, ShowWindow,
     WindowGeometry, WindowState, Xfer,
 };
-use tt_ttl::{Interp, TtlError};
+use tt_ttl::{CmdLine, Interp, TtlError};
 
 /// How far a script is allowed to run before the harness stops it.
 ///
@@ -951,20 +953,75 @@ fn portable(text: String, dir: &Path, home: &Path, exe_dir: &Path) -> String {
     out
 }
 
+/// How a script is launched, as the command line `ttpmacro.exe` would have
+/// been given, with `{}` where the macro's own quoted path goes.
+///
+/// Fifty-one of the 53 are started with the macro and nothing else. The other
+/// two are not about the language at all — they are about
+/// [`tt_ttl::CmdLine`], and the `.bat` files sitting next to them in
+/// upstream's `tests/` are the specification. This is a transcription of those
+/// two files: four launches for `macroparam.bat` and one for
+/// `params_array.bat`, each of which drives the script down a different arm and
+/// asserts a different `paramcnt`. Their point is that `/V` before the macro is
+/// a switch and `/V` after it is a parameter, so the four lines have to be run
+/// as four runs — a script cannot be launched two ways at once.
+fn launches(script: &str) -> &'static [&'static str] {
+    match script {
+        "macroparam.ttl" => &[
+            "{} /vxx /ixx /V /i test1",
+            "/V /i {} /v /I test2",
+            "/I {} test3 /Vxx /ixx /V /i",
+            "/i {} test4 /V /Vxx /ixx",
+        ],
+        "params_array.ttl" => &[r#"{} /vxx /ixx /V /i test1 "param 7" "" param9 10 eleven"#],
+        _ => &["{}"],
+    }
+}
+
 fn run_one(script: &Path, root: &Path, upstream: &Path, home: &Path) -> String {
     let name = script.file_name().unwrap().to_string_lossy().into_owned();
-    let dir = root.join(&name);
+    let lines = launches(&name);
+    // A launch line is only worth writing down when there is something to say:
+    // the default one is the same for 51 scripts and adds nothing to a golden.
+    let show = lines != ["{}"];
+    let mut out = String::new();
+    for line in lines {
+        out.push_str(&run_once(script, &name, line, show, root, upstream, home));
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_once(
+    script: &Path,
+    name: &str,
+    launch: &str,
+    show: bool,
+    root: &Path,
+    upstream: &Path,
+    home: &Path,
+) -> String {
+    let dir = root.join(name);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     seed(upstream, &dir);
 
     let raw = std::fs::read(script).unwrap();
-    let path = dir.join(&name);
+    let path = dir.join(name);
     std::fs::write(&path, &raw).unwrap();
 
+    // `%TTMACRO%` and `%MACROFILE%` are both quoted in upstream's `.bat` files,
+    // and the quoting is part of what `ParseParam` is being asked about.
+    let quoted = format!("\"{}\"", path.to_string_lossy());
+    let cmd =
+        CmdLine::parse(format!("\"ttpmacro.exe\" {}", launch.replace("{}", &quoted)).as_bytes());
+
     let before = snapshot(&dir);
-    let mut tape = Tape::new(dir.clone(), user(&name));
-    let mut it = Interp::new(path.to_string_lossy().into_owned(), raw, &mut tape);
+    let mut tape = Tape::new(dir.clone(), user(name));
+    if show {
+        tape.note(format!("-- launch {}", String::from_utf8_lossy(&cmd.raw)));
+    }
+    let mut it = Interp::with_cmdline(&cmd, raw, &mut tape);
     let mut lines = 0;
     while it.step(&mut tape) {
         lines += 1;

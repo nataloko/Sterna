@@ -14,6 +14,7 @@
 //! having finished.
 
 use crate::buffer::Buffers;
+use crate::cmdline::CmdLine;
 use crate::error::{TtlError, TtlResult};
 use crate::expr::{self, Eval};
 use crate::files::Files;
@@ -71,14 +72,29 @@ pub struct Interp {
 }
 
 impl Interp {
-    /// Load a macro.
+    /// Load a macro, with no command line behind it.
     ///
     /// `name` names it in error reports, and — when it is an absolute path —
     /// is also where `CurrentDir` starts, which is what a relative filename in
     /// a file command resolves against. `TTLStart` does the same
     /// (`ttl.cpp:267`).
     pub fn new(name: impl Into<String>, body: Vec<u8>, host: &mut dyn ScriptHost) -> Self {
-        let name = name.into();
+        Self::load(name.into(), body, &CmdLine::default(), host)
+    }
+
+    /// Load the macro a command line named, so that `paramcnt`, `param1`..`9`
+    /// and `params[]` say what `ttpmacro` would have made them say.
+    ///
+    /// The file to read is [`CmdLine::fitted_file_name`], because upstream's
+    /// `.TTL` default extension is applied to `FileName` itself and not only to
+    /// the name the macro is told (`ttmmain.cpp:253`) — the caller has already
+    /// opened it, and this uses the same name so the two cannot drift.
+    pub fn with_cmdline(cmd: &CmdLine, body: Vec<u8>, host: &mut dyn ScriptHost) -> Self {
+        let name = String::from_utf8_lossy(&cmd.fitted_file_name()).into_owned();
+        Self::load(name, body, cmd, host)
+    }
+
+    fn load(name: String, body: Vec<u8>, cmd: &CmdLine, host: &mut dyn ScriptHost) -> Self {
         let files = Files::new(&name);
         let mut it = Interp {
             lx: Lexer::new(),
@@ -97,17 +113,28 @@ impl Interp {
             rx: crate::regex::RegexConfig::default(),
         };
         it.buf.open(name, body);
-        it.define_system_variables(&[]);
+        it.define_system_variables(cmd);
         it.register_labels(host);
         it
     }
 
     /// `InitTTL`'s system variables (`ttl.cpp:199-235`).
     ///
-    /// `params` is the argument list *without* the macro's own name, which goes
-    /// in `param1` and `params[1]`. Upstream counts the name in `paramcnt`, and
-    /// makes `paramcnt` at least 1 even when nothing was passed.
-    pub fn define_system_variables(&mut self, params: &[Vec<u8>]) {
+    /// The macro's own name is `param1` and `params[1]`, and it is the **short**
+    /// name — the last path component with `.TTL` fitted onto it
+    /// (`ttmmain.cpp:263`) — so a script that puts its own name in a dialog puts
+    /// a bare filename there however it was launched. Upstream counts that name
+    /// in `paramcnt`, which is therefore at least 1 even when nothing was passed
+    /// (`ttl.cpp:214`).
+    ///
+    /// **`params[0]` is the whole command line.** The array is `ParamCnt + 1`
+    /// long and the loop that fills it starts at zero and skips only index 1,
+    /// so `Params[0]` — which `ParseParam` set to `GetCommandLineW()` before it
+    /// tokenised anything (`ttmdlg.cpp:98`) — lands there. It is the only way a
+    /// macro can see the switches the launcher ate, and the old `param1`..`9`
+    /// form has no equivalent.
+    pub fn define_system_variables(&mut self, cmd: &CmdLine) {
+        let params = &cmd.args;
         let v = &mut self.vars;
         v.new_int(b"result", 0);
         v.new_int(b"timeout", 0);
@@ -118,7 +145,7 @@ impl Interp {
             v.new_str(format!("groupmatchstr{i}").as_bytes(), b"");
         }
 
-        let name = self.buf.file_name().to_owned().into_bytes();
+        let name = crate::cmdline::short_name_of(self.buf.file_name().as_bytes());
         let count = (params.len() + 1).max(1);
         v.new_int(b"paramcnt", count as i32);
         v.new_str(b"param1", &name);
@@ -127,9 +154,8 @@ impl Interp {
             v.new_str(format!("param{i}").as_bytes(), val);
         }
 
-        // `params[0]` exists and is never written to, which is upstream's:
-        // the array is `ParamCnt + 1` long and the loop starts the names at 1.
         let id = v.new_str_array(b"params", count + 1);
+        v.set_str(VarRef::Elem(id, 0), &cmd.raw);
         v.set_str(VarRef::Elem(id, 1), &name);
         for (i, p) in params.iter().enumerate() {
             v.set_str(VarRef::Elem(id, i + 2), p);
@@ -1077,18 +1103,43 @@ endif";
     #[test]
     fn arguments_land_in_both_the_old_and_the_new_form() {
         let mut host = RecordingHost::new();
-        let mut it = Interp::new(
-            "t.ttl",
+        let cmd = CmdLine::parse(b"ttpmacro.exe t.ttl one two");
+        let mut it = Interp::with_cmdline(
+            &cmd,
             b"dispstr param1 param2 params[3] paramcnt".to_vec(),
             &mut host,
         );
-        it.vars = Vars::new();
-        it.define_system_variables(&[b"one".to_vec(), b"two".to_vec()]);
         it.run(&mut host);
         assert!(host.errors.is_empty(), "{:?}", host.errors);
         // param1 is the macro, param2 the first argument, and `params` is the
         // same list one index further on — `params[1]` being the macro too.
         assert_eq!(String::from_utf8_lossy(&host.output), "t.ttlonetwo3");
+    }
+
+    /// `params[0]` is the command line as typed, switches and all — the one
+    /// thing the `param1`..`9` form cannot show a macro.
+    #[test]
+    fn params_zero_is_the_whole_command_line() {
+        let mut host = RecordingHost::new();
+        let cmd = CmdLine::parse(b"ttpmacro.exe /V t.ttl one");
+        let mut it = Interp::with_cmdline(&cmd, b"dispstr params[0]".to_vec(), &mut host);
+        it.run(&mut host);
+        assert!(host.errors.is_empty(), "{:?}", host.errors);
+        assert_eq!(
+            String::from_utf8_lossy(&host.output),
+            "ttpmacro.exe /V t.ttl one"
+        );
+    }
+
+    /// The name a macro is told is `ShortName`, not the path it was launched
+    /// by — and the `.TTL` upstream fits onto a name with no dot is part of it.
+    #[test]
+    fn the_macro_knows_itself_by_a_bare_filename() {
+        let mut host = RecordingHost::new();
+        let cmd = CmdLine::parse(b"ttpmacro.exe /tmp/scripts/t");
+        let mut it = Interp::with_cmdline(&cmd, b"dispstr param1 params[1]".to_vec(), &mut host);
+        it.run(&mut host);
+        assert_eq!(String::from_utf8_lossy(&host.output), "t.TTLt.TTL");
     }
 
     #[test]
