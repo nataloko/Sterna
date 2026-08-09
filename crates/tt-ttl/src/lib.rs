@@ -16,6 +16,7 @@
 pub mod buffer;
 pub mod cksumcmds;
 pub mod clockcmds;
+pub mod cmdline;
 pub mod conncmds;
 pub mod dlgcmds;
 pub mod envcmds;
@@ -43,6 +44,7 @@ pub mod termcmds;
 pub mod vars;
 pub mod wait;
 
+pub use cmdline::CmdLine;
 pub use error::{TtlError, TtlResult};
 pub use host::{
     BeepSound, ClearScreen, DebugMode, DialogAnchor, DialogEnd, DialogOrigin, DialogPos,
