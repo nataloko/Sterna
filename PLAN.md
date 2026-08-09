@@ -1051,10 +1051,10 @@ before anything else in every session.
   `send`/`wait`/`waitln`/`waitn`/`waitrecv`/`recvln`/`pause`/`flushrecv`, the
   link and the connection, the serial control lines, all sixteen transfer
   commands, the whole file family, the eleven dialogs, the eight logging
-  commands, the ten checksums and the terminal's odds and ends — 171 of the
-  214 reserved words. What is left is the environment and clipboard, the
-  clock, `scp` and the `send*` variants, the password family and the regex
-  family. See below.
+  commands, the ten checksums, the terminal's odds and ends, the environment
+  and clipboard, and the clock — 188 of the
+  214 reserved words. What is left is `scp` and the `send*` variants, the
+  password family and the regex family. See below.
 - **Lua via `mlua`** over the same `ScriptHost` command table (~500 LOC glue).
 - `ttctl` JSON-RPC control socket replacing DDE. Keep a `ttpmacro script.ttl`
   CLI entry point so existing shortcuts and `.bat` wrappers keep working.
@@ -1590,7 +1590,11 @@ said anyway.
 That is **twelve** found in `ttpmacro` by reading: `waitn`'s timeout arm,
 `getmodemstatus`'s always-zero result, `logopen`'s discarded error,
 `filenamebox`'s swapped flags, `inputbox`'s uninitialised buffer, and seven
-out-of-bounds accesses.
+out-of-bounds accesses. Three more arrived with the environment and the clock
+below, for **fifteen**: `getspecialfolder`'s always-1 result, the NULL it
+hands `strncpy_s` for a folder type it does not know, and `gettime`'s
+timezone argument leaking into the process environment when the line has
+trailing junk.
 
 #### The checksums, and the terminal's odds and ends
 
@@ -1646,9 +1650,112 @@ are not visible from the macro side:
 directory and a test binary gets its own, which is the same answer upstream
 would give in the same position.
 
-**What is left**, in the order it is likely to be built: the
-environment/clipboard/`exec` odds and ends, the `getdate`/`gettime`/`uptime`
-clock commands, the `send*` variants and `scp`, the password family — which
+#### The environment, the clipboard and `exec`
+
+`crates/tt-ttl/src/envcmds.rs`, 2026-08-09. Twelve commands, eleven of which
+run inside `ttpmacro.exe` rather than over DDE — `gethostname` is the odd one
+out and asks the terminal.
+
+Four of the twelve have no Linux counterpart to be faithful to, and what each
+one does about that is the interesting part:
+
+- **`exec`'s `<show>` is validated and then dropped.** It is `STARTUPINFO`'s
+  `wShowWindow`, asking the *child* to open hidden or minimised, and there is
+  no such request here. An unrecognised word is still `ErrSyntax`, because
+  that is where a typo in a working script gets caught. The command line is
+  split with `CommandLineToArgvW`'s rules and the first word run directly:
+  `CreateProcess` runs a program and not a shell, so a script that wanted a
+  pipe already had to write `cmd /c` and will have to write `sh -c` here.
+- **`getspecialfolder` answers the nine XDG has and admits to the seven it
+  does not.** `Favorites`, `NetHood`, `PrintHood`, `Recent`, `SendTo` and
+  `AllUsersDesktop` are the empty string — which is also what upstream gives
+  for a name it does not recognise.
+- **`getipv4addr`/`getipv6addr` are `ScriptHost` methods** whose default
+  answers "cannot retrieve", `result` -1. Enumerating interfaces is the one
+  thing in the family that needs more than `std`, and `tt-ttl` has no
+  dependencies; -1 is upstream's own answer when `WSAStartup` fails or
+  `GetAdaptersAddresses` is missing, so the default is a state a real Tera
+  Term can be in. The IPv6 rendering when a host does supply them is
+  upstream's and is *not* RFC 5952: `myInetNtop` (`ttl.cpp:2499`) prints all
+  sixteen bytes as `%02x` with a colon after every second one, so `::1` is
+  `0000:0000:0000:0000:0000:0000:0000:0001`.
+- **`outputdebugstring` is behind a Cargo feature that is off**, because
+  `OUTPUTDEBUGSTRING_ENABLE` is commented out at `ttmparse.h:36`. Compiled
+  out, upstream does not have the *reserved word* either, so a macro using it
+  fails as a syntax error on a line that reads perfectly well — the trap
+  `filenamebox` already cost four commits. Accepting it here would be this
+  port quietly having a command Tera Term does not.
+
+And one decision that is not a portability question at all: **`getver`
+deliberately answers Tera Term's version, not Sterna's** — 5.7, on the
+`ScriptHost` so a frontend can say otherwise. Its whole use is feature
+gating (`getver v '4.56'`, then `if result >= 0`), so a version of its own
+would fail every gate ever written and silently take the old branch.
+
+**A thirteenth upstream defect, and a fourteenth.** `GetSpecialFolder`
+(`ttmlib.c:249`) throws away `GetSpecialFolderAlloc`'s return and returns a
+literal 1, so the documented "0 when the command fails" never happens — and
+for an unrecognised folder type the same line hands `strncpy_s` a **NULL
+source**, which is the CRT's invalid-parameter path rather than an empty
+string. `result` is always 1 here too, because a script branching on it must
+branch the same way; the NULL is not reproduced because there is nothing to
+reproduce it with.
+
+Three more laxities are reproduced rather than reported, because a script
+could depend on them: `var2clipb` and `outputdebugstring` never check for end
+of line, so `var2clipb 'x' junk` is accepted; `clipb2var`'s guard is
+`offset * 511 < len`, so an **empty** clipboard is `result` 0 rather than 1;
+and `clipb2var`'s documented `result` 3 is set by no path in the function.
+
+#### The clock
+
+`crates/tt-ttl/src/clockcmds.rs` and `strftime.rs`, 2026-08-09. Five commands
+over a `strftime` written for the purpose — there is no calendar, no time zone
+and no `strftime` in the standard library, and this crate has no dependencies.
+
+**The conversions are MSVC's, not glibc's**, and they differ where it shows:
+`%c` in the C locale is `08/09/26 14:30:00` on MSVC and
+`Sun Aug  9 14:30:00 2026` on glibc. A macro that prints `%c` was written
+against MSVC. The `#` flag is MSVC's too — `%#d` drops the leading zero,
+`%#c` and `%#x` are long forms, and everything else ignores it. Only the
+twenty-three conversions `isInvalidStrftimeCharW` (`ttlib_static_cpp.cpp:1894`)
+lets through are implemented, and that is not an omission: `%F`, `%T`, `%e`
+and `%s` never reach `strftime` because `getdate` rejects the format with
+`result` 2 first.
+
+`ScriptHost::format_time` became `strftime(secs, format, tz)` and `filestat`
+now goes through it as well, so a frontend with a date library fixes both
+zones at once. The default works in **UTC** and honours a fixed-offset POSIX
+`TZ` (`JST-9` is UTC+9, since POSIX counts west) and nothing more: an Olson
+name needs the database, and a `dst,start,end` tail needs a transition rule.
+Anything not understood is UTC, which is what POSIX says an unparseable `TZ`
+means anyway.
+
+**A fifteenth upstream defect: the `<timezone>` argument leaks.** Upstream
+applies it by putting it in the process environment and puts the old value
+back on the way out — but the `GetFirstChar()` check sits *between* the two
+(`ttl.cpp:2782` and `:2801`), so `gettime t '%H' 'UTC' junk` returns
+`ErrSyntax` with `TZ` still overwritten and every later `localtime` in the run
+is in the wrong zone. Not reproduced: the zone is an argument here and never
+touches the environment, so there is nothing to leak. There is a second,
+smaller one in the same restore — `_putenv_s("TZ", "")` *deletes* the variable
+on Windows and *sets it to UTC* under POSIX, so a straight port of the restore
+would have broken the macro's own zone for the rest of the run.
+
+Three quirks are reproduced. Only the form **with** a format touches `result`,
+so a script testing `result` after a bare `getdate` reads the previous
+command's answer. `strftime` returning 0 is reported as `result` 1, "too
+long" — and it also returns 0 for a format that produced nothing, so
+`gettime t ''` is a length error that is really an empty one. And `setdate`
+and `settime` read **fixed columns** (`Str[4] = 0`, then `sscanf "%u"`), never
+looking at the separators: `1997/08/01` and `1997x08y01` are both accepted, a
+piece with no digit ends the command silently, and nothing is ever reported.
+Both are `ScriptHost` methods that do nothing by default, which is faithful
+rather than a stub — `SetLocalTime` needs `SE_SYSTEMTIME_NAME`, so an
+unelevated `ttpmacro.exe` silently does nothing too.
+
+**What is left**, in the order it is likely to be built:
+the `send*` variants and `scp`, the password family — which
 needs `ttmenc.c`'s obfuscation, and a decision about whether to keep it — and
 the regex family. That last one is a decision, not a port: `sprintf` validates its
 format specifiers with **Oniguruma** and `strmatch`/`strreplace`/`waitregex`
