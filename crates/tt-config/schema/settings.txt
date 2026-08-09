@@ -96,6 +96,29 @@ terminal.size_follows_window | bool | Tera Term | TermIsWin | off | DLG_TERM_TER
 # `ttset.c:628`. With it on, a remote resize resizes the window.
 terminal.auto_win_resize | bool | Tera Term | AutoWinResize | off | -
 
+# `ttset.c:1676`, part of `TermFlag` — the same trap as `ColorFlag`. Whether
+# changing the terminal's size scrolls the page away and homes the cursor.
+#
+# Off, so the screen survives a resize and what moves is which lines the page
+# covers (`buffer.c:5001`). Two things it does that its name does not say:
+# with it **on** the clear happens even when the size did not change, because
+# `BuffScroll` sits outside the `if (size changed)` block (`:5028`); and
+# DECCOLM tests it and skips its own clear, since `ChangeTerminalSize` has
+# already done one (`vtterm.c:2925`).
+terminal.clear_on_resize | bool | Tera Term | ClearOnResize | off | DLG_TAB_GENERAL_CLEAR_ON_RESIZE
+
+# `ttset.c:1444`. Whether `ED 0` with the cursor already at the home position
+# is treated as `ED 2`.
+#
+# **It is not the gate on `ED 2` its name suggests.** `CSScreenErase`'s `case 2`
+# calls `BuffClearScreen` whatever this says (`vtterm.c:1740`), and a clear
+# screen is a scroll into the history rather than an erase either way; what
+# the key decides is only whether the `ESC [ H ESC [ J` pair — which many
+# programs send in place of `ESC [ 2 J` — takes that path too. Turning it off
+# leaves those programs erasing to the end of the screen, which is what the
+# sequence literally asks for and loses the screen out of the history.
+terminal.home_erase_clears_screen | bool | Tera Term | ScrollWindowClearScreen | on | -
+
 # `ttset.c:743`. Off keeps the terminal to one screen and no history.
 terminal.scrollback_enabled | bool | Tera Term | EnableScrollBuff | on | DLG_TERM_SCROLLBUFF
 
@@ -279,6 +302,27 @@ window.alt_screen | bool | Tera Term | AlternateScreenBuffer | on | -
 # `ttset.c:1950`. Whether `ED 3` may discard the scrollback.
 window.remote_clears_buffer | bool | Tera Term | ClearScrollBufferFromRemote | on | -
 
+# `ttset.c:1564`. Whether output arriving while the user has scrolled back
+# leaves the view where it is.
+#
+# **Off**, which means the opposite of what a modern terminal does: every line
+# the host prints yanks the view to the cursor, because `MoveCursor` and
+# `MoveRight` call `DispScrollToCursor` unconditionally (`buffer.c:3794`,
+# `:3805`). Scrolling back through a boot log on a device that is still
+# talking is the case it ruins, and this port had upstream's `on` behaviour
+# hardcoded before there was a key to read.
+window.auto_scroll_only_at_bottom | bool | Tera Term | AutoScrollOnlyInBottomLine | off | DLG_TAB_GENERAL_AUTOSCROLL_ONLY_IN_BOTTOM_LINE
+
+# `ttset.c:1273`. How many scrolled lines upstream lets accumulate before it
+# repaints (`vtdisp.c:3132`) — a coalescing governor, counted in lines rather
+# than in time.
+#
+# Read and written and acting on nothing, said here rather than discovered:
+# the equivalent is `TerminalView`'s 8 ms frame floor, which measures the same
+# thing in the unit a compositor cares about. Carried so a file round-trips,
+# the way `bell.notify_sound` is.
+window.scroll_threshold | int | Tera Term | ScrollThreshold | 12 | -
+
 # `ttset.c:1568`. How the title the host set and `terminal.title` combine, and
 # **`off` means the host's title is not even stored** (`vtterm.c:5112`), which
 # also switches off the title stack at `CSI 22 t` / `CSI 23 t`.
@@ -312,6 +356,27 @@ mouse.ctrl_disables_tracking | bool | Tera Term | DisableMouseTrackingByCtrl | o
 
 # `ttset.c:1515`. Gates `DECSET 7786`, and is what a reset restores it to.
 mouse.wheel_to_cursor | bool | Tera Term | TranslateWheelToCursor | on | -
+
+# `ttset.c:1594`. Holding Ctrl cancels the translation above, so the wheel
+# scrolls the terminal's own history instead of sending arrow keys to the
+# full-screen application in front of it (`vtterm.c:5847`). The pair to
+# `mouse.ctrl_disables_tracking`, and on for the same reason.
+mouse.ctrl_disables_wheel_to_cursor | bool | Tera Term | DisableWheelToCursorByCtrl | on | -
+
+# `ttset.c:1276`. How many lines one notch of the wheel moves.
+#
+# **Only when the notch arrives alone.** `vtwin.cpp:2539` multiplies under
+# `line == 1`, where `line` is `abs(zDelta)/WHEEL_DELTA` — so a flick fast
+# enough to coalesce two notches into one message scrolls two lines rather
+# than six, and the setting stops applying exactly when the user is scrolling
+# hardest. Not a clamp either: the guard is `> 0`, so `MouseWheelScrollLine=0`
+# is one line per notch and so is a negative value.
+#
+# It is also the step for something with no other name: with the pointer over
+# the title bar the wheel changes the window's opacity, by this many units of
+# 255 (`vtwin.cpp:2500`). One setting, two meanings, the way `TelEcho` and
+# `ts.BSKey` each have two.
+mouse.wheel_scroll_line | int | Tera Term | MouseWheelScrollLine | 3 | DLG_TAB_GENERAL_MOUSEWHEEL_SCROLL_LINE
 
 # --- bell --------------------------------------------------------------------
 #

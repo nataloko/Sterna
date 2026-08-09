@@ -973,6 +973,27 @@ pub struct Settings {
     pub terminal_size_follows_window: bool,
     /// `ttset.c:628`. With it on, a remote resize resizes the window.
     pub terminal_auto_win_resize: bool,
+    /// `ttset.c:1676`, part of `TermFlag` — the same trap as `ColorFlag`. Whether
+    /// changing the terminal's size scrolls the page away and homes the cursor.
+    ///
+    /// Off, so the screen survives a resize and what moves is which lines the page
+    /// covers (`buffer.c:5001`). Two things it does that its name does not say:
+    /// with it **on** the clear happens even when the size did not change, because
+    /// `BuffScroll` sits outside the `if (size changed)` block (`:5028`); and
+    /// DECCOLM tests it and skips its own clear, since `ChangeTerminalSize` has
+    /// already done one (`vtterm.c:2925`).
+    pub terminal_clear_on_resize: bool,
+    /// `ttset.c:1444`. Whether `ED 0` with the cursor already at the home position
+    /// is treated as `ED 2`.
+    ///
+    /// **It is not the gate on `ED 2` its name suggests.** `CSScreenErase`'s `case 2`
+    /// calls `BuffClearScreen` whatever this says (`vtterm.c:1740`), and a clear
+    /// screen is a scroll into the history rather than an erase either way; what
+    /// the key decides is only whether the `ESC [ H ESC [ J` pair — which many
+    /// programs send in place of `ESC [ 2 J` — takes that path too. Turning it off
+    /// leaves those programs erasing to the end of the screen, which is what the
+    /// sequence literally asks for and loses the screen out of the history.
+    pub terminal_home_erase_clears_screen: bool,
     /// `ttset.c:743`. Off keeps the terminal to one screen and no history.
     pub terminal_scrollback_enabled: bool,
     /// `ttset.c:751`. Upstream ships **100** lines, which is small for a console
@@ -1109,6 +1130,25 @@ pub struct Settings {
     pub window_alt_screen: bool,
     /// `ttset.c:1950`. Whether `ED 3` may discard the scrollback.
     pub window_remote_clears_buffer: bool,
+    /// `ttset.c:1564`. Whether output arriving while the user has scrolled back
+    /// leaves the view where it is.
+    ///
+    /// **Off**, which means the opposite of what a modern terminal does: every line
+    /// the host prints yanks the view to the cursor, because `MoveCursor` and
+    /// `MoveRight` call `DispScrollToCursor` unconditionally (`buffer.c:3794`,
+    /// `:3805`). Scrolling back through a boot log on a device that is still
+    /// talking is the case it ruins, and this port had upstream's `on` behaviour
+    /// hardcoded before there was a key to read.
+    pub window_auto_scroll_only_at_bottom: bool,
+    /// `ttset.c:1273`. How many scrolled lines upstream lets accumulate before it
+    /// repaints (`vtdisp.c:3132`) — a coalescing governor, counted in lines rather
+    /// than in time.
+    ///
+    /// Read and written and acting on nothing, said here rather than discovered:
+    /// the equivalent is `TerminalView`'s 8 ms frame floor, which measures the same
+    /// thing in the unit a compositor cares about. Carried so a file round-trips,
+    /// the way `bell.notify_sound` is.
+    pub window_scroll_threshold: i32,
     /// `ttset.c:1568`. How the title the host set and `terminal.title` combine, and
     /// **`off` means the host's title is not even stored** (`vtterm.c:5112`), which
     /// also switches off the title stack at `CSI 22 t` / `CSI 23 t`.
@@ -1136,6 +1176,25 @@ pub struct Settings {
     pub mouse_ctrl_disables_tracking: bool,
     /// `ttset.c:1515`. Gates `DECSET 7786`, and is what a reset restores it to.
     pub mouse_wheel_to_cursor: bool,
+    /// `ttset.c:1594`. Holding Ctrl cancels the translation above, so the wheel
+    /// scrolls the terminal's own history instead of sending arrow keys to the
+    /// full-screen application in front of it (`vtterm.c:5847`). The pair to
+    /// `mouse.ctrl_disables_tracking`, and on for the same reason.
+    pub mouse_ctrl_disables_wheel_to_cursor: bool,
+    /// `ttset.c:1276`. How many lines one notch of the wheel moves.
+    ///
+    /// **Only when the notch arrives alone.** `vtwin.cpp:2539` multiplies under
+    /// `line == 1`, where `line` is `abs(zDelta)/WHEEL_DELTA` — so a flick fast
+    /// enough to coalesce two notches into one message scrolls two lines rather
+    /// than six, and the setting stops applying exactly when the user is scrolling
+    /// hardest. Not a clamp either: the guard is `> 0`, so `MouseWheelScrollLine=0`
+    /// is one line per notch and so is a negative value.
+    ///
+    /// It is also the step for something with no other name: with the pointer over
+    /// the title bar the wheel changes the window's opacity, by this many units of
+    /// 255 (`vtwin.cpp:2500`). One setting, two meanings, the way `TelEcho` and
+    /// `ts.BSKey` each have two.
+    pub mouse_wheel_scroll_line: i32,
     /// `ttset.c:1112`, read with an **empty** default and compared down an
     /// `_stricmp` chain that tests only `off` and `visual` — so the `on` spelling
     /// below matches nothing and lands on the same `else` the absent key does, which
@@ -1736,6 +1795,8 @@ impl Default for Settings {
             terminal_local_echo: false,
             terminal_size_follows_window: false,
             terminal_auto_win_resize: false,
+            terminal_clear_on_resize: false,
+            terminal_home_erase_clears_screen: true,
             terminal_scrollback_enabled: true,
             terminal_scrollback_lines: 100,
             terminal_buffer_max_lines: 10000,
@@ -1770,11 +1831,15 @@ impl Default for Settings {
             window_send_8bit_ctrl: false,
             window_alt_screen: true,
             window_remote_clears_buffer: true,
+            window_auto_scroll_only_at_bottom: false,
+            window_scroll_threshold: 12,
             window_title_change: WindowTitleChange::default(),
             window_title_report: WindowTitleReport::default(),
             mouse_tracking: true,
             mouse_ctrl_disables_tracking: true,
             mouse_wheel_to_cursor: true,
+            mouse_ctrl_disables_wheel_to_cursor: true,
+            mouse_wheel_scroll_line: 3,
             bell_mode: BellMode::default(),
             bell_on_connect: false,
             bell_visual_wait_ms: 10,
@@ -1936,6 +2001,14 @@ impl Settings {
                 ini.get("Tera Term", "AutoWinResize"),
                 false,
             ),
+            terminal_clear_on_resize: crate::schema::on_off(
+                ini.get("Tera Term", "ClearOnResize"),
+                false,
+            ),
+            terminal_home_erase_clears_screen: crate::schema::on_off(
+                ini.get("Tera Term", "ScrollWindowClearScreen"),
+                true,
+            ),
             terminal_scrollback_enabled: crate::schema::on_off(
                 ini.get("Tera Term", "EnableScrollBuff"),
                 true,
@@ -2057,6 +2130,15 @@ impl Settings {
                 ini.get("Tera Term", "ClearScrollBufferFromRemote"),
                 true,
             ),
+            window_auto_scroll_only_at_bottom: crate::schema::on_off(
+                ini.get("Tera Term", "AutoScrollOnlyInBottomLine"),
+                false,
+            ),
+            window_scroll_threshold: ini.get_int(
+                "Tera Term",
+                "ScrollThreshold",
+                d.window_scroll_threshold,
+            ) as i32,
             window_title_change: match ini.get("Tera Term", "AcceptTitleChangeRequest") {
                 Some(v) => WindowTitleChange::from_ini(v),
                 None => d.window_title_change,
@@ -2074,6 +2156,15 @@ impl Settings {
                 ini.get("Tera Term", "TranslateWheelToCursor"),
                 true,
             ),
+            mouse_ctrl_disables_wheel_to_cursor: crate::schema::on_off(
+                ini.get("Tera Term", "DisableWheelToCursorByCtrl"),
+                true,
+            ),
+            mouse_wheel_scroll_line: ini.get_int(
+                "Tera Term",
+                "MouseWheelScrollLine",
+                d.mouse_wheel_scroll_line,
+            ) as i32,
             bell_mode: match ini.get("Tera Term", "Beep") {
                 Some(v) => BellMode::from_ini(v),
                 None => d.bell_mode,
@@ -2592,6 +2683,26 @@ impl Settings {
         );
         ini.set(
             "Tera Term",
+            "ClearOnResize",
+            &if self.terminal_clear_on_resize {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "ScrollWindowClearScreen",
+            &if self.terminal_home_erase_clears_screen {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
             "EnableScrollBuff",
             &if self.terminal_scrollback_enabled {
                 "on"
@@ -2819,6 +2930,21 @@ impl Settings {
         );
         ini.set(
             "Tera Term",
+            "AutoScrollOnlyInBottomLine",
+            &if self.window_auto_scroll_only_at_bottom {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "ScrollThreshold",
+            &self.window_scroll_threshold.to_string(),
+        );
+        ini.set(
+            "Tera Term",
             "AcceptTitleChangeRequest",
             &self.window_title_change.as_ini().to_string(),
         );
@@ -2851,6 +2977,21 @@ impl Settings {
                 "off"
             }
             .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "DisableWheelToCursorByCtrl",
+            &if self.mouse_ctrl_disables_wheel_to_cursor {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "MouseWheelScrollLine",
+            &self.mouse_wheel_scroll_line.to_string(),
         );
         ini.set("Tera Term", "Beep", &self.bell_mode.as_ini().to_string());
         ini.set(
@@ -3697,6 +3838,18 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "terminal.clear_on_resize" => if self.terminal_clear_on_resize {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "terminal.home_erase_clears_screen" => if self.terminal_home_erase_clears_screen {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "terminal.scrollback_enabled" => if self.terminal_scrollback_enabled {
                 "on"
             } else {
@@ -3796,6 +3949,13 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "window.auto_scroll_only_at_bottom" => if self.window_auto_scroll_only_at_bottom {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "window.scroll_threshold" => self.window_scroll_threshold.to_string(),
             "window.title_change" => self.window_title_change.as_ini().to_string(),
             "window.title_report" => self.window_title_report.as_ini().to_string(),
             "mouse.tracking" => if self.mouse_tracking { "on" } else { "off" }.to_string(),
@@ -3811,6 +3971,13 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "mouse.ctrl_disables_wheel_to_cursor" => if self.mouse_ctrl_disables_wheel_to_cursor {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "mouse.wheel_scroll_line" => self.mouse_wheel_scroll_line.to_string(),
             "bell.mode" => self.bell_mode.as_ini().to_string(),
             "bell.on_connect" => if self.bell_on_connect { "on" } else { "off" }.to_string(),
             "bell.visual_wait_ms" => self.bell_visual_wait_ms.to_string(),
@@ -4156,6 +4323,12 @@ impl Settings {
             "terminal.auto_win_resize" => {
                 self.terminal_auto_win_resize = crate::schema::on_off(Some(value), false)
             }
+            "terminal.clear_on_resize" => {
+                self.terminal_clear_on_resize = crate::schema::on_off(Some(value), false)
+            }
+            "terminal.home_erase_clears_screen" => {
+                self.terminal_home_erase_clears_screen = crate::schema::on_off(Some(value), true)
+            }
             "terminal.scrollback_enabled" => {
                 self.terminal_scrollback_enabled = crate::schema::on_off(Some(value), true)
             }
@@ -4242,6 +4415,13 @@ impl Settings {
             "window.remote_clears_buffer" => {
                 self.window_remote_clears_buffer = crate::schema::on_off(Some(value), true)
             }
+            "window.auto_scroll_only_at_bottom" => {
+                self.window_auto_scroll_only_at_bottom = crate::schema::on_off(Some(value), false)
+            }
+            "window.scroll_threshold" => {
+                self.window_scroll_threshold =
+                    crate::schema::int(value, self.window_scroll_threshold)
+            }
             "window.title_change" => self.window_title_change = WindowTitleChange::from_ini(value),
             "window.title_report" => self.window_title_report = WindowTitleReport::from_ini(value),
             "mouse.tracking" => self.mouse_tracking = crate::schema::on_off(Some(value), true),
@@ -4250,6 +4430,13 @@ impl Settings {
             }
             "mouse.wheel_to_cursor" => {
                 self.mouse_wheel_to_cursor = crate::schema::on_off(Some(value), true)
+            }
+            "mouse.ctrl_disables_wheel_to_cursor" => {
+                self.mouse_ctrl_disables_wheel_to_cursor = crate::schema::on_off(Some(value), true)
+            }
+            "mouse.wheel_scroll_line" => {
+                self.mouse_wheel_scroll_line =
+                    crate::schema::int(value, self.mouse_wheel_scroll_line)
             }
             "bell.mode" => self.bell_mode = BellMode::from_ini(value),
             "bell.on_connect" => self.bell_on_connect = crate::schema::on_off(Some(value), false),
@@ -4713,6 +4900,26 @@ pub const FIELDS: &[Field] = &[
         doc: "`ttset.c:628`. With it on, a remote resize resizes the window.",
     },
     Field {
+        name: "terminal.clear_on_resize",
+        page: "terminal",
+        section: "Tera Term",
+        key: "ClearOnResize",
+        kind: Kind::Bool,
+        default: "off",
+        label: Some("DLG_TAB_GENERAL_CLEAR_ON_RESIZE"),
+        doc: "`ttset.c:1676`, part of `TermFlag` — the same trap as `ColorFlag`. Whether changing the terminal's size scrolls the page away and homes the cursor.  Off, so the screen survives a resize and what moves is which lines the page covers (`buffer.c:5001`). Two things it does that its name does not say: with it **on** the clear happens even when the size did not change, because `BuffScroll` sits outside the `if (size changed)` block (`:5028`); and DECCOLM tests it and skips its own clear, since `ChangeTerminalSize` has already done one (`vtterm.c:2925`).",
+    },
+    Field {
+        name: "terminal.home_erase_clears_screen",
+        page: "terminal",
+        section: "Tera Term",
+        key: "ScrollWindowClearScreen",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1444`. Whether `ED 0` with the cursor already at the home position is treated as `ED 2`.  **It is not the gate on `ED 2` its name suggests.** `CSScreenErase`'s `case 2` calls `BuffClearScreen` whatever this says (`vtterm.c:1740`), and a clear screen is a scroll into the history rather than an erase either way; what the key decides is only whether the `ESC [ H ESC [ J` pair — which many programs send in place of `ESC [ 2 J` — takes that path too. Turning it off leaves those programs erasing to the end of the screen, which is what the sequence literally asks for and loses the screen out of the history.",
+    },
+    Field {
         name: "terminal.scrollback_enabled",
         page: "terminal",
         section: "Tera Term",
@@ -5053,6 +5260,26 @@ pub const FIELDS: &[Field] = &[
         doc: "`ttset.c:1950`. Whether `ED 3` may discard the scrollback.",
     },
     Field {
+        name: "window.auto_scroll_only_at_bottom",
+        page: "window",
+        section: "Tera Term",
+        key: "AutoScrollOnlyInBottomLine",
+        kind: Kind::Bool,
+        default: "off",
+        label: Some("DLG_TAB_GENERAL_AUTOSCROLL_ONLY_IN_BOTTOM_LINE"),
+        doc: "`ttset.c:1564`. Whether output arriving while the user has scrolled back leaves the view where it is.  **Off**, which means the opposite of what a modern terminal does: every line the host prints yanks the view to the cursor, because `MoveCursor` and `MoveRight` call `DispScrollToCursor` unconditionally (`buffer.c:3794`, `:3805`). Scrolling back through a boot log on a device that is still talking is the case it ruins, and this port had upstream's `on` behaviour hardcoded before there was a key to read.",
+    },
+    Field {
+        name: "window.scroll_threshold",
+        page: "window",
+        section: "Tera Term",
+        key: "ScrollThreshold",
+        kind: Kind::Int,
+        default: "12",
+        label: None,
+        doc: "`ttset.c:1273`. How many scrolled lines upstream lets accumulate before it repaints (`vtdisp.c:3132`) — a coalescing governor, counted in lines rather than in time.  Read and written and acting on nothing, said here rather than discovered: the equivalent is `TerminalView`'s 8 ms frame floor, which measures the same thing in the unit a compositor cares about. Carried so a file round-trips, the way `bell.notify_sound` is.",
+    },
+    Field {
         name: "window.title_change",
         page: "window",
         section: "Tera Term",
@@ -5101,6 +5328,26 @@ pub const FIELDS: &[Field] = &[
         default: "on",
         label: None,
         doc: "`ttset.c:1515`. Gates `DECSET 7786`, and is what a reset restores it to.",
+    },
+    Field {
+        name: "mouse.ctrl_disables_wheel_to_cursor",
+        page: "mouse",
+        section: "Tera Term",
+        key: "DisableWheelToCursorByCtrl",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1594`. Holding Ctrl cancels the translation above, so the wheel scrolls the terminal's own history instead of sending arrow keys to the full-screen application in front of it (`vtterm.c:5847`). The pair to `mouse.ctrl_disables_tracking`, and on for the same reason.",
+    },
+    Field {
+        name: "mouse.wheel_scroll_line",
+        page: "mouse",
+        section: "Tera Term",
+        key: "MouseWheelScrollLine",
+        kind: Kind::Int,
+        default: "3",
+        label: Some("DLG_TAB_GENERAL_MOUSEWHEEL_SCROLL_LINE"),
+        doc: "`ttset.c:1276`. How many lines one notch of the wheel moves.  **Only when the notch arrives alone.** `vtwin.cpp:2539` multiplies under `line == 1`, where `line` is `abs(zDelta)/WHEEL_DELTA` — so a flick fast enough to coalesce two notches into one message scrolls two lines rather than six, and the setting stops applying exactly when the user is scrolling hardest. Not a clamp either: the guard is `> 0`, so `MouseWheelScrollLine=0` is one line per notch and so is a negative value.  It is also the step for something with no other name: with the pointer over the title bar the wheel changes the window's opacity, by this many units of 255 (`vtwin.cpp:2500`). One setting, two meanings, the way `TelEcho` and `ts.BSKey` each have two.",
     },
     Field {
         name: "bell.mode",
