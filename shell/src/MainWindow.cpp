@@ -3,6 +3,7 @@
 #include "MainWindow.h"
 
 #include <QAction>
+#include <QCloseEvent>
 #include <QFontDialog>
 #include <QLabel>
 #include <QHBoxLayout>
@@ -642,8 +643,41 @@ void MainWindow::onSshFailed(const QString &error)
     updateStatus();
 }
 
+bool MainWindow::confirmDisconnect()
+{
+    if (m_session->linkKind() != TT_LINK_NETWORK) {
+        return true;
+    }
+    if (m_session->setting(QStringLiteral("connection.confirm_disconnect"))
+        != QLatin1String("on")) {
+        return true;
+    }
+    // Cancel is the default button, as it is upstream (`MB_DEFBUTTON2`): the
+    // question is asked at the moment somebody may have hit the wrong thing,
+    // so Return must not be the answer that loses the session.
+    const auto answer = QMessageBox::warning(
+        this, tr("Sterna"), tr("Disconnect?"), QMessageBox::Ok | QMessageBox::Cancel,
+        QMessageBox::Cancel);
+    return answer == QMessageBox::Ok;
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    // `CloseTT` is upstream's third condition here (`vtwin.cpp:1670`) — a
+    // window closing because the *application* is quitting does not ask. There
+    // is nothing equivalent yet: this process is one window.
+    if (m_session->isConnected() && !confirmDisconnect()) {
+        event->ignore();
+        return;
+    }
+    QMainWindow::closeEvent(event);
+}
+
 void MainWindow::disconnectPort()
 {
+    if (!confirmDisconnect()) {
+        return;
+    }
     m_session->disconnectPort();
     updateStatus();
 }

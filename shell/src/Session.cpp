@@ -21,6 +21,16 @@ constexpr int kRetryIntervalMs = 20;
 /// hold the line for as long as it likes.
 constexpr uint32_t kWriteTimeoutMs = 10;
 
+/// How often the transport is given a wakeup the wire did not provide.
+///
+/// Only telnet's keepalive wants one, and it counts in whole seconds, so a
+/// second is as fine as this needs to be — upstream's own thread wakes ten
+/// times as often to answer the same question (`telnet.c:917`). One idle
+/// timer for the life of the window is the price; the alternative is a
+/// `TelKeepAliveInterval` that does nothing, because an idle socket produces
+/// no descriptor wakeup and that is precisely the socket it exists for.
+constexpr int kTickIntervalMs = 1000;
+
 } // namespace
 
 Session::Session(int cols, int rows, QObject *parent)
@@ -41,6 +51,14 @@ Session::Session(int cols, int rows, QObject *parent)
     m_xferTimer = new QTimer(this);
     m_xferTimer->setSingleShot(true);
     connect(m_xferTimer, &QTimer::timeout, this, &Session::onTransferDeadline);
+
+    m_tick = new QTimer(this);
+    m_tick->setInterval(kTickIntervalMs);
+    // Coarse on purpose: this must never be the reason a laptop wakes up, and
+    // nothing behind it needs better than a second.
+    m_tick->setTimerType(Qt::VeryCoarseTimer);
+    connect(m_tick, &QTimer::timeout, this, [this] { tt_session_tick(m_session); });
+    m_tick->start();
 
     // Ahead of anything the window connects, so that a slot reacting to a
     // settings change already sees the title those settings imply.
@@ -136,6 +154,8 @@ bool Session::backspaceSendsBs() const
 bool Session::isConnected() const { return tt_session_is_connected(m_session); }
 
 bool Session::supportsBreak() const { return tt_session_supports_break(m_session); }
+
+TtLinkKind Session::linkKind() const { return tt_session_link_kind(m_session); }
 
 QString Session::describe() const
 {

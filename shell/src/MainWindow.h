@@ -111,6 +111,11 @@ public:
     /// it will be spelled.
     static QString settingsPath();
 
+protected:
+    /// Ask before closing a window with a live TCP session on it —
+    /// `ConfirmDisconnect`, which is on by default.
+    void closeEvent(QCloseEvent *event) override;
+
 private slots:
     void showConnectDialog();
     void showSshDialog();
@@ -156,6 +161,15 @@ private slots:
 private:
     void buildMenus();
     void updateStatus();
+    /// `ConfirmDisconnect` (`ttset.c:1154`, on by default): whether to go ahead
+    /// with dropping the connection.
+    ///
+    /// **TCP only**, which is upstream's condition and not a simplification —
+    /// both tests are `cv.PortType==IdTCPIP` (`vtwin.cpp:1668`, `:4448`), so a
+    /// serial session closes without a word however this is set. The reasoning
+    /// is visible once stated: reopening a serial port costs nothing, and
+    /// reopening a session on a router four hops away costs a login.
+    bool confirmDisconnect();
     /// Start `args`' macro and complain in a box if it will not start. The one
     /// place a macro is launched, whichever of the two asked: the menu, or a
     /// `/M=` on the command line.

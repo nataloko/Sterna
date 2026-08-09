@@ -87,12 +87,20 @@ struct TransferResult {
 /// arriving, and a window that wakes 60 times a second to discover that is a
 /// window that costs battery for no reason.
 ///
-/// The one thing a descriptor cannot cover is output the far end refused to
-/// take. Flow control holds the line, the write comes up short, and the
-/// remainder waits for a pump that will never come — because a device
-/// asserting backpressure is not sending anything to wake us with. So there is
-/// a second timer that runs *only* while `tt_session_pending_out` is non-zero,
-/// and stops the moment the queue drains.
+/// Two things a descriptor cannot cover, and each has a timer of its own.
+///
+/// The first is output the far end refused to take. Flow control holds the
+/// line, the write comes up short, and the remainder waits for a pump that will
+/// never come — because a device asserting backpressure is not sending anything
+/// to wake us with. That timer runs *only* while `tt_session_pending_out` is
+/// non-zero, and stops the moment the queue drains.
+///
+/// The second is the line going **quiet**, which is not an event at all. Telnet
+/// sends `IAC NOP` after `TelKeepAliveInterval` of silence, and silence is
+/// exactly what a readability notifier cannot report — so `tt_session_tick`
+/// runs on a once-a-second coarse timer for the life of the window. It is the
+/// one wakeup in the idle path, and the cheapest honest way to have that
+/// setting mean anything.
 class Session : public QObject {
     Q_OBJECT
 
@@ -148,6 +156,12 @@ public:
     /// Whether `sendBreak` will do anything. False when nothing is connected,
     /// and false over SSH — which has no break at all.
     bool supportsBreak() const;
+    /// What is attached — the nearest thing to upstream's `cv.PortType`.
+    ///
+    /// Several of Tera Term's settings are conditioned on it rather than on
+    /// anything the transport does: `ConfirmDisconnect` asks only about a TCP
+    /// session, and so does `BeepOnConnect`.
+    TtLinkKind linkKind() const;
     QString describe() const;
     /// Open a serial port. `path` should be a `TtPortInfo::open_path`.
     bool connectSerial(const QString &path, const TtSerialParams &params,
@@ -382,6 +396,10 @@ private:
     /// timer in the class, and like the first it exists for a case a
     /// descriptor genuinely cannot cover.
     QTimer *m_xferTimer = nullptr;
+    /// The third and last timer, and the only one that runs while nothing is
+    /// happening: `tt_session_tick`, which is what lets a transport act on the
+    /// line having gone *quiet*. See `kTickIntervalMs` for why it is cheap.
+    QTimer *m_tick = nullptr;
     QString m_title;
 
     /// Read the window title back from the core and emit an edge.
