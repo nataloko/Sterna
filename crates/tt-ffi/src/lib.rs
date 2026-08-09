@@ -1665,6 +1665,26 @@ pub extern "C" fn tt_session_pump(
     }
 }
 
+/// Give the transport the wakeup a quiet line cannot give it.
+///
+/// Telnet's keepalive is the only caller so far, and it is exactly the case
+/// [`tt_session_pump`] cannot serve: `IAC NOP` goes out when the link has been
+/// *silent* for `TelKeepAliveInterval`, and silence produces no descriptor
+/// wakeup and no pump. A frontend that only ever pumps has a keepalive setting
+/// that does nothing.
+///
+/// Cheap on every transport and a no-op with nothing connected, so a
+/// once-a-second timer is the whole of what this needs. It writes no bytes to
+/// the terminal and raises no events.
+#[no_mangle]
+pub extern "C" fn tt_session_tick(session: *mut TtSession) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    match s.session.tick() {
+        Ok(()) => TT_OK,
+        Err(e) => report(e),
+    }
+}
+
 /// How many bytes are still waiting for the far end.
 ///
 /// Non-zero means flow control held the line — CTS low, an XOFF, a DSR that
@@ -2288,6 +2308,38 @@ pub extern "C" fn tt_session_is_connected(session: *const TtSession) -> bool {
 #[no_mangle]
 pub extern "C" fn tt_session_supports_break(session: *const TtSession) -> bool {
     session_ref!(session, false).session.supports_break()
+}
+
+/// What kind of link is attached — upstream's `cv.PortType`, as far as a
+/// frontend needs it.
+pub type TtLinkKind = u32;
+
+/// Nothing is connected.
+pub const TT_LINK_NONE: TtLinkKind = 0;
+/// A real serial port.
+pub const TT_LINK_SERIAL: TtLinkKind = 1;
+/// Telnet or SSH — `IdTCPIP`, which is what the settings that say "TCP" mean.
+pub const TT_LINK_NETWORK: TtLinkKind = 2;
+/// A local shell on a pty. Upstream reaches this through CygTerm, which is a
+/// *telnet* session to a local process, so it has no equivalent.
+pub const TT_LINK_LOCAL_PTY: TtLinkKind = 3;
+
+/// Which of the four the current connection is.
+///
+/// Exists because several of upstream's settings are conditioned on
+/// `cv.PortType` rather than on anything about the transport itself —
+/// `ConfirmDisconnect` asks only for a TCP session (`vtwin.cpp:1668`),
+/// `BeepOnConnect` sounds only for one (`:3018`) — and a frontend acting on
+/// those has to be able to ask.
+#[no_mangle]
+pub extern "C" fn tt_session_link_kind(session: *const TtSession) -> TtLinkKind {
+    let s = session_ref!(session, TT_LINK_NONE);
+    match s.session.link_kind() {
+        None => TT_LINK_NONE,
+        Some(tt_conn::LinkKind::Serial { .. }) => TT_LINK_SERIAL,
+        Some(tt_conn::LinkKind::Network) => TT_LINK_NETWORK,
+        Some(tt_conn::LinkKind::LocalPty) => TT_LINK_LOCAL_PTY,
+    }
 }
 
 /// A short name for the status line — `/dev/ttyUSB0`, `user@host`. Null when

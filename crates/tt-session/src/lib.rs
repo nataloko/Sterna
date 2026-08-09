@@ -1098,6 +1098,16 @@ impl Session {
         self.conn.as_ref().is_some_and(|c| c.supports_break())
     }
 
+    /// What is attached, or `None` with nothing connected.
+    ///
+    /// The nearest thing this port has to `cv.PortType`, which several
+    /// settings are conditioned on rather than on anything the transport does
+    /// — `ConfirmDisconnect` and `BeepOnConnect` both ask only about a TCP
+    /// session.
+    pub fn link_kind(&self) -> Option<tt_conn::LinkKind> {
+        self.conn.as_ref().map(|c| c.link_kind())
+    }
+
     /// Feed bytes as though they had arrived from the far end. For local echo
     /// and for tests; it is also how a replayed session log would work.
     pub fn feed(&mut self, bytes: &[u8]) {

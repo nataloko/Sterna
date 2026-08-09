@@ -1126,6 +1126,12 @@ typedef struct {
 } TtPtyParams;
 
 /**
+ * What kind of link is attached — upstream's `cv.PortType`, as far as a
+ * frontend needs it.
+ */
+typedef uint32_t TtLinkKind;
+
+/**
  * One serial port, as a picker wants to show it. Every string is borrowed
  * from the owning [`TtPortList`] and dies with it.
  */
@@ -1920,6 +1926,27 @@ typedef struct {
  */
 #define TT_TELNET_FRAMED 3
 
+/**
+ * Nothing is connected.
+ */
+#define TT_LINK_NONE 0
+
+/**
+ * A real serial port.
+ */
+#define TT_LINK_SERIAL 1
+
+/**
+ * Telnet or SSH — `IdTCPIP`, which is what the settings that say "TCP" mean.
+ */
+#define TT_LINK_NETWORK 2
+
+/**
+ * A local shell on a pty. Upstream reaches this through CygTerm, which is a
+ * *telnet* session to a local process, so it has no equivalent.
+ */
+#define TT_LINK_LOCAL_PTY 3
+
 #define TT_HOST_KEY_POLICY_ASK 0
 
 /**
@@ -2585,6 +2612,21 @@ TtStatus tt_session_pump(TtSession *session,
                          size_t *out_bytes);
 
 /**
+ * Give the transport the wakeup a quiet line cannot give it.
+ *
+ * Telnet's keepalive is the only caller so far, and it is exactly the case
+ * [`tt_session_pump`] cannot serve: `IAC NOP` goes out when the link has been
+ * *silent* for `TelKeepAliveInterval`, and silence produces no descriptor
+ * wakeup and no pump. A frontend that only ever pumps has a keepalive setting
+ * that does nothing.
+ *
+ * Cheap on every transport and a no-op with nothing connected, so a
+ * once-a-second timer is the whole of what this needs. It writes no bytes to
+ * the terminal and raises no events.
+ */
+TtStatus tt_session_tick(TtSession *session);
+
+/**
  * How many bytes are still waiting for the far end.
  *
  * Non-zero means flow control held the line — CTS low, an XOFF, a DSR that
@@ -2801,6 +2843,17 @@ bool tt_session_is_connected(const TtSession *session);
  * time to find out.
  */
 bool tt_session_supports_break(const TtSession *session);
+
+/**
+ * Which of the four the current connection is.
+ *
+ * Exists because several of upstream's settings are conditioned on
+ * `cv.PortType` rather than on anything about the transport itself —
+ * `ConfirmDisconnect` asks only for a TCP session (`vtwin.cpp:1668`),
+ * `BeepOnConnect` sounds only for one (`:3018`) — and a frontend acting on
+ * those has to be able to ask.
+ */
+TtLinkKind tt_session_link_kind(const TtSession *session);
 
 /**
  * A short name for the status line — `/dev/ttyUSB0`, `user@host`. Null when
