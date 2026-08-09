@@ -97,6 +97,8 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/pty_test                 # ...and over a local shell, which needs nothing
 ./build/xfer_test                # a ZMODEM send, driven by the event loop
 ./build/xfer_test --write /tmp   # ...and the transfer dialogs, as PNGs
+./build/macro_test               # a TTL macro, driven by the event loop
+./build/macro_test --write /tmp  # ...and the dialogs it raises, as PNGs
 ./build/cmdline_test             # a Tera Term command line, argv to connected
 ./build/sterna --port /dev/ttyUSB0 --baud 115200
 ./build/sterna myrouter        # an alias out of ~/.ssh/config
@@ -800,6 +802,16 @@ And for the macro language:
   is `Syntax error` on a line that looks obviously right, and it happens to
   every command that takes two integers in a row. Write the negative one in
   brackets. Upstream parses identically — this is the language, not the port.
+  **The same rule makes `listbox`'s keywords quoted strings**: a bare
+  `listboxsize=40x10` is the variable `listboxsize`, so the line reports
+  `Variable not initialized` — a message about the *keyword* nobody would
+  connect to a missing pair of quotes.
+- **A macro path with no extension is not the file you wrote.**
+  `FitTTLFileName` (`ttmmain.cpp:253`) fits `.TTL` onto the last component of
+  a name that has no dot at all, and it does it to `FileName` itself rather
+  than only to the name the macro is told — so a `mkstemp` template opens
+  `…-XXXXXX.TTL`, which is not the file the test just created. Reproduced;
+  give a test macro a `.ttl` on the end.
 - **`SendCmnd` is where the link check lives**, so a command whose body never
   mentions `Linked` still fails with `ErrLinkFirst` — and *after* its arguments
   are parsed, so `sendbreak junk` is a syntax error where `send 'x'` with no
@@ -940,6 +952,36 @@ And for the macro language:
   would leave the macro thread parked on a condvar for ever. `PROBE` in
   `tt-macro/src/host.rs` is a quarter-second knock on the door, and it is there
   for that and nothing else.
+
+And for a macro reached from outside the process:
+
+- **A macro that ends without asking for anything never wakes its frontend.**
+  The frontend only looks when the macro's descriptor fires, and the last
+  thing a script does is usually a `sendln` whose job has already been
+  serviced — so `dispstr 'done'` on the last line is noticed and a bare
+  `pause 1` is not, and the window sits with a Stop button for a script that
+  finished ten minutes ago. `tt_macro_start`'s thread knocks once on its way
+  out. **And it sets its "done" flag before knocking**, because
+  `JoinHandle::is_finished` is still false at that point: read that instead
+  and the frontend services the knock, finds the macro still running, and goes
+  back to waiting for a wakeup that has already happened.
+- **The `QSocketNotifier` has to be disabled across `tt_macro_service`.** It
+  is level-triggered and a `messagebox` spins a nested event loop, so the
+  notifier fires again *inside* the open dialog — the same re-entrancy that
+  made the SSH host-key prompt ask twice, except that here it would run a
+  second dialog inside the first. The core drains its wakeup pipe before it
+  runs a single job, so in practice nothing is pending; "in practice" is not
+  a guard.
+- **Qt cannot tell No from the close box**, and `yesnobox` distinguishes them:
+  closing it ends the macro where No does not. `QMessageBox` gives Escape and
+  the title bar's close to the reject-role button, so a closed `yesnobox`
+  reads as No here and the script carries on. Stated in `Macro.cpp` rather
+  than hidden — and the same limit applies to `listbox`, where Closed is -2.
+- **`tt_macro_free` cannot detach the terminal.** It is not given a session,
+  deliberately, so the tap `tt_macro_start` turned on outlives it and every
+  character the terminal prints goes on being copied into a ring nobody
+  reads. `tt_session_unlink_macro` is the other half, and the frontend calls
+  both.
 
 And for the C ABI:
 

@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 192
+**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 212
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1059,9 +1059,13 @@ before anything else in every session.
   scripts that check their own answers now do it against real arguments. See
   below. `crates/tt-macro/` is the host that is a terminal rather than a
   recorder, 2026-08-09, including the transfers, `connect`/`cygconnect` and the
-  serial control lines — what is left is a way to reach one from outside the
-  process, and the commands listed at the bottom of `tt-macro/src/host.rs` that
-  want subsystems this port has not built.
+  serial control lines. **And the window runs one**, 2026-08-09 — the macro
+  half of the C ABI, and `shell/src/Macro.cpp` answering what it asks: Control
+  > Run macro, `/M=` on the command line, and the dialogs. See below. What is
+  left is the commands listed at the bottom of `tt-macro/src/host.rs` and of
+  `shell/src/Macro.cpp`, each of which wants a subsystem this port has not
+  built, and a way in that is not a person clicking a menu — which is the
+  `ttctl` socket.
 - **Lua via `mlua`** over the same `ScriptHost` command table (~500 LOC glue).
 - `ttctl` JSON-RPC control socket replacing DDE. Keep a `ttpmacro script.ttl`
   CLI entry point so existing shortcuts and `.bat` wrappers keep working.
@@ -2651,6 +2655,63 @@ command parsed, reported nothing and changed nothing. Every write through that
 seam wants `terminal.local_echo`; a `debug_assert` on the `false` now says so,
 and the test asserts against the terminal's mode, which is the only place it
 shows.
+
+#### And then the window ran one, which is the first callback in the ABI
+
+`crates/tt-ffi/src/lib.rs` and `shell/src/Macro.cpp`, 2026-08-09. The language
+was ported, the host was a real terminal, and none of it could be reached from
+outside the process: `MainWindow` put a box up saying macros could not be
+started yet. Now Control > Run macro starts one, `/M=` on a command line starts
+one, and the eleven dialogs are Qt dialogs.
+
+**The seam calls back into C, which nothing else here does, and the reason is
+the mirror image of why SSH refuses to.** `tt_ssh_connect_poll` is a state
+machine precisely because a callback would fire on a worker thread — the one
+place a Qt frontend cannot raise a dialog. `TtMacroUi`'s twenty callbacks fire
+from inside `tt_macro_service`, on the thread that *called* it, which is the
+frontend's own: a modal dialog spinning a nested event loop is an ordinary
+modal dialog, and the macro is parked on its own thread until it closes. That
+is the whole of the design `tt-macro` was built for, arriving at the seam.
+
+A null function pointer is not a crash and not a silent success. The Rust side
+falls through to `NullUi` rather than to a hand-written refusal, so "this
+frontend has not implemented that" stays the trait's own documented default —
+the macro is told "Unknown command", which is the only refusal the language
+has, and a frontend with three dialogs is useful.
+
+Three things the wiring turned up, all in `CLAUDE.md`:
+
+- **A macro that ends without asking for anything never wakes its frontend.**
+  A `dispstr` on the last line is noticed and a bare `pause 1` is not, because
+  a frontend has no timer to fall back on. The thread knocks once on its way
+  out — and sets its flag *before* knocking, since `JoinHandle::is_finished`
+  is still false at that point and reading it would make the frontend wait for
+  a wakeup that had already happened. `tests/abi.c` polls for five seconds
+  against a one-second macro, which fails outright without the knock.
+- **The notifier is disabled across a service call.** It is level-triggered,
+  so it fires again inside the dialog's own nested loop — the SSH prompt's
+  re-entrancy, except that here it would open a second dialog inside the
+  first.
+- **`tt_macro_free` cannot detach the terminal**, because it is not given a
+  session. `tt_session_unlink_macro` is the other half; without it the
+  terminal goes on copying every character it prints into a ring nobody reads.
+
+**Two divergences, both stated where they happen.** Qt gives Escape and the
+title bar's close to a dialog's reject-role button, so a closed `yesnobox`
+cannot be told from No — upstream ends the macro on the first and not the
+second, and here both are No. And `enablekeyb 0` is released when the macro
+ends: upstream puts `KeybEnabled` back only from Control > Reset terminal
+(`vtwin.cpp:4874`), a menu item this port has not got, so a macro that died
+between the two calls would leave a terminal nobody can type into.
+`enablekeyb.html` describes the lock as lasting "while the macro is sending
+the data", which makes this the fourth place the port follows the manual.
+
+`shell/tests/macro_test.cpp` runs seven cases against the real event loop,
+including one that drives `/bin/sh` — a macro typing at a shell and waiting
+for what comes back, which is the tap, the ring, the macro's thread and the
+window's notifier in one assertion. The dialogs are answered by a repeating
+timer that fires *inside* the modal loop, which is the only way to test them
+and is also the re-entrancy the guard above exists for.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 

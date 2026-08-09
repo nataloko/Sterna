@@ -18,6 +18,8 @@ distrobox-host-exec distrobox enter sterna-fedora --no-tty -- bash -lc '
   ./build/pty_test               # ...and over a local shell, which never skips
   ./build/xfer_test              # a ZMODEM send, driven by the event loop
   ./build/xfer_test --write /tmp # ...and the transfer dialogs, as PNGs
+  ./build/macro_test             # a TTL macro, driven by the event loop
+  ./build/macro_test --write /tmp # ...and the dialogs it raises, as PNGs
   ./build/sterna --port /dev/ttyUSB0 --baud 115200
   ./build/sterna myrouter      # an alias out of ~/.ssh/config
   ./build/sterna --telnet console-server:2001
@@ -464,6 +466,45 @@ B-Plus and Quick-VAN are in the list, last, labelled *untested*. They compile
 and are wired, and there has been no counterparty for either since CompuServe
 and NIFTY-Serve shut down — saying so in the menu is better than letting
 someone find out.
+
+## A macro is the only thing that calls *into* this window
+
+`Control > Run macro...`, `/M=` on a Tera Term command line, and `Macro.cpp`.
+The interpreter runs on a thread inside the core and blocks whenever it wants
+something out here; this window waits on its descriptor with a third
+`QSocketNotifier` and, when it fires, runs whatever the macro asked for **on
+this thread**. So a `messagebox` is an ordinary modal dialog: it spins a nested
+event loop, the terminal goes on painting, and the script is parked until the
+user answers.
+
+That is the one place the ABI hands out function pointers, and it is not a
+contradiction of the SSH design next to it. `tt_ssh_connect_poll` refuses a
+callback because it would fire on a worker thread — the one place a Qt frontend
+*cannot* raise a dialog. These fire from inside a call this window itself made.
+
+**The notifier is disabled across that call**, because it is level-triggered
+and the dialog's own nested loop would otherwise re-enter it and open a second
+dialog inside the first. It is the same re-entrancy `Session::m_sshWaiting`
+guards against, and it is why `macro_test` answers its dialogs from a repeating
+timer rather than a `singleShot`: the timer has to fire *inside* the modal
+loop, which is precisely the situation being defended.
+
+Two things here differ from upstream and both are stated in the source:
+
+- **A closed `yesnobox` reads as No.** Upstream ends the macro when the dialog
+  is closed and carries on when No is clicked; Qt gives Escape and the title
+  bar's close to the reject-role button, so the two cannot be told apart.
+- **`enablekeyb 0` is released when the macro ends.** Upstream only puts
+  `KeybEnabled` back from `Control > Reset terminal`, which this port does not
+  have — so a macro that died between the two calls would leave a terminal
+  nobody can type into. `enablekeyb.html` describes the lock as lasting "while
+  the macro is sending the data", so this follows the manual.
+
+`callmenu` is refused: its ids are `teraterm.rc`'s and there are about ninety
+of them, which wants a table from Windows command ids onto `QAction`s and is
+worth writing when there is a menu to map rather than ahead of one. `show` —
+the macro's own control window — has nowhere to go, since the macro is a thread
+in this process; its End button is `Control > Stop macro`.
 
 ## Not here yet
 

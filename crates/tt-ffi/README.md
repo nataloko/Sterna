@@ -57,6 +57,7 @@ Two things about how it is generated, both learned the hard way:
 | Ports | `tt_serial_enumerate`, `tt_port_list_len` / `_at` / `_free`, `tt_ssh_config_aliases` + `tt_string_list_*` |
 | Logging | `tt_log_options_default`, `tt_session_log_start` / `_stop` / `_path` / `_bytes` |
 | Settings | `tt_settings_field_count` / `_field` / `tt_settings_choice`, `tt_session_setting` / `_set_setting` / `_settings_load` / `_settings_save` |
+| Macros | `tt_macro_start` / `_poll_fd` / `_service` / `_running` / `_cancel` / `_exit_code` / `_free`, `tt_session_unlink_macro`, and `TtMacroUi` |
 
 Deliberately absent, and each for a reason rather than for lack of time:
 
@@ -114,6 +115,20 @@ Deliberately absent, and each for a reason rather than for lack of time:
   returns afterwards.** Register the notifier once, before connecting, and
   keep it: swapping it at the moment output starts is a race with the first
   screenful.
+- **`TtMacroUi` is the one place this ABI calls back into C, and that is not
+  an inconsistency with the line above.** SSH refuses a callback because it
+  would fire on a worker thread; a macro's callbacks fire from inside
+  `tt_macro_service`, on the thread that called it, which is the frontend's
+  own — the one place a modal dialog *can* go up. Zero-initialise the struct
+  and fill in what you have: a null pointer means the macro is told "Unknown
+  command", which is the same answer a port that never implemented the command
+  would give.
+- **A macro's descriptor is not the session's**, and both want watching. A
+  macro also produces exactly one wakeup when it ends, so `tt_macro_running`
+  after every service is enough and there is nothing to poll for.
+- **`tt_macro_free` does not detach the terminal.** It is not given a session,
+  so `tt_session_unlink_macro` is the other half of it; skip that and every
+  character the terminal prints goes on being copied into a ring nobody reads.
 - **`tt_session_pump` returns as soon as the line is quiet**, which is the
   point of it — so waiting belongs on the descriptor, not in a pump loop.
   Pumping in a bare loop spins through a thousand iterations in a millisecond
