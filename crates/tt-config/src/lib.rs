@@ -7,10 +7,16 @@
 //! lines of dialog code over a 909-line settings struct, and hand-porting that
 //! is where this project would stop.
 //!
+//! [`cmdline`] is the third thing that reads settings from outside the process,
+//! and it is here rather than in the frontend because a command line's first
+//! job is to say which INI file to read — upstream puts `_ParseParam` in the
+//! same DLL as `_ReadIniFile` for exactly that reason.
+//!
 //! ```sh
 //! cargo run -p tt-config --bin gen-settings   # after editing the schema
 //! ```
 
+pub mod cmdline;
 pub mod gen;
 pub mod ini;
 pub mod schema;
