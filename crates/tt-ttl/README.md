@@ -83,22 +83,27 @@ files behind it. It does not belong in a parser.
 
 | | |
 |---|---|
-| `lexer.rs` | `ttmparse.cpp`'s tokeniser and the 213-name reserved word table |
+**Every one of the 231 reserved words has an arm.**
+
+| | |
+|---|---|
+| `lexer.rs`, `rsv.rs` | `ttmparse.cpp`'s tokeniser and the reserved word table |
 | `vars.rs` | the variable table — integers, strings, arrays and labels in one namespace |
 | `expr.rs` | the eleven precedence levels, `GetFactor` through `GetExpression` |
+| `source.rs` | `fileread.cpp`'s `LoadFileU8C` — the macro file's own encoding |
 | `buffer.rs` | `ttmbuff.c` — the include stack, the control stack, the line reader |
 | `interp.rs` | `ExecCmnd` — the four skip flags, assignment, and control flow |
-| `strcmds.rs` | the string and integer commands |
+| `strcmds.rs`, `sprintf.rs` | the string and integer commands, and C's `printf` |
+| `regex.rs`, `regexcmds.rs` | Oniguruma, and the six commands that speak it |
 | `wait.rs` | `ttmdde.c`'s matchers — `Wait`, `Wait2`, `WaitN` and the line buffer |
-| `conncmds.rs` | `send`, the `wait` family, `pause`, `flushrecv` |
+| `conncmds.rs`, `sesscmds.rs`, `sendcmds.rs` | the line: `send` and its variants, the `wait` family, the link, the control lines, the transfers |
+| `filecmds.rs`, `files.rs`, `pathcmds.rs` | the sixteen handles, and the filesystem |
+| `dlgcmds.rs`, `logcmds.rs`, `termcmds.rs` | the dialogs, the session log, the terminal's odds and ends |
+| `envcmds.rs`, `clockcmds.rs`, `cksumcmds.rs`, `pwd.rs`, `pwdcmds.rs` | the environment, the clock, the checksums, the passwords |
 | `host.rs` | the seam, and a host that records |
 
-Still to come: the rest of the connection commands (`connect`, `disconnect`,
-`testlink`, the transfer protocols, the serial control lines), the file
-commands, the dialogs, and the regex family — `sprintf`, `strmatch`,
-`strreplace` and `waitregex`. Upstream validates `sprintf`'s format specifiers
-with Oniguruma and matches with it too, so **which regex dialect this speaks is
-a compatibility decision of its own** and is not made yet.
+What is left is not the language: `params[]` needs the `ttpmacro` command
+line's switch parser, which is a Stage 2 item of its own.
 
 ## An upstream defect, reproduced
 
@@ -117,12 +122,23 @@ real `ttpmacro.exe`. Demonstrate it on Windows in Stage 3 before filing it.
 ## Tests
 
 ```sh
-cargo test -p tt-ttl
+cargo test -p tt-ttl                              # the unit tests
+cargo test -p tt-ttl --test scripts               # upstream's own 53 macros
+TTL_BLESS=1 cargo test -p tt-ttl --test scripts   # ...rewrite the transcripts
 ```
 
-They are unit tests against `RecordingHost`, written as TTL source and an
-expected output. The 53 `.ttl` scripts in `../../../teraterm/tests/` are the
-eventual conformance target, but they are **not self-checking** — they report to
-a human through `messagebox`, several are deliberately full of errors to
-exercise the error dialog, and most are Shift-JIS. Running them means a host
-that records dialogs and a golden per script.
+The unit tests are TTL source and an expected output, run against
+`RecordingHost`.
+
+`tests/scripts.rs` is the conformance suite: the 53 `.ttl` scripts in
+`../../../teraterm/tests/`, each run against a host that writes down every
+send, dialog and action in order and a golden transcript per script. They are
+**not self-checking** — they report to a human through `messagebox`, several
+are deliberately full of errors to exercise the error dialog, one asks the user
+to choose a file, and most are Shift-JIS — so the transcript is what "pass"
+means, and the harness's own header documents the eight decisions that make a
+run reproducible. Blessing deliberately fails the run: a golden nobody has read
+is worse than no test, which is `oracle/`'s rule and applies here unchanged.
+
+A tree without the `../teraterm` reference checkout **skips** this suite rather
+than failing it. `TERATERM_TESTS` points it somewhere else.

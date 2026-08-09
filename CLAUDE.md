@@ -59,6 +59,9 @@ cargo fmt -p tt-vt               # per package: --all rewrites generated.rs
 tt-ffi/run_abi.sh                # the C ABI, compiled and driven from C
 cargo test -p tt-xfer            # the protocols vs lrzsz and gkermit, over a pty
 cargo test -p tt-ttl             # the macro language, with no terminal attached
+cargo test -p tt-ttl --test scripts          # ...and upstream's own 53 macros
+TTL_BLESS=1 cargo test -p tt-ttl --test scripts   # rewrite the transcripts,
+                                             # then read every one you changed
 ../vendor/ttpfile/sync.sh --check   # ...and that the vendored C has not drifted
 cargo run -p tt-config --bin gen-settings   # after editing the settings schema
 TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
@@ -684,10 +687,15 @@ And for the macro language:
   out-of-bounds accesses have been found in `ttpmacro` by reading; none is
   reproduced, all are listed in `PLAN.md`. Assume the next array is unchecked
   until you have looked.
-- **A missing reserved word does not report "unknown command".** An
-  unrecognised name is read as a *variable*, so a command left out of the table
-  fails as a syntax error on a line that is perfectly good — which is what hid
-  `filenamebox` for four commits. `rsv.rs`'s table is a transcription of
+- **A missing reserved word is not diagnosed as a missing command — it is
+  diagnosed as a bad assignment.** An unrecognised name is read as a *variable*,
+  so a command left out of the table falls into `ExecCmnd`'s `else` arm
+  (`ttl.cpp:6480`), which reports `ErrNotSupported` when what follows is not an
+  `=`. The message is "Unknown command.", which sounds like a dispatch that
+  failed and is really a word that was never a command at all — and on a line
+  that is perfectly good, which is what hid `filenamebox` for four commits.
+  Same arm, same reason: `a[1 = 2` says "Unknown command" rather than
+  "] expected". `rsv.rs`'s table is a transcription of
   `ttmparse.cpp:CheckReservedWord`, and the way to check a transcription is to
   extract both lists and diff them, not to read them. That goes for every
   upstream list this port copies.

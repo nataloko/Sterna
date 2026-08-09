@@ -1045,16 +1045,18 @@ before anything else in every session.
 - **TTL interpreter**: native Rust, **in-process on a thread** — deletes ~2,600
   LOC of DDE glue (`ttpmacro/ttmdde.c` + `teraterm/ttdde.c`) and a whole class
   of races. Target: the 53 `.ttl` scripts in `teraterm/tests/` pass.
-  🔵 **the language runs, holds a conversation, drives a session and talks to
-  the user**, 2026-08-09 — `crates/tt-ttl/`: the tokeniser, the variables, the
+  ✅ **the language is ported and upstream's own macros run**, 2026-08-09 —
+  `crates/tt-ttl/`: the tokeniser, the variables, the
   eleven precedence levels, the control flow, the string and integer commands,
   `send`/`wait`/`waitln`/`waitn`/`waitrecv`/`recvln`/`pause`/`flushrecv`, the
   link and the connection, the serial control lines, all sixteen transfer
   commands, the whole file family, the eleven dialogs, the eight logging
   commands, the ten checksums, the terminal's odds and ends, the environment
-  and clipboard, the clock, the `send*` variants and `scp` — 200 of the
-  214 reserved words. What is left is the
-  password family and the regex family. See below.
+  and clipboard, the clock, the `send*` variants, `scp`, the passwords and the
+  regex family — **every one of the 231 reserved words has an arm**, and
+  `crates/tt-ttl/tests/scripts.rs` runs upstream's own 53 macros against a
+  golden transcript each. What is left is not the language: it is the
+  `ttpmacro` command line, which is what `params[]` needs. See below.
 - **Lua via `mlua`** over the same `ScriptHost` command table (~500 LOC glue).
 - `ttctl` JSON-RPC control socket replacing DDE. Keep a `ttpmacro script.ttl`
   CLI entry point so existing shortcuts and `.bat` wrappers keep working.
@@ -1977,13 +1979,96 @@ the buffer, reads the empty string that leaves, and puts the byte back. A plain
 `strmatch 'abc' '(x)?abc'` reaches it. Not reproduced: the empty string is what
 it produces anyway.
 
-**What is left in the language** is the conformance target, which needs its own
-harness. The 53 `.ttl` scripts are
-**not self-checking** — they report to a human through `messagebox`, several are
-deliberately full of errors so as to exercise the error dialog, and most are
-Shift-JIS. "They pass" has to mean a host that records dialogs and a golden per
-script, which is the same shape as `oracle/`'s suite and the same warning
-applies: never bless one you have not read.
+#### And then the 53 scripts, which needed a definition of "pass" first
+
+`crates/tt-ttl/tests/scripts.rs` and 53 goldens, 2026-08-09. This document has
+said since Stage 0 that the target is "the 53 `.ttl` scripts in
+`teraterm/tests/` pass", and the first thing that had to be built was the
+sentence. **They are not self-checking**: they report to a human through
+`messagebox`, several are deliberately full of errors so as to exercise the
+error dialog, one asks the user to choose a file, most are Shift-JIS, and there
+is no exit code to test in any of them. So "pass" is a **transcript** — every
+send, every dialog, every action, and what the macro left on disk, in order —
+against a golden per script, which is `oracle/`'s shape and carries `oracle/`'s
+warning: every one was read before it was blessed.
+
+Eight decisions make a run reproducible and they are all on the harness, where
+somebody can disagree with them: the terminal starts connected, nothing ever
+arrives from the far end so every `wait` is a timeout, the error dialog answers
+**Continue** rather than Stop, the clock and the entropy and `HOME` are fixed,
+each script gets its own directory, and the machine's own paths are substituted
+out of the transcript so a golden is the same anywhere. The scripts stay in
+`../teraterm`; a tree without that checkout skips the suite rather than failing
+it.
+
+**A harness that always presses the default button does not terminate.**
+`gui_commands_test.ttl` loops on `yesnobox` until it has been told both yes and
+no, on `inputbox` until the string is `ok`, on `listbox` until each of seven
+items has been picked *and* the dialog then cancelled. The first blessing
+produced a 57,000-line transcript that stopped on the line limit. So the harness
+plays a **scripted user** per script — which is the honest model anyway, since
+that is what the file is: a walkthrough for a person.
+
+**And a transcript of host calls alone is blind to a third of them.**
+`#32621.ttl` reads a file, rewrites every line through `strreplace` and writes
+another one, and asks the host for nothing at all while doing it — its
+transcript was the exit code. The directory is therefore snapshotted before and
+after and the difference is part of the golden, which is what makes
+`test_file.ttl` worth something: that one *is* self-checking, it puts up a
+`messagebox` only when a file command misbehaves, and it comes out clean across
+`fileopen`, `filerename`, `filecreate`, `fileconcat`, `filecopy`,
+`filetruncate`, `filestat`, `filesearch`, `findfirst`/`findnext`,
+`foldercreate`/`folderdelete`, `getfileattr`/`setfileattr` and the whole
+password family.
+
+Two scripts do not finish and both say so in their own golden.
+`#35822-random.ttl` draws **eleven million** random numbers to check their
+distribution — a benchmark, not a test — and stops at the line limit;
+`array.ttl` fills a 100,000-element array and does complete, which is why the
+limit sits between them.
+
+Nothing in the 53 turned out to be a port defect. Three answers looked wrong on
+first reading and each is upstream's: `#34838.ttl`'s three empty
+`groupmatchstr` are the *clear* at `ttmdde.c:626`, which a successful match does
+before it fills only the groups that exist; `comstat.ttl`'s three
+`Variable not initialized` are `TTLFileStat`'s `goto end`, which returns -1
+without ever parsing its output variables; and `oneline-if.ttl`'s
+`Unknown command` for `if 1 hogefuga` is `ttl.cpp:6480`'s `else`, which is what
+an identifier not followed by `=` gets. The rest are platform: `makepath` joins
+with `/`, a `z:\name` argument is a filename containing a backslash, and
+`filetruncate 'aa:\...'` succeeds here where Windows calls it an invalid path.
+
+**What is left is not the language.** `macroparam.ttl` and `params_array.ttl`
+are about `params[]`, and the `.bat` files beside them run `ttpmacro.exe` with
+`/V`, `/i` and `/vxx` switches that the **launcher** eats before the macro sees
+what is left. Which arguments reach `params[]` is `ttmacro.cpp`'s parser, and
+this port has not built the `ttpmacro` command line yet — so both scripts run
+their `paramcnt == 1` arm and stop, and wiring the real command lines is a
+follow-up on the CLI entry point that is already on Stage 2's list.
+
+#### The macro file's own encoding, which is the machine's on Windows
+
+`crates/tt-ttl/src/source.rs`, 2026-08-09. Four of the 53 scripts are named
+`code_*.ttl` and exist to ask this question. Upstream's parser never sees a
+file: `LoadMacroFile` goes through `fileread.cpp`'s `LoadFileU8C`, which sniffs
+a byte-order mark and converts the whole thing to UTF-8 before `Buff[]` is
+filled — so the decision belongs between the file and the buffer, and `include`
+gets it for free. The three BOM branches are reproduced, and so are two things
+that only show up in a damaged file: the macro **ends at its first NUL**, which
+is what makes a BOM-less UTF-16 file a one-character macro, and a trailing
+half-unit is a character whose missing byte is the *low* one in **both** byte
+orders, because upstream's swap loop never reaches it.
+
+**The no-BOM branch is deliberately not reproduced.** `LoadFileU8C` tries
+`CP_ACP` *first* and falls back to UTF-8 only when the conversion fails, so the
+encoding of a macro file is a property of the machine that runs it: on a
+Japanese Windows a Shift-JIS macro reads correctly and a UTF-8 one that happens
+to be valid CP932 is mojibake, and on a Western one every byte sequence is
+valid CP1252 so a UTF-8 macro is mangled with no fallback at all. There is no
+ANSI code page on Linux to be faithful to. A file with no BOM is passed through
+unchanged, which is right for UTF-8 and leaves a Shift-JIS macro's bytes to
+reach the host as they were written — visible in `code_cp932.txt`. Stage 3 puts
+the code-page branch back on Windows, where it means something.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
