@@ -19,7 +19,10 @@
 //! than deriving the mapping: a setting that silently does nothing should be
 //! visible as an absence here.
 
-use tt_config::{CursorShape, KeyboardBackspace, Settings, TerminalCrReceive, TerminalCrSend};
+use crate::log::{LogMode, LogOptions, Timestamp};
+use tt_config::{
+    CursorShape, KeyboardBackspace, LogTimestampType, Settings, TerminalCrReceive, TerminalCrSend,
+};
 use tt_vt::{ColorFlags, Config, CrReceive, CrSend, TermId};
 
 /// Build the terminal's configuration from the settings.
@@ -75,7 +78,92 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
         mouse_tracking_enabled: s.mouse_tracking,
         disable_mouse_tracking_by_ctrl: s.mouse_ctrl_disables_tracking,
         translate_wheel_to_cursor: s.mouse_wheel_to_cursor,
+        // A log setting in the terminal's configuration, because that is where
+        // upstream reads it: the tap it gates is `vtterm.c`'s, and it feeds a
+        // macro's received-line buffer as well as the log.
+        log_plain_text: s.log_plain_text,
         ..*base
+    }
+}
+
+/// Build the log's options from the settings — `LogStart`'s reading of `ts`
+/// (`filesys_log.cpp:387`), plus the timestamp chain `ttset.c` leaves half in
+/// one key and half in another.
+///
+/// Not applied to an open log: upstream reads `ts` when the log *opens*, so a
+/// setting changed mid-capture takes effect on the next one. The two
+/// exceptions are `logrotate`'s three arms, which reconfigure a running log on
+/// purpose and go through [`SessionLog`](crate::SessionLog) directly.
+pub fn log_options(s: &Settings) -> LogOptions {
+    // `FixLogOption` (`filesys_log.cpp:243`) clears the timestamp for a binary
+    // log, and `SessionLog::open` does the same thing on the way in — so this
+    // does not repeat it, and `LogOptions` cannot claim a timestamp that will
+    // never be written.
+    LogOptions {
+        mode: if s.log_binary {
+            LogMode::Raw
+        } else {
+            LogMode::Text
+        },
+        timestamp: timestamp(s),
+        append: s.log_append,
+        rotate_size: rotate_size(s),
+        rotate_keep: rotate_keep(s),
+        // Upstream's text log always writes CR LF (`vtterm.c:361` sets
+        // `log_cr_type` to 0) and has no key for it, so this is the one field
+        // here the schema does not decide. See `LogOptions::crlf` for why the
+        // default is the other way round.
+        crlf: LogOptions::default().crlf,
+    }
+}
+
+/// `ttset.c:1000`'s chain, which is two keys and an `else`.
+fn timestamp(s: &Settings) -> Timestamp {
+    if !s.log_timestamp {
+        return Timestamp::None;
+    }
+    match s.log_timestamp_type {
+        // No `LogTimestampType` at all: Tera Term 4's `LogTimestampUTC`
+        // answers instead (`ttset.c:1007`), which is the whole reason the
+        // schema keeps an empty spelling apart from `Local`.
+        LogTimestampType::Unset if s.log_timestamp_utc => Timestamp::Utc,
+        LogTimestampType::Unset | LogTimestampType::Local => Timestamp::Local,
+        LogTimestampType::Utc => Timestamp::Utc,
+        LogTimestampType::LoggingElapsed => Timestamp::Elapsed,
+        LogTimestampType::ConnectionElapsed => Timestamp::ElapsedConnection,
+    }
+}
+
+/// `LogRotate` is the switch and `LogRotateSize` is the threshold, and neither
+/// is bounded on the way in.
+///
+/// **The size is already in bytes.** `LogRotateSizeType` is the unit the
+/// dialog *shows*, and `log_pp.cpp:471` multiplies by 1024 per unit before
+/// storing — so scaling it again here would turn the 1 MB somebody asked for
+/// into a terabyte, and their log would never rotate.
+fn rotate_size(s: &Settings) -> u64 {
+    // `filesys_log.cpp:513`: `ROTATE_SIZE` is 1, `ROTATE_NONE` is 0, and
+    // anything else falls out of the `if` and rotates nothing.
+    if s.log_rotate != 1 {
+        return 0;
+    }
+    s.log_rotate_size.max(0) as u64
+}
+
+/// How many generations, where upstream's zero is not "none".
+///
+/// `filesys_log.cpp:507` leaves `loopmax` at a hardcoded 10000 when
+/// `LogRotateStep` is unset, so rotation with no step keeps ten thousand
+/// files. Reproduced rather than tidied: a file that says nothing must behave
+/// the way the user's own Tera Term behaves, and `LogOptions::rotate_keep`
+/// gets the number rather than the meaning of the zero.
+fn rotate_keep(s: &Settings) -> u32 {
+    if s.log_rotate != 1 {
+        return 0;
+    }
+    match s.log_rotate_step {
+        n if n > 0 => n as u32,
+        _ => 10_000,
     }
 }
 
@@ -161,6 +249,81 @@ mod tests {
         s.terminal_scrollback_lines = 1000;
         s.terminal_scrollback_enabled = false;
         assert_eq!(scrollback_max(&s), 0);
+    }
+
+    /// The timestamp is two keys, and which one answers depends on whether the
+    /// *first* is there at all.
+    #[test]
+    fn the_timestamp_type_falls_back_to_tera_term_4s_key() {
+        let of = |bytes: &[u8]| log_options(&Settings::load(&Ini::parse(bytes))).timestamp;
+
+        // The switch is a key of its own: a type with `LogTimestamp=off` is
+        // no stamp at all, which is what makes the setting pair usable.
+        assert_eq!(
+            of(b"[Tera Term]\r\nLogTimestampType=UTC\r\n"),
+            Timestamp::None
+        );
+
+        let on = b"[Tera Term]\r\nLogTimestamp=on\r\n";
+        assert_eq!(of(on), Timestamp::Local, "the `else` of the chain");
+
+        // A Tera Term 4 file: no type key, and the compatibility key answers.
+        let mut tt4 = on.to_vec();
+        tt4.extend_from_slice(b"LogTimestampUTC=on\r\n");
+        assert_eq!(of(&tt4), Timestamp::Utc);
+
+        // ...and the same file after a Tera Term 5 has saved it, which writes
+        // the new key and leaves the old one behind. Local wins, because the
+        // key it would have consulted is no longer absent.
+        let mut both = tt4.clone();
+        both.extend_from_slice(b"LogTimestampType=Local\r\n");
+        assert_eq!(of(&both), Timestamp::Local);
+
+        let mut elapsed = on.to_vec();
+        elapsed.extend_from_slice(b"LogTimestampType=ConnectionElapsed\r\n");
+        assert_eq!(of(&elapsed), Timestamp::ElapsedConnection);
+    }
+
+    /// Three keys decide rotation and two of them are traps: the size is
+    /// already in bytes, and a step of zero is ten thousand generations.
+    #[test]
+    fn rotation_reads_bytes_and_a_zero_step_is_not_none() {
+        let of = |bytes: &[u8]| log_options(&Settings::load(&Ini::parse(bytes)));
+
+        // Off by default, and the size alone does not switch it on.
+        let sized = of(b"[Tera Term]\r\nLogRotateSize=1048576\r\n");
+        assert_eq!((sized.rotate_size, sized.rotate_keep), (0, 0));
+
+        // `LogRotateSizeType=2` says the *dialog* shows this as 2 MB. The
+        // stored number is still bytes, so nothing here multiplies it.
+        let on =
+            of(b"[Tera Term]\r\nLogRotate=1\r\nLogRotateSize=2097152\r\nLogRotateSizeType=2\r\n");
+        assert_eq!(on.rotate_size, 2_097_152);
+        assert_eq!(on.rotate_keep, 10_000, "filesys_log.cpp:507's loopmax");
+
+        let stepped =
+            of(b"[Tera Term]\r\nLogRotate=1\r\nLogRotateSize=4096\r\nLogRotateStep=3\r\n");
+        assert_eq!((stepped.rotate_size, stepped.rotate_keep), (4096, 3));
+
+        // Neither 0 nor 1: upstream's `if` chain falls out and rotates
+        // nothing, so a range that clamped this to 1 would switch rotation on
+        // for a file that had it off.
+        let odd = of(b"[Tera Term]\r\nLogRotate=2\r\nLogRotateSize=4096\r\nLogRotateStep=3\r\n");
+        assert_eq!((odd.rotate_size, odd.rotate_keep), (0, 0));
+    }
+
+    #[test]
+    fn a_binary_log_is_the_mode_and_not_a_second_flag() {
+        let s = Settings::load(&Ini::parse(
+            b"[Tera Term]\r\nLogBinary=on\r\nLogAppend=on\r\nLogTimestamp=on\r\n",
+        ));
+        let o = log_options(&s);
+        assert_eq!(o.mode, LogMode::Raw);
+        assert!(o.append);
+        // Asked for and dropped, but by `SessionLog::open` rather than here —
+        // so the options a caller passes are the options they wrote, and the
+        // ones the log reports back are the ones in force.
+        assert_eq!(o.timestamp, Timestamp::Local);
     }
 
     #[test]

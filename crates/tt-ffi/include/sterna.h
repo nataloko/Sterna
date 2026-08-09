@@ -162,10 +162,24 @@ enum TtLogTimestamp
      */
     TT_LOG_TIMESTAMP_UTC,
     /**
-     * Seconds since the log was opened, as `H:MM:SS.mmm`. The one that is
-     * actually useful on a console: "how long after reset did it hang".
+     * Time since the log was opened, as `D HH:MM:SS.mmm` — `strelapsedW`
+     * (`ttlib_static.c:554`), whose leading field is **days** and is printed
+     * whether or not there have been any. The one that is actually useful on
+     * a console: "how long after reset did it hang".
      */
     TT_LOG_TIMESTAMP_ELAPSED,
+    /**
+     * The same clock, started at the *connection* rather than at the log —
+     * upstream's `TIMESTAMP_ELAPSED_CONNECTED`, which reads `cv.ConnectedTime`
+     * (`commlib.c:787`) where the one above reads `fv->StartTime`. The two
+     * agree until a log is opened by hand part-way through a session, which
+     * is exactly when the difference is the thing being asked about.
+     *
+     * With no connection open it falls back to the log's own start: upstream
+     * subtracts a `ConnectedTime` of zero from `GetTickCount()` and prints
+     * how long the machine has been up, which is not worth reproducing.
+     */
+    TT_LOG_TIMESTAMP_ELAPSED_CONNECTION,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L

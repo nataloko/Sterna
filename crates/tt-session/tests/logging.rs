@@ -111,6 +111,49 @@ fn timestamps_go_at_the_head_of_each_line_and_only_there() {
     assert!(lines[0].ends_with("] one more"), "{:?}", lines[0]);
     assert!(lines[1].ends_with("] two"), "{:?}", lines[1]);
     assert_eq!(lines[0].matches('[').count(), 1, "one stamp per line");
+
+    // `strelapsedW`'s own layout (`ttlib_static.c:554`): days, then the clock.
+    // The leading `0 ` looks like a stray field until you have had a console
+    // log running for a weekend, which is why upstream prints it.
+    let stamp = lines[0].split_once("] ").expect("a stamp").0;
+    assert!(
+        stamp.starts_with("[0 ") && stamp.len() == "[0 00:00:00.000".len(),
+        "not upstream's elapsed layout: {stamp:?}"
+    );
+}
+
+/// The other elapsed clock, which counts from the *connection*. Upstream reads
+/// `cv.ConnectedTime` at every stamp, so a reconnect restarts it — and a log
+/// opened before anything connected falls back to its own start rather than
+/// printing the machine's uptime.
+#[test]
+fn the_connection_clock_is_the_connections_and_survives_a_reconnect() {
+    let dir = Scratch::new("connstamp");
+    let path = dir.path("session.log");
+    let mut s = session();
+    s.start_log(
+        &path,
+        LogOptions {
+            timestamp: Timestamp::ElapsedConnection,
+            ..LogOptions::default()
+        },
+    )
+    .unwrap();
+    s.feed(b"before\r\n");
+
+    // A second connection while the log is open. The stamps carry on from the
+    // new one, which is what reading `cv.ConnectedTime` live amounts to.
+    let (transport, _handle) = MemoryTransport::new();
+    s.connect(Box::new(transport));
+    s.feed(b"after\r\n");
+    s.stop_log();
+
+    let text = fs::read_to_string(&path).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text:?}");
+    for line in &lines {
+        assert!(line.starts_with("[0 00:00:"), "{line:?}");
+    }
 }
 
 #[test]

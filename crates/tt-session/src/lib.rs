@@ -42,7 +42,7 @@ pub mod xfer;
 
 pub use log::{LogMode, LogOptions, SessionLog, Timestamp};
 pub use macros::{MacroLink, MACRO_BUF_SIZE};
-pub use settings::vt_config;
+pub use settings::{log_options, vt_config};
 pub use xfer::{xfer_options, TransferError, TransferOutcome, TransferReply, TransferStatus};
 // Re-exported rather than reached for directly, so that a frontend — the C ABI
 // above all — takes the settings and the metadata that describes them from the
@@ -135,6 +135,10 @@ pub struct Session {
     /// linked, which is what turns the tap in `tt-vt` on. See
     /// [`Session::link_macro`].
     macro_link: Option<MacroLink>,
+    /// `cv.ConnectedTime` (`commlib.c:787`) — when the current connection
+    /// opened, for the one log timestamp that counts from there rather than
+    /// from the log. `None` until something connects.
+    connected_at: Option<Instant>,
 }
 
 impl Session {
@@ -158,6 +162,7 @@ impl Session {
             xfer: None,
             xfer_reply: None,
             macro_link: None,
+            connected_at: None,
         }
     }
 
@@ -236,10 +241,28 @@ impl Session {
     pub fn connect(&mut self, conn: Box<dyn Transport>) {
         self.pending.clear();
         self.close_note = None;
+        self.connected_at = Some(Instant::now());
+        // Upstream reads `cv.ConnectedTime` at every stamp rather than at the
+        // log's open, so a log left running across a reconnect restarts its
+        // connection clock. Reproduced here by moving the origin, since the
+        // log holds an instant rather than asking for one.
+        self.sync_log_epoch();
         self.conn = Some(conn);
         let (cols, rows) = (self.vt.grid().cols(), self.vt.grid().rows());
         if let Some(c) = self.conn.as_mut() {
             let _ = c.resize(cols as u16, rows as u16);
+        }
+    }
+
+    /// Point an open [`Timestamp::ElapsedConnection`] log at the current
+    /// connection. A no-op for every other timestamp, and when nothing has
+    /// connected — see that variant for what upstream prints instead.
+    fn sync_log_epoch(&mut self) {
+        let (Some(at), Some(log)) = (self.connected_at, self.log.as_mut()) else {
+            return;
+        };
+        if log.options().timestamp == Timestamp::ElapsedConnection {
+            log.set_elapsed_origin(at);
         }
     }
 
@@ -392,6 +415,7 @@ impl Session {
         let text = opts.mode == LogMode::Text;
         let log = SessionLog::open(path, opts)?;
         self.log = Some(log);
+        self.sync_log_epoch();
         self.vt.set_log_text_enabled(text);
         // Whatever the tap collected before this point belongs to no log.
         let _ = self.vt.take_log_text();

@@ -48,9 +48,21 @@ pub enum Timestamp {
     Local,
     /// The same, in UTC.
     Utc,
-    /// Seconds since the log was opened, as `H:MM:SS.mmm`. The one that is
-    /// actually useful on a console: "how long after reset did it hang".
+    /// Time since the log was opened, as `D HH:MM:SS.mmm` — `strelapsedW`
+    /// (`ttlib_static.c:554`), whose leading field is **days** and is printed
+    /// whether or not there have been any. The one that is actually useful on
+    /// a console: "how long after reset did it hang".
     Elapsed,
+    /// The same clock, started at the *connection* rather than at the log —
+    /// upstream's `TIMESTAMP_ELAPSED_CONNECTED`, which reads `cv.ConnectedTime`
+    /// (`commlib.c:787`) where the one above reads `fv->StartTime`. The two
+    /// agree until a log is opened by hand part-way through a session, which
+    /// is exactly when the difference is the thing being asked about.
+    ///
+    /// With no connection open it falls back to the log's own start: upstream
+    /// subtracts a `ConnectedTime` of zero from `GetTickCount()` and prints
+    /// how long the machine has been up, which is not worth reproducing.
+    ElapsedConnection,
 }
 
 /// `ts.LogRotate*` plus the mode and timestamp keys.
@@ -171,6 +183,16 @@ impl SessionLog {
         self.paused
     }
 
+    /// Count [`Timestamp::ElapsedConnection`] from `at` rather than from the
+    /// moment this log opened.
+    ///
+    /// Separate from [`SessionLog::open`] because the log does not know what a
+    /// connection is and should not learn: the caller that has both is
+    /// [`crate::Session::start_log`], and it is the only one that calls this.
+    pub fn set_elapsed_origin(&mut self, at: Instant) {
+        self.started = at;
+    }
+
     /// Raw bytes off the wire. Ignored unless the log is in [`LogMode::Raw`].
     pub fn write_raw(&mut self, bytes: &[u8]) -> std::io::Result<()> {
         if self.paused || self.opts.mode != LogMode::Raw || bytes.is_empty() {
@@ -286,12 +308,15 @@ impl SessionLog {
     fn stamp(&self) -> String {
         match self.opts.timestamp {
             Timestamp::None => String::new(),
-            Timestamp::Elapsed => {
+            Timestamp::Elapsed | Timestamp::ElapsedConnection => {
+                // `strelapsedW`'s own fields, days included: a console log
+                // left open over a weekend is why upstream prints one.
                 let d = self.started.elapsed();
                 let secs = d.as_secs();
                 format!(
-                    "[{}:{:02}:{:02}.{:03}] ",
-                    secs / 3600,
+                    "[{} {:02}:{:02}:{:02}.{:03}] ",
+                    secs / 86_400,
+                    (secs / 3600) % 24,
                     (secs / 60) % 60,
                     secs % 60,
                     d.subsec_millis()
