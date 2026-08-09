@@ -10,7 +10,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use tt_conn::pty::{PtyConn, PtyParams};
-use tt_session::{Event, Session, TransferError, TransferOutcome};
+use tt_session::{Event, Session, TransferError, TransferOutcome, TransferReply};
 use tt_vt::Config;
 use tt_xfer::{Direction, Job, Link, Options};
 
@@ -106,6 +106,44 @@ fn a_file_goes_out_over_the_sessions_own_connection() {
     );
     // And the session is a terminal again.
     assert!(session.transfer().is_none());
+}
+
+/// The outcome also reaches somebody *waiting* for it on another thread, which
+/// is what a macro's transfer command blocks on: the event queue is the
+/// frontend's way of hearing and no use to a script that is not draining it.
+#[test]
+fn a_finished_transfer_answers_a_waiting_caller() {
+    if !have("rz") {
+        eprintln!("skipping: lrzsz is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("payload.bin");
+    let out = dir.path().join("out");
+    std::fs::create_dir(&out).unwrap();
+    payload(&src, 4096);
+
+    let mut session = session_on("rz -b", &out);
+    let reply = TransferReply::new();
+    session.send_files(ZSEND, &[&src], &opts()).unwrap();
+    session.notify_transfer(reply.clone());
+
+    // The waiter, which is the macro thread's shape: block in short turns so
+    // that it would still notice its own End button, and give up long after
+    // `run` below would have panicked.
+    let waiter = std::thread::spawn(move || {
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(90) {
+            if let Some(o) = reply.wait(Duration::from_millis(50)) {
+                return Some(o);
+            }
+        }
+        None
+    });
+
+    let outcome = run(&mut session, Duration::from_secs(60));
+    assert!(outcome.success, "{outcome:?}");
+    assert_eq!(waiter.join().unwrap(), Some(outcome));
 }
 
 /// The protocol's traffic must not reach the parser.

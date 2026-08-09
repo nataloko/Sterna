@@ -15,14 +15,19 @@
 //! The third list is short and it is written down at the bottom of this file
 //! rather than left to be discovered by a script.
 
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use tt_session::{LogMode, LogOptions, MacroLink, Session, Timestamp};
+use tt_session::{LogMode, LogOptions, MacroLink, Session, Timestamp, TransferReply};
 use tt_ttl::host::{
     BeepSound, ClearScreen, DialogEnd, DialogPos, ErrorReport, ListBoxOpts, LogClock, LogInfo,
-    LogOpen, MacroWindow, ScriptHost, SendMode, ShowWindow, WindowGeometry,
+    LogOpen, MacroWindow, ScriptHost, SendMode, ShowWindow, WindowGeometry, Xfer, XmodemOpt,
 };
 use tt_ttl::TtlError;
+// The sixteen transfer commands are the one place a macro reaches past the
+// session into the protocols themselves, because the command *is* the protocol
+// and its options.
+use tt_xfer::{Direction, Job as XferJob, KermitMode, XmodemOpt as XferXmodemOpt, YmodemOpt};
 
 use crate::channel::MacroSender;
 use crate::ui::MacroError;
@@ -36,6 +41,17 @@ use crate::ui::MacroError;
 /// nobody is watching. Two milliseconds is under a character time at 4800 baud
 /// and invisible against any dialog or prompt.
 const POLL: Duration = Duration::from_millis(2);
+
+/// How often something blocked on the *frontend* checks that it is still
+/// there.
+///
+/// A `wait` needs none of this: it polls a ring the frontend fills, so a
+/// frontend that has gone shows up as a line that has gone quiet. A transfer
+/// is the other shape — the answer is posted from over there and nothing here
+/// would ever notice its absence — so it asks, rarely enough to be free
+/// against a transfer's own traffic and often enough that a closed window does
+/// not leave a thread behind.
+const PROBE: Duration = Duration::from_millis(250);
 
 /// A macro's view of a running session.
 pub struct SessionHost {
@@ -428,6 +444,56 @@ impl ScriptHost for SessionHost {
             .unwrap_or(false)
     }
 
+    // ---- the transfers ----
+
+    /// All sixteen of them, of which fifteen are `tt-xfer`'s.
+    ///
+    /// **The command blocks until the transfer ends**, which is upstream's
+    /// shape as well and for a reason worth keeping: a script's next line
+    /// nearly always depends on the file having arrived. Upstream gets it by
+    /// parking `ttpmacro` in `IdTTLWaitCmndResult` until `ProtoEnd` sends a
+    /// DDE reply; here the transfer runs on the frontend's thread, the outcome
+    /// is posted to a [`TransferReply`], and this waits on that.
+    ///
+    /// The answer is `filesys_proto.cpp:442`'s: `result` is 1 when the
+    /// protocol succeeded and 0 for everything else, including a transfer that
+    /// never started because nothing is connected.
+    fn transfer(&mut self, req: &Xfer<'_>) -> Result<bool, TtlError> {
+        let plan = Plan::of(req, &self.transfer_dir)?;
+        let reply = TransferReply::new();
+        let armed = reply.clone();
+        if !self.ask(move |s| plan.start(s, armed))? {
+            // Upstream's `*Start*` returns FALSE, `ttdde.c` answers
+            // `DDE_FNOTPROCESSED`, and the macro reads a 0.
+            return Ok(false);
+        }
+
+        let mut cancelling = false;
+        let mut probed = Instant::now();
+        loop {
+            if let Some(outcome) = reply.wait(POLL) {
+                return Ok(outcome.success);
+            }
+            if !cancelling && self.tx.cancelled() {
+                cancelling = true;
+                // Asking is all it does. The protocol sends its cancel
+                // sequence and ends on its own terms — ZMODEM arms a 500 ms
+                // timer for it — so the wait goes on until the outcome
+                // arrives, which is also how upstream's End button behaves.
+                let _ = self.tx.call(|s, _| s.cancel_transfer());
+            }
+            if probed.elapsed() >= PROBE {
+                // The outcome is posted by the frontend's thread, so a
+                // frontend that has gone would leave this waiting for ever —
+                // and unlike a `wait`, nothing about a transfer polls the
+                // session. Every other method here notices by a call coming
+                // back empty; this one has to ask.
+                self.ask(|_| ())?;
+                probed = Instant::now();
+            }
+        }
+    }
+
     // ---- the transfer directory ----
 
     fn set_transfer_dir(&mut self, path: &[u8]) -> Result<(), TtlError> {
@@ -463,10 +529,8 @@ impl ScriptHost for SessionHost {
     //   silent successes because upstream's terminal answers
     //   `DDE_FNOTPROCESSED` for a connection that is not serial, which is the
     //   right answer for every transport this port has but one.
-    // `transfer` — sixteen commands over `tt-xfer`, which the session can
-    //   already run; what is missing is that `Session::send_files` returns
-    //   immediately and this has to block until the protocol reports, so it
-    //   needs a completion the channel can wait on rather than a job.
+    // `sendfile` — the one of the sixteen transfer commands that is not a
+    //   protocol; the reason is in `Plan::of`, where the other fifteen are.
     // `scp` — an SSH channel `tt-conn` does not open yet.
     // `send_broadcast`, `send_multicast`, `set_multicast_name`, `wait_for_all`
     //   — all four are about the *other* sessions, and this crate is handed
@@ -477,6 +541,199 @@ impl ScriptHost for SessionHost {
     // `log_pause`, `log_write`, `log_rotate` — `SessionLog` has no pause and no
     //   out-of-band write; small, and they want a test each.
     // `local_ip_addresses` — enumerating interfaces needs more than `std`.
+}
+
+/// A transfer command, resolved into what the session needs to start it.
+///
+/// Built on the macro's thread out of the borrowed request and then moved
+/// across, because nothing may be borrowed over the boundary.
+enum Plan {
+    Send {
+        job: XferJob,
+        files: Vec<PathBuf>,
+    },
+    Recv {
+        job: XferJob,
+        dir: PathBuf,
+        name: Option<PathBuf>,
+    },
+}
+
+impl Plan {
+    /// The mapping, which is `filesys_proto.cpp`'s `*Start*` functions read
+    /// for what they do to `ts` before calling `OpenProtoDlg`.
+    ///
+    /// Two things are the same in every arm and both are upstream's. A
+    /// relative filename is resolved against `ts.FileDir` — every one of those
+    /// functions does `IsRelativePathW` then `GetFileDir(&ts)` — and that same
+    /// directory is where a protocol that names its own file puts it, because
+    /// it is what `GetRecievePath` answers.
+    fn of(req: &Xfer<'_>, dir: &Option<Vec<u8>>) -> Result<Plan, TtlError> {
+        let send = |job, path: &[u8]| Plan::Send {
+            job,
+            files: vec![resolve(dir, path)],
+        };
+        let recv = |job| Plan::Recv {
+            job,
+            dir: recv_dir(dir),
+            name: None,
+        };
+        // For the three that are told a name: the same resolution, handed on
+        // as the name rather than as the directory. `Transfer::receive` joins
+        // it against the directory, and an absolute path wins that join.
+        let recv_named = |job, path: &[u8]| Plan::Recv {
+            job,
+            dir: recv_dir(dir),
+            name: Some(resolve(dir, path)),
+        };
+
+        Ok(match *req {
+            // `xmodemsend` has no binary argument, so the mode is whatever
+            // `ts.XmodemBin` says — and `GetOnOff(..., TRUE)` at
+            // `ttset.c:1051` says binary. It is not in the schema yet; when it
+            // is, this is one of the values `Session::transfer_options` should
+            // be answering.
+            Xfer::XmodemSend { path, opt } => send(
+                XferJob::XModem {
+                    dir: Direction::Send,
+                    opt: xmodem_opt(opt),
+                    text: false,
+                },
+                path,
+            ),
+            Xfer::XmodemRecv { path, binary, opt } => recv_named(
+                XferJob::XModem {
+                    dir: Direction::Receive,
+                    opt: xmodem_opt(opt),
+                    text: !binary,
+                },
+                path,
+            ),
+            // `Yopt1K` in both directions, hardcoded at
+            // `filesys_proto.cpp:1409` and `:1447` with the comment saying so.
+            Xfer::YmodemSend { path } => send(
+                XferJob::YModem {
+                    dir: Direction::Send,
+                    opt: YmodemOpt::K1,
+                },
+                path,
+            ),
+            Xfer::YmodemRecv => recv(XferJob::YModem {
+                dir: Direction::Receive,
+                opt: YmodemOpt::K1,
+            }),
+            Xfer::ZmodemSend { path, binary } => send(
+                XferJob::ZModem {
+                    dir: Direction::Send,
+                    binary,
+                    auto: false,
+                },
+                path,
+            ),
+            // `ZMODEMStartReceive` passes 0 and it does not matter:
+            // `zmodem.c:1008` overwrites `BinFlag` from the sender's own
+            // ZFILE header, so the peer decides.
+            Xfer::ZmodemRecv => recv(XferJob::ZModem {
+                dir: Direction::Receive,
+                binary: false,
+                auto: false,
+            }),
+            Xfer::KmtSend { path } => send(
+                XferJob::Kermit {
+                    mode: KermitMode::Send,
+                },
+                path,
+            ),
+            Xfer::KmtRecv => recv(XferJob::Kermit {
+                mode: KermitMode::Receive,
+            }),
+            // The one place the resolved path is not a local file: it is the
+            // name asked of the peer, and `kermit.c:1160` takes its basename
+            // before it goes in the `R` packet — so `kmtget` cannot name a
+            // remote directory, here or upstream.
+            Xfer::KmtGet { path } => recv_named(
+                XferJob::Kermit {
+                    mode: KermitMode::Get,
+                },
+                path,
+            ),
+            Xfer::KmtFinish => recv(XferJob::Kermit {
+                mode: KermitMode::Finish,
+            }),
+            Xfer::BPlusSend { path } => send(
+                XferJob::BPlus {
+                    dir: Direction::Send,
+                    auto: false,
+                },
+                path,
+            ),
+            Xfer::BPlusRecv => recv(XferJob::BPlus {
+                dir: Direction::Receive,
+                auto: false,
+            }),
+            Xfer::QuickVanSend { path } => send(
+                XferJob::QuickVan {
+                    dir: Direction::Send,
+                },
+                path,
+            ),
+            Xfer::QuickVanRecv => recv(XferJob::QuickVan {
+                dir: Direction::Receive,
+            }),
+            // Not a protocol: the line into a file until it has been quiet for
+            // `autostop`. **A `recvfile` that receives nothing never ends** —
+            // `raw.c:168` arms the stop timer in the packet reader, so it is
+            // the first byte that starts the clock and a zero-byte transfer
+            // waits as long as one with `autostop 0`.
+            Xfer::RecvFile { path, autostop } => recv_named(XferJob::Raw { autostop }, path),
+            // `sendfile` is the File menu's, not `ttpfile`'s: upstream runs it
+            // from `filesys.cpp:359` a byte at a time through the terminal's
+            // own write path, with bracketed paste, local echo and the DBCS
+            // decoding that goes with them. `raw.h` says outright that there
+            // is no raw *send* protocol. It wants `Session`'s own file send,
+            // which nothing has needed yet — the shell has no File menu.
+            Xfer::SendFile { .. } => return Err(TtlError::NotSupported),
+        })
+    }
+
+    fn start(self, s: &mut Session, reply: TransferReply) -> bool {
+        let opts = s.transfer_options();
+        let started = match self {
+            Plan::Send { job, files } => s.send_files(job, &files, &opts).is_ok(),
+            Plan::Recv { job, dir, name } => {
+                let name = name.map(|p| p.to_string_lossy().into_owned());
+                s.receive_files(job, &dir, name.as_deref(), &opts).is_ok()
+            }
+        };
+        // Only once it is actually running, so that a refused start cannot
+        // leave a reply armed for somebody else's transfer.
+        if started {
+            s.notify_transfer(reply);
+        }
+        started
+    }
+}
+
+/// The macro language's XMODEM option, in `tt-xfer`'s terms.
+///
+/// The two enumerations are the same three values under different names; the
+/// fourth, `Xopt1kCksum`, is unreachable from a macro because the interpreter
+/// has already folded the argument against what the *sender* gets to choose.
+fn xmodem_opt(opt: XmodemOpt) -> XferXmodemOpt {
+    match opt {
+        XmodemOpt::Checksum => XferXmodemOpt::Checksum,
+        XmodemOpt::Crc => XferXmodemOpt::Crc,
+        XmodemOpt::Crc1K => XferXmodemOpt::Crc1K,
+    }
+}
+
+/// Where a protocol that names its own file puts it — `GetRecievePath`, which
+/// upstream answers with `ts.FileDir`.
+fn recv_dir(dir: &Option<Vec<u8>>) -> PathBuf {
+    match dir {
+        Some(d) => PathBuf::from(String::from_utf8_lossy(d).into_owned()),
+        None => PathBuf::from("."),
+    }
 }
 
 /// Resolve a filename the way a transfer or a log does: against `changedir`'s

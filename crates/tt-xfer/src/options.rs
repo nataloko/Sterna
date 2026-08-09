@@ -372,6 +372,25 @@ impl Job {
         }
     }
 
+    /// Whether a *receive* has to be told a name, because this job's does not
+    /// come off the wire.
+    ///
+    /// Three do, for three different reasons — XMODEM carries no filename at
+    /// all, `raw.c:80` writes into whatever it is handed, and a Kermit `GET`
+    /// is asking the peer for a name rather than being told one. All three
+    /// read it through `GetNextFname`, which is why a receive puts it in the
+    /// *send* list.
+    pub(crate) fn needs_name(self) -> bool {
+        matches!(
+            self,
+            Job::XModem { .. }
+                | Job::Raw { .. }
+                | Job::Kermit {
+                    mode: KermitMode::Get
+                }
+        )
+    }
+
     /// `SetOpt`'s option word, which every protocol spells differently.
     pub(crate) fn opt(self) -> i32 {
         match self {

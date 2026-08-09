@@ -41,7 +41,7 @@ pub mod xfer;
 pub use log::{LogMode, LogOptions, SessionLog, Timestamp};
 pub use macros::{MacroLink, MACRO_BUF_SIZE};
 pub use settings::vt_config;
-pub use xfer::{xfer_options, TransferError, TransferOutcome, TransferStatus};
+pub use xfer::{xfer_options, TransferError, TransferOutcome, TransferReply, TransferStatus};
 // Re-exported rather than reached for directly, so that a frontend — the C ABI
 // above all — takes the settings and the metadata that describes them from the
 // same place it takes the session they belong to.
@@ -125,6 +125,10 @@ pub struct Session {
     settings: Settings,
     /// The file transfer that owns the byte stream, if one is running.
     xfer: Option<xfer::Running>,
+    /// Where the running transfer's outcome goes besides the event queue, for
+    /// a caller on another thread that is blocked on it. See
+    /// [`Session::notify_transfer`].
+    xfer_reply: Option<TransferReply>,
     /// The linked macro's byte ring — `Some` for exactly as long as one is
     /// linked, which is what turns the tap in `tt-vt` on. See
     /// [`Session::link_macro`].
@@ -150,6 +154,7 @@ impl Session {
             close_note: None,
             settings: Settings::default(),
             xfer: None,
+            xfer_reply: None,
             macro_link: None,
         }
     }

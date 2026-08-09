@@ -14,10 +14,15 @@ description = "A running TTL macro, joined to a running session"
 tt-conn.workspace = true
 tt-session.workspace = true
 tt-ttl.workspace = true
+# For the transfer commands alone: a `zmodemsend` names a protocol and its
+# options, and there is nothing to be gained by copying that enumeration into
+# a third place. `tt-session` compiles it either way.
+tt-xfer.workspace = true
 
 [dev-dependencies]
 tt-grid.workspace = true
 tt-vt.workspace = true
+tempfile = "3"
 
 # One `poll(2)`, to assert that the wakeup descriptor goes quiet and then
 # wakes. Asserting it is *returned* would prove nothing.

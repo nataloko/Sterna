@@ -13,6 +13,7 @@
 //! screenful of `**\x18B00`.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use tt_config::Settings;
@@ -46,6 +47,55 @@ pub struct TransferOutcome {
     /// Bytes moved, for the status line.
     pub bytes: i64,
     pub elapsed: Duration,
+}
+
+/// Somewhere for a finished transfer's outcome to be *waited* for, rather than
+/// collected from the event queue.
+///
+/// The event is how a frontend hears; this is how a caller on another thread
+/// does, and today that caller is a macro. Upstream the two are the same
+/// mechanism seen from two processes: a transfer command parks `ttpmacro` in
+/// `IdTTLWaitCmndResult` and `ProtoEnd` sends the answer back over DDE, so a
+/// script blocks for as long as the transfer takes and hears exactly once how
+/// it went. A macro thread here has the same shape and needs the same reply.
+///
+/// A clone shares the slot — the session keeps one end and the waiter the
+/// other — and it is a one-shot: [`take`](TransferReply::take) empties it, and
+/// the session drops its end when it fires.
+#[derive(Clone, Debug, Default)]
+pub struct TransferReply(Arc<(Mutex<Option<TransferOutcome>>, Condvar)>);
+
+impl TransferReply {
+    pub fn new() -> TransferReply {
+        TransferReply::default()
+    }
+
+    /// The session's end: the transfer ended, this is how.
+    pub fn post(&self, outcome: TransferOutcome) {
+        let (slot, wake) = &*self.0;
+        *slot.lock().unwrap() = Some(outcome);
+        wake.notify_all();
+    }
+
+    /// The waiter's end: block for up to `timeout`, and take the outcome if it
+    /// has arrived.
+    ///
+    /// A timeout rather than a plain wait so that the caller keeps the turn —
+    /// a macro has an End button to answer and a frontend that may have gone,
+    /// neither of which this can see.
+    pub fn wait(&self, timeout: Duration) -> Option<TransferOutcome> {
+        let (slot, wake) = &*self.0;
+        let guard = slot.lock().unwrap();
+        let (mut guard, _) = wake
+            .wait_timeout_while(guard, timeout, |o| o.is_none())
+            .unwrap();
+        guard.take()
+    }
+
+    /// The outcome if it is already there, without waiting.
+    pub fn take(&self) -> Option<TransferOutcome> {
+        self.0 .0.lock().unwrap().take()
+    }
 }
 
 pub(crate) struct Running {
@@ -123,8 +173,10 @@ impl crate::Session {
 
     /// Start receiving into `dir`.
     ///
-    /// `name` is XMODEM's alone: its wire format carries no filename, so there
-    /// is nothing to derive a destination from and the caller supplies one.
+    /// `name` is for the three jobs that are not told one by the far end —
+    /// XMODEM, whose format carries no filename; a raw receive, which pours
+    /// the line into whatever it is handed; and a Kermit `GET`, where it is
+    /// the *remote* name being asked for. See [`Transfer::receive`].
     pub fn receive_files(
         &mut self,
         job: Job,
@@ -153,6 +205,26 @@ impl crate::Session {
         // interleaved with the protocol's first packet.
         self.pending.clear();
         self.xfer = Some(Running { xfer, sending });
+    }
+
+    /// Post the *next* transfer's outcome to `reply` as well as pushing it as
+    /// an event.
+    ///
+    /// Armed by whoever is about to start one and cleared when it fires, so a
+    /// caller that blocks on a reply cannot be woken by somebody else's
+    /// transfer. Starting one is the frontend's own thread either way, so
+    /// arming and starting in the same breath is atomic against pumping.
+    pub fn notify_transfer(&mut self, reply: TransferReply) {
+        self.xfer_reply = Some(reply);
+    }
+
+    /// The one place a transfer ends. Both callers reach it.
+    fn finish_transfer(&mut self, outcome: TransferOutcome) {
+        if let Some(reply) = self.xfer_reply.take() {
+            reply.post(outcome.clone());
+        }
+        self.events
+            .push(crate::Event::TransferDone(Box::new(outcome)));
     }
 
     /// Whether a transfer is running, and how it is doing.
@@ -265,8 +337,7 @@ impl crate::Session {
 
         if running.xfer.is_done() {
             let outcome = running.outcome();
-            self.events
-                .push(crate::Event::TransferDone(Box::new(outcome)));
+            self.finish_transfer(outcome);
             Ok(true)
         } else {
             let status = running.status();
@@ -288,7 +359,56 @@ impl crate::Session {
         running.xfer.disconnected();
         running.xfer.poll();
         let outcome = running.outcome();
-        self.events
-            .push(crate::Event::TransferDone(Box::new(outcome)));
+        self.finish_transfer(outcome);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn outcome(success: bool) -> TransferOutcome {
+        TransferOutcome {
+            success,
+            cancelled: false,
+            message: None,
+            bytes: 12,
+            elapsed: Duration::from_millis(3),
+        }
+    }
+
+    /// A clone is the same slot, and the outcome comes out exactly once.
+    #[test]
+    fn a_reply_carries_the_outcome_across_a_clone_and_empties() {
+        let a = TransferReply::new();
+        let b = a.clone();
+        assert!(b.take().is_none());
+        a.post(outcome(true));
+        assert_eq!(b.take(), Some(outcome(true)));
+        assert!(a.take().is_none());
+    }
+
+    /// Waiting for one that never comes gives the turn back rather than
+    /// hanging — which is what lets a blocked macro still answer End.
+    #[test]
+    fn a_wait_with_nothing_posted_gives_up() {
+        let r = TransferReply::new();
+        let start = std::time::Instant::now();
+        assert!(r.wait(Duration::from_millis(20)).is_none());
+        assert!(start.elapsed() >= Duration::from_millis(20));
+    }
+
+    #[test]
+    fn a_wait_returns_as_soon_as_the_other_side_posts() {
+        let r = TransferReply::new();
+        let poster = r.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(10));
+            poster.post(outcome(false));
+        });
+        // Ten times longer than the post will take, so a wait that only woke
+        // on its own timeout would be visible.
+        let got = r.wait(Duration::from_secs(10));
+        assert_eq!(got, Some(outcome(false)));
     }
 }

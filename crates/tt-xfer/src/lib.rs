@@ -140,11 +140,21 @@ impl Transfer {
 
     /// Receive into `dir`.
     ///
-    /// `name` is only for XMODEM, whose wire format carries no filename at
-    /// all: there is nothing to derive a destination from, so the caller
-    /// supplies one. Passing it for a protocol that *does* carry a name would
-    /// override the peer's, so the other protocols ignore it — which is what
-    /// upstream's receive dialog does with the same field.
+    /// `name` is for the three jobs whose destination does not come off the
+    /// wire, and it means something different in each:
+    ///
+    /// - **XMODEM**, whose format carries no filename at all, so there is
+    ///   nothing to derive a destination from.
+    /// - **Raw**, which is not a protocol: `raw.c:80` opens `GetNextFname`'s
+    ///   answer for writing and pours the line into it.
+    /// - **A Kermit `GET`**, where it is not a destination at all but the
+    ///   *remote* name to ask for — `kermit.c:1159` takes it from the same
+    ///   list and puts its **basename** in the `R` packet, so a directory in
+    ///   it cannot reach the peer.
+    ///
+    /// Every other protocol takes the name its sender gives, and supplying one
+    /// would override the peer's — which is what upstream's receive dialog
+    /// does with the same field.
     pub fn receive(
         job: Job,
         dir: impl AsRef<Path>,
@@ -158,12 +168,14 @@ impl Transfer {
         if unsafe { ffi::tt_xfer_set_recv_dir(t.raw, cdir.as_ptr()) } == 0 {
             return Err(Error::Refused("could not record the receive directory"));
         }
-        if matches!(job, Job::XModem { .. }) {
+        if job.needs_name() {
             let Some(name) = name else {
                 return Err(Error::NothingToDo);
             };
-            // XMODEM reaches for its destination through GetNextFname, which
-            // is the same service the send side uses to walk its file list.
+            // All three reach for it through GetNextFname, which is the same
+            // service the send side uses to walk its file list. An absolute
+            // `name` replaces `dir` here, which is what `join` does and what a
+            // macro that named a full path means.
             let target = cstr(&dir.join(name))?;
             // SAFETY: as above.
             if unsafe { ffi::tt_xfer_add_send_file(t.raw, target.as_ptr()) } == 0 {
@@ -487,6 +499,32 @@ mod tests {
             .mode(),
             3
         );
+    }
+
+    /// The three receives whose name the caller supplies, and the reason each
+    /// is in the list. Getting this wrong is silent: `GetNextFname` answers
+    /// NULL and the protocol opens a file called nothing.
+    #[test]
+    fn only_three_receives_are_told_their_own_name() {
+        assert!(Job::Raw {
+            autostop: Duration::ZERO
+        }
+        .needs_name());
+        assert!(Job::Kermit {
+            mode: KermitMode::Get
+        }
+        .needs_name());
+        // A Kermit receive is told by its sender, and a finish moves no file.
+        assert!(!Job::Kermit {
+            mode: KermitMode::Receive
+        }
+        .needs_name());
+        assert!(!Job::ZModem {
+            dir: Direction::Receive,
+            binary: true,
+            auto: false
+        }
+        .needs_name());
     }
 
     #[test]
