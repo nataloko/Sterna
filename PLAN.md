@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `CLAUDE.md`.
 
-**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 156
+**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 180
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1057,8 +1057,11 @@ before anything else in every session.
   `crates/tt-ttl/tests/scripts.rs` runs upstream's own 53 macros against a
   golden transcript each — including the `ttpmacro` command line, so the three
   scripts that check their own answers now do it against real arguments. See
-  below. What is left is not in the crate: a host that is a terminal rather
-  than a recorder, and a way to reach one from outside the process.
+  below. `crates/tt-macro/` is the host that is a terminal rather than a
+  recorder, 2026-08-09, including the transfers — what is left is a way to
+  reach one from outside the process, and the three commands listed at the
+  bottom of `tt-macro/src/host.rs` that want subsystems this port has not
+  built.
 - **Lua via `mlua`** over the same `ScriptHost` command table (~500 LOC glue).
 - `ttctl` JSON-RPC control socket replacing DDE. Keep a `ttpmacro script.ttl`
   CLI entry point so existing shortcuts and `.bat` wrappers keep working.
@@ -2224,9 +2227,67 @@ real session over a `MemoryTransport`, including the two that matter most: a
 `waitregex` anchored with `$` failing where `\r$` succeeds, driven end to end
 for the first time, and End releasing a macro blocked in a `wait` with no
 timeout. What the host still refuses is listed at the bottom of
-`crates/tt-macro/src/host.rs` with a reason each; the two that block real use
-are `connect`, which wants the Tera Term command-line parser the CLI entry point
-also wants, and `transfer`, which wants a completion the channel can wait on.
+`crates/tt-macro/src/host.rs` with a reason each; the one that blocks real use
+is `connect`, which wants the Tera Term command-line parser the CLI entry point
+also wants.
+
+#### And then it could move a file, which needed something to wait on
+
+`crates/tt-macro/src/host.rs`'s `Plan`, plus `TransferReply` in `tt-session`,
+2026-08-09. Fifteen of the sixteen transfer commands, which is every one that
+is a protocol.
+
+**The command blocks, and that is the whole difficulty.** `Session::send_files`
+returns as soon as the protocol has started, because a transfer is driven by
+the frontend's pump; a macro is on another thread and has nothing to watch. So
+`TransferReply` is a one-shot the session posts the outcome to alongside the
+event, and the macro parks on a condvar until it arrives. That is upstream's
+shape rather than a new one — a transfer command puts `ttpmacro` in
+`IdTTLWaitCmndResult` and `ProtoEnd` answers over DDE — and it is the second
+thing to cross this boundary without being a job, after the byte ring, for the
+same reason: it is not work for the frontend to do.
+
+Two details are not obvious. **Cancelling asks and then keeps waiting**: the
+protocol sends its cancel sequence and ends on its own terms, which for ZMODEM
+is a 500 ms timer, so End is followed by a wait rather than by a return. And a
+transfer is the one blocking command that cannot notice a dead frontend on its
+own — a `wait` polls a ring that goes quiet, but an outcome that is *posted*
+never arrives at all — so it knocks every 250 ms, which is free against a
+transfer's own traffic.
+
+**The mapping is `filesys_proto.cpp`'s `*Start*` functions read for what they
+do to `ts` before opening the dialog**, not for their signatures. Two things
+are the same in every one: a relative filename is resolved against
+`ts.FileDir`, and that same directory is where a protocol that names its own
+file puts what arrives. The per-protocol answers are mostly settings rather
+than arguments — `xmodemsend` has no binary flag, so `ts.XmodemBin` decides and
+`ttset.c:1051` makes it binary; YMODEM is `Yopt1K` in both directions,
+hardcoded with a comment saying so; and ZMODEM's receive flag does not matter
+at all, because `zmodem.c:1008` overwrites it from the sender's own ZFILE
+header.
+
+It also corrected `tt-xfer`, which believed only XMODEM is told its own
+destination. Three are, for three different reasons: XMODEM carries no filename,
+`raw.c:80` writes into whatever `GetNextFname` hands it, and a Kermit `GET`'s
+name is the **remote** one being asked for — `kermit.c:1160` takes its basename
+before it goes in the `R` packet, so `kmtget` cannot name a remote directory
+here or upstream. Without that, `kmtget` and `recvfile` would have opened a
+file called nothing.
+
+**`sendfile` is the one that is still refused, and it is not laziness.** It is
+the File menu's, not `ttpfile`'s: `filesys.cpp:359` runs it a byte at a time
+through the terminal's own write path, with bracketed paste, local echo and
+DBCS decoding, and `raw.h` says outright that there is no raw *send* protocol.
+It wants a `Session::send_file` that nothing has needed yet, because the shell
+has no File menu either — one feature, two callers, and its own tests.
+
+Four integration tests drive it on a real thread against a real session, using
+the raw receive because it is the only protocol that needs no peer. The one
+that matters is the wait: a `recvfile` with a one-second auto-stop takes a
+second, and the `result` the script sends afterwards could not have been sent
+before. The other three are the auto-stop that never fires, the cancel, and a
+transfer that fails to start — which is `result` 0 rather than an error, and
+returns at once.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 

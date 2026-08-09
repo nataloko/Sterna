@@ -790,6 +790,28 @@ And for the macro language:
   takes the tokens as given and skips both `GetParam` and `DequoteParam`;
   `CmdLine::parse` is for a genuine command line, which is Stage 3 and the
   `.bat` transcriptions in `tests/scripts.rs`.
+- **A `recvfile` that receives nothing waits for ever, whatever its auto-stop
+  says.** `raw.c:168` arms the stop timer inside the *packet reader*, so the
+  first byte starts the clock — the argument means "quiet for this long after
+  something arrived", not "give up after this long". A capture that the host
+  never answers is indistinguishable from a hung macro, and End is the only
+  thing that ends it. `raw.c:184` also throws away whatever was already
+  buffered when the transfer starts, so the prompt that triggered it is not in
+  the file.
+- **Three receives are told their own name and four hear it from the wire**,
+  and getting the list wrong fails silently: `GetNextFname` answers NULL and
+  the protocol opens a file called nothing. XMODEM carries no filename, `raw.c`
+  writes into whatever it is handed, and a Kermit `GET`'s name is the
+  **remote** one — `kermit.c:1160` takes its basename before it goes in the `R`
+  packet, so `kmtget 'sub/x'` asks the peer for `x`. `Job::needs_name` is the
+  list.
+- **A transfer is the one blocking command a macro cannot notice a dead
+  frontend from.** Everything else either polls the ring — which goes quiet
+  when the terminal does — or is a job that comes back empty. A transfer's
+  outcome is *posted* from the other thread, so a window that closed mid-ZMODEM
+  would leave the macro thread parked on a condvar for ever. `PROBE` in
+  `tt-macro/src/host.rs` is a quarter-second knock on the door, and it is there
+  for that and nothing else.
 
 And for the C ABI:
 
