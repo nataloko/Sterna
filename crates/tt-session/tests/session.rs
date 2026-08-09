@@ -188,15 +188,28 @@ fn a_break_from_the_far_end_becomes_an_event_not_a_nul() {
 }
 
 #[test]
-fn send_break_reaches_the_transport() {
+fn send_break_reaches_the_transport_and_holds_for_what_the_file_says() {
     let (mut s, h) = connected(20, 4);
-    s.send_break(Duration::from_millis(1)).unwrap();
+    s.send_break().unwrap();
     assert_eq!(h.with(|st| st.breaks), 1);
+    // `SendBreakTime`'s default, and the point of the setting being the only
+    // thing allowed to say: this used to be 300 ms in the window and 250 in
+    // the macro host, neither of them upstream's.
+    assert_eq!(
+        h.with(|st| st.last_break),
+        Some(Duration::from_millis(1000))
+    );
+
+    let mut settings = s.settings().clone();
+    settings.serial_break_time = 5;
+    s.set_settings(settings).unwrap();
+    s.send_break().unwrap();
+    assert_eq!(h.with(|st| st.last_break), Some(Duration::from_millis(5)));
 
     // And with nothing attached it is a no-op rather than an error: the user
     // pressing the break key at a dead session should not raise a dialog.
     s.disconnect();
-    s.send_break(Duration::from_millis(1)).unwrap();
+    s.send_break().unwrap();
 }
 
 #[test]

@@ -199,7 +199,9 @@ public:
     void focus(bool focused);
     void resize(int cols, int rows);
     void setCellPixels(int w, int h);
-    void sendBreak(int ms);
+    /// How long the line is held is `SendBreakTime`'s, so there is nothing to
+    /// pass — see `tt_session_send_break`.
+    void sendBreak();
 
     // --- session logging ----------------------------------------------------
 

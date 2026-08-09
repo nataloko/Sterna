@@ -289,9 +289,11 @@ impl ScriptHost for SessionHost {
     }
 
     fn send_break(&mut self) -> Result<(), TtlError> {
-        // 250 ms, which is what upstream's serial break holds for
-        // (`commlib.c`'s `SetCommBreak`/`Sleep`/`ClearCommBreak`).
-        self.ask(|s| s.send_break(Duration::from_millis(250)))?
+        // No duration here, because upstream's `sendbreak` has none to give:
+        // it posts the menu command (`ttdde.c:801`) and the length comes from
+        // `SendBreakTime`, same as the menu's. This held 250 ms against a
+        // comment claiming that was upstream's; the file says 1000.
+        self.ask(|s| s.send_break())?
             .map_err(|_| TtlError::CantCall)
     }
 

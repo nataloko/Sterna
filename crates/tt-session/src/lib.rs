@@ -995,7 +995,16 @@ impl Session {
     /// Send a line break — `CommSendBreak`. On a serial console this is how
     /// you reach a `getty` or drop a Sun box to its PROM.
     ///
-    pub fn send_break(&mut self, dur: Duration) -> Result<()> {
+    /// **The duration is the setting's and not the caller's.** Upstream has
+    /// exactly one break length, `ts.SendBreakTime` (`vtwin.cpp:4906`), and
+    /// every way of asking for one arrives there: the menu, the accelerator,
+    /// and a macro's `sendbreak`, which posts the menu command through DDE
+    /// (`ttdde.c:801`) rather than carrying a length of its own. So a
+    /// parameter here is a parameter every caller has to invent a value for,
+    /// which is what happened — 300 ms in the window, 250 in the macro host,
+    /// and neither of them the file's 1000.
+    pub fn send_break(&mut self) -> Result<()> {
+        let dur = Duration::from_millis(self.settings.serial_break_time.max(0) as u64);
         match self.conn.as_mut() {
             Some(c) => c.send_break(dur),
             None => Ok(()),
@@ -1202,6 +1211,9 @@ pub struct MemoryState {
     pub disconnected: bool,
     pub last_resize: Option<(u16, u16)>,
     pub breaks: usize,
+    /// How long the last one was asked to hold for — `SendBreakTime`, since
+    /// nothing else is allowed to name a duration.
+    pub last_break: Option<Duration>,
     /// Most bytes to accept per write, or 0 for all of them. Set it to 1 to
     /// behave like a line held by flow control.
     pub write_chunk: usize,
@@ -1267,8 +1279,11 @@ impl Transport for MemoryTransport {
         })
     }
 
-    fn send_break(&mut self, _dur: Duration) -> Result<()> {
-        self.0.with(|s| s.breaks += 1);
+    fn send_break(&mut self, dur: Duration) -> Result<()> {
+        self.0.with(|s| {
+            s.breaks += 1;
+            s.last_break = Some(dur);
+        });
         Ok(())
     }
 

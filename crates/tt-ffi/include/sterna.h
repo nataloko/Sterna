@@ -2680,8 +2680,12 @@ void tt_session_set_cell_pixels(TtSession *session, int32_t w, int32_t h);
  * Send a line break — `CommSendBreak`. On a serial console this is how you
  * reach a `getty` or drop a Sun box to its PROM. A no-op with nothing
  * connected.
+ *
+ * How long it holds is `SendBreakTime`, and there is deliberately no
+ * parameter for it: upstream has one break length and every caller reaches
+ * it, so an argument here is one every frontend has to make up.
  */
-TtStatus tt_session_send_break(TtSession *session, uint32_t ms);
+TtStatus tt_session_send_break(TtSession *session);
 
 /**
  * Feed bytes as though they had arrived from the far end.

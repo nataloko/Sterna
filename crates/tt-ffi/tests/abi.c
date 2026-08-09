@@ -895,7 +895,7 @@ static void test_null_safety(void)
     CHECK(!tt_session_backspace_sends_bs(NULL));
     CHECK(tt_session_send_text(NULL, "x", 1) == TT_ERR_INVALID);
     CHECK(tt_session_focus(NULL, true) == TT_ERR_INVALID);
-    CHECK(tt_session_send_break(NULL, 1) == TT_ERR_INVALID);
+    CHECK(tt_session_send_break(NULL) == TT_ERR_INVALID);
     tt_session_feed(NULL, NULL, 0);
     tt_session_disconnect(NULL);
     CHECK(!tt_session_is_connected(NULL));

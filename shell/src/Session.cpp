@@ -469,9 +469,9 @@ void Session::setCellPixels(int w, int h)
     tt_session_set_cell_pixels(m_session, w, h);
 }
 
-void Session::sendBreak(int ms)
+void Session::sendBreak()
 {
-    if (tt_session_send_break(m_session, static_cast<uint32_t>(ms)) != TT_OK) {
+    if (tt_session_send_break(m_session) != TT_OK) {
         emit notice(QString::fromUtf8(tt_last_error()));
     }
 }

@@ -1867,10 +1867,14 @@ pub extern "C" fn tt_session_set_cell_pixels(session: *mut TtSession, w: i32, h:
 /// Send a line break — `CommSendBreak`. On a serial console this is how you
 /// reach a `getty` or drop a Sun box to its PROM. A no-op with nothing
 /// connected.
+///
+/// How long it holds is `SendBreakTime`, and there is deliberately no
+/// parameter for it: upstream has one break length and every caller reaches
+/// it, so an argument here is one every frontend has to make up.
 #[no_mangle]
-pub extern "C" fn tt_session_send_break(session: *mut TtSession, ms: u32) -> TtStatus {
+pub extern "C" fn tt_session_send_break(session: *mut TtSession) -> TtStatus {
     let s = session!(session, TT_ERR_INVALID);
-    match s.session.send_break(Duration::from_millis(ms.into())) {
+    match s.session.send_break() {
         Ok(()) => TT_OK,
         Err(e) => report(e),
     }

@@ -35,10 +35,6 @@
 
 namespace {
 
-/// `CommSendBreak`'s duration. Long enough for a `getty` and for a Sun PROM,
-/// both of which want a break of a few hundred milliseconds.
-constexpr int kBreakMs = 300;
-
 /// What the schema says a setting ships as.
 ///
 /// Read out of the table rather than written down a second time here, which is
@@ -654,7 +650,7 @@ void MainWindow::disconnectPort()
 
 void MainWindow::sendBreak()
 {
-    m_session->sendBreak(kBreakMs);
+    m_session->sendBreak();
 }
 
 void MainWindow::sendFile()
