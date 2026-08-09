@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use crate::error::{TtlError, TtlResult};
 use crate::expr::{self, Eval};
-use crate::host::ScriptHost;
+use crate::host::{ScriptHost, SendMode};
 use crate::interp::Interp;
 use crate::rsv::Rsv;
 use crate::vars::{VarRef, VarType};
@@ -100,7 +100,7 @@ impl Interp {
     /// A string goes out as its bytes and an integer as its **low byte only**,
     /// which is how `send 'x' 13 10` writes a line ending. Anything else is a
     /// type mismatch.
-    fn param_strings(&mut self) -> TtlResult<Vec<u8>> {
+    pub(crate) fn param_strings(&mut self) -> TtlResult<Vec<u8>> {
         let mut out = Vec::new();
         loop {
             if let Some(s) = self.lx.string()? {
@@ -130,7 +130,7 @@ impl Interp {
         if ln {
             bytes.push(0x0d);
         }
-        host.send(&bytes)
+        host.send(&bytes, SendMode::Compat)
     }
 
     fn cmd_flush_recv(&mut self, host: &mut dyn ScriptHost) -> TtlResult<()> {

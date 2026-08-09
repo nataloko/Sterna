@@ -29,6 +29,7 @@ pub mod lexer;
 pub mod logcmds;
 pub mod pathcmds;
 pub mod rsv;
+pub mod sendcmds;
 pub mod sesscmds;
 pub mod strcmds;
 pub mod strftime;
@@ -40,7 +41,7 @@ pub use error::{TtlError, TtlResult};
 pub use host::{
     BeepSound, ClearScreen, DebugMode, DialogAnchor, DialogEnd, DialogOrigin, DialogPos,
     ErrorReport, FlowControl, ListBoxOpts, LogClock, LogInfo, LogOpen, LogRotate, MacroWindow,
-    ModemLines, RecordingHost, ScriptHost, ShowWindow, WindowGeometry, WindowState, Xfer,
+    ModemLines, RecordingHost, ScriptHost, SendMode, ShowWindow, WindowGeometry, WindowState, Xfer,
     XmodemOpt,
 };
 pub use interp::Interp;

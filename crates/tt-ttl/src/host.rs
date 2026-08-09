@@ -70,8 +70,76 @@ pub trait ScriptHost {
     }
 
     /// `send` and `sendln` — bytes out of the connection, unchanged.
-    fn send(&mut self, bytes: &[u8]) -> Result<(), TtlError> {
-        let _ = bytes;
+    fn send(&mut self, bytes: &[u8], mode: SendMode) -> Result<(), TtlError> {
+        let _ = (bytes, mode);
+        Err(TtlError::NotSupported)
+    }
+
+    /// `sendbroadcast` / `sendlnbroadcast` — the same bytes to **every**
+    /// terminal, not just this one.
+    ///
+    /// Upstream is one `ttpmacro.exe` poking one `ttermpro.exe`, which then
+    /// broadcasts a window message to its siblings; here it is one frontend
+    /// that owns however many sessions, so the whole thing is this method. A
+    /// terminal with `AcceptBroadcast` off ignores what arrives, which the
+    /// documentation says and which is the receiver's decision either way.
+    fn send_broadcast(&mut self, text: &[u8]) -> Result<(), TtlError> {
+        let _ = text;
+        Err(TtlError::NotSupported)
+    }
+
+    /// `sendmulticast` — the same, to the terminals answering to `name`.
+    fn send_multicast(&mut self, name: &[u8], text: &[u8]) -> Result<(), TtlError> {
+        let _ = (name, text);
+        Err(TtlError::NotSupported)
+    }
+
+    /// `setmulticastname` — the name **this** terminal answers to.
+    fn set_multicast_name(&mut self, name: &[u8]) -> Result<(), TtlError> {
+        let _ = name;
+        Err(TtlError::NotSupported)
+    }
+
+    /// `sendkcode` — press a key, by the code `KEYCODE.EXE` reports, `repeat`
+    /// times.
+    ///
+    /// Not a character: it runs whatever the *keyboard file* has bound to that
+    /// key, which is usually a string but need not be. Both arguments reach
+    /// the terminal as four hex digits (`Word2HexStr`), so they are 16 bits
+    /// and a larger value silently wraps.
+    fn send_key_code(&mut self, code: u16, repeat: u16) -> Result<(), TtlError> {
+        let _ = (code, repeat);
+        Err(TtlError::NotSupported)
+    }
+
+    /// `scpsend` / `scprecv` — a file over the SSH connection's own SCP
+    /// channel, which is neither `tt-xfer`'s business nor the terminal's.
+    ///
+    /// `dest` is empty when the macro left it out, which means the remote home
+    /// directory for a send and the transfer directory for a receive. Upstream
+    /// does **not** wait for it to finish — the documentation's own example
+    /// polls `ps` to find out — so a host that blocks here is being kinder
+    /// than Tera Term rather than more faithful.
+    fn scp(&mut self, send: bool, path: &[u8], dest: &[u8]) -> Result<(), TtlError> {
+        let _ = (send, path, dest);
+        Err(TtlError::NotSupported)
+    }
+
+    /// `wait4all` — wait until **every** terminal running a macro has seen one
+    /// of the patterns, and answer with the index this one matched (1-based,
+    /// 0 for a timeout).
+    ///
+    /// Wholly the frontend's: upstream reaches into the other `ttpmacro`
+    /// processes' receive buffers through shared memory (`ttmdde.c:856`), and
+    /// the in-process equivalent is a frontend that owns all the sessions. The
+    /// set is whatever was running **when the command started**, and a
+    /// terminal that matches twice still counts once.
+    fn wait_for_all(
+        &mut self,
+        patterns: &[Vec<u8>],
+        timeout: Option<Duration>,
+    ) -> Result<usize, TtlError> {
+        let _ = (patterns, timeout);
         Err(TtlError::NotSupported)
     }
 
@@ -681,6 +749,42 @@ pub trait ScriptHost {
     }
 }
 
+/// Which of the three send commands the bytes came from.
+///
+/// All three build the same buffer and differ only in the DDE command they
+/// hand it to (`ttmdde.c:434-457`); the terminal decides what to do with it
+/// (`ttdde.c:1215`). So the choice belongs to the host, not the interpreter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendMode {
+    /// `send` / `sendln` — `SendData` (`ttdde.c:368`), which **sniffs**. Bytes
+    /// that look like text go out re-encoded for the connection; anything else
+    /// goes out unchanged. [`looks_like_text`] is the test.
+    Compat,
+    /// `sendtext` — `SendStringU8`, always text. The bytes are UTF-8, decoded
+    /// and re-encoded for the connection; if they are **not** valid UTF-8,
+    /// upstream sends nothing at all rather than falling back.
+    Text,
+    /// `sendbinary` — `SendBinary`, always the bytes as they are.
+    Binary,
+}
+
+/// `IsBinaryData` (`ttdde.c:352`) and the round trip after it, inverted.
+///
+/// `send` treats its bytes as text when they hold no control character below
+/// 0x20 other than CR and LF **and** they survive UTF-8 → UTF-16 → UTF-8
+/// unchanged, which for a byte string means "is valid UTF-8". Anything else is
+/// binary and goes out untouched — which is how `send 27 '[2J'` gets an escape
+/// sequence to the far end without the charset layer rewriting it.
+///
+/// It is here rather than in the host because it is the *language's* rule: two
+/// hosts disagreeing about it would make the same macro send different bytes.
+pub fn looks_like_text(bytes: &[u8]) -> bool {
+    if bytes.iter().any(|&c| c < 0x20 && c != 0x0d && c != 0x0a) {
+        return false;
+    }
+    std::str::from_utf8(bytes).is_ok()
+}
+
 /// `beep`'s optional argument (`ttl.cpp:TTLBeep`).
 ///
 /// Windows system-event sounds, so a host that has none of them plays whatever
@@ -1269,6 +1373,13 @@ pub struct RecordingHost {
     pub uptime_ms: Option<u64>,
     /// Every `setdate` / `settime`, rendered, in order.
     pub clock_sets: Vec<String>,
+
+    /// Every send that was not a plain `send`, rendered, in order — the two
+    /// mode variants, the broadcasts, `sendkcode`, `scp` and `wait4all`. Plain
+    /// `send` stays in `sent`, which is what most tests want.
+    pub sends: Vec<String>,
+    /// What `wait4all` should report as the matching index.
+    pub wait4all_match: usize,
 }
 
 impl RecordingHost {
@@ -1308,9 +1419,48 @@ impl ScriptHost for RecordingHost {
         self.linked
     }
 
-    fn send(&mut self, bytes: &[u8]) -> Result<(), TtlError> {
+    fn send(&mut self, bytes: &[u8], mode: SendMode) -> Result<(), TtlError> {
         self.sent.extend_from_slice(bytes);
+        if mode != SendMode::Compat {
+            self.sends.push(format!("{mode:?} {}", show(bytes)));
+        }
         Ok(())
+    }
+
+    fn send_broadcast(&mut self, text: &[u8]) -> Result<(), TtlError> {
+        self.sends.push(format!("broadcast {}", show(text)));
+        Ok(())
+    }
+
+    fn send_multicast(&mut self, name: &[u8], text: &[u8]) -> Result<(), TtlError> {
+        self.sends.push(format!("multicast {}", show2(name, text)));
+        Ok(())
+    }
+
+    fn set_multicast_name(&mut self, name: &[u8]) -> Result<(), TtlError> {
+        self.sends.push(format!("multicastname {}", show(name)));
+        Ok(())
+    }
+
+    fn send_key_code(&mut self, code: u16, repeat: u16) -> Result<(), TtlError> {
+        self.sends.push(format!("kcode {code} x{repeat}"));
+        Ok(())
+    }
+
+    fn scp(&mut self, send: bool, path: &[u8], dest: &[u8]) -> Result<(), TtlError> {
+        let dir = if send { "scpsend" } else { "scprecv" };
+        self.sends.push(format!("{dir} {}", show2(path, dest)));
+        Ok(())
+    }
+
+    fn wait_for_all(
+        &mut self,
+        patterns: &[Vec<u8>],
+        _timeout: Option<Duration>,
+    ) -> Result<usize, TtlError> {
+        let rendered: Vec<String> = patterns.iter().map(|p| show(p)).collect();
+        self.sends.push(format!("wait4all {}", rendered.join(" ")));
+        Ok(self.wait4all_match)
     }
 
     /// The recorded input, then `None` for ever — which stands in for both a
