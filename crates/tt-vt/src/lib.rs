@@ -63,6 +63,24 @@ pub enum Beep {
     Visual,
 }
 
+/// What the host asked of the bell in one chunk — [`Vt::take_bells`].
+///
+/// Two facts and not an ordered list, which is a deliberate simplification and
+/// the one place the bell diverges. Upstream's governor is stepped and reset in
+/// stream order; here a chunk holding a RIS *and* bells collapses to "reset,
+/// then this many bells", so bells that arrived **before** a RIS are counted
+/// against the state it cleared. The cost is which of the next few bells inside
+/// the same over-used window are heard, after a host reset the terminal in the
+/// middle of a burst it was itself producing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BellRequests {
+    /// A RIS went past, so the governor's clocks want putting back
+    /// (`vtterm.c:348`, inside `ResetTerminal`).
+    pub reset: bool,
+    /// How many bells were asked for.
+    pub count: u32,
+}
+
 /// Tera Term's `ts.ColorFlag`, or the two bits of it that change how SGR parses.
 ///
 /// `Xterm256Color` defaults to **on** (`ttset.c:743`) and `Aixterm16Color` to
@@ -688,7 +706,7 @@ impl Vt {
         self.state.send(bytes);
     }
 
-    /// How many bells the host has asked for since this was last called.
+    /// What the host has asked of the bell since this was last called.
     ///
     /// A count rather than an event, and not one bell rather than a count,
     /// because upstream's governor (`vtterm.c:5791`) is a state machine that
@@ -699,8 +717,11 @@ impl Vt {
     /// settings and a clock, and `Vt` has no clock — which is what lets the
     /// differential suite and the fuzzers treat it as a function of its bytes.
     /// `tt_session` runs it, one step per count, against a single `Instant`.
-    pub fn take_bells(&mut self) -> u32 {
-        std::mem::take(&mut self.state.bells)
+    pub fn take_bells(&mut self) -> BellRequests {
+        BellRequests {
+            reset: std::mem::take(&mut self.state.bell_reset),
+            count: std::mem::take(&mut self.state.bells),
+        }
     }
 
     /// The last title the *host* set, with OSC 0, 1 or 2 — `cv.TitleRemoteW`.
@@ -1010,6 +1031,9 @@ struct State {
     modes: Modes,
     /// Bells asked for and not yet collected. See [`Vt::take_bells`].
     bells: u32,
+    /// A RIS went past, which is where `ResetTerminal` puts the governor's
+    /// clocks back (`vtterm.c:348`).
+    bell_reset: bool,
 }
 
 /// What a linked macro sees of the session — `ttdde.c`'s `DDEPut1` sink, and
@@ -1101,6 +1125,7 @@ impl State {
             mouse: mouse::MouseState::default(),
             modes: Modes::from_config(&Config::default()),
             bells: 0,
+            bell_reset: false,
         }
     }
 
@@ -2917,6 +2942,10 @@ impl Perform for State {
                 // and button mask included. `SoftReset` clears none of it.
                 self.mouse.reset();
                 self.modes = self.modes.reset(&self.config);
+                // ...and puts the bell governor's clocks back (`:348`), which
+                // is the one part of `ResetTerminal` that lives outside the
+                // engine. `SoftReset` does not.
+                self.bell_reset = true;
             }
             _ => {}
         }
@@ -3802,10 +3831,10 @@ mod tests {
     #[test]
     fn bel_asks_for_a_bell_and_prints_nothing() {
         let mut vt = run(b"a\x07b", 20, 2);
-        assert_eq!(vt.take_bells(), 1);
+        assert_eq!(vt.take_bells().count, 1);
         assert_eq!(row(&vt, 0), "ab");
         // Drained, so a second call sees none.
-        assert_eq!(vt.take_bells(), 0);
+        assert_eq!(vt.take_bells().count, 0);
     }
 
     /// Every BEL is counted. The engine does not thin a burst out — that is the
@@ -3813,7 +3842,7 @@ mod tests {
     #[test]
     fn a_burst_of_bels_is_a_burst_of_requests() {
         let mut vt = run(b"\x07\x07\x07\x07\x07", 20, 2);
-        assert_eq!(vt.take_bells(), 5);
+        assert_eq!(vt.take_bells().count, 5);
     }
 
     #[test]
@@ -3825,7 +3854,7 @@ mod tests {
             ..Config::default()
         });
         vt.feed(b"\x07\x07");
-        assert_eq!(vt.take_bells(), 0);
+        assert_eq!(vt.take_bells().count, 0);
     }
 
     /// `ESC g` is screen's visual bell, and it does **not** consult the
@@ -3836,7 +3865,7 @@ mod tests {
     #[test]
     fn esc_g_asks_for_a_bell_whatever_the_setting_says() {
         let mut vt = run(b"\x1bg", 20, 2);
-        assert_eq!(vt.take_bells(), 1);
+        assert_eq!(vt.take_bells().count, 1);
         assert_eq!(row(&vt, 0), "");
 
         let mut off = Vt::new(Config {
@@ -3844,6 +3873,29 @@ mod tests {
             ..Config::default()
         });
         off.feed(b"\x1bg");
-        assert_eq!(off.take_bells(), 1);
+        assert_eq!(off.take_bells().count, 1);
+    }
+
+    /// RIS puts the governor's clocks back (`vtterm.c:348`), which is the one
+    /// part of `ResetTerminal` the engine cannot do itself. A soft reset does
+    /// not — it is a much shorter list.
+    #[test]
+    fn ris_asks_for_the_governor_to_be_reset_and_decstr_does_not() {
+        let mut vt = run(b"\x1bc", 20, 2);
+        assert_eq!(
+            vt.take_bells(),
+            BellRequests {
+                reset: true,
+                count: 0
+            }
+        );
+        vt.feed(b"\x1b[!p\x07");
+        assert_eq!(
+            vt.take_bells(),
+            BellRequests {
+                reset: false,
+                count: 1
+            }
+        );
     }
 }

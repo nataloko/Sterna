@@ -19,7 +19,9 @@
 //! than deriving the mapping: a setting that silently does nothing should be
 //! visible as an absence here.
 
+use crate::bell::BellLimits;
 use crate::log::{LogMode, LogOptions, Timestamp};
+use std::time::Duration;
 use tt_config::{
     hex_decode, BellMode, CursorShape, KeyboardBackspace, LogTimestampType, Settings,
     TerminalCrReceive, TerminalCrSend, WindowTitleChange, WindowTitleReport,
@@ -120,6 +122,25 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
         // and it truncates rather than refusing, as it does there.
         answerback: hex_decode(&s.terminal_answerback, 32),
         ..*base
+    }
+}
+
+/// The three numbers behind `RingBell`'s governor (`vtterm.c:5791`).
+///
+/// Read at every bell rather than held, which is what upstream does — the
+/// governor's state is three file statics and the limits come straight out of
+/// `ts` inside the function, so a setting changed in the dialog applies to the
+/// next BEL and not to the next connection.
+///
+/// Negative is not reachable through the dialog and is reachable by hand:
+/// `GetPrivateProfileInt` refuses a leading `-` and answers with the default
+/// (`ini-audit/win32.txt`), so a `BeepOverUsedTime=-1` never gets this far. The
+/// saturating casts are for a caller that set the field directly.
+pub fn bell_limits(s: &Settings) -> BellLimits {
+    BellLimits {
+        count: s.bell_over_used_count.max(0) as u32,
+        over_used: Duration::from_secs(s.bell_over_used_time.max(0) as u64),
+        suppress: Duration::from_secs(s.bell_suppress_time.max(0) as u64),
     }
 }
 

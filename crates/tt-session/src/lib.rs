@@ -33,6 +33,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+pub mod bell;
 pub mod log;
 pub mod logname;
 pub mod macros;
@@ -41,6 +42,7 @@ mod serial;
 pub mod settings;
 pub mod xfer;
 
+pub use bell::{BellGovernor, BellLimits};
 pub use log::{LogMode, LogOptions, SessionLog, Timestamp};
 pub use macros::{MacroLink, MACRO_BUF_SIZE};
 pub use settings::{log_options, vt_config};
@@ -100,6 +102,15 @@ pub enum Event {
     /// A file transfer ended, for any reason: finished, cancelled, refused by
     /// the peer, or cut off by the connection going away.
     TransferDone(Box<TransferOutcome>),
+    /// The terminal wants a bell. Already governed, so this is a bell that
+    /// upstream would have made a noise for — a burst of BELs in one read
+    /// arrives as at most one of these, because two beeps in the same
+    /// millisecond are one beep.
+    ///
+    /// `visual` is `bell.mode` being `visual`: invert the screen for
+    /// `bell.visual_wait_ms` rather than making a sound. The frontend owns
+    /// both, since the core has neither a speaker nor a window.
+    Bell { visual: bool },
 }
 
 /// A terminal, and optionally something for it to talk to.
@@ -147,6 +158,8 @@ pub struct Session {
     /// [`Session::set_connection_name`].
     conn_host: Option<String>,
     conn_port: Option<u16>,
+    /// `RingBell`'s three statics — see [`bell`].
+    bell: BellGovernor,
 }
 
 impl Session {
@@ -173,6 +186,7 @@ impl Session {
             connected_at: None,
             conn_host: None,
             conn_port: None,
+            bell: BellGovernor::default(),
         }
     }
 
@@ -257,10 +271,30 @@ impl Session {
         // connection clock. Reproduced here by moving the origin, since the
         // log holds an instant rather than asking for one.
         self.sync_log_epoch();
+        let kind = conn.link_kind();
         self.conn = Some(conn);
         let (cols, rows) = (self.vt.grid().cols(), self.vt.grid().rows());
         if let Some(c) = self.conn.as_mut() {
             let _ = c.resize(cols as u16, rows as u16);
+        }
+        self.connect_beep(kind);
+    }
+
+    /// `BeepOnConnect` — `vtwin.cpp:3658` on the way in and `:3018` on the way
+    /// out, both of them a bare `MessageBeep(0)`.
+    ///
+    /// It bypasses `RingBell` entirely, so it is always audible, never the
+    /// visual bell, and the governor neither thins it nor is stepped by it.
+    ///
+    /// Upstream's condition is `PortType == IdTCPIP`, and it is written here as
+    /// "not a serial port" because its three port types are serial, TCP and a
+    /// file: the case that separates the two readings does not exist. A local
+    /// pty is the one link upstream has no word for, and it beeps — CygTerm,
+    /// which is the same thing there, reaches Tera Term over a TCP socket and
+    /// beeps for that reason.
+    fn connect_beep(&mut self, kind: tt_conn::LinkKind) {
+        if self.settings.bell_on_connect && !matches!(kind, tt_conn::LinkKind::Serial { .. }) {
+            self.events.push(Event::Bell { visual: false });
         }
     }
 
@@ -277,7 +311,11 @@ impl Session {
     }
 
     pub fn disconnect(&mut self) {
+        let kind = self.conn.as_ref().map(|c| c.link_kind());
         self.conn = None;
+        if let Some(kind) = kind {
+            self.connect_beep(kind);
+        }
         self.pending.clear();
         // A transfer has to be told here rather than on the next pump: with no
         // connection left, `pump` returns before it reaches anything, so the
@@ -687,10 +725,12 @@ impl Session {
                     // Asked before the transport is dropped, which is the only
                     // moment it still knows: a pty's exit status dies with the
                     // child handle.
+                    let kind = conn.link_kind();
                     self.close_note = conn.closing_note();
                     self.conn = None;
                     self.transfer_disconnected();
                     self.events.push(Event::Disconnected);
+                    self.connect_beep(kind);
                     return Ok(total);
                 }
                 Err(e) => return Err(e),
@@ -752,6 +792,7 @@ impl Session {
         }
 
         self.collect_title();
+        self.collect_bells();
         Ok(total)
     }
 
@@ -946,6 +987,40 @@ impl Session {
         self.follow_scroll();
         self.events.push(Event::Damage);
         self.collect_title();
+        self.collect_bells();
+    }
+
+    /// Run the governor over whatever the parser asked for, and emit at most
+    /// one [`Event::Bell`].
+    ///
+    /// One event for a burst because two beeps in the same millisecond are one
+    /// beep — but the governor is stepped once per request even so, since its
+    /// whole job is to count them. A burst that is thinned to nothing here
+    /// still leaves the terminal quiet for the next one, which is the point.
+    fn collect_bells(&mut self) {
+        let asked = self.vt.take_bells();
+        if asked.reset {
+            self.bell.reset();
+        }
+        if asked.count == 0 {
+            return;
+        }
+        // `ESC g` asks for a bell without consulting the setting, so this has
+        // to test it again — `RingBell`'s own switch is where upstream does.
+        let visual = match self.settings.bell_mode {
+            tt_config::BellMode::Off => return,
+            tt_config::BellMode::On => false,
+            tt_config::BellMode::Visual => true,
+        };
+        let limits = settings::bell_limits(&self.settings);
+        let now = Instant::now();
+        let mut heard = false;
+        for _ in 0..asked.count {
+            heard |= self.bell.ring(now, &limits);
+        }
+        if heard {
+            self.events.push(Event::Bell { visual });
+        }
     }
 
     /// Keep a scrolled-back view on the same lines as new output arrives.
@@ -1005,10 +1080,12 @@ impl Session {
                 Ok(())
             }
             Err(e) if e.is_disconnected() => {
+                let kind = conn.link_kind();
                 self.close_note = conn.closing_note();
                 self.conn = None;
                 self.pending.clear();
                 self.events.push(Event::Disconnected);
+                self.connect_beep(kind);
                 Ok(())
             }
             Err(e) => Err(e),
