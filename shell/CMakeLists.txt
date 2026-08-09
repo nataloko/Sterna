@@ -70,6 +70,7 @@ add_library(sterna_shell STATIC
     src/TerminalView.cpp
     src/Session.cpp
     src/Macro.cpp
+    src/Control.cpp
     src/Theme.cpp
     src/SerialDialog.cpp
     src/SettingsDialog.cpp
@@ -151,6 +152,14 @@ add_executable(cmdline_test tests/cmdline_test.cpp)
 target_link_libraries(cmdline_test PRIVATE sterna_shell)
 target_compile_options(cmdline_test PRIVATE -Wall -Wextra)
 add_test(NAME cmdline COMMAND cmdline_test)
+
+# The control socket against the window's own event loop, which is the only
+# place the notifier, the nested loops and the window's four callbacks meet.
+# Needs nothing: it binds into a scratch runtime directory and talks to itself.
+add_executable(control_test tests/control_test.cpp)
+target_link_libraries(control_test PRIVATE sterna_shell)
+target_compile_options(control_test PRIVATE -Wall -Wextra)
+add_test(NAME control COMMAND control_test)
 
 # --- the performance gate ----------------------------------------------------
 #

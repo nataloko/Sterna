@@ -2884,6 +2884,7 @@ pub struct TtCmdLine {
     setup_file: Option<CString>,
     log_file: Option<CString>,
     macro_file: Option<CString>,
+    dde_topic: Option<CString>,
     unknown: Vec<CString>,
     /// Backing store for what the **last** [`tt_cmdline_startup`] handed out,
     /// and only that one: resolving again replaces these.
@@ -2925,6 +2926,16 @@ pub struct TtCmdLineInfo {
     pub macro_kind: TtMacroArg,
     /// The `/M=<name>`, for [`TT_MACRO_FILE`]. Null otherwise.
     pub macro_file: *const c_char,
+    /// `/D=`'s topic, or null.
+    ///
+    /// Upstream this is the DDE conversation a window registers so that the
+    /// `ttpmacro.exe` it launched can find it (`ttdde.c:208`, `:1497`). Here
+    /// it names the window's **control socket**, which is the same job through
+    /// the mechanism that replaced DDE — so a shortcut that said
+    /// `ttermpro /D=A1B2C3D4` still ends up with a window a
+    /// `ttpmacro /D=A1B2C3D4` can find. Twenty characters, which is
+    /// `TopicName[21]` at both ends.
+    pub dde_topic: *const c_char,
     /// `/I` — start minimised.
     pub minimize: bool,
     /// `/V` — no window at all, for a session driven entirely by a macro.
@@ -3057,6 +3068,52 @@ pub extern "C" fn tt_cmdline_parse(
             MacroArg::File(f) => Some(cbytes(f)),
             _ => None,
         },
+        dde_topic: cmd.dde_topic.as_deref().map(cbytes),
+        unknown: ssh.unknown.iter().map(|u| cbytes(u)).collect(),
+        cmd,
+        ssh,
+        resolved: Vec::new(),
+        identities: Vec::new(),
+        argv: Vec::new(),
+    }))
+}
+
+/// The same, over a whole command line rather than over arguments.
+///
+/// This is a macro's `connect` — an argument that *is* a command line, with no
+/// program name in front of it. `ttdde.c:617` prepends a literal `"a "` for
+/// that reason, since `_ParseParam` throws its first token away, and passes
+/// **NULL** for the DDE topic: so a `/D=` inside one of these neither sets a
+/// topic nor cancels the startup macro, which [`tt_cmdline_parse`] over the
+/// process's own `argv` does do.
+///
+/// Both parsers again, TTSSH's first — `ssh://user@host/` is rewritten *into*
+/// a bare `host:22` token before Tera Term's own parser sees it, which is the
+/// only reason it can find a host in an SSH URL.
+///
+/// Free with [`tt_cmdline_free`]. Null only if `line` is null.
+#[no_mangle]
+pub extern "C" fn tt_cmdline_parse_line(line: *const c_char, max_com_port: u16) -> *mut TtCmdLine {
+    if line.is_null() {
+        fail(TT_ERR_INVALID, "null command line");
+        return ptr::null_mut();
+    }
+    let arg = unsafe { CStr::from_ptr(line) }.to_bytes().to_vec();
+    let (cmd, ssh) = cmdline::ssh::parse_both_argument(
+        &arg,
+        match max_com_port {
+            0 => cmdline::DEFAULT_MAX_COM_PORT,
+            n => n,
+        },
+    );
+    Box::into_raw(Box::new(TtCmdLine {
+        setup_file: cmd.setup_file.as_deref().map(cbytes),
+        log_file: cmd.log_file.as_deref().filter(|_| !cmd.no_log).map(cbytes),
+        macro_file: match &cmd.macro_file {
+            MacroArg::File(f) => Some(cbytes(f)),
+            _ => None,
+        },
+        dde_topic: cmd.dde_topic.as_deref().map(cbytes),
         unknown: ssh.unknown.iter().map(|u| cbytes(u)).collect(),
         cmd,
         ssh,
@@ -3089,6 +3146,7 @@ pub extern "C" fn tt_cmdline_info(cmd: *const TtCmdLine, out: *mut TtCmdLineInfo
             MacroArg::File(_) => TT_MACRO_FILE,
         },
         macro_file: cptr(&c.macro_file),
+        dde_topic: cptr(&c.dde_topic),
         minimize: c.cmd.minimize,
         hide_window: c.cmd.hide_window,
         has_x: c.cmd.window_x.is_some(),

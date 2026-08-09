@@ -14,6 +14,7 @@
 #include <QFileInfo>
 #include <QLocale>
 #include <QStatusBar>
+#include <QTimer>
 
 #include <QDir>
 #include <QStandardPaths>
@@ -21,6 +22,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "Control.h"
 #include "Macro.h"
 #include "SerialDialog.h"
 #include "Session.h"
@@ -130,6 +132,42 @@ MainWindow::MainWindow(const QString &settingsPath)
 
     updateStatus();
     m_view->setFocus();
+
+    // Last, because it publishes the window: once this is bound, something
+    // else on the machine can ask this session for things, and everything it
+    // can ask about has to exist by then.
+    startControl(QString());
+}
+
+void MainWindow::startControl(const QString &name)
+{
+    // Rebinding is how a `/D=` topic takes effect: the constructor has
+    // already bound this window under its pid, and `startFrom` calls again
+    // with the name the command line asked for. Nothing can have connected in
+    // between — the event loop has not started — so the old socket is simply
+    // dropped.
+    delete m_control;
+    m_control = new Control(m_session, this, this);
+
+    QString error;
+    if (!m_control->start(name, &error)) {
+        // Not fatal, and not a dialog. A window with no way in is still a
+        // window, and refusing to open one because a socket file is in the way
+        // would be the wrong trade for the user in front of it.
+        onNotice(tr("No control socket: %1").arg(error));
+        delete m_control;
+        m_control = nullptr;
+        return;
+    }
+
+    // So that anything this window launches can find it — the local shell
+    // above all, where a script running *inside* the terminal can then drive
+    // the window it is running in. That is the one thing DDE could not do.
+    //
+    // The process's environment rather than the child's, because
+    // `TtPtyParams` has no environment array: one window per process today,
+    // and tabs (Stage 3) are where this has to become per-session.
+    qputenv("STERNA_CTL", m_control->path().toUtf8());
 }
 
 QString MainWindow::settingsPath()
@@ -304,6 +342,15 @@ void MainWindow::startFrom(TtCmdLine *cmd)
 
     TtCmdLineInfo info = {};
     tt_cmdline_info(cmd, &info);
+
+    // Upstream's `/D=` is the DDE topic a window registers so the `ttpmacro`
+    // it launched can find it. Here it names the control socket, which is the
+    // same job through what replaced DDE — so a shortcut written for
+    // `ttermpro /D=A1B2C3D4` still produces a window `ttpmacro /D=A1B2C3D4`
+    // can reach.
+    if (info.dde_topic && *info.dde_topic) {
+        startControl(QString::fromUtf8(info.dde_topic));
+    }
 
     // Before showing, so the window does not jump. Upstream pairs the two:
     // giving one coordinate puts the other at 0 rather than leaving it at
@@ -747,9 +794,24 @@ void MainWindow::runMacro()
 void MainWindow::startMacro(const QStringList &args)
 {
     QString error;
-    if (!m_macro->start(args, &error)) {
+    bool busy = false;
+    if (!runMacroFile(args, &error, &busy)) {
         note(tr("Macro"), tr("Could not start the macro.\n\n%1").arg(error));
-        return;
+    }
+}
+
+bool MainWindow::runMacroFile(const QStringList &args, QString *outError,
+                              bool *outBusy)
+{
+    // "Already running" is separated out here rather than in `Macro::start`
+    // because only the two callers know what to do with it: the menu puts a
+    // box up, and the control socket has an error code of its own for the one
+    // refusal a client would retry.
+    if (outBusy) {
+        *outBusy = m_macro->running();
+    }
+    if (!m_macro->start(args, outError)) {
+        return false;
     }
     // Not `updateStatus`: the macro may already have finished — a two-line
     // script does — and `onMacroFinished` has then already run.
@@ -759,6 +821,84 @@ void MainWindow::startMacro(const QStringList &args)
     if (m_macro->running()) {
         onNotice(tr("Running %1").arg(m_macro->name()));
     }
+    return true;
+}
+
+bool MainWindow::macroRunning() const { return m_macro && m_macro->running(); }
+
+int MainWindow::macroExitCode() const { return m_macro ? m_macro->exitCode() : 0; }
+
+bool MainWindow::openCommandLine(const QByteArray &line, QString *outError)
+{
+    // `tt_cmdline_parse_line`, not `tt_cmdline_parse`: this is an argument
+    // that *is* a command line, with no program name in front of it, so it
+    // goes through the arm that prepends upstream's dummy one and passes NULL
+    // for the DDE topic. A `/D=` inside it therefore neither names a socket
+    // nor cancels the startup macro, which is exactly what `ttdde.c:617` does.
+    TtCmdLine *cmd = tt_cmdline_parse_line(line.constData(), 0);
+    if (!cmd) {
+        if (outError) {
+            *outError = QString::fromUtf8(tt_last_error());
+        }
+        return false;
+    }
+
+    QString error;
+    if (!m_session->applyCommandLine(cmd, &error)) {
+        onNotice(tr("Could not apply the command line: %1").arg(error));
+    }
+
+    TtStartup startup;
+    const TtStartupKind kind = m_session->startup(cmd, &startup);
+
+    switch (kind) {
+    case TT_STARTUP_OPEN:
+        // **Queued, not immediate**, and for the same reason the dialog arm
+        // below refuses outright: opening can fail, and every one of the four
+        // arms of `openTarget` reports a failure in a modal box. Called
+        // straight from here that box would go up *inside* `tt_ctl_service`,
+        // holding the socket's request open — and the client, which asked a
+        // question it was told would be answered at once, would wait on a
+        // window nobody is looking at.
+        //
+        // So the answer goes back first and the connection is opened on the
+        // next turn of the event loop, which is where a dialog is an ordinary
+        // dialog. `startup`'s strings are borrowed from `cmd`, so the handle
+        // is freed by the same closure rather than here.
+        QTimer::singleShot(0, this, [this, cmd, startup] {
+            openTarget(startup);
+            tt_cmdline_free(cmd);
+        });
+        return true;
+    case TT_STARTUP_DIALOG:
+        // **A divergence, and a deliberate one.** Upstream's `connect` with
+        // nothing openable in it puts the New Connection dialog up
+        // (`OnCommStart`'s dialog arm), which is right when a person asked.
+        // Nobody asked here: the request came off a socket, and a modal dialog
+        // would block this window — and the client with it — until somebody
+        // found the window and closed it. So the refusal is reported instead,
+        // and the reason is that a request from outside the process must not
+        // be able to make the window wait on a person.
+        if (outError) {
+            *outError = tr("the command line named nothing to connect to");
+        }
+        break;
+    case TT_STARTUP_IDLE:
+        if (outError) {
+            *outError = tr("the command line asked for no connection");
+        }
+        break;
+    default:
+        if (outError) {
+            *outError = QString::fromUtf8(startup.reason ? startup.reason
+                                                         : tt_last_error());
+        }
+        break;
+    }
+    // Only the refusing arms reach here; the opening one hands the handle to
+    // the closure that will need its strings.
+    tt_cmdline_free(cmd);
+    return false;
 }
 
 void MainWindow::stopMacro()

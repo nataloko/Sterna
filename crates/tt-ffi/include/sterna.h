@@ -1273,6 +1273,18 @@ typedef struct {
      */
     const char *macro_file;
     /**
+     * `/D=`'s topic, or null.
+     *
+     * Upstream this is the DDE conversation a window registers so that the
+     * `ttpmacro.exe` it launched can find it (`ttdde.c:208`, `:1497`). Here
+     * it names the window's **control socket**, which is the same job through
+     * the mechanism that replaced DDE — so a shortcut that said
+     * `ttermpro /D=A1B2C3D4` still ends up with a window a
+     * `ttpmacro /D=A1B2C3D4` can find. Twenty characters, which is
+     * `TopicName[21]` at both ends.
+     */
+    const char *dde_topic;
+    /**
      * `/I` — start minimised.
      */
     bool minimize;
@@ -2781,6 +2793,25 @@ void tt_string_list_free(TtStringList *list);
 TtCmdLine *tt_cmdline_parse(const char *const *argv,
                             size_t argc,
                             uint16_t max_com_port);
+
+/**
+ * The same, over a whole command line rather than over arguments.
+ *
+ * This is a macro's `connect` — an argument that *is* a command line, with no
+ * program name in front of it. `ttdde.c:617` prepends a literal `"a "` for
+ * that reason, since `_ParseParam` throws its first token away, and passes
+ * **NULL** for the DDE topic: so a `/D=` inside one of these neither sets a
+ * topic nor cancels the startup macro, which [`tt_cmdline_parse`] over the
+ * process's own `argv` does do.
+ *
+ * Both parsers again, TTSSH's first — `ssh://user@host/` is rewritten *into*
+ * a bare `host:22` token before Tera Term's own parser sees it, which is the
+ * only reason it can find a host in an SSH URL.
+ *
+ * Free with [`tt_cmdline_free`]. Null only if `line` is null.
+ */
+TtCmdLine *tt_cmdline_parse_line(const char *line,
+                                 uint16_t max_com_port);
 
 void tt_cmdline_free(TtCmdLine *cmd);
 

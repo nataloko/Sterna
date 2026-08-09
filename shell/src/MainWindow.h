@@ -9,6 +9,7 @@
 
 #include "Session.h"
 
+class Control;
 class Macro;
 class QLabel;
 class QScrollBar;
@@ -63,6 +64,43 @@ public:
     /// an interesting question.
     Session *session() const { return m_session; }
 
+    // --- what the control socket asks of the window --------------------------
+    //
+    // The same four things the menu can do, said without a person: run a
+    // macro, stop it, open a connection, close the window. They return their
+    // errors rather than putting them in a box, because the thing that asked
+    // is on the other end of a socket and a message box would be shown to
+    // nobody — and would block the window until somebody found it.
+
+    /// Start a macro. `args` is `ttpmacro`'s command line, already split.
+    ///
+    /// `outBusy` distinguishes the one refusal worth retrying, which is what
+    /// the socket reports as its own error code.
+    bool runMacroFile(const QStringList &args, QString *outError, bool *outBusy);
+    bool macroRunning() const;
+    /// The last `setexitcode`, or 0.
+    int macroExitCode() const;
+    /// Ask the running macro to stop — upstream's End button, which is on
+    /// `ttpmacro.exe`'s own control window there and has to be somewhere here.
+    /// Public because the socket asks for it too, and it is the same request.
+    void stopMacro();
+    /// Open what a Tera Term command line describes — a macro's `connect`
+    /// argument, which is a command line with no program name in it.
+    ///
+    /// Answering means the attempt has *started*: an SSH target goes through
+    /// the same state machine and the same dialogs as everything else here,
+    /// and those are answered by a person.
+    bool openCommandLine(const QByteArray &line, QString *outError);
+
+    /// The control socket, or null when none was bound. Its path goes into
+    /// the environment of anything this window launches.
+    Control *control() const { return m_control; }
+
+    /// Bind the control socket under `name` — a `/D=` topic, or empty for
+    /// this process's pid. Called once from the constructor and again from
+    /// [`startFrom`] when a command line named a topic.
+    void startControl(const QString &name);
+
     /// Where the settings are read from and written to.
     ///
     /// `$XDG_CONFIG_HOME/sterna/sterna.ini` rather than a `TERATERM.INI`
@@ -94,9 +132,6 @@ private slots:
     void toggleLogging();
     /// Ask for a `.ttl` and run it. Upstream's Control > Macro.
     void runMacro();
-    /// Upstream's End button, which is on `ttpmacro.exe`'s own control window
-    /// there and has to be somewhere here.
-    void stopMacro();
     void onMacroFinished(int exitCode);
     void chooseFont();
     void showSettingsDialog();
@@ -159,6 +194,10 @@ private:
     /// upstream's rule too, since linking a second macro takes the terminal
     /// from the first.
     Macro *m_macro = nullptr;
+    /// This window's `ttctl` socket, for its lifetime. Null when it could not
+    /// be bound, which is not fatal — a window with no way in is still a
+    /// window.
+    Control *m_control = nullptr;
     /// Where the last macro was chosen from, so the dialog does not start at
     /// the process's working directory every time.
     QString m_lastMacroDir;
