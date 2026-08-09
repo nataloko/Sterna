@@ -158,6 +158,24 @@ pub trait Transport: Send {
         LinkKind::Network
     }
 
+    /// The serial port underneath, when there is one.
+    ///
+    /// The trait's one downcast, and it is here for the same reason
+    /// [`link_kind`](Transport::link_kind) is: the session cannot reach the
+    /// concrete type once it holds a box. The alternative is four more
+    /// methods — DTR, RTS, the speed, the modem lines — that three transports
+    /// out of four would implement only to decline, and a fifth that returns
+    /// something meaningless off a socket.
+    ///
+    /// It stays one method because the *commands* are serial-only by
+    /// definition rather than by omission: `setdtr`, `setrts`, `setbaud`,
+    /// `setflowctrl` and `getmodemstatus` are each guarded by
+    /// `cv.PortType != IdSerial` in `ttdde.c` and do nothing at all otherwise.
+    /// `None` is that guard, and it covers "not open" at the same time.
+    fn as_serial(&mut self) -> Option<&mut crate::serial::SerialConn> {
+        None
+    }
+
     /// A short name for the status line — `/dev/ttyUSB0`, `user@host`.
     fn describe(&self) -> String;
 

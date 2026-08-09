@@ -36,6 +36,7 @@ use std::time::{Duration, Instant};
 pub mod log;
 pub mod macros;
 pub mod open;
+mod serial;
 pub mod settings;
 pub mod xfer;
 

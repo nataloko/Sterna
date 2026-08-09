@@ -514,6 +514,11 @@ impl crate::transport::Transport for SerialConn {
         Some(self.port.as_raw_fd())
     }
 
+    /// The one transport that answers this, and the whole reason it is asked.
+    fn as_serial(&mut self) -> Option<&mut SerialConn> {
+        Some(self)
+    }
+
     fn describe(&self) -> String {
         format!("{} {}", self.path, self.params.baud)
     }

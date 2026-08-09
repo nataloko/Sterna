@@ -310,3 +310,30 @@ fn output_and_input_interleave_over_repeated_pumps() {
     assert_eq!(row(&s, 1), "password:");
     assert_eq!(row(&s, 2), "$");
 }
+
+#[test]
+fn the_control_lines_are_declined_by_everything_that_is_not_a_serial_port() {
+    // Upstream's guard is `!cv.Open || cv.PortType != IdSerial`, and both
+    // halves land here as `Transport::as_serial` answering `None`. What the
+    // guard rejects is not an error — the terminal answers
+    // `DDE_FNOTPROCESSED` and a macro reads that as success — so the only
+    // thing to assert is that nothing happened, including to the settings.
+    let (mut s, _h) = connected(20, 4);
+    let before = s.settings().clone();
+
+    assert!(!s.set_dtr(false));
+    assert!(!s.set_rts(false));
+    assert!(!s.set_baud(19200));
+    assert!(!s.set_flow_control(tt_conn::serial::FlowControl::RtsCts));
+    assert!(s.modem_lines().is_none());
+
+    // The guard comes *before* the assignment upstream, so a `setbaud` over
+    // SSH must not leave the serial settings changed for the next connection.
+    assert_eq!(s.settings().serial_baud, before.serial_baud);
+    assert_eq!(s.settings().serial_flow, before.serial_flow);
+
+    // ...and with nothing connected at all, which is the other half.
+    let mut s = Session::new(Config::default());
+    assert!(!s.set_dtr(true));
+    assert!(s.modem_lines().is_none());
+}

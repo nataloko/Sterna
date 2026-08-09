@@ -12,7 +12,7 @@
 
 use std::time::{Duration, Instant};
 
-use tt_conn::serial::{SerialConn, SerialParams};
+use tt_conn::serial::{FlowControl, ModemLines, SerialConn, SerialParams};
 use tt_session::{Event, Session};
 use tt_vt::{Config, Key};
 
@@ -192,6 +192,196 @@ fn the_poll_descriptor_sleeps_on_a_quiet_line_and_wakes_on_bytes() {
         !readable(&s, Duration::from_millis(250)),
         "still readable after the bytes were consumed"
     );
+}
+
+/// Everything the far end receives inside `dur`, however it is split up.
+fn read_for(far: &mut SerialConn, dur: Duration) -> Vec<u8> {
+    let mut got = Vec::new();
+    let mut events = Vec::new();
+    let deadline = Instant::now() + dur;
+    while Instant::now() < deadline {
+        far.read(&mut got, &mut events).expect("read the far end");
+    }
+    got
+}
+
+/// Wait for the far end's control lines to say `f`, and report what they
+/// last said. A pin change crosses a USB bus, so it is never instant.
+fn lines_until(far: &mut SerialConn, f: impl Fn(&ModemLines) -> bool) -> ModemLines {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let m = far.modem_lines().expect("read the far end's lines");
+        if f(&m) || Instant::now() > deadline {
+            return m;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// `setdtr` and `setrts`, proven on the wire rather than at the ioctl.
+///
+/// The rig has DTR wired to the other port's DSR and RTS to its CTS, so this
+/// is the whole path — the session, the boxed transport, the port, the cable
+/// — and it is the only way to tell driving a pin from believing you did.
+#[test]
+fn the_control_lines_reach_the_far_end() {
+    let Some((a, b)) = rig() else { return };
+    let mut far = SerialConn::open(&b, &params()).expect("open the far end");
+    let near = SerialConn::open(&a, &params()).expect("open the near end");
+    let mut s = Session::new(Config::default());
+    s.connect(Box::new(near));
+
+    // Both are asserted on open — `SerialParams::default` is `PinControl::
+    // Enable` for each, which is what `dcb.fDtrControl` defaults to as well.
+    let m = lines_until(&mut far, |m| m.dsr && m.cts);
+    assert!(
+        m.dsr && m.cts,
+        "the rig did not start with both pins up: {m:?}"
+    );
+
+    assert!(s.set_dtr(false));
+    assert!(!lines_until(&mut far, |m| !m.dsr).dsr, "DTR did not drop");
+    assert!(s.set_rts(false));
+    assert!(!lines_until(&mut far, |m| !m.cts).cts, "RTS did not drop");
+
+    assert!(s.set_dtr(true));
+    assert!(s.set_rts(true));
+    let m = lines_until(&mut far, |m| m.dsr && m.cts);
+    assert!(m.dsr && m.cts, "the pins did not come back up: {m:?}");
+
+    // And the other direction: `getmodemstatus` reads what the far end is
+    // driving. Lowering its DTR must show up as DSR low here.
+    far.set_dtr(false).expect("drop the far end's DTR");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut seen = s.modem_lines().expect("the session should have lines");
+    while seen.dsr && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+        seen = s.modem_lines().expect("the session should have lines");
+    }
+    assert!(!seen.dsr, "the far end's DTR was not visible: {seen:?}");
+}
+
+/// The second guard: with anything but "none" for flow control the lines
+/// belong to the driver, and `setdtr` is refused without touching them.
+///
+/// The refusal is the deterministic half — nothing is written at all, so what
+/// the pins do afterwards is not the driver's opinion — and the second half is
+/// the idiom `setdtr.html` describes: turn the flow control off first, and
+/// then it works.
+#[test]
+fn the_control_lines_are_refused_while_the_driver_owns_them() {
+    let Some((a, b)) = rig() else { return };
+    let mut far = SerialConn::open(&b, &params()).expect("open the far end");
+    let near = SerialConn::open(
+        &a,
+        &SerialParams {
+            flow: FlowControl::RtsCts,
+            ..params()
+        },
+    )
+    .expect("open the near end");
+    let mut s = Session::new(Config::default());
+    s.connect(Box::new(near));
+    // The settings are what the guard reads, so they have to say what the
+    // port was opened with — which is what the New Connection dialog and the
+    // command line both arrange.
+    assert!(s.set_setting("serial.flow", "hard").expect("apply"));
+
+    assert!(!s.set_dtr(false), "DTR should have been refused");
+    assert!(!s.set_rts(false), "RTS should have been refused");
+    let m = lines_until(&mut far, |_| false);
+    assert!(m.dsr, "a refused setdtr moved the pin anyway: {m:?}");
+
+    // `setflowctrl 3`, which upstream leaves as a setting and this port also
+    // applies — see `Session::set_flow_control`.
+    assert!(s.set_flow_control(FlowControl::None));
+    assert!(s.set_dtr(false), "the guard should be open now");
+    assert!(!lines_until(&mut far, |m| !m.dsr).dsr, "DTR did not drop");
+}
+
+/// `setbaud` reaches the hardware, which a test that only read the setting
+/// back could not tell from a no-op.
+///
+/// The proof is a speed *mismatch*: the near end is moved on its own first,
+/// and the line goes to pieces because the far end is still where it was.
+#[test]
+fn setbaud_changes_the_port_and_not_only_the_setting() {
+    let Some((a, b)) = rig() else { return };
+    let mut far = SerialConn::open(&b, &params()).expect("open the far end");
+    let near = SerialConn::open(&a, &params()).expect("open the near end");
+    let mut s = Session::new(Config::default());
+    s.connect(Box::new(near));
+
+    assert!(s.set_baud(19200));
+    // The speed is in what the status line shows, which is why upstream
+    // repaints the title bar here.
+    assert!(
+        s.describe().unwrap_or_default().ends_with(" 19200"),
+        "the transport still reports {:?}",
+        s.describe()
+    );
+
+    // Read at the far end rather than on the screen, in both halves: garbage
+    // off a mismatched line is escape-sequence bytes as often as not, and a
+    // parser left inside an OSC string swallows everything that follows it —
+    // including the next half of the test.
+    far.clear(true, true).ok();
+    s.send_bytes(b"mismatched").expect("send");
+    assert_ne!(
+        read_for(&mut far, Duration::from_millis(600)),
+        b"mismatched",
+        "19200 into 115200 arrived intact, so the speed did not change"
+    );
+
+    // And with the far end moved to match, the same bytes arrive.
+    far.apply(&SerialParams {
+        baud: 19200,
+        ..params()
+    })
+    .expect("move the far end");
+    std::thread::sleep(Duration::from_millis(300));
+    far.clear(true, true).ok();
+    s.send_bytes(b"matched").expect("send");
+    assert_eq!(read_for(&mut far, Duration::from_secs(2)), b"matched");
+}
+
+/// `setflowctrl` is applied to the port rather than only written down, which
+/// is where this port and upstream part company — see
+/// `Session::set_flow_control` for why.
+///
+/// The observable is the kernel's and it is exact: XON/XOFF flow control is
+/// the tty layer acting on a received XOFF by stopping this end's
+/// transmitter. So the far end sends XOFF, the session sends a line, and
+/// nothing arrives until the XON — which is only true if the setting reached
+/// the port. Written down and not applied, the line would come straight
+/// through.
+#[test]
+fn setflowctrl_reaches_the_port() {
+    let Some((a, b)) = rig() else { return };
+    let mut far = SerialConn::open(&b, &params()).expect("open the far end");
+    let near = SerialConn::open(&a, &params()).expect("open the near end");
+    let mut s = Session::new(Config::default());
+    s.connect(Box::new(near));
+    far.clear(true, true).ok();
+
+    assert!(s.set_flow_control(FlowControl::XonXoff));
+
+    // Stop the near end, then give it something to say.
+    far.write(&[0x13], Duration::from_secs(1)).unwrap();
+    far.flush(Duration::from_millis(500)).ok();
+    std::thread::sleep(Duration::from_millis(200));
+    s.send_bytes(b"held\n").expect("queue the line");
+    assert!(
+        read_for(&mut far, Duration::from_millis(400)).is_empty(),
+        "XOFF did not stop the transmitter — the setting was not applied"
+    );
+
+    // ...and let it go again. Always, whatever the assertion above did: a
+    // port left stopped would take the next test down with it.
+    far.write(&[0x11], Duration::from_secs(1)).unwrap();
+    far.flush(Duration::from_millis(500)).ok();
+    let got = read_for(&mut far, Duration::from_secs(2));
+    assert_eq!(got, b"held\n", "the held line did not arrive after XON");
 }
 
 #[test]
