@@ -1052,8 +1052,8 @@ before anything else in every session.
   link and the connection, the serial control lines, all sixteen transfer
   commands, the whole file family, the eleven dialogs, the eight logging
   commands, the ten checksums, the terminal's odds and ends, the environment
-  and clipboard, and the clock — 188 of the
-  214 reserved words. What is left is `scp` and the `send*` variants, the
+  and clipboard, the clock, the `send*` variants and `scp` — 200 of the
+  214 reserved words. What is left is the
   password family and the regex family. See below.
 - **Lua via `mlua`** over the same `ScriptHost` command table (~500 LOC glue).
 - `ttctl` JSON-RPC control socket replacing DDE. Keep a `ttpmacro script.ttl`
@@ -1754,8 +1754,60 @@ Both are `ScriptHost` methods that do nothing by default, which is faithful
 rather than a stub — `SetLocalTime` needs `SE_SYSTEMTIME_NAME`, so an
 unelevated `ttpmacro.exe` silently does nothing too.
 
+#### The send variants, the broadcasts and `scp`
+
+`crates/tt-ttl/src/sendcmds.rs`, 2026-08-09. Twelve commands, in three groups
+that are each a different kind of "not this terminal".
+
+**`sendtext` and `sendbinary` are `send` with the guessing turned off.** All
+three build the identical buffer from the identical argument list and hand it
+to a different DDE command; the *terminal* decides (`ttdde.c:1215`). `send`
+sniffs — text if there is no control byte below 0x20 other than CR/LF **and**
+the bytes survive UTF-8 → UTF-16 → UTF-8, which for a byte string means "is
+valid UTF-8" — and sends text re-encoded for the connection or binary
+unchanged. The two newer commands exist because the guess is sometimes wrong.
+So `ScriptHost::send` grew a `SendMode`, and the sniff itself is
+`host::looks_like_text` in the *language* rather than a rule each host would
+have to rediscover: two hosts disagreeing about it would make the same macro
+send different bytes. `sendtext` on invalid UTF-8 sends **nothing at all**,
+which is upstream's `ToWcharU8` returning NULL and no fallback.
+
+**`sendbroadcast`, `sendmulticast` and `setmulticastname` address other
+windows**, and `wait4all` reaches into other *macro processes* — `ttmdde.c:856`
+walks a shared-memory table of every running `ttpmacro.exe` and snoops their
+receive buffers until each has matched one of the patterns. Both are wholly a
+frontend that owns several sessions, so all four are host methods and the
+interpreter only parses. `scpsend`/`scprecv` are host methods for a different
+reason: SCP is the SSH connection's own channel, not `tt-xfer`'s and not the
+terminal's, and upstream does not wait for the transfer to finish — the
+documentation's own example polls `ps` to find out.
+
+**One thing is deliberately not reproduced.** `GetBroadcastString`
+(`ttl.cpp:4031`) escapes `0x00` as `0x01 0x01` and `0x01` as `0x01 0x02`
+because a DDE string ends at its first NUL. That is transport, not language:
+there is no DDE here, and copying the escape would put literal `0x01` bytes
+into everybody's broadcast.
+
+Four quirks are reproduced. `sendlnbroadcast` ends with **CRLF** where
+`sendln` ends with a bare CR, because `sendln` goes through the terminal's
+newline setting and a broadcast does not. `setmulticastname` never checks for
+end of line. `sendkcode`'s two arguments cross as four hex digits each, so
+both are sixteen bits and `sendkcode 65536 1` is `sendkcode 0 1`. And
+`scpsend 'f' 3` is **not** a type mismatch: the optional destination is
+optional by discarding whatever `GetStrVal` reports, and the expression is
+consumed on the way to the error that is thrown away, so the end-of-line check
+finds nothing left and the file goes to the default destination.
+
+`waitevent` is the one command in the group that is not a host method, because
+it needs nothing new: its tests are on the **current** connection state rather
+than on a transition (`ttmmain.cpp:609`), so `waitevent 4` on a connection
+that is already closed returns at once. That reads as a bug and is what a
+script means by it. `WakeupCondition &= 15` drops the bits above the four, so
+`waitevent 16` waits for nothing and, with no timeout set, for ever — which is
+what `ScriptHost::cancelled` exists for.
+
 **What is left**, in the order it is likely to be built:
-the `send*` variants and `scp`, the password family — which
+the password family — which
 needs `ttmenc.c`'s obfuscation, and a decision about whether to keep it — and
 the regex family. That last one is a decision, not a port: `sprintf` validates its
 format specifiers with **Oniguruma** and `strmatch`/`strreplace`/`waitregex`
