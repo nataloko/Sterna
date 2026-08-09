@@ -128,6 +128,26 @@ terminal.iso2022_shifts | string | Tera Term | ISO2022ShiftFunction | on | -
 # `ts.Title`, `ttset.c:713`. The window title before the host sends one.
 terminal.title | string | Tera Term | Title | Tera Term | DLG_TERM_TITLE
 
+# `ttset.c:663`. What the terminal sends when the host asks it who it is with
+# ENQ (`0x05`) — `vtterm.c:1076` writes it with `CommBinaryOut`, so the bytes
+# go out raw, with no CR translation and no local echo.
+#
+# **The value is a hex string, not the answer itself.** `Hex2Str`
+# (`ttlib.c:406`) copies bytes through and reads `$` as the lead of a two-digit
+# escape, so `Answerback=VT100$0D` is nine bytes ending in a CR. Three quirks
+# come with it, all from the same loop: `ConvHexChar` answers **0** for a digit
+# that is not hex, so `$ZZ` is a NUL; a `$` with fewer than two digits behind
+# it borrows `'0'` for each one it is missing, so a trailing `$` is also a NUL
+# and `$A` is `0xA0`; and the result is arbitrary bytes rather than text, which
+# is why this is held as the file's own spelling and decoded at the point of
+# use rather than stored decoded.
+#
+# It is also the one setting in this file another setting **overwrites**:
+# `ttset.c:1132` replaces it outright with B Plus's five-byte activation string
+# when `BPAuto=on`, a hundred lines after reading it, so a file that sets both
+# loses this one without a word. See `transfer.bplus_auto`.
+terminal.answerback | string | Tera Term | Answerback |  | -
+
 # --- keyboard ----------------------------------------------------------------
 
 # **`ttset.c:877` reads this with an empty fallback and only the literal `DEL`
@@ -292,6 +312,64 @@ mouse.ctrl_disables_tracking | bool | Tera Term | DisableMouseTrackingByCtrl | o
 
 # `ttset.c:1515`. Gates `DECSET 7786`, and is what a reset restores it to.
 mouse.wheel_to_cursor | bool | Tera Term | TranslateWheelToCursor | on | -
+
+# --- bell --------------------------------------------------------------------
+#
+# What BEL does, and the governor in front of it. Upstream's `RingBell`
+# (`vtterm.c:5791`) is four settings deep before it makes a sound, which is
+# more machinery than a beep looks like it needs and exists for one case: a
+# binary file shown by mistake is thousands of BELs, and a terminal that
+# honours all of them is unusable until it stops.
+#
+# The dropdown is on the Additional Settings "Sequence" page; upstream has
+# `.lng` keys for the three items (`DLG_TAB_SEQUENCE_BEEP_*`, `addsetting.cpp`)
+# and none for the labels, hence `-` throughout.
+
+# `ttset.c:1112`, read with an **empty** default and compared down an
+# `_stricmp` chain that tests only `off` and `visual` — so the `on` spelling
+# below matches nothing and lands on the same `else` the absent key does, which
+# is why both give the same variant here. Ninth member of the family
+# `AGENTS.md` keeps returning to.
+bell.mode | enum(off=Off,visual=Visual,on=On) | Tera Term | Beep | on | -
+
+# `ttset.c:1121`, `PF_BEEPONCONNECT`. **A TCP/IP connection only**: both places
+# it is read test `PortType==IdTCPIP` first (`vtwin.cpp:3018`, `:3658`), so a
+# serial console opening and closing is silent however this is set. It also
+# bypasses `RingBell` entirely — always audible, never the visual bell, and
+# never governed by the four below.
+bell.on_connect | bool | Tera Term | BeepOnConnect | off | -
+
+# `ttset.c:1125`. How long the screen stays inverted for a visual bell, in
+# milliseconds — `int_min`, since it floors at 1 rather than taking the default.
+bell.visual_wait_ms | int_min(1) | Tera Term | BeepVBellWait | 10 | -
+
+# `ttset.c:1781`. How many bells inside `bell.over_used_time` seconds are
+# allowed before the governor starts suppressing. **Off by one against the
+# manual**: `teraterm-term.html` says five bells are permitted and six sound,
+# because `RingBell`'s inner `if` decides the *next* bell's fate and the switch
+# that makes the noise sits outside it (`vtterm.c:5800`).
+bell.over_used_count | int | Tera Term | BeepOverUsedCount | 5 | -
+
+# `ttset.c:1783`. The window the count is measured over, in seconds. A gap
+# longer than this refills the count.
+bell.over_used_time | int | Tera Term | BeepOverUsedTime | 2 | -
+
+# `ttset.c:1785`. How long the terminal stays silent once the count is used up,
+# in seconds — and it is **quiet** time, not elapsed time. Every bell arriving
+# during the suppression pushes the deadline out again (`vtterm.c:5796` assigns
+# `now` in the arm that decides it is suppressed), so a host beeping steadily
+# is silenced until it stops and for this long afterwards. The manual reads as
+# though it were a fixed delay; the code is the specification and this follows
+# the code, because a governor that let a runaway through every five seconds
+# would not do the job it exists for.
+bell.suppress_time | int | Tera Term | BeepSuppressTime | 5 | -
+
+# `ttset.c:1996`. Whether the *notification* makes a sound — upstream's tray
+# balloon (`vtwin.cpp:725`, `Notify2SetSound`), not the terminal's bell. Read
+# and written and acting on nothing here, because there is no notification
+# surface yet; it is in this section because a user looking for "the sound
+# settings" will look here.
+bell.notify_sound | bool | Tera Term | NotifySound | on | -
 
 # --- clipboard ---------------------------------------------------------------
 #

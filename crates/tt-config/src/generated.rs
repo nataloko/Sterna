@@ -483,6 +483,55 @@ impl Default for WindowTitleReport {
     }
 }
 
+/// `ttset.c:1112`, read with an **empty** default and compared down an
+/// `_stricmp` chain that tests only `off` and `visual` — so the `on` spelling
+/// below matches nothing and lands on the same `else` the absent key does, which
+/// is why both give the same variant here. Ninth member of the family
+/// `AGENTS.md` keeps returning to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BellMode {
+    /// `off`
+    Off,
+    /// `visual`
+    Visual,
+    /// `on`
+    On,
+}
+
+impl BellMode {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Visual => "visual",
+            Self::On => "on",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised takes the default**
+    /// rather than failing — which is how upstream spells most of its
+    /// defaults, as the `else` branch of a chain of comparisons.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("off") {
+            return Self::Off;
+        }
+        if s.eq_ignore_ascii_case("visual") {
+            return Self::Visual;
+        }
+        if s.eq_ignore_ascii_case("on") {
+            return Self::On;
+        }
+        Self::default()
+    }
+}
+
+impl Default for BellMode {
+    fn default() -> Self {
+        Self::On
+    }
+}
+
 /// `ttset.c:589`, and the default is the `else` branch: a `Port=` that says
 /// anything but `serial` is TCP/IP, including `Port=tcp` and `Port=`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -900,6 +949,25 @@ pub struct Settings {
     pub terminal_iso2022_shifts: String,
     /// `ts.Title`, `ttset.c:713`. The window title before the host sends one.
     pub terminal_title: String,
+    /// `ttset.c:663`. What the terminal sends when the host asks it who it is with
+    /// ENQ (`0x05`) — `vtterm.c:1076` writes it with `CommBinaryOut`, so the bytes
+    /// go out raw, with no CR translation and no local echo.
+    ///
+    /// **The value is a hex string, not the answer itself.** `Hex2Str`
+    /// (`ttlib.c:406`) copies bytes through and reads `$` as the lead of a two-digit
+    /// escape, so `Answerback=VT100$0D` is nine bytes ending in a CR. Three quirks
+    /// come with it, all from the same loop: `ConvHexChar` answers **0** for a digit
+    /// that is not hex, so `$ZZ` is a NUL; a `$` with fewer than two digits behind
+    /// it borrows `'0'` for each one it is missing, so a trailing `$` is also a NUL
+    /// and `$A` is `0xA0`; and the result is arbitrary bytes rather than text, which
+    /// is why this is held as the file's own spelling and decoded at the point of
+    /// use rather than stored decoded.
+    ///
+    /// It is also the one setting in this file another setting **overwrites**:
+    /// `ttset.c:1132` replaces it outright with B Plus's five-byte activation string
+    /// when `BPAuto=on`, a hundred lines after reading it, so a file that sets both
+    /// loses this one without a word. See `transfer.bplus_auto`.
+    pub terminal_answerback: String,
     /// **`ttset.c:877` reads this with an empty fallback and only the literal `DEL`
     /// takes the other arm**, so an absent key means BS. That is Tera Term's default
     /// and it is probably not what a Linux user wants: a `getty` usually has
@@ -1017,6 +1085,45 @@ pub struct Settings {
     pub mouse_ctrl_disables_tracking: bool,
     /// `ttset.c:1515`. Gates `DECSET 7786`, and is what a reset restores it to.
     pub mouse_wheel_to_cursor: bool,
+    /// `ttset.c:1112`, read with an **empty** default and compared down an
+    /// `_stricmp` chain that tests only `off` and `visual` — so the `on` spelling
+    /// below matches nothing and lands on the same `else` the absent key does, which
+    /// is why both give the same variant here. Ninth member of the family
+    /// `AGENTS.md` keeps returning to.
+    pub bell_mode: BellMode,
+    /// `ttset.c:1121`, `PF_BEEPONCONNECT`. **A TCP/IP connection only**: both places
+    /// it is read test `PortType==IdTCPIP` first (`vtwin.cpp:3018`, `:3658`), so a
+    /// serial console opening and closing is silent however this is set. It also
+    /// bypasses `RingBell` entirely — always audible, never the visual bell, and
+    /// never governed by the four below.
+    pub bell_on_connect: bool,
+    /// `ttset.c:1125`. How long the screen stays inverted for a visual bell, in
+    /// milliseconds — `int_min`, since it floors at 1 rather than taking the default.
+    pub bell_visual_wait_ms: i32,
+    /// `ttset.c:1781`. How many bells inside `bell.over_used_time` seconds are
+    /// allowed before the governor starts suppressing. **Off by one against the
+    /// manual**: `teraterm-term.html` says five bells are permitted and six sound,
+    /// because `RingBell`'s inner `if` decides the *next* bell's fate and the switch
+    /// that makes the noise sits outside it (`vtterm.c:5800`).
+    pub bell_over_used_count: i32,
+    /// `ttset.c:1783`. The window the count is measured over, in seconds. A gap
+    /// longer than this refills the count.
+    pub bell_over_used_time: i32,
+    /// `ttset.c:1785`. How long the terminal stays silent once the count is used up,
+    /// in seconds — and it is **quiet** time, not elapsed time. Every bell arriving
+    /// during the suppression pushes the deadline out again (`vtterm.c:5796` assigns
+    /// `now` in the arm that decides it is suppressed), so a host beeping steadily
+    /// is silenced until it stops and for this long afterwards. The manual reads as
+    /// though it were a fixed delay; the code is the specification and this follows
+    /// the code, because a governor that let a runaway through every five seconds
+    /// would not do the job it exists for.
+    pub bell_suppress_time: i32,
+    /// `ttset.c:1996`. Whether the *notification* makes a sound — upstream's tray
+    /// balloon (`vtwin.cpp:725`, `Notify2SetSound`), not the terminal's bell. Read
+    /// and written and acting on nothing here, because there is no notification
+    /// surface yet; it is in this section because a user looking for "the sound
+    /// settings" will look here.
+    pub bell_notify_sound: bool,
     /// `ttset.c:1419`. Two things at once, and the second is not about copying.
     /// With it on a wrapped line is marked continued, so selecting from column 0
     /// takes the whole logical line and copying it joins the rows — **and the `CR`
@@ -1426,6 +1533,7 @@ impl Default for Settings {
             terminal_buffer_max_lines: 10000,
             terminal_iso2022_shifts: String::from("on"),
             terminal_title: String::from("Tera Term"),
+            terminal_answerback: String::from(""),
             keyboard_backspace: KeyboardBackspace::default(),
             keyboard_meta: KeyboardMeta::default(),
             keyboard_delete_sends_del: false,
@@ -1459,6 +1567,13 @@ impl Default for Settings {
             mouse_tracking: true,
             mouse_ctrl_disables_tracking: true,
             mouse_wheel_to_cursor: true,
+            bell_mode: BellMode::default(),
+            bell_on_connect: false,
+            bell_visual_wait_ms: 10,
+            bell_over_used_count: 5,
+            bell_over_used_time: 2,
+            bell_suppress_time: 5,
+            bell_notify_sound: true,
             clipboard_continued_line_copy: false,
             clipboard_auto_copy: true,
             clipboard_select_on_activate: true,
@@ -1621,6 +1736,9 @@ impl Settings {
             terminal_title: ini
                 .get_or("Tera Term", "Title", &d.terminal_title)
                 .to_string(),
+            terminal_answerback: ini
+                .get_or("Tera Term", "Answerback", &d.terminal_answerback)
+                .to_string(),
             keyboard_backspace: match ini.get("Tera Term", "BSKey") {
                 Some(v) => KeyboardBackspace::from_ini(v),
                 None => d.keyboard_backspace,
@@ -1731,6 +1849,25 @@ impl Settings {
                 ini.get("Tera Term", "TranslateWheelToCursor"),
                 true,
             ),
+            bell_mode: match ini.get("Tera Term", "Beep") {
+                Some(v) => BellMode::from_ini(v),
+                None => d.bell_mode,
+            },
+            bell_on_connect: crate::schema::on_off(ini.get("Tera Term", "BeepOnConnect"), false),
+            bell_visual_wait_ms: crate::schema::floored(
+                ini.get_int("Tera Term", "BeepVBellWait", d.bell_visual_wait_ms) as i32,
+                1,
+            ),
+            bell_over_used_count: ini.get_int(
+                "Tera Term",
+                "BeepOverUsedCount",
+                d.bell_over_used_count,
+            ) as i32,
+            bell_over_used_time: ini.get_int("Tera Term", "BeepOverUsedTime", d.bell_over_used_time)
+                as i32,
+            bell_suppress_time: ini.get_int("Tera Term", "BeepSuppressTime", d.bell_suppress_time)
+                as i32,
+            bell_notify_sound: crate::schema::on_off(ini.get("Tera Term", "NotifySound"), true),
             clipboard_continued_line_copy: crate::schema::on_off(
                 ini.get("Tera Term", "EnableContinuedLineCopy"),
                 false,
@@ -2195,6 +2332,7 @@ impl Settings {
             &self.terminal_iso2022_shifts.clone(),
         );
         ini.set("Tera Term", "Title", &self.terminal_title.clone());
+        ini.set("Tera Term", "Answerback", &self.terminal_answerback.clone());
         ini.set(
             "Tera Term",
             "BSKey",
@@ -2429,6 +2567,37 @@ impl Settings {
                 "off"
             }
             .to_string(),
+        );
+        ini.set("Tera Term", "Beep", &self.bell_mode.as_ini().to_string());
+        ini.set(
+            "Tera Term",
+            "BeepOnConnect",
+            &if self.bell_on_connect { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "BeepVBellWait",
+            &self.bell_visual_wait_ms.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "BeepOverUsedCount",
+            &self.bell_over_used_count.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "BeepOverUsedTime",
+            &self.bell_over_used_time.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "BeepSuppressTime",
+            &self.bell_suppress_time.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "NotifySound",
+            &if self.bell_notify_sound { "on" } else { "off" }.to_string(),
         );
         ini.set(
             "Tera Term",
@@ -3137,6 +3306,7 @@ impl Settings {
             "terminal.buffer_max_lines" => self.terminal_buffer_max_lines.to_string(),
             "terminal.iso2022_shifts" => self.terminal_iso2022_shifts.clone(),
             "terminal.title" => self.terminal_title.clone(),
+            "terminal.answerback" => self.terminal_answerback.clone(),
             "keyboard.backspace" => self.keyboard_backspace.as_ini().to_string(),
             "keyboard.meta" => self.keyboard_meta.as_ini().to_string(),
             "keyboard.delete_sends_del" => if self.keyboard_delete_sends_del {
@@ -3240,6 +3410,13 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "bell.mode" => self.bell_mode.as_ini().to_string(),
+            "bell.on_connect" => if self.bell_on_connect { "on" } else { "off" }.to_string(),
+            "bell.visual_wait_ms" => self.bell_visual_wait_ms.to_string(),
+            "bell.over_used_count" => self.bell_over_used_count.to_string(),
+            "bell.over_used_time" => self.bell_over_used_time.to_string(),
+            "bell.suppress_time" => self.bell_suppress_time.to_string(),
+            "bell.notify_sound" => if self.bell_notify_sound { "on" } else { "off" }.to_string(),
             "clipboard.continued_line_copy" => if self.clipboard_continued_line_copy {
                 "on"
             } else {
@@ -3534,6 +3711,7 @@ impl Settings {
             }
             "terminal.iso2022_shifts" => self.terminal_iso2022_shifts = value.to_string(),
             "terminal.title" => self.terminal_title = value.to_string(),
+            "terminal.answerback" => self.terminal_answerback = value.to_string(),
             "keyboard.backspace" => self.keyboard_backspace = KeyboardBackspace::from_ini(value),
             "keyboard.meta" => self.keyboard_meta = KeyboardMeta::from_ini(value),
             "keyboard.delete_sends_del" => {
@@ -3610,6 +3788,24 @@ impl Settings {
             }
             "mouse.wheel_to_cursor" => {
                 self.mouse_wheel_to_cursor = crate::schema::on_off(Some(value), true)
+            }
+            "bell.mode" => self.bell_mode = BellMode::from_ini(value),
+            "bell.on_connect" => self.bell_on_connect = crate::schema::on_off(Some(value), false),
+            "bell.visual_wait_ms" => {
+                self.bell_visual_wait_ms =
+                    crate::schema::floored(crate::schema::int(value, self.bell_visual_wait_ms), 1)
+            }
+            "bell.over_used_count" => {
+                self.bell_over_used_count = crate::schema::int(value, self.bell_over_used_count)
+            }
+            "bell.over_used_time" => {
+                self.bell_over_used_time = crate::schema::int(value, self.bell_over_used_time)
+            }
+            "bell.suppress_time" => {
+                self.bell_suppress_time = crate::schema::int(value, self.bell_suppress_time)
+            }
+            "bell.notify_sound" => {
+                self.bell_notify_sound = crate::schema::on_off(Some(value), true)
             }
             "clipboard.continued_line_copy" => {
                 self.clipboard_continued_line_copy = crate::schema::on_off(Some(value), false)
@@ -4053,6 +4249,16 @@ pub const FIELDS: &[Field] = &[
         doc: "`ts.Title`, `ttset.c:713`. The window title before the host sends one.",
     },
     Field {
+        name: "terminal.answerback",
+        page: "terminal",
+        section: "Tera Term",
+        key: "Answerback",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "`ttset.c:663`. What the terminal sends when the host asks it who it is with ENQ (`0x05`) — `vtterm.c:1076` writes it with `CommBinaryOut`, so the bytes go out raw, with no CR translation and no local echo.  **The value is a hex string, not the answer itself.** `Hex2Str` (`ttlib.c:406`) copies bytes through and reads `$` as the lead of a two-digit escape, so `Answerback=VT100$0D` is nine bytes ending in a CR. Three quirks come with it, all from the same loop: `ConvHexChar` answers **0** for a digit that is not hex, so `$ZZ` is a NUL; a `$` with fewer than two digits behind it borrows `'0'` for each one it is missing, so a trailing `$` is also a NUL and `$A` is `0xA0`; and the result is arbitrary bytes rather than text, which is why this is held as the file's own spelling and decoded at the point of use rather than stored decoded.  It is also the one setting in this file another setting **overwrites**: `ttset.c:1132` replaces it outright with B Plus's five-byte activation string when `BPAuto=on`, a hundred lines after reading it, so a file that sets both loses this one without a word. See `transfer.bplus_auto`.",
+    },
+    Field {
         name: "keyboard.backspace",
         page: "keyboard",
         section: "Tera Term",
@@ -4381,6 +4587,76 @@ pub const FIELDS: &[Field] = &[
         default: "on",
         label: None,
         doc: "`ttset.c:1515`. Gates `DECSET 7786`, and is what a reset restores it to.",
+    },
+    Field {
+        name: "bell.mode",
+        page: "bell",
+        section: "Tera Term",
+        key: "Beep",
+        kind: Kind::Enum(&["off", "visual", "on"]),
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1112`, read with an **empty** default and compared down an `_stricmp` chain that tests only `off` and `visual` — so the `on` spelling below matches nothing and lands on the same `else` the absent key does, which is why both give the same variant here. Ninth member of the family `AGENTS.md` keeps returning to.",
+    },
+    Field {
+        name: "bell.on_connect",
+        page: "bell",
+        section: "Tera Term",
+        key: "BeepOnConnect",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1121`, `PF_BEEPONCONNECT`. **A TCP/IP connection only**: both places it is read test `PortType==IdTCPIP` first (`vtwin.cpp:3018`, `:3658`), so a serial console opening and closing is silent however this is set. It also bypasses `RingBell` entirely — always audible, never the visual bell, and never governed by the four below.",
+    },
+    Field {
+        name: "bell.visual_wait_ms",
+        page: "bell",
+        section: "Tera Term",
+        key: "BeepVBellWait",
+        kind: Kind::IntMin(1),
+        default: "10",
+        label: None,
+        doc: "`ttset.c:1125`. How long the screen stays inverted for a visual bell, in milliseconds — `int_min`, since it floors at 1 rather than taking the default.",
+    },
+    Field {
+        name: "bell.over_used_count",
+        page: "bell",
+        section: "Tera Term",
+        key: "BeepOverUsedCount",
+        kind: Kind::Int,
+        default: "5",
+        label: None,
+        doc: "`ttset.c:1781`. How many bells inside `bell.over_used_time` seconds are allowed before the governor starts suppressing. **Off by one against the manual**: `teraterm-term.html` says five bells are permitted and six sound, because `RingBell`'s inner `if` decides the *next* bell's fate and the switch that makes the noise sits outside it (`vtterm.c:5800`).",
+    },
+    Field {
+        name: "bell.over_used_time",
+        page: "bell",
+        section: "Tera Term",
+        key: "BeepOverUsedTime",
+        kind: Kind::Int,
+        default: "2",
+        label: None,
+        doc: "`ttset.c:1783`. The window the count is measured over, in seconds. A gap longer than this refills the count.",
+    },
+    Field {
+        name: "bell.suppress_time",
+        page: "bell",
+        section: "Tera Term",
+        key: "BeepSuppressTime",
+        kind: Kind::Int,
+        default: "5",
+        label: None,
+        doc: "`ttset.c:1785`. How long the terminal stays silent once the count is used up, in seconds — and it is **quiet** time, not elapsed time. Every bell arriving during the suppression pushes the deadline out again (`vtterm.c:5796` assigns `now` in the arm that decides it is suppressed), so a host beeping steadily is silenced until it stops and for this long afterwards. The manual reads as though it were a fixed delay; the code is the specification and this follows the code, because a governor that let a runaway through every five seconds would not do the job it exists for.",
+    },
+    Field {
+        name: "bell.notify_sound",
+        page: "bell",
+        section: "Tera Term",
+        key: "NotifySound",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1996`. Whether the *notification* makes a sound — upstream's tray balloon (`vtwin.cpp:725`, `Notify2SetSound`), not the terminal's bell. Read and written and acting on nothing here, because there is no notification surface yet; it is in this section because a user looking for \"the sound settings\" will look here.",
     },
     Field {
         name: "clipboard.continued_line_copy",
