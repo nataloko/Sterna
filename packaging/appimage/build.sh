@@ -98,6 +98,21 @@ cmake --build "$build/cmake" --target sterna || exit 2
 rm -rf "$appdir"
 cmake --install "$build/cmake" >/dev/null || exit 2
 
+# The two control-socket clients, which CMake does not build: they are cargo
+# binaries in the core's own workspace and the shell does not link them. An
+# AppImage that shipped a window with a control socket and no way to talk to it
+# would be half of a feature — the socket exists so that a shell script can
+# drive the terminal, and on this platform the AppImage *is* the installation.
+#
+# They go beside `sterna` and are reached through AppRun's first argument; see
+# the dispatch there.
+echo "appimage: building the clients" >&2
+cargo build --release --manifest-path "$root/crates/Cargo.toml" \
+	-p tt-ctl --bins || exit 2
+for client in ttctl ttpmacro; do
+	cp "$root/crates/target/release/$client" "$appdir/usr/bin/$client" || exit 2
+done
+
 # --- what the licences oblige ------------------------------------------------
 docs=$appdir/usr/share/doc/sterna
 mkdir -p "$docs"
@@ -274,6 +289,19 @@ export LD_LIBRARY_PATH="$here/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 for hook in "$here"/apprun-hooks/*.sh; do
 	[ -e "$hook" ] && . "$hook"
 done
+
+# One AppImage, three programs. `sterna.AppImage ttctl status` runs the client
+# rather than the terminal, which is the only way to reach a second binary
+# inside a single-file artifact — and the clients need the same
+# LD_LIBRARY_PATH, since they are built against this tree's glibc rather than
+# the host's.
+case ${1-} in
+ttctl | ttpmacro)
+	prog=$1
+	shift
+	exec "$here/usr/bin/$prog" "$@"
+	;;
+esac
 exec "$here/usr/bin/sterna" "$@"
 APPRUN
 chmod +x "$appdir/AppRun"

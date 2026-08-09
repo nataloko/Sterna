@@ -22,6 +22,29 @@ RSS / 33 MB PSS** with a shell attached under Wayland, and about **144 ms** from
 exec to a mapped window — which includes mounting the SquashFS, a cost the build
 tree does not pay.
 
+## One file, three programs
+
+The control socket needs a client, and on this platform the AppImage *is* the
+installation — so `ttctl` and `ttpmacro` are staged next to `sterna` and
+reached through AppRun's first argument:
+
+```sh
+./sterna-x86_64.AppImage --shell &        # a window
+./sterna-x86_64.AppImage ttctl status     # ...and something to ask it
+./sterna-x86_64.AppImage ttctl sendln 'uptime'
+./sterna-x86_64.AppImage ttpmacro login.ttl
+```
+
+Argument dispatch rather than three files, because a single self-contained
+binary is the whole point of the format. They go through AppRun rather than
+being run out of a mounted image directly, for the reason everything else here
+does: they are built against this tree's glibc and need the same
+`LD_LIBRARY_PATH`.
+
+Shipping the window without them would be half a feature — the socket exists so
+a shell script can drive the terminal, and a user with only the image would have
+had a socket and nothing that speaks to it.
+
 ## The base is the decision, and it is not settled
 
 An AppImage's floor is the glibc it was linked against. This one is built in
@@ -126,6 +149,14 @@ WAYLAND_DEBUG=1 timeout 8 ./sterna-x86_64.AppImage --shell -- /bin/echo hi 2>&1 
 ./sterna-x86_64.AppImage --shell -- /bin/sleep 30 & sleep 3
 grep -o '/[^ ]*libQt6Core[^ ]*' /proc/$(pgrep -n -f usr/bin/sterna)/maps | sort -u
 #   → /tmp/.mount_sterna*/usr/lib/libQt6Core.so.6, not /usr/lib64/...
+```
+
+```sh
+# 4. and the clients are in there and can find the window
+D=$(mktemp -d); export XDG_RUNTIME_DIR=$D
+QT_QPA_PLATFORM=offscreen ./sterna-x86_64.AppImage --shell & sleep 2
+./sterna-x86_64.AppImage ttctl ls        # → one row, with a pid and a title
+./sterna-x86_64.AppImage ttctl close
 ```
 
 Check 3 matters because the desktop this is developed on *has* Qt 6.11.1
