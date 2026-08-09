@@ -506,6 +506,38 @@ worth writing when there is a menu to map rather than ahead of one. `show` —
 the macro's own control window — has nowhere to go, since the macro is a thread
 in this process; its End button is `Control > Stop macro`.
 
+## And a control socket is the only thing that calls in from *outside*
+
+`Control.cpp`, and a fourth `QSocketNotifier`. The window binds
+`$XDG_RUNTIME_DIR/sterna/<pid>.sock` — or `<topic>.sock` when a command line
+gave `/D=` — and `tt_ctl_service` runs whatever a client asked for on this
+thread, which is the same arrangement as the macro one level out. See
+[`crates/tt-ctl`](../crates/tt-ctl/README.md) for the protocol and the nine
+methods; what belongs here is the four callbacks that are about the *window*
+rather than the terminal, and the two things a request is not allowed to do.
+
+**A request may not raise a modal dialog**, and both places it would are easy
+to miss. A `connect` naming nothing openable reaches `showConnectDialog`, and
+a `connect` that fails to open reaches a `QMessageBox::critical` inside
+`openTarget` — so a request from another process could park this window on a
+box nobody is looking for, with the requester blocked behind it. The first is
+refused with a reason; the second is queued to the next turn of the event
+loop, where a dialog is an ordinary dialog and the client already has its
+answer. Upstream's `connect` opens the dialog, which is right when a person
+clicked and is exactly the difference.
+
+**A `close` request may not close the window from where it is standing.** It
+arrives inside `tt_ctl_service`, which is inside a call this window's own child
+object is making, so it is invoked queued — and it is `close()` rather than a
+delete, because the window's own close handler is what stops the macro, writes
+the settings back and tears the socket down.
+
+The path goes into `$STERNA_CTL`, so a shell started *inside* the terminal can
+drive the window it is running in. That is the one thing DDE could not do at
+all. It is the process's environment rather than the child's, because
+`TtPtyParams` has no environment array and there is one window per process
+today; tabs are where that has to become per-session.
+
 ## Not here yet
 
 - **Blinking cursor and blinking text.** Tera Term colours blink rather than

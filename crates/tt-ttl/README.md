@@ -103,9 +103,11 @@ files behind it. It does not belong in a parser.
 | `envcmds.rs`, `clockcmds.rs`, `cksumcmds.rs`, `pwd.rs`, `pwdcmds.rs` | the environment, the clock, the checksums, the passwords |
 | `host.rs` | the seam, and a host that records |
 
-The language is complete. What is left is not in this crate: a host that is a
-real terminal rather than a recorder, and the `ttctl` control socket that lets
-one be reached from outside the process.
+The language is complete, and what was left is no longer left: `tt-macro` is
+the host that is a real terminal rather than a recorder, and
+[`tt-ctl`](../tt-ctl) is the control socket that lets one be reached from
+outside the process — including a `ttpmacro` entry point that parses the
+command line in `cmdline.rs` and then asks a window to run the file.
 
 ## An upstream defect, reproduced
 

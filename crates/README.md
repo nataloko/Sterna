@@ -1,7 +1,8 @@
 # Sterna core
 
-The Rust side. Nine of the crates `PLAN.md` describes, plus three CLIs that
-exist so the engine can be measured against something.
+The Rust side. Ten of the crates `PLAN.md` describes, plus three CLIs that
+exist so the engine can be measured against something and two that drive a
+running window from outside it.
 
 | Crate | What it is |
 |---|---|
@@ -14,6 +15,7 @@ exist so the engine can be measured against something.
 | `tt-ttl` | Tera Term's macro language, ported from `ttpmacro/`, with the terminal behind a trait instead of behind DDE. See [its README](tt-ttl/README.md). |
 | `tt-session` | A terminal attached to a connection: the loop between `tt-vt` and `tt-conn`, and what the C ABI exports. See [its README](tt-session/README.md). |
 | `tt-macro` | The join: a `tt-ttl` script on its own thread, driving a `tt-session` on the frontend's. See [its README](tt-macro/README.md). |
+| `tt-ctl` | The control socket that replaces DDE — JSON-RPC over a Unix socket, and the `ttctl` and `ttpmacro` clients. See [its README](tt-ctl/README.md). |
 | `tt-ffi` | The flat C ABI over `tt-session` — the whole core/frontend seam, and what the Qt shell links. See [its README](tt-ffi/README.md). |
 | `tt-dump` | A CLI that drives `tt-vt` over a byte stream and prints the oracle's dump format. Exists for the differential harness. |
 | `tt-host` | A terminal with no window: runs a program on a pty and is the terminal on the other end of it. Exists for `esctest/`, which cannot be a recording. |

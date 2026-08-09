@@ -61,6 +61,8 @@ cargo test -p tt-xfer            # the protocols vs lrzsz and gkermit, over a pt
 cargo test -p tt-ttl             # the macro language, with no terminal attached
 cargo test -p tt-ttl --test scripts          # ...and upstream's own 53 macros
 cargo test -p tt-macro           # ...and one driving a real session, threaded
+cargo test -p tt-ctl             # the control socket, the wire and the address
+cargo test -p tt-ctl --test cli  # ...and `ttctl`/`ttpmacro`, as subprocesses
 TTL_BLESS=1 cargo test -p tt-ttl --test scripts   # rewrite the transcripts,
                                              # then read every one you changed
 ../vendor/ttpfile/sync.sh --check   # ...and that the vendored C has not drifted
@@ -100,6 +102,7 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/macro_test               # a TTL macro, driven by the event loop
 ./build/macro_test --write /tmp  # ...and the dialogs it raises, as PNGs
 ./build/cmdline_test             # a Tera Term command line, argv to connected
+./build/control_test             # the control socket, against the window's loop
 ./build/sterna --port /dev/ttyUSB0 --baud 115200
 ./build/sterna myrouter        # an alias out of ~/.ssh/config
 ./build/sterna --shell         # a local login shell
@@ -983,6 +986,40 @@ And for a macro reached from outside the process:
   reads. `tt_session_unlink_macro` is the other half, and the frontend calls
   both.
 
+And for the control socket:
+
+- **A socket file outlives the process that bound it, and `bind` cannot tell a
+  leftover from a collision.** `bind(2)` on an existing path is `EADDRINUSE`
+  whether or not anybody is behind it, so a window that crashed leaves a name
+  the next window with the same `/D=` cannot take. The only way to tell the two
+  apart is to *connect*: `ECONNREFUSED` means the file is rubbish and can be
+  unlinked, and a success means somebody really is there. The same test is what
+  prunes dead names out of the directory — and without the pruning, "there is
+  exactly one window, so I know which you meant" starts refusing a session that
+  has exactly one window.
+- **A modal dialog raised from inside `tt_ctl_service` holds the client open**,
+  and neither of the two places it happens looks like a dialog. A `connect` that
+  names nothing reaches `showConnectDialog`, and one that fails to open reaches
+  a `QMessageBox::critical` inside `openTarget` — so a request from another
+  process can park the window on a box nobody is looking for, with the requester
+  blocked behind it. The first is refused outright and the second is queued to
+  the next turn of the event loop. **In a test this is not a failure, it is a
+  hang**, which is what it looked like the first time.
+- **`Vt::encode_text` translates a CR and not an LF**, so `sendln` appends
+  `\r`. Appending `\n` instead puts a bare LF on the wire under *every*
+  `CRSend` setting, including the default — and it reads as correct, because a
+  newline is what a line ending is called everywhere else in the file. The macro
+  language's own `sendln` appends the CR for the same reason.
+- **A `spin(predicate, ms)` helper calls its predicate one extra time to produce
+  its return value.** Harmless for "is it connected yet"; wrong for anything
+  that consumes what it is testing for, and taking a pending connection off a
+  listening socket is exactly that — the first call accepts and returns true,
+  the second finds nothing and returns false, and the test reports that the
+  connection never arrived. Latch the result.
+- **`QLocalSocket` is in Qt6::Network, which the shell does not link.** A test
+  that wants to be a client uses a `sockaddr_un` and `poll(2)` — which is also
+  what the claim "this needs no library" is actually asserting.
+
 And for the C ABI:
 
 - **cbindgen parses files, not crates, so it cannot see `pub(crate)` or a
@@ -1183,7 +1220,7 @@ ini-audit/       what GetPrivateProfile* really does, asked of Wine (see its REA
 vendor/ttpfile/  Tera Term's file-transfer protocols, verbatim — the only
                  upstream code the distribution ships (see its README)
 crates/          Rust core — tt-grid, tt-vt, tt-conn, tt-session, tt-config,
-                 tt-xfer, tt-ttl, tt-macro, tt-ffi (see its README)
+                 tt-xfer, tt-ttl, tt-macro, tt-ctl, tt-ffi (see its README)
 crates/tt-fuzz/  the properties, and what they found (see its README)
 crates/fuzz/     the libFuzzer targets — nightly, weekly in CI
 bench/           the perf gate: a floor in CI, a baseline locally (see README)

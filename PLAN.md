@@ -1064,20 +1064,23 @@ before anything else in every session.
   > Run macro, `/M=` on the command line, and the dialogs. See below. What is
   left is the commands listed at the bottom of `tt-macro/src/host.rs` and of
   `shell/src/Macro.cpp`, each of which wants a subsystem this port has not
-  built, and a way in that is not a person clicking a menu — which is the
-  `ttctl` socket.
+  built. **The way in that is not a person clicking a menu now exists**: see
+  the `ttctl` bullet above.
 - **Lua via `mlua`** over the same `ScriptHost` command table (~500 LOC glue).
 - `ttctl` JSON-RPC control socket replacing DDE. Keep a `ttpmacro script.ttl`
   CLI entry point so existing shortcuts and `.bat` wrappers keep working.
-  ✅ **both command lines are parsed, and `ttermpro`'s opens a window**,
+  ✅ **done**, 2026-08-09 — `crates/tt-ctl/`: the wire, the address, the
+  dispatch, the two clients; the ctl half of the C ABI; and
+  `shell/src/Control.cpp`, so a window binds one on startup and answers it.
+  See below. ✅ **both command lines are parsed, and `ttermpro`'s opens a
+  window**,
   2026-08-09 — `crates/tt-ttl/src/cmdline.rs` for `ttpmacro`'s and
   `crates/tt-config/src/cmdline/` for `ttermpro`'s, the second including TTSSH's
   plugin half; `tt-session`'s `open.rs` for what a line says to open, the
   command-line half of the C ABI, and `shell/src/main.cpp`, so
   `sterna /ssh /auth=publickey myhost` works as the shortcut it was converted
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
-  two parsers plus CygTerm's for `cygconnect`. What is left is the `ttctl`
-  socket itself.
+  two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
   `crates/tt-config/` (60 settings: 39 for the terminal, 2026-08-08, plus the
   connection, serial, log and transfer ones the command line writes into,
@@ -2407,8 +2410,8 @@ with its own errors.
 its own listening socket — so argv to a live connection is checked end to end
 in CI.
 
-What is still not wired: the `ttctl` socket that lets one of these be reached
-from outside the process.
+And a `ttctl` socket now lets one of these be reached from outside the process
+— see the section at the end of this stage.
 
 #### And then a macro opened one, which is the same line through a third parser
 
@@ -2712,6 +2715,74 @@ for what comes back, which is the tap, the ring, the macro's thread and the
 window's notifier in one assertion. The dialogs are answered by a repeating
 timer that fires *inside* the modal loop, which is the only way to test them
 and is also the re-entrancy the guard above exists for.
+
+#### And then it could be reached from outside, which is what DDE was for
+
+`crates/tt-ctl/`, the ctl half of `crates/tt-ffi/src/lib.rs`, and
+`shell/src/Control.cpp`, 2026-08-09. The last thing in this stage that had not
+been built, and the one `PLAN.md` has named since Stage 0.
+
+**The socket is not a replacement for DDE's command set.** That set is
+`ttddecmnd.h`, ninety-odd commands, and it *is* the macro language — because
+upstream's macro is a second process and had no other way to reach the
+terminal. Here the macro is a thread inside the window, the language is
+`tt-ttl`, and all of that glue was deleted in the first place. What was deleted
+with it was the *reachability*: a running window could be asked for something by
+a person clicking Control > Run macro, or by a `/M=` at startup, and that was
+the entire list. So this replaces the reachability and nothing else — nine
+methods, of which two start and stop a macro and the rest are the things a
+script wants that are not a macro.
+
+JSON-RPC 2.0, one object per line, on a Unix socket in
+`$XDG_RUNTIME_DIR/sterna/`. The framing is chosen so that
+`printf … | nc -U` is a client: if driving a window needs a library, the socket
+has failed at the thing DDE was bad at. `serde_json` is a dependency and a
+hand-rolled parser was rejected — the protocol is one this project did not
+design, the parser is on a socket, and this is the wrong place in the tree to
+save four crates.
+
+**The directory is the name service DDE had and a Unix socket has not.** A
+window binds `<name>.sock`; the name is a `/D=` topic or the pid, which is the
+same command line upstream uses for the same purpose — `ttermpro` launches
+`TTPMACRO /D=<hwnd-in-hex>` (`ttdde.c:1497`) precisely so the macro can find
+the window that started it. It is also the access control: `0700` on the
+directory, `0600` on the socket, `SO_PEERCRED` behind both. Anything that
+reaches this can type at whatever the window is connected to.
+
+**Four divergences, all stated where they happen.**
+
+- **A client given no name refuses to guess between two windows.** A DDE
+  wildcard connect takes whichever conversation answers first, so upstream's
+  `ttpmacro login.ttl` with two Tera Terms open logs into an arbitrary one of
+  them — and that macro usually types a password.
+- **`connect` with nothing openable is refused rather than answered with the
+  New Connection dialog**, and a `connect` that *will* open is queued to the
+  next turn of the event loop. Both are the same rule: a modal dialog raised
+  from inside `tt_ctl_service` parks the window on a box nobody is looking for,
+  with the requester blocked behind it. Upstream opens the dialog, which is
+  right when a person clicked.
+- **`ttpmacro`'s `/V`, `/I` and `/S` do nothing.** All three describe the
+  control window of a second process, and there is no second process: this
+  `ttpmacro` parses the command line and then asks a window to run the file.
+  `params[0]` is likewise the file and its parameters rather than the line as
+  typed, because what the window can see is what was sent.
+
+**One new ABI function and one new field**, both because the seam could not
+otherwise carry a command line. `tt_cmdline_parse_line` is `parse_argument` —
+the arm that prepends upstream's dummy program name and passes NULL for the DDE
+topic — which is what a macro's `connect` and a socket's `connect` are both
+given; the ABI could parse `argv` and nothing else. And `TtCmdLineInfo` gained
+`dde_topic`, which had been parsed since the command line landed and had
+nothing to be.
+
+Four suites cover it and each proves something the others cannot:
+`cargo test -p tt-ctl` is the wire and the address; `--test cli` runs both
+binaries as subprocesses against a real session; `tests/abi.c` drives the C
+side with `sprintf` and a `sockaddr_un` and no JSON library, which is as close
+as this suite gets to the shell script the design is for; and
+`shell/tests/control_test.cpp` runs it against a real `MainWindow`'s event
+loop, which is the only place the notifier, the nested loops and the window's
+own four callbacks meet.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
