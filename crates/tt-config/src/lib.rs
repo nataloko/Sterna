@@ -18,6 +18,7 @@
 
 pub mod cmdline;
 pub mod gen;
+pub mod hex;
 pub mod ini;
 pub mod schema;
 pub mod services;
@@ -25,5 +26,6 @@ pub mod services;
 mod generated;
 
 pub use generated::*;
+pub use hex::hex_decode;
 pub use ini::{Encoding, Ini};
 pub use schema::{Field, Kind};
