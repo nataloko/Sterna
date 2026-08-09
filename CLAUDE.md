@@ -693,6 +693,17 @@ And for the macro language:
   `logautoclosemode` is the reserved word; `logautoclose` is nothing at all,
   and a test written against it passes through the same variable-not-command
   path above. Take the spelling from `CheckReservedWord`, never from prose.
+- **`waitregex` matches whole lines and the line still has its CR on it**, so
+  a pattern ending in `$` never matches a CRLF line and the obvious first
+  guess — that the regex dialect is wrong — is the wrong place to look. The
+  match is attempted when the LF arrives and *before* it is added to the
+  buffer, so the CR is the last byte of what the pattern sees. It also matches
+  nothing at all on an empty line, whatever the pattern.
+- **Oniguruma's `onig` crate needs `default-features = false` or the build
+  needs `libclang`.** With the default `generate` feature on, `onig_sys` runs
+  `bindgen`; with it off the pre-generated bindings are used and `cc` is the
+  only requirement. The failure is a build-script panic naming `libclang`,
+  which reads as a missing toolchain rather than as a feature flag.
 - **A macro that shows a dialog must not be run on the UI thread**, which is
   the same rule `wait` already imposed and for a different reason: upstream's
   dialogs are modal on the macro's own thread, so the faithful shape is a host
@@ -803,7 +814,7 @@ diffing the two engines. Patches in `oracle/patches/`, reports drafted in
 `docs/upstream-bugs.md`. Filing needs a GitHub account and is an open item in
 `PLAN.md`.
 
-**Twenty-one more are in `ttpmacro` and none of them is in that file**, because
+**Twenty-two more are in `ttpmacro` and none of them is in that file**, because
 they were found by reading the source rather than by two engines disagreeing,
 and `docs/upstream-bugs.md` holds only what a differential run proved. They are
 written up in `PLAN.md`'s TTL sections: `waitn`'s timeout arm leaving the
@@ -817,8 +828,10 @@ out-of-bounds accesses (`strtrim`, `strsplit`, `GetFactor`, `HandleGet`,
 `HandleFree`, `FPointer`, `logrotate`) and six in the password family — two
 stack overflows in the v1 codec, two uninitialised reads and a wild `free()`
 in the v2 one, and a v1 record that is silently unreadable when the INI layer
-strips a matching pair of quotes off it. Demonstrate each against a real
-`ttpmacro.exe` in Stage 3 before filing.
+strips a matching pair of quotes off it — and one in the regex matcher, which
+indexes the target with a non-participating group's -1 and writes a NUL before
+the buffer. Demonstrate each against a real `ttpmacro.exe` in Stage 3 before
+filing.
 
 **And one in `vte`**, which is a dependency rather than the specification, so it
 is not in that file: `vte` 0.15.0's `advance_partial_utf8` (`lib.rs:687`) prints

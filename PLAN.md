@@ -1594,8 +1594,8 @@ out-of-bounds accesses. Three more arrived with the environment and the clock
 below, for **fifteen**: `getspecialfolder`'s always-1 result, the NULL it
 hands `strncpy_s` for a folder type it does not know, and `gettime`'s
 timezone argument leaking into the process environment when the line has
-trailing junk. Six more came with the passwords, for **twenty-one** — see
-that section.
+trailing junk. Six more came with the passwords and one with the regular
+expressions, for **twenty-two** — see those sections.
 
 #### The checksums, and the terminal's odds and ends
 
@@ -1905,14 +1905,80 @@ dependency. A file this port *creates* also carries a UTF-8 BOM where
 deliberate divergence `tt-config` already makes, and `ini-audit/` measured
 Win32 reading a BOM'd file correctly.
 
-**What is left** is the regex family. That one is a decision, not a port:
-`sprintf` validates its format specifiers with **Oniguruma** and
-`strmatch`/`strreplace`/`waitregex` match with it, and `regexoption` exposes
-eleven syntaxes and some thirty encodings that only Oniguruma has — so *which
-regex dialect this speaks* is a compatibility question that wants answering
-deliberately rather than by whichever crate is reached for.
+#### The regex family, and the dialect decision inside it
 
-And the conformance target needs its own harness. The 53 `.ttl` scripts are
+`crates/tt-ttl/src/regex.rs`, `regexcmds.rs` and `sprintf.rs`, 2026-08-09. Six
+commands, and **every reserved word in the language now has an arm in the
+dispatch** — the test that used to name whichever one the port had not reached
+asserts that instead, by running each of the 231 words and failing on any that
+still answers "unknown command".
+
+**The dialect decision went to Oniguruma itself, through the `onig` crate.**
+Decided 2026-08-09 with the user. The alternatives were a pure-Rust
+Perl-flavoured engine (`fancy-regex`) or the linear-time `regex` crate, and
+both lose the same thing: `regexoption` names **eleven syntaxes** — ASIS,
+POSIX basic and extended, Emacs, grep, GNU, Java, Perl, Perl-NG, Ruby, default
+— and some **thirty encodings**, and no other engine has them. `regex` also
+has no backreferences and no look-around, which the documented patterns use.
+Reimplementing that is reimplementing Oniguruma, and Tera Term vendors and
+builds the same library, so this is the rule about preferring real upstream
+code over a stub applied one level out.
+
+Three things about it are worth writing down. `default-features = false` is
+load-bearing: with the default on, `onig_sys` runs `bindgen` and the **build
+then needs `libclang`**; without it the pre-generated bindings are used and
+`cc` is the only requirement. Oniguruma is C, so the core crate now compiles a
+C library — the first that ships rather than being test-only. And it
+backtracks, so a pattern with nested quantifiers can be made to take
+exponential time, and `waitregex` matches against **what the far end sent**.
+Upstream has the identical exposure and a macro chooses its own patterns, so it
+is reproduced rather than fenced; `timeout` is what an unattended script has.
+
+**`sprintf` needed none of it.** Upstream validates each conversion spec with
+Oniguruma — `^%[-+0 #]*([1-9][0-9]*|\*)?(?:\.([0-9]*|\*))?$`, recompiled on
+every call — but the pattern is fixed and its two groups only ever answer "is
+this a `*`", so the grammar is written out. What `sprintf` *does* need is C's
+`printf`, because Rust has no `%g`, `%o` or `%a` and its `{:e}` prints `1.5e0`
+where C prints `1.500000e+00`. All twenty conversions are written out and the
+55 goldens come from a C program compiled and run, the same way the password
+codec's did.
+
+**A macro has no floating-point type**, which is why `%f` and its relatives
+read a *string* and put it through `atof` — `sprintf '%f' '1.5'`, quotes
+included, since without them the `1.5` is read as the integer 1 and refused.
+`atof` answers 0 for anything it cannot read, so `sprintf '%f' 'abc'` prints
+`0.000000` rather than failing.
+
+The three commands report success three different ways, all from one upstream
+function that returns a position: `strmatch`'s `result` is the **byte position**
+of the match counting from one, `waitregex`'s is the **index of the pattern**,
+and `sprintf`'s is **0 for success** — 1, 2, 3 and 4 name which argument went
+wrong. `strreplace` is 1, 0 or -1 and is the only one of them that tells a
+pattern Oniguruma refused apart from one that simply did not match.
+
+Five quirks are reproduced. `regexoption` leaves each of its three settings
+alone unless the call mentioned it, so there is no way back to the defaults;
+naming an encoding or a syntax twice is a syntax error and naming an option
+twice is not, because the options are ORed; and the one-sided check on
+`OPTION_NONE` means `regexoption 'OPTION_NONE' 'IGNORECASE'` is accepted and
+turns `IGNORECASE` **on** while the other order is refused. `waitregex` matches
+a **line at a time** rather than a byte at a time — it waits for a newline and
+then runs the patterns over the line that just ended, which is what makes `^`
+and `$` mean anything — and the line still has its **CR** on it, because the LF
+that triggered the attempt has not been added yet, so a pattern ending in `$`
+does not match a CRLF line. An empty line never matches at all. And
+`strreplace` measures what it is replacing by looking the `matchstr` *variable*
+up by name rather than by using the match it just made.
+
+**A twenty-second upstream defect.** `FindRegexStringOne` (`ttmdde.c:634`) uses
+the match region's `beg` and `end` as indices into the target, and for a group
+that did not participate both are **-1** — so it writes a NUL one byte *before*
+the buffer, reads the empty string that leaves, and puts the byte back. A plain
+`strmatch 'abc' '(x)?abc'` reaches it. Not reproduced: the empty string is what
+it produces anyway.
+
+**What is left in the language** is the conformance target, which needs its own
+harness. The 53 `.ttl` scripts are
 **not self-checking** — they report to a human through `messagebox`, several are
 deliberately full of errors so as to exercise the error dialog, and most are
 Shift-JIS. "They pass" has to mean a host that records dialogs and a golden per
