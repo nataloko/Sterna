@@ -408,3 +408,88 @@ fn unplugging_the_far_end_ends_the_session() {
     assert_eq!(s.pump(Duration::from_millis(10)).unwrap(), 0);
     assert!(s.drain_events().is_empty());
 }
+
+/// `ClearComBuffOnOpen` — whether what arrived before anybody was watching is
+/// thrown away or delivered.
+///
+/// Only a real port can answer this: the setting acts on the *driver's* queue,
+/// which a memory transport does not have, and the two answers are otherwise
+/// indistinguishable from the session's side.
+#[test]
+fn what_arrived_before_the_session_did_is_kept_or_purged_by_the_setting() {
+    let Some((a, b)) = rig() else { return };
+
+    // Put bytes on the wire with nothing on this side reading them, so they
+    // sit in the near port's own receive queue. The port is opened first and
+    // handed over after — which is what a session does, since `connect` takes
+    // an already-open transport.
+    let speak = |near: SerialConn, clear: bool| {
+        let mut far = SerialConn::open(&b, &params()).expect("open the far end");
+        far.write(b"said before\r\n", Duration::from_secs(1))
+            .expect("write");
+        far.flush(Duration::from_millis(500)).ok();
+        // Long enough for the FTDI to have handed it to the kernel; a purge
+        // that runs before the bytes land clears an empty queue and proves
+        // nothing.
+        std::thread::sleep(Duration::from_millis(250));
+
+        let settings = tt_config::Settings {
+            serial_clear_buffer_on_open: clear,
+            ..tt_config::Settings::default()
+        };
+        let mut s = Session::new(Config::default());
+        s.set_settings(settings).expect("settings");
+        s.connect(Box::new(near));
+        pump_until(&mut s, Duration::from_millis(600), |s| {
+            !row(s, 0).is_empty()
+        });
+        row(&s, 0)
+    };
+
+    let near = SerialConn::open(&a, &params()).expect("open the near end");
+    assert_eq!(
+        speak(near, false),
+        "said before",
+        "with the purge off, what the far end said first is the session's first line"
+    );
+
+    let near = SerialConn::open(&a, &params()).expect("open the near end");
+    assert_eq!(
+        speak(near, true),
+        "",
+        "with the purge on, it is gone before the terminal sees it"
+    );
+}
+
+/// The two control lines, resolved out of the settings and asserted at the
+/// other end of the cable — DTR→DSR and RTS→CTS on the rig's loom.
+#[test]
+fn the_control_lines_reach_the_wire_as_the_settings_ask() {
+    let Some((a, b)) = rig() else { return };
+    let mut far = SerialConn::open(&b, &params()).expect("open the far end");
+
+    let held = |value: i32| {
+        let settings = tt_config::Settings {
+            serial_rts: value,
+            serial_dtr: value,
+            ..tt_config::Settings::default()
+        };
+        tt_session::open::serial_params(&settings)
+    };
+
+    // `FlowCtrlRTS=0` / `FlowCtrlDTR=0` is `*_CONTROL_DISABLE`, and the far
+    // end should see both lines low.
+    let near = SerialConn::open(&a, &held(0)).expect("open low");
+    let lines = lines_until(&mut far, |l| !l.cts && !l.dsr);
+    assert!(!lines.cts, "RTS stayed high with FlowCtrlRTS=0");
+    assert!(!lines.dsr, "DTR stayed high with FlowCtrlDTR=0");
+    drop(near);
+
+    // ...and the sentinel, which with no flow control derives to Enable for
+    // both. This is the default a file that says nothing produces.
+    let near = SerialConn::open(&a, &held(-1)).expect("open high");
+    let lines = lines_until(&mut far, |l| l.cts && l.dsr);
+    assert!(lines.cts, "RTS did not come up for the derived default");
+    assert!(lines.dsr, "DTR did not come up for the derived default");
+    drop(near);
+}

@@ -99,6 +99,19 @@ pub enum PinControl {
     /// `*_CONTROL_HANDSHAKE` — the driver raises and lowers it as its buffer
     /// fills. On Linux only RTS can do this, and only as part of `CRTSCTS`.
     Handshake,
+    /// `RTS_CONTROL_TOGGLE` — RTS up while transmitting and down otherwise,
+    /// which is half-duplex RS-485 keying. **RTS only**: Win32 has no
+    /// `DTR_CONTROL_TOGGLE` and upstream's DTR list has three entries to RTS's
+    /// four (`serial_pp.cpp:74`).
+    ///
+    /// Linux does this through `TIOCSRS485` rather than through termios, and
+    /// whether it exists at all is the driver's answer, not the kernel's — the
+    /// FTDI Quad RS232-HS on the rig here answers `ENOTTY` to even the *get*,
+    /// so there is nothing to test an implementation against. So the line is
+    /// left where the kernel put it on open rather than driven by hand, which
+    /// on a port with no RS-485 support is the same place `Enable` leaves it.
+    /// The mapping is written down here for whoever has an 8250 to try it on.
+    Toggle,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -257,8 +270,11 @@ impl SerialConn {
         }
 
         // RTS is the driver's while CRTSCTS is on, so only drive it by hand
-        // when it is ours to drive.
-        if params.rts != PinControl::Handshake && params.flow != FlowControl::RtsCts {
+        // when it is ours to drive. `Toggle` is the driver's too, where a
+        // driver has it at all.
+        if !matches!(params.rts, PinControl::Handshake | PinControl::Toggle)
+            && params.flow != FlowControl::RtsCts
+        {
             self.port
                 .write_request_to_send(params.rts == PinControl::Enable)?;
         }
@@ -452,7 +468,15 @@ impl SerialConn {
     }
 
     /// Discard whatever the driver has buffered in either direction —
-    /// `PurgeComm`'s `PURGE_*CLEAR`.
+    /// `PurgeComm`'s `PURGE_*CLEAR` (`commlib.c:162`).
+    ///
+    /// Deliberately not part of [`apply`](SerialConn::apply), because it is
+    /// not part of `CommResetSerial` either: that takes it as an *argument*,
+    /// so the caller decides. `ClearComBuffOnOpen` is only ever that argument
+    /// at open — Control > Reset port passes TRUE whatever the setting says
+    /// (`vtwin.cpp:4913`). The reason someone turns it off is a console
+    /// server, where what the driver buffered is what the far end said before
+    /// anybody was watching, and often the only copy.
     pub fn clear(&mut self, input: bool, output: bool) -> Result<()> {
         let what = match (input, output) {
             (true, true) => serialport::ClearBuffer::All,

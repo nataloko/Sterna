@@ -292,7 +292,26 @@ impl Session {
         if let Some(c) = self.conn.as_mut() {
             let _ = c.resize(cols as u16, rows as u16);
         }
+        self.clear_com_buff_on_open();
         self.connect_beep(kind);
+    }
+
+    /// `ClearComBuffOnOpen` — `CommOpen` purges the driver's queues as the
+    /// port opens (`commlib.c:475`), and this is the same moment: nothing has
+    /// read from the transport yet.
+    ///
+    /// The error is dropped because upstream's is not checked either, and
+    /// because a purge that failed leaves the session with more data than
+    /// asked for rather than less. When the setting is off, upstream marks the
+    /// port readable instead (`:477`'s `cv->RRQ`), which here needs nothing —
+    /// the frontend's notifier will find the bytes on its own.
+    fn clear_com_buff_on_open(&mut self) {
+        if !self.settings.serial_clear_buffer_on_open {
+            return;
+        }
+        if let Some(port) = self.conn.as_mut().and_then(|c| c.as_serial()) {
+            let _ = port.clear(true, true);
+        }
     }
 
     /// `BeepOnConnect` — `vtwin.cpp:3658` on the way in and `:3018` on the way
@@ -975,6 +994,7 @@ impl Session {
 
     /// Send a line break — `CommSendBreak`. On a serial console this is how
     /// you reach a `getty` or drop a Sun box to its PROM.
+    ///
     pub fn send_break(&mut self, dur: Duration) -> Result<()> {
         match self.conn.as_mut() {
             Some(c) => c.send_break(dur),

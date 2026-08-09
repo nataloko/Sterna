@@ -622,6 +622,21 @@ enum TtPinControl
      * fills. On Linux only RTS can do this, and only as part of `CRTSCTS`.
      */
     TT_PIN_CONTROL_HANDSHAKE,
+    /**
+     * `RTS_CONTROL_TOGGLE` — RTS up while transmitting and down otherwise,
+     * which is half-duplex RS-485 keying. **RTS only**: Win32 has no
+     * `DTR_CONTROL_TOGGLE` and upstream's DTR list has three entries to RTS's
+     * four (`serial_pp.cpp:74`).
+     *
+     * Linux does this through `TIOCSRS485` rather than through termios, and
+     * whether it exists at all is the driver's answer, not the kernel's — the
+     * FTDI Quad RS232-HS on the rig here answers `ENOTTY` to even the *get*,
+     * so there is nothing to test an implementation against. So the line is
+     * left where the kernel put it on open rather than driven by hand, which
+     * on a port with no RS-485 support is the same place `Enable` leaves it.
+     * The mapping is written down here for whoever has an 8250 to try it on.
+     */
+    TT_PIN_CONTROL_TOGGLE,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L

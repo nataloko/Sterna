@@ -35,7 +35,9 @@ use tt_config::cmdline::{cygterm, CommandLine, PortType};
 use tt_config::Settings;
 use tt_config::{ConnectionPortType, SerialDataBits, SerialFlow, SerialParity, SerialStopBits};
 use tt_conn::pty::PtyParams;
-use tt_conn::serial::{port_by_number, DataBits, FlowControl, Parity, SerialParams, StopBits};
+use tt_conn::serial::{
+    port_by_number, DataBits, FlowControl, Parity, PinControl, SerialParams, StopBits,
+};
 use tt_conn::ssh::SshParams;
 use tt_conn::telnet::{TelnetMode, TelnetParams};
 use tt_conn::Transport;
@@ -402,7 +404,36 @@ pub fn serial_params(s: &Settings) -> SerialParams {
             SerialFlow::Hardware => FlowControl::RtsCts,
             SerialFlow::DsrDtr => FlowControl::DsrDtr,
         },
+        rts: pin_control(s.serial_rts, s.serial_flow == SerialFlow::Hardware),
+        dtr: pin_control(s.serial_dtr, s.serial_flow == SerialFlow::DsrDtr),
         ..SerialParams::default()
+    }
+}
+
+/// `FlowCtrlRTS` / `FlowCtrlDTR` → [`PinControl`], resolving the sentinel.
+///
+/// `-1` is the default both are read with (`ttset.c:2034`, `:2042`) and it is
+/// not a `DCB` value: it means "derive from the flow control", which is why
+/// the resolution is here rather than in the schema — the answer depends on
+/// another setting, the same reason `connection.terminal_speed` is parsed here
+/// too. `handshaking` is whether the flow control is the one *this* line does,
+/// which is `hard` for RTS and `dsrdtr` for DTR.
+///
+/// Anything outside 0..=3 reads as `Enable`, and that is a divergence worth
+/// stating: upstream puts the number straight into the `DCB` and never checks
+/// what `SetCommState` made of it (`commlib.c:240`), so a stray `FlowCtrlRTS=9`
+/// makes Windows reject the whole structure and the port silently keeps the
+/// baud, parity and stop bits it already had. Reproducing that would mean
+/// reproducing a bug whose symptom is every serial setting in the file going
+/// missing at once.
+fn pin_control(value: i32, handshaking: bool) -> PinControl {
+    match value {
+        -1 if handshaking => PinControl::Handshake,
+        -1 => PinControl::Enable,
+        0 => PinControl::Disable,
+        2 => PinControl::Handshake,
+        3 => PinControl::Toggle,
+        _ => PinControl::Enable,
     }
 }
 
@@ -709,6 +740,62 @@ mod tests {
             Startup::Unsupported(why) => assert!(why.contains("no serial port")),
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    /// The control lines' `-1` is not a value — it is "derive from the flow
+    /// control", and each derives from a *different* one of the four.
+    #[test]
+    fn the_control_lines_derive_from_the_flow_control_they_belong_to() {
+        let with = |flow| {
+            let s = Settings {
+                serial_flow: flow,
+                ..Settings::default()
+            };
+            let p = serial_params(&s);
+            (p.rts, p.dtr)
+        };
+        // Neither line is the flow control's, so both are simply asserted.
+        assert_eq!(
+            with(SerialFlow::None),
+            (PinControl::Enable, PinControl::Enable)
+        );
+        assert_eq!(
+            with(SerialFlow::XonXoff),
+            (PinControl::Enable, PinControl::Enable)
+        );
+        // `hard` is RTS/CTS, so RTS becomes the driver's and DTR does not.
+        assert_eq!(
+            with(SerialFlow::Hardware),
+            (PinControl::Handshake, PinControl::Enable)
+        );
+        // ...and `dsrdtr` the other way round, which is the half that is easy
+        // to write as one condition and get wrong for both.
+        assert_eq!(
+            with(SerialFlow::DsrDtr),
+            (PinControl::Enable, PinControl::Handshake)
+        );
+
+        // A number in the file overrides the derivation, including one that
+        // contradicts the flow control — upstream's dialog writes both fields
+        // independently and this is what a saved file looks like.
+        let mut s = Settings {
+            serial_flow: SerialFlow::Hardware,
+            serial_rts: 0,
+            ..Settings::default()
+        };
+        assert_eq!(serial_params(&s).rts, PinControl::Disable);
+
+        // Toggle is RTS's fourth value and DTR has no such thing; nothing here
+        // stops the file naming it for DTR, and `tt-conn` treats it as the
+        // driver's line either way.
+        s.serial_rts = 3;
+        assert_eq!(serial_params(&s).rts, PinControl::Toggle);
+
+        // And the one Win32 would refuse. Upstream hands 9 to `SetCommState`
+        // and ignores the failure, which discards every other serial setting
+        // with it; this reads it as Enable and keeps the rest of the file.
+        s.serial_rts = 9;
+        assert_eq!(serial_params(&s).rts, PinControl::Enable);
     }
 
     /// What the terminal claims to be, on both transports — and the speed's
