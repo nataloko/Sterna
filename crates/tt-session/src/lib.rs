@@ -140,6 +140,10 @@ pub struct Session {
     /// opened, for the one log timestamp that counts from there rather than
     /// from the log. `None` until something connects.
     connected_at: Option<Instant>,
+    /// `ts.HostName` and `ts.TCPPort`, as far as a log name is concerned. See
+    /// [`Session::set_connection_name`].
+    conn_host: Option<String>,
+    conn_port: Option<u16>,
 }
 
 impl Session {
@@ -164,6 +168,8 @@ impl Session {
             xfer_reply: None,
             macro_link: None,
             connected_at: None,
+            conn_host: None,
+            conn_port: None,
         }
     }
 
@@ -399,6 +405,45 @@ impl Session {
     }
 
     // --- session logging ----------------------------------------------------
+
+    /// Say what this session is connected *to*, for the `&h` and `&p` in a log
+    /// name.
+    ///
+    /// The session cannot work this out from its own transport: a
+    /// `Box<dyn Transport>` is a thing that moves bytes and deliberately knows
+    /// nothing about how it was addressed. Upstream has the same split and
+    /// reads `ts.HostName` — which the dialog and the command line write —
+    /// rather than asking the connection.
+    ///
+    /// `host` is the host name for anything over TCP and the port's own name
+    /// for a serial line, where upstream formats `COM<n>`.
+    pub fn set_connection_name(&mut self, host: Option<String>, tcp_port: Option<u16>) {
+        self.conn_host = host;
+        self.conn_port = tcp_port;
+    }
+
+    /// What the `&`-escapes in a log name expand to right now.
+    ///
+    /// Both connection escapes go empty while nothing is connected, which is
+    /// `ConvertLognameW`'s test on `cv.Open` rather than an accident of when
+    /// the name happens to be asked for.
+    pub fn log_context(&self) -> logname::LogContext {
+        let open = self.conn.is_some();
+        logname::LogContext {
+            host: self.conn_host.clone().filter(|_| open),
+            tcp_port: self.conn_port.filter(|_| open),
+            user: logname::current_user(),
+        }
+    }
+
+    /// The file a log would be opened under — `FLogGetLogFilename`.
+    ///
+    /// `requested` is `/L=`'s argument or a name a user typed, and `None` asks
+    /// for `LogDefaultName`. Either way the answer is expanded and absolute,
+    /// so a frontend can put it in a save dialog and a caller can open it.
+    pub fn log_file_name(&self, requested: Option<&str>) -> std::path::PathBuf {
+        logname::log_file_name(requested, &self.settings, &self.log_context())
+    }
 
     /// Start writing a session log, replacing any log already open.
     ///

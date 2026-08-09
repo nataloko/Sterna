@@ -318,6 +318,10 @@ pub struct TtSession {
     describe: CString,
     title: CString,
     log_path: CString,
+    /// The last answer from `tt_session_log_name`, which is a *different*
+    /// string from the one above: one is where a log is going and the other is
+    /// where one would go.
+    log_name: CString,
     close_note: CString,
     setting: CString,
     /// The strings the last `TtTransferStatus` handed out, and the outcome of
@@ -359,6 +363,7 @@ pub extern "C" fn tt_session_new(config: *const TtConfig) -> *mut TtSession {
         event_texts: Vec::new(),
         describe: CString::default(),
         log_path: CString::default(),
+        log_name: CString::default(),
         close_note: CString::default(),
         setting: CString::default(),
         xfer_protocol: CString::default(),
@@ -554,6 +559,52 @@ pub extern "C" fn tt_session_log_path(session: *mut TtSession) -> *const c_char 
 #[no_mangle]
 pub extern "C" fn tt_session_log_bytes(session: *const TtSession) -> u64 {
     session_ref!(session, 0).session.log_bytes()
+}
+
+/// Say what this session is connected to, for the `&h` and `&p` a log name may
+/// hold. `host` may be null and a `tcp_port` of 0 means "none".
+///
+/// A serial line passes its port's name as `host` and no port number, which is
+/// upstream putting `COM<n>` through the same escape.
+#[no_mangle]
+pub extern "C" fn tt_session_set_connection_name(
+    session: *mut TtSession,
+    host: *const c_char,
+    tcp_port: u16,
+) {
+    let s = session!(session);
+    let host = match unsafe { str_arg(host, usize::MAX) } {
+        Ok(h) if !h.is_empty() => Some(h.to_string()),
+        _ => None,
+    };
+    s.session
+        .set_connection_name(host, (tcp_port != 0).then_some(tcp_port));
+}
+
+/// The file a log would be opened under, expanded and absolute.
+///
+/// `requested` is `/L=`'s argument or a name a user typed, and **null asks for
+/// `LogDefaultName`** — which is not the same as passing it, because only an
+/// absolute request escapes the log directory.
+///
+/// The answer is a template's expansion, so it is not stable: a name holding
+/// `%H` changes on the hour. Ask for it at the moment the log is opened, or at
+/// the moment a dialog is filled in, and not before.
+///
+/// Borrowed, and valid until the next call to this function on this session.
+#[no_mangle]
+pub extern "C" fn tt_session_log_name(
+    session: *mut TtSession,
+    requested: *const c_char,
+) -> *const c_char {
+    let s = session!(session, ptr::null());
+    let requested = match unsafe { str_arg(requested, usize::MAX) } {
+        Ok(r) if !r.is_empty() => Some(r.to_string()),
+        _ => None,
+    };
+    let name = s.session.log_file_name(requested.as_deref());
+    s.log_name = CString::new(name.to_string_lossy().as_bytes()).unwrap_or_default();
+    s.log_name.as_ptr()
 }
 
 /// How many lines of history there are to scroll through.

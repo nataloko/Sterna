@@ -203,8 +203,17 @@ public:
 
     // --- session logging ----------------------------------------------------
 
-    /// Start logging to `path`. Returns false and fills `outError` on failure.
-    bool startLog(const QString &path, const TtLogOptions &options, QString *outError);
+    /// Start logging to `path` with whatever the settings say — the mode, the
+    /// timestamp, appending and rotation are all `TERATERM.INI` keys, and a
+    /// window that assembled its own would be a second copy of the schema.
+    /// Returns false and fills `outError` on failure.
+    bool startLog(const QString &path, QString *outError);
+    /// The file a log would be opened under: `requested` expanded against the
+    /// template rules, or `LogDefaultName` when it is empty.
+    ///
+    /// **Ask for it at the moment it is needed.** A name holding `%H` or `&h`
+    /// is an expansion of the clock and the connection, not a constant.
+    QString logName(const QString &requested = QString()) const;
     void stopLog();
     /// These three const_cast the session pointer, because the ABI's
     /// `tt_session_log_path` caches the string it hands back and so takes a
@@ -345,6 +354,8 @@ private:
     void pollSsh();
     /// Free the handle and stop watching it.
     void endSsh();
+    /// Tell the core what a log name's `&h` and `&p` expand to.
+    void setConnectionName(const QString &host, quint16 port);
 
     TtSession *m_session = nullptr;
     QSocketNotifier *m_notifier = nullptr;

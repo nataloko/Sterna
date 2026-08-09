@@ -129,6 +129,17 @@ QString Session::describe() const
     return d ? QString::fromUtf8(d) : QString();
 }
 
+/// What a log name's `&h` and `&p` expand to. Set from each of the four
+/// connect paths rather than from the window, so that a connection opened by
+/// the control socket or by a macro names itself the same way one opened from
+/// the dialog does.
+void Session::setConnectionName(const QString &host, quint16 port)
+{
+    const QByteArray utf8 = host.toUtf8();
+    tt_session_set_connection_name(m_session, host.isEmpty() ? nullptr : utf8.constData(),
+                                   port);
+}
+
 bool Session::connectSerial(const QString &path, const TtSerialParams &params,
                             QString *outError)
 {
@@ -139,6 +150,9 @@ bool Session::connectSerial(const QString &path, const TtSerialParams &params,
         }
         return false;
     }
+    // Upstream's `&h` on a serial line is `COM<n>`; the device's own name is
+    // the counterpart, and the leading `/dev/` would be swept to underscores.
+    setConnectionName(path.section(QLatin1Char('/'), -1), 0);
     rearm();
     emit connectionChanged();
     return true;
@@ -155,6 +169,7 @@ bool Session::connectTelnet(const QString &host, quint16 port,
         }
         return false;
     }
+    setConnectionName(host, port);
     rearm();
     emit connectionChanged();
     return true;
@@ -190,6 +205,9 @@ bool Session::connectPty(const QStringList &argv, QString *outError)
         }
         return false;
     }
+    // Nothing: upstream's escape has no arm for a local shell, so `&h` in a
+    // log name expands to nothing rather than to the shell's path.
+    setConnectionName(QString(), 0);
     rearm();
     emit connectionChanged();
     return true;
@@ -227,6 +245,7 @@ bool Session::startSsh(const TtSshParams &params, QString *outError)
         }
         return false;
     }
+    setConnectionName(QString::fromUtf8(params.host), params.port);
     // The descriptor moves from the connection to the session at the moment
     // the shell starts, and it is the *same* descriptor — so `rearm` keeps
     // the notifier it already has rather than swapping one in mid-burst.
@@ -443,11 +462,23 @@ void Session::sendBreak(int ms)
     }
 }
 
-bool Session::startLog(const QString &path, const TtLogOptions &options,
-                       QString *outError)
+QString Session::logName(const QString &requested) const
+{
+    const QByteArray utf8 = requested.toUtf8();
+    // `const_cast` for the same reason `logPath` does it: the ABI caches the
+    // string it hands back, so it takes a mutable session while changing no
+    // observable state.
+    const char *name = tt_session_log_name(const_cast<TtSession *>(m_session),
+                                           requested.isEmpty() ? nullptr : utf8.constData());
+    return name ? QString::fromUtf8(name) : QString();
+}
+
+bool Session::startLog(const QString &path, QString *outError)
 {
     const QByteArray utf8 = path.toUtf8();
-    if (tt_session_log_start(m_session, utf8.constData(), &options) != TT_OK) {
+    // Null options: "however the settings say", which is the only thing this
+    // window has ever wanted and is now a real answer rather than a guess.
+    if (tt_session_log_start(m_session, utf8.constData(), nullptr) != TT_OK) {
         if (outError) {
             *outError = QString::fromUtf8(tt_last_error());
         }

@@ -291,6 +291,46 @@ static void test_logging(void)
     tt_session_free(s);
 }
 
+/* The log's name is a template, and the frontend asks the core to expand it
+ * rather than doing it itself — which is the whole point, since the rules are
+ * a validator table, two `strftime` dialects and three `&`-escapes. */
+static void test_log_name(void)
+{
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+
+    /* Nothing connected: `&h` and `&p` expand to nothing at all, the way
+     * `ConvertLognameW` does when `cv.Open` is false. */
+    CHECK_OK(tt_session_set_setting(s, "log.default_path", "/tmp"));
+    CHECK_OK(tt_session_set_setting(s, "log.default_name", "&h-&p.log"));
+    const char *name = tt_session_log_name(s, NULL);
+    CHECK(name != NULL);
+    CHECK(strcmp(name, "/tmp/-.log") == 0);
+
+    tt_session_set_connection_name(s, "router1", 2222);
+    /* Still nothing: the escapes are gated on there being a connection, not on
+     * something having been named. */
+    CHECK(strcmp(tt_session_log_name(s, NULL), "/tmp/-.log") == 0);
+
+    /* A relative request lands in the log directory, an absolute one does not,
+     * and both go through the template. */
+    CHECK(strcmp(tt_session_log_name(s, "out.log"), "/tmp/out.log") == 0);
+    CHECK(strcmp(tt_session_log_name(s, "/var/tmp/a.log"), "/var/tmp/a.log") == 0);
+
+    /* And starting a log with no options at all takes the settings' — which is
+     * the ordinary call, and the one the window makes. */
+    CHECK_OK(tt_session_set_setting(s, "log.default_name", "tt-ffi-abi-name.log"));
+    const char *path = tt_session_log_name(s, NULL);
+    CHECK(strcmp(path, "/tmp/tt-ffi-abi-name.log") == 0);
+    CHECK_OK(tt_session_log_start(s, path, NULL));
+    tt_session_feed(s, (const uint8_t *)"x\r\n", 3);
+    tt_session_log_stop(s);
+    remove("/tmp/tt-ffi-abi-name.log");
+
+    tt_session_free(s);
+}
+
 static void test_attributes(void)
 {
     TtConfig cfg;
@@ -1933,6 +1973,7 @@ int main(void)
     test_scrollback_viewport();
     test_absolute_lines();
     test_logging();
+    test_log_name();
     test_settings();
     test_cmdline();
     test_input();

@@ -376,13 +376,16 @@ void MainWindow::startFrom(TtCmdLine *cmd)
     switch (m_session->startup(cmd, &startup)) {
     case TT_STARTUP_OPEN:
         // Logging first, so the banner a console prints on connect is in the
-        // file. Upstream starts it at the same point, `vtwin.cpp:3631`.
-        if (info.log_file) {
-            TtLogOptions opts;
-            tt_log_options_default(&opts);
-            opts.timestamp = TT_LOG_TIMESTAMP_ELAPSED;
-            const QString path = QString::fromUtf8(info.log_file);
-            if (!m_session->startLog(path, opts, &error)) {
+        // file. Upstream starts it at the same point, `vtwin.cpp:3631` — and
+        // with the same test: `/L=` names a file, `LogAutoStart` asks for the
+        // default one, and either is enough on its own.
+        if (info.log_file || m_session->setting(QStringLiteral("log.auto_start"))
+                                 == QStringLiteral("on")) {
+            // Expanded here rather than taken as typed: `/L=&h-%Y%m%d.log` is
+            // a template, and this is the moment its clock is read.
+            const QString path = m_session->logName(
+                info.log_file ? QString::fromUtf8(info.log_file) : QString());
+            if (!m_session->startLog(path, &error)) {
                 QMessageBox::critical(this, tr("Logging"),
                                       tr("Could not write %1.\n\n%2")
                                           .arg(path, error));
@@ -936,22 +939,18 @@ void MainWindow::toggleLogging()
         return;
     }
 
+    // `LogDefaultName` in `LogDefaultPath`, both expanded — so a user whose
+    // file says `&h-%Y%m%d.log` is offered today's file for this host rather
+    // than a name this window made up.
     const QString path = QFileDialog::getSaveFileName(
-        this, tr("Log session to"), QStringLiteral("sterna.log"),
+        this, tr("Log session to"), m_session->logName(),
         tr("Log files (*.log);;All files (*)"));
     if (path.isEmpty()) {
         return;
     }
 
-    TtLogOptions opts;
-    tt_log_options_default(&opts);
-    // Elapsed time rather than wall clock, and it is the useful one on a
-    // console: the question is nearly always "how long after reset did it
-    // stop", not what time it was. Both are `TERATERM.INI` keys and become
-    // choices when the settings schema exists.
-    opts.timestamp = TT_LOG_TIMESTAMP_ELAPSED;
     QString error;
-    if (!m_session->startLog(path, opts, &error)) {
+    if (!m_session->startLog(path, &error)) {
         QMessageBox::critical(this, tr("Logging"),
                               tr("Could not write %1.\n\n%2").arg(path, error));
         return;

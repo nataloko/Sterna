@@ -2159,6 +2159,32 @@ const char *tt_session_log_path(TtSession *session);
 uint64_t tt_session_log_bytes(const TtSession *session);
 
 /**
+ * Say what this session is connected to, for the `&h` and `&p` a log name may
+ * hold. `host` may be null and a `tcp_port` of 0 means "none".
+ *
+ * A serial line passes its port's name as `host` and no port number, which is
+ * upstream putting `COM<n>` through the same escape.
+ */
+void tt_session_set_connection_name(TtSession *session,
+                                    const char *host,
+                                    uint16_t tcp_port);
+
+/**
+ * The file a log would be opened under, expanded and absolute.
+ *
+ * `requested` is `/L=`'s argument or a name a user typed, and **null asks for
+ * `LogDefaultName`** — which is not the same as passing it, because only an
+ * absolute request escapes the log directory.
+ *
+ * The answer is a template's expansion, so it is not stable: a name holding
+ * `%H` changes on the hour. Ask for it at the moment the log is opened, or at
+ * the moment a dialog is filled in, and not before.
+ *
+ * Borrowed, and valid until the next call to this function on this session.
+ */
+const char *tt_session_log_name(TtSession *session, const char *requested);
+
+/**
  * How many lines of history there are to scroll through.
  */
 size_t tt_session_scrollback_len(const TtSession *session);
