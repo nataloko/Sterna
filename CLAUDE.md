@@ -699,6 +699,22 @@ And for the macro language:
   method that blocks, and a frontend answers it by spinning a nested event
   loop. See the `Session::m_sshWaiting` trap for what re-entering that loop
   costs if the notifier is left armed.
+- **`getpassword` can report success and hand back nothing, and the bug is in
+  the INI layer rather than in the cipher.** `Encrypt`'s output is printable
+  ASCII including `'` and `"`, it goes into a `[Password]` section, and
+  `GetPrivateProfileString` strips one matched pair of surrounding quotes — so
+  about one record in four thousand comes back two characters short, fails
+  `Decrypt`'s complement check, and yields `result` 1 with an empty password
+  while `ispassword` still says the entry is there. Reproduced. Debugging it
+  from the symptom leads straight into the cipher, which is fine.
+- **Two things about the v2 password format are quirks, not choices, and both
+  are invisible until a file written elsewhere refuses to open.** The HMAC key
+  is derived from `EncSalt` **as stored** — its own ciphertext, because the
+  field was overwritten before the derivation — and the three encrypted fields
+  are one continuous keystream, the MAC starting at offset 219, because
+  upstream pushes all three through the same cipher BIO. Deriving from the
+  plaintext salt, or restarting the counter per field, produces a file that
+  round-trips perfectly here and nowhere else.
 
 And for the C ABI:
 
@@ -787,16 +803,21 @@ diffing the two engines. Patches in `oracle/patches/`, reports drafted in
 `docs/upstream-bugs.md`. Filing needs a GitHub account and is an open item in
 `PLAN.md`.
 
-**Twelve more are in `ttpmacro` and none of them is in that file**, because they
-were found by reading the source rather than by two engines disagreeing, and
-`docs/upstream-bugs.md` holds only what a differential run proved. They are
+**Twenty-one more are in `ttpmacro` and none of them is in that file**, because
+they were found by reading the source rather than by two engines disagreeing,
+and `docs/upstream-bugs.md` holds only what a differential run proved. They are
 written up in `PLAN.md`'s TTL sections: `waitn`'s timeout arm leaving the
 received-line buffer in the wrong mode, `getmodemstatus` never reporting
 failure, `logopen` discarding the error from its own mandatory arguments,
 `filenamebox`'s Open and Save flag sets being each other's, `inputbox` copying
-an uninitialised stack buffer into `inputstr` when Escape dismisses it, and
-seven out-of-bounds accesses (`strtrim`, `strsplit`, `GetFactor`, `HandleGet`,
-`HandleFree`, `FPointer`, `logrotate`). Demonstrate each against a real
+an uninitialised stack buffer into `inputstr` when Escape dismisses it,
+`getspecialfolder`'s always-1 result and the NULL it hands `strncpy_s`,
+`gettime`'s timezone argument leaking into the environment, seven
+out-of-bounds accesses (`strtrim`, `strsplit`, `GetFactor`, `HandleGet`,
+`HandleFree`, `FPointer`, `logrotate`) and six in the password family — two
+stack overflows in the v1 codec, two uninitialised reads and a wild `free()`
+in the v2 one, and a v1 record that is silently unreadable when the INI layer
+strips a matching pair of quotes off it. Demonstrate each against a real
 `ttpmacro.exe` in Stage 3 before filing.
 
 **And one in `vte`**, which is a dependency rather than the specification, so it

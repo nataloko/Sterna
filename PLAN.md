@@ -1594,7 +1594,8 @@ out-of-bounds accesses. Three more arrived with the environment and the clock
 below, for **fifteen**: `getspecialfolder`'s always-1 result, the NULL it
 hands `strncpy_s` for a folder type it does not know, and `gettime`'s
 timezone argument leaking into the process environment when the line has
-trailing junk.
+trailing junk. Six more came with the passwords, for **twenty-one** — see
+that section.
 
 #### The checksums, and the terminal's odds and ends
 
@@ -1806,13 +1807,110 @@ script means by it. `WakeupCondition &= 15` drops the bits above the four, so
 `waitevent 16` waits for nothing and, with no timeout set, for ever — which is
 what `ScriptHost::cancelled` exists for.
 
-**What is left**, in the order it is likely to be built:
-the password family — which
-needs `ttmenc.c`'s obfuscation, and a decision about whether to keep it — and
-the regex family. That last one is a decision, not a port: `sprintf` validates its
-format specifiers with **Oniguruma** and `strmatch`/`strreplace`/`waitregex`
-match with it, so *which regex dialect this speaks* is a compatibility question
-that wants answering deliberately rather than by whichever crate is reached for.
+#### The passwords, and a store that is not one
+
+`crates/tt-ttl/src/pwd.rs` and `pwdcmds.rs`, 2026-08-09. Eight commands over
+two file formats, and the decision the plan had left open — keep `ttmenc.c` or
+drop it — went **keep**, for a reason that is about files rather than about
+cryptography.
+
+**The v1 store is obfuscation and always was.** `Encrypt` takes no key: it
+reads the password six bits at a time, writes each group next to the random
+byte that masked it, and runs the lot through a rolling bias. Anything it
+wrote can be read by anyone holding the file, and `Decrypt` — thirty lines
+below it in the same source — is the program that does it. Dropping it would
+have been defensible on its merits and is the wrong call anyway: `password.dat`
+files full of it exist, `getpassword` is in twenty years of scripts, and a
+successor that cannot open the user's own file is not one. So it is ported
+exactly, documented as what it is, and new scripts are pointed at the `2`
+commands.
+
+**The v2 store is real and is byte-compatible.** AES-256-CTR under a key from
+PBKDF2-HMAC-SHA512 at 210001 iterations, an HMAC-SHA512 over the record, the
+key *name* stored only as its own PBKDF2 hash so the file does not say whose
+passwords it holds — 381 bytes per record, base64'd to 508, one per line.
+Which is what lets one file hold both formats at once: v1 lives in a
+`[Password]` INI section and v2 lives in lines that are not INI at all, and the
+documentation's own examples point both at `password.dat`.
+
+Two details in there are quirks rather than choices, and getting either wrong
+writes files nothing else opens. The HMAC key is derived from `EncSalt` **as
+stored**, which by that point is its own ciphertext; and the three encrypted
+fields are one continuous keystream — 203 bytes of NUL-padded password, then
+the salt, then the MAC at offset 219 — because upstream pushes all three
+through the same OpenSSL cipher BIO.
+
+**This crate has dependencies now**, which it did not before. Six: the four
+RustCrypto crates the format names, `getrandom` for the salts, and `tt-config`
+for the INI layer — every one of them already in the lock file through
+`russh`, at the version already resolved, so the shipped binary gains no code.
+`getrandom` rather than `ScriptHost::random_u32` is deliberate: a salt a host
+could make repeatable would not be a salt. The v1 obfuscation *does* take the
+host's `random_u32`, because there the randomness is cosmetic and a repeatable
+host makes a testable record. Unoptimised RustCrypto is about thirty times
+slower than optimised, and 210001 iterations of it turned `cargo test -p
+tt-ttl` from three seconds into thirty, so the workspace's dev profile now
+builds those four crates at `opt-level = 3` and nothing else changes.
+
+**The v1 vectors were not derived by reading.** `ttmenc.c` was compiled with a
+deterministic `rand()` and run, and its output is the golden data in
+`pwd.rs`'s tests — including the length table that pins `2·ceil(4n/3) + 2`,
+which is where the first of the new defects came from.
+
+**Six more upstream defects, for twenty-one.** Two are stack overflows in the
+v1 codec. `Encrypt`'s output is `2·ceil(4n/3) + 2` characters and both callers
+hand it a `char[512]` while accepting a password of up to 511, so **191
+characters overflows** — 512 written plus a terminator, confirmed by running
+it. `Decrypt` is the same shape from the other side: its working buffer is a
+`char[512]` indexed by `strlen` of a value read out of the password file, and
+its output is a `TStrVal` holding three-quarters of that, so a long enough
+entry in a file the macro named overruns both. Two more are in the v2 layer:
+`Encrypt2SetPassword`'s "has it changed?" test compares 203 bytes against a
+buffer `strncpy_s` only NUL-*terminated*, reading uninitialised stack, and the
+call that fills it writes `PassStr[203]` — one past the field, into the
+record's own `EncSalt`; and `Encrypt2ProfileSearch` seeks to `Dpos` when
+nothing matched, which is uninitialised if the file held no v2 record at all.
+The fifth is the worst of them: `getpassword2` calls `SetStrVal` **between**
+`GetStrVar` and the error check, and `GetStrVar` returns without touching its
+out-parameter when an earlier argument already failed — so `getpassword2 1 2 3
+4` reaches a function that bounds-checks nothing and `free()`s the pointer it
+finds at a stack-valued index. None of the five is reproduced.
+
+**The sixth is reproduced, because it is about files.** The obfuscated form is
+printable ASCII and includes both quote characters, and it goes into an INI
+file — where `GetPrivateProfileString` strips one matched pair of surrounding
+quotes, which `ini-audit/` measured. So a record that happens to begin and end
+with the same quote comes back two characters short, fails `Decrypt`'s
+complement check, and `getpassword` reports **`result` 1 with an empty
+password**: success, nothing in the variable, and `ispassword` still says the
+entry is there. Roughly one record in four thousand. Reproducing it is the only
+option that does not make this terminal write files it then misreads.
+
+Four laxities are reproduced rather than reported, and they contradict each
+other, which is the point. `setpassword` refuses an empty argument with a
+syntax error; `getpassword` returns quietly from the same condition and does
+not even write `result`, so a script testing it reads the previous command's
+answer. `delpassword` never writes `result` on any path, success included.
+`getpassword`'s Close button ends the macro — the only dialog that does —
+where `getpassword2` discards the dialog's return value entirely, so closing
+its window is indistinguishable from typing nothing. And `delpassword` is
+silent about an empty filename where `delpassword2` calls it a syntax error.
+
+One deviation is an improvement in a corner upstream cannot reach with its own
+files: the v2 delete removes exactly `508 + 2` bytes at a computed offset, so a
+password file somebody has run through an editor that changed the line endings
+comes back corrupt. Reading the file into lines and writing it back has no such
+dependency. A file this port *creates* also carries a UTF-8 BOM where
+`WritePrivateProfileStringW` would have written the ANSI codepage — the same
+deliberate divergence `tt-config` already makes, and `ini-audit/` measured
+Win32 reading a BOM'd file correctly.
+
+**What is left** is the regex family. That one is a decision, not a port:
+`sprintf` validates its format specifiers with **Oniguruma** and
+`strmatch`/`strreplace`/`waitregex` match with it, and `regexoption` exposes
+eleven syntaxes and some thirty encodings that only Oniguruma has — so *which
+regex dialect this speaks* is a compatibility question that wants answering
+deliberately rather than by whichever crate is reached for.
 
 And the conformance target needs its own harness. The 53 `.ttl` scripts are
 **not self-checking** — they report to a human through `messagebox`, several are
