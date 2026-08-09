@@ -65,7 +65,7 @@ impl Recv {
 /// (`ttl.cpp`) makes it before it dispatches anything, which is why a macro
 /// run against no window fails loudly at its first `send` instead of quietly
 /// writing into nothing. A host is entitled to assume it has already happened.
-fn link(host: &Host<'_>) -> mlua::Result<()> {
+pub(crate) fn link(host: &Host<'_>) -> mlua::Result<()> {
     if host.borrow_mut().linked() {
         Ok(())
     } else {

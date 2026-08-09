@@ -70,6 +70,8 @@ use mlua::{HookTriggers, Lua, LuaOptions, Scope, StdLib, Table, Value, VmState};
 use tt_ttl::{ScriptHost, TtlError};
 
 mod conn;
+mod serial;
+mod xfer;
 
 pub use conn::Recv;
 
@@ -167,6 +169,8 @@ impl Script {
         lua.scope(|scope| {
             let tt = lua.create_table()?;
             conn::install(scope, &tt, &cell, &recv)?;
+            serial::install(scope, &tt, &cell)?;
+            xfer::install(scope, &tt, &cell)?;
 
             let args = lua.create_table()?;
             for (i, a) in self.args.iter().enumerate() {
@@ -299,6 +303,25 @@ fn install_cancel_hook<'s, 'e>(
 /// twenty-one conditions would be a second thing to keep in step.
 pub(crate) fn lua_err(e: TtlError) -> mlua::Error {
     mlua::Error::external(e)
+}
+
+/// One of a named set, so a script says `'rts'` rather than `2`.
+///
+/// TTL numbers these because DDE carries a decimal string and because the
+/// numbers are `ttdde.c`'s `switch` labels. Nothing here is a switch label,
+/// and a wrong name is reported with the list — where a wrong *number* is
+/// dropped in silence, which is upstream's answer to `setflowctrl 7`.
+pub(crate) fn choice<T: Copy>(got: &str, what: &str, of: &[(&str, T)]) -> mlua::Result<T> {
+    of.iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(got))
+        .map(|(_, v)| *v)
+        .ok_or_else(|| {
+            let names: Vec<&str> = of.iter().map(|(n, _)| *n).collect();
+            mlua::Error::runtime(format!(
+                "{what} '{got}' is not one of: {}",
+                names.join(", ")
+            ))
+        })
 }
 
 /// `tt.timeout`, in seconds, as a deadline. Zero and absent are both "for
