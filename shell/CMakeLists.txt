@@ -72,6 +72,7 @@ add_library(sterna_shell STATIC
     src/Macro.cpp
     src/Control.cpp
     src/Theme.cpp
+    src/PasteDialog.cpp
     src/SerialDialog.cpp
     src/SettingsDialog.cpp
     src/SshDialog.cpp

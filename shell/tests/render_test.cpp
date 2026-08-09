@@ -34,8 +34,10 @@
 #include <QLineEdit>
 #include <QStandardPaths>
 #include <QTabWidget>
+#include <QTemporaryFile>
 
 #include "MainWindow.h"
+#include "PasteDialog.h"
 #include "Session.h"
 #include "SettingsDialog.h"
 #include "TerminalView.h"
@@ -625,6 +627,105 @@ void test_dragging_off_the_edge_scrolls_the_view()
     CHECK(h.session.viewOffset() == after);
 }
 
+/// `EnableContinuedLineCopy` — a row the terminal wrapped onto is the same
+/// line as the one above it, and copying the pair puts no break between them.
+void test_continued_line_copy_joins_a_wrapped_line()
+{
+    Harness h;
+    QString error;
+    // 100 characters across an 80-column screen, so the terminal breaks it and
+    // the host never did.
+    const QString wide(100, QLatin1Char('x'));
+    h.feed(wide.toLatin1().constData());
+
+    // Off, which is how it ships: two rows, two lines.
+    h.drag(h.px(0), h.py(0), h.px(19, 0.7), h.py(1));
+    CHECK(h.copied() == wide.left(80) + QLatin1Char('\n') + wide.left(20));
+
+    CHECK(h.session.setSetting(QStringLiteral("clipboard.continued_line_copy"),
+                               QStringLiteral("on"), &error));
+    h.view.applySettings();
+    CHECK(h.copied() == wide);
+
+    // A break the *host* sent is still a break, which is the distinction the
+    // attribute exists to make.
+    Harness g;
+    CHECK(g.session.setSetting(QStringLiteral("clipboard.continued_line_copy"),
+                               QStringLiteral("on"), &error));
+    g.view.applySettings();
+    g.feed("one\r\ntwo");
+    g.drag(g.px(0), g.py(0), g.px(3, 0.7), g.py(1));
+    CHECK(g.copied() == QStringLiteral("one\ntwo"));
+}
+
+/// `SelectOnlyByLButton` and `AutoTextCopy`, which are one condition upstream:
+/// with the first on, a middle or right button coming up over a standing
+/// selection must not copy it (`vtwin.cpp:819`).
+void test_the_other_buttons_do_not_start_or_copy_a_selection()
+{
+    Harness h;
+    h.feed("hello world");
+    // The right button *pastes* on the way up, which is upstream's default and
+    // is not what is being tested here — and a clipboard holding a line break
+    // would raise the confirmation dialog and park this suite on it for ever.
+    QApplication::clipboard()->clear(QClipboard::Clipboard);
+
+    // A right-button drag selects nothing at all, because it never started.
+    const auto rightDrag = [&h](int fromX, int toX) {
+        for (auto type : { QEvent::MouseButtonPress, QEvent::MouseMove,
+                           QEvent::MouseButtonRelease }) {
+            const int x = type == QEvent::MouseButtonPress ? fromX : toX;
+            const Qt::MouseButtons held =
+                type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::RightButton;
+            QMouseEvent ev(type, QPointF(x, h.py(0)), QPointF(x, h.py(0)),
+                           Qt::RightButton, held, Qt::NoModifier);
+            QCoreApplication::sendEvent(&h.view, &ev);
+        }
+    };
+    rightDrag(h.px(0), h.px(4, 0.7));
+    CHECK(!h.view.hasSelection());
+
+    // With the setting off it selects like the left one.
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("clipboard.select_only_by_lbutton"),
+                               QStringLiteral("off"), &error));
+    h.view.applySettings();
+    rightDrag(h.px(0), h.px(4, 0.7));
+    CHECK(h.view.hasSelection());
+    CHECK(h.copied() == QStringLiteral("hello"));
+}
+
+/// `ConfirmChangePaste`, which ships **on**: a paste holding a line break is
+/// shown before it is sent, because the host cannot tell a pasted newline from
+/// a typed one and a shell runs every line of it.
+void test_a_paste_with_a_line_break_is_confirmed()
+{
+    CHECK(!PasteDialog::shouldConfirm(QStringLiteral("one word"), QString()));
+    CHECK(PasteDialog::shouldConfirm(QStringLiteral("two\nlines"), QString()));
+    CHECK(PasteDialog::shouldConfirm(QStringLiteral("cmd\r"), QString()));
+
+    // And the dictionary, which is how a site adds a string of its own to the
+    // list. A substring match, one needle per line.
+    QTemporaryFile dict;
+    CHECK(dict.open());
+    dict.write("rm -rf\nshutdown\n");
+    dict.flush();
+    CHECK(PasteDialog::shouldConfirm(QStringLiteral("sudo rm -rf /tmp/x"), dict.fileName()));
+    CHECK(!PasteDialog::shouldConfirm(QStringLiteral("ls -l"), dict.fileName()));
+    // A path that is not there is no dictionary rather than an error, which is
+    // upstream's `LoadFileWW` returning NULL.
+    CHECK(!PasteDialog::shouldConfirm(QStringLiteral("rm -rf /"),
+                                      QStringLiteral("/nonexistent/dict.txt")));
+
+    // The dialog opens at the size the settings hold, which is the whole
+    // reason `PasteDialogSize` is a setting: upstream writes it back.
+    PasteDialog dialog(QStringLiteral("two\nlines"), QSize(400, 300));
+    dialog.adjustSize();
+    dialog.resize(400, 300);
+    CHECK(dialog.text() == QStringLiteral("two\nlines"));
+    CHECK(dialog.size() == QSize(400, 300));
+}
+
 
 
 
@@ -802,6 +903,9 @@ int main(int argc, char **argv)
     test_a_triple_click_selects_the_line();
     test_a_selection_holds_on_to_its_text_not_its_place();
     test_a_selection_survives_scrolling_back();
+    test_continued_line_copy_joins_a_wrapped_line();
+    test_the_other_buttons_do_not_start_or_copy_a_selection();
+    test_a_paste_with_a_line_break_is_confirmed();
     test_dragging_off_the_edge_scrolls_the_view();
     test_settings_change_the_painted_colours();
     test_the_settings_dialog_is_built_from_the_schema();

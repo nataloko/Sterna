@@ -71,6 +71,10 @@ public:
     void copySelection() const;
     /// Paste the system clipboard.
     void pasteClipboard();
+    /// Paste a string — the one path everything that pastes goes through, so
+    /// that the trim and the confirmation dialog happen once. The rest of what
+    /// a paste is happens in the core; see `tt_session::paste`.
+    void pasteText(const QString &text);
     bool hasSelection() const { return m_hasSelection; }
 
 public slots:
@@ -130,6 +134,27 @@ private:
 
     /// `KeybEnabled`. A macro's `enablekeyb 0` clears it.
     bool m_keyboardEnabled = true;
+
+    /// The `clipboard.*` settings this widget acts on, refreshed by
+    /// `applySettings` rather than read per event.
+    ///
+    /// The defaults here are the schema's, and two of them will surprise a
+    /// Linux user: Tera Term pastes on the **right** button and not on the
+    /// middle one (`ttset.c:1422`, `:1425`). This shell used to do the
+    /// opposite by hand; it is one line in `sterna.ini` either way now.
+    struct Clipboard {
+        bool autoCopy = true;
+        bool selectOnlyByLButton = true;
+        bool pasteRButtonDisabled = false;
+        bool pasteMButtonDisabled = true;
+        bool confirmPasteRButton = false;
+        bool continuedLineCopy = false;
+        bool confirmPaste = true;
+        bool trimTrailingNewline = false;
+        QString dictionary;
+        int dialogWidth = 330;
+        int dialogHeight = 220;
+    } m_clipboard;
 
     /// Since the last frame was painted, for the floor in `requestRepaint`.
     QElapsedTimer m_sincePaint;

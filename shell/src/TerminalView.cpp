@@ -13,6 +13,7 @@
 #include <QWheelEvent>
 
 #include "DecGraphics.h"
+#include "PasteDialog.h"
 #include "Session.h"
 
 namespace {
@@ -203,6 +204,37 @@ QSize TerminalView::sizeHint() const
 void TerminalView::applySettings()
 {
     m_theme.applySettings(*m_session);
+
+    // The schema writes a boolean out as `on` or `off` whatever the file said,
+    // so this is a comparison and not a second copy of `GetOnOff` — which is
+    // default-biased and belongs in exactly one place.
+    const auto flag = [this](const char *name, bool fallback) {
+        const QString value = m_session->setting(QString::fromLatin1(name));
+        return value.isEmpty() ? fallback : value == QLatin1String("on");
+    };
+    m_clipboard.autoCopy = flag("clipboard.auto_copy", m_clipboard.autoCopy);
+    m_clipboard.selectOnlyByLButton =
+        flag("clipboard.select_only_by_lbutton", m_clipboard.selectOnlyByLButton);
+    m_clipboard.pasteRButtonDisabled =
+        flag("clipboard.paste_rbutton_disabled", m_clipboard.pasteRButtonDisabled);
+    m_clipboard.pasteMButtonDisabled =
+        flag("clipboard.paste_mbutton_disabled", m_clipboard.pasteMButtonDisabled);
+    m_clipboard.confirmPasteRButton =
+        flag("clipboard.confirm_paste_rbutton", m_clipboard.confirmPasteRButton);
+    m_clipboard.continuedLineCopy =
+        flag("clipboard.continued_line_copy", m_clipboard.continuedLineCopy);
+    m_clipboard.confirmPaste = flag("clipboard.confirm_paste", m_clipboard.confirmPaste);
+    m_clipboard.trimTrailingNewline =
+        flag("clipboard.trim_trailing_newline", m_clipboard.trimTrailingNewline);
+    m_clipboard.dictionary = m_session->setting(QStringLiteral("clipboard.confirm_paste_dictionary"));
+    const auto number = [this](const char *name, int fallback) {
+        bool ok = false;
+        const int n = m_session->setting(QString::fromLatin1(name)).toInt(&ok);
+        return ok ? n : fallback;
+    };
+    m_clipboard.dialogWidth = number("clipboard.paste_dialog_width", m_clipboard.dialogWidth);
+    m_clipboard.dialogHeight = number("clipboard.paste_dialog_height", m_clipboard.dialogHeight);
+
     update();
 }
 
@@ -575,18 +607,15 @@ void TerminalView::mousePressEvent(QMouseEvent *event)
         return;
     }
 
-    if (event->button() == Qt::MiddleButton) {
-        // The X11 convention, and the one thing every Linux terminal user
-        // reaches for without thinking.
-        const QClipboard *clip = QApplication::clipboard();
-        const QString sel = clip->supportsSelection()
-                                ? clip->text(QClipboard::Selection)
-                                : clip->text();
-        m_session->paste(sel);
+    // A paste happens on the button coming *up* (`vtwin.cpp:2375`, `:2645`),
+    // so there is nothing to do here for the other two buttons but decide
+    // whether they may start a selection. With `SelectOnlyByLButton` on —
+    // which is how it ships — they may not.
+    if (event->button() != Qt::LeftButton && m_clipboard.selectOnlyByLButton) {
         return;
     }
 
-    if (event->button() == Qt::LeftButton) {
+    if (event->button() == Qt::LeftButton || !m_clipboard.selectOnlyByLButton) {
         // A third press soon after a double click is a triple click, which Qt
         // does not deliver as an event of its own.
         const QPoint cell(static_cast<int>(p.x()) / m_theme.cellWidth(),
@@ -642,9 +671,17 @@ void TerminalView::mouseReleaseEvent(QMouseEvent *event)
     if (m_selecting) {
         m_selecting = false;
         m_autoScroll->stop();
-        if (m_hasSelection) {
-            // Copy to the primary selection on release, so middle-click paste
-            // works between this window and every other X11 application.
+        // `AutoTextCopy` (`vtwin.cpp:838`), and its companion condition: with
+        // `SelectOnlyByLButton` on, a middle or right button coming up over a
+        // standing selection must *not* copy it, which is the bug that arm was
+        // added for (`vtwin.cpp:819`).
+        const bool wrongButton =
+            m_clipboard.selectOnlyByLButton && event->button() != Qt::LeftButton;
+        if (m_hasSelection && m_clipboard.autoCopy && !wrongButton) {
+            // The primary selection rather than the clipboard, which is where
+            // upstream puts it: on X11 copy-on-select owns PRIMARY, and taking
+            // CLIPBOARD instead would throw away whatever the user last copied
+            // every time they dragged across the screen.
             QClipboard *clip = QApplication::clipboard();
             if (clip->supportsSelection()) {
                 clip->setText(selectedText(), QClipboard::Selection);
@@ -662,6 +699,23 @@ void TerminalView::mouseReleaseEvent(QMouseEvent *event)
     const QPointF p = event->position();
     m_session->mouse(TT_MOUSE_EVENT_RELEASE, button, static_cast<int>(p.x()),
                      static_cast<int>(p.y()), modifiersOf(event->modifiers()));
+
+    // And then the paste, which upstream does on the way up for both buttons.
+    // `ConfirmPasteMouseRButton` suppresses the right one because it raises a
+    // menu with Paste on it instead; there is no such menu here yet, so it
+    // suppresses the paste and offers nothing — which is the same terminal a
+    // user who set that key already has, minus the menu.
+    if (event->button() == Qt::MiddleButton && !m_clipboard.pasteMButtonDisabled) {
+        // The X11 convention: the middle button pastes the *primary*
+        // selection, which is a different buffer from the clipboard the right
+        // button and Ctrl-Shift-V use.
+        const QClipboard *clip = QApplication::clipboard();
+        pasteText(clip->supportsSelection() ? clip->text(QClipboard::Selection)
+                                            : clip->text());
+    } else if (event->button() == Qt::RightButton && !m_clipboard.pasteRButtonDisabled &&
+               !m_clipboard.confirmPasteRButton) {
+        pasteClipboard();
+    }
 }
 
 void TerminalView::mouseDoubleClickEvent(QMouseEvent *event)
@@ -901,7 +955,8 @@ QString TerminalView::selectedText() const
         return QString();
     }
 
-    QStringList lines;
+    QString out;
+    bool first = true;
     for (quint64 n = a.line; n <= b.line; n++) {
         size_t len = 0;
         const TtCell *cells = m_session->line(n, &len);
@@ -910,6 +965,16 @@ QString TerminalView::selectedText() const
             // beats inventing a blank line where text used to be.
             continue;
         }
+        // `EnableContinuedLineCopy`: a row an automatic wrap landed on is the
+        // same line as the one above it, so no break goes between them. The
+        // core marks it with `TT_ATTR_LINE_CONTINUED` on the first cell of the
+        // row, which survives into the scrollback along with the text.
+        const bool joins = m_clipboard.continuedLineCopy && len > 0 &&
+                           (cells[0].attrs & TT_ATTR_LINE_CONTINUED) != 0;
+        if (!first && !joins) {
+            out += QLatin1Char('\n');
+        }
+        first = false;
         const int from = (n == a.line) ? a.x : 0;
         const int to = qMin((n == b.line) ? b.x : static_cast<int>(len),
                             static_cast<int>(len));
@@ -922,13 +987,14 @@ QString TerminalView::selectedText() const
         }
         // Trailing blanks are padding, not content — a terminal line is always
         // full width, and copying the padding turns every paste into a
-        // rectangle.
+        // rectangle. A row that wrapped has none, so this is a no-op on a
+        // joined line rather than a hole in the middle of one.
         while (line.endsWith(QLatin1Char(' '))) {
             line.chop(1);
         }
-        lines << line;
+        out += line;
     }
-    return lines.join(QLatin1Char('\n'));
+    return out;
 }
 
 void TerminalView::clearSelection()
@@ -962,5 +1028,45 @@ void TerminalView::copySelection() const
 
 void TerminalView::pasteClipboard()
 {
-    m_session->paste(QApplication::clipboard()->text(QClipboard::Clipboard));
+    pasteText(QApplication::clipboard()->text(QClipboard::Clipboard));
+}
+
+void TerminalView::pasteText(const QString &text)
+{
+    if (text.isEmpty()) {
+        // `GetClipboardTextW` returning nothing is where upstream gives up
+        // (`clipboar.c:236`), before any of the rest of this.
+        return;
+    }
+    // The trim happens *before* the decision to confirm (`clipboar.c:241`), so
+    // with `TrimTrailingNLonPaste` on, a copied line with its newline still on
+    // it is pasted without a question — there is no newline left by then.
+    // `Session::paste` trims again, which costs nothing and keeps the core the
+    // only place that knows the rule.
+    QString body = text;
+    if (m_clipboard.trimTrailingNewline) {
+        while (body.endsWith(QLatin1Char('\r')) || body.endsWith(QLatin1Char('\n'))) {
+            body.chop(1);
+        }
+        if (body.isEmpty()) {
+            return;
+        }
+    }
+    if (m_clipboard.confirmPaste && PasteDialog::shouldConfirm(body, m_clipboard.dictionary)) {
+        PasteDialog dialog(body, QSize(m_clipboard.dialogWidth, m_clipboard.dialogHeight), this);
+        if (dialog.exec() != QDialog::Accepted) {
+            return;
+        }
+        // Upstream writes the size back into `ts.PasteDialogSize` as soon as
+        // the dialog closes (`clipboar.c:180`), which is the whole reason it
+        // is a setting; it reaches the file with everything else on save.
+        m_clipboard.dialogWidth = dialog.width();
+        m_clipboard.dialogHeight = dialog.height();
+        m_session->setSetting(QStringLiteral("clipboard.paste_dialog_width"),
+                              QString::number(m_clipboard.dialogWidth), nullptr);
+        m_session->setSetting(QStringLiteral("clipboard.paste_dialog_height"),
+                              QString::number(m_clipboard.dialogHeight), nullptr);
+        body = dialog.text();
+    }
+    m_session->paste(body);
 }
