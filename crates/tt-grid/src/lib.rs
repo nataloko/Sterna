@@ -1572,15 +1572,25 @@ impl Grid {
 
     /// Write one codepoint at the cursor, wrapping and advancing as Tera Term's
     /// `PutU32NoLog` does.
-    pub fn put(&mut self, cp: u32) {
+    ///
+    /// Returns whether the write began with an **automatic line break** —
+    /// either arm of it, the pending wrap and the wide glyph that will not fit
+    /// in the last column. The caller needs to know because upstream's log and
+    /// macro taps are fed a `CR` and an `LF` at exactly these two points
+    /// (`vtterm.c:870`, `:900`), and the break happens in here where nothing
+    /// outside can see it. Ignoring the answer is fine and is what a caller
+    /// with no tap does.
+    pub fn put(&mut self, cp: u32) -> bool {
         if self.put_combining(cp) {
-            return;
+            return false;
         }
+        let mut wrapped = false;
 
         if self.cursor.pending_wrap {
             self.carriage_return();
             self.line_feed();
             self.cursor.pending_wrap = false;
+            wrapped = true;
         }
 
         let w = char_width(cp).max(1);
@@ -1608,6 +1618,7 @@ impl Grid {
                 self.lines[y][x] = Cell::blank(pen);
                 self.carriage_return();
                 self.line_feed();
+                wrapped = true;
             } else {
                 self.cursor.x = 0;
             }
@@ -1633,6 +1644,7 @@ impl Grid {
             self.cursor.x = x + 2;
             self.cursor.pending_wrap = false;
         }
+        wrapped
     }
 
     fn place(&mut self, cp: u32, w: usize) {

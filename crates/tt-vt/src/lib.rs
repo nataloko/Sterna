@@ -716,6 +716,45 @@ impl Vt {
         }
     }
 
+    /// Turn the macro tap on or off — upstream's `DDELog`, which is set when a
+    /// macro links to the terminal and cleared when it unlinks
+    /// (`ttdde.c:1382`, `:1432`).
+    ///
+    /// **What a macro reads is not what the far end sent.** It is the text the
+    /// parser printed, plus `CR`, `LF`, `BS` and `HT` where those controls
+    /// executed and a `CR LF` where a line wrapped — so `wait 'ESC'` can never
+    /// match, an erased character is in the stream anyway, and a line arrives
+    /// with the CR still on it. The `MacroTap` type this crate keeps privately
+    /// documents why each of those is the way it is; between them they decide
+    /// what every `wait` in every script matches against.
+    ///
+    /// Turning it off discards what it had collected, which is upstream's
+    /// `DDEFreeBuf`.
+    pub fn set_macro_tap_enabled(&mut self, on: bool) {
+        if on {
+            self.state.macro_tap.get_or_insert_with(MacroTap::default);
+        } else {
+            self.state.macro_tap = None;
+        }
+    }
+
+    /// Whether a macro is listening.
+    pub fn macro_tap_enabled(&self) -> bool {
+        self.state.macro_tap.is_some()
+    }
+
+    /// Take what the macro tap has collected, leaving its buffer allocated.
+    ///
+    /// Unbounded between calls, deliberately: the caller drains it every pump
+    /// into the ring that *is* bounded, and putting the 64 KiB limit here as
+    /// well would drop bytes twice with two different policies.
+    pub fn take_macro_bytes(&mut self) -> Vec<u8> {
+        match &mut self.state.macro_tap {
+            Some(t) => std::mem::take(&mut t.buf),
+            None => Vec::new(),
+        }
+    }
+
     /// Encode typed text — `ttcmn.c:OutControl`, which every `IdText` byte
     /// goes through on its way out.
     ///
@@ -773,6 +812,9 @@ struct State {
     /// cost when it is not is one branch per printed character. See
     /// [`Vt::take_log_text`].
     log_text: Option<String>,
+    /// The macro tap — `Some` only while a macro is linked, which is upstream's
+    /// `DDELog` (`ttdde.c:69`). See [`Vt::set_macro_tap_enabled`].
+    macro_tap: Option<MacroTap>,
     /// DECSACE's `RectangleMode` (`vtterm.c:113`). False — stream — out of
     /// reset, and it decides how DECCARA and DECRARA read their rectangle.
     rect_mode: bool,
@@ -794,6 +836,69 @@ struct State {
     modes: Modes,
 }
 
+/// What a linked macro sees of the session — `ttdde.c`'s `DDEPut1` sink, and
+/// the `CheckEOLCheckLog` state in front of it (`checkeol.cpp:105`).
+///
+/// **A macro does not see the wire.** This is the surprise at the bottom of the
+/// whole macro language: `wait`, `waitln`, `waitregex` and `recvln` match
+/// against the characters the parser decided to *display*, re-encoded as UTF-8,
+/// not against the bytes the far end sent. An escape sequence never reaches a
+/// macro at all, because the parser consumed it; a character the host sent and
+/// then erased is in the stream anyway, because it was printed once.
+///
+/// Upstream reaches this sink from one function, `OutputLogUTF32`
+/// (`vtterm.c:448`), which also feeds the text session log — so the two taps
+/// see the same moments. Here they are two fields because they do not want the
+/// same bytes: the log's newline is a policy the user sets
+/// (`LogOptions::crlf`) and the macro's is not, and getting the macro's wrong
+/// breaks every script that ever matched a `$`.
+#[derive(Debug, Default, Clone)]
+struct MacroTap {
+    buf: Vec<u8>,
+    /// `CheckEOLData_st::cr_hold`. A lone CR is **dropped**, and a CR followed
+    /// by an LF becomes one `CR LF`. So `abc\rdef` reaches a macro as `abcdef`
+    /// — the text as it was printed, with the overwrite invisible — and
+    /// `abc\r\n` reaches it with its CR intact, which is why a `waitregex`
+    /// pattern ending in `$` never matches a line from a normal host.
+    cr_hold: bool,
+}
+
+impl MacroTap {
+    /// `OutputLogUTF32`, macro branch. Everything the tap sees comes through
+    /// here, characters and control bytes alike, because upstream's control
+    /// bytes go through `OutputLogByte` which is a one-line call to it.
+    fn put(&mut self, u32: u32) {
+        // `CheckEOLCheckLog`.
+        let (eol, chr) = match u32 {
+            0x0d => {
+                self.cr_hold = true;
+                (false, false)
+            }
+            0x0a if self.cr_hold => {
+                self.cr_hold = false;
+                (true, false)
+            }
+            0x0a => (false, true),
+            _ => {
+                self.cr_hold = false;
+                (false, true)
+            }
+        };
+        if eol {
+            self.buf.extend_from_slice(b"\r\n");
+        }
+        // `UTF32ToUTF8` writes nothing for a value it cannot encode, and a
+        // surrogate is the only way to reach that from a parser that has
+        // already decoded its input.
+        if chr {
+            if let Some(c) = char::from_u32(u32) {
+                let mut b = [0u8; 4];
+                self.buf.extend_from_slice(c.encode_utf8(&mut b).as_bytes());
+            }
+        }
+    }
+}
+
 impl State {
     fn empty() -> Self {
         State {
@@ -810,6 +915,7 @@ impl State {
             auto_generated_crlf: false,
             last_printed: None,
             log_text: None,
+            macro_tap: None,
             rect_mode: false,
             lr_margin_mode: false,
             vt_level: 1,
@@ -1065,12 +1171,40 @@ impl State {
 
     // --- C0 --------------------------------------------------------------
 
+    /// One character or control byte into the macro tap, if one is listening.
+    ///
+    /// Upstream's `OutputLogUTF32` also feeds the text log and the printer from
+    /// here; the text log has its own field because it wants different bytes,
+    /// and there is no printer.
+    #[inline]
+    fn tap(&mut self, u32: u32) {
+        if let Some(t) = &mut self.macro_tap {
+            t.put(u32);
+        }
+    }
+
+    /// `vtterm.c:CarriageReturn` — the move, and the tap upstream does inside
+    /// it. Used at the sites that call that function and not at every cursor
+    /// motion to column zero: `ESC E` moves with `MoveCursor` and so is silent.
+    ///
+    /// The `logFlag` argument is not carried. It only matters when
+    /// `ts.EnableContinuedLineCopy` is on, which it is not by default
+    /// (`ttset.c:1419`), and this port has not adopted that setting.
+    fn carriage_return(&mut self) {
+        self.tap(0x0d);
+        self.grid.carriage_return();
+    }
+
     /// `vtterm.c:725`.
     fn process_cr(&mut self) {
         match self.config.cr_receive {
             CrReceive::Auto => {
                 if !self.prev_was_lf || !self.auto_generated_crlf {
-                    self.grid.carriage_return();
+                    self.carriage_return();
+                    // Upstream's `LineFeed(CR, TRUE)`, minus the LNM tail —
+                    // see the note on `line_feed`, which this deliberately does
+                    // not call.
+                    self.tap(0x0a);
                     self.grid.line_feed();
                     self.auto_generated_crlf = true;
                 } else {
@@ -1078,10 +1212,15 @@ impl State {
                 }
             }
             CrReceive::CrLf => {
-                self.grid.carriage_return();
+                self.carriage_return();
+                // Upstream returns here and pushes an LF back into the input
+                // stream instead (`CommInsert1Byte`), which arrives as an
+                // ordinary line feed a moment later. The grid ends up the same
+                // and so does the tap.
+                self.tap(0x0a);
                 self.grid.line_feed();
             }
-            _ => self.grid.carriage_return(),
+            _ => self.carriage_return(),
         }
     }
 
@@ -1112,9 +1251,10 @@ impl State {
     /// else treats as being about what the keyboard sends. Upstream does it
     /// after the vertical move, not before (`vtterm.c:706`).
     fn line_feed(&mut self) {
+        self.tap(0x0a);
         self.grid.line_feed();
         if self.modes.lf_mode {
-            self.grid.carriage_return();
+            self.carriage_return();
         }
     }
 
@@ -1123,12 +1263,12 @@ impl State {
         match self.config.cr_receive {
             CrReceive::Lf => {
                 // "the server sends LF alone" — so LF means CR+LF.
-                self.grid.carriage_return();
+                self.carriage_return();
                 self.line_feed();
             }
             CrReceive::Auto => {
                 if !self.prev_was_cr || !self.auto_generated_crlf {
-                    self.grid.carriage_return();
+                    self.carriage_return();
                     self.line_feed();
                     self.auto_generated_crlf = true;
                 } else {
@@ -2272,16 +2412,27 @@ impl Perform for State {
         // have come from a single byte; anything above U+00FF is text by
         // definition and never DEC special graphics.
         let special = cp <= 0xff && self.charset.is_special(cp);
-        if special {
+        let wrapped = if special {
             // Upstream builds a throwaway attribute for the one character
             // (`CharAttrTmp`), leaving the pen alone. Same here.
             let pen = self.grid.pen.attrs;
             self.grid.pen.attrs |= ATTR_SPECIAL;
-            self.grid.put(cp);
+            let w = self.grid.put(cp);
             self.grid.pen.attrs = pen;
+            w
         } else {
-            self.grid.put(cp);
+            self.grid.put(cp)
+        };
+        // An automatic line break is a `CarriageReturn` and a `LineFeed`
+        // upstream (`vtterm.c:870`, `:900`), so a macro sees a wrapped line as
+        // two lines — which is the whole reason `Grid::put` reports it. The
+        // taps go in *before* the character, which is the order upstream
+        // reaches them in: the break happens, then the character lands.
+        if wrapped {
+            self.tap(0x0d);
+            self.tap(0x0a);
         }
+        self.tap(cp);
         if let Some(log) = &mut self.log_text {
             log.push(c);
         }
@@ -2293,7 +2444,16 @@ impl Perform for State {
     fn execute(&mut self, byte: u8) {
         match byte {
             0x07 => {} // BEL — the oracle silences it (IdBeepOff)
-            0x08 => self.grid.backspace(),
+            0x08 => {
+                // `BackSpace()` taps a BS in each of its two moving arms and
+                // not in the arm that does nothing, so the test is whether the
+                // cursor moved rather than whether a BS arrived.
+                let before = (self.grid.cursor.x, self.grid.cursor.y);
+                self.grid.backspace();
+                if (self.grid.cursor.x, self.grid.cursor.y) != before {
+                    self.tap(0x08);
+                }
+            }
             0x09 => {
                 // `vtterm.c:Tab()` — a plain HT takes the *pending wrap first*
                 // and only then tabs, so a tab arriving on a full line starts
@@ -2301,15 +2461,22 @@ impl Perform for State {
                 // `CursorForwardTab` directly. `ts.VTCompatTab` would suppress
                 // it, but it is off by default.
                 if self.grid.cursor.pending_wrap {
-                    self.grid.carriage_return();
+                    self.carriage_return();
+                    self.tap(0x0a);
                     self.grid.line_feed();
                     self.grid.cursor.pending_wrap = false;
                 }
                 self.grid.forward_tab(1);
+                self.tap(0x09);
             }
             0x0e => self.shift(Shift::Ls1), // SO
             0x0f => self.shift(Shift::Ls0), // SI
             // LF, VT and FF all line-feed (vtterm.c treats them alike).
+            //
+            // Not quite: upstream sends VT and FF straight to `LineFeed` and
+            // only LF through `ProcessLF`, so `ts.CRReceive` does not apply to
+            // them. The grid cannot tell the difference; the macro tap can, and
+            // this is where it would show up if it is ever worth fixing.
             0x0a..=0x0c => {
                 if let Some(log) = &mut self.log_text {
                     log.push('\n');
@@ -3017,5 +3184,144 @@ mod tests {
         assert_eq!(row(&vt, 0), "hello");
         vt.feed(b"\x1b[c");
         assert_eq!(vt.take_reply(), b"\x1b[?63;1;2;6;7;8;9c");
+    }
+
+    // --- the macro tap ---------------------------------------------------
+
+    /// Feed a stream to a terminal with a macro listening and return what the
+    /// macro would have read.
+    fn tapped(input: &[u8], cols: usize, rows: usize) -> Vec<u8> {
+        let mut vt = Vt::new(Config {
+            cols,
+            rows,
+            ..Config::default()
+        });
+        vt.set_macro_tap_enabled(true);
+        vt.feed(input);
+        vt.take_macro_bytes()
+    }
+
+    fn tapped_str(input: &[u8]) -> String {
+        String::from_utf8(tapped(input, 20, 5)).unwrap()
+    }
+
+    /// The headline: escape sequences never reach a macro, because the parser
+    /// consumed them. A `wait 'ESC['` cannot match, ever.
+    #[test]
+    fn a_macro_reads_the_text_and_not_the_wire() {
+        assert_eq!(tapped_str(b"\x1b[31mred\x1b[m"), "red");
+        assert_eq!(tapped_str(b"a\x1b[2Jb"), "ab");
+        // A character that was printed and then erased is in the stream
+        // anyway, because it was printed once.
+        assert_eq!(tapped_str(b"secret\x1b[6D\x1b[K"), "secret");
+    }
+
+    /// The trap `CLAUDE.md` records from the other end: a line reaches a macro
+    /// with its CR still on it, which is why a `waitregex` ending in `$` never
+    /// matches one.
+    #[test]
+    fn a_crlf_line_keeps_its_cr_and_a_lone_cr_is_dropped() {
+        assert_eq!(tapped_str(b"abc\r\ndef\r\n"), "abc\r\ndef\r\n");
+        // A bare LF is a bare LF — `CheckEOLCheckLog` passes it through as a
+        // character rather than turning it into an EOL.
+        assert_eq!(tapped_str(b"abc\ndef"), "abc\ndef");
+        // And a CR with no LF after it vanishes, so an overwrite reaches the
+        // macro as the two texts run together while the screen shows only the
+        // second.
+        assert_eq!(tapped_str(b"abc\rdef"), "abcdef");
+        let mut vt = run(b"abc\rdef", 20, 5);
+        vt.feed(b"");
+        assert_eq!(row(&vt, 0).trim_end(), "def");
+    }
+
+    /// `CarriageReturn` and `LineFeed` are what tap, so `ts.CRReceive` changes
+    /// what a macro sees and not only what the screen does.
+    #[test]
+    fn cr_receive_reaches_the_tap() {
+        fn with(cr: CrReceive, input: &[u8]) -> String {
+            let mut vt = Vt::new(Config {
+                cr_receive: cr,
+                ..Config::default()
+            });
+            vt.set_macro_tap_enabled(true);
+            vt.feed(input);
+            String::from_utf8(vt.take_macro_bytes()).unwrap()
+        }
+        // The default: a CR is a carriage return and nothing more, so on its
+        // own it is held and dropped.
+        assert_eq!(with(CrReceive::Cr, b"a\rb"), "ab");
+        // Told the far end sends CR alone, a CR is a CR *and* a line feed —
+        // and the pair reaches the tap as one EOL.
+        assert_eq!(with(CrReceive::CrLf, b"a\rb"), "a\r\nb");
+        // Told it sends LF alone, an LF is a CR and an LF.
+        assert_eq!(with(CrReceive::Lf, b"a\nb"), "a\r\nb");
+    }
+
+    /// BS, HT and the wrap are the three that a tap written from `DDEPut1`
+    /// alone would miss — they are emitted by the functions that execute the
+    /// control, not by the sink.
+    #[test]
+    fn the_controls_that_moved_the_cursor_are_in_the_stream() {
+        assert_eq!(tapped_str(b"ab\x08c"), "ab\x08c");
+        // A backspace that could not move taps nothing.
+        assert_eq!(tapped_str(b"\x08a"), "a");
+        assert_eq!(tapped_str(b"a\tb"), "a\tb");
+    }
+
+    /// A wrapped line reaches a macro as two lines, which is what makes
+    /// `waitln` usable against a host that does not know the terminal's width.
+    #[test]
+    fn an_automatic_wrap_is_a_line_break_to_a_macro() {
+        assert_eq!(tapped(b"abcde", 4, 5), b"abcd\r\ne");
+        // The other wrap: a double-width glyph that will not fit in the last
+        // column parks a space and breaks the line before it. **The space is
+        // not in the stream** — upstream parks it with `BuffPutUnicode`
+        // (`vtterm.c:896`), which is the buffer's write path and not `PutU32`,
+        // so it never reaches `OutputLogUTF32`. A macro's copy of that line is
+        // one column narrower than the screen's.
+        assert_eq!(
+            String::from_utf8(tapped("abc\u{4f60}".as_bytes(), 4, 5)).unwrap(),
+            "abc\r\n\u{4f60}"
+        );
+        // With autowrap off there is no break, and upstream taps nothing.
+        assert_eq!(tapped(b"\x1b[?7labcde", 4, 5), b"abcde");
+    }
+
+    /// Nothing is collected while no macro is linked, and unlinking throws
+    /// away what was collected — `DDEFreeBuf`.
+    #[test]
+    fn the_tap_costs_nothing_and_keeps_nothing_when_it_is_off() {
+        let mut vt = Vt::new(Config::default());
+        vt.feed(b"before");
+        assert!(!vt.macro_tap_enabled());
+        assert!(vt.take_macro_bytes().is_empty());
+        vt.set_macro_tap_enabled(true);
+        vt.feed(b"after");
+        assert!(vt.macro_tap_enabled());
+        vt.set_macro_tap_enabled(false);
+        vt.set_macro_tap_enabled(true);
+        assert!(vt.take_macro_bytes().is_empty());
+    }
+
+    /// The two taps are independent: draining one leaves the other alone, and
+    /// they do not agree about newlines on purpose.
+    #[test]
+    fn the_log_tap_and_the_macro_tap_do_not_share_a_buffer() {
+        let mut vt = Vt::new(Config::default());
+        vt.set_log_text_enabled(true);
+        vt.set_macro_tap_enabled(true);
+        vt.feed(b"a\tb\r\n");
+        assert_eq!(vt.take_macro_bytes(), b"a\tb\r\n");
+        // The log's is `\n` with no tab, which is this port's own choice — see
+        // `LogOptions::crlf` and the note on `MacroTap`.
+        assert_eq!(vt.take_log_text(), "ab\n");
+    }
+
+    /// Wide characters go out as UTF-8, which is what `DDEPut1U32` does with
+    /// `UTF32ToUTF8`.
+    #[test]
+    fn the_tap_is_utf8_whatever_the_terminal_decoded() {
+        assert_eq!(tapped_str("héllo".as_bytes()), "héllo");
+        assert_eq!(tapped_str("日本".as_bytes()), "日本");
     }
 }
