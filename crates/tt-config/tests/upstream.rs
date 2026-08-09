@@ -2,7 +2,7 @@
 //!
 //! The schema is a transcription, and the way to check a transcription is to
 //! extract both lists and diff them rather than to read them — the same rule
-//! `CLAUDE.md` states for `CheckReservedWord`. It is worth having as a test
+//! `AGENTS.md` states for `CheckReservedWord`. It is worth having as a test
 //! because a wrong key **cannot fail loudly**: reading one that upstream never
 //! writes gives the default from a file that sets the setting, and writing it
 //! puts a line in the user's `TERATERM.INI` that their own Tera Term ignores.

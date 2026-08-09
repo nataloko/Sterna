@@ -63,7 +63,7 @@ first ten. What is *not* reused is the line buffer, for the reason above.
 **`print` writes on the terminal**, through `disp_str`, with `\n` expanded to
 `CR LF` because that is what a terminal needs to start a line. Lua's own
 `print` goes to stdout, which for a window launched from a desktop menu is
-nowhere — the same silent-diagnostic trap `CLAUDE.md` records for `qWarning`
+nowhere — the same silent-diagnostic trap `AGENTS.md` records for `qWarning`
 under journald. A host with no screen falls back to stderr.
 
 **`os.exit` is removed.** The script is a thread inside the terminal, so

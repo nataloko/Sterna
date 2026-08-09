@@ -3472,7 +3472,7 @@ mod tests {
         assert_eq!(tapped_str(b"secret\x1b[6D\x1b[K"), "secret");
     }
 
-    /// The trap `CLAUDE.md` records from the other end: a line reaches a macro
+    /// The trap `AGENTS.md` records from the other end: a line reaches a macro
     /// with its CR still on it, which is why a `waitregex` ending in `$` never
     /// matches one.
     #[test]

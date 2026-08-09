@@ -50,7 +50,7 @@
 //! [`disp_str`](ScriptHost::disp_str), with `\n` expanded to `CR LF` because
 //! that is what a terminal needs to start a line. Lua's own `print` goes to
 //! stdout, which for a window launched from a desktop menu is nowhere — the
-//! same silent-diagnostic trap `CLAUDE.md` records for `qWarning` under
+//! same silent-diagnostic trap `AGENTS.md` records for `qWarning` under
 //! journald. A host with no screen falls back to stderr rather than failing.
 //!
 //! **`os.exit` is removed.** The macro is a thread inside the terminal, so

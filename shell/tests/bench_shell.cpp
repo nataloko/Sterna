@@ -9,7 +9,7 @@
 // **Build this in `sterna-fedora`, in Release, and run it on the desktop.**
 // Qt 6.4.2 in the Ubuntu container is seven releases behind what the desktop
 // runs and has already produced one false finding and one set of numbers
-// flattering by 2x — see `CLAUDE.md`. A Debug build measures `-O0` Qt calls.
+// flattering by 2x — see `AGENTS.md`. A Debug build measures `-O0` Qt calls.
 // Neither refuses to run, because both are useful for checking that the
 // harness works; both are wrong to quote.
 //

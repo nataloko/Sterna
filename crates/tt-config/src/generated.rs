@@ -951,7 +951,7 @@ pub struct Settings {
     /// unlike its two neighbours above, whose keys carry the `Enable` prefix this one
     /// does not. `vtdisp.c:2412` is the only reader.
     pub color_underline_enabled: bool,
-    /// `ttset.c:741`. **On**, and this is one of the four flag words `CLAUDE.md`
+    /// `ttset.c:741`. **On**, and this is one of the four flag words `AGENTS.md`
     /// warns about: `ColorFlag` is zeroed at the top of `ttset.c` and built up from
     /// per-key calls a thousand lines later, so reading the zero as the default
     /// turns 256-colour off and looks like a parser bug.
@@ -3718,7 +3718,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "on",
         label: None,
-        doc: "`ttset.c:741`. **On**, and this is one of the four flag words `CLAUDE.md` warns about: `ColorFlag` is zeroed at the top of `ttset.c` and built up from per-key calls a thousand lines later, so reading the zero as the default turns 256-colour off and looks like a parser bug.",
+        doc: "`ttset.c:741`. **On**, and this is one of the four flag words `AGENTS.md` warns about: `ColorFlag` is zeroed at the top of `ttset.c` and built up from per-key calls a thousand lines later, so reading the zero as the default turns 256-colour off and looks like a parser bug.",
     },
     Field {
         name: "color.aixterm_16",

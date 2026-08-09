@@ -1,7 +1,7 @@
 # Sterna — plan and status
 
 Canonical roadmap. Update the status markers as work lands; this file is the
-thing a fresh session should read first, together with `CLAUDE.md`.
+thing a fresh session should read first, together with `AGENTS.md`.
 
 **Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 234
 
@@ -19,7 +19,7 @@ thing a fresh session should read first, together with `CLAUDE.md`.
 Silverblue 44) host and inherits the whole session — Qt 6 windows open on the
 real desktop under both Wayland and Xwayland, the session bus is reachable, and
 an FTDI Quad RS232-HS is present with `ttyUSB0`/`ttyUSB1` wired back-to-back on
-data *and* control lines. See `CLAUDE.md` for the capability table and the three
+data *and* control lines. See `AGENTS.md` for the capability table and the three
 places it still bites.
 
 **All Stage 0 spikes are now resolved.** Of the three once called highest-risk:
@@ -436,7 +436,7 @@ sending BS because that is what Tera Term does).
   Ubuntu 24.04 container was rejected as a base for exactly that reason, its
   Qt 6.4.2 being the one that costs 62 MB of extra private memory under Wayland.
 
-  **Two of the three ways this fails are silent**, both now in `CLAUDE.md`:
+  **Two of the three ways this fails are silent**, both now in `AGENTS.md`:
   linuxdeploy's `patchelf` predates `.relr.dyn` and corrupts every library it
   bundles, which presents as a segfault in the `_init` of whichever one the
   loader reaches first; and a Qt Wayland plugin with no shell integration binds
@@ -472,7 +472,7 @@ fails on a diff**: the break becomes a review question instead of a runtime
 mystery. Same reasoning as the differential suite — put the check where a
 mistake is visible, not where it is plausible.
 
-Three things it cost to find, all in `CLAUDE.md`:
+Three things it cost to find, all in `AGENTS.md`:
 
 - **cbindgen parses files, not crates, so privacy does not exist.** `tt-vt`'s
   private `locator_flag` module put `PIXEL`, `ONE_SHOT` and `FILTERED` into the
@@ -787,7 +787,7 @@ port was done.** Every subsequent finding came from writing a harder case.
    `stubs_manual.c` because `vtdisp.c` is not compiled; it held *xterm's*
    palette rather than Tera Term's and omitted the bright/dim flip the real one
    applies, so every truecolor SGR resolved to the wrong index. This is exactly
-   the failure `CLAUDE.md` warns about — "every stub is a place the oracle can
+   the failure `AGENTS.md` warns about — "every stub is a place the oracle can
    lie" — caught only because a Rust implementation disagreed with it.
 
 Finding 2 is worth dwelling on: **the port was briefly being written against a
@@ -1126,7 +1126,7 @@ directions so a reason cannot outlive the behaviour it describes.
 
 It corrected the plan on its first run. **This document said "no quote
 stripping" and that is wrong** — a matched pair, single or double, is
-discarded, which MSDN documents. Four more findings are in `CLAUDE.md`, and one
+discarded, which MSDN documents. Four more findings are in `AGENTS.md`, and one
 of them is the same shape as every settings trap already there: **`GetOnOff` is
 default-biased** (`ttset.c:344`), so `Key=1` means *on* for a setting that ships
 on and *off* for one that ships off. It also reads into a four-byte buffer, so
@@ -1280,7 +1280,7 @@ is also upstream's position — the protocol list says *untested* beside them
 rather than letting somebody find out.
 
 Two portability findings came out of building it on the *other* container's
-compiler, both recorded in `CLAUDE.md`: upstream leans on `<windows.h>` for
+compiler, both recorded in `AGENTS.md`: upstream leans on `<windows.h>` for
 `<stdlib.h>` and for the `SetTimer`/`KillTimer` declarations, which GCC 13
 forgave and GCC 14 does not, and `ttcstd.h`'s `char8_t` guard is inverted so
 the C++ has to be pinned at `gnu++17`.
@@ -2411,7 +2411,7 @@ own product name and is read as "no opinion" rather than put in this program's
 title bar. `/M=` and a mistyped `/ssh` option are said out loud rather than
 ignored.
 
-**And a trap that cost a debugging round, now in `CLAUDE.md`.** The diagnostic
+**And a trap that cost a debugging round, now in `AGENTS.md`.** The diagnostic
 under `/V` was written with `qWarning`, and Fedora builds Qt with journald — so
 it goes to the journal rather than to stderr whenever stderr is not a terminal,
 which is exactly how a windowless session is launched. It read as "the option
@@ -2695,7 +2695,7 @@ frontend has not implemented that" stays the trait's own documented default —
 the macro is told "Unknown command", which is the only refusal the language
 has, and a frontend with three dialogs is useful.
 
-Three things the wiring turned up, all in `CLAUDE.md`:
+Three things the wiring turned up, all in `AGENTS.md`:
 
 - **A macro that ends without asking for anything never wakes its frontend.**
   A `dispstr` on the last line is noticed and a bare `pause 1` is not, because
@@ -2914,7 +2914,7 @@ text in a timestamp. The shipped `LogTimestampFormat` ends in `%N`, so pasting
 it into `LogDefaultName` silently loses the milliseconds. Both reproduced;
 neither is documented upstream.
 
-**Four more of the settings-trap family**, all now in `CLAUDE.md`:
+**Four more of the settings-trap family**, all now in `AGENTS.md`:
 `LogRotateSize` is in bytes whatever `LogRotateSizeType` says, so scaling it
 turns 1 MB into a terabyte; a `LogRotateStep` of zero is **ten thousand**
 generations rather than none; `LogTypePlainText` is one byte and it is a BS,
@@ -2937,7 +2937,7 @@ plus `DeferredLogWriteMode` (Win32 share modes and a writer thread).
 #### And four keys that were in no Tera Term
 
 `crates/tt-config/tests/upstream.rs`, 2026-08-09. The schema is a
-transcription of `ttset.c`, and `CLAUDE.md` already says that the way to check
+transcription of `ttset.c`, and `AGENTS.md` already says that the way to check
 a transcription is to extract both lists and diff them rather than to read
 them. Nobody had done it for this one. Four of the first 77 keys —
 `AltScreenBuffer`, `EnableUnderlineAttrColor`, `RemoteClearsBuffer` and
@@ -3380,7 +3380,7 @@ be asked microseconds too early and the window said "Disconnected" instead of
 A bare `QWidget` painting an 80x24 grid with `QPainter` — no GPU, no damage
 tracking, no glyph atlas, per-cell `drawText`. A floor, not a ceiling.
 **Measured on Qt 6.11.1 / Fedora 44, which is what the desktop actually runs**
-(the `sterna-fedora` distrobox, see `CLAUDE.md`).
+(the `sterna-fedora` distrobox, see `AGENTS.md`).
 
 | | X11 | Wayland |
 |---|---|---|

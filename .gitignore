@@ -21,3 +21,8 @@ compile_commands.json
 .vscode/
 .idea/
 *.swp
+
+# Context about the user and this machine, for whichever agent is working here.
+# Deliberately not tracked: the repository is public and this is not about the
+# code. `AGENTS.md` tells an agent to read it if it is there.
+/AGENTS.local.md

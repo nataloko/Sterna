@@ -3,7 +3,7 @@
 //! Answers one question: **did the engine get meaningfully slower?** It is a
 //! regression detector, not a profiler, and it is deliberately the half that
 //! has no window in it — the Qt shell's numbers depend on a Qt version this
-//! container does not have (see `CLAUDE.md`), while this half is the same
+//! container does not have (see `AGENTS.md`), while this half is the same
 //! everywhere and can gate CI.
 //!
 //! ```text

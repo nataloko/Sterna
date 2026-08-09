@@ -127,7 +127,7 @@ fn status(tx: &CtlSender) -> Result<Value, RpcError> {
 /// and the string is encoded, and the other two through
 /// [`Session::send_bytes`], which puts what it is given on the wire. The macro
 /// language draws the same line between `sendtext` and `sendbinary` and
-/// `CLAUDE.md` records what picking one for both costs.
+/// `AGENTS.md` records what picking one for both costs.
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct SendParams {

@@ -57,7 +57,7 @@ xfer --proto x|y|z|kermit|bplus|quickvan
 ```
 
 `--pty` spawns a peer on a pty and is what the test suite uses. `--serial`
-drives a real port — with the FTDI loopback rig (see `CLAUDE.md`) you can run a
+drives a real port — with the FTDI loopback rig (see `AGENTS.md`) you can run a
 transfer over actual wire:
 
 ```sh
@@ -86,7 +86,7 @@ Each of these cost real debugging time, and each looks like something else.
 - **Settings must mirror `ttset.c`.** A zeroed `TTTSet` sets every timeout to 0
   and every transfer aborts on its first wait. `settings_defaults()` in
   `main.c` carries the ~20 fields the protocols read, with line references. Same
-  hazard as the oracle's, and see `CLAUDE.md` ground rule 4.
+  hazard as the oracle's, and see `AGENTS.md` ground rule 4.
 - **XMODEM has no filename and no length.** Receiving needs `--recv-name`,
   because in Tera Term the receive dialog supplies it via `FileNames[]`. And the
   received file is padded to a whole 128/1024-byte block, so a byte-exact

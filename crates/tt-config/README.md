@@ -80,7 +80,7 @@ generator into Cargo *and* CMake is how `PLAN.md`'s risk 5 starts.
 
 ### Every default carries the line that proves it
 
-Because four of them are not where they look, and `CLAUDE.md` has a trap for
+Because four of them are not where they look, and `AGENTS.md` has a trap for
 each: `CRReceive` and `BSKey` and `CursorShape` are `else` branches, and the
 flag words are zeroed at the top of `ttset.c` and built up from per-key calls a
 thousand lines below. A schema is only worth having if its defaults are

@@ -67,7 +67,7 @@ The rest, in the order they would bite:
 | Enumeration | ...but a key listing reports duplicates twice, and section names likewise |
 | Case | Section and key names match case-insensitively |
 | Whitespace | Trimmed around the key, the value, the section name in the file **and** in the query — but never collapsed inside a name |
-| Empty value | `Key=` returns an **empty string, not the default**. This is the trap `CLAUDE.md` records for `BSKey`, at the API level |
+| Empty value | `Key=` returns an **empty string, not the default**. This is the trap `AGENTS.md` records for `BSKey`, at the API level |
 | Comments | `;` starts one; **`#` does not** — `#B=2` is a key called `#B` |
 | Trailing comment | `Key=value ; note` keeps the whole thing, comment and all |
 | ...and a comment is only a comment to *enumeration* | A lookup has no notion of one: `;A=1` is an entry whose key is `;A`, and asking for `;A` returns `1`. Asking for `A` misses because the names differ, which is why this is invisible until something enumerates |

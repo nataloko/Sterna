@@ -180,7 +180,7 @@ fn waitln_hands_the_line_back_without_its_terminator() {
 /// is matched before the LF joins the buffer, so the CR is the last byte it
 /// sees and a `$` never matches a line from an ordinary host.
 ///
-/// This is the trap `CLAUDE.md` records, driven end to end for the first time
+/// This is the trap `AGENTS.md` records, driven end to end for the first time
 /// — and it needs the tap to have put the CR there, which is the thing a macro
 /// reading the wire would have got for free and a macro reading the screen
 /// nearly did not.

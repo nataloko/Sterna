@@ -21,7 +21,7 @@ The **shell** half (`shell/build*/bench_shell`) needs Qt 6.11.1 and a real
 compositor, so it is a local gate and never a CI one. Build it in
 `sterna-fedora` with `-DCMAKE_BUILD_TYPE=Release`; measured on the container's
 Qt 6.4.2 or in a Debug build the numbers are wrong in ways that have already
-fooled this project once (see CLAUDE.md).
+fooled this project once (see AGENTS.md).
 
 ## What keeps this from being a flaky gate
 

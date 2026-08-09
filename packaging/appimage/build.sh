@@ -16,7 +16,7 @@
 # this is being written for, and everything below except the base is what a
 # portable build will need anyway. The Ubuntu box was considered and rejected as
 # a base: its Qt 6.4.2 loads Mesa's gallium driver under Wayland and costs 62 MB
-# of extra private memory (CLAUDE.md), and bundling that would ship a regression
+# of extra private memory (AGENTS.md), and bundling that would ship a regression
 # to every user of a terminal whose claim is being light. Reaching older distros
 # means an older base *and* a Qt fetched separately, which is the follow-up.
 #

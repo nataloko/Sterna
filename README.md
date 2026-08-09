@@ -14,7 +14,9 @@ shell — for Linux and Windows. Compatible with Tera Term; not Tera Term.
 
 The name is settled. See [PLAN.md](PLAN.md) for scope and status,
 [ATTRIBUTION.md](ATTRIBUTION.md) for what is borrowed from Tera Term and under
-which terms.
+which terms, and [AGENTS.md](AGENTS.md) for the working agreements and the list
+of traps — which is written for coding agents and is the fastest way for a
+person to find out where this codebase bites, too.
 
 ## Why
 

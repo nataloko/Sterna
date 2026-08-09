@@ -6,7 +6,7 @@ knows about the core.
 
 ```sh
 # Qt work goes in the sterna-fedora container: Qt 6.11.1, matching the
-# desktop. See CLAUDE.md for why the Ubuntu container's 6.4.2 does not count.
+# desktop. See AGENTS.md for why the Ubuntu container's 6.4.2 does not count.
 distrobox-host-exec distrobox enter sterna-fedora --no-tty -- bash -lc '
   export PATH="$HOME/.cargo/bin:$PATH"
   cd ~/Projects/Sterna/shell

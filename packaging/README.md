@@ -8,7 +8,7 @@ the host is Bluefin, an image-based Fedora where layering an rpm is the awkward
 path and a self-contained binary is the ordinary one.
 
 ```sh
-# Qt work happens in the sterna-fedora container. See CLAUDE.md for why.
+# Qt work happens in the sterna-fedora container. See AGENTS.md for why.
 distrobox-host-exec distrobox enter sterna-fedora --no-tty -- bash -lc '
   cd ~/Projects/Sterna/packaging/appimage
   ./build.sh              # → build/sterna-x86_64.AppImage
@@ -63,7 +63,7 @@ also ship old Qt.
 
 The Ubuntu 24.04 container was considered as a base and rejected: glibc 2.39
 would reach much further, but its Qt 6.4.2 loads Mesa's gallium driver under
-Wayland and costs 62 MB of extra private memory (`CLAUDE.md`). Bundling that
+Wayland and costs 62 MB of extra private memory (`AGENTS.md`). Bundling that
 would ship a regression to every user of a terminal whose claim is being light.
 
 ## Not in CI, and that is deliberate

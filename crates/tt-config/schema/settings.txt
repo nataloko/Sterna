@@ -51,7 +51,7 @@
 #
 # Comment lines immediately above a setting become its documentation, in the
 # generated Rust and in the dialog's tooltip. Cite the line in `ttset.c` that
-# proves the default — `CLAUDE.md` has four traps that are all "the default is
+# proves the default — `AGENTS.md` has four traps that are all "the default is
 # not where it looks like it is".
 
 # --- terminal ---------------------------------------------------------------
@@ -198,7 +198,7 @@ color.reverse_enabled | bool | Tera Term | EnableReverseAttrColor | off | -
 # does not. `vtdisp.c:2412` is the only reader.
 color.underline_enabled | bool | Tera Term | UnderlineAttrColor | on | -
 
-# `ttset.c:741`. **On**, and this is one of the four flag words `CLAUDE.md`
+# `ttset.c:741`. **On**, and this is one of the four flag words `AGENTS.md`
 # warns about: `ColorFlag` is zeroed at the top of `ttset.c` and built up from
 # per-key calls a thousand lines later, so reading the zero as the default
 # turns 256-colour off and looks like a parser bug.

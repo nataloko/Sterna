@@ -9,7 +9,7 @@ use tt_config::{
 #[test]
 fn the_defaults_are_upstreams() {
     let d = Settings::default();
-    // The four `CLAUDE.md` calls out by name, because each one is a default
+    // The four `AGENTS.md` calls out by name, because each one is a default
     // that is not where it looks like it is — an `else` branch or a key read
     // a thousand lines after the initialiser that zeroes it.
     assert_eq!(d.terminal_cr_receive, TerminalCrReceive::Cr, "ttset.c:643");

@@ -2,7 +2,7 @@
 //! from.
 //!
 //! Every value here is `ttpset/ttset.c`'s, cited by line. That discipline is
-//! not decoration: `CLAUDE.md` lists five settings whose real default is an
+//! not decoration: `AGENTS.md` lists five settings whose real default is an
 //! `else` branch or a flag word built up hundreds of lines from where it is
 //! declared, and a transfer configured from the wrong ones is a transfer that
 //! times out on its first packet for a reason nobody would think to look for.

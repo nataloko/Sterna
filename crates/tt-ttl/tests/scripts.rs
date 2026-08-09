@@ -18,7 +18,7 @@
 //! same way, which is what `run_diff.sh` is for on the terminal side and what
 //! nothing is for here, because there is no headless `ttpmacro.exe` to diff
 //! against. Every golden was read before it was blessed; the rule in
-//! `CLAUDE.md` applies here exactly as it does to `oracle/cases/`.
+//! `AGENTS.md` applies here exactly as it does to `oracle/cases/`.
 //!
 //! Eight decisions make a run reproducible. They are choices, not discoveries,
 //! and a script's transcript only means anything against them:

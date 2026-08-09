@@ -38,7 +38,7 @@ shared runner had a bad minute.
 **The shell half** — `shell/tests/bench_shell.cpp` — measures the window, and
 so is a **local** gate and never a CI one. Qt 6.4.2 in the Ubuntu container is
 seven releases behind the desktop's 6.11.1 and has already produced one false
-finding and one set of numbers flattering by 2x (see `CLAUDE.md`). Build it in
+finding and one set of numbers flattering by 2x (see `AGENTS.md`). Build it in
 `sterna-fedora`, in Release, and run it on the real desktop.
 
 ## What is measured

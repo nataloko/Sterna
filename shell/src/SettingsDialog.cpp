@@ -52,7 +52,7 @@ QString pageTitle(const QString &page)
 ///
 /// The citation is the part worth carrying all the way to the UI. Four of
 /// these defaults are an `else` branch or a flag word built up a thousand
-/// lines from where it was zeroed, and `CLAUDE.md` has a trap written about
+/// lines from where it was zeroed, and `AGENTS.md` has a trap written about
 /// each — so "why is this on?" has an answer in the dialog rather than in the
 /// source.
 QString tooltip(const TtSettingField &f)

@@ -271,7 +271,7 @@ jobs:
       # has already produced one false finding, so this job's job is "does it
       # compile and does the painter still agree", NOT anything about
       # behaviour or footprint. Measure those in the sterna-fedora
-      # container; see CLAUDE.md.
+      # container; see AGENTS.md.
       #
       # fonts-dejavu-core is not decoration: the render test compares a box
       # drawing character against a letter, and a runner with no font carrying

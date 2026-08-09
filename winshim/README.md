@@ -32,7 +32,7 @@ sys/             MSVC spells two headers differently
 constants; the rule is that anything with *behaviour* goes in `winshim.c` or
 `stubs_manual.c` next to a note saying what the real one does, because a stub
 that quietly returns zero is how a harness starts lying. `oracle/README.md` has
-three worked examples of exactly that happening, and `CLAUDE.md` has more.
+three worked examples of exactly that happening, and `AGENTS.md` has more.
 
 `codeconv_min.c` sits here rather than with the oracle because
 `ttpfile/protolog.cpp` needs two of the same entry points for its path

@@ -324,7 +324,7 @@ void DispGetCellSize(vtdraw_t *vt, int *width, int *height)
  * font metrics. The generated stubs left both of these empty -- they did not
  * even store through their out-parameters, so MouseReport read an
  * uninitialised x and y off the stack. That is invisible until a mouse event
- * arrives, which is exactly the shape of stub CLAUDE.md warns about.
+ * arrives, which is exactly the shape of stub AGENTS.md warns about.
  *
  * The window origin is taken as (0,0) rather than (WinOrgX,WinOrgY), and that
  * is deliberate. WinOrgY is a *scrollback viewport* offset: buffer.c:3865
