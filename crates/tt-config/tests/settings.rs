@@ -405,3 +405,57 @@ fn the_timestamp_type_keeps_absent_apart_from_local() {
         LogTimestampType::Unset
     );
 }
+
+/// The two control lines are read with a default of `-1`, which is a sentinel
+/// meaning "derive from the flow control" and not a value the `DCB` has. What
+/// the schema has to get right is that the sentinel *survives* the read —
+/// resolving it is `tt-session`'s, because the answer depends on another
+/// setting.
+#[test]
+fn the_control_lines_keep_the_sentinel_their_default_is() {
+    let s = Settings::load(&Ini::parse(b"[Tera Term]\r\n"));
+    assert_eq!(s.serial_rts, -1);
+    assert_eq!(s.serial_dtr, -1);
+
+    // A negative number in the file is not an error — `GetPrivateProfileInt`
+    // wraps it, which is what `ini-audit` recorded as 4294967291 for `-5`, and
+    // the field is an `int`. So a written-out `-1` reads back as the sentinel
+    // and this port's own file round-trips.
+    let mut out = Ini::parse(b"");
+    s.store(&mut out);
+    assert_eq!(out.get("Tera Term", "FlowCtrlRTS"), Some("-1"));
+    assert_eq!(Settings::load(&out).serial_rts, -1);
+
+    // And a value that is one takes it literally, including the one Win32
+    // would refuse. Nothing is clamped here; `serial_params` is where an
+    // unknown number becomes Enable.
+    let s = Settings::load(&Ini::parse(
+        b"[Tera Term]\r\nFlowCtrlRTS=2\r\nFlowCtrlDTR=9\r\n",
+    ));
+    assert_eq!(s.serial_rts, 2);
+    assert_eq!(s.serial_dtr, 9);
+}
+
+/// The rest of the serial family, whose defaults are all somewhere other than
+/// where the surrounding code suggests.
+#[test]
+fn the_serial_defaults_are_upstreams() {
+    let s = Settings::load(&Ini::parse(b"[Tera Term]\r\n"));
+    // `GetOnOff(…, TRUE)` at `ttset.c:1147`, so `ClearComBuffOnOpen=1` is on
+    // and only a literal `off` turns it off.
+    assert!(s.serial_clear_buffer_on_open);
+    assert_eq!(s.serial_break_time, 1000);
+    assert!(s.serial_auto_reconnect);
+    assert_eq!(s.serial_auto_reconnect_delay, 500);
+    assert_eq!(s.serial_auto_reconnect_delay_unknown_port, 2000);
+    assert_eq!(s.serial_auto_reconnect_retry_interval, 1000);
+    assert_eq!(s.serial_auto_reconnect_retries, 3);
+
+    // The `GetOnOff` asymmetry, on the two bools this family added: both
+    // default on, so `1` is on for the same reason `Telnet=1` is.
+    let s = Settings::load(&Ini::parse(
+        b"[Tera Term]\r\nClearComBuffOnOpen=1\r\nAutoComPortReconnect=0\r\n",
+    ));
+    assert!(s.serial_clear_buffer_on_open);
+    assert!(s.serial_auto_reconnect);
+}

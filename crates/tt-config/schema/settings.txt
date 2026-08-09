@@ -619,6 +619,96 @@ serial.wait_com | bool | Tera Term | WaitCom | off | -
 # argument.
 serial.max_com_port | int(4..4096) | Tera Term | MaxComPort | 256 | -
 
+# **`ttset.c:2034`, and the default is a sentinel rather than a value.** Read
+# with a default of `-1` and then derived from the flow control: RTS becomes
+# Handshake under `FlowCtrl=hard` and Enable under anything else. This is the
+# `TCPPort` trap the right way up — `FlowCtrl` is read at `:943`, eleven
+# hundred lines earlier, so the derivation really does see the file's own
+# value rather than an initialiser.
+#
+# The numbers are Win32 `DCB` fields, not a table of Tera Term's own: 0
+# disable, 1 enable, 2 handshake, 3 toggle — and only RTS offers the fourth
+# (`serial_pp.cpp:74`). An out-of-range number is where this gets dangerous.
+# `CommResetSerial` puts it straight into the `DCB` and **does not check what
+# `SetCommState` says about it** (`commlib.c:240`), so `FlowCtrlRTS=9` makes
+# Windows reject the whole structure and the port keeps whatever it had —
+# every serial setting in the file silently discarded, baud included, with no
+# message. Not reproduced: `tt-session`'s `serial_params` reads anything it
+# does not know as Enable.
+#
+# Held as the sentinel rather than resolved on the way in, the same call
+# `connection.terminal_speed` makes for the same reason — the schema cannot
+# say "the default is another setting", so the resolution is in
+# `serial_params`. **Upstream resolves at load and writes the concrete number
+# back**, so its own save pins the line and changing the flow control
+# afterwards no longer moves it; this port keeps the `-1`, which a real Tera
+# Term reads the same way it reads an absent key.
+serial.rts | int | Tera Term | FlowCtrlRTS | -1 | -
+
+# `ttset.c:2042`, the same sentinel as `serial.rts` against a different arm:
+# DTR becomes Handshake under `FlowCtrl=dsrdtr` and Enable otherwise. There is
+# no toggle for DTR — `serial_pp.cpp:75` lists three — and Win32 has no
+# `DTR_CONTROL_TOGGLE` to list.
+serial.dtr | int | Tera Term | FlowCtrlDTR | -1 | -
+
+# `ttset.c:1147`, `GetOnOff(…, TRUE)`. Purge whatever the driver has already
+# buffered when the port opens, rather than delivering it as the session's
+# first bytes. Off is a real choice on a console server: it is how you see
+# what the far end said before you got there, and upstream marks the port
+# readable straight away for it (`commlib.c:476`'s `cv->RRQ`).
+#
+# It gates the purge on **open** only. Control > Reset port purges whatever
+# this says (`vtwin.cpp:4913` passes TRUE outright), so the setting is not the
+# answer to "does resetting the port clear it".
+serial.clear_buffer_on_open | bool | Tera Term | ClearComBuffOnOpen | on | -
+
+# `ttset.c:1286`, milliseconds. How long `CommSendBreak` holds the line at
+# space — Control > Send break, and a macro's `sendbreak`, which reaches the
+# same place through DDE (`ttdde.c:801` posts the menu command).
+#
+# One second is a long break and it is deliberate: a Sun PROM wants one, and
+# `commlib.c:1176` says "pause for 1 sec" in a comment beside the parameter.
+# This port had **three** durations and none of them was the file's — 300 ms
+# in `MainWindow.cpp`, 250 ms in `tt-macro`, and whatever a caller of
+# `tt_session_send_break` passed.
+serial.break_time | int | Tera Term | SendBreakTime | 1000 | -
+
+# `ttset.c:1086`, `GetOnOff(…, TRUE)`. Reopen the port by itself when the
+# adapter comes back — the USB-serial cable somebody unplugged, which is the
+# whole reason the setting exists.
+#
+# Upstream drives it from `WM_DEVICECHANGE` (`vtwin.cpp:311`), so the Linux
+# half is a udev monitor and is not built yet; the four keys below describe a
+# state machine this port carries and does not yet run.
+serial.auto_reconnect | bool | Tera Term | AutoComPortReconnect | on | -
+
+# `ttset.c:1088`, milliseconds. The wait between the device arriving and the
+# reopen, for the case where the arrival named the port it was about.
+serial.auto_reconnect_delay | int | Tera Term | AutoComPortReconnectDelayNormal | 500 | -
+
+# `ttset.c:1090`, milliseconds, and **"illegal" is about the notification and
+# not about a value.** Some drivers send only `DBT_DEVTYP_DEVICEINTERFACE` and
+# never the `DBT_DEVTYP_PORT` that would say *which* port arrived
+# (`vtwin.cpp:335`), so this is the longer wait taken when the port number is
+# unknown and the reopen is a guess.
+serial.auto_reconnect_delay_unknown_port | int | Tera Term | AutoComPortReconnectDelayIllegal | 2000 | -
+
+# `ttset.c:1092`, milliseconds between one failed reopen and the next.
+serial.auto_reconnect_retry_interval | int | Tera Term | AutoComPortReconnectRetryInterval | 1000 | -
+
+# `ttset.c:1094`. Retries **after** the first attempt, so three is four tries —
+# and unlike `BeepOverUsedCount` the name is honest about it. Two details are
+# not in the name: an attempt where the port is still absent costs a retry
+# without opening anything (`vtwin.cpp:475`'s `CheckComPort` guard), and the
+# *last* attempt is the one allowed to raise the error box, because the
+# suppression tests `retry_left_ != 0` (`:481`).
+#
+# The four above are `WORD` in `tttypes.h:602`, so upstream truncates them to
+# 16 bits: a two-minute retry interval written as `120000` is 54464 ms there
+# and 120000 here. Not reproduced — the schema has no type for it and the
+# divergence only exists for values nobody means.
+serial.auto_reconnect_retries | int | Tera Term | AutoComPortReconnectRetryCount | 3 | -
+
 # --- log ---------------------------------------------------------------------
 
 # `ttset.c:1026`. Start logging as soon as the session opens, under

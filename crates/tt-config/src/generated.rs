@@ -1302,6 +1302,87 @@ pub struct Settings {
     /// the setting `/C=` is bounded against, which is why the parser takes it as an
     /// argument.
     pub serial_max_com_port: i32,
+    /// **`ttset.c:2034`, and the default is a sentinel rather than a value.** Read
+    /// with a default of `-1` and then derived from the flow control: RTS becomes
+    /// Handshake under `FlowCtrl=hard` and Enable under anything else. This is the
+    /// `TCPPort` trap the right way up — `FlowCtrl` is read at `:943`, eleven
+    /// hundred lines earlier, so the derivation really does see the file's own
+    /// value rather than an initialiser.
+    ///
+    /// The numbers are Win32 `DCB` fields, not a table of Tera Term's own: 0
+    /// disable, 1 enable, 2 handshake, 3 toggle — and only RTS offers the fourth
+    /// (`serial_pp.cpp:74`). An out-of-range number is where this gets dangerous.
+    /// `CommResetSerial` puts it straight into the `DCB` and **does not check what
+    /// `SetCommState` says about it** (`commlib.c:240`), so `FlowCtrlRTS=9` makes
+    /// Windows reject the whole structure and the port keeps whatever it had —
+    /// every serial setting in the file silently discarded, baud included, with no
+    /// message. Not reproduced: `tt-session`'s `serial_params` reads anything it
+    /// does not know as Enable.
+    ///
+    /// Held as the sentinel rather than resolved on the way in, the same call
+    /// `connection.terminal_speed` makes for the same reason — the schema cannot
+    /// say "the default is another setting", so the resolution is in
+    /// `serial_params`. **Upstream resolves at load and writes the concrete number
+    /// back**, so its own save pins the line and changing the flow control
+    /// afterwards no longer moves it; this port keeps the `-1`, which a real Tera
+    /// Term reads the same way it reads an absent key.
+    pub serial_rts: i32,
+    /// `ttset.c:2042`, the same sentinel as `serial.rts` against a different arm:
+    /// DTR becomes Handshake under `FlowCtrl=dsrdtr` and Enable otherwise. There is
+    /// no toggle for DTR — `serial_pp.cpp:75` lists three — and Win32 has no
+    /// `DTR_CONTROL_TOGGLE` to list.
+    pub serial_dtr: i32,
+    /// `ttset.c:1147`, `GetOnOff(…, TRUE)`. Purge whatever the driver has already
+    /// buffered when the port opens, rather than delivering it as the session's
+    /// first bytes. Off is a real choice on a console server: it is how you see
+    /// what the far end said before you got there, and upstream marks the port
+    /// readable straight away for it (`commlib.c:476`'s `cv->RRQ`).
+    ///
+    /// It gates the purge on **open** only. Control > Reset port purges whatever
+    /// this says (`vtwin.cpp:4913` passes TRUE outright), so the setting is not the
+    /// answer to "does resetting the port clear it".
+    pub serial_clear_buffer_on_open: bool,
+    /// `ttset.c:1286`, milliseconds. How long `CommSendBreak` holds the line at
+    /// space — Control > Send break, and a macro's `sendbreak`, which reaches the
+    /// same place through DDE (`ttdde.c:801` posts the menu command).
+    ///
+    /// One second is a long break and it is deliberate: a Sun PROM wants one, and
+    /// `commlib.c:1176` says "pause for 1 sec" in a comment beside the parameter.
+    /// This port had **three** durations and none of them was the file's — 300 ms
+    /// in `MainWindow.cpp`, 250 ms in `tt-macro`, and whatever a caller of
+    /// `tt_session_send_break` passed.
+    pub serial_break_time: i32,
+    /// `ttset.c:1086`, `GetOnOff(…, TRUE)`. Reopen the port by itself when the
+    /// adapter comes back — the USB-serial cable somebody unplugged, which is the
+    /// whole reason the setting exists.
+    ///
+    /// Upstream drives it from `WM_DEVICECHANGE` (`vtwin.cpp:311`), so the Linux
+    /// half is a udev monitor and is not built yet; the four keys below describe a
+    /// state machine this port carries and does not yet run.
+    pub serial_auto_reconnect: bool,
+    /// `ttset.c:1088`, milliseconds. The wait between the device arriving and the
+    /// reopen, for the case where the arrival named the port it was about.
+    pub serial_auto_reconnect_delay: i32,
+    /// `ttset.c:1090`, milliseconds, and **"illegal" is about the notification and
+    /// not about a value.** Some drivers send only `DBT_DEVTYP_DEVICEINTERFACE` and
+    /// never the `DBT_DEVTYP_PORT` that would say *which* port arrived
+    /// (`vtwin.cpp:335`), so this is the longer wait taken when the port number is
+    /// unknown and the reopen is a guess.
+    pub serial_auto_reconnect_delay_unknown_port: i32,
+    /// `ttset.c:1092`, milliseconds between one failed reopen and the next.
+    pub serial_auto_reconnect_retry_interval: i32,
+    /// `ttset.c:1094`. Retries **after** the first attempt, so three is four tries —
+    /// and unlike `BeepOverUsedCount` the name is honest about it. Two details are
+    /// not in the name: an attempt where the port is still absent costs a retry
+    /// without opening anything (`vtwin.cpp:475`'s `CheckComPort` guard), and the
+    /// *last* attempt is the one allowed to raise the error box, because the
+    /// suppression tests `retry_left_ != 0` (`:481`).
+    ///
+    /// The four above are `WORD` in `tttypes.h:602`, so upstream truncates them to
+    /// 16 bits: a two-minute retry interval written as `120000` is 54464 ms there
+    /// and 120000 here. Not reproduced — the schema has no type for it and the
+    /// divergence only exists for values nobody means.
+    pub serial_auto_reconnect_retries: i32,
     /// `ttset.c:1026`. Start logging as soon as the session opens, under
     /// `LogDefaultName` in `LogDefaultPath`. `/NOLOG` turns it off; `/L=` names the
     /// file, which is **not** a setting — `ts.LogFN` has no key of its own.
@@ -1611,6 +1692,15 @@ impl Default for Settings {
             serial_delay_per_line: 0,
             serial_wait_com: false,
             serial_max_com_port: 256,
+            serial_rts: -1,
+            serial_dtr: -1,
+            serial_clear_buffer_on_open: true,
+            serial_break_time: 1000,
+            serial_auto_reconnect: true,
+            serial_auto_reconnect_delay: 500,
+            serial_auto_reconnect_delay_unknown_port: 2000,
+            serial_auto_reconnect_retry_interval: 1000,
+            serial_auto_reconnect_retries: 3,
             log_auto_start: false,
             log_binary: false,
             log_append: false,
@@ -2008,6 +2098,38 @@ impl Settings {
                 4,
                 4096,
             ),
+            serial_rts: ini.get_int("Tera Term", "FlowCtrlRTS", d.serial_rts) as i32,
+            serial_dtr: ini.get_int("Tera Term", "FlowCtrlDTR", d.serial_dtr) as i32,
+            serial_clear_buffer_on_open: crate::schema::on_off(
+                ini.get("Tera Term", "ClearComBuffOnOpen"),
+                true,
+            ),
+            serial_break_time: ini.get_int("Tera Term", "SendBreakTime", d.serial_break_time)
+                as i32,
+            serial_auto_reconnect: crate::schema::on_off(
+                ini.get("Tera Term", "AutoComPortReconnect"),
+                true,
+            ),
+            serial_auto_reconnect_delay: ini.get_int(
+                "Tera Term",
+                "AutoComPortReconnectDelayNormal",
+                d.serial_auto_reconnect_delay,
+            ) as i32,
+            serial_auto_reconnect_delay_unknown_port: ini.get_int(
+                "Tera Term",
+                "AutoComPortReconnectDelayIllegal",
+                d.serial_auto_reconnect_delay_unknown_port,
+            ) as i32,
+            serial_auto_reconnect_retry_interval: ini.get_int(
+                "Tera Term",
+                "AutoComPortReconnectRetryInterval",
+                d.serial_auto_reconnect_retry_interval,
+            ) as i32,
+            serial_auto_reconnect_retries: ini.get_int(
+                "Tera Term",
+                "AutoComPortReconnectRetryCount",
+                d.serial_auto_reconnect_retries,
+            ) as i32,
             log_auto_start: crate::schema::on_off(ini.get("Tera Term", "LogAutoStart"), false),
             log_binary: crate::schema::on_off(ini.get("Tera Term", "LogBinary"), false),
             log_append: crate::schema::on_off(ini.get("Tera Term", "LogAppend"), false),
@@ -2855,6 +2977,53 @@ impl Settings {
             "MaxComPort",
             &self.serial_max_com_port.to_string(),
         );
+        ini.set("Tera Term", "FlowCtrlRTS", &self.serial_rts.to_string());
+        ini.set("Tera Term", "FlowCtrlDTR", &self.serial_dtr.to_string());
+        ini.set(
+            "Tera Term",
+            "ClearComBuffOnOpen",
+            &if self.serial_clear_buffer_on_open {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "SendBreakTime",
+            &self.serial_break_time.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "AutoComPortReconnect",
+            &if self.serial_auto_reconnect {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "AutoComPortReconnectDelayNormal",
+            &self.serial_auto_reconnect_delay.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "AutoComPortReconnectDelayIllegal",
+            &self.serial_auto_reconnect_delay_unknown_port.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "AutoComPortReconnectRetryInterval",
+            &self.serial_auto_reconnect_retry_interval.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "AutoComPortReconnectRetryCount",
+            &self.serial_auto_reconnect_retries.to_string(),
+        );
         ini.set(
             "Tera Term",
             "LogAutoStart",
@@ -3529,6 +3698,29 @@ impl Settings {
             "serial.delay_per_line" => self.serial_delay_per_line.to_string(),
             "serial.wait_com" => if self.serial_wait_com { "on" } else { "off" }.to_string(),
             "serial.max_com_port" => self.serial_max_com_port.to_string(),
+            "serial.rts" => self.serial_rts.to_string(),
+            "serial.dtr" => self.serial_dtr.to_string(),
+            "serial.clear_buffer_on_open" => if self.serial_clear_buffer_on_open {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "serial.break_time" => self.serial_break_time.to_string(),
+            "serial.auto_reconnect" => if self.serial_auto_reconnect {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "serial.auto_reconnect_delay" => self.serial_auto_reconnect_delay.to_string(),
+            "serial.auto_reconnect_delay_unknown_port" => {
+                self.serial_auto_reconnect_delay_unknown_port.to_string()
+            }
+            "serial.auto_reconnect_retry_interval" => {
+                self.serial_auto_reconnect_retry_interval.to_string()
+            }
+            "serial.auto_reconnect_retries" => self.serial_auto_reconnect_retries.to_string(),
             "log.auto_start" => if self.log_auto_start { "on" } else { "off" }.to_string(),
             "log.binary" => if self.log_binary { "on" } else { "off" }.to_string(),
             "log.append" => if self.log_append { "on" } else { "off" }.to_string(),
@@ -3921,6 +4113,33 @@ impl Settings {
                     4,
                     4096,
                 )
+            }
+            "serial.rts" => self.serial_rts = crate::schema::int(value, self.serial_rts),
+            "serial.dtr" => self.serial_dtr = crate::schema::int(value, self.serial_dtr),
+            "serial.clear_buffer_on_open" => {
+                self.serial_clear_buffer_on_open = crate::schema::on_off(Some(value), true)
+            }
+            "serial.break_time" => {
+                self.serial_break_time = crate::schema::int(value, self.serial_break_time)
+            }
+            "serial.auto_reconnect" => {
+                self.serial_auto_reconnect = crate::schema::on_off(Some(value), true)
+            }
+            "serial.auto_reconnect_delay" => {
+                self.serial_auto_reconnect_delay =
+                    crate::schema::int(value, self.serial_auto_reconnect_delay)
+            }
+            "serial.auto_reconnect_delay_unknown_port" => {
+                self.serial_auto_reconnect_delay_unknown_port =
+                    crate::schema::int(value, self.serial_auto_reconnect_delay_unknown_port)
+            }
+            "serial.auto_reconnect_retry_interval" => {
+                self.serial_auto_reconnect_retry_interval =
+                    crate::schema::int(value, self.serial_auto_reconnect_retry_interval)
+            }
+            "serial.auto_reconnect_retries" => {
+                self.serial_auto_reconnect_retries =
+                    crate::schema::int(value, self.serial_auto_reconnect_retries)
             }
             "log.auto_start" => self.log_auto_start = crate::schema::on_off(Some(value), false),
             "log.binary" => self.log_binary = crate::schema::on_off(Some(value), false),
@@ -5027,6 +5246,96 @@ pub const FIELDS: &[Field] = &[
         default: "256",
         label: None,
         doc: "`ttset.c:1218`, floored at 4 and capped at `MAXCOMPORT` (4096, `tttypes.h:908`) — so the range here is the *file's* and the floor is upstream's own. This is the setting `/C=` is bounded against, which is why the parser takes it as an argument.",
+    },
+    Field {
+        name: "serial.rts",
+        page: "serial",
+        section: "Tera Term",
+        key: "FlowCtrlRTS",
+        kind: Kind::Int,
+        default: "-1",
+        label: None,
+        doc: "**`ttset.c:2034`, and the default is a sentinel rather than a value.** Read with a default of `-1` and then derived from the flow control: RTS becomes Handshake under `FlowCtrl=hard` and Enable under anything else. This is the `TCPPort` trap the right way up — `FlowCtrl` is read at `:943`, eleven hundred lines earlier, so the derivation really does see the file's own value rather than an initialiser.  The numbers are Win32 `DCB` fields, not a table of Tera Term's own: 0 disable, 1 enable, 2 handshake, 3 toggle — and only RTS offers the fourth (`serial_pp.cpp:74`). An out-of-range number is where this gets dangerous. `CommResetSerial` puts it straight into the `DCB` and **does not check what `SetCommState` says about it** (`commlib.c:240`), so `FlowCtrlRTS=9` makes Windows reject the whole structure and the port keeps whatever it had — every serial setting in the file silently discarded, baud included, with no message. Not reproduced: `tt-session`'s `serial_params` reads anything it does not know as Enable.  Held as the sentinel rather than resolved on the way in, the same call `connection.terminal_speed` makes for the same reason — the schema cannot say \"the default is another setting\", so the resolution is in `serial_params`. **Upstream resolves at load and writes the concrete number back**, so its own save pins the line and changing the flow control afterwards no longer moves it; this port keeps the `-1`, which a real Tera Term reads the same way it reads an absent key.",
+    },
+    Field {
+        name: "serial.dtr",
+        page: "serial",
+        section: "Tera Term",
+        key: "FlowCtrlDTR",
+        kind: Kind::Int,
+        default: "-1",
+        label: None,
+        doc: "`ttset.c:2042`, the same sentinel as `serial.rts` against a different arm: DTR becomes Handshake under `FlowCtrl=dsrdtr` and Enable otherwise. There is no toggle for DTR — `serial_pp.cpp:75` lists three — and Win32 has no `DTR_CONTROL_TOGGLE` to list.",
+    },
+    Field {
+        name: "serial.clear_buffer_on_open",
+        page: "serial",
+        section: "Tera Term",
+        key: "ClearComBuffOnOpen",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1147`, `GetOnOff(…, TRUE)`. Purge whatever the driver has already buffered when the port opens, rather than delivering it as the session's first bytes. Off is a real choice on a console server: it is how you see what the far end said before you got there, and upstream marks the port readable straight away for it (`commlib.c:476`'s `cv->RRQ`).  It gates the purge on **open** only. Control > Reset port purges whatever this says (`vtwin.cpp:4913` passes TRUE outright), so the setting is not the answer to \"does resetting the port clear it\".",
+    },
+    Field {
+        name: "serial.break_time",
+        page: "serial",
+        section: "Tera Term",
+        key: "SendBreakTime",
+        kind: Kind::Int,
+        default: "1000",
+        label: None,
+        doc: "`ttset.c:1286`, milliseconds. How long `CommSendBreak` holds the line at space — Control > Send break, and a macro's `sendbreak`, which reaches the same place through DDE (`ttdde.c:801` posts the menu command).  One second is a long break and it is deliberate: a Sun PROM wants one, and `commlib.c:1176` says \"pause for 1 sec\" in a comment beside the parameter. This port had **three** durations and none of them was the file's — 300 ms in `MainWindow.cpp`, 250 ms in `tt-macro`, and whatever a caller of `tt_session_send_break` passed.",
+    },
+    Field {
+        name: "serial.auto_reconnect",
+        page: "serial",
+        section: "Tera Term",
+        key: "AutoComPortReconnect",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1086`, `GetOnOff(…, TRUE)`. Reopen the port by itself when the adapter comes back — the USB-serial cable somebody unplugged, which is the whole reason the setting exists.  Upstream drives it from `WM_DEVICECHANGE` (`vtwin.cpp:311`), so the Linux half is a udev monitor and is not built yet; the four keys below describe a state machine this port carries and does not yet run.",
+    },
+    Field {
+        name: "serial.auto_reconnect_delay",
+        page: "serial",
+        section: "Tera Term",
+        key: "AutoComPortReconnectDelayNormal",
+        kind: Kind::Int,
+        default: "500",
+        label: None,
+        doc: "`ttset.c:1088`, milliseconds. The wait between the device arriving and the reopen, for the case where the arrival named the port it was about.",
+    },
+    Field {
+        name: "serial.auto_reconnect_delay_unknown_port",
+        page: "serial",
+        section: "Tera Term",
+        key: "AutoComPortReconnectDelayIllegal",
+        kind: Kind::Int,
+        default: "2000",
+        label: None,
+        doc: "`ttset.c:1090`, milliseconds, and **\"illegal\" is about the notification and not about a value.** Some drivers send only `DBT_DEVTYP_DEVICEINTERFACE` and never the `DBT_DEVTYP_PORT` that would say *which* port arrived (`vtwin.cpp:335`), so this is the longer wait taken when the port number is unknown and the reopen is a guess.",
+    },
+    Field {
+        name: "serial.auto_reconnect_retry_interval",
+        page: "serial",
+        section: "Tera Term",
+        key: "AutoComPortReconnectRetryInterval",
+        kind: Kind::Int,
+        default: "1000",
+        label: None,
+        doc: "`ttset.c:1092`, milliseconds between one failed reopen and the next.",
+    },
+    Field {
+        name: "serial.auto_reconnect_retries",
+        page: "serial",
+        section: "Tera Term",
+        key: "AutoComPortReconnectRetryCount",
+        kind: Kind::Int,
+        default: "3",
+        label: None,
+        doc: "`ttset.c:1094`. Retries **after** the first attempt, so three is four tries — and unlike `BeepOverUsedCount` the name is honest about it. Two details are not in the name: an attempt where the port is still absent costs a retry without opening anything (`vtwin.cpp:475`'s `CheckComPort` guard), and the *last* attempt is the one allowed to raise the error box, because the suppression tests `retry_left_ != 0` (`:481`).  The four above are `WORD` in `tttypes.h:602`, so upstream truncates them to 16 bits: a two-minute retry interval written as `120000` is 54464 ms there and 120000 here. Not reproduced — the schema has no type for it and the divergence only exists for values nobody means.",
     },
     Field {
         name: "log.auto_start",
