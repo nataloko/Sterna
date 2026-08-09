@@ -141,6 +141,24 @@ pub struct SshOptions {
     pub unknown: Vec<Vec<u8>>,
 }
 
+/// What TTSSH did with one token — `action`, which is `OPTION_NONE`,
+/// `OPTION_CLEAR` or `OPTION_REPLACE` (`ttxssh.h`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Action {
+    /// Not TTSSH's, or deliberately left for Tera Term to read.
+    Keep,
+    /// Consumed: blanked out of the line.
+    Clear,
+    /// Rewritten in place — an `ssh://` URL or a `user@host`.
+    ///
+    /// The payload is the option buffer **as upstream leaves it**, which is
+    /// always as long as the token was: the URL arm space-fills the tail and the
+    /// `user@host` arm turns the user part into leading spaces. The line keeps
+    /// that padding, since it is what the next parser reads; the token path
+    /// trims it, since there is no line for it to sit in.
+    Replace(Vec<u8>),
+}
+
 /// `TTXParseParam` — the options, and the line with them taken out.
 ///
 /// Two passes, like `_ParseParam` and for the same reason: the first reads a
@@ -149,63 +167,111 @@ pub fn parse(line: &[u8]) -> (SshOptions, Vec<u8>) {
     let mut opts = SshOptions::default();
     let mut line = line.to_vec();
 
-    // Pass one: `/ssh-f=`, `/ssh-consume=` and `/f=`. The first two are
-    // consumed; `/f=` is left alone because "Tera Term側でも解釈する必要がある"
-    // — it is Tera Term's option, read here as well so that a `/F=` also
-    // brings the TTSSH half of the same file.
-    let mut edits: Vec<(std::ops::Range<usize>, Option<Vec<u8>>)> = Vec::new();
-    for (span, tok) in token_spans(&line, line.len() + 1) {
-        let Some(rest) = switch_body(&tok) else {
-            continue;
-        };
-        if let Some(path) = after_cs(rest, b"ssh-f=") {
-            opts.options_files.push(OptionsFile {
-                path: path.to_vec(),
-                consume: false,
-            });
-            edits.push((span, None));
-        } else if let Some(path) = after_cs(rest, b"ssh-consume=") {
-            opts.options_files.push(OptionsFile {
-                path: path.to_vec(),
-                consume: true,
-            });
-            edits.push((span, None));
-        } else if let Some(path) = after_ci(rest, b"f=") {
-            opts.options_files.push(OptionsFile {
-                path: path.to_vec(),
-                consume: false,
-            });
-        }
+    for pass in [Pass::One, Pass::Two] {
+        let edits: Vec<_> = token_spans(&line, line.len() + 1)
+            .into_iter()
+            .filter_map(|(span, tok)| match opts.token(&tok, pass) {
+                Action::Keep => None,
+                Action::Clear => Some((span, None)),
+                Action::Replace(text) => Some((span, Some(text))),
+            })
+            .collect();
+        apply_edits(&mut line, edits);
     }
-    apply_edits(&mut line, edits);
-
-    // Pass two: everything else, over the line the first pass left.
-    let mut edits = Vec::new();
-    for (span, tok) in token_spans(&line, line.len() + 1) {
-        if let Some(rest) = switch_body(&tok) {
-            // `action = OPTION_CLEAR` is set before the chain runs, so a switch
-            // TTSSH recognises is consumed unless an arm says otherwise.
-            if opts.switch_arm(rest) {
-                edits.push((span, None));
-            }
-            // "パスワードを聞く場合は自動ログインが無効になる" — and this runs
-            // for every switch, not only for `/ask4passwd`, so the two options
-            // may come in either order.
-            if opts.ask_password {
-                opts.auto_login = false;
-            }
-        } else if let Some(rewritten) = opts.url(&tok) {
-            edits.push((span, Some(rewritten)));
-        } else if let Some(rewritten) = opts.user_at_host(&tok) {
-            edits.push((span, Some(rewritten)));
-        }
-    }
-    apply_edits(&mut line, edits);
 
     (opts, line)
 }
 
+/// The same over arguments the platform has already split — Unix `argv` with
+/// `argv[0]` dropped — returning the tokens that survived.
+///
+/// **There is no line to blank here, so the two halves compose through the
+/// token list instead**, which is the same thing one step earlier: a cleared
+/// token is one that vanishes from re-tokenising, and a replaced one is a token
+/// whose leading spaces the next parser would have skipped. Tokenising a joined
+/// `argv` instead would quote-process everything twice and turn `/W=My Session`
+/// into two options — the trap `tt-ttl`'s `CmdLine::from_args` already carries.
+pub fn parse_args<I, S>(args: I) -> (SshOptions, Vec<Vec<u8>>)
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<[u8]>,
+{
+    let mut opts = SshOptions::default();
+    let mut toks: Vec<Vec<u8>> = args.into_iter().map(|a| a.as_ref().to_vec()).collect();
+    for pass in [Pass::One, Pass::Two] {
+        toks = toks
+            .into_iter()
+            .filter_map(|tok| match opts.token(&tok, pass) {
+                Action::Keep => Some(tok),
+                Action::Clear => None,
+                Action::Replace(text) => Some(text.trim_ascii().to_vec()),
+            })
+            .collect();
+    }
+    (opts, toks)
+}
+
+/// Which of `TTXParseParam`'s two loops is running. The first reads a settings
+/// file and consumes nothing else; the second is everything.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Pass {
+    One,
+    Two,
+}
+
 impl SshOptions {
+    /// One token, in one of the two passes.
+    fn token(&mut self, tok: &[u8], pass: Pass) -> Action {
+        if pass == Pass::One {
+            // `/ssh-f=`, `/ssh-consume=` and `/f=`. The first two are consumed;
+            // `/f=` is left alone because "Tera Term側でも解釈する必要がある" —
+            // it is Tera Term's option, read here as well so that one `/F=`
+            // brings both halves of the same file.
+            let Some(rest) = switch_body(tok) else {
+                return Action::Keep;
+            };
+            for (prefix, consume) in [(&b"ssh-f="[..], false), (b"ssh-consume=", true)] {
+                if let Some(path) = after_cs(rest, prefix) {
+                    self.options_files.push(OptionsFile {
+                        path: path.to_vec(),
+                        consume,
+                    });
+                    return Action::Clear;
+                }
+            }
+            if let Some(path) = after_ci(rest, b"f=") {
+                self.options_files.push(OptionsFile {
+                    path: path.to_vec(),
+                    consume: false,
+                });
+            }
+            return Action::Keep;
+        }
+
+        if let Some(rest) = switch_body(tok) {
+            // `action = OPTION_CLEAR` is set before the chain runs, so a switch
+            // TTSSH recognises is consumed unless an arm says otherwise.
+            let consumed = self.switch_arm(rest);
+            // "パスワードを聞く場合は自動ログインが無効になる" — and this runs
+            // for every switch, not only for `/ask4passwd`, so the two options
+            // may come in either order.
+            if self.ask_password {
+                self.auto_login = false;
+            }
+            return match consumed {
+                true => Action::Clear,
+                false => Action::Keep,
+            };
+        }
+        if let Some(rewritten) = self.url(tok) {
+            return Action::Replace(rewritten);
+        }
+        if let Some(rewritten) = self.user_at_host(tok) {
+            return Action::Replace(rewritten);
+        }
+        Action::Keep
+    }
+
     /// One `/`- or `-`-led token. Returns whether TTSSH consumed it.
     fn switch_arm(&mut self, rest: &[u8]) -> bool {
         // `wcsncmp`, so the case matters and `/SSH` is not this.
@@ -786,6 +852,59 @@ mod tests {
         let (o, rest) = ssh("tt /nolog h");
         assert!(o.unknown.is_empty());
         assert_eq!(rest, "tt /nolog h");
+    }
+
+    /// The split-`argv` path, where there is no line to blank and the two
+    /// halves compose through the token list instead.
+    #[test]
+    fn parse_args_composes_through_tokens_rather_than_a_line() {
+        let (o, left) = parse_args(["/ssh", "/user=me", "myhost"]);
+        assert_eq!(o.enabled, Some(true));
+        assert_eq!(text(&o.username), "me");
+        // Consumed tokens are gone rather than blanked.
+        assert_eq!(left, [b"myhost".to_vec()]);
+
+        // A rewritten one arrives trimmed, because there is no line for the
+        // padding to sit in.
+        let (o, left) = parse_args(["me@myhost"]);
+        assert_eq!(text(&o.username), "me");
+        assert_eq!(left, [b"myhost".to_vec()]);
+        let (_, left) = parse_args(["ssh://u:p@myhost/"]);
+        assert_eq!(left, [b"myhost:22".to_vec()]);
+
+        // ...and what is left is what Tera Term's own split parser then reads.
+        let (o, left) = parse_args(["/ssh", "/t=0", "myhost"]);
+        let cmd = CommandLine::from_args(&left, DEFAULT_MAX_COM_PORT);
+        assert_eq!(o.enabled, Some(false), "the later /t=0 wins, as in a line");
+        assert_eq!(cmd.telnet, Some(false), "and /t=0 survived for Tera Term");
+        assert_eq!(cmd.host_name, b"myhost");
+    }
+
+    /// The two paths agree about everything except the whitespace they cannot
+    /// share, which is the claim that makes the token path safe.
+    #[test]
+    fn the_line_and_the_token_paths_find_the_same_options() {
+        for line in [
+            "tt /ssh /auth=publickey /user=me /keyfile=k myhost",
+            "tt ssh://me@myhost:2222/",
+            "tt me@myhost /nossh",
+            "tt /ssh-L1:h:2,3:h:4 /ssh-C=9 /ssh-N h",
+            "tt /ssh-f=my.ini /F=my.ini h",
+        ] {
+            let (a, rest) = ssh(line);
+            let split: Vec<&str> = line.split(' ').skip(1).collect();
+            let (b, toks) = parse_args(&split);
+            assert_eq!(a, b, "{line}");
+            let joined: Vec<String> = toks
+                .iter()
+                .map(|t| String::from_utf8_lossy(t).into_owned())
+                .collect();
+            assert_eq!(
+                rest.split_whitespace().skip(1).collect::<Vec<_>>(),
+                joined,
+                "{line}"
+            );
+        }
     }
 
     /// The first pass, which is a settings file and one option that is read by

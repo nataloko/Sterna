@@ -610,21 +610,54 @@ impl CommandLine {
         }
     }
 
+    /// The same over arguments the platform has already split — Unix `argv`
+    /// with `argv[0]` dropped.
+    ///
+    /// **No tokenising and no dequoting: the shell did both**, and doing them
+    /// again would turn `/W="My Session"` — which reaches `main` as one
+    /// argument — into a `/W=My` and a stray `Session`. `tt-ttl`'s
+    /// `CmdLine::from_args` carries the same rule for the same reason, and
+    /// `raw` is the arguments joined by a space, which is all `execve` left of
+    /// the line as typed.
+    ///
+    /// This is the entry point a Unix frontend wants; [`CommandLine::parse`] is
+    /// for a genuine command line, which is Windows, a `connect` argument and a
+    /// `.bat` file.
+    pub fn from_args<I, S>(args: I, max_com_port: u16) -> CommandLine
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<[u8]>,
+    {
+        let toks: Vec<Vec<u8>> = args.into_iter().map(|a| a.as_ref().to_vec()).collect();
+        CommandLine::from_tokens(&toks, max_com_port, true)
+    }
+
     /// `_ParseParam(Param, ts, DDETopic)`, where `topic` is whether that third
     /// argument was a buffer rather than NULL. Two arms test it.
     fn parse_inner(line: &[u8], max_com_port: u16, topic: bool) -> CommandLine {
-        // "Set AutoConnect true as default (2008.2.16 by steven)" is in
-        // `Default`, with the rest of what an empty line means.
-        let mut cmd = CommandLine {
+        let cmd = CommandLine::from_tokens(&tokens(line, MAX_STR_LEN), max_com_port, topic);
+        CommandLine {
             raw: line.to_vec(),
+            ..cmd
+        }
+    }
+
+    /// Both passes over tokens already in hand — the body of `_ParseParam`
+    /// after `GetParam` has done its work.
+    fn from_tokens(toks: &[Vec<u8>], max_com_port: u16, topic: bool) -> CommandLine {
+        // "Set AutoConnect true as default (2008.2.16 by steven)" is in
+        // `Default`, with the rest of what an empty line means. `raw` is the
+        // arguments joined, which is what `execve` left of the line as typed;
+        // `parse` puts the real one back.
+        let mut cmd = CommandLine {
+            raw: toks.join(&b' '),
             ..Default::default()
         };
-        let toks = tokens(line, MAX_STR_LEN);
 
         // First pass: the settings file, and stop at the first one. Upstream
         // reads it here, so everything the second pass does lands on top of
         // the new contents.
-        for t in &toks {
+        for t in toks {
             if let Some(v) = after_ci(t, b"/F=") {
                 cmd.setup_file = Some(v.to_vec());
                 break;
@@ -641,7 +674,7 @@ impl CommandLine {
         let mut host_name_flag = false;
         let mut just_after_host = false;
 
-        for t in &toks {
+        for t in toks {
             if host_name_flag {
                 just_after_host = true;
                 host_name_flag = false;
@@ -1234,6 +1267,55 @@ mod tests {
         assert_eq!(cmd.port_type, Some(PortType::TcpIp));
         assert_eq!(parse("tt /B h").telnet_binary, Some(true));
         assert_eq!(parse("tt h").telnet_binary, None);
+    }
+
+    /// The Unix half: the shell has split and unquoted already, so running the
+    /// tokeniser again would do it twice.
+    #[test]
+    fn from_args_does_not_tokenise_a_second_time() {
+        let cmd = CommandLine::from_args(
+            ["/W=My Session", "/C=1", "/SPEED=115200", "myhost"],
+            DEFAULT_MAX_COM_PORT,
+        );
+        // One argument with a space in it stays one option. Joining and
+        // re-tokenising would give a `/W=My` and a host called `Session`.
+        assert_eq!(text(&cmd.title), "My Session");
+        assert_eq!(host(&cmd), "myhost");
+        assert_eq!(cmd.baud, Some(115_200));
+        // ...and the host name still cancels `/C=`, because that is the arm and
+        // not the tokeniser.
+        assert_eq!(cmd.port_type, Some(PortType::TcpIp));
+
+        // A `;` is an ordinary character here: the shell already decided where
+        // the arguments end, so nothing is a comment.
+        let cmd = CommandLine::from_args(["a;b"], DEFAULT_MAX_COM_PORT);
+        assert_eq!(host(&cmd), "a;b");
+        // `raw` is what `execve` left, which is the arguments joined.
+        assert_eq!(
+            CommandLine::from_args(["/H", "myhost"], DEFAULT_MAX_COM_PORT).raw,
+            b"/H myhost"
+        );
+    }
+
+    /// Both entry points agree whenever nothing needed quoting, which is what
+    /// makes the split one safe to prefer on Unix.
+    #[test]
+    fn both_entry_points_agree_on_a_plain_line() {
+        let split = CommandLine::from_args(
+            ["/C=2", "/SPEED=9600", "/CPARITY=even", "/NOLOG"],
+            DEFAULT_MAX_COM_PORT,
+        );
+        let whole = parse("ttermpro /C=2 /SPEED=9600 /CPARITY=even /NOLOG");
+        assert_eq!(
+            CommandLine {
+                raw: Vec::new(),
+                ..split
+            },
+            CommandLine {
+                raw: Vec::new(),
+                ..whole
+            }
+        );
     }
 
     /// The other half: what `apply` puts into the settings, and what it
