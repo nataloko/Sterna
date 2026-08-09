@@ -1,0 +1,35 @@
+[package]
+name = "tt-ctl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The control socket that replaces DDE — one window, reached from outside the process"
+
+# The socket is a *way in*, not a second copy of anything. Everything it can
+# ask for is already implemented once — the session's own methods, and the
+# frontend's macro — so this crate is the wire, the address and the dispatch,
+# and it holds no terminal behaviour of its own.
+[dependencies]
+tt-session.workspace = true
+# `screen` reads cells, and a cell's width class is what says whether it holds
+# text or is the right half of something that does. `tt-session` compiles it
+# either way.
+tt-grid.workspace = true
+# The `ttpmacro` entry point parses its own command line, and that parser is
+# `ttmdlg.cpp`'s. A second one here would be a second set of answers about
+# where a `/V` stops being a switch.
+tt-ttl.workspace = true
+# JSON-RPC is the protocol `PLAN.md` chose in Stage 0, and the parser is on a
+# socket: this is the wrong place in the tree to save a dependency by writing
+# one. `serde_json` is also what makes the socket usable from a shell with
+# `jq`, which is half the point of replacing DDE with it.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# `getuid` for the runtime directory's name, and `SO_PEERCRED` for who is on
+# the other end of an accepted connection.
+libc = "0.2"
+
+[dev-dependencies]
+tt-vt.workspace = true
+tempfile = "3"

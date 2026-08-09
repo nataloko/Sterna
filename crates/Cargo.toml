@@ -10,6 +10,7 @@ members = [
     "tt-xfer",
     "tt-ttl",
     "tt-macro",
+    "tt-ctl",
     "tt-ffi",
     "tt-dump",
     "tt-host",
@@ -38,6 +39,7 @@ tt-config = { path = "tt-config" }
 tt-xfer = { path = "tt-xfer" }
 tt-ttl = { path = "tt-ttl" }
 tt-macro = { path = "tt-macro" }
+tt-ctl = { path = "tt-ctl" }
 tt-ffi = { path = "tt-ffi" }
 
 # `setpassword2` derives its key with 210001 iterations of PBKDF2-HMAC-SHA512,
