@@ -467,6 +467,68 @@ And for telnet:
   the laxity.
 - **Telnet has a break and SSH does not**, which is why `supports_break` is on
   the transport rather than assumed.
+- **`Telnet=off` is not a raw socket, and `/T=0` is not either.**
+  `TelAutoDetect` is a key of its own, it ships **on**, and `ttcmn.c:590` reads
+  it without reference to `ts.Telnet` — so the framing still switches on at the
+  first `0xFF` byte. TTSSH clears the flag by hand (`ttxssh.c:981`) under a
+  comment saying the line "should not be needed"; it is, because an SSH stream
+  is full of `0xFF`. Raw needs *both* keys off.
+- **The framing and the opening burst are two questions, so there are four
+  modes and not two.** `ts.Telnet` decides the first (`commlib.c:340`) and
+  `ts.TCPPort == ts.TelPort` decides the second (`vtwin.cpp:3666`). The mode
+  this port was missing is `Telnet=on` at a port that is not the telnet port —
+  IAC framing with nothing offered, which is the *ordinary* state of a console
+  server. It read as `Auto`, and a `CR NUL` arriving before any `IAC` reached
+  the terminal as two characters. `TelnetMode::of` is the table; do not
+  assemble the mode by hand.
+- **`TelEcho` is not "echo locally", it is "let the `ECHO` option decide"** —
+  and in both directions. Off, `WILL ECHO` changes nothing (`telnet.c:411`,
+  `:497` both test it first). On, the negotiated state assigns `ts.LocalEcho`
+  *and* the burst runs `TelChangeEcho` (`:845`), which asks the server to echo
+  only when local echo is off and asks it to **stop** when it is on — so a
+  `LocalEcho=on` file opens with the opposite request. Same shape as `ts.BSKey`
+  and DECBKM: one variable with two names. It is a `TransportEvent` rather than
+  a state to poll, because SRM assigns the same variable and a transport
+  re-asserting its answer every read would undo a host's `ESC [ 12 h`.
+- **The keepalive interval is a *quiet* period, and it only runs where the
+  burst ran.** `telnet.c:913` compares against `cv.LastSendTime`, stamped by
+  every telnet send including the NOP (`commlib.c:1062`), so a session being
+  typed at sends none; and `TelStartKeepAliveThread` is called inside the
+  `TCPPort == TelPort` arm, so a telnet-framed console port gets none at all.
+  Second governor in this port to measure quiet rather than elapsed time, after
+  the bell's. **And a pump cannot drive it** — an idle socket produces no
+  descriptor wakeup, which is the whole case it exists for — so it needs
+  `tt_session_tick` on a timer. That is the one wakeup in the window's idle
+  path and `Session.h` says so.
+- **`TELNET.LOG` holds one half of the conversation.** All eight `TelWriteLog`
+  calls sit directly after a `CommRawOut` and nothing on the receive path logs,
+  so the `>` leading each record has no inbound counterpart. Logging both
+  directions is the obvious build and produces a file upstream never writes.
+- **`TCPLocalEcho` and `TCPCRSend` do not sit beside the terminal's settings —
+  they spend them and put them back.** `vtwin.cpp:3696` assigns `ts.LocalEcho`
+  and `ts.CRSend` when a non-telnet TCP connection opens, `:3589` restores
+  `ts.LocalEcho_ini`/`ts.CRSend_ini` at `FD_CLOSE`, and **off is not a value**:
+  a key left unset borrows nothing, so a host's own SRM survives the
+  disconnect. That is what `TCPLocalEchoUsed`/`TCPCRSendUsed` are for.
+- **`TCPCRSend` moves the keyboard's line ending and not LNM.** `LFMode` is a
+  separate variable seeded from `ts.CRSend` at reset and nowhere else
+  (`vtterm.c:285`), so `SM 20` moves the pair and this does not — DECRQM goes
+  on reporting mode 20 reset while Return sends CR LF. `Vt::set_cr_send` says
+  so where it declines to touch it.
+- **`ConfirmDisconnect` is TCP only.** Both tests are `cv.PortType==IdTCPIP`
+  (`vtwin.cpp:1668`, `:4448`), so a serial session closes without a word
+  however it is set — which is why `tt_session_link_kind` exists rather than a
+  bool. A macro's `disconnect` *can* raise that dialog upstream
+  (`ttdde.c:634` passes the argument through) and deliberately cannot here, for
+  the reason the control socket already has: a modal dialog raised from inside
+  a request holds the requester open.
+- **Five keys are written in a case their own readers do not use** —
+  `Historylist`, `Metakey`, `XmodemRcvCommand`, `YmodemRcvCommand`,
+  `ZmodemRcvCommand`, against readers spelling them `HistoryList`, `MetaKey`
+  and `X/Y/ZModemRcvCommand`. Harmless only because `GetPrivateProfile*`
+  matches key names case-insensitively and `Ini` reproduces that, which
+  `ini-audit/` measured rather than assumed. A hand-rolled lookup that compares
+  bytes silently loses four settings already in the schema.
 
 And for the local pty:
 

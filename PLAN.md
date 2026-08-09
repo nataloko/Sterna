@@ -3430,6 +3430,104 @@ built. Three things in them are worth knowing before it is:
 
 158 settings over 145 keys, 120 to go.
 
+#### And telnet, where two keys turn out to be four states
+
+`crates/tt-config/`, `tt-conn`, `tt-vt`, `tt-session`, the C ABI and `shell/`,
+2026-08-10. Eight keys — the two that decide how much of the protocol is
+spoken, the echo, the log, the keepalive, the two a *non*-telnet TCP port
+applies to the terminal, and the confirmation before dropping a session. The
+transport was built in Stage 1 and has been carrying hardcoded answers to five
+of them since.
+
+**`Telnet=off` is not a raw socket, and finding that out corrected the port.**
+`ts.Telnet` becomes `cv->TelFlag` at open (`commlib.c:340`) and `TelAutoDetect`
+becomes `cv->TelAutoDetect` beside it (`:323`) — *unconditionally*, with no
+reference to the first — and then `ttcmn.c:590` reads
+`!cv->TelFlag && cv->TelAutoDetect` and turns the framing on at the first
+`0xFF`. Both keys ship on, so `/T=0` gives a session that starts as data and
+becomes telnet the moment anything sends an `IAC`. The proof that this is
+deliberate rather than an oversight is in TTSSH, which clears the flag by hand
+(`ttxssh.c:981`) under a comment saying the line "should not be needed because
+Tera Term's CommLib should find `ts->Telnet == 0`" — it is needed, because an
+SSH stream is full of `0xFF`.
+
+So the framing and the negotiation are two questions and there are **four**
+answers, not two. The third is the one this port did not have: `Telnet=on` at a
+port that is not the telnet port, which is IAC framing with not a word offered
+— and that is the *ordinary* state of a console server, since the opening burst
+goes out only when `ts.TCPPort == ts.TelPort` (`vtwin.cpp:3666`). `TelnetMode`
+had been answering `Auto` there, so until a host happened to send an `IAC` a
+`CR NUL` reached the terminal as two characters rather than as a line ending.
+`TelnetMode::of` is the table, and `for_port` is now one call into it.
+
+**`TelEcho` is not "echo locally".** It is "let the `ECHO` option decide", and
+it works in both directions. With it off — the shipped state — `WILL ECHO` and
+`WONT ECHO` change nothing locally, because both arms test it first
+(`telnet.c:411`, `:497`); with it on, the negotiated state assigns
+`ts.LocalEcho`, and the opening burst runs `TelChangeEcho` (`:845`) instead of
+asking flat: ask the server to echo only if the terminal is not already doing
+it, and ask it to **stop** if it is. So a `LocalEcho=on` file opens with
+`DONT ECHO`, the opposite request from the default's. The setting and the
+protocol state are one variable, which is the shape `ts.BSKey` and DECBKM
+already had — hence `TransportEvent::LocalEcho` as an event at the two points
+upstream assigns, rather than a state the session polls. Polling would re-assert
+the transport's answer over the top of a host's `ESC [ 12 h` a moment after it
+arrived.
+
+**The keepalive measures quiet, not elapsed time**, and it is the second
+governor in this port to do so after the bell's. `telnet.c:913` compares against
+`cv.LastSendTime`, which `commlib.c:1062` stamps for every telnet send —
+including the NOP itself — so a session being typed at sends none at all. It
+also runs only where the burst ran, because `TelStartKeepAliveThread` is called
+inside that same `TCPPort == TelPort` arm: a telnet-framed console port gets no
+NOPs however the interval is set. Reproduced rather than tidied.
+
+It needed something the frontend did not have. `Session::pump` runs when the
+descriptor says bytes arrived, and an idle link produces no wakeup — which is
+precisely the link a keepalive exists for. So `tt_session_tick` is a new ABI
+call and the shell runs it on a one-second `Qt::VeryCoarseTimer`: the first
+wakeup in the window's idle path, and the class comment that said there was
+none has been corrected rather than left to be discovered.
+
+**`TELNET.LOG` is one half of a conversation.** All eight `TelWriteLog` calls
+sit directly after a `CommRawOut` and nothing on the receive path logs at all,
+so the `>` leading each record has no inbound counterpart. A file that reads
+like a negotiation trace holds only what Tera Term said, and building the
+obvious thing — logging both directions — would produce a file upstream never
+writes.
+
+**`TCPLocalEcho` and `TCPCRSend` do not sit beside the terminal's settings;
+they spend them.** `vtwin.cpp:3696` assigns `ts.LocalEcho` and `ts.CRSend` when
+a non-telnet TCP connection opens and `:3589` puts `ts.LocalEcho_ini` and
+`ts.CRSend_ini` back when it closes — upstream keeps a second copy of the file's
+value for exactly this. Here `Session::settings` already *is* that copy, since
+it holds the file rather than the live terminal. Two details that a
+straightforward build gets wrong: **off is not a value**, so a connection where
+the key was unset borrows nothing and gives nothing back and a host's own SRM
+survives the disconnect (upstream's `TCPLocalEchoUsed`/`TCPCRSendUsed`); and
+`TCPCRSend` moves the keyboard's line ending **without** moving LNM, because
+`LFMode` is a separate variable seeded from `ts.CRSend` at reset and nowhere
+else (`vtterm.c:285`). `SM 20` moves the pair; this does not, so DECRQM goes on
+reporting mode 20 reset while Return sends CR LF.
+
+`ConfirmDisconnect` is **TCP only** — both tests are `cv.PortType==IdTCPIP`
+(`vtwin.cpp:1668`, `:4448`) — which is why `tt_session_link_kind` exists rather
+than a bool: it is upstream's `cv.PortType`, and `BeepOnConnect` is conditioned
+on the same thing. A macro's `disconnect` can raise the dialog upstream
+(`ttdde.c:634` passes the argument through) and cannot here, which is the
+deliberate divergence already written down for the control socket: a modal
+dialog raised from inside a request holds the requester open.
+
+One transcription note that cost nothing this time and is worth knowing: **five
+of upstream's keys are written in a case their own readers do not use** —
+`Historylist`, `Metakey`, `XmodemRcvCommand`, `YmodemRcvCommand` and
+`ZmodemRcvCommand` against readers spelling them `HistoryList`, `MetaKey` and
+`X/Y/ZModemRcvCommand`. Four of the five were already in the schema. It is
+harmless only because `GetPrivateProfile*` matches key names case-insensitively
+and `Ini` reproduces that, which `ini-audit/` measured rather than assumed.
+
+166 settings over 153 keys, 112 to go.
+
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
 Windows build, ConPTY, Win32 serial edge cases, NSIS installer. All 14 `.lng`
