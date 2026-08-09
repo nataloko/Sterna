@@ -224,19 +224,22 @@ fn dispstr_reaches_the_screen_and_the_macro_can_see_it() {
     assert_eq!(r.sent, b"saw it\r");
 }
 
-/// `gettitle` reads what the host set, which means the OSC went through the
-/// parser and came back out of the session.
+/// **`gettitle` cannot see the title the host set**, which is the opposite of
+/// what the name suggests and is upstream: `CmdGetTitle` answers with
+/// `ts.Title` (`ttdde.c:646`), the one out of `TERATERM.INI`, while an OSC
+/// writes `cv.TitleRemoteW`. The window shows the two combined; a macro is
+/// told only its own half.
 #[test]
-fn a_macro_can_read_the_title_the_host_set() {
+fn a_macro_reads_the_files_title_and_not_the_hosts() {
     let r = drive(
-        "sendln 'go'\ntimeout = 2\nwait 'ready'\ngettitle t\nsendln t",
+        "settitle 'mine'\nsendln 'go'\ntimeout = 2\nwait 'ready'\ngettitle t\nsendln t",
         |out| match out {
             b"go\r" => b"\x1b]2;buildbox\x07ready\r\n".to_vec(),
             _ => Vec::new(),
         },
     );
     assert!(
-        r.sent.ends_with(b"buildbox\r"),
+        r.sent.ends_with(b"mine\r"),
         "{:?}",
         String::from_utf8_lossy(&r.sent)
     );

@@ -77,6 +77,68 @@ impl Default for ColorFlags {
     }
 }
 
+/// What `CSI 20 t` and `CSI 21 t` answer — `ts.WindowFlag & WF_TITLEREPORT`,
+/// `vtterm.c:2668`.
+///
+/// The shipped value is [`Empty`](Self::Empty), and that is a deliberate
+/// mitigation rather than an oversight: a terminal that echoes its own title
+/// back into the input stream lets anything which can write to the screen put
+/// text in front of the shell, and the title is the one thing the host chose
+/// itself. Upstream spells it in a way that hides the choice — `IdTitleReportEmpty`
+/// is **24**, which is `WF_TITLEREPORT` entire, so the name reads like "no
+/// bits" and sets both.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TitleReport {
+    /// `ignore`. Nothing is sent at all.
+    Ignore,
+    /// `accept`. The real title, interleaved with [`Config::title`] the way
+    /// [`TitleChange`] says.
+    Accept,
+    /// `empty`, and the default. The reply is sent, with nothing in it.
+    #[default]
+    Empty,
+}
+
+/// How the title the host set and the one in the file combine —
+/// `ts.AcceptTitleChangeRequest`, `ttwinman.c:109` for the window and
+/// `vtterm.c:2677` for the report.
+///
+/// It is also a switch: [`Off`](Self::Off) means the host's title is never
+/// stored at all (`vtterm.c:5112`), which takes the title stack down with it
+/// since `CSI 22 t` and `CSI 23 t` are gated on the same field.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TitleChange {
+    /// `off`. The host's title is discarded on arrival.
+    Off,
+    /// `overwrite`, and the default. The host's title replaces the file's,
+    /// falling back to the file's while the host has set none.
+    #[default]
+    Overwrite,
+    /// `ahead`. The host's title, a space, then the file's.
+    Ahead,
+    /// `last`. The file's title, a space, then the host's.
+    Last,
+}
+
+impl TitleChange {
+    /// The window title, out of the file's and whatever the host has set.
+    ///
+    /// `ttwinman.c:101`: an empty remote title is no remote title, and takes
+    /// the `Off` arm's answer whatever the mode is. That is not the same test
+    /// the report path makes, which is why this is not shared with it.
+    pub fn combine(self, file: &str, remote: &str) -> String {
+        if remote.is_empty() {
+            return file.to_string();
+        }
+        match self {
+            TitleChange::Off => file.to_string(),
+            TitleChange::Overwrite => remote.to_string(),
+            TitleChange::Ahead => format!("{remote} {file}"),
+            TitleChange::Last => format!("{file} {remote}"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     pub cols: usize,
@@ -101,22 +163,16 @@ pub struct Config {
     /// `WF_WINDOWREPORT` (`ttset.c:1661`, key default on). Gates the ones that
     /// answer back.
     pub window_report: bool,
-    /// `WF_TITLEREPORT` (`ttset.c:1664`). Three-valued upstream and shipped as
-    /// **`Empty`**: `CSI 20 t` and `CSI 21 t` are answered, but with an empty
-    /// OSC string rather than with the title. That is a deliberate mitigation —
-    /// a terminal that echoes its own title into the input stream lets anything
-    /// that can write to the screen put text in front of the shell — and it is
-    /// what this models when true. False is upstream's `ignore`, which answers
-    /// nothing at all.
-    ///
-    /// The third mode, `accept`, reports the real title, and its four spellings
-    /// interleave `ts.Title` from the INI with the remote one. That needs the
-    /// settings surface, so it is not offered here rather than being guessed at.
-    pub title_report: bool,
-    /// `ts.AcceptTitleChangeRequest`, as the boolean the title stack uses it as
-    /// (`vtterm.c:2758`). Upstream's default is `overwrite`, so: on. The full
-    /// four-way enum is `TERATERM.INI`'s and belongs to Stage 2's schema.
-    pub accept_title_change: bool,
+    /// `WF_TITLEREPORT` (`ttset.c:1664`). See [`TitleReport`].
+    pub title_report: TitleReport,
+    /// `ts.AcceptTitleChangeRequest` (`ttset.c:1568`). See [`TitleChange`].
+    pub accept_title_change: TitleChange,
+    /// `ts.Title` — the title out of `TERATERM.INI`, before the host has said
+    /// anything. The terminal needs it for one thing only: `CSI 20 t` and
+    /// `CSI 21 t` under [`TitleReport::Accept`] interleave it with the host's
+    /// (`vtterm.c:2677`). Everything else about the title bar belongs to the
+    /// frontend, which is where upstream does it too (`ttwinman.c:95`).
+    pub title: String,
     /// DECRQCRA, the rectangular-area checksum — **and the one thing here that
     /// is not upstream's**. Tera Term has no `CSI * y` at all; `vtterm.c` never
     /// mentions a checksum, so the faithful answer to the request is silence,
@@ -243,8 +299,13 @@ impl Default for Config {
             remote_clears_buffer: true,
             window_change: true,
             window_report: true,
-            title_report: true,
-            accept_title_change: true,
+            title_report: TitleReport::default(),
+            accept_title_change: TitleChange::default(),
+            // Upstream's `Title=` default is its own product name. Empty here:
+            // the frontend owns what this program is called, and a core that
+            // shipped "Tera Term" would put it in the title bar of anything
+            // that forgot to set it.
+            title: String::new(),
             decrqcra: false,
             send_8bit_ctrl: false,
             cursor_shape: 1,
@@ -574,9 +635,42 @@ impl Vt {
         self.state.send(bytes);
     }
 
-    /// The last title set by OSC 0 / OSC 2. Empty if never set.
-    pub fn title(&self) -> &str {
+    /// The last title the *host* set, with OSC 0, 1 or 2 — `cv.TitleRemoteW`.
+    /// Empty if it has never set one, or if [`TitleChange::Off`] is discarding
+    /// them.
+    ///
+    /// This is what the host asked for and not what the window shows; see
+    /// [`Vt::window_title`] for that.
+    pub fn remote_title(&self) -> &str {
         &self.state.title
+    }
+
+    /// Set [`Config::title`] — `ts.Title`, which is what `settitle` writes and
+    /// `gettitle` reads (`ttdde.c:636`, `:646`).
+    ///
+    /// Under [`TitleChange::Overwrite`] it also **discards the host's title**
+    /// (`ttdde.c:838`), because that mode would otherwise keep hiding the one
+    /// just set. The other three leave it: `ahead` and `last` show both, and
+    /// `off` never had one.
+    pub fn set_title(&mut self, title: String) {
+        self.state.config.title = title;
+        if self.state.config.accept_title_change == TitleChange::Overwrite {
+            self.state.title.clear();
+        }
+    }
+
+    /// What the title bar should say — `ChangeTitle`'s half of `ttwinman.c:95`,
+    /// which is [`Config::title`] and [`Vt::remote_title`] combined the way
+    /// [`Config::accept_title_change`] says.
+    ///
+    /// Upstream does this in the frontend and so could this, but the same two
+    /// strings are combined again inside `CSI 20 t`, which is the terminal's —
+    /// so one of the two callers is here regardless and the rule lives with it.
+    pub fn window_title(&self) -> String {
+        self.state
+            .config
+            .accept_title_change
+            .combine(&self.state.config.title, &self.state.title)
     }
 
     /// Report a mouse event, in **window pixels**. Returns true if the
@@ -1799,20 +1893,19 @@ impl State {
                 self.send_csi(&body);
             }
             // Report icon label and window title. Gated on the *title* setting,
-            // not on `WF_WINDOWREPORT`, and answered empty — see
-            // `Config::title_report`.
-            20 if self.config.title_report => self.send_osc("L"),
-            21 if self.config.title_report => self.send_osc("l"),
+            // not on `WF_WINDOWREPORT` — see `Config::title_report`.
+            20 => self.report_title('L'),
+            21 => self.report_title('l'),
             // Push and pop the title — `vtterm.c:2751`. The parameter names
             // which of icon and window title to stack, and all three values
             // do the same thing upstream because there is only one title.
-            22 if self.config.accept_title_change => {
+            22 if self.config.accept_title_change != TitleChange::Off => {
                 if matches!(arg0(params, 1), 0..=2) {
                     let title = self.title.clone();
                     self.title_stack.push(title);
                 }
             }
-            23 if self.config.accept_title_change => {
+            23 if self.config.accept_title_change != TitleChange::Off => {
                 if matches!(arg0(params, 1), 0..=2) {
                     if let Some(title) = self.title_stack.pop() {
                         self.title = title;
@@ -1821,6 +1914,34 @@ impl State {
             }
             _ => {}
         }
+    }
+
+    /// `CSI 20 t` and `CSI 21 t`, whose answer is an OSC string led by `lead` —
+    /// `L` for the icon label and `l` for the window title (`vtterm.c:2668`).
+    ///
+    /// The `Accept` arm is not [`TitleChange::combine`]. Upstream writes the
+    /// two chains separately and they disagree in one place: the window falls
+    /// back to the file's title whenever the host's is empty, while the report
+    /// only does that under `Overwrite`, so `ahead` with no host title answers
+    /// with a **leading space** (`vtterm.c:2683`). Reproduced rather than
+    /// tidied — the reply goes on somebody's wire.
+    fn report_title(&mut self, lead: char) {
+        let body = match self.config.title_report {
+            TitleReport::Ignore => return,
+            TitleReport::Empty => String::new(),
+            TitleReport::Accept => {
+                let file = &self.config.title;
+                let remote = &self.title;
+                match self.config.accept_title_change {
+                    TitleChange::Off => file.clone(),
+                    TitleChange::Ahead => format!("{remote} {file}"),
+                    TitleChange::Last => format!("{file} {remote}"),
+                    TitleChange::Overwrite if remote.is_empty() => file.clone(),
+                    TitleChange::Overwrite => remote.clone(),
+                }
+            }
+        };
+        self.send_osc(&format!("{lead}{body}"));
     }
 
     /// DECRQM — `vtterm.c:CSDolRequestMode`. Answers `CSI [?]Ps;Ps $ y`, where
@@ -2718,7 +2839,12 @@ impl Perform for State {
         // `cv.TitleRemoteW` and calls `ChangeTitle`. There is one title here as
         // there is upstream, so an icon name set with OSC 1 lands in the title
         // bar — which reads like a bug and is what Tera Term does.
-        if matches!(kind, 0 | 1 | 2) {
+        //
+        // `off` discards it rather than merely hiding it: the arm is gated on
+        // `ts.AcceptTitleChangeRequest` before `cv.TitleRemoteW` is touched, so
+        // a title that arrived while the setting was off is not there to be
+        // shown if it is turned on afterwards.
+        if matches!(kind, 0..=2) && self.config.accept_title_change != TitleChange::Off {
             if let Some(text) = params.get(1) {
                 self.title = String::from_utf8_lossy(text).into_owned();
             }
@@ -2781,8 +2907,117 @@ mod tests {
     #[test]
     fn osc_zero_sets_the_title() {
         let vt = run(b"\x1b]0;My Session\x07text", 20, 2);
-        assert_eq!(vt.title(), "My Session");
+        assert_eq!(vt.remote_title(), "My Session");
         assert_eq!(row(&vt, 0), "text");
+    }
+
+    /// The four spellings, and the one place the window and the report
+    /// disagree about them.
+    #[test]
+    fn the_file_and_the_host_combine_four_ways() {
+        let of = |mode, input: &[u8]| {
+            let mut vt = Vt::new(Config {
+                cols: 20,
+                rows: 2,
+                title: "file".into(),
+                accept_title_change: mode,
+                title_report: TitleReport::Accept,
+                ..Config::default()
+            });
+            vt.feed(input);
+            (
+                vt.window_title(),
+                String::from_utf8_lossy(vt.reply()).into_owned(),
+            )
+        };
+
+        let set = b"\x1b]2;host\x1b\\\x1b[21t";
+        assert_eq!(
+            of(TitleChange::Overwrite, set),
+            ("host".into(), "\x1b]lhost\x1b\\".into())
+        );
+        assert_eq!(
+            of(TitleChange::Ahead, set),
+            ("host file".into(), "\x1b]lhost file\x1b\\".into())
+        );
+        assert_eq!(
+            of(TitleChange::Last, set),
+            ("file host".into(), "\x1b]lfile host\x1b\\".into())
+        );
+        // `off` never stored it, so there is nothing to combine.
+        assert_eq!(
+            of(TitleChange::Off, set),
+            ("file".into(), "\x1b]lfile\x1b\\".into())
+        );
+
+        // With no host title the window falls back to the file's under every
+        // mode, and the *report* does not — `ahead` answers with a leading
+        // space, which is upstream's `vtterm.c:2683` and not a slip here.
+        let ask = b"\x1b[21t";
+        assert_eq!(
+            of(TitleChange::Overwrite, ask),
+            ("file".into(), "\x1b]lfile\x1b\\".into())
+        );
+        assert_eq!(
+            of(TitleChange::Ahead, ask),
+            ("file".into(), "\x1b]l file\x1b\\".into())
+        );
+        assert_eq!(
+            of(TitleChange::Last, ask),
+            ("file".into(), "\x1b]lfile \x1b\\".into())
+        );
+    }
+
+    /// `empty` and `ignore` are two different silences: one sends a reply with
+    /// nothing in it, the other sends nothing.
+    #[test]
+    fn the_title_report_has_three_answers_and_off_discards_the_title() {
+        let of = |report, input: &[u8]| {
+            let mut vt = Vt::new(Config {
+                cols: 20,
+                rows: 2,
+                title: "file".into(),
+                title_report: report,
+                ..Config::default()
+            });
+            vt.feed(input);
+            String::from_utf8_lossy(vt.reply()).into_owned()
+        };
+        assert_eq!(
+            of(TitleReport::Empty, b"\x1b[20t\x1b[21t"),
+            "\x1b]L\x1b\\\x1b]l\x1b\\"
+        );
+        assert_eq!(of(TitleReport::Ignore, b"\x1b[20t\x1b[21t"), "");
+        assert_eq!(of(TitleReport::Accept, b"\x1b[20t"), "\x1b]Lfile\x1b\\");
+
+        // `off` is a discard, not a mask: the title stack goes with it, so the
+        // pop at the end restores nothing.
+        let mut vt = Vt::new(Config {
+            accept_title_change: TitleChange::Off,
+            ..Config::default()
+        });
+        vt.feed(b"\x1b]2;host\x1b\\\x1b[22;0t\x1b]2;second\x1b\\\x1b[23;0t");
+        assert_eq!(vt.remote_title(), "");
+    }
+
+    /// `settitle` writes the *file's* half — the one `gettitle` reads.
+    #[test]
+    fn set_title_is_the_file_half_and_overwrite_clears_the_host() {
+        let mut vt = Vt::new(Config::default());
+        vt.feed(b"\x1b]2;host\x1b\\");
+        vt.set_title("mine".into());
+        assert_eq!(vt.config().title, "mine");
+        assert_eq!(vt.remote_title(), "", "overwrite would keep hiding it");
+        assert_eq!(vt.window_title(), "mine");
+
+        // `last` shows both, so it has nothing to clear.
+        let mut vt = Vt::new(Config {
+            accept_title_change: TitleChange::Last,
+            ..Config::default()
+        });
+        vt.feed(b"\x1b]2;host\x1b\\");
+        vt.set_title("mine".into());
+        assert_eq!(vt.window_title(), "mine host");
     }
 
     #[test]

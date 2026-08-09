@@ -261,8 +261,8 @@ fn dump(out: &mut impl Write, vt: &Vt, args: &Args) -> std::io::Result<()> {
     writeln!(out, "# term {} {}x{}", args.term, grid.cols(), grid.rows())?;
     writeln!(out, "# cursor {},{}", grid.cursor.x, grid.cursor.y)?;
 
-    if !vt.title().is_empty() {
-        writeln!(out, "# title {}", vt.title())?;
+    if !vt.remote_title().is_empty() {
+        writeln!(out, "# title {}", vt.remote_title())?;
     }
 
     for y in 0..grid.rows() {

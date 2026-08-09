@@ -204,20 +204,10 @@ void MainWindow::onSettingsChanged()
     // here rather than in the startup path so that a file which sets them and
     // a line which sets them arrive at the same place.
     //
-    // `Title=`'s default is upstream's product name, so taking it literally
-    // would put "Tera Term" in this program's title bar. The default is
-    // therefore read as "no opinion" and means ours.
-    QString base = m_session->setting(QStringLiteral("terminal.title"));
-    if (base.isEmpty() || base == settingDefault("terminal.title")) {
-        base = tr("Sterna");
-    }
-    // Only while the window still shows the last one: a host that has sent an
-    // OSC title owns the title bar, and changing the font in a dialog must not
-    // take it back.
-    if (windowTitle() == m_baseTitle) {
-        setWindowTitle(base);
-    }
-    m_baseTitle = base;
+    // The core combines `terminal.title` with whatever the host set, the way
+    // `window.title_change` says (`ttwinman.c:95`), so there is nothing to
+    // decide here — only the substitution below, which is ours.
+    showTitle(m_session->title());
 
     const bool hideTitle =
         m_session->setting(QStringLiteral("window.hide_title")) == QLatin1String("on");
@@ -971,9 +961,17 @@ void MainWindow::chooseFont()
     }
 }
 
-void MainWindow::onTitleChanged(const QString &title)
+void MainWindow::onTitleChanged(const QString &title) { showTitle(title); }
+
+void MainWindow::showTitle(const QString &title)
 {
-    setWindowTitle(title.isEmpty() ? tr("Sterna") : title);
+    // `Title=`'s default is upstream's own product name, so taking it
+    // literally would put "Tera Term" in this program's title bar. It is read
+    // as "no opinion" and means ours — which is the whole of what this window
+    // decides about the title now that the core combines it.
+    setWindowTitle(title.isEmpty() || title == settingDefault("terminal.title")
+                       ? tr("Sterna")
+                       : title);
 }
 
 void MainWindow::onNotice(const QString &text)

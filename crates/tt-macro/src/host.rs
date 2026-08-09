@@ -384,16 +384,16 @@ impl ScriptHost for SessionHost {
 
     fn set_title(&mut self, title: &[u8]) -> Result<(), TtlError> {
         let text = String::from_utf8_lossy(title).into_owned();
-        // Through the parser, because that is where a title lives and where
-        // the frontend already listens for one. Upstream sets `ts.Title` and
-        // then repaints the caption, which is the same two steps in the other
-        // order.
-        let seq = format!("\x1b]2;{text}\x07").into_bytes();
-        self.ask(move |s| s.feed(&seq))
+        // `ts.Title`, not an OSC. Writing one through the parser is the obvious
+        // thing and puts the string in the *host's* half instead
+        // (`cv.TitleRemoteW`), which is a different setting under `ahead` and
+        // `last` — and which `gettitle` cannot see, because that reads
+        // `ts.Title` (`ttdde.c:646`).
+        self.ask(move |s| s.set_title(text))
     }
 
     fn title(&mut self) -> Result<Vec<u8>, TtlError> {
-        Ok(self.ask(|s| s.vt().title().to_string())?.into_bytes())
+        Ok(self.ask(|s| s.vt().config().title.clone())?.into_bytes())
     }
 
     // ---- the session log ----

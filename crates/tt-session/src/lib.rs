@@ -153,7 +153,7 @@ impl Session {
     pub fn new(config: Config) -> Session {
         let vt = Vt::new(config);
         Session {
-            last_title: vt.title().to_string(),
+            last_title: vt.window_title(),
             vt,
             conn: None,
             events: Vec::new(),
@@ -352,6 +352,17 @@ impl Session {
     /// reads — cursor visibility, bracketed paste, reverse video.
     pub fn vt(&self) -> &Vt {
         &self.vt
+    }
+
+    /// `settitle` — `ts.Title`, and a title event if the window's changed.
+    ///
+    /// Narrow rather than a `vt_mut()`, because the title is the one piece of
+    /// terminal state the session watches for an edge: anything that could set
+    /// it behind [`Session::collect_title`] would leave the title bar showing
+    /// the previous one until the host next printed something.
+    pub fn set_title(&mut self, title: String) {
+        self.vt.set_title(title);
+        self.collect_title();
     }
 
     /// One row of what the window is *showing*, which is the live screen until
@@ -983,9 +994,14 @@ impl Session {
     }
 
     /// The title is state on `Vt`, not an event, so an edge has to be found.
+    ///
+    /// The *window* title — what the frontend puts in the title bar — rather
+    /// than the one the host set, so that `AcceptTitleChangeRequest`'s four
+    /// spellings are applied once, here, instead of in every frontend.
     fn collect_title(&mut self) {
-        if self.vt.title() != self.last_title {
-            self.last_title = self.vt.title().to_string();
+        let title = self.vt.window_title();
+        if title != self.last_title {
+            self.last_title = title;
             self.events.push(Event::Title(self.last_title.clone()));
         }
     }

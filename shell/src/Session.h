@@ -371,6 +371,15 @@ private:
     QTimer *m_xferTimer = nullptr;
     QString m_title;
 
+    /// Read the window title back from the core and emit an edge.
+    ///
+    /// A settings change moves it without a byte arriving: the title is
+    /// `terminal.title` and whatever the host set, combined the way
+    /// `window.title_change` says, so two of the three inputs are settings.
+    /// The core only looks for the edge when it pumps, which a dialog's OK
+    /// button does not.
+    void refreshTitle();
+
     /// The connection being set up, or null.
     TtSshConnect *m_ssh = nullptr;
     /// True between emitting a question and being answered.

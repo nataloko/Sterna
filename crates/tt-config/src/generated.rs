@@ -369,6 +369,120 @@ impl Default for CursorShape {
     }
 }
 
+/// `ttset.c:1568`. How the title the host set and `terminal.title` combine, and
+/// **`off` means the host's title is not even stored** (`vtterm.c:5112`), which
+/// also switches off the title stack at `CSI 22 t` / `CSI 23 t`.
+///
+/// This is the first row to use `*`, and it needs it: the key is read with a
+/// default of `overwrite` and then compared down a chain whose `else` is **off**,
+/// so `AcceptTitleChangeRequest=ovewrite` is a terminal that ignores every OSC
+/// title while an absent key is one that accepts them. Absent and misspelt are
+/// two different settings, and only the second is the `else`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowTitleChange {
+    /// `overwrite`, `on` — the first is written back, the rest are aliases the
+    /// file may hold because upstream's own table has them.
+    Overwrite,
+    /// `ahead`
+    Ahead,
+    /// `last`
+    Last,
+    /// `off`
+    Off,
+}
+
+impl WindowTitleChange {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Overwrite => "overwrite",
+            Self::Ahead => "ahead",
+            Self::Last => "last",
+            Self::Off => "off",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised is `Off`** — which
+    /// is *not* this type's default. Upstream reads the key with a
+    /// default string and then runs a chain of comparisons whose last
+    /// arm catches everything, so an absent key and a misspelt value
+    /// are two different settings.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("overwrite") || s.eq_ignore_ascii_case("on") {
+            return Self::Overwrite;
+        }
+        if s.eq_ignore_ascii_case("ahead") {
+            return Self::Ahead;
+        }
+        if s.eq_ignore_ascii_case("last") {
+            return Self::Last;
+        }
+        if s.eq_ignore_ascii_case("off") {
+            return Self::Off;
+        }
+        Self::Off
+    }
+}
+
+impl Default for WindowTitleChange {
+    fn default() -> Self {
+        Self::Overwrite
+    }
+}
+
+/// `ttset.c:1664`, and it is `WindowFlag` again — with the extra turn that
+/// `IdTitleReportEmpty` is **24**, which is `WF_TITLEREPORT` entire. So the
+/// shipped `empty` sets both bits, lands on the `default:` arm, and answers
+/// `CSI 20 t` and `CSI 21 t` with an empty OSC string. That is deliberate: a
+/// terminal that echoes its own title into the input stream lets anything which
+/// can write to the screen put text in front of the shell. `accept` reports the
+/// real title, combined with `window.title_change`'s four spellings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowTitleReport {
+    /// `empty`
+    Empty,
+    /// `accept`
+    Accept,
+    /// `ignore`, `off` — the first is written back, the rest are aliases the
+    /// file may hold because upstream's own table has them.
+    Ignore,
+}
+
+impl WindowTitleReport {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Empty => "empty",
+            Self::Accept => "accept",
+            Self::Ignore => "ignore",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised takes the default**
+    /// rather than failing — which is how upstream spells most of its
+    /// defaults, as the `else` branch of a chain of comparisons.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("empty") {
+            return Self::Empty;
+        }
+        if s.eq_ignore_ascii_case("accept") {
+            return Self::Accept;
+        }
+        if s.eq_ignore_ascii_case("ignore") || s.eq_ignore_ascii_case("off") {
+            return Self::Ignore;
+        }
+        Self::default()
+    }
+}
+
+impl Default for WindowTitleReport {
+    fn default() -> Self {
+        Self::Empty
+    }
+}
+
 /// `ttset.c:589`, and the default is the `else` branch: a `Port=` that says
 /// anything but `serial` is TCP/IP, including `Port=tcp` and `Port=`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -863,6 +977,24 @@ pub struct Settings {
     pub window_alt_screen: bool,
     /// `ttset.c:1950`. Whether `ED 3` may discard the scrollback.
     pub window_remote_clears_buffer: bool,
+    /// `ttset.c:1568`. How the title the host set and `terminal.title` combine, and
+    /// **`off` means the host's title is not even stored** (`vtterm.c:5112`), which
+    /// also switches off the title stack at `CSI 22 t` / `CSI 23 t`.
+    ///
+    /// This is the first row to use `*`, and it needs it: the key is read with a
+    /// default of `overwrite` and then compared down a chain whose `else` is **off**,
+    /// so `AcceptTitleChangeRequest=ovewrite` is a terminal that ignores every OSC
+    /// title while an absent key is one that accepts them. Absent and misspelt are
+    /// two different settings, and only the second is the `else`.
+    pub window_title_change: WindowTitleChange,
+    /// `ttset.c:1664`, and it is `WindowFlag` again — with the extra turn that
+    /// `IdTitleReportEmpty` is **24**, which is `WF_TITLEREPORT` entire. So the
+    /// shipped `empty` sets both bits, lands on the `default:` arm, and answers
+    /// `CSI 20 t` and `CSI 21 t` with an empty OSC string. That is deliberate: a
+    /// terminal that echoes its own title into the input stream lets anything which
+    /// can write to the screen put text in front of the shell. `accept` reports the
+    /// real title, combined with `window.title_change`'s four spellings.
+    pub window_title_report: WindowTitleReport,
     /// `ttset.c:1523`. **On**, and it was left zeroed here for a while, which
     /// silently disabled every mouse mode and made DECRQM answer "permanently
     /// reset" for all of them.
@@ -1198,6 +1330,8 @@ impl Default for Settings {
             window_send_8bit_ctrl: false,
             window_alt_screen: true,
             window_remote_clears_buffer: true,
+            window_title_change: WindowTitleChange::default(),
+            window_title_report: WindowTitleReport::default(),
             mouse_tracking: true,
             mouse_ctrl_disables_tracking: true,
             mouse_wheel_to_cursor: true,
@@ -1430,6 +1564,14 @@ impl Settings {
                 ini.get("Tera Term", "ClearScrollBufferFromRemote"),
                 true,
             ),
+            window_title_change: match ini.get("Tera Term", "AcceptTitleChangeRequest") {
+                Some(v) => WindowTitleChange::from_ini(v),
+                None => d.window_title_change,
+            },
+            window_title_report: match ini.get("Tera Term", "TitleReportSequence") {
+                Some(v) => WindowTitleReport::from_ini(v),
+                None => d.window_title_report,
+            },
             mouse_tracking: crate::schema::on_off(ini.get("Tera Term", "MouseEventTracking"), true),
             mouse_ctrl_disables_tracking: crate::schema::on_off(
                 ini.get("Tera Term", "DisableMouseTrackingByCtrl"),
@@ -2005,6 +2147,16 @@ impl Settings {
                 "off"
             }
             .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "AcceptTitleChangeRequest",
+            &self.window_title_change.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "TitleReportSequence",
+            &self.window_title_report.as_ini().to_string(),
         );
         ini.set(
             "Tera Term",
@@ -2666,6 +2818,8 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "window.title_change" => self.window_title_change.as_ini().to_string(),
+            "window.title_report" => self.window_title_report.as_ini().to_string(),
             "mouse.tracking" => if self.mouse_tracking { "on" } else { "off" }.to_string(),
             "mouse.ctrl_disables_tracking" => if self.mouse_ctrl_disables_tracking {
                 "on"
@@ -2961,6 +3115,8 @@ impl Settings {
             "window.remote_clears_buffer" => {
                 self.window_remote_clears_buffer = crate::schema::on_off(Some(value), true)
             }
+            "window.title_change" => self.window_title_change = WindowTitleChange::from_ini(value),
+            "window.title_report" => self.window_title_report = WindowTitleReport::from_ini(value),
             "mouse.tracking" => self.mouse_tracking = crate::schema::on_off(Some(value), true),
             "mouse.ctrl_disables_tracking" => {
                 self.mouse_ctrl_disables_tracking = crate::schema::on_off(Some(value), true)
@@ -3610,6 +3766,26 @@ pub const FIELDS: &[Field] = &[
         default: "on",
         label: None,
         doc: "`ttset.c:1950`. Whether `ED 3` may discard the scrollback.",
+    },
+    Field {
+        name: "window.title_change",
+        page: "window",
+        section: "Tera Term",
+        key: "AcceptTitleChangeRequest",
+        kind: Kind::Enum(&["overwrite", "ahead", "last", "off"]),
+        default: "overwrite",
+        label: None,
+        doc: "`ttset.c:1568`. How the title the host set and `terminal.title` combine, and **`off` means the host's title is not even stored** (`vtterm.c:5112`), which also switches off the title stack at `CSI 22 t` / `CSI 23 t`.  This is the first row to use `*`, and it needs it: the key is read with a default of `overwrite` and then compared down a chain whose `else` is **off**, so `AcceptTitleChangeRequest=ovewrite` is a terminal that ignores every OSC title while an absent key is one that accepts them. Absent and misspelt are two different settings, and only the second is the `else`.",
+    },
+    Field {
+        name: "window.title_report",
+        page: "window",
+        section: "Tera Term",
+        key: "TitleReportSequence",
+        kind: Kind::Enum(&["empty", "accept", "ignore"]),
+        default: "empty",
+        label: None,
+        doc: "`ttset.c:1664`, and it is `WindowFlag` again — with the extra turn that `IdTitleReportEmpty` is **24**, which is `WF_TITLEREPORT` entire. So the shipped `empty` sets both bits, lands on the `default:` arm, and answers `CSI 20 t` and `CSI 21 t` with an empty OSC string. That is deliberate: a terminal that echoes its own title into the input stream lets anything which can write to the screen put text in front of the shell. `accept` reports the real title, combined with `window.title_change`'s four spellings.",
     },
     Field {
         name: "mouse.tracking",

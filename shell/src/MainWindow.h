@@ -143,6 +143,9 @@ private slots:
     /// the terminal's size.
     void onSettingsChanged();
     void onTitleChanged(const QString &title);
+    /// Put a title in the title bar, with the one substitution this window
+    /// makes: upstream's `Title=` default is its own product name.
+    void showTitle(const QString &title);
     void onNotice(const QString &text);
     void onConnectionChanged();
     /// Track the viewport: the core moves the offset itself to keep a
@@ -176,10 +179,6 @@ private:
     /// Where the settings came from, and where `Save setup` puts them back.
     /// Not always [`settingsPath()`] — `/F=` names another one.
     QString m_settingsPath;
-    /// The title the settings ask for, which is what the window shows until a
-    /// host sends an OSC title of its own. Kept so a later settings change can
-    /// tell "still ours" from "the host owns it now".
-    QString m_baseTitle;
     Session *m_session;
     TerminalView *m_view;
     QScrollBar *m_scroll;

@@ -41,6 +41,11 @@ Session::Session(int cols, int rows, QObject *parent)
     m_xferTimer = new QTimer(this);
     m_xferTimer->setSingleShot(true);
     connect(m_xferTimer, &QTimer::timeout, this, &Session::onTransferDeadline);
+
+    // Ahead of anything the window connects, so that a slot reacting to a
+    // settings change already sees the title those settings imply.
+    connect(this, &Session::settingsChanged, this, &Session::refreshTitle);
+    m_title = QString::fromUtf8(tt_session_title(m_session));
 }
 
 Session::~Session()
@@ -111,6 +116,15 @@ bool Session::reverseVideo() const { return tt_session_reverse_video(m_session);
 TtTracking Session::mouseTracking() const { return tt_session_mouse_tracking(m_session); }
 
 QString Session::title() const { return m_title; }
+
+void Session::refreshTitle()
+{
+    const QString title = QString::fromUtf8(tt_session_title(m_session));
+    if (title != m_title) {
+        m_title = title;
+        emit titleChanged(m_title);
+    }
+}
 
 bool Session::backspaceSendsBs() const
 {

@@ -154,8 +154,12 @@ pub fn vt_diff(a: &Vt, b: &Vt) -> Option<String> {
             String::from_utf8_lossy(b.reply())
         ));
     }
-    if a.title() != b.title() {
-        return Some(format!("title {:?} vs {:?}", a.title(), b.title()));
+    if a.remote_title() != b.remote_title() {
+        return Some(format!(
+            "title {:?} vs {:?}",
+            a.remote_title(),
+            b.remote_title()
+        ));
     }
 
     // The modes, which are what a cut-in-half `DECSET` loses. Listed rather

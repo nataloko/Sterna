@@ -66,8 +66,20 @@ enum Kind {
     /// and `hard` are one flow-control value under two names (`ttset.c:111`),
     /// and a file that says `rtscts` has to keep meaning what the user's own
     /// Tera Term makes of it.
+    ///
+    /// One spelling is special. **`*` is the `else` branch**, and it is not the
+    /// same thing as the default: upstream reads most of these with
+    /// `GetPrivateProfileString(…, "<the default spelling>", …)` and then runs
+    /// a chain of `_stricmp`s whose last arm catches everything, so an *absent*
+    /// key takes the default and a *misspelt* value takes the `else` — and for
+    /// `AcceptTitleChangeRequest` those are two different settings
+    /// (`ttset.c:1568`: absent is `overwrite`, misspelt is **off**). Written
+    /// `off/*=Off`, alongside the real spelling that variant writes back.
     Enum {
         variants: Vec<(Vec<String>, String)>,
+        /// The `*` variant, if the schema named one. `from_ini` returns it
+        /// instead of the default for anything it does not recognise.
+        fallback: Option<String>,
         exact: bool,
     },
     /// Two RGB triples in one value.
@@ -149,15 +161,37 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
         let Some(body) = spec.strip_prefix(prefix).and_then(|s| s.strip_suffix(')')) else {
             continue;
         };
+        let mut fallback = None;
         let variants = body
             .split(',')
             .map(|pair| {
                 let (spelling, variant) = pair.split_once('=').expect("spelling=Variant");
-                let spellings = spelling.split('/').map(|s| s.trim().to_string()).collect();
-                (spellings, variant.trim().to_string())
+                let variant = variant.trim().to_string();
+                let mut spellings: Vec<String> =
+                    spelling.split('/').map(|s| s.trim().to_string()).collect();
+                // `*` is the `else` arm rather than a string anyone can write,
+                // so it comes out of the list the matcher and the writer see.
+                if let Some(at) = spellings.iter().position(|s| s == "*") {
+                    spellings.remove(at);
+                    assert!(
+                        !spellings.is_empty(),
+                        "{key}: `*` marks the else branch of a variant that also \
+                         has a spelling to write back, so it cannot be the only one"
+                    );
+                    assert!(fallback.is_none(), "{key}: two else branches");
+                    fallback = Some(variant.clone());
+                }
+                (spellings, variant)
             })
             .collect();
-        return (key.to_string(), Kind::Enum { variants, exact });
+        return (
+            key.to_string(),
+            Kind::Enum {
+                variants,
+                fallback,
+                exact,
+            },
+        );
     }
     // `int`, `int(min..max)` or `int_min(floor)`.
     let (spec, bound) =
@@ -227,7 +261,12 @@ fn emit(settings: &[Setting]) -> String {
     // the schema stays a description of a *file* and the wiring that maps it
     // onto a running terminal lives one layer up.
     for s in settings {
-        let Kind::Enum { variants, exact } = &s.kind else {
+        let Kind::Enum {
+            variants,
+            fallback,
+            exact,
+        } = &s.kind
+        else {
             continue;
         };
         for line in &s.doc {
@@ -263,19 +302,27 @@ fn emit(settings: &[Setting]) -> String {
             .expect("string");
         }
         out.push_str("        }\n    }\n\n");
-        if *exact {
-            out.push_str(
+        match (fallback, exact) {
+            (Some(v), _) => writeln!(
+                out,
+                "    /// Case-insensitive, and **anything unrecognised is `{v}`** — which\n\
+                 \x20   /// is *not* this type's default. Upstream reads the key with a\n\
+                 \x20   /// default string and then runs a chain of comparisons whose last\n\
+                 \x20   /// arm catches everything, so an absent key and a misspelt value\n\
+                 \x20   /// are two different settings."
+            )
+            .expect("string"),
+            (None, true) => out.push_str(
                 "    /// Case-**sensitive**, because upstream compares this one with\n\
                  \x20   /// `strcmp` rather than `_stricmp` — and **anything unrecognised\n\
                  \x20   /// takes the default** rather than failing, so a lower-case\n\
                  \x20   /// spelling silently reads as that default.\n",
-            );
-        } else {
-            out.push_str(
+            ),
+            (None, false) => out.push_str(
                 "    /// Case-insensitive, and **anything unrecognised takes the default**\n\
                  \x20   /// rather than failing — which is how upstream spells most of its\n\
                  \x20   /// defaults, as the `else` branch of a chain of comparisons.\n",
-            );
+            ),
         }
         writeln!(out, "    pub fn from_ini(s: &str) -> Self {{").expect("string");
         out.push_str("        let s = s.trim();\n");
@@ -294,7 +341,10 @@ fn emit(settings: &[Setting]) -> String {
             )
             .expect("string");
         }
-        writeln!(out, "        Self::default()").expect("string");
+        match fallback {
+            Some(v) => writeln!(out, "        Self::{v}").expect("string"),
+            None => writeln!(out, "        Self::default()").expect("string"),
+        }
         out.push_str("    }\n}\n\n");
 
         let default_variant = variants

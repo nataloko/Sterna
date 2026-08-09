@@ -2267,8 +2267,9 @@ const TtCell *tt_session_line(const TtSession *session,
 void tt_session_cursor(const TtSession *session, TtCursor *out);
 
 /**
- * The window title, from OSC 0 / OSC 2. Never null; empty before the host
- * sets one.
+ * The window title — `terminal.title` and whatever the host set with OSC 0,
+ * 1 or 2, combined the way `window.title_change` says. Never null; empty only
+ * when neither has been set.
  *
  * Borrowed, and **valid until the next call to this function** on this
  * session. The [`TtEventKind::Title`] event carries the same string and is

@@ -96,7 +96,7 @@ fn ping(tx: &CtlSender) -> Result<Value, RpcError> {
     // Answered from the frontend's thread rather than from here, so that a
     // window whose event loop has stopped fails the ping instead of passing
     // it from the listener behind its back.
-    let title = gone(tx.call(|s, h| h.title().unwrap_or_else(|| s.vt().title().to_string())))?;
+    let title = gone(tx.call(|s, h| h.title().unwrap_or_else(|| s.vt().window_title())))?;
     Ok(json!({
         "pid": std::process::id(),
         "version": env!("CARGO_PKG_VERSION"),
@@ -110,7 +110,7 @@ fn status(tx: &CtlSender) -> Result<Value, RpcError> {
         json!({
             "connected": s.is_connected(),
             "transport": s.describe(),
-            "title": h.title().unwrap_or_else(|| s.vt().title().to_string()),
+            "title": h.title().unwrap_or_else(|| s.vt().window_title()),
             "cols": s.grid().cols(),
             "rows": s.grid().rows(),
             "scrollback": s.scrollback_len(),

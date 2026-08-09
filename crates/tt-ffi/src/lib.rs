@@ -357,7 +357,7 @@ pub extern "C" fn tt_session_new(config: *const TtConfig) -> *mut TtSession {
     }
     let session = Session::new(cfg);
     Box::into_raw(Box::new(TtSession {
-        title: cstring(session.vt().title()),
+        title: cstring(&session.vt().window_title()),
         session,
         events: Vec::new(),
         event_texts: Vec::new(),
@@ -739,8 +739,9 @@ pub extern "C" fn tt_session_cursor(session: *const TtSession, out: *mut TtCurso
     };
 }
 
-/// The window title, from OSC 0 / OSC 2. Never null; empty before the host
-/// sets one.
+/// The window title — `terminal.title` and whatever the host set with OSC 0,
+/// 1 or 2, combined the way `window.title_change` says. Never null; empty only
+/// when neither has been set.
 ///
 /// Borrowed, and **valid until the next call to this function** on this
 /// session. The [`TtEventKind::Title`] event carries the same string and is
@@ -748,7 +749,7 @@ pub extern "C" fn tt_session_cursor(session: *const TtSession, out: *mut TtCurso
 #[no_mangle]
 pub extern "C" fn tt_session_title(session: *mut TtSession) -> *const c_char {
     let s = session!(session, c"".as_ptr());
-    s.title = cstring(s.session.vt().title());
+    s.title = cstring(&s.session.vt().window_title());
     s.title.as_ptr()
 }
 

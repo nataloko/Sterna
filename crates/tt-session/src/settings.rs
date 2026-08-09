@@ -22,8 +22,9 @@
 use crate::log::{LogMode, LogOptions, Timestamp};
 use tt_config::{
     CursorShape, KeyboardBackspace, LogTimestampType, Settings, TerminalCrReceive, TerminalCrSend,
+    WindowTitleChange, WindowTitleReport,
 };
-use tt_vt::{ColorFlags, Config, CrReceive, CrSend, TermId};
+use tt_vt::{ColorFlags, Config, CrReceive, CrSend, TermId, TitleChange, TitleReport};
 
 /// Build the terminal's configuration from the settings.
 ///
@@ -70,6 +71,18 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
         nonblinking_cursor: s.cursor_nonblinking,
         window_change: s.window_change_allowed,
         window_report: s.window_report_allowed,
+        title: s.terminal_title.clone(),
+        title_report: match s.window_title_report {
+            WindowTitleReport::Ignore => TitleReport::Ignore,
+            WindowTitleReport::Accept => TitleReport::Accept,
+            WindowTitleReport::Empty => TitleReport::Empty,
+        },
+        accept_title_change: match s.window_title_change {
+            WindowTitleChange::Off => TitleChange::Off,
+            WindowTitleChange::Overwrite => TitleChange::Overwrite,
+            WindowTitleChange::Ahead => TitleChange::Ahead,
+            WindowTitleChange::Last => TitleChange::Last,
+        },
         cursor_ctrl_sequence: s.window_cursor_ctrl_allowed,
         accept_8bit_ctrl: s.window_accept_8bit_ctrl,
         send_8bit_ctrl: s.window_send_8bit_ctrl,
@@ -233,9 +246,15 @@ mod tests {
         // Everything except the history, which upstream ships at 100 lines
         // *including* the page while `Config::default` carries `MaxBuffSize`.
         assert_eq!(mapped.scrollback_max, 100 - 24);
+        // ...and the title, whose `Title=` default is upstream's own product
+        // name. The core ships empty deliberately — it has no product name to
+        // put in somebody else's title bar — so this is the one place the two
+        // defaults are meant to differ rather than a transcription slip.
+        assert_eq!(mapped.title, "Tera Term");
         assert_eq!(
             Config {
                 scrollback_max: d.scrollback_max,
+                title: d.title.clone(),
                 ..mapped
             },
             d,
