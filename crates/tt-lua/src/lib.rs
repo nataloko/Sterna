@@ -71,6 +71,7 @@ use tt_ttl::{ScriptHost, TtlError};
 
 mod conn;
 mod dlg;
+mod env;
 mod log;
 mod serial;
 mod term;
@@ -177,6 +178,7 @@ impl Script {
             dlg::install(scope, &tt, &cell)?;
             log::install(scope, &tt, &cell)?;
             term::install(scope, &tt, &cell)?;
+            env::install(scope, &tt, &cell)?;
 
             let args = lua.create_table()?;
             for (i, a) in self.args.iter().enumerate() {
@@ -192,6 +194,7 @@ impl Script {
             os.set("exit", Value::Nil)?;
 
             install_cancel_hook(&lua, scope, &cell)?;
+            self.reach_neighbours(&lua)?;
 
             let r = lua.load(&self.body[..]).set_name(&self.name).exec();
             // The hook holds a reference to a scoped function; taking it down
@@ -209,6 +212,29 @@ impl Script {
                 other => other,
             }
         })
+    }
+}
+
+impl Script {
+    /// `require 'helper'` should find the file next to the script.
+    ///
+    /// Lua's default `package.path` is the *process's* working directory and
+    /// the system module directories, neither of which is where a script that
+    /// somebody double-clicked lives. TTL's `include` resolves against the
+    /// running macro's own directory, which is what a script author expects,
+    /// so the directory goes on the front of the path. Nothing is removed —
+    /// a script that installs a library in the usual place still finds it.
+    fn reach_neighbours(&self, lua: &Lua) -> mlua::Result<()> {
+        let Some(dir) = std::path::Path::new(&self.name).parent() else {
+            return Ok(());
+        };
+        if dir.as_os_str().is_empty() {
+            return Ok(());
+        }
+        let package: Table = lua.globals().get("package")?;
+        let existing: String = package.get("path")?;
+        let dir = dir.display();
+        package.set("path", format!("{dir}/?.lua;{dir}/?/init.lua;{existing}"))
     }
 }
 
@@ -423,6 +449,31 @@ mod tests {
         let src = b"pcall(function() while true do end end)".to_vec();
         let r = Script::new("spin.lua", src).run(&mut host);
         assert!(is_cancelled(&r.unwrap_err()));
+    }
+
+    /// `require` should find the file next to the script, which is where
+    /// `include` looks and where Lua's own `package.path` does not.
+    #[test]
+    fn a_script_can_require_its_neighbour() {
+        let dir = std::env::temp_dir().join(format!("sterna-lua-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("greet.lua"),
+            b"return function() tt.sendln('hi') end",
+        )
+        .unwrap();
+        let script = dir.join("main.lua");
+
+        let mut host = RecordingHost::new();
+        host.linked = true;
+        Script::new(
+            script.display().to_string(),
+            b"local g = require('greet'); g()".to_vec(),
+        )
+        .run(&mut host)
+        .unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(host.sent, b"hi\r");
     }
 
     /// Bytes in, bytes out — no UTF-8 anywhere on the path.
