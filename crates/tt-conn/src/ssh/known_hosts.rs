@@ -138,7 +138,7 @@ impl Verdict {
 }
 
 /// The `known_hosts` files, consulted in order.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KnownHosts {
     files: Vec<PathBuf>,
     hash: bool,

@@ -32,7 +32,7 @@ use crate::error::{Error, Result};
 use crate::transport::{Transport, TransportEvent};
 
 /// What to run, and what to tell it about itself.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PtyParams {
     /// The command and its arguments. **Empty means the user's login shell**,
     /// which is the case the connect menu uses; anything else is run as

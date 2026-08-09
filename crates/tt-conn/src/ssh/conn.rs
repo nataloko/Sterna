@@ -53,7 +53,7 @@ use crate::transport::{Transport, TransportEvent};
 const HIGH_WATER: usize = 1 << 20;
 
 /// What to connect to, and what to try when the far end asks who we are.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SshParams {
     pub host: String,
     pub port: u16,

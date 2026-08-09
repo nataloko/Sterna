@@ -149,7 +149,7 @@ enum State {
 }
 
 /// What the terminal tells the far end about itself.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TelnetParams {
     pub mode: TelnetMode,
     /// `ts.TermType`, sent for `TERMINAL-TYPE`.
