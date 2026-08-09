@@ -222,7 +222,11 @@ fn a_lines_number_does_not_change_when_the_host_talks() {
     let row0_before = row(&s, 0);
 
     s.feed(&lines(10, 30));
-    assert_eq!(line(&s, n).as_deref(), Some("line7"), "same line, same number");
+    assert_eq!(
+        line(&s, n).as_deref(),
+        Some("line7"),
+        "same line, same number"
+    );
     assert_ne!(row(&s, 0), row0_before, "...while viewport row 0 moved on");
 }
 
@@ -236,7 +240,11 @@ fn the_top_of_the_page_is_the_origin() {
     // Seven lines left the page, so the top of it is line seven.
     assert_eq!(s.top_line(), 7);
     assert_eq!(line(&s, 7).as_deref(), Some("line7"));
-    assert_eq!(line(&s, 0).as_deref(), Some("line0"), "the oldest still held");
+    assert_eq!(
+        line(&s, 0).as_deref(),
+        Some("line0"),
+        "the oldest still held"
+    );
 }
 
 #[test]

@@ -35,7 +35,10 @@ fn a_session_starts_from_the_file() {
     assert_eq!(s.vt().config().term_id, TermId::Vt320);
     // ...and the settings the core does not read came along anyway, because
     // the frontend and the file both need them back.
-    assert_eq!(s.setting("color.normal").as_deref(), Some("0,0,0,255,255,255"));
+    assert_eq!(
+        s.setting("color.normal").as_deref(),
+        Some("0,0,0,255,255,255")
+    );
 }
 
 #[test]

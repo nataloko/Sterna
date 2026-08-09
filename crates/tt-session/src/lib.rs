@@ -34,10 +34,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub mod log;
+pub mod macros;
 pub mod settings;
 pub mod xfer;
 
 pub use log::{LogMode, LogOptions, SessionLog, Timestamp};
+pub use macros::{MacroLink, MACRO_BUF_SIZE};
 pub use settings::vt_config;
 pub use xfer::{xfer_options, TransferError, TransferOutcome, TransferStatus};
 // Re-exported rather than reached for directly, so that a frontend — the C ABI
@@ -123,6 +125,10 @@ pub struct Session {
     settings: Settings,
     /// The file transfer that owns the byte stream, if one is running.
     xfer: Option<xfer::Running>,
+    /// The linked macro's byte ring — `Some` for exactly as long as one is
+    /// linked, which is what turns the tap in `tt-vt` on. See
+    /// [`Session::link_macro`].
+    macro_link: Option<MacroLink>,
 }
 
 impl Session {
@@ -144,6 +150,7 @@ impl Session {
             close_note: None,
             settings: Settings::default(),
             xfer: None,
+            macro_link: None,
         }
     }
 
@@ -403,6 +410,55 @@ impl Session {
         self.log.as_ref().map_or(0, |l| l.bytes())
     }
 
+    /// Attach a macro, and hand back the ring it will read the session
+    /// through.
+    ///
+    /// This is upstream's `DDELog = TRUE` (`ttdde.c:1382`): until it is called
+    /// the terminal collects nothing for a macro, and calling it throws away
+    /// anything left over from a previous one. What arrives in the ring is
+    /// **not** the byte stream from the far end — see
+    /// [`Vt::set_macro_tap_enabled`], which is where that surprise is written
+    /// down.
+    ///
+    /// Calling it twice replaces the link, which is upstream's rule too: one
+    /// macro at a time, and `connect`ing a second one takes the terminal from
+    /// the first.
+    pub fn link_macro(&mut self) -> MacroLink {
+        let link = MacroLink::new();
+        self.vt.set_macro_tap_enabled(true);
+        // Whatever the tap collected before this point belongs to no macro —
+        // the same rule `start_log` follows.
+        let _ = self.vt.take_macro_bytes();
+        self.macro_link = Some(link.clone());
+        link
+    }
+
+    /// Detach it — `DDELog = FALSE` and `DDEFreeBuf`. A no-op when none is
+    /// linked.
+    pub fn unlink_macro(&mut self) {
+        self.vt.set_macro_tap_enabled(false);
+        if let Some(link) = self.macro_link.take() {
+            link.clear();
+        }
+    }
+
+    /// Whether a macro is driving this session.
+    pub fn macro_linked(&self) -> bool {
+        self.macro_link.is_some()
+    }
+
+    /// Move what the tap collected into the macro's ring.
+    ///
+    /// Called wherever the log is fed, and for the same reason: the tap fills
+    /// as the parser runs and something has to take it away before it grows.
+    fn macro_bytes_in(&mut self) {
+        let Some(link) = &self.macro_link else {
+            return;
+        };
+        let bytes = self.vt.take_macro_bytes();
+        link.push(&bytes);
+    }
+
     /// Feed the log from whatever just arrived. Errors are reported once and
     /// then the log is closed: a disk that filled up will not un-fill, and
     /// retrying every pump turns one problem into a stall.
@@ -523,6 +579,7 @@ impl Session {
                 let bytes = std::mem::take(&mut self.rx);
                 self.vt.feed(&bytes);
                 self.log_bytes_in(&bytes);
+                self.macro_bytes_in();
                 self.rx = bytes;
                 self.follow_scroll();
                 self.events.push(Event::Damage);
@@ -695,6 +752,7 @@ impl Session {
     pub fn feed(&mut self, bytes: &[u8]) {
         self.vt.feed(bytes);
         self.log_bytes_in(bytes);
+        self.macro_bytes_in();
         self.follow_scroll();
         self.events.push(Event::Damage);
         self.collect_title();
