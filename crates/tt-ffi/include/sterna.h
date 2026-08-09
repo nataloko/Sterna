@@ -1067,6 +1067,28 @@ typedef struct {
      */
     bool binary;
     uint32_t connect_timeout_ms;
+    /**
+     * `ts.TelEcho`, off by default. Whether the `ECHO` option decides local
+     * echo — in both directions: it changes what the burst asks for, and it
+     * makes the answer change the terminal.
+     */
+    bool echo_negotiates;
+    /**
+     * Local echo as the terminal has it, read only when `echo_negotiates` is
+     * set. Ignored otherwise.
+     */
+    bool local_echo;
+    /**
+     * `ts.TelKeepAliveInterval` in **seconds**, zero meaning none. An
+     * `IAC NOP` after this much quiet — and it is measured from the last thing
+     * sent, so a session being typed at sends none.
+     */
+    uint32_t keepalive_secs;
+    /**
+     * Where `TelLog` writes, or null for no log. Upstream's is `TELNET.LOG` in
+     * the log directory, and it holds only what this end sent.
+     */
+    const char *log_path;
 } TtTelnetParams;
 
 /**
@@ -1888,9 +1910,15 @@ typedef struct {
 
 /**
  * Telnet from the first byte, opening with the negotiation upstream opens
- * with. Upstream does this only when the port is 23.
+ * with. Upstream does this only when the port is the telnet port.
  */
 #define TT_TELNET_NEGOTIATE 2
+
+/**
+ * Telnet from the first byte and nothing offered — `Telnet=on` at a port that
+ * is not the telnet port, which is the ordinary state of a console server.
+ */
+#define TT_TELNET_FRAMED 3
 
 #define TT_HOST_KEY_POLICY_ASK 0
 

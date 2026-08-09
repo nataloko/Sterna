@@ -2021,8 +2021,11 @@ pub const TT_TELNET_RAW: TtTelnetMode = 0;
 /// `TelAutoDetect`, which defaults on.
 pub const TT_TELNET_AUTO: TtTelnetMode = 1;
 /// Telnet from the first byte, opening with the negotiation upstream opens
-/// with. Upstream does this only when the port is 23.
+/// with. Upstream does this only when the port is the telnet port.
 pub const TT_TELNET_NEGOTIATE: TtTelnetMode = 2;
+/// Telnet from the first byte and nothing offered — `Telnet=on` at a port that
+/// is not the telnet port, which is the ordinary state of a console server.
+pub const TT_TELNET_FRAMED: TtTelnetMode = 3;
 
 /// What to tell the far end about this terminal.
 #[repr(C)]
@@ -2046,6 +2049,20 @@ pub struct TtTelnetParams {
     /// defaults **off** — it agrees if asked, but does not ask.
     pub binary: bool,
     pub connect_timeout_ms: u32,
+    /// `ts.TelEcho`, off by default. Whether the `ECHO` option decides local
+    /// echo — in both directions: it changes what the burst asks for, and it
+    /// makes the answer change the terminal.
+    pub echo_negotiates: bool,
+    /// Local echo as the terminal has it, read only when `echo_negotiates` is
+    /// set. Ignored otherwise.
+    pub local_echo: bool,
+    /// `ts.TelKeepAliveInterval` in **seconds**, zero meaning none. An
+    /// `IAC NOP` after this much quiet — and it is measured from the last thing
+    /// sent, so a session being typed at sends none.
+    pub keepalive_secs: u32,
+    /// Where `TelLog` writes, or null for no log. Upstream's is `TELNET.LOG` in
+    /// the log directory, and it holds only what this end sent.
+    pub log_path: *const c_char,
 }
 
 /// Fill `out` with the defaults for `port`: upstream's mode rule, 38400 both
@@ -2056,17 +2073,26 @@ pub extern "C" fn tt_telnet_params_default(out: *mut TtTelnetParams, port: u16) 
         return;
     };
     *out = TtTelnetParams {
-        mode: match TelnetMode::for_port(port) {
-            TelnetMode::Raw => TT_TELNET_RAW,
-            TelnetMode::Auto => TT_TELNET_AUTO,
-            TelnetMode::Negotiate => TT_TELNET_NEGOTIATE,
-        },
+        mode: telnet_mode_c(TelnetMode::for_port(port)),
         term_type: ptr::null(),
         input_speed: 38400,
         output_speed: 38400,
         binary: false,
         connect_timeout_ms: 10_000,
+        echo_negotiates: false,
+        local_echo: false,
+        keepalive_secs: 300,
+        log_path: ptr::null(),
     };
+}
+
+fn telnet_mode_c(mode: TelnetMode) -> TtTelnetMode {
+    match mode {
+        TelnetMode::Raw => TT_TELNET_RAW,
+        TelnetMode::Auto => TT_TELNET_AUTO,
+        TelnetMode::Framed => TT_TELNET_FRAMED,
+        TelnetMode::Negotiate => TT_TELNET_NEGOTIATE,
+    }
 }
 
 /// Open a telnet (or raw TCP) connection and attach it. Replaces any current
@@ -2097,17 +2123,30 @@ pub extern "C" fn tt_session_connect_telnet(
         mode: match p.mode {
             TT_TELNET_RAW => TelnetMode::Raw,
             TT_TELNET_NEGOTIATE => TelnetMode::Negotiate,
+            TT_TELNET_FRAMED => TelnetMode::Framed,
             _ => TelnetMode::Auto,
         },
         speed: (p.input_speed, p.output_speed),
         cols: s.session.grid().cols() as u16,
         rows: s.session.grid().rows() as u16,
         binary: p.binary,
+        echo_negotiates: p.echo_negotiates,
+        local_echo: p.local_echo,
+        keepalive: match p.keepalive_secs {
+            0 => None,
+            n => Some(Duration::from_secs(n.into())),
+        },
         ..TelnetParams::default()
     };
     if !p.term_type.is_null() {
         match unsafe { str_arg(p.term_type, usize::MAX) } {
             Ok(t) => rust.term_type = t.to_string(),
+            Err(e) => return e,
+        }
+    }
+    if !p.log_path.is_null() {
+        match unsafe { str_arg(p.log_path, usize::MAX) } {
+            Ok(l) => rust.log = Some(PathBuf::from(l)),
             Err(e) => return e,
         }
     }
@@ -3456,17 +3495,27 @@ pub extern "C" fn tt_cmdline_startup(
             c.resolved.push(cstring(&params.term_type));
             answer.host = c.resolved[0].as_ptr();
             answer.port = port;
+            let log = params
+                .log
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned());
             answer.telnet = TtTelnetParams {
-                mode: match params.mode {
-                    TelnetMode::Raw => TT_TELNET_RAW,
-                    TelnetMode::Auto => TT_TELNET_AUTO,
-                    TelnetMode::Negotiate => TT_TELNET_NEGOTIATE,
-                },
+                mode: telnet_mode_c(params.mode),
                 term_type: c.resolved[1].as_ptr(),
                 input_speed: params.speed.0,
                 output_speed: params.speed.1,
                 binary: params.binary,
                 connect_timeout_ms: ms(timeout),
+                echo_negotiates: params.echo_negotiates,
+                local_echo: params.local_echo,
+                keepalive_secs: params.keepalive.map_or(0, |d| d.as_secs() as u32),
+                log_path: match log {
+                    Some(l) => {
+                        c.resolved.push(cstring(&l));
+                        c.resolved[2].as_ptr()
+                    }
+                    None => ptr::null(),
+                },
             };
         }
         Target::Ssh {
