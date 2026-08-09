@@ -97,9 +97,12 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/pty_test                 # ...and over a local shell, which needs nothing
 ./build/xfer_test                # a ZMODEM send, driven by the event loop
 ./build/xfer_test --write /tmp   # ...and the transfer dialogs, as PNGs
+./build/cmdline_test             # a Tera Term command line, argv to connected
 ./build/sterna --port /dev/ttyUSB0 --baud 115200
 ./build/sterna myrouter        # an alias out of ~/.ssh/config
 ./build/sterna --shell         # a local login shell
+./build/sterna /ssh /auth=publickey myrouter   # ...and Tera Term's own line,
+                               # which a `/OPTION` anywhere switches to
 
 ./bench/bench.py --core          # the perf gate's half that runs anywhere
 ./bench/bench.py                 # ...and the Qt half, in sterna-fedora only
@@ -535,7 +538,21 @@ And for SSH:
   *size* is in it. `bench_shell` calls `QStandardPaths::setTestModeEnabled`
   before `QApplication` for that reason: otherwise a 132x50 in somebody's file
   silently benchmarks a different window from the baseline's, consistently, for
-  a reason nobody would think to look for.
+  a reason nobody would think to look for. `cmdline_test` needs it too, and for
+  the *title* as well as the size.
+- **`qWarning` does not reach stderr on Fedora, and the case where that matters
+  is the case it was written for.** Fedora builds Qt with journald support, so
+  every `qWarning`/`qDebug` goes to the systemd journal rather than to stderr
+  whenever stderr is not a terminal — which is how a script, a `.desktop` entry
+  or a cron job launches something, and precisely how a windowless `/V` session
+  is launched. The message is findable with `journalctl` and nowhere a user
+  would look, and nothing says it was diverted: a diagnostic just does not
+  appear. It cost a debugging round here, where it read as "the option was
+  never parsed" rather than "the message went somewhere else" — `/ssh-bogus`
+  was, in fact, parsed correctly all along. `QT_FORCE_STDERR_LOGGING=1` proves
+  which it is in one run. Anything the user has to see uses `fprintf(stderr)`,
+  which is what `QCommandLineParser` does with its own errors for the same
+  reason.
 
 And for measuring anything:
 

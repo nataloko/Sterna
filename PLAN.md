@@ -1065,11 +1065,13 @@ before anything else in every session.
 - **Lua via `mlua`** over the same `ScriptHost` command table (~500 LOC glue).
 - `ttctl` JSON-RPC control socket replacing DDE. Keep a `ttpmacro script.ttl`
   CLI entry point so existing shortcuts and `.bat` wrappers keep working.
-  ✅ **both command lines are parsed**, 2026-08-09 —
-  `crates/tt-ttl/src/cmdline.rs` for `ttpmacro`'s and
+  ✅ **both command lines are parsed, and `ttermpro`'s opens a window**,
+  2026-08-09 — `crates/tt-ttl/src/cmdline.rs` for `ttpmacro`'s and
   `crates/tt-config/src/cmdline/` for `ttermpro`'s, the second including TTSSH's
-  plugin half. What either entry point still needs is the host behind it: a
-  transport built from a `CommandLine`, and the frontend reading one.
+  plugin half; `tt-session`'s `open.rs` for what a line says to open, the
+  command-line half of the C ABI, and `shell/src/main.cpp`, so
+  `sterna /ssh /auth=publickey myhost` works as the shortcut it was converted
+  from did. What is left is the `ttctl` socket itself.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
   `crates/tt-config/` (60 settings: 39 for the terminal, 2026-08-08, plus the
   connection, serial, log and transfer ones the command line writes into,
@@ -2356,11 +2358,52 @@ server's per-line port — so a user who has ever connected by SSH from the dial
 already has 22 in their file and sees no change. Overruling this is a one-line
 change in `Target::of`.
 
-What is still not wired, in the order chosen 2026-08-09: **the frontend entry
-point** — `CommandLine` over the C ABI plus `main.cpp`, so `sterna` accepts a
-Tera Term command line and existing shortcuts work — and then **`connect` in a
-macro**, which is the same `Startup` and `Target` with the request posted to
-whoever owns the window.
+#### And then a window opened from one
+
+`crates/tt-ffi`'s command-line half plus `shell/src/main.cpp`, 2026-08-09.
+`sterna /ssh /auth=publickey myhost` works as the shortcut it was converted
+from did.
+
+**Three calls, in the order a frontend has to make them**: `tt_cmdline_parse`
+over `argv` as the shell split it, `tt_cmdline_apply` to write the line into
+the settings the file was just loaded into, and `tt_cmdline_startup` for
+`OnCommStart`'s answer. The `TtStartup` it fills is exactly what the existing
+`tt_session_connect_*` calls take, with SSH going to `tt_ssh_connect` because
+it has prompts. Writing the C test found the order matters and is not
+reversible: applying writes *into* the settings and nothing takes it back out,
+so a second line over the first sees the first one's port.
+
+**The two spellings are read one way or the other and never half of each**,
+because on one point they disagree: a bare host name is telnet to `ttermpro`
+and SSH to `sterna`, and each is right on its own side. An argument spelled
+`/OPTION` switches to Tera Term's; anything led by `-` stays ours, which is
+what keeps `--shell -- /bin/sh` working when its own positional arguments are
+full of slashes. TTSSH's dash spellings (`-ssh`) therefore reach nobody, which
+is stated rather than guessed at — `-` is Qt's option lead here.
+
+`/F=` is why upstream parses twice and why this does: it names the settings
+file, and `MaxComPort=` — which bounds `/C=` — is inside it. `/W=` and `/H` go
+through the *settings* rather than the startup, so a file that sets them and a
+line that sets them arrive at the same place; `Title=`'s default is upstream's
+own product name and is read as "no opinion" rather than put in this program's
+title bar. `/M=` and a mistyped `/ssh` option are said out loud rather than
+ignored.
+
+**And a trap that cost a debugging round, now in `CLAUDE.md`.** The diagnostic
+under `/V` was written with `qWarning`, and Fedora builds Qt with journald — so
+it goes to the journal rather than to stderr whenever stderr is not a terminal,
+which is exactly how a windowless session is launched. It read as "the option
+was never parsed"; the option had been parsed correctly all along. Anything the
+user has to see uses `fprintf(stderr)`, which is what `QCommandLineParser` does
+with its own errors.
+
+`shell/tests/cmdline_test.cpp` needs nothing — the one case that connects opens
+its own listening socket — so argv to a live connection is checked end to end
+in CI.
+
+What is still not wired: **`connect` in a macro**, which is the same `Startup`
+and `Target` with the request posted to whoever owns the window, and then the
+`ttctl` socket that lets one be reached from outside the process.
 
 #### And then it could move a file, which needed something to wait on
 
