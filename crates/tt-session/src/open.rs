@@ -38,6 +38,7 @@ use tt_conn::pty::PtyParams;
 use tt_conn::serial::{port_by_number, DataBits, FlowControl, Parity, SerialParams, StopBits};
 use tt_conn::ssh::SshParams;
 use tt_conn::telnet::{TelnetMode, TelnetParams};
+use tt_conn::Transport;
 
 /// SSH's own port, for the divergence described on [`Target::of`].
 const SSH_PORT: u16 = 22;
@@ -205,6 +206,41 @@ impl Target {
             // pipe is Windows.
             PortType::File => Err("replaying a captured session is not implemented"),
             PortType::NamedPipe => Err("named pipes are a Windows transport"),
+        }
+    }
+}
+
+impl Target {
+    /// Open it — `CommOpen`, for the three transports that can be opened
+    /// without asking the user anything.
+    ///
+    /// **[`Target::Ssh`] is not one of them, and that is the whole shape of
+    /// this.** An SSH connection may need a host key confirmed or a password
+    /// typed, so it is a state machine the caller pumps while it owns a window;
+    /// `tt-ffi`'s `tt_ssh_connect` family exists for exactly that and the Qt
+    /// shell already drives it. Returning an error here is better than a
+    /// blocking `open` that could only answer such a prompt by inventing a
+    /// policy — and upstream agrees about *where* the prompt goes: TTSSH puts
+    /// its dialogs on the terminal's thread while the macro that asked sleeps.
+    pub fn open(&self) -> tt_conn::Result<Box<dyn Transport>> {
+        match self {
+            Target::Serial { path, params } => {
+                Ok(Box::new(tt_conn::serial::SerialConn::open(path, params)?))
+            }
+            Target::Telnet {
+                host,
+                port,
+                params,
+                timeout,
+            } => Ok(Box::new(tt_conn::telnet::TelnetConn::connect(
+                host, *port, params, *timeout,
+            )?)),
+            Target::Shell(params) => Ok(Box::new(tt_conn::pty::PtyConn::open(params)?)),
+            Target::Ssh { .. } => Err(tt_conn::Error::Unsupported(
+                "an SSH connection has prompts, so it is driven by the caller rather than opened \
+                 here — see tt_ssh_connect"
+                    .into(),
+            )),
         }
     }
 }
@@ -478,6 +514,27 @@ mod tests {
             startup(r"ttermpro /PIPE mypipe"),
             Startup::Unsupported(w) if w.contains("named pipes")
         ));
+    }
+
+    /// The opener, on the one transport that needs nothing but a fork — and the
+    /// one that must refuse.
+    #[test]
+    fn a_shell_opens_and_ssh_says_who_should_open_it() {
+        let shell = Target::Shell(Box::new(PtyParams {
+            argv: vec!["sh".into(), "-c".into(), "exit 0".into()],
+            login_shell: false,
+            ..Default::default()
+        }));
+        assert!(shell.open().is_ok(), "a local shell needs no prompt");
+
+        let Startup::Open(ssh) = startup("ttermpro /ssh myhost") else {
+            panic!("expected ssh");
+        };
+        let why = match ssh.open() {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("ssh must not be opened here"),
+        };
+        assert!(why.contains("tt_ssh_connect"), "{why}");
     }
 
     /// The settings file decides when the command line says nothing, which is
