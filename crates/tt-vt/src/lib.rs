@@ -845,6 +845,40 @@ impl Vt {
         self.state.modes.local_echo
     }
 
+    /// Set local echo from outside the byte stream.
+    ///
+    /// The same variable SRM writes, deliberately: upstream has one
+    /// `ts.LocalEcho` and three things assign it — the file, `ESC [ 12 h`
+    /// (`vtterm.c:2053`) and the telnet `ECHO` negotiation when `TelEcho` is on
+    /// (`telnet.c:411`). Giving the transport a second flag to be ANDed in
+    /// would make `DECRQM`'s answer for SRM stop describing what the terminal
+    /// does, which is the one thing that mode is for.
+    pub fn set_local_echo(&mut self, on: bool) {
+        self.state.modes.local_echo = on;
+    }
+
+    /// What a CR from the keyboard sends. LNM writes it and so does the file.
+    pub fn cr_send(&self) -> CrSend {
+        self.state.modes.cr_send
+    }
+
+    /// Set it from outside the byte stream, the way `TCPCRSend` does.
+    ///
+    /// `vtwin.cpp:3691` assigns `ts.CRSend` **and** `cv.CRSend` when a
+    /// non-telnet TCP connection opens; one variable here covers both, since
+    /// [`Vt::encode_text`] and [`Key::encode`] read the same field.
+    ///
+    /// **`lf_mode` is deliberately not touched**, unlike in `SM 20`, which
+    /// moves the two together (`vtterm.c:2058`). Upstream's `LFMode` is a
+    /// separate variable seeded from `ts.CRSend` at reset and nowhere else
+    /// (`:285`), so a `TCPCRSend=CRLF` connection sends CR LF from the keyboard
+    /// while a received LF still does not carry a CR with it — and DECRQM goes
+    /// on reporting mode 20 reset. The pair is only one fact when the host says
+    /// it is.
+    pub fn set_cr_send(&mut self, cr_send: CrSend) {
+        self.state.modes.cr_send = cr_send;
+    }
+
     /// LNM. A CR from the keyboard sends CR LF while it is on.
     pub fn newline_mode(&self) -> bool {
         self.state.modes.lf_mode

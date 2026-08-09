@@ -5,9 +5,12 @@
 //! session with output on the screen, a viewport scrolled back and a transport
 //! attached — which is the state a settings dialog is always opened from.
 
+use std::time::Duration;
+
 use tt_config::{Ini, KeyboardBackspace, Settings};
+use tt_conn::{Result, Transport, TransportEvent};
 use tt_session::{MemoryHandle, MemoryTransport, Session};
-use tt_vt::TermId;
+use tt_vt::{CrSend, TermId};
 
 fn session() -> (Session, MemoryHandle) {
     let mut s = Session::from_settings(Settings::default());
@@ -148,4 +151,87 @@ fn applying_a_size_takes_a_scrolled_back_view_live() {
     settings.terminal_rows = 30;
     s.set_settings(settings).expect("apply");
     assert_eq!(s.view_offset(), 0);
+}
+
+/// A TCP session that is not telnet, which is the only kind `TCPLocalEcho` and
+/// `TCPCRSend` apply to.
+struct RawTcp(MemoryTransport);
+
+impl Transport for RawTcp {
+    fn read(&mut self, data: &mut Vec<u8>, events: &mut Vec<TransportEvent>) -> Result<usize> {
+        self.0.read(data, events)
+    }
+
+    fn write(&mut self, data: &[u8], timeout: Duration) -> Result<usize> {
+        self.0.write(data, timeout)
+    }
+
+    fn tcp_without_telnet(&self) -> bool {
+        true
+    }
+
+    fn describe(&self) -> String {
+        "raw".into()
+    }
+}
+
+/// `vtwin.cpp:3690` — the two settings a raw TCP connection spends on the
+/// terminal, and gives back.
+///
+/// The giving back is the half worth testing: upstream keeps `ts.LocalEcho_ini`
+/// and `ts.CRSend_ini` for it, and a port that assigned the live value without
+/// keeping the file's would leave a terminal echoing after the socket that
+/// asked for it had gone.
+#[test]
+fn a_raw_tcp_connection_borrows_local_echo_and_gives_it_back() {
+    let ini = Ini::parse(b"[Tera Term]\r\nTCPLocalEcho=on\r\nTCPCRSend=CRLF\r\n");
+    let mut s = Session::from_settings(Settings::load(&ini));
+    assert!(!s.vt().local_echo(), "the file's own value, to start");
+    assert_eq!(s.vt().cr_send(), CrSend::Cr);
+
+    let (transport, _handle) = MemoryTransport::new();
+    s.connect(Box::new(RawTcp(transport)));
+    assert!(s.vt().local_echo());
+    assert_eq!(s.vt().cr_send(), CrSend::CrLf);
+    // ...and LNM did not come with it: upstream's `LFMode` is seeded at reset
+    // and `TCPCRSend` is not a reset. A received LF still does not carry a CR.
+    assert!(!s.vt().newline_mode());
+
+    s.disconnect();
+    assert!(!s.vt().local_echo(), "the file's value is back");
+    assert_eq!(s.vt().cr_send(), CrSend::Cr);
+}
+
+/// The same connection with neither key set changes nothing — and, because
+/// nothing was borrowed, gives nothing back either. A host's own `SM 12`
+/// therefore survives the disconnect, which is what the two `*Used` flags
+/// upstream keeps are for.
+#[test]
+fn without_the_keys_a_hosts_own_local_echo_survives_the_disconnect() {
+    let mut s = Session::from_settings(Settings::default());
+    let (transport, _handle) = MemoryTransport::new();
+    s.connect(Box::new(RawTcp(transport)));
+    assert!(!s.vt().local_echo());
+
+    s.feed(b"\x1b[12h"); // SRM: the host asks the terminal to stop echoing...
+    assert!(!s.vt().local_echo());
+    s.feed(b"\x1b[12l"); // ...and to start.
+    assert!(s.vt().local_echo());
+
+    s.disconnect();
+    assert!(
+        s.vt().local_echo(),
+        "nothing was borrowed, so nothing is put back"
+    );
+}
+
+/// A telnet session at the telnet port is excluded — it is upstream's `else`,
+/// not a separate test — and so is every non-TCP transport.
+#[test]
+fn the_override_does_not_reach_a_transport_that_declines_it() {
+    let ini = Ini::parse(b"[Tera Term]\r\nTCPLocalEcho=on\r\n");
+    let mut s = Session::from_settings(Settings::load(&ini));
+    let (transport, _handle) = MemoryTransport::new();
+    s.connect(Box::new(transport));
+    assert!(!s.vt().local_echo());
 }

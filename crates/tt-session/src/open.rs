@@ -439,23 +439,47 @@ fn pin_control(value: i32, handshaking: bool) -> PinControl {
 
 /// `ts` → [`TelnetParams`].
 ///
-/// `Telnet=off`, which is what `/T=0` sets, is **raw** — that is why raw is a
-/// first-class mode rather than a fallback. On it, the mode is
-/// [`TelnetMode::for_port`], which is upstream's own rule and not a guess: the
-/// opening burst goes out only when the port is 23 (`vtwin.cpp:3666`), because a
-/// terminal server's per-line port is not a telnet server and five bytes of
-/// negotiation would land in somebody's serial console.
+/// **`Telnet=off` is not a raw socket**, which is what this used to say and is
+/// the trap the whole family turns on: `TelAutoDetect` is a key of its own, it
+/// ships on, and `ttcmn.c:590` turns the framing on at the first `0xFF`
+/// whatever `Telnet=` said. Two keys and the port test make four modes — see
+/// [`TelnetMode::of`], which is where the table is.
+///
+/// The port test is `ts.TCPPort == ts.TelPort` rather than a literal 23
+/// (`vtwin.cpp:3666`): the burst goes out only at the port telnet was chosen
+/// for, because a terminal server's per-line port is not a telnet server and
+/// five bytes of negotiation would land in somebody's serial console.
+///
 pub fn telnet_params(s: &Settings, port: u16, cols: u16, rows: u16) -> TelnetParams {
     TelnetParams {
-        mode: match s.connection_telnet {
-            true => TelnetMode::for_port(port),
-            false => TelnetMode::Raw,
-        },
+        mode: TelnetMode::of(
+            s.connection_telnet,
+            s.connection_telnet_auto_detect,
+            i32::from(port) == s.connection_telnet_port,
+        ),
         binary: s.connection_telnet_binary,
         term_type: s.connection_term_type.clone(),
         speed: terminal_speed(s),
         cols,
         rows,
+        echo_negotiates: s.connection_telnet_echo,
+        // What `TelChangeEcho` reads is the terminal's *live* `ts.LocalEcho`,
+        // but nothing has connected yet at the moment the burst is built, so
+        // the file's value is the terminal's value. A session that has since
+        // seen an SRM would differ, and upstream has the same gap: the burst is
+        // built once, at open.
+        local_echo: s.terminal_local_echo,
+        keepalive: match s.connection_telnet_keepalive {
+            n if n > 0 => Some(Duration::from_secs(n as u64)),
+            _ => None,
+        },
+        // `telnet.c:128` puts it in `ts.LogDirW`, so it lands wherever the
+        // session log would — including the surprise that an empty
+        // `LogDefaultPath` sends it to the file-*transfer* directory. See
+        // [`crate::logname::term_log_dir`].
+        log: s
+            .connection_telnet_log
+            .then(|| crate::logname::term_log_dir(s).join("TELNET.LOG")),
         // Every field is named now, and there is no `..default()` to fall
         // through to — so a field added to `TelnetParams` is a compile error
         // here rather than a setting the file silently cannot reach.
@@ -602,9 +626,10 @@ mod tests {
         assert_eq!((host.as_str(), port), ("myhost", 2323));
         assert_eq!(timeout, Duration::from_secs(5));
         assert_eq!((params.cols, params.rows), (80, 24));
-        // Not 23, so no opening burst — a terminal server's per-line port is
-        // not a telnet server, which is upstream's rule and not a guess.
-        assert_eq!(params.mode, TelnetMode::Auto);
+        // Not the telnet port, so no opening burst — a terminal server's
+        // per-line port is not a telnet server, which is upstream's rule and
+        // not a guess. The framing is still on, because `Telnet=` is.
+        assert_eq!(params.mode, TelnetMode::Framed);
         assert!(!params.binary);
 
         let Startup::Open(Target::Telnet { params, .. }) = startup("ttermpro myhost") else {
@@ -612,12 +637,25 @@ mod tests {
         };
         assert_eq!(params.mode, TelnetMode::Negotiate, "port 23 does negotiate");
 
-        // `/T=0` is raw rather than telnet, which is the whole reason raw is a
-        // first-class mode.
+        // **`/T=0` is not raw**, which is the trap the whole family turns on:
+        // it clears `ts.Telnet` and says nothing about `TelAutoDetect`, which
+        // ships on — so `ttcmn.c:590` still turns the framing on at the first
+        // `0xFF`. Raw needs the second key as well.
         let Startup::Open(Target::Telnet { params, .. }) = startup("ttermpro myhost /T=0") else {
             panic!("expected telnet");
         };
-        assert_eq!(params.mode, TelnetMode::Raw);
+        assert_eq!(params.mode, TelnetMode::Auto);
+
+        let off = Settings {
+            connection_telnet: false,
+            connection_telnet_auto_detect: false,
+            ..Settings::default()
+        };
+        assert_eq!(
+            telnet_params(&off, 23, 80, 24).mode,
+            TelnetMode::Raw,
+            "and only then is every byte data"
+        );
 
         // `/B` asks for binary in the opening burst.
         let Startup::Open(Target::Telnet { params, .. }) = startup("ttermpro myhost /B") else {

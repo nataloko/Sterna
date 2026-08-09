@@ -30,6 +30,15 @@ use tt_vt::{
     Beep, ColorFlags, Config, CrReceive, CrSend, ShiftFlags, TermId, TitleChange, TitleReport,
 };
 
+/// `CRSend` → the engine's, named because `TCPCRSend` restores this one.
+pub(crate) fn cr_send_of(s: TerminalCrSend) -> CrSend {
+    match s {
+        TerminalCrSend::Cr => CrSend::Cr,
+        TerminalCrSend::CrLf => CrSend::CrLf,
+        TerminalCrSend::Lf => CrSend::Lf,
+    }
+}
+
 /// Build the terminal's configuration from the settings.
 ///
 /// `base` supplies everything the schema has no key for — the cell size the
@@ -52,11 +61,7 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
             TerminalCrReceive::Lf => CrReceive::Lf,
             TerminalCrReceive::Auto => CrReceive::Auto,
         },
-        cr_send: match s.terminal_cr_send {
-            TerminalCrSend::Cr => CrSend::Cr,
-            TerminalCrSend::CrLf => CrSend::CrLf,
-            TerminalCrSend::Lf => CrSend::Lf,
-        },
+        cr_send: cr_send_of(s.terminal_cr_send),
         local_echo: s.terminal_local_echo,
         bs_key_is_bs: s.keyboard_backspace == KeyboardBackspace::Bs,
         disable_app_keypad: s.keyboard_disable_app_keypad,

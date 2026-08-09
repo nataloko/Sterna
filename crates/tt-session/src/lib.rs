@@ -45,6 +45,7 @@ pub mod xfer;
 pub use bell::{BellGovernor, BellLimits};
 pub use log::{LogMode, LogOptions, SessionLog, Timestamp};
 pub use macros::{MacroLink, MACRO_BUF_SIZE};
+use settings::cr_send_of;
 pub use settings::{log_options, vt_config};
 pub use xfer::{
     job_defaults, xfer_options, JobDefaults, TransferError, TransferOutcome, TransferReply,
@@ -53,11 +54,12 @@ pub use xfer::{
 // Re-exported rather than reached for directly, so that a frontend — the C ABI
 // above all — takes the settings and the metadata that describes them from the
 // same place it takes the session they belong to.
+use tt_config::ConnectionTcpCrSend;
 pub use tt_config::{Field, Ini, Kind, Settings, FIELDS};
 
 use tt_conn::{Error, Result, Transport, TransportEvent};
 use tt_grid::{Cell, Grid};
-use tt_vt::{Config, Key, Modifiers, MouseEvent, Tracking, Vt};
+use tt_vt::{Config, CrSend, Key, Modifiers, MouseEvent, Tracking, Vt};
 
 /// Something the frontend needs to know about. Drained, not delivered: a
 /// callback would have to be `Send` and would run on whichever thread the
@@ -140,6 +142,11 @@ pub struct Session {
     /// Every setting, including the ones this layer does not act on — see
     /// [`Session::settings`].
     settings: Settings,
+    /// `TCPLocalEchoUsed` and `TCPCRSendUsed` (`vtwin.cpp:140`): whether this
+    /// connection spent the terminal's own value and so owes it back. See
+    /// [`Session::tcp_echo_cr_override`].
+    tcp_local_echo_used: bool,
+    tcp_cr_send_used: bool,
     /// The file transfer that owns the byte stream, if one is running.
     xfer: Option<xfer::Running>,
     /// Where the running transfer's outcome goes besides the event queue, for
@@ -178,6 +185,8 @@ impl Session {
             view_offset: 0,
             seen_scrolled_off: 0,
             seen_size: (0, 0),
+            tcp_local_echo_used: false,
+            tcp_cr_send_used: false,
             close_note: None,
             settings: Settings::default(),
             xfer: None,
@@ -293,7 +302,65 @@ impl Session {
             let _ = c.resize(cols as u16, rows as u16);
         }
         self.clear_com_buff_on_open();
+        self.tcp_echo_cr_override();
         self.connect_beep(kind);
+    }
+
+    /// `TCPLocalEcho` and `TCPCRSend` — the two settings a TCP connection that
+    /// is not telnet applies to the *terminal* (`vtwin.cpp:3690`).
+    ///
+    /// Both are overrides rather than settings beside the terminal's own: they
+    /// assign `ts.LocalEcho` and `ts.CRSend`, which the file already had a
+    /// value for, and `:3589` puts the file's value back when the connection
+    /// closes. Upstream keeps a second copy — `ts.LocalEcho_ini`,
+    /// `ts.CRSend_ini` — for exactly that; here [`Session::settings`] *is* that
+    /// copy, since it holds the file rather than the live terminal.
+    ///
+    /// **Off is not a value.** Neither key applies when it is off, so the
+    /// terminal keeps whatever it had; that is why the two `_used` flags exist
+    /// rather than restoring unconditionally, and why a host's `ESC [ 12 h`
+    /// survives a disconnect on a session where `TCPLocalEcho` was never set.
+    fn tcp_echo_cr_override(&mut self) {
+        if !self.conn.as_ref().is_some_and(|c| c.tcp_without_telnet()) {
+            return;
+        }
+        if self.settings.connection_tcp_local_echo {
+            self.tcp_local_echo_used = true;
+            self.vt.set_local_echo(true);
+        }
+        let cr = match self.settings.connection_tcp_cr_send {
+            ConnectionTcpCrSend::Disabled => None,
+            ConnectionTcpCrSend::Cr => Some(CrSend::Cr),
+            ConnectionTcpCrSend::CrLf => Some(CrSend::CrLf),
+        };
+        if let Some(cr) = cr {
+            self.tcp_cr_send_used = true;
+            self.vt.set_cr_send(cr);
+        }
+    }
+
+    /// Put the file's values back, which is `FD_CLOSE`'s half of the pair
+    /// above (`vtwin.cpp:3588`).
+    fn restore_tcp_echo_cr(&mut self) {
+        if std::mem::take(&mut self.tcp_local_echo_used) {
+            self.vt.set_local_echo(self.settings.terminal_local_echo);
+        }
+        if std::mem::take(&mut self.tcp_cr_send_used) {
+            self.vt
+                .set_cr_send(cr_send_of(self.settings.terminal_cr_send));
+        }
+    }
+
+    /// Give the transport the wakeup a quiet line cannot give it — telnet's
+    /// keepalive, and nothing else so far. Cheap on every other transport.
+    ///
+    /// Separate from [`Session::pump`] because the whole point is that it runs
+    /// when *nothing* arrived; a frontend drives it from a timer.
+    pub fn tick(&mut self) -> Result<()> {
+        match self.conn.as_mut() {
+            Some(c) => c.tick(),
+            None => Ok(()),
+        }
     }
 
     /// `ClearComBuffOnOpen` — `CommOpen` purges the driver's queues as the
@@ -347,6 +414,7 @@ impl Session {
     pub fn disconnect(&mut self) {
         let kind = self.conn.as_ref().map(|c| c.link_kind());
         self.conn = None;
+        self.restore_tcp_echo_cr();
         if let Some(kind) = kind {
             self.connect_beep(kind);
         }
@@ -762,6 +830,7 @@ impl Session {
                     let kind = conn.link_kind();
                     self.close_note = conn.closing_note();
                     self.conn = None;
+                    self.restore_tcp_echo_cr();
                     self.transfer_disconnected();
                     self.events.push(Event::Disconnected);
                     self.connect_beep(kind);
@@ -771,11 +840,18 @@ impl Session {
             };
 
             for ev in self.rx_events.drain(..) {
-                self.events.push(match ev {
-                    TransportEvent::Break => Event::Break,
-                    TransportEvent::BadByte(b) => Event::BadByte(b),
-                    TransportEvent::Resize { cols, rows } => Event::Resize { cols, rows },
-                });
+                match ev {
+                    TransportEvent::Break => self.events.push(Event::Break),
+                    TransportEvent::BadByte(b) => self.events.push(Event::BadByte(b)),
+                    TransportEvent::Resize { cols, rows } => {
+                        self.events.push(Event::Resize { cols, rows })
+                    }
+                    // `ts.LocalEcho`, assigned from the `ECHO` negotiation the
+                    // way `telnet.c:411` assigns it. Not an [`Event`]: nothing
+                    // above needs telling, because the terminal is where local
+                    // echo is decided and it has just been told.
+                    TransportEvent::LocalEcho(on) => self.vt.set_local_echo(on),
+                }
             }
 
             // A running transfer owns the byte stream: its traffic must not
