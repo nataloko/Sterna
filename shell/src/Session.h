@@ -304,6 +304,13 @@ public:
 signals:
     /// The screen changed and wants repainting.
     void damaged();
+    /// The terminal wants a bell. `visual` is `bell.mode` being `visual`:
+    /// invert the screen for `bell.visual_wait_ms` rather than making a noise.
+    ///
+    /// Already governed by the core, which has thinned a runaway host down to
+    /// the bells Tera Term would have sounded — so this wants no rate limit of
+    /// its own.
+    void bellRang(bool visual);
     void titleChanged(const QString &title);
     /// Something worth saying in the status bar — a break, a corrupt byte, a
     /// failed write.

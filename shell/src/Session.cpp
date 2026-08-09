@@ -772,6 +772,12 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
             // times and a dialog only needs the latest.
             transferMoved = true;
             break;
+        case TT_EVENT_KIND_BELL:
+        case TT_EVENT_KIND_VISUAL_BELL:
+            // Not coalesced with the others: the core has already decided
+            // this is a bell worth making, and one pump produces at most one.
+            emit bellRang(events[i].kind == TT_EVENT_KIND_VISUAL_BELL);
+            break;
         case TT_EVENT_KIND_TRANSFER_DONE: {
             TtTransferResult r;
             if (tt_session_transfer_result(m_session, &r)) {

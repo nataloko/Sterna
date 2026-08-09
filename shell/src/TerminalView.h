@@ -100,6 +100,11 @@ protected:
     void focusOutEvent(QFocusEvent *event) override;
 
 private:
+    /// Make the bell the core asked for: a noise, or a flash of the screen.
+    ///
+    /// The terminal's, rather than the window's, because it is the terminal
+    /// that has a bell — and because the visual form is a way of painting.
+    void ring(bool visual);
     /// Repaint now, or at the frame floor — whichever is later. Everything
     /// that reacts to *output* goes through this; the frontend's own changes
     /// (selection, focus, a new font) still call `update` directly, because
@@ -160,6 +165,19 @@ private:
     QElapsedTimer m_sincePaint;
     /// The deferred repaint, alive only while output outruns that floor.
     QTimer *m_repaint;
+
+    /// The visual bell: the screen is inverted while this is set, and
+    /// `m_bellOff` puts it back after `bell.visual_wait_ms`.
+    ///
+    /// Painted as an XOR against DECSCNM rather than as a colour of its own,
+    /// which is what upstream does — `VisualBell` toggles the same
+    /// `CF_REVERSEVIDEO` flag either side of its `Sleep` (`vtterm.c:5784`), so
+    /// a flash on a screen the host has already reversed shows it the normal
+    /// way round. The difference here is that the flash does not stop the
+    /// terminal: upstream sleeps on the thread that is parsing, and this is a
+    /// timer, so output keeps arriving underneath it.
+    bool m_visualBell = false;
+    QTimer *m_bellOff;
 
     // Selection is a frontend concept — the core only has to support it, and
     // what it supports is naming a line (`Session::line`) so that a highlight

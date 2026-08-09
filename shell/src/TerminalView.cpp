@@ -174,6 +174,18 @@ TerminalView::TerminalView(Session *session, QWidget *parent)
     m_autoScroll->setInterval(kAutoScrollMs);
     connect(m_autoScroll, &QTimer::timeout, this, [this] { dragTo(m_dragPos); });
 
+    // The visual bell's other half. Single-shot and restarted by each flash,
+    // so a second bell inside the first extends it rather than cutting it
+    // short — the closest a timer gets to upstream's sequential `Sleep`s.
+    m_bellOff = new QTimer(this);
+    m_bellOff->setSingleShot(true);
+    connect(m_bellOff, &QTimer::timeout, this, [this] {
+        m_visualBell = false;
+        update();
+    });
+
+    connect(m_session, &Session::bellRang, this, &TerminalView::ring);
+
     connect(m_session, &Session::damaged, this, [this] {
         // A resize that arrived in the byte stream — DECCOLM, or a telnet
         // NAWS from the far end — re-flows every line, so a selection made
@@ -266,6 +278,27 @@ void TerminalView::applyFont(const QFont &font)
 /// for a long time, so a keystroke still repaints on the spot — measured at
 /// 1.03 ms, unchanged by this — and the timer only exists while output is
 /// outrunning 125 frames a second.
+void TerminalView::ring(bool visual)
+{
+    if (!visual) {
+        // `MessageBeep(0)` is what upstream calls, which is the system's
+        // default sound rather than a tone this program chose. `QApplication`
+        // has the same idea, and falls back to the X11 bell where there is no
+        // desktop sound theme.
+        QApplication::beep();
+        return;
+    }
+    // `BeepVBellWait`, floored at 1 by the settings layer. Read at each bell
+    // rather than cached: upstream reads `ts` inside `VisualBell` too, so a
+    // change in the dialog applies to the next flash.
+    const int ms = qMax(1, m_session->setting(QStringLiteral("bell.visual_wait_ms")).toInt());
+    m_visualBell = true;
+    // `update`, not `requestRepaint`: a flash that the frame floor deferred by
+    // 8 ms out of a 10 ms wait would be most of the flash.
+    update();
+    m_bellOff->start(ms);
+}
+
 void TerminalView::requestRepaint()
 {
     const qint64 since = m_sincePaint.isValid() ? m_sincePaint.elapsed() : kMinFrameMs;
@@ -286,7 +319,10 @@ void TerminalView::paintEvent(QPaintEvent *)
     QPainter p(this);
     const int cw = m_theme.cellWidth();
     const int ch = m_theme.cellHeight();
-    const bool screenReverse = m_session->reverseVideo();
+    // XOR, not "or": upstream's visual bell toggles the same flag DECSCNM
+    // sets, so a flash on an already-reversed screen shows it the normal way
+    // round for the duration.
+    const bool screenReverse = m_session->reverseVideo() != m_visualBell;
     const int rows = m_session->rows();
 
     // Whatever is not grid — the few pixels left over when the window is not

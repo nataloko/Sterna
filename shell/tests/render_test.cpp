@@ -29,12 +29,14 @@
 
 #include <QComboBox>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QLineEdit>
 #include <QStandardPaths>
 #include <QTabWidget>
 #include <QTemporaryFile>
+#include <QTimer>
 
 #include "MainWindow.h"
 #include "PasteDialog.h"
@@ -238,6 +240,43 @@ void test_reverse_and_screen_reverse()
     h.render();
     CHECK(h.at(0, 0) == kWhite);
     CHECK(h.at(1, 0) == kBlack);
+}
+
+/// The visual bell inverts the screen for `BeepVBellWait` and then puts it
+/// back — and it does it by XORing DECSCNM's own flag, which is upstream's
+/// mechanism rather than a colour of its own.
+void test_a_visual_bell_inverts_the_screen_and_puts_it_back()
+{
+    Harness h;
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("bell.mode"), QStringLiteral("visual"), &error));
+    // Long enough that the wait cannot expire between the feed and the grab.
+    CHECK(h.session.setSetting(QStringLiteral("bell.visual_wait_ms"),
+                               QStringLiteral("400"), &error));
+
+    h.feed("\007");
+    h.render();
+    CHECK(h.bgAt(10, 10) == kBlack);
+
+    // A screen the host has already reversed goes the *normal* way round for
+    // the duration, because two inversions are none.
+    h.feed("\033[?5h\007");
+    h.render();
+    CHECK(h.bgAt(10, 10) == kWhite);
+
+    // The flash ends on a timer, so the wait has to run the event loop.
+    QEventLoop loop;
+    QTimer::singleShot(500, &loop, &QEventLoop::quit);
+    loop.exec(QEventLoop::AllEvents);
+    h.render();
+    CHECK(h.bgAt(10, 10) == kBlack);
+
+    // ...and with the bell off there is no flash at all.
+    h.feed("\033[?5l");
+    CHECK(h.session.setSetting(QStringLiteral("bell.mode"), QStringLiteral("off"), &error));
+    h.feed("\007");
+    h.render();
+    CHECK(h.bgAt(10, 10) == kWhite);
 }
 
 void test_bold_has_its_own_colour()
@@ -890,6 +929,7 @@ int main(int argc, char **argv)
     test_sgr_background_colours();
     test_truecolor_resolves_through_upstreams_search();
     test_reverse_and_screen_reverse();
+    test_a_visual_bell_inverts_the_screen_and_puts_it_back();
     test_bold_has_its_own_colour();
     test_a_wide_character_covers_two_cells();
     test_dec_special_graphics_draws_a_line();
