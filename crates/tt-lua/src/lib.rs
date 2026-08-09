@@ -196,7 +196,16 @@ impl Script {
             install_cancel_hook(&lua, scope, &cell)?;
             self.reach_neighbours(&lua)?;
 
-            let r = lua.load(&self.body[..]).set_name(&self.name).exec();
+            // `@` in front is Lua's own mark for "this chunk came from a
+            // file", and it is what makes an error read `login.lua:12:` rather
+            // than `[string "login.lua"]:12:`. The difference is not cosmetic:
+            // the second form is what a chunk compiled from a *string* looks
+            // like, so an editor jumping to the error would not find it, and
+            // the reader is told the wrong thing about where the code is.
+            let r = lua
+                .load(&self.body[..])
+                .set_name(format!("@{}", self.name))
+                .exec();
             // The hook holds a reference to a scoped function; taking it down
             // before the scope closes keeps the two from racing at drop.
             lua.remove_hook();

@@ -1399,24 +1399,26 @@ typedef struct {
  */
 typedef struct {
     /**
-     * `ttmparse.h`'s number for it — 11 is a syntax error.
+     * `ttmparse.h`'s number for it — 11 is a syntax error — or **0** for an
+     * error from a language upstream never numbered, which is every Lua one.
      */
     uint32_t code;
     /**
-     * The sentence upstream puts in the dialog, verbatim, spelling included.
+     * The sentence to show. For TTL that is upstream's, verbatim and spelling
+     * included; for Lua it is the traceback, which names its own position.
      */
     const char *message;
     /**
-     * The macro the error is in. Not always the one that was launched:
+     * The script the error is in. Not always the one that was launched:
      * `include` opens another.
      */
     const char *file;
     /**
-     * The source line, whole.
+     * The source line, whole. Empty when `code` is 0 — the message has it.
      */
     const char *line;
     /**
-     * Counting from 1.
+     * Counting from 1, and 0 when there is no line to point at.
      */
     size_t line_no;
     /**
@@ -2872,6 +2874,13 @@ TtStartupKind tt_cmdline_startup(TtCmdLine *cmd,
  * the file, `.TTL` is fitted onto it if it has no extension, and everything
  * after it reaches the macro as `param2`..`param9` and `params[]`. So the
  * simplest call is a one-element array holding a path.
+ *
+ * **The extension picks the language.** A name ending in `.lua` is run by
+ * `tt-lua` and anything else by `tt-ttl`, which includes every extensionless
+ * name — `FitTTLFileName` has already made those `.TTL`. One entry point
+ * rather than two because the caller is answering "run this script", and a
+ * frontend that had to know which language a file was in would be asking the
+ * user a question the file already answers.
  *
  * Returns null if there is no macro named, if the file cannot be read, or if
  * the thread or its pipe could not be created; [`tt_last_error`] says which.

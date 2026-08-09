@@ -112,16 +112,27 @@ impl SessionHost {
     {
         self.tx.call(f).ok_or(TtlError::CantCall)
     }
+
+    /// `DispErr`'s dialog, for an error from any language.
+    ///
+    /// Public because TTL is not the only caller: `tt-lua` cannot report
+    /// through [`ScriptHost::error`], whose report borrows a source line out
+    /// of the interpreter's buffer and carries one of `ttmparse.h`'s numbered
+    /// codes. **`true` stops the run.**
+    ///
+    /// A frontend that has gone cannot be told, and a script with nobody
+    /// watching should stop rather than run on past an error.
+    pub fn report(&mut self, err: &MacroError) -> bool {
+        let owned = err.clone();
+        self.ask_ui(move |ui| ui.error(&owned)).unwrap_or(true)
+    }
 }
 
 impl ScriptHost for SessionHost {
     // ---- the macro itself ----
 
     fn error(&mut self, report: &ErrorReport<'_>) -> bool {
-        let owned = MacroError::from_report(report);
-        // A frontend that has gone cannot be told, and a macro with nobody
-        // watching should stop rather than run on past a syntax error.
-        self.ask_ui(move |ui| ui.error(&owned)).unwrap_or(true)
+        self.report(&MacroError::from_report(report))
     }
 
     fn read_macro(&mut self, path: &[u8]) -> Result<Vec<u8>, TtlError> {

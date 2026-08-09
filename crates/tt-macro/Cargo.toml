@@ -24,6 +24,11 @@ tt-grid.workspace = true
 tt-vt.workspace = true
 tempfile = "3"
 
+# `tests/lua.rs` only. Nothing in this crate is Lua-aware — the point of that
+# suite is that the host written for the macro language carries the other one
+# unchanged — so the dependency belongs here and not above.
+tt-lua.workspace = true
+
 # One `poll(2)`, to assert that the wakeup descriptor goes quiet and then
 # wakes. Asserting it is *returned* would prove nothing.
 [target.'cfg(unix)'.dev-dependencies]

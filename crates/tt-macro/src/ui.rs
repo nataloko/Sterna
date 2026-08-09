@@ -27,9 +27,17 @@ use tt_ttl::TtlError;
 /// the dialog closes. Nothing is borrowed across this boundary — that is the
 /// rule the channel is built on, and the SSH host-key prompt is the worked
 /// example of what breaking it costs.
+/// It carries the *sentence* rather than the code alone, because there is more
+/// than one language now. `tt-ttl`'s errors are `ttmparse.h`'s twenty-one, each
+/// with upstream's wording; a Lua error is a traceback and belongs to nothing
+/// upstream numbered. A frontend shows `message` either way and reads `code`
+/// only if it wants to tell them apart.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MacroError {
-    pub error: TtlError,
+    /// `ttmparse.h`'s number, or **0** for an error that is not one of
+    /// upstream's — which is every error from a language other than TTL.
+    pub code: u32,
+    pub message: String,
     pub line: Vec<u8>,
     pub line_no: usize,
     pub start: usize,
@@ -40,12 +48,31 @@ pub struct MacroError {
 impl MacroError {
     pub fn from_report(r: &tt_ttl::host::ErrorReport<'_>) -> MacroError {
         MacroError {
-            error: r.error,
+            code: r.error.code().into(),
+            message: r.error.message().to_string(),
             line: r.line.to_vec(),
             line_no: r.line_no,
             start: r.start,
             end: r.end,
             file: r.file.to_string(),
+        }
+    }
+
+    /// An error from a language that is not TTL, which has no line to point at
+    /// and no number to report.
+    ///
+    /// The message is expected to name its own position — a Lua error opens
+    /// with `chunk:line:`, which is why nothing here tries to take that apart
+    /// and hand the pieces over separately.
+    pub fn elsewhere(message: String, file: String) -> MacroError {
+        MacroError {
+            code: 0,
+            message,
+            line: Vec::new(),
+            line_no: 0,
+            start: 0,
+            end: 0,
+            file,
         }
     }
 }

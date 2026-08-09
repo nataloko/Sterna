@@ -402,14 +402,20 @@ void Macro::setDialogPos(const TtDialogPos *pos)
 
 bool Macro::showError(const TtMacroError *err)
 {
-    const QString where = tr("%1, line %2")
-                              .arg(QFileInfo(str(err->file)).fileName())
-                              .arg(err->line_no);
     QMessageBox box(m_window);
     box.setIcon(QMessageBox::Warning);
     box.setWindowTitle(tr("Macro error"));
     box.setText(str(err->message));
-    box.setInformativeText(tr("%1\n\n%2").arg(where, str(err->line).trimmed()));
+    // `code` 0 is an error from a language `ttmparse.h` never numbered, which
+    // is every Lua one — and those carry their own `file:line:` in the message
+    // rather than in the fields. Repeating a position the message already has,
+    // as "line 0" and a blank line, would be worse than saying nothing.
+    if (err->code != 0) {
+        const QString where = tr("%1, line %2")
+                                  .arg(QFileInfo(str(err->file)).fileName())
+                                  .arg(err->line_no);
+        box.setInformativeText(tr("%1\n\n%2").arg(where, str(err->line).trimmed()));
+    }
     // Upstream's two buttons, and Continue is the one that is not the
     // default: a script that has gone wrong should stop unless the user says
     // otherwise.

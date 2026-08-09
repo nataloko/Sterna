@@ -781,9 +781,13 @@ void MainWindow::runMacro()
                                      .arg(m_macro->name()));
         return;
     }
+    // Two languages, one dialog: the core picks the interpreter from the
+    // extension, so there is nothing here to ask the user about. `.ttl` leads
+    // because that is the one a converted shortcut names.
     const QString path = QFileDialog::getOpenFileName(
         this, tr("Run macro"), m_lastMacroDir,
-        tr("Macros (*.ttl *.TTL);;All files (*)"));
+        tr("Scripts (*.ttl *.TTL *.lua);;Tera Term macros (*.ttl *.TTL);;Lua "
+           "scripts (*.lua);;All files (*)"));
     if (path.isEmpty()) {
         return;
     }

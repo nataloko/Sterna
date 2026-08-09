@@ -130,7 +130,7 @@ private slots:
     void onTransferProgressed(const TransferProgress &progress);
     void onTransferFinished(const TransferResult &result);
     void toggleLogging();
-    /// Ask for a `.ttl` and run it. Upstream's Control > Macro.
+    /// Ask for a `.ttl` or a `.lua` and run it. Upstream's Control > Macro.
     void runMacro();
     void onMacroFinished(int exitCode);
     void chooseFont();

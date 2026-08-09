@@ -1,4 +1,4 @@
-// A TTL macro, driven by the window's event loop.
+// A macro, in either language, driven by the window's event loop.
 //
 // Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 //
@@ -75,14 +75,16 @@ QString screenText(const Session &session)
     return out;
 }
 
-/// A macro on disk. The name matters: upstream fits `.TTL` onto a filename
-/// with no extension at all, so a temporary name without one would open a file
-/// that is not the one just written.
+/// A script on disk. The name matters twice over: upstream fits `.TTL` onto a
+/// filename with no extension at all, so a temporary name without one would
+/// open a file that is not the one just written — and the extension is also
+/// what picks the language, so `.lua` here is the whole of how Lua is reached.
 class Script {
 public:
-    explicit Script(const QString &body)
+    explicit Script(const QString &body,
+                    const QString &name = QStringLiteral("m.ttl"))
     {
-        path = QDir(dir.path()).filePath(QStringLiteral("m.ttl"));
+        path = QDir(dir.path()).filePath(name);
         QFile f(path);
         if (f.open(QIODevice::WriteOnly)) {
             f.write(body.toUtf8());
@@ -93,6 +95,12 @@ public:
 private:
     QTemporaryDir dir;
 };
+
+/// A `.lua` one.
+Script luaScript(const QString &body)
+{
+    return Script(body, QStringLiteral("m.lua"));
+}
 
 /// Answer whatever modal dialog is up, and photograph it on the way past.
 ///
@@ -310,6 +318,100 @@ void test_destroying_a_running_macro()
     CHECK(timer.elapsed() < 2000);
 }
 
+/// The same window, the other language. Nothing here knows which — the
+/// extension picks it inside the core — so this is the one check that the
+/// choice is actually being made.
+void test_a_lua_script_prints_and_ends()
+{
+    Session session(40, 10);
+    Macro macro(&session, nullptr);
+    int finished = 0;
+    int code = -1;
+    QObject::connect(&macro, &Macro::finished, [&](int c) {
+        finished++;
+        code = c;
+    });
+
+    Script script = luaScript(QStringLiteral("print('hello from lua')\n"
+                                             "tt.setexitcode(3)\n"));
+    QString error;
+    CHECK(macro.start({script.path}, &error));
+    CHECK(error.isEmpty());
+    CHECK(spin([&] { return finished > 0; }, 5000));
+    CHECK(code == 3);
+    CHECK(screenText(session).contains(QStringLiteral("hello from lua")));
+}
+
+/// And the whole path, which is the same shell the TTL case drives.
+void test_a_lua_script_drives_a_shell()
+{
+    Session session(60, 12);
+    QString error;
+    CHECK(session.connectPty({QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+                              QStringLiteral("PS1='$ ' exec /bin/sh -i")},
+                             &error));
+    CHECK(session.isConnected());
+
+    Macro macro(&session, nullptr);
+    int finished = 0;
+    QObject::connect(&macro, &Macro::finished, [&](int) { finished++; });
+
+    Script script = luaScript(QStringLiteral("tt.timeout = 10\n"
+                                             "tt.sendln('echo lua-was-here')\n"
+                                             "if tt.wait('lua-was-here') then\n"
+                                             "  tt.dispstr('the script saw it')\n"
+                                             "end\n"
+                                             "tt.sendln('exit')\n"));
+    CHECK(macro.start({script.path}, &error));
+    CHECK(spin([&] { return finished > 0; }, 15000));
+    const QString screen = screenText(session);
+    const bool saw = screen.contains(QStringLiteral("the script saw it"));
+    CHECK(saw);
+    if (!saw) {
+        fprintf(stderr, "screen was:\n%s\n", qPrintable(screen));
+    }
+}
+
+/// An error puts the same dialog up, without the "line 0" a Lua error has no
+/// answer for.
+void test_a_lua_error_reaches_the_dialog()
+{
+    Session session(40, 10);
+    Macro macro(&session, nullptr);
+    int finished = 0;
+    QObject::connect(&macro, &Macro::finished, [&](int) { finished++; });
+
+    Script script = luaScript(QStringLiteral("error('deliberate')\n"));
+    Answerer answerer(QStringLiteral("lua-error"));
+    QString error;
+    CHECK(macro.start({script.path}, &error));
+    CHECK(spin([&] { return finished > 0; }, 5000));
+    CHECK(answerer.answered() == 1);
+}
+
+/// The trap this exists for: a Lua loop that calls nothing still answers End.
+///
+/// TTL checks `cancelled` once a line, which a `goto` loop reaches; Lua has no
+/// such seam and needs a debug hook. If the hook were missing this would hang
+/// until the spin gave up — and if the stop were reported as an *error*, the
+/// dialog would open with nobody to answer it and hang instead, which is why
+/// there is no `Answerer` here.
+void test_stopping_a_runaway_lua_loop()
+{
+    Session session(40, 10);
+    Macro macro(&session, nullptr);
+    int finished = 0;
+    QObject::connect(&macro, &Macro::finished, [&](int) { finished++; });
+
+    Script script = luaScript(QStringLiteral("while true do end\n"));
+    QString error;
+    CHECK(macro.start({script.path}, &error));
+    CHECK(macro.running());
+    macro.cancel();
+    CHECK(spin([&] { return finished > 0; }, 5000));
+    CHECK(!macro.running());
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -328,6 +430,10 @@ int main(int argc, char **argv)
     test_enablekeyb_locks_the_terminal();
     test_stopping_a_macro();
     test_destroying_a_running_macro();
+    test_a_lua_script_prints_and_ends();
+    test_a_lua_script_drives_a_shell();
+    test_a_lua_error_reaches_the_dialog();
+    test_stopping_a_runaway_lua_loop();
 
     if (failures) {
         fprintf(stderr, "%d check(s) failed\n", failures);

@@ -3431,16 +3431,18 @@ pub const TT_WINDOW_HIDDEN: TtWindowState = 3;
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct TtMacroError {
-    /// `ttmparse.h`'s number for it — 11 is a syntax error.
+    /// `ttmparse.h`'s number for it — 11 is a syntax error — or **0** for an
+    /// error from a language upstream never numbered, which is every Lua one.
     pub code: u32,
-    /// The sentence upstream puts in the dialog, verbatim, spelling included.
+    /// The sentence to show. For TTL that is upstream's, verbatim and spelling
+    /// included; for Lua it is the traceback, which names its own position.
     pub message: *const c_char,
-    /// The macro the error is in. Not always the one that was launched:
+    /// The script the error is in. Not always the one that was launched:
     /// `include` opens another.
     pub file: *const c_char,
-    /// The source line, whole.
+    /// The source line, whole. Empty when `code` is 0 — the message has it.
     pub line: *const c_char,
-    /// Counting from 1.
+    /// Counting from 1, and 0 when there is no line to point at.
     pub line_no: usize,
     /// Byte offsets into `line` bounding what the interpreter was reading when
     /// it gave up. `start == end` is possible and means "at that point".
@@ -3672,11 +3674,11 @@ impl MacroUi for CUi {
         let Some(f) = self.vt.error else {
             return MacroUi::error(&mut NullUi, err);
         };
-        let message = cstring(err.error.message());
+        let message = cstring(&err.message);
         let file = cstring(&err.file);
         let line = cbytes(&err.line);
         let c = TtMacroError {
-            code: err.error.code().into(),
+            code: err.code,
             message: message.as_ptr(),
             file: file.as_ptr(),
             line: line.as_ptr(),
@@ -4007,6 +4009,25 @@ pub struct TtMacro {
     ui: CUi,
 }
 
+/// One Lua script, run to the end, with its error reported the way TTL's is.
+///
+/// Two things differ from the interpreter's loop and both come from the
+/// language rather than from here. A Lua error cannot be continued past, so
+/// the dialog's Stop/Continue answer is read and discarded — the script has
+/// already stopped either way. And a script the user ended is **not** an
+/// error: it arrives as one because raising is the only way out of a Lua
+/// chunk, and putting a dialog up because somebody pressed End would be the
+/// wrong end of that.
+fn run_lua(path: &std::path::Path, body: Vec<u8>, cmd: &CmdLine, host: &mut SessionHost) {
+    let script = tt_lua::Script::new(path.display().to_string(), body).with_args(cmd.args.clone());
+    let Err(e) = script.run(host) else { return };
+    if tt_lua::is_cancelled(&e) {
+        return;
+    }
+    let err = MacroError::elsewhere(e.to_string(), path.display().to_string());
+    let _ = host.report(&err);
+}
+
 /// Start `args`' macro against `session`, on a new thread.
 ///
 /// `args` is `ttpmacro`'s command line **already split** — a null-terminated
@@ -4014,6 +4035,13 @@ pub struct TtMacro {
 /// the file, `.TTL` is fitted onto it if it has no extension, and everything
 /// after it reaches the macro as `param2`..`param9` and `params[]`. So the
 /// simplest call is a one-element array holding a path.
+///
+/// **The extension picks the language.** A name ending in `.lua` is run by
+/// `tt-lua` and anything else by `tt-ttl`, which includes every extensionless
+/// name — `FitTTLFileName` has already made those `.TTL`. One entry point
+/// rather than two because the caller is answering "run this script", and a
+/// frontend that had to know which language a file was in would be asking the
+/// user a question the file already answers.
 ///
 /// Returns null if there is no macro named, if the file cannot be read, or if
 /// the thread or its pipe could not be created; [`tt_last_error`] says which.
@@ -4063,15 +4091,22 @@ pub extern "C" fn tt_macro_start(
             return ptr::null_mut();
         }
     };
+    let lua = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("lua"));
     let link = s.session.link_macro();
     let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let flag = done.clone();
     let thread = std::thread::Builder::new()
-        .name("ttl".into())
+        .name(if lua { "lua" } else { "ttl" }.into())
         .spawn(move || {
             let mut host = SessionHost::new(tx.clone(), link);
-            let mut it = Interp::with_cmdline(&cmd, body, &mut host);
-            it.run(&mut host);
+            if lua {
+                run_lua(&path, body, &cmd, &mut host);
+            } else {
+                let mut it = Interp::with_cmdline(&cmd, body, &mut host);
+                it.run(&mut host);
+            }
             // A macro that ends without asking for anything would otherwise
             // never be noticed: the frontend only looks when its descriptor
             // wakes it, and the last thing a script does is usually a `sendln`
