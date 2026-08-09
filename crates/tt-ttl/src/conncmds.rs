@@ -60,7 +60,7 @@ impl Interp {
     /// Both are read at the point of use rather than captured, so assigning to
     /// `timeout` changes the next wait and not the one already running — which
     /// is the only thing it could mean when a wait cannot be interrupted.
-    fn deadline(&self) -> Option<Instant> {
+    pub(crate) fn deadline(&self) -> Option<Instant> {
         let secs = match self.vars.find(b"timeout") {
             Some((id, VarType::Integer)) => self.vars.int_at(VarRef::Scalar(id)) as i64,
             _ => 0,
@@ -81,7 +81,11 @@ impl Interp {
     ///
     /// Upstream tells those two apart — `TimeOut` versus `ComReady == 0` — and
     /// then does the same thing for both in every arm, so they are one here.
-    fn read_byte(&mut self, host: &mut dyn ScriptHost, deadline: Option<Instant>) -> Option<u8> {
+    pub(crate) fn read_byte(
+        &mut self,
+        host: &mut dyn ScriptHost,
+        deadline: Option<Instant>,
+    ) -> Option<u8> {
         let left = match deadline {
             None => None,
             Some(d) => {

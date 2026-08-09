@@ -26,6 +26,15 @@ hmac = "0.13"
 pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"] }
 sha2 = "0.11"
 
+# Oniguruma, which the regex commands are documented in terms of and which
+# nothing else implements: `regexoption` names eleven syntaxes and thirty
+# encodings, and the patterns want Ruby's backreferences and look-around. Tera
+# Term vendors the same library. `default-features = false` drops the crate's
+# `bindgen` step — with it on, building needs `libclang` at hand, and without
+# it the pre-generated bindings are used and `cc` is the only requirement.
+onig = { version = "6.5", default-features = false }
+onig_sys = { version = "69.9", default-features = false }
+
 # `OUTPUTDEBUGSTRING_ENABLE`, which is commented out at `ttmparse.h:36`. With
 # it off — as it is in every shipping Tera Term — `outputdebugstring` is not a
 # reserved word, so a macro using it gets the syntax error an unknown word

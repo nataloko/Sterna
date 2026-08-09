@@ -63,6 +63,11 @@ pub struct Interp {
     /// other offset reads out of it. `None` is upstream's NULL, which is what
     /// a clipboard that could not be read leaves behind.
     pub(crate) clipboard: Option<Vec<u8>>,
+    /// `RegexOpt`, `RegexEnc` and `RegexSyntax` — the three globals
+    /// `regexoption` sets and every regular expression here reads
+    /// (`ttmdde.c:61`). On the interpreter rather than in a `static`, which is
+    /// the only difference and one no macro can see.
+    pub(crate) rx: crate::regex::RegexConfig,
 }
 
 impl Interp {
@@ -89,6 +94,7 @@ impl Interp {
             files,
             finds: Default::default(),
             clipboard: None,
+            rx: crate::regex::RegexConfig::default(),
         };
         it.buf.open(name, body);
         it.define_system_variables(&[]);
@@ -493,6 +499,12 @@ impl Interp {
             return r;
         }
         if let Some(r) = self.password_command(host, w) {
+            return r;
+        }
+        if let Some(r) = self.regex_command(host, w) {
+            return r;
+        }
+        if let Some(r) = self.sprintf_command(host, w) {
             return r;
         }
         match w {
@@ -1086,11 +1098,36 @@ endif";
     }
 
     #[test]
-    fn an_unimplemented_command_is_an_unknown_one_for_now() {
-        // A real reserved word with no arm in the dispatch. It has to be
-        // replaced each time the port catches up with whichever one is named
-        // here — `regexoption` is furthest out, since the regex family is a
-        // dialect decision rather than a port.
-        assert_eq!(err("regexoption 1"), TtlError::NotSupported);
+    fn every_reserved_word_now_has_an_arm_in_the_dispatch() {
+        // This test used to name whichever command the port had not reached
+        // yet and assert `NotSupported`; there is no longer one to name, so it
+        // is inverted. `NotSupported` is what an *unknown* word gets, and the
+        // dispatch must never produce it for a word the table knows — a
+        // command added to `rsv.rs` and forgotten here would otherwise fail as
+        // a syntax error on a line that is perfectly good, which is the trap
+        // that hid `filenamebox` for four commits.
+        //
+        // Running each word with no arguments is enough: the dispatch happens
+        // before the arguments are read, so anything that gets as far as
+        // parsing has an arm. Operators are not commands and are skipped.
+        let mut missing = Vec::new();
+        for (name, w) in crate::rsv::RESERVED {
+            if w.is_operator() {
+                continue;
+            }
+            let mut host = RecordingHost::new();
+            // A terminal and a file, so the commands that want either get past
+            // their own checks rather than stopping somewhere less useful.
+            host.linked = true;
+            let mut it = Interp::new("t.ttl", name.as_bytes().to_vec(), &mut host);
+            it.run(&mut host);
+            if host.errors.iter().any(|e| e.0 == TtlError::NotSupported) {
+                missing.push(*name);
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "no arm in the dispatch for: {missing:?}"
+        );
     }
 }

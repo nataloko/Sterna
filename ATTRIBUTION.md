@@ -110,10 +110,25 @@ Recorded as they land. Present:
 | `russh` | Apache-2.0 | Rust crate, `ssh-audit` |
 | `libc` | MIT OR Apache-2.0 | Rust crate |
 | `tokio` | MIT | Rust crate |
+| `onig` / `onig_sys` | MIT | Rust crate, `tt-ttl` |
+| **Oniguruma** | BSD-2-Clause | **C, statically linked** — vendored inside `onig_sys` |
+| `aes`, `ctr`, `pbkdf2`, `hmac`, `sha2` | MIT OR Apache-2.0 | Rust crate, `tt-ttl` |
+| `getrandom` | MIT OR Apache-2.0 | Rust crate, `tt-ttl` |
 
 Planned, licences to be confirmed as they are added: `vte`, `portable-pty`,
 `mlua`, and Qt 6 (LGPLv3, **dynamically linked** — see the Qt posture note in
 `PLAN.md`).
+
+**Oniguruma is the one dependency that is C compiled into the binary rather
+than a Rust crate**, and it is listed on its own line because the notice
+obligation is its own: BSD-2-Clause requires the copyright notice and the
+disclaimer to be reproduced *in the documentation or other materials* of a
+binary distribution. Its `COPYING` is
+`Copyright (c) 2002-2021 K. Kosako`, and it has to reach the AppImage and the
+Windows installer, not only this file. Tera Term vendors and builds the same
+library, so this adds no third party the project did not already have — but
+upstream's obligation is not ours automatically, and this is where ours is
+recorded.
 
 **`serialport` is MPL-2.0, which is file-level copyleft, and that interacts with
 a decision spike 4 already flagged.** Using the crate is unproblematic: MPL
