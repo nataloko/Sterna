@@ -1,0 +1,3 @@
+messagebox "%WINDIR% hoge" "1"
+messagebox "%OS% fuga" "2"
+-- exit 0

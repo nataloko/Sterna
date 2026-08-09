@@ -1,0 +1,15 @@
+unlink
+cygconnect ""
+unlink
+cygconnect ""
+unlink
+cygconnect ""
+callmenu 50814
+sendbroadcast "pwd\r\n"
+sleep 1000ms
+sendbroadcast "echo "
+sleep 1000ms
+sendbroadcast "test\r\n"
+sleep 1000ms
+sendbroadcast "echo testdatepwd\r\n"
+-- exit 0

@@ -1,0 +1,10 @@
+send "true;echo \"STATUS:$?\"\r"
+messagebox "" "0"
+messagebox "" ""
+send "true;echo \"STATUS:$?\"\r"
+messagebox "" "0"
+messagebox "" ""
+send "true;echo \"STATUS:$?\"\r"
+messagebox "" "0"
+messagebox "" ""
+-- exit 0

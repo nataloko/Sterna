@@ -1,0 +1,4 @@
+send "ps ax\r"
+messagebox "modal" ""
+send "date\r"
+-- exit 0

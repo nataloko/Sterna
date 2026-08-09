@@ -1,0 +1,3 @@
+messagebox "0x5A" ""
+messagebox "0x5A" ""
+-- exit 0

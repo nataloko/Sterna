@@ -1,0 +1,30 @@
+messagebox "msg\\tbox" "title"
+messagebox "msg\\tbox" "title"
+messagebox "msg\tbox" "title"
+yesnobox "yesno\\tbox" "title" -> yes
+yesnobox "yesno\\tbox" "title" -> yes
+yesnobox "yesno\tbox" "title" -> yes
+inputbox "inp\\tbox" "title" default="" -> "typed"
+inputbox "inp\\tbox" "title" default="default" -> "typed"
+inputbox "inp\\tbox" "title" default="default" -> "typed"
+inputbox "inp\tbox" "title" default="default" -> "typed"
+passwordbox "pass\\tbox" "title" default="" -> "hunter2"
+passwordbox "pass\\tbox" "title" default="" -> "hunter2"
+passwordbox "pass\tbox" "title" default="" -> "hunter2"
+statusbox "stat\\tbox" "title"
+sleep 1000ms
+closesbox
+statusbox "stat\\tbox" "title"
+sleep 1000ms
+closesbox
+statusbox "stat\tbox" "title"
+sleep 1000ms
+closesbox
+statusbox "stat\\tbox" "title"
+sleep 1000ms
+statusbox "stat\\tbox" "title"
+sleep 1000ms
+statusbox "stat\tbox" "title"
+sleep 1000ms
+closesbox
+-- exit 0

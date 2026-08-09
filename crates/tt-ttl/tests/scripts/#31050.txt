@@ -1,0 +1,4 @@
+messagebox "a" "a"
+messagebox "a" "a"
+-- exit 0
++ file z:\tmpa.txt 0 bytes ""

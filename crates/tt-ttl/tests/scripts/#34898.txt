@@ -1,0 +1,3 @@
+messagebox "<dir>" "getdir"
+messagebox "<exedir>" "getttdir"
+-- exit 0

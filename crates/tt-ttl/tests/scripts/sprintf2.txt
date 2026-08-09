@@ -1,0 +1,10 @@
+messagebox "+00000000001" "d"
+messagebox "       1" "d"
+messagebox "0x1" "x"
+messagebox "0X1" "X"
+messagebox "a" "s"
+!! TypeMismatch (14) at line 41 cols 15..17
+messagebox "3" "error"
+!! TypeMismatch (14) at line 49 cols 12..14
+messagebox "3" "error"
+-- exit 0

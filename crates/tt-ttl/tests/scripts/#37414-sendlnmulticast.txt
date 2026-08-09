@@ -1,0 +1,17 @@
+setmulticastname "multicast-test"
+unlink
+cygconnect ""
+setmulticastname "multicast-test"
+unlink
+cygconnect ""
+setmulticastname "multicast-test"
+unlink
+cygconnect ""
+setmulticastname "multicast-test"
+callmenu 50814
+sendmulticast "multicast-test" "date\r\n"
+sleep 1000ms
+sendmulticast "multicast-test" "echo 1echo 2echo 3\r\n"
+sleep 5000ms
+sendmulticast "multicast-test" "exit\r\n"
+-- exit 0

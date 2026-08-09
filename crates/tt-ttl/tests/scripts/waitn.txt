@@ -1,0 +1,10 @@
+send "ls\r"
+flushrecv
+messagebox "" "0"
+send "ps ax\r"
+flushrecv
+messagebox "" "0"
+send "ls -lA\r"
+flushrecv
+messagebox "" "0"
+-- exit 0

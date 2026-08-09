@@ -1,0 +1,11 @@
+setdlgpos DialogPos { x: 0, y: 0, anchor: None, offset_x: 0, offset_y: 0 }
+statusbox "First setdlgpos 0 0" "setdlgpos"
+sleep 5000ms
+setdlgpos DialogPos { x: 0, y: 0, anchor: None, offset_x: 0, offset_y: 0 }
+statusbox "Second setdlgpos 0 0" "setdlgpos"
+sleep 5000ms
+closesbox
+setdlgpos DialogPos { x: 0, y: 0, anchor: None, offset_x: 0, offset_y: 0 }
+statusbox "After closesbox setdlgpos 0 0" "setdlgpos"
+sleep 5000ms
+-- exit 0

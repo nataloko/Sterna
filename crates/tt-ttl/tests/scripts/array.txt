@@ -1,0 +1,6 @@
+messagebox "2" "intarray"
+messagebox "3" "strarray"
+!! CloseBracket (18) at line 14 cols 20..11
+messagebox "255" "ar_int[MAX]"
+messagebox "ar_str[99999]=99999" "ar_str[MAX]"
+-- exit 0

@@ -1,0 +1,12 @@
+messagebox "folder (getdir):\n<dir>" "test_file.ttl"
+dirnamebox "test_file.ttl folder for test" dir="<dir>" -> "<dir>"
+yesnobox "selected folder:\n<dir>" "test_file.ttl" -> yes
+filenamebox "\x8f\x91\x82\xab\x8d\x9e\x82\xdd\x83t\x83@\x83C\x83\x8b" save=on dir="" -> "<dir>/chosen.txt"
+messagebox "checkfiles 1" "test_file.ttl"
+messagebox "checkfiles 2" "test_file.ttl"
+messagebox "checkfiles 3" "test_file.ttl"
+messagebox "checkfiles 4" "test_file.ttl"
+messagebox "test_file.ttl\n" "test_file.ttl"
+passwordbox "password2" "Enter password" default="" -> "hunter2"
+messagebox "finish all tests" "test_file.ttl"
+-- exit 0

@@ -1,0 +1,2 @@
+messagebox "-1" "wait"
+-- exit 0

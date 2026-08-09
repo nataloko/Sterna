@@ -1,0 +1,11 @@
+send "stty -echo -icrnl; hexdump -C; stty echo icrnl\r"
+sleep 1000ms
+send "send cr"
+send "\r"
+send "send lf"
+send "\n"
+send "send crlf"
+send "\r\n"
+send "end"
+send "\x04\x04"
+-- exit 0

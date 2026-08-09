@@ -1,0 +1,30 @@
+messagebox ":1:   2:   3:4   :5   :6:7:" "c"
+messagebox ":1:   2:0003:4   :5   :+6: 7:" "d"
+messagebox ":1:   2:0003:4   :5   :+6: 7:" "i"
+messagebox ":4:   5:0006:7   :10  :11:12:" "o"
+messagebox ":1:   2:0003:4   :5   :6:7:" "u"
+messagebox ":9:   a:000b:c   :d   :e:f:" "x"
+messagebox ":9:   A:000B:C   :D   :E:F:" "X"
+messagebox ":a:   b:   c:d   :e   :f:g:" "s"
+messagebox "%:%p" ""
+!! Syntax (11) at line 74 cols 12..16
+messagebox "3" "error"
+!! Syntax (11) at line 82 cols 12..16
+messagebox "3" "error"
+!! Syntax (11) at line 90 cols 12..16
+messagebox "3" "error"
+!! Syntax (11) at line 98 cols 12..16
+messagebox "3" "error"
+!! Syntax (11) at line 106 cols 12..16
+messagebox "3" "error"
+!! Syntax (11) at line 114 cols 12..16
+messagebox "3" "error"
+!! Syntax (11) at line 122 cols 12..16
+messagebox "3" "error"
+!! TypeMismatch (14) at line 130 cols 12..15
+messagebox "3" "error"
+!! Syntax (11) at line 138 cols 7..13
+messagebox "2" "error"
+!! Syntax (11) at line 146 cols 7..7
+messagebox "1" "error"
+-- exit 0

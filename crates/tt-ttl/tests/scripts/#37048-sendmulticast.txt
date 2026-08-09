@@ -1,0 +1,20 @@
+setmulticastname "multicast-test"
+unlink
+cygconnect ""
+setmulticastname "multicast-test"
+unlink
+cygconnect ""
+setmulticastname "multicast-test"
+unlink
+cygconnect ""
+setmulticastname "multicast-test"
+callmenu 50814
+sendmulticast "multicast-test" "hexdump -C\n"
+sleep 1000ms
+sendmulticast "multicast-test" "0: \x00, 1:\x01,\r\n"
+sendmulticast "multicast-test" "1:\x01,\r\n"
+sleep 1000ms
+sendmulticast "multicast-test" "1:\x01,\r\n"
+sleep 1000ms
+sendmulticast "multicast-test" "\x04"
+-- exit 0

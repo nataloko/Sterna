@@ -1,0 +1,4 @@
+messagebox "getspecialfolder file 'getspecialfolder_result.txt'" "teraterm test"
+messagebox "getspecialfolder finish" "teraterm test"
+-- exit 0
++ file getspecialfolder_result.txt 427 bytes "AllUsersDesktop: \nAllUsersStartMenu: /usr/share/applications\nAllUsersPrograms: /usr/share/applications\nAllUsersStartup: /etc/xdg/autostart\nDesktop: <home>/Desktop\nFavorites: \nFonts: <home>/.local/share/fonts\nMyDocuments: <home>/Documents\nNetHood: \nPrintHood: \nPrograms: <home>/.local/share/applications\nRecent: \nSendTo: \nStartMenu: <home>/.local/share/applications\nStartup: <home>/.config/autostart\nTemplates: <home>/Templates\n"

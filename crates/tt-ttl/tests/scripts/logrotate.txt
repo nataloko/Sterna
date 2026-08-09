@@ -1,0 +1,5 @@
+changedir "z:"
+logopen "teraterm_sample.log" - screen=off clock=Local
+logrotate Size(1024)
+logrotate Keep(3)
+-- exit 0

@@ -1,0 +1,2 @@
+messagebox "2" "result"
+-- exit 0

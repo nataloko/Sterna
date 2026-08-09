@@ -1,0 +1,7 @@
+messagebox "hoge\nhoge1" "1"
+messagebox "fuga\nfuga1" "2"
+messagebox "hoge\nhoge2" "hoge\\nhoge2"
+messagebox "hoge\nhoge2" "hoge\nhoge2"
+!! Syntax (11) at line 17 cols 14..23
+!! TypeMismatch (14) at line 21 cols 14..16
+-- exit 0

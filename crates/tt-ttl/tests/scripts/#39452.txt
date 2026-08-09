@@ -1,0 +1,9 @@
+!! Syntax (11) at line 1 cols 12..28
+messagebox "-1" "invalid file name"
+!! Syntax (11) at line 4 cols 27..36
+messagebox "-1" "invalid file size"
+messagebox "0" "success"
+messagebox "0" "invalid file path"
+messagebox "0" "cannot open with write mode"
+-- exit 0
++ file aa:\#39452-1.txt 10 bytes "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"

@@ -1,0 +1,5 @@
+messagebox "" "test"
+messagebox "" "test"
+messagebox "" "test"
+messagebox "YYYY.gz" "test"
+-- exit 0

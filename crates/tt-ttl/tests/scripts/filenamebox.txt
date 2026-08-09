@@ -1,0 +1,4 @@
+filenamebox "a" save=off dir="" -> "<dir>/chosen.txt"
+filenamebox "a" save=off dir="" -> "<dir>/chosen.txt"
+filenamebox "a" save=on dir="" -> "<dir>/chosen.txt"
+-- exit 0

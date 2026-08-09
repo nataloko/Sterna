@@ -1,0 +1,5 @@
+messagebox "-1" "result"
+!! VarNotInit (15) at line 3 cols 0..11
+!! VarNotInit (15) at line 4 cols 0..11
+!! VarNotInit (15) at line 5 cols 0..11
+-- exit 0

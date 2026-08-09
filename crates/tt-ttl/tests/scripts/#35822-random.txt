@@ -1,0 +1,4 @@
+statusbox "0% done." "stat"
+statusbox "1% done." "stat"
+-- stopped after 500000 lines
+-- exit 0

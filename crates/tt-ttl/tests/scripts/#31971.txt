@@ -1,0 +1,3 @@
+messagebox "XXX.XXX.XXX.XXX:22 /ssh /auth=passwd /user=root /passwd=XXXXX /F=D:\\WINDOWS\\TTL\\test2\\01ini/TERATERM.INI" ""
+messagebox "XXX.XXX.XXX.XXX:22 /ssh /auth=passwd /user=root /passwd=XXXXX /F=\"D:\\WINDOWS\\TTL\\test2\\01ini/TERATERM.INI\"" ""
+-- exit 0

@@ -1,0 +1,7 @@
+dispstr "Test 1\r"
+dispstr "\n"
+dispstr "Test 2\r"
+dispstr "\n"
+dispstr "Test 3\r"
+dispstr "\n"
+-- exit 0

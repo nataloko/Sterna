@@ -1,0 +1,25 @@
+send "lsx 1.mp3\r"
+xmodemrecv "z:\\1.mp3" binary=on Checksum
+send "lsx 1.mp3\r"
+xmodemrecv "z:\\1.mp3" binary=on Crc
+send "lsx 1.mp3\r"
+xmodemrecv "z:\\1.mp3" binary=on Crc
+send "lsx -k 1.mp3\r"
+xmodemrecv "z:\\1.mp3" binary=on Checksum
+send "lsx -k 1.mp3\r"
+xmodemrecv "z:\\1.mp3" binary=on Crc
+send "lsx -k 1.mp3\r"
+xmodemrecv "z:\\1.mp3" binary=on Crc
+send "lrx 2.mp3\r"
+xmodemsend "z:\\2.mp3" Crc
+send "lrx 2.mp3\r"
+xmodemsend "z:\\2.mp3" Crc
+send "lrx 2.mp3\r"
+xmodemsend "z:\\2.mp3" Crc1K
+send "lrx -c 2.mp3\r"
+xmodemsend "z:\\2.mp3" Crc
+send "lrx -c 2.mp3\r"
+xmodemsend "z:\\2.mp3" Crc
+send "lrx -c 2.mp3\r"
+xmodemsend "z:\\2.mp3" Crc1K
+-- exit 0
