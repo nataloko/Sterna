@@ -2210,6 +2210,15 @@ dependencies = [
 [[package]]
 name = "tt-ttl"
 version = "0.0.0"
+dependencies = [
+ "aes",
+ "ctr",
+ "getrandom 0.3.4",
+ "hmac",
+ "pbkdf2",
+ "sha2",
+ "tt-config",
+]
 
 [[package]]
 name = "tt-vt"

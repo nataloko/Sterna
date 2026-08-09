@@ -28,6 +28,8 @@ pub mod interp;
 pub mod lexer;
 pub mod logcmds;
 pub mod pathcmds;
+pub mod pwd;
+pub mod pwdcmds;
 pub mod rsv;
 pub mod sendcmds;
 pub mod sesscmds;

@@ -37,3 +37,17 @@ tt-config = { path = "tt-config" }
 tt-xfer = { path = "tt-xfer" }
 tt-ttl = { path = "tt-ttl" }
 tt-ffi = { path = "tt-ffi" }
+
+# `setpassword2` derives its key with 210001 iterations of PBKDF2-HMAC-SHA512,
+# which is the point of it — but an unoptimised RustCrypto is roughly thirty
+# times slower than an optimised one, and that turns `cargo test -p tt-ttl`
+# from three seconds into thirty. Optimising the four crypto crates alone
+# leaves every crate we actually debug built exactly as before.
+[profile.dev.package.aes]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.hmac]
+opt-level = 3
+[profile.dev.package.pbkdf2]
+opt-level = 3

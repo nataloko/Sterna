@@ -6,7 +6,25 @@ license.workspace = true
 repository.workspace = true
 description = "Tera Term's TTL macro language, as an interpreter with no window in it"
 
+# Until the password family this crate had no dependencies at all, and the
+# comment on `ScriptHost::strftime` still explains why that was worth keeping.
+# `setpassword2` ended it: its file format is AES-256-CTR under a PBKDF2 key
+# with an HMAC over the record, and hand-rolling any of that would be worse
+# than depending on it. Every crate here is one `tt-conn` already pulls in
+# through `russh`, at the version already in the lock file, so the shipped
+# binary gains no new code — only this crate's own test build does.
 [dependencies]
+# `WritePrivateProfileString`, which is where `setpassword` puts its output.
+# The Win32 semantics were audited in `ini-audit/` and implemented once, in
+# `tt-config`; a second reader here would be a second set of answers.
+tt-config.workspace = true
+
+aes = "0.9"
+ctr = "0.10"
+getrandom = "0.3"
+hmac = "0.13"
+pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"] }
+sha2 = "0.11"
 
 # `OUTPUTDEBUGSTRING_ENABLE`, which is commented out at `ttmparse.h:36`. With
 # it off — as it is in every shipping Tera Term — `outputdebugstring` is not a

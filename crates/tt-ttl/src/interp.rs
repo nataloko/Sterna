@@ -492,6 +492,9 @@ impl Interp {
         if let Some(r) = self.send_command(host, w) {
             return r;
         }
+        if let Some(r) = self.password_command(host, w) {
+            return r;
+        }
         match w {
             // --- control flow ---
             Rsv::If => self.cmd_if(host),
