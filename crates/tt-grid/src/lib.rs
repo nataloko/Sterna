@@ -355,12 +355,24 @@ impl Grid {
         }
     }
 
-    /// `BuffClearScreen`.
+    /// `buffer.c:BuffClearScreen` — which is a **scroll**, not an erase.
+    ///
+    /// It is `BuffScroll(NumOfLines, NumOfLines-1)`: the whole page moves into
+    /// the history and the page comes back blank, so a `clear` at the shell
+    /// leaves what was on the screen where the user can scroll back to it.
+    /// That is the behaviour people know Tera Term for, and this used to fill
+    /// the rows in place instead — which the differential dump cannot see,
+    /// because a blank page is a blank page whichever way it got there.
+    ///
+    /// The scroll region has no say in it. `BuffScroll` is the raw one and
+    /// `BuffClearScreen` hands it the last row of the page, so a host with
+    /// DECSTBM set still scrolls out everything.
     pub fn clear_screen(&mut self) {
-        let pen = self.pen;
-        for line in &mut self.lines {
-            *line = vec![Cell::erased(pen); self.cols];
+        let (pen, cols, rows) = (self.pen, self.cols, self.rows);
+        for line in std::mem::take(&mut self.lines) {
+            self.push_scrollback(line);
         }
+        self.lines = (0..rows).map(|_| vec![Cell::erased(pen); cols]).collect();
     }
 
     pub fn cols(&self) -> usize {
@@ -1359,12 +1371,10 @@ impl Grid {
                 }
             }
             // Mode 3 is not an erase at all — see `clear_buffer`, which the
-            // parser routes to because it is gated on a setting.
-            2 => {
-                for row in 0..self.rows {
-                    self.lines[row] = vec![Cell::erased(pen); self.cols];
-                }
-            }
+            // parser routes to because it is gated on a setting. Mode 2 is not
+            // one either: `CSScreenErase` calls `BuffClearScreen`, which
+            // scrolls the page into the history rather than blanking it.
+            2 => self.clear_screen(),
             _ => {}
         }
     }
