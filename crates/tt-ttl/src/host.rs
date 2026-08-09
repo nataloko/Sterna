@@ -104,17 +104,78 @@ pub trait ScriptHost {
         0
     }
 
-    /// A Unix timestamp as `%Y-%m-%d %H:%M:%S` — `filestat`'s third output,
-    /// and what `getdate` and `gettime` will want.
+    /// `time(NULL)` — what `getdate` and `gettime` format.
+    ///
+    /// Separate from [`strftime`](ScriptHost::strftime) so that a host wanting
+    /// a repeatable run only has to make the clock repeatable, which is the
+    /// same arrangement [`random_u32`](ScriptHost::random_u32) has.
+    fn now_unix(&mut self) -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64)
+    }
+
+    /// A Unix timestamp through `strftime` — `getdate`, `gettime` and
+    /// `filestat`'s third output. `None` is a result that did not fit, which
+    /// is `result` 1.
     ///
     /// It is here because a wall clock is not in the standard library: there
     /// are no time zones and no `strftime`, and this crate has no
-    /// dependencies. Upstream's `localtime` is the *user's* zone, which the
-    /// frontend knows and the interpreter does not, so the default below
-    /// answers in **UTC** — right shape, and honest about not knowing where it
-    /// is. A host with a date library should override it.
-    fn format_time(&mut self, unix_secs: i64) -> String {
-        format_utc(unix_secs)
+    /// dependencies. The conversions themselves are portable and are
+    /// implemented in [`crate::strftime`]; what is not is the **zone**.
+    /// Upstream's `localtime` is the *user's*, which the frontend knows and
+    /// the interpreter does not, so with `tz` unset the default below answers
+    /// in **UTC** — right shape, and honest about not knowing where it is.
+    /// With `tz` set it honours a fixed-offset POSIX `TZ` and nothing more.
+    /// A host with a date library should override this.
+    ///
+    /// `tz` is `getdate`'s third argument, which upstream applies by putting
+    /// it in the environment around the call. Passing it instead of setting
+    /// `TZ` here is deliberate: upstream leaks it on one path, and that leak
+    /// is a defect rather than something to reproduce — see
+    /// [`Interp::cmd_get_time`](crate::Interp).
+    fn strftime(&mut self, unix_secs: i64, format: &[u8], tz: Option<&[u8]>) -> Option<Vec<u8>> {
+        let zone = tz.map_or_else(crate::strftime::Zone::utc, crate::strftime::parse_tz);
+        let out = crate::strftime::format(unix_secs, format, &zone);
+        // `strftime` answers 0 for a result that did not fit *and* for one
+        // that was legitimately empty, and the caller cannot tell them apart.
+        (!out.is_empty() && out.len() < crate::lexer::MAX_STR_LEN).then_some(out)
+    }
+
+    /// `uptime` — milliseconds since the machine booted, or `None` if it
+    /// cannot be asked, which stores 0.
+    ///
+    /// Upstream is `GetTickCount`, whose `DWORD` is assigned to an `int`, so a
+    /// machine up more than 24.9 days reports a negative number and one up
+    /// more than 49.7 wraps to zero. Both are reproduced by the cast in
+    /// [`Interp::cmd_uptime`](crate::Interp), and the documentation calls the
+    /// second one out.
+    fn uptime_ms(&mut self) -> Option<u64> {
+        // `/proc/uptime` rather than a host call: it needs no dependency and
+        // no privilege, and a macro asking for uptime on a machine without it
+        // gets the same 0 a failed `GetTickCount` would give.
+        let text = std::fs::read_to_string("/proc/uptime").ok()?;
+        let secs: f64 = text.split_whitespace().next()?.parse().ok()?;
+        Some((secs * 1000.0) as u64)
+    }
+
+    /// `setdate` / `settime` — move the **system** clock.
+    ///
+    /// The default does nothing, and that is faithful rather than a stub:
+    /// `SetLocalTime` needs `SE_SYSTEMTIME_NAME`, so an unelevated
+    /// `ttpmacro.exe` — the ordinary case — has the call fail, and upstream
+    /// discards the `BOOL` and reports nothing either way. A frontend that
+    /// wants a macro to be able to set the clock has somewhere to put it.
+    ///
+    /// The fields not named are left as they are, which is what upstream's
+    /// `GetLocalTime`, overwrite three fields, `SetLocalTime` amounts to.
+    fn set_system_date(&mut self, year: i32, month: i32, day: i32) {
+        let _ = (year, month, day);
+    }
+
+    /// `settime`. See [`set_system_date`](ScriptHost::set_system_date).
+    fn set_system_time(&mut self, hour: i32, minute: i32, second: i32) {
+        let _ = (hour, minute, second);
     }
 
     /// Whether the run has been cancelled from outside.
@@ -971,32 +1032,15 @@ impl DialogAnchor {
     }
 }
 
-/// A Unix timestamp as `%Y-%m-%d %H:%M:%S`, in UTC.
-///
-/// Hinnant's `civil_from_days`: shift the epoch to March 1st of year 0 so that
-/// the leap day lands at the end of the era, and the month arithmetic becomes
-/// exact integer division. Correct for any date the proleptic Gregorian
-/// calendar covers, which is more than a filesystem will produce.
+/// A Unix timestamp as `%Y-%m-%d %H:%M:%S`, in UTC. The calendar behind it is
+/// in [`crate::strftime`].
 pub fn format_utc(unix_secs: i64) -> String {
-    let days = unix_secs.div_euclid(86_400);
-    let secs = unix_secs.rem_euclid(86_400);
-
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
-
-    format!(
-        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}",
-        secs / 3600,
-        (secs / 60) % 60,
-        secs % 60
-    )
+    let out = crate::strftime::format(
+        unix_secs,
+        b"%Y-%m-%d %H:%M:%S",
+        &crate::strftime::Zone::utc(),
+    );
+    String::from_utf8(out).unwrap_or_default()
 }
 
 /// `setflowctrl`'s four values (`ttdde.c:1002`).
@@ -1217,6 +1261,14 @@ pub struct RecordingHost {
     /// What `getver` should answer. Zero means "use the port's own default",
     /// so a test that does not care need not know the number.
     pub version: (i32, i32),
+    /// The instant `getdate`, `gettime` and `filestat` should believe in, so a
+    /// test asserting a formatted date is not a test of what day it is.
+    /// `None` leaves the default, which is the real clock.
+    pub now: Option<i64>,
+    /// What `uptime` should find.
+    pub uptime_ms: Option<u64>,
+    /// Every `setdate` / `settime`, rendered, in order.
+    pub clock_sets: Vec<String>,
 }
 
 impl RecordingHost {
@@ -1583,6 +1635,28 @@ impl ScriptHost for RecordingHost {
         } else {
             self.version
         }
+    }
+
+    fn uptime_ms(&mut self) -> Option<u64> {
+        self.uptime_ms
+    }
+
+    fn now_unix(&mut self) -> i64 {
+        self.now.unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs() as i64)
+        })
+    }
+
+    fn set_system_date(&mut self, year: i32, month: i32, day: i32) {
+        self.clock_sets
+            .push(format!("setdate {year}-{month}-{day}"));
+    }
+
+    fn set_system_time(&mut self, hour: i32, minute: i32, second: i32) {
+        self.clock_sets
+            .push(format!("settime {hour}:{minute}:{second}"));
     }
 }
 

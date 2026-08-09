@@ -15,6 +15,7 @@
 
 pub mod buffer;
 pub mod cksumcmds;
+pub mod clockcmds;
 pub mod conncmds;
 pub mod dlgcmds;
 pub mod envcmds;
@@ -30,6 +31,7 @@ pub mod pathcmds;
 pub mod rsv;
 pub mod sesscmds;
 pub mod strcmds;
+pub mod strftime;
 pub mod termcmds;
 pub mod vars;
 pub mod wait;

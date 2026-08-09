@@ -264,8 +264,13 @@ impl Interp {
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
-            let s = host.format_time(secs);
-            self.vars.set_str(var, s.as_bytes());
+            // Upstream's is `strftime(..., "%Y-%m-%d %H:%M:%S", localtime(..))`
+            // (`ttl.cpp:TTLFileStat`), so it goes through the same host method
+            // `getdate` does and a frontend fixes both zones at once.
+            let s = host
+                .strftime(secs, b"%Y-%m-%d %H:%M:%S", None)
+                .unwrap_or_default();
+            self.vars.set_str(var, &s);
         }
         if self.lx.parameter_given() {
             let var = expr::get_str_var(&mut self.lx, &mut self.vars)?;
