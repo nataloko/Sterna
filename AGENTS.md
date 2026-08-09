@@ -854,6 +854,52 @@ And for the clipboard, where the surprise is what happens to a line break:
   0; above the ceiling, `int_min(0)` would leave `60000` alone and this gives
   5000.
 
+And for the bell, where the surprise is that a beep is a state machine:
+
+- **The bell that trips the over-used limit still sounds, and the suppression
+  measures quiet rather than elapsed time.** `RingBell` (`vtterm.c:5791`) sets
+  the suppression clock in the arm that decides the *next* bell is too many and
+  then falls through to the noise, so `BeepOverUsedCount=5` is heard **six**
+  times; and the arm that finds itself already suppressed assigns `now` to the
+  clock it just tested (`:5796`), so a host beeping steadily is silenced until
+  it stops and for `BeepSuppressTime` afterwards rather than for that long in
+  total. `teraterm-term.html` says five and describes a fixed delay, and it is
+  wrong about its own code both times. This is the fourth place the code and
+  the manual disagree and the first where the port follows the **code** — the
+  other three had a concrete harm on the other side and this has none.
+- **`BEL` is gated by the setting and `ESC g` is not.** `vtterm.c:1077` tests
+  `ts.Beep != IdBeepOff` before calling `RingBell` and `:1561` calls it
+  outright, so with the bell switched off a stream of `ESC g` still spends the
+  terminal's allowance — invisibly, since nothing is heard either way.
+- **The bell governor needs a clock, so it is not in the engine.** `Vt` is a
+  function of its bytes, which is the whole basis of the differential suite and
+  the fuzzers; `Vt::take_bells` therefore hands `tt-session` a **count** rather
+  than an event, and one step of the state machine per BEL is the point of it.
+  Collapsing a burst into one bell in the engine leaves the terminal audible
+  through the next one.
+- **`BeepOnConnect` never fires on a serial port**, whatever its name suggests:
+  both places it is read test `PortType==IdTCPIP` first (`vtwin.cpp:3018`,
+  `:3658`). It also bypasses `RingBell`, so it is always audible, never the
+  visual bell, and neither thinned by the governor nor counted against it.
+- **The visual bell is DECSCNM's own flag, toggled twice.** `VisualBell`
+  (`vtterm.c:5784`) XORs `CF_REVERSEVIDEO` either side of a `Sleep`, so a flash
+  on a screen the host has already reversed shows it the *normal* way round,
+  and painting it as "reverse the screen" instead is wrong in exactly that
+  case. Upstream's `Sleep` is on the parsing thread, so its flash also stops
+  the terminal; ours is a timer and does not.
+- **`Answerback` and `DelimList` are stored as hex, and `Hex2Str` is
+  default-biased like everything else here.** `ttlib.c:406` reads `$` as the
+  lead of two hex digits; `ConvHexChar` answers **0** for anything that is not
+  one, and a `$` with fewer than two characters behind it borrows `'0'` for
+  each one it is missing — so `$ZZ` is a NUL, a trailing `$` is a NUL, and `$A`
+  is `0xA0`. Reading the value literally puts three characters on the wire
+  where one byte belongs, and a word-delimiter list that begins `$20` then has
+  no space in it.
+- **`BPAuto=on` silently discards `Answerback=`.** `ttset.c:1132` overwrites
+  `ts.Answerback` with B Plus's five-byte activation string, four hundred lines
+  after reading the key. It is the only setting in the file that another
+  setting takes over.
+
 And for the title, which is two strings in three places:
 
 - **OSC 1 sets the window title.** `vtterm.c:5109` is `case 0: case 1: case 2:`
@@ -1405,6 +1451,18 @@ changes flow control. **The third place the port follows the manual instead**,
 and for the same reason as the other two: the harm is dropped bytes on a real
 cable, and a `setdtr` whose "flow control is none" guard opens while the driver
 still has `CRTSCTS`. `Session::set_flow_control` says so where it diverges.
+
+**And a twenty-ninth, in `vtterm.c` and reachable from the wire: `RingBell`
+never reads the argument it is given.** `RingBell(int type)` (`:5791`) switches
+on `ts.Beep` instead, so the parameter is dead — and the only caller that
+passes anything else is `ESC g`, GNU screen's **visual** bell, which asks for
+`IdBeepVisual` at `:1561` and gets an audible beep under the default or nothing
+at all when the bell is off. The one sequence whose entire purpose is to flash
+the screen is the one that cannot. Reproduced, because it is what a user of
+Tera Term sees. Its documentation has a defect of its own that is not the same
+one: `teraterm-term.html` says five bells are permitted where six sound, and
+describes the suppression as a fixed delay when it is a *quiet* period that
+every further bell extends.
 
 **And one in `vte`**, which is a dependency rather than the specification, so it
 is not in that file: `vte` 0.15.0's `advance_partial_utf8` (`lib.rs:687`) prints

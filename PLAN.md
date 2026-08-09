@@ -3216,6 +3216,109 @@ nothing rather than one that offers a choice.
 
 141 settings over 128 keys, 137 to go.
 
+#### The bell, which is four settings deep before it makes a sound
+
+`crates/tt-config/`, `tt-vt`, `tt-session`, the C ABI and `shell/`,
+2026-08-09. Eight keys — seven for the bell and one for the other control that
+answers back — and the first family in a while where the *engine* had nothing
+at all: `0x07` was an empty match arm with a comment saying the oracle silences
+it, and `0x05` was not an arm.
+
+**A bell is not a beep, it is a governor with a beep behind it.** `RingBell`
+(`vtterm.c:5791`) is three clocks and three settings, and it exists for the
+case `teraterm-term.html` names outright: a binary file shown by mistake is
+thousands of BELs, and a terminal that honours every one of them cannot be used
+until it stops. Two things about it are surprising and both are the code rather
+than the prose:
+
+- **The bell that trips the limit still sounds.** The inner test decides the
+  *next* one's fate and the switch that makes the noise sits outside it
+  (`vtterm.c:5800`), so `BeepOverUsedCount=5` is heard six times. The manual's
+  worked example says five.
+- **Suppression measures quiet, not elapsed time.** The arm that finds itself
+  suppressed assigns `now` to the clock it just tested (`:5796`), so every bell
+  arriving during the silence pushes the end of it further out — a host beeping
+  steadily is silenced until it stops and for `BeepSuppressTime` afterwards.
+  The manual reads as a fixed delay. The port follows the code here rather than
+  the manual, unlike the three places it does the opposite: a governor that let
+  a runaway through every five seconds would not do the job it exists for, and
+  there is no harm on the other side of the choice.
+
+The governor is in `tt-session` and not in the engine, which is the same line
+`SessionLog`'s timestamps are on: it needs a clock, and `Vt` having none is
+what lets the differential suite and the fuzzers treat it as a function of its
+bytes. So `Vt::take_bells` hands over a **count** — one step of the state
+machine per BEL, because thinning the burst in the engine would leave the
+terminal audible through the next one — and the session runs the governor
+against a single `Instant` and emits at most one `Event::Bell`. Two beeps in
+the same millisecond are one beep; two *steps* are not one step.
+
+`BellRequests` carries a `reset` flag beside the count for the one part of
+`ResetTerminal` that lives outside the engine (`vtterm.c:348` puts both clocks
+back). It is also the one place the bell diverges, stated where it is declared:
+a chunk holding a RIS *and* bells collapses to "reset, then this many", so
+bells that arrived before the RIS are counted against the state it cleared.
+
+**`Answerback` is stored as hex and this port had no decoder.** `Hex2Str`
+(`ttlib.c:406`) reads `$` as the lead of a two-digit escape, which is how a
+setting whose value is arbitrary bytes survives a file format with no way to
+write a control character. Three of its behaviours are worth knowing and none
+is an error: a digit that is not hexadecimal is **0**, so `$ZZ` is a NUL; a `$`
+with fewer than two characters behind it borrows `'0'` for each one it is
+missing, so a trailing `$` is a NUL and `$A` is `0xA0`; and `$` is the only
+escape, which is why upstream's own `DelimList` default opens `$20!"#$24%…`.
+That second reader is why `hex_decode` is in `tt-config` rather than beside the
+answerback — **`keyboard.word_delimiters` is the same escape and the shell is
+still using a hardcoded constant for it**, which is the next thing in this
+area.
+
+The value is held in the file's own spelling and decoded at the point of use.
+Upstream re-encodes on write (`Str2Hex`, `ttset.c:2156`), so a file saying
+`Answerback=A` comes back `A` and one saying `$41` also comes back `A`; this
+one gives the user their own line back, which is a divergence in the file's
+text and not in its meaning.
+
+It is also the one setting in the file another setting **overwrites**:
+`ttset.c:1132` replaces `ts.Answerback` outright with B Plus's five-byte
+activation string when `BPAuto=on`, a hundred lines after reading the key. A
+file that sets both loses this one without a word.
+
+**And a twenty-ninth defect, in `vtterm.c` and reachable from the wire.**
+`RingBell(int type)` never reads `type`; it switches on `ts.Beep`. The only
+caller that passes anything other than the setting is `ESC g` — GNU screen's
+visual bell — which asks for `IdBeepVisual` at `vtterm.c:1561` and gets an
+audible beep under the default, or nothing at all when the bell is off. So the
+one sequence whose entire purpose is to flash the screen is the one that
+cannot. Reproduced, because it is what a user of Tera Term sees, and written up
+with the rest; it wants a `-Wunused-parameter` more than it wants a patch.
+
+`ESC g` has a second consequence that is upstream and not a defect: it reaches
+the governor *without* the `ts.Beep != IdBeepOff` test that guards the BEL path
+(`vtterm.c:1077`), so a stream of them silently spends a terminal's allowance
+while the bell is switched off.
+
+`BeepOnConnect` is named after connecting and tests the port type first
+(`vtwin.cpp:3018`, `:3658`), so **the serial console this project exists for is
+the one link it never fires on** — and it bypasses `RingBell` entirely, so it
+is always audible, never a flash, and neither thinned by the governor nor
+counted against it. Written here as "not a serial port" rather than as
+`PortType == IdTCPIP`, because upstream's three port types leave no case
+between the two readings and a local pty is a link it has no word for; CygTerm,
+which is the same thing there, arrives over a TCP socket and beeps.
+
+The visual bell is upstream's mechanism and not a colour of its own:
+`VisualBell` toggles `CF_REVERSEVIDEO` — DECSCNM's own flag — either side of a
+`Sleep` (`vtterm.c:5784`), so `TerminalView` paints it as an XOR and a flash on
+an already-reversed screen shows it the normal way round. The difference is
+that upstream sleeps on the thread that is parsing and this is a timer, so
+output keeps arriving underneath the flash.
+
+One of the eight is read and written and acts on nothing, saying so where it is
+declared: `NotifySound` belongs to the tray notification (`vtwin.cpp:725`),
+which does not exist here.
+
+149 settings over 136 keys, 129 to go.
+
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
 Windows build, ConPTY, Win32 serial edge cases, NSIS installer. All 14 `.lng`
