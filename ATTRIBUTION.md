@@ -30,6 +30,7 @@ points to
 | One local bug fix, applied to a build copy | `oracle/patches/` | Fix only; upstream source unmodified. |
 | Behavioural specification for the Rust port | `crates/` | No code copied. |
 | **Vendored and shipped** — the file-transfer protocols | `vendor/ttpfile/` | **Redistributed**, verbatim, notices retained. See below. |
+| **Transcribed and shipped** — one data table | `crates/tt-config/src/services.rs` | **Redistributed** as data. See below. |
 
 ### `vendor/ttpfile/` — what is shipped
 
@@ -43,6 +44,20 @@ copies are still byte-identical to that revision.
 This is the only Tera Term code the distribution contains. Because our own
 licence is the same 3-clause BSD, the shipped tree needs one licence text
 rather than two — which is why `LICENSE` says what it says.
+
+### `crates/tt-config/src/services.rs` — one transcribed table
+
+The 317-entry TCP service-name table from `teraterm/common/servicenames.c`,
+turned into a Rust array. That file is **Robert O'Callahan's**, 1998–2001, under
+the same 3-clause BSD notice the rest carries, with the TeraTerm Project as
+later copyright holder; the notice is inline in the original and cited in the
+module.
+
+Not `/etc/services` and not `getservbyname`, deliberately: what `/P=telnet` or
+`myhost:ssh` means has to be the same number on Linux and on Windows and the
+same number it was in 2003, so the specification is upstream's table rather
+than the host's. The data is facts about port numbers, but the selection is
+upstream's, so it is credited like code.
 
 ## Vendoring clearance
 

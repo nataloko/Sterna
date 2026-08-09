@@ -20,6 +20,7 @@ pub mod cmdline;
 pub mod gen;
 pub mod ini;
 pub mod schema;
+pub mod services;
 
 mod generated;
 
