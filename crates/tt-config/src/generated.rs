@@ -748,7 +748,9 @@ pub struct Settings {
     /// `ttset.c:768`. **Off**, which is why `SGR 7` swaps the normal pair rather
     /// than using the colours above.
     pub color_reverse_enabled: bool,
-    /// `ttset.c:790`. Whether `SGR 4` gets its own colour pair at all.
+    /// `ttset.c:784`. Whether `SGR 4` gets its own colour pair at all, and **on** —
+    /// unlike its two neighbours above, whose keys carry the `Enable` prefix this one
+    /// does not. `vtdisp.c:2412` is the only reader.
     pub color_underline_enabled: bool,
     /// `ttset.c:741`. **On**, and this is one of the four flag words `CLAUDE.md`
     /// warns about: `ColorFlag` is zeroed at the top of `ttset.c` and built up from
@@ -990,7 +992,7 @@ impl Default for Settings {
             color_bold_enabled: true,
             color_blink_enabled: true,
             color_reverse_enabled: false,
-            color_underline_enabled: false,
+            color_underline_enabled: true,
             color_xterm_256: true,
             color_aixterm_16: false,
             color_pc_bold_16: false,
@@ -1137,8 +1139,8 @@ impl Settings {
                 false,
             ),
             color_underline_enabled: crate::schema::on_off(
-                ini.get("Tera Term", "EnableUnderlineAttrColor"),
-                false,
+                ini.get("Tera Term", "UnderlineAttrColor"),
+                true,
             ),
             color_xterm_256: crate::schema::on_off(ini.get("Tera Term", "Xterm256Color"), true),
             color_aixterm_16: crate::schema::on_off(ini.get("Tera Term", "Aixterm16Color"), false),
@@ -1152,7 +1154,7 @@ impl Settings {
                 false,
             ),
             window_change_allowed: crate::schema::on_off(
-                ini.get("Tera Term", "WindowChangeSequence"),
+                ini.get("Tera Term", "WindowCtrlSequence"),
                 true,
             ),
             window_report_allowed: crate::schema::on_off(
@@ -1171,9 +1173,12 @@ impl Settings {
                 ini.get("Tera Term", "Send8BitCtrl"),
                 false,
             ),
-            window_alt_screen: crate::schema::on_off(ini.get("Tera Term", "AltScreenBuffer"), true),
+            window_alt_screen: crate::schema::on_off(
+                ini.get("Tera Term", "AlternateScreenBuffer"),
+                true,
+            ),
             window_remote_clears_buffer: crate::schema::on_off(
-                ini.get("Tera Term", "RemoteClearsBuffer"),
+                ini.get("Tera Term", "ClearScrollBufferFromRemote"),
                 true,
             ),
             mouse_tracking: crate::schema::on_off(ini.get("Tera Term", "MouseEventTracking"), true),
@@ -1433,7 +1438,7 @@ impl Settings {
         );
         ini.set(
             "Tera Term",
-            "EnableUnderlineAttrColor",
+            "UnderlineAttrColor",
             &if self.color_underline_enabled {
                 "on"
             } else {
@@ -1468,7 +1473,7 @@ impl Settings {
         );
         ini.set(
             "Tera Term",
-            "WindowChangeSequence",
+            "WindowCtrlSequence",
             &if self.window_change_allowed {
                 "on"
             } else {
@@ -1518,12 +1523,12 @@ impl Settings {
         );
         ini.set(
             "Tera Term",
-            "AltScreenBuffer",
+            "AlternateScreenBuffer",
             &if self.window_alt_screen { "on" } else { "off" }.to_string(),
         );
         ini.set(
             "Tera Term",
-            "RemoteClearsBuffer",
+            "ClearScrollBufferFromRemote",
             &if self.window_remote_clears_buffer {
                 "on"
             } else {
@@ -2001,7 +2006,7 @@ impl Settings {
                 self.color_reverse_enabled = crate::schema::on_off(Some(value), false)
             }
             "color.underline_enabled" => {
-                self.color_underline_enabled = crate::schema::on_off(Some(value), false)
+                self.color_underline_enabled = crate::schema::on_off(Some(value), true)
             }
             "color.xterm_256" => self.color_xterm_256 = crate::schema::on_off(Some(value), true),
             "color.aixterm_16" => self.color_aixterm_16 = crate::schema::on_off(Some(value), false),
@@ -2366,11 +2371,11 @@ pub const FIELDS: &[Field] = &[
         name: "color.underline_enabled",
         page: "color",
         section: "Tera Term",
-        key: "EnableUnderlineAttrColor",
+        key: "UnderlineAttrColor",
         kind: Kind::Bool,
-        default: "off",
+        default: "on",
         label: None,
-        doc: "`ttset.c:790`. Whether `SGR 4` gets its own colour pair at all.",
+        doc: "`ttset.c:784`. Whether `SGR 4` gets its own colour pair at all, and **on** — unlike its two neighbours above, whose keys carry the `Enable` prefix this one does not. `vtdisp.c:2412` is the only reader.",
     },
     Field {
         name: "color.xterm_256",
@@ -2426,7 +2431,7 @@ pub const FIELDS: &[Field] = &[
         name: "window.change_allowed",
         page: "window",
         section: "Tera Term",
-        key: "WindowChangeSequence",
+        key: "WindowCtrlSequence",
         kind: Kind::Bool,
         default: "on",
         label: None,
@@ -2476,7 +2481,7 @@ pub const FIELDS: &[Field] = &[
         name: "window.alt_screen",
         page: "window",
         section: "Tera Term",
-        key: "AltScreenBuffer",
+        key: "AlternateScreenBuffer",
         kind: Kind::Bool,
         default: "on",
         label: None,
@@ -2486,7 +2491,7 @@ pub const FIELDS: &[Field] = &[
         name: "window.remote_clears_buffer",
         page: "window",
         section: "Tera Term",
-        key: "RemoteClearsBuffer",
+        key: "ClearScrollBufferFromRemote",
         kind: Kind::Bool,
         default: "on",
         label: None,

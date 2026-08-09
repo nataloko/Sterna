@@ -155,8 +155,10 @@ color.blink_enabled | bool | Tera Term | EnableBlinkAttrColor | on | -
 # than using the colours above.
 color.reverse_enabled | bool | Tera Term | EnableReverseAttrColor | off | -
 
-# `ttset.c:790`. Whether `SGR 4` gets its own colour pair at all.
-color.underline_enabled | bool | Tera Term | EnableUnderlineAttrColor | off | -
+# `ttset.c:784`. Whether `SGR 4` gets its own colour pair at all, and **on** —
+# unlike its two neighbours above, whose keys carry the `Enable` prefix this one
+# does not. `vtdisp.c:2412` is the only reader.
+color.underline_enabled | bool | Tera Term | UnderlineAttrColor | on | -
 
 # `ttset.c:741`. **On**, and this is one of the four flag words `CLAUDE.md`
 # warns about: `ColorFlag` is zeroed at the top of `ttset.c` and built up from
@@ -183,7 +185,7 @@ cursor.nonblinking | bool | Tera Term | NonblinkingCursor | off | DLG_TAB_VISUAL
 
 # `ttset.c:1653`, part of `WindowFlag` — the same trap as `ColorFlag`. Gates
 # every XTWINOPS operation that *changes* something, the resize included.
-window.change_allowed | bool | Tera Term | WindowChangeSequence | on | -
+window.change_allowed | bool | Tera Term | WindowCtrlSequence | on | -
 
 # `ttset.c:1661`. Gates the ones that answer back.
 window.report_allowed | bool | Tera Term | WindowReportSequence | on | -
@@ -201,10 +203,10 @@ window.send_8bit_ctrl | bool | Tera Term | Send8BitCtrl | off | -
 
 # `ttset.c:1681`, part of `TermFlag`. The alternate screen, which `vim` and
 # `less` need.
-window.alt_screen | bool | Tera Term | AltScreenBuffer | on | -
+window.alt_screen | bool | Tera Term | AlternateScreenBuffer | on | -
 
 # `ttset.c:1950`. Whether `ED 3` may discard the scrollback.
-window.remote_clears_buffer | bool | Tera Term | RemoteClearsBuffer | on | -
+window.remote_clears_buffer | bool | Tera Term | ClearScrollBufferFromRemote | on | -
 
 # --- mouse -------------------------------------------------------------------
 
