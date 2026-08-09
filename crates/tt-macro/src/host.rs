@@ -18,6 +18,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use tt_session::open::{Startup, Target};
 use tt_session::{LogMode, LogOptions, MacroLink, Session, Timestamp, TransferReply};
 use tt_ttl::host::{
     BeepSound, ClearScreen, DialogEnd, DialogPos, ErrorReport, ListBoxOpts, LogClock, LogInfo,
@@ -101,6 +102,15 @@ impl SessionHost {
     {
         self.tx.call(move |_, ui| f(ui)).ok_or(TtlError::CantCall)
     }
+
+    /// And for the one command that needs both at once.
+    fn ask_both<T, F>(&self, f: F) -> Result<T, TtlError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut Session, &mut dyn crate::ui::MacroUi) -> T + Send + 'static,
+    {
+        self.tx.call(f).ok_or(TtlError::CantCall)
+    }
 }
 
 impl ScriptHost for SessionHost {
@@ -157,6 +167,29 @@ impl ScriptHost for SessionHost {
     fn unlink(&mut self) {
         self.linked = false;
         let _ = self.tx.call(|s, _| s.unlink_macro());
+    }
+
+    fn connect(&mut self, cmdline: &[u8], cygwin: bool) -> Result<(), TtlError> {
+        // "link to Tera Term", which upstream reaches by launching a second
+        // `ttermpro.exe` and opening a DDE conversation with it. In-process
+        // there is one terminal and the macro is already inside it, so linking
+        // is taking the ring back — and the only way to be here without a link
+        // is to have given it up with `unlink` or `closett`.
+        if !self.linked {
+            self.link = self.ask(|s| s.link_macro())?;
+            self.linked = true;
+        }
+
+        let arg = cmdline.to_vec();
+        // One job for the whole thing: the parse needs the session's settings
+        // and its size, and the open needs the session. Splitting it would let
+        // a resize land between the two.
+        self.ask_both(move |s, ui| open(s, ui, &arg, cygwin))?;
+        // Nothing is reported from here. `connect`'s `result` is read back off
+        // `linked` and `com_ready` afterwards — upstream's own three-value
+        // answer — so a connection that did not come up is a 1 rather than an
+        // error, and this returns `Err` only when the frontend has gone.
+        Ok(())
     }
 
     fn send(&mut self, bytes: &[u8], mode: SendMode) -> Result<(), TtlError> {
@@ -547,10 +580,6 @@ impl ScriptHost for SessionHost {
     // Everything not written above keeps the trait's own refusing default, and
     // each is refused for a reason rather than for want of typing:
     //
-    // `connect`/`cygconnect` — the argument is a Tera Term command line, and
-    //   parsing it is `ttermpro`'s own front door rather than the macro
-    //   language's. It arrives with the CLI entry point, which needs the same
-    //   parser.
     // `setdtr`, `setrts`, `setbaud`, `setflowctrl`, `getmodemstatus`,
     //   `setserialdelay*` — the control lines are on `SerialConn` and not on
     //   `Transport`, so a `Session` cannot reach them through the box it holds.
@@ -566,8 +595,70 @@ impl ScriptHost for SessionHost {
     //   one. They belong to whatever owns the tab bar.
     // `send_key_code` — needs `KEYBOARD.CNF`, which is Stage 2's other half.
     // `load_key_map`, `restore_setup` — the same file, and `TERATERM.INI`.
+    //   `restore_setup` is also the half of `connect` that is missing: a `/F=`
+    //   naming a *different* settings file makes upstream re-read it and
+    //   re-apply it (`ttdde.c:622`), and nothing here knows where the settings
+    //   came from. The option is parsed and applied; the file is not re-read.
     // `set_debug_mode` — `ts.DebugMode` has no equivalent in `tt-vt` yet.
     // `local_ip_addresses` — enumerating interfaces needs more than `std`.
+    //
+    // And one thing `connect` does *not* do that upstream's does: a `/L=` on
+    // the line starts a log when the connection comes up (`vtwin.cpp:3631`,
+    // inside `OnCommOpen`). It is the frontend's there and the frontend's here
+    // — `shell/src/MainWindow.cpp` does it for the startup line — so putting a
+    // second implementation behind `connect` would be two of them.
+}
+
+/// `connect` and `cygconnect`, on the frontend's thread — which is where
+/// upstream's is too: `ttdde.c:608` parses the macro's string into `ts` and
+/// posts `WM_USER_COMMSTART` to the *window*, and the macro sleeps until
+/// `SetDdeComReady` answers.
+///
+/// Nothing is reported. Every arm that opens nothing leaves the session
+/// disconnected, and `connect` reads that back as its `result` — which is the
+/// documented three-value answer and covers a refused port, a name that does
+/// not resolve, a frontend with no SSH dialogs and a line that named nothing at
+/// all, without the macro having to tell them apart.
+fn open(s: &mut Session, ui: &mut dyn crate::ui::MacroUi, arg: &[u8], cygwin: bool) {
+    let (cols, rows) = (s.grid().cols() as u16, s.grid().rows() as u16);
+    let startup = if cygwin {
+        // `cyglaunch.exe`'s job, which here is a shell on a pty. The argument
+        // is CygTerm's command line and not Tera Term's, and none of it is a
+        // setting: CygTerm is a separate program reading `cygterm.cfg`.
+        Startup::Open(Target::cygterm(arg, cols, rows))
+    } else {
+        let mut settings = s.settings().clone();
+        let (startup, _cmd) = Startup::of_connect(arg, &mut settings, cols, rows);
+        // Only when the line actually said something. Upstream writes `ts` and
+        // does **not** re-apply it to the running terminal — only a `/F=` that
+        // changed the settings file does that, through `IdCmdRestoreSetup` —
+        // so a `connect 'myhost'` must not quietly reset the modes the last
+        // host set, which is what `set_settings` would do.
+        if settings != *s.settings() {
+            let _ = s.set_settings(settings);
+        }
+        startup
+    };
+    let conn = match startup {
+        // The prompt case, and the only one that leaves this crate: see
+        // `MacroUi::connect_ssh`.
+        Startup::Open(t @ Target::Ssh { .. }) => ui.connect_ssh(&t).ok().flatten(),
+        Startup::Open(t) => t.open().ok(),
+        // `OnFileNewConnection` — upstream puts the New Connection dialog up
+        // and the macro waits for whoever is sitting there. There is no such
+        // dialog to reach from here: the shell's own is serial-only and the
+        // one this wants is the whole four-transport thing. So a `connect`
+        // that named nothing reports "not connected" rather than asking, which
+        // is `SetDdeComReady(0)` — the arm upstream takes when the dialog is
+        // switched off.
+        Startup::Dialog | Startup::Idle => None,
+        // A transport the line named and this port does not have. Silent for
+        // the same reason as the rest: `result` is the channel a macro has.
+        Startup::Unsupported(_) => None,
+    };
+    if let Some(conn) = conn {
+        s.connect(conn);
+    }
 }
 
 /// A transfer command, resolved into what the session needs to start it.

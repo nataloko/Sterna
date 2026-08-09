@@ -13,6 +13,8 @@
 //! the tests here run against — a macro with no window at all, which is a real
 //! configuration once `ttpmacro script.ttl` exists.
 
+use tt_conn::Transport;
+use tt_session::open::Target;
 use tt_ttl::host::{
     BeepSound, DialogEnd, DialogPos, ListBoxOpts, MacroWindow, ShowWindow, WindowGeometry,
 };
@@ -208,6 +210,29 @@ pub trait MacroUi {
     /// `setexitcode` — what the process exits with once the macro ends.
     fn set_exit_code(&mut self, code: i32) {
         let _ = code;
+    }
+
+    /// The one connection a macro's `connect` cannot open for itself.
+    ///
+    /// `target` is always [`Target::Ssh`], because [`Target::open`] opens the
+    /// other three and refuses that one: a host key or a password is a
+    /// **prompt**, and a prompt belongs to whoever owns a window. Upstream
+    /// agrees about where it goes — TTSSH puts its dialogs on the terminal's
+    /// thread while the macro that asked sleeps — and this call is on the
+    /// frontend's thread for exactly that reason, so an implementation may spin
+    /// a nested event loop the way the dialogs above do.
+    ///
+    /// `Ok(None)` is a connection that did not come up, which the macro reads
+    /// as `result` 1 — and it is the **default**, rather than the refusal every
+    /// other method here makes. A `connect` that answered "Unknown command"
+    /// would be the larger lie: the command exists, it works for the other
+    /// three transports, and "not connected" is an outcome the documentation
+    /// already promises. A frontend with SSH dialogs implements this; one
+    /// without it leaves `connect '… /ssh'` reporting 1, which a script can
+    /// test for.
+    fn connect_ssh(&mut self, target: &Target) -> Result<Option<Box<dyn Transport>>, TtlError> {
+        let _ = target;
+        Ok(None)
     }
 }
 
