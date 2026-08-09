@@ -18,6 +18,9 @@
 #include <QDir>
 #include <QStandardPaths>
 
+#include <cstdio>
+#include <cstring>
+
 #include "SerialDialog.h"
 #include "Session.h"
 #include "SettingsDialog.h"
@@ -33,9 +36,27 @@ namespace {
 /// both of which want a break of a few hundred milliseconds.
 constexpr int kBreakMs = 300;
 
+/// What the schema says a setting ships as.
+///
+/// Read out of the table rather than written down a second time here, which is
+/// the whole point of there being a table: a default that is duplicated in the
+/// frontend is a default that changes in one place.
+QString settingDefault(const char *name)
+{
+    for (size_t i = 0, n = tt_settings_field_count(); i < n; i++) {
+        TtSettingField f;
+        if (tt_settings_field(i, &f) && f.name && strcmp(f.name, name) == 0) {
+            return QString::fromUtf8(f.default_value);
+        }
+    }
+    return {};
+}
+
 } // namespace
 
-MainWindow::MainWindow()
+MainWindow::MainWindow(const QString &settingsPath)
+    : m_settingsPath(settingsPath.isEmpty() ? MainWindow::settingsPath()
+                                            : settingsPath)
 {
     m_session = new Session(80, 24, this);
     m_view = new TerminalView(m_session, this);
@@ -93,7 +114,7 @@ MainWindow::MainWindow()
     // not there is a first run: every setting takes its default and nothing is
     // written until `Save setup`.
     QString error;
-    if (!m_session->loadSettings(settingsPath(), &error)) {
+    if (!m_session->loadSettings(m_settingsPath, &error)) {
         // Not fatal and not a dialog. An unreadable settings file is a reason
         // to run with the defaults and say so once, not a reason to refuse to
         // open a terminal.
@@ -101,7 +122,6 @@ MainWindow::MainWindow()
     }
 
     updateStatus();
-    setWindowTitle(tr("Sterna"));
     m_view->setFocus();
 }
 
@@ -133,6 +153,37 @@ void MainWindow::onSettingsChanged()
         const QSize want = m_view->sizeForCells(cols, rows);
         resize(size() + (want - m_view->size()));
     }
+
+    // The title and the title *bar*, which are both `TERATERM.INI` keys and
+    // both reachable from the command line — `/W=` and `/H`. They are applied
+    // here rather than in the startup path so that a file which sets them and
+    // a line which sets them arrive at the same place.
+    //
+    // `Title=`'s default is upstream's product name, so taking it literally
+    // would put "Tera Term" in this program's title bar. The default is
+    // therefore read as "no opinion" and means ours.
+    QString base = m_session->setting(QStringLiteral("terminal.title"));
+    if (base.isEmpty() || base == settingDefault("terminal.title")) {
+        base = tr("Sterna");
+    }
+    // Only while the window still shows the last one: a host that has sent an
+    // OSC title owns the title bar, and changing the font in a dialog must not
+    // take it back.
+    if (windowTitle() == m_baseTitle) {
+        setWindowTitle(base);
+    }
+    m_baseTitle = base;
+
+    const bool hideTitle =
+        m_session->setting(QStringLiteral("window.hide_title")) == QLatin1String("on");
+    if (hideTitle != windowFlags().testFlag(Qt::FramelessWindowHint)) {
+        const bool wasVisible = isVisible();
+        setWindowFlag(Qt::FramelessWindowHint, hideTitle);
+        // Changing a window flag re-creates the native window, which hides it.
+        if (wasVisible) {
+            show();
+        }
+    }
     updateStatus();
 }
 
@@ -144,7 +195,9 @@ void MainWindow::showSettingsDialog()
 
 void MainWindow::saveSettings()
 {
-    const QString path = settingsPath();
+    // Back to the file it came from, which a `/F=` may have chosen. Writing to
+    // the default one instead would move somebody's settings without saying so.
+    const QString path = m_settingsPath;
     QDir().mkpath(QFileInfo(path).absolutePath());
     QString error;
     if (!m_session->saveSettings(path, &error)) {
@@ -221,6 +274,147 @@ void MainWindow::showConnectDialog()
     connectSerial(dialog.portPath(), dialog.params());
 }
 
+void MainWindow::startFrom(TtCmdLine *cmd)
+{
+    // Applied first, so everything downstream reads one place — which is
+    // upstream's order too: `_ParseParam` writes into `ts` and `CommOpen`
+    // reads `ts` back. This is also what puts `/W=` and `/H` into effect,
+    // since both are settings and `onSettingsChanged` acts on them.
+    QString error;
+    if (!m_session->applyCommandLine(cmd, &error)) {
+        onNotice(tr("Could not apply the command line: %1").arg(error));
+    }
+
+    TtCmdLineInfo info = {};
+    tt_cmdline_info(cmd, &info);
+
+    // Before showing, so the window does not jump. Upstream pairs the two:
+    // giving one coordinate puts the other at 0 rather than leaving it at
+    // `CW_USEDEFAULT`, because a real position in one axis and "wherever you
+    // like" in the other is not a position a window manager can honour.
+    if (info.has_x || info.has_y) {
+        move(info.has_x ? info.x : 0, info.has_y ? info.y : 0);
+    }
+
+    // `/V` is a session with no window at all, for one driven entirely by a
+    // macro. It is upstream's, and it is why nothing here assumes `show()`.
+    if (!info.hide_window) {
+        show();
+        if (info.minimize) {
+            showMinimized();
+        }
+    }
+
+    // *After* showing: the terminal's size is what goes out as `NAWS` and as
+    // the pty's `winsize`, and before the first layout it is still the size
+    // the settings asked for rather than the one the window got.
+    TtStartup startup;
+    switch (m_session->startup(cmd, &startup)) {
+    case TT_STARTUP_OPEN:
+        // Logging first, so the banner a console prints on connect is in the
+        // file. Upstream starts it at the same point, `vtwin.cpp:3631`.
+        if (info.log_file) {
+            TtLogOptions opts;
+            tt_log_options_default(&opts);
+            opts.timestamp = TT_LOG_TIMESTAMP_ELAPSED;
+            const QString path = QString::fromUtf8(info.log_file);
+            if (!m_session->startLog(path, opts, &error)) {
+                QMessageBox::critical(this, tr("Logging"),
+                                      tr("Could not write %1.\n\n%2")
+                                          .arg(path, error));
+            }
+        }
+        openTarget(startup);
+        break;
+    case TT_STARTUP_DIALOG:
+        showConnectDialog();
+        break;
+    case TT_STARTUP_IDLE:
+        // Nothing, deliberately: a terminal with no connection is what `/DS`
+        // asks for.
+        break;
+    default:
+        QMessageBox::warning(this, tr("Connect"),
+                             tr("Nothing was opened: %1")
+                                 .arg(QString::fromUtf8(
+                                     startup.reason ? startup.reason
+                                                    : tt_last_error())));
+        break;
+    }
+
+    // The two things a command line can ask for that this port has not built
+    // yet. Said out loud rather than ignored: a shortcut whose macro silently
+    // does not run is a shortcut whose user thinks the terminal is broken.
+    if (info.macro_kind != TT_MACRO_UNSET && info.macro_kind != TT_MACRO_CLEARED) {
+        const QString which = info.macro_file
+                                  ? QString::fromUtf8(info.macro_file)
+                                  : tr("(one to be chosen)");
+        note(tr("Macros"),
+             tr("This command line asks for a macro, %1, and macros cannot yet "
+                "be started from the window. The language itself is "
+                "implemented.")
+                 .arg(which));
+    }
+    if (info.unknown_count > 0) {
+        QStringList bad;
+        for (size_t i = 0; i < info.unknown_count; i++) {
+            bad << QString::fromUtf8(tt_cmdline_unknown(cmd, i));
+        }
+        // A message box, which is what upstream does with these and the only
+        // diagnostic in either parser.
+        note(tr("SSH"), tr("Unrecognised option(s): %1").arg(bad.join(", ")));
+    }
+}
+
+void MainWindow::openTarget(const TtStartup &startup)
+{
+    switch (startup.target) {
+    case TT_TARGET_SERIAL:
+        connectSerial(QString::fromUtf8(startup.path), startup.serial);
+        break;
+    case TT_TARGET_TELNET:
+        connectTelnet(QString::fromUtf8(startup.host), startup.port,
+                      &startup.telnet);
+        break;
+    case TT_TARGET_SSH:
+        // Not opened by the core: a host key or a password is a prompt, and a
+        // prompt belongs to whoever owns a window. This is the same state
+        // machine the SSH dialog drives.
+        startSsh(startup.ssh, QString::fromUtf8(startup.ssh.host));
+        break;
+    case TT_TARGET_SHELL: {
+        QStringList argv;
+        for (size_t i = 0; i < startup.pty.argc; i++) {
+            argv << QString::fromUtf8(startup.pty.argv[i]);
+        }
+        connectPty(argv);
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+/// Say something the user has to see, whether or not there is a window to say
+/// it in. `/V` means there is not, and a modal dialog nobody can find is worse
+/// than a line on stderr.
+///
+/// **`fprintf` and not `qWarning`, which would be lost.** Fedora builds Qt with
+/// journald support, so `qWarning` goes to the *systemd journal* rather than to
+/// stderr whenever stderr is not a terminal — which is precisely the case a
+/// windowless session is launched in: a script, a `.desktop` entry, a cron job.
+/// The message would be findable with `journalctl` and nowhere a user would
+/// look. `QCommandLineParser` writes its own errors the same way for the same
+/// reason.
+void MainWindow::note(const QString &title, const QString &text)
+{
+    if (isVisible()) {
+        QMessageBox::information(this, title, text);
+    } else {
+        fprintf(stderr, "%s: %s\n", qUtf8Printable(title), qUtf8Printable(text));
+    }
+}
+
 void MainWindow::connectSerial(const QString &path, const TtSerialParams &params)
 {
     QString error;
@@ -252,15 +446,7 @@ void MainWindow::showSshDialog()
 
     TtSshParams params;
     dialog.fill(&params);
-    QString error;
-    if (!m_session->startSsh(params, &error)) {
-        QMessageBox::critical(this, tr("SSH"),
-                              tr("Could not start the connection.\n\n%1").arg(error));
-        return;
-    }
-    m_lastSshHost = dialog.host();
-    statusBar()->showMessage(tr("Connecting to %1...").arg(m_lastSshHost));
-    updateStatus();
+    startSsh(params, dialog.host());
 }
 
 void MainWindow::connectSsh(const QString &host, const QString &user, int port)
@@ -275,6 +461,13 @@ void MainWindow::connectSsh(const QString &host, const QString &user, int port)
     params.user = user.isEmpty() ? nullptr : userUtf8.constData();
     params.port = static_cast<uint16_t>(port);
 
+    startSsh(params, host);
+    m_lastSshUser = user;
+    m_lastSshPort = port;
+}
+
+void MainWindow::startSsh(const TtSshParams &params, const QString &host)
+{
     QString error;
     if (!m_session->startSsh(params, &error)) {
         QMessageBox::critical(this, tr("SSH"),
@@ -282,8 +475,6 @@ void MainWindow::connectSsh(const QString &host, const QString &user, int port)
         return;
     }
     m_lastSshHost = host;
-    m_lastSshUser = user;
-    m_lastSshPort = port;
     statusBar()->showMessage(tr("Connecting to %1...").arg(host));
     updateStatus();
 }
@@ -327,11 +518,16 @@ void MainWindow::showTelnetDialog()
     m_lastTelnetMode = params.mode;
 }
 
-void MainWindow::connectTelnet(const QString &host, quint16 port)
+void MainWindow::connectTelnet(const QString &host, quint16 port,
+                               const TtTelnetParams *given)
 {
     TtTelnetParams params;
-    tt_telnet_params_default(&params, port);
-    params.mode = m_lastTelnetMode;
+    if (given) {
+        params = *given;
+    } else {
+        tt_telnet_params_default(&params, port);
+        params.mode = m_lastTelnetMode;
+    }
     QString error;
     if (!m_session->connectTelnet(host, port, params, &error)) {
         QMessageBox::critical(this, tr("Telnet"),

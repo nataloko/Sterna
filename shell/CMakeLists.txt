@@ -135,6 +135,14 @@ target_link_libraries(xfer_test PRIVATE sterna_shell)
 target_compile_options(xfer_test PRIVATE -Wall -Wextra)
 add_test(NAME xfer COMMAND xfer_test)
 
+# A Tera Term command line, from `argv` to a window that has connected. Needs
+# nothing either: the one case that connects does so to a listening socket it
+# opens itself.
+add_executable(cmdline_test tests/cmdline_test.cpp)
+target_link_libraries(cmdline_test PRIVATE sterna_shell)
+target_compile_options(cmdline_test PRIVATE -Wall -Wextra)
+add_test(NAME cmdline COMMAND cmdline_test)
+
 # --- the performance gate ----------------------------------------------------
 #
 # NOT a test, and deliberately not in `ctest`: it takes tens of seconds, its
@@ -176,7 +184,8 @@ target_compile_definitions(bench_shell PRIVATE TT_BENCH_EXE="${TT_BENCH_EXE}")
 # cdylib no `DT_SONAME` (see `tt-ffi/build.rs`), so what the binary records is
 # whatever path the linker was handed — which out of tree is *relative*, and ran
 # only from the build directory until that was fixed.
-set_target_properties(sterna render_test ssh_test telnet_test pty_test bench_shell PROPERTIES
+set_target_properties(sterna render_test ssh_test telnet_test pty_test cmdline_test
+                      bench_shell PROPERTIES
     BUILD_RPATH "${TT_CARGO_DIR}/${TT_CARGO_SUBDIR}"
     INSTALL_RPATH "$ORIGIN/../lib")
 

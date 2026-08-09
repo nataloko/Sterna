@@ -258,6 +258,20 @@ public:
     /// this project does not know about alone.
     bool saveSettings(const QString &path, QString *outError) const;
 
+    // --- the command line ---------------------------------------------------
+
+    /// Write a parsed Tera Term command line into the settings, and through
+    /// them into the running terminal. Call it once, after the settings file
+    /// has been loaded — which is upstream's order, since `_ParseParam` writes
+    /// `ts` and everything downstream reads `ts` back.
+    bool applyCommandLine(TtCmdLine *cmd, QString *outError);
+    /// What that command line says to open — `OnCommStart`'s answer, which is
+    /// one of five and only one of which is a connection.
+    ///
+    /// The terminal's current size goes into the target, so ask once the
+    /// window has settled: that size is what goes out as `NAWS`.
+    TtStartupKind startup(TtCmdLine *cmd, TtStartup *out);
+
 signals:
     /// The screen changed and wants repainting.
     void damaged();

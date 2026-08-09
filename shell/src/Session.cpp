@@ -616,6 +616,24 @@ bool Session::loadSettings(const QString &path, QString *outError)
     return true;
 }
 
+bool Session::applyCommandLine(TtCmdLine *cmd, QString *outError)
+{
+    if (tt_cmdline_apply(cmd, m_session) != TT_OK) {
+        if (outError) {
+            *outError = QString::fromUtf8(tt_last_error());
+        }
+        return false;
+    }
+    emit settingsChanged();
+    emit damaged();
+    return true;
+}
+
+TtStartupKind Session::startup(TtCmdLine *cmd, TtStartup *out)
+{
+    return tt_cmdline_startup(cmd, m_session, out);
+}
+
 bool Session::saveSettings(const QString &path, QString *outError) const
 {
     const QByteArray utf8 = path.toUtf8();
