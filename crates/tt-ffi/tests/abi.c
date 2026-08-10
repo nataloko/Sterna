@@ -725,6 +725,30 @@ static void test_settings(void)
     CHECK(cur.shape == TT_CURSOR_SHAPE_HORIZONTAL);
     CHECK(cur.nonblinking);
 
+    /* Shift+Escape cycles through only the modes admitted by DebugModes. The
+     * frontend owns the key event, but the core owns this state and the raw
+     * receive path it selects. */
+    TtSession *debug = tt_session_new(&cfg);
+    CHECK(debug != NULL);
+    CHECK_OK(tt_session_set_setting(debug, "debug.enabled", "on"));
+    CHECK_OK(tt_session_set_setting(debug, "debug.modes", "hex"));
+    CHECK(tt_session_cycle_debug_mode(debug));
+    static const char debug_feed[] = "\033[A";
+    tt_session_feed(debug, (const uint8_t *)debug_feed, sizeof debug_feed - 1);
+    size_t debug_len = 0;
+    const TtCell *debug_row = tt_session_row(debug, 0, &debug_len);
+    CHECK(debug_row != NULL && debug_len >= 8);
+    if (debug_row && debug_len >= 8) {
+        CHECK(base(&debug_row[0]) == '1');
+        CHECK(base(&debug_row[1]) == 'B');
+        CHECK(base(&debug_row[3]) == '5');
+        CHECK(base(&debug_row[4]) == 'B');
+        CHECK(base(&debug_row[6]) == '4');
+        CHECK(base(&debug_row[7]) == '1');
+    }
+    CHECK(tt_session_cycle_debug_mode(debug));
+    tt_session_free(debug);
+
     /* A round trip through a file, including a key nothing here knows about:
      * a TERATERM.INI shared with a real Tera Term has to survive being
      * written back. */
@@ -1042,6 +1066,7 @@ static void test_null_safety(void)
     CHECK(tt_session_focus(NULL, true) == TT_ERR_INVALID);
     CHECK(tt_session_send_break(NULL) == TT_ERR_INVALID);
     tt_session_feed(NULL, NULL, 0);
+    CHECK(!tt_session_cycle_debug_mode(NULL));
     tt_session_disconnect(NULL);
     CHECK(!tt_session_is_connected(NULL));
     CHECK(tt_session_describe(NULL) == NULL);

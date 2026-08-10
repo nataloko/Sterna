@@ -2229,6 +2229,16 @@ pub extern "C" fn tt_session_feed(session: *mut TtSession, bytes: *const u8, len
     s.session.feed(unsafe { slice::from_raw_parts(bytes, len) });
 }
 
+/// Handle Tera Term's Shift+Escape debug-mode shortcut.
+///
+/// False means debug cycling is disabled and the frontend should continue
+/// treating Escape as an ordinary key.
+#[no_mangle]
+pub extern "C" fn tt_session_cycle_debug_mode(session: *mut TtSession) -> bool {
+    let s = session!(session, false);
+    s.session.cycle_debug_mode()
+}
+
 // --- connections ----------------------------------------------------------
 
 /// The serial line settings, one field per `commlib.c` DCB field that Tera

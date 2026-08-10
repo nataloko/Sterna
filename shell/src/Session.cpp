@@ -680,6 +680,11 @@ void Session::feed(const QByteArray &bytes)
     pumpAndDispatch(0);
 }
 
+bool Session::cycleDebugMode()
+{
+    return tt_session_cycle_debug_mode(m_session);
+}
+
 void Session::unlinkMacro() { tt_session_unlink_macro(m_session); }
 
 void Session::poll() { pumpAndDispatch(0); }

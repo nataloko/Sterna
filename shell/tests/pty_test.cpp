@@ -299,6 +299,22 @@ void test_strict_mapping_and_delete()
     CHECK(screen.contains(QStringLiteral("7f 7a")));
 }
 
+void test_shift_escape_cycles_the_configured_debug_modes()
+{
+    Session session(40, 10);
+    QString error;
+    CHECK(session.setSetting(QStringLiteral("debug.enabled"),
+                             QStringLiteral("on"), &error));
+    CHECK(session.setSetting(QStringLiteral("debug.modes"),
+                             QStringLiteral("hex"), &error));
+    TerminalView view(&session);
+    view.applySettings();
+
+    key(view, QEvent::KeyPress, Qt::Key_Escape, Qt::ShiftModifier);
+    session.feed(QByteArray("\033[A", 3));
+    CHECK(screenText(session).contains(QStringLiteral("1B 5B 41")));
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -312,6 +328,7 @@ int main(int argc, char **argv)
     test_a_program_that_does_not_exist_reports_rather_than_connects();
     test_meta_key_modes();
     test_strict_mapping_and_delete();
+    test_shift_escape_cycles_the_configured_debug_modes();
 
     if (failures) {
         fprintf(stderr, "%d check(s) failed\n", failures);

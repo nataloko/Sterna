@@ -281,6 +281,9 @@ public:
 
     /// Feed bytes as though they had arrived from the far end.
     void feed(const QByteArray &bytes);
+    /// Handle Shift+Escape. False leaves Escape available to ordinary key
+    /// encoding because debug cycling is disabled in the settings.
+    bool cycleDebugMode();
 
     // --- macros -------------------------------------------------------------
 

@@ -759,6 +759,12 @@ void TerminalView::keyPressEvent(QKeyEvent *event)
     // Scrolling the history, before anything else looks at these keys —
     // PageUp is otherwise a `TtKey` and would go to the host.
     if (mods.testFlag(Qt::ShiftModifier)) {
+        // Upstream handles this before its keyboard-enabled check: debug
+        // display remains controllable even while host input is locked.
+        if (event->key() == Qt::Key_Escape && m_session->cycleDebugMode()) {
+            QApplication::beep();
+            return;
+        }
         const int page = qMax(1, m_session->rows() - 1);
         if (event->key() == Qt::Key_PageUp) {
             setViewOffset(m_session->viewOffset() + page);
