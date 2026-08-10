@@ -2429,11 +2429,13 @@ bool tt_session_wheel_to_cursor(const TtSession *session,
 TtTracking tt_session_mouse_tracking(const TtSession *session);
 
 /**
- * A palette entry, for the painter. False for `index > 255`.
+ * A live session's palette entry, for the painter. False for a null session
+ * or `index > 255`.
  *
  * Tera Term stores one byte of colour per cell, so this is the *whole* colour
  * story — `SGR 38;2;r;g;b` has already resolved to the nearest index by the
- * time a cell holds it. Entries 0-15 are the VGA values, not xterm's.
+ * time a cell holds it. Entries 0-15 reflect the session's `ANSIColor`
+ * setting; entries 16-255 are the fixed xterm cube and greyscale ramp.
  *
  * Note what the cell says: `fg`/`bg` mean a palette index only when
  * `TT_ATTR2_FORE` / `TT_ATTR2_BACK` is set in `attrs`. Without the bit the
@@ -2441,10 +2443,20 @@ TtTracking tt_session_mouse_tracking(const TtSession *session);
  * is the frontend's to choose — painting index 0 there gives a black-on-black
  * screen.
  */
-bool tt_palette_rgb(uint32_t index,
-                    uint8_t *r,
-                    uint8_t *g,
-                    uint8_t *b);
+bool tt_session_palette_rgb(const TtSession *session,
+                            uint32_t index,
+                            uint8_t *r,
+                            uint8_t *g,
+                            uint8_t *b);
+
+/**
+ * An entry from the compiled-in default palette. False for `index > 255`.
+ *
+ * Kept for callers that need colours before they own a session. A painter of
+ * a live terminal should use [`tt_session_palette_rgb`], because `ANSIColor`
+ * can replace its first sixteen entries.
+ */
+bool tt_palette_rgb(uint32_t index, uint8_t *r, uint8_t *g, uint8_t *b);
 
 /**
  * How many settings there are. The index runs `0..count` and is stable for

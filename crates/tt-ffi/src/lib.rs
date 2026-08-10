@@ -814,23 +814,17 @@ pub extern "C" fn tt_session_mouse_tracking(session: *const TtSession) -> Tracki
         .mouse_tracking()
 }
 
-/// A palette entry, for the painter. False for `index > 255`.
-///
-/// Tera Term stores one byte of colour per cell, so this is the *whole* colour
-/// story — `SGR 38;2;r;g;b` has already resolved to the nearest index by the
-/// time a cell holds it. Entries 0-15 are the VGA values, not xterm's.
-///
-/// Note what the cell says: `fg`/`bg` mean a palette index only when
-/// `TT_ATTR2_FORE` / `TT_ATTR2_BACK` is set in `attrs`. Without the bit the
-/// cell is asking for the terminal's *configured* default text colour, which
-/// is the frontend's to choose — painting index 0 there gives a black-on-black
-/// screen.
-#[no_mangle]
-pub extern "C" fn tt_palette_rgb(index: u32, r: *mut u8, g: *mut u8, b: *mut u8) -> bool {
+fn palette_rgb(
+    palette: &[tt_vt::palette::Rgb; 256],
+    index: u32,
+    r: *mut u8,
+    g: *mut u8,
+    b: *mut u8,
+) -> bool {
     let Ok(i) = usize::try_from(index) else {
         return false;
     };
-    let Some(&(pr, pg, pb)) = tt_vt::palette::default_palette().get(i) else {
+    let Some(&(pr, pg, pb)) = palette.get(i) else {
         return false;
     };
     unsafe {
@@ -845,6 +839,41 @@ pub extern "C" fn tt_palette_rgb(index: u32, r: *mut u8, g: *mut u8, b: *mut u8)
         }
     }
     true
+}
+
+/// A live session's palette entry, for the painter. False for a null session
+/// or `index > 255`.
+///
+/// Tera Term stores one byte of colour per cell, so this is the *whole* colour
+/// story — `SGR 38;2;r;g;b` has already resolved to the nearest index by the
+/// time a cell holds it. Entries 0-15 reflect the session's `ANSIColor`
+/// setting; entries 16-255 are the fixed xterm cube and greyscale ramp.
+///
+/// Note what the cell says: `fg`/`bg` mean a palette index only when
+/// `TT_ATTR2_FORE` / `TT_ATTR2_BACK` is set in `attrs`. Without the bit the
+/// cell is asking for the terminal's *configured* default text colour, which
+/// is the frontend's to choose — painting index 0 there gives a black-on-black
+/// screen.
+#[no_mangle]
+pub extern "C" fn tt_session_palette_rgb(
+    session: *const TtSession,
+    index: u32,
+    r: *mut u8,
+    g: *mut u8,
+    b: *mut u8,
+) -> bool {
+    let session = session_ref!(session, false);
+    palette_rgb(&session.session.vt().config().palette, index, r, g, b)
+}
+
+/// An entry from the compiled-in default palette. False for `index > 255`.
+///
+/// Kept for callers that need colours before they own a session. A painter of
+/// a live terminal should use [`tt_session_palette_rgb`], because `ANSIColor`
+/// can replace its first sixteen entries.
+#[no_mangle]
+pub extern "C" fn tt_palette_rgb(index: u32, r: *mut u8, g: *mut u8, b: *mut u8) -> bool {
+    palette_rgb(tt_vt::palette::default_palette(), index, r, g, b)
 }
 
 // --- settings -------------------------------------------------------------

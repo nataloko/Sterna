@@ -438,6 +438,9 @@ static void test_input(void)
 static void test_palette(void)
 {
     uint8_t r = 0, g = 0, b = 0;
+
+    /* The old entry point is the immutable fallback for callers that do not
+     * own a session. */
     CHECK(tt_palette_rgb(0, &r, &g, &b));
     CHECK(r == 0 && g == 0 && b == 0);
     /* The VGA values, not xterm's 205/238/229 — using xterm's moves the
@@ -447,6 +450,29 @@ static void test_palette(void)
     CHECK(tt_palette_rgb(255, &r, &g, &b));
     CHECK(r == 238 && g == 238 && b == 238);
     CHECK(!tt_palette_rgb(256, &r, &g, &b));
+
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+    CHECK(s != NULL);
+    CHECK(tt_session_palette_rgb(s, 1, &r, &g, &b));
+    CHECK(r == 128 && g == 0 && b == 0);
+
+    CHECK_OK(tt_session_set_setting(
+        s, "color.ansi_palette", "0,1,2,3,1,4,5,6"));
+    CHECK(tt_session_palette_rgb(s, 0, &r, &g, &b));
+    CHECK(r == 1 && g == 2 && b == 3);
+    /* ANSIColor uses the legacy table order: its 1 becomes drawing index 9. */
+    CHECK(tt_session_palette_rgb(s, 9, &r, &g, &b));
+    CHECK(r == 4 && g == 5 && b == 6);
+
+    /* The fallback is still the fallback, and null output pointers are fine. */
+    CHECK(tt_palette_rgb(0, &r, &g, &b));
+    CHECK(r == 0 && g == 0 && b == 0);
+    CHECK(tt_session_palette_rgb(s, 0, NULL, NULL, NULL));
+    CHECK(!tt_session_palette_rgb(s, 256, &r, &g, &b));
+    CHECK(!tt_session_palette_rgb(NULL, 0, &r, &g, &b));
+    tt_session_free(s);
 }
 
 static void test_serial(void)
