@@ -553,14 +553,11 @@ fn exit_code(st: std::process::ExitStatus) -> i32 {
 /// the documentation's own example shows. Expansion is not recursive: scanning
 /// resumes after whatever was substituted.
 ///
-/// **One case is a guess and is flagged as one.** With `%a%b%` where `a` is
-/// unset and `b` is set, it matters whether the closing `%` of the failed
-/// lookup can open the next one. Here it cannot — the whole `%a%` is copied
-/// out and scanning resumes at `b` — which is the reading that keeps the
-/// documented "unset names come through untouched" true for every input.
-/// `ini-audit/` is the shape of harness that would settle it, and it needs a
-/// Windows to ask; the same Stage 3 pass that re-runs that battery should
-/// settle this too.
+/// Windows asks `ExpandEnvironmentStringsW` directly, as upstream does. Unix
+/// has no environment-string API; its small equivalent follows the same
+/// delimiter rule, including that the closing `%` of an unknown name is not
+/// reused as the opening delimiter of a second name.
+#[cfg(not(windows))]
 fn expand_env(src: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(src.len());
     let mut i = 0;
@@ -587,6 +584,34 @@ fn expand_env(src: &[u8]) -> Vec<u8> {
         }
     }
     out
+}
+
+#[cfg(windows)]
+fn expand_env(src: &[u8]) -> Vec<u8> {
+    use std::ptr::null_mut;
+    use windows_sys::Win32::System::Environment::ExpandEnvironmentStringsW;
+
+    let mut source = crate::source::to_upstream_wide(src);
+    source.push(0);
+    // SAFETY: `source` is live and NUL-terminated; a NULL destination asks
+    // Win32 for the required size, including its terminating NUL.
+    let needed = unsafe { ExpandEnvironmentStringsW(source.as_ptr(), null_mut(), 0) };
+    if needed == 0 {
+        return Vec::new();
+    }
+    let mut expanded = vec![0u16; needed as usize];
+    // SAFETY: `expanded` has exactly the size returned above and neither live
+    // buffer aliases the other.
+    let written =
+        unsafe { ExpandEnvironmentStringsW(source.as_ptr(), expanded.as_mut_ptr(), needed) };
+    if written == 0 || written > needed {
+        return Vec::new();
+    }
+    let end = expanded
+        .iter()
+        .position(|&unit| unit == 0)
+        .unwrap_or(written as usize);
+    crate::source::from_upstream_wide(&expanded[..end])
 }
 
 /// `sscanf(s, "%d.%d")`, and it must fill both fields.
@@ -1016,6 +1041,19 @@ mod tests {
             expand_env(b"%STERNA_TTL_EXPAND%%STERNA_TTL_EXPAND%"),
             b"VALUEVALUE".to_vec(),
         );
+        assert_eq!(
+            expand_env(b"%STERNA_NOT_SET%STERNA_TTL_EXPAND%"),
+            b"%STERNA_NOT_SET%STERNA_TTL_EXPAND%".to_vec(),
+            "an unknown name's closing percent is not reused as an opener"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn expandenv_crosses_win32s_utf16_boundary_like_upstream() {
+        std::env::set_var("STERNA_TTL_UNICODE", "café");
+        assert_eq!(expand_env(b"%STERNA_TTL_UNICODE%"), "café".as_bytes());
+        assert_eq!(expand_env(b"bad \xFF byte"), b"bad ? byte");
     }
 
     #[test]

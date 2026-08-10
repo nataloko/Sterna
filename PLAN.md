@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 411
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 412
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4658,6 +4658,16 @@ for an unpaired surrogate. Rust's `from_utf16_lossy` had emitted U+FFFD in the
 one damaged-file case specifically preserved by `source.rs`. Both byte orders
 now use the shared upstream-shaped encoder and the focused regression runs on
 Unix and Windows.
+
+TTL `expandenv` no longer carries its Stage 2 delimiter guess into Windows.
+That target now calls `ExpandEnvironmentStringsW`, exactly as `TTLExpandEnv`
+does, with the same permissive UTF-8-to-wide and wide-to-UTF-8 helpers on each
+side. Unix retains the small portable parser and a shared case pins it to the
+API's answer: the closing percent of an unknown name is consumed, not reused
+as the opener of the next name. A Windows-only case also covers non-ASCII
+environment values and upstream's `?` replacement for an invalid TTL byte.
+Those focused MinGW cases pass under Wine and the 53-script gate keeps its
+48/5 split; the native Windows job remains the authority for the kernel API.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
