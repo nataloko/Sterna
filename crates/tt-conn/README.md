@@ -63,6 +63,13 @@ three are why people still keep a Windows VM for console work.
 | `PurgeComm` | `clear()` | |
 | close drops DTR | `Drop` | how a modem is told to hang up |
 
+On Windows those rows are one DCB rather than a chain of portable setters.
+That matters for MARK/SPACE, `fOutxDsrFlow`, independent DTR/RTS control and
+the XON/XOFF characters and thresholds, none of which the crate API can fully
+name. The DCB is applied once and read back field by field; a driver which
+accepts the call but silently keeps a different data size or line mode is an
+error rather than a successful-looking wrong port.
+
 ## The four things that are not obvious
 
 **A break is not a NUL, and by default Linux says it is.** With default termios

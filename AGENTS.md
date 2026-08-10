@@ -742,6 +742,13 @@ And for the serial side:
   Windows reads up to upstream's 64 KiB input-buffer size and synthesises one
   more notice only when that fills. And do not send its bytes through the Unix
   `PARMRK` decoder: an ordinary `0xFF` would be held as an incomplete escape.
+- **The portable serial setters describe less than half of a Win32 DCB.** They
+  have no MARK/SPACE parity, DSR flow, custom XON/XOFF bytes or independent pin
+  modes, and applying them one by one can leave four new values behind when the
+  fifth fails. Windows builds upstream's zeroed DCB, calls `SetCommState` once,
+  and reads every controlled field back. DTR toggle is rejected before that
+  call because Win32 has no such mode; do not turn the readback into a cached
+  `SerialParams` comparison, which would merely prove what the caller asked.
 - **A test byte with bit 7 set cannot tell 7 data bits from 8.** At seven bits
   the stop bit lands in bit 7, so `0xA5` round-trips as `0xA5` either way and
   the test passes whatever the port is doing. Use `0x25`.

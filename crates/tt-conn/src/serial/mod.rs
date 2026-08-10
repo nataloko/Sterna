@@ -21,7 +21,9 @@ pub use enumerate::{enumerate, number_of_port, port_by_number, PortInfo, UsbInfo
 use std::io::{Read, Write};
 #[cfg(windows)]
 use std::os::windows::io::RawHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(unix)]
+use std::time::Instant;
 
 use serialport::SerialPort;
 
@@ -227,35 +229,35 @@ impl SerialConn {
     /// Apply a full parameter set to an already-open port — the settings
     /// dialog's "OK", and `CommResetSerial`'s job.
     ///
-    /// Order matters: the crate's setters are applied first, then the raw-fd
-    /// patches, because the crate rewrites the fields it owns and would
-    /// otherwise clear `CMSPAR` on the way past. It does *not* touch the
-    /// fields it does not own, which is what makes the second half stick.
+    /// On Unix, order matters: the crate's setters run before the raw-fd
+    /// patches because they would otherwise clear `CMSPAR` on the way past.
+    /// Windows instead builds one complete DCB and reads it back, both because
+    /// the portable setters cannot express half its fields and so a rejected
+    /// field cannot leave the preceding setters applied piecemeal.
     pub fn apply(&mut self, params: &SerialParams) -> Result<()> {
-        self.port.set_baud_rate(params.baud)?;
-        self.port.set_stop_bits(match params.stop_bits {
-            StopBits::One => serialport::StopBits::One,
-            StopBits::Two => serialport::StopBits::Two,
-        })?;
-        self.port.set_parity(match params.parity {
-            Parity::Odd | Parity::Mark => serialport::Parity::Odd,
-            Parity::Even | Parity::Space => serialport::Parity::Even,
-            // MARK and SPACE are set through CMSPAR below; asking the crate
-            // for Odd/Even first gets PARENB on and the bit in the right
-            // place, and CMSPAR then overrides what it means.
-            Parity::None => serialport::Parity::None,
-        })?;
-        self.port.set_flow_control(match params.flow {
-            FlowControl::RtsCts => serialport::FlowControl::Hardware,
-            FlowControl::XonXoff => serialport::FlowControl::Software,
-            // DSR/DTR gets no kernel help at all; the gating is in `write`.
-            FlowControl::None | FlowControl::DsrDtr => serialport::FlowControl::None,
-        })?;
-        self.port.set_timeout(params.read_timeout)?;
-
         #[cfg(unix)]
         {
             use std::os::unix::io::AsRawFd;
+            self.port.set_baud_rate(params.baud)?;
+            self.port.set_stop_bits(match params.stop_bits {
+                StopBits::One => serialport::StopBits::One,
+                StopBits::Two => serialport::StopBits::Two,
+            })?;
+            self.port.set_parity(match params.parity {
+                Parity::Odd | Parity::Mark => serialport::Parity::Odd,
+                Parity::Even | Parity::Space => serialport::Parity::Even,
+                // MARK and SPACE are set through CMSPAR below; asking the
+                // crate for Odd/Even first gets PARENB on and the bit in the
+                // right place, and CMSPAR then overrides what it means.
+                Parity::None => serialport::Parity::None,
+            })?;
+            self.port.set_flow_control(match params.flow {
+                FlowControl::RtsCts => serialport::FlowControl::Hardware,
+                FlowControl::XonXoff => serialport::FlowControl::Software,
+                // DSR/DTR gets no kernel help; `write` gates it in userspace.
+                FlowControl::None | FlowControl::DsrDtr => serialport::FlowControl::None,
+            })?;
+            self.port.set_timeout(params.read_timeout)?;
             let fd = self.port.as_raw_fd();
             linux::set_data_bits(
                 fd,
@@ -276,25 +278,23 @@ impl SerialConn {
             )?;
             linux::set_parmrk(fd, params.detect_break)?;
             linux::set_xon_xoff_chars(fd, params.xon, params.xoff)?;
-        }
-        #[cfg(not(unix))]
-        {
-            if matches!(params.parity, Parity::Mark | Parity::Space) {
-                return Err(Error::Unsupported("MARK/SPACE parity".into()));
+            // RTS is the driver's while CRTSCTS is on, so only drive it by
+            // hand when it is ours. `Toggle` is the driver too, where one has
+            // it at all.
+            if !matches!(params.rts, PinControl::Handshake | PinControl::Toggle)
+                && params.flow != FlowControl::RtsCts
+            {
+                self.port
+                    .write_request_to_send(params.rts == PinControl::Enable)?;
             }
-        }
-
-        // RTS is the driver's while CRTSCTS is on, so only drive it by hand
-        // when it is ours to drive. `Toggle` is the driver's too, where a
-        // driver has it at all.
-        if !matches!(params.rts, PinControl::Handshake | PinControl::Toggle)
-            && params.flow != FlowControl::RtsCts
-        {
             self.port
-                .write_request_to_send(params.rts == PinControl::Enable)?;
+                .write_data_terminal_ready(params.dtr == PinControl::Enable)?;
         }
-        self.port
-            .write_data_terminal_ready(params.dtr == PinControl::Enable)?;
+        #[cfg(windows)]
+        {
+            windows::apply(&self.port, params)?;
+            self.port.set_timeout(params.read_timeout)?;
+        }
 
         self.params = *params;
         Ok(())
@@ -409,28 +409,37 @@ impl SerialConn {
         if self.dead {
             return Err(Error::Disconnected);
         }
-        if self.params.flow != FlowControl::DsrDtr {
-            return self.write_raw(data);
+        #[cfg(windows)]
+        {
+            let _ = timeout;
+            self.write_raw(data)
         }
 
-        let deadline = Instant::now() + timeout;
-        let mut sent = 0;
-        while sent < data.len() {
-            if self.modem_lines()?.dsr {
-                // One chunk at a time, so DSR is re-checked often enough to
-                // stop within a buffer of the far end deasserting it.
-                let end = (sent + 64).min(data.len());
-                sent += self.write_raw(&data[sent..end])?;
-                continue;
+        #[cfg(unix)]
+        {
+            if self.params.flow != FlowControl::DsrDtr {
+                return self.write_raw(data);
             }
-            if Instant::now() >= deadline {
-                break;
+
+            let deadline = Instant::now() + timeout;
+            let mut sent = 0;
+            while sent < data.len() {
+                if self.modem_lines()?.dsr {
+                    // One chunk at a time, so DSR is re-checked often enough to
+                    // stop within a buffer of the far end deasserting it.
+                    let end = (sent + 64).min(data.len());
+                    sent += self.write_raw(&data[sent..end])?;
+                    continue;
+                }
+                if Instant::now() >= deadline {
+                    break;
+                }
+                // 2 ms is well under a character time at any baud rate a DSR-flow
+                // device runs at, and cheap enough to poll.
+                std::thread::sleep(Duration::from_millis(2));
             }
-            // 2 ms is well under a character time at any baud rate a DSR-flow
-            // device runs at, and cheap enough to poll.
-            std::thread::sleep(Duration::from_millis(2));
+            Ok(sent)
         }
-        Ok(sent)
     }
 
     fn write_raw(&mut self, data: &[u8]) -> Result<usize> {

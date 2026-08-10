@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 393
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 394
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4465,6 +4465,24 @@ It still needs the native Windows runner. Wine's PTY-backed COM mapping rejects
 ordinary port setup with `ERROR_NOT_SUPPORTED` before the event worker can run,
 so it cannot serve even as the focused smoke test it did for sockets and plain
 Win32 events.
+
+The other half of Windows serial setup no longer goes through portable setters
+which cannot name the settings. One zero-initialised DCB now carries the baud,
+5–8 data bits, all five parity modes, stop bits, native CTS or DSR output flow,
+independent DTR/RTS modes, custom XON/XOFF bytes and upstream's 768/3328
+thresholds into a single `SetCommState`. Applying one setter at a time had two
+bad answers: MARK/SPACE was rejected despite native support, while the data
+bits and XON/XOFF bytes were silently left at the driver's old values. A single
+invalid field could also leave every earlier setter applied. DTR toggle now
+fails before touching the port because Win32 has no such control value.
+
+Success is not trusted: `GetCommState` reads the controlled fields back and an
+adapter which silently keeps an old value produces a named unsupported-setting
+error. The same native hardware file which covers `WaitCommEvent` opens a
+115200 7-mark-2 port with DSR/DTR flow and non-default software-flow bytes, so
+the readback itself is the assertion. Pure DCB construction and its CTS/DSR bit
+split pass under Wine; the driver readback still requires native Windows for
+the COM-emulation reason above.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

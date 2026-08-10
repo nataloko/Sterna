@@ -12,12 +12,147 @@ use std::sync::Arc;
 
 use serialport::COMPort;
 use windows_sys::Win32::Devices::Communication::{
-    ClearCommError, SetCommMask, WaitCommEvent, CE_BREAK, EV_BREAK, EV_ERR, EV_RXCHAR,
+    ClearCommError, GetCommState, SetCommMask, SetCommState, SetupComm, WaitCommEvent, CE_BREAK,
+    DCB, EVENPARITY, EV_BREAK, EV_ERR, EV_RXCHAR, MARKPARITY, NOPARITY, ODDPARITY, ONESTOPBIT,
+    SPACEPARITY, TWOSTOPBITS,
 };
 use windows_sys::Win32::Foundation::HANDLE;
 
 use crate::error::{Error, Result};
 use crate::windows_event::ManualEvent;
+
+use super::{DataBits, FlowControl, Parity, PinControl, SerialParams, StopBits};
+
+const INPUT_QUEUE: u32 = 64 * 1024;
+const OUTPUT_QUEUE: u32 = 4 * 1024;
+const XON_LIMIT: u16 = 768;
+const XOFF_LIMIT: u16 = 3328;
+const CONTROLLED_FLAGS: u32 = 0x7fff;
+
+/// Apply the DCB in one operation, then ask the driver what actually stuck.
+///
+/// `serialport-rs` cannot express MARK/SPACE parity, DSR flow control, the pin
+/// modes or custom XON/XOFF bytes. Calling its setters one at a time also
+/// leaves a half-mutated port when the fifth setting is invalid. Upstream
+/// builds one zeroed DCB and calls `SetCommState`; do the same here.
+pub(super) fn apply(port: &COMPort, params: &SerialParams) -> Result<()> {
+    let expected = build_dcb(params)?;
+    let handle = port.as_raw_handle() as HANDLE;
+
+    // A recommendation which drivers may ignore, just as upstream ignores
+    // SetupComm's return value. The DCB below remains authoritative.
+    // SAFETY: `port` owns a live communications handle.
+    let _ = unsafe { SetupComm(handle, INPUT_QUEUE, OUTPUT_QUEUE) };
+    // SAFETY: the handle and DCB remain live for the call.
+    if unsafe { SetCommState(handle, &expected) } == 0 {
+        return Err(Error::from_io(std::io::Error::last_os_error()));
+    }
+
+    let mut actual = DCB {
+        DCBlength: std::mem::size_of::<DCB>() as u32,
+        ..DCB::default()
+    };
+    // SAFETY: the handle and output DCB remain live for the call.
+    if unsafe { GetCommState(handle, &mut actual) } == 0 {
+        return Err(Error::from_io(std::io::Error::last_os_error()));
+    }
+    verify_dcb(&expected, &actual)
+}
+
+fn build_dcb(params: &SerialParams) -> Result<DCB> {
+    if params.dtr == PinControl::Toggle {
+        return Err(Error::Unsupported("DTR toggle control".into()));
+    }
+
+    let mut dcb = DCB {
+        DCBlength: std::mem::size_of::<DCB>() as u32,
+        BaudRate: params.baud,
+        ByteSize: match params.data_bits {
+            DataBits::Five => 5,
+            DataBits::Six => 6,
+            DataBits::Seven => 7,
+            DataBits::Eight => 8,
+        },
+        Parity: match params.parity {
+            Parity::None => NOPARITY,
+            Parity::Odd => ODDPARITY,
+            Parity::Even => EVENPARITY,
+            Parity::Mark => MARKPARITY,
+            Parity::Space => SPACEPARITY,
+        },
+        StopBits: match params.stop_bits {
+            StopBits::One => ONESTOPBIT,
+            StopBits::Two => TWOSTOPBITS,
+        },
+        XonChar: params.xon as i8,
+        XoffChar: params.xoff as i8,
+        ..DCB::default()
+    };
+
+    set_flag(&mut dcb, 0, true); // fBinary
+    set_flag(&mut dcb, 1, params.parity != Parity::None); // fParity
+    set_field(&mut dcb, 4, 2, params.dtr as u32); // fDtrControl
+    set_field(&mut dcb, 12, 2, params.rts as u32); // fRtsControl
+    match params.flow {
+        FlowControl::None => {}
+        FlowControl::XonXoff => {
+            set_flag(&mut dcb, 8, true); // fOutX
+            set_flag(&mut dcb, 9, true); // fInX
+            dcb.XonLim = XON_LIMIT;
+            dcb.XoffLim = XOFF_LIMIT;
+        }
+        FlowControl::RtsCts => set_flag(&mut dcb, 2, true), // fOutxCtsFlow
+        FlowControl::DsrDtr => set_flag(&mut dcb, 3, true), // fOutxDsrFlow
+    }
+    Ok(dcb)
+}
+
+fn set_flag(dcb: &mut DCB, bit: u32, on: bool) {
+    if on {
+        dcb._bitfield |= 1 << bit;
+    } else {
+        dcb._bitfield &= !(1 << bit);
+    }
+}
+
+fn set_field(dcb: &mut DCB, bit: u32, width: u32, value: u32) {
+    let mask = ((1 << width) - 1) << bit;
+    dcb._bitfield = (dcb._bitfield & !mask) | ((value << bit) & mask);
+}
+
+fn verify_dcb(expected: &DCB, actual: &DCB) -> Result<()> {
+    macro_rules! same {
+        ($field:ident) => {
+            if actual.$field != expected.$field {
+                return Err(Error::Unsupported(format!(
+                    "COM driver kept {}={} instead of {}",
+                    stringify!($field),
+                    actual.$field,
+                    expected.$field
+                )));
+            }
+        };
+    }
+
+    same!(BaudRate);
+    same!(ByteSize);
+    same!(Parity);
+    same!(StopBits);
+    if actual._bitfield & CONTROLLED_FLAGS != expected._bitfield & CONTROLLED_FLAGS {
+        return Err(Error::Unsupported(format!(
+            "COM driver kept control flags {:#06x} instead of {:#06x}",
+            actual._bitfield & CONTROLLED_FLAGS,
+            expected._bitfield & CONTROLLED_FLAGS
+        )));
+    }
+    if expected._bitfield & ((1 << 8) | (1 << 9)) != 0 {
+        same!(XonChar);
+        same!(XoffChar);
+        same!(XonLim);
+        same!(XoffLim);
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct Notice {
@@ -160,5 +295,71 @@ impl WindowsSerialWake {
 fn publish_end(tx: &SyncSender<Message>, wake: &ManualEvent) {
     if tx.send(Message::End).is_ok() {
         wake.signal();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn field(dcb: &DCB, bit: u32, width: u32) -> u32 {
+        (dcb._bitfield >> bit) & ((1 << width) - 1)
+    }
+
+    #[test]
+    fn dcb_carries_every_setting_the_portable_crate_cannot() {
+        let params = SerialParams {
+            baud: 115_200,
+            data_bits: DataBits::Seven,
+            parity: Parity::Mark,
+            stop_bits: StopBits::Two,
+            flow: FlowControl::XonXoff,
+            xon: 0x80,
+            xoff: 0xff,
+            dtr: PinControl::Handshake,
+            rts: PinControl::Toggle,
+            ..SerialParams::default()
+        };
+        let dcb = build_dcb(&params).unwrap();
+
+        assert_eq!(dcb.BaudRate, 115_200);
+        assert_eq!(dcb.ByteSize, 7);
+        assert_eq!(dcb.Parity, MARKPARITY);
+        assert_eq!(dcb.StopBits, TWOSTOPBITS);
+        assert_eq!(dcb.XonChar, -128);
+        assert_eq!(dcb.XoffChar, -1);
+        assert_eq!(dcb.XonLim, XON_LIMIT);
+        assert_eq!(dcb.XoffLim, XOFF_LIMIT);
+        assert_eq!(field(&dcb, 0, 1), 1, "fBinary");
+        assert_eq!(field(&dcb, 1, 1), 1, "fParity");
+        assert_eq!(field(&dcb, 4, 2), 2, "fDtrControl");
+        assert_eq!(field(&dcb, 8, 1), 1, "fOutX");
+        assert_eq!(field(&dcb, 9, 1), 1, "fInX");
+        assert_eq!(field(&dcb, 12, 2), 3, "fRtsControl");
+    }
+
+    #[test]
+    fn cts_and_dsr_flow_are_distinct_dcb_bits() {
+        let mut params = SerialParams {
+            flow: FlowControl::RtsCts,
+            ..SerialParams::default()
+        };
+        let cts = build_dcb(&params).unwrap();
+        assert_eq!(field(&cts, 2, 1), 1, "fOutxCtsFlow");
+        assert_eq!(field(&cts, 3, 1), 0, "fOutxDsrFlow");
+
+        params.flow = FlowControl::DsrDtr;
+        let dsr = build_dcb(&params).unwrap();
+        assert_eq!(field(&dsr, 2, 1), 0, "fOutxCtsFlow");
+        assert_eq!(field(&dsr, 3, 1), 1, "fOutxDsrFlow");
+    }
+
+    #[test]
+    fn dtr_toggle_fails_before_touching_the_port() {
+        let params = SerialParams {
+            dtr: PinControl::Toggle,
+            ..SerialParams::default()
+        };
+        assert!(matches!(build_dcb(&params), Err(Error::Unsupported(_))));
     }
 }

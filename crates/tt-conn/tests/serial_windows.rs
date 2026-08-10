@@ -2,16 +2,20 @@
 //!
 //! Set `TT_SERIAL_A=COM<n>` and `TT_SERIAL_B=COM<n>` to the two ends. The
 //! test skips loudly without them because a named pipe is not a COM driver and
-//! cannot prove `WaitCommEvent` or `ClearCommError` behavior.
+//! cannot prove `WaitCommEvent` or `ClearCommError` behavior. The cases
+//! serialize themselves because both own the same physical pair.
 
 #![cfg(windows)]
 
+use std::sync::Mutex;
 use std::time::Duration;
 
 use tt_conn::serial::{SerialConn, SerialParams};
 use tt_conn::Transport;
 use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+static RIG: Mutex<()> = Mutex::new(());
 
 fn ports() -> Option<(String, String)> {
     let a = std::env::var("TT_SERIAL_A").ok();
@@ -30,6 +34,7 @@ fn received_bytes_wake_once_and_keep_ff_literal() {
     let Some((a, b)) = ports() else {
         return;
     };
+    let _rig = RIG.lock().unwrap();
     let params = SerialParams {
         read_timeout: Duration::from_millis(50),
         ..SerialParams::default()
@@ -57,4 +62,43 @@ fn received_bytes_wake_once_and_keep_ff_literal() {
     // not turn into a timer after one successful read.
     // SAFETY: as above.
     assert_eq!(unsafe { WaitForSingleObject(handle, 0) }, WAIT_TIMEOUT);
+}
+
+#[test]
+fn the_driver_reads_back_the_extended_dcb() {
+    let Some((a, _)) = ports() else {
+        return;
+    };
+    let _rig = RIG.lock().unwrap();
+    let params = SerialParams {
+        baud: 115_200,
+        data_bits: tt_conn::serial::DataBits::Seven,
+        parity: tt_conn::serial::Parity::Mark,
+        stop_bits: tt_conn::serial::StopBits::Two,
+        flow: tt_conn::serial::FlowControl::DsrDtr,
+        xon: 0x12,
+        xoff: 0x14,
+        dtr: tt_conn::serial::PinControl::Handshake,
+        rts: tt_conn::serial::PinControl::Enable,
+        ..SerialParams::default()
+    };
+
+    // `open` reads the DCB back and fails if the driver silently kept any old
+    // value. Reaching this assertion proves the settings, not merely the
+    // success return from SetCommState.
+    let mut conn = SerialConn::open(&a, &params).expect("open with extended DCB");
+    assert_eq!(conn.params(), &params);
+
+    let software = SerialParams {
+        parity: tt_conn::serial::Parity::Space,
+        flow: tt_conn::serial::FlowControl::XonXoff,
+        xon: 0x12,
+        xoff: 0x14,
+        dtr: tt_conn::serial::PinControl::Enable,
+        rts: tt_conn::serial::PinControl::Handshake,
+        ..params
+    };
+    conn.apply(&software)
+        .expect("reapply with software flow DCB");
+    assert_eq!(conn.params(), &software);
 }
