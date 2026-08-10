@@ -537,6 +537,17 @@ And for telnet:
   (`ttdde.c:634` passes the argument through) and deliberately cannot here, for
   the reason the control socket already has: a modal dialog raised from inside
   a request holds the requester open.
+- **`AutoWinClose` is TCP only, and Disconnect takes the same close branch as
+  a dropped line.** `Disconnect` posts `FD_CLOSE` (`vtwin.cpp:4462`), which
+  reaches the `IdComEndTimer` branch at `:3005`; with auto-close on a network
+  window closes even when the user chose File > Disconnect. Serial and local
+  pty windows stay. If the window cannot close — upstream tests
+  `IsWindowEnabled` — an enabled `ClearScreenOnCloseConnection` runs instead,
+  and its “clear” is `BuffClearScreen`: the page scrolls into history and the
+  cursor homes rather than the rows being erased in place. A disconnect
+  discovered while writing has to take this same branch too; duplicating only
+  the read arm also forgets to restore TCP's borrowed echo/CR values and to end
+  a file transfer.
 - **Five keys are written in a case their own readers do not use** —
   `Historylist`, `Metakey`, `XmodemRcvCommand`, `YmodemRcvCommand`,
   `ZmodemRcvCommand`, against readers spelling them `HistoryList`, `MetaKey`

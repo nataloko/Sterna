@@ -1088,7 +1088,7 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (204 settings over 190 keys: 39 for the terminal,
+  `crates/tt-config/` (205 settings over 191 keys: 39 for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
   writes into, 2026-08-09, plus the whole log family, then the whole
   file-transfer family, then the seven the terminal and the two the *transports*
@@ -1098,11 +1098,12 @@ before anything else in every session.
   switches, the custom ANSI palette, the URL family, the four menu keys and
   the window-position pair and its save switch, the unfocused-cursor switch
   alongside the live cursor renderer, the startup macro's one-shot launch
-  state, and OSC 52's remote clipboard permissions and notification,
-  2026-08-10), the map onto a running terminal in `tt-session`, the
+  state, OSC 52's remote clipboard permissions and notification, and the
+  connection-close outcome pair, 2026-08-10), the map onto a running
+  terminal in `tt-session`, the
   schema as data over the C ABI, and a Qt dialog that builds itself from it.
   What remains is the *rest of the settings*, which is a line and a citation
-  each — 82 keys as of 2026-08-10, and `tests/upstream.rs`
+  each — 81 keys as of 2026-08-10, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -4019,6 +4020,34 @@ The core, session, generated C header and Qt tests each pin their own side of
 that boundary.
 
 204 settings over 190 keys, 82 to go.
+
+#### A disconnect either closes the window or clears its page
+
+`crates/tt-config/`, `tt-session`, the C ABI and the shell, 2026-08-10.
+`AutoWinClose` was already parsed — including `/AUTOWINCLOSE=` — but had no
+window behavior behind it. `ClearScreenOnCloseConnection` was the remaining
+key in the same branch. Both now act whether the far end disappears, a write
+discovers the dead link, or the user chooses Disconnect.
+
+**Auto-close is network-only.** `vtwin.cpp:3020` tests `PortType==IdTCPIP`, so
+SSH, telnet and raw TCP request a window close while a serial port and a local
+pty stay open. This is independent of `ConfirmDisconnect`: confirmation asks
+before a deliberate TCP disconnect; auto-close decides what happens after it.
+The core emits a close request rather than pretending it owns a window, and
+the Qt shell retains upstream's `IsWindowEnabled` guard so a socket dying in a
+modal dialog's nested loop does not close the disabled parent out from under
+the dialog.
+
+**Clear screen still means scroll.** When enabled, the live page moves into
+history, a blank page takes its place and the cursor goes home — the same
+`BuffClearScreen` path as Edit > Clear screen, not an erase in place. The core
+does this before an auto-close request too: it is invisible when the window
+closes and gives the right fallback when a disabled window cannot. The shared
+disconnect path also restores TCP's borrowed echo/CR settings and ends a file
+transfer on write-side disconnects, which the older write-error arm had
+skipped.
+
+205 settings over 191 keys, 81 to go.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 

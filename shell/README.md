@@ -407,6 +407,13 @@ and the status bar says "bash exited with status 1". That routes through the
 core rather than through a `if (transport == pty)` here, because the frontend
 should not be the thing that knows which transports have something to say.
 
+A network disconnect has one more outcome. `AutoWinClose` arrives as a core
+close request because only this layer owns a window; serial and local shells
+never ask. The window accepts it only while enabled, matching upstream's guard
+against a socket disappearing inside a modal dialog's nested event loop.
+`ClearScreenOnCloseConnection` is handled before that boundary: its blank page
+is a page whose old contents moved into scrollback, not an erase.
+
 ## The setup dialog has no list of settings in it
 
 `SettingsDialog` walks `tt_settings_field`, the core's metadata table: a tab per

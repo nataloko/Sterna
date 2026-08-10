@@ -146,6 +146,11 @@ Deliberately absent, and each for a reason rather than for lack of time:
   like; a local shell is not, and "bash exited with status 1" is the difference
   between a window that explains itself and one that just goes quiet. Read it
   after `TT_EVENT_KIND_DISCONNECTED` and fall back to the generic wording.
+- **`TT_EVENT_KIND_CLOSE_REQUESTED` is a window action, not another
+  disconnect.** It follows a network connection ending when `AutoWinClose` is
+  on, including `tt_session_disconnect`; serial and local pty sessions never
+  emit it. A frontend in a modal state may decline it, which is why the core
+  requests rather than owns the close.
 
 ## `run_abi.sh` is the only test that means anything here
 

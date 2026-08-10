@@ -64,13 +64,19 @@ the same thing to the host.
   leaves `vi` drawing to the old size, and the symptom looks like a redraw bug
   rather than a missing ioctl. `connect()` announces the size too, or a pty
   starts at 80x24 and emits a screenful of wrongly-wrapped output first.
-- **A disconnect is reported once and leaves the screen alone.** The text
-  explaining *why* it dropped is the whole reason anyone looks afterwards. The
-  transport gets asked for its own account of it — `close_note()` — **before**
-  it is dropped, because a pty's exit status dies with the child handle, and
+- **A disconnect is reported once and leaves the screen alone by default.**
+  The text explaining *why* it dropped is the whole reason anyone looks
+  afterwards. `ClearScreenOnCloseConnection` can instead scroll the page into
+  history and home the cursor; it does not erase the evidence. The transport
+  gets asked for its own account of the close — `close_note()` — **before** it
+  is dropped, because a pty's exit status dies with the child handle, and
   "bash exited with status 1" is a different message from "disconnected". It
   survives a `disconnect()` and is cleared by the next `connect()`, so a status
   line can keep showing it while the window sits there.
+- **Auto-close belongs to network windows.** `AutoWinClose` emits a
+  `CloseRequested` after SSH, telnet or raw TCP ends, including a deliberate
+  disconnect. Serial ports and local ptys never do. The frontend owns the
+  window and may decline the request while a modal child has it disabled.
 - **Typing at a dead session must not queue forever.** Otherwise pulling a
   cable turns into a slow leak.
 
