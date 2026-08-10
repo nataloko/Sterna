@@ -3,14 +3,12 @@
 A cross-platform **communications terminal** — serial, SSH, telnet and local
 shell — for Linux and Windows. Compatible with Tera Term; not Tera Term.
 
-> **Status: Stage 1 in progress — early, but it runs.** Stage 0 built the
-> groundwork: a differential-test oracle running Tera Term's real VT engine
-> (`oracle/`), a harness running its real file-transfer protocols (`xfer/`),
-> and audits of the serial and SSH layers (`serial-audit/`, `ssh-audit/`).
-> Stage 1 has the VT engine (`crates/`), diffed against the oracle on every
-> commit; all four transports — serial, SSH, telnet and a local shell; and a Qt
-> window that opens them. No file transfer, no scripting, no settings, no
-> packaging. See [PLAN.md](PLAN.md).
+> **Status: Stage 2 complete; Stage 3 in progress.** The Linux application has
+> all four transports, the oracle-diffed VT engine, six file-transfer
+> protocols, TTL and Lua scripting, the generated settings UI, a control
+> socket, an AppImage, `KEYBOARD.CNF`, and the first `.lng`-translated shell
+> surfaces. Windows/ConPTY, tabs, printing, and translation of the specialized
+> dialogs remain. See [PLAN.md](PLAN.md).
 
 The name is settled. See [PLAN.md](PLAN.md) for scope and status,
 [ATTRIBUTION.md](ATTRIBUTION.md) for what is borrowed from Tera Term and under

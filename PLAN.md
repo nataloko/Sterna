@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 1 complete, 2 in progress · **Commits:** 367
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 374
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1039,7 +1039,7 @@ immediately: it opens with `WILL AUTHENTICATION`, `WILL ENCRYPT`, `DO XDISPLOC`
 and `DO NEW-ENVIRON`, four options above `MaxTelOpt`, so the refusal path runs
 before anything else in every session.
 
-### 🔵 Stage 2 — the differentiators (3–4 months, ~20k LOC)
+### ✅ Stage 2 — the differentiators — **COMPLETE 2026-08-10**
 
 - **File transfer**: FFI to the vendored C, all six protocols, interop-tested
   against `lrzsz` and `gkermit`. ✅ **done through the C ABI**, 2026-08-08 —
@@ -1090,8 +1090,9 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs.** ✅ **schema complete** —
-  `crates/tt-config/` (295 addressable settings over all 272 keys read by
-  `ttset.c`: 39 for the terminal,
+  `crates/tt-config/` (296 addressable settings over 273 upstream keys: all
+  272 keys read directly by `ttset.c`, plus `UILanguageFile` read through its
+  helper; 39 settings for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
   writes into, 2026-08-09, plus the whole log family, then the whole
   file-transfer family, then the seven the terminal and the two the *transports*
@@ -1198,7 +1199,7 @@ Three decisions worth recording, each of which looks like a bug from one side:
   exactly those — while deliberately leaving `LFMode` and `AcceptWheelToCursor`,
   which upstream *does* keep separately and `SetupTerm` does not touch.
 - **The dialog writes only what changed.** Applying every field would pin all
-  295 known settings into the user's file the first time it was opened, and a
+  296 known settings into the user's file the first time it was opened, and a
   pinned setting stops following upstream's default for ever.
 - **The size resizes the *window*, not the grid** — the same path a telnet NAWS
   resize takes, because the view fits the terminal to the space it has.
@@ -4269,7 +4270,38 @@ what makes `StrictKeyMapping` useful rather than merely suppressive. TTL's
 window shortcuts still wait for their own missing subsystems; the file reader
 does not claim those exist.
 
-### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
+#### The language files stay language files
+
+`vendor/lang/`, `crates/tt-i18n/`, the C ABI and the Qt shell, 2026-08-10.
+All 14 UTF-8 `.lng` files are vendored byte-for-byte at the same named upstream
+revision as the protocol C, with `sync.sh --check` as their drift gate. They
+are installed as data rather than converted to Qt `.ts`, preserving the 17,610
+lines of existing translation and the upstream translator workflow.
+
+The format has no new parser. `tt-i18n` reads through `tt-config::Ini`, so its
+duplicate sections, quotes and empty values have the same measured Win32
+behavior as `TERATERM.INI`, then restores upstream's four escapes: backslash,
+newline, tab and NUL. The last matters to common-file-dialog filters, which is
+why `tt_i18n_text` returns a borrowed UTF-8 span with an explicit length rather
+than a C string. The C test proves two embedded NULs cross intact.
+
+`UILanguageFile` is now the schema's 296th setting. It is the one key whose
+read `ttset.c` delegates to `GetUILanguageFileFullW`; its upstream fallback is
+`lang\Default.lng`, and relative Windows-style values resolve against the
+active setup, the executable and Sterna's installed data directory. The setup
+dialog offers every shipped catalog by its own `[Info] language` name, unique
+field labels translate, and the main menus retranslate live.
+
+Menu strings are adapted at the presentation boundary: Win32 mnemonic markers
+and printed `Alt+…` captions are removed because Sterna reserves Alt for the
+terminal and owns real shortcuts on `QAction`. This includes the complete
+Japanese-style `設定(&S)` marker rather than leaving a stray `(S)`.
+
+This begins Stage 3 rather than completing its language item. The catalog,
+main menus and generated settings UI are wired; the specialized connection,
+transfer and macro dialogs still need their existing keys mapped.
+
+### 🔵 Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
 Windows build, ConPTY, Win32 serial edge cases, NSIS installer. All 14 `.lng`
 languages wired through unchanged. VT320/VT525 depth and DEC private modes.
@@ -4335,9 +4367,12 @@ Adoption hinges on "my existing setup just works." Budget real time here.
 - **Hosts and keys** — read Tera Term's `ssh_known_hosts` *and*
   `~/.ssh/known_hosts`; read `~/.ssh/id_*` and `~/.ssh/config`; write OpenSSH
   format.
-- **`.lng` files** — keep the exact format. Do **not** migrate to Qt `.ts`: that
-  throws away 17,610 lines of donated translation (14 languages × ~1,150 keys)
-  and the translator workflow.
+- **`.lng` files** — 🔵 **in progress 2026-08-10.** The exact 14 files are
+  vendored, loaded through `tt-i18n`, installed with the shell, selected by the
+  compatible `UILanguageFile` setting, and used by the main menus and generated
+  settings UI. Do **not** migrate to Qt `.ts`: that throws away 17,610 lines of
+  donated translation and the translator workflow. The specialized dialogs
+  remain to map.
 - **TTX plugins** — replace in order: (1) fold the ones that matter into core —
   `TTXProxy` (~1k Rust), `TTXKanjiMenu`, `TTXResizeMenu`, `TTXttyrec`; (2) a
   **Lua plugin API** — menu items, key bindings, connect/disconnect hooks,
@@ -4411,7 +4446,8 @@ file/dir 1k, connection/terminal 2k, dialogs 0.8k, misc 1k — **~9.3k Rust vs
    does not (see below) and the other is spacing combining marks, deferred with
    CJK. **Two of the nine original xfail notes named the wrong cause** — a
    reminder that an xfail reason is a hypothesis until something re-tests it.
-   Still to do: the 53 `.ttl` files as the TTL conformance suite, in Stage 2.
+   The 53 `.ttl` files now run as the TTL conformance suite in
+   `crates/tt-ttl/tests/scripts.rs`; each has a reviewed transcript.
 5. **✅ Fuzzing and property tests** — `crates/tt-fuzz/`, 2026-08-08. All four
    named invariants are asserted, `cargo-fuzz` runs three targets over the
    parser and the telnet decoder, and the whole thing found **five real bugs on

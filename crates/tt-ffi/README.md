@@ -57,6 +57,7 @@ Two things about how it is generated, both learned the hard way:
 | Ports | `tt_serial_enumerate`, `tt_port_list_len` / `_at` / `_free`, `tt_ssh_config_aliases` + `tt_string_list_*` |
 | Logging | `tt_log_options_default`, `tt_session_log_start` / `_stop` / `_path` / `_bytes` |
 | Settings | `tt_settings_field_count` / `_field` / `tt_settings_choice`, `tt_session_setting` / `_set_setting` / `_settings_load` / `_settings_save` |
+| Languages | `tt_i18n_load` / `_text` / `_free`; `_text` returns an explicit-length UTF-8 span because file-dialog filters contain embedded NULs |
 | Macros | `tt_macro_start` / `_poll_fd` / `_service` / `_running` / `_cancel` / `_exit_code` / `_free`, `tt_session_unlink_macro`, and `TtMacroUi` |
 
 Deliberately absent, and each for a reason rather than for lack of time:

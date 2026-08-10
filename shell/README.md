@@ -488,12 +488,15 @@ keep in step.
 Three things it does deliberately:
 
 - **Only what changed is written.** A dialog that applied every field would pin
-  all 295 settings into the user's file the first time it was opened, and a
+  all 296 settings into the user's file the first time it was opened, and a
   pinned setting stops following upstream's default for ever.
 - **The combo box shows the file's spellings**, not prettified ones. Upstream
   compares `TerminalID` with `strcmp`, so `Vt320` would read back as a VT100.
-- **The label is derived from the setting's name**, because `.lng` has no
-  loader yet. The label key is in the tooltip, waiting for `tt-i18n`.
+- **A unique `.lng` label is translated; a shared one is not.** Several schema
+  rows point at one upstream group caption — the foreground/background colour
+  pairs, for example. Giving that translation to every generated row would
+  make different settings display the same name, so those keep the clear name
+  derived from their dotted setting.
 
 Applying reaches the running terminal, and **it overwrites modes the host set** —
 `ts.BSKey` is the same variable DECBKM writes, upstream and here. The size is
@@ -502,6 +505,31 @@ the view fits the terminal to it, the same path a remote NAWS resize takes.
 `AlphaBlendActive` and `AlphaBlend` likewise reach the top-level window: their
 0..255 values become Qt opacity and switch as focus enters and leaves. An
 active value omitted from the file inherits the loaded inactive one.
+
+## Language catalogs stay Tera Term language catalogs
+
+All 14 UTF-8 `.lng` files are vendored byte-for-byte under `vendor/lang/` and
+installed under `share/sterna/lang`; the build-tree path is only a development
+fallback. `settings.language_file` is upstream's `UILanguageFile`, including
+its `lang\Default.lng` fallback, so a shared `TERATERM.INI` selects the same
+file spelling in either program. The setup dialog offers every shipped file by
+its own `[Info] language` name.
+
+`I18n` owns the opaque catalog from the flat ABI. Lookups cross as a pointer
+plus a length rather than as a C string because upstream file-dialog filters
+contain embedded NULs. Main menus and their actions retranslate in place when
+the setting changes; the menu structure remains the only list of actions.
+
+The `.lng` menu text needs one deliberate adaptation. Upstream includes Win32
+mnemonics and printable `Alt+…` captions, while Sterna reserves Alt for the
+terminal and puts its actual shortcuts on `QAction`. Those markers are removed
+from the displayed translation, including Japanese-style `設定(&S)`, so loading
+a language cannot silently make Meta keystrokes open a menu.
+
+This is the translation foundation, not a claim that every dialog is done.
+The generated settings UI and the main menu are wired; the specialized serial,
+SSH, telnet, transfer and macro dialogs still need their existing `.lng` keys
+mapped as Stage 3 proceeds.
 
 Native Wayland is the platform exception. Qt 6.11 retains the opacity property
 but has no backend operation to give it to the compositor; Fedora's xcb backend

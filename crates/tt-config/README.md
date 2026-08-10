@@ -121,11 +121,13 @@ every other trap here — a rule that looks uniform and is not.
   **500**; this file said 500 for both, which is the next line of
   `tttypes.h:633` and the same wrong constant `tt-grid` had.
 
-The transcription is complete: the schema has **295 addressable settings over
-all 272 distinct keys read by `ttset.c`**. Tuple-valued keys such as
-`VTFontSpace` have one setting per field. `tests/upstream.rs` extracts both
-lists and fails on either a missing or an invented key, so this is a checked
-property rather than a maintained count.
+The transcription is complete: the schema has **296 addressable settings over
+273 upstream keys**. Of those, 272 are read directly by `ttset.c`; the last is
+`UILanguageFile`, whose read is delegated to `GetUILanguageFileFullW` and whose
+writer remains in `ttset.c`. Tuple-valued keys such as `VTFontSpace` have one
+setting per field. `tests/upstream.rs` extracts the direct list and fails on
+either a missing or an invented key, so this is checked rather than trusted to
+the maintained count.
 
 ## `KEYBOARD.CNF` uses the same INI, but not the same values
 
@@ -141,7 +143,11 @@ The result distinguishes terminal keys, DEC UDKs, local shortcuts, and all
 four user-key types. It does not send anything: live terminal modes and
 frontend-owned actions belong to `tt-session` and the shell respectively.
 
-## Still to come
+## The label keys now reach the language catalogs
 
-- **`.lng` labels.** The metadata carries the label key and nothing looks it
-  up, so the dialog derives a name from the setting instead. That is `tt-i18n`.
+The schema still only *names* a `.lng` key; loading translations belongs to
+`tt-i18n`, which deliberately reuses this crate's INI behavior. The flat ABI
+carries the label key and the Qt settings dialog resolves unique field labels
+through the selected catalog. A key shared by several rows names an upstream
+group rather than one generated field, so those rows keep their unambiguous
+name-derived fallback instead of all acquiring the same translated caption.
