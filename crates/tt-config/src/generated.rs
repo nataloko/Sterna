@@ -1376,6 +1376,16 @@ pub struct Settings {
     /// this controls only the hand cursor and the double-click that launches one
     /// (`vtwin.cpp:2426`, `buffer.c:4411`). It ships off.
     pub mouse_clickable_url: bool,
+    /// `ttset.c:1460`. The ordinary pointer over the terminal: `ARROW`, `IBEAM`,
+    /// `CROSS` or `HAND`, compared case-insensitively by `SetMouseCursor`
+    /// (`vtwin.cpp:159`). `IBEAM` is the shipped default.
+    ///
+    /// A `string`, deliberately, rather than an enum. The reader copies the file's
+    /// spelling verbatim into `MouseCursorName`, and `SetMouseCursor` simply returns
+    /// without changing the current pointer when none of the four names matches.
+    /// Normalising an unknown value to the default would therefore change both a
+    /// shared file and the live no-op behavior upstream gives it.
+    pub mouse_cursor: String,
     /// `ttset.c:1760`. An empty string uses the operating system's URL handler.
     /// A configured executable is tried only for HTTP, HTTPS and FTP; SFTP, TFTP,
     /// NEWS and MMS still go straight to the system handler (`buffer.c:4084`).
@@ -2117,6 +2127,7 @@ impl Default for Settings {
             mouse_ctrl_disables_wheel_to_cursor: true,
             mouse_wheel_scroll_line: 3,
             mouse_clickable_url: false,
+            mouse_cursor: String::from("IBEAM"),
             url_browser: String::from(""),
             url_browser_args: String::from(""),
             url_join_split: false,
@@ -2518,6 +2529,9 @@ impl Settings {
                 ini.get("Tera Term", "EnableClickableUrl"),
                 false,
             ),
+            mouse_cursor: ini
+                .get_or("Tera Term", "MouseCursor", &d.mouse_cursor)
+                .to_string(),
             url_browser: ini
                 .get_or("Tera Term", "ClickableUrlBrowser", &d.url_browser)
                 .to_string(),
@@ -3518,6 +3532,7 @@ impl Settings {
             }
             .to_string(),
         );
+        ini.set("Tera Term", "MouseCursor", &self.mouse_cursor.clone());
         ini.set(
             "Tera Term",
             "ClickableUrlBrowser",
@@ -4670,6 +4685,7 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "mouse.cursor" => self.mouse_cursor.clone(),
             "url.browser" => self.url_browser.clone(),
             "url.browser_args" => self.url_browser_args.clone(),
             "url.join_split" => if self.url_join_split { "on" } else { "off" }.to_string(),
@@ -5215,6 +5231,7 @@ impl Settings {
             "mouse.clickable_url" => {
                 self.mouse_clickable_url = crate::schema::on_off(Some(value), false)
             }
+            "mouse.cursor" => self.mouse_cursor = value.to_string(),
             "url.browser" => self.url_browser = value.to_string(),
             "url.browser_args" => self.url_browser_args = value.to_string(),
             "url.join_split" => self.url_join_split = crate::schema::on_off(Some(value), false),
@@ -6338,6 +6355,16 @@ pub const FIELDS: &[Field] = &[
         default: "off",
         label: Some("DLG_TAB_GENERAL_CLICKURL"),
         doc: "`ttset.c:771`. URL recognition, colouring and underlining happen regardless; this controls only the hand cursor and the double-click that launches one (`vtwin.cpp:2426`, `buffer.c:4411`). It ships off.",
+    },
+    Field {
+        name: "mouse.cursor",
+        page: "mouse",
+        section: "Tera Term",
+        key: "MouseCursor",
+        kind: Kind::Str,
+        default: "IBEAM",
+        label: Some("DLG_TAB_VISUAL_MOUSE"),
+        doc: "`ttset.c:1460`. The ordinary pointer over the terminal: `ARROW`, `IBEAM`, `CROSS` or `HAND`, compared case-insensitively by `SetMouseCursor` (`vtwin.cpp:159`). `IBEAM` is the shipped default.  A `string`, deliberately, rather than an enum. The reader copies the file's spelling verbatim into `MouseCursorName`, and `SetMouseCursor` simply returns without changing the current pointer when none of the four names matches. Normalising an unknown value to the default would therefore change both a shared file and the live no-op behavior upstream gives it.",
     },
     Field {
         name: "url.browser",

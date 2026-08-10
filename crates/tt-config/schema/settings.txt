@@ -525,6 +525,17 @@ mouse.wheel_scroll_line | int | Tera Term | MouseWheelScrollLine | 3 | DLG_TAB_G
 # (`vtwin.cpp:2426`, `buffer.c:4411`). It ships off.
 mouse.clickable_url | bool | Tera Term | EnableClickableUrl | off | DLG_TAB_GENERAL_CLICKURL
 
+# `ttset.c:1460`. The ordinary pointer over the terminal: `ARROW`, `IBEAM`,
+# `CROSS` or `HAND`, compared case-insensitively by `SetMouseCursor`
+# (`vtwin.cpp:159`). `IBEAM` is the shipped default.
+#
+# A `string`, deliberately, rather than an enum. The reader copies the file's
+# spelling verbatim into `MouseCursorName`, and `SetMouseCursor` simply returns
+# without changing the current pointer when none of the four names matches.
+# Normalising an unknown value to the default would therefore change both a
+# shared file and the live no-op behavior upstream gives it.
+mouse.cursor | string | Tera Term | MouseCursor | IBEAM | DLG_TAB_VISUAL_MOUSE
+
 # --- URL ---------------------------------------------------------------------
 
 # `ttset.c:1760`. An empty string uses the operating system's URL handler.

@@ -126,6 +126,25 @@ fn an_unrecognised_value_takes_the_default_rather_than_failing() {
 }
 
 #[test]
+fn the_mouse_cursor_keeps_the_files_own_spelling() {
+    // Unlike an enumerated setting, `MouseCursor` is copied into
+    // `MouseCursorName` as text and interpreted only when the pointer is set.
+    // `_stricmp` accepts this lower-case spelling, and an unknown name is a
+    // live no-op rather than the default — both therefore have to survive a
+    // round trip unchanged.
+    for value in ["cross", "MY-CURSOR"] {
+        let ini = Ini::parse(format!("[Tera Term]\r\nMouseCursor={value}\r\n").as_bytes());
+        let s = Settings::load(&ini);
+        assert_eq!(s.mouse_cursor, value);
+
+        let mut out = Ini::new();
+        s.store(&mut out);
+        assert_eq!(out.get("Tera Term", "MouseCursor"), Some(value));
+    }
+    assert_eq!(Settings::default().mouse_cursor, "IBEAM");
+}
+
+#[test]
 fn writing_settings_leaves_the_rest_of_the_file_alone() {
     let original = b"; my notes\r\n[Tera Term]\r\nCRReceive=LF\r\n[Extra]\r\nMine=1\r\n";
     let mut ini = Ini::parse(original);
