@@ -58,6 +58,14 @@ enum Bound {
     Clamped(i32, i32),
 }
 
+/// What a missing comma-separated field becomes when the key itself exists.
+enum FieldFallback {
+    /// `GetNthNum2`: the field's own default, used by transfer timeouts.
+    Default,
+    /// `GetNthNum`: zero, used by geometry and sizes.
+    Zero,
+}
+
 enum Kind {
     Bool,
     /// `Key` or `Key.N`, the latter being the Nth comma-separated field of a
@@ -65,6 +73,7 @@ enum Kind {
     Int {
         field: Option<usize>,
         bound: Option<Bound>,
+        fallback: FieldFallback,
     },
     Str,
     /// `spelling => Variant`, in the order they were written, and whether the
@@ -235,8 +244,9 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
             },
         );
     }
-    // `int`, `int(min..max)`, `int_min(floor)` or `int_clamp(min..max)`.
-    let (spec, bound) = if let Some(body) = spec
+    // `int`, `int_zero`, their ranged forms, `int_min(floor)` or
+    // `int_clamp(min..max)`.
+    let (spec, bound, fallback) = if let Some(body) = spec
         .strip_prefix("int_clamp(")
         .and_then(|s| s.strip_suffix(')'))
     {
@@ -247,6 +257,25 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
                 lo.trim().parse::<i32>().expect("a number"),
                 hi.trim().parse::<i32>().expect("a number"),
             )),
+            FieldFallback::Default,
+        )
+    } else if let Some(body) = spec
+        .strip_prefix("int_zero(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        let (lo, hi) = body.split_once("..").expect("a range is `min..max`");
+        let hi = hi.trim();
+        (
+            "int",
+            Some(Bound::Ranged(
+                lo.trim().parse::<i32>().expect("a number"),
+                if hi.is_empty() {
+                    i32::MAX
+                } else {
+                    hi.parse::<i32>().expect("a number")
+                },
+            )),
+            FieldFallback::Zero,
         )
     } else if let Some(body) = spec.strip_prefix("int(").and_then(|s| s.strip_suffix(')')) {
         let (lo, hi) = body.split_once("..").expect("a range is `min..max`");
@@ -263,7 +292,7 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
                 hi.parse::<i32>().expect("a number")
             },
         );
-        ("int", Some(bound))
+        ("int", Some(bound), FieldFallback::Default)
     } else if let Some(body) = spec
         .strip_prefix("int_min(")
         .and_then(|s| s.strip_suffix(')'))
@@ -271,9 +300,12 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
         (
             "int",
             Some(Bound::Floor(body.trim().parse::<i32>().expect("a number"))),
+            FieldFallback::Default,
         )
+    } else if spec == "int_zero" {
+        ("int", None, FieldFallback::Zero)
     } else {
-        (spec, None)
+        (spec, None, FieldFallback::Default)
     };
     match spec {
         "bool" => (key.to_string(), Kind::Bool),
@@ -285,9 +317,17 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
                 Kind::Int {
                     field: Some(n.parse::<usize>().expect("a digit") - 1),
                     bound,
+                    fallback,
                 },
             ),
-            _ => (key.to_string(), Kind::Int { field: None, bound }),
+            _ => (
+                key.to_string(),
+                Kind::Int {
+                    field: None,
+                    bound,
+                    fallback,
+                },
+            ),
         },
         other => panic!("unknown type {other}"),
     }
@@ -473,12 +513,21 @@ fn emit(settings: &[Setting]) -> String {
                 "crate::schema::on_off(ini.get(\"{section}\", \"{key}\"), {})",
                 on_off_literal(&s.default)
             ),
-            Kind::Int { field: nth, bound } => {
+            Kind::Int {
+                field: nth,
+                bound,
+                fallback,
+            } => {
                 let read = match nth {
                     None => format!("ini.get_int(\"{section}\", \"{key}\", d.{field}) as i32"),
-                    Some(n) => format!(
-                        "crate::schema::nth_int(ini.get(\"{section}\", \"{key}\"), {n}, d.{field})"
-                    ),
+                    Some(n) => match fallback {
+                        FieldFallback::Default => format!(
+                            "crate::schema::nth_int(ini.get(\"{section}\", \"{key}\"), {n}, d.{field})"
+                        ),
+                        FieldFallback::Zero => format!(
+                            "crate::schema::nth_int_zero(ini.get(\"{section}\", \"{key}\"), {n}, d.{field})"
+                        ),
+                    },
                 };
                 match bound {
                     None => read,

@@ -33,6 +33,11 @@
 #   int(lo..)     the same with no ceiling, which is how `MaxBuffSize` is read
 #                 (`ttset.c:1214`) — upstream caps that one against a
 #                 compile-time constant in `buffer.c` rather than on the way in
+#   int_zero      a comma-separated field read through `GetNthNum`: an absent
+#   int_zero(...) *key* takes the default, but a missing or empty field in a
+#                 present value is zero. `VTPos=12` is `(12,0)`. Plain `int`
+#                 fields use their own default there instead, which is what
+#                 the transfer timeouts' different helper, `GetNthNum2`, does
 #   int_clamp(lo..hi)
 #                 clamped at **both** ends, `min(max(lo, v), hi)`. The third of
 #                 three bounds and a special case of neither: `int(lo..hi)`
@@ -70,10 +75,10 @@
 # this used to say; 500 is `TermHeightMax`, the next line of `tttypes.h:633`.
 # Zero or less takes the default rather than the floor, which is what the range
 # means here.
-terminal.cols | int(1..1000) | Tera Term | TerminalSize.1 | 80 | DLG_TABSHEET_TITLE_TERM
+terminal.cols | int_zero(1..1000) | Tera Term | TerminalSize.1 | 80 | DLG_TABSHEET_TITLE_TERM
 
 # `ttset.c:619`, the second half of the same key, bounded by `TermHeightMax`.
-terminal.rows | int(1..500) | Tera Term | TerminalSize.2 | 24 | DLG_TABSHEET_TITLE_TERM
+terminal.rows | int_zero(1..500) | Tera Term | TerminalSize.2 | 24 | DLG_TABSHEET_TITLE_TERM
 
 # `ts.TerminalID`. `ttset.c:709` reads the key with an empty default and hands
 # it to `TermIDGetID`, which is a case-sensitive `strcmp`
@@ -694,10 +699,10 @@ clipboard.paste_delay_per_line | int_clamp(0..5000) | Tera Term | PasteDelayPerL
 # is resized, which is the whole reason it is a setting. Below zero takes the
 # default and there is no ceiling, so it is the `TerminalSize` bound rather
 # than a clamp.
-clipboard.paste_dialog_width | int(0..) | Tera Term | PasteDialogSize.1 | 330 | -
+clipboard.paste_dialog_width | int_zero(0..) | Tera Term | PasteDialogSize.1 | 330 | -
 
 # The second half of the same key, with a default of its own.
-clipboard.paste_dialog_height | int(0..) | Tera Term | PasteDialogSize.2 | 220 | -
+clipboard.paste_dialog_height | int_zero(0..) | Tera Term | PasteDialogSize.2 | 220 | -
 
 # `ttset.c:2002`. **A second gate on `DECSET 2004`**, and the one to know
 # about: `clipboar.c:265` tests the setting *and* the mode, so a host that has
@@ -1337,7 +1342,7 @@ window.save_position | bool | Tera Term | SaveVTWinPos | off | -
 # the window manager to place the window rather than meaning coordinate zero.
 # **Conditionally written**: with `SaveVTWinPos=off`, `_WriteIniFile` leaves an
 # existing `VTPos` line byte-for-byte alone (`ttset.c:2109`).
-window.x | int | Tera Term | VTPos.1 | -2147483648 | - | write-if=window.save_position
+window.x | int_zero | Tera Term | VTPos.1 | -2147483648 | - | write-if=window.save_position
 
 # `ttset.c:600`, second half of the same pair and the same sentinel.
-window.y | int | Tera Term | VTPos.2 | -2147483648 | - | write-if=window.save_position
+window.y | int_zero | Tera Term | VTPos.2 | -2147483648 | - | write-if=window.save_position

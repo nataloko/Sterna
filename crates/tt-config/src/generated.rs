@@ -2159,13 +2159,21 @@ impl Settings {
         let d = Settings::default();
         Settings {
             terminal_cols: crate::schema::ranged(
-                crate::schema::nth_int(ini.get("Tera Term", "TerminalSize"), 0, d.terminal_cols),
+                crate::schema::nth_int_zero(
+                    ini.get("Tera Term", "TerminalSize"),
+                    0,
+                    d.terminal_cols,
+                ),
                 d.terminal_cols,
                 1,
                 1000,
             ),
             terminal_rows: crate::schema::ranged(
-                crate::schema::nth_int(ini.get("Tera Term", "TerminalSize"), 1, d.terminal_rows),
+                crate::schema::nth_int_zero(
+                    ini.get("Tera Term", "TerminalSize"),
+                    1,
+                    d.terminal_rows,
+                ),
                 d.terminal_rows,
                 1,
                 500,
@@ -2496,7 +2504,7 @@ impl Settings {
                 5000,
             ),
             clipboard_paste_dialog_width: crate::schema::ranged(
-                crate::schema::nth_int(
+                crate::schema::nth_int_zero(
                     ini.get("Tera Term", "PasteDialogSize"),
                     0,
                     d.clipboard_paste_dialog_width,
@@ -2506,7 +2514,7 @@ impl Settings {
                 2147483647,
             ),
             clipboard_paste_dialog_height: crate::schema::ranged(
-                crate::schema::nth_int(
+                crate::schema::nth_int_zero(
                     ini.get("Tera Term", "PasteDialogSize"),
                     1,
                     d.clipboard_paste_dialog_height,
@@ -2888,8 +2896,8 @@ impl Settings {
                 ini.get("Tera Term", "SaveVTWinPos"),
                 false,
             ),
-            window_x: crate::schema::nth_int(ini.get("Tera Term", "VTPos"), 0, d.window_x),
-            window_y: crate::schema::nth_int(ini.get("Tera Term", "VTPos"), 1, d.window_y),
+            window_x: crate::schema::nth_int_zero(ini.get("Tera Term", "VTPos"), 0, d.window_x),
+            window_y: crate::schema::nth_int_zero(ini.get("Tera Term", "VTPos"), 1, d.window_y),
         }
     }
 

@@ -154,6 +154,26 @@ pub fn nth_int(value: Option<&str>, n: usize, default: i32) -> i32 {
         .unwrap_or(default)
 }
 
+/// The `GetNthNum` variant: an absent **key** takes the field's default, but a
+/// missing or empty field in a value that exists is zero.
+///
+/// `VTPos=12` is therefore `(12, 0)`, not `(12, CW_USEDEFAULT)`, while no
+/// `VTPos` key at all is the sentinel in both axes. Transfer timeouts use
+/// [`nth_int`] instead, because upstream reads those with `GetNthNum2` and a
+/// per-field fallback.
+pub fn nth_int_zero(value: Option<&str>, n: usize, default: i32) -> i32 {
+    let Some(value) = value else {
+        return default;
+    };
+    value
+        .split(',')
+        .nth(n)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| int(s, 0))
+        .unwrap_or(0)
+}
+
 /// Put `value` in the `n`th field, keeping whatever the others were.
 ///
 /// Reading before writing matters: the other half of `TerminalSize` belongs to

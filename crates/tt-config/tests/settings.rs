@@ -88,6 +88,27 @@ fn the_window_position_is_written_only_when_its_switch_is_on() {
     assert_eq!((defaults.window_x, defaults.window_y), (i32::MIN, i32::MIN));
     defaults.store(&mut empty);
     assert_eq!(empty.get("Tera Term", "VTPos"), None);
+
+    // `GetNthNum`, not `GetNthNum2`: once the key exists, a field it omitted
+    // is zero rather than that field's default. The absent key above remains
+    // the two sentinels because GetPrivateProfileString supplied both first.
+    let partial = Settings::load(&Ini::parse(b"[Tera Term]\r\nVTPos=12\r\n"));
+    assert_eq!((partial.window_x, partial.window_y), (12, 0));
+}
+
+#[test]
+fn the_two_comma_field_helpers_disagree_about_an_omitted_field() {
+    // Sizes use `GetNthNum`, where a present value's missing field is zero.
+    let s = Settings::load(&Ini::parse(b"[Tera Term]\r\nPasteDialogSize=400\r\n"));
+    assert_eq!(s.clipboard_paste_dialog_width, 400);
+    assert_eq!(s.clipboard_paste_dialog_height, 0);
+
+    // Transfer timeouts use `GetNthNum2`, where every missing field takes the
+    // fallback passed for that field, and only a supplied zero is floored.
+    let s = Settings::load(&Ini::parse(b"[Tera Term]\r\nXmodemTimeouts=5\r\n"));
+    assert_eq!(s.transfer_xmodem_timeout_init, 5);
+    assert_eq!(s.transfer_xmodem_timeout_init_crc, 3);
+    assert_eq!(s.transfer_xmodem_timeout_short, 10);
 }
 
 #[test]
