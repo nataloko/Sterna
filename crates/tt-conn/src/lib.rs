@@ -34,6 +34,8 @@ pub mod telnet;
 pub mod transport;
 #[cfg(windows)]
 mod windows_event;
+#[cfg(windows)]
+mod windows_reader;
 
 pub use error::{Error, Result};
 pub use netif::local_ip_addresses;

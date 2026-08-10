@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 391
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 392
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4416,8 +4416,8 @@ its self-pipe. All three set/wait/reset tests pass through the MinGW binaries
 under Wine, the Windows crates link cleanly, and the Unix Qt build remains
 clean with its pty, macro and control event-loop tests passing. A native
 Windows Qt build is still required before calling the frontend path proven;
-serial and telnet need their own Windows asynchronous I/O events rather than
-being folded into this worker-channel change.
+serial still needs its own Windows asynchronous I/O event rather than being
+folded into this worker-channel change. Telnet and ConPTY are recorded below.
 
 ConPTY is now a byte transport rather than a type that merely constructs. The
 anonymous pipes `portable-pty` creates are synchronous, so one blocking worker
@@ -4436,6 +4436,18 @@ host rejects the internal `--inheritcursor` switch selected by `portable-pty`
 and closes the output pipe empty. Keep the native Windows runner as the
 authority; Wine's failure happens below Sterna before the child produces a
 byte.
+
+Windows telnet no longer makes the frontend poll a synchronous Winsock socket.
+Its read side shares ConPTY's bounded 1 MiB worker queue and manual-reset event,
+using a blocking socket clone while the original retains ordinary timed writes.
+That deliberately avoids `WSAEventSelect`, whose forced nonblocking mode would
+turn every protocol reply into a partial-write state machine. Windows does not
+set Unix's 50 ms read timeout on the clone, and `Drop` shuts down the underlying
+connection because closing the original handle alone cannot wake a cloned one.
+The local Winsock test proves a quiet connection leaves the event unsignalled,
+then orders data and EOF as two wakes; it and the shared ConPTY-worker regression
+pass from MinGW binaries under Wine. Serial is now the last transport without a
+native Windows wakeup.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

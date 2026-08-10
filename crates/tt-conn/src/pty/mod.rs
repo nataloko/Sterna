@@ -25,14 +25,12 @@
 #[cfg(unix)]
 use std::io::ErrorKind;
 #[cfg(windows)]
-use std::io::{ErrorKind, Read, Write};
+use std::io::Write;
 #[cfg(windows)]
 use std::os::windows::io::RawHandle;
 use std::path::{Path, PathBuf};
 #[cfg(windows)]
-use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError};
-#[cfg(windows)]
-use std::sync::Arc;
+use std::sync::mpsc::{SyncSender, TrySendError};
 use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
@@ -40,10 +38,7 @@ use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize}
 use crate::error::{Error, Result};
 use crate::transport::{Transport, TransportEvent};
 #[cfg(windows)]
-use crate::windows_event::ManualEvent;
-
-#[cfg(windows)]
-const READ_QUEUE_DEPTH: usize = 128;
+use crate::windows_reader::WindowsReader;
 #[cfg(windows)]
 const WRITE_QUEUE_DEPTH: usize = 16;
 
@@ -56,57 +51,17 @@ const WRITE_QUEUE_DEPTH: usize = 16;
 /// of an open modal dialog growing this process without limit.
 #[cfg(windows)]
 struct WindowsPtyIo {
-    read: Receiver<ReadMessage>,
+    read: WindowsReader,
     write: SyncSender<Vec<u8>>,
-    wake: Arc<ManualEvent>,
-    held: Option<ReadMessage>,
-    read_ended: bool,
-}
-
-#[cfg(windows)]
-enum ReadMessage {
-    Data(Vec<u8>),
-    End,
 }
 
 #[cfg(windows)]
 impl WindowsPtyIo {
     fn start(
-        mut reader: Box<dyn Read + Send>,
+        reader: Box<dyn std::io::Read + Send>,
         mut writer: Box<dyn Write + Send>,
     ) -> Result<WindowsPtyIo> {
-        let wake = Arc::new(ManualEvent::new()?);
-        let (read_tx, read_rx) = std::sync::mpsc::sync_channel(READ_QUEUE_DEPTH);
-        let read_wake = Arc::clone(&wake);
-        std::thread::Builder::new()
-            .name("sterna-conpty-read".into())
-            .spawn(move || {
-                let mut buf = [0u8; 8192];
-                loop {
-                    match reader.read(&mut buf) {
-                        Ok(0) => {
-                            if read_tx.send(ReadMessage::End).is_ok() {
-                                read_wake.signal();
-                            }
-                            return;
-                        }
-                        Ok(n) => {
-                            if read_tx.send(ReadMessage::Data(buf[..n].to_vec())).is_err() {
-                                return;
-                            }
-                            read_wake.signal();
-                        }
-                        Err(e) if e.kind() == ErrorKind::Interrupted => continue,
-                        Err(_) => {
-                            if read_tx.send(ReadMessage::End).is_ok() {
-                                read_wake.signal();
-                            }
-                            return;
-                        }
-                    }
-                }
-            })
-            .map_err(Error::from_io)?;
+        let read = WindowsReader::start(reader, "sterna-conpty-read")?;
 
         let (write_tx, write_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(WRITE_QUEUE_DEPTH);
         std::thread::Builder::new()
@@ -121,56 +76,13 @@ impl WindowsPtyIo {
             .map_err(Error::from_io)?;
 
         Ok(WindowsPtyIo {
-            read: read_rx,
+            read,
             write: write_tx,
-            wake,
-            held: None,
-            read_ended: false,
         })
     }
 
     fn read(&mut self, data: &mut Vec<u8>) -> Result<usize> {
-        self.wake.reset();
-        if self.read_ended {
-            return Err(Error::Disconnected);
-        }
-
-        let message = match self.held.take() {
-            Some(message) => message,
-            None => match self.read.try_recv() {
-                Ok(message) => message,
-                Err(TryRecvError::Empty) => return Ok(0),
-                Err(TryRecvError::Disconnected) => {
-                    self.read_ended = true;
-                    return Err(Error::Disconnected);
-                }
-            },
-        };
-
-        match message {
-            ReadMessage::End => {
-                self.read_ended = true;
-                Err(Error::Disconnected)
-            }
-            ReadMessage::Data(bytes) => {
-                let n = bytes.len();
-                data.extend_from_slice(&bytes);
-
-                // One 8-KiB chunk per pump, matching the Unix path. A queued
-                // second message needs another edge because resetting a
-                // manual event coalesced the worker's earlier signals. Holding
-                // it here preserves order: the second message can be EOF.
-                self.held = match self.read.try_recv() {
-                    Ok(next) => Some(next),
-                    Err(TryRecvError::Disconnected) => Some(ReadMessage::End),
-                    Err(TryRecvError::Empty) => None,
-                };
-                if self.held.is_some() {
-                    self.wake.signal();
-                }
-                Ok(n)
-            }
-        }
+        self.read.read(data)
     }
 
     fn write(&self, data: &[u8]) -> Result<usize> {
@@ -185,7 +97,7 @@ impl WindowsPtyIo {
     }
 
     fn wait_handle(&self) -> RawHandle {
-        self.wake.handle()
+        self.read.wait_handle()
     }
 }
 
@@ -737,7 +649,7 @@ fn set_nonblocking(fd: std::os::unix::io::RawFd) -> Result<()> {
 mod windows_tests {
     use super::*;
     use std::io::Cursor;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
     use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
     use windows_sys::Win32::System::Threading::WaitForSingleObject;
 

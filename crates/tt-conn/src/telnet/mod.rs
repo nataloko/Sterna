@@ -15,18 +15,28 @@ pub mod protocol;
 pub use protocol::{TelnetEvent, TelnetMode, TelnetParams};
 
 use std::fs::File;
-use std::io::{ErrorKind, Read, Write};
+#[cfg(not(windows))]
+use std::io::Read;
+use std::io::{ErrorKind, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+#[cfg(windows)]
+use std::os::windows::io::RawHandle;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crate::error::{Error, Result};
 use crate::transport::{Transport, TransportEvent};
+#[cfg(windows)]
+use crate::windows_reader::WindowsReader;
 use protocol::Telnet;
 
 /// A telnet (or raw TCP) connection.
 pub struct TelnetConn {
     socket: TcpStream,
+    /// A blocking clone of `socket`, kept off the frontend thread. The
+    /// original remains synchronous for timed writes and protocol replies.
+    #[cfg(windows)]
+    reader: WindowsReader,
     telnet: Telnet,
     describe: String,
     /// Read scratch, kept so a busy line does not allocate per read.
@@ -91,14 +101,25 @@ impl TelnetConn {
         // coalescing on every one is exactly the lag people describe as "the
         // GUI feels slow".
         let _ = socket.set_nodelay(true);
-        // A read timeout rather than non-blocking, so `read` behaves like the
-        // serial one: quiet is `Ok(0)` and cheap.
+        // A read timeout rather than non-blocking, so Unix `read` behaves like
+        // the serial one: quiet is `Ok(0)` and cheap. Windows blocks a worker
+        // on a cloned socket instead; a timeout there would turn an idle line
+        // into a 20 Hz wakeup and make timeout indistinguishable from EOF to
+        // the generic worker.
+        #[cfg(not(windows))]
         socket
             .set_read_timeout(Some(Duration::from_millis(50)))
             .map_err(Error::from_io)?;
+        #[cfg(windows)]
+        let reader = WindowsReader::start(
+            Box::new(socket.try_clone().map_err(Error::from_io)?),
+            "sterna-telnet-read",
+        )?;
 
         let mut conn = TelnetConn {
             socket,
+            #[cfg(windows)]
+            reader,
             // `CREATE_ALWAYS` (`telnet.c:129`) — the log is this connection's,
             // not a running one, so a failure to open it is not a failure to
             // connect. Upstream does not check either.
@@ -201,12 +222,18 @@ fn open_log(path: &Path) -> Option<File> {
 impl Transport for TelnetConn {
     fn read(&mut self, data: &mut Vec<u8>, events: &mut Vec<TransportEvent>) -> Result<usize> {
         let before = data.len();
+        #[cfg(not(windows))]
         let n = match self.socket.read(&mut self.buf) {
             Ok(0) => return Err(Error::Disconnected),
             Ok(n) => n,
             Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => 0,
             Err(e) if e.kind() == ErrorKind::Interrupted => 0,
             Err(e) => return Err(Error::from_io(e)),
+        };
+        #[cfg(windows)]
+        let n = {
+            self.buf.clear();
+            self.reader.read(&mut self.buf)?
         };
 
         let mut telnet_events = Vec::new();
@@ -279,7 +306,80 @@ impl Transport for TelnetConn {
         Some(self.socket.as_raw_fd())
     }
 
+    #[cfg(windows)]
+    fn wait_handle(&self) -> Option<RawHandle> {
+        Some(self.reader.wait_handle())
+    }
+
     fn describe(&self) -> String {
         self.describe.clone()
+    }
+}
+
+#[cfg(windows)]
+impl Drop for TelnetConn {
+    fn drop(&mut self) {
+        // Dropping the original socket is not enough: the blocking reader
+        // owns a clone. Shutdown applies to the underlying connection and
+        // wakes that clone before its receiver and event are dropped.
+        let _ = self.socket.shutdown(std::net::Shutdown::Both);
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+    #[test]
+    fn reader_event_orders_idle_data_and_eof() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (release_tx, release_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            release_rx.recv().unwrap();
+            socket.write_all(b"telnet-worker-ok").unwrap();
+            socket.shutdown(std::net::Shutdown::Write).unwrap();
+        });
+
+        let mut conn = TelnetConn::connect(
+            "127.0.0.1",
+            addr.port(),
+            &TelnetParams {
+                mode: TelnetMode::Raw,
+                ..TelnetParams::default()
+            },
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        let handle = conn.wait_handle().unwrap();
+
+        // A quiet socket does not wake the frontend just to report no bytes.
+        // SAFETY: `conn` owns this event for the duration of the wait.
+        assert_eq!(unsafe { WaitForSingleObject(handle, 0) }, WAIT_TIMEOUT);
+        release_tx.send(()).unwrap();
+
+        // SAFETY: as above.
+        assert_eq!(unsafe { WaitForSingleObject(handle, 5000) }, WAIT_OBJECT_0);
+        let (mut data, mut events) = (Vec::new(), Vec::new());
+        assert_eq!(conn.read(&mut data, &mut events).unwrap(), 16);
+        assert_eq!(data, b"telnet-worker-ok");
+        assert!(events.is_empty());
+
+        // The worker can observe data and EOF before the frontend drains
+        // either. Reading the data re-signals its manual-reset event so the
+        // final bytes are never hidden behind the close.
+        // SAFETY: as above.
+        assert_eq!(unsafe { WaitForSingleObject(handle, 5000) }, WAIT_OBJECT_0);
+        assert!(matches!(
+            conn.read(&mut data, &mut events),
+            Err(Error::Disconnected)
+        ));
+
+        server.join().unwrap();
     }
 }

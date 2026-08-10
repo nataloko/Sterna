@@ -33,8 +33,8 @@ portable-pty = "0.9"
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-# A manual-reset event is the SSH worker's frontend wakeup. It is the native
-# counterpart of Unix's self-pipe and is borrowed through the flat ABI by Qt.
+# Manual-reset events are the native frontend wakeup for worker channels and
+# blocking byte readers. They are borrowed through the flat ABI by Qt.
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Threading",

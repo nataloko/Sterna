@@ -519,6 +519,12 @@ And for telnet:
   calls sit directly after a `CommRawOut` and nothing on the receive path logs,
   so the `>` leading each record has no inbound counterpart. Logging both
   directions is the obvious build and produces a file upstream never writes.
+- **A cloned Windows socket stays alive, and its read timeout is shared state.**
+  Telnet's Windows frontend wakeup owns a blocking reader clone, a bounded
+  1 MiB queue and a manual-reset event; setting the Unix 50 ms read timeout
+  there turns an idle connection into a 20 Hz worker and makes its timeout look
+  like EOF. Dropping the original handle is not enough either — `Drop` must
+  `shutdown` the underlying connection to wake the clone.
 - **`TCPLocalEcho` and `TCPCRSend` do not sit beside the terminal's settings —
   they spend them and put them back.** `vtwin.cpp:3696` assigns `ts.LocalEcho`
   and `ts.CRSend` when a non-telnet TCP connection opens, `:3589` restores
