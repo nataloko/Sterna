@@ -890,6 +890,16 @@ connection.terminal_speed | string | Tera Term | TerminalSpeed | 38400 | -
 # `on` and everything else is off, so the two readers disagree about `1`.
 connection.auto_win_close | bool | Tera Term | AutoWinClose | on | DLG_TCPIP_AUTOCLOSE
 
+# `ttset.c:1610`, off by default. When a connection ends and the window is
+# staying open, scroll the live page into the history and home the cursor
+# (`vtwin.cpp:3029`, `:4513`). This is Tera Term's ordinary Clear screen
+# operation, not an erase: the old page remains available in scrollback.
+#
+# It sits after the auto-close decision. A network session with
+# `connection.auto_win_close` on closes its window instead, while serial and
+# local-pty sessions never take that network-only branch.
+connection.clear_screen_on_close | bool | Tera Term | ClearScreenOnCloseConnection | off | -
+
 # `ttset.c:1457`, in seconds, zero meaning the stack's own timeout. `/TIMEOUT=`
 # refuses a negative value rather than clamping it.
 connection.timeout | int | Tera Term | ConnectingTimeout | 0 | -

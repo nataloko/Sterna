@@ -1657,6 +1657,15 @@ pub struct Settings {
     /// does. `/AUTOWINCLOSE=` on a command line is **not** `GetOnOff`: it tests for
     /// `on` and everything else is off, so the two readers disagree about `1`.
     pub connection_auto_win_close: bool,
+    /// `ttset.c:1610`, off by default. When a connection ends and the window is
+    /// staying open, scroll the live page into the history and home the cursor
+    /// (`vtwin.cpp:3029`, `:4513`). This is Tera Term's ordinary Clear screen
+    /// operation, not an erase: the old page remains available in scrollback.
+    ///
+    /// It sits after the auto-close decision. A network session with
+    /// `connection.auto_win_close` on closes its window instead, while serial and
+    /// local-pty sessions never take that network-only branch.
+    pub connection_clear_screen_on_close: bool,
     /// `ttset.c:1457`, in seconds, zero meaning the stack's own timeout. `/TIMEOUT=`
     /// refuses a negative value rather than clamping it.
     pub connection_timeout: i32,
@@ -2154,6 +2163,7 @@ impl Default for Settings {
             connection_term_type: String::from("xterm"),
             connection_terminal_speed: String::from("38400"),
             connection_auto_win_close: true,
+            connection_clear_screen_on_close: false,
             connection_timeout: 0,
             connection_host_dialog_on_startup: true,
             macro_startup_file: String::from(""),
@@ -2680,6 +2690,10 @@ impl Settings {
             connection_auto_win_close: crate::schema::on_off(
                 ini.get("Tera Term", "AutoWinClose"),
                 true,
+            ),
+            connection_clear_screen_on_close: crate::schema::on_off(
+                ini.get("Tera Term", "ClearScreenOnCloseConnection"),
+                false,
             ),
             connection_timeout: ini.get_int("Tera Term", "ConnectingTimeout", d.connection_timeout)
                 as i32,
@@ -3841,6 +3855,16 @@ impl Settings {
         );
         ini.set(
             "Tera Term",
+            "ClearScreenOnCloseConnection",
+            &if self.connection_clear_screen_on_close {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
             "ConnectingTimeout",
             &self.connection_timeout.to_string(),
         );
@@ -4797,6 +4821,12 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "connection.clear_screen_on_close" => if self.connection_clear_screen_on_close {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "connection.timeout" => self.connection_timeout.to_string(),
             "connection.host_dialog_on_startup" => if self.connection_host_dialog_on_startup {
                 "on"
@@ -5325,6 +5355,9 @@ impl Settings {
             "connection.terminal_speed" => self.connection_terminal_speed = value.to_string(),
             "connection.auto_win_close" => {
                 self.connection_auto_win_close = crate::schema::on_off(Some(value), true)
+            }
+            "connection.clear_screen_on_close" => {
+                self.connection_clear_screen_on_close = crate::schema::on_off(Some(value), false)
             }
             "connection.timeout" => {
                 self.connection_timeout = crate::schema::int(value, self.connection_timeout)
@@ -6765,6 +6798,16 @@ pub const FIELDS: &[Field] = &[
         default: "on",
         label: Some("DLG_TCPIP_AUTOCLOSE"),
         doc: "`ttset.c:969`, on by default. Whether the window closes when the connection does. `/AUTOWINCLOSE=` on a command line is **not** `GetOnOff`: it tests for `on` and everything else is off, so the two readers disagree about `1`.",
+    },
+    Field {
+        name: "connection.clear_screen_on_close",
+        page: "connection",
+        section: "Tera Term",
+        key: "ClearScreenOnCloseConnection",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1610`, off by default. When a connection ends and the window is staying open, scroll the live page into the history and home the cursor (`vtwin.cpp:3029`, `:4513`). This is Tera Term's ordinary Clear screen operation, not an erase: the old page remains available in scrollback.  It sits after the auto-close decision. A network session with `connection.auto_win_close` on closes its window instead, while serial and local-pty sessions never take that network-only branch.",
     },
     Field {
         name: "connection.timeout",
