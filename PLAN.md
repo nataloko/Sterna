@@ -1088,7 +1088,7 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (202 settings over 188 keys: 39 for the terminal,
+  `crates/tt-config/` (204 settings over 190 keys: 39 for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
   writes into, 2026-08-09, plus the whole log family, then the whole
   file-transfer family, then the seven the terminal and the two the *transports*
@@ -1097,11 +1097,12 @@ before anything else in every session.
   and the parser's own eight switches, then the painter's four draw-attribute
   switches, the custom ANSI palette, the URL family, the four menu keys and
   the window-position pair and its save switch, the unfocused-cursor switch
-  alongside the live cursor renderer, and the startup macro's one-shot launch
-  state, 2026-08-10), the map onto a running terminal in `tt-session`, the
+  alongside the live cursor renderer, the startup macro's one-shot launch
+  state, and OSC 52's remote clipboard permissions and notification,
+  2026-08-10), the map onto a running terminal in `tt-session`, the
   schema as data over the C ABI, and a Qt dialog that builds itself from it.
   What remains is the *rest of the settings*, which is a line and a citation
-  each — 84 keys as of 2026-08-10, and `tests/upstream.rs`
+  each — 82 keys as of 2026-08-10, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -3983,6 +3984,41 @@ command-line test pins inheritance, override and cancellation with relative
 paths against an idle window.
 
 202 settings over 188 keys, 84 to go.
+
+#### The remote clipboard, where notification is not permission
+
+`crates/tt-config/`, `tt-vt`, `tt-session`, the C ABI and the shell,
+2026-08-10. `ClipboardAccessFromRemote` is the four-state permission behind
+OSC 52 — off, read, write, or both — while `NotifyClipboardAccess` is an
+independent switch over the notice. Tera Term ships with access **off** and
+notification **on**, so a rejected attempt is visible rather than silently
+giving a remote process the clipboard. `/OSC52=` is now the launch-time
+override its parser already promised; an unrecognised value clears both bits.
+
+The terminal parses and authorises the sequence but never touches the desktop.
+It drains typed clipboard requests through `tt-session` and the flat ABI; the
+Qt session handles them on the GUI thread, writes decoded text to the system
+clipboard, or reads it and immediately returns an OSC 52 reply. Accepted and
+rejected reads and writes retain upstream's notification distinction. The
+shell renders those notices in its existing status surface rather than adding
+a second notification subsystem for one setting.
+
+**OSC 52's syntax has three quiet traps.** `Pc` accepts only `c`, `p`, `s` and
+digits 0–7 before its semicolon. A read is only a payload equal to exactly
+`?`; anything else is a write. And `b64decode` is not a strict RFC decoder: it
+skips whitespace, stops at the first invalid byte (including `=`), and still
+decodes an incomplete final group, so malformed input can write a valid prefix
+or an empty clipboard. The port reproduces that rather than turning a remote
+write into a parser error upstream never reports.
+
+Replies preserve `Pc`, encode Sterna's UTF-8 text, and end in ST even when the
+request used BEL. Upstream builds the prefix in `char hdr[20]`, so a selector
+longer than thirteen bytes is accepted and notified but gets no reply; its
+`IsTextW` check likewise allows an empty string and refuses binary controls.
+The core, session, generated C header and Qt tests each pin their own side of
+that boundary.
+
+204 settings over 190 keys, 82 to go.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 

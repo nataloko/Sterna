@@ -1098,6 +1098,28 @@ And for the painter, whose decisions the differential dump cannot see:
 
 And for the clipboard, where the surprise is what happens to a line break:
 
+- **OSC 52 has two permission bits and notification is neither of them.**
+  `ClipboardAccessFromRemote=read` and `write` are independent, `on` sets
+  both, and anything else sets neither (`ttset.c:1742`). Access ships off while
+  `NotifyClipboardAccess` ships on, so a rejected attempt is visible. Turning
+  notification off must make an allowed action quiet, not refuse it; turning
+  access off must not hide the rejection while notification is on.
+- **OSC 52 base64 is deliberately permissive.** `ttlib.c:b64decode` skips
+  whitespace, stops at the first invalid byte — `=` included — and decodes a
+  final group of two or three digits anyway. A malformed remote write can
+  therefore replace the clipboard with a valid prefix or with an empty string;
+  a strict decoder that rejects the sequence is observably different. `Pc`
+  accepts only `cps01234567`, and only a payload equal to exactly `?` is a
+  read; `?x` is a write of whatever its base64 prefix decodes to.
+- **An OSC 52 read reply has a fourteen-byte-looking limit that is really
+  thirteen.** `XsProcClipboard` starts `char hdr[20]` with five bytes of
+  `ESC ] 52 ;`, then appends `Pc` **and its semicolon** through `strncat_s`, so
+  at most thirteen selector bytes fit. A longer read is accepted and notified
+  but never reaches the clipboard or sends a response. A response always ends
+  in ST even when the request ended in BEL, and `IsTextW` permits an empty
+  clipboard while refusing binary control characters. The terminal owns these
+  rules; the Qt layer owns only the operating system clipboard.
+
 - **A paste is a keyboard, so every line break goes on the wire as a single
   `CR`.** `NormalizeLineBreakCR` (`ttlib_static_cpp.cpp:535`, called at
   `clipboar.c:289`) maps `LF` and `CR LF` alike onto `CR` — the Return key's
