@@ -2356,6 +2356,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tt-i18n"
+version = "0.0.0"
+dependencies = [
+ "tt-config",
+]
+
+[[package]]
 name = "tt-lua"
 version = "0.0.0"
 dependencies = [

@@ -1,0 +1,10 @@
+[package]
+name = "tt-i18n"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Tera Term .lng catalog loading over the compatible INI reader"
+
+[dependencies]
+tt-config.workspace = true
