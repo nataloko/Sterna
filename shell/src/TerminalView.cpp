@@ -162,6 +162,40 @@ bool mapKey(const QKeyEvent *e, TtKey *out)
     }
 }
 
+enum class AltSide { Unknown, Left, Right };
+
+/// Qt gives the character event only `AltModifier`, so remember which Alt key
+/// produced it from the native key event. The values cover XKB/X11, evdev,
+/// Windows and macOS; an unknown platform still supports `MetaKey=on`, while
+/// deliberately declining to guess for the side-specific modes.
+AltSide altSide(const QKeyEvent *e)
+{
+    switch (e->nativeVirtualKey()) {
+    case 0xFFE9: // XKB Alt_L
+    case 0xA4:   // Windows VK_LMENU
+    case 0x3A:   // macOS left Option
+        return AltSide::Left;
+    case 0xFFEA: // XKB Alt_R
+    case 0xA5:   // Windows VK_RMENU
+    case 0x3D:   // macOS right Option
+        return AltSide::Right;
+    default:
+        break;
+    }
+
+    switch (e->nativeScanCode()) {
+    case 0x38: // Windows set-1 / evdev left Alt (before Qt's +8 on X11)
+    case 64:   // X11 left Alt
+        return AltSide::Left;
+    case 0x138: // Windows extended right Alt
+    case 100:   // evdev right Alt
+    case 108:   // X11 right Alt
+        return AltSide::Right;
+    default:
+        return AltSide::Unknown;
+    }
+}
+
 } // namespace
 
 TerminalView::TerminalView(Session *session, QWidget *parent)
@@ -295,6 +329,28 @@ void TerminalView::applySettings()
     m_delimiters = m_session->wordDelimiters();
     m_widthDelimitsWord =
         flag("keyboard.width_delimits_word", m_widthDelimitsWord);
+    m_strictKeyMapping = flag("keyboard.strict_mapping", m_strictKeyMapping);
+    m_deleteSendsDel = flag("keyboard.delete_sends_del", m_deleteSendsDel);
+
+    const QString metaKey = m_session->setting(QStringLiteral("keyboard.meta"));
+    if (metaKey == QLatin1String("on")) {
+        m_metaKey = MetaKey::On;
+    } else if (metaKey == QLatin1String("left")) {
+        m_metaKey = MetaKey::Left;
+    } else if (metaKey == QLatin1String("right")) {
+        m_metaKey = MetaKey::Right;
+    } else {
+        m_metaKey = MetaKey::Off;
+    }
+    const QString meta8Bit =
+        m_session->setting(QStringLiteral("keyboard.meta_8bit"));
+    if (meta8Bit == QLatin1String("raw")) {
+        m_meta8Bit = Meta8Bit::Raw;
+    } else if (meta8Bit == QLatin1String("text")) {
+        m_meta8Bit = Meta8Bit::Text;
+    } else {
+        m_meta8Bit = Meta8Bit::Off;
+    }
 
     // The setting may have changed the live non-blinking flag. Let the next
     // paint decide whether to restart the clock, beginning from visible.
@@ -642,6 +698,25 @@ void TerminalView::keyPressEvent(QKeyEvent *event)
 {
     const Qt::KeyboardModifiers mods = event->modifiers();
 
+    if (event->key() == Qt::Key_Alt) {
+        switch (altSide(event)) {
+        case AltSide::Left:
+            m_leftAltDown = true;
+            break;
+        case AltSide::Right:
+            m_rightAltDown = true;
+            break;
+        case AltSide::Unknown:
+            break;
+        }
+        if (m_metaKey != MetaKey::Off) {
+            event->accept();
+            return;
+        }
+        QWidget::keyPressEvent(event);
+        return;
+    }
+
     // Scrolling the history, before anything else looks at these keys —
     // PageUp is otherwise a `TtKey` and would go to the host.
     if (mods.testFlag(Qt::ShiftModifier)) {
@@ -683,8 +758,28 @@ void TerminalView::keyPressEvent(QKeyEvent *event)
         return;
     }
 
+    const bool alt = mods.testFlag(Qt::AltModifier);
+    const bool meta = alt &&
+                      (m_metaKey == MetaKey::On ||
+                       (m_metaKey == MetaKey::Left && m_leftAltDown) ||
+                       (m_metaKey == MetaKey::Right && m_rightAltDown));
+    if (alt && !meta) {
+        // With Meta disabled (the shipping default), Alt belongs to the menu
+        // and the desktop. In particular, Alt+Up must not leak an ordinary Up
+        // sequence merely because `mapKey` does not carry modifier variants.
+        QWidget::keyPressEvent(event);
+        return;
+    }
+
+    if (event->key() == Qt::Key_Delete &&
+        !(mods & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier)) &&
+        m_deleteSendsDel) {
+        m_session->sendBytes(QByteArray(1, '\x7f'));
+        return;
+    }
+
     TtKey key;
-    if (mapKey(event, &key)) {
+    if (!m_strictKeyMapping && mapKey(event, &key)) {
         m_session->sendKey(key);
         return;
     }
@@ -707,12 +802,26 @@ void TerminalView::keyPressEvent(QKeyEvent *event)
 
     QString text = event->text();
     if (!text.isEmpty()) {
-        // Alt as Meta: an ESC prefix, which is what every Linux line editor
-        // and Emacs expects. Tera Term's `ts.MetaKey` ships off, so this is a
-        // deliberate divergence rather than an oversight — it becomes a
-        // setting when the schema exists.
-        if ((mods & Qt::AltModifier) && !(mods & Qt::ControlModifier)) {
-            text.prepend(QChar(0x1B));
+        if (meta) {
+            switch (m_meta8Bit) {
+            case Meta8Bit::Raw: {
+                QByteArray bytes;
+                bytes.reserve(text.size());
+                for (QChar ch : text) {
+                    bytes.append(static_cast<char>((ch.unicode() & 0xFF) | 0x80));
+                }
+                m_session->sendBytes(bytes);
+                return;
+            }
+            case Meta8Bit::Text:
+                for (qsizetype i = 0; i < text.size(); i++) {
+                    text[i] = QChar(text.at(i).unicode() | 0x80);
+                }
+                break;
+            case Meta8Bit::Off:
+                text.prepend(QChar(0x1B));
+                break;
+            }
         }
         m_session->sendText(text);
         return;
@@ -726,6 +835,33 @@ void TerminalView::keyPressEvent(QKeyEvent *event)
     }
 
     QWidget::keyPressEvent(event);
+}
+
+void TerminalView::keyReleaseEvent(QKeyEvent *event)
+{
+    if (event->key() == Qt::Key_Alt) {
+        switch (altSide(event)) {
+        case AltSide::Left:
+            m_leftAltDown = false;
+            break;
+        case AltSide::Right:
+            m_rightAltDown = false;
+            break;
+        case AltSide::Unknown:
+            // A missed native side must not leave a side-specific Meta key
+            // stuck down after Qt has told us that no Alt is held.
+            if (!event->modifiers().testFlag(Qt::AltModifier)) {
+                m_leftAltDown = false;
+                m_rightAltDown = false;
+            }
+            break;
+        }
+        if (m_metaKey != MetaKey::Off) {
+            event->accept();
+            return;
+        }
+    }
+    QWidget::keyReleaseEvent(event);
 }
 
 // --- mouse -------------------------------------------------------------------
@@ -1055,6 +1191,8 @@ void TerminalView::focusInEvent(QFocusEvent *event)
 void TerminalView::focusOutEvent(QFocusEvent *event)
 {
     m_session->focus(false);
+    m_leftAltDown = false;
+    m_rightAltDown = false;
     QWidget::focusOutEvent(event);
     m_cursorBlink->stop();
     m_cursorBlinkOn = true;

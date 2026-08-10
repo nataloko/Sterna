@@ -221,6 +221,9 @@ public:
 
     void sendKey(TtKey key);
     void sendText(const QString &text);
+    /// Raw bytes: no UTF-8 encoding or LNM. `Meta8Bit=raw` is the frontend
+    /// caller; macro binary sends use the same core path directly.
+    void sendBytes(const QByteArray &bytes);
     void paste(const QString &text);
     /// Returns whether the terminal consumed it; if not, the click belongs to
     /// the frontend and means selection.

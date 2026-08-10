@@ -474,6 +474,20 @@ void Session::sendText(const QString &text)
     rearm();
 }
 
+void Session::sendBytes(const QByteArray &bytes)
+{
+    if (bytes.isEmpty()) {
+        return;
+    }
+    if (tt_session_send_bytes(
+            m_session, reinterpret_cast<const uint8_t *>(bytes.constData()),
+            static_cast<size_t>(bytes.size()))
+        != TT_OK) {
+        emit notice(QString::fromUtf8(tt_last_error()));
+    }
+    rearm();
+}
+
 void Session::paste(const QString &text)
 {
     if (text.isEmpty()) {

@@ -102,6 +102,7 @@ protected:
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void keyReleaseEvent(QKeyEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
@@ -156,6 +157,19 @@ private:
 
     /// `KeybEnabled`. A macro's `enablekeyb 0` clears it.
     bool m_keyboardEnabled = true;
+
+    /// The three keyboard settings which decide whether Qt's Alt key belongs
+    /// to the desktop or to the terminal, and how a Meta character is put on
+    /// the wire. Left and right have to be remembered from their own key
+    /// events: the character event says only "Alt is down".
+    enum class MetaKey { Off, On, Left, Right };
+    enum class Meta8Bit { Off, Raw, Text };
+    MetaKey m_metaKey = MetaKey::Off;
+    Meta8Bit m_meta8Bit = Meta8Bit::Off;
+    bool m_leftAltDown = false;
+    bool m_rightAltDown = false;
+    bool m_strictKeyMapping = false;
+    bool m_deleteSendsDel = false;
 
     /// The two menu settings and the bar's current visibility, combined by
     /// `MainWindow`. `m_popupMenuPressed` consumes the matching release after

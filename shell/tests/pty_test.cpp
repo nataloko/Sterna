@@ -17,11 +17,15 @@
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QKeyEvent>
 #include <QTimer>
 
 #include <cstdio>
+#include <functional>
+#include <initializer_list>
 
 #include "Session.h"
+#include "TerminalView.h"
 
 static int failures = 0;
 
@@ -72,6 +76,54 @@ QString screenText(const Session &session)
 QStringList sh(const QString &script)
 {
     return {QStringLiteral("/bin/sh"), QStringLiteral("-c"), script};
+}
+
+struct Setting {
+    const char *name;
+    const char *value;
+};
+
+void key(TerminalView &view, QEvent::Type type, int code,
+         Qt::KeyboardModifiers modifiers, const QString &text = QString(),
+         quint32 scanCode = 0, quint32 virtualKey = 0)
+{
+    QKeyEvent event(type, code, modifiers, scanCode, virtualKey, 0, text);
+    QCoreApplication::sendEvent(&view, &event);
+}
+
+/// Put exactly `count` terminal input bytes through a real pty and let `od`
+/// make them visible. Waiting for `ready` is load-bearing: otherwise a fast
+/// test can type before the child has disabled canonical input and spend five
+/// seconds waiting for a newline that was intentionally never sent.
+QString captureKeys(int count, std::initializer_list<Setting> settings,
+                    const std::function<void(TerminalView &)> &send)
+{
+    Session session(40, 10);
+    QString error;
+    for (const Setting &setting : settings) {
+        CHECK(session.setSetting(QString::fromLatin1(setting.name),
+                                 QString::fromLatin1(setting.value), &error));
+    }
+    TerminalView view(&session);
+    view.applySettings();
+    CHECK(session.connectPty(
+        sh(QStringLiteral("stty raw -echo; printf 'ready\\r\\nbytes:'; "
+                          "od -An -t x1 -N %1")
+               .arg(count)),
+        &error));
+    CHECK(error.isEmpty());
+    CHECK(spin([&] { return screenText(session).contains(QStringLiteral("ready")); },
+               5000));
+
+    send(view);
+    const bool finished = spin([&] { return !session.isConnected(); }, 5000);
+    CHECK(finished);
+    const QString screen = screenText(session);
+    if (!finished) {
+        fprintf(stderr, "key capture screen was:\n%s\n", qPrintable(screen));
+        session.disconnectPort();
+    }
+    return screen;
 }
 
 /// Output arrives through the notifier, the size the window has is the size
@@ -170,6 +222,83 @@ void test_a_program_that_does_not_exist_reports_rather_than_connects()
     CHECK(!session.isConnected());
 }
 
+void test_meta_key_modes()
+{
+    // MetaKey ships off: Alt belongs to Qt's menu handling, while the next
+    // ordinary character still reaches the terminal.
+    QString screen = captureKeys(1, {}, [](TerminalView &view) {
+        key(view, QEvent::KeyPress, Qt::Key_A, Qt::AltModifier,
+            QStringLiteral("a"));
+        key(view, QEvent::KeyPress, Qt::Key_Z, Qt::NoModifier,
+            QStringLiteral("z"));
+    });
+    CHECK(screen.contains(QStringLiteral("7a")));
+
+    // Meta8Bit=off means ESC-prefix, despite that setting's misleading name.
+    screen = captureKeys(2, {{"keyboard.meta", "on"}}, [](TerminalView &view) {
+        key(view, QEvent::KeyPress, Qt::Key_A, Qt::AltModifier,
+            QStringLiteral("a"));
+    });
+    CHECK(screen.contains(QStringLiteral("1b 61")));
+
+    screen = captureKeys(1,
+                         {{"keyboard.meta", "on"},
+                          {"keyboard.meta_8bit", "raw"}},
+                         [](TerminalView &view) {
+                             key(view, QEvent::KeyPress, Qt::Key_A,
+                                 Qt::AltModifier, QStringLiteral("a"));
+                         });
+    CHECK(screen.contains(QStringLiteral("e1")));
+
+    // Text mode sets U+0080 before the session encodes the character, making
+    // U+00E1 and therefore the two UTF-8 bytes C3 A1.
+    screen = captureKeys(2,
+                         {{"keyboard.meta", "on"},
+                          {"keyboard.meta_8bit", "text"}},
+                         [](TerminalView &view) {
+                             key(view, QEvent::KeyPress, Qt::Key_A,
+                                 Qt::AltModifier, QStringLiteral("a"));
+                         });
+    CHECK(screen.contains(QStringLiteral("c3 a1")));
+
+    // The character event carries no side. A right-Alt press must not satisfy
+    // `left`, while the XKB left-Alt event immediately after it must.
+    screen = captureKeys(2, {{"keyboard.meta", "left"}}, [](TerminalView &view) {
+        key(view, QEvent::KeyPress, Qt::Key_Alt, Qt::AltModifier, {}, 108,
+            0xFFEA);
+        key(view, QEvent::KeyPress, Qt::Key_A, Qt::AltModifier,
+            QStringLiteral("a"));
+        key(view, QEvent::KeyRelease, Qt::Key_Alt, Qt::NoModifier, {}, 108,
+            0xFFEA);
+        key(view, QEvent::KeyPress, Qt::Key_Alt, Qt::AltModifier, {}, 64,
+            0xFFE9);
+        key(view, QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+            QStringLiteral("b"));
+        key(view, QEvent::KeyRelease, Qt::Key_Alt, Qt::NoModifier, {}, 64,
+            0xFFE9);
+    });
+    CHECK(screen.contains(QStringLiteral("1b 62")));
+}
+
+void test_strict_mapping_and_delete()
+{
+    const QString screen =
+        captureKeys(2,
+                    {{"keyboard.strict_mapping", "on"},
+                     {"keyboard.delete_sends_del", "on"}},
+                    [](TerminalView &view) {
+                        // No KEYBOARD.CNF entry exists, so strict mode drops
+                        // the built-in Up fallback. DeleteKey is upstream's
+                        // explicit exception and still produces DEL.
+                        key(view, QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
+                        key(view, QEvent::KeyPress, Qt::Key_Delete,
+                            Qt::NoModifier);
+                        key(view, QEvent::KeyPress, Qt::Key_Z, Qt::NoModifier,
+                            QStringLiteral("z"));
+                    });
+    CHECK(screen.contains(QStringLiteral("7f 7a")));
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -181,6 +310,8 @@ int main(int argc, char **argv)
     test_resizing_the_window_resizes_the_shell();
     test_a_second_shell_after_the_first_ended();
     test_a_program_that_does_not_exist_reports_rather_than_connects();
+    test_meta_key_modes();
+    test_strict_mapping_and_delete();
 
     if (failures) {
         fprintf(stderr, "%d check(s) failed\n", failures);
