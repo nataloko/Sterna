@@ -10,7 +10,7 @@ use std::time::Duration;
 use tt_config::{Ini, KeyboardBackspace, Settings};
 use tt_conn::{Result, Transport, TransportEvent};
 use tt_session::{MemoryHandle, MemoryTransport, Session};
-use tt_vt::{CrSend, TermId};
+use tt_vt::{CrSend, DebugMode, DebugModes, TermId};
 
 fn session() -> (Session, MemoryHandle) {
     let mut s = Session::from_settings(Settings::default());
@@ -42,6 +42,24 @@ fn a_session_starts_from_the_file() {
         s.setting("color.normal").as_deref(),
         Some("0,0,0,255,255,255")
     );
+}
+
+#[test]
+fn debug_modes_are_applied_and_can_be_selected_directly() {
+    let ini = Ini::parse(b"[Tera Term]\r\nDebug=on\r\nDebugModes=hex,noout\r\n");
+    let mut s = Session::from_settings(Settings::load(&ini));
+    assert!(s.vt().config().debug_enabled);
+    assert_eq!(
+        s.vt().config().debug_modes.bits(),
+        DebugModes::HEX | DebugModes::NO_OUTPUT
+    );
+    assert!(s.cycle_debug_mode());
+    assert_eq!(s.vt().debug_mode(), DebugMode::Hex);
+
+    // TTL does not consult `Debug=` or the cycle mask.
+    s.set_debug_mode(DebugMode::Normal);
+    s.feed(&[0x01]);
+    assert_eq!(row(&s, 0), "^A");
 }
 
 #[test]

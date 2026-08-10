@@ -23,12 +23,13 @@ use crate::bell::BellLimits;
 use crate::log::{LogMode, LogOptions, Timestamp};
 use std::time::Duration;
 use tt_config::{
-    hex_decode, BellMode, ClipboardRemoteAccess, CursorShape, KeyboardBackspace, LogTimestampType,
-    Settings, TerminalCrReceive, TerminalCrSend, WindowTitleChange, WindowTitleReport,
+    hex_decode, BellMode, ClipboardRemoteAccess, CursorShape, DebugModes as FileDebugModes,
+    KeyboardBackspace, LogTimestampType, Settings, TerminalCrReceive, TerminalCrSend,
+    WindowTitleChange, WindowTitleReport,
 };
 use tt_vt::{
     palette::Rgb, valid_terminal_uid, Beep, ClipboardAccess, ColorFlags, Config, CrReceive, CrSend,
-    ShiftFlags, TabStopFlags, TermId, TitleChange, TitleReport, DEFAULT_TERMINAL_UID,
+    DebugModes, ShiftFlags, TabStopFlags, TermId, TitleChange, TitleReport, DEFAULT_TERMINAL_UID,
 };
 
 /// `vtdisp.c:GetIndex256From16`: `ts.ANSIColor` keeps the legacy table order,
@@ -55,6 +56,7 @@ pub(crate) fn cr_send_of(s: TerminalCrSend) -> CrSend {
 /// That list is the whole of it: every other field below is named, and a field
 /// that stops being named is a setting the file can no longer reach.
 pub fn vt_config(s: &Settings, base: &Config) -> Config {
+    let file_debug_modes = FileDebugModes::parse_ini(&s.debug_modes);
     Config {
         cols: s.terminal_cols.max(1) as usize,
         rows: rows(s),
@@ -66,6 +68,8 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
             TerminalCrReceive::Lf => CrReceive::Lf,
             TerminalCrReceive::Auto => CrReceive::Auto,
         },
+        debug_enabled: s.debug_enabled && !file_debug_modes.is_empty(),
+        debug_modes: DebugModes::from_bits(file_debug_modes.bits()),
         cr_send: cr_send_of(s.terminal_cr_send),
         local_echo: s.terminal_local_echo,
         bs_key_is_bs: s.keyboard_backspace == KeyboardBackspace::Bs,

@@ -330,6 +330,17 @@ fn setecho_reaches_the_terminals_own_mode() {
     assert!(!r.session.vt().local_echo(), "setecho 0 left the mode on");
 }
 
+#[test]
+fn setdebug_changes_how_the_terminal_displays_the_reply() {
+    let r = drive("setdebug 2\nsendln 'go'", |out| match out {
+        b"go\r" => b"A\n".to_vec(),
+        _ => Vec::new(),
+    });
+    assert_eq!(r.sent, b"go\r");
+    assert_eq!(r.screen[0], "41 0A");
+    assert_eq!(r.session.vt().debug_mode(), tt_vt::DebugMode::Hex);
+}
+
 /// `clearscreen` is a terminal operation and not a wire one — nothing goes
 /// out, and the screen is empty afterwards.
 #[test]

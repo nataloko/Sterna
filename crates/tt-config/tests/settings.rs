@@ -141,6 +141,21 @@ fn the_final_compatibility_settings_keep_upstreams_parsers() {
     assert_eq!(on.window_maximized_bug_tweak, 2);
     assert_eq!(on.font_draw_api, FontDrawApi::Auto);
     assert_eq!(on.window_icon, WindowIcon::Default);
+
+    let debug = Settings::load(&Ini::parse(
+        b"[Tera Term]\r\nDebug=on\r\nDebugModes=none\r\n",
+    ));
+    assert!(
+        !debug.debug_enabled,
+        "an empty debug mask turns Debug back off"
+    );
+    let mut debug = Settings::default();
+    assert!(debug.set_str("debug.enabled", "on"));
+    assert!(debug.set_str("debug.modes", "unknown"));
+    assert!(
+        !debug.debug_enabled,
+        "name-addressed writes use the same rule"
+    );
 }
 
 #[test]

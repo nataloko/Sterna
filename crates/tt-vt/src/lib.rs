@@ -12,7 +12,8 @@
 use tt_charset::{gset_from_intermediate, sbcs_final, Iso2022, Iso2022State, Shift};
 use tt_grid::{
     Grid, Pen, Rect, ATTR2_BACK, ATTR2_COLOR_MASK, ATTR2_FORE, ATTR2_PROTECT, ATTR_BLINK,
-    ATTR_BOLD, ATTR_REVERSE, ATTR_SGR_MASK, ATTR_SPECIAL, ATTR_UNDER, DEFAULT_BG, DEFAULT_FG,
+    ATTR_BOLD, ATTR_MASK, ATTR_REVERSE, ATTR_SGR_MASK, ATTR_SPECIAL, ATTR_UNDER, DEFAULT_BG,
+    DEFAULT_FG,
 };
 use vte::{Params, Perform};
 
@@ -342,12 +343,80 @@ pub fn valid_terminal_uid(value: &str) -> Option<String> {
 /// is also the key's default (`ttset.c:1702`).
 pub const DEFAULT_TERMINAL_UID: &str = "FFFFFFFF";
 
+/// What the receive-debug decoder does with each raw byte.
+///
+/// These values deliberately match `DEBUG_FLAG_*` (`charset.h:83`) so TTL's
+/// `setdebug 0..3` maps without a second interpretation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DebugMode {
+    #[default]
+    Off = 0,
+    Normal = 1,
+    Hex = 2,
+    NoOutput = 3,
+}
+
+impl DebugMode {
+    fn next(self) -> DebugMode {
+        match self {
+            DebugMode::Off => DebugMode::Normal,
+            DebugMode::Normal => DebugMode::Hex,
+            DebugMode::Hex => DebugMode::NoOutput,
+            DebugMode::NoOutput => DebugMode::Off,
+        }
+    }
+}
+
+/// Which non-off modes Shift+Escape may cycle through (`ts.DebugModes`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DebugModes(u8);
+
+impl DebugModes {
+    pub const NORMAL: u8 = 1;
+    pub const HEX: u8 = 2;
+    pub const NO_OUTPUT: u8 = 4;
+    pub const ALL: DebugModes = DebugModes(Self::NORMAL | Self::HEX | Self::NO_OUTPUT);
+    pub const NONE: DebugModes = DebugModes(0);
+
+    pub fn from_bits(bits: u8) -> DebugModes {
+        DebugModes(bits & Self::ALL.0)
+    }
+
+    pub fn bits(self) -> u8 {
+        self.0
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    fn allows(self, mode: DebugMode) -> bool {
+        match mode {
+            DebugMode::Off => true,
+            DebugMode::Normal => self.0 & Self::NORMAL != 0,
+            DebugMode::Hex => self.0 & Self::HEX != 0,
+            DebugMode::NoOutput => self.0 & Self::NO_OUTPUT != 0,
+        }
+    }
+}
+
+impl Default for DebugModes {
+    fn default() -> Self {
+        DebugModes::ALL
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     pub cols: usize,
     pub rows: usize,
     pub term_id: TermId,
     pub cr_receive: CrReceive,
+    /// `Debug=`: the keyboard gate on Shift+Escape. TTL's `setdebug` bypasses
+    /// it, as upstream's DDE command does.
+    pub debug_enabled: bool,
+    /// `DebugModes=`: which three non-off modes that key cycles through.
+    pub debug_modes: DebugModes,
     pub color_flags: ColorFlags,
     /// The terminal's 256 drawing colours. Entries 0-15 come from the
     /// `ANSIColor` setting after `vtdisp.c:GetIndex256From16` swaps its legacy
@@ -581,6 +650,8 @@ impl Default for Config {
             rows: 24,
             term_id: TermId::Vt100,
             cr_receive: CrReceive::Cr,
+            debug_enabled: false,
+            debug_modes: DebugModes::ALL,
             color_flags: ColorFlags::default(),
             palette: *palette::default_palette(),
             iso2022_flags: ShiftFlags::ALL,
@@ -699,6 +770,7 @@ impl Modes {
 pub struct Vt {
     parser: vte::Parser,
     state: State,
+    debug_mode: DebugMode,
     /// A `0xC2` seen at the end of the previous chunk. Without this, feeding
     /// `[0xC2]` then `[0x8D]` would print a replacement character where a
     /// single call would have produced a carriage return.
@@ -747,6 +819,7 @@ impl Vt {
                 send_8bit,
                 ..State::empty()
             },
+            debug_mode: DebugMode::Off,
             pending_c2: false,
             utf8_left: 0,
             held: Vec::new(),
@@ -754,6 +827,12 @@ impl Vt {
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
+        if self.debug_mode != DebugMode::Off {
+            for &byte in bytes {
+                self.debug_byte(byte);
+            }
+            return;
+        }
         // Pure ASCII needs no rewriting at all, and almost every chunk is. The
         // test cannot be narrower than this: the walk has to see whole UTF-8
         // sequences to know a continuation byte from a bare one, so any byte
@@ -764,6 +843,76 @@ impl Vt {
         }
         let rewritten = self.rewrite_c1(bytes);
         self.parser.advance(&mut self.state, &rewritten);
+    }
+
+    /// `charset.cpp:PutDebugChar`: display one raw byte without letting the
+    /// escape parser consume it.
+    fn debug_byte(&mut self, mut byte: u8) {
+        let insert = self.state.grid.insert_mode;
+        let autowrap = self.state.grid.autowrap;
+        self.state.grid.insert_mode = false;
+        self.state.grid.autowrap = true;
+
+        // `char_attr.Attr = AttrDefault` clears only the low byte; explicit
+        // colours and DECSCA protection live in Attr2 and survive. Upstream's
+        // apparent save is not restored at the end — it writes `char_attr`
+        // rather than `svCharAttr` back — so the last debug byte also leaves
+        // this primary attribute behind after debug mode is switched off.
+        self.state.grid.pen.attrs &= !ATTR_MASK;
+
+        match self.debug_mode {
+            DebugMode::Off => unreachable!("the ordinary parser handles off"),
+            DebugMode::Hex => {
+                const HEX: &[u8; 16] = b"0123456789ABCDEF";
+                self.state.print(char::from(HEX[usize::from(byte >> 4)]));
+                self.state.print(char::from(HEX[usize::from(byte & 0x0f)]));
+                self.state.print(' ');
+            }
+            DebugMode::Normal => {
+                if byte & 0x80 != 0 {
+                    self.state.grid.pen.attrs |= ATTR_REVERSE;
+                    byte &= 0x7f;
+                }
+                if byte <= 0x1f {
+                    self.state.print('^');
+                    self.state.print(char::from(byte + 0x40));
+                } else if byte == 0x7f {
+                    for c in "<DEL>".chars() {
+                        self.state.print(c);
+                    }
+                } else {
+                    self.state.print(char::from(byte));
+                }
+            }
+            DebugMode::NoOutput => {}
+        }
+
+        self.state.grid.insert_mode = insert;
+        self.state.grid.autowrap = autowrap;
+    }
+
+    /// TTL's `setdebug`: select a mode directly, without consulting the file's
+    /// keyboard gate or cycle mask.
+    pub fn set_debug_mode(&mut self, mode: DebugMode) {
+        self.debug_mode = mode;
+    }
+
+    pub fn debug_mode(&self) -> DebugMode {
+        self.debug_mode
+    }
+
+    /// Shift+Escape. False means the key was not a debug key and should carry
+    /// on through ordinary keyboard encoding.
+    pub fn cycle_debug_mode(&mut self) -> bool {
+        if !self.state.config.debug_enabled || self.state.config.debug_modes.is_empty() {
+            return false;
+        }
+        loop {
+            self.debug_mode = self.debug_mode.next();
+            if self.state.config.debug_modes.allows(self.debug_mode) {
+                return true;
+            }
+        }
     }
 
     /// Fold 8-bit C1 controls into something `vte` can act on.
@@ -3714,6 +3863,60 @@ mod tests {
         let vt = run(b"Hello, world!\rSecond line", 40, 4);
         assert_eq!(row(&vt, 0), "Second lined!");
         assert_eq!(vt.grid().cursor.x, 11);
+    }
+
+    #[test]
+    fn normal_debug_spells_raw_controls_and_marks_high_bytes() {
+        let mut vt = Vt::new(Config::default());
+        vt.feed(b"\x1b[1;31m");
+        vt.grid_mut().insert_mode = true;
+        vt.grid_mut().autowrap = false;
+        vt.set_macro_tap_enabled(true);
+        vt.set_debug_mode(DebugMode::Normal);
+        vt.feed(&[0x01, b'A', 0x80, 0x7f]);
+
+        assert_eq!(row(&vt, 0), "^AA^@<DEL>");
+        assert_eq!(vt.take_macro_bytes(), b"^AA^@<DEL>");
+        let cells = vt.grid().line(0);
+        assert_eq!(cells[0].attrs & ATTR_MASK, 0, "bold was cleared");
+        assert_ne!(cells[0].attrs & ATTR2_FORE, 0, "the SGR colour survived");
+        assert_ne!(cells[3].attrs & ATTR_REVERSE, 0);
+        assert_ne!(cells[4].attrs & ATTR_REVERSE, 0);
+        assert_eq!(cells[5].attrs & ATTR_MASK, 0, "the next byte reset reverse");
+        assert!(vt.grid().insert_mode && !vt.grid().autowrap);
+        assert_eq!(vt.grid().pen.attrs & ATTR_MASK, 0);
+    }
+
+    #[test]
+    fn hex_and_no_output_debug_bypass_the_escape_parser() {
+        let mut vt = Vt::new(Config::default());
+        vt.set_debug_mode(DebugMode::Hex);
+        vt.feed(b"\x1b[A");
+        assert_eq!(row(&vt, 0), "1B 5B 41");
+
+        vt.set_debug_mode(DebugMode::NoOutput);
+        vt.feed(b"nothing\x1b[2J");
+        assert_eq!(row(&vt, 0), "1B 5B 41");
+    }
+
+    #[test]
+    fn the_debug_key_uses_its_gate_and_mode_mask() {
+        let mut vt = Vt::new(Config {
+            debug_enabled: true,
+            debug_modes: DebugModes::from_bits(DebugModes::HEX),
+            ..Config::default()
+        });
+        assert!(vt.cycle_debug_mode());
+        assert_eq!(vt.debug_mode(), DebugMode::Hex);
+        assert!(vt.cycle_debug_mode());
+        assert_eq!(vt.debug_mode(), DebugMode::Off);
+
+        vt.set_config(Config {
+            debug_enabled: false,
+            ..vt.config().clone()
+        });
+        assert!(!vt.cycle_debug_mode());
+        assert_eq!(vt.debug_mode(), DebugMode::Off);
     }
 
     #[test]

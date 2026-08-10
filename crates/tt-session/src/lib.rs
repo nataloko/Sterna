@@ -56,6 +56,7 @@ pub use xfer::{
 // same place it takes the session they belong to.
 use tt_config::ConnectionTcpCrSend;
 pub use tt_config::{Field, Ini, Kind, Settings, FIELDS};
+pub use tt_vt::DebugMode;
 
 use tt_conn::{Error, Result, Transport, TransportEvent};
 use tt_grid::{Cell, Grid, ATTR_LINE_CONTINUED, ATTR_URL, WIDTH_PAD, WIDTH_WIDE};
@@ -500,6 +501,17 @@ impl Session {
     /// reads — cursor visibility, bracketed paste, reverse video.
     pub fn vt(&self) -> &Vt {
         &self.vt
+    }
+
+    /// TTL's `setdebug`: select the receive display directly, independently
+    /// of the keyboard shortcut's setting and allowed-mode list.
+    pub fn set_debug_mode(&mut self, mode: DebugMode) {
+        self.vt.set_debug_mode(mode);
+    }
+
+    /// Shift+Escape. True when the settings made it a debug key.
+    pub fn cycle_debug_mode(&mut self) -> bool {
+        self.vt.cycle_debug_mode()
     }
 
     /// `settitle` — `ts.Title`, and a title event if the window's changed.

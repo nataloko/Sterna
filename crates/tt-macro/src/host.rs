@@ -20,11 +20,13 @@ use std::time::{Duration, Instant};
 
 use tt_conn::serial::FlowControl as ConnFlow;
 use tt_session::open::{Startup, Target};
-use tt_session::{LogMode, LogOptions, MacroLink, Session, Timestamp, TransferReply};
+use tt_session::{
+    DebugMode as VtDebugMode, LogMode, LogOptions, MacroLink, Session, Timestamp, TransferReply,
+};
 use tt_ttl::host::{
-    BeepSound, ClearScreen, DialogEnd, DialogPos, ErrorReport, FlowControl, ListBoxOpts, LogClock,
-    LogInfo, LogOpen, LogRotate, MacroWindow, ModemLines, ScriptHost, SendMode, ShowWindow,
-    WindowGeometry, Xfer, XmodemOpt,
+    BeepSound, ClearScreen, DebugMode, DialogEnd, DialogPos, ErrorReport, FlowControl, ListBoxOpts,
+    LogClock, LogInfo, LogOpen, LogRotate, MacroWindow, ModemLines, ScriptHost, SendMode,
+    ShowWindow, WindowGeometry, Xfer, XmodemOpt,
 };
 use tt_ttl::TtlError;
 // The sixteen transfer commands are the one place a macro reaches past the
@@ -372,6 +374,16 @@ impl ScriptHost for SessionHost {
         })
     }
 
+    fn set_debug_mode(&mut self, mode: DebugMode) -> Result<(), TtlError> {
+        let mode = match mode {
+            DebugMode::Off => VtDebugMode::Off,
+            DebugMode::Normal => VtDebugMode::Normal,
+            DebugMode::Hex => VtDebugMode::Hex,
+            DebugMode::Silent => VtDebugMode::NoOutput,
+        };
+        self.ask(move |s| s.set_debug_mode(mode))
+    }
+
     fn clear_screen(&mut self, what: ClearScreen) -> Result<(), TtlError> {
         // The TEK arm is not a refusal: upstream has a second window and this
         // port has not, so clearing it is a no-op rather than an error, which
@@ -679,8 +691,6 @@ impl ScriptHost for SessionHost {
     //   naming a *different* settings file makes upstream re-read it and
     //   re-apply it (`ttdde.c:622`), and nothing here knows where the settings
     //   came from. The option is parsed and applied; the file is not re-read.
-    // `set_debug_mode` — `ts.DebugMode` has no equivalent in `tt-vt` yet.
-    //
     // Everything left on that list now wants a subsystem rather than a
     // method, which is the point of keeping it here: it is a list of what the
     // port has not built, not of what has not been typed.

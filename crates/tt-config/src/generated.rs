@@ -5117,6 +5117,7 @@ impl Settings {
             0,
             255,
         );
+        settings.normalize();
         settings
     }
 
@@ -8774,6 +8775,7 @@ impl Settings {
             }
             _ => return false,
         }
+        self.normalize();
         true
     }
 }

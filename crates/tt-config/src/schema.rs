@@ -58,6 +58,50 @@ pub struct Field {
     pub doc: &'static str,
 }
 
+/// The receive-debug modes named by `DebugModes` (`ttset.c:1798`).
+///
+/// This is the parsed meaning beside the schema's raw string. Keeping the raw
+/// spelling lets a shared file round-trip without losing order or unknown
+/// words; this mask is what the terminal and `Debug=on` validation consume.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DebugModes(u8);
+
+impl DebugModes {
+    pub const NORMAL: u8 = 1;
+    pub const HEX: u8 = 2;
+    pub const NO_OUTPUT: u8 = 4;
+    pub const ALL: u8 = Self::NORMAL | Self::HEX | Self::NO_OUTPUT;
+
+    pub fn parse_ini(value: &str) -> DebugModes {
+        let whole = value.trim();
+        if whole.eq_ignore_ascii_case("on") || whole.eq_ignore_ascii_case("all") {
+            return DebugModes(Self::ALL);
+        }
+        if whole.eq_ignore_ascii_case("off") || whole.eq_ignore_ascii_case("none") {
+            return DebugModes(0);
+        }
+        let mut bits = 0;
+        for item in value.split(',').map(str::trim) {
+            if item.eq_ignore_ascii_case("normal") {
+                bits |= Self::NORMAL;
+            } else if item.eq_ignore_ascii_case("hex") {
+                bits |= Self::HEX;
+            } else if item.eq_ignore_ascii_case("noout") {
+                bits |= Self::NO_OUTPUT;
+            }
+        }
+        DebugModes(bits)
+    }
+
+    pub fn bits(self) -> u8 {
+        self.0
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+}
+
 /// `GetOnOff` (`ttset.c:344`), which is **not** a symmetric parse.
 ///
 /// With a default of on, anything that is not literally `off` is on. With a
@@ -271,7 +315,7 @@ pub fn color2_str(value: &[u8; 6]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{int_alias, validated, word_alias};
+    use super::{int_alias, validated, word_alias, DebugModes};
 
     #[test]
     fn validated_ranges_default_at_both_ends() {
@@ -296,5 +340,16 @@ mod tests {
         assert_eq!(word_alias(Some("ON"), 9, "on", 2), 2);
         assert_eq!(word_alias(Some("-1"), 9, "on", 2), 65_535);
         assert_eq!(word_alias(Some("65537"), 9, "on", 2), 1);
+    }
+
+    #[test]
+    fn debug_modes_have_whole_values_and_a_list() {
+        assert_eq!(DebugModes::parse_ini("ON").bits(), DebugModes::ALL);
+        assert_eq!(DebugModes::parse_ini("none").bits(), 0);
+        assert_eq!(
+            DebugModes::parse_ini("hex, unknown, NORMAL").bits(),
+            DebugModes::HEX | DebugModes::NORMAL
+        );
+        assert!(DebugModes::parse_ini("unknown").is_empty());
     }
 }

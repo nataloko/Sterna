@@ -711,7 +711,7 @@ fn emit(settings: &[Setting]) -> String {
         };
         writeln!(out, "        settings.{field} = {expr};").expect("string");
     }
-    out.push_str("        settings\n    }\n\n");
+    out.push_str("        settings.normalize();\n        settings\n    }\n\n");
 
     out.push_str(
         "    /// Write every setting back, leaving the rest of the file alone.\n\
@@ -818,7 +818,9 @@ fn emit(settings: &[Setting]) -> String {
         };
         writeln!(out, "            \"{}\" => {expr},", escape(&s.name)).expect("string");
     }
-    out.push_str("            _ => return false,\n        }\n        true\n    }\n}\n\n");
+    out.push_str(
+        "            _ => return false,\n        }\n        self.normalize();\n        true\n    }\n}\n\n",
+    );
 
     // The metadata table.
     out.push_str(
