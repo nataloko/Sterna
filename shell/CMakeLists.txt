@@ -72,6 +72,7 @@ add_library(sterna_shell STATIC
     src/Session.cpp
     src/Macro.cpp
     src/Control.cpp
+    src/I18n.cpp
     src/Theme.cpp
     src/PasteDialog.cpp
     src/SerialDialog.cpp
@@ -85,6 +86,8 @@ add_dependencies(sterna_shell tt_core)
 target_link_libraries(sterna_shell PUBLIC Qt6::Widgets sterna_core)
 target_include_directories(sterna_shell PUBLIC src)
 target_compile_options(sterna_shell PRIVATE -Wall -Wextra)
+target_compile_definitions(sterna_shell PRIVATE
+    TT_SOURCE_LANG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../vendor/lang")
 
 add_executable(sterna
     src/main.cpp
@@ -217,3 +220,6 @@ set_target_properties(sterna render_test ssh_test telnet_test pty_test cmdline_t
 # expects `usr/lib`. A packaging layout is not a distribution layout.
 install(TARGETS sterna RUNTIME DESTINATION bin)
 install(FILES "${TT_CORE_LIB}" DESTINATION lib)
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../vendor/lang/"
+        DESTINATION share/sterna/lang
+        FILES_MATCHING PATTERN "*.lng")

@@ -13,6 +13,7 @@
 #include "sterna.h"
 
 class QLabel;
+class I18n;
 class QLineEdit;
 class QTabWidget;
 class QWidget;
@@ -34,14 +35,12 @@ class Session;
 /// leaves nothing to keep in step — adding a setting is a line in
 /// `schema/settings.txt` and a widget appears.
 ///
-/// What it deliberately does not do yet is translate. The `.lng` label key is
-/// carried through to the tooltip rather than looked up, because `tt-i18n`
-/// does not exist; the visible label is derived from the setting's own name.
 class SettingsDialog : public QDialog {
     Q_OBJECT
 
 public:
-    explicit SettingsDialog(Session *session, QWidget *parent = nullptr);
+    explicit SettingsDialog(Session *session, I18n *i18n = nullptr,
+                            QWidget *parent = nullptr);
 
     /// Apply every changed row. Called on OK; public so a test can drive it
     /// without a button press.
@@ -70,6 +69,7 @@ private:
     void applyFilter(const QString &text);
 
     Session *m_session;
+    I18n *m_i18n;
     QTabWidget *m_tabs = nullptr;
     QLineEdit *m_search = nullptr;
     QVector<Row> m_rows;

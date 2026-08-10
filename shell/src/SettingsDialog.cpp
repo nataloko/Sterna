@@ -18,15 +18,14 @@
 #include <QVBoxLayout>
 
 #include "Session.h"
+#include "I18n.h"
 
 namespace {
 
 /// `terminal.scrollback_lines` → "Scrollback lines".
 ///
-/// Derived rather than translated: the `.lng` key is on the field and there is
-/// no loader for it yet, so showing the setting's own name is the honest
-/// placeholder. It also happens to be what a user searching for a setting
-/// types, which the label of a translated dialog is not.
+/// The source-language fallback. It also happens to be what a user searching
+/// for a setting types, which the label of a translated dialog is not.
 QString humanise(const QString &name)
 {
     QString text = name.section(QLatin1Char('.'), 1);
@@ -129,8 +128,8 @@ QColor colorAt(const QStringList &parts, int i)
 
 } // namespace
 
-SettingsDialog::SettingsDialog(Session *session, QWidget *parent)
-    : QDialog(parent), m_session(session)
+SettingsDialog::SettingsDialog(Session *session, I18n *i18n, QWidget *parent)
+    : QDialog(parent), m_session(session), m_i18n(i18n)
 {
     setWindowTitle(tr("Setup"));
     build();
@@ -153,7 +152,20 @@ void SettingsDialog::build()
     // schema decides the layout as well as the content.
     QHash<QString, QFormLayout *> pages;
 
+    // Some schema rows share an upstream label because it names a group rather
+    // than either value inside it — foreground/background colour pairs and
+    // terminal dimensions, for example. Translating that key onto every row
+    // would make distinct settings display the same name. Only a unique key is
+    // a field label; the rest keep their unambiguous generated fallback.
+    QHash<QString, int> labelUses;
     const size_t count = tt_settings_field_count();
+    for (size_t i = 0; i < count; i++) {
+        TtSettingField field;
+        if (tt_settings_field(i, &field) && field.label) {
+            labelUses[QString::fromUtf8(field.label)]++;
+        }
+    }
+
     for (size_t i = 0; i < count; i++) {
         TtSettingField f;
         if (!tt_settings_field(i, &f)) {
@@ -181,7 +193,15 @@ void SettingsDialog::build()
         row.name = name;
         row.page = page;
         row.original = current;
-        row.label = new QLabel(humanise(name), this);
+        const QString fallback = humanise(name);
+        QString label = fallback;
+        if (m_i18n && f.label) {
+            const QString key = QString::fromUtf8(f.label);
+            if (labelUses.value(key) == 1) {
+                label = m_i18n->text(f.label, fallback);
+            }
+        }
+        row.label = new QLabel(label, this);
         row.label->setToolTip(tooltip(f));
         row.haystack = (name + QLatin1Char(' ') + row.label->text() + QLatin1Char(' ')
                         + QString::fromUtf8(f.key) + QLatin1Char(' ')
@@ -250,6 +270,21 @@ void SettingsDialog::build()
         }
         case TT_SETTING_KIND_STR:
         default: {
+            if (name == QLatin1String("settings.language_file")) {
+                auto *combo = new QComboBox(this);
+                for (const LanguageChoice &language : I18n::availableLanguages()) {
+                    combo->addItem(language.name, language.setting);
+                }
+                int at = combo->findData(current);
+                if (at < 0) {
+                    combo->insertItem(0, current, current);
+                    at = 0;
+                }
+                combo->setCurrentIndex(at);
+                row.editor = combo;
+                row.value = [combo] { return combo->currentData().toString(); };
+                break;
+            }
             auto *edit = new QLineEdit(current, this);
             row.editor = edit;
             row.value = [edit] { return edit->text(); };
@@ -258,6 +293,7 @@ void SettingsDialog::build()
         }
 
         row.editor->setToolTip(row.label->toolTip());
+        row.label->setBuddy(row.editor);
         form->addRow(row.label, row.editor);
         m_rows.push_back(row);
     }

@@ -10,6 +10,7 @@
 #include "Session.h"
 
 class Control;
+class I18n;
 class Macro;
 class QLabel;
 class QScrollBar;
@@ -210,12 +211,17 @@ private:
     /// what `damaged` means — so the idle path stays free of wakeups, which
     /// is the same reason `Session` has no poll timer.
     void updateLogStatus();
+    /// Select the catalog named by `settings.language_file`. Missing catalogs
+    /// leave the source-language UI in place, as upstream's defaults do.
+    void reloadLanguage();
 
     /// Where the settings came from, and where `Save setup` puts them back.
     /// Not always [`settingsPath()`] — `/F=` names another one.
     QString m_settingsPath;
     /// The active `KEYBOARD.CNF`, for reopening the file picker in its folder.
     QString m_keyMapPath;
+    I18n *m_i18n = nullptr;
+    QString m_languageSetting;
     Session *m_session = nullptr;
     TerminalView *m_view;
     QScrollBar *m_scroll;

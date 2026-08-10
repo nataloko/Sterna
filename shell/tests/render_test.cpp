@@ -34,6 +34,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QLineEdit>
+#include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
 #include <QScreen>
@@ -45,6 +46,7 @@
 #include <QTimer>
 
 #include "MainWindow.h"
+#include "I18n.h"
 #include "PasteDialog.h"
 #include "Session.h"
 #include "SettingsDialog.h"
@@ -1393,6 +1395,43 @@ void test_the_settings_dialog_is_built_from_the_schema()
     }
 }
 
+void test_the_settings_dialog_uses_a_language_catalog()
+{
+    Harness h;
+    QString error;
+    I18n i18n;
+    CHECK(i18n.load(QStringLiteral("lang\\ja_JP.lng"), QString(), &error));
+    CHECK(i18n.text("MENU_FILE", QStringLiteral("File"))
+          == QStringLiteral("ファイル(&F)"));
+
+    CHECK(h.session.setSetting(QStringLiteral("settings.language_file"),
+                               QStringLiteral("lang\\ja_JP.lng"), &error));
+    SettingsDialog dialog(&h.session, &i18n);
+
+    bool translated = false;
+    for (QLabel *label : dialog.findChildren<QLabel *>()) {
+        if (label->text() == QStringLiteral("送信(&M):")) {
+            translated = true;
+            break;
+        }
+    }
+    CHECK(translated);
+
+    QComboBox *languages = nullptr;
+    for (QComboBox *combo : dialog.findChildren<QComboBox *>()) {
+        if (combo->findData(QStringLiteral("lang\\ja_JP.lng")) >= 0) {
+            languages = combo;
+            break;
+        }
+    }
+    CHECK(languages != nullptr);
+    if (languages) {
+        CHECK(languages->count() == 14);
+        CHECK(languages->currentData().toString()
+              == QStringLiteral("lang\\ja_JP.lng"));
+    }
+}
+
 /// Only what changed. A dialog that wrote every field would pin all of them
 /// into the user's file the first time it was opened, and a pinned setting
 /// stops following upstream's default for ever.
@@ -1851,6 +1890,7 @@ int main(int argc, char **argv)
     test_attribute_colours_can_keep_the_normal_background();
     test_use_text_colour_repairs_only_the_three_same_colour_pairs();
     test_the_settings_dialog_is_built_from_the_schema();
+    test_the_settings_dialog_uses_a_language_catalog();
     test_the_dialog_writes_only_what_changed();
     test_window_opacity_follows_activation();
     test_the_window_opens_at_the_configured_size();

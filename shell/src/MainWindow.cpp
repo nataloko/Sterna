@@ -33,6 +33,7 @@
 #include <limits>
 
 #include "Control.h"
+#include "I18n.h"
 #include "Macro.h"
 #include "SerialDialog.h"
 #include "Session.h"
@@ -163,6 +164,7 @@ MainWindow::MainWindow(const QString &settingsPath)
                                             : settingsPath)
 {
     m_session = new Session(80, 24, this);
+    m_i18n = new I18n(this);
     m_view = new TerminalView(m_session, this);
 
     // A plain QWidget plus a scrollbar rather than a QAbstractScrollArea: the
@@ -352,6 +354,7 @@ void MainWindow::applyWindowOpacity(bool active)
 
 void MainWindow::onSettingsChanged()
 {
+    reloadLanguage();
     const QSize oldCell = m_view->sizeForCells(1, 1);
     m_view->applySettings();
     const bool cellSizeChanged = oldCell != m_view->sizeForCells(1, 1);
@@ -477,8 +480,22 @@ void MainWindow::showPopupMenu(const QPoint &globalPos)
 
 void MainWindow::showSettingsDialog()
 {
-    SettingsDialog dialog(m_session, this);
+    SettingsDialog dialog(m_session, m_i18n, this);
     dialog.exec();
+}
+
+void MainWindow::reloadLanguage()
+{
+    const QString configured =
+        m_session->setting(QStringLiteral("settings.language_file"));
+    if (configured == m_languageSetting) {
+        return;
+    }
+    m_languageSetting = configured;
+    QString error;
+    if (!m_i18n->load(configured, m_settingsPath, &error)) {
+        onNotice(tr("Could not read the language file: %1").arg(error));
+    }
 }
 
 void MainWindow::saveSettings()
