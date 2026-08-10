@@ -6,6 +6,7 @@
 
 use std::time::Duration;
 
+use tt_conn::LinkKind;
 use tt_session::{Event, MemoryHandle, MemoryTransport, Session};
 use tt_vt::{Config, Key, Modifiers, MouseEvent};
 
@@ -213,7 +214,7 @@ fn send_break_reaches_the_transport_and_holds_for_what_the_file_says() {
 }
 
 #[test]
-fn a_disconnect_is_reported_once_and_leaves_the_screen_alone() {
+fn a_network_disconnect_requests_auto_close_and_leaves_the_screen_alone() {
     let (mut s, h) = connected(20, 4);
     h.feed(b"keep me");
     pump(&mut s);
@@ -223,14 +224,99 @@ fn a_disconnect_is_reported_once_and_leaves_the_screen_alone() {
     h.with(|st| st.disconnected = true);
     let events = pump(&mut s);
     assert!(events.contains(&Event::Disconnected), "{events:?}");
+    assert!(events.contains(&Event::CloseRequested), "{events:?}");
     assert!(!s.is_connected());
-    // Screen and scrollback survive: the text explaining why it dropped is
-    // the whole reason anyone looks after a disconnect.
+    // ClearScreenOnCloseConnection ships off. The close request belongs to a
+    // window and a headless caller may decline it, so the terminal state still
+    // has to be the exact state it would see if the window stayed open.
     assert_eq!(row(&s, 0), "keep me");
 
     // And a second pump does not report it again.
     let events = pump(&mut s);
     assert!(events.is_empty(), "{events:?}");
+}
+
+#[test]
+fn a_window_that_stays_open_can_clear_on_disconnect() {
+    let (mut s, h) = connected(20, 4);
+    let mut settings = s.settings().clone();
+    settings.terminal_cols = 20;
+    settings.terminal_rows = 4;
+    settings.connection_auto_win_close = false;
+    settings.connection_clear_screen_on_close = true;
+    s.set_settings(settings).unwrap();
+    s.drain_events();
+
+    h.feed(b"keep me");
+    pump(&mut s);
+    assert_eq!(row(&s, 0), "keep me");
+
+    h.with(|st| st.disconnected = true);
+    let events = pump(&mut s);
+    assert!(events.contains(&Event::Disconnected), "{events:?}");
+    assert!(events.contains(&Event::Damage), "{events:?}");
+    assert!(!events.contains(&Event::CloseRequested), "{events:?}");
+    assert_eq!(row(&s, 0), "");
+    assert_eq!((s.grid().cursor.x, s.grid().cursor.y), (0, 0));
+
+    // Clear screen is BuffClearScreen, not an erase. The old page moved into
+    // history and its first character remains available there.
+    assert_eq!(s.scrollback_len(), 4);
+    let old = s.line(0).expect("old page is in scrollback");
+    assert_eq!(old[0].codepoints().next(), Some(u32::from(b'k')));
+}
+
+#[test]
+fn auto_close_is_network_only() {
+    let mut s = Session::new(Config {
+        cols: 20,
+        rows: 4,
+        ..Config::default()
+    });
+    let mut settings = s.settings().clone();
+    settings.terminal_cols = 20;
+    settings.terminal_rows = 4;
+    settings.connection_clear_screen_on_close = true;
+    s.set_settings(settings).unwrap();
+    s.drain_events();
+
+    let (transport, h) = MemoryTransport::with_kind(LinkKind::LocalPty);
+    s.connect(Box::new(transport));
+    h.feed(b"local");
+    pump(&mut s);
+    h.with(|st| st.disconnected = true);
+
+    let events = pump(&mut s);
+    assert!(events.contains(&Event::Disconnected), "{events:?}");
+    assert!(events.contains(&Event::Damage), "{events:?}");
+    assert!(!events.contains(&Event::CloseRequested), "{events:?}");
+    assert_eq!(row(&s, 0), "");
+}
+
+#[test]
+fn choosing_disconnect_also_applies_the_close_outcome() {
+    let (mut s, _h) = connected(20, 4);
+    s.drain_events();
+
+    s.disconnect();
+    let events = s.drain_events();
+    assert!(events.contains(&Event::CloseRequested), "{events:?}");
+    // The caller initiated this one and already knows the connection changed;
+    // only a transport disappearing reports the generic disconnect notice.
+    assert!(!events.contains(&Event::Disconnected), "{events:?}");
+}
+
+#[test]
+fn a_disconnect_while_writing_takes_the_same_outcome_branch() {
+    let (mut s, h) = connected(20, 4);
+    s.drain_events();
+    h.with(|st| st.disconnected = true);
+
+    s.send_text("x").unwrap();
+    let events = s.drain_events();
+    assert!(events.contains(&Event::Disconnected), "{events:?}");
+    assert!(events.contains(&Event::CloseRequested), "{events:?}");
+    assert!(!s.is_connected());
 }
 
 #[test]

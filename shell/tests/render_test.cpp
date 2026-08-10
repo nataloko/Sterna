@@ -1411,6 +1411,35 @@ void test_the_hidden_menu_is_the_ordinary_menu_as_a_popup()
     }
 }
 
+/// `AutoWinClose` is decided in the core, but only the frontend owns a
+/// window. The request closes an ordinary window and honours upstream's
+/// IsWindowEnabled guard when a modal child has disabled its parent.
+void test_an_auto_close_request_respects_window_state()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+
+    {
+        MainWindow window(dir.filePath(QStringLiteral("close.ini")));
+        window.show();
+        qApp->processEvents();
+        CHECK(window.isVisible());
+        window.session()->closeRequested();
+        CHECK(!window.isVisible());
+    }
+
+    {
+        MainWindow window(dir.filePath(QStringLiteral("disabled.ini")));
+        window.show();
+        window.setEnabled(false);
+        qApp->processEvents();
+        window.session()->closeRequested();
+        CHECK(window.isVisible());
+        window.setEnabled(true);
+        window.close();
+    }
+}
+
 /// `VTPos` is always read, but is written only when `SaveVTWinPos` is on. A
 /// full Save setup captures every setting plus the live geometry; closing the
 /// window writes the geometry alone.
@@ -1627,6 +1656,7 @@ int main(int argc, char **argv)
     test_the_dialog_writes_only_what_changed();
     test_the_window_opens_at_the_configured_size();
     test_the_hidden_menu_is_the_ordinary_menu_as_a_popup();
+    test_an_auto_close_request_respects_window_state();
     test_window_geometry_has_full_and_close_only_saves();
 
     // `--write <dir>` dumps what was rendered, for looking at a failure rather

@@ -1364,8 +1364,9 @@ pub enum TtEventKind {
     /// through, kept rather than dropped: it is usually still readable, and
     /// silently losing it makes a bad cable look like a bad program.
     BadByte = 3,
-    /// The transport went away. Reported once; the screen is left alone,
-    /// because the text explaining why it dropped is the reason anyone looks.
+    /// The transport went away. Reported once. The screen is left alone by
+    /// default because the text explaining why it dropped is the reason
+    /// anyone looks; `ClearScreenOnCloseConnection` can change that.
     Disconnected = 4,
     /// The session log could not be written and has been closed. `text` says
     /// why. Reported once — a disk that filled up will not un-fill, and
@@ -1413,6 +1414,9 @@ pub enum TtEventKind {
     ClipboardReadRejected = 13,
     /// The corresponding rejected write.
     ClipboardWriteRejected = 14,
+    /// `AutoWinClose` after a network connection ended. Close the window if
+    /// it can close now; serial ports and local ptys never emit this.
+    CloseRequested = 15,
 }
 
 #[repr(C)]
@@ -1459,6 +1463,7 @@ pub extern "C" fn tt_session_drain_events(
             Event::Break => (TtEventKind::Break, 0, ptr::null()),
             Event::BadByte(b) => (TtEventKind::BadByte, b, ptr::null()),
             Event::Disconnected => (TtEventKind::Disconnected, 0, ptr::null()),
+            Event::CloseRequested => (TtEventKind::CloseRequested, 0, ptr::null()),
             Event::Resize { cols, rows } => {
                 size = (cols, rows);
                 (TtEventKind::Resize, 0, ptr::null())
@@ -2574,7 +2579,9 @@ pub extern "C" fn tt_session_connect_pty(
     }
 }
 
-/// Drop the connection. The screen is left alone. A no-op when there is none.
+/// Drop the connection. Applies `AutoWinClose` and
+/// `ClearScreenOnCloseConnection`, whose results are drained as ordinary
+/// events. A no-op when there is no connection.
 #[no_mangle]
 pub extern "C" fn tt_session_disconnect(session: *mut TtSession) {
     let s = session!(session);

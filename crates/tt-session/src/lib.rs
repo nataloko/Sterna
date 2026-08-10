@@ -80,6 +80,10 @@ pub enum Event {
     BadByte(u8),
     /// The transport went away — unplugged, hung up, or the child exited.
     Disconnected,
+    /// `AutoWinClose`, after a network connection ended. The core cannot
+    /// close a window, so the frontend which owns one does it. Serial ports
+    /// and local ptys never produce this request.
+    CloseRequested,
     /// The **far end** says the terminal should be this size.
     ///
     /// Backwards from the usual direction and real: telnet's NAWS is defined
@@ -417,16 +421,16 @@ impl Session {
     pub fn disconnect(&mut self) {
         let kind = self.conn.as_ref().map(|c| c.link_kind());
         self.conn = None;
-        self.restore_tcp_echo_cr();
-        if let Some(kind) = kind {
-            self.connect_beep(kind);
-        }
         self.pending.clear();
-        // A transfer has to be told here rather than on the next pump: with no
-        // connection left, `pump` returns before it reaches anything, so the
-        // transfer would sit "running" for ever with a progress dialog on top
-        // of it and no way to reach the end.
+        self.restore_tcp_echo_cr();
+        // A transfer has to be told here rather than on the next pump: with
+        // no connection left, `pump` returns before it reaches anything, so
+        // the transfer would sit "running" for ever with a progress dialog
+        // on top of it and no way to reach the end.
         self.transfer_disconnected();
+        if let Some(kind) = kind {
+            self.connection_closed(kind);
+        }
         // `close_note` is deliberately not cleared: the user disconnecting is
         // not a reason to forget why the *last* connection ended, and the note
         // is what the status line is showing.
@@ -925,10 +929,11 @@ impl Session {
                     let kind = conn.link_kind();
                     self.close_note = conn.closing_note();
                     self.conn = None;
+                    self.pending.clear();
                     self.restore_tcp_echo_cr();
                     self.transfer_disconnected();
                     self.events.push(Event::Disconnected);
-                    self.connect_beep(kind);
+                    self.connection_closed(kind);
                     return Ok(total);
                 }
                 Err(e) => return Err(e),
@@ -1362,8 +1367,10 @@ impl Session {
                 self.close_note = conn.closing_note();
                 self.conn = None;
                 self.pending.clear();
+                self.restore_tcp_echo_cr();
+                self.transfer_disconnected();
                 self.events.push(Event::Disconnected);
-                self.connect_beep(kind);
+                self.connection_closed(kind);
                 Ok(())
             }
             Err(e) => Err(e),
@@ -1390,6 +1397,30 @@ impl Session {
                 .into_iter()
                 .map(Event::Clipboard),
         );
+    }
+
+    /// The branch after `CommClose` in `vtwin.cpp:3020`.
+    ///
+    /// `AutoWinClose` is network-only. If the window remains, the independent
+    /// clear setting runs the ordinary Clear screen command: scroll the page
+    /// into history, home the cursor, and reconcile a scrolled-back view. The
+    /// clear is also done before a close request when enabled, because the
+    /// core cannot know whether a disabled/modal frontend will accept that
+    /// request; it is unobservable when the window does close and is the
+    /// upstream fallback when it cannot.
+    fn connection_closed(&mut self, kind: tt_conn::LinkKind) {
+        self.connect_beep(kind);
+
+        if self.settings.connection_clear_screen_on_close {
+            self.vt.grid_mut().clear_screen();
+            self.vt.grid_mut().move_cursor(0, 0);
+            self.follow_scroll();
+            self.events.push(Event::Damage);
+        }
+
+        if matches!(kind, tt_conn::LinkKind::Network) && self.settings.connection_auto_win_close {
+            self.events.push(Event::CloseRequested);
+        }
     }
 }
 
@@ -1481,19 +1512,36 @@ impl MemoryHandle {
     }
 }
 
-pub struct MemoryTransport(MemoryHandle);
+pub struct MemoryTransport {
+    handle: MemoryHandle,
+    kind: tt_conn::LinkKind,
+}
 
 impl MemoryTransport {
     /// The transport and a handle onto its state. The session eats the first.
     pub fn new() -> (MemoryTransport, MemoryHandle) {
+        Self::with_kind(tt_conn::LinkKind::Network)
+    }
+
+    /// The same in-memory wire carrying a particular kind of link. Most tests
+    /// want the default network shape; settings conditioned on `PortType`
+    /// need to distinguish it from a serial port or local pty without opening
+    /// real hardware or a child process.
+    pub fn with_kind(kind: tt_conn::LinkKind) -> (MemoryTransport, MemoryHandle) {
         let handle = MemoryHandle::default();
-        (MemoryTransport(handle.clone()), handle)
+        (
+            MemoryTransport {
+                handle: handle.clone(),
+                kind,
+            },
+            handle,
+        )
     }
 }
 
 impl Transport for MemoryTransport {
     fn read(&mut self, data: &mut Vec<u8>, events: &mut Vec<TransportEvent>) -> Result<usize> {
-        self.0.with(|s| {
+        self.handle.with(|s| {
             if s.disconnected {
                 return Err(Error::Disconnected);
             }
@@ -1505,7 +1553,7 @@ impl Transport for MemoryTransport {
     }
 
     fn write(&mut self, data: &[u8], _timeout: Duration) -> Result<usize> {
-        self.0.with(|s| {
+        self.handle.with(|s| {
             if s.disconnected {
                 return Err(Error::Disconnected);
             }
@@ -1523,7 +1571,7 @@ impl Transport for MemoryTransport {
     }
 
     fn send_break(&mut self, dur: Duration) -> Result<()> {
-        self.0.with(|s| {
+        self.handle.with(|s| {
             s.breaks += 1;
             s.last_break = Some(dur);
         });
@@ -1531,8 +1579,12 @@ impl Transport for MemoryTransport {
     }
 
     fn resize(&mut self, cols: u16, rows: u16) -> Result<()> {
-        self.0.with(|s| s.last_resize = Some((cols, rows)));
+        self.handle.with(|s| s.last_resize = Some((cols, rows)));
         Ok(())
+    }
+
+    fn link_kind(&self) -> tt_conn::LinkKind {
+        self.kind
     }
 
     fn describe(&self) -> String {

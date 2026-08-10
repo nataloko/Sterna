@@ -113,6 +113,14 @@ MainWindow::MainWindow(const QString &settingsPath)
     connect(m_session, &Session::notice, this, &MainWindow::onNotice);
     connect(m_session, &Session::connectionChanged, this,
             &MainWindow::onConnectionChanged);
+    connect(m_session, &Session::closeRequested, this, [this] {
+        // Upstream checks IsWindowEnabled before AutoWinClose. A socket can
+        // disappear inside a modal dialog's nested event loop; closing its
+        // disabled parent out from under it would strand the dialog.
+        if (isEnabled()) {
+            close();
+        }
+    });
     connect(m_session, &Session::sshHostKeyWanted, this,
             &MainWindow::onSshHostKeyWanted);
     connect(m_session, &Session::sshAuthWanted, this, &MainWindow::onSshAuthWanted);

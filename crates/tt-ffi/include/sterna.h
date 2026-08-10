@@ -346,8 +346,9 @@ enum TtEventKind
      */
     TT_EVENT_KIND_BAD_BYTE = 3,
     /**
-     * The transport went away. Reported once; the screen is left alone,
-     * because the text explaining why it dropped is the reason anyone looks.
+     * The transport went away. Reported once. The screen is left alone by
+     * default because the text explaining why it dropped is the reason
+     * anyone looks; `ClearScreenOnCloseConnection` can change that.
      */
     TT_EVENT_KIND_DISCONNECTED = 4,
     /**
@@ -416,6 +417,11 @@ enum TtEventKind
      * The corresponding rejected write.
      */
     TT_EVENT_KIND_CLIPBOARD_WRITE_REJECTED = 14,
+    /**
+     * `AutoWinClose` after a network connection ended. Close the window if
+     * it can close now; serial ports and local ptys never emit this.
+     */
+    TT_EVENT_KIND_CLOSE_REQUESTED = 15,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -2972,7 +2978,9 @@ TtStatus tt_session_connect_pty(TtSession *session,
                                 const TtPtyParams *params);
 
 /**
- * Drop the connection. The screen is left alone. A no-op when there is none.
+ * Drop the connection. Applies `AutoWinClose` and
+ * `ClearScreenOnCloseConnection`, whose results are drained as ordinary
+ * events. A no-op when there is no connection.
  */
 void tt_session_disconnect(TtSession *session);
 

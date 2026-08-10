@@ -281,7 +281,11 @@ void Session::disconnectPort()
     delete m_notifier;
     m_notifier = nullptr;
     tt_session_disconnect(m_session);
-    rearm();
+    // A deliberate disconnect takes the same upstream outcome branch as a
+    // dropped line: clear the screen or ask the network window to close. The
+    // caller already knows the connection changed, so the core does not also
+    // manufacture a generic Disconnected notice for this path.
+    pumpAndDispatch(0);
     emit connectionChanged();
 }
 
@@ -803,6 +807,7 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
 
     bool dirty = false;
     bool connectionEnded = false;
+    bool windowCloseRequested = false;
     bool transferMoved = false;
     std::optional<TransferResult> transferEnded;
     for (size_t i = 0; i < n; i++) {
@@ -898,6 +903,9 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
         case TT_EVENT_KIND_CLIPBOARD_WRITE_REJECTED:
             emit notice(tr("Remote clipboard write rejected"));
             break;
+        case TT_EVENT_KIND_CLOSE_REQUESTED:
+            windowCloseRequested = true;
+            break;
         }
     }
 
@@ -922,6 +930,9 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
         const QString note = closeNote();
         emit notice(note.isEmpty() ? tr("Disconnected") : note);
         emit connectionChanged();
+    }
+    if (windowCloseRequested) {
+        emit closeRequested();
     }
 }
 
