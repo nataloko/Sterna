@@ -38,6 +38,7 @@ unicodebuf-decsel.sh                 | --cols 80 --rows 24 --attrs |
 #38170-deccara-kanji-broken.sh       | --cols 80 --rows 24 --attrs |
 decfra.sh                            | --cols 80 --rows 24 --attrs |
 unicodebuf-irm3.sh                   | --cols 80 --rows 24 --attrs |
+unicodebuf-url.sh                    | --attrs |
 
 # --- known divergences ---------------------------------------------------
 #38168-deccara-range.sh              | --cols 80 --rows 24 --attrs | XFAIL: the script opens with `ESC [ * 2 x`, an intermediate BEFORE its parameter. Tera Term's CSI parser accepts the two in any order; the `vte` crate follows ECMA-48 and ignores the sequence, so DECSACE never reaches rectangle mode
@@ -47,6 +48,5 @@ unicodebuf-combining-spacing_mark.pl | --cols 80 --rows 24 --attrs | XFAIL: spac
 unicodebuf-combining.pl              | | SKIP: paces itself with Time::HiRes::usleep, so a bounded capture truncates mid-stream. Covered deterministically by cases 10 and 28.
 color-sgr-decscnm.pl                 | | SKIP: loops forever once stdin reaches EOF.
 erase.pl                             | | SKIP: interactive menu driver; needs a scripted command sequence, not blank lines.
-unicodebuf-url.sh                    | | SKIP: clickable-URL highlighting, which is a frontend concern and out of scope.
 unicodebuf-unicode_15.1-.pl          | | SKIP: Unicode 15.1 width tables. Deferred with CJK, and we knowingly use the unicode-width crate rather than Tera Term's tables.
 change-terminal-test.sh              | | SKIP: changes the terminal id mid-stream; the dump header is fixed at startup.

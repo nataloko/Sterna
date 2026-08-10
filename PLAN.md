@@ -1088,18 +1088,18 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (185 settings over 172 keys: 39 for the terminal,
+  `crates/tt-config/` (193 settings over 180 keys: 39 for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
   writes into, 2026-08-09, plus the whole log family, then the whole
   file-transfer family, then the seven the terminal and the two the *transports*
   were already honouring with no key to read, then the clipboard's sixteen,
   2026-08-09, then the bell's, the serial port's, telnet's, the scrollback's
   and the parser's own eight switches, then the painter's four draw-attribute
-  switches and the custom ANSI palette, 2026-08-10), the map onto a running
-  terminal in
+  switches, the custom ANSI palette and the URL family, 2026-08-10), the map
+  onto a running terminal in
   `tt-session`, the schema as data over the C ABI, and a Qt dialog that builds
   itself from it. What remains is the *rest of the settings*, which is a line
-  and a citation each — 100 keys as of 2026-08-10, and `tests/upstream.rs`
+  and a citation each — 92 keys as of 2026-08-10, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -3790,6 +3790,47 @@ truecolor value resolved and painted through the same custom table.
 
 185 settings over 172 keys, 100 to go.
 
+#### URLs, where recognition, paint and clicking are three different switches
+
+`crates/tt-config/`, `tt-grid`, `tt-session`, the C ABI and the shell,
+2026-08-10. Eight keys: the colour pair, its enable, the independent underline,
+the click gate, a custom browser and its arguments, and two split-URL settings
+that current upstream reads and writes but never consults.
+
+**`EnableClickableUrl` does not enable URL recognition.** `buffer.c:3430` runs
+the detector on every character written, regardless of that key; the grid
+therefore always carries `AttrURL`. `EnableURLColor` and `URLUnderline` decide
+two independent parts of painting, while `EnableClickableUrl` — off in the
+shipping file — decides only whether hovering gets a hand and double-clicking
+launches. Treating it as one master switch gives three wrong terminals for the
+price of one plausible name.
+
+The detector is upstream's incremental one rather than a regular expression:
+seven lower-case schemes, and the ASCII table from `isURLchar`. A URL may cross
+an automatic wrap because `AttrLineContinued` joins the cells. **And it has a
+visible pointer-zero edge.** When a URL begins in the allocation's first cell,
+the rescan at `buffer.c:2658` stops at pointer zero and then increments anyway;
+growing `http://` by one character clears every URL bit except the first.
+`sftp://` and `tftp://` are stranger still because the rescan from character
+two finds the `ftp://` suffix. Differential case 130 records the behavior
+rather than cleaning it up invisibly.
+
+Launching reads the marked run back instead of parsing it a second time. That
+inherits an unrelated copy setting: `BuffGetStringForCB` joins a wrapped URL
+only when `EnableContinuedLineCopy` is on, and with it off inserts the exact
+`CR CR LF` sequence its clipboard path writes. `JoinSplitURL` and
+`JoinSplitURLIgnoreEOLChar` sound like the answer and are not — no current
+upstream code reads either after load. They round-trip here and act on nothing
+for the same reason.
+
+The custom executable is tried only for HTTP, HTTPS and FTP. SFTP, TFTP, NEWS
+and MMS always go to the desktop handler, and a failed custom launch falls back
+there too (`buffer.c:4084`). The Qt test captures the double-click without
+opening a real browser and launches itself as a detached helper to pin argument
+ordering.
+
+193 settings over 180 keys, 92 to go.
+
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
 Windows build, ConPTY, Win32 serial edge cases, NSIS installer. All 14 `.lng`
@@ -3890,7 +3931,7 @@ file/dir 1k, connection/terminal 2k, dialogs 0.8k, misc 1k — **~9.3k Rust vs
 1. **✅ Differential testing against real Tera Term** — `oracle/` built and
    green, and as of Stage 1 actually wired up: `./run_diff.sh` feeds identical
    byte streams to it and to the Rust engine and diffs the grid dumps *and the
-   replies*, in CI on every commit. 128 cases, two of them `xfail`. Since the
+   replies*, in CI on every commit. 130 cases, two of them `xfail`. Since the
    oracle also takes
    injected mouse, focus and **key** events — and compiles `keyboard.c` for the
    last of those — this covers both halves of the frontend seam. **This is
@@ -3920,7 +3961,7 @@ file/dir 1k, connection/terminal 2k, dialogs 0.8k, misc 1k — **~9.3k Rust vs
    exercisers in `teraterm/tests/` headless and diffs the two engines over
    their output. Not golden files and not copied into the repo: the scripts are
    executed from the pinned sibling checkout, so the corpus tracks upstream.
-   **19 matching, 2 known-divergent, 6 not run**, each with a recorded reason in
+   **20 matching, 2 known-divergent, 5 not run**, each with a recorded reason in
    `oracle/upstream.cases`. The prediction above was accurate — `bcetest.sh`,
    `decfra.sh` and the `#38168-deccara-*.sh` trio were among the breakages, and
    three of them turned out to be upstream bugs rather than ours. Of the two

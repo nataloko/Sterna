@@ -96,6 +96,9 @@ while IFS='|' read -r script args note; do
 	fi
 
 	case "$script" in
+		# Declares /bin/sh, but uses Bash's arithmetic `for ((...))` and
+		# `read -t`. Dash exits before producing a byte.
+		unicodebuf-url.sh) interp=bash ;;
 		*.pl) interp=perl ;;
 		*) interp=sh ;;
 	esac

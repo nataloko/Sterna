@@ -55,7 +55,7 @@ S-shaped flight path.
 ## Build and test
 
 ```sh
-./run_diff.sh                    # THE gate: Rust engine vs Tera Term, 128 cases
+./run_diff.sh                    # THE gate: Rust engine vs Tera Term, 130 cases
 ./run_diff.sh 27                 # just the cases matching "27"
 ./run_upstream.sh                # the same diff over Tera Term's OWN exercisers
 
@@ -971,6 +971,28 @@ something other than what they do:
   (`vtdisp.c:3132`), which is `TerminalView`'s 8 ms frame floor measuring the
   same thing in a different unit. Carried and acting on nothing, like
   `NotifySound`.
+
+And for URLs, where one plausible master switch is really three independent
+ones:
+
+- **`EnableClickableUrl` does not enable URL recognition.** The write path
+  always sets `AttrURL`; `EnableURLColor` and `URLUnderline` independently
+  decide how it is painted, and `EnableClickableUrl` gates only the hand
+  cursor and double-click launch. It ships off, while both paint switches ship
+  on, so treating it as a master gate gives the wrong default screen.
+- **A URL beginning at buffer pointer zero loses its own marking when it
+  grows.** `mark_url_line_w` stops its backward search at zero and then
+  increments unconditionally (`buffer.c:2658`), so typing one character after
+  `http://` in the first cell leaves only the `h` marked. `sftp://` and
+  `tftp://` are the exceptions because the mistaken rescan from cell one finds
+  their `ftp://` suffix. Differential case 130 pins this; do not clean it up
+  by replacing the incremental detector with a regex.
+- **A wrapped URL is copied with the clipboard setting, not either split-URL
+  setting.** `invokeBrowserW` uses `BuffGetStringForCB`, so
+  `EnableContinuedLineCopy=off` inserts its exact `CR CR LF` between the two
+  marked rows. `JoinSplitURL` and `JoinSplitURLIgnoreEOLChar` are read and
+  written but never consulted anywhere in current upstream. Their names are
+  more convincing than their code.
 
 And for the parser's own switches, where three of the eight are two settings
 wearing one name:
