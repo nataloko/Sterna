@@ -2561,9 +2561,41 @@ TtStatus tt_session_settings_load(TtSession *session,
  * The file is re-read first and only the keys the schema owns are touched, so
  * comments, ordering, spelling and every setting this project does not know
  * about survive — which is what makes a `TERATERM.INI` shared with a real
- * Tera Term keep working.
+ * Tera Term keep working. The terminal size is read from the live grid rather
+ * than from the last settings load. A caller with a window should use
+ * [`tt_session_settings_save_for_window`] so `VTPos` is live too.
  */
 TtStatus tt_session_settings_save(const TtSession *session, const char *path);
+
+/**
+ * Save every setting, taking the live position from the frontend's window.
+ *
+ * `position_valid` is false when the window system does not have a client-
+ * controlled position. Wayland is that case: `QWidget::pos()` commonly says
+ * `(0,0)` and `move()` is deliberately ignored. With it false an existing
+ * `VTPos` line is preserved byte-for-byte, while the live terminal size and
+ * every other setting are still saved.
+ */
+TtStatus tt_session_settings_save_for_window(const TtSession *session,
+                                             const char *path,
+                                             int32_t x,
+                                             int32_t y,
+                                             bool position_valid);
+
+/**
+ * Persist only the window geometry on close.
+ *
+ * This is upstream's `SaveVTPos`, not a shortened Save setup: when
+ * `SaveVTWinPos` is off it does nothing, and when it is on it writes only
+ * `VTPos` (if the window system has one) and the live `TerminalSize`. A close
+ * must not pin every schema default into a file merely because the user
+ * enabled position memory.
+ */
+TtStatus tt_session_window_geometry_save(const TtSession *session,
+                                         const char *path,
+                                         int32_t x,
+                                         int32_t y,
+                                         bool position_valid);
 
 /**
  * Take everything that has happened since the last drain.

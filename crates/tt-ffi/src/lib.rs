@@ -1173,12 +1173,71 @@ pub extern "C" fn tt_session_settings_load(
     }
 }
 
+/// Where a full settings save gets the window position it may write.
+enum SavedWindowPosition {
+    /// The values already in `Settings`, for a caller with no window.
+    Settings,
+    /// A frontend's live answer. `None` means the window system cannot report
+    /// a useful position — Wayland deliberately cannot — so the old line must
+    /// survive byte-for-byte even when `SaveVTWinPos` is on.
+    Live(Option<(i32, i32)>),
+}
+
+fn settings_for_save(s: &TtSession) -> Settings {
+    let mut settings = s.session.settings().clone();
+    // `ts.TerminalWidth/Height` are live variables upstream, updated with the
+    // window. The schema is a snapshot from the last load, so take the grid at
+    // the moment of saving or dragging an 80x24 window to 132x50 would write
+    // the old size back with complete confidence.
+    settings.terminal_cols = s.session.grid().cols() as i32;
+    settings.terminal_rows = s.session.grid().rows() as i32;
+    settings
+}
+
+fn save_all_settings(s: &TtSession, path: &Path, position: SavedWindowPosition) -> TtStatus {
+    let mut ini = match Ini::load(path) {
+        Ok(ini) => ini,
+        Err(e) => return fail(TT_ERR_IO, format!("{}: {e}", path.display())),
+    };
+    let mut settings = settings_for_save(s);
+
+    match position {
+        SavedWindowPosition::Settings => {}
+        SavedWindowPosition::Live(Some((x, y))) => {
+            settings.window_x = x;
+            settings.window_y = y;
+        }
+        SavedWindowPosition::Live(None) if settings.window_save_position => {
+            // Make `Settings::store` skip VTPos while retaining the real value
+            // of SaveVTWinPos below. Restoring the parsed value afterwards is
+            // not equivalent: it would strip a matched pair of quotes from a
+            // line this save was supposed to leave alone.
+            settings.window_save_position = false;
+            settings.store(&mut ini);
+            ini.set("Tera Term", "SaveVTWinPos", "on");
+            return match ini.save(path) {
+                Ok(()) => TT_OK,
+                Err(e) => fail(TT_ERR_IO, format!("{}: {e}", path.display())),
+            };
+        }
+        SavedWindowPosition::Live(None) => {}
+    }
+
+    settings.store(&mut ini);
+    match ini.save(path) {
+        Ok(()) => TT_OK,
+        Err(e) => fail(TT_ERR_IO, format!("{}: {e}", path.display())),
+    }
+}
+
 /// Write every setting back, leaving the rest of the file alone.
 ///
 /// The file is re-read first and only the keys the schema owns are touched, so
 /// comments, ordering, spelling and every setting this project does not know
 /// about survive — which is what makes a `TERATERM.INI` shared with a real
-/// Tera Term keep working.
+/// Tera Term keep working. The terminal size is read from the live grid rather
+/// than from the last settings load. A caller with a window should use
+/// [`tt_session_settings_save_for_window`] so `VTPos` is live too.
 #[no_mangle]
 pub extern "C" fn tt_session_settings_save(
     session: *const TtSession,
@@ -1189,12 +1248,74 @@ pub extern "C" fn tt_session_settings_save(
         Ok(p) => p,
         Err(e) => return e,
     };
-    let path = std::path::Path::new(path);
+    save_all_settings(s, Path::new(path), SavedWindowPosition::Settings)
+}
+
+/// Save every setting, taking the live position from the frontend's window.
+///
+/// `position_valid` is false when the window system does not have a client-
+/// controlled position. Wayland is that case: `QWidget::pos()` commonly says
+/// `(0,0)` and `move()` is deliberately ignored. With it false an existing
+/// `VTPos` line is preserved byte-for-byte, while the live terminal size and
+/// every other setting are still saved.
+#[no_mangle]
+pub extern "C" fn tt_session_settings_save_for_window(
+    session: *const TtSession,
+    path: *const c_char,
+    x: i32,
+    y: i32,
+    position_valid: bool,
+) -> TtStatus {
+    let s = session_ref!(session, TT_ERR_INVALID);
+    let path = match unsafe { str_arg(path, usize::MAX) } {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    save_all_settings(
+        s,
+        Path::new(path),
+        SavedWindowPosition::Live(position_valid.then_some((x, y))),
+    )
+}
+
+/// Persist only the window geometry on close.
+///
+/// This is upstream's `SaveVTPos`, not a shortened Save setup: when
+/// `SaveVTWinPos` is off it does nothing, and when it is on it writes only
+/// `VTPos` (if the window system has one) and the live `TerminalSize`. A close
+/// must not pin every schema default into a file merely because the user
+/// enabled position memory.
+#[no_mangle]
+pub extern "C" fn tt_session_window_geometry_save(
+    session: *const TtSession,
+    path: *const c_char,
+    x: i32,
+    y: i32,
+    position_valid: bool,
+) -> TtStatus {
+    let s = session_ref!(session, TT_ERR_INVALID);
+    let path = match unsafe { str_arg(path, usize::MAX) } {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let settings = settings_for_save(s);
+    if !settings.window_save_position {
+        return TT_OK;
+    }
+
+    let path = Path::new(path);
     let mut ini = match Ini::load(path) {
         Ok(ini) => ini,
         Err(e) => return fail(TT_ERR_IO, format!("{}: {e}", path.display())),
     };
-    s.session.settings().store(&mut ini);
+    if position_valid {
+        ini.set("Tera Term", "VTPos", &format!("{x},{y}"));
+    }
+    ini.set(
+        "Tera Term",
+        "TerminalSize",
+        &format!("{},{}", settings.terminal_cols, settings.terminal_rows),
+    );
     match ini.save(path) {
         Ok(()) => TT_OK,
         Err(e) => fail(TT_ERR_IO, format!("{}: {e}", path.display())),

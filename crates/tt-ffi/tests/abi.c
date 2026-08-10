@@ -65,6 +65,18 @@ static int failures = 0;
 /* The codepoint in a cell, ignoring any combining marks. */
 static uint32_t base(const TtCell *cell) { return cell->text[0]; }
 
+static size_t read_file(const char *path, char *buf, size_t cap)
+{
+    FILE *f = fopen(path, "rb");
+    CHECK(f != NULL);
+    if (!f || cap == 0)
+        return 0;
+    size_t got = fread(buf, 1, cap - 1, f);
+    fclose(f);
+    buf[got] = 0;
+    return got;
+}
+
 /* Read a row and compare its base codepoints against ASCII. */
 static void expect_row(const TtSession *s, size_t y, const char *want)
 {
@@ -664,6 +676,7 @@ static void test_settings(void)
     CHECK(f2 != NULL);
     if (f2) {
         fputs("; a comment\r\n[Tera Term]\r\nTerminalSize=100,40\r\n"
+              "VTPos='12,34'\r\n"
               "SomethingElse=kept\r\n",
               f2);
         fclose(f2);
@@ -674,19 +687,40 @@ static void test_settings(void)
     CHECK(strcmp(tt_session_setting(s, "terminal.id"), "VT100") == 0);
 
     CHECK_OK(tt_session_set_setting(s, "terminal.title", "sterna"));
+    /* The grid is live state and the Settings struct is the last load. A save
+     * must take the first or resizing the window writes the old size back. */
+    CHECK_OK(tt_session_resize(s, 90, 30));
     CHECK_OK(tt_session_settings_save(s, path));
-    f2 = fopen(path, "rb");
-    CHECK(f2 != NULL);
-    if (f2) {
-        char buf[2048] = {0};
-        size_t got = fread(buf, 1, sizeof buf - 1, f2);
-        fclose(f2);
-        CHECK(got > 0);
-        CHECK(strstr(buf, "; a comment") != NULL);
-        CHECK(strstr(buf, "SomethingElse=kept") != NULL);
-        CHECK(strstr(buf, "Title=sterna") != NULL);
-        remove(path);
-    }
+    char buf[65536] = {0};
+    CHECK(read_file(path, buf, sizeof buf) > 0);
+    CHECK(strstr(buf, "; a comment") != NULL);
+    CHECK(strstr(buf, "SomethingElse=kept") != NULL);
+    CHECK(strstr(buf, "Title=sterna") != NULL);
+    CHECK(strstr(buf, "TerminalSize=90,30") != NULL);
+    /* SaveVTWinPos is off, so even the quotes on a line we did not own stay. */
+    CHECK(strstr(buf, "VTPos='12,34'") != NULL);
+
+    CHECK_OK(tt_session_set_setting(s, "window.save_position", "on"));
+    CHECK_OK(tt_session_settings_save_for_window(s, path, 56, 78, true));
+    CHECK(read_file(path, buf, sizeof buf) > 0);
+    CHECK(strstr(buf, "VTPos=56,78") != NULL);
+    /* Wayland has no client-owned position. Its confident-looking (0,0) must
+     * not replace the last useful coordinates. */
+    CHECK_OK(tt_session_settings_save_for_window(s, path, 0, 0, false));
+    CHECK(read_file(path, buf, sizeof buf) > 0);
+    CHECK(strstr(buf, "VTPos=56,78") != NULL);
+
+    /* Closing writes geometry and nothing else. A setting changed only in
+     * memory must not be pinned into the file by this smaller save. */
+    CHECK_OK(tt_session_set_setting(s, "terminal.title", "not-written-on-close"));
+    CHECK_OK(tt_session_resize(s, 91, 31));
+    CHECK_OK(tt_session_window_geometry_save(s, path, 90, 91, true));
+    CHECK(read_file(path, buf, sizeof buf) > 0);
+    CHECK(strstr(buf, "VTPos=90,91") != NULL);
+    CHECK(strstr(buf, "TerminalSize=91,31") != NULL);
+    CHECK(strstr(buf, "Title=sterna") != NULL);
+    CHECK(strstr(buf, "not-written-on-close") == NULL);
+    remove(path);
 
     /* A file that is not there is a first run, not a failure. */
     CHECK_OK(tt_session_settings_load(s, "/tmp/tt-ffi-abi-no-such.ini"));
@@ -978,6 +1012,10 @@ static void test_null_safety(void)
     CHECK(tt_session_set_setting(NULL, "terminal.cols", "80") == TT_ERR_INVALID);
     CHECK(tt_session_settings_load(NULL, "/tmp/x.ini") == TT_ERR_INVALID);
     CHECK(tt_session_settings_save(NULL, "/tmp/x.ini") == TT_ERR_INVALID);
+    CHECK(tt_session_settings_save_for_window(NULL, "/tmp/x.ini", 0, 0, true)
+          == TT_ERR_INVALID);
+    CHECK(tt_session_window_geometry_save(NULL, "/tmp/x.ini", 0, 0, true)
+          == TT_ERR_INVALID);
 
     /* A command line with no arguments is a valid one — it is what a bare
      * `sterna` has — so a null `argv` parses rather than failing. */
