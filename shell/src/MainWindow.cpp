@@ -11,6 +11,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QScreen>
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QFileDialog>
@@ -167,9 +168,26 @@ void MainWindow::applySavedPosition()
     // `CW_USEDEFAULT,CW_USEDEFAULT`, and a real X means both fields came out of
     // the value. A present but short `VTPos=12` has already become `(12,0)` in
     // the settings parser, because GetNthNum makes the omitted field zero.
-    if (xOk && yOk && x != std::numeric_limits<int>::min()) {
-        move(x, y);
+    if (!xOk || !yOk || x == std::numeric_limits<int>::min()) {
+        return;
     }
+
+    QPoint position(x, y);
+    if (QScreen *screen = QGuiApplication::primaryScreen()) {
+        const QRect desktop = screen->virtualGeometry();
+        // Win32's RECT has exclusive right/bottom edges, and upstream uses a
+        // strict `>` test against them (`vtdisp.c:1517`). Keep that odd last
+        // accepted coordinate rather than quietly making the check tidier.
+        const qint64 right = qint64(desktop.x()) + desktop.width();
+        const qint64 bottom = qint64(desktop.y()) + desktop.height();
+        if (x > right || y > bottom || qint64(x) < qint64(desktop.x()) - 20
+            || qint64(y) < qint64(desktop.y()) - 20) {
+            return;
+        }
+        position.setX(qMax(x, desktop.x()));
+        position.setY(qMax(y, desktop.y()));
+    }
+    move(position);
 }
 
 void MainWindow::startControl(const QString &name)

@@ -36,6 +36,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
+#include <QScreen>
 #include <QStandardPaths>
 #include <QTabWidget>
 #include <QTemporaryDir>
@@ -1423,6 +1424,33 @@ void test_window_geometry_has_full_and_close_only_saves()
         CHECK(window.close());
     }
     CHECK(read(offPath) == off);
+
+    // Upstream forgets a position that has fallen off the virtual desktop,
+    // but tolerates twenty pixels above or left of it and clamps those back to
+    // the edge (`vtdisp.c:1517`).
+    QScreen *screen = QGuiApplication::primaryScreen();
+    CHECK(screen != nullptr);
+    if (screen) {
+        const QRect desktop = screen->virtualGeometry();
+        const QString nearPath = dir.filePath(QStringLiteral("near.ini"));
+        write(nearPath,
+              QStringLiteral("[Tera Term]\r\nVTPos=%1,%2\r\n")
+                  .arg(desktop.x() - 20)
+                  .arg(desktop.y() - 20)
+                  .toUtf8());
+        MainWindow nearWindow(nearPath);
+        CHECK(nearWindow.pos() == desktop.topLeft());
+
+        const QPoint lost(desktop.x() + desktop.width() + 1, desktop.y());
+        const QString lostPath = dir.filePath(QStringLiteral("lost.ini"));
+        write(lostPath,
+              QStringLiteral("[Tera Term]\r\nVTPos=%1,%2\r\n")
+                  .arg(lost.x())
+                  .arg(lost.y())
+                  .toUtf8());
+        MainWindow lostWindow(lostPath);
+        CHECK(lostWindow.pos() != lost);
+    }
 }
 
 } // namespace
