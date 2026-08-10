@@ -413,6 +413,45 @@ mod tests {
         );
     }
 
+    /// The two of the parser's special options that are not scalars, and the
+    /// conversion each needs on the way through.
+    #[test]
+    fn the_tab_stop_list_and_the_unit_id_reach_the_terminal() {
+        let of = |bytes: &[u8]| vt_config(&Settings::load(&Ini::parse(bytes)), &Config::default());
+
+        assert_eq!(of(b"[Tera Term]\r\n").tab_stop_modify, TabStopFlags::ALL);
+        assert_eq!(
+            of(b"[Tera Term]\r\nTabStopModifySequence=off\r\n").tab_stop_modify,
+            TabStopFlags::NONE
+        );
+        assert_eq!(
+            of(b"[Tera Term]\r\nTabStopModifySequence=HTS7,TBC\r\n").tab_stop_modify,
+            TabStopFlags(TabStopFlags::HTS7 | TabStopFlags::TBC)
+        );
+
+        // Eight hex digits, upper-cased; anything else is the key's default,
+        // which is upstream's own fallback rather than a refusal.
+        assert_eq!(of(b"[Tera Term]\r\n").terminal_uid, "FFFFFFFF");
+        assert_eq!(
+            of(b"[Tera Term]\r\nTerminalUID=0f1e2d3c\r\n").terminal_uid,
+            "0F1E2D3C"
+        );
+        for bad in [
+            &b"[Tera Term]\r\nTerminalUID=123456789\r\n"[..],
+            b"[Tera Term]\r\nTerminalUID=1234567\r\n",
+            b"[Tera Term]\r\nTerminalUID=zzzzzzzz\r\n",
+            b"[Tera Term]\r\nTerminalUID=\r\n",
+        ] {
+            assert_eq!(of(bad).terminal_uid, "FFFFFFFF");
+        }
+        // And the file keeps what the user wrote, which is the reason the
+        // validation is here and not in the schema.
+        assert_eq!(
+            Settings::load(&Ini::parse(b"[Tera Term]\r\nTerminalUID=nope\r\n")).terminal_uid,
+            "nope"
+        );
+    }
+
     /// Four settings the terminal already honoured and the file could not say.
     #[test]
     fn the_four_that_had_no_key_have_one() {
