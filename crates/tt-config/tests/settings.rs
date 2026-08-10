@@ -145,6 +145,20 @@ fn the_mouse_cursor_keeps_the_files_own_spelling() {
 }
 
 #[test]
+fn character_width_delimits_words_by_default() {
+    assert!(Settings::default().keyboard_width_delimits_word);
+
+    let off = Ini::parse(b"[Tera Term]\r\nDelimDBCS=off\r\n");
+    assert!(!Settings::load(&off).keyboard_width_delimits_word);
+
+    // `GetOnOff` is biased by the on default, so anything other than the
+    // literal `off` remains on. This includes the numeric form people often
+    // use for INI booleans.
+    let numeric = Ini::parse(b"[Tera Term]\r\nDelimDBCS=1\r\n");
+    assert!(Settings::load(&numeric).keyboard_width_delimits_word);
+}
+
+#[test]
 fn writing_settings_leaves_the_rest_of_the_file_alone() {
     let original = b"; my notes\r\n[Tera Term]\r\nCRReceive=LF\r\n[Extra]\r\nMine=1\r\n";
     let mut ini = Ini::parse(original);

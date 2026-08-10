@@ -1201,6 +1201,12 @@ pub struct Settings {
     /// underscore, which is what makes `some_name` one word and `some-name` three
     /// when you double-click it.
     pub keyboard_word_delimiters: String,
+    /// `ttset.c:1176`. When a word starts on a non-delimiter, changing between a
+    /// one-cell and a multi-cell character ends it (`buffer.c:4479`). On by default,
+    /// so double-clicking `abc北京def` selects one of the three width runs rather than
+    /// the whole string. A run that starts on a delimiter is unaffected: upstream's
+    /// other arm still groups consecutive copies of that same character.
+    pub keyboard_width_delimits_word: bool,
     /// `ttset.c:754`. Black on white, which is what Tera Term looks like out of the
     /// box and surprises people who expect a terminal to be dark.
     pub color_normal: [u8; 6],
@@ -2086,6 +2092,7 @@ impl Default for Settings {
             keyboard_disable_app_keypad: false,
             keyboard_disable_app_cursor: false,
             keyboard_word_delimiters: String::from("$20!\"#$24%&'()*+,-./:;<=>?@[\\]^`{|}~"),
+            keyboard_width_delimits_word: true,
             color_normal: [0, 0, 0, 255, 255, 255],
             color_bold: [0, 0, 255, 255, 255, 255],
             color_blink: [255, 0, 0, 255, 255, 255],
@@ -2397,6 +2404,10 @@ impl Settings {
             keyboard_word_delimiters: ini
                 .get_or("Tera Term", "DelimList", &d.keyboard_word_delimiters)
                 .to_string(),
+            keyboard_width_delimits_word: crate::schema::on_off(
+                ini.get("Tera Term", "DelimDBCS"),
+                true,
+            ),
             color_normal: crate::schema::color2(ini.get("Tera Term", "VTColor"), d.color_normal),
             color_bold: crate::schema::color2(ini.get("Tera Term", "VTBoldColor"), d.color_bold),
             color_blink: crate::schema::color2(ini.get("Tera Term", "VTBlinkColor"), d.color_blink),
@@ -3235,6 +3246,16 @@ impl Settings {
             "Tera Term",
             "DelimList",
             &self.keyboard_word_delimiters.clone(),
+        );
+        ini.set(
+            "Tera Term",
+            "DelimDBCS",
+            &if self.keyboard_width_delimits_word {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
         );
         ini.set(
             "Tera Term",
@@ -4549,6 +4570,12 @@ impl Settings {
             }
             .to_string(),
             "keyboard.word_delimiters" => self.keyboard_word_delimiters.clone(),
+            "keyboard.width_delimits_word" => if self.keyboard_width_delimits_word {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "color.normal" => crate::schema::color2_str(&self.color_normal),
             "color.bold" => crate::schema::color2_str(&self.color_bold),
             "color.blink" => crate::schema::color2_str(&self.color_blink),
@@ -5128,6 +5155,9 @@ impl Settings {
                 self.keyboard_disable_app_cursor = crate::schema::on_off(Some(value), false)
             }
             "keyboard.word_delimiters" => self.keyboard_word_delimiters = value.to_string(),
+            "keyboard.width_delimits_word" => {
+                self.keyboard_width_delimits_word = crate::schema::on_off(Some(value), true)
+            }
             "color.normal" => {
                 self.color_normal = crate::schema::color2(Some(value), self.color_normal)
             }
@@ -5945,6 +5975,16 @@ pub const FIELDS: &[Field] = &[
         default: "$20!\"#$24%&'()*+,-./:;<=>?@[\\]^`{|}~",
         label: None,
         doc: "`ttset.c:1167`, and the value is **hex-escaped** (`Hex2StrW`): `$20` is a space. The default is a space plus every ASCII punctuation mark except underscore, which is what makes `some_name` one word and `some-name` three when you double-click it.",
+    },
+    Field {
+        name: "keyboard.width_delimits_word",
+        page: "keyboard",
+        section: "Tera Term",
+        key: "DelimDBCS",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1176`. When a word starts on a non-delimiter, changing between a one-cell and a multi-cell character ends it (`buffer.c:4479`). On by default, so double-clicking `abc北京def` selects one of the three width runs rather than the whole string. A run that starts on a delimiter is unaffected: upstream's other arm still groups consecutive copies of that same character.",
     },
     Field {
         name: "color.normal",

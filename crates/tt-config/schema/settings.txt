@@ -296,6 +296,13 @@ keyboard.disable_app_cursor | bool | Tera Term | DisableAppCursor | off | -
 # when you double-click it.
 keyboard.word_delimiters | string | Tera Term | DelimList | $20!"#$24%&'()*+,-./:;<=>?@[\]^`{|}~ | -
 
+# `ttset.c:1176`. When a word starts on a non-delimiter, changing between a
+# one-cell and a multi-cell character ends it (`buffer.c:4479`). On by default,
+# so double-clicking `abc北京def` selects one of the three width runs rather than
+# the whole string. A run that starts on a delimiter is unaffected: upstream's
+# other arm still groups consecutive copies of that same character.
+keyboard.width_delimits_word | bool | Tera Term | DelimDBCS | on | -
+
 # --- colour ------------------------------------------------------------------
 #
 # Every one of these is a pair, foreground then background, because upstream's
