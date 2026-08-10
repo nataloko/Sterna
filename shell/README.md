@@ -485,7 +485,7 @@ keep in step.
 Three things it does deliberately:
 
 - **Only what changed is written.** A dialog that applied every field would pin
-  all 248 settings into the user's file the first time it was opened, and a
+  all 295 settings into the user's file the first time it was opened, and a
   pinned setting stops following upstream's default for ever.
 - **The combo box shows the file's spellings**, not prettified ones. Upstream
   compares `TerminalID` with `strcmp`, so `Vt320` would read back as a VT100.

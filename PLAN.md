@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 1 complete, 2 in progress · **Commits:** 310
+**Last updated:** 2026-08-10 · **Stage:** 1 complete, 2 in progress · **Commits:** 361
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1089,8 +1089,9 @@ before anything else in every session.
   `sterna /ssh /auth=publickey myhost` works as the shortcut it was converted
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
-- **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (248 settings over 234 keys: 39 for the terminal,
+- **Settings schema + generated dialogs.** ✅ **schema complete** —
+  `crates/tt-config/` (295 addressable settings over all 272 keys read by
+  `ttset.c`: 39 for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
   writes into, 2026-08-09, plus the whole log family, then the whole
   file-transfer family, then the seven the terminal and the two the *transports*
@@ -1104,13 +1105,15 @@ before anything else in every session.
   connection-close outcome pair, then the configured mouse pointer, the
   character-width word boundary, protected setup-file saves and the
   active/inactive window-opacity pair and the window-title format word, then
-  the shell/menu/broadcast, raw-file, keyboard and font families,
+  the shell/menu/broadcast, raw-file, keyboard and font families, and finally
+  the encoding, printer, TEK, debug and remaining compatibility keys,
   2026-08-10),
   the map onto a running terminal in `tt-session`, the schema as
   data over the C ABI, and a Qt dialog that builds itself from it.
-  What remains is the *rest of the settings*, which is a line and a citation
-  each — 38 keys as of 2026-08-10, and `tests/upstream.rs`
-  prints the count on every run rather than leaving it to a stale comment here.
+  `tests/upstream.rs` extracts both lists and reports zero missing and zero
+  invented keys rather than trusting this count. CJK, printing and TEK remain
+  out of scope; their settings round-trip as compatibility data rather than
+  pretending those subsystems exist.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
   against a real Win32 rather than against a reading of the documentation;
@@ -1194,7 +1197,7 @@ Three decisions worth recording, each of which looks like a bug from one side:
   exactly those — while deliberately leaving `LFMode` and `AcceptWheelToCursor`,
   which upstream *does* keep separately and `SetupTerm` does not touch.
 - **The dialog writes only what changed.** Applying every field would pin all
-  248 known settings into the user's file the first time it was opened, and a
+  295 known settings into the user's file the first time it was opened, and a
   pinned setting stops following upstream's default for ever.
 - **The size resizes the *window*, not the grid** — the same path a telnet NAWS
   resize takes, because the view fits the terminal to the space it has.
@@ -4201,6 +4204,39 @@ One setting required a schema feature rather than a row. Upstream reads
 significant whitespace and `write-key=` records the different output spelling,
 so loading and saving reproduce both halves instead of normalising away a bug
 in a shared file.
+
+#### The last thirty-eight keys
+
+`crates/tt-config/`, `tt-vt`, `tt-session`, the C ABI and the shell,
+2026-08-10. Three coherent passes closed the extracted upstream list: eighteen
+encoding keys, eleven printer/TEK and other legacy keys, then the final nine
+keys. Tuple-valued keys become separately addressable fields, so those 38 keys
+added 47 settings and brought the schema from 248/234 to **295 settings over
+all 272 keys**. The upstream-list test now reports zero missing and zero
+invented keys.
+
+The encoding rows keep every spelling and fallback Tera Term accepts, including
+its exact-case code-page names and wrapping integer words. CJK remains deferred,
+so those values round-trip without claiming that the missing conversion tables
+act. The same honest boundary applies to the printer and TEK families: the file
+is safe to share with Tera Term, while Sterna does not expose a printer or a TEK
+window it does not have.
+
+The keys with a live surface do act. `VTFontSpace`'s four signed margins expand
+the cell and move the glyph within it; resized fallback glyphs still target the
+natural font box, not that padded cell. `Debug` and `DebugModes` drive the raw
+receive display, Shift+Escape cycles only the admitted modes with the upstream
+beep, and TTL's `setdebug` selects a mode directly as upstream does. Hex mode
+prints `XX `, normal mode uses caret notation and reverse video for high-bit
+bytes, and no-output mode consumes the stream without parsing it. `VTIcon` is
+also accepted by the Tera Term command-line parser.
+
+The remaining compatibility-only values — drawing API/code page, source
+version, maximized-window workaround, printer resolution and icon selection —
+are carried and saved with their upstream conversion rules. In particular,
+`MaximizedBugTweak=on` means numeric 2 and every other spelling goes through
+`atoi` before narrowing to a `WORD`; treating it as a bool would silently alter
+a shared file.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 

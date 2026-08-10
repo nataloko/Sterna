@@ -121,11 +121,14 @@ every other trap here — a rule that looks uniform and is not.
   **500**; this file said 500 for both, which is the next line of
   `tttypes.h:633` and the same wrong constant `tt-grid` had.
 
+The transcription is complete: the schema has **295 addressable settings over
+all 272 distinct keys read by `ttset.c`**. Tuple-valued keys such as
+`VTFontSpace` have one setting per field. `tests/upstream.rs` extracts both
+lists and fails on either a missing or an invented key, so this is a checked
+property rather than a maintained count.
+
 ## Still to come
 
-- **The rest of the settings.** The schema currently has 248 settings over 234
-  of the 272 keys read by `ttset.c`; `tests/upstream.rs` prints the live count.
-  The machinery is done; adding a row is a line and a citation.
 - **`.lng` labels.** The metadata carries the label key and nothing looks it
   up, so the dialog derives a name from the setting instead. That is `tt-i18n`.
 - **`KEYBOARD.CNF`**, which is an INI and reads with the same layer.

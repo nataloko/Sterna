@@ -933,6 +933,23 @@ And for the settings, all of which came out of `ini-audit/`:
   pair while the buffer disagrees — and `Grid`'s dump looks perfect. The only
   outward sign is that DECRQSS' SGR (`vtterm.c:4332`) and the termcap `Co`
   query (`:4451`) stop naming a colour.
+- **`MaximizedBugTweak=on` is a numeric alias, not a boolean.** The reader maps
+  that one spelling to 2 and sends every other value through `atoi` before
+  assigning it to a `WORD` (`ttset.c:1527`). So `off` is 0, `65537` is 1 and
+  `-1` is 65535; a bool row loses three distinct behaviours and writes a value
+  upstream did not read.
+- **`DebugModes` can turn `Debug` back off.** `all`/`on` admits all three
+  modes, `none`/`off` admits none, and any other list starts empty and adds only
+  `normal`, `hex` and `noout` (`ttset.c:1798`). A list with no recognised word
+  therefore clears `Debug`, rather than leaving an enabled shortcut which can
+  never find a mode. TTL's `setdebug` bypasses both the gate and the mask,
+  matching the DDE path.
+- **The settings generator can be blocked by the stale file it is meant to
+  replace.** If handwritten code starts referring to a newly generated field
+  before regeneration, `cargo run -p tt-config --bin gen-settings` compiles the
+  old `generated.rs` first and fails. Generate before wiring consumers; if the
+  order has already been crossed, run the previously built
+  `crates/target/debug/gen-settings` once, then return to the normal command.
 
 And for the scrollback and the wheel, where three settings are named after
 something other than what they do:
@@ -1015,6 +1032,13 @@ ones:
 And for the parser's own switches, where three of the eight are two settings
 wearing one name:
 
+- **Debug display saves one attribute and restores another.** `PutDebugChar`
+  copies the current pen into `svCharAttr`, clears and edits `char_attr`, then
+  mistakenly restores `char_attr` (`charset.cpp:757`). Attribute-2 colours
+  survive because that copy is only changing the low attribute byte, but the
+  low pen left behind is the last debug byte's normal or reverse state. The
+  port reproduces that typo; restoring the obviously named saved value changes
+  what the next ordinary character looks like.
 - **A broken multi-byte sequence is one U+FFFD per *byte*, and `vte` says one
   per run.** Tera Term's decoder emits a replacement character for every byte
   it had already taken when the sequence breaks, so `E2 82 'b'` is two and
@@ -1097,6 +1121,12 @@ wearing one name:
 
 And for the painter, whose decisions the differential dump cannot see:
 
+- **`VTFontSpace` is four signed margins, not extra letter spacing.** The left
+  and top values move the glyph, left+right and top+bottom expand the cell, and
+  the negative-value clamps in `ttset.c:1346` are commented out. With
+  `DrawingResizedFont`, upstream stretches a fallback glyph to `FontWidth`, not
+  the padded `CellWidth`; using the latter makes changing a margin distort the
+  font as well as moving it.
 - **Bold and underline each have a font switch and a colour switch.**
   `EnableBold`/`UnderlineAttrFont` select the face;
   `EnableBoldAttrColor`/`UnderlineAttrColor` select the pair, independently.
