@@ -1501,11 +1501,13 @@ void test_window_geometry_has_full_and_close_only_saves()
     };
 
     // Save setup: current position and current grid size, not the values from
-    // the last load, alongside the rest of the changed settings.
+    // the last load, alongside the rest of the changed settings. Its default-
+    // on backup is the exact pre-save file, in a timestamped sibling.
     const QString fullPath = dir.filePath(QStringLiteral("full.ini"));
-    write(fullPath,
-          "[Tera Term]\r\nSaveVTWinPos=on\r\nVTPos=120,80\r\n"
-          "TerminalSize=80,24\r\nTitle=before\r\n");
+    const QByteArray fullBefore =
+        "[Tera Term]\r\nSaveVTWinPos=on\r\nVTPos=120,80\r\n"
+        "TerminalSize=80,24\r\nTitle=before\r\n";
+    write(fullPath, fullBefore);
     {
         MainWindow window(fullPath);
         CHECK(window.pos() == QPoint(120, 80));
@@ -1546,11 +1548,39 @@ void test_window_geometry_has_full_and_close_only_saves()
         CHECK(bytes.contains(expectedSize));
         CHECK(bytes.contains("Title=after"));
 
+        const QStringList backups =
+            QDir(dir.path()).entryList({QStringLiteral("*_full.ini")}, QDir::Files);
+        CHECK(backups.size() == 1);
+        if (backups.size() == 1) {
+            CHECK(read(dir.filePath(backups.constFirst())) == fullBefore);
+        }
+
         // Keep the scope's teardown from exercising the close-only arm too;
         // that arm has its own file below.
         CHECK(window.session()->setSetting(QStringLiteral("window.save_position"),
                                            QStringLiteral("off"), &error));
         window.close();
+    }
+
+    // The switch is live rather than a hardwired safety copy.
+    const QString noBackupPath = dir.filePath(QStringLiteral("no-backup.ini"));
+    write(noBackupPath,
+          "[Tera Term]\r\nIniAutoBackup=off\r\nTerminalSize=80,24\r\n");
+    {
+        MainWindow window(noBackupPath);
+        QAction *save = nullptr;
+        for (QAction *action : window.findChildren<QAction *>()) {
+            if (action->text() == QStringLiteral("Save setup")) {
+                save = action;
+            }
+        }
+        CHECK(save != nullptr);
+        if (save) {
+            save->trigger();
+        }
+        CHECK(QDir(dir.path())
+                  .entryList({QStringLiteral("*_no-backup.ini")}, QDir::Files)
+                  .isEmpty());
     }
 
     // Window close: geometry changes, an unrelated in-memory setting does not,

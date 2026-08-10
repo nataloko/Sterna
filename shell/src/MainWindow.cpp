@@ -4,6 +4,8 @@
 
 #include <QAction>
 #include <QCloseEvent>
+#include <QDateTime>
+#include <QFile>
 #include <QFontDialog>
 #include <QGuiApplication>
 #include <QLabel>
@@ -65,6 +67,27 @@ QString settingDefault(const char *name)
 bool windowPositionIsMeaningful()
 {
     return !QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
+}
+
+/// The sibling name upstream's `CreateBakupFile` gives the old setup file.
+QString settingsBackupPath(const QString &path)
+{
+    const QDateTime now = QDateTime::currentDateTime();
+    int offsetMinutes = now.offsetFromUtc() / 60;
+    QChar sign = QLatin1Char('+');
+    if (offsetMinutes < 0) {
+        sign = QLatin1Char('-');
+        offsetMinutes = -offsetMinutes;
+    }
+
+    QString prefix = now.toString(QStringLiteral("yyyyMMdd'T'HHmmss"));
+    prefix += sign;
+    prefix += QStringLiteral("%1").arg(offsetMinutes / 60, 2, 10, QLatin1Char('0'));
+    prefix += QStringLiteral("%1").arg(offsetMinutes % 60, 2, 10, QLatin1Char('0'));
+    prefix += QLatin1Char('_');
+
+    const QFileInfo info(path);
+    return QDir(info.absolutePath()).filePath(prefix + info.fileName());
 }
 
 } // namespace
@@ -338,6 +361,17 @@ void MainWindow::saveSettings()
     // the default one instead would move somebody's settings without saying so.
     const QString path = m_settingsPath;
     QDir().mkpath(QFileInfo(path).absolutePath());
+
+    // Upstream makes this best-effort: a collision in the same second or an
+    // unwritable directory does not turn Save setup itself into a failure.
+    // QFile::copy also refuses to overwrite, so the first pre-save copy in a
+    // second wins just as it does through CopyFileW(..., TRUE).
+    if (m_session->setting(QStringLiteral("settings.auto_backup"))
+            == QLatin1String("on")
+        && QFile::exists(path)) {
+        QFile::copy(path, settingsBackupPath(path));
+    }
+
     QString error;
     const QPoint p = pos();
     if (!m_session->saveSettingsForWindow(path, p.x(), p.y(),
