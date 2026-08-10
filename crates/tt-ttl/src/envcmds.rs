@@ -24,6 +24,7 @@
 //!   feature is compiled in, `outputdebugstring`. Trailing junk is accepted
 //!   where every neighbouring command calls it a syntax error.
 
+#[cfg(unix)]
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -183,8 +184,8 @@ impl Interp {
 
     /// `getspecialfolder <strvar> <foldertype>` (`ttl.cpp:2720`).
     ///
-    /// Sixteen Windows shell folders, of which nine have something an XDG
-    /// desktop would call the same thing and seven do not. A name with no
+    /// Sixteen Windows shell folders, of which ten have something an XDG
+    /// desktop would call the same thing and six do not. A name with no
     /// answer here — and an unrecognised name — is the empty string, which is
     /// what upstream produces for an unrecognised one too. See [`special_folder`].
     ///
@@ -607,15 +608,15 @@ fn split_command_line(cmdline: &[u8]) -> Vec<Vec<u8>> {
     argv
 }
 
-/// One of `getspecialfolder`'s sixteen names, as an XDG desktop would answer
-/// it. `None` is a name with no counterpart, or a name that is not one of the
-/// sixteen — upstream cannot tell those apart either.
+/// One of `getspecialfolder`'s sixteen names. `None` is a name with no
+/// counterpart, or a name that is not one of the sixteen — upstream cannot
+/// tell those apart either.
 ///
-/// Seven have no answer and say so rather than inventing one:
-/// `AllUsersDesktop`, `Favorites`, `NetHood`, `PrintHood`, `Recent`, `SendTo`
-/// and `AllUsersDesktop`. `Recent` is the near miss — the desktop does keep
-/// one, but as a *file* (`recently-used.xbel`), and the command's contract is
-/// a directory.
+/// Six have no answer and say so rather than inventing one:
+/// `AllUsersDesktop`, `Favorites`, `NetHood`, `PrintHood`, `Recent`, and
+/// `SendTo`. `Recent` is the near miss — the desktop does keep one, but as a
+/// *file* (`recently-used.xbel`), and the command's contract is a directory.
+#[cfg(unix)]
 fn special_folder(kind: &[u8]) -> Option<Vec<u8>> {
     let data_home = xdg_dir("XDG_DATA_HOME", ".local/share")?;
     let config_home = xdg_dir("XDG_CONFIG_HOME", ".config")?;
@@ -633,12 +634,84 @@ fn special_folder(kind: &[u8]) -> Option<Vec<u8>> {
     Some(crate::files::path_to_bytes(&path))
 }
 
+/// The same table as `GetSpecialFolderAlloc` (`ttmlib.c:207`), using the
+/// known-folder API its Vista-and-later branch resolves dynamically.
+#[cfg(windows)]
+fn special_folder(kind: &[u8]) -> Option<Vec<u8>> {
+    use windows_sys::Win32::UI::Shell::{
+        FOLDERID_CommonPrograms, FOLDERID_CommonStartMenu, FOLDERID_CommonStartup,
+        FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Favorites, FOLDERID_Fonts, FOLDERID_NetHood,
+        FOLDERID_PrintHood, FOLDERID_Programs, FOLDERID_PublicDesktop, FOLDERID_Recent,
+        FOLDERID_SendTo, FOLDERID_StartMenu, FOLDERID_Startup, FOLDERID_Templates,
+    };
+
+    let folder = match kind.to_ascii_lowercase().as_slice() {
+        b"allusersdesktop" => &FOLDERID_PublicDesktop,
+        b"allusersstartmenu" => &FOLDERID_CommonStartMenu,
+        b"allusersprograms" => &FOLDERID_CommonPrograms,
+        b"allusersstartup" => &FOLDERID_CommonStartup,
+        b"desktop" => &FOLDERID_Desktop,
+        b"favorites" => &FOLDERID_Favorites,
+        b"fonts" => &FOLDERID_Fonts,
+        b"mydocuments" => &FOLDERID_Documents,
+        b"nethood" => &FOLDERID_NetHood,
+        b"printhood" => &FOLDERID_PrintHood,
+        b"programs" => &FOLDERID_Programs,
+        b"recent" => &FOLDERID_Recent,
+        b"sendto" => &FOLDERID_SendTo,
+        b"startmenu" => &FOLDERID_StartMenu,
+        b"startup" => &FOLDERID_Startup,
+        b"templates" => &FOLDERID_Templates,
+        _ => return None,
+    };
+    known_folder(folder)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn special_folder(_kind: &[u8]) -> Option<Vec<u8>> {
+    None
+}
+
+#[cfg(windows)]
+fn known_folder(folder: &windows_sys::core::GUID) -> Option<Vec<u8>> {
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::UI::Shell::SHGetKnownFolderPath;
+
+    let mut path = std::ptr::null_mut();
+    // SAFETY: `folder` and the output pointer are live, the flags are zero as
+    // upstream's call specifies, and a null token means the current user.
+    let result = unsafe { SHGetKnownFolderPath(folder, 0, std::ptr::null_mut(), &mut path) };
+    if result < 0 || path.is_null() {
+        // The API contract permits task memory even on failure.
+        // SAFETY: CoTaskMemFree accepts null and the returned pointer.
+        unsafe { CoTaskMemFree(path.cast()) };
+        return None;
+    }
+
+    // SAFETY: a successful call returns a NUL-terminated UTF-16 string which
+    // stays live until freed below.
+    let len = unsafe {
+        let mut len = 0;
+        while *path.add(len) != 0 {
+            len += 1;
+        }
+        len
+    };
+    // SAFETY: `len` was found inside the API-owned NUL-terminated allocation.
+    let value = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(path, len) });
+    // SAFETY: the pointer came from SHGetKnownFolderPath and is freed once.
+    unsafe { CoTaskMemFree(path.cast()) };
+    Some(value.into_bytes())
+}
+
+#[cfg(unix)]
 fn home() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .filter(|h| !h.is_empty())
         .map(PathBuf::from)
 }
 
+#[cfg(unix)]
 fn xdg_dir(var: &str, default: &str) -> Option<PathBuf> {
     match std::env::var_os(var) {
         Some(v) if !v.is_empty() => Some(PathBuf::from(v)),
@@ -649,6 +722,7 @@ fn xdg_dir(var: &str, default: &str) -> Option<PathBuf> {
 /// One of the user directories, which live in `~/.config/user-dirs.dirs`
 /// rather than in the environment — the session exports them only sometimes,
 /// so the file is the authority and the environment is the override.
+#[cfg(unix)]
 fn user_dir(var: &str, default: &str) -> Option<PathBuf> {
     if let Some(v) = std::env::var_os(var) {
         if !v.is_empty() {
@@ -682,6 +756,8 @@ fn user_dir(var: &str, default: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    use super::special_folder;
     use super::{expand_env, scan_version, split_command_line};
     use crate::host::RecordingHost;
     use crate::interp::Interp;
@@ -963,6 +1039,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn getspecialfolder_matches_its_name_without_regard_to_case() {
         // `XDG_DATA_HOME` rather than `HOME`: the tests share a process, and
@@ -987,6 +1064,36 @@ mod tests {
             out("getspecialfolder s 'AllUsersPrograms'\ndispstr s"),
             "/usr/share/applications"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn getspecialfolder_uses_all_sixteen_windows_shell_folders() {
+        for name in [
+            "AllUsersDesktop",
+            "AllUsersStartMenu",
+            "AllUsersPrograms",
+            "AllUsersStartup",
+            "Desktop",
+            "Favorites",
+            "Fonts",
+            "MyDocuments",
+            "NetHood",
+            "PrintHood",
+            "Programs",
+            "Recent",
+            "SendTo",
+            "StartMenu",
+            "Startup",
+            "Templates",
+        ] {
+            let folder = special_folder(name.as_bytes()).unwrap_or_else(|| panic!("{name}"));
+            let folder = String::from_utf8(folder).expect(name);
+            assert!(
+                folder.as_bytes().get(1) == Some(&b':') || folder.starts_with(r"\\"),
+                "{name}: {folder:?}"
+            );
+        }
     }
 
     // ---- exec ----

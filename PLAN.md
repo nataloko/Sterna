@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 397
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 398
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1726,7 +1726,7 @@ one does about that is the interesting part:
   split with `CommandLineToArgvW`'s rules and the first word run directly:
   `CreateProcess` runs a program and not a shell, so a script that wanted a
   pipe already had to write `cmd /c` and will have to write `sh -c` here.
-- **`getspecialfolder` answers the nine XDG has and admits to the seven it
+- **`getspecialfolder` answers the ten XDG has and admits to the six it
   does not.** `Favorites`, `NetHood`, `PrintHood`, `Recent`, `SendTo` and
   `AllUsersDesktop` are the empty string — which is also what upstream gives
   for a name it does not recognise.
@@ -4517,6 +4517,16 @@ bytes in upstream's long form. API-query failures remain a successful empty
 list just as they are upstream; only Winsock initialisation failure is “cannot
 retrieve.” Both families execute from the MinGW test binary under Wine, while
 Linux's existing interface assertions remain green.
+
+`getspecialfolder` now asks the Windows shell on Windows instead of running the
+XDG approximation there. Its sixteen case-insensitive names map one-for-one to
+upstream's known-folder IDs, including the seven Windows concepts which
+correctly have no Linux answer. Returned task memory is copied as UTF-8 and
+freed on both success and failure. The command's stranger outer contract is
+unchanged: it still writes an empty string for an unknown or unavailable
+folder and reports `result=1` regardless, because `GetSpecialFolder` itself
+returns a literal one. Wine resolves all sixteen to Windows-absolute paths;
+the Unix XDG mapping and tests remain separate.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

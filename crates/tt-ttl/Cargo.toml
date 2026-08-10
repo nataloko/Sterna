@@ -35,6 +35,16 @@ sha2 = "0.11"
 onig = { version = "6.5", default-features = false }
 onig_sys = { version = "69.9", default-features = false }
 
+[target.'cfg(windows)'.dependencies]
+# `getspecialfolder` is a shell API rather than an environment convention on
+# Windows. The path is returned from COM task memory even though no apartment
+# needs to be initialised for this call.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+] }
+
 # `OUTPUTDEBUGSTRING_ENABLE`, which is commented out at `ttmparse.h:36`. With
 # it off — as it is in every shipping Tera Term — `outputdebugstring` is not a
 # reserved word, so a macro using it gets the syntax error an unknown word
