@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 400
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 401
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4545,6 +4545,15 @@ by a failed `fileunlock`. Windows now uses upstream's exact pair and range;
 Unix retains its advisory standard-library lock. The complete MinGW TTL unit
 binary is 332/332 under Wine, as is the native Linux run, and the upstream
 script suite remains green.
+
+TTL's `exec` show mode is now real on Windows too. The portable process builder
+cannot set `STARTUPINFO.wShowWindow` on stable Rust, so the Windows branch uses
+`CreateProcessW` directly, keeps the macro's original raw command line, and
+passes `hide`, `minimize`, `maximize` and the default `show` through with
+`STARTF_USESHOWWINDOW`. A child-process smoke test reads its own startup info
+and verifies all five paths under Wine. The complete Windows TTL binary is now
+333/333 there; native Linux remains 332/332 plus the upstream script suite,
+and every Windows workspace target still links.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

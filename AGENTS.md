@@ -1573,6 +1573,11 @@ And for the macro language:
   refuses its unlock, leaving `filelock` reporting success and `fileunlock`
   failure on the same handle. `tt-ttl::files` uses the exact Win32 pair on
   Windows and keeps the portable advisory lock only on Unix.
+- **Stable Rust's process builder cannot set `STARTUPINFO.wShowWindow`.** TTL's
+  `exec` does, for all four show words and for the default `show`; dropping the
+  argument is only the Unix compromise. The Windows launcher therefore calls
+  `CreateProcessW` directly, which also keeps the original raw command line
+  instead of splitting and reconstructing it.
 - **A missing reserved word is not diagnosed as a missing command — it is
   diagnosed as a bad assignment.** An unrecognised name is read as a *variable*,
   so a command left out of the table falls into `ExecCmnd`'s `else` arm

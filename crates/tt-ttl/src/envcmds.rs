@@ -26,6 +26,7 @@
 
 #[cfg(unix)]
 use std::path::PathBuf;
+#[cfg(not(windows))]
 use std::process::Command;
 
 use crate::error::{TtlError, TtlResult};
@@ -291,19 +292,19 @@ impl Interp {
     /// `if (wait)` where the documentation says "if it is 1" — any non-zero
     /// value waits.
     ///
-    /// Three things do not carry across from `CreateProcessW` and are handled
-    /// rather than pretended:
+    /// On Windows this uses `CreateProcessW` directly, including the original
+    /// command-line string and `STARTUPINFO.wShowWindow`. Three details need
+    /// an explicit cross-platform answer:
     ///
-    /// - **`<show>` is validated and then dropped.** It is `STARTUPINFO`'s
-    ///   `wShowWindow`, which asks the *child* to open minimised or hidden and
-    ///   has no counterpart here. An unrecognised word is still `ErrSyntax`,
-    ///   because that is where a typo in a working script would be caught.
+    /// - **`<show>` has no Unix counterpart.** It is applied on Windows and
+    ///   validated but dropped on Unix. An unrecognised word is still
+    ///   `ErrSyntax`, because that is where a typo in a working script would
+    ///   be caught.
     /// - **The command line is one string, and Windows splits it.** Splitting
-    ///   it with `CommandLineToArgvW`'s rules and running the first word is
-    ///   the faithful reading: `CreateProcess` runs a program, not a shell, so
-    ///   a script that wanted globbing or a pipe already had to write
-    ///   `cmd /c ...` and will have to write `sh -c ...` here. See
-    ///   [`split_command_line`].
+    ///   it with `CommandLineToArgvW`'s rules is the Unix approximation:
+    ///   `CreateProcess` runs a program, not a shell, so a script that wanted
+    ///   globbing or a pipe already had to write `cmd /c ...` and will have to
+    ///   write `sh -c ...` here. See [`split_command_line`].
     /// - **A child killed by a signal has no Windows equivalent.** It reports
     ///   `128 + signal`, which is every Unix shell's convention and at least
     ///   recognisable; -1 is taken already and means the program never ran.
@@ -314,16 +315,12 @@ impl Interp {
     /// command uses neither `GetAbsPath` nor `CurrentDir`.
     fn cmd_exec(&mut self) -> TtlResult<()> {
         let cmdline = expr::get_str_val(&mut self.lx, &mut self.vars)?;
+        let mut mode = ExecShow::Show;
         let mut wait = 0;
         let mut dir = Vec::new();
         if self.lx.parameter_given() {
-            let mode = expr::get_str_val(&mut self.lx, &mut self.vars)?;
-            if !matches!(
-                mode.to_ascii_lowercase().as_slice(),
-                b"hide" | b"minimize" | b"maximize" | b"show"
-            ) {
-                return Err(TtlError::Syntax);
-            }
+            let word = expr::get_str_val(&mut self.lx, &mut self.vars)?;
+            mode = ExecShow::parse(&word).ok_or(TtlError::Syntax)?;
             if self.lx.parameter_given() {
                 wait = expr::get_int_val(&mut self.lx, &mut self.vars)?;
                 if self.lx.parameter_given() {
@@ -336,31 +333,14 @@ impl Interp {
         }
         self.end_of_line()?;
 
-        let argv = split_command_line(&cmdline);
-        let Some((program, args)) = argv.split_first() else {
-            self.set_result(-1);
-            return Ok(());
+        #[cfg(windows)]
+        let result = exec_windows(&cmdline, mode, wait != 0, &dir);
+        #[cfg(not(windows))]
+        let result = {
+            let _ = mode;
+            exec_portable(&cmdline, wait != 0, &dir)
         };
-        let mut cmd = Command::new(bytes_to_os(program));
-        cmd.args(args.iter().map(|a| bytes_to_os(a)));
-        if !dir.is_empty() {
-            cmd.current_dir(bytes_to_os(&dir));
-        }
-
-        if wait != 0 {
-            match cmd.status() {
-                Ok(st) => self.set_result(exit_code(st)),
-                Err(_) => self.set_result(-1),
-            }
-        } else {
-            match cmd.spawn() {
-                // The child is not reaped. Upstream closes both handles and
-                // walks away too; a frontend that runs long-lived macros will
-                // want a `SIGCHLD` handler, which is not the interpreter's.
-                Ok(_) => self.set_result(0),
-                Err(_) => self.set_result(-1),
-            }
-        }
+        self.set_result(result);
         Ok(())
     }
 
@@ -408,13 +388,147 @@ fn set_env(name: &[u8], val: &[u8]) {
     std::env::set_var(name, val);
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExecShow {
+    Hide,
+    Minimize,
+    Maximize,
+    Show,
+}
+
+impl ExecShow {
+    fn parse(word: &[u8]) -> Option<Self> {
+        match word.to_ascii_lowercase().as_slice() {
+            b"hide" => Some(Self::Hide),
+            b"minimize" => Some(Self::Minimize),
+            b"maximize" => Some(Self::Maximize),
+            b"show" => Some(Self::Show),
+            _ => None,
+        }
+    }
+
+    #[cfg(windows)]
+    fn win32(self) -> u16 {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_SHOW,
+        };
+
+        match self {
+            Self::Hide => SW_HIDE as u16,
+            Self::Minimize => SW_MINIMIZE as u16,
+            Self::Maximize => SW_MAXIMIZE as u16,
+            Self::Show => SW_SHOW as u16,
+        }
+    }
+}
+
+#[cfg(windows)]
+fn exec_windows(cmdline: &[u8], mode: ExecShow, wait: bool, dir: &[u8]) -> i32 {
+    use std::ptr::null;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        CreateProcessW, GetExitCodeProcess, WaitForSingleObject, INFINITE, NORMAL_PRIORITY_CLASS,
+        PROCESS_INFORMATION, STARTF_USESHOWWINDOW, STARTUPINFOW,
+    };
+
+    // `wc::fromUtf8`, used upstream, replaces malformed UTF-8 rather than
+    // treating TTL bytes as the active Windows code page.
+    let mut command: Vec<u16> = String::from_utf8_lossy(cmdline).encode_utf16().collect();
+    command.push(0);
+    let mut directory: Vec<u16> = String::from_utf8_lossy(dir).encode_utf16().collect();
+    directory.push(0);
+
+    let startup = STARTUPINFOW {
+        cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+        dwFlags: STARTF_USESHOWWINDOW,
+        wShowWindow: mode.win32(),
+        ..Default::default()
+    };
+    let mut process = PROCESS_INFORMATION::default();
+    let current_dir = if dir.is_empty() {
+        null()
+    } else {
+        directory.as_ptr()
+    };
+
+    // SAFETY: both UTF-16 buffers are NUL-terminated and remain live and
+    // mutable for the call. The security pointers and environment are absent,
+    // and both output structures have the layout required by Win32.
+    let started = unsafe {
+        CreateProcessW(
+            null(),
+            command.as_mut_ptr(),
+            null(),
+            null(),
+            0,
+            NORMAL_PRIORITY_CLASS,
+            null(),
+            current_dir,
+            &startup,
+            &mut process,
+        )
+    };
+    if started == 0 {
+        return -1;
+    }
+
+    let result = if wait {
+        let mut code = 0;
+        // Upstream waits without a timeout and treats the DWORD exit code as
+        // the macro language's signed `int`.
+        unsafe {
+            WaitForSingleObject(process.hProcess, INFINITE);
+            GetExitCodeProcess(process.hProcess, &mut code);
+        }
+        code as i32
+    } else {
+        0
+    };
+
+    // SAFETY: successful CreateProcessW returned two owned, live handles.
+    unsafe {
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+    }
+    result
+}
+
+#[cfg(not(windows))]
+fn exec_portable(cmdline: &[u8], wait: bool, dir: &[u8]) -> i32 {
+    let argv = split_command_line(cmdline);
+    let Some((program, args)) = argv.split_first() else {
+        return -1;
+    };
+    let mut cmd = Command::new(bytes_to_os(program));
+    cmd.args(args.iter().map(|a| bytes_to_os(a)));
+    if !dir.is_empty() {
+        cmd.current_dir(bytes_to_os(dir));
+    }
+
+    if wait {
+        match cmd.status() {
+            Ok(st) => exit_code(st),
+            Err(_) => -1,
+        }
+    } else {
+        match cmd.spawn() {
+            // The child is not reaped. Upstream closes both handles and walks
+            // away too; a frontend that runs long-lived macros will want a
+            // `SIGCHLD` handler, which is not the interpreter's.
+            Ok(_) => 0,
+            Err(_) => -1,
+        }
+    }
+}
+
+#[cfg(not(windows))]
 fn bytes_to_os(b: &[u8]) -> std::ffi::OsString {
-    // Safety: the bytes came out of a TTL string, which on unix is exactly an
-    // `OsStr`'s encoding. On Windows this is WTF-8, which `from_encoded_bytes_unchecked`
-    // also documents as its encoded form.
+    // Safety: the bytes came out of a TTL string, which on Unix is exactly an
+    // `OsStr`'s encoded form.
     unsafe { std::ffi::OsString::from_encoded_bytes_unchecked(b.to_vec()) }
 }
 
+#[cfg(not(windows))]
 fn exit_code(st: std::process::ExitStatus) -> i32 {
     match st.code() {
         Some(c) => c,
@@ -530,6 +644,7 @@ fn scan_int(s: &[u8]) -> Option<(i32, &[u8])> {
 /// `argv[0]` has its own rules and they are not the others': no backslash
 /// escaping at all, and the word simply ends at the first space unless it
 /// opened with a quote.
+#[cfg(any(not(windows), test))]
 fn split_command_line(cmdline: &[u8]) -> Vec<Vec<u8>> {
     let mut argv = Vec::new();
     let mut i = 0;
@@ -1126,7 +1241,7 @@ mod tests {
     }
 
     #[test]
-    fn exec_validates_the_show_word_it_then_cannot_use() {
+    fn exec_validates_the_show_word_on_every_platform() {
         #[cfg(unix)]
         let success = "/bin/true";
         #[cfg(windows)]
@@ -1140,6 +1255,81 @@ mod tests {
             TtlError::Syntax
         );
         assert_eq!(err_of("exec ''"), TtlError::Syntax);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn exec_passes_the_show_word_through_windows_startup_info() {
+        use windows_sys::Win32::System::Threading::{
+            GetStartupInfoW, STARTF_USESHOWWINDOW, STARTUPINFOW,
+        };
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_SHOW,
+        };
+
+        const CHILD_OUTPUT: &str = "STERNA_TTL_EXEC_STARTUP_INFO";
+        if let Some(output) = std::env::var_os(CHILD_OUTPUT) {
+            let mut startup = STARTUPINFOW::default();
+            // SAFETY: GetStartupInfoW fills the live structure and has no
+            // failure return. This is the child side of the smoke test.
+            unsafe { GetStartupInfoW(&mut startup) };
+            std::fs::write(
+                output,
+                format!("{} {}", startup.dwFlags, startup.wShowWindow),
+            )
+            .unwrap();
+            return;
+        }
+
+        let exe = std::env::current_exe().unwrap();
+        let output = std::env::temp_dir().join(format!(
+            "tt-ttl-exec-startup-info-{}.txt",
+            std::process::id()
+        ));
+        std::env::set_var(CHILD_OUTPUT, &output);
+        let command = format!(
+            "\"{}\" --exact envcmds::tests::exec_passes_the_show_word_through_windows_startup_info --nocapture",
+            exe.display()
+        );
+
+        for (word, expected) in [
+            (None, SW_SHOW),
+            (Some("hide"), SW_HIDE),
+            (Some("minimize"), SW_MINIMIZE),
+            (Some("maximize"), SW_MAXIMIZE),
+            (Some("show"), SW_SHOW),
+        ] {
+            let _ = std::fs::remove_file(&output);
+            let source = match word {
+                Some(word) => format!("exec '{command}' '{word}' 1\ndispstr result"),
+                None => format!("exec '{command}'\ndispstr result"),
+            };
+            assert_eq!(out(&source), "0");
+            let fields = (0..100)
+                .find_map(|_| {
+                    let fields = std::fs::read_to_string(&output).ok().and_then(|text| {
+                        let fields = text
+                            .split_whitespace()
+                            .map(str::parse)
+                            .collect::<Result<Vec<u32>, _>>()
+                            .ok()?;
+                        (fields.len() == 2).then_some(fields)
+                    });
+                    if fields.is_none() {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    fields
+                })
+                .unwrap_or_else(|| panic!("child did not write {}", output.display()));
+            let [flags, show] = fields.as_slice() else {
+                unreachable!()
+            };
+            assert_ne!(*flags & STARTF_USESHOWWINDOW, 0, "{word:?}");
+            assert_eq!(*show, expected as u32, "{word:?}");
+        }
+
+        std::env::remove_var(CHILD_OUTPUT);
+        let _ = std::fs::remove_file(output);
     }
 
     #[test]
