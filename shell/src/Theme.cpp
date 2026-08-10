@@ -113,6 +113,26 @@ void Theme::applySettings(const Session &session)
         readFlag(session, "color.underline_font", m_underlineFontEnabled);
     m_urlUnderlineEnabled =
         readFlag(session, "color.url_underline", m_urlUnderlineEnabled);
+    m_drawResizedFont =
+        readFlag(session, "font.draw_resized", m_drawResizedFont);
+
+    // Win32 exposes four rasterisation requests. Qt has the same default,
+    // antialiased and non-antialiased choices; ClearType's subpixel details
+    // remain the platform paint engine's decision, so it maps to the explicit
+    // antialias request here instead of pretending every desktop is Windows.
+    const QString quality = session.setting(QStringLiteral("font.quality"));
+    QFont::StyleStrategy strategy = QFont::PreferDefault;
+    if (quality == QLatin1String("nonantialiased")) {
+        strategy = QFont::NoAntialias;
+    } else if (quality == QLatin1String("antialiased") ||
+               quality == QLatin1String("cleartype")) {
+        strategy = QFont::PreferAntialias;
+    }
+    if (m_font.styleStrategy() != strategy) {
+        QFont font = m_font;
+        font.setStyleStrategy(strategy);
+        setFont(font);
+    }
 
     // The cursor is painted in the normal foreground, which is what upstream
     // does when `VTCursorColor` is absent — and it is absent from the schema,
@@ -153,6 +173,25 @@ void Theme::recomputeMetrics()
 
     m_boldFont = m_font;
     m_boldFont.setBold(true);
+}
+
+bool Theme::shouldResizeGlyph(const QString &text, bool bold, int cells) const
+{
+    if (!m_drawResizedFont || text.isEmpty() || cells <= 0) {
+        return false;
+    }
+
+    // The selected fixed-width face already puts printable ASCII on the cell
+    // grid through the font's letter spacing. Avoid a metrics lookup for the
+    // overwhelmingly common path; wide and non-ASCII glyphs are precisely
+    // where fallback faces acquire a different natural advance.
+    if (cells == 1 && text.size() == 1 && text.at(0).unicode() < 0x80) {
+        return false;
+    }
+    const QFontMetricsF fm(bold ? m_boldFont : m_font);
+    const qreal advance = fm.horizontalAdvance(text);
+    const qreal target = cells * m_cellW;
+    return advance > 0.0 && qAbs(advance - target) > 1.0;
 }
 
 void Theme::resolve(const TtCell &cell, bool selected, bool screenReverse,

@@ -1209,6 +1209,40 @@ void test_the_font_attribute_switches_are_independent_of_the_colours()
     CHECK(h.cell(4, 0) == h.cell(6, 0));
 }
 
+void test_font_quality_and_resizing_are_live_settings()
+{
+    Harness h;
+    QString error;
+    CHECK(h.view.theme().drawsResizedFont());
+
+    CHECK(h.session.setSetting(QStringLiteral("font.draw_resized"),
+                               QStringLiteral("off"), &error));
+    h.view.applySettings();
+    CHECK(!h.view.theme().drawsResizedFont());
+
+    CHECK(h.session.setSetting(QStringLiteral("font.quality"),
+                               QStringLiteral("nonantialiased"), &error));
+    h.view.applySettings();
+    CHECK(h.view.theme().font().styleStrategy() == QFont::NoAntialias);
+
+    CHECK(h.session.setSetting(QStringLiteral("font.quality"),
+                               QStringLiteral("antialiased"), &error));
+    h.view.applySettings();
+    CHECK(h.view.theme().font().styleStrategy() == QFont::PreferAntialias);
+
+    // Qt deliberately leaves subpixel rasterisation to the platform, so the
+    // Win32 ClearType request has the explicit antialias strategy here too.
+    CHECK(h.session.setSetting(QStringLiteral("font.quality"),
+                               QStringLiteral("cleartype"), &error));
+    h.view.applySettings();
+    CHECK(h.view.theme().font().styleStrategy() == QFont::PreferAntialias);
+
+    CHECK(h.session.setSetting(QStringLiteral("font.quality"),
+                               QStringLiteral("default"), &error));
+    h.view.applySettings();
+    CHECK(h.view.theme().font().styleStrategy() == QFont::PreferDefault);
+}
+
 void test_attribute_colours_can_keep_the_normal_background()
 {
     Harness h;
@@ -1759,6 +1793,7 @@ int main(int argc, char **argv)
     test_settings_change_the_painted_colours();
     test_url_colour_and_underline_are_independent();
     test_the_font_attribute_switches_are_independent_of_the_colours();
+    test_font_quality_and_resizing_are_live_settings();
     test_attribute_colours_can_keep_the_normal_background();
     test_use_text_colour_repairs_only_the_three_same_colour_pairs();
     test_the_settings_dialog_is_built_from_the_schema();

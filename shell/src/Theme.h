@@ -6,6 +6,7 @@
 
 #include <QColor>
 #include <QFont>
+#include <QString>
 
 #include "sterna.h"
 
@@ -70,6 +71,11 @@ public:
     }
     void setFont(const QFont &font);
 
+    /// `DrawingResizedFont`: whether a glyph whose natural advance misses its
+    /// cell box is stretched horizontally into that box.
+    bool drawsResizedFont() const { return m_drawResizedFont; }
+    bool shouldResizeGlyph(const QString &text, bool bold, int cells) const;
+
     int cellWidth() const { return m_cellW; }
     int cellHeight() const { return m_cellH; }
     /// Distance from the top of the cell to the text baseline.
@@ -101,6 +107,7 @@ private:
     bool m_boldFontEnabled = true;
     bool m_underlineFontEnabled = true;
     bool m_urlUnderlineEnabled = true;
+    bool m_drawResizedFont = true;
 
     QFont m_font;
     QFont m_boldFont;

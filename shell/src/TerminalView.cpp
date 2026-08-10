@@ -7,6 +7,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QDesktopServices>
+#include <QFontMetricsF>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -284,6 +285,7 @@ QSize TerminalView::sizeHint() const
 void TerminalView::applySettings()
 {
     m_theme.applySettings(*m_session);
+    m_session->setCellPixels(m_theme.cellWidth(), m_theme.cellHeight());
 
     // The schema writes a boolean out as `on` or `off` whatever the file said,
     // so this is a comparison and not a second copy of `GetOnOff` — which is
@@ -496,6 +498,26 @@ void TerminalView::paintEvent(QPaintEvent *)
             runText.clear();
         };
 
+        auto drawResized = [&](const QRect &box, const QString &text,
+                               const QColor &fg, const QColor &bg, bool bold,
+                               bool under) {
+            p.fillRect(box, bg);
+            p.setPen(fg);
+            p.setFont(bold ? m_theme.boldFont() : m_theme.font());
+            const qreal advance =
+                QFontMetricsF(p.font()).horizontalAdvance(text);
+            p.save();
+            p.setClipRect(box);
+            p.translate(box.left(), 0);
+            p.scale(box.width() / advance, 1.0);
+            p.drawText(QPointF(0, y * ch + m_theme.baseline()), text);
+            p.restore();
+            if (under) {
+                const int uy = y * ch + m_theme.baseline() + 1;
+                p.drawLine(box.left(), uy, box.right(), uy);
+            }
+        };
+
         for (int x = 0; x < static_cast<int>(len);) {
             const TtCell &cell = cells[x];
             if (cell.width_class == TT_WIDTH_PAD) {
@@ -513,6 +535,15 @@ void TerminalView::paintEvent(QPaintEvent *)
             const bool bold = m_theme.paintsBold(cell.attrs);
             const bool under = m_theme.paintsUnderline(cell.attrs);
             const int width = cellWidthClass(cell);
+            const QString text = cellText(cell);
+
+            if (m_theme.shouldResizeGlyph(text, bold, width)) {
+                flush();
+                drawResized(QRect(x * cw, y * ch, width * cw, ch), text, fg,
+                            bg, bold, under);
+                x += width;
+                continue;
+            }
 
             const bool joins = runStart >= 0 && fg == runFg && bg == runBg &&
                                bold == runBold && under == runUnder && width == 1;
@@ -524,7 +555,7 @@ void TerminalView::paintEvent(QPaintEvent *)
                 runBold = bold;
                 runUnder = under;
             }
-            runText += cellText(cell);
+            runText += text;
             runCells += width;
             x += width;
             if (width == 2) {
