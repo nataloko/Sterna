@@ -399,8 +399,8 @@ void TerminalView::paintEvent(QPaintEvent *)
             QColor fg;
             QColor bg;
             m_theme.resolve(cell, x >= selFrom && x < selTo, screenReverse, &fg, &bg);
-            const bool bold = (cell.attrs & TT_ATTR_BOLD) != 0;
-            const bool under = (cell.attrs & TT_ATTR_UNDER) != 0;
+            const bool bold = m_theme.paintsBold(cell.attrs);
+            const bool under = m_theme.paintsUnderline(cell.attrs);
             const int width = cellWidthClass(cell);
 
             const bool joins = runStart >= 0 && fg == runFg && bg == runBg &&
@@ -448,7 +448,8 @@ void TerminalView::paintEvent(QPaintEvent *)
                 m_theme.resolve(cell, false, screenReverse, &fg, &bg);
                 p.fillRect(box, fg);
                 p.setPen(bg);
-                p.setFont((cell.attrs & TT_ATTR_BOLD) ? m_theme.boldFont() : m_theme.font());
+                p.setFont(m_theme.paintsBold(cell.attrs) ? m_theme.boldFont()
+                                                         : m_theme.font());
                 p.drawText(QPoint(box.left(), cursorRow * ch + m_theme.baseline()),
                            cellText(cell));
             } else {

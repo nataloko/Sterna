@@ -168,6 +168,12 @@ struct Harness {
         }
         return n;
     }
+
+    QImage cell(int col, int row) const
+    {
+        return image.copy(col * view.theme().cellWidth(), row * view.theme().cellHeight(),
+                          view.theme().cellWidth(), view.theme().cellHeight());
+    }
 };
 
 /// Tera Term's shipping defaults, which is what the shell starts from.
@@ -897,6 +903,79 @@ void test_settings_change_the_painted_colours()
     CHECK(h.at(40, 0) == QColor(20, 20, 20));
 }
 
+void test_the_font_attribute_switches_are_independent_of_the_colours()
+{
+    Harness h;
+    QString error;
+
+    // Make the attribute colour arms disappear so the only difference between
+    // each pair of cells is the face itself.
+    CHECK(h.session.setSetting(QStringLiteral("color.bold_enabled"),
+                               QStringLiteral("off"), &error));
+    CHECK(h.session.setSetting(QStringLiteral("color.underline_enabled"),
+                               QStringLiteral("off"), &error));
+    CHECK(h.session.setSetting(QStringLiteral("color.bold_font"),
+                               QStringLiteral("off"), &error));
+    CHECK(h.session.setSetting(QStringLiteral("color.underline_font"),
+                               QStringLiteral("off"), &error));
+    h.view.applySettings();
+    h.feed("A \033[1mA\033[0m B \033[4mB\033[0m");
+    h.render();
+
+    // SGR 1 and SGR 4 remain in the cells; these settings gate only the font
+    // chosen by the painter. With both gates off, identical glyphs are
+    // pixel-identical to their unadorned neighbours.
+    CHECK(h.cell(0, 0) == h.cell(2, 0));
+    CHECK(h.cell(4, 0) == h.cell(6, 0));
+}
+
+void test_attribute_colours_can_keep_the_normal_background()
+{
+    Harness h;
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("color.bold"),
+                               QStringLiteral("0,0,255,255,0,0"), &error));
+    h.view.applySettings();
+    h.feed("\033[1m \033[0m");
+    h.render();
+    CHECK(h.bgAt(0, 0) == QColor(255, 0, 0));
+
+    CHECK(h.session.setSetting(QStringLiteral("color.use_normal_background"),
+                               QStringLiteral("on"), &error));
+    h.view.applySettings();
+    h.render();
+    CHECK(h.bgAt(0, 0) == kWhite);
+}
+
+void test_use_text_colour_repairs_only_the_three_same_colour_pairs()
+{
+    Harness h;
+    QString error;
+    h.feed("\033[30;40m \033[31;41m \033[0m");
+    h.render();
+    CHECK(h.bgAt(0, 0) == kBlack);
+    CHECK(h.bgAt(1, 0) == kDarkRed);
+
+    CHECK(h.session.setSetting(QStringLiteral("color.use_text_color"),
+                               QStringLiteral("on"), &error));
+    h.view.applySettings();
+    h.render();
+    CHECK(h.bgAt(0, 0) == kWhite);
+    CHECK(h.bgAt(1, 0) == kDarkRed);
+
+    // The reverse arm uses the configured reverse pair even while the normal
+    // reverse-colour gate is off. This is upstream's ordering: UseTextColor is
+    // applied after the ordinary attribute-colour decision.
+    CHECK(h.session.setSetting(QStringLiteral("color.reverse"),
+                               QStringLiteral("10,20,30,40,50,60"), &error));
+    CHECK(h.session.setSetting(QStringLiteral("color.reverse_enabled"),
+                               QStringLiteral("off"), &error));
+    h.view.applySettings();
+    h.feed("\r\033[30;40;7m \033[0m");
+    h.render();
+    CHECK(h.bgAt(0, 0) == QColor(40, 50, 60));
+}
+
 /// The dialog holds no list of settings: it walks the core's metadata table,
 /// so this checks that every row in the table became a widget and that what
 /// comes back out is the file's own spelling.
@@ -1044,6 +1123,9 @@ int main(int argc, char **argv)
     test_a_paste_with_a_line_break_is_confirmed();
     test_dragging_off_the_edge_scrolls_the_view();
     test_settings_change_the_painted_colours();
+    test_the_font_attribute_switches_are_independent_of_the_colours();
+    test_attribute_colours_can_keep_the_normal_background();
+    test_use_text_colour_repairs_only_the_three_same_colour_pairs();
     test_the_settings_dialog_is_built_from_the_schema();
     test_the_dialog_writes_only_what_changed();
     test_the_window_opens_at_the_configured_size();

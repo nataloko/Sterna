@@ -60,6 +60,14 @@ public:
     /// The same face, bolded — cached because constructing a QFont per run of
     /// bold text shows up in a profile immediately.
     const QFont &boldFont() const { return m_boldFont; }
+    bool paintsBold(uint32_t attrs) const
+    {
+        return m_boldFontEnabled && (attrs & TT_ATTR_BOLD) != 0;
+    }
+    bool paintsUnderline(uint32_t attrs) const
+    {
+        return m_underlineFontEnabled && (attrs & TT_ATTR_UNDER) != 0;
+    }
     void setFont(const QFont &font);
 
     int cellWidth() const { return m_cellW; }
@@ -79,15 +87,17 @@ private:
     QColor m_reverse[2];
     QColor m_cursor;
 
-    // `ts.ColorFlag` bits, and `ts.UseNormalBGColor`. Upstream's defaults
-    // until `applySettings` reads the file; `UseNormalBGColor` has no schema
-    // row yet and so stays put.
+    // `ts.ColorFlag`, `ts.FontFlag` and `ts.UseNormalBGColor`. Upstream's
+    // defaults until `applySettings` reads the file.
     bool m_ansiColor = true;
     bool m_boldColor = true;
     bool m_blinkColor = true;
     bool m_underlineColor = true;
     bool m_reverseColor = false;
+    bool m_useTextColor = false;
     bool m_useNormalBg = false;
+    bool m_boldFontEnabled = true;
+    bool m_underlineFontEnabled = true;
 
     QFont m_font;
     QFont m_boldFont;

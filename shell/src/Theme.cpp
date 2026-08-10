@@ -91,6 +91,12 @@ void Theme::applySettings(const Session &session)
     m_blinkColor = readFlag(session, "color.blink_enabled", m_blinkColor);
     m_underlineColor = readFlag(session, "color.underline_enabled", m_underlineColor);
     m_reverseColor = readFlag(session, "color.reverse_enabled", m_reverseColor);
+    m_useTextColor = readFlag(session, "color.use_text_color", m_useTextColor);
+    m_useNormalBg =
+        readFlag(session, "color.use_normal_background", m_useNormalBg);
+    m_boldFontEnabled = readFlag(session, "color.bold_font", m_boldFontEnabled);
+    m_underlineFontEnabled =
+        readFlag(session, "color.underline_font", m_underlineFontEnabled);
 
     // The cursor is painted in the normal foreground, which is what upstream
     // does when `VTCursorColor` is absent — and it is absent from the schema,
@@ -212,5 +218,20 @@ void Theme::resolve(const TtCell &cell, bool selected, bool screenReverse,
         } else {
             *fg = c;
         }
+    }
+
+    // `CF_USETEXTCOLOR`, after both explicit colours. Some applications assume
+    // a black terminal and set white-on-white or black-on-black when Tera
+    // Term's configured background is the opposite. Upstream repairs only a
+    // same-colour pair whose foreground is black, white or bright white — not
+    // every invisible pair (`vtdisp.c:2542`). Under reverse it deliberately
+    // uses the configured reverse pair even when that pair's ordinary enable
+    // flag is off.
+    if (m_useTextColor && m_ansiColor && (attrs & TT_ATTR2_FORE) &&
+        (attrs & TT_ATTR2_BACK) && cell.fg == cell.bg &&
+        (cell.fg == 0 || cell.fg == 7 || cell.fg == 15)) {
+        const QColor *safe = reverse ? m_reverse : m_normal;
+        *fg = safe[0];
+        *bg = safe[1];
     }
 }
