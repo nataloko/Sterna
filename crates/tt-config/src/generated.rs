@@ -1179,6 +1179,27 @@ pub struct Settings {
     /// a colour — DECRQSS' SGR (`vtterm.c:4332`) and `Co` in the termcap query
     /// (`:4451`) — go quiet with it, which is how a host is told.
     pub color_ansi_enabled: bool,
+    /// `ttset.c:868`, `FF_BOLD`. Whether SGR 1 selects a bold *font*, independently
+    /// of `color.bold_enabled`, which decides whether it selects the bold colour
+    /// pair. Both ship on, but either may be disabled alone — a bold cell can be
+    /// blue in a regular face or bold in the normal text colour.
+    pub color_bold_font: bool,
+    /// `ttset.c:782`, `FF_UNDERLINE`. The font half of SGR 4, independent of
+    /// `color.underline_enabled`'s magenta colour pair. Off keeps the underline
+    /// attribute in the grid and changes only how it is drawn.
+    pub color_underline_font: bool,
+    /// `ttset.c:1335`, `CF_USETEXTCOLOR`. A compatibility escape for applications
+    /// which assume a black terminal: after applying explicit SGR colours,
+    /// `GetDrawAttr` (`vtdisp.c:2542`) replaces an invisible same-colour pair with
+    /// the configured normal pair when both indices match and the foreground is
+    /// black (0), white (7), or bright white (15). Under reverse video it uses the
+    /// configured reverse pair — even when `color.reverse_enabled` is off.
+    pub color_use_text_color: bool,
+    /// `ttset.c:1561`. Bold, blink, underline and URL colours are pairs of their
+    /// own; on, their configured background half is ignored and the normal text
+    /// background is used instead. Reverse swaps that normal background into the
+    /// foreground (`vtdisp.c:2453`).
+    pub color_use_normal_background: bool,
     /// `ttset.c:718`, and the default is again the `else` branch.
     pub cursor_shape: CursorShape,
     /// `ttset.c:1227`.
@@ -1901,6 +1922,10 @@ impl Default for Settings {
             color_aixterm_16: false,
             color_pc_bold_16: false,
             color_ansi_enabled: true,
+            color_bold_font: true,
+            color_underline_font: true,
+            color_use_text_color: false,
+            color_use_normal_background: false,
             cursor_shape: CursorShape::default(),
             cursor_nonblinking: false,
             window_change_allowed: true,
@@ -2198,6 +2223,19 @@ impl Settings {
             color_ansi_enabled: crate::schema::on_off(
                 ini.get("Tera Term", "EnableANSIColor"),
                 true,
+            ),
+            color_bold_font: crate::schema::on_off(ini.get("Tera Term", "EnableBold"), true),
+            color_underline_font: crate::schema::on_off(
+                ini.get("Tera Term", "UnderlineAttrFont"),
+                true,
+            ),
+            color_use_text_color: crate::schema::on_off(
+                ini.get("Tera Term", "UseTextColor"),
+                false,
+            ),
+            color_use_normal_background: crate::schema::on_off(
+                ini.get("Tera Term", "UseNormalBGColor"),
+                false,
             ),
             cursor_shape: match ini.get("Tera Term", "CursorShape") {
                 Some(v) => CursorShape::from_ini(v),
@@ -3008,6 +3046,41 @@ impl Settings {
             "Tera Term",
             "EnableANSIColor",
             &if self.color_ansi_enabled { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "EnableBold",
+            &if self.color_bold_font { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "UnderlineAttrFont",
+            &if self.color_underline_font {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "UseTextColor",
+            &if self.color_use_text_color {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "UseNormalBGColor",
+            &if self.color_use_normal_background {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
         );
         ini.set(
             "Tera Term",
@@ -4089,6 +4162,25 @@ impl Settings {
             "color.aixterm_16" => if self.color_aixterm_16 { "on" } else { "off" }.to_string(),
             "color.pc_bold_16" => if self.color_pc_bold_16 { "on" } else { "off" }.to_string(),
             "color.ansi_enabled" => if self.color_ansi_enabled { "on" } else { "off" }.to_string(),
+            "color.bold_font" => if self.color_bold_font { "on" } else { "off" }.to_string(),
+            "color.underline_font" => if self.color_underline_font {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "color.use_text_color" => if self.color_use_text_color {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "color.use_normal_background" => if self.color_use_normal_background {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "cursor.shape" => self.cursor_shape.as_ini().to_string(),
             "cursor.nonblinking" => if self.cursor_nonblinking { "on" } else { "off" }.to_string(),
             "window.change_allowed" => if self.window_change_allowed {
@@ -4589,6 +4681,16 @@ impl Settings {
             "color.pc_bold_16" => self.color_pc_bold_16 = crate::schema::on_off(Some(value), false),
             "color.ansi_enabled" => {
                 self.color_ansi_enabled = crate::schema::on_off(Some(value), true)
+            }
+            "color.bold_font" => self.color_bold_font = crate::schema::on_off(Some(value), true),
+            "color.underline_font" => {
+                self.color_underline_font = crate::schema::on_off(Some(value), true)
+            }
+            "color.use_text_color" => {
+                self.color_use_text_color = crate::schema::on_off(Some(value), false)
+            }
+            "color.use_normal_background" => {
+                self.color_use_normal_background = crate::schema::on_off(Some(value), false)
             }
             "cursor.shape" => self.cursor_shape = CursorShape::from_ini(value),
             "cursor.nonblinking" => {
@@ -5448,6 +5550,46 @@ pub const FIELDS: &[Field] = &[
         default: "on",
         label: None,
         doc: "`ttset.c:856`, and the last of the four `ColorFlag` bits. **On**, and it is not a parse gate like the three above it: `SGR 30-37` still stores its colour in the cell, and `vtdisp.c:2417` then declines to draw with it, so the screen is `color.normal` while the buffer says otherwise. The two reports that name a colour — DECRQSS' SGR (`vtterm.c:4332`) and `Co` in the termcap query (`:4451`) — go quiet with it, which is how a host is told.",
+    },
+    Field {
+        name: "color.bold_font",
+        page: "color",
+        section: "Tera Term",
+        key: "EnableBold",
+        kind: Kind::Bool,
+        default: "on",
+        label: Some("DLG_TAB_VISUAL_BOLD_FONT"),
+        doc: "`ttset.c:868`, `FF_BOLD`. Whether SGR 1 selects a bold *font*, independently of `color.bold_enabled`, which decides whether it selects the bold colour pair. Both ship on, but either may be disabled alone — a bold cell can be blue in a regular face or bold in the normal text colour.",
+    },
+    Field {
+        name: "color.underline_font",
+        page: "color",
+        section: "Tera Term",
+        key: "UnderlineAttrFont",
+        kind: Kind::Bool,
+        default: "on",
+        label: Some("DLG_TAB_VISUAL_UNDERLINE_FONT"),
+        doc: "`ttset.c:782`, `FF_UNDERLINE`. The font half of SGR 4, independent of `color.underline_enabled`'s magenta colour pair. Off keeps the underline attribute in the grid and changes only how it is drawn.",
+    },
+    Field {
+        name: "color.use_text_color",
+        page: "color",
+        section: "Tera Term",
+        key: "UseTextColor",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1335`, `CF_USETEXTCOLOR`. A compatibility escape for applications which assume a black terminal: after applying explicit SGR colours, `GetDrawAttr` (`vtdisp.c:2542`) replaces an invisible same-colour pair with the configured normal pair when both indices match and the foreground is black (0), white (7), or bright white (15). Under reverse video it uses the configured reverse pair — even when `color.reverse_enabled` is off.",
+    },
+    Field {
+        name: "color.use_normal_background",
+        page: "color",
+        section: "Tera Term",
+        key: "UseNormalBGColor",
+        kind: Kind::Bool,
+        default: "off",
+        label: Some("DLG_WIN_ALWAYSBG"),
+        doc: "`ttset.c:1561`. Bold, blink, underline and URL colours are pairs of their own; on, their configured background half is ignored and the normal text background is used instead. Reverse swaps that normal background into the foreground (`vtdisp.c:2453`).",
     },
     Field {
         name: "cursor.shape",

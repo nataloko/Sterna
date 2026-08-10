@@ -346,6 +346,31 @@ color.pc_bold_16 | bool | Tera Term | PcBoldColor | off | -
 # (`:4451`) — go quiet with it, which is how a host is told.
 color.ansi_enabled | bool | Tera Term | EnableANSIColor | on | -
 
+# `ttset.c:868`, `FF_BOLD`. Whether SGR 1 selects a bold *font*, independently
+# of `color.bold_enabled`, which decides whether it selects the bold colour
+# pair. Both ship on, but either may be disabled alone — a bold cell can be
+# blue in a regular face or bold in the normal text colour.
+color.bold_font | bool | Tera Term | EnableBold | on | DLG_TAB_VISUAL_BOLD_FONT
+
+# `ttset.c:782`, `FF_UNDERLINE`. The font half of SGR 4, independent of
+# `color.underline_enabled`'s magenta colour pair. Off keeps the underline
+# attribute in the grid and changes only how it is drawn.
+color.underline_font | bool | Tera Term | UnderlineAttrFont | on | DLG_TAB_VISUAL_UNDERLINE_FONT
+
+# `ttset.c:1335`, `CF_USETEXTCOLOR`. A compatibility escape for applications
+# which assume a black terminal: after applying explicit SGR colours,
+# `GetDrawAttr` (`vtdisp.c:2542`) replaces an invisible same-colour pair with
+# the configured normal pair when both indices match and the foreground is
+# black (0), white (7), or bright white (15). Under reverse video it uses the
+# configured reverse pair — even when `color.reverse_enabled` is off.
+color.use_text_color | bool | Tera Term | UseTextColor | off | -
+
+# `ttset.c:1561`. Bold, blink, underline and URL colours are pairs of their
+# own; on, their configured background half is ignored and the normal text
+# background is used instead. Reverse swaps that normal background into the
+# foreground (`vtdisp.c:2453`).
+color.use_normal_background | bool | Tera Term | UseNormalBGColor | off | DLG_WIN_ALWAYSBG
+
 # --- cursor ------------------------------------------------------------------
 
 # `ttset.c:718`, and the default is again the `else` branch.
