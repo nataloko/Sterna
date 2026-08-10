@@ -266,6 +266,72 @@ void test_a_settings_file_named_on_the_line()
           == QStringLiteral("300"));
 }
 
+/// `StartupMacro` is a file setting with two command-line overrides: `/M`
+/// replaces it and a `/D=` topic cancels it. Relative names live beside the
+/// active INI here instead of depending on a desktop launcher's working
+/// directory.
+void test_the_startup_macro_setting_and_its_overrides()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    if (!dir.isValid()) {
+        return;
+    }
+
+    const auto write = [](const QString &path, const QByteArray &body) {
+        QFile file(path);
+        return file.open(QIODevice::WriteOnly) && file.write(body) == body.size();
+    };
+    CHECK(write(dir.filePath(QStringLiteral("startup.ttl")),
+                QByteArray("dispstr 'from the startup setting'\n")));
+    // `tt_macro_start` reproduces `FitTTLFileName`, including the upper-case
+    // extension upstream adds. The filesystem here is case-sensitive.
+    CHECK(write(dir.filePath(QStringLiteral("override.TTL")),
+                QByteArray("dispstr 'from the command line'\n")));
+    const QString ini = dir.filePath(QStringLiteral("settings.ini"));
+    CHECK(write(ini, QByteArray("[Tera Term]\nStartupMacro=startup.ttl\n")));
+
+    {
+        MainWindow window(ini);
+        TtCmdLine *cmd = parse({QStringLiteral("/DS")});
+        CHECK(cmd != nullptr);
+        window.startFrom(cmd);
+        tt_cmdline_free(cmd);
+        CHECK(spin([&] {
+            return screenText(*window.session())
+                .contains(QStringLiteral("from the startup setting"));
+        }, 5000));
+    }
+
+    {
+        MainWindow window(ini);
+        TtCmdLine *cmd =
+            parse({QStringLiteral("/M=override"), QStringLiteral("/DS")});
+        CHECK(cmd != nullptr);
+        window.startFrom(cmd);
+        tt_cmdline_free(cmd);
+        CHECK(spin([&] {
+            return screenText(*window.session())
+                .contains(QStringLiteral("from the command line"));
+        }, 5000));
+        CHECK(!screenText(*window.session())
+                   .contains(QStringLiteral("from the startup setting")));
+    }
+
+    {
+        MainWindow window(ini);
+        TtCmdLine *cmd =
+            parse({QStringLiteral("/D=startup-test"), QStringLiteral("/DS")});
+        CHECK(cmd != nullptr);
+        window.startFrom(cmd);
+        tt_cmdline_free(cmd);
+        CHECK(!spin([&] {
+            return screenText(*window.session())
+                .contains(QStringLiteral("from the startup setting"));
+        }, 250));
+    }
+}
+
 /// The whole path, argv to a live connection — and the log the same line asked
 /// for, which starts before the connection so a console's opening banner is in
 /// the file.
@@ -320,6 +386,7 @@ int main(int argc, char **argv)
     test_a_window_that_is_never_shown();
     test_a_window_position();
     test_a_settings_file_named_on_the_line();
+    test_the_startup_macro_setting_and_its_overrides();
     test_a_host_name_connects_and_logs();
 
     if (failures) {

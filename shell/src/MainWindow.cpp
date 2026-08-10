@@ -497,14 +497,25 @@ void MainWindow::startFrom(TtCmdLine *cmd)
         break;
     }
 
-    // Last, and after the connection: a startup macro's first line is
+    // Last, and after starting the connection: a startup macro's first line is
     // usually a `wait` for the prompt of the session the same command line
-    // opened. Upstream starts it from `OnCommStart` for the same reason.
+    // opened. Upstream launches TTPMACRO first with `/S`, then its DDE init
+    // starts the connection (`ttdde.c:657`). The link is in-process here, so
+    // starting the attempt first and the macro immediately afterwards gives
+    // the same ordering without a second process to synchronise.
     switch (info.macro_kind) {
-    case TT_MACRO_UNSET:
+    case TT_MACRO_UNSET: {
+        const QString configured =
+            m_session->setting(QStringLiteral("macro.startup_file"));
+        if (!configured.isEmpty()) {
+            startNamedMacro(configured);
+        }
+        break;
+    }
     case TT_MACRO_CLEARED:
-        // `/M=` with nothing after it cancels the settings file's
-        // `StartupMacro`, which is the whole of what `TT_MACRO_CLEARED` means.
+        // A `/D=` topic cancels the settings file's `StartupMacro`, which is
+        // the whole of what `TT_MACRO_CLEARED` means: a terminal launched by
+        // a macro must not recursively launch another one.
         break;
     case TT_MACRO_PROMPT:
         // `/M` on its own, or `/M=*`: upstream puts its file dialog up.
@@ -512,7 +523,7 @@ void MainWindow::startFrom(TtCmdLine *cmd)
         break;
     default:
         if (info.macro_file) {
-            startMacro({QString::fromUtf8(info.macro_file)});
+            startNamedMacro(QString::fromUtf8(info.macro_file));
         }
         break;
     }
@@ -948,6 +959,29 @@ void MainWindow::startMacro(const QStringList &args)
     if (!runMacroFile(args, &error, &busy)) {
         note(tr("Macro"), tr("Could not start the macro.\n\n%1").arg(error));
     }
+}
+
+void MainWindow::startNamedMacro(const QString &name)
+{
+    // TTPMACRO checks the first character rather than the whole name
+    // (`ttmmain.cpp:285`), so `StartupMacro=*anything` is a prompt too.
+    if (name.startsWith(QLatin1Char('*'))) {
+        runMacro();
+        return;
+    }
+
+    // Tera Term sets its current directory to `HomeDirW` at process startup,
+    // and `/M=` also resolves against that directory explicitly. Sterna does
+    // not change the process-wide working directory: it may have more than one
+    // settings path, and a macro can launch a child which should inherit the
+    // directory the user launched from. Resolve only this name instead. The
+    // active INI's directory is the useful cross-platform analogue and keeps a
+    // copied `TERATERM.INI` and its relative startup macro together.
+    QString path = name;
+    if (QFileInfo(path).isRelative()) {
+        path = QDir(QFileInfo(m_settingsPath).absolutePath()).filePath(path);
+    }
+    startMacro({path});
 }
 
 bool MainWindow::runMacroFile(const QStringList &args, QString *outError,

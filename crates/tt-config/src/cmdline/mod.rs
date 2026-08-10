@@ -507,10 +507,14 @@ impl CommandLine {
     ///   every call, so where to connect is the session's and not the file's.
     ///   `tcp_port` *is* a setting and is written.
     /// - `/KR=`, `/KT=`, `/VTICON=`, `/TEKICON=`, `/THEME=`, `/K=`, `/MN=`,
-    ///   `/M`, `/D=`, `/L=`, `/R=` — no character-set identifiers, no icon
-    ///   table, no background themes, no `KEYBOARD.CNF`, no tab bar, no startup
-    ///   macro path, no DDE, and no `ts.LogFN` (which upstream has no key for
-    ///   either).
+    ///   `/L=`, `/R=` — no character-set identifiers, no icon table, no
+    ///   background themes, no `KEYBOARD.CNF`, no tab bar, and no `ts.LogFN`
+    ///   (which upstream has no key for either).
+    /// - `/M` and `/D=` are one-shot launch state rather than edits to
+    ///   `macro.startup_file`: the frontend uses [`MacroArg`] to replace or
+    ///   cancel that setting for this launch. Keeping the file value intact
+    ///   means saving unrelated settings after an automatic macro ran does not
+    ///   silently erase the next launch's macro.
     /// - `/4`, `/6`, `/I`, `/V`, `/DUPLICATE`, `/E` — upstream has no key for
     ///   any of these. `ProtocolFamily` is command-line-only, and `Minimize`
     ///   and `HideWindow` are zeroed at `ttset.c:554` and never read.

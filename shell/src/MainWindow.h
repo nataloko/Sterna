@@ -181,6 +181,10 @@ private:
     /// place a macro is launched, whichever of the two asked: the menu, or a
     /// `/M=` on the command line.
     void startMacro(const QStringList &args);
+    /// Start a macro named by `StartupMacro` or `/M=`. Relative names resolve
+    /// beside the active settings file, Sterna's stable equivalent of
+    /// upstream's process-wide `HomeDirW`; a leading `*` asks the user.
+    void startNamedMacro(const QString &name);
     /// Connect what a command line resolved to. The SSH arm goes through the
     /// same state machine the SSH dialog uses, because it has the same
     /// prompts to answer.
