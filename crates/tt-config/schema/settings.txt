@@ -171,6 +171,85 @@ terminal.title | string | Tera Term | Title | Tera Term | DLG_TERM_TITLE
 # loses this one without a word. See `transfer.bplus_auto`.
 terminal.answerback | string | Tera Term | Answerback |  | -
 
+# `ttset.c:1108`, `TF_BACKWRAP`. Whether a BS on the left margin steps back to
+# the *previous* line rather than stopping dead. Off, `BackSpace`
+# (`vtterm.c:662`) has an arm that does nothing at all; on, it moves to
+# `CursorRightM` of the row above — the right *margin*, so a terminal with
+# DECSLRM set lands inside the margins rather than at the last column.
+#
+# Only the arm that moves taps a BS into the log and the macro language's
+# received-line buffer, so this key also decides whether a script's `wait` ever
+# sees one at column zero.
+terminal.back_wrap | bool | Tera Term | BackWrap | off | -
+
+# `ttset.c:1343`, and it is read in two places that do not sound like the same
+# setting. Off — which is how it ships — a tab is *like a printed character*:
+# `Tab` (`vtterm.c:713`) takes a pending wrap first, so a tab arriving on a full
+# line breaks the line before tabbing, and `CursorForwardTab` (`buffer.c:5228`)
+# arms the pending wrap when it runs out of stops. On, both stop happening and a
+# tab is only ever a cursor move, which is what a real VT does.
+#
+# CHT (`CSI Ps I`) is unaffected by the first half: it calls `CursorForwardTab`
+# directly and never sees the wrap.
+terminal.vt_compat_tab | bool | Tera Term | VTCompatTab | off | -
+
+# `ttset.c:1717`, `ts.TabStopFlag`. Which sequences a *host* is allowed to move
+# the tab stops with, as a comma list — `HTS7` is `ESC H`, `HTS8` is the 8-bit
+# C1 at 0x88, `TBC0` is `CSI 0 g` and `TBC3` is `CSI 3 g`; `HTS` and `TBC` are
+# each the pair. `on`/`all` and `off`/`none` assign the whole word.
+#
+# A `string` rather than a type of its own, for the same reason
+# `terminal.iso2022_shifts` is one: it is a flag list and the parse lives beside
+# the bits it names. Unlike that key, this one starts from `TABF_NONE` only in
+# the *list* arm and the default applies whenever the value is absent **or**
+# matches `on`.
+terminal.tab_stop_modify | string | Tera Term | TabStopModifySequence | on | -
+
+# `ttset.c:1756`, `TF_INVALIDDECRPSS`, and upstream's own comment is "(for
+# testing)". `RequestStatusString` (`vtterm.c:4400`) flips the leading digit of
+# the reply it was about to send, so a valid request answers `0$r` — "I do not
+# recognise this" — and an invalid one answers `1$r` with an empty body. It is
+# there to exercise the *host's* error handling, and the only setting in the
+# terminal whose purpose is to lie.
+terminal.invalid_decrqss | bool | Tera Term | UseInvalidDECRQSSResponse | off | -
+
+# `ttset.c:1688`. The eight hex digits the tertiary DA (`CSI = c`) answers with,
+# in a `DCS ! | … ST` (`vtterm.c:2829`).
+#
+# **Validated on read and the fallback is the default**: eight characters, every
+# one a hex digit, upper-cased in place — anything else, including a nine-digit
+# value, becomes `FFFFFFFF`. That is `ts.BSKey`'s shape rather than an enum's,
+# so it is held as a string and checked at the point of use; a file keeps
+# whatever it wrote, and the terminal answers with the valid form.
+terminal.uid | string | Tera Term | TerminalUID | FFFFFFFF | -
+
+# `ttset.c:1711`, `TF_LOCKTUID`, and the default is **on** — so DECSTUI
+# (`DCS ! { … ST`) is refused as shipped. `vtterm.c:4565` is the whole of it:
+# with the key off a host may set the UID above, with it on the sequence is
+# read and dropped. The same eight-hex-digit validation applies there as
+# applies to the file, in a second place.
+terminal.lock_uid | bool | Tera Term | LockTUID | on | -
+
+# `ttset.c:1101`, `TF_AUTOINVOKE`. Whether designating a character set into G0
+# also invokes G0 into GL, so `ESC ( B` puts ASCII back on the wire's own bytes
+# without an SI.
+#
+# Two things about `ESCSBCSSelect` (`vtterm.c:1409`) that reading the name would
+# not give. The invoke is **outside** the switch that handled the final
+# character, so an unrecognised designation like `ESC ( Z` still invokes; and it
+# is *not* gated on `ts.ISO2022Flag`, unlike every other locking shift in the
+# parser, so a terminal with `ISO2022ShiftFunction=off` still performs this one.
+terminal.auto_invoke | bool | Tera Term | AutoInvoke | off | -
+
+# `ttset.c:1789`. The ceiling on the buffer an OSC or DCS string is collected
+# into — `vtterm.c:5265` doubles the buffer from `sizeof(ts.Title)` up to this
+# and then silently **drops** every further byte, so a title longer than this
+# arrives truncated and the sequence still terminates normally.
+#
+# It is the only bound on a string a host controls the length of, which is why
+# it is not merely cosmetic.
+terminal.max_osc_buffer | int | Tera Term | MaxOSCBufferSize | 4096 | -
+
 # --- keyboard ----------------------------------------------------------------
 
 # **`ttset.c:877` reads this with an empty fallback and only the literal `DEL`

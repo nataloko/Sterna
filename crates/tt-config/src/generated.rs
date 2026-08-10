@@ -1040,6 +1040,77 @@ pub struct Settings {
     /// when `BPAuto=on`, a hundred lines after reading it, so a file that sets both
     /// loses this one without a word. See `transfer.bplus_auto`.
     pub terminal_answerback: String,
+    /// `ttset.c:1108`, `TF_BACKWRAP`. Whether a BS on the left margin steps back to
+    /// the *previous* line rather than stopping dead. Off, `BackSpace`
+    /// (`vtterm.c:662`) has an arm that does nothing at all; on, it moves to
+    /// `CursorRightM` of the row above — the right *margin*, so a terminal with
+    /// DECSLRM set lands inside the margins rather than at the last column.
+    ///
+    /// Only the arm that moves taps a BS into the log and the macro language's
+    /// received-line buffer, so this key also decides whether a script's `wait` ever
+    /// sees one at column zero.
+    pub terminal_back_wrap: bool,
+    /// `ttset.c:1343`, and it is read in two places that do not sound like the same
+    /// setting. Off — which is how it ships — a tab is *like a printed character*:
+    /// `Tab` (`vtterm.c:713`) takes a pending wrap first, so a tab arriving on a full
+    /// line breaks the line before tabbing, and `CursorForwardTab` (`buffer.c:5228`)
+    /// arms the pending wrap when it runs out of stops. On, both stop happening and a
+    /// tab is only ever a cursor move, which is what a real VT does.
+    ///
+    /// CHT (`CSI Ps I`) is unaffected by the first half: it calls `CursorForwardTab`
+    /// directly and never sees the wrap.
+    pub terminal_vt_compat_tab: bool,
+    /// `ttset.c:1717`, `ts.TabStopFlag`. Which sequences a *host* is allowed to move
+    /// the tab stops with, as a comma list — `HTS7` is `ESC H`, `HTS8` is the 8-bit
+    /// C1 at 0x88, `TBC0` is `CSI 0 g` and `TBC3` is `CSI 3 g`; `HTS` and `TBC` are
+    /// each the pair. `on`/`all` and `off`/`none` assign the whole word.
+    ///
+    /// A `string` rather than a type of its own, for the same reason
+    /// `terminal.iso2022_shifts` is one: it is a flag list and the parse lives beside
+    /// the bits it names. Unlike that key, this one starts from `TABF_NONE` only in
+    /// the *list* arm and the default applies whenever the value is absent **or**
+    /// matches `on`.
+    pub terminal_tab_stop_modify: String,
+    /// `ttset.c:1756`, `TF_INVALIDDECRPSS`, and upstream's own comment is "(for
+    /// testing)". `RequestStatusString` (`vtterm.c:4400`) flips the leading digit of
+    /// the reply it was about to send, so a valid request answers `0$r` — "I do not
+    /// recognise this" — and an invalid one answers `1$r` with an empty body. It is
+    /// there to exercise the *host's* error handling, and the only setting in the
+    /// terminal whose purpose is to lie.
+    pub terminal_invalid_decrqss: bool,
+    /// `ttset.c:1688`. The eight hex digits the tertiary DA (`CSI = c`) answers with,
+    /// in a `DCS ! | … ST` (`vtterm.c:2829`).
+    ///
+    /// **Validated on read and the fallback is the default**: eight characters, every
+    /// one a hex digit, upper-cased in place — anything else, including a nine-digit
+    /// value, becomes `FFFFFFFF`. That is `ts.BSKey`'s shape rather than an enum's,
+    /// so it is held as a string and checked at the point of use; a file keeps
+    /// whatever it wrote, and the terminal answers with the valid form.
+    pub terminal_uid: String,
+    /// `ttset.c:1711`, `TF_LOCKTUID`, and the default is **on** — so DECSTUI
+    /// (`DCS ! { … ST`) is refused as shipped. `vtterm.c:4565` is the whole of it:
+    /// with the key off a host may set the UID above, with it on the sequence is
+    /// read and dropped. The same eight-hex-digit validation applies there as
+    /// applies to the file, in a second place.
+    pub terminal_lock_uid: bool,
+    /// `ttset.c:1101`, `TF_AUTOINVOKE`. Whether designating a character set into G0
+    /// also invokes G0 into GL, so `ESC ( B` puts ASCII back on the wire's own bytes
+    /// without an SI.
+    ///
+    /// Two things about `ESCSBCSSelect` (`vtterm.c:1409`) that reading the name would
+    /// not give. The invoke is **outside** the switch that handled the final
+    /// character, so an unrecognised designation like `ESC ( Z` still invokes; and it
+    /// is *not* gated on `ts.ISO2022Flag`, unlike every other locking shift in the
+    /// parser, so a terminal with `ISO2022ShiftFunction=off` still performs this one.
+    pub terminal_auto_invoke: bool,
+    /// `ttset.c:1789`. The ceiling on the buffer an OSC or DCS string is collected
+    /// into — `vtterm.c:5265` doubles the buffer from `sizeof(ts.Title)` up to this
+    /// and then silently **drops** every further byte, so a title longer than this
+    /// arrives truncated and the sequence still terminates normally.
+    ///
+    /// It is the only bound on a string a host controls the length of, which is why
+    /// it is not merely cosmetic.
+    pub terminal_max_osc_buffer: i32,
     /// **`ttset.c:877` reads this with an empty fallback and only the literal `DEL`
     /// takes the other arm**, so an absent key means BS. That is Tera Term's default
     /// and it is probably not what a Linux user wants: a `getty` usually has
@@ -1803,6 +1874,14 @@ impl Default for Settings {
             terminal_iso2022_shifts: String::from("on"),
             terminal_title: String::from("Tera Term"),
             terminal_answerback: String::from(""),
+            terminal_back_wrap: false,
+            terminal_vt_compat_tab: false,
+            terminal_tab_stop_modify: String::from("on"),
+            terminal_invalid_decrqss: false,
+            terminal_uid: String::from("FFFFFFFF"),
+            terminal_lock_uid: true,
+            terminal_auto_invoke: false,
+            terminal_max_osc_buffer: 4096,
             keyboard_backspace: KeyboardBackspace::default(),
             keyboard_meta: KeyboardMeta::default(),
             keyboard_delete_sends_del: false,
@@ -2037,6 +2116,32 @@ impl Settings {
             terminal_answerback: ini
                 .get_or("Tera Term", "Answerback", &d.terminal_answerback)
                 .to_string(),
+            terminal_back_wrap: crate::schema::on_off(ini.get("Tera Term", "BackWrap"), false),
+            terminal_vt_compat_tab: crate::schema::on_off(
+                ini.get("Tera Term", "VTCompatTab"),
+                false,
+            ),
+            terminal_tab_stop_modify: ini
+                .get_or(
+                    "Tera Term",
+                    "TabStopModifySequence",
+                    &d.terminal_tab_stop_modify,
+                )
+                .to_string(),
+            terminal_invalid_decrqss: crate::schema::on_off(
+                ini.get("Tera Term", "UseInvalidDECRQSSResponse"),
+                false,
+            ),
+            terminal_uid: ini
+                .get_or("Tera Term", "TerminalUID", &d.terminal_uid)
+                .to_string(),
+            terminal_lock_uid: crate::schema::on_off(ini.get("Tera Term", "LockTUID"), true),
+            terminal_auto_invoke: crate::schema::on_off(ini.get("Tera Term", "AutoInvoke"), false),
+            terminal_max_osc_buffer: ini.get_int(
+                "Tera Term",
+                "MaxOSCBufferSize",
+                d.terminal_max_osc_buffer,
+            ) as i32,
             keyboard_backspace: match ini.get("Tera Term", "BSKey") {
                 Some(v) => KeyboardBackspace::from_ini(v),
                 None => d.keyboard_backspace,
@@ -2728,6 +2833,57 @@ impl Settings {
         );
         ini.set("Tera Term", "Title", &self.terminal_title.clone());
         ini.set("Tera Term", "Answerback", &self.terminal_answerback.clone());
+        ini.set(
+            "Tera Term",
+            "BackWrap",
+            &if self.terminal_back_wrap { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "VTCompatTab",
+            &if self.terminal_vt_compat_tab {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "TabStopModifySequence",
+            &self.terminal_tab_stop_modify.clone(),
+        );
+        ini.set(
+            "Tera Term",
+            "UseInvalidDECRQSSResponse",
+            &if self.terminal_invalid_decrqss {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set("Tera Term", "TerminalUID", &self.terminal_uid.clone());
+        ini.set(
+            "Tera Term",
+            "LockTUID",
+            &if self.terminal_lock_uid { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "AutoInvoke",
+            &if self.terminal_auto_invoke {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "MaxOSCBufferSize",
+            &self.terminal_max_osc_buffer.to_string(),
+        );
         ini.set(
             "Tera Term",
             "BSKey",
@@ -3861,6 +4017,29 @@ impl Settings {
             "terminal.iso2022_shifts" => self.terminal_iso2022_shifts.clone(),
             "terminal.title" => self.terminal_title.clone(),
             "terminal.answerback" => self.terminal_answerback.clone(),
+            "terminal.back_wrap" => if self.terminal_back_wrap { "on" } else { "off" }.to_string(),
+            "terminal.vt_compat_tab" => if self.terminal_vt_compat_tab {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "terminal.tab_stop_modify" => self.terminal_tab_stop_modify.clone(),
+            "terminal.invalid_decrqss" => if self.terminal_invalid_decrqss {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "terminal.uid" => self.terminal_uid.clone(),
+            "terminal.lock_uid" => if self.terminal_lock_uid { "on" } else { "off" }.to_string(),
+            "terminal.auto_invoke" => if self.terminal_auto_invoke {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "terminal.max_osc_buffer" => self.terminal_max_osc_buffer.to_string(),
             "keyboard.backspace" => self.keyboard_backspace.as_ini().to_string(),
             "keyboard.meta" => self.keyboard_meta.as_ini().to_string(),
             "keyboard.delete_sends_del" => if self.keyboard_delete_sends_del {
@@ -4347,6 +4526,27 @@ impl Settings {
             "terminal.iso2022_shifts" => self.terminal_iso2022_shifts = value.to_string(),
             "terminal.title" => self.terminal_title = value.to_string(),
             "terminal.answerback" => self.terminal_answerback = value.to_string(),
+            "terminal.back_wrap" => {
+                self.terminal_back_wrap = crate::schema::on_off(Some(value), false)
+            }
+            "terminal.vt_compat_tab" => {
+                self.terminal_vt_compat_tab = crate::schema::on_off(Some(value), false)
+            }
+            "terminal.tab_stop_modify" => self.terminal_tab_stop_modify = value.to_string(),
+            "terminal.invalid_decrqss" => {
+                self.terminal_invalid_decrqss = crate::schema::on_off(Some(value), false)
+            }
+            "terminal.uid" => self.terminal_uid = value.to_string(),
+            "terminal.lock_uid" => {
+                self.terminal_lock_uid = crate::schema::on_off(Some(value), true)
+            }
+            "terminal.auto_invoke" => {
+                self.terminal_auto_invoke = crate::schema::on_off(Some(value), false)
+            }
+            "terminal.max_osc_buffer" => {
+                self.terminal_max_osc_buffer =
+                    crate::schema::int(value, self.terminal_max_osc_buffer)
+            }
             "keyboard.backspace" => self.keyboard_backspace = KeyboardBackspace::from_ini(value),
             "keyboard.meta" => self.keyboard_meta = KeyboardMeta::from_ini(value),
             "keyboard.delete_sends_del" => {
@@ -4978,6 +5178,86 @@ pub const FIELDS: &[Field] = &[
         default: "",
         label: None,
         doc: "`ttset.c:663`. What the terminal sends when the host asks it who it is with ENQ (`0x05`) — `vtterm.c:1076` writes it with `CommBinaryOut`, so the bytes go out raw, with no CR translation and no local echo.  **The value is a hex string, not the answer itself.** `Hex2Str` (`ttlib.c:406`) copies bytes through and reads `$` as the lead of a two-digit escape, so `Answerback=VT100$0D` is nine bytes ending in a CR. Three quirks come with it, all from the same loop: `ConvHexChar` answers **0** for a digit that is not hex, so `$ZZ` is a NUL; a `$` with fewer than two digits behind it borrows `'0'` for each one it is missing, so a trailing `$` is also a NUL and `$A` is `0xA0`; and the result is arbitrary bytes rather than text, which is why this is held as the file's own spelling and decoded at the point of use rather than stored decoded.  It is also the one setting in this file another setting **overwrites**: `ttset.c:1132` replaces it outright with B Plus's five-byte activation string when `BPAuto=on`, a hundred lines after reading it, so a file that sets both loses this one without a word. See `transfer.bplus_auto`.",
+    },
+    Field {
+        name: "terminal.back_wrap",
+        page: "terminal",
+        section: "Tera Term",
+        key: "BackWrap",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1108`, `TF_BACKWRAP`. Whether a BS on the left margin steps back to the *previous* line rather than stopping dead. Off, `BackSpace` (`vtterm.c:662`) has an arm that does nothing at all; on, it moves to `CursorRightM` of the row above — the right *margin*, so a terminal with DECSLRM set lands inside the margins rather than at the last column.  Only the arm that moves taps a BS into the log and the macro language's received-line buffer, so this key also decides whether a script's `wait` ever sees one at column zero.",
+    },
+    Field {
+        name: "terminal.vt_compat_tab",
+        page: "terminal",
+        section: "Tera Term",
+        key: "VTCompatTab",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1343`, and it is read in two places that do not sound like the same setting. Off — which is how it ships — a tab is *like a printed character*: `Tab` (`vtterm.c:713`) takes a pending wrap first, so a tab arriving on a full line breaks the line before tabbing, and `CursorForwardTab` (`buffer.c:5228`) arms the pending wrap when it runs out of stops. On, both stop happening and a tab is only ever a cursor move, which is what a real VT does.  CHT (`CSI Ps I`) is unaffected by the first half: it calls `CursorForwardTab` directly and never sees the wrap.",
+    },
+    Field {
+        name: "terminal.tab_stop_modify",
+        page: "terminal",
+        section: "Tera Term",
+        key: "TabStopModifySequence",
+        kind: Kind::Str,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1717`, `ts.TabStopFlag`. Which sequences a *host* is allowed to move the tab stops with, as a comma list — `HTS7` is `ESC H`, `HTS8` is the 8-bit C1 at 0x88, `TBC0` is `CSI 0 g` and `TBC3` is `CSI 3 g`; `HTS` and `TBC` are each the pair. `on`/`all` and `off`/`none` assign the whole word.  A `string` rather than a type of its own, for the same reason `terminal.iso2022_shifts` is one: it is a flag list and the parse lives beside the bits it names. Unlike that key, this one starts from `TABF_NONE` only in the *list* arm and the default applies whenever the value is absent **or** matches `on`.",
+    },
+    Field {
+        name: "terminal.invalid_decrqss",
+        page: "terminal",
+        section: "Tera Term",
+        key: "UseInvalidDECRQSSResponse",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1756`, `TF_INVALIDDECRPSS`, and upstream's own comment is \"(for testing)\". `RequestStatusString` (`vtterm.c:4400`) flips the leading digit of the reply it was about to send, so a valid request answers `0$r` — \"I do not recognise this\" — and an invalid one answers `1$r` with an empty body. It is there to exercise the *host's* error handling, and the only setting in the terminal whose purpose is to lie.",
+    },
+    Field {
+        name: "terminal.uid",
+        page: "terminal",
+        section: "Tera Term",
+        key: "TerminalUID",
+        kind: Kind::Str,
+        default: "FFFFFFFF",
+        label: None,
+        doc: "`ttset.c:1688`. The eight hex digits the tertiary DA (`CSI = c`) answers with, in a `DCS ! | … ST` (`vtterm.c:2829`).  **Validated on read and the fallback is the default**: eight characters, every one a hex digit, upper-cased in place — anything else, including a nine-digit value, becomes `FFFFFFFF`. That is `ts.BSKey`'s shape rather than an enum's, so it is held as a string and checked at the point of use; a file keeps whatever it wrote, and the terminal answers with the valid form.",
+    },
+    Field {
+        name: "terminal.lock_uid",
+        page: "terminal",
+        section: "Tera Term",
+        key: "LockTUID",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1711`, `TF_LOCKTUID`, and the default is **on** — so DECSTUI (`DCS ! { … ST`) is refused as shipped. `vtterm.c:4565` is the whole of it: with the key off a host may set the UID above, with it on the sequence is read and dropped. The same eight-hex-digit validation applies there as applies to the file, in a second place.",
+    },
+    Field {
+        name: "terminal.auto_invoke",
+        page: "terminal",
+        section: "Tera Term",
+        key: "AutoInvoke",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1101`, `TF_AUTOINVOKE`. Whether designating a character set into G0 also invokes G0 into GL, so `ESC ( B` puts ASCII back on the wire's own bytes without an SI.  Two things about `ESCSBCSSelect` (`vtterm.c:1409`) that reading the name would not give. The invoke is **outside** the switch that handled the final character, so an unrecognised designation like `ESC ( Z` still invokes; and it is *not* gated on `ts.ISO2022Flag`, unlike every other locking shift in the parser, so a terminal with `ISO2022ShiftFunction=off` still performs this one.",
+    },
+    Field {
+        name: "terminal.max_osc_buffer",
+        page: "terminal",
+        section: "Tera Term",
+        key: "MaxOSCBufferSize",
+        kind: Kind::Int,
+        default: "4096",
+        label: None,
+        doc: "`ttset.c:1789`. The ceiling on the buffer an OSC or DCS string is collected into — `vtterm.c:5265` doubles the buffer from `sizeof(ts.Title)` up to this and then silently **drops** every further byte, so a title longer than this arrives truncated and the sequence still terminates normally.  It is the only bound on a string a host controls the length of, which is why it is not merely cosmetic.",
     },
     Field {
         name: "keyboard.backspace",
