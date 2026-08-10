@@ -88,7 +88,9 @@ use tt_ctl::{CtlHost, MacroStatus, NullHost, RunError, Server as CtlServer};
 use tt_grid::Cell;
 use tt_macro::{MacroError, MacroReceiver, MacroUi, NullUi, SessionHost};
 use tt_session::open::{Startup, Target};
-use tt_session::{Event, Ini, LogMode, LogOptions, Session, Settings, Timestamp};
+use tt_session::{
+    Event, Ini, KeyCodeResult, LogMode, LogOptions, Session, Settings, Shortcut, Timestamp,
+};
 use tt_ttl::host::{
     BeepSound, DialogAnchor, DialogEnd, DialogOrigin, DialogPos, ListBoxOpts, MacroWindow,
     ShowWindow, WindowGeometry, WindowState,
@@ -324,6 +326,11 @@ pub struct TtSession {
     log_name: CString,
     close_note: CString,
     setting: CString,
+    /// The string returned by the last physical-key dispatch, when it asked
+    /// the frontend to start a macro.
+    key_action: CString,
+    /// Duplicate scan codes found by the last successful keyboard-map load.
+    key_duplicates: Vec<u16>,
     /// The decoded `DelimList`, which is not the file's own spelling and so
     /// cannot share the buffer above.
     delimiters: CString,
@@ -371,6 +378,8 @@ pub extern "C" fn tt_session_new(config: *const TtConfig) -> *mut TtSession {
         log_name: CString::default(),
         close_note: CString::default(),
         setting: CString::default(),
+        key_action: CString::default(),
+        key_duplicates: Vec::new(),
         delimiters: CString::default(),
         url: CString::default(),
         xfer_protocol: CString::default(),
@@ -2003,6 +2012,158 @@ pub extern "C" fn tt_session_poll_fd(session: *const TtSession) -> c_int {
 }
 
 // --- input ----------------------------------------------------------------
+
+/// What [`tt_session_send_key_code`] did.
+pub type TtKeyCodeKind = u32;
+pub const TT_KEY_CODE_UNMAPPED: TtKeyCodeKind = 0;
+pub const TT_KEY_CODE_SENT: TtKeyCodeKind = 1;
+pub const TT_KEY_CODE_LOCAL_KEY: TtKeyCodeKind = 2;
+pub const TT_KEY_CODE_UDK: TtKeyCodeKind = 3;
+pub const TT_KEY_CODE_SHORTCUT: TtKeyCodeKind = 4;
+pub const TT_KEY_CODE_MACRO: TtKeyCodeKind = 5;
+pub const TT_KEY_CODE_COMMAND: TtKeyCodeKind = 6;
+pub const TT_KEY_CODE_IGNORED: TtKeyCodeKind = 7;
+
+/// A `[Shortcut keys]` action. Values follow Tera Term's internal ids 71–89,
+/// so a command dispatcher can keep one table for these and type-3 user keys.
+pub type TtShortcut = u32;
+pub const TT_SHORTCUT_EDIT_COPY: TtShortcut = 71;
+pub const TT_SHORTCUT_EDIT_PASTE: TtShortcut = 72;
+pub const TT_SHORTCUT_EDIT_PASTE_CR: TtShortcut = 73;
+pub const TT_SHORTCUT_EDIT_CLEAR_SCREEN: TtShortcut = 74;
+pub const TT_SHORTCUT_EDIT_CLEAR_BUFFER: TtShortcut = 75;
+pub const TT_SHORTCUT_CONTROL_OPEN_TEK: TtShortcut = 76;
+pub const TT_SHORTCUT_CONTROL_CLOSE_TEK: TtShortcut = 77;
+pub const TT_SHORTCUT_LINE_UP: TtShortcut = 78;
+pub const TT_SHORTCUT_LINE_DOWN: TtShortcut = 79;
+pub const TT_SHORTCUT_PAGE_UP: TtShortcut = 80;
+pub const TT_SHORTCUT_PAGE_DOWN: TtShortcut = 81;
+pub const TT_SHORTCUT_BUFFER_TOP: TtShortcut = 82;
+pub const TT_SHORTCUT_BUFFER_BOTTOM: TtShortcut = 83;
+pub const TT_SHORTCUT_NEXT_WINDOW: TtShortcut = 84;
+pub const TT_SHORTCUT_PREVIOUS_WINDOW: TtShortcut = 85;
+pub const TT_SHORTCUT_NEXT_SHOWN_WINDOW: TtShortcut = 86;
+pub const TT_SHORTCUT_PREVIOUS_SHOWN_WINDOW: TtShortcut = 87;
+pub const TT_SHORTCUT_LOCAL_ECHO: TtShortcut = 88;
+pub const TT_SHORTCUT_SCROLL_LOCK: TtShortcut = 89;
+
+/// Result of a physical-key lookup.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtKeyCodeResult {
+    pub kind: TtKeyCodeKind,
+    /// A [`Key`] for `LOCAL_KEY`, 6–20 for `UDK`, one of the
+    /// `TT_SHORTCUT_*` constants for `SHORTCUT`, or the menu id for `COMMAND`;
+    /// zero otherwise.
+    pub value: u32,
+    /// The macro path for `MACRO`, null otherwise. Borrowed until the next
+    /// call to [`tt_session_send_key_code`] on this session.
+    pub text: *const c_char,
+}
+
+fn shortcut_id(s: Shortcut) -> TtShortcut {
+    match s {
+        Shortcut::EditCopy => TT_SHORTCUT_EDIT_COPY,
+        Shortcut::EditPaste => TT_SHORTCUT_EDIT_PASTE,
+        Shortcut::EditPasteCr => TT_SHORTCUT_EDIT_PASTE_CR,
+        Shortcut::EditClearScreen => TT_SHORTCUT_EDIT_CLEAR_SCREEN,
+        Shortcut::EditClearBuffer => TT_SHORTCUT_EDIT_CLEAR_BUFFER,
+        Shortcut::ControlOpenTek => TT_SHORTCUT_CONTROL_OPEN_TEK,
+        Shortcut::ControlCloseTek => TT_SHORTCUT_CONTROL_CLOSE_TEK,
+        Shortcut::LineUp => TT_SHORTCUT_LINE_UP,
+        Shortcut::LineDown => TT_SHORTCUT_LINE_DOWN,
+        Shortcut::PageUp => TT_SHORTCUT_PAGE_UP,
+        Shortcut::PageDown => TT_SHORTCUT_PAGE_DOWN,
+        Shortcut::BufferTop => TT_SHORTCUT_BUFFER_TOP,
+        Shortcut::BufferBottom => TT_SHORTCUT_BUFFER_BOTTOM,
+        Shortcut::NextWindow => TT_SHORTCUT_NEXT_WINDOW,
+        Shortcut::PreviousWindow => TT_SHORTCUT_PREVIOUS_WINDOW,
+        Shortcut::NextShownWindow => TT_SHORTCUT_NEXT_SHOWN_WINDOW,
+        Shortcut::PreviousShownWindow => TT_SHORTCUT_PREVIOUS_SHOWN_WINDOW,
+        Shortcut::LocalEcho => TT_SHORTCUT_LOCAL_ECHO,
+        Shortcut::ScrollLock => TT_SHORTCUT_SCROLL_LOCK,
+    }
+}
+
+/// Load a `KEYBOARD.CNF`. A missing file installs an empty map; another I/O
+/// error leaves the current one intact.
+#[no_mangle]
+pub extern "C" fn tt_session_key_map_load(
+    session: *mut TtSession,
+    path: *const c_char,
+) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    let path = match unsafe { str_arg(path, usize::MAX) } {
+        Ok(path) => path,
+        Err(e) => return e,
+    };
+    match s.session.load_key_map(Path::new(path)) {
+        Ok(duplicates) => {
+            s.key_duplicates = duplicates;
+            TT_OK
+        }
+        Err(e) => fail(TT_ERR_IO, e.to_string()),
+    }
+}
+
+/// Number of duplicate scan-code assignments in the last loaded map.
+#[no_mangle]
+pub extern "C" fn tt_session_key_map_duplicate_count(session: *const TtSession) -> usize {
+    session_ref!(session, 0).key_duplicates.len()
+}
+
+/// One duplicate scan code, or zero when `index` is out of range.
+#[no_mangle]
+pub extern "C" fn tt_session_key_map_duplicate(session: *const TtSession, index: usize) -> u16 {
+    session_ref!(session, 0)
+        .key_duplicates
+        .get(index)
+        .copied()
+        .unwrap_or(0)
+}
+
+/// Dispatch a PC/AT set-1 scan code through the active `KEYBOARD.CNF`.
+///
+/// Shift, Ctrl and Alt are bits `0x200`, `0x400` and `0x800` in `scan`. `out`
+/// may be null when only the wire side matters.
+#[no_mangle]
+pub extern "C" fn tt_session_send_key_code(
+    session: *mut TtSession,
+    scan: u16,
+    out: *mut TtKeyCodeResult,
+) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    s.key_action = CString::default();
+    let result = match s.session.send_key_code(scan) {
+        Ok(result) => result,
+        Err(e) => return report(e),
+    };
+    let (kind, value) = match result {
+        KeyCodeResult::Unmapped => (TT_KEY_CODE_UNMAPPED, 0),
+        KeyCodeResult::Sent => (TT_KEY_CODE_SENT, 0),
+        KeyCodeResult::LocalKey(key) => (TT_KEY_CODE_LOCAL_KEY, key as u32),
+        KeyCodeResult::Udk(n) => (TT_KEY_CODE_UDK, n.into()),
+        KeyCodeResult::Shortcut(action) => (TT_KEY_CODE_SHORTCUT, shortcut_id(action)),
+        KeyCodeResult::RunMacro(path) => {
+            s.key_action = cstring(&path);
+            (TT_KEY_CODE_MACRO, 0)
+        }
+        KeyCodeResult::Command(command) => (TT_KEY_CODE_COMMAND, command.into()),
+        KeyCodeResult::Ignored => (TT_KEY_CODE_IGNORED, 0),
+    };
+    if let Some(out) = unsafe { out.as_mut() } {
+        *out = TtKeyCodeResult {
+            kind,
+            value,
+            text: if kind == TT_KEY_CODE_MACRO {
+                s.key_action.as_ptr()
+            } else {
+                ptr::null()
+            },
+        };
+    }
+    TT_OK
+}
 
 /// Send a key, encoded by the core because which form it takes is terminal
 /// state the frontend never sees — and because `KEYBOARD.CNF` compatibility

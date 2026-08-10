@@ -1049,6 +1049,29 @@ typedef struct {
 } TtTransferResult;
 
 /**
+ * What [`tt_session_send_key_code`] did.
+ */
+typedef uint32_t TtKeyCodeKind;
+
+/**
+ * Result of a physical-key lookup.
+ */
+typedef struct {
+    TtKeyCodeKind kind;
+    /**
+     * A [`Key`] for `LOCAL_KEY`, 6–20 for `UDK`, one of the
+     * `TT_SHORTCUT_*` constants for `SHORTCUT`, or the menu id for `COMMAND`;
+     * zero otherwise.
+     */
+    uint32_t value;
+    /**
+     * The macro path for `MACRO`, null otherwise. Borrowed until the next
+     * call to [`tt_session_send_key_code`] on this session.
+     */
+    const char *text;
+} TtKeyCodeResult;
+
+/**
  * The serial line settings, one field per `commlib.c` DCB field that Tera
  * Term actually sets.
  */
@@ -1897,6 +1920,12 @@ typedef struct {
     const char *(*title)(void *user);
 } TtCtlHost;
 
+/**
+ * A `[Shortcut keys]` action. Values follow Tera Term's internal ids 71–89,
+ * so a command dispatcher can keep one table for these and type-3 user keys.
+ */
+typedef uint32_t TtShortcut;
+
 #define TT_OK 0
 
 /**
@@ -1961,6 +1990,60 @@ typedef struct {
  * that makes the message actionable.
  */
 #define TT_ERR_AUTH -9
+
+#define TT_KEY_CODE_UNMAPPED 0
+
+#define TT_KEY_CODE_SENT 1
+
+#define TT_KEY_CODE_LOCAL_KEY 2
+
+#define TT_KEY_CODE_UDK 3
+
+#define TT_KEY_CODE_SHORTCUT 4
+
+#define TT_KEY_CODE_MACRO 5
+
+#define TT_KEY_CODE_COMMAND 6
+
+#define TT_KEY_CODE_IGNORED 7
+
+#define TT_SHORTCUT_EDIT_COPY 71
+
+#define TT_SHORTCUT_EDIT_PASTE 72
+
+#define TT_SHORTCUT_EDIT_PASTE_CR 73
+
+#define TT_SHORTCUT_EDIT_CLEAR_SCREEN 74
+
+#define TT_SHORTCUT_EDIT_CLEAR_BUFFER 75
+
+#define TT_SHORTCUT_CONTROL_OPEN_TEK 76
+
+#define TT_SHORTCUT_CONTROL_CLOSE_TEK 77
+
+#define TT_SHORTCUT_LINE_UP 78
+
+#define TT_SHORTCUT_LINE_DOWN 79
+
+#define TT_SHORTCUT_PAGE_UP 80
+
+#define TT_SHORTCUT_PAGE_DOWN 81
+
+#define TT_SHORTCUT_BUFFER_TOP 82
+
+#define TT_SHORTCUT_BUFFER_BOTTOM 83
+
+#define TT_SHORTCUT_NEXT_WINDOW 84
+
+#define TT_SHORTCUT_PREVIOUS_WINDOW 85
+
+#define TT_SHORTCUT_NEXT_SHOWN_WINDOW 86
+
+#define TT_SHORTCUT_PREVIOUS_SHOWN_WINDOW 87
+
+#define TT_SHORTCUT_LOCAL_ECHO 88
+
+#define TT_SHORTCUT_SCROLL_LOCK 89
 
 /**
  * Every byte is data, `0xFF` included. What a console server's per-line port
@@ -2811,6 +2894,32 @@ size_t tt_session_pending_out(const TtSession *session);
  * grows a second spelling.
  */
 int tt_session_poll_fd(const TtSession *session);
+
+/**
+ * Load a `KEYBOARD.CNF`. A missing file installs an empty map; another I/O
+ * error leaves the current one intact.
+ */
+TtStatus tt_session_key_map_load(TtSession *session, const char *path);
+
+/**
+ * Number of duplicate scan-code assignments in the last loaded map.
+ */
+size_t tt_session_key_map_duplicate_count(const TtSession *session);
+
+/**
+ * One duplicate scan code, or zero when `index` is out of range.
+ */
+uint16_t tt_session_key_map_duplicate(const TtSession *session, size_t index);
+
+/**
+ * Dispatch a PC/AT set-1 scan code through the active `KEYBOARD.CNF`.
+ *
+ * Shift, Ctrl and Alt are bits `0x200`, `0x400` and `0x800` in `scan`. `out`
+ * may be null when only the wire side matters.
+ */
+TtStatus tt_session_send_key_code(TtSession *session,
+                                  uint16_t scan,
+                                  TtKeyCodeResult *out);
 
 /**
  * Send a key, encoded by the core because which form it takes is terminal

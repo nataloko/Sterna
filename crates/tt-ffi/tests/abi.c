@@ -468,6 +468,42 @@ static void test_input(void)
     CHECK_OK(tt_session_send_key(s, TT_KEY_HOLD, &sent));
     CHECK(!sent);
 
+    /* A copied KEYBOARD.CNF is parsed in the core and returns only the actions
+     * the window itself owns. The later internal key id wins a duplicate, not
+     * whichever line happened to appear last in the file. */
+    const char *keymap = "/tmp/tt-ffi-abi-keyboard.cnf";
+    FILE *kf = fopen(keymap, "wb");
+    CHECK(kf != NULL);
+    if (kf) {
+        fputs("[VT editor keypad]\nUp=328\nDown=328\n"
+              "[Shortcut keys]\nEditPaste=850\n"
+              "[User keys]\nUser1=1083,2,test.ttl\n"
+              "User2=1084,3,50110tail\n",
+              kf);
+        fclose(kf);
+    }
+    CHECK_OK(tt_session_key_map_load(s, keymap));
+    CHECK(tt_session_key_map_duplicate_count(s) == 1);
+    CHECK(tt_session_key_map_duplicate(s, 0) == 328);
+    CHECK(tt_session_key_map_duplicate(s, 1) == 0);
+
+    TtKeyCodeResult action = {0};
+    CHECK_OK(tt_session_send_key_code(s, 328, &action));
+    CHECK(action.kind == TT_KEY_CODE_SENT);
+    CHECK_OK(tt_session_send_key_code(s, 850, &action));
+    CHECK(action.kind == TT_KEY_CODE_SHORTCUT);
+    CHECK(action.value == TT_SHORTCUT_EDIT_PASTE);
+    CHECK(action.text == NULL);
+    CHECK_OK(tt_session_send_key_code(s, 1083, &action));
+    CHECK(action.kind == TT_KEY_CODE_MACRO);
+    CHECK(action.text != NULL && strcmp(action.text, "test.ttl") == 0);
+    CHECK_OK(tt_session_send_key_code(s, 1084, &action));
+    CHECK(action.kind == TT_KEY_CODE_COMMAND && action.value == 50110);
+    CHECK_OK(tt_session_send_key_code(s, 999, &action));
+    CHECK(action.kind == TT_KEY_CODE_UNMAPPED);
+    CHECK_OK(tt_session_send_key_code(s, 999, NULL));
+    remove(keymap);
+
     CHECK_OK(tt_session_send_text(s, "ls -l\r", SIZE_MAX));
     static const uint8_t raw[] = {0xE1, 0x00, 0xFF};
     CHECK_OK(tt_session_send_bytes(s, raw, sizeof raw));
@@ -1044,6 +1080,10 @@ static void test_null_safety(void)
     CHECK(tt_session_drain_events(NULL, NULL) == 0);
     CHECK(tt_session_pump(NULL, 0, NULL) == TT_ERR_INVALID);
     CHECK(tt_session_poll_fd(NULL) == -1);
+    CHECK(tt_session_key_map_load(NULL, "/tmp/x.cnf") == TT_ERR_INVALID);
+    CHECK(tt_session_key_map_duplicate_count(NULL) == 0);
+    CHECK(tt_session_key_map_duplicate(NULL, 0) == 0);
+    CHECK(tt_session_send_key_code(NULL, 1, NULL) == TT_ERR_INVALID);
     CHECK(tt_session_scrollback_len(NULL) == 0);
     tt_log_options_default(NULL);
     CHECK(tt_session_log_start(NULL, "/tmp/x", NULL) == TT_ERR_INVALID);
