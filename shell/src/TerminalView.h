@@ -209,6 +209,12 @@ private:
     /// URL recognition and painting are unconditional; this is only the hand
     /// cursor and double-click gate (`EnableClickableUrl`).
     bool m_clickableUrl = false;
+    /// `MouseCursor`, kept in the file's own spelling because upstream accepts
+    /// the four names case-insensitively and treats anything else as a no-op.
+    /// The URL hand calls the same interpreter when it leaves, so a valid
+    /// configured arrow, I-beam, cross or hand is restored rather than an
+    /// assumed default.
+    QString m_mouseCursorName = QStringLiteral("IBEAM");
     QString m_urlBrowser;
     QString m_urlBrowserArgs;
 

@@ -28,6 +28,28 @@ constexpr qint64 kMinFrameMs = 8;
 /// How often a drag held outside the window scrolls it, in milliseconds.
 constexpr int kAutoScrollMs = 40;
 
+/// Apply one of `MouseCursor`'s four names, or leave the current pointer alone.
+///
+/// The no-op is observable and upstream's own behavior: `SetMouseCursor`
+/// (`vtwin.cpp:159`) returns before calling `SetClassLongPtrW` when the raw
+/// setting is not in its table. In particular, it must not silently turn a
+/// hand-edited value into the shipped I-beam default.
+void setMouseCursor(QWidget *widget, const QString &name)
+{
+    Qt::CursorShape shape;
+    if (name.compare(QLatin1String("ARROW"), Qt::CaseInsensitive) == 0) {
+        shape = Qt::ArrowCursor;
+    } else if (name.compare(QLatin1String("IBEAM"), Qt::CaseInsensitive) == 0) {
+        shape = Qt::IBeamCursor;
+    } else if (name.compare(QLatin1String("CROSS"), Qt::CaseInsensitive) == 0) {
+        shape = Qt::CrossCursor;
+    } else if (name.compare(QLatin1String("HAND"), Qt::CaseInsensitive) == 0) {
+        shape = Qt::PointingHandCursor;
+    } else {
+        return;
+    }
+    widget->setCursor(shape);
+}
 
 /// The text one cell draws: the base character plus its combining marks.
 QString cellText(const TtCell &cell)
@@ -262,11 +284,10 @@ void TerminalView::applySettings()
     m_showUnfocusedCursor =
         flag("cursor.show_unfocused", m_showUnfocusedCursor);
     m_clickableUrl = flag("mouse.clickable_url", m_clickableUrl);
+    m_mouseCursorName = m_session->setting(QStringLiteral("mouse.cursor"));
     m_urlBrowser = m_session->setting(QStringLiteral("url.browser"));
     m_urlBrowserArgs = m_session->setting(QStringLiteral("url.browser_args"));
-    if (!m_clickableUrl) {
-        setCursor(Qt::IBeamCursor);
-    }
+    setMouseCursor(this, m_mouseCursorName);
 
     // Decoded by the core rather than read by name: `DelimList` is stored in
     // `Hex2StrW`'s `$xx` escape and its own default opens with one, so the raw
@@ -792,8 +813,14 @@ void TerminalView::mouseMoveEvent(QMouseEvent *event)
     // Upstream changes the cursor only while no button is held. A URL remains
     // marked and coloured with this setting off; it simply behaves like text.
     if (event->buttons() == Qt::NoButton) {
-        setCursor(m_clickableUrl && urlAt(p) ? Qt::PointingHandCursor
-                                            : Qt::IBeamCursor);
+        if (m_clickableUrl && urlAt(p)) {
+            setCursor(Qt::PointingHandCursor);
+        } else {
+            // The hand over a URL is temporary. Restore `MouseCursor`, not an
+            // assumed I-beam — and preserve `SetMouseCursor`'s no-op for a raw
+            // name it does not recognise.
+            setMouseCursor(this, m_mouseCursorName);
+        }
     }
 
     uint8_t button = TT_BUTTON_RELEASE;

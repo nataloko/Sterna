@@ -751,18 +751,47 @@ void test_clickable_url_controls_only_the_cursor_and_launch()
     h.feed("x http://example.test end");
 
     // Recognition, colour and underline happen with the setting off, but the
-    // cursor and double-click stay those of ordinary text.
-    h.hover(h.px(4), h.py(0));
-    CHECK(h.view.cursor().shape() == Qt::IBeamCursor);
-
+    // cursor and double-click stay those of ordinary text. That cursor is a
+    // setting of its own rather than necessarily an I-beam.
     QString error;
+    CHECK(h.session.setSetting(QStringLiteral("mouse.cursor"),
+                               QStringLiteral("ibeam"), &error));
+    h.view.applySettings();
+    CHECK(h.view.cursor().shape() == Qt::IBeamCursor);
+    CHECK(h.session.setSetting(QStringLiteral("mouse.cursor"),
+                               QStringLiteral("HAND"), &error));
+    h.view.applySettings();
+    CHECK(h.view.cursor().shape() == Qt::PointingHandCursor);
+    CHECK(h.session.setSetting(QStringLiteral("mouse.cursor"),
+                               QStringLiteral("ARROW"), &error));
+    h.view.applySettings();
+    h.hover(h.px(4), h.py(0));
+    CHECK(h.view.cursor().shape() == Qt::ArrowCursor);
+
     CHECK(h.session.setSetting(QStringLiteral("mouse.clickable_url"),
                                QStringLiteral("on"), &error));
     h.view.applySettings();
     h.hover(h.px(4), h.py(0));
     CHECK(h.view.cursor().shape() == Qt::PointingHandCursor);
     h.hover(h.px(0), h.py(0));
-    CHECK(h.view.cursor().shape() == Qt::IBeamCursor);
+    CHECK(h.view.cursor().shape() == Qt::ArrowCursor);
+
+    // The names are case-insensitive at the point of use, but their file
+    // spelling stays untouched. URL hover must restore the configured cross.
+    CHECK(h.session.setSetting(QStringLiteral("mouse.cursor"),
+                               QStringLiteral("cross"), &error));
+    h.view.applySettings();
+    CHECK(h.view.cursor().shape() == Qt::CrossCursor);
+    h.hover(h.px(4), h.py(0));
+    CHECK(h.view.cursor().shape() == Qt::PointingHandCursor);
+    h.hover(h.px(0), h.py(0));
+    CHECK(h.view.cursor().shape() == Qt::CrossCursor);
+
+    // An unknown raw value is upstream's no-op, not an implicit I-beam.
+    CHECK(h.session.setSetting(QStringLiteral("mouse.cursor"),
+                               QStringLiteral("MY-CURSOR"), &error));
+    h.view.applySettings();
+    CHECK(h.view.cursor().shape() == Qt::CrossCursor);
 
     h.mouse(QEvent::MouseButtonPress, h.px(4), h.py(0));
     h.mouse(QEvent::MouseButtonDblClick, h.px(4), h.py(0));
