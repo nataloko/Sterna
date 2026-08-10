@@ -402,6 +402,11 @@ And for the AppImage, where two of the three failures are silent:
   renders from. `Grid::check_wide_pairs` is the only check that covers this,
   and it is deliberately *not* an invariant — Tera Term breaks the pairing in
   three places itself, all listed on that function.
+  **The dump's other blind spot was the history, and that one is now
+  openable**: `--scrollback` on both engines prints the lines that have left
+  the page, and a case whose `cmd` asks for it compares them. It found `ED 2`
+  erasing a screen that upstream scrolls out — see the scrollback traps below.
+  Ask what a case cannot see before trusting that it passed.
 - **A parked space goes through the whole write path, not straight into the
   cell.** With one column left for a double-width glyph, upstream parks a space
   and retries by calling `BuffPutUnicode(0x20, …)` recursively
@@ -907,6 +912,55 @@ And for the settings, all of which came out of `ini-audit/`:
   pair while the buffer disagrees — and `Grid`'s dump looks perfect. The only
   outward sign is that DECRQSS' SGR (`vtterm.c:4332`) and the termcap `Co`
   query (`:4451`) stop naming a colour.
+
+And for the scrollback and the wheel, where three settings are named after
+something other than what they do:
+
+- **`BuffClearScreen` is a scroll, not an erase, and the differential dump
+  could not see the difference.** `buffer.c:4021` is
+  `BuffScroll(NumOfLines, NumOfLines-1)`: `ED 2` moves the whole page into the
+  history and comes back blank, which is why `clear` at a Tera Term keeps what
+  was on the screen. Filling the rows in place gives a page that compares
+  equal, so the port did that for months — the fix came with `--scrollback` on
+  both engines, which is the section that can tell them apart. The scroll
+  region has no say (the raw `BuffScroll` is handed the last row), and
+  `DECSET 1049` scrolls out on the way **in and out** (`vtterm.c:3044`,
+  `:3202`), so leaving `vim` leaves two pages in the history.
+- **`ScrollWindowClearScreen` does not gate `ED 2`.** `case 2` calls
+  `BuffClearScreen` whatever it says; the key decides only whether an `ED 0`
+  with the cursor at the home position is *promoted* to one (`vtterm.c:1728`),
+  which is what `ESC [ H ESC [ J` is and what a good many programs send in
+  place of `ESC [ 2 J`. Reading the name as "does a clear screen scroll" gets
+  the gate onto the wrong sequence.
+- **`ClearOnResize` clears on a resize that changed no size.** The
+  `BuffScroll` and the cursor-home sit *outside* the `if (size changed)` block
+  (`buffer.c:5028`), so `CSI 8 ; 24 ; 80 t` clears an 80x24 terminal — and so
+  does the `BuffChangeTerminalSize` upstream makes on its way to its first
+  screen, which puts a blank page in the history before a byte arrives. It is
+  also why DECCOLM skips its own clear when the flag is on (`vtterm.c:2925`):
+  the resize has already done one.
+- **`AutoScrollOnlyInBottomLine` ships off, so output drags a scrolled-back
+  view back down.** `MoveCursor` and `MoveRight` call `DispScrollToCursor` on
+  every step (`buffer.c:3794`, `:3805`) and `BuffScrollNLines` leaves
+  `NewOrgY` alone (`:3866`). It is the *minimum* scroll rather than a jump —
+  invisible while a host prints lines, since the cursor is on the last row
+  then, and visible when a full-screen program draws at the top. This port had
+  the `on` behaviour hardcoded before the key existed. **And the cursor
+  following belongs to the feed, not to a settings change**: sharing one
+  function between them made opening the settings dialog snap the reader back
+  to live, which is `Session::reanchor_after_resize`'s whole reason to exist.
+- **`MouseWheelScrollLine` applies only to a notch that arrived alone.**
+  `vtwin.cpp:2536` computes `abs(zDelta)/WHEEL_DELTA` and multiplies under
+  `line == 1`, so a flick fast enough to coalesce two notches into one message
+  scrolls two lines rather than six. The guard is `> 0` rather than a clamp, so
+  `MouseWheelScrollLine=0` is one line per notch and so is a negative value.
+  It is also the step for something with no other name: over the title bar the
+  wheel changes the window's opacity by this many units of 255
+  (`vtwin.cpp:2500`).
+- **`ScrollThreshold` is a repaint coalescer counted in lines**
+  (`vtdisp.c:3132`), which is `TerminalView`'s 8 ms frame floor measuring the
+  same thing in a different unit. Carried and acting on nothing, like
+  `NotifySound`.
 
 And for the clipboard, where the surprise is what happens to a line break:
 

@@ -3528,6 +3528,105 @@ and `Ini` reproduces that, which `ini-audit/` measured rather than assumed.
 
 166 settings over 153 keys, 112 to go.
 
+#### And the scrollback, where the harness had to be widened first
+
+`oracle/`, `crates/tt-config/`, `tt-grid`, `tt-vt`, `tt-session`, the C ABI and
+`shell/`, 2026-08-10. Six keys — two the terminal spends on the buffer, two the
+view spends on itself, two the wheel's — and the first family in a while where
+the *differential suite* was the thing that had to change before anything else
+could be trusted.
+
+**The dump could not see the history, and one of the six is entirely about
+it.** `--scrollback` was in the oracle's usage text and had never been
+implemented; it is now, on both engines, printing the lines that have left the
+page oldest first and numbered backwards from it. Off by default, so nothing
+already in `cases/` moved. It found a bug on its first run.
+
+**`BuffClearScreen` is a scroll and this port was erasing.** `buffer.c:4021` is
+`BuffScroll(NumOfLines, NumOfLines-1)`: `ED 2` moves the whole page into the
+history and comes back blank, which is why `clear` at a Tera Term keeps what
+was on the screen and why people who use it expect that. `Grid::clear_screen`
+filled the rows in place — and a blank page compares equal to a blank page, so
+112 differential cases and 568 conformance assertions all passed over it.
+Case 108 is the fix's proof and 109 records the half nobody would guess:
+`DECSET 1049` calls `BuffClearScreen` on the way **in and out**
+(`vtterm.c:3044`, `:3202`), so quitting `vim` leaves two pages in the history,
+the screen before it and vim's last.
+
+That is the second blind spot on file, after the wide-character pairing that
+`Grid::check_wide_pairs` covers, and the two want reading together: **the
+question to ask of a green case is what it cannot see.** This one is now
+openable per case, which the other is not.
+
+**Two of the six are named after something they do not do.**
+`ScrollWindowClearScreen` sounds like the gate on whether a clear screen
+scrolls, and `case 2` calls `BuffClearScreen` whatever it says; what the key
+decides is whether an `ED 0` with the cursor at the home position is *promoted*
+to a clear (`vtterm.c:1728`) — which is what `ESC [ H ESC [ J` is, and a good
+many programs send that in place of `ESC [ 2 J`. And `ClearOnResize` clears on
+a resize that changed no size, because the `BuffScroll` and the cursor-home sit
+outside the `if (size changed)` block (`buffer.c:5028`). The consequence
+reaches the harness: upstream makes a `BuffChangeTerminalSize` call on its way
+to its first screen, so with the key on a blank page is in the history before a
+byte has arrived, and `tt-dump` now makes the same call. It is also why DECCOLM
+skips its own clear when the flag is on — the resize has already done one, and
+upstream says so in a comment.
+
+The oracle grew `--clearonresize` and `--noscrollwindowclear` to reach the
+non-default half of each, the way `--crreceive` already did. Four cases,
+108-114, and none of them needed a golden.
+
+**`AutoScrollOnlyInBottomLine` ships off, and this port has been shipping `on`
+since the viewport was built.** Upstream calls `DispScrollToCursor` from
+`MoveCursor` and `MoveRight` on every step (`buffer.c:3794`, `:3805`) and
+leaves `NewOrgY` where it was when the page scrolls (`:3866`), so output while
+scrolled back pulls the reader back down — the thing the key was added to
+switch off, in 2008. Reproduced rather than kept, on the rule this document
+already applies to the two mouse-paste buttons: upstream's default is the
+file's to change and is not a bug. It is the *minimum* scroll rather than a
+jump to the bottom, which is invisible while a host prints lines and visible
+when a full-screen program draws at the top; both are tested.
+
+It cost one thing worth writing down. `Session::follow_scroll` was doing two
+jobs — re-anchoring on a resize and following the cursor — and `set_settings`
+called it for the first. With the cursor following added, opening the settings
+dialog on a terminal whose cursor is on the last row snapped the reader back to
+live. `reanchor_after_resize` is the half a settings change wants, and
+upstream's `SetupTerm` does not call `DispScrollToCursor` either.
+
+**The wheel had a hardcoded constant and a mode with nothing to act on it.**
+`TerminalView` scrolled by `QApplication::wheelScrollLines()`, which is the
+desktop's answer to a different question; `MouseWheelScrollLine` is Tera
+Term's, and it applies **only to a notch that arrived alone** — `vtwin.cpp:2536`
+multiplies under `line == 1`, so a flick fast enough to coalesce two notches
+into one message scrolls two lines rather than six. Reproduced quirk and all,
+because the alternative is a wheel that behaves differently here at exactly the
+speeds people scroll fastest. The guard is `> 0` rather than a clamp, so a 0 or
+a negative value is one line per notch. And it is the step for something with
+no other name: over the title bar the wheel changes the window's opacity by
+this many units of 255 (`vtwin.cpp:2500`) — one setting, two meanings, the way
+`TelEcho` and `ts.BSKey` each have.
+
+`DECSET 7786` was in the engine and unreachable: a host that asked for the
+wheel as cursor keys got the window's scrollback instead. `WheelToCursorMode`
+is four terms (`vtterm.c:5847`) and the frontend has no business assembling
+them, so `tt_session_wheel_to_cursor` is the whole predicate and takes the
+modifiers the way `tt_session_mouse` does — Ctrl under
+`DisableWheelToCursorByCtrl` is the escape hatch that reaches the terminal's
+own history while a full-screen program is up, and it is a setting rather than
+a convention.
+
+One of the six is carried and acts on nothing, said where it is declared:
+`ScrollThreshold` is a repaint coalescer counted in lines (`vtdisp.c:3132`),
+which is `TerminalView`'s 8 ms frame floor measuring the same thing in the unit
+a compositor cares about.
+
+And `run_abi.sh` had been red since the telnet pass: two checks still expected
+`TT_TELNET_AUTO` at a port that is not 23, from before `TelnetMode::Framed`
+existed. Corrected here rather than left.
+
+172 settings over 159 keys, 106 to go.
+
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
 Windows build, ConPTY, Win32 serial edge cases, NSIS installer. All 14 `.lng`
