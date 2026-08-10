@@ -1082,7 +1082,7 @@ void MainWindow::sendBreak()
 
 void MainWindow::sendFile()
 {
-    XferOptionsDialog options(true, m_session, this);
+    XferOptionsDialog options(true, m_session, this, m_i18n);
     if (options.exec() != QDialog::Accepted) {
         return;
     }
@@ -1094,9 +1094,10 @@ void MainWindow::sendFile()
     const QString dir = transferDirectory(*m_session);
     const QString filter = transferNameFilter(
         m_session->setting(QStringLiteral("transfer.send_filter")));
+    const QString title = options.transferTitle();
     const QStringList paths =
-        batch ? QFileDialog::getOpenFileNames(this, tr("Send"), dir, filter)
-              : QStringList{QFileDialog::getOpenFileName(this, tr("Send"), dir,
+        batch ? QFileDialog::getOpenFileNames(this, title, dir, filter)
+              : QStringList{QFileDialog::getOpenFileName(this, title, dir,
                                                          filter)};
     if (paths.isEmpty() || paths.first().isEmpty()) {
         return;
@@ -1104,12 +1105,11 @@ void MainWindow::sendFile()
 
     QString error;
     if (!m_session->sendFiles(options.job(), paths, &error)) {
-        QMessageBox::warning(this, tr("Send file"), error);
+        QMessageBox::warning(this, options.windowTitle(), error);
         return;
     }
 
-    m_xferDialog = new XferProgressDialog(
-        tr("Sending — %1").arg(options.protocolName()), this);
+    m_xferDialog = new XferProgressDialog(title, this, m_i18n);
     m_xferDialog->setAttribute(Qt::WA_DeleteOnClose);
     connect(m_xferDialog, &XferProgressDialog::cancelled, m_session,
             &Session::cancelTransfer);
@@ -1120,13 +1120,13 @@ void MainWindow::sendFile()
 
 void MainWindow::receiveFile()
 {
-    XferOptionsDialog options(false, m_session, this);
+    XferOptionsDialog options(false, m_session, this, m_i18n);
     if (options.exec() != QDialog::Accepted) {
         return;
     }
-    const QString dir =
-        QFileDialog::getExistingDirectory(this, tr("Receive into"),
-                                          transferDirectory(*m_session));
+    const QString title = options.transferTitle();
+    const QString dir = QFileDialog::getExistingDirectory(
+        this, title, transferDirectory(*m_session));
     if (dir.isEmpty()) {
         return;
     }
@@ -1147,12 +1147,11 @@ void MainWindow::receiveFile()
 
     QString error;
     if (!m_session->receiveFiles(options.job(), dir, name, &error)) {
-        QMessageBox::warning(this, tr("Receive file"), error);
+        QMessageBox::warning(this, options.windowTitle(), error);
         return;
     }
 
-    m_xferDialog = new XferProgressDialog(
-        tr("Receiving — %1").arg(options.protocolName()), this);
+    m_xferDialog = new XferProgressDialog(title, this, m_i18n);
     m_xferDialog->setAttribute(Qt::WA_DeleteOnClose);
     connect(m_xferDialog, &XferProgressDialog::cancelled, m_session,
             &Session::cancelTransfer);

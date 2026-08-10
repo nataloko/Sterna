@@ -16,16 +16,21 @@
 // still rendered, since those need no peer.
 
 #include <QApplication>
+#include <QComboBox>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
+#include <QLabel>
+#include <QPushButton>
 #include <QTemporaryDir>
 #include <QTimer>
 
 #include <cstdio>
 
 #include "MainWindow.h"
+#include "I18n.h"
 #include "Session.h"
 #include "XferDialog.h"
 
@@ -215,6 +220,47 @@ void test_the_menu_follows_the_state()
     CHECK(!send->isEnabled());
 }
 
+void test_the_dialogs_use_the_language_catalog()
+{
+    QString error;
+    I18n i18n;
+    CHECK(i18n.load(QStringLiteral("lang\\ja_JP.lng"), QString(), &error));
+
+    XferOptionsDialog options(true, nullptr, nullptr, &i18n);
+    CHECK(options.windowTitle() == QStringLiteral("ファイル送信"));
+    CHECK(options.transferTitle() == QStringLiteral("ZMODEM送信"));
+    bool protocolLabel = false;
+    bool optionLabel = false;
+    for (const QLabel *label : options.findChildren<QLabel *>()) {
+        protocolLabel |= label->text() == QStringLiteral("プロトコル:");
+        optionLabel |= label->text() == QStringLiteral("オプション");
+    }
+    CHECK(protocolLabel);
+    CHECK(optionLabel);
+
+    options.setProtocol(TT_XFER_PROTOCOL_X_MODEM);
+    CHECK(options.transferTitle() == QStringLiteral("XMODEM送信"));
+    bool checksum = false;
+    for (const QComboBox *combo : options.findChildren<QComboBox *>()) {
+        checksum |= combo->findText(QStringLiteral("128 bytes, チェックサム"))
+                    >= 0;
+    }
+    CHECK(checksum);
+
+    XferProgressDialog progress(options.transferTitle(), nullptr, &i18n);
+    auto *buttons = progress.findChild<QDialogButtonBox *>();
+    CHECK(buttons != nullptr);
+    if (buttons) {
+        CHECK(buttons->button(QDialogButtonBox::Cancel)->text()
+              == QStringLiteral("キャンセル"));
+        TransferResult complete;
+        complete.success = true;
+        progress.finish(complete);
+        CHECK(buttons->button(QDialogButtonBox::Close)->text()
+              == QStringLiteral("閉じる(&C)"));
+    }
+}
+
 /// The dialogs, rendered. `QWidget::grab()` re-renders offscreen, which is the
 /// only screenshot that works here and exactly what is wanted for checking our
 /// own layout.
@@ -267,6 +313,7 @@ int main(int argc, char **argv)
     test_a_file_goes_out_through_the_event_loop();
     test_cancelling_a_silent_transfer_ends_it();
     test_the_menu_follows_the_state();
+    test_the_dialogs_use_the_language_catalog();
     render_dialogs();
 
     if (failures) {

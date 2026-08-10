@@ -11,6 +11,8 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+#include "I18n.h"
+
 namespace {
 
 /// A size in the units a person reads.
@@ -29,10 +31,21 @@ QString humanBytes(qint64 n)
 
 // --- picking a protocol ------------------------------------------------------
 
-XferOptionsDialog::XferOptionsDialog(bool sending, Session *session, QWidget *parent)
-    : QDialog(parent), m_sending(sending), m_session(session)
+XferOptionsDialog::XferOptionsDialog(bool sending, Session *session, QWidget *parent,
+                                     const I18n *i18n)
+    : QDialog(parent), m_sending(sending), m_session(session), m_i18n(i18n)
 {
-    setWindowTitle(sending ? tr("Send file") : tr("Receive file"));
+    const auto text = [i18n](const char *key, const QString &fallback) {
+        return i18n ? i18n->text(key, fallback) : fallback;
+    };
+    const auto plainText = [i18n](const char *key, const QString &fallback) {
+        return i18n ? i18n->plainText(key, fallback) : fallback;
+    };
+
+    setWindowTitle(
+        plainText(sending ? "DLG_FILETRANS_TITLE"
+                          : "FILEDLG_TRANS_TITLE_RECVFILE",
+                  sending ? tr("Send file") : tr("Receive file")));
 
     m_protocol = new QComboBox(this);
     m_protocol->addItem(tr("ZMODEM"), TT_XFER_PROTOCOL_Z_MODEM);
@@ -49,7 +62,7 @@ XferOptionsDialog::XferOptionsDialog(bool sending, Session *session, QWidget *pa
            "has been tested against anything and both are best-effort."));
 
     m_option = new QComboBox(this);
-    m_optionLabel = new QLabel(tr("Blocks:"), this);
+    m_optionLabel = new QLabel(text("DLG_XOPT", tr("Blocks:")), this);
 
     m_text = new QCheckBox(tr("Text mode (translate line endings)"), this);
     m_text->setToolTip(tr("XMODEM only, and off unless the file is text: it "
@@ -59,12 +72,16 @@ XferOptionsDialog::XferOptionsDialog(bool sending, Session *session, QWidget *pa
             &XferOptionsDialog::protocolChanged);
 
     auto *form = new QFormLayout;
-    form->addRow(tr("Protocol:"), m_protocol);
+    form->addRow(text("DLG_PROT_PROTO", tr("Protocol:")), m_protocol);
     form->addRow(m_optionLabel, m_option);
     form->addRow(QString(), m_text);
 
     auto *buttons =
         new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    buttons->button(QDialogButtonBox::Ok)
+        ->setText(text("BTN_OK", tr("OK")));
+    buttons->button(QDialogButtonBox::Cancel)
+        ->setText(text("BTN_CANCEL", tr("Cancel")));
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
@@ -78,6 +95,9 @@ XferOptionsDialog::XferOptionsDialog(bool sending, Session *session, QWidget *pa
 void XferOptionsDialog::protocolChanged()
 {
     const auto proto = static_cast<TtXferProtocol>(m_protocol->currentData().toInt());
+    const auto optionText = [this](const char *key, const QString &fallback) {
+        return m_i18n ? m_i18n->plainText(key, fallback) : fallback;
+    };
 
     m_option->clear();
     switch (proto) {
@@ -85,10 +105,21 @@ void XferOptionsDialog::protocolChanged()
         // Upstream's four, in the order its own dialog lists them. CRC first
         // because it is what a receiver asks for by sending `C`; checksum is
         // for a peer old enough not to know about CRC.
-        m_option->addItem(tr("128 bytes, CRC"), 2);
-        m_option->addItem(tr("128 bytes, checksum"), 1);
-        m_option->addItem(tr("1K, CRC"), 3);
-        m_option->addItem(tr("1K, checksum"), 4);
+        m_option->addItem(
+            tr("128 bytes, %1").arg(optionText("DLG_XOPT_CRC", tr("CRC"))), 2);
+        m_option->addItem(tr("128 bytes, %1")
+                              .arg(optionText("DLG_XOPT_CHECKSUM", tr("checksum"))),
+                          1);
+        m_option->addItem(
+            tr("%1, %2")
+                .arg(optionText("DLG_XOPT_1K", tr("1K")),
+                     optionText("DLG_XOPT_CRC", tr("CRC"))),
+            3);
+        m_option->addItem(
+            tr("%1, %2")
+                .arg(optionText("DLG_XOPT_1K", tr("1K")),
+                     optionText("DLG_XOPT_CHECKSUM", tr("checksum"))),
+            4);
         break;
     case TT_XFER_PROTOCOL_Y_MODEM:
         // 1K is the only value the sender's packet builder has a case for —
@@ -149,6 +180,48 @@ QString XferOptionsDialog::protocolName() const
     return m_protocol->currentText();
 }
 
+QString XferOptionsDialog::transferTitle() const
+{
+    const auto protocol =
+        static_cast<TtXferProtocol>(m_protocol->currentData().toInt());
+    const char *key = nullptr;
+    switch (protocol) {
+    case TT_XFER_PROTOCOL_X_MODEM:
+        key = m_sending ? "FILEDLG_TRANS_TITLE_XSEND"
+                        : "FILEDLG_TRANS_TITLE_XRCV";
+        break;
+    case TT_XFER_PROTOCOL_Y_MODEM:
+        key = m_sending ? "FILEDLG_TRANS_TITLE_YSEND"
+                        : "FILEDLG_TRANS_TITLE_YRCV";
+        break;
+    case TT_XFER_PROTOCOL_Z_MODEM:
+        key = m_sending ? "FILEDLG_TRANS_TITLE_ZSEND"
+                        : "FILEDLG_TRANS_TITLE_ZRCV";
+        break;
+    case TT_XFER_PROTOCOL_KERMIT:
+        key = m_sending ? "FILEDLG_TRANS_TITLE_KMTSEND"
+                        : "FILEDLG_TRANS_TITLE_KMTRCV";
+        break;
+    case TT_XFER_PROTOCOL_B_PLUS:
+        key = m_sending ? "FILEDLG_TRANS_TITLE_BPSEND"
+                        : "FILEDLG_TRANS_TITLE_BPRCV";
+        break;
+    case TT_XFER_PROTOCOL_QUICK_VAN:
+        key = m_sending ? "FILEDLG_TRANS_TITLE_QVSEND"
+                        : "FILEDLG_TRANS_TITLE_QVRCV";
+        break;
+    case TT_XFER_PROTOCOL_RAW:
+        key = m_sending ? "FILEDLG_TRANS_TITLE_SENDFILE"
+                        : "FILEDLG_TRANS_TITLE_RAWRCV";
+        break;
+    }
+
+    const QString fallback =
+        m_sending ? tr("Sending — %1").arg(protocolName())
+                  : tr("Receiving — %1").arg(protocolName());
+    return m_i18n && key ? m_i18n->plainText(key, fallback) : fallback;
+}
+
 bool XferOptionsDialog::needsReceiveName() const
 {
     return !m_sending
@@ -172,8 +245,9 @@ TtXferJob XferOptionsDialog::job() const
 
 // --- watching it happen ------------------------------------------------------
 
-XferProgressDialog::XferProgressDialog(const QString &title, QWidget *parent)
-    : QDialog(parent)
+XferProgressDialog::XferProgressDialog(const QString &title, QWidget *parent,
+                                       const I18n *i18n)
+    : QDialog(parent), m_i18n(i18n)
 {
     setWindowTitle(title);
 
@@ -191,6 +265,9 @@ XferProgressDialog::XferProgressDialog(const QString &title, QWidget *parent)
     m_stats = new QLabel(QString(), this);
 
     m_buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
+    m_buttons->button(QDialogButtonBox::Cancel)
+        ->setText(m_i18n ? m_i18n->text("BTN_CANCEL", tr("Cancel"))
+                         : tr("Cancel"));
     connect(m_buttons, &QDialogButtonBox::rejected, this, [this] {
         if (m_done) {
             accept();
@@ -262,6 +339,8 @@ void XferProgressDialog::finish(const TransferResult &result)
 
     m_buttons->setStandardButtons(QDialogButtonBox::Close);
     if (QPushButton *close = m_buttons->button(QDialogButtonBox::Close)) {
+        close->setText(m_i18n ? m_i18n->text("BTN_CLOSE", tr("Close"))
+                              : tr("Close"));
         close->setDefault(true);
         close->setFocus();
     }

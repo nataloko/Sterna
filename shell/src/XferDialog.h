@@ -17,6 +17,7 @@ class QDialogButtonBox;
 class QLabel;
 class QLineEdit;
 class QProgressBar;
+class I18n;
 
 /// Pick a protocol and its options.
 ///
@@ -35,12 +36,14 @@ public:
     /// `XmodemBin`, `ZmodemAuto` and the raw capture's wait from the settings
     /// file, which is where the user put them.
     XferOptionsDialog(bool sending, Session *session = nullptr,
-                      QWidget *parent = nullptr);
+                      QWidget *parent = nullptr, const I18n *i18n = nullptr);
 
     /// The job as configured. Ready to hand to `Session::sendFiles`.
     TtXferJob job() const;
     /// The protocol as the user picked it, for a window title.
     QString protocolName() const;
+    /// Upstream's protocol-specific caption, such as `XMODEM Send`.
+    QString transferTitle() const;
     /// Whether the chosen protocol needs a destination filename from the user.
     /// True for XMODEM and nothing else: its wire format carries no name, so
     /// there is nothing to derive one from.
@@ -59,6 +62,7 @@ private:
 
     bool m_sending;
     Session *m_session;
+    const I18n *m_i18n;
     QComboBox *m_protocol;
     QComboBox *m_option;
     QCheckBox *m_text;
@@ -77,7 +81,8 @@ class XferProgressDialog : public QDialog {
     Q_OBJECT
 
 public:
-    XferProgressDialog(const QString &title, QWidget *parent = nullptr);
+    XferProgressDialog(const QString &title, QWidget *parent = nullptr,
+                       const I18n *i18n = nullptr);
 
     void update(const TransferProgress &progress);
     /// Show how it ended and turn Cancel into Close. The dialog stays up: a
@@ -95,5 +100,6 @@ private:
     QLabel *m_stats;
     QProgressBar *m_bar;
     QDialogButtonBox *m_buttons;
+    const I18n *m_i18n;
     bool m_done = false;
 };
