@@ -8,12 +8,14 @@ trait object or an allocator — and nothing Win32- or Qt-shaped comes back the
 other way. No `HWND`, no `QWidget`, no fonts, no glyphs, and no pixels beyond
 `cell_w`/`cell_h`.
 
-Builds as `libsterna.so` / `sterna.a` (and an rlib), with the header at
+Builds as `libsterna.so` / `sterna.a` on Linux and `sterna.dll` /
+`libsterna.dll.a` on Windows (and an rlib), with the header at
 `include/sterna.h`.
 
 ```sh
 cargo build -p tt-ffi     # also regenerates include/sterna.h
 ./run_abi.sh              # compile the header and drive it from C and C++
+./run_abi_windows.sh      # the Win32 header, DLL, HANDLEs and named pipe
 ```
 
 ## The header is generated, committed, and gated
@@ -156,15 +158,23 @@ Deliberately absent, and each for a reason rather than for lack of time:
   emit it. A frontend in a modal state may decline it, which is why the core
   requests rather than owns the close.
 
-## `run_abi.sh` is the only test that means anything here
+## The platform C harnesses are the tests that mean anything here
 
 A Rust test calling these functions proves the logic and nothing about the
 seam: it never compiles the header, never links the shared library, and cannot
 notice that a struct the frontend must fill in is unreachable without a Rust
-type. `tests/abi.c` is written the way the Qt shell will be — no helpers, just
-the header — and the script also compiles the header as **C++**, which is what
-will actually include it.
+type. `tests/abi.c` is written the way the Unix Qt shell will be — no helpers,
+just the header, poll descriptors, a pty and a Unix control socket.
+`tests/abi_windows.c` does the same against `sterna.dll`, Win32 event handles
+and a named-pipe client. Both scripts also compile the header as **C++**, which
+is what will actually include it.
 
 Both compile with `-Wall -Wextra -Werror -pedantic`, because a warning in a
 header is the header's bug: a frontend that has to silence warnings to include
 us will end up silencing the warnings.
+
+`run_abi_windows.sh` is a focused MinGW/Wine seam smoke, not a claim that Wine
+is Windows. Its screen, file, command-line, missing-COM, macro-event and direct
+named-pipe answers execute below the Qt layer and are useful here. ConPTY,
+serial hardware and the two pipe-namespace operations Wine does not implement
+remain native-Windows tests.

@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 407
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 408
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4610,6 +4610,18 @@ spawns `rustfmt`; Wine cannot run the installed Linux executable, so its
 Windows half remains a native-toolchain check rather than being weakened. The
 native Linux suite passes all 123 checks, including that generator guard, and
 both target clippy passes are clean.
+
+The flat ABI now has a real Windows consumer rather than a zero-test Rust DLL
+build. A MinGW C11 program includes the generated header, links and loads
+`sterna.dll`, then drives the screen/event surface, Windows temporary files,
+settings, logging, command-line resolution, serial enumeration and missing-COM
+mapping. It also waits for a threaded macro through the exported Win32 event
+and sends raw JSON through a `CreateFile` named-pipe client, servicing the
+control event until the reply comes back. The same header is compiled as
+C++17. That focused harness passes under Wine, while the unchanged native
+Linux C/C++ ABI harness remains green including its pty and ZMODEM paths.
+This does not move the native-Windows boundary: ConPTY, real COM hardware and
+Wine's two missing pipe-namespace operations still require the Windows runner.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

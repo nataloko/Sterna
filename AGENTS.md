@@ -63,6 +63,7 @@ cd crates                        # the Rust core
 cargo test && cargo clippy --all-targets -- -D warnings
 cargo fmt --all                  # the whole workspace, generated.rs included
 tt-ffi/run_abi.sh                # the C ABI, compiled and driven from C
+tt-ffi/run_abi_windows.sh        # ...and its Win32 DLL/HANDLE/pipe seam
 cargo test -p tt-xfer            # the protocols vs lrzsz and gkermit, over a pty
 cargo test -p tt-ttl             # the macro language, with no terminal attached
 cargo test -p tt-ttl --test scripts          # ...and upstream's own 53 macros
@@ -253,6 +254,11 @@ error in the other.
 These cost real debugging time. Each is a place where the failure looks like
 something other than what it is.
 
+- **`cargo test -p tt-ffi` runs zero ABI tests.** That crate deliberately has
+  no Rust-side seam tests: Rust calling Rust cannot prove the generated header
+  compiles or the shared library links from C. Run `tt-ffi/run_abi.sh` for the
+  Unix ABI and `tt-ffi/run_abi_windows.sh` for the focused Win32 DLL, HANDLE
+  and named-pipe smoke.
 - **`UTF32ToUTF16` is not optional.** `buffer.c:234` uses it to fill
   `buff_char_t::wc2`, and `expand_wchar()` reads back from `wc2`, not `u32`.
   Stub it and you get a screen holding all the right codepoints that renders
