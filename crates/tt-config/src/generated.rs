@@ -1222,6 +1222,11 @@ pub struct Settings {
     pub cursor_shape: CursorShape,
     /// `ttset.c:1227`.
     pub cursor_nonblinking: bool,
+    /// `ttset.c:1231`. Whether a window without keyboard focus keeps a hollow
+    /// cursor on the live screen. `CaretKillFocus` (`vtdisp.c:1872`) draws a
+    /// full-cell outline regardless of the configured active cursor shape; off, an
+    /// unfocused window has no cursor at all.
+    pub cursor_show_unfocused: bool,
     /// `ttset.c:1653`, part of `WindowFlag` — the same trap as `ColorFlag`. Gates
     /// every XTWINOPS operation that *changes* something, the resize included.
     pub window_change_allowed: bool,
@@ -2002,6 +2007,7 @@ impl Default for Settings {
             color_use_normal_background: false,
             cursor_shape: CursorShape::default(),
             cursor_nonblinking: false,
+            cursor_show_unfocused: true,
             window_change_allowed: true,
             window_report_allowed: true,
             window_cursor_ctrl_allowed: false,
@@ -2344,6 +2350,10 @@ impl Settings {
             cursor_nonblinking: crate::schema::on_off(
                 ini.get("Tera Term", "NonblinkingCursor"),
                 false,
+            ),
+            cursor_show_unfocused: crate::schema::on_off(
+                ini.get("Tera Term", "KillFocusCursor"),
+                true,
             ),
             window_change_allowed: crate::schema::on_off(
                 ini.get("Tera Term", "WindowCtrlSequence"),
@@ -3246,6 +3256,16 @@ impl Settings {
             "Tera Term",
             "NonblinkingCursor",
             &if self.cursor_nonblinking { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "KillFocusCursor",
+            &if self.cursor_show_unfocused {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
         );
         ini.set(
             "Tera Term",
@@ -4431,6 +4451,12 @@ impl Settings {
             .to_string(),
             "cursor.shape" => self.cursor_shape.as_ini().to_string(),
             "cursor.nonblinking" => if self.cursor_nonblinking { "on" } else { "off" }.to_string(),
+            "cursor.show_unfocused" => if self.cursor_show_unfocused {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "window.change_allowed" => if self.window_change_allowed {
                 "on"
             } else {
@@ -4983,6 +5009,9 @@ impl Settings {
             "cursor.shape" => self.cursor_shape = CursorShape::from_ini(value),
             "cursor.nonblinking" => {
                 self.cursor_nonblinking = crate::schema::on_off(Some(value), false)
+            }
+            "cursor.show_unfocused" => {
+                self.cursor_show_unfocused = crate::schema::on_off(Some(value), true)
             }
             "window.change_allowed" => {
                 self.window_change_allowed = crate::schema::on_off(Some(value), true)
@@ -5964,6 +5993,16 @@ pub const FIELDS: &[Field] = &[
         default: "off",
         label: Some("DLG_TAB_VISUAL_CURSOR"),
         doc: "`ttset.c:1227`.",
+    },
+    Field {
+        name: "cursor.show_unfocused",
+        page: "cursor",
+        section: "Tera Term",
+        key: "KillFocusCursor",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1231`. Whether a window without keyboard focus keeps a hollow cursor on the live screen. `CaretKillFocus` (`vtdisp.c:1872`) draws a full-cell outline regardless of the configured active cursor shape; off, an unfocused window has no cursor at all.",
     },
     Field {
         name: "window.change_allowed",

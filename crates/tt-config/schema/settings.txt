@@ -411,6 +411,12 @@ cursor.shape | enum(block=Block,vertical=Vertical,horizontal=Horizontal) | Tera 
 # `ttset.c:1227`.
 cursor.nonblinking | bool | Tera Term | NonblinkingCursor | off | DLG_TAB_VISUAL_CURSOR
 
+# `ttset.c:1231`. Whether a window without keyboard focus keeps a hollow
+# cursor on the live screen. `CaretKillFocus` (`vtdisp.c:1872`) draws a
+# full-cell outline regardless of the configured active cursor shape; off, an
+# unfocused window has no cursor at all.
+cursor.show_unfocused | bool | Tera Term | KillFocusCursor | on | -
+
 # --- window ------------------------------------------------------------------
 
 # `ttset.c:1653`, part of `WindowFlag` — the same trap as `ColorFlag`. Gates
