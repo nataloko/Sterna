@@ -229,6 +229,19 @@ setting when the schema exists:
   an interrupt. Middle-click pastes the primary selection, and releasing a drag
   fills it.
 
+## The mouse pointer has a setting of its own
+
+`MouseCursor` chooses an arrow, I-beam, cross or hand, independently of the
+terminal's painted text cursor. The file's names are interpreted
+case-insensitively, and an unknown raw name is a no-op rather than an implicit
+default. That is why the shell keeps the spelling and interprets it when the
+pointer is applied instead of asking the schema to normalise an enum.
+
+A clickable URL temporarily uses the hand. Moving away reapplies
+`MouseCursor`, so the pointer returns to the configured shape — not always to
+the shipped I-beam. URL recognition, colour and underline remain independent
+of both pointer settings.
+
 ## Scrollback follows the session, not the other way round
 
 The wheel, `Shift+PageUp`/`PageDown` and the scrollbar all move the same thing:

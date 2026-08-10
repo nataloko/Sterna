@@ -95,6 +95,12 @@ four-byte buffer, so only the first three characters are compared and `offline`
 is `off`. All of it is reproduced, because a file that says `offline` is one
 somebody's Tera Term is already treating as off.
 
+Not every setting with a short list of useful values is an enum. `MouseCursor`
+accepts four names at the point of use, case-insensitively, but its reader keeps
+the raw text and an unknown name leaves the current pointer unchanged. It is a
+schema `string` for that reason: turning it into an enum would silently replace
+a hand-edited value with the default on the next save.
+
 ## Two spellings the file needs that the first pass did not have
 
 Both found by wiring the schema to the terminal, and both are the same shape as

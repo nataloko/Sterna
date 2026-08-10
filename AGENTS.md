@@ -991,6 +991,13 @@ ones:
   decide how it is painted, and `EnableClickableUrl` gates only the hand
   cursor and double-click launch. It ships off, while both paint switches ship
   on, so treating it as a master gate gives the wrong default screen.
+- **`MouseCursor` looks like an enum and is not one.** `ttset.c:1460` keeps the
+  file's raw spelling, while `SetMouseCursor` (`vtwin.cpp:159`) compares
+  `ARROW`, `IBEAM`, `CROSS` and `HAND` case-insensitively and returns without
+  changing anything for an unknown value. Normalising one to `IBEAM` changes a
+  shared file and live behavior at once. The hand over a clickable URL is only
+  temporary; moving away calls this same setting again, so hardcoding an
+  I-beam there loses a configured arrow, cross or hand.
 - **A URL beginning at buffer pointer zero loses its own marking when it
   grows.** `mark_url_line_w` stops its backward search at zero and then
   increments unconditionally (`buffer.c:2658`), so typing one character after

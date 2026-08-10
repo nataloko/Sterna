@@ -1088,7 +1088,7 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (205 settings over 191 keys: 39 for the terminal,
+  `crates/tt-config/` (206 settings over 192 keys: 39 for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
   writes into, 2026-08-09, plus the whole log family, then the whole
   file-transfer family, then the seven the terminal and the two the *transports*
@@ -1099,11 +1099,11 @@ before anything else in every session.
   the window-position pair and its save switch, the unfocused-cursor switch
   alongside the live cursor renderer, the startup macro's one-shot launch
   state, OSC 52's remote clipboard permissions and notification, and the
-  connection-close outcome pair, 2026-08-10), the map onto a running
-  terminal in `tt-session`, the
-  schema as data over the C ABI, and a Qt dialog that builds itself from it.
+  connection-close outcome pair, then the configured mouse pointer,
+  2026-08-10), the map onto a running terminal in `tt-session`, the schema as
+  data over the C ABI, and a Qt dialog that builds itself from it.
   What remains is the *rest of the settings*, which is a line and a citation
-  each — 81 keys as of 2026-08-10, and `tests/upstream.rs`
+  each — 80 keys as of 2026-08-10, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -4048,6 +4048,23 @@ transfer on write-side disconnects, which the older write-error arm had
 skipped.
 
 205 settings over 191 keys, 81 to go.
+
+#### The URL hand returns to the configured pointer
+
+`crates/tt-config/` and the shell, 2026-08-10. `MouseCursor` chooses the
+ordinary pointer over the terminal from `ARROW`, `IBEAM`, `CROSS` and `HAND`,
+case-insensitively. `EnableClickableUrl` temporarily replaces whichever one
+was chosen with a hand while the pointer is over a marked URL; moving away now
+restores the configured pointer instead of the I-beam the shell had hardcoded.
+
+**Four known values do not make this an enum in the file.** `ttset.c:1460`
+copies the raw spelling into `MouseCursorName`, and `SetMouseCursor`
+(`vtwin.cpp:159`) simply leaves the existing cursor alone when it recognises
+none of them. The schema therefore keeps a string: lowercase names continue
+to work, and an unknown hand-edited value survives both a save and a live
+settings change without being normalised to the default.
+
+206 settings over 192 keys, 80 to go.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
