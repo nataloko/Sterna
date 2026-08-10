@@ -1307,6 +1307,41 @@ And for the menu, where three plausible names are three independent controls:
   a command was added. A `QAction` may belong to both widgets; destroying the
   temporary `QMenu` only removes that association.
 
+And for the keyboard, where two settings both say Meta but mean different
+things:
+
+- **`MetaKey` chooses whether an Alt key is Meta; `Meta8Bit` chooses what an
+  enabled Meta does.** Both ship `off`, but those two `off`s are unrelated:
+  `MetaKey=off` leaves Alt to the desktop, while `MetaKey=on` plus
+  `Meta8Bit=off` sends an ESC prefix (`vtwin.cpp:2856`). `raw` ORs 0x80 into
+  the byte and `text` ORs U+0080 into the character before text encoding, so
+  they cannot share the UTF-8 send path. Left/right modes require remembering
+  the native Alt press because a later Qt character event carries no side.
+- **`StrictKeyMapping` removes defaults; it does not validate a map.** A key
+  absent from `KEYBOARD.CNF` normally falls through to Tera Term's built-in VT
+  sequence and strict mode suppresses that fallback (`keyboard.c:960` onward).
+  Delete is an explicit exception: `DeleteKey=on` still sends 0x7f before the
+  strict check. With no `KEYBOARD.CNF` reader yet, strict mode therefore makes
+  the built-in special keys quiet, which is the faithful incomplete behavior.
+
+And for the last batch of file-shaped settings:
+
+- **The key Tera Term reads is `CygwinDirectory `, including the trailing
+  space, and the key it writes is `CygwinDirectory`, without it.** The two
+  literals are at `ttset.c:1476` and `:2250`. Trimming schema columns or using
+  one spelling both ways makes a saved value invisible on the next load.
+  Backtick-quoted schema keys preserve the space; `write-key=` records the
+  writer's different spelling.
+- **`FileSendFilter` reaches raw send and every protocol send picker;
+  `FileReceiveFilter` is raw receive only.** `_GetXFname` deliberately passes
+  no receive mask (`filesys_proto.cpp:727`), because protocol receive either
+  carries a name or asks through its own flow. Applying the apparently paired
+  setting symmetrically changes a dialog upstream does not filter.
+- **`DrawingResizedFont` is glyph fitting, not cell measurement.** Upstream
+  measures the selected glyph and stretches a mismatch into its assigned cell
+  box (`vtdisp.c:2902`). Turning it off must not remove the separate spacing
+  correction which keeps a batched monospace run aligned to the grid.
+
 And for remembered window geometry, where one switch controls writes rather
 than reads:
 

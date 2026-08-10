@@ -3,7 +3,7 @@
 `TERATERM.INI`, and the schema that says what is in it.
 
 ```sh
-cargo test -p tt-config                          # 17 tests, no Wine needed
+cargo test -p tt-config                          # no Wine needed
 cargo run -p tt-config --bin gen-settings        # after editing the schema
 cd ../../ini-audit && ./run.sh                   # re-check the Win32 record
 ```
@@ -123,8 +123,9 @@ every other trap here — a rule that looks uniform and is not.
 
 ## Still to come
 
-- **The rest of the settings.** 39 of roughly 600. The machinery is the
-  expensive part and it is done; adding a row is a line and a citation.
+- **The rest of the settings.** The schema currently has 248 settings over 234
+  of the 272 keys read by `ttset.c`; `tests/upstream.rs` prints the live count.
+  The machinery is done; adding a row is a line and a citation.
 - **`.lng` labels.** The metadata carries the label key and nothing looks it
   up, so the dialog derives a name from the setting instead. That is `tt-i18n`.
 - **`KEYBOARD.CNF`**, which is an INI and reads with the same layer.

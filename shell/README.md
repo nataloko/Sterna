@@ -445,6 +445,28 @@ event so the new value appears immediately. The file value is a 16-bit word,
 not a range-clamped integer: values wrap modulo 65536 and unknown bits 6–15 are
 kept.
 
+## Alt is Meta only when the file says it is
+
+`MetaKey` ships off, so Alt belongs to the desktop and the menu until the user
+enables all, left or right Alt. The side-specific forms are tracked from the
+native Alt press because Qt's later character event says only that *an* Alt key
+is down. Once Meta is active, `Meta8Bit=off` prefixes ESC, `raw` sets the high
+bit on the byte through the binary ABI, and `text` sets U+0080 on the character
+before the ordinary UTF-8 text path encodes it. Those are different byte
+streams and the real-pty test asserts each one.
+
+`StrictKeyMapping` means a special key with no `KEYBOARD.CNF` entry has no
+built-in fallback; it does not mean stricter validation. The mapping file is
+still to come, so strict mode currently suppresses those special keys.
+`DeleteKey=on` is upstream's explicit exception and sends DEL anyway.
+
+Font rasterisation is applied at the painter boundary. `FontQuality` maps to
+Qt's default, antialiased or non-antialiased request; ClearType uses the
+antialias request away from Windows and leaves subpixel policy to the platform.
+`DrawingResizedFont` gates horizontal fitting for a fallback glyph whose
+natural advance does not match its cell. It does not remove the small letter
+spacing correction that keeps an ordinary 80-column run on the cell grid.
+
 ## The setup dialog has no list of settings in it
 
 `SettingsDialog` walks `tt_settings_field`, the core's metadata table: a tab per
@@ -463,7 +485,7 @@ keep in step.
 Three things it does deliberately:
 
 - **Only what changed is written.** A dialog that applied every field would pin
-  all 39 settings into the user's file the first time it was opened, and a
+  all 248 settings into the user's file the first time it was opened, and a
   pinned setting stops following upstream's default for ever.
 - **The combo box shows the file's spellings**, not prettified ones. Upstream
   compares `TerminalID` with `strcmp`, so `Vt320` would read back as a VT100.
@@ -500,6 +522,13 @@ supported thing to do and `--ini` is how it will be spelled.
 `File > Send file...` and `File > Receive file...`. The protocols are Tera
 Term's own C, vendored and driven by `tt-xfer`; what the window supplies is a
 protocol chooser, a progress dialog, and the wakeups.
+
+The pickers begin at `FileDir`, after `%NAME%` expansion, or at Downloads when
+that path is absent or unusable. `FileSendFilter` uses Tera Term's semicolon
+mask spelling and applies to every protocol send picker. `FileReceiveFilter`
+belongs only to raw receive; it is retained in the settings but is not applied
+to the protocol receive dialogs, matching upstream even for XMODEM's prompted
+name.
 
 **The wakeups are the part worth reading.** Everything else in this window
 runs off the descriptor, and a transfer cannot: the protocols retry by

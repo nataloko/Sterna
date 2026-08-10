@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 1 complete, 2 in progress · **Commits:** 300
+**Last updated:** 2026-08-10 · **Stage:** 1 complete, 2 in progress · **Commits:** 310
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1090,7 +1090,7 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (211 settings over 197 keys: 39 for the terminal,
+  `crates/tt-config/` (248 settings over 234 keys: 39 for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
   writes into, 2026-08-09, plus the whole log family, then the whole
   file-transfer family, then the seven the terminal and the two the *transports*
@@ -1103,12 +1103,13 @@ before anything else in every session.
   state, OSC 52's remote clipboard permissions and notification, and the
   connection-close outcome pair, then the configured mouse pointer, the
   character-width word boundary, protected setup-file saves and the
-  active/inactive window-opacity pair and the window-title format word,
+  active/inactive window-opacity pair and the window-title format word, then
+  the shell/menu/broadcast, raw-file, keyboard and font families,
   2026-08-10),
   the map onto a running terminal in `tt-session`, the schema as
   data over the C ABI, and a Qt dialog that builds itself from it.
   What remains is the *rest of the settings*, which is a line and a citation
-  each — 75 keys as of 2026-08-10, and `tests/upstream.rs`
+  each — 38 keys as of 2026-08-10, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -1164,10 +1165,10 @@ are `else` branches or flag words and each already has a trap written about it.
 The generated file is committed and a test fails when it is stale, the same
 arrangement as `tt-ffi`'s header.
 
-39 settings of roughly 600. The machinery was the expensive part; adding a row
-is a line and a citation — and the log family, added later the same week, is
-what that claim was tested against: seventeen rows, and the work was reading
-`ttset.c` and `filesys_log.cpp` rather than anything to do with the schema.
+The first 39 settings proved the machinery. Adding a row is a line and a
+citation — and the log family, added later the same week, is what that claim
+was tested against: seventeen rows, and the work was reading `ttset.c` and
+`filesys_log.cpp` rather than anything to do with the schema.
 
 #### And then it was wired, which is where the schema paid for itself
 
@@ -1192,9 +1193,9 @@ Three decisions worth recording, each of which looks like a bug from one side:
   `Vt::set_config` is `CVTWindow::SetupTerm` (`vtwin.cpp:1383`) and refreshes
   exactly those — while deliberately leaving `LFMode` and `AcceptWheelToCursor`,
   which upstream *does* keep separately and `SetupTerm` does not touch.
-- **The dialog writes only what changed.** Applying every field would pin all 39
-  settings into the user's file the first time it was opened, and a pinned
-  setting stops following upstream's default for ever.
+- **The dialog writes only what changed.** Applying every field would pin all
+  248 known settings into the user's file the first time it was opened, and a
+  pinned setting stops following upstream's default for ever.
 - **The size resizes the *window*, not the grid** — the same path a telnet NAWS
   resize takes, because the view fits the terminal to the space it has.
 
@@ -4160,6 +4161,46 @@ reset, matching `ttdde.c:988`, so the caption changes immediately rather than
 waiting for unrelated terminal output.
 
 211 settings over 197 keys, 75 to go.
+
+#### Thirty-seven settings, and the remaining list is shorter than this batch
+
+`crates/tt-config/`, the C ABI and the shell, 2026-08-10. Three related passes
+added 37 settings over 37 upstream keys: eighteen for the shell, menus and
+broadcast window; eleven for raw file send/receive; and eight for terminal,
+keyboard and font behavior. The schema now stands at **248 settings over 234
+keys, with 38 of `ttset.c`'s 272 keys to go**.
+
+The keys with an existing surface act now. `AcceleratorNewConnection`,
+`AcceleratorCygwinConnection` and the Send break accelerator change their Qt
+shortcuts live; the matching disable-menu switches change action availability.
+`FileSendFilter` is converted from Tera Term's `*.txt;*.log` spelling to Qt's
+name filter and every protocol send picker starts from the expanded `FileDir`,
+falling back to Downloads as upstream does. The rest of the raw-file family is
+carried faithfully for the raw send/capture UI which is not built yet; it does
+not get incorrectly folded into X/Y/ZMODEM or Kermit.
+
+`MetaKey` and `Meta8Bit` are live and deliberately separate. Meta itself ships
+off; once enabled, `Meta8Bit=off` prefixes ESC, `raw` sets bit 7 on the byte,
+and `text` sets U+0080 before UTF-8 encoding. The raw arm required a binary
+`tt_session_send_bytes` ABI rather than abusing the text path. Left and right
+Alt are remembered from native key events, `StrictKeyMapping` suppresses the
+built-in special-key fallback, and `DeleteKey` remains upstream's exception.
+The Qt pty test asserts the actual bytes for all three Meta encodings and both
+keyboard switches.
+
+`FontQuality` reaches Qt's rasterisation strategy. ClearType becomes an
+explicit antialias request off Windows, leaving subpixel details to the native
+paint engine instead of promising a Windows renderer on every platform.
+`DrawingResizedFont` controls whether a fallback glyph whose natural advance
+misses its cell box is stretched horizontally into it; the painter's ordinary
+monospace run spacing remains load-bearing and independent.
+
+One setting required a schema feature rather than a row. Upstream reads
+`"CygwinDirectory "` with a trailing space (`ttset.c:1476`) and writes
+`"CygwinDirectory"` without it (`:2250`). Backtick-quoted keys now preserve
+significant whitespace and `write-key=` records the different output spelling,
+so loading and saving reproduce both halves instead of normalising away a bug
+in a shared file.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
