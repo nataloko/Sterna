@@ -245,6 +245,29 @@ static void test_absolute_lines(void)
     tt_session_free(s);
 }
 
+static void test_url_lookup(void)
+{
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    cfg.cols = 40;
+    cfg.rows = 3;
+    TtSession *s = tt_session_new(&cfg);
+
+    static const char feed[] = "x http://example.test end";
+    tt_session_feed(s, (const uint8_t *)feed, sizeof feed - 1);
+
+    size_t len = 0;
+    const TtCell *row = tt_session_row(s, 0, &len);
+    CHECK(row != NULL && len == 40);
+    CHECK((row[2].attrs & TT_ATTR_URL) != 0);
+    CHECK(strcmp(tt_session_url_at(s, 0, 7), "http://example.test") == 0);
+    CHECK(tt_session_url_at(s, 0, 0) == NULL);
+    CHECK(tt_session_url_at(s, UINT64_MAX, 0) == NULL);
+    CHECK(tt_session_url_at(s, 0, 40) == NULL);
+
+    tt_session_free(s);
+}
+
 static void test_logging(void)
 {
     TtConfig cfg;
@@ -918,6 +941,7 @@ static void test_null_safety(void)
     CHECK(tt_session_line_at(NULL, 0) == 0);
     CHECK(tt_session_top_line(NULL) == 0);
     CHECK(tt_session_line(NULL, 0, NULL) == NULL);
+    CHECK(tt_session_url_at(NULL, 0, 0) == NULL);
     CHECK(tt_session_pending_out(NULL) == 0);
     /* Null answers false, which happens to be the non-default — a frontend
      * that lost its session sends DEL rather than reading through a null. */
@@ -2003,6 +2027,7 @@ int main(void)
     test_attributes();
     test_scrollback_viewport();
     test_absolute_lines();
+    test_url_lookup();
     test_logging();
     test_log_name();
     test_settings();

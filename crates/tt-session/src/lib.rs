@@ -58,7 +58,7 @@ use tt_config::ConnectionTcpCrSend;
 pub use tt_config::{Field, Ini, Kind, Settings, FIELDS};
 
 use tt_conn::{Error, Result, Transport, TransportEvent};
-use tt_grid::{Cell, Grid};
+use tt_grid::{Cell, Grid, ATTR_LINE_CONTINUED, ATTR_URL, WIDTH_PAD, WIDTH_WIDE};
 use tt_vt::{Config, CrSend, Key, Modifiers, MouseEvent, Tracking, Vt};
 
 /// Something the frontend needs to know about. Drained, not delivered: a
@@ -556,6 +556,98 @@ impl Session {
             let y = i - back;
             (y < grid.rows()).then(|| grid.line(y))
         }
+    }
+
+    /// The AttrURL run containing one cell, by absolute line number.
+    ///
+    /// `buffer.c:invokeBrowserW` does not parse the text again. It walks the
+    /// already-marked cells in both directions, crossing only automatic line
+    /// continuations, and hands that exact run to the launcher. Doing the same
+    /// here preserves upstream's incremental-marking edges instead of silently
+    /// turning them into a different URL detector at click time.
+    ///
+    /// The surprising `CR CR LF` in a split URL is upstream too:
+    /// `BuffGetStringForCB` is shared with copying, so it joins an automatic
+    /// wrap only when `EnableContinuedLineCopy` is on. The setting ships off.
+    pub fn url_at(&self, line: u64, x: usize) -> Option<String> {
+        let cell = self.line(line)?.get(x)?;
+        if cell.attrs & ATTR_URL == 0 || cell.width_class == WIDTH_PAD {
+            return None;
+        }
+
+        let mut first = (line, x);
+        while let Some(previous) = self.previous_buffer_cell(first.0, first.1) {
+            let cell = &self.line(previous.0)?[previous.1];
+            if cell.attrs & ATTR_URL == 0 {
+                break;
+            }
+            first = previous;
+        }
+
+        let mut last = (line, x);
+        while let Some(next) = self.next_buffer_cell(last.0, last.1) {
+            let cell = &self.line(next.0)?[next.1];
+            if cell.attrs & ATTR_URL == 0 {
+                break;
+            }
+            last = next;
+        }
+
+        let mut out = String::new();
+        let mut at = first;
+        loop {
+            let cell = &self.line(at.0)?[at.1];
+            for cp in cell.codepoints() {
+                out.push(char::from_u32(cp).unwrap_or('\u{fffd}'));
+            }
+            if at == last {
+                break;
+            }
+            let next = self.next_buffer_cell(at.0, at.1)?;
+            if next.0 != at.0 && !self.settings.clipboard_continued_line_copy {
+                // Yes, two CRs. `buffer.c:1889` writes precisely that before
+                // its LF, and URL launch inherits the clipboard routine.
+                out.push_str("\r\r\n");
+            }
+            at = next;
+        }
+        Some(out)
+    }
+
+    fn previous_buffer_cell(&self, line: u64, x: usize) -> Option<(u64, usize)> {
+        let current = self.line(line)?;
+        if x >= current.len() {
+            return None;
+        }
+        let (line, mut x) = if x > 0 {
+            (line, x - 1)
+        } else {
+            if current.first()?.attrs & ATTR_LINE_CONTINUED == 0 {
+                return None;
+            }
+            let line = line.checked_sub(1)?;
+            (line, self.line(line)?.len().checked_sub(1)?)
+        };
+        let cells = self.line(line)?;
+        while cells[x].width_class == WIDTH_PAD {
+            x = x.checked_sub(1)?;
+        }
+        Some((line, x))
+    }
+
+    fn next_buffer_cell(&self, line: u64, x: usize) -> Option<(u64, usize)> {
+        let cells = self.line(line)?;
+        let cell = cells.get(x)?;
+        let step = if cell.width_class == WIDTH_WIDE { 2 } else { 1 };
+        if x + step < cells.len() {
+            return Some((line, x + step));
+        }
+        if cells.last()?.attrs & ATTR_LINE_CONTINUED == 0 {
+            return None;
+        }
+        let line = line.checked_add(1)?;
+        self.line(line)?.first()?;
+        Some((line, 0))
     }
 
     // --- session logging ----------------------------------------------------

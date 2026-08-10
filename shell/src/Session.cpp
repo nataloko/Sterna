@@ -99,6 +99,12 @@ quint64 Session::lineAt(int y) const
     return tt_session_line_at(m_session, static_cast<size_t>(qMax(0, y)));
 }
 
+QString Session::urlAt(quint64 line, int x)
+{
+    const char *url = tt_session_url_at(m_session, line, static_cast<size_t>(qMax(0, x)));
+    return url ? QString::fromUtf8(url) : QString();
+}
+
 quint64 Session::topLine() const { return tt_session_top_line(m_session); }
 
 TtCursor Session::cursor() const

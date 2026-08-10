@@ -128,6 +128,9 @@ public:
     const TtCell *line(quint64 n, size_t *outLen) const;
     /// The absolute number of the line at viewport row `y`.
     quint64 lineAt(int y) const;
+    /// The URL-marked run containing one cell, or an empty string when the
+    /// cell is not a URL. `line` is absolute, like `line()`.
+    QString urlAt(quint64 line, int x);
     /// The absolute number of the top line of the *live* page.
     quint64 topLine() const;
     TtCursor cursor() const;

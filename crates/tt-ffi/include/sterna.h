@@ -2377,6 +2377,20 @@ const TtCell *tt_session_line(const TtSession *session,
                               uint64_t line,
                               size_t *out_len);
 
+/**
+ * The URL-marked run containing cell `(line, x)`.
+ *
+ * `line` is an absolute number on the same scale as [`tt_session_line`], so a
+ * click still names the same text if output arrives between hit-testing and
+ * invocation. Null when the cell is absent or not marked as a URL; that is an
+ * ordinary answer and sets no error.
+ *
+ * The returned UTF-8 string is owned by `session` and remains valid until the
+ * next call to this function on the same session, or until the session is
+ * freed.
+ */
+const char *tt_session_url_at(TtSession *session, uint64_t line, size_t x);
+
 void tt_session_cursor(const TtSession *session, TtCursor *out);
 
 /**

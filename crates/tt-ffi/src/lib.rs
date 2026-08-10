@@ -327,6 +327,8 @@ pub struct TtSession {
     /// The decoded `DelimList`, which is not the file's own spelling and so
     /// cannot share the buffer above.
     delimiters: CString,
+    /// The last AttrURL run returned to the frontend.
+    url: CString,
     /// The strings the last `TtTransferStatus` handed out, and the outcome of
     /// the last transfer to finish. Kept on the session because the C caller
     /// has nowhere to put them.
@@ -370,6 +372,7 @@ pub extern "C" fn tt_session_new(config: *const TtConfig) -> *mut TtSession {
         close_note: CString::default(),
         setting: CString::default(),
         delimiters: CString::default(),
+        url: CString::default(),
         xfer_protocol: CString::default(),
         xfer_file: CString::default(),
         xfer_message: CString::default(),
@@ -709,6 +712,26 @@ pub extern "C" fn tt_session_line(
         *len = cells.len();
     }
     cells.as_ptr()
+}
+
+/// The URL-marked run containing cell `(line, x)`.
+///
+/// `line` is an absolute number on the same scale as [`tt_session_line`], so a
+/// click still names the same text if output arrives between hit-testing and
+/// invocation. Null when the cell is absent or not marked as a URL; that is an
+/// ordinary answer and sets no error.
+///
+/// The returned UTF-8 string is owned by `session` and remains valid until the
+/// next call to this function on the same session, or until the session is
+/// freed.
+#[no_mangle]
+pub extern "C" fn tt_session_url_at(session: *mut TtSession, line: u64, x: usize) -> *const c_char {
+    let s = session!(session, ptr::null());
+    let Some(url) = s.session.url_at(line, x) else {
+        return ptr::null();
+    };
+    s.url = cstring(&url);
+    s.url.as_ptr()
 }
 
 /// Where the cursor is and whether to draw it.
