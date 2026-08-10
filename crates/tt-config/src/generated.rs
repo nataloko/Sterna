@@ -1162,6 +1162,12 @@ pub struct Settings {
     /// unlike its two neighbours above, whose keys carry the `Enable` prefix this one
     /// does not. `vtdisp.c:2412` is the only reader.
     pub color_underline_enabled: bool,
+    /// `ttset.c:797`. Sixteen `(legacy index,r,g,b)` groups in one `MAX_PATH`
+    /// buffer. This stays a string because upstream accepts partial lists, repeated
+    /// and wrapped IDs, and byte-wrapped channels; the behavioral parse belongs by
+    /// the terminal palette in `tt-session`. The default is upstream's exact colour
+    /// values with only its alignment whitespace removed.
+    pub color_ansi_palette: String,
     /// `ttset.c:741`. **On**, and this is one of the four flag words `AGENTS.md`
     /// warns about: `ColorFlag` is zeroed at the top of `ttset.c` and built up from
     /// per-key calls a thousand lines later, so reading the zero as the default
@@ -1918,6 +1924,7 @@ impl Default for Settings {
             color_blink_enabled: true,
             color_reverse_enabled: false,
             color_underline_enabled: true,
+            color_ansi_palette: String::from("0,0,0,0,1,255,0,0,2,0,255,0,3,255,255,0,4,0,0,255,5,255,0,255,6,0,255,255,7,255,255,255,8,128,128,128,9,128,0,0,10,0,128,0,11,128,128,0,12,0,0,128,13,128,0,128,14,0,128,128,15,192,192,192"),
             color_xterm_256: true,
             color_aixterm_16: false,
             color_pc_bold_16: false,
@@ -2217,6 +2224,9 @@ impl Settings {
                 ini.get("Tera Term", "UnderlineAttrColor"),
                 true,
             ),
+            color_ansi_palette: ini
+                .get_or("Tera Term", "ANSIColor", &d.color_ansi_palette)
+                .to_string(),
             color_xterm_256: crate::schema::on_off(ini.get("Tera Term", "Xterm256Color"), true),
             color_aixterm_16: crate::schema::on_off(ini.get("Tera Term", "Aixterm16Color"), false),
             color_pc_bold_16: crate::schema::on_off(ini.get("Tera Term", "PcBoldColor"), false),
@@ -3027,6 +3037,7 @@ impl Settings {
             }
             .to_string(),
         );
+        ini.set("Tera Term", "ANSIColor", &self.color_ansi_palette.clone());
         ini.set(
             "Tera Term",
             "Xterm256Color",
@@ -4158,6 +4169,7 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "color.ansi_palette" => self.color_ansi_palette.clone(),
             "color.xterm_256" => if self.color_xterm_256 { "on" } else { "off" }.to_string(),
             "color.aixterm_16" => if self.color_aixterm_16 { "on" } else { "off" }.to_string(),
             "color.pc_bold_16" => if self.color_pc_bold_16 { "on" } else { "off" }.to_string(),
@@ -4676,6 +4688,7 @@ impl Settings {
             "color.underline_enabled" => {
                 self.color_underline_enabled = crate::schema::on_off(Some(value), true)
             }
+            "color.ansi_palette" => self.color_ansi_palette = value.to_string(),
             "color.xterm_256" => self.color_xterm_256 = crate::schema::on_off(Some(value), true),
             "color.aixterm_16" => self.color_aixterm_16 = crate::schema::on_off(Some(value), false),
             "color.pc_bold_16" => self.color_pc_bold_16 = crate::schema::on_off(Some(value), false),
@@ -5510,6 +5523,16 @@ pub const FIELDS: &[Field] = &[
         default: "on",
         label: None,
         doc: "`ttset.c:784`. Whether `SGR 4` gets its own colour pair at all, and **on** — unlike its two neighbours above, whose keys carry the `Enable` prefix this one does not. `vtdisp.c:2412` is the only reader.",
+    },
+    Field {
+        name: "color.ansi_palette",
+        page: "color",
+        section: "Tera Term",
+        key: "ANSIColor",
+        kind: Kind::Str,
+        default: "0,0,0,0,1,255,0,0,2,0,255,0,3,255,255,0,4,0,0,255,5,255,0,255,6,0,255,255,7,255,255,255,8,128,128,128,9,128,0,0,10,0,128,0,11,128,128,0,12,0,0,128,13,128,0,128,14,0,128,128,15,192,192,192",
+        label: None,
+        doc: "`ttset.c:797`. Sixteen `(legacy index,r,g,b)` groups in one `MAX_PATH` buffer. This stays a string because upstream accepts partial lists, repeated and wrapped IDs, and byte-wrapped channels; the behavioral parse belongs by the terminal palette in `tt-session`. The default is upstream's exact colour values with only its alignment whitespace removed.",
     },
     Field {
         name: "color.xterm_256",
