@@ -5,6 +5,7 @@
 //! the feed knows when that happened. A frontend holding "n lines from the
 //! bottom" watches what it is reading walk up the screen as the host talks.
 
+use tt_config::Settings;
 use tt_session::{MemoryHandle, MemoryTransport, Session};
 use tt_vt::Config;
 
@@ -15,6 +16,43 @@ fn session(cols: usize, rows: usize, scrollback: usize) -> (Session, MemoryHandl
         scrollback_max: scrollback,
         ..Config::default()
     });
+    let (transport, handle) = MemoryTransport::new();
+    s.connect(Box::new(transport));
+    (s, handle)
+}
+
+/// The same with `AutoScrollOnlyInBottomLine` on.
+///
+/// It ships **off**, so the plain helper above is a terminal that jumps back
+/// to the cursor whenever the host talks — upstream's behaviour and what
+/// [`the_view_goes_live_when_the_host_talks`] measures. Everything the
+/// viewport was built for needs the key, and says so by asking for it.
+///
+/// Built from `Settings` rather than `Config` because the key is the session's
+/// rather than the engine's: `ScrollBuffSize` is the whole buffer with the page
+/// inside it, hence the `+ rows`.
+fn holding(cols: usize, rows: usize, scrollback: usize) -> (Session, MemoryHandle) {
+    configured(cols, rows, scrollback, true)
+}
+
+/// The same builder with the key either way, for the tests that go on to
+/// replace the settings — `Session::new` leaves them at the schema's 80x24, so
+/// the first `set_settings` would resize and re-anchor the view for a reason
+/// that is the harness's rather than the code's.
+fn configured(cols: usize, rows: usize, scrollback: usize, hold: bool) -> (Session, MemoryHandle) {
+    let mut settings = Settings::default();
+    for (name, value) in [
+        ("terminal.cols", cols.to_string()),
+        ("terminal.rows", rows.to_string()),
+        ("terminal.scrollback_lines", (scrollback + rows).to_string()),
+        (
+            "window.auto_scroll_only_at_bottom",
+            if hold { "on" } else { "off" }.to_string(),
+        ),
+    ] {
+        assert!(settings.set_str(name, &value), "no such setting: {name}");
+    }
+    let mut s = Session::from_settings(settings);
     let (transport, handle) = MemoryTransport::new();
     s.connect(Box::new(transport));
     (s, handle)
@@ -72,7 +110,7 @@ fn a_scrolled_back_view_holds_still_while_the_host_talks() {
     // slides by one for every line printed, so reading a boot log on a device
     // that is still booting becomes impossible — which is exactly when anyone
     // scrolls back on a serial console.
-    let (mut s, _h) = session(20, 4, 100);
+    let (mut s, _h) = holding(20, 4, 100);
     s.feed(&lines(0, 10));
     s.set_view_offset(5);
     assert_eq!(row(&s, 0), "line2");
@@ -87,7 +125,7 @@ fn holding_still_survives_the_scrollback_filling_up_and_evicting() {
     // Once the buffer is full its length stops changing, so a viewport that
     // reconciled against the length would think nothing had moved — while
     // every line pushed silently drops the oldest and shifts everything.
-    let (mut s, _h) = session(20, 4, 8);
+    let (mut s, _h) = holding(20, 4, 8);
     s.feed(&lines(0, 12));
     assert_eq!(s.scrollback_len(), 8, "full");
 
@@ -100,7 +138,7 @@ fn holding_still_survives_the_scrollback_filling_up_and_evicting() {
 
 #[test]
 fn a_view_pushed_off_the_top_lands_on_the_oldest_line() {
-    let (mut s, _h) = session(20, 4, 5);
+    let (mut s, _h) = holding(20, 4, 5);
     s.feed(&lines(0, 10));
     s.set_view_offset(5);
     let oldest = row(&s, 0);
@@ -111,6 +149,64 @@ fn a_view_pushed_off_the_top_lands_on_the_oldest_line() {
     s.feed(&lines(10, 40));
     assert_eq!(s.view_offset(), 5, "clamped to the history that exists");
     assert_ne!(row(&s, 0), oldest, "the content itself was evicted");
+}
+
+/// And the shipped default is the other one.
+///
+/// `AutoScrollOnlyInBottomLine` is off, so upstream calls `DispScrollToCursor`
+/// on every cursor step and the view is pulled back down until the cursor is
+/// on screen again. While a host is printing that is the last row, so it comes
+/// to "jump to live" — which is the behaviour people know, and the reason the
+/// key was added in the first place.
+#[test]
+fn the_view_goes_live_when_the_host_talks() {
+    let (mut s, _h) = session(20, 4, 100);
+    s.feed(&lines(0, 10));
+    s.set_view_offset(5);
+    assert_eq!(row(&s, 0), "line2");
+
+    s.feed(&lines(10, 15));
+    assert_eq!(s.view_offset(), 0, "dumped back at the bottom");
+}
+
+/// It is the *minimum* scroll rather than a jump, which shows when the cursor
+/// is not on the last row: `DispScrollToCursor` moves the origin only as far
+/// as it takes to bring the cursor's row on screen (`vtdisp.c:3095`), so a
+/// full-screen program drawing at the top pulls the reader down by less than a
+/// program printing lines.
+#[test]
+fn going_live_stops_at_the_cursor_rather_than_at_the_bottom() {
+    let (mut s, _h) = session(20, 4, 100);
+    s.feed(&lines(0, 10));
+    s.set_view_offset(3);
+
+    // Home the cursor and print there. Row 0 of a four-row page is visible
+    // from two lines back, so the view stops there rather than going live.
+    s.feed(b"\x1b[Hx");
+    assert_eq!(s.view_offset(), 3, "row 0 was already on screen");
+
+    s.set_view_offset(3);
+    s.feed(b"\x1b[3;1Hx");
+    assert_eq!(s.view_offset(), 1, "row 2 needed one line of it back");
+}
+
+/// And nothing but a resize does it.
+///
+/// Applying settings re-anchors the view *only* when the grid changed size.
+/// The cursor following is upstream's `MoveCursor`, not its `SetupTerm`, so
+/// opening the settings dialog on a terminal whose cursor is on the last row —
+/// which is every terminal that has just printed something — must not dump the
+/// reader back at the bottom. It did, for as long as one function did both.
+#[test]
+fn applying_settings_at_the_same_size_leaves_the_view_alone() {
+    let (mut s, _h) = configured(20, 4, 100, false);
+    s.feed(&lines(0, 10));
+    s.set_view_offset(5);
+
+    let mut settings = s.settings().clone();
+    assert!(settings.set_str("terminal.local_echo", "on"));
+    s.set_settings(settings).unwrap();
+    assert_eq!(s.view_offset(), 5);
 }
 
 #[test]

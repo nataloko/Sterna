@@ -236,10 +236,10 @@ impl Session {
         let config = vt_config(&settings, self.vt.config());
         self.settings = settings;
         self.vt.set_config(config);
-        // `set_config` may have resized the grid, and `follow_scroll` is where
-        // that is noticed — it re-anchors the viewport on a size change rather
-        // than leaving the offset pointing at a line that has moved.
-        self.follow_scroll();
+        // `set_config` may have resized the grid, which is the one thing here
+        // that moves the viewport's anchor: the offset would otherwise point
+        // at a line that has moved between the page and the history.
+        self.reanchor_after_resize();
         self.events.push(Event::Damage);
         let (cols, rows) = (self.vt.grid().cols(), self.vt.grid().rows());
         if let Some(c) = self.conn.as_mut() {
@@ -1153,19 +1153,31 @@ impl Session {
         }
     }
 
-    /// Keep a scrolled-back view on the same lines as new output arrives.
+    /// Keep a scrolled-back view on the same lines as new output arrives —
+    /// `AutoScrollOnlyInBottomLine`, and only when it is on.
     ///
-    /// Without this the view is anchored to the bottom, so every line the host
+    /// Without it the view is anchored to the bottom, so every line the host
     /// prints slides what the user is reading up by one — which is worst
     /// exactly when it matters, scrolling back through a boot log while the
-    /// device is still talking.
+    /// device is still talking. **That is upstream's shipped behaviour**: the
+    /// key defaults off, `MoveCursor` and `MoveRight` then call
+    /// `DispScrollToCursor` on every step (`buffer.c:3794`, `:3805`), and
+    /// `BuffScrollNLines` leaves `NewOrgY` where it was so the content slides
+    /// under the view (`:3866`). This port had the `on` behaviour hardcoded
+    /// until the key existed to ask.
     ///
-    /// The offset moves by however many lines left the page, and that is the
-    /// right number whether the scrollback grew or was already full and
-    /// evicted: both shift the content by the same amount. Clamping is left to
-    /// the accessors, so a view pushed off the top lands on the oldest line
-    /// rather than being reset.
-    /// A resize that arrives *in the byte stream* re-anchors the view too.
+    /// `DispScrollToCursor` is the minimum scroll that keeps the cursor on
+    /// screen rather than a jump to the bottom (`vtdisp.c:3095`) — which comes
+    /// to the same thing while a host is printing, since the cursor is then on
+    /// the last row, and does not when it is drawing higher up.
+    ///
+    /// With the key on, the offset moves by however many lines left the page,
+    /// and that is the right number whether the scrollback grew or was already
+    /// full and evicted: both shift the content by the same amount. Clamping
+    /// is left to the accessors, so a view pushed off the top lands on the
+    /// oldest line rather than being reset.
+    /// A resize that arrives *in the byte stream* re-anchors the view either
+    /// way.
     ///
     /// [`Session::resize`] is only the frontend's path. DECCOLM and the
     /// XTWINOPS resize both reach `Grid::resize` from inside the parser, and
@@ -1175,18 +1187,40 @@ impl Session {
     /// jumps by however many lines the resize shuffled. Same answer as the
     /// frontend path: stop guessing, go live.
     fn follow_scroll(&mut self) {
-        let size = (self.vt.grid().cols(), self.vt.grid().rows());
-        if size != self.seen_size {
-            self.seen_size = size;
-            self.view_offset = 0;
-            self.seen_scrolled_off = self.vt.grid().scrolled_off();
+        if self.reanchor_after_resize() {
             return;
         }
         let now = self.vt.grid().scrolled_off();
         if self.view_offset > 0 {
-            self.view_offset += (now - self.seen_scrolled_off) as usize;
+            if self.settings.window_auto_scroll_only_at_bottom {
+                self.view_offset += (now - self.seen_scrolled_off) as usize;
+            } else {
+                let grid = self.vt.grid();
+                self.view_offset = self.view_offset.min(grid.rows() - 1 - grid.cursor.y);
+            }
         }
         self.seen_scrolled_off = now;
+    }
+
+    /// The half of [`Session::follow_scroll`] that a settings change needs, and
+    /// the only half: a resize moves lines between the page and the history in
+    /// both directions, so the difference `follow_scroll` reads stops meaning
+    /// what it means and the view goes live.
+    ///
+    /// Separate because the other half is the *cursor* following, which
+    /// upstream does from `MoveCursor` and not from `SetupTerm` — folding the
+    /// two together made opening the settings dialog on a terminal whose
+    /// cursor is on the last row snap the reader back to live, which is a
+    /// thing no dialog should do.
+    fn reanchor_after_resize(&mut self) -> bool {
+        let size = (self.vt.grid().cols(), self.vt.grid().rows());
+        if size == self.seen_size {
+            return false;
+        }
+        self.seen_size = size;
+        self.view_offset = 0;
+        self.seen_scrolled_off = self.vt.grid().scrolled_off();
+        true
     }
 
     fn queue(&mut self, bytes: &[u8]) {

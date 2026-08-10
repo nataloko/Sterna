@@ -101,6 +101,8 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
         send_8bit_ctrl: s.window_send_8bit_ctrl,
         alt_screen_enabled: s.window_alt_screen,
         remote_clears_buffer: s.window_remote_clears_buffer,
+        clear_on_resize: s.terminal_clear_on_resize,
+        home_erase_clears_screen: s.terminal_home_erase_clears_screen,
         mouse_tracking_enabled: s.mouse_tracking,
         disable_mouse_tracking_by_ctrl: s.mouse_ctrl_disables_tracking,
         translate_wheel_to_cursor: s.mouse_wheel_to_cursor,
