@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 406
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 407
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4599,6 +4599,17 @@ byte strings, neighbouring `require`, cancellation hooks, dialogs, logs,
 serial controls and transfer plans. The threaded seven-case Lua/session join
 is part of the 43 macro checks above; together these leave no Lua-specific
 native-Windows exception to carry forward.
+
+The configuration and command-line suite no longer requires `GetFilePath`'s
+inserted separator to be `/` on every target. The implementation was already
+using the platform separator—the Windows binary correctly produced `\`—and
+the test now checks that target-shaped join while still preserving separators
+which came from the supplied path. All 122 configuration checks Wine can run
+are green, including the recorded Win32 INI answers. The one excluded check
+spawns `rustfmt`; Wine cannot run the installed Linux executable, so its
+Windows half remains a native-toolchain check rather than being weakened. The
+native Linux suite passes all 123 checks, including that generator guard, and
+both target clippy passes are clean.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

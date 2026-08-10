@@ -1640,22 +1640,31 @@ mod tests {
     /// The paths, and the two arguments `GetFilePath` takes.
     #[test]
     fn get_file_path_adds_a_directory_and_an_extension() {
+        let joined = |dir: &[u8], file: &[u8]| {
+            let mut out = dir.to_vec();
+            out.push(std::path::MAIN_SEPARATOR as u8);
+            out.extend_from_slice(file);
+            out
+        };
         assert_eq!(
             file_path(b"my.ini", Some(b"/home/nata"), Some(b".INI")),
-            b"/home/nata/my.ini"
+            joined(b"/home/nata", b"my.ini")
         );
         // No dot anywhere in the *file part* means the extension goes on.
         assert_eq!(
             file_path(b"my", Some(b"/etc"), Some(b".INI")),
-            b"/etc/my.INI"
+            joined(b"/etc", b"my.INI")
         );
         // A dot in a directory further up is not the file's.
         assert_eq!(
             file_path(b"tt/my", Some(b"/a.b"), Some(b".INI")),
-            b"/a.b/tt/my.INI"
+            joined(b"/a.b", b"tt/my.INI")
         );
         // A trailing dot counts, so nothing is added.
-        assert_eq!(file_path(b"my.", Some(b"/etc"), Some(b".INI")), b"/etc/my.");
+        assert_eq!(
+            file_path(b"my.", Some(b"/etc"), Some(b".INI")),
+            joined(b"/etc", b"my.")
+        );
         // An absolute path is left where it is, on either platform's spelling.
         assert_eq!(
             file_path(b"/etc/my.ini", Some(b"/home"), None),
