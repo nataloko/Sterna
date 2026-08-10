@@ -120,7 +120,8 @@ Deliberately absent, and each for a reason rather than for lack of time:
 - **`tt_ssh_connect_poll_fd` is the same descriptor `tt_session_poll_fd`
   returns afterwards.** Register the notifier once, before connecting, and
   keep it: swapping it at the moment output starts is a race with the first
-  screenful.
+  screenful. These descriptor spellings return `-1` on Windows; the native
+  wait-handle ABI and Qt notifier are still Stage 3 work.
 - **`TtMacroUi` is the one place this ABI calls back into C, and that is not
   an inconsistency with the line above.** SSH refuses a callback because it
   would fire on a worker thread; a macro's callbacks fire from inside

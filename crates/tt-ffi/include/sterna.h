@@ -3239,6 +3239,9 @@ TtSshConnect *tt_ssh_connect(const TtSshParams *params);
  * **The same one [`tt_session_poll_fd`] returns once the session is
  * connected**, so a frontend registers its notifier once and keeps it across
  * the handover rather than swapping it at the moment output starts.
+ *
+ * Returns `-1` on Windows. The SSH worker is still asynchronous there, but
+ * its wakeup is not a file descriptor; the native-event ABI remains open.
  */
 int tt_ssh_connect_poll_fd(const TtSshConnect *c);
 

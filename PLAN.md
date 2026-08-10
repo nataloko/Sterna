@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 386
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 387
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4368,6 +4368,13 @@ still 49/49 and 12/12; the named-pipe tests cross-compile but need the native
 Windows runner. The frontend wakeup is still open: `tt-ctl`'s Windows channel
 has no wait handle yet, so this is the transport landing rather than a working
 Windows `Control` object.
+
+The flat ABI's SSH-connect poll function was the next compiler stop: unlike
+the session, macro and control variants, it called the Unix-only accessor on
+every target. All four descriptor spellings now make the same honest promise:
+an fd on Unix and `-1` on Windows. That clears the ABI source without claiming
+a Windows frontend can sleep efficiently yet; native wait handles remain a
+single follow-up spanning SSH, macros, control and the Qt notifier.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

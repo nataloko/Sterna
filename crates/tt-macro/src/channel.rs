@@ -28,6 +28,7 @@
 //! asks for a byte thousands of times a second and none of those should queue
 //! behind a repaint.
 
+#[cfg(unix)]
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SendError, Sender, TryRecvError};
