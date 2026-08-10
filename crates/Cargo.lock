@@ -2286,6 +2286,7 @@ dependencies = [
  "sha1",
  "sha2",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2385,6 +2386,7 @@ dependencies = [
  "tt-ttl",
  "tt-vt",
  "tt-xfer",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

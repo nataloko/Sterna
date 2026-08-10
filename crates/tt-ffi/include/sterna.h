@@ -2146,7 +2146,7 @@ typedef uint32_t TtShortcut;
 #define TT_SSH_AUTH_PASSPHRASE 2
 
 /**
- * Nothing yet. Wait for the descriptor to become readable.
+ * Nothing yet. Wait for the platform's descriptor or event to become ready.
  */
 #define TT_SSH_WORKING 0
 
@@ -2924,12 +2924,22 @@ size_t tt_session_pending_out(const TtSession *session);
  * - **Do not close it, and do not keep it past a disconnect.** It is the
  *   transport's own descriptor, not a copy.
  *
- * Returns `-1` on Windows, where a serial port is a `HANDLE` and an
- * `OVERLAPPED` event rather than a descriptor. A frontend that gets `-1` has
- * to fall back to a timer, which is what that platform will need until this
- * grows a second spelling.
+ * Returns `-1` on Windows, whose native spelling is
+ * [`tt_session_wait_handle`].
  */
 int tt_session_poll_fd(const TtSession *session);
+
+/**
+ * A waitable Windows event that becomes signalled when
+ * [`tt_session_pump`] has something to do; null when there is none.
+ *
+ * This is the native Windows spelling of [`tt_session_poll_fd`]. Pass it to
+ * `WaitForSingleObject`, `QWinEventNotifier`, or an equivalent event-loop
+ * primitive. When it fires, call `tt_session_pump` with a budget of **0**.
+ * The handle is borrowed: do not close it, and re-read it after every connect
+ * or disconnect. Returns null on Unix, whose native spelling is the fd.
+ */
+void *tt_session_wait_handle(const TtSession *session);
 
 /**
  * Load a `KEYBOARD.CNF`. A missing file installs an empty map; another I/O
@@ -3240,10 +3250,19 @@ TtSshConnect *tt_ssh_connect(const TtSshParams *params);
  * connected**, so a frontend registers its notifier once and keeps it across
  * the handover rather than swapping it at the moment output starts.
  *
- * Returns `-1` on Windows. The SSH worker is still asynchronous there, but
- * its wakeup is not a file descriptor; the native-event ABI remains open.
+ * Returns `-1` on Windows, whose native spelling is
+ * [`tt_ssh_connect_wait_handle`].
  */
 int tt_ssh_connect_poll_fd(const TtSshConnect *c);
+
+/**
+ * The Windows event to wait on while an SSH connection is being set up.
+ *
+ * **The same event [`tt_session_wait_handle`] returns once connected**, so a
+ * frontend can keep its notifier across the handover. Borrowed until the
+ * connection handle is freed or handed to the session. Returns null on Unix.
+ */
+void *tt_ssh_connect_wait_handle(const TtSshConnect *c);
 
 /**
  * What the connection needs next. Never blocks.
@@ -3450,9 +3469,18 @@ TtMacro *tt_macro_start(TtSession *session,
  * The same bargain as [`tt_session_poll_fd`]: wait on it, and call
  * [`tt_macro_service`] when it fires. A quiet macro — one in a `wait`, which
  * polls a ring this side fills — costs nothing, so there is no timer to run.
- * **Both descriptors want watching**; they are not the same one.
+ * **Both descriptors want watching**; they are not the same one. Returns
+ * `-1` on Windows, whose native spelling is [`tt_macro_wait_handle`].
  */
 int tt_macro_poll_fd(const TtMacro *m);
+
+/**
+ * The Windows event that becomes signalled when the macro wants something.
+ *
+ * The native spelling of [`tt_macro_poll_fd`]. It is borrowed until
+ * [`tt_macro_free`], must not be closed by the frontend, and is null on Unix.
+ */
+void *tt_macro_wait_handle(const TtMacro *m);
 
 /**
  * Run whatever the macro is waiting on, against `session`. Returns how many
@@ -3547,9 +3575,19 @@ const char *tt_ctl_path(const TtCtl *ctl);
  *
  * The same bargain as [`tt_session_poll_fd`] and [`tt_macro_poll_fd`]: wait
  * on it and call [`tt_ctl_service`] when it fires. A window nobody is talking
- * to costs nothing, so there is no timer.
+ * to costs nothing, so there is no timer. Returns `-1` on Windows, whose
+ * native spelling is [`tt_ctl_wait_handle`].
  */
 int tt_ctl_poll_fd(const TtCtl *ctl);
+
+/**
+ * The Windows event that becomes signalled when a control client wants
+ * something.
+ *
+ * The native spelling of [`tt_ctl_poll_fd`]. It is borrowed until
+ * [`tt_ctl_free`], must not be closed by the frontend, and is null on Unix.
+ */
+void *tt_ctl_wait_handle(const TtCtl *ctl);
 
 /**
  * Run whatever the clients have asked for, against `session`. Returns how
@@ -3559,9 +3597,9 @@ int tt_ctl_poll_fd(const TtCtl *ctl);
  * as the user does — and it can close the window, which means the caller must
  * not touch anything it owns afterwards without checking.
  *
- * The same re-entrancy rule as [`tt_macro_service`]: a descriptor watched by
- * a level-triggered notifier fires again inside a dialog's nested event loop,
- * so disable the notifier across this call.
+ * The same re-entrancy rule as [`tt_macro_service`]: the fd or manual-reset
+ * event remains ready inside a dialog's nested event loop, so disable the
+ * notifier across this call.
  */
 size_t tt_ctl_service(TtCtl *ctl,
                       TtSession *session);

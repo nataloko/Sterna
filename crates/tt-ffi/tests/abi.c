@@ -691,6 +691,7 @@ static void test_serial(void)
      * that handed -1 to QSocketNotifier would abort, so this is the value the
      * frontend branches on rather than one it can assume away. */
     CHECK(tt_session_poll_fd(s) == -1);
+    CHECK(tt_session_wait_handle(s) == NULL);
 
     /* Typing at a disconnected window queues nothing, so the retry timer a
      * frontend runs off this never starts. */
@@ -1123,6 +1124,7 @@ static void test_null_safety(void)
     CHECK(tt_session_drain_events(NULL, NULL) == 0);
     CHECK(tt_session_pump(NULL, 0, NULL) == TT_ERR_INVALID);
     CHECK(tt_session_poll_fd(NULL) == -1);
+    CHECK(tt_session_wait_handle(NULL) == NULL);
     CHECK(tt_session_key_map_load(NULL, "/tmp/x.cnf") == TT_ERR_INVALID);
     CHECK(tt_session_key_map_duplicate_count(NULL) == 0);
     CHECK(tt_session_key_map_duplicate(NULL, 0) == 0);
@@ -1159,6 +1161,7 @@ static void test_null_safety(void)
     tt_ssh_params_default(NULL);
     CHECK(tt_ssh_connect(NULL) == NULL);
     CHECK(tt_ssh_connect_poll_fd(NULL) == -1);
+    CHECK(tt_ssh_connect_wait_handle(NULL) == NULL);
     CHECK(tt_ssh_connect_poll(NULL, NULL) == TT_SSH_FAILED);
     CHECK(tt_ssh_connect_host_key(NULL) == NULL);
     CHECK(tt_ssh_connect_auth(NULL) == NULL);
@@ -1204,6 +1207,8 @@ static void test_null_safety(void)
     tt_cmdline_free(NULL);
     CHECK(tt_macro_start(NULL, NULL, NULL) == NULL);
     CHECK(tt_macro_poll_fd(NULL) == -1);
+    CHECK(tt_macro_wait_handle(NULL) == NULL);
+    CHECK(tt_ctl_wait_handle(NULL) == NULL);
     CHECK(tt_macro_service(NULL, NULL) == 0);
     CHECK(!tt_macro_running(NULL));
     CHECK(tt_macro_exit_code(NULL) == 0);
@@ -1280,6 +1285,7 @@ static void test_ssh(void)
     CHECK(c != NULL);
     if (c) {
         CHECK(tt_ssh_connect_poll_fd(c) >= 0);
+        CHECK(tt_ssh_connect_wait_handle(c) == NULL);
         TtSshStep step;
         for (int i = 0; i < 2000; i++) {
             step = tt_ssh_connect_poll(c, NULL);
@@ -1832,6 +1838,7 @@ static void test_macro(void)
 
     int mfd = tt_macro_poll_fd(m);
     CHECK(mfd >= 0);
+    CHECK(tt_macro_wait_handle(m) == NULL);
     long deadline = now_ms() + 10000;
     for (;;) {
         tt_macro_service(m, s);
@@ -2103,6 +2110,7 @@ static void test_ctl(void)
     const char *path = tt_ctl_path(c);
     CHECK(path != NULL && strstr(path, "abitest.sock") != NULL);
     CHECK(tt_ctl_poll_fd(c) >= 0);
+    CHECK(tt_ctl_wait_handle(c) == NULL);
 
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     CHECK(fd >= 0);

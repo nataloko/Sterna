@@ -182,11 +182,11 @@ until there was a second transport to decide them against.
 the Qt shell are all synchronous, and a terminal wants nothing from a connection
 but bytes. So the tokio runtime is private to `ssh/conn.rs`: one thread and one
 current-thread runtime. Unix adds a self-pipe (`ssh/wakeup.rs`) so a frontend
-can wait on SSH exactly the way it waits on a serial port. Windows keeps the
-same state machine but has no pollable descriptor; the Windows Qt pass still
-needs to connect it to a native event or a bounded timer. The alternative — an
-async shell — would spread `russh`'s runtime through three layers with no use
-for it.
+can wait on SSH exactly the way it waits on a serial port. Windows uses an
+owned manual-reset event instead; `QWinEventNotifier` waits on the borrowed
+handle, and the same event spans connection setup and the running transport.
+The alternative — an async shell — would spread `russh`'s runtime through
+three layers with no use for it.
 
 **Connecting is a state machine the caller drives.** `SshConnect::poll` returns
 the question — host key, password, keyboard-interactive challenge, key

@@ -33,3 +33,11 @@ tt-lua.workspace = true
 # wakes. Asserting it is *returned* would prove nothing.
 [target.'cfg(unix)'.dev-dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+# The macro thread wakes the frontend with a manual-reset event, the native
+# counterpart of the Unix socket pair.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }

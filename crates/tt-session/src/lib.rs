@@ -519,6 +519,14 @@ impl Session {
         self.conn.as_ref().and_then(|c| c.poll_fd())
     }
 
+    /// The Windows event that becomes signalled when [`pump`](Session::pump)
+    /// has something to do. This is the native spelling of
+    /// [`poll_fd`](Session::poll_fd), with the same borrowed lifetime.
+    #[cfg(windows)]
+    pub fn wait_handle(&self) -> Option<std::os::windows::io::RawHandle> {
+        self.conn.as_ref().and_then(|c| c.wait_handle())
+    }
+
     pub fn grid(&self) -> &Grid {
         self.vt.grid()
     }

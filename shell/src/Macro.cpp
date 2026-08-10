@@ -15,7 +15,11 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScreen>
+#ifdef Q_OS_WIN
+#include <QWinEventNotifier>
+#else
 #include <QSocketNotifier>
+#endif
 #include <QVBoxLayout>
 #include <QVector>
 
@@ -262,11 +266,19 @@ bool Macro::start(const QStringList &args, QString *outError)
         }
     }
 
+#ifdef Q_OS_WIN
+    void *handle = tt_macro_wait_handle(m_macro);
+    if (handle) {
+        m_notifier = new QWinEventNotifier(handle, this);
+        connect(m_notifier, &QWinEventNotifier::activated, this, &Macro::onServiceable);
+    }
+#else
     const int fd = tt_macro_poll_fd(m_macro);
     if (fd >= 0) {
         m_notifier = new QSocketNotifier(fd, QSocketNotifier::Read, this);
         connect(m_notifier, &QSocketNotifier::activated, this, &Macro::onServiceable);
     }
+#endif
     // It has been running since `tt_macro_start` returned, so anything it has
     // already asked for is waiting — and a one-line macro may have finished
     // already, in which case this is where that is noticed.
@@ -292,10 +304,10 @@ void Macro::service()
     if (!m_macro) {
         return;
     }
-    // A dialog spins a nested event loop, and a `QSocketNotifier` is level
-    // triggered — so without this the loop inside the dialog would call back
-    // in here and run a second dialog inside the first. The same re-entrancy
-    // the SSH host-key prompt needed a guard for.
+    // A dialog spins a nested event loop, and the fd or manual-reset event
+    // remains ready — so without this the loop inside the dialog would call
+    // back in here and run a second dialog inside the first. The same
+    // re-entrancy the SSH host-key prompt needed a guard for.
     if (m_notifier) {
         m_notifier->setEnabled(false);
     }
@@ -319,8 +331,7 @@ void Macro::stop()
         return;
     }
     // Disabled before `deleteLater` and not simply deleted: this runs inside
-    // the notifier's own signal, and the handle it watches is about to be
-    // freed with the descriptor under it.
+    // the notifier's own signal, and its native wakeup is about to be freed.
     if (m_notifier) {
         m_notifier->setEnabled(false);
         m_notifier->deleteLater();

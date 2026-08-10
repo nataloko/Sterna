@@ -3,8 +3,8 @@
 //! Three kinds of thread meet here and the split is the point:
 //!
 //! - **The frontend's**, which owns the [`Session`](tt_session::Session) and
-//!   never blocks on a socket. It calls [`Server::service`] when
-//!   [`Server::poll_fd`] fires, and that is its whole involvement.
+//!   never blocks on a socket. It calls [`Server::service`] when the channel's
+//!   fd or event fires, and that is its whole involvement.
 //! - **The accept thread**, which is blocked on the listener. Unix waits in
 //!   `poll(2)` with a stop pipe; Windows wakes a named-pipe accept by making a
 //!   private final connection after setting the stop flag.
@@ -115,6 +115,13 @@ impl Server {
     #[cfg(unix)]
     pub fn poll_fd(&self) -> std::os::unix::io::RawFd {
         self.rx.poll_fd()
+    }
+
+    /// The event a Windows toolkit waits on. See
+    /// [`CtlReceiver::wait_handle`].
+    #[cfg(windows)]
+    pub fn wait_handle(&self) -> std::os::windows::io::RawHandle {
+        self.rx.wait_handle()
     }
 
     /// Run whatever the clients have asked for. Returns how many ran.

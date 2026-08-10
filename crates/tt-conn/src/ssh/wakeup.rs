@@ -1,14 +1,13 @@
 //! Wake an ordinary frontend from an async SSH worker.
 //!
-//! [`Transport::poll_fd`](crate::Transport::poll_fd) exists because the Qt
-//! shell has no timer in its event loop and does not want one — a serial
-//! console is quiet almost all the time, and a poll on a timer burns a wakeup
-//! per frame forever to discover nothing happened. A serial port satisfies
-//! that trivially: it *is* a descriptor.
+//! A transport exposes its platform's native wakeup because the Qt shell has
+//! no timer in its event loop and does not want one — a serial console is
+//! quiet almost all the time, and a poll on a timer burns a wakeup per frame
+//! forever to discover nothing happened.
 //!
 //! SSH does not. `russh` is `tokio`, its readable thing is a task, and there
-//! is no fd to hand out. On Unix one is manufactured: a pipe whose read end
-//! goes to the frontend and whose write end the worker thread pokes whenever
+//! is no native object to hand out. On Unix a self-pipe is manufactured; on
+//! Windows it is a manual-reset event. The worker signals either one whenever
 //! the terminal has something to collect.
 //!
 //! The alternative — the shell running its own tokio reactor, or polling on a
@@ -18,6 +17,11 @@
 
 #[cfg(unix)]
 use std::os::unix::io::RawFd;
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
+
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::{CreateEventW, ResetEvent, SetEvent};
 
 use crate::error::Result;
 
@@ -93,14 +97,57 @@ impl Drop for Wakeup {
     }
 }
 
-/// Windows has no descriptor that `QSocketNotifier` can wait on. The worker's
-/// state is still safe to poll, so keep the signal operations as no-ops until
-/// the Windows shell supplies its native-event notifier in the next layer.
-/// This is deliberately a platform limit rather than a fake file descriptor.
-#[cfg(not(unix))]
+/// A manual-reset event, the Win32 counterpart of the Unix self-pipe.
+///
+/// Manual reset preserves the self-pipe's coalescing: ten worker messages can
+/// produce one frontend wakeup, and the event stays signalled until `drain`.
+#[cfg(windows)]
+pub(crate) struct Wakeup {
+    event: OwnedHandle,
+}
+
+#[cfg(windows)]
+impl Wakeup {
+    pub(crate) fn new() -> Result<Wakeup> {
+        // SAFETY: unnamed event, default security, manual reset, initially
+        // quiet. A non-null handle is uniquely owned by the returned object.
+        let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+        if event.is_null() {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        // SAFETY: `event` is a fresh owned Win32 handle and is transferred
+        // exactly once into `OwnedHandle`.
+        let event = unsafe { OwnedHandle::from_raw_handle(event) };
+        Ok(Wakeup { event })
+    }
+
+    pub(crate) fn handle(&self) -> RawHandle {
+        self.event.as_raw_handle()
+    }
+
+    pub(crate) fn signal(&self) {
+        // SAFETY: the event stays live for this borrow. A signal already set
+        // is the same coalesced wakeup, so the result needs no special case.
+        unsafe {
+            SetEvent(self.event.as_raw_handle());
+        }
+    }
+
+    pub(crate) fn drain(&self) {
+        // Reset before the caller examines its queue. A signal racing after
+        // this reset remains set; one racing before it has already published
+        // its state and the caller will consume that state now.
+        // SAFETY: the event stays live for this borrow.
+        unsafe {
+            ResetEvent(self.event.as_raw_handle());
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 pub(crate) struct Wakeup;
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 impl Wakeup {
     pub(crate) fn new() -> Result<Wakeup> {
         Ok(Wakeup)
@@ -109,4 +156,24 @@ impl Wakeup {
     pub(crate) fn signal(&self) {}
 
     pub(crate) fn drain(&self) {}
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+    #[test]
+    fn event_wakes_and_drain_resets_it() {
+        let wake = Wakeup::new().unwrap();
+        // SAFETY: `wake` owns a live waitable event for the duration.
+        unsafe {
+            assert_eq!(WaitForSingleObject(wake.handle(), 0), WAIT_TIMEOUT);
+            wake.signal();
+            assert_eq!(WaitForSingleObject(wake.handle(), 0), WAIT_OBJECT_0);
+            wake.drain();
+            assert_eq!(WaitForSingleObject(wake.handle(), 0), WAIT_TIMEOUT);
+        }
+    }
 }

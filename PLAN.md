@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 389
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 390
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4365,16 +4365,16 @@ topic into the same address-in-use answer. Pipe enumeration preserves
 `GetCommandLineW` and runs the upstream tokeniser instead of accidentally
 using Windows' different argv quoting rules. The Unix crate and CLI suites are
 still 49/49 and 12/12; the named-pipe tests cross-compile but need the native
-Windows runner. The frontend wakeup is still open: `tt-ctl`'s Windows channel
-has no wait handle yet, so this is the transport landing rather than a working
-Windows `Control` object.
+Windows runner. The frontend wakeup was still open at this point:
+`tt-ctl`'s Windows channel had no wait handle in this transport landing; the
+native-event change below completes that half of the Windows `Control` object.
 
 The flat ABI's SSH-connect poll function was the next compiler stop: unlike
 the session, macro and control variants, it called the Unix-only accessor on
 every target. All four descriptor spellings now make the same honest promise:
-an fd on Unix and `-1` on Windows. That clears the ABI source without claiming
-a Windows frontend can sleep efficiently yet; native wait handles remain a
-single follow-up spanning SSH, macros, control and the Qt notifier.
+an fd on Unix and `-1` on Windows. That compiler fix deliberately did not
+claim a Windows frontend could sleep efficiently yet; the single native-event
+follow-up spanning SSH, macros, control and the Qt notifier is recorded below.
 
 `cargo check` was not the whole Windows gate: linking every test found MinGW
 skipping all seven protocol constructors. The vendored C and C++ archives were
@@ -4404,6 +4404,20 @@ directory is `%LOCALAPPDATA%\sterna` rather than an XDG path interpreted under
 Windows rules. `FileDir`'s `%VAR%` references are expanded before its existence
 check, at the same point `GetTermLogDir` does it upstream; `LogDefaultPath`
 deliberately is not expanded, also matching that function.
+
+The native frontend wakeup is no longer a placeholder. SSH, macro and control
+channels own manual-reset Win32 events, signal them only after publishing work,
+and reset them before the frontend drains that work; a racing post therefore
+leaves either a queued job or a signalled event, never a sleeping window. The
+flat ABI exposes borrowed `*_wait_handle` spellings alongside the Unix fds,
+and the Qt shell selects `QWinEventNotifier` on Windows. SSH preserves the same
+event across connection setup and the running session, just as Unix preserves
+its self-pipe. All three set/wait/reset tests pass through the MinGW binaries
+under Wine, the Windows crates link cleanly, and the Unix Qt build remains
+clean with its pty, macro and control event-loop tests passing. A native
+Windows Qt build is still required before calling the frontend path proven;
+serial, telnet and ConPTY need their own Windows asynchronous I/O events rather
+than being folded into this worker-channel change.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

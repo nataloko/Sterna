@@ -72,10 +72,11 @@ serial console is nearly all the time. Calling it on a timer instead trades the
 freeze for a wakeup every frame, forever, to discover that nothing arrived, on
 a terminal whose whole claim is being light.
 
-So the core hands out a descriptor (`tt_session_poll_fd`), a `QSocketNotifier`
-waits on it, and the pump runs only when there is something to pump — with a
-budget of **zero**, which reads exactly once and returns. A burst arrives over
-several turns of the event loop and the window keeps painting through it.
+So the core hands out the platform's native wakeup: a descriptor watched by
+`QSocketNotifier` on Unix, or an event watched by `QWinEventNotifier` on
+Windows. The pump runs only when there is something to pump — with a budget of
+**zero**, which reads exactly once and returns. A burst arrives over several
+turns of the event loop and the window keeps painting through it.
 
 Measured: **zero CPU ticks over five seconds** with a port open and idle, at
 65 MB RSS — in line with `PLAN.md`'s ~60 MB Qt floor. Re-measured with a local
@@ -349,10 +350,10 @@ asks the same question twice.
 `tt_ssh_connect_host_key` hands back dies at the next poll, and the dialog
 outlives that. `HostKeyRequest` and `AuthRequest` are the copies.
 
-**One descriptor spans the handover.** `tt_ssh_connect_poll_fd` and
-`tt_session_poll_fd` return the same fd, so `Session::rearm` asks whichever
-owns it now and the `QSocketNotifier` never has to be replaced at the moment
-output starts.
+**One native wakeup spans the handover.** The SSH-connect and session calls
+return the same fd on Unix or event on Windows, so `Session::rearm` asks
+whichever owns it now and the Qt notifier never has to be replaced at the
+moment output starts.
 
 Cancelling an authentication dialog ends the attempt rather than sending empty
 strings: a device that counts failures should not be walked toward a lockout by
@@ -607,9 +608,9 @@ someone find out.
 
 `Control > Run macro...`, `/M=` on a Tera Term command line, and `Macro.cpp`.
 The interpreter runs on a thread inside the core and blocks whenever it wants
-something out here; this window waits on its descriptor with a third
-`QSocketNotifier` and, when it fires, runs whatever the macro asked for **on
-this thread**. So a `messagebox` is an ordinary modal dialog: it spins a nested
+something out here; this window waits on its fd or event with the platform's
+Qt notifier and, when it fires, runs whatever the macro asked for **on this
+thread**. So a `messagebox` is an ordinary modal dialog: it spins a nested
 event loop, the terminal goes on painting, and the script is parked until the
 user answers.
 

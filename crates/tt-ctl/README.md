@@ -127,6 +127,12 @@ command line as typed, because what the window can see is what was sent.
 | `bin/ttctl.rs` | The shell's way in. |
 | `bin/ttpmacro.rs` | The compatibility entry point. |
 
+The listener and its clients block on their own threads. The frontend sleeps
+on the channel's native wakeup until one of them posts a job: a socket-pair fd
+on Unix and a manual-reset event on Windows. The flat ABI borrows it as
+`tt_ctl_poll_fd` or `tt_ctl_wait_handle`; neither platform needs a polling
+timer when nobody is talking to the window.
+
 ## Tests
 
 ```sh

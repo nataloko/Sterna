@@ -30,6 +30,8 @@
 
 #[cfg(unix)]
 use std::io::{Read, Write};
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SendError, Sender, TryRecvError};
 use std::sync::{mpsc, Arc};
@@ -37,6 +39,9 @@ use std::sync::{mpsc, Arc};
 use tt_session::Session;
 
 use crate::ui::MacroUi;
+
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::{CreateEventW, ResetEvent, SetEvent};
 
 /// Something to do on the frontend's thread, on behalf of a macro.
 ///
@@ -132,6 +137,14 @@ impl MacroReceiver {
         self.wake.poll_fd()
     }
 
+    /// The Windows event that becomes signalled when there is work.
+    ///
+    /// Borrowed for this receiver's lifetime; the frontend must not close it.
+    #[cfg(windows)]
+    pub fn wait_handle(&self) -> RawHandle {
+        self.wake.wait_handle()
+    }
+
     /// Run everything waiting. Returns how many jobs ran.
     ///
     /// **This may show a dialog**, because a macro's `messagebox` is a job like
@@ -166,16 +179,18 @@ impl MacroReceiver {
     }
 }
 
-/// A descriptor that can be made readable from another thread.
+/// A native wakeup that can be signalled from another thread.
 ///
-/// `UnixStream::pair` rather than a pipe because it is in `std`: this crate
-/// would otherwise want `libc` for one `pipe(2)`. Stage 3 replaces the whole
-/// type with an event object; nothing outside it knows which it is.
+/// Unix uses `UnixStream::pair` rather than a pipe because it is in `std`:
+/// this crate would otherwise want `libc` for one `pipe(2)`. Windows uses a
+/// manual-reset event. Nothing outside the type knows which one it is.
 struct Waker {
     #[cfg(unix)]
     read: std::os::unix::net::UnixStream,
     #[cfg(unix)]
     write: std::sync::Mutex<std::os::unix::net::UnixStream>,
+    #[cfg(windows)]
+    event: OwnedHandle,
 }
 
 impl Waker {
@@ -209,13 +224,49 @@ impl Waker {
         self.read.as_raw_fd()
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    fn new() -> std::io::Result<Waker> {
+        // SAFETY: unnamed event, default security, manual reset, initially
+        // quiet. A non-null handle is transferred into `OwnedHandle` once.
+        let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+        if event.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: `event` is freshly created and uniquely owned.
+        let event = unsafe { OwnedHandle::from_raw_handle(event) };
+        Ok(Waker { event })
+    }
+
+    #[cfg(windows)]
+    fn wake(&self) {
+        // SAFETY: the event stays live for this borrow. Multiple sets
+        // deliberately coalesce into one pending frontend wakeup.
+        unsafe {
+            SetEvent(self.event.as_raw_handle());
+        }
+    }
+
+    #[cfg(windows)]
+    fn drain(&self) {
+        // Reset before reading the queue so a later post remains signalled.
+        // SAFETY: the event stays live for this borrow.
+        unsafe {
+            ResetEvent(self.event.as_raw_handle());
+        }
+    }
+
+    #[cfg(windows)]
+    fn wait_handle(&self) -> RawHandle {
+        self.event.as_raw_handle()
+    }
+
+    #[cfg(not(any(unix, windows)))]
     fn new() -> std::io::Result<Waker> {
         Ok(Waker {})
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     fn wake(&self) {}
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     fn drain(&self) {}
 }
 
@@ -258,6 +309,31 @@ mod tests {
         assert!(!tx.cancelled());
         rx.cancel();
         assert!(tx.cancelled());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn event_wakes_on_a_job_and_goes_quiet_when_serviced() {
+        use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
+        use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+        let (tx, rx) = channel().unwrap();
+        // SAFETY: the receiver owns a live waitable event throughout.
+        unsafe {
+            assert_eq!(WaitForSingleObject(rx.wait_handle(), 0), WAIT_TIMEOUT);
+        }
+        tx.post(Box::new(|_, _| {})).unwrap();
+        // SAFETY: as above.
+        unsafe {
+            assert_eq!(WaitForSingleObject(rx.wait_handle(), 0), WAIT_OBJECT_0);
+        }
+        let mut session = Session::new(Config::default());
+        let mut ui = NullUi;
+        assert_eq!(rx.service(&mut session, &mut ui), 1);
+        // SAFETY: as above.
+        unsafe {
+            assert_eq!(WaitForSingleObject(rx.wait_handle(), 0), WAIT_TIMEOUT);
+        }
     }
 
     /// The descriptor is quiet until there is work and readable after.

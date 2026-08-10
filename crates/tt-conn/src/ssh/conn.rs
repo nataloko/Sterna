@@ -422,6 +422,13 @@ impl SshConnect {
         self.shared.wake.fd()
     }
 
+    /// The Windows event to wait on. The resulting [`SshConn`] borrows the
+    /// same event, so a frontend can keep one notifier across the handover.
+    #[cfg(windows)]
+    pub fn wait_handle(&self) -> std::os::windows::io::RawHandle {
+        self.shared.wake.handle()
+    }
+
     /// What the connection needs next. Never blocks.
     ///
     /// A spent handle — one that has already yielded [`Step::Ready`] or
@@ -565,6 +572,11 @@ impl Transport for SshConn {
     #[cfg(unix)]
     fn poll_fd(&self) -> Option<std::os::unix::io::RawFd> {
         Some(self.shared.wake.fd())
+    }
+
+    #[cfg(windows)]
+    fn wait_handle(&self) -> Option<std::os::windows::io::RawHandle> {
+        Some(self.shared.wake.handle())
     }
 
     fn describe(&self) -> String {

@@ -2,7 +2,11 @@
 
 #include "Control.h"
 
+#ifdef Q_OS_WIN
+#include <QWinEventNotifier>
+#else
 #include <QSocketNotifier>
+#endif
 
 #include "MainWindow.h"
 #include "Session.h"
@@ -59,8 +63,8 @@ Control::Control(Session *session, MainWindow *window, QObject *parent)
 
 Control::~Control()
 {
-    // Disabled before the handle goes: `tt_ctl_free` closes the descriptor
-    // this notifier is watching.
+    // The notifier goes first: `tt_ctl_free` closes the native wakeup it is
+    // watching.
     delete m_notifier;
     m_notifier = nullptr;
     if (m_ctl) {
@@ -94,11 +98,19 @@ bool Control::start(const QString &name, QString *outError)
     }
     m_path = QString::fromUtf8(tt_ctl_path(m_ctl));
 
+#ifdef Q_OS_WIN
+    void *handle = tt_ctl_wait_handle(m_ctl);
+    if (handle) {
+        m_notifier = new QWinEventNotifier(handle, this);
+        connect(m_notifier, &QWinEventNotifier::activated, this, &Control::onServiceable);
+    }
+#else
     const int fd = tt_ctl_poll_fd(m_ctl);
     if (fd >= 0) {
         m_notifier = new QSocketNotifier(fd, QSocketNotifier::Read, this);
         connect(m_notifier, &QSocketNotifier::activated, this, &Control::onServiceable);
     }
+#endif
     return true;
 }
 
@@ -109,11 +121,11 @@ void Control::service()
     if (!m_ctl) {
         return;
     }
-    // A dialog spins a nested event loop, and a `QSocketNotifier` is level
-    // triggered — so without this the loop inside an SSH host-key prompt would
-    // call back in here and start servicing a second request inside the first.
-    // The same re-entrancy `Macro::service` and `Session::m_sshWaiting` exist
-    // for.
+    // A dialog spins a nested event loop, and the fd or manual-reset event
+    // remains ready — so without this the loop inside an SSH host-key prompt
+    // would call back in here and start servicing a second request inside the
+    // first. The same re-entrancy `Macro::service` and
+    // `Session::m_sshWaiting` exist for.
     if (m_notifier) {
         m_notifier->setEnabled(false);
     }

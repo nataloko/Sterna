@@ -169,11 +169,23 @@ pub trait Transport: Send {
     ///   only valid while this `Transport` is alive; a frontend that caches it
     ///   across a reconnect is watching a closed or recycled fd.
     ///
-    /// `None` means the transport cannot be waited on this way and the caller
-    /// has to poll. Nothing implements that yet, but a Windows serial port
-    /// will: it has a `HANDLE` and an `OVERLAPPED` event, not a descriptor.
+    /// `None` means this is not the target's native wait primitive. Windows
+    /// uses [`wait_handle`](Transport::wait_handle) instead.
     #[cfg(unix)]
     fn poll_fd(&self) -> Option<std::os::unix::io::RawFd> {
+        None
+    }
+
+    /// A waitable event that is signalled when there is something to
+    /// [`read`](Transport::read), for a Windows frontend.
+    ///
+    /// This is the native spelling of [`poll_fd`](Transport::poll_fd), with
+    /// the same borrowed lifetime and wakeup-not-bytes contract. It is an
+    /// event `HANDLE`, not an ordinary file handle: wait on it with
+    /// `WaitForSingleObject`, `QWinEventNotifier`, or an equivalent event-loop
+    /// primitive. The transport owns it and resets it at the start of `read`.
+    #[cfg(windows)]
+    fn wait_handle(&self) -> Option<std::os::windows::io::RawHandle> {
         None
     }
 

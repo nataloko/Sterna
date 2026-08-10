@@ -4,7 +4,11 @@
 
 #include <QClipboard>
 #include <QGuiApplication>
+#ifdef Q_OS_WIN
+#include <QWinEventNotifier>
+#else
 #include <QSocketNotifier>
+#endif
 #include <QStringList>
 #include <QTimer>
 #include <QVector>
@@ -70,10 +74,9 @@ Session::Session(int cols, int rows, QObject *parent)
 
 Session::~Session()
 {
-    // Order matters: the notifier watches a descriptor the session or the
+    // Order matters: the notifier watches a native object the session or the
     // pending connection owns, and freeing either closes it. A notifier left
-    // armed on a closed descriptor is a warning at best and a busy loop at
-    // worst.
+    // armed on a closed object is a warning at best and a busy loop at worst.
     delete m_notifier;
     m_notifier = nullptr;
     tt_ssh_connect_free(m_ssh);
@@ -322,7 +325,7 @@ void Session::cancelSsh()
     if (!m_ssh) {
         return;
     }
-    // Freeing the handle stops the attempt, and the descriptor it owns goes
+    // Freeing the connection stops the attempt, and its native wakeup goes
     // with it — so the notifier has to go first.
     delete m_notifier;
     m_notifier = nullptr;
@@ -441,9 +444,11 @@ void Session::pollSsh()
         // TT_SSH_FAILED, or anything a future core adds that this does not
         // know: stop, and say why.
         const QString error = QString::fromUtf8(tt_last_error());
-        endSsh();
+        // The failed connection is the last owner of its wakeup, so stop Qt
+        // watching it before `endSsh` closes it.
         delete m_notifier;
         m_notifier = nullptr;
+        endSsh();
         rearm();
         emit sshFailed(error);
         emit connectionChanged();
@@ -1001,6 +1006,23 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
 
 void Session::rearm()
 {
+#ifdef Q_OS_WIN
+    // SSH's connection and running transport share one manual-reset event.
+    // Other Windows transports return null until their native asynchronous
+    // byte-I/O paths land, so never manufacture a polling timer here.
+    void *handle = m_ssh ? tt_ssh_connect_wait_handle(m_ssh)
+                         : tt_session_wait_handle(m_session);
+
+    if (m_notifier && m_notifier->handle() != handle) {
+        m_notifier->setEnabled(false);
+        delete m_notifier;
+        m_notifier = nullptr;
+    }
+    if (handle && !m_notifier) {
+        m_notifier = new QWinEventNotifier(handle, this);
+        connect(m_notifier, &QWinEventNotifier::activated, this, &Session::onReadable);
+    }
+#else
     // While connecting, the connection owns the descriptor; afterwards the
     // session does, and it is the same one. Asking in this order means the
     // handover changes nothing the notifier can see.
@@ -1018,6 +1040,7 @@ void Session::rearm()
         m_notifier = new QSocketNotifier(fd, QSocketNotifier::Read, this);
         connect(m_notifier, &QSocketNotifier::activated, this, &Session::onReadable);
     }
+#endif
 
     const bool stuck = tt_session_pending_out(m_session) > 0;
     if (stuck && !m_retry->isActive()) {

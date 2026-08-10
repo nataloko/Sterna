@@ -32,6 +32,14 @@ portable-pty = "0.9"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(windows)'.dependencies]
+# A manual-reset event is the SSH worker's frontend wakeup. It is the native
+# counterpart of Unix's self-pipe and is borrowed through the flat ABI by Qt.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }
+
 [target.'cfg(unix)'.dev-dependencies]
 # The pty tests poll the descriptor and check the child is gone, which is the
 # frontend's own event loop in miniature.

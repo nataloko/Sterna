@@ -10,7 +10,11 @@
 
 #include "sterna.h"
 
+#ifdef Q_OS_WIN
+class QWinEventNotifier;
+#else
 class QSocketNotifier;
+#endif
 class QTimer;
 
 /// A host key the `known_hosts` files did not already trust, copied out of the
@@ -89,13 +93,14 @@ struct KeyCodeAction {
 /// Owns one `TtSession` and drives its loop from the Qt event loop.
 ///
 /// **There is no timer in the idle path**, which is the whole design of this
-/// class. The core hands out a descriptor that becomes readable when there is
-/// something to do; a `QSocketNotifier` waits on it, and only then does the
-/// session pump. A terminal spends nearly all of its life with nothing
+/// class. The core hands out a native wakeup when there is something to do;
+/// the platform's Qt notifier waits on it, and only then does the session
+/// pump. A terminal spends nearly all of its life with nothing
 /// arriving, and a window that wakes 60 times a second to discover that is a
 /// window that costs battery for no reason.
 ///
-/// Two things a descriptor cannot cover, and each has a timer of its own.
+/// Two things a readability wakeup cannot cover, and each has a timer of its
+/// own.
 ///
 /// The first is output the far end refused to take. Flow control holds the
 /// line, the write comes up short, and the remainder waits for a pump that will
@@ -433,7 +438,11 @@ private:
     void setConnectionName(const QString &host, quint16 port);
 
     TtSession *m_session = nullptr;
+#ifdef Q_OS_WIN
+    QWinEventNotifier *m_notifier = nullptr;
+#else
     QSocketNotifier *m_notifier = nullptr;
+#endif
     QTimer *m_retry = nullptr;
     /// Runs only while a transfer is up.
     ///

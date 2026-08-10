@@ -77,16 +77,17 @@ a second and none of those should queue behind a repaint.
 
 ## The frontend's side
 
-Two calls, from two descriptors, with no timer:
+Two calls, from two native wakeups, with no timer:
 
 ```rust
 rx.service(&mut session, &mut ui);   // whatever the macro asked for
 session.pump(Duration::ZERO)?;       // whatever the line brought
 ```
 
-`MacroReceiver::poll_fd` wakes on the first and `Session::poll_fd` on the
-second. `service` may show a dialog, because a macro's `messagebox` is a job
-like any other — that is exactly why the macro is somewhere else.
+On Unix, `MacroReceiver::poll_fd` wakes on the first and `Session::poll_fd` on
+the second. Windows uses each receiver's `wait_handle` instead. `service` may
+show a dialog, because a macro's `messagebox` is a job like any other — that is
+exactly why the macro is somewhere else.
 
 `MacroUi` is what a frontend implements: the eleven dialogs, the clipboard, the
 menu, the window. Every method refuses by default, so a frontend with three

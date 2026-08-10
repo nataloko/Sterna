@@ -2074,10 +2074,8 @@ pub extern "C" fn tt_session_pending_out(session: *const TtSession) -> usize {
 /// - **Do not close it, and do not keep it past a disconnect.** It is the
 ///   transport's own descriptor, not a copy.
 ///
-/// Returns `-1` on Windows, where a serial port is a `HANDLE` and an
-/// `OVERLAPPED` event rather than a descriptor. A frontend that gets `-1` has
-/// to fall back to a timer, which is what that platform will need until this
-/// grows a second spelling.
+/// Returns `-1` on Windows, whose native spelling is
+/// [`tt_session_wait_handle`].
 #[no_mangle]
 pub extern "C" fn tt_session_poll_fd(session: *const TtSession) -> c_int {
     let s = session_ref!(session, -1);
@@ -2089,6 +2087,28 @@ pub extern "C" fn tt_session_poll_fd(session: *const TtSession) -> c_int {
     {
         let _ = s;
         -1
+    }
+}
+
+/// A waitable Windows event that becomes signalled when
+/// [`tt_session_pump`] has something to do; null when there is none.
+///
+/// This is the native Windows spelling of [`tt_session_poll_fd`]. Pass it to
+/// `WaitForSingleObject`, `QWinEventNotifier`, or an equivalent event-loop
+/// primitive. When it fires, call `tt_session_pump` with a budget of **0**.
+/// The handle is borrowed: do not close it, and re-read it after every connect
+/// or disconnect. Returns null on Unix, whose native spelling is the fd.
+#[no_mangle]
+pub extern "C" fn tt_session_wait_handle(session: *const TtSession) -> *mut std::ffi::c_void {
+    let s = session_ref!(session, ptr::null_mut());
+    #[cfg(windows)]
+    {
+        s.session.wait_handle().unwrap_or(ptr::null_mut())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = s;
+        ptr::null_mut()
     }
 }
 
@@ -3122,7 +3142,7 @@ pub const TT_SSH_AUTH_PASSPHRASE: TtSshAuthKind = 2;
 /// What [`tt_ssh_connect_poll`] found.
 pub type TtSshStep = i32;
 
-/// Nothing yet. Wait for the descriptor to become readable.
+/// Nothing yet. Wait for the platform's descriptor or event to become ready.
 pub const TT_SSH_WORKING: TtSshStep = 0;
 /// [`tt_ssh_connect_host_key`] has a question. Answer it with
 /// [`tt_ssh_connect_answer_host_key`].
@@ -3409,8 +3429,8 @@ unsafe fn path_array(
 /// connected**, so a frontend registers its notifier once and keeps it across
 /// the handover rather than swapping it at the moment output starts.
 ///
-/// Returns `-1` on Windows. The SSH worker is still asynchronous there, but
-/// its wakeup is not a file descriptor; the native-event ABI remains open.
+/// Returns `-1` on Windows, whose native spelling is
+/// [`tt_ssh_connect_wait_handle`].
 #[no_mangle]
 pub extern "C" fn tt_ssh_connect_poll_fd(c: *const TtSshConnect) -> c_int {
     match unsafe { c.as_ref() } {
@@ -3419,6 +3439,22 @@ pub extern "C" fn tt_ssh_connect_poll_fd(c: *const TtSshConnect) -> c_int {
         #[cfg(not(unix))]
         Some(_) => -1,
         None => -1,
+    }
+}
+
+/// The Windows event to wait on while an SSH connection is being set up.
+///
+/// **The same event [`tt_session_wait_handle`] returns once connected**, so a
+/// frontend can keep its notifier across the handover. Borrowed until the
+/// connection handle is freed or handed to the session. Returns null on Unix.
+#[no_mangle]
+pub extern "C" fn tt_ssh_connect_wait_handle(c: *const TtSshConnect) -> *mut std::ffi::c_void {
+    match unsafe { c.as_ref() } {
+        #[cfg(windows)]
+        Some(c) => c.inner.wait_handle(),
+        #[cfg(not(windows))]
+        Some(_) => ptr::null_mut(),
+        None => ptr::null_mut(),
     }
 }
 
@@ -5037,7 +5073,8 @@ unsafe fn byte_array(array: *const *const c_char) -> Option<Vec<Vec<u8>>> {
 /// The same bargain as [`tt_session_poll_fd`]: wait on it, and call
 /// [`tt_macro_service`] when it fires. A quiet macro — one in a `wait`, which
 /// polls a ring this side fills — costs nothing, so there is no timer to run.
-/// **Both descriptors want watching**; they are not the same one.
+/// **Both descriptors want watching**; they are not the same one. Returns
+/// `-1` on Windows, whose native spelling is [`tt_macro_wait_handle`].
 #[no_mangle]
 pub extern "C" fn tt_macro_poll_fd(m: *const TtMacro) -> c_int {
     match unsafe { m.as_ref() } {
@@ -5046,6 +5083,21 @@ pub extern "C" fn tt_macro_poll_fd(m: *const TtMacro) -> c_int {
         #[cfg(not(unix))]
         Some(_) => -1,
         None => -1,
+    }
+}
+
+/// The Windows event that becomes signalled when the macro wants something.
+///
+/// The native spelling of [`tt_macro_poll_fd`]. It is borrowed until
+/// [`tt_macro_free`], must not be closed by the frontend, and is null on Unix.
+#[no_mangle]
+pub extern "C" fn tt_macro_wait_handle(m: *const TtMacro) -> *mut std::ffi::c_void {
+    match unsafe { m.as_ref() } {
+        #[cfg(windows)]
+        Some(m) => m.rx.wait_handle(),
+        #[cfg(not(windows))]
+        Some(_) => ptr::null_mut(),
+        None => ptr::null_mut(),
     }
 }
 
@@ -5395,7 +5447,8 @@ pub extern "C" fn tt_ctl_path(ctl: *const TtCtl) -> *const c_char {
 ///
 /// The same bargain as [`tt_session_poll_fd`] and [`tt_macro_poll_fd`]: wait
 /// on it and call [`tt_ctl_service`] when it fires. A window nobody is talking
-/// to costs nothing, so there is no timer.
+/// to costs nothing, so there is no timer. Returns `-1` on Windows, whose
+/// native spelling is [`tt_ctl_wait_handle`].
 #[no_mangle]
 pub extern "C" fn tt_ctl_poll_fd(ctl: *const TtCtl) -> c_int {
     match unsafe { ctl.as_ref() } {
@@ -5407,6 +5460,22 @@ pub extern "C" fn tt_ctl_poll_fd(ctl: *const TtCtl) -> c_int {
     }
 }
 
+/// The Windows event that becomes signalled when a control client wants
+/// something.
+///
+/// The native spelling of [`tt_ctl_poll_fd`]. It is borrowed until
+/// [`tt_ctl_free`], must not be closed by the frontend, and is null on Unix.
+#[no_mangle]
+pub extern "C" fn tt_ctl_wait_handle(ctl: *const TtCtl) -> *mut std::ffi::c_void {
+    match unsafe { ctl.as_ref() } {
+        #[cfg(windows)]
+        Some(c) => c.server.wait_handle(),
+        #[cfg(not(windows))]
+        Some(_) => ptr::null_mut(),
+        None => ptr::null_mut(),
+    }
+}
+
 /// Run whatever the clients have asked for, against `session`. Returns how
 /// many ran; never blocks on a client.
 ///
@@ -5414,9 +5483,9 @@ pub extern "C" fn tt_ctl_poll_fd(ctl: *const TtCtl) -> c_int {
 /// as the user does — and it can close the window, which means the caller must
 /// not touch anything it owns afterwards without checking.
 ///
-/// The same re-entrancy rule as [`tt_macro_service`]: a descriptor watched by
-/// a level-triggered notifier fires again inside a dialog's nested event loop,
-/// so disable the notifier across this call.
+/// The same re-entrancy rule as [`tt_macro_service`]: the fd or manual-reset
+/// event remains ready inside a dialog's nested event loop, so disable the
+/// notifier across this call.
 #[no_mangle]
 pub extern "C" fn tt_ctl_service(ctl: *mut TtCtl, session: *mut TtSession) -> usize {
     let Some(c) = (unsafe { ctl.as_mut() }) else {

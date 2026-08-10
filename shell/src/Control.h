@@ -12,7 +12,11 @@
 #include "sterna.h"
 
 class MainWindow;
+#ifdef Q_OS_WIN
+class QWinEventNotifier;
+#else
 class QSocketNotifier;
+#endif
 class Session;
 
 /// This window's `ttctl` socket, and the other half of what it can be asked.
@@ -28,7 +32,8 @@ class Session;
 /// What it answers is nine methods, listed in `crates/tt-ctl/src/dispatch.rs`.
 /// Most of them need only the session and never reach this class; what is here
 /// is the four that are about the *window* — its macro, its connection, its
-/// title and its closing.
+/// title and its closing. Windows waits on the same contract through a native
+/// event and `QWinEventNotifier`.
 class Control : public QObject {
     Q_OBJECT
 
@@ -82,7 +87,11 @@ private:
     Session *m_session;
     MainWindow *m_window;
     TtCtl *m_ctl = nullptr;
+#ifdef Q_OS_WIN
+    QWinEventNotifier *m_notifier = nullptr;
+#else
     QSocketNotifier *m_notifier = nullptr;
+#endif
     QString m_path;
     /// The last message a callback handed back. One socket, one service call
     /// at a time, and the core copies it before the callback returns — so one

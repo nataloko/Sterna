@@ -13,7 +13,11 @@
 
 class QDialog;
 class QLabel;
+#ifdef Q_OS_WIN
+class QWinEventNotifier;
+#else
 class QSocketNotifier;
+#endif
 class QWidget;
 class I18n;
 class Session;
@@ -27,7 +31,8 @@ class Session;
 /// fires, `tt_macro_service` runs whatever the macro asked for **on this
 /// thread**. So a `messagebox` is an ordinary modal dialog: it spins a nested
 /// event loop, the window goes on painting, and the script is parked on its own
-/// thread until the user answers.
+/// thread until the user answers. Windows uses the same contract with a
+/// waitable event and `QWinEventNotifier`.
 ///
 /// The dialogs it can raise are the eleven the language has. What it cannot do
 /// is listed at the bottom of `Macro.cpp`, with a reason each.
@@ -114,7 +119,11 @@ private:
     QWidget *m_window;
     const I18n *m_i18n;
     TtMacro *m_macro = nullptr;
+#ifdef Q_OS_WIN
+    QWinEventNotifier *m_notifier = nullptr;
+#else
     QSocketNotifier *m_notifier = nullptr;
+#endif
     QString m_name;
 
     /// `statusbox`'s modeless window, while one is up. Owned here: the macro

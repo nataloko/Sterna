@@ -52,13 +52,14 @@ Two things about how it is generated, both learned the hard way:
 | Screen | `tt_session_row` (borrowed, zero-copy), `_cols`, `_rows`, `_cursor`, `_title`, `_reverse_video`, `_palette_rgb`; `tt_palette_rgb` is the sessionless default fallback |
 | Viewport | `_scrollback_len`, `_view_offset`, `_set_view_offset`, `_cursor_view_row`, `_line_at`, `_top_line`, `_line` |
 | Input | `_send_key`, `_send_text`, `_paste`, `_mouse`, `_focus`, `_resize`, `_set_cell_pixels`, `_send_break`, `_feed` |
-| Connection | `_connect_serial`, `_connect_telnet`, `_connect_pty`, `_disconnect`, `_is_connected`, `_describe`, `_close_note`, `_pump`, `_drain_events` |
-| SSH | `tt_ssh_params_default`, `tt_ssh_connect`, `_poll`, `_poll_fd`, `_host_key`, `_auth`, `_answer_host_key`, `_answer_auth`, `_free` |
+| Connection | `_connect_serial`, `_connect_telnet`, `_connect_pty`, `_disconnect`, `_is_connected`, `_describe`, `_close_note`, `_pump`, `_drain_events`, `_poll_fd`, `_wait_handle` |
+| SSH | `tt_ssh_params_default`, `tt_ssh_connect`, `_poll`, `_poll_fd`, `_wait_handle`, `_host_key`, `_auth`, `_answer_host_key`, `_answer_auth`, `_free` |
 | Ports | `tt_serial_enumerate`, `tt_port_list_len` / `_at` / `_free`, `tt_ssh_config_aliases` + `tt_string_list_*` |
 | Logging | `tt_log_options_default`, `tt_session_log_start` / `_stop` / `_path` / `_bytes` |
 | Settings | `tt_settings_field_count` / `_field` / `tt_settings_choice`, `tt_session_setting` / `_set_setting` / `_settings_load` / `_settings_save` |
 | Languages | `tt_i18n_load` / `_text` / `_free`; `_text` returns an explicit-length UTF-8 span because file-dialog filters contain embedded NULs |
-| Macros | `tt_macro_start` / `_poll_fd` / `_service` / `_running` / `_cancel` / `_exit_code` / `_free`, `tt_session_unlink_macro`, and `TtMacroUi` |
+| Macros | `tt_macro_start` / `_poll_fd` / `_wait_handle` / `_service` / `_running` / `_cancel` / `_exit_code` / `_free`, `tt_session_unlink_macro`, and `TtMacroUi` |
+| Control | `tt_ctl_start` / `_path` / `_poll_fd` / `_wait_handle` / `_service` / `_free`, and `TtCtlHost` |
 
 Deliberately absent, and each for a reason rather than for lack of time:
 
@@ -117,11 +118,11 @@ Deliberately absent, and each for a reason rather than for lack of time:
   challenge — and attaches the transport to the session on `TT_SSH_READY`. A
   callback would have to be thread-safe and would fire on a worker thread,
   which is exactly where a Qt frontend cannot raise a dialog.
-- **`tt_ssh_connect_poll_fd` is the same descriptor `tt_session_poll_fd`
-  returns afterwards.** Register the notifier once, before connecting, and
-  keep it: swapping it at the moment output starts is a race with the first
-  screenful. These descriptor spellings return `-1` on Windows; the native
-  wait-handle ABI and Qt notifier are still Stage 3 work.
+- **One native wakeup spans SSH setup and the running session.** On Unix,
+  `tt_ssh_connect_poll_fd` and `tt_session_poll_fd` return the same descriptor;
+  on Windows, the two `_wait_handle` calls return the same event. Register the
+  platform's Qt notifier once before connecting and keep it: swapping at the
+  moment output starts is a race with the first screenful.
 - **`TtMacroUi` is the one place this ABI calls back into C, and that is not
   an inconsistency with the line above.** SSH refuses a callback because it
   would fire on a worker thread; a macro's callbacks fire from inside
@@ -130,9 +131,10 @@ Deliberately absent, and each for a reason rather than for lack of time:
   and fill in what you have: a null pointer means the macro is told "Unknown
   command", which is the same answer a port that never implemented the command
   would give.
-- **A macro's descriptor is not the session's**, and both want watching. A
-  macro also produces exactly one wakeup when it ends, so `tt_macro_running`
-  after every service is enough and there is nothing to poll for.
+- **A macro's wakeup is not the session's**, and both want watching. That is a
+  descriptor on Unix and an event on Windows. A macro also produces exactly
+  one wakeup when it ends, so `tt_macro_running` after every service is enough
+  and there is nothing to poll for.
 - **`tt_macro_free` does not detach the terminal.** It is not given a session,
   so `tt_session_unlink_macro` is the other half of it; skip that and every
   character the terminal prints goes on being copied into a ring nobody reads.
