@@ -7,7 +7,7 @@
 //!         [--crreceive cr|lf|crlf|auto] [--clearonresize]
 //!         [--noscrollwindowclear] [--backwrap] [--vtcompattab]
 //!         [--tabstop SPEC] [--invaliddecrqss] [--autoinvoke] [--nolocktuid]
-//!         [--maxoscbuffer N] [FILE]
+//!         [--cursorctrl] [--maxoscbuffer N] [FILE]
 //! ```
 //!
 //! `run_diff.sh` runs both engines over every case in `oracle/cases/` and diffs
@@ -31,7 +31,7 @@ const USAGE: &str = "usage: tt-dump [--cols N] [--rows N] [--term ID] [--attrs]\
                      \x20              [--clearonresize] [--noscrollwindowclear]\n\
                      \x20              [--backwrap] [--vtcompattab] [--tabstop SPEC]\n\
                      \x20              [--invaliddecrqss] [--autoinvoke] [--nolocktuid]\n\
-                     \x20              [--maxoscbuffer N] [FILE]\n";
+                     \x20              [--cursorctrl] [--maxoscbuffer N] [FILE]\n";
 
 /// `TermWidthMax` / `TermHeightMax` from Tera Term's `ttcommon.h`, so the two
 /// engines reject the same sizes.
@@ -53,6 +53,7 @@ struct Args {
     invalid_decrqss: bool,
     auto_invoke: bool,
     lock_uid: bool,
+    cursor_ctrl_sequence: bool,
     max_osc_buffer: usize,
     path: Option<String>,
 }
@@ -114,6 +115,7 @@ fn main() {
         invalid_decrqss: args.invalid_decrqss,
         auto_invoke: args.auto_invoke,
         lock_uid: args.lock_uid,
+        cursor_ctrl_sequence: args.cursor_ctrl_sequence,
         max_osc_buffer: args.max_osc_buffer,
         ..Config::default()
     });
@@ -258,6 +260,7 @@ fn parse_args() -> Result<Option<Args>, String> {
         invalid_decrqss: false,
         auto_invoke: false,
         lock_uid: true,
+        cursor_ctrl_sequence: false,
         max_osc_buffer: 4096,
         path: None,
     };
@@ -293,6 +296,7 @@ fn parse_args() -> Result<Option<Args>, String> {
             "--invaliddecrqss" => args.invalid_decrqss = true,
             "--autoinvoke" => args.auto_invoke = true,
             "--nolocktuid" => args.lock_uid = false,
+            "--cursorctrl" => args.cursor_ctrl_sequence = true,
             "--maxoscbuffer" => {
                 args.max_osc_buffer = next(&mut i)?
                     .parse()

@@ -10,7 +10,7 @@
  *          [--crreceive cr|lf|crlf|auto] [--clearonresize]
  *          [--noscrollwindowclear] [--backwrap] [--vtcompattab]
  *          [--tabstop SPEC] [--invaliddecrqss] [--autoinvoke] [--nolocktuid]
- *          [--maxoscbuffer N] [FILE]
+ *          [--cursorctrl] [--maxoscbuffer N] [FILE]
  *
  * With no FILE, reads stdin. Output goes to stdout.
  */
@@ -61,6 +61,7 @@ struct opts {
 	int invalid_decrqss;            /* ttset.c:1756 */
 	int auto_invoke;                /* ttset.c:1101 */
 	int lock_tuid;                  /* ttset.c:1711 */
+	int cursor_ctrl_sequence;       /* ttset.c:1656 */
 	int max_osc_buffer;             /* ttset.c:1789 */
 };
 
@@ -284,6 +285,9 @@ static void settings_defaults(const struct opts *o)
 	 * "an initialiser is not a default" trap as the flag words, in a
 	 * constant whose name reads like zero and is not. */
 	ts.WindowFlag = WF_WINDOWCHANGE | WF_WINDOWREPORT | IdTitleReportEmpty;
+	if (o->cursor_ctrl_sequence) {
+		ts.WindowFlag |= WF_CURSORCHANGE;
+	}
 
 	/* ttset.c:1537 DecSpMappingDir defaults to IdDecSpecialDoNot, not the
 	 * IdDecSpecialUniToDec that a zeroed struct produces. :1546
@@ -737,6 +741,7 @@ int main(int argc, char **argv)
 		0,          /* UseInvalidDECRQSSResponse, ttset.c:1756 off */
 		0,          /* AutoInvoke, ttset.c:1101 off */
 		1,          /* LockTUID, ttset.c:1711 on */
+		0,          /* CursorCtrlSequence, ttset.c:1656 off */
 		4096,       /* MaxOSCBufferSize, ttset.c:1789 */
 	};
 	int want_attrs = 0, want_scrollback = 0;
@@ -771,6 +776,8 @@ int main(int argc, char **argv)
 			o.auto_invoke = 1;
 		} else if (strcmp(argv[i], "--nolocktuid") == 0) {
 			o.lock_tuid = 0;
+		} else if (strcmp(argv[i], "--cursorctrl") == 0) {
+			o.cursor_ctrl_sequence = 1;
 		} else if (strcmp(argv[i], "--maxoscbuffer") == 0 && i + 1 < argc) {
 			o.max_osc_buffer = atoi(argv[++i]);
 		} else if (strcmp(argv[i], "--tabstop") == 0 && i + 1 < argc) {
@@ -794,7 +801,7 @@ int main(int argc, char **argv)
 			        "              [--clearonresize] [--noscrollwindowclear]\n"
 			        "              [--backwrap] [--vtcompattab] [--tabstop SPEC]\n"
 			        "              [--invaliddecrqss] [--autoinvoke] [--nolocktuid]\n"
-			        "              [--maxoscbuffer N] [FILE]\n");
+			        "              [--cursorctrl] [--maxoscbuffer N] [FILE]\n");
 			return 0;
 		} else if (argv[i][0] != '-') {
 			path = argv[i];
