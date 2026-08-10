@@ -921,6 +921,37 @@ void test_settings_change_the_painted_colours()
     CHECK(h.at(40, 0) == QColor(20, 20, 20));
 }
 
+void test_url_colour_and_underline_are_independent()
+{
+    Harness h;
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("color.url"),
+                               QStringLiteral("1,2,3,10,20,30"), &error));
+    h.view.applySettings();
+    h.feed("h http://");
+    h.render();
+
+    // The URL pair participates after ordinary underline in the same priority
+    // chain as upstream. A solid background makes the assertion independent
+    // of font rasterisation.
+    CHECK(h.bgAt(2, 0) == QColor(10, 20, 30));
+    CHECK(h.bgAt(0, 0) == kWhite);
+
+    // URLUnderline is a font switch of its own. Turn the colour arm off first
+    // so the two identical `h` glyphs differ only by that line.
+    CHECK(h.session.setSetting(QStringLiteral("color.url_enabled"),
+                               QStringLiteral("off"), &error));
+    h.view.applySettings();
+    h.render();
+    CHECK(h.cell(0, 0) != h.cell(2, 0));
+
+    CHECK(h.session.setSetting(QStringLiteral("color.url_underline"),
+                               QStringLiteral("off"), &error));
+    h.view.applySettings();
+    h.render();
+    CHECK(h.cell(0, 0) == h.cell(2, 0));
+}
+
 void test_the_font_attribute_switches_are_independent_of_the_colours()
 {
     Harness h;
@@ -1142,6 +1173,7 @@ int main(int argc, char **argv)
     test_a_paste_with_a_line_break_is_confirmed();
     test_dragging_off_the_edge_scrolls_the_view();
     test_settings_change_the_painted_colours();
+    test_url_colour_and_underline_are_independent();
     test_the_font_attribute_switches_are_independent_of_the_colours();
     test_attribute_colours_can_keep_the_normal_background();
     test_use_text_colour_repairs_only_the_three_same_colour_pairs();

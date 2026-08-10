@@ -65,6 +65,8 @@ Theme::Theme()
     m_blink[1] = QColor(255, 255, 255);
     m_underline[0] = QColor(255, 0, 255);     // VTUnderlineColor, :786
     m_underline[1] = QColor(255, 255, 255);
+    m_url[0] = QColor(0, 255, 0);             // URLColor, :775
+    m_url[1] = QColor(255, 255, 255);
     m_reverse[0] = QColor(255, 255, 255);     // VTReverseColor, :767 — off by
     m_reverse[1] = QColor(0, 0, 0);           // default, so normally unused
     m_cursor = QColor(0, 0, 0);
@@ -90,6 +92,7 @@ void Theme::applySettings(const Session &session)
     readPair(session, "color.bold", m_bold);
     readPair(session, "color.blink", m_blink);
     readPair(session, "color.underline", m_underline);
+    readPair(session, "color.url", m_url);
     readPair(session, "color.reverse", m_reverse);
 
     // The master switch, and the one flag here the core also reads: with it
@@ -100,6 +103,7 @@ void Theme::applySettings(const Session &session)
     m_boldColor = readFlag(session, "color.bold_enabled", m_boldColor);
     m_blinkColor = readFlag(session, "color.blink_enabled", m_blinkColor);
     m_underlineColor = readFlag(session, "color.underline_enabled", m_underlineColor);
+    m_urlColor = readFlag(session, "color.url_enabled", m_urlColor);
     m_reverseColor = readFlag(session, "color.reverse_enabled", m_reverseColor);
     m_useTextColor = readFlag(session, "color.use_text_color", m_useTextColor);
     m_useNormalBg =
@@ -107,6 +111,8 @@ void Theme::applySettings(const Session &session)
     m_boldFontEnabled = readFlag(session, "color.bold_font", m_boldFontEnabled);
     m_underlineFontEnabled =
         readFlag(session, "color.underline_font", m_underlineFontEnabled);
+    m_urlUnderlineEnabled =
+        readFlag(session, "color.url_underline", m_urlUnderlineEnabled);
 
     // The cursor is painted in the normal foreground, which is what upstream
     // does when `VTCursorColor` is absent — and it is absent from the schema,
@@ -160,6 +166,7 @@ void Theme::resolve(const TtCell &cell, bool selected, bool screenReverse,
     const bool bold = m_boldColor && (attrs & TT_ATTR_BOLD);
     const bool blink = m_blinkColor && (attrs & TT_ATTR_BLINK);
     const bool underline = m_underlineColor && (attrs & TT_ATTR_UNDER);
+    const bool url = m_urlColor && (attrs & TT_ATTR_URL);
 
     bool reverse = selected;
     if (attrs & TT_ATTR_REVERSE) {
@@ -169,7 +176,8 @@ void Theme::resolve(const TtCell &cell, bool selected, bool screenReverse,
         reverse = !reverse;
     }
 
-    // Blink beats bold beats underline. Only one pair applies; they do not mix.
+    // Blink beats bold beats underline beats URL (`vtdisp.c:2449-2514`). Only
+    // one pair applies; they do not mix.
     const QColor *pair = nullptr;
     if (blink) {
         pair = m_blink;
@@ -177,10 +185,9 @@ void Theme::resolve(const TtCell &cell, bool selected, bool screenReverse,
         pair = m_bold;
     } else if (underline) {
         pair = m_underline;
+    } else if (url) {
+        pair = m_url;
     }
-    // `AttrURL` has no arm here because the VT engine never sets it: detecting
-    // a URL in the buffer is a Tera Term *display* feature, and it is not
-    // ported.
 
     if (!pair) {
         if (!reverse) {

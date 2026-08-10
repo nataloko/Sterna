@@ -65,7 +65,8 @@ public:
     }
     bool paintsUnderline(uint32_t attrs) const
     {
-        return m_underlineFontEnabled && (attrs & TT_ATTR_UNDER) != 0;
+        return (m_urlUnderlineEnabled && (attrs & TT_ATTR_URL) != 0) ||
+               (m_underlineFontEnabled && (attrs & TT_ATTR_UNDER) != 0);
     }
     void setFont(const QFont &font);
 
@@ -83,6 +84,7 @@ private:
     QColor m_bold[2];
     QColor m_blink[2];
     QColor m_underline[2];
+    QColor m_url[2];
     QColor m_reverse[2];
     QColor m_cursor;
 
@@ -92,11 +94,13 @@ private:
     bool m_boldColor = true;
     bool m_blinkColor = true;
     bool m_underlineColor = true;
+    bool m_urlColor = true;
     bool m_reverseColor = false;
     bool m_useTextColor = false;
     bool m_useNormalBg = false;
     bool m_boldFontEnabled = true;
     bool m_underlineFontEnabled = true;
+    bool m_urlUnderlineEnabled = true;
 
     QFont m_font;
     QFont m_boldFont;
