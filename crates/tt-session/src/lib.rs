@@ -59,7 +59,7 @@ pub use tt_config::{Field, Ini, Kind, Settings, FIELDS};
 
 use tt_conn::{Error, Result, Transport, TransportEvent};
 use tt_grid::{Cell, Grid, ATTR_LINE_CONTINUED, ATTR_URL, WIDTH_PAD, WIDTH_WIDE};
-use tt_vt::{Config, CrSend, Key, Modifiers, MouseEvent, Tracking, Vt};
+use tt_vt::{ClipboardRequest, Config, CrSend, Key, Modifiers, MouseEvent, Tracking, Vt};
 
 /// Something the frontend needs to know about. Drained, not delivered: a
 /// callback would have to be `Send` and would run on whichever thread the
@@ -113,6 +113,9 @@ pub enum Event {
     /// `bell.visual_wait_ms` rather than making a sound. The frontend owns
     /// both, since the core has neither a speaker nor a window.
     Bell { visual: bool },
+    /// OSC 52, parsed and authorised by the terminal but waiting for the
+    /// frontend which owns the operating system clipboard.
+    Clipboard(ClipboardRequest),
 }
 
 /// A terminal, and optionally something for it to talk to.
@@ -970,6 +973,7 @@ impl Session {
                 self.vt.feed(&bytes);
                 self.log_bytes_in(&bytes);
                 self.macro_bytes_in();
+                self.collect_clipboard();
                 self.rx = bytes;
                 self.follow_scroll();
                 self.events.push(Event::Damage);
@@ -1096,6 +1100,23 @@ impl Session {
         self.flush_pending()
     }
 
+    /// Answer an accepted OSC 52 clipboard read. `selection` is the string
+    /// carried by [`ClipboardRequest::Read`]; `text` is UTF-8 from the
+    /// frontend's clipboard.
+    ///
+    /// False is not an I/O error: it means upstream would send no reply
+    /// because the selector does not fit its fixed header or the clipboard is
+    /// not text. A true result has already been flushed to the far end.
+    pub fn clipboard_reply(&mut self, selection: &str, text: &str) -> Result<bool> {
+        if !self.vt.clipboard_reply(selection, text) {
+            return Ok(false);
+        }
+        let reply = self.vt.take_reply();
+        self.queue(&reply);
+        self.flush_pending()?;
+        Ok(true)
+    }
+
     /// Report a mouse event, in window pixels. Returns whether the terminal
     /// consumed it — if not, the click is the frontend's to use for
     /// selection.
@@ -1206,6 +1227,7 @@ impl Session {
         self.vt.feed(bytes);
         self.log_bytes_in(bytes);
         self.macro_bytes_in();
+        self.collect_clipboard();
         self.follow_scroll();
         self.events.push(Event::Damage);
         self.collect_title();
@@ -1359,6 +1381,15 @@ impl Session {
             self.last_title = title;
             self.events.push(Event::Title(self.last_title.clone()));
         }
+    }
+
+    fn collect_clipboard(&mut self) {
+        self.events.extend(
+            self.vt
+                .take_clipboard_requests()
+                .into_iter()
+                .map(Event::Clipboard),
+        );
     }
 }
 

@@ -2,6 +2,8 @@
 
 #include "Session.h"
 
+#include <QClipboard>
+#include <QGuiApplication>
 #include <QSocketNotifier>
 #include <QStringList>
 #include <QTimer>
@@ -862,6 +864,40 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
             }
             break;
         }
+        case TT_EVENT_KIND_CLIPBOARD_READ: {
+            if (events[i].byte != 0) {
+                emit notice(tr("Remote host read the clipboard"));
+            }
+            const QByteArray selection(events[i].text ? events[i].text : "");
+            const QString text = QGuiApplication::clipboard()->text(QClipboard::Clipboard);
+            const QByteArray utf8 = text.toUtf8();
+            bool sent = false;
+            if (tt_session_clipboard_reply(m_session, selection.constData(),
+                                           utf8.constData(),
+                                           static_cast<size_t>(utf8.size()), &sent)
+                != TT_OK) {
+                emit notice(QString::fromUtf8(tt_last_error()));
+            }
+            break;
+        }
+        case TT_EVENT_KIND_CLIPBOARD_WRITE: {
+            const QString text = QString::fromUtf8(events[i].text ? events[i].text : "");
+            if (events[i].byte != 0) {
+                emit notice(tr("Remote host wrote the clipboard"));
+            }
+            if (text.isEmpty()) {
+                QGuiApplication::clipboard()->clear(QClipboard::Clipboard);
+            } else {
+                QGuiApplication::clipboard()->setText(text, QClipboard::Clipboard);
+            }
+            break;
+        }
+        case TT_EVENT_KIND_CLIPBOARD_READ_REJECTED:
+            emit notice(tr("Remote clipboard read rejected"));
+            break;
+        case TT_EVENT_KIND_CLIPBOARD_WRITE_REJECTED:
+            emit notice(tr("Remote clipboard write rejected"));
+            break;
         }
     }
 

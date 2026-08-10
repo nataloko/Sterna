@@ -266,6 +266,36 @@ void test_a_settings_file_named_on_the_line()
           == QStringLiteral("300"));
 }
 
+/// `/OSC52=` is an override of the file's permission, not a second setting.
+/// The unrecognised-value arm matters because it clears both bits upstream.
+void test_osc52_overrides_the_file_for_this_launch()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("clipboard.ini"));
+    QFile file(ini);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[Tera Term]\nClipboardAccessFromRemote=write\n");
+    file.close();
+
+    MainWindow window(ini);
+    CHECK(window.session()->setting(QStringLiteral("clipboard.remote_access"))
+          == QStringLiteral("write"));
+
+    QString error;
+    TtCmdLine *cmd = parse({QStringLiteral("/OSC52=read")});
+    CHECK(window.session()->applyCommandLine(cmd, &error));
+    tt_cmdline_free(cmd);
+    CHECK(window.session()->setting(QStringLiteral("clipboard.remote_access"))
+          == QStringLiteral("read"));
+
+    cmd = parse({QStringLiteral("/OSC52=nonsense")});
+    CHECK(window.session()->applyCommandLine(cmd, &error));
+    tt_cmdline_free(cmd);
+    CHECK(window.session()->setting(QStringLiteral("clipboard.remote_access"))
+          == QStringLiteral("off"));
+}
+
 /// `StartupMacro` is a file setting with two command-line overrides: `/M`
 /// replaces it and a `/D=` topic cancels it. Relative names live beside the
 /// active INI here instead of depending on a desktop launcher's working
@@ -386,6 +416,7 @@ int main(int argc, char **argv)
     test_a_window_that_is_never_shown();
     test_a_window_position();
     test_a_settings_file_named_on_the_line();
+    test_osc52_overrides_the_file_for_this_launch();
     test_the_startup_macro_setting_and_its_overrides();
     test_a_host_name_connects_and_logs();
 

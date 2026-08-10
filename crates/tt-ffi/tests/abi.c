@@ -144,6 +144,45 @@ static void test_screen(void)
     tt_session_free(s);
 }
 
+static void test_remote_clipboard(void)
+{
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+    const TtEvent *events = NULL;
+
+    /* Access ships off but notification ships on, so a rejected request is
+     * visible rather than silently discarded. */
+    static const char denied[] = "\033]52;c;?\007";
+    tt_session_feed(s, (const uint8_t *)denied, sizeof denied - 1);
+    size_t n = tt_session_drain_events(s, &events);
+    CHECK(n == 2);
+    CHECK(events[0].kind == TT_EVENT_KIND_CLIPBOARD_READ_REJECTED);
+
+    CHECK_OK(tt_session_set_setting(s, "clipboard.remote_access", "on"));
+    tt_session_drain_events(s, &events); /* damage from applying settings */
+    static const char allowed[] = "\033]52;c;?\007\033]52;p;aGk=\033\\";
+    tt_session_feed(s, (const uint8_t *)allowed, sizeof allowed - 1);
+    n = tt_session_drain_events(s, &events);
+    /* The first settings application also gives the core its file title, so
+     * the next feed reports that title edge alongside these three events. */
+    CHECK(n == 4);
+    CHECK(events[0].kind == TT_EVENT_KIND_CLIPBOARD_READ);
+    CHECK(events[0].byte == 1);
+    CHECK(events[0].text != NULL && strcmp(events[0].text, "c") == 0);
+    CHECK(events[1].kind == TT_EVENT_KIND_CLIPBOARD_WRITE);
+    CHECK(events[1].text != NULL && strcmp(events[1].text, "hi") == 0);
+
+    /* There is no transport in this ABI unit, but this still crosses the C
+     * seam and builds the exact reply before the disconnected session drops
+     * it. */
+    bool sent = false;
+    CHECK_OK(tt_session_clipboard_reply(s, "c", "hé", SIZE_MAX, &sent));
+    CHECK(sent);
+
+    tt_session_free(s);
+}
+
 static void test_scrollback_viewport(void)
 {
     TtConfig cfg;
@@ -2075,6 +2114,7 @@ int main(void)
 {
     printf("Sterna core %s\n", tt_version());
     test_screen();
+    test_remote_clipboard();
     test_attributes();
     test_scrollback_viewport();
     test_absolute_lines();

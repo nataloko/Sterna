@@ -23,12 +23,12 @@ use crate::bell::BellLimits;
 use crate::log::{LogMode, LogOptions, Timestamp};
 use std::time::Duration;
 use tt_config::{
-    hex_decode, BellMode, CursorShape, KeyboardBackspace, LogTimestampType, Settings,
-    TerminalCrReceive, TerminalCrSend, WindowTitleChange, WindowTitleReport,
+    hex_decode, BellMode, ClipboardRemoteAccess, CursorShape, KeyboardBackspace, LogTimestampType,
+    Settings, TerminalCrReceive, TerminalCrSend, WindowTitleChange, WindowTitleReport,
 };
 use tt_vt::{
-    palette::Rgb, valid_terminal_uid, Beep, ColorFlags, Config, CrReceive, CrSend, ShiftFlags,
-    TabStopFlags, TermId, TitleChange, TitleReport, DEFAULT_TERMINAL_UID,
+    palette::Rgb, valid_terminal_uid, Beep, ClipboardAccess, ColorFlags, Config, CrReceive, CrSend,
+    ShiftFlags, TabStopFlags, TermId, TitleChange, TitleReport, DEFAULT_TERMINAL_UID,
 };
 
 /// `vtdisp.c:GetIndex256From16`: `ts.ANSIColor` keeps the legacy table order,
@@ -151,6 +151,13 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
         // `GetPrivateProfileInt` cannot return a negative (`ini-audit/`), so
         // the floor is only for a caller that set the field by hand.
         max_osc_buffer: s.terminal_max_osc_buffer.max(0) as usize,
+        clipboard_access: match s.clipboard_remote_access {
+            ClipboardRemoteAccess::Off => ClipboardAccess::Off,
+            ClipboardRemoteAccess::Read => ClipboardAccess::Read,
+            ClipboardRemoteAccess::Write => ClipboardAccess::Write,
+            ClipboardRemoteAccess::ReadWrite => ClipboardAccess::ReadWrite,
+        },
+        notify_clipboard_access: s.clipboard_remote_notify,
         ..*base
     }
 }

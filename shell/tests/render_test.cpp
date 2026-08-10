@@ -1035,6 +1035,42 @@ void test_a_paste_with_a_line_break_is_confirmed()
     CHECK(dialog.size() == QSize(400, 300));
 }
 
+/// OSC 52 stops at the core/toolkit boundary: the parser decides whether the
+/// request is allowed, and this `Session` is the first layer which may touch
+/// the operating system clipboard.
+void test_remote_clipboard_access_is_permissioned_and_notified()
+{
+    Session session(80, 24);
+    QStringList notices;
+    QObject::connect(&session, &Session::notice,
+                     [&notices](const QString &text) { notices.append(text); });
+
+    QApplication::clipboard()->setText(QStringLiteral("local"), QClipboard::Clipboard);
+    session.feed(QByteArray("\033]52;c;cmVtb3Rl\007"));
+    CHECK(QApplication::clipboard()->text(QClipboard::Clipboard)
+          == QStringLiteral("local"));
+    CHECK(notices == QStringList{QStringLiteral("Remote clipboard write rejected")});
+
+    QString error;
+    CHECK(session.setSetting(QStringLiteral("clipboard.remote_access"),
+                             QStringLiteral("write"), &error));
+    notices.clear();
+    session.feed(QByteArray("\033]52;c;cmVtb3Rl\033\\"));
+    CHECK(QApplication::clipboard()->text(QClipboard::Clipboard)
+          == QStringLiteral("remote"));
+    CHECK(notices == QStringList{QStringLiteral("Remote host wrote the clipboard")});
+
+    // Notification is independent of permission: turning it off makes the
+    // same authorised write quiet rather than refusing it.
+    CHECK(session.setSetting(QStringLiteral("clipboard.remote_notify"),
+                             QStringLiteral("off"), &error));
+    notices.clear();
+    session.feed(QByteArray("\033]52;c;cXVpZXQ=\007"));
+    CHECK(QApplication::clipboard()->text(QClipboard::Clipboard)
+          == QStringLiteral("quiet"));
+    CHECK(notices.isEmpty());
+}
+
 
 
 
@@ -1580,6 +1616,7 @@ int main(int argc, char **argv)
     test_continued_line_copy_joins_a_wrapped_line();
     test_the_other_buttons_do_not_start_or_copy_a_selection();
     test_a_paste_with_a_line_break_is_confirmed();
+    test_remote_clipboard_access_is_permissioned_and_notified();
     test_dragging_off_the_edge_scrolls_the_view();
     test_settings_change_the_painted_colours();
     test_url_colour_and_underline_are_independent();

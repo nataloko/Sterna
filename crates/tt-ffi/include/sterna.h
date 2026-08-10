@@ -396,6 +396,26 @@ enum TtEventKind
      * can ignore this one and still be honest about it.
      */
     TT_EVENT_KIND_VISUAL_BELL = 10,
+    /**
+     * An authorised OSC 52 read. `text` is the ASCII selection name; read
+     * the system clipboard and call [`tt_session_clipboard_reply`]. `byte`
+     * is nonzero when the user also asked to be notified.
+     */
+    TT_EVENT_KIND_CLIPBOARD_READ = 11,
+    /**
+     * An authorised OSC 52 write. `text` is decoded UTF-8 to put on the
+     * system clipboard; `byte` is the notification flag.
+     */
+    TT_EVENT_KIND_CLIPBOARD_WRITE = 12,
+    /**
+     * An OSC 52 read rejected by the setting. It is emitted only when remote
+     * clipboard notifications are enabled.
+     */
+    TT_EVENT_KIND_CLIPBOARD_READ_REJECTED = 13,
+    /**
+     * The corresponding rejected write.
+     */
+    TT_EVENT_KIND_CLIPBOARD_WRITE_REJECTED = 14,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -904,7 +924,8 @@ typedef struct {
 typedef struct {
     TtEventKind kind;
     /**
-     * Meaningful for [`TtEventKind::BadByte`] only.
+     * The byte for [`TtEventKind::BadByte`], or the notification flag for an
+     * authorised clipboard event.
      */
     uint8_t byte;
     /**
@@ -913,8 +934,8 @@ typedef struct {
     uint16_t cols;
     uint16_t rows;
     /**
-     * Meaningful for [`TtEventKind::Title`] and [`TtEventKind::LogFailed`];
-     * null otherwise.
+     * Meaningful for [`TtEventKind::Title`], [`TtEventKind::LogFailed`], and
+     * authorised clipboard events; null otherwise.
      */
     const char *text;
 } TtEvent;
@@ -2815,6 +2836,22 @@ TtStatus tt_session_send_text(TtSession *session,
  * newline.
  */
 TtStatus tt_session_paste(TtSession *session, const char *text, size_t len);
+
+/**
+ * Answer an authorised [`TtEventKind::ClipboardRead`] with UTF-8 clipboard
+ * text. `selection` is the event's `text`; `len` may be `SIZE_MAX` for a
+ * NUL-terminated clipboard string.
+ *
+ * `out_sent` (may be null) is false when upstream would intentionally send
+ * nothing — its fixed response header cannot hold the selector, or the
+ * clipboard contains a control character which makes it binary rather than
+ * text. An empty string is text and sends an empty base64 payload.
+ */
+TtStatus tt_session_clipboard_reply(TtSession *session,
+                                    const char *selection,
+                                    const char *text,
+                                    size_t len,
+                                    bool *out_sent);
 
 /**
  * Report a mouse event, in **window pixels** rather than cells.

@@ -81,6 +81,44 @@ pub struct BellRequests {
     pub count: u32,
 }
 
+/// What OSC 52 may do to the frontend's clipboard —
+/// `ts.CtrlFlag & CSF_CBMASK` (`tttypes.h:223`).
+///
+/// Off is deliberately the default. A program on the far end otherwise gains
+/// access to text which may never have passed through this terminal at all.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ClipboardAccess {
+    #[default]
+    Off,
+    Read,
+    Write,
+    ReadWrite,
+}
+
+impl ClipboardAccess {
+    fn can_read(self) -> bool {
+        matches!(self, ClipboardAccess::Read | ClipboardAccess::ReadWrite)
+    }
+
+    fn can_write(self) -> bool {
+        matches!(self, ClipboardAccess::Write | ClipboardAccess::ReadWrite)
+    }
+}
+
+/// An OSC 52 action which needs the frontend. The terminal parses and
+/// authorises it; only the frontend can touch the operating system clipboard.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ClipboardRequest {
+    /// Read the named selection and return it with [`Vt::clipboard_reply`].
+    Read { selection: String, notify: bool },
+    /// Replace the clipboard with decoded UTF-8 text.
+    Write { text: String, notify: bool },
+    /// A read was refused. Produced only when notification is enabled.
+    ReadRejected,
+    /// A write was refused. Produced only when notification is enabled.
+    WriteRejected,
+}
+
 /// Tera Term's `ts.ColorFlag`, or the two bits of it that change how SGR parses.
 ///
 /// `Xterm256Color` defaults to **on** (`ttset.c:743`) and `Aixterm16Color` to
@@ -486,6 +524,13 @@ pub struct Config {
     /// string collected out of an OSC; upstream drops every byte past it and
     /// lets the sequence terminate normally, so a long title arrives cut.
     pub max_osc_buffer: usize,
+    /// `ts.CtrlFlag & CSF_CBMASK` (`ttset.c:1742`). The two OSC 52
+    /// permissions are independent; see [`ClipboardAccess`].
+    pub clipboard_access: ClipboardAccess,
+    /// `ts.NotifyClipboardAccess` (`ttset.c:1753`, key default on). Accepted
+    /// actions carry this bit to the frontend; rejected ones become events
+    /// only when it is set.
+    pub notify_clipboard_access: bool,
 }
 
 /// The private and ANSI modes that are one flag each. Grouped so a reset can
@@ -587,6 +632,8 @@ impl Default for Config {
             lock_uid: true,
             auto_invoke: false,
             max_osc_buffer: 4096,
+            clipboard_access: ClipboardAccess::Off,
+            notify_clipboard_access: true,
         }
     }
 }
@@ -951,6 +998,39 @@ impl Vt {
         }
     }
 
+    /// OSC 52 work waiting for the frontend. Drained for the same reason as a
+    /// session event: a GUI clipboard may only be used on the GUI thread.
+    pub fn take_clipboard_requests(&mut self) -> Vec<ClipboardRequest> {
+        std::mem::take(&mut self.state.clipboard_requests)
+    }
+
+    /// Answer one accepted OSC 52 read with UTF-8 text.
+    ///
+    /// The selector is copied back verbatim, and ST is used even when the
+    /// request ended in BEL — `CBStartPasteB64` is always handed `"\e\\"`
+    /// (`vtterm.c:5006`). False means upstream would send nothing: the
+    /// selector does not fit its 20-byte header, or the clipboard is not text.
+    pub fn clipboard_reply(&mut self, selection: &str, text: &str) -> bool {
+        // `hdr[20]` starts with five bytes of `ESC ] 5 2 ;`, then receives the
+        // selector and its semicolon through `strncat_s`.
+        if selection.len() > 13 || !selection.bytes().all(is_clipboard_selector) {
+            return false;
+        }
+        // `GetClipboardTextW` is passed through `IsTextW`. Its zero length is
+        // valid; a NUL ends the Win32 string before this test.
+        let text = text.split('\0').next().unwrap_or("");
+        if !text.chars().all(is_clipboard_text) {
+            return false;
+        }
+
+        self.state.send(b"\x1b]52;");
+        self.state.send(selection.as_bytes());
+        self.state.send(b";");
+        self.state.send(&base64_encode(text.as_bytes()));
+        self.state.send(b"\x1b\\");
+        true
+    }
+
     /// The last title the *host* set, with OSC 0, 1 or 2 — `cv.TitleRemoteW`.
     /// Empty if it has never set one, or if [`TitleChange::Off`] is discarding
     /// them.
@@ -1312,6 +1392,8 @@ struct State {
     /// A RIS went past, which is where `ResetTerminal` puts the governor's
     /// clocks back (`vtterm.c:348`).
     bell_reset: bool,
+    /// OSC 52 actions waiting for the toolkit which owns the clipboard.
+    clipboard_requests: Vec<ClipboardRequest>,
 }
 
 /// What a linked macro sees of the session — `ttdde.c`'s `DDEPut1` sink, and
@@ -1404,6 +1486,7 @@ impl State {
             modes: Modes::from_config(&Config::default()),
             bells: 0,
             bell_reset: false,
+            clipboard_requests: Vec::new(),
         }
     }
 
@@ -2988,6 +3071,108 @@ fn arg0(params: &Params, n: usize) -> u16 {
         .unwrap_or(0)
 }
 
+fn is_clipboard_selector(byte: u8) -> bool {
+    matches!(byte, b'c' | b'p' | b's' | b'0'..=b'7')
+}
+
+fn is_clipboard_text(c: char) -> bool {
+    c >= ' ' || matches!(c, '\u{7}'..='\r' | '\u{1b}')
+}
+
+/// `ttlib.c:b64decode`, including its permissive stop rule. Whitespace is
+/// skipped, an invalid byte (padding included) ends the input, and a final
+/// group of two or three digits is still decoded.
+fn base64_decode(input: &[u8]) -> Vec<u8> {
+    let value = |byte| match byte {
+        b'A'..=b'Z' => Some(u32::from(byte - b'A')),
+        b'a'..=b'z' => Some(u32::from(byte - b'a') + 26),
+        b'0'..=b'9' => Some(u32::from(byte - b'0') + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    };
+    let mut out = Vec::with_capacity(input.len() * 3 / 4 + 1);
+    let mut bits = 0u32;
+    let mut state = 0u8;
+    for &byte in input {
+        if byte.is_ascii_whitespace() {
+            continue;
+        }
+        let Some(digit) = value(byte) else { break };
+        bits = (bits << 6) | digit;
+        state += 1;
+        if state == 4 {
+            out.extend_from_slice(&[(bits >> 16) as u8, (bits >> 8) as u8, bits as u8]);
+            bits = 0;
+            state = 0;
+        }
+    }
+    match state {
+        2 => {
+            bits <<= 4;
+            out.push((bits >> 8) as u8);
+        }
+        3 => {
+            bits <<= 6;
+            out.extend_from_slice(&[(bits >> 16) as u8, (bits >> 8) as u8]);
+        }
+        _ => {}
+    }
+    out
+}
+
+fn base64_encode(input: &[u8]) -> Vec<u8> {
+    const DIGITS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = Vec::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let bits = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        out.push(DIGITS[((bits >> 18) & 0x3f) as usize]);
+        out.push(DIGITS[((bits >> 12) & 0x3f) as usize]);
+        out.push(if chunk.len() > 1 {
+            DIGITS[((bits >> 6) & 0x3f) as usize]
+        } else {
+            b'='
+        });
+        out.push(if chunk.len() > 2 {
+            DIGITS[(bits & 0x3f) as usize]
+        } else {
+            b'='
+        });
+    }
+    out
+}
+
+/// `ConvertUTF16`'s UTF-8 failure rule: one U+FFFD for each byte in a broken
+/// sequence, not one for the whole maximal invalid subpart as
+/// `String::from_utf8_lossy` gives.
+fn clipboard_utf8(input: &[u8]) -> String {
+    let input = &input[..input.iter().position(|&b| b == 0).unwrap_or(input.len())];
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    while !rest.is_empty() {
+        match std::str::from_utf8(rest) {
+            Ok(valid) => {
+                out.push_str(valid);
+                break;
+            }
+            Err(error) => {
+                let valid = error.valid_up_to();
+                // SAFETY: `valid_up_to` is the UTF-8 validator's own boundary.
+                out.push_str(unsafe { std::str::from_utf8_unchecked(&rest[..valid]) });
+                rest = &rest[valid..];
+                let invalid = error.error_len().unwrap_or(rest.len()).min(rest.len());
+                for _ in 0..invalid {
+                    out.push('\u{fffd}');
+                }
+                rest = &rest[invalid..];
+            }
+        }
+    }
+    out
+}
+
 impl State {
     /// Everything after the OSC's first `;`, bounded by `ts.MaxOSCBufferSize`.
     ///
@@ -3024,6 +3209,41 @@ impl State {
         }
         out.truncate(limit);
         out
+    }
+
+    /// OSC 52 — `XsProcClipboard` (`vtterm.c:4981`). The parser owns syntax,
+    /// permissions and base64; the queued action owns no clipboard itself.
+    fn osc_clipboard(&mut self, params: &[&[u8]]) {
+        let body = self.osc_string(params);
+        let selection_len = body
+            .iter()
+            .position(|&byte| !is_clipboard_selector(byte))
+            .unwrap_or(body.len());
+        if body.get(selection_len) != Some(&b';') {
+            return;
+        }
+        let selection =
+            String::from_utf8(body[..selection_len].to_vec()).expect("OSC 52 selectors are ASCII");
+        let payload = &body[selection_len + 1..];
+
+        if payload == b"?" {
+            if self.config.clipboard_access.can_read() {
+                self.clipboard_requests.push(ClipboardRequest::Read {
+                    selection,
+                    notify: self.config.notify_clipboard_access,
+                });
+            } else if self.config.notify_clipboard_access {
+                self.clipboard_requests.push(ClipboardRequest::ReadRejected);
+            }
+        } else if self.config.clipboard_access.can_write() {
+            self.clipboard_requests.push(ClipboardRequest::Write {
+                text: clipboard_utf8(&base64_decode(payload)),
+                notify: self.config.notify_clipboard_access,
+            });
+        } else if self.config.notify_clipboard_access {
+            self.clipboard_requests
+                .push(ClipboardRequest::WriteRejected);
+        }
     }
 }
 
@@ -3449,6 +3669,9 @@ impl Perform for State {
             && params.len() > 1
         {
             self.title = String::from_utf8_lossy(&self.osc_string(params)).into_owned();
+        }
+        if kind == 52 {
+            self.osc_clipboard(params);
         }
     }
 }
@@ -4027,6 +4250,96 @@ mod tests {
         vt.feed(b"\x1b]2;abcdefghij\x07");
         // Seven, not eight: upstream's test is `StrLen + 1 < StrBuffSize`.
         assert_eq!(vt.remote_title(), "abcdefg");
+    }
+
+    #[test]
+    fn osc52_keeps_read_and_write_as_separate_permissions() {
+        let requests = |access, notify| {
+            let mut vt = Vt::new(Config {
+                clipboard_access: access,
+                notify_clipboard_access: notify,
+                ..Config::default()
+            });
+            vt.feed(b"\x1b]52;c;?\x07\x1b]52;c;aGk=\x1b\\");
+            vt.take_clipboard_requests()
+        };
+
+        assert_eq!(
+            requests(ClipboardAccess::Off, true),
+            vec![
+                ClipboardRequest::ReadRejected,
+                ClipboardRequest::WriteRejected
+            ]
+        );
+        assert!(requests(ClipboardAccess::Off, false).is_empty());
+        assert_eq!(
+            requests(ClipboardAccess::Read, false),
+            vec![ClipboardRequest::Read {
+                selection: "c".into(),
+                notify: false
+            }]
+        );
+        assert_eq!(
+            requests(ClipboardAccess::Write, true),
+            vec![
+                ClipboardRequest::ReadRejected,
+                ClipboardRequest::Write {
+                    text: "hi".into(),
+                    notify: true
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn osc52_has_upstreams_selector_and_base64_rules() {
+        let mut vt = Vt::new(Config {
+            clipboard_access: ClipboardAccess::Write,
+            ..Config::default()
+        });
+        // Padding is the invalid byte which ends upstream's permissive
+        // decoder; whitespace is skipped, and an incomplete group is kept.
+        vt.feed(b"\x1b]52;c;a Gk=ignored\x07");
+        // E2 82 followed by `b`: the charset decoder emits one replacement
+        // for each bad byte. The NUL in the next request ends Win32 text.
+        vt.feed(b"\x1b]52;p;4oJi\x07\x1b]52;s;YQBi\x07");
+        // `x` is not one of Pc's accepted selector bytes, so this is not an
+        // OSC 52 action at all.
+        vt.feed(b"\x1b]52;x;aGk=\x07");
+        assert_eq!(
+            vt.take_clipboard_requests(),
+            vec![
+                ClipboardRequest::Write {
+                    text: "hi".into(),
+                    notify: true
+                },
+                ClipboardRequest::Write {
+                    text: "\u{fffd}\u{fffd}b".into(),
+                    notify: true
+                },
+                ClipboardRequest::Write {
+                    text: "a".into(),
+                    notify: true
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn an_osc52_read_reply_is_utf8_base64_and_always_ends_in_st() {
+        let mut vt = Vt::new(Config::default());
+        assert!(vt.clipboard_reply("c", "hé"));
+        assert_eq!(vt.take_reply(), b"\x1b]52;c;aMOp\x1b\\");
+
+        // An empty clipboard is still text upstream and produces an empty
+        // payload. A selector one byte beyond `hdr[20]` produces no reply.
+        assert!(vt.clipboard_reply("", ""));
+        assert_eq!(vt.take_reply(), b"\x1b]52;;\x1b\\");
+        assert!(vt.clipboard_reply("cps0123456701", "ok"));
+        vt.take_reply();
+        assert!(!vt.clipboard_reply("cps01234567012", "too long"));
+        assert!(!vt.clipboard_reply("c", "not\u{1}text"));
+        assert!(vt.reply().is_empty());
     }
 
     /// A broken multi-byte sequence is one replacement character **per byte**,

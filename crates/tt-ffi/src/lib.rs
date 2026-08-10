@@ -94,7 +94,7 @@ use tt_ttl::host::{
     ShowWindow, WindowGeometry, WindowState,
 };
 use tt_ttl::{CmdLine, Interp, TtlError};
-use tt_vt::{Config, Key, Modifiers, MouseEvent, TermId, Tracking};
+use tt_vt::{ClipboardRequest, Config, Key, Modifiers, MouseEvent, TermId, Tracking};
 
 // --- status ---------------------------------------------------------------
 
@@ -1401,19 +1401,32 @@ pub enum TtEventKind {
     /// two are different actions, and because a frontend with no way to flash
     /// can ignore this one and still be honest about it.
     VisualBell = 10,
+    /// An authorised OSC 52 read. `text` is the ASCII selection name; read
+    /// the system clipboard and call [`tt_session_clipboard_reply`]. `byte`
+    /// is nonzero when the user also asked to be notified.
+    ClipboardRead = 11,
+    /// An authorised OSC 52 write. `text` is decoded UTF-8 to put on the
+    /// system clipboard; `byte` is the notification flag.
+    ClipboardWrite = 12,
+    /// An OSC 52 read rejected by the setting. It is emitted only when remote
+    /// clipboard notifications are enabled.
+    ClipboardReadRejected = 13,
+    /// The corresponding rejected write.
+    ClipboardWriteRejected = 14,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct TtEvent {
     pub kind: TtEventKind,
-    /// Meaningful for [`TtEventKind::BadByte`] only.
+    /// The byte for [`TtEventKind::BadByte`], or the notification flag for an
+    /// authorised clipboard event.
     pub byte: u8,
     /// Meaningful for [`TtEventKind::Resize`] only.
     pub cols: u16,
     pub rows: u16,
-    /// Meaningful for [`TtEventKind::Title`] and [`TtEventKind::LogFailed`];
-    /// null otherwise.
+    /// Meaningful for [`TtEventKind::Title`], [`TtEventKind::LogFailed`], and
+    /// authorised clipboard events; null otherwise.
     pub text: *const c_char,
 }
 
@@ -1466,6 +1479,24 @@ pub extern "C" fn tt_session_drain_events(
             }
             Event::Bell { visual: false } => (TtEventKind::Bell, 0, ptr::null()),
             Event::Bell { visual: true } => (TtEventKind::VisualBell, 0, ptr::null()),
+            Event::Clipboard(request) => match request {
+                ClipboardRequest::Read { selection, notify } => {
+                    s.event_texts.push(cstring(&selection));
+                    let p = s.event_texts.last().expect("just pushed").as_ptr();
+                    (TtEventKind::ClipboardRead, u8::from(notify), p)
+                }
+                ClipboardRequest::Write { text, notify } => {
+                    s.event_texts.push(cstring(&text));
+                    let p = s.event_texts.last().expect("just pushed").as_ptr();
+                    (TtEventKind::ClipboardWrite, u8::from(notify), p)
+                }
+                ClipboardRequest::ReadRejected => {
+                    (TtEventKind::ClipboardReadRejected, 0, ptr::null())
+                }
+                ClipboardRequest::WriteRejected => {
+                    (TtEventKind::ClipboardWriteRejected, 0, ptr::null())
+                }
+            },
         };
         s.events.push(TtEvent {
             kind,
@@ -2032,6 +2063,42 @@ pub extern "C" fn tt_session_paste(
     };
     match s.session.paste(text) {
         Ok(()) => TT_OK,
+        Err(e) => report(e),
+    }
+}
+
+/// Answer an authorised [`TtEventKind::ClipboardRead`] with UTF-8 clipboard
+/// text. `selection` is the event's `text`; `len` may be `SIZE_MAX` for a
+/// NUL-terminated clipboard string.
+///
+/// `out_sent` (may be null) is false when upstream would intentionally send
+/// nothing — its fixed response header cannot hold the selector, or the
+/// clipboard contains a control character which makes it binary rather than
+/// text. An empty string is text and sends an empty base64 payload.
+#[no_mangle]
+pub extern "C" fn tt_session_clipboard_reply(
+    session: *mut TtSession,
+    selection: *const c_char,
+    text: *const c_char,
+    len: usize,
+    out_sent: *mut bool,
+) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    let selection = match unsafe { str_arg(selection, usize::MAX) } {
+        Ok(selection) => selection,
+        Err(e) => return e,
+    };
+    let text = match unsafe { str_arg(text, len) } {
+        Ok(text) => text,
+        Err(e) => return e,
+    };
+    match s.session.clipboard_reply(selection, text) {
+        Ok(sent) => {
+            if let Some(out) = unsafe { out_sent.as_mut() } {
+                *out = sent;
+            }
+            TT_OK
+        }
         Err(e) => report(e),
     }
 }
