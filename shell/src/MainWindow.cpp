@@ -284,6 +284,33 @@ void MainWindow::onSettingsChanged()
 {
     m_view->applySettings();
 
+    // Tera Term's four accelerators are resources whose handlers consult
+    // these switches (`vtwin.cpp:1454`). Qt actions own their shortcuts, so a
+    // disabled accelerator is represented by no shortcut while the menu item
+    // remains available. There is no Duplicate session action until Stage 3;
+    // its two settings still round-trip in the schema.
+    if (m_serialConnectAction) {
+        const bool enabled =
+            m_session->setting(QStringLiteral("menu.accelerator_new_connection"))
+            == QLatin1String("on");
+        m_serialConnectAction->setShortcut(
+            enabled ? QKeySequence(Qt::ALT | Qt::Key_N) : QKeySequence());
+    }
+    if (m_localShellAction) {
+        const bool enabled =
+            m_session->setting(QStringLiteral("menu.accelerator_local_shell"))
+            == QLatin1String("on");
+        m_localShellAction->setShortcut(
+            enabled ? QKeySequence(Qt::ALT | Qt::Key_G) : QKeySequence());
+    }
+    if (m_breakAction) {
+        const bool disabled =
+            m_session->setting(QStringLiteral("menu.disable_accelerator_send_break"))
+            == QLatin1String("on");
+        m_breakAction->setShortcut(
+            disabled ? QKeySequence() : QKeySequence(Qt::ALT | Qt::Key_B));
+    }
+
     // Before the first show, upstream explicitly applies the active value
     // (`vtwin.cpp:780`). Afterwards the desktop's activation state decides,
     // including while the settings dialog is still the active window.
@@ -416,14 +443,17 @@ void MainWindow::buildMenus()
     // Linux line editor receives Meta. A menu that stole Alt+B from readline
     // would be a menu people disable the whole menu bar to escape.
     QMenu *file = menuBar()->addMenu(tr("File"));
-    file->addAction(tr("Connect to serial port..."), QKeySequence(Qt::ALT | Qt::Key_N),
-                    this, &MainWindow::showConnectDialog);
-    file->addAction(tr("Connect over SSH..."), this, &MainWindow::showSshDialog);
-    file->addAction(tr("Connect over telnet..."), this, &MainWindow::showTelnetDialog);
+    m_serialConnectAction = file->addAction(tr("Connect to serial port..."), this,
+                                             &MainWindow::showConnectDialog);
+    m_sshConnectAction = file->addAction(tr("Connect over SSH..."), this,
+                                          &MainWindow::showSshDialog);
+    m_telnetConnectAction = file->addAction(tr("Connect over telnet..."), this,
+                                             &MainWindow::showTelnetDialog);
     // No dialog: there is nothing to ask. The shell, the size and the
     // environment are all already known, and a dialog whose only button is OK
     // is a dialog nobody wants twice.
-    file->addAction(tr("Local shell"), this, [this] { connectPty(); });
+    m_localShellAction =
+        file->addAction(tr("Local shell"), this, [this] { connectPty(); });
     m_disconnectAction = file->addAction(tr("Disconnect"), this,
                                          &MainWindow::disconnectPort);
     file->addSeparator();
@@ -1309,7 +1339,26 @@ void MainWindow::updateStatus()
         // no break — RFC 4335 defines one and russh does not implement it —
         // and offering the item anyway offers an error message at the moment
         // a console has stopped answering.
-        m_breakAction->setEnabled(m_session->supportsBreak());
+        const bool menuDisabled =
+            m_session->setting(QStringLiteral("menu.disable_send_break"))
+            == QLatin1String("on");
+        m_breakAction->setEnabled(m_session->supportsBreak() && !menuDisabled);
+    }
+    // `DisableMenuNewConnection` is consulted only while a connection is
+    // already open (`vtwin.cpp:1133`); the item is always grey while a new
+    // one is still connecting. Sterna splits upstream's one New connection
+    // dialog into one action per transport, so the same gate covers all three
+    // remote/device dialogs. Local shell is Cygwin connection's counterpart
+    // and remains independent upstream too.
+    const bool disableNew =
+        m_session->setting(QStringLiteral("menu.disable_new_connection"))
+        == QLatin1String("on");
+    const bool canOpenNew = !connecting && (!connected || !disableNew);
+    for (QAction *action : {m_serialConnectAction, m_sshConnectAction,
+                            m_telnetConnectAction}) {
+        if (action) {
+            action->setEnabled(canOpenNew);
+        }
     }
     // One transfer at a time, and only over something. The core refuses both
     // anyway, but a greyed item says so before the click rather than after.

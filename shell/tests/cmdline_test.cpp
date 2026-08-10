@@ -16,6 +16,7 @@
 // repeated here.
 
 #include <QApplication>
+#include <QAction>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -153,6 +154,16 @@ TtCmdLine *parse(const QStringList &args, uint16_t maxComPort = 0)
     }
     return tt_cmdline_parse(argv.constData(), static_cast<size_t>(argv.size()),
                             maxComPort);
+}
+
+QAction *findAction(MainWindow &window, const QString &text)
+{
+    for (QAction *action : window.findChildren<QAction *>()) {
+        if (action->text() == text) {
+            return action;
+        }
+    }
+    return nullptr;
 }
 
 /// `/DS` on everything below that must not connect: without it a line naming
@@ -330,6 +341,73 @@ void test_a_settings_file_named_on_the_line()
           == QStringLiteral("300"));
 }
 
+void test_menu_and_accelerator_settings()
+{
+    Listener listener;
+    CHECK(listener.port() != 0);
+    if (listener.port() == 0) {
+        return;
+    }
+
+    MainWindow window;
+    QAction *serial = findAction(window, QStringLiteral("Connect to serial port..."));
+    QAction *ssh = findAction(window, QStringLiteral("Connect over SSH..."));
+    QAction *telnet = findAction(window, QStringLiteral("Connect over telnet..."));
+    QAction *local = findAction(window, QStringLiteral("Local shell"));
+    QAction *sendBreak = findAction(window, QStringLiteral("Send break"));
+    CHECK(serial != nullptr);
+    CHECK(ssh != nullptr);
+    CHECK(telnet != nullptr);
+    CHECK(local != nullptr);
+    CHECK(sendBreak != nullptr);
+    if (!serial || !ssh || !telnet || !local || !sendBreak) {
+        return;
+    }
+
+    // All three upstream accelerators ship enabled. The duplicate-session
+    // fourth has no action until Stage 3.
+    CHECK(serial->shortcut() == QKeySequence(Qt::ALT | Qt::Key_N));
+    CHECK(local->shortcut() == QKeySequence(Qt::ALT | Qt::Key_G));
+    CHECK(sendBreak->shortcut() == QKeySequence(Qt::ALT | Qt::Key_B));
+
+    QString error;
+    CHECK(window.session()->setSetting(
+        QStringLiteral("menu.accelerator_new_connection"), QStringLiteral("off"),
+        &error));
+    CHECK(window.session()->setSetting(
+        QStringLiteral("menu.accelerator_local_shell"), QStringLiteral("off"),
+        &error));
+    CHECK(window.session()->setSetting(
+        QStringLiteral("menu.disable_accelerator_send_break"),
+        QStringLiteral("on"), &error));
+    CHECK(serial->shortcut().isEmpty());
+    CHECK(local->shortcut().isEmpty());
+    CHECK(sendBreak->shortcut().isEmpty());
+
+    // The menu gates are separate from the shortcuts. New connection stays
+    // available on an open line by default; its switch greys the three pieces
+    // of Sterna's split dialog, while Local shell remains Cygwin's separate
+    // command. Telnet supports break, making that independent gate observable.
+    window.connectTelnet(QStringLiteral("127.0.0.1"), listener.port());
+    CHECK(window.session()->isConnected());
+    CHECK(serial->isEnabled());
+    CHECK(ssh->isEnabled());
+    CHECK(telnet->isEnabled());
+    CHECK(local->isEnabled());
+    CHECK(sendBreak->isEnabled());
+
+    CHECK(window.session()->setSetting(QStringLiteral("menu.disable_new_connection"),
+                                       QStringLiteral("on"), &error));
+    CHECK(!serial->isEnabled());
+    CHECK(!ssh->isEnabled());
+    CHECK(!telnet->isEnabled());
+    CHECK(local->isEnabled());
+
+    CHECK(window.session()->setSetting(QStringLiteral("menu.disable_send_break"),
+                                       QStringLiteral("on"), &error));
+    CHECK(!sendBreak->isEnabled());
+}
+
 /// `/OSC52=` is an override of the file's permission, not a second setting.
 /// The unrecognised-value arm matters because it clears both bits upstream.
 void test_osc52_overrides_the_file_for_this_launch()
@@ -489,6 +567,7 @@ int main(int argc, char **argv)
     test_a_window_that_is_never_shown();
     test_a_window_position();
     test_a_settings_file_named_on_the_line();
+    test_menu_and_accelerator_settings();
     test_osc52_overrides_the_file_for_this_launch();
     test_the_startup_macro_setting_and_its_overrides();
     test_a_host_name_connects_and_logs();

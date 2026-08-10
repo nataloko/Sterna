@@ -214,6 +214,10 @@ private:
     QScrollBar *m_scroll;
     QLabel *m_status;
     QAction *m_disconnectAction = nullptr;
+    QAction *m_serialConnectAction = nullptr;
+    QAction *m_sshConnectAction = nullptr;
+    QAction *m_telnetConnectAction = nullptr;
+    QAction *m_localShellAction = nullptr;
     QAction *m_breakAction = nullptr;
     QAction *m_logAction = nullptr;
     QAction *m_sendAction = nullptr;
