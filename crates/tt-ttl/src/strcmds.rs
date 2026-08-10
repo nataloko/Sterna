@@ -590,8 +590,9 @@ mod tests {
     fn strlen_counts_bytes() {
         assert_eq!(out("strlen 'abc'\ndispstr result"), "3");
         assert_eq!(out("strlen ''\ndispstr result"), "0");
-        // Two bytes for the pound sign, and TTL says two.
-        assert_eq!(out("strlen '£'\ndispstr result"), "2");
+        // The BOM makes this test source explicitly UTF-8 on Windows too: it
+        // is testing TTL's byte count, not the machine's ANSI code page.
+        assert_eq!(out("\u{FEFF}strlen '£'\ndispstr result"), "2");
     }
 
     #[test]

@@ -10,19 +10,14 @@
 //! [`crate::buffer::Buffers`], and it applies to an included file exactly as it
 //! applies to the first one.
 //!
-//! **The no-BOM branch is upstream's ANSI code page, and this port does not
-//! have one.** `LoadFileU8C` tries `CP_ACP` *first* and only falls back to
-//! UTF-8 when the conversion fails — with `MB_ERR_INVALID_CHARS` set, so it
-//! fails only on bytes the code page cannot spell. On a Japanese Windows that
-//! makes a Shift-JIS macro read correctly and a UTF-8 one that happens to be
-//! valid CP932 read as mojibake; on a Western one the same file is CP1252,
-//! where *every* byte sequence is valid, so a UTF-8 macro is mangled and there
-//! is no fallback at all. The encoding of a macro file is therefore a property
-//! of the machine that runs it, which is not something to reproduce on Linux
-//! where there is no such setting. A file with no BOM is passed through
-//! unchanged: valid UTF-8 is already what the parser wants, and anything else
-//! reaches the host as the bytes the file held. See `PLAN.md` — Stage 3 puts
-//! the code-page branch back on Windows, where it means something.
+//! **The no-BOM branch is upstream's ANSI code page on Windows.** `LoadFileU8C`
+//! tries `CP_ACP` first, with `MB_ERR_INVALID_CHARS`, and keeps the original
+//! bytes when that conversion fails. On a Japanese Windows that makes a
+//! Shift-JIS macro read correctly and a UTF-8 one that happens to be valid
+//! CP932 read as mojibake; on a Western one the same file is CP1252, where
+//! almost every byte sequence is valid. The encoding of a macro file is
+//! therefore a property of the Windows machine that runs it. Windows follows
+//! that rule; Unix, which has no ACP to ask, keeps a BOM-less file unchanged.
 
 /// `LoadFileU8C` — a macro file's bytes as the parser should see them.
 pub fn decode(raw: &[u8]) -> Vec<u8> {
@@ -31,7 +26,7 @@ pub fn decode(raw: &[u8]) -> Vec<u8> {
         [0xEF, 0xBB, 0xBF, rest @ ..] => rest.to_vec(),
         [0xFF, 0xFE, rest @ ..] => from_utf16(rest, u16::from_le_bytes),
         [0xFE, 0xFF, rest @ ..] => from_utf16(rest, u16::from_be_bytes),
-        _ => raw.to_vec(),
+        _ => from_ansi(raw),
     };
 
     // Every branch of `LoadFileU8C` finishes with `*_len = strlen(buf)+1`, so
@@ -41,6 +36,202 @@ pub fn decode(raw: &[u8]) -> Vec<u8> {
     // one character. A macro that appears to be one line long is the symptom.
     let end = out.iter().position(|&b| b == 0).unwrap_or(out.len());
     out.truncate(end);
+    out
+}
+
+#[cfg(not(windows))]
+fn from_ansi(raw: &[u8]) -> Vec<u8> {
+    raw.to_vec()
+}
+
+/// `ToU8A` — convert the bytes Windows accepts in its active ANSI code page.
+///
+/// `LoadRawFile` NUL-terminates the input and `ToU8A` uses `strlen`, so bytes
+/// after the first NUL do not get a vote on whether the conversion succeeds.
+/// If `MultiByteToWideChar` refuses the bytes, upstream tries its permissive
+/// UTF-8 decoder only as a check and then retains the original buffer. Keeping
+/// the bytes here is therefore the observable fallback too.
+#[cfg(windows)]
+fn from_ansi(raw: &[u8]) -> Vec<u8> {
+    let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
+    let text = &raw[..end];
+    // SAFETY: GetACP takes no pointers and only reads the process locale.
+    let code_page = unsafe { windows_sys::Win32::Globalization::GetACP() };
+    from_code_page(text, code_page).unwrap_or_else(|| text.to_vec())
+}
+
+#[cfg(windows)]
+fn from_code_page(raw: &[u8], code_page: u32) -> Option<Vec<u8>> {
+    use std::ptr::{null, null_mut};
+    use windows_sys::Win32::Globalization::{
+        MultiByteToWideChar, WideCharToMultiByte, CP_UTF8, MB_ERR_INVALID_CHARS,
+    };
+
+    if raw.is_empty() {
+        return Some(Vec::new());
+    }
+    if code_page == CP_UTF8 {
+        // `_MultiByteToWideChar` deliberately uses Tera Term's own permissive
+        // decoder for CP_UTF8 rather than the Win32 function below.
+        return Some(from_upstream_utf8(raw));
+    }
+    let raw_len = i32::try_from(raw.len()).ok()?;
+    // SAFETY: `raw` is alive for the call, its explicit length is checked
+    // above, and a NULL output asks Win32 for the required allocation size.
+    let wide_len = unsafe {
+        MultiByteToWideChar(
+            code_page,
+            MB_ERR_INVALID_CHARS,
+            raw.as_ptr(),
+            raw_len,
+            null_mut(),
+            0,
+        )
+    };
+    if wide_len == 0 {
+        return None;
+    }
+    let mut wide = vec![0u16; wide_len as usize];
+    // SAFETY: `wide` has exactly the capacity Win32 just requested and both
+    // slices remain alive and unaliased for the call.
+    if unsafe {
+        MultiByteToWideChar(
+            code_page,
+            MB_ERR_INVALID_CHARS,
+            raw.as_ptr(),
+            raw_len,
+            wide.as_mut_ptr(),
+            wide_len,
+        )
+    } != wide_len
+    {
+        return None;
+    }
+
+    // `ToU8A` next calls `_WideCharToMultiByte(..., CP_UTF8, ...)`.
+    // SAFETY: `wide` is a fully initialised UTF-16 buffer; NULL output and
+    // default-character pointers are required for CP_UTF8.
+    let utf8_len = unsafe {
+        WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            wide.as_ptr(),
+            wide_len,
+            null_mut(),
+            0,
+            null(),
+            null_mut(),
+        )
+    };
+    if utf8_len == 0 {
+        return None;
+    }
+    let mut utf8 = vec![0u8; utf8_len as usize];
+    // SAFETY: `utf8` has the size reported by the preceding call and all
+    // pointers refer to live, non-overlapping buffers.
+    if unsafe {
+        WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            wide.as_ptr(),
+            wide_len,
+            utf8.as_mut_ptr(),
+            utf8_len,
+            null(),
+            null_mut(),
+        )
+    } != utf8_len
+    {
+        return None;
+    }
+    Some(utf8)
+}
+
+/// `UTF8ToWideChar` followed by `WideCharToMBCP(CP_UTF8)`.
+///
+/// This differs from both strict UTF-8 and Win32's replacement behavior: an
+/// invalid byte becomes an ASCII `?`, while adjacent UTF-8 encodings of a high
+/// and low surrogate are joined by the UTF-16 intermediate representation.
+#[cfg(windows)]
+fn from_upstream_utf8(raw: &[u8]) -> Vec<u8> {
+    fn continuation(byte: u8) -> bool {
+        byte & 0xC0 == 0x80
+    }
+
+    let mut wide = Vec::with_capacity(raw.len());
+    let mut at = 0;
+    while at < raw.len() {
+        let c1 = raw[at];
+        let decoded = if c1 <= 0x7F {
+            Some((u32::from(c1), 1))
+        } else if (0xC2..=0xDF).contains(&c1) && at + 1 < raw.len() {
+            let c2 = raw[at + 1];
+            continuation(c2).then_some((u32::from(c1 & 0x1F) << 6 | u32::from(c2 & 0x3F), 2))
+        } else if (0xE0..=0xEF).contains(&c1) && at + 2 < raw.len() {
+            let c2 = raw[at + 1];
+            let c3 = raw[at + 2];
+            ((c1 & 0x0F != 0 || c2 & 0x20 != 0) && continuation(c2) && continuation(c3)).then_some(
+                (
+                    u32::from(c1 & 0x0F) << 12 | u32::from(c2 & 0x3F) << 6 | u32::from(c3 & 0x3F),
+                    3,
+                ),
+            )
+        } else if (0xF0..=0xF7).contains(&c1) && at + 3 < raw.len() {
+            let c2 = raw[at + 1];
+            let c3 = raw[at + 2];
+            let c4 = raw[at + 3];
+            ((c1 & 0x07 != 0 || c2 & 0x30 != 0)
+                && continuation(c2)
+                && continuation(c3)
+                && continuation(c4))
+            .then_some((
+                u32::from(c1 & 0x07) << 18
+                    | u32::from(c2 & 0x3F) << 12
+                    | u32::from(c3 & 0x3F) << 6
+                    | u32::from(c4 & 0x3F),
+                4,
+            ))
+        } else {
+            None
+        };
+
+        let (codepoint, used) = decoded.unwrap_or((u32::from(b'?'), 1));
+        at += used;
+        if codepoint < 0x1_0000 {
+            wide.push(codepoint as u16);
+        } else if codepoint <= 0x10_FFFF {
+            let pair = codepoint - 0x1_0000;
+            wide.push(0xD800 | (pair >> 10) as u16);
+            wide.push(0xDC00 | (pair & 0x3FF) as u16);
+        } else {
+            wide.push(u16::from(b'?'));
+        }
+    }
+
+    let mut out = Vec::with_capacity(raw.len());
+    let mut at = 0;
+    while at < wide.len() {
+        let first = wide[at];
+        let (codepoint, used) = if (0xD800..=0xDBFF).contains(&first)
+            && wide
+                .get(at + 1)
+                .is_some_and(|u| (0xDC00..=0xDFFF).contains(u))
+        {
+            let second = wide[at + 1];
+            (
+                0x1_0000 + (u32::from(first - 0xD800) << 10) + u32::from(second - 0xDC00),
+                2,
+            )
+        } else if (0xD800..=0xDFFF).contains(&first) {
+            (u32::from(b'?'), 1)
+        } else {
+            (u32::from(first), 1)
+        };
+        at += used;
+        let ch = char::from_u32(codepoint).unwrap_or('?');
+        let mut encoded = [0u8; 4];
+        out.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
+    }
     out
 }
 
@@ -81,8 +272,9 @@ mod tests {
             decode(b"\xEF\xBB\xBFmessagebox 'a' 'b'"),
             b"messagebox 'a' 'b'"
         );
-        // Two thirds of a BOM is not a BOM.
-        assert_eq!(decode(b"\xEF\xBBx"), b"\xEF\xBBx");
+        // Two thirds of a BOM is not a BOM: it takes the platform's ordinary
+        // no-BOM branch rather than losing those first two bytes.
+        assert_eq!(decode(b"\xEF\xBBx"), from_ansi(b"\xEF\xBBx"));
     }
 
     #[test]
@@ -121,6 +313,7 @@ mod tests {
         assert_eq!(decode(b"\xFE\xFF\x00A\x42"), "A\u{42}".as_bytes());
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn a_file_with_no_bom_is_its_own_bytes() {
         // Shift-JIS, which upstream would have read through the code page.
@@ -131,6 +324,103 @@ mod tests {
         assert_eq!(
             decode("messagebox 'こん'".as_bytes()),
             "messagebox 'こん'".as_bytes()
+        );
+    }
+
+    #[cfg(windows)]
+    fn encode_without_best_fit(text: &str, code_page: u32) -> Option<Vec<u8>> {
+        use std::ptr::{null, null_mut};
+        use windows_sys::core::BOOL;
+        use windows_sys::Win32::Globalization::{
+            WideCharToMultiByte, CP_UTF8, WC_NO_BEST_FIT_CHARS,
+        };
+
+        if code_page == CP_UTF8 {
+            return Some(text.as_bytes().to_vec());
+        }
+        let wide: Vec<u16> = text.encode_utf16().collect();
+        let mut used_default: BOOL = 0;
+        // SAFETY: `wide` is live for the call; NULL output requests its size.
+        let len = unsafe {
+            WideCharToMultiByte(
+                code_page,
+                WC_NO_BEST_FIT_CHARS,
+                wide.as_ptr(),
+                wide.len() as i32,
+                null_mut(),
+                0,
+                null(),
+                &mut used_default,
+            )
+        };
+        if len == 0 || used_default != 0 {
+            return None;
+        }
+        let mut encoded = vec![0u8; len as usize];
+        used_default = 0;
+        // SAFETY: `encoded` has the size Win32 just returned and both slices
+        // remain alive and unaliased for the call.
+        let written = unsafe {
+            WideCharToMultiByte(
+                code_page,
+                WC_NO_BEST_FIT_CHARS,
+                wide.as_ptr(),
+                wide.len() as i32,
+                encoded.as_mut_ptr(),
+                len,
+                null(),
+                &mut used_default,
+            )
+        };
+        (written == len && used_default == 0).then_some(encoded)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_file_with_no_bom_uses_the_active_windows_code_page() {
+        use windows_sys::Win32::Globalization::GetACP;
+
+        // SAFETY: GetACP takes no pointers and only reads the process locale.
+        let code_page = unsafe { GetACP() };
+        let (text, encoded) = [
+            "café",
+            "こんにちは",
+            "中文",
+            "한국어",
+            "Привет",
+            "Γειά",
+            "שלום",
+            "مرحبا",
+            "สวัสดี",
+        ]
+        .into_iter()
+        .find_map(|text| encode_without_best_fit(text, code_page).map(|bytes| (text, bytes)))
+        .unwrap_or_else(|| panic!("no test text is representable in Windows CP{code_page}"));
+        assert_eq!(decode(&encoded), text.as_bytes());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_rejected_ansi_sequence_keeps_its_original_bytes() {
+        // A lone CP932 lead byte is rejected with MB_ERR_INVALID_CHARS. This
+        // tests the fallback independently of the machine's active code page.
+        assert_eq!(from_code_page(b"x\x82", 932), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_utf8_active_code_page_uses_upstreams_replacement_rules() {
+        use windows_sys::Win32::Globalization::CP_UTF8;
+
+        assert_eq!(
+            from_code_page(b"a\xFF\xF0\x90\x80\x80", CP_UTF8),
+            Some(b"a?\xF0\x90\x80\x80".to_vec())
+        );
+        // Two individually invalid surrogate encodings become a valid pair
+        // when upstream takes the detour through UTF-16.
+        assert_eq!(
+            from_code_page(b"\xED\xA0\x80\xED\xB0\x80", CP_UTF8),
+            Some(b"\xF0\x90\x80\x80".to_vec())
         );
     }
 

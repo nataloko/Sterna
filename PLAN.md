@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 409
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 410
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -2117,16 +2117,14 @@ is what makes a BOM-less UTF-16 file a one-character macro, and a trailing
 half-unit is a character whose missing byte is the *low* one in **both** byte
 orders, because upstream's swap loop never reaches it.
 
-**The no-BOM branch is deliberately not reproduced.** `LoadFileU8C` tries
-`CP_ACP` *first* and falls back to UTF-8 only when the conversion fails, so the
-encoding of a macro file is a property of the machine that runs it: on a
-Japanese Windows a Shift-JIS macro reads correctly and a UTF-8 one that happens
-to be valid CP932 is mojibake, and on a Western one every byte sequence is
-valid CP1252 so a UTF-8 macro is mangled with no fallback at all. There is no
-ANSI code page on Linux to be faithful to. A file with no BOM is passed through
-unchanged, which is right for UTF-8 and leaves a Shift-JIS macro's bytes to
-reach the host as they were written — visible in `code_cp932.txt`. Stage 3 puts
-the code-page branch back on Windows, where it means something.
+**The no-BOM branch is platform-shaped.** `LoadFileU8C` tries `CP_ACP` first,
+so the encoding of a macro file is a property of the Windows machine that runs
+it: on a Japanese Windows a Shift-JIS macro reads correctly and a UTF-8 one
+that happens to be valid CP932 is mojibake, and on a Western one almost every
+byte sequence is valid CP1252. Windows now reproduces that conversion and its
+keep-the-original fallback; Unix, where there is no ANSI code page to ask,
+passes a BOM-less file through unchanged. The Stage 3 landing and its portable
+test boundary are recorded in the Windows section below.
 
 #### And the command line, which is the last thing the 53 were waiting for
 
@@ -4631,6 +4629,26 @@ errors, and runs the Win32 consumer beside the DLL. The same job now installs
 native Rust workspace, and checks that cbindgen left the committed header
 unchanged. The MinGW/Wine path remains green locally; the MSVC path is written
 but cannot be called verified until that native job runs on a pushed commit.
+
+The last deferred TTL file branch is now back where it has meaning. On Windows,
+a macro with no BOM is converted from `GetACP()` exactly where the initial file
+and every `include` enter the buffer. Legacy code pages go through
+`MultiByteToWideChar(MB_ERR_INVALID_CHARS)` and then to UTF-8; CP65001 takes
+upstream's own decoder, including its ASCII-`?` replacement and strange
+surrogate-pair detour. If the ACP refuses the bytes, the original bytes
+survive; Unix retains its existing pass-through. The Windows unit binary
+generates bytes in its live ACP and also exercises a rejected CP932 lead byte
+and the CP65001 edges, so this is not a compile-only branch.
+
+The 53-script gate deliberately tests a different layer: its upstream fixtures
+mix BOM-less CP932 and UTF-8, which no one Windows ACP can interpret without
+changing at least one set. The harness adds a BOM only to its private Windows
+copies, leaving the read-only checkout untouched and keeping 48 language
+transcripts machine-independent; the decoder's unit cases own the real ACP
+semantics. Wine's usual CP1252 is therefore neither blessed nor added to the
+five-name platform allowlist. The complete MinGW unit binary is 335/335 under
+Wine and the script gate retains its 48/5 split; native Linux remains 332 unit
+checks plus both script-harness checks, and both target clippy passes are clean.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

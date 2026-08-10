@@ -85,7 +85,10 @@
 //! allowlist makes the common 48 a gate and makes any new divergence a failure,
 //! while native Windows remains the authority for the five platform-shaped
 //! transcripts. Blessing is refused on Windows so it cannot overwrite the
-//! reviewed set.
+//! reviewed set. A BOM is added to the harness's private copy of a BOM-less
+//! script on Windows: these are language transcripts, so the machine's ACP
+//! must not turn CP932 or UTF-8 fixture bytes into a new expected language.
+//! `source.rs` tests the real ACP branch separately.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -981,6 +984,30 @@ fn isolated_source(name: &str, raw: Vec<u8>) -> Vec<u8> {
     replace_bytes(&raw, FROM, TO)
 }
 
+/// Make the interpreter transcript independent of the Windows machine's ACP.
+///
+/// A user file with no BOM really does use that code page; [`tt_ttl::source`]
+/// tests it. These 53 fixtures contain both CP932 and UTF-8 without BOM, so no
+/// single system ACP can preserve the reviewed byte transcripts for both.
+/// Marking the harness copy as UTF-8 selects `LoadFileU8C`'s pass-through BOM
+/// branch and leaves the read-only upstream file untouched.
+#[cfg(windows)]
+fn stable_source(mut raw: Vec<u8>) -> Vec<u8> {
+    if raw.starts_with(b"\xEF\xBB\xBF")
+        || raw.starts_with(b"\xFF\xFE")
+        || raw.starts_with(b"\xFE\xFF")
+    {
+        return raw;
+    }
+    raw.splice(..0, b"\xEF\xBB\xBF".iter().copied());
+    raw
+}
+
+#[cfg(not(windows))]
+fn stable_source(raw: Vec<u8>) -> Vec<u8> {
+    raw
+}
+
 /// Paths that are this machine's, replaced by names that are not.
 fn portable(text: String, dir: &Path, home: &Path, exe_dir: &Path) -> String {
     let mut out = text;
@@ -1071,7 +1098,7 @@ fn run_once(
     std::fs::create_dir_all(&dir).unwrap();
     seed(upstream, &dir);
 
-    let raw = isolated_source(name, std::fs::read(script).unwrap());
+    let raw = stable_source(isolated_source(name, std::fs::read(script).unwrap()));
     let path = dir.join(name);
     std::fs::write(&path, &raw).unwrap();
 

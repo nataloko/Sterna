@@ -74,10 +74,12 @@ refusing default. [`RecordingHost`] implements the parts that need no terminal
 and is what the tests here run against.
 
 **Loading a file is the host's job**, including working out its encoding.
-Upstream's `LoadFileU8W` sniffs a BOM and falls back to the ANSI codepage, and
-the `code_utf8.ttl` / `code_utf16le-bom.ttl` / `code_cp932.ttl` cases in
-`../../../teraterm/tests/` exist because that is a real decision with real
-files behind it. It does not belong in a parser.
+Upstream's `LoadFileU8W` sniffs a BOM and falls back to the active Windows ANSI
+code page. Windows reproduces that machine-dependent branch; Unix passes a
+BOM-less file through because it has no ACP to ask. The `code_utf8.ttl` /
+`code_utf16le-bom.ttl` / `code_cp932.ttl` cases in `../../../teraterm/tests/`
+exist because that is a real decision with real files behind it. It does not
+belong in a parser.
 
 ## What is here so far
 

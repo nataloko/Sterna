@@ -1606,6 +1606,12 @@ And for the macro language:
   authority. The Windows gate runs all 53 against the portable goldens and
   requires exactly those five names to differ; `TTL_BLESS` is refused before
   it can overwrite anything.
+- **A BOM-less TTL file means the machine's ACP on Windows.** Wine commonly
+  supplies CP1252 while the upstream corpus mixes CP932 and UTF-8, so letting
+  the transcript harness decode those fixtures normally manufactures
+  locale-shaped diffs no native implementation bug caused. Its private copies
+  get a BOM on Windows; `source.rs` tests the real ACP conversion separately.
+  Do not grow the five-name platform allowlist to absorb an encoding locale.
 - **A missing reserved word is not diagnosed as a missing command — it is
   diagnosed as a bad assignment.** An unrecognised name is read as a *variable*,
   so a command left out of the table falls into `ExecCmnd`'s `else` arm
