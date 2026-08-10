@@ -73,7 +73,16 @@ fn main() {
 
     let mut theirs = cc::Build::new();
     base(&mut theirs);
-    theirs.warnings(false).extra_warnings(false);
+    theirs
+        .warnings(false)
+        .extra_warnings(false)
+        // Every constructor is reached through `tt_xfer_create`, which lives
+        // in the host archive emitted later. MinGW scans static archives once
+        // from left to right, so without this it sees no reason to extract a
+        // protocol and then reports XCreate/YCreate/... as unresolved when it
+        // reaches the host. They are all runtime-selectable and all belong in
+        // the library anyway.
+        .link_lib_modifier("+whole-archive");
     if !msvc {
         theirs.flag("-w");
     }
@@ -105,7 +114,11 @@ fn main() {
         // the other.
         .std(if msvc { "c++17" } else { "gnu++17" })
         .warnings(false)
-        .extra_warnings(false);
+        .extra_warnings(false)
+        // ProtoLogCreate is first referenced by the C archive and its path
+        // conversions live back in that archive. Loading both vendored
+        // archives whole also closes that static-link cycle.
+        .link_lib_modifier("+whole-archive");
     if !msvc {
         theirs_cxx.flag("-w");
     }
@@ -118,7 +131,13 @@ fn main() {
     base(&mut ours);
     ours.warnings(true)
         .flag_if_supported("-Wextra")
-        .flag_if_supported("-Wno-unused-parameter");
+        .flag_if_supported("-Wno-unused-parameter")
+        // A downstream that depends on tt-session but never starts a transfer
+        // still receives the whole vendored archives above. Keep their host
+        // callbacks beside them; otherwise MinGW quite correctly omits this
+        // unreferenced archive and the forced protocol objects have nowhere
+        // to resolve ProtoEnd and the redirected window calls.
+        .link_lib_modifier("+whole-archive");
     for f in OURS_C {
         ours.file(csrc.join(f));
     }

@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 387
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 388
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4375,6 +4375,17 @@ every target. All four descriptor spellings now make the same honest promise:
 an fd on Unix and `-1` on Windows. That clears the ABI source without claiming
 a Windows frontend can sleep efficiently yet; native wait handles remain a
 single follow-up spanning SSH, macros, control and the Qt notifier.
+
+`cargo check` was not the whole Windows gate: linking every test found MinGW
+skipping all seven protocol constructors. The vendored C and C++ archives were
+emitted before the host archive that first referenced `XCreate` and friends,
+and MinGW scans an archive only once. Reversing them is still wrong because
+`protolog.cpp` reaches back into the C archive for `ToWcharA`/`ToWcharU8`.
+All three native archives are now linked whole: every protocol is
+runtime-selectable and belongs in the library, and the small host archive must
+travel with their callbacks even in a downstream binary that never starts a
+transfer. The complete Windows-target test link is the gate for this fix;
+`cargo check` cannot see it.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

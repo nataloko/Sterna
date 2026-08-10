@@ -39,6 +39,12 @@ filename is not reinterpreted through the process ANSI code page. The vendored
 sources are unchanged on both sides. `csrc/platform.h` also redirects their
 window timers and message boxes into the per-transfer host: this library has no
 `HWND`, and an error in the core must not open a second dialog behind Qt's.
+The three native archives are linked whole: every protocol constructor is
+selected at runtime from the host archive, and MinGW's one-pass archive scan
+otherwise skips them before it learns their names. `protolog.cpp` also calls
+back into the C archive for its path conversions, while the protocols call
+back into the host; merely reversing the archives moves the unresolved symbol
+rather than fixing the cycle.
 
 **The comm side is `TComVar`-shaped, not merely vtable-shaped**, because three
 places in the protocol sources reach past the vtable: `raw.c:152` drains
