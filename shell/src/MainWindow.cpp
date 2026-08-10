@@ -912,14 +912,14 @@ void MainWindow::startSsh(const TtSshParams &params, const QString &host)
 
 void MainWindow::onSshHostKeyWanted(const HostKeyRequest &request)
 {
-    HostKeyDialog dialog(request, this);
+    HostKeyDialog dialog(request, this, m_i18n);
     dialog.exec();
     m_session->answerHostKey(dialog.decision());
 }
 
 void MainWindow::onSshAuthWanted(const AuthRequest &request)
 {
-    AuthDialog dialog(request, this);
+    AuthDialog dialog(request, this, m_i18n);
     if (dialog.exec() != QDialog::Accepted) {
         // Cancelling has to end the attempt rather than send empty strings:
         // a device that counts failures should not be walked toward a lockout

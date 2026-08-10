@@ -54,6 +54,7 @@
 #include "Session.h"
 #include "SettingsDialog.h"
 #include "SshDialog.h"
+#include "SshPrompts.h"
 #include "TelnetDialog.h"
 #include "TerminalView.h"
 
@@ -1474,6 +1475,49 @@ void test_the_connection_dialogs_use_the_language_catalog()
     CHECK(cancelText(telnet) == QStringLiteral("キャンセル"));
 }
 
+void test_the_ssh_prompts_use_the_language_catalog()
+{
+    QString error;
+    I18n i18n;
+    CHECK(i18n.load(QStringLiteral("lang\\ja_JP.lng"), QString(), &error));
+
+    HostKeyRequest request;
+    request.host = QStringLiteral("console.example.com");
+    request.algorithm = QStringLiteral("ssh-ed25519");
+    request.fingerprint = QStringLiteral("SHA256:test");
+    request.verdict = TT_HOST_KEY_UNKNOWN;
+    HostKeyDialog hostKey(request, nullptr, &i18n);
+    CHECK(hostKey.windowTitle() == QStringLiteral("セキュリティ警告"));
+
+    bool fingerprintLabel = false;
+    bool rememberButton = false;
+    bool disconnectButton = false;
+    for (const QLabel *label : hostKey.findChildren<QLabel *>()) {
+        fingerprintLabel |=
+            label->text() == QStringLiteral("サーバ側のホスト鍵指紋:");
+    }
+    for (const QPushButton *button : hostKey.findChildren<QPushButton *>()) {
+        rememberButton |= button->text()
+                          == QStringLiteral("このホストをknown hostsリストに追加する(&A)");
+        disconnectButton |= button->text() == QStringLiteral("接続断(&D)");
+    }
+    CHECK(fingerprintLabel);
+    CHECK(rememberButton);
+    CHECK(disconnectButton);
+
+    AuthRequest auth;
+    auth.kind = TT_SSH_AUTH_KEYBOARD_INTERACTIVE;
+    auth.lines = {{QStringLiteral("Password:"), false}};
+    AuthDialog authentication(auth, nullptr, &i18n);
+    CHECK(authentication.windowTitle() == QStringLiteral("SSH 認証チャレンジ"));
+    const auto *buttons = authentication.findChild<QDialogButtonBox *>();
+    CHECK(buttons != nullptr);
+    if (buttons) {
+        CHECK(buttons->button(QDialogButtonBox::Cancel)->text()
+              == QStringLiteral("キャンセル"));
+    }
+}
+
 /// Only what changed. A dialog that wrote every field would pin all of them
 /// into the user's file the first time it was opened, and a pinned setting
 /// stops following upstream's default for ever.
@@ -1934,6 +1978,7 @@ int main(int argc, char **argv)
     test_the_settings_dialog_is_built_from_the_schema();
     test_the_settings_dialog_uses_a_language_catalog();
     test_the_connection_dialogs_use_the_language_catalog();
+    test_the_ssh_prompts_use_the_language_catalog();
     test_the_dialog_writes_only_what_changed();
     test_window_opacity_follows_activation();
     test_the_window_opens_at_the_configured_size();

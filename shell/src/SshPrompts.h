@@ -11,6 +11,7 @@
 
 #include "Session.h"
 
+class I18n;
 class QLineEdit;
 
 /// "Is this the machine you meant?"
@@ -26,7 +27,8 @@ class HostKeyDialog : public QDialog {
     Q_OBJECT
 
 public:
-    HostKeyDialog(const HostKeyRequest &request, QWidget *parent = nullptr);
+    HostKeyDialog(const HostKeyRequest &request, QWidget *parent = nullptr,
+                  const I18n *i18n = nullptr);
 
     /// 1 to accept and record, 2 to accept once, 0 to refuse.
     int decision() const { return m_decision; }
@@ -43,7 +45,8 @@ class AuthDialog : public QDialog {
     Q_OBJECT
 
 public:
-    AuthDialog(const AuthRequest &request, QWidget *parent = nullptr);
+    AuthDialog(const AuthRequest &request, QWidget *parent = nullptr,
+               const I18n *i18n = nullptr);
 
     /// One string per prompt, in the order asked.
     QStringList answers() const;

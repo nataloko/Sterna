@@ -10,11 +10,35 @@
 #include <QStyle>
 #include <QVBoxLayout>
 
-HostKeyDialog::HostKeyDialog(const HostKeyRequest &request, QWidget *parent)
+#include "I18n.h"
+
+HostKeyDialog::HostKeyDialog(const HostKeyRequest &request, QWidget *parent,
+                             const I18n *i18n)
     : QDialog(parent)
 {
+    const auto text = [i18n](const char *key, const QString &fallback) {
+        return i18n ? i18n->text(key, fallback, "TTSSH") : fallback;
+    };
+    const auto plainText = [i18n](const char *key, const QString &fallback) {
+        return i18n ? i18n->plainText(key, fallback, "TTSSH") : fallback;
+    };
+
     const bool changed = request.verdict == TT_HOST_KEY_CHANGED;
-    setWindowTitle(changed ? tr("Host key changed") : tr("Unknown host"));
+    const char *titleKey = "DLG_UNKNOWNHOST_TITLE";
+    const char *fingerprintKey = "DLG_UNKNOWNHOST_FINGERPRINT";
+    const char *rememberKey = "DLG_UNKNOWNHOST_ADD";
+    if (changed) {
+        titleKey = "DLG_DIFFERENTKEY_TITLE";
+        fingerprintKey = "DLG_DIFFERENTKEY_FINGERPRINT";
+        rememberKey = "DLG_DIFFERENTKEY_REPLACE";
+    } else if (request.verdict == TT_HOST_KEY_NEW_ALGORITHM) {
+        titleKey = "DLG_DIFFERENTTYPEKEY_TITLE";
+        fingerprintKey = "DLG_DIFFERENTTYPEKEY_FINGERPRINT";
+        rememberKey = "DLG_DIFFERENTTYPEKEY_ADD";
+    }
+    setWindowTitle(plainText(titleKey,
+                             changed ? tr("Host key changed")
+                                     : tr("Unknown host")));
 
     QString headline;
     QString detail;
@@ -62,6 +86,9 @@ HostKeyDialog::HostKeyDialog(const HostKeyRequest &request, QWidget *parent)
     auto *detailLabel = new QLabel(detail, this);
     detailLabel->setWordWrap(true);
 
+    auto *fingerprintLabel =
+        new QLabel(text(fingerprintKey, tr("Host key fingerprint:")), this);
+
     // Both fingerprints, one above the other, when there are two. Showing the
     // new one alone and describing the old one in a paragraph makes the
     // comparison — the only thing a user can actually do here — into an
@@ -81,24 +108,27 @@ HostKeyDialog::HostKeyDialog(const HostKeyRequest &request, QWidget *parent)
     fingerprint->setFont(mono);
     fingerprint->setTextFormat(Qt::PlainText);
 
-    auto *text = new QVBoxLayout;
-    text->addWidget(headlineLabel);
-    text->addWidget(fingerprint);
-    text->addWidget(detailLabel);
-    text->addStretch(1);
+    auto *textLayout = new QVBoxLayout;
+    textLayout->addWidget(headlineLabel);
+    textLayout->addWidget(fingerprintLabel);
+    textLayout->addWidget(fingerprint);
+    textLayout->addWidget(detailLabel);
+    textLayout->addStretch(1);
 
     auto *top = new QHBoxLayout;
     top->addWidget(icon);
     top->addSpacing(12);
-    top->addLayout(text, 1);
+    top->addLayout(textLayout, 1);
 
     auto *buttons = new QDialogButtonBox(this);
     QPushButton *save =
-        buttons->addButton(tr("Accept and remember"), QDialogButtonBox::AcceptRole);
+        buttons->addButton(text(rememberKey, tr("Accept and remember")),
+                           QDialogButtonBox::AcceptRole);
     QPushButton *once =
         buttons->addButton(tr("Accept once"), QDialogButtonBox::AcceptRole);
     QPushButton *refuse =
-        buttons->addButton(tr("Disconnect"), QDialogButtonBox::RejectRole);
+        buttons->addButton(text("BTN_DISCONNECT", tr("Disconnect")),
+                           QDialogButtonBox::RejectRole);
 
     connect(save, &QPushButton::clicked, this, [this] {
         m_decision = 1;
@@ -137,18 +167,26 @@ HostKeyDialog::HostKeyDialog(const HostKeyRequest &request, QWidget *parent)
     layout->setSizeConstraint(QLayout::SetMinimumSize);
 }
 
-AuthDialog::AuthDialog(const AuthRequest &request, QWidget *parent)
+AuthDialog::AuthDialog(const AuthRequest &request, QWidget *parent,
+                       const I18n *i18n)
     : QDialog(parent)
 {
+    const auto text = [i18n](const char *key, const QString &fallback) {
+        return i18n ? i18n->text(key, fallback, "TTSSH") : fallback;
+    };
+    const auto plainText = [i18n](const char *key, const QString &fallback) {
+        return i18n ? i18n->plainText(key, fallback, "TTSSH") : fallback;
+    };
+
     switch (request.kind) {
     case TT_SSH_AUTH_PASSPHRASE:
-        setWindowTitle(tr("Key passphrase"));
+        setWindowTitle(plainText("DLG_AUTH_TITLE", tr("Key passphrase")));
         break;
     case TT_SSH_AUTH_KEYBOARD_INTERACTIVE:
-        setWindowTitle(tr("Authentication"));
+        setWindowTitle(plainText("DLG_TIS_TITLE", tr("Authentication")));
         break;
     default:
-        setWindowTitle(tr("Password"));
+        setWindowTitle(plainText("DLG_AUTH_TITLE", tr("Password")));
         break;
     }
 
@@ -179,6 +217,10 @@ AuthDialog::AuthDialog(const AuthRequest &request, QWidget *parent)
 
     auto *buttons =
         new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    buttons->button(QDialogButtonBox::Ok)
+        ->setText(text("BTN_OK", tr("OK")));
+    buttons->button(QDialogButtonBox::Cancel)
+        ->setText(text("BTN_CANCEL", tr("Cancel")));
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     layout->addWidget(buttons);

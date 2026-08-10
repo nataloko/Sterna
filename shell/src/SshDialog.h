@@ -50,6 +50,7 @@ private:
     QCheckBox *m_agent;
     QCheckBox *m_legacy;
     QCheckBox *m_useConfig;
+    const I18n *m_i18n;
 
     // The UTF-8 the ABI is handed. Members rather than locals because
     // `TtSshParams` holds borrowed pointers.

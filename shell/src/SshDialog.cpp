@@ -17,7 +17,7 @@
 #include "I18n.h"
 
 SshDialog::SshDialog(QWidget *parent, const I18n *i18n)
-    : QDialog(parent)
+    : QDialog(parent), m_i18n(i18n)
 {
     const auto text = [i18n](const char *key, const QString &fallback,
                              const char *section = "TTSSH") {
@@ -104,8 +104,12 @@ SshDialog::SshDialog(QWidget *parent, const I18n *i18n)
 
 void SshDialog::browseForKey()
 {
+    const QString title =
+        m_i18n ? m_i18n->plainText("FILEDLG_OPEN_PRIVATEKEY_TITLE",
+                                   tr("Private key"), "TTSSH")
+               : tr("Private key");
     const QString path = QFileDialog::getOpenFileName(
-        this, tr("Private key"), QDir::homePath() + QStringLiteral("/.ssh"),
+        this, title, QDir::homePath() + QStringLiteral("/.ssh"),
         tr("All files (*)"));
     if (!path.isEmpty()) {
         m_identity->setText(path);
