@@ -459,7 +459,10 @@ Applying reaches the running terminal, and **it overwrites modes the host set** 
 the window's business rather than the painter's: the *window* is resized and
 the view fits the terminal to it, the same path a remote NAWS resize takes.
 `Setup > Save setup` writes the file, which is upstream's bargain — a change
-applies now and outlives the session only if it is saved.
+applies now and outlives the session only if it is saved. With the default-on
+`IniAutoBackup`, an existing file is first copied byte-for-byte to a timestamped
+sibling. That copy belongs specifically to the full menu save: creating the
+file for the first time and the close-time geometry-only write make no backup.
 
 The file is `$XDG_CONFIG_HOME/sterna/sterna.ini`: Tera Term's *format*, in
 the place a Linux configuration file belongs, since the executable may be

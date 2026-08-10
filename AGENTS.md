@@ -1232,6 +1232,14 @@ And for the bell, where the surprise is that a beep is a state machine:
   Turning it off joins the width runs but does not make half a wide character
   selectable; padding still resolves to its lead. It ships on, through
   `GetOnOff(..., TRUE)` (`ttset.c:1176`).
+- **`IniAutoBackup` does not cover every write to the INI.** It is consulted
+  only when Setup > Save setup overwrites the active file
+  (`vtwin.cpp:4738`): a first save has no old file, and close-time `SaveVTPos`
+  writes no backup. `CreateBakupFile` prefixes the original name with local
+  `YYYYMMDDTHHMMSS+zzzz_` and calls `CopyFileW(..., TRUE)`, then ignores the
+  result — so the first copy in a second wins, and a failed backup does not
+  stop the save. Putting the switch inside the generic INI writer would back
+  up operations upstream does not and risks recursively backing up a backup.
 - **`BPAuto=on` silently discards `Answerback=`.** `ttset.c:1132` overwrites
   `ts.Answerback` with B Plus's five-byte activation string, four hundred lines
   after reading the key. It is the only setting in the file that another

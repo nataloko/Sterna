@@ -1090,7 +1090,7 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (207 settings over 193 keys: 39 for the terminal,
+  `crates/tt-config/` (208 settings over 194 keys: 39 for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
   writes into, 2026-08-09, plus the whole log family, then the whole
   file-transfer family, then the seven the terminal and the two the *transports*
@@ -1101,12 +1101,12 @@ before anything else in every session.
   the window-position pair and its save switch, the unfocused-cursor switch
   alongside the live cursor renderer, the startup macro's one-shot launch
   state, OSC 52's remote clipboard permissions and notification, and the
-  connection-close outcome pair, then the configured mouse pointer and the
-  character-width word boundary, 2026-08-10), the map onto a running terminal
-  in `tt-session`, the schema as
+  connection-close outcome pair, then the configured mouse pointer, the
+  character-width word boundary and protected setup-file saves, 2026-08-10),
+  the map onto a running terminal in `tt-session`, the schema as
   data over the C ABI, and a Qt dialog that builds itself from it.
   What remains is the *rest of the settings*, which is a line and a citation
-  each — 79 keys as of 2026-08-10, and `tests/upstream.rs`
+  each — 78 keys as of 2026-08-10, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -4084,6 +4084,25 @@ non-delimiters and conditionally stops when `b->cell == 1` changes
 is off: clicking its padding cell first resolves to its leading cell.
 
 207 settings over 193 keys, 79 to go.
+
+#### Save setup keeps the file it is about to replace
+
+`crates/tt-config/` and the shell, 2026-08-10. `IniAutoBackup` ships on, and
+Setup > Save setup now copies an existing active INI byte-for-byte before
+writing it. The sibling has upstream's local-time name,
+`YYYYMMDDTHHMMSS+zzzz_<original-name>`; a second save in the same second keeps
+the first copy rather than replacing it.
+
+**This is narrower than "back up every settings write."** Upstream enters the
+branch only while overwriting the same file from Save setup
+(`vtwin.cpp:4738`). A first save has nothing to copy, and `SaveVTPos` on window
+close writes the small geometry pair without making one. The copy is also
+best-effort: a collision or an unwritable sibling does not prevent the actual
+save, matching `CreateBakupFile` ignoring `CopyFileW`'s answer. The Qt test
+drives the menu action and proves both the preserved old bytes and the literal
+`IniAutoBackup=off` case.
+
+208 settings over 194 keys, 78 to go.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
