@@ -189,7 +189,10 @@ fn meta_8bit_keeps_raw_and_text_distinct() {
         ))
         .keyboard_meta_8bit
     };
-    assert_eq!(Settings::default().keyboard_meta_8bit, KeyboardMeta8bit::Off);
+    assert_eq!(
+        Settings::default().keyboard_meta_8bit,
+        KeyboardMeta8bit::Off
+    );
     assert_eq!(load("raw"), KeyboardMeta8bit::Raw);
     assert_eq!(load("on"), KeyboardMeta8bit::Raw, "the read-only alias");
     assert_eq!(load("text"), KeyboardMeta8bit::Text);

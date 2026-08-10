@@ -2066,7 +2066,10 @@ pub extern "C" fn tt_session_send_bytes(
     if bytes.is_null() {
         return fail(TT_ERR_INVALID, "null bytes");
     }
-    match s.session.send_bytes(unsafe { slice::from_raw_parts(bytes, len) }) {
+    match s
+        .session
+        .send_bytes(unsafe { slice::from_raw_parts(bytes, len) })
+    {
         Ok(()) => TT_OK,
         Err(e) => report(e),
     }
