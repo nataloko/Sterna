@@ -28,6 +28,11 @@ struct Setting {
     /// the reader agree about it without a second conversion.
     default: String,
     label: String,
+    /// A boolean setting whose true arm permits this key to be written. Most
+    /// keys are unconditional; `VTPos` is not written when `SaveVTWinPos` is
+    /// off, and preserving an existing line there is part of round-tripping a
+    /// real file rather than cosmetic output.
+    write_if: Option<String>,
     doc: Vec<String>,
 }
 
@@ -143,6 +148,21 @@ fn parse(text: &str) -> Vec<Setting> {
         let mut head = trimmed.splitn(5, '|');
         let f: Vec<&str> = head.by_ref().take(4).map(str::trim).collect();
         let rest = head.next().unwrap_or("");
+        // An optional seventh field is recognisable from its prefix, so a
+        // default remains free to contain `|` — `DelimList` uses one.
+        let (rest, write_if) = match rest.rsplit_once('|') {
+            Some((before, tail)) if tail.trim().starts_with("write-if=") => (
+                before,
+                Some(
+                    tail.trim()
+                        .strip_prefix("write-if=")
+                        .expect("tested")
+                        .trim()
+                        .to_string(),
+                ),
+            ),
+            _ => (rest, None),
+        };
         let (default, label) = rest
             .rsplit_once('|')
             .unwrap_or_else(|| panic!("want 6 fields: {trimmed}"));
@@ -156,8 +176,24 @@ fn parse(text: &str) -> Vec<Setting> {
             key,
             default: default.trim().to_string(),
             label: label.trim().to_string(),
+            write_if,
             doc: std::mem::take(&mut doc),
         });
+    }
+
+    for setting in &out {
+        let Some(condition) = &setting.write_if else {
+            continue;
+        };
+        let referenced = out
+            .iter()
+            .find(|candidate| candidate.name == *condition)
+            .unwrap_or_else(|| panic!("{}: no write condition named {condition}", setting.name));
+        assert!(
+            matches!(&referenced.kind, Kind::Bool),
+            "{}: write condition {condition} is not a bool",
+            setting.name
+        );
     }
     out
 }
@@ -486,7 +522,16 @@ fn emit(settings: &[Setting]) -> String {
             Kind::Enum { .. } => format!("self.{field}.as_ini().to_string()"),
             Kind::Color2 => format!("crate::schema::color2_str(&self.{field})"),
         };
-        writeln!(out, "        ini.set(\"{section}\", \"{key}\", &{expr});").expect("string");
+        let indent = if let Some(condition) = &s.write_if {
+            writeln!(out, "        if self.{} {{", field_name(condition)).expect("string");
+            "            "
+        } else {
+            "        "
+        };
+        writeln!(out, "{indent}ini.set(\"{section}\", \"{key}\", &{expr});").expect("string");
+        if s.write_if.is_some() {
+            out.push_str("        }\n");
+        }
     }
     out.push_str("    }\n\n");
 

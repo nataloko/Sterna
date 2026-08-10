@@ -1931,6 +1931,19 @@ pub struct Settings {
     /// terminal window and TEK is out of scope, so it is read and written and acts
     /// on nothing until Stage 3 gives the shell multiple sessions to list.
     pub window_window_menu: bool,
+    /// `ttset.c:608`, default off. Upstream updates `ts.VTPos` on every move but
+    /// writes it only under this switch — both during Save setup (`:2109`) and on
+    /// window close (`SaveVTPos`, `:3340`). The switch itself is read-only upstream:
+    /// `_WriteIniFile` never writes the key, so a user enables it by hand. This port
+    /// exposes it through the generated dialog and writes the same upstream key.
+    pub window_save_position: bool,
+    /// `ttset.c:598`, first half. `CW_USEDEFAULT` is `INT_MIN`, so an absent key asks
+    /// the window manager to place the window rather than meaning coordinate zero.
+    /// **Conditionally written**: with `SaveVTWinPos=off`, `_WriteIniFile` leaves an
+    /// existing `VTPos` line byte-for-byte alone (`ttset.c:2109`).
+    pub window_x: i32,
+    /// `ttset.c:600`, second half of the same pair and the same sentinel.
+    pub window_y: i32,
 }
 
 impl Default for Settings {
@@ -2133,6 +2146,9 @@ impl Default for Settings {
             window_popup_menu_enabled: true,
             window_show_menu_enabled: true,
             window_window_menu: true,
+            window_save_position: false,
+            window_x: -2147483648,
+            window_y: -2147483648,
         }
     }
 }
@@ -2868,6 +2884,12 @@ impl Settings {
                 true,
             ),
             window_window_menu: crate::schema::on_off(ini.get("Tera Term", "WindowMenu"), true),
+            window_save_position: crate::schema::on_off(
+                ini.get("Tera Term", "SaveVTWinPos"),
+                false,
+            ),
+            window_x: crate::schema::nth_int(ini.get("Tera Term", "VTPos"), 0, d.window_x),
+            window_y: crate::schema::nth_int(ini.get("Tera Term", "VTPos"), 1, d.window_y),
         }
     }
 
@@ -4224,6 +4246,30 @@ impl Settings {
             "WindowMenu",
             &if self.window_window_menu { "on" } else { "off" }.to_string(),
         );
+        ini.set(
+            "Tera Term",
+            "SaveVTWinPos",
+            &if self.window_save_position {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        if self.window_save_position {
+            ini.set(
+                "Tera Term",
+                "VTPos",
+                &crate::schema::with_nth(ini.get("Tera Term", "VTPos"), 0, self.window_x),
+            );
+        }
+        if self.window_save_position {
+            ini.set(
+                "Tera Term",
+                "VTPos",
+                &crate::schema::with_nth(ini.get("Tera Term", "VTPos"), 1, self.window_y),
+            );
+        }
     }
 
     /// One setting by its dotted name, in the INI's own spelling.
@@ -4780,6 +4826,14 @@ impl Settings {
             }
             .to_string(),
             "window.window_menu" => if self.window_window_menu { "on" } else { "off" }.to_string(),
+            "window.save_position" => if self.window_save_position {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "window.x" => self.window_x.to_string(),
+            "window.y" => self.window_y.to_string(),
             _ => return None,
         })
     }
@@ -5357,6 +5411,11 @@ impl Settings {
             "window.window_menu" => {
                 self.window_window_menu = crate::schema::on_off(Some(value), true)
             }
+            "window.save_position" => {
+                self.window_save_position = crate::schema::on_off(Some(value), false)
+            }
+            "window.x" => self.window_x = crate::schema::int(value, self.window_x),
+            "window.y" => self.window_y = crate::schema::int(value, self.window_y),
             _ => return false,
         }
         true
@@ -7337,5 +7396,35 @@ pub const FIELDS: &[Field] = &[
         default: "on",
         label: None,
         doc: "`ttset.c:1380`, default **on**. Adds the dynamic Window menu, whose entries are every open VT and TEK window (`vtwin.cpp:1116`). This process owns one terminal window and TEK is out of scope, so it is read and written and acts on nothing until Stage 3 gives the shell multiple sessions to list.",
+    },
+    Field {
+        name: "window.save_position",
+        page: "window",
+        section: "Tera Term",
+        key: "SaveVTWinPos",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:608`, default off. Upstream updates `ts.VTPos` on every move but writes it only under this switch — both during Save setup (`:2109`) and on window close (`SaveVTPos`, `:3340`). The switch itself is read-only upstream: `_WriteIniFile` never writes the key, so a user enables it by hand. This port exposes it through the generated dialog and writes the same upstream key.",
+    },
+    Field {
+        name: "window.x",
+        page: "window",
+        section: "Tera Term",
+        key: "VTPos",
+        kind: Kind::Int,
+        default: "-2147483648",
+        label: None,
+        doc: "`ttset.c:598`, first half. `CW_USEDEFAULT` is `INT_MIN`, so an absent key asks the window manager to place the window rather than meaning coordinate zero. **Conditionally written**: with `SaveVTWinPos=off`, `_WriteIniFile` leaves an existing `VTPos` line byte-for-byte alone (`ttset.c:2109`).",
+    },
+    Field {
+        name: "window.y",
+        page: "window",
+        section: "Tera Term",
+        key: "VTPos",
+        kind: Kind::Int,
+        default: "-2147483648",
+        label: None,
+        doc: "`ttset.c:600`, second half of the same pair and the same sentinel.",
     },
 ];

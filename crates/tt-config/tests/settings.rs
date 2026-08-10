@@ -62,6 +62,35 @@ fn one_key_can_hold_two_settings() {
 }
 
 #[test]
+fn the_window_position_is_written_only_when_its_switch_is_on() {
+    let mut ini = Ini::parse(b"[Tera Term]\r\nVTPos='12,34'\r\n");
+    let mut s = Settings::load(&ini);
+    assert_eq!((s.window_x, s.window_y), (12, 34));
+    assert!(!s.window_save_position);
+
+    // `_WriteIniFile` skips this key with SaveVTWinPos off. Skipping means
+    // preserving the exact old line, quotes included — deleting it or writing
+    // the sentinel would both change a shared file the user did not ask us to
+    // move.
+    s.window_x = 56;
+    s.window_y = 78;
+    s.store(&mut ini);
+    assert!(String::from_utf8(ini.to_bytes())
+        .expect("utf8")
+        .contains("VTPos='12,34'"));
+
+    s.window_save_position = true;
+    s.store(&mut ini);
+    assert_eq!(ini.get("Tera Term", "VTPos"), Some("56,78"));
+
+    let mut empty = Ini::new();
+    let defaults = Settings::default();
+    assert_eq!((defaults.window_x, defaults.window_y), (i32::MIN, i32::MIN));
+    defaults.store(&mut empty);
+    assert_eq!(empty.get("Tera Term", "VTPos"), None);
+}
+
+#[test]
 fn an_unrecognised_value_takes_the_default_rather_than_failing() {
     // Upstream spells nearly every default as the `else` branch of a chain of
     // comparisons, so a typo is not an error — it is the default, silently.

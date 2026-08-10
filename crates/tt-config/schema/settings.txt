@@ -8,7 +8,7 @@
 # a 909-line struct surfaced by ~13.8k lines of dialog code across 76 templates,
 # and hand-porting it is where the motivation goes to die.
 #
-#   name | type | section | key | default | label
+#   name | type | section | key | default | label [| write-if=name.of.bool]
 #
 # `name` is dotted: the part before the first dot is the dialog page, and the
 # whole thing is what a script says. It becomes a Rust field with the dots
@@ -17,6 +17,11 @@
 # `label` is the `.lng` key for the dialog, or `-` where upstream has no dialog
 # for it. Those are real settings people set by hand, so they still need to be
 # readable and writable — they just have no widget yet.
+#
+# The optional `write-if` is for a key upstream reads but conditionally omits
+# when it saves. It names another boolean setting. Leaving the old line alone
+# when that boolean is off matters: deleting it or writing a default would
+# change a shared `TERATERM.INI` that the user did not ask this program to own.
 #
 # Types:
 #   bool          `GetOnOff`, which is **not** a symmetric parse. See below.
@@ -1320,3 +1325,19 @@ window.show_menu_enabled | bool | Tera Term | EnableShowMenu | on | -
 # terminal window and TEK is out of scope, so it is read and written and acts
 # on nothing until Stage 3 gives the shell multiple sessions to list.
 window.window_menu | bool | Tera Term | WindowMenu | on | -
+
+# `ttset.c:608`, default off. Upstream updates `ts.VTPos` on every move but
+# writes it only under this switch — both during Save setup (`:2109`) and on
+# window close (`SaveVTPos`, `:3340`). The switch itself is read-only upstream:
+# `_WriteIniFile` never writes the key, so a user enables it by hand. This port
+# exposes it through the generated dialog and writes the same upstream key.
+window.save_position | bool | Tera Term | SaveVTWinPos | off | -
+
+# `ttset.c:598`, first half. `CW_USEDEFAULT` is `INT_MIN`, so an absent key asks
+# the window manager to place the window rather than meaning coordinate zero.
+# **Conditionally written**: with `SaveVTWinPos=off`, `_WriteIniFile` leaves an
+# existing `VTPos` line byte-for-byte alone (`ttset.c:2109`).
+window.x | int | Tera Term | VTPos.1 | -2147483648 | - | write-if=window.save_position
+
+# `ttset.c:600`, second half of the same pair and the same sentinel.
+window.y | int | Tera Term | VTPos.2 | -2147483648 | - | write-if=window.save_position
