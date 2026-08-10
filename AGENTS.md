@@ -1281,6 +1281,16 @@ And for the command line, which is two parsers and one of them is a plugin:
   `StartupMacro` is an INI setting — so a terminal launched by a macro does not
   run the startup macro. Reading `/D=` as "just a DDE name" gives a window that
   launches a second macro on every `connect`.
+- **`TT_MACRO_UNSET` means inherit `StartupMacro`, not run nothing.** The four
+  launch states are inherit, cancel (`/D=`), prompt and file (`/M`), and
+  collapsing the first two makes the setting inert. Upstream launches the
+  macro first with `/S` and its DDE init starts the connection (`ttdde.c:657`);
+  with an in-process link the shell starts the attempt and then the macro
+  immediately, without waiting for the connection to finish. The raw setting's
+  relative path works upstream because the process has changed to `HomeDirW`;
+  here it resolves beside the active INI without a global `chdir`. And
+  TTPMACRO tests only `FileName[0] == '*'` (`ttmmain.cpp:285`), so
+  `StartupMacro=*anything` is a picker too.
 - **`/ssh` and friends are not in `ttset.c` at all.** TTSSH hooks the parser,
   runs first, and **blanks the options it consumed out of the line**
   (`ttxssh.c:1521`) — so the two halves compose through a string, and

@@ -1088,7 +1088,7 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (201 settings over 187 keys: 39 for the terminal,
+  `crates/tt-config/` (202 settings over 188 keys: 39 for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
   writes into, 2026-08-09, plus the whole log family, then the whole
   file-transfer family, then the seven the terminal and the two the *transports*
@@ -1096,12 +1096,12 @@ before anything else in every session.
   2026-08-09, then the bell's, the serial port's, telnet's, the scrollback's
   and the parser's own eight switches, then the painter's four draw-attribute
   switches, the custom ANSI palette, the URL family, the four menu keys and
-  the window-position pair and its save switch, and the unfocused-cursor
-  switch alongside the live cursor renderer, 2026-08-10), the map onto a
-  running terminal in `tt-session`, the schema as data over the C ABI, and a
-  Qt dialog that builds itself from it. What remains is the *rest of the
-  settings*, which is a line
-  and a citation each — 85 keys as of 2026-08-10, and `tests/upstream.rs`
+  the window-position pair and its save switch, the unfocused-cursor switch
+  alongside the live cursor renderer, and the startup macro's one-shot launch
+  state, 2026-08-10), the map onto a running terminal in `tt-session`, the
+  schema as data over the C ABI, and a Qt dialog that builds itself from it.
+  What remains is the *rest of the settings*, which is a line and a citation
+  each — 84 keys as of 2026-08-10, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -3948,6 +3948,41 @@ style crosses the ABI, and the Qt pixel test proves both shapes, focus states
 and blink choices reach the screen.
 
 201 settings over 187 keys, 85 to go.
+
+#### The startup macro, where “unset” means inherit rather than stop
+
+`crates/tt-config/` and the shell, 2026-08-10. `StartupMacro` was already all
+over the command-line model: `/M=` could name one, `/M` could ask for one and a
+`/D=` topic produced a distinct `TT_MACRO_CLEARED` state specifically to cancel
+the file's value. The file value itself was absent. `TT_MACRO_UNSET` and
+`TT_MACRO_CLEARED` consequently reached the same no-op arm, under a comment
+explaining a cancellation which had nothing to cancel.
+
+All four states now act. Unset inherits `macro.startup_file`; cleared runs
+nothing; prompt opens the existing two-language picker; file runs the command
+line's override. The setting stays in the settings object after it is used:
+the command line is one-shot launch state, and saving some unrelated change
+after an automatic macro ran must not quietly erase the next launch's macro.
+
+**The apparent connection order hides a second process upstream.**
+`CVTWindow::Startup` launches TTPMACRO first with `/S`; the macro's DDE
+`CmdInit` then posts `WM_USER_COMMSTART` (`ttdde.c:657`). Here the macro and
+terminal already share an in-process link, so the shell starts the connection
+attempt and starts the macro immediately afterwards. It does not wait for the
+connection to finish: the first line is commonly a `wait`, and an idle `/DS`
+window must also be able to run a macro whose job is to issue `connect` itself.
+
+Relative names no longer depend on whatever working directory a desktop
+launcher happened to supply. Upstream changes its process directory to
+`HomeDirW` (`teraterm.cpp:135`) and resolves `/M=` there explicitly; Sterna
+resolves both the file value and `/M=` beside the active INI instead of changing
+the process-wide directory. TTPMACRO's other filename rules still apply: a
+missing extension gets `.TTL`, and **any name whose first character is `*`**
+opens the picker (`ttmmain.cpp:285`), not only a value equal to `*`. The Qt
+command-line test pins inheritance, override and cancellation with relative
+paths against an idle window.
+
+202 settings over 188 keys, 84 to go.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
