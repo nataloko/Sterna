@@ -1088,7 +1088,7 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (200 settings over 186 keys: 39 for the terminal,
+  `crates/tt-config/` (201 settings over 187 keys: 39 for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
   writes into, 2026-08-09, plus the whole log family, then the whole
   file-transfer family, then the seven the terminal and the two the *transports*
@@ -1096,11 +1096,12 @@ before anything else in every session.
   2026-08-09, then the bell's, the serial port's, telnet's, the scrollback's
   and the parser's own eight switches, then the painter's four draw-attribute
   switches, the custom ANSI palette, the URL family, the four menu keys and
-  the window-position pair and its save switch, 2026-08-10), the map onto a
+  the window-position pair and its save switch, and the unfocused-cursor
+  switch alongside the live cursor renderer, 2026-08-10), the map onto a
   running terminal in `tt-session`, the schema as data over the C ABI, and a
   Qt dialog that builds itself from it. What remains is the *rest of the
   settings*, which is a line
-  and a citation each — 86 keys as of 2026-08-10, and `tests/upstream.rs`
+  and a citation each — 85 keys as of 2026-08-10, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -3914,6 +3915,40 @@ edges; the C ABI test pins exact preservation for the Wayland-shaped call.
 
 200 settings over 186 keys, 86 to go.
 
+#### The cursor, whose file settings become host-controlled live state
+
+`crates/tt-config/`, `tt-vt`, the C ABI and the shell, 2026-08-10. One new key,
+`KillFocusCursor`, completed the family already holding `CursorShape` and
+`NonblinkingCursor`; making the family act exposed an older parser hole under
+it. The shell had painted a permanent block whatever all three said.
+
+**An inactive cursor has a shape of its own.** `KillFocusCursor=on` does not
+keep the selected block, bar or underline: `CaretKillFocus` (`vtdisp.c:1872`)
+draws a full-cell outline regardless. Off means an unfocused window has no
+cursor at all. The active vertical and horizontal forms use upstream's exact
+two-pixel `CurWidth`, including a bar that stays two pixels wide on a
+double-width character; only the block and underline span both cells.
+
+**The painter cannot read the file values after startup.** With
+`CursorCtrlSequence=on`, DECSCUSR replaces both shape and blinking and DECSET
+12 replaces the latter, using the same variables `ttset.c` loaded. `TtCursor`
+therefore carries the live style beside the live position rather than making
+Qt assemble it from three raw settings. The blink phase follows Qt's desktop
+caret flash time and its timer exists only while a blinking cursor is visible
+in the focused live page; non-blinking, unfocused, hidden and scrolled-away
+cursors leave no periodic wakeup.
+
+That live test found **DECSCUSR had never reached the code which reported its
+result**. Its space is a real CSI intermediate, and `csi_plain` correctly drops
+unknown intermediates to keep a sequence such as `CSI $ r` from becoming its
+plain namesake. DECSCUSR consequently needs its own `(space, q)` dispatch arm,
+just as DECSCA and DECSTR do. All seven valid parameters, the gate and the
+ignored invalid arm are pinned in `tt-vt`; the C test then proves the changed
+style crosses the ABI, and the Qt pixel test proves both shapes, focus states
+and blink choices reach the screen.
+
+201 settings over 187 keys, 85 to go.
+
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
 Windows build, ConPTY, Win32 serial edge cases, NSIS installer. All 14 `.lng`
@@ -4014,7 +4049,7 @@ file/dir 1k, connection/terminal 2k, dialogs 0.8k, misc 1k — **~9.3k Rust vs
 1. **✅ Differential testing against real Tera Term** — `oracle/` built and
    green, and as of Stage 1 actually wired up: `./run_diff.sh` feeds identical
    byte streams to it and to the Rust engine and diffs the grid dumps *and the
-   replies*, in CI on every commit. 130 cases, two of them `xfail`. Since the
+   replies*, in CI on every commit. 131 cases, two of them `xfail`. Since the
    oracle also takes
    injected mouse, focus and **key** events — and compiles `keyboard.c` for the
    last of those — this covers both halves of the frontend seam. **This is

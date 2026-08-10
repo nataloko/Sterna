@@ -55,7 +55,7 @@ S-shaped flight path.
 ## Build and test
 
 ```sh
-./run_diff.sh                    # THE gate: Rust engine vs Tera Term, 130 cases
+./run_diff.sh                    # THE gate: Rust engine vs Tera Term, 131 cases
 ./run_diff.sh 27                 # just the cases matching "27"
 ./run_upstream.sh                # the same diff over Tera Term's OWN exercisers
 
@@ -1022,6 +1022,15 @@ wearing one name:
   ate the tertiary DA — with the arm for it sitting there looking right. The
   primary DA answers whatever its parameter is; `CSI > Ps c` and `CSI = Ps c`
   both insist on zero (`vtterm.c:CSGT`, `CSEQ`).
+- **DECSCUSR's space *is* a real intermediate, so it needs an explicit
+  dispatch arm.** `CSI Ps SP q` cannot go through `csi_plain`, whose refusal of
+  real intermediates is load-bearing, and for a while it was silently dropped
+  while DECRQSS reported the configured style as if the control worked. With
+  `CursorCtrlSequence=on` it changes `CursorShape` and `NonblinkingCursor`
+  themselves (`vtterm.c:3966`), so a frontend must read the live terminal
+  style rather than the two file settings. `KillFocusCursor` is separate
+  again: on, `CaretKillFocus` draws a full-cell outline whatever that live
+  shape is; off, an unfocused window has no cursor.
 - **HTS is the one C1 that must not be folded into its 7-bit form.**
   `TABF_HTS7` and `TABF_HTS8` are separate bits (`vtterm.c:1512` and `:1160`),
   so a file can accept `ESC H` and refuse `0x88` — and `rewrite_c1`'s fold is
