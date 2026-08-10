@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 1 complete, 2 in progress · **Commits:** 296
+**Last updated:** 2026-08-10 · **Stage:** 1 complete, 2 in progress · **Commits:** 300
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1090,7 +1090,7 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (210 settings over 196 keys: 39 for the terminal,
+  `crates/tt-config/` (211 settings over 197 keys: 39 for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
   writes into, 2026-08-09, plus the whole log family, then the whole
   file-transfer family, then the seven the terminal and the two the *transports*
@@ -1103,11 +1103,12 @@ before anything else in every session.
   state, OSC 52's remote clipboard permissions and notification, and the
   connection-close outcome pair, then the configured mouse pointer, the
   character-width word boundary, protected setup-file saves and the
-  active/inactive window-opacity pair, 2026-08-10),
+  active/inactive window-opacity pair and the window-title format word,
+  2026-08-10),
   the map onto a running terminal in `tt-session`, the schema as
   data over the C ABI, and a Qt dialog that builds itself from it.
   What remains is the *rest of the settings*, which is a line and a citation
-  each — 76 keys as of 2026-08-10, and `tests/upstream.rs`
+  each — 75 keys as of 2026-08-10, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -2666,15 +2667,15 @@ Linux equivalent, and so the one thing not reproduced. The rendering is
 with a colon after every second one, always 39 characters, because a script has
 been comparing against that string for a decade.
 
-Three things are still refused, and the list at the bottom of
+Two commands are still refused, and the list at the bottom of
 `tt-macro/src/host.rs` says so. `setserialdelaychar` and `setserialdelayline`
 pace what is *sent*, and upstream paces it in `SendMem` — a queue between the
 macro and the wire that this port does not have, with three other callers
 waiting on it (a paste, `sendfile`, the File menu's send), so it wants building
-once for all of them. And a `setbaud` does not repaint the status line: upstream
-posts `WM_USER_CHANGETITLE` because the speed is in the title, `Session::
-describe` carries the speed here too, and nothing asks it again — there is no
-frontend running macros yet to notice, and it wants an event when there is.
+once for all of them. The other item that used to sit here is done as part of
+the title-format work, 2026-08-10: `setbaud` queues the same caption edge as
+upstream's `WM_USER_CHANGETITLE`, and the frontend reads the new speed from the
+live transport rather than from the file value the port may never have used.
 
 **One bug fixed on the way past, in this port rather than upstream's.**
 `setecho` wrote `LocalEcho` through `Session::set_setting`, which matches the
@@ -4128,6 +4129,37 @@ under xcb (and on platforms whose Qt backend supports opacity); on native
 Wayland they round-trip and switch internally but the window remains opaque.
 
 210 settings over 196 keys, 76 to go.
+
+#### The endpoint is part of the window title
+
+`crates/tt-config/`, `tt-session`, the C ABI and the shell, 2026-08-10.
+`TitleFormat` is a six-bit word controlling the endpoint, session number,
+`VT`/`TEK` suffix, title/endpoint order, TCP port and serial speed. Its shipped
+value is 13, so the ordinary caption is `<endpoint> - <title> VT`; a window
+with no ready line says `<title> - [connecting...] VT` or
+`<title> - [disconnected] VT` instead. The endpoint order bit does not move
+those state messages, which sit in an earlier arm of `ChangeTitle`.
+
+**The integer narrows into a `WORD`.** `TitleFormat=-1` is 65535 and
+`TitleFormat=65537` is 1 before upstream writes it back. The schema gained a
+`uint16` spelling rather than treating that as a clamp: both a lower-bound
+default and a ceiling would disagree with C assignment. Unknown bits 6–15
+remain preserved even though the dialog knows only the lower six.
+
+The configured title and the host's OSC title are still combined by the core;
+the shell adds the pieces which depend on a window and a connection. Upstream's
+default `Title=Tera Term` remains a product-name sentinel, so it becomes
+`Sterna` even under `ahead` and `last`, without replacing the same words inside
+an unrelated remote title. A local pty has no upstream port type—CygTerm is TCP
+there—so its command description is used as the useful endpoint equivalent.
+
+Serial speed is read from the transport, not `serial.baud`: `--baud` can open
+the line at a value the loaded settings never saw, and a macro can change it
+again with `setbaud`. That command now raises a title event after the successful
+reset, matching `ttdde.c:988`, so the caption changes immediately rather than
+waiting for unrelated terminal output.
+
+211 settings over 197 keys, 75 to go.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 

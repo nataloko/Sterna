@@ -1276,6 +1276,17 @@ And for the title, which is two strings in three places:
   `overwrite`, so `ahead` answers `CSI 21 t` with a **leading space**. Sharing
   one function between them is the tidy thing and changes what goes on the
   wire.
+- **`TitleFormat` is a wrapping word, not six booleans and not an enum.** The
+  dialog exposes bits 0–5, but `ts.TitleFormat` is a `WORD`, so unknown bits
+  through 15 survive, `-1` becomes 65535 and `65537` becomes 1. Its default 13
+  is endpoint + VT + swapped order: `<endpoint> - <title> VT`. Connecting and
+  disconnected captions do **not** take the swap arm; both remain
+  `<title> - [state] VT`.
+- **A displayed serial speed comes from the live port.** A `--baud` open need
+  not match `serial.baud`, and `setbaud` changes it again. Upstream posts
+  `WM_USER_CHANGETITLE` after the reset (`ttdde.c:988`), so the core emits the
+  same caption edge and the shell re-reads the transport. Caching the opening
+  parameters makes the title stale after the first macro speed change.
 
 And for the menu, where three plausible names are three independent controls:
 

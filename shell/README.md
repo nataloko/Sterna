@@ -429,6 +429,22 @@ against a socket disappearing inside a modal dialog's nested event loop.
 `ClearScreenOnCloseConnection` is handled before that boundary: its blank page
 is a page whose old contents moved into scrollback, not an erase.
 
+## The title names the connection
+
+`TitleFormat` is the same six-bit word Tera Term reads. Its shipped value is
+13, so a connected window says `<endpoint> - <title> VT`; before and after the
+line is ready it says `<title> - [connecting...] VT` or
+`<title> - [disconnected] VT`. TCP port and serial speed are separate bits,
+and a local pty uses its command description as the endpoint Tera Term has no
+native word for.
+
+The speed is asked from the live transport rather than copied from
+`serial.baud`. A command-line `--baud` may never have touched that setting, and
+a macro's `setbaud` changes the port again; the successful reset raises a title
+event so the new value appears immediately. The file value is a 16-bit word,
+not a range-clamped integer: values wrap modulo 65536 and unknown bits 6–15 are
+kept.
+
 ## The setup dialog has no list of settings in it
 
 `SettingsDialog` walks `tt_settings_field`, the core's metadata table: a tab per
