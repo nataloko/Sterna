@@ -21,6 +21,7 @@
 //! times a second and is deliberately not a job; a control request arrives when
 //! somebody's script runs, which is a handful of times a session.
 
+#[cfg(unix)]
 use std::io::{Read, Write};
 use std::sync::mpsc::{self, Receiver, SendError, Sender, TryRecvError};
 use std::sync::Arc;

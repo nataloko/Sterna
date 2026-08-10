@@ -7,21 +7,18 @@
 //! hand has no topic and reaches whichever Tera Term answers a wildcard
 //! connect.
 //!
-//! There is no name service on a Unix socket, so the directory is one. Each
-//! window binds `<runtime>/sterna/<name>.sock`, the name defaults to the
-//! process id, and `/D=` overrides it — which is the same command line
-//! upstream uses for the same purpose, doing the same job through a different
-//! mechanism. [`CommandLine::dde_topic`](tt_config::cmdline::CommandLine) has
-//! been parsed since the command line landed and had nothing to be; this is
-//! what it is.
+//! There is no name service on a local byte stream. On Unix the runtime
+//! directory is one; on Windows the named-pipe namespace is enumerable. Each
+//! window binds an endpoint named for the process id unless `/D=` overrides
+//! it — the same command line upstream uses for the same purpose, doing the
+//! same job through a different mechanism.
 //!
-//! **The directory is the access control.** `$XDG_RUNTIME_DIR` is already
-//! `0700` and owned by the user; the `sterna` subdirectory is created the same
-//! way, and the fallback under `/tmp` carries the uid in its name so two users
-//! cannot collide on it. The socket itself is `0600` as well, so a
-//! misconfigured `/tmp` still needs the file's owner. That is belt and braces
-//! for a good reason: anything that reaches this socket can type at whatever
-//! the window is connected to.
+//! **The address is part of the access control.** Unix uses a `0700` runtime
+//! directory, a uid-bearing `/tmp` fallback and a `0600` socket. Windows puts
+//! the login-session id in the pipe name and rejects remote clients; both then
+//! verify the accepted peer's uid or token SID. That is belt and braces for a
+//! good reason: anything that reaches this endpoint can type at whatever the
+//! window is connected to.
 //!
 //! **A client given no name refuses to guess between two windows**, which is
 //! where this diverges from upstream. `DdeConnect` with a wildcard picks
@@ -32,9 +29,12 @@
 //! `--to` and `/D=` are the three ways to say which.
 
 use std::io;
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+use crate::ipc::{Listener, Stream};
 
 /// The environment variable holding the full path of one window's socket.
 ///
@@ -51,13 +51,14 @@ pub const ENV: &str = "STERNA_CTL";
 /// names the same socket in both.
 pub const MAX_NAME: usize = 20;
 
-/// The directory the sockets live in, created if it is not there.
+/// The Unix socket directory, or the Windows named-pipe namespace.
 ///
-/// `$XDG_RUNTIME_DIR` when the session has one, which is the correct home for
+/// On Unix, `$XDG_RUNTIME_DIR` when the session has one, which is the correct home for
 /// a socket that should not outlive the login. The `/tmp` fallback is for a
 /// session that has none — a bare `ssh` login, or a container — and carries
 /// the uid because `/tmp` is shared and the name must not be another user's to
-/// create.
+/// create. Windows returns `\\.\pipe`; there is no directory to create.
+#[cfg(unix)]
 pub fn dir() -> io::Result<PathBuf> {
     let base = match std::env::var_os("XDG_RUNTIME_DIR") {
         Some(d) if !d.is_empty() => PathBuf::from(d).join("sterna"),
@@ -71,6 +72,11 @@ pub fn dir() -> io::Result<PathBuf> {
             .create(&base)?;
     }
     Ok(base)
+}
+
+#[cfg(windows)]
+pub fn dir() -> io::Result<PathBuf> {
+    Ok(PathBuf::from(r"\\.\pipe"))
 }
 
 /// Whether a name may be used as a file name in [`dir`].
@@ -95,7 +101,39 @@ pub fn path_of(name: &str) -> io::Result<PathBuf> {
             format!("bad socket name {name:?}: letters, digits, - and _, at most {MAX_NAME}"),
         ));
     }
-    Ok(dir()?.join(format!("{name}.sock")))
+    #[cfg(unix)]
+    {
+        Ok(dir()?.join(format!("{name}.sock")))
+    }
+    #[cfg(windows)]
+    {
+        Ok(dir()?.join(format!("{}{name}", pipe_prefix()?)))
+    }
+}
+
+#[cfg(windows)]
+fn pipe_prefix() -> io::Result<String> {
+    use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+
+    let mut session = 0u32;
+    let ok = unsafe { ProcessIdToSessionId(std::process::id(), &mut session) };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(format!("sterna-{session}-"))
+}
+
+/// The `/D=` name carried by an endpoint returned by [`list`] or [`live`].
+pub fn name_of(path: &Path) -> Option<String> {
+    #[cfg(unix)]
+    {
+        path.file_stem().map(|s| s.to_string_lossy().into_owned())
+    }
+    #[cfg(windows)]
+    {
+        let leaf = path.file_name()?.to_string_lossy();
+        leaf.strip_prefix(&pipe_prefix().ok()?).map(str::to_owned)
+    }
 }
 
 /// This process's default name — its pid, which is what a window uses when no
@@ -118,9 +156,10 @@ pub fn default_name() -> String {
 /// one of the two without a socket and is reported as the error it is, rather
 /// than being retried. Two windows choose the same name only when both were
 /// given the same `/D=`.
-pub fn bind(path: &Path) -> io::Result<UnixListener> {
+#[cfg(unix)]
+pub(crate) fn bind(path: &Path) -> io::Result<Listener> {
     if path.exists() {
-        match UnixStream::connect(path) {
+        match Stream::connect(path) {
             Ok(_) => {
                 return Err(io::Error::new(
                     io::ErrorKind::AddrInUse,
@@ -136,13 +175,25 @@ pub fn bind(path: &Path) -> io::Result<UnixListener> {
             Err(e) => return Err(e),
         }
     }
-    let listener = UnixListener::bind(path)?;
+    let listener = Listener::bind(path)?;
     // The directory is already `0700`; this is what is left if it is not.
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     Ok(listener)
 }
 
-/// Every socket in the directory, live or stale, sorted by name.
+#[cfg(windows)]
+pub(crate) fn bind(path: &Path) -> io::Result<Listener> {
+    Listener::bind(path)
+}
+
+/// Every Unix socket file or Windows named pipe, sorted by name.
+#[cfg(windows)]
+pub fn list() -> io::Result<Vec<PathBuf>> {
+    let pattern = dir()?.join(format!("{}*", pipe_prefix()?));
+    crate::ipc::list_named_pipes(&pattern)
+}
+
+#[cfg(unix)]
 pub fn list() -> io::Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     let dir = match std::fs::read_dir(dir()?) {
@@ -169,8 +220,9 @@ pub fn list() -> io::Result<Vec<PathBuf>> {
 pub fn live() -> io::Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     for path in list()? {
-        match UnixStream::connect(&path) {
+        match Stream::connect(&path) {
             Ok(_) => out.push(path),
+            #[cfg(unix)]
             Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => {
                 // Best effort: another client may be pruning the same one, and
                 // a socket in somebody else's directory is not ours to remove.
@@ -186,13 +238,12 @@ pub fn live() -> io::Result<Vec<PathBuf>> {
 
 /// Which window a client means.
 ///
-/// In order: what it was told, then `$STERNA_CTL`, then the only live socket
-/// there is. A `name` that contains a `/` is taken as a path rather than as a
-/// name, so `--to /run/user/1000/sterna/4321.sock` works and does not have to
-/// be spelled as a bare `4321`.
+/// In order: what it was told, then `$STERNA_CTL`, then the only live endpoint
+/// there is. A name containing a path separator is taken as an explicit Unix
+/// socket path or Windows pipe path.
 pub fn resolve(name: Option<&str>) -> io::Result<PathBuf> {
     if let Some(n) = name {
-        return if n.contains('/') {
+        return if n.contains('/') || n.contains('\\') {
             Ok(PathBuf::from(n))
         } else {
             path_of(n)
@@ -211,11 +262,7 @@ pub fn resolve(name: Option<&str>) -> io::Result<PathBuf> {
             format!("no Sterna window is listening in {}", dir()?.display()),
         )),
         _ => {
-            let names: Vec<String> = live
-                .iter()
-                .filter_map(|p| p.file_stem())
-                .map(|s| s.to_string_lossy().into_owned())
-                .collect();
+            let names: Vec<String> = live.iter().filter_map(|p| name_of(p)).collect();
             Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!(
@@ -237,29 +284,14 @@ pub fn resolve(name: Option<&str>) -> io::Result<PathBuf> {
 /// production router should not be a way for a daemon running as root to do it
 /// by accident.
 ///
-/// `SO_PEERCRED` is Linux's; the Windows half of this is a named pipe and asks
-/// a different question, which is Stage 3's problem.
-pub fn peer_is_us(stream: &UnixStream) -> bool {
-    use std::os::unix::io::AsRawFd;
-    let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
-    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-    // SAFETY: `cred` and `len` are the size the option expects, and the fd is
-    // borrowed from a live stream.
-    let rc = unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_SOCKET,
-            libc::SO_PEERCRED,
-            &mut cred as *mut libc::ucred as *mut libc::c_void,
-            &mut len,
-        )
-    };
-    // A failure is not a pass. If the credentials cannot be read the peer
-    // cannot be shown to be us, and the connection is refused.
-    rc == 0 && cred.uid == unsafe { libc::getuid() }
+/// Unix compares `SO_PEERCRED`'s uid. Windows impersonates the named-pipe
+/// client long enough to compare its token user SID with the server's, then
+/// reverts before any request is parsed.
+pub(crate) fn peer_is_us(stream: &Stream) -> bool {
+    stream.peer_is_us()
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
@@ -408,9 +440,55 @@ mod tests {
         let _g = lock();
         let _s = Scratch::new();
         let p = path_of("cred").unwrap();
-        let l = bind(&p).unwrap();
-        let _client = UnixStream::connect(&p).unwrap();
-        let (server, _) = l.accept().unwrap();
+        let mut l = bind(&p).unwrap();
+        let _client = Stream::connect(&p).unwrap();
+        let server = l.accept().unwrap();
+        assert!(peer_is_us(&server));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn name() -> String {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        format!("a{:x}{n:x}", std::process::id())
+    }
+
+    #[test]
+    fn names_cannot_escape_the_pipe_namespace() {
+        assert!(valid_name("A1B2C3D4"));
+        assert!(!valid_name(r"..\other"));
+        assert!(!valid_name("has/slash"));
+        assert!(!valid_name(""));
+        assert!(!valid_name(&"x".repeat(MAX_NAME + 1)));
+    }
+
+    #[test]
+    fn a_pipe_name_round_trips_and_is_enumerated() {
+        let name = name();
+        let path = path_of(&name).unwrap();
+        let _listener = bind(&path).unwrap();
+        assert_eq!(name_of(&path).as_deref(), Some(name.as_str()));
+        assert!(list().unwrap().contains(&path));
+    }
+
+    #[test]
+    fn two_windows_cannot_own_one_pipe() {
+        let path = path_of(&name()).unwrap();
+        let _listener = bind(&path).unwrap();
+        assert_eq!(bind(&path).unwrap_err().kind(), io::ErrorKind::AddrInUse);
+    }
+
+    #[test]
+    fn our_own_connection_passes_the_token_check() {
+        let path = path_of(&name()).unwrap();
+        let mut listener = bind(&path).unwrap();
+        let _client = Stream::connect(&path).unwrap();
+        let server = listener.accept().unwrap();
         assert!(peer_is_us(&server));
     }
 }

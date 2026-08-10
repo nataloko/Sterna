@@ -184,10 +184,7 @@ fn list(json_out: bool) -> Result<(), String> {
     let live = addr::live().map_err(|e| e.to_string())?;
     let mut rows = Vec::new();
     for path in &live {
-        let name = path
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let name = addr::name_of(path).unwrap_or_default();
         let info = Client::connect(path)
             .and_then(|mut c| c.call("ping", json!({})))
             .ok();

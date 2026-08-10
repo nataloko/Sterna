@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 385
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 386
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4353,6 +4353,21 @@ unconditionally. Unix still sleeps on `poll(2)`; Windows now uses a bounded
 sleep, explicitly temporary until ConPTY supplies byte I/O and a native
 frontend wakeup. This makes the harness compile there without pretending that
 the missing transport path works.
+
+The control socket is now a local byte-stream abstraction rather than Unix
+types threaded through the client and server. Unix keeps its `0700`/`0600`
+socket and `SO_PEERCRED`; Windows binds a byte-mode named pipe under
+`\\.\pipe\sterna-<session>-<name>`, refuses remote clients and impersonates an
+accepted client only long enough to compare its token user SID. Named pipes
+have no stale files, and `FILE_FLAG_FIRST_PIPE_INSTANCE` turns a duplicate
+topic into the same address-in-use answer. Pipe enumeration preserves
+`ttctl ls` and the refuse-to-guess rule. `ttpmacro.exe` reads
+`GetCommandLineW` and runs the upstream tokeniser instead of accidentally
+using Windows' different argv quoting rules. The Unix crate and CLI suites are
+still 49/49 and 12/12; the named-pipe tests cross-compile but need the native
+Windows runner. The frontend wakeup is still open: `tt-ctl`'s Windows channel
+has no wait handle yet, so this is the transport landing rather than a working
+Windows `Control` object.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

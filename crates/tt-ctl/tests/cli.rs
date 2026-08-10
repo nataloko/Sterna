@@ -68,6 +68,7 @@ impl CtlHost for Host {
 /// A running window: a socket, a session and a thread servicing both.
 struct Window {
     dir: tempfile::TempDir,
+    name: String,
     path: PathBuf,
     record: Arc<Mutex<Record>>,
     stop: Arc<AtomicBool>,
@@ -77,10 +78,26 @@ struct Window {
 impl Window {
     fn new(exit: i32) -> Window {
         let dir = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        let name = String::from("win");
+        #[cfg(windows)]
+        let name = {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            format!(
+                "c{:x}{:x}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            )
+        };
         // Where `addr::dir()` looks, so that a client given no `--to` finds
         // this window by the same directory scan it would use for a real one.
+        #[cfg(unix)]
         std::fs::create_dir_all(dir.path().join("sterna")).unwrap();
+        #[cfg(unix)]
         let path = dir.path().join("sterna").join("win.sock");
+        #[cfg(windows)]
+        let path = tt_ctl::addr::path_of(&name).unwrap();
         let record = Arc::new(Mutex::new(Record::default()));
         let stop = Arc::new(AtomicBool::new(false));
 
@@ -110,6 +127,7 @@ impl Window {
         ready_rx.recv().unwrap();
         Window {
             dir,
+            name,
             path,
             record,
             stop,
@@ -119,14 +137,19 @@ impl Window {
 
     /// Run a binary against this window, with the directory it should look in.
     fn run(&self, exe: &str, args: &[&str]) -> Output {
-        Command::new(exe)
+        let mut command = Command::new(exe);
+        command
             .args(args)
+            // The endpoint inherited by a child is the deterministic answer
+            // on both platforms and isolates parallel Windows tests, whose
+            // named pipes share one session namespace.
+            .env("STERNA_CTL", &self.path);
+        #[cfg(unix)]
+        command
             // So that a client with no `--to` finds this window and not the
             // developer's own.
-            .env("XDG_RUNTIME_DIR", self.dir.path())
-            .env_remove("STERNA_CTL")
-            .output()
-            .expect("the binary runs")
+            .env("XDG_RUNTIME_DIR", self.dir.path());
+        command.output().expect("the binary runs")
     }
 }
 
@@ -160,10 +183,9 @@ fn ttctl_reads_a_window_it_was_pointed_at() {
     assert_eq!(v["connected"], serde_json::json!(false));
 }
 
-/// The socket lives under the runtime directory, so a client with nothing to
-/// go on finds the one window that is open.
+/// A child inherits the endpoint of the window that launched it.
 #[test]
-fn ttctl_finds_the_only_window_by_itself() {
+fn ttctl_uses_the_inherited_window_by_itself() {
     let w = Window::new(0);
     let out = w.run(TTCTL, &["ping"]);
     assert!(
@@ -188,7 +210,7 @@ fn ttctl_screen_prints_the_terminal_as_text() {
 fn ttctl_ls_names_the_window() {
     let w = Window::new(0);
     let out = w.run(TTCTL, &["ls"]);
-    assert!(stdout(&out).contains("win"), "{}", stdout(&out));
+    assert!(stdout(&out).contains(&w.name), "{}", stdout(&out));
 }
 
 #[test]
@@ -229,6 +251,7 @@ fn an_unknown_method_is_reported_and_fails() {
 }
 
 #[test]
+#[cfg(unix)]
 fn ttctl_says_so_when_no_window_is_listening() {
     let dir = tempfile::tempdir().unwrap();
     let out = Command::new(TTCTL)
@@ -239,6 +262,19 @@ fn ttctl_says_so_when_no_window_is_listening() {
         .unwrap();
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("no Sterna window"));
+}
+
+#[test]
+#[cfg(windows)]
+fn ttctl_says_so_when_the_named_window_is_not_listening() {
+    let name = format!("missing{:x}", std::process::id());
+    let out = Command::new(TTCTL)
+        .args(["--to", &name, "status"])
+        .env_remove("STERNA_CTL")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(!out.stderr.is_empty());
 }
 
 /// The whole point of the compatibility binary: a `.bat` wrapper's command
@@ -293,8 +329,8 @@ fn ttpmacro_takes_its_window_from_the_topic() {
     let script = w.dir.path().join("m.ttl");
     std::fs::write(&script, b"\n").unwrap();
 
-    // The socket is `win.sock`, so the topic is `win`.
-    let out = w.run(TTPMACRO, &["/D=win", script.to_str().unwrap()]);
+    let topic = format!("/D={}", w.name);
+    let out = w.run(TTPMACRO, &[&topic, script.to_str().unwrap()]);
     assert!(
         out.status.success(),
         "{}",

@@ -1,11 +1,8 @@
 //! The other end, for the two binaries and for anything else in the tree.
 //!
-//! Deliberately small: a client is a socket, a line out and a line back, and
-//! the point of choosing JSON-RPC over a Unix socket is that nobody *needs*
-//! this type. `printf | nc -U` is a client. What this adds is the id
-//! bookkeeping and turning an error object back into a Rust error, which is
-//! the part a shell script does with `jq` and a Rust caller should not do by
-//! hand.
+//! Deliberately small: a client is a local byte stream, a line out and a line
+//! back. Unix exposes that stream as a socket and Windows as a named pipe;
+//! neither changes the ids or JSON above it.
 //!
 //! **A call is synchronous and the connection is not shared.** Requests are
 //! answered in order on one connection, and every method here waits for its
@@ -15,11 +12,11 @@
 //! descriptor and no code.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 
 use serde_json::Value;
 
+use crate::ipc::Stream;
 use crate::proto::{RpcError, MAX_LINE};
 
 /// What went wrong, from a caller's point of view.
@@ -58,15 +55,15 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// One connection to one window.
 pub struct Client {
-    out: UnixStream,
-    reader: BufReader<UnixStream>,
+    out: Stream,
+    reader: BufReader<Stream>,
     next_id: u64,
 }
 
 impl Client {
     /// Connect to an explicit path.
     pub fn connect(path: &Path) -> Result<Client> {
-        let out = UnixStream::connect(path)?;
+        let out = Stream::connect(path)?;
         let reader = BufReader::new(out.try_clone()?);
         Ok(Client {
             out,

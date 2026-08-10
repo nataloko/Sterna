@@ -5,8 +5,9 @@
 //! - **The frontend's**, which owns the [`Session`](tt_session::Session) and
 //!   never blocks on a socket. It calls [`Server::service`] when
 //!   [`Server::poll_fd`] fires, and that is its whole involvement.
-//! - **The accept thread**, which is blocked in `poll(2)` on the listener and
-//!   on a pipe that tells it to stop.
+//! - **The accept thread**, which is blocked on the listener. Unix waits in
+//!   `poll(2)` with a stop pipe; Windows wakes a named-pipe accept by making a
+//!   private final connection after setting the stop flag.
 //! - **A connection thread**, one per client, blocked on a read. It parses,
 //!   posts a job, waits for the answer and writes it back.
 //!
@@ -22,8 +23,6 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::io::AsRawFd;
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -34,6 +33,7 @@ use crate::addr;
 use crate::channel::{channel, CtlReceiver, CtlSender};
 use crate::dispatch;
 use crate::host::CtlHost;
+use crate::ipc::{Listener as IpcListener, Stream};
 use crate::proto::{self, Incoming, Response, RpcError, MAX_LINE};
 
 /// A bound socket, before the accept thread has been started.
@@ -42,7 +42,7 @@ use crate::proto::{self, Incoming, Response, RpcError, MAX_LINE};
 /// is taken — the one failure that is about the *user's* setup rather than
 /// about the machine — before it has spawned anything.
 pub struct Listener {
-    listener: UnixListener,
+    listener: IpcListener,
     path: PathBuf,
 }
 
@@ -90,7 +90,7 @@ impl Listener {
     }
 }
 
-/// A running control socket. Dropping it closes and unlinks it.
+/// A running control endpoint. Dropping it closes it and unlinks a Unix socket.
 pub struct Server {
     rx: CtlReceiver,
     path: PathBuf,
@@ -129,12 +129,11 @@ impl Server {
 impl Drop for Server {
     fn drop(&mut self) {
         // In this order: tell the accept thread to stop, hang up on every
-        // client so its thread's read returns, then take the file away. The
-        // last one is not what stops new clients — a socket file with nobody
-        // behind it is refused by the kernel — it is so the directory does not
-        // fill with names of windows that have closed.
-        self.stop.set();
+        // client so its thread's read returns, then take the Unix file away.
+        // A Windows pipe leaves the namespace with its last handle.
+        self.stop.set(&self.path);
         self.conns.shutdown_all();
+        #[cfg(unix)]
         let _ = std::fs::remove_file(&self.path);
         if let Some(t) = self.thread.take() {
             let _ = t.join();
@@ -142,12 +141,16 @@ impl Drop for Server {
     }
 }
 
-fn accept_loop(listener: UnixListener, tx: CtlSender, stop: Stop, conns: Arc<Connections>) {
+fn accept_loop(mut listener: IpcListener, tx: CtlSender, stop: Stop, conns: Arc<Connections>) {
     loop {
-        if stop.is_set() || !wait_readable(&listener, &stop) {
+        if stop.is_set() {
             return;
         }
-        let (stream, _) = match listener.accept() {
+        #[cfg(unix)]
+        if !wait_readable(&listener, &stop) {
+            return;
+        }
+        let stream = match listener.accept() {
             Ok(s) => s,
             // `EINVAL` is the listener being torn down under us; anything else
             // transient (`ECONNABORTED`, a signal) is worth another turn, and
@@ -155,6 +158,11 @@ fn accept_loop(listener: UnixListener, tx: CtlSender, stop: Stop, conns: Arc<Con
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => return,
         };
+        // On Windows this may be the connection `Stop::set` made solely to
+        // wake ConnectNamedPipe. It must not become a client thread.
+        if stop.is_set() {
+            return;
+        }
         // The directory is `0700` and the socket `0600`, so this should be
         // unreachable. It is the second lock, and it is cheap.
         if !addr::peer_is_us(&stream) {
@@ -179,7 +187,7 @@ fn accept_loop(listener: UnixListener, tx: CtlSender, stop: Stop, conns: Arc<Con
 }
 
 /// One client, until it hangs up or asks for something impossible.
-fn serve(stream: UnixStream, tx: &CtlSender) {
+fn serve(stream: Stream, tx: &CtlSender) {
     let mut out = match stream.try_clone() {
         Ok(s) => s,
         Err(_) => return,
@@ -259,13 +267,16 @@ fn handle(line: &str, tx: &CtlSender) -> (Option<Response>, bool) {
 #[derive(Clone)]
 struct Stop {
     flag: Arc<AtomicBool>,
-    read: Arc<UnixStream>,
-    write: Arc<Mutex<UnixStream>>,
+    #[cfg(unix)]
+    read: Arc<std::os::unix::net::UnixStream>,
+    #[cfg(unix)]
+    write: Arc<Mutex<std::os::unix::net::UnixStream>>,
 }
 
 impl Stop {
+    #[cfg(unix)]
     fn new() -> std::io::Result<Stop> {
-        let (read, write) = UnixStream::pair()?;
+        let (read, write) = std::os::unix::net::UnixStream::pair()?;
         read.set_nonblocking(true)?;
         Ok(Stop {
             flag: Arc::new(AtomicBool::new(false)),
@@ -274,9 +285,19 @@ impl Stop {
         })
     }
 
-    fn set(&self) {
+    #[cfg(windows)]
+    fn new() -> std::io::Result<Stop> {
+        Ok(Stop {
+            flag: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    fn set(&self, _path: &Path) {
         self.flag.store(true, Ordering::SeqCst);
+        #[cfg(unix)]
         let _ = self.write.lock().unwrap().write(&[1]);
+        #[cfg(windows)]
+        let _ = Stream::connect(_path);
     }
 
     fn is_set(&self) -> bool {
@@ -289,7 +310,10 @@ impl Stop {
 /// `false` means stop. A `poll` failure is also a stop: there is no error here
 /// a retry would fix, and a spinning accept thread would be worse than a
 /// missing socket.
-fn wait_readable(listener: &UnixListener, stop: &Stop) -> bool {
+#[cfg(unix)]
+fn wait_readable(listener: &IpcListener, stop: &Stop) -> bool {
+    use std::os::unix::io::AsRawFd;
+
     let mut fds = [
         libc::pollfd {
             fd: listener.as_raw_fd(),
@@ -330,11 +354,11 @@ fn wait_readable(listener: &UnixListener, stop: &Stop) -> bool {
 #[derive(Default)]
 struct Connections {
     next: AtomicU64,
-    live: Mutex<HashMap<u64, UnixStream>>,
+    live: Mutex<HashMap<u64, Stream>>,
 }
 
 impl Connections {
-    fn add(&self, stream: &UnixStream) -> Option<u64> {
+    fn add(&self, stream: &Stream) -> Option<u64> {
         let clone = stream.try_clone().ok()?;
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         self.live.lock().ok()?.insert(id, clone);
@@ -350,7 +374,7 @@ impl Connections {
     fn shutdown_all(&self) {
         if let Ok(live) = self.live.lock() {
             for s in live.values() {
-                let _ = s.shutdown(std::net::Shutdown::Both);
+                let _ = s.shutdown();
             }
         }
     }
@@ -379,10 +403,20 @@ mod tests {
         }
     }
 
-    fn socket() -> (tempfile::TempDir, PathBuf) {
+    #[cfg(unix)]
+    fn socket() -> (Option<tempfile::TempDir>, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.sock");
-        (dir, path)
+        (Some(dir), path)
+    }
+
+    #[cfg(windows)]
+    fn socket() -> (Option<tempfile::TempDir>, PathBuf) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let name = format!("t{:x}{n:x}", std::process::id());
+        (None, crate::addr::path_of(&name).unwrap())
     }
 
     /// End to end over a real socket: a request in, a response out, and the
@@ -448,9 +482,15 @@ mod tests {
     fn dropping_the_server_unlinks_the_socket() {
         let (_dir, path) = socket();
         let server = Listener::bind_path(&path).unwrap().start().unwrap();
+        #[cfg(unix)]
         assert!(path.exists());
+        #[cfg(windows)]
+        assert!(crate::addr::list().unwrap().contains(&path));
         drop(server);
+        #[cfg(unix)]
         assert!(!path.exists());
+        #[cfg(windows)]
+        assert!(!crate::addr::list().unwrap().contains(&path));
     }
 
     /// A client holding an open connection does not keep the window alive.

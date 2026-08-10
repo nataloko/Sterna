@@ -49,13 +49,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<ExitCode, String> {
-    // `from_args` rather than `parse`: the shell has already tokenised and
-    // unquoted, and running `GetParam` over a rejoined `argv` would
-    // quote-process everything twice.
-    let cmd = CmdLine::from_args(std::env::args_os().skip(1).map(|a| {
-        use std::os::unix::ffi::OsStrExt;
-        a.as_bytes().to_vec()
-    }));
+    let cmd = command_line();
 
     if cmd.needs_prompt() {
         // Upstream puts a file-open dialog up. This has no window to put one
@@ -101,4 +95,34 @@ fn run() -> Result<ExitCode, String> {
 
     let exit = result["exit"].as_i64().unwrap_or(0);
     Ok(ExitCode::from((exit & 0xff) as u8))
+}
+
+/// Feed the launcher what the platform actually supplies. Unix has already
+/// split and unquoted `argv`; Windows still has the original command line and
+/// must use Tera Term's own tokeniser rather than `CommandLineToArgvW`'s rules.
+#[cfg(unix)]
+fn command_line() -> CmdLine {
+    CmdLine::from_args(std::env::args_os().skip(1).map(|a| {
+        use std::os::unix::ffi::OsStrExt;
+        a.as_bytes().to_vec()
+    }))
+}
+
+#[cfg(windows)]
+fn command_line() -> CmdLine {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::Environment::GetCommandLineW;
+
+    let ptr = unsafe { GetCommandLineW() };
+    if ptr.is_null() {
+        return CmdLine::default();
+    }
+    let mut len = 0usize;
+    while unsafe { *ptr.add(len) } != 0 {
+        len += 1;
+    }
+    let wide = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let line = OsString::from_wide(wide).to_string_lossy().into_owned();
+    CmdLine::parse(line.as_bytes())
 }

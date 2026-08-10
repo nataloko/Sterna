@@ -47,6 +47,7 @@ pub mod channel;
 pub mod client;
 pub mod dispatch;
 pub mod host;
+mod ipc;
 pub mod proto;
 pub mod server;
 
