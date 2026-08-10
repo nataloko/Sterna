@@ -133,7 +133,10 @@ twelve-conversion `ttstrftime`. `%N` works in one and vanishes from the other,
 literal text in a timestamp. Both are reproduced, and the module header lists
 them. The file-name path uses the native C runtime on each platform, including
 MSVC's `%#d` modifier on Windows rather than translating it into a Unix
-spelling.
+spelling. Local timestamps use `localtime_r`'s offset on Unix and Windows'
+current timezone bias there; `&u` likewise asks `GetUserNameW` on Windows, and
+the fallback transfer directory expands Windows `%VAR%` references before it
+is tested.
 
 ## The viewport, and why a line has a number
 

@@ -419,11 +419,23 @@ pub(crate) fn local_offset() -> Duration {
     Duration::from_secs(secs.rem_euclid(86_400) as u64)
 }
 
-/// Windows wants `GetTimeZoneInformation`, which is Stage 3's to add along
-/// with the rest of the platform. Until then a local timestamp there reads as
-/// UTC, which is wrong but not *silently* wrong — it is written down here and
-/// the UTC option says the same thing honestly.
-#[cfg(not(unix))]
+/// The current Windows UTC offset. `Bias` and its seasonal adjustment are
+/// minutes to add to local time to obtain UTC, so the sign is reversed here.
+#[cfg(windows)]
 pub(crate) fn local_offset() -> Duration {
-    Duration::ZERO
+    use windows_sys::Win32::System::SystemServices::{
+        TIME_ZONE_ID_DAYLIGHT, TIME_ZONE_ID_STANDARD, TIME_ZONE_ID_UNKNOWN,
+    };
+    use windows_sys::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
+
+    let mut zone: TIME_ZONE_INFORMATION = unsafe { std::mem::zeroed() };
+    let state = unsafe { GetTimeZoneInformation(&mut zone) };
+    let seasonal = match state {
+        TIME_ZONE_ID_STANDARD => zone.StandardBias,
+        TIME_ZONE_ID_DAYLIGHT => zone.DaylightBias,
+        TIME_ZONE_ID_UNKNOWN => 0,
+        _ => return Duration::ZERO,
+    };
+    let east = -i64::from(zone.Bias + seasonal) * 60;
+    Duration::from_secs(east.rem_euclid(86_400) as u64)
 }

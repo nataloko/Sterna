@@ -56,11 +56,26 @@ pub struct LogContext {
 }
 
 /// `GetUserNameW`'s counterpart: who is running this, for `&u`.
+#[cfg(unix)]
 pub fn current_user() -> Option<String> {
     std::env::var("USER")
         .or_else(|_| std::env::var("LOGNAME"))
         .ok()
         .filter(|u| !u.is_empty())
+}
+
+#[cfg(windows)]
+pub fn current_user() -> Option<String> {
+    use windows_sys::Win32::System::WindowsProgramming::GetUserNameW;
+
+    // UNLEN is 256 and the count includes the terminator.
+    let mut name = vec![0u16; 257];
+    let mut len = name.len() as u32;
+    if unsafe { GetUserNameW(name.as_mut_ptr(), &mut len) } == 0 || len <= 1 {
+        return None;
+    }
+    name.truncate(len as usize - 1);
+    Some(String::from_utf16_lossy(&name))
 }
 
 /// A civil date and time, which is what both expanders read.
@@ -429,13 +444,23 @@ pub fn term_log_dir(settings: &Settings) -> PathBuf {
         return PathBuf::from(&settings.log_default_path);
     }
     if !settings.transfer_dir.is_empty() {
-        let dir = PathBuf::from(&settings.transfer_dir);
+        let dir = expanded_transfer_dir(&settings.transfer_dir);
         if dir.is_dir() {
             return dir;
         }
     }
-    // Upstream's last resort is `%LOCALAPPDATA%\teraterm5`. Logs are state
-    // rather than configuration or data, so this is `XDG_STATE_HOME`.
+    // Upstream's last resort is `%LOCALAPPDATA%\teraterm5`.
+    #[cfg(windows)]
+    match std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()) {
+        Some(v) => PathBuf::from(v).join("sterna"),
+        None => std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(Path::to_path_buf))
+            .unwrap_or_else(|| PathBuf::from(".")),
+    }
+    // Logs are state rather than configuration or data on Unix, so the same
+    // answer is `XDG_STATE_HOME` there.
+    #[cfg(unix)]
     match std::env::var_os("XDG_STATE_HOME").filter(|v| !v.is_empty()) {
         Some(v) => PathBuf::from(v).join("sterna"),
         None => match std::env::var_os("HOME").filter(|v| !v.is_empty()) {
@@ -445,6 +470,38 @@ pub fn term_log_dir(settings: &Settings) -> PathBuf {
             None => PathBuf::from("."),
         },
     }
+}
+
+#[cfg(unix)]
+fn expanded_transfer_dir(path: &str) -> PathBuf {
+    PathBuf::from(path)
+}
+
+#[cfg(windows)]
+fn expanded_transfer_dir(path: &str) -> PathBuf {
+    use std::ffi::{OsStr, OsString};
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use windows_sys::Win32::System::Environment::ExpandEnvironmentStringsW;
+
+    let source: Vec<u16> = OsStr::new(path).encode_wide().chain(Some(0)).collect();
+    let needed = unsafe { ExpandEnvironmentStringsW(source.as_ptr(), std::ptr::null_mut(), 0) };
+    if needed == 0 {
+        return PathBuf::from(path);
+    }
+    let mut expanded = vec![0u16; needed as usize];
+    let written = unsafe {
+        ExpandEnvironmentStringsW(
+            source.as_ptr(),
+            expanded.as_mut_ptr(),
+            expanded.len() as u32,
+        )
+    };
+    if written == 0 || written as usize > expanded.len() {
+        return PathBuf::from(path);
+    }
+    // The count includes the terminator.
+    expanded.truncate(written.saturating_sub(1) as usize);
+    PathBuf::from(OsString::from_wide(&expanded))
 }
 
 /// `FLogGetLogFilename` (`filesys_log.cpp:964`), whole: the name a log is
@@ -548,6 +605,15 @@ mod tests {
         assert_eq!(expand_name("%j.log", &ctx, when()), "221.log");
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_keeps_msvcs_no_padding_modifier() {
+        assert_eq!(
+            expand_name("%#d.log", &LogContext::default(), when()),
+            "9.log"
+        );
+    }
+
     #[test]
     fn the_connection_escapes_expand_or_vanish() {
         let ctx = LogContext {
@@ -594,8 +660,10 @@ mod tests {
 
     #[test]
     fn only_an_absolute_request_escapes_the_log_directory() {
+        let log_dir = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
         let settings = Settings {
-            log_default_path: String::from("/var/log/sterna"),
+            log_default_path: log_dir.path().to_string_lossy().into_owned(),
             log_default_name: String::from("&h.log"),
             ..Settings::default()
         };
@@ -606,16 +674,17 @@ mod tests {
 
         assert_eq!(
             log_file_name(None, &settings, &ctx),
-            PathBuf::from("/var/log/sterna/box.log")
+            log_dir.path().join("box.log")
         );
         // A relative `/L=` is *not* relative to the working directory.
         assert_eq!(
             log_file_name(Some("out.log"), &settings, &ctx),
-            PathBuf::from("/var/log/sterna/out.log")
+            log_dir.path().join("out.log")
         );
+        let requested = elsewhere.path().join("&h.log");
         assert_eq!(
-            log_file_name(Some("/tmp/here/&h.log"), &settings, &ctx),
-            PathBuf::from("/tmp/here/box.log")
+            log_file_name(Some(&requested.to_string_lossy()), &settings, &ctx),
+            elsewhere.path().join("box.log")
         );
     }
 
@@ -623,8 +692,15 @@ mod tests {
     /// relationship anybody would guess at.
     #[test]
     fn the_transfer_directory_is_the_second_answer_and_only_if_it_exists() {
+        let scratch = tempfile::tempdir().unwrap();
+        let transfer = tempfile::tempdir().unwrap();
+        let logs = tempfile::tempdir().unwrap();
         let mut settings = Settings {
-            transfer_dir: String::from("/definitely/not/here"),
+            transfer_dir: scratch
+                .path()
+                .join("not-here")
+                .to_string_lossy()
+                .into_owned(),
             ..Settings::default()
         };
         let fallback = term_log_dir(&settings);
@@ -633,14 +709,25 @@ mod tests {
             "a directory that does not exist is skipped: {fallback:?}"
         );
 
-        settings.transfer_dir = String::from("/tmp");
-        assert_eq!(term_log_dir(&settings), PathBuf::from("/tmp"));
+        settings.transfer_dir = transfer.path().to_string_lossy().into_owned();
+        assert_eq!(term_log_dir(&settings), transfer.path());
 
-        settings.log_default_path = String::from("/var/tmp");
+        settings.log_default_path = logs.path().to_string_lossy().into_owned();
         assert_eq!(
             term_log_dir(&settings),
-            PathBuf::from("/var/tmp"),
+            logs.path(),
             "and it is the third answer once the log path is set"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_transfer_directory_expands_windows_environment_variables() {
+        let temp = std::env::var_os("TEMP").expect("Windows has TEMP");
+        let settings = Settings {
+            transfer_dir: String::from("%TEMP%"),
+            ..Settings::default()
+        };
+        assert_eq!(term_log_dir(&settings), PathBuf::from(temp));
     }
 }

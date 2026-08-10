@@ -20,5 +20,15 @@ tt-xfer.workspace = true
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(windows)'.dependencies]
+# The current timezone bias and user name for log timestamps/templates. File
+# names themselves still go through the platform C runtime in logname.rs.
+windows-sys = { version = "0.61", features = [
+    "Win32_System_Environment",
+    "Win32_System_SystemServices",
+    "Win32_System_Time",
+    "Win32_System_WindowsProgramming",
+] }
+
 [dev-dependencies]
 tempfile = "3"

@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 388
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 389
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4386,6 +4386,24 @@ runtime-selectable and belongs in the library, and the small host archive must
 travel with their callbacks even in a downstream binary that never starts a
 transfer. The complete Windows-target test link is the gate for this fix;
 `cargo check` cannot see it.
+
+The linked binaries run under Wine far enough to exercise the platform seams
+(not to substitute Wine for Windows). All nine transfer unit tests pass; five
+of the six named-pipe server lifecycle tests pass, plus the direct pipe and
+token-SID check. Wine 9 itself does not implement the two namespace operations
+those remaining assertions use: `FindFirstFileW` on `\\.\pipe` returns
+`ERROR_BAD_DEV_TYPE`, and `FILE_FLAG_FIRST_PIPE_INSTANCE` is ignored. Keep the
+native Windows tests as the authority for both.
+
+That run found a real test defect beside the Wine gaps: `tt-session`'s log-name
+tests used `/var` and `/tmp` as though they were absolute on every platform.
+They now use platform-native temporary paths and cover MSVC's `%#d` directly.
+The production path is complete too: local log timestamps use
+`GetTimeZoneInformation`, `&u` uses `GetUserNameW`, and the fallback log
+directory is `%LOCALAPPDATA%\sterna` rather than an XDG path interpreted under
+Windows rules. `FileDir`'s `%VAR%` references are expanded before its existence
+check, at the same point `GetTermLogDir` does it upstream; `LogDefaultPath`
+deliberately is not expanded, also matching that function.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
