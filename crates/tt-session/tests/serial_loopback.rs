@@ -10,6 +10,8 @@
 //!   cargo test -p tt-session -- --test-threads=1
 //! ```
 
+#![cfg(unix)]
+
 use std::time::{Duration, Instant};
 
 use tt_conn::serial::{FlowControl, ModemLines, SerialConn, SerialParams};

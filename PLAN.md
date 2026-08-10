@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 383
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 384
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4337,6 +4337,15 @@ its byte I/O and a frontend wakeup remain open. The fork/`poll(2)` pty suite and
 the SSH descriptor assertion are gated as POSIX tests rather than being made
 to pass vacuously on Windows. `tt-conn` now cross-checks cleanly for the full
 Windows target, including all targets.
+
+The third stop was in tests and log naming, not in the session state machine.
+The Unix transfer, pty and serial harnesses now say so at the crate boundary
+instead of asking a Windows compiler for `poll(2)` and `/bin/sh`. Log file
+templates still go through the platform C runtime as upstream's do: Unix keeps
+`libc::strftime`, and Windows supplies its native nine-field `tm` to the CRT,
+including MSVC's `%#d` spelling. The ordinary date expansion remains covered
+on Linux; the Windows branch is cross-compiled but still needs a native MSVC
+run before it is called proven.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

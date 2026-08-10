@@ -6,7 +6,10 @@
 //!
 //! It is also the only place `close_note` is exercised end to end: the pty is
 //! the transport that has something to say on its way out, and the whole
-//! mechanism exists for it.
+//! mechanism exists for it. This harness drives `/bin/sh` and `poll(2)`, so it
+//! is the POSIX end-to-end test; ConPTY needs its own native Windows exercise.
+
+#![cfg(unix)]
 
 use std::time::{Duration, Instant};
 

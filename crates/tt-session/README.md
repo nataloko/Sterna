@@ -131,7 +131,9 @@ table and handed to the C runtime; a timestamp goes through upstream's own
 twelve-conversion `ttstrftime`. `%N` works in one and vanishes from the other,
 `%e` is the other way round, and ten more work in a name and come back as
 literal text in a timestamp. Both are reproduced, and the module header lists
-them.
+them. The file-name path uses the native C runtime on each platform, including
+MSVC's `%#d` modifier on Windows rather than translating it into a Unix
+spelling.
 
 ## The viewport, and why a line has a number
 

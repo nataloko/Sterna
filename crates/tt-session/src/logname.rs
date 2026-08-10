@@ -237,11 +237,10 @@ fn delete_invalid_codes(format: &str) -> String {
 /// reimplementation, because `%c`, `%x`, `%X` and `%Z` are the locale's
 /// business and this is the one place a port can have them for free.
 ///
-/// The `#` modifier is the exception and is Stage 3's: MSVC reads `%#d` as
-/// "no leading zero" and glibc has never heard of it, so a name using one
-/// expands differently on the two platforms. Nothing is done about it here —
-/// silently rewriting it to glibc's `%-d` would make the same file name mean
-/// two different things depending on where it was typed.
+/// The `#` modifier is the platform exception: MSVC reads `%#d` as "no leading
+/// zero" and glibc has never heard of it, so a name using one expands
+/// differently on the two platforms. That is upstream's behaviour too; the
+/// format goes to each platform's own C runtime unchanged.
 fn strftime(format: &str, t: Civil) -> String {
     let cleaned = delete_invalid_codes(format);
     if cleaned.is_empty() {
@@ -252,6 +251,7 @@ fn strftime(format: &str, t: Civil) -> String {
         // string cannot hold one either; a name that has one is not a name.
         return String::new();
     };
+    #[cfg(unix)]
     let tm = libc::tm {
         tm_sec: t.second as i32,
         tm_min: t.minute as i32,
@@ -265,9 +265,22 @@ fn strftime(format: &str, t: Civil) -> String {
         tm_gmtoff: 0,
         tm_zone: std::ptr::null(),
     };
+    #[cfg(windows)]
+    let tm = WindowsTm {
+        tm_sec: t.second as i32,
+        tm_min: t.minute as i32,
+        tm_hour: t.hour as i32,
+        tm_mday: t.day as i32,
+        tm_mon: t.month as i32 - 1,
+        tm_year: (t.year - 1900) as i32,
+        tm_wday: t.weekday as i32,
+        tm_yday: day_of_year(t) as i32,
+        tm_isdst: -1,
+    };
     let mut len = 64usize;
     loop {
         let mut buf = vec![0u8; len];
+        #[cfg(unix)]
         let n = unsafe {
             libc::strftime(
                 buf.as_mut_ptr() as *mut libc::c_char,
@@ -276,6 +289,8 @@ fn strftime(format: &str, t: Civil) -> String {
                 &tm,
             )
         };
+        #[cfg(windows)]
+        let n = unsafe { c_strftime(buf.as_mut_ptr().cast(), len, c_format.as_ptr(), &tm) };
         if n > 0 {
             buf.truncate(n);
             return String::from_utf8_lossy(&buf).into_owned();
@@ -289,6 +304,33 @@ fn strftime(format: &str, t: Civil) -> String {
         }
         len *= 2;
     }
+}
+
+/// MSVC and MinGW expose the ISO C `tm` fields in this order. Unlike glibc's
+/// `tm`, the Windows structure has no zone-name or UTC-offset extension.
+#[cfg(windows)]
+#[repr(C)]
+struct WindowsTm {
+    tm_sec: std::ffi::c_int,
+    tm_min: std::ffi::c_int,
+    tm_hour: std::ffi::c_int,
+    tm_mday: std::ffi::c_int,
+    tm_mon: std::ffi::c_int,
+    tm_year: std::ffi::c_int,
+    tm_wday: std::ffi::c_int,
+    tm_yday: std::ffi::c_int,
+    tm_isdst: std::ffi::c_int,
+}
+
+#[cfg(windows)]
+unsafe extern "C" {
+    #[link_name = "strftime"]
+    fn c_strftime(
+        buffer: *mut std::ffi::c_char,
+        size: usize,
+        format: *const std::ffi::c_char,
+        time: *const WindowsTm,
+    ) -> usize;
 }
 
 fn day_of_year(t: Civil) -> u32 {

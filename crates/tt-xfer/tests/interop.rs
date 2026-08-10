@@ -11,6 +11,8 @@
 //! Needs `lrzsz` and `gkermit`. Without them the cases skip loudly rather than
 //! passing quietly.
 
+#![cfg(unix)]
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
