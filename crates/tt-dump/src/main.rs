@@ -35,7 +35,7 @@ const USAGE: &str = "usage: tt-dump [--cols N] [--rows N] [--term ID] [--attrs]\
 
 /// `TermWidthMax` / `TermHeightMax` from Tera Term's `ttcommon.h`, so the two
 /// engines reject the same sizes.
-const TERM_WIDTH_MAX: usize = 500;
+const TERM_WIDTH_MAX: usize = 1000;
 const TERM_HEIGHT_MAX: usize = 500;
 
 struct Args {
