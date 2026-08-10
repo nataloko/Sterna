@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 1 complete, 2 in progress · **Commits:** 289
+**Last updated:** 2026-08-10 · **Stage:** 1 complete, 2 in progress · **Commits:** 290
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1098,7 +1098,7 @@ before anything else in every session.
   terminal in
   `tt-session`, the schema as data over the C ABI, and a Qt dialog that builds
   itself from it. What remains is the *rest of the settings*, which is a line
-  and a citation each — 98 keys as of 2026-08-10, and `tests/upstream.rs`
+  and a citation each — 105 keys as of 2026-08-10, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -3720,7 +3720,9 @@ which is what the terminal shows, and not the ceiling, which is what the
 setting exists for. Worth revisiting if the parser is ever forked — it is the
 same fork the two `xfail`s want.
 
-180 settings over 167 keys, 98 to go.
+180 settings over 167 keys, 105 to go. The earlier 98 omitted seven keys read
+through Win32's wide-character APIs; the extraction guard now covers those
+call shapes too.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 

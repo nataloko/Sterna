@@ -86,14 +86,17 @@ fn every_key_is_one_upstream_reads() {
 
 /// Every INI key `ttset.c` reads, however it reads it.
 ///
-/// Four call shapes and two string widths, which is why this matches on the
+/// Seven call shapes and two string widths, which is why this matches on the
 /// *second* quoted argument of any of them rather than trying to parse the
 /// call. Over-matching would only inflate the "to go" count it feeds.
 fn upstream_keys(src: &str) -> std::collections::BTreeSet<&str> {
     let mut out = std::collections::BTreeSet::new();
     for call in [
         "GetPrivateProfileInt(Section, \"",
+        "GetPrivateProfileIntW(SectionW, L\"",
         "GetPrivateProfileString(Section, \"",
+        "GetPrivateProfileStringW(SectionW, L\"",
+        "hGetPrivateProfileStringW(SectionW, L\"",
         "GetOnOff(Section, \"",
         "GetPrivateProfileColor2(Section, \"",
     ] {
@@ -106,6 +109,21 @@ fn upstream_keys(src: &str) -> std::collections::BTreeSet<&str> {
         }
     }
     out
+}
+
+#[test]
+fn upstream_key_extractor_includes_wide_reads() {
+    let src = r#"
+        GetPrivateProfileIntW(SectionW, L"WideInt", 0, FName);
+        GetPrivateProfileStringW(SectionW, L"WideFixed", L"", out, 1, FName);
+        hGetPrivateProfileStringW(SectionW, L"WideAllocated", L"", FName, &out);
+    "#;
+    assert_eq!(
+        upstream_keys(src),
+        ["WideAllocated", "WideFixed", "WideInt"]
+            .into_iter()
+            .collect()
+    );
 }
 
 #[test]
