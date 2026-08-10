@@ -213,6 +213,18 @@ typedef uint32_t TtLogTimestamp;
 #endif // __cplusplus
 
 /**
+ * The live text-cursor shape, in DECSCUSR's numbering.
+ *
+ * It is live terminal state rather than only the value loaded from the file:
+ * a host may change it with DECSCUSR when `CursorCtrlSequence` permits that.
+ */
+typedef enum {
+    TT_CURSOR_SHAPE_BLOCK = 1,
+    TT_CURSOR_SHAPE_HORIZONTAL = 3,
+    TT_CURSOR_SHAPE_VERTICAL = 5,
+} TtCursorShape;
+
+/**
  * `MouseReportMode` — `tttypes.h:650`.
  *
  * The `repr(u32)` on this and its neighbours is not decoration: the C ABI
@@ -787,7 +799,7 @@ typedef struct {
 typedef int32_t TtStatus;
 
 /**
- * Where the cursor is and whether to draw it.
+ * Where the cursor is and how to draw it.
  */
 typedef struct {
     size_t x;
@@ -807,6 +819,15 @@ typedef struct {
      * stuck on the last column.
      */
     bool pending_wrap;
+    /**
+     * The shape as it stands now, after both the setting and any accepted
+     * DECSCUSR sequence.
+     */
+    TtCursorShape shape;
+    /**
+     * `NonblinkingCursor`, likewise live after DECSET 12 or DECSCUSR.
+     */
+    bool nonblinking;
 } TtCursor;
 
 /**

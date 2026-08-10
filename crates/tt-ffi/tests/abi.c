@@ -123,6 +123,8 @@ static void test_screen(void)
     CHECK(cur.y == 0);
     CHECK(cur.x == 11);
     CHECK(cur.visible);
+    CHECK(cur.shape == TT_CURSOR_SHAPE_BLOCK);
+    CHECK(!cur.nonblinking);
 
     /* A feed queues damage; a title only when one arrives. */
     const TtEvent *events = NULL;
@@ -667,6 +669,17 @@ static void test_settings(void)
      * floor itself. */
     CHECK_OK(tt_session_set_setting(s, "terminal.cols", "0"));
     CHECK(tt_session_cols(s) == 80);
+
+    /* Cursor style is live state: once the file permits the control sequence,
+     * the frontend sees the host's shape and blink choice rather than the
+     * stale setting. DECSCUSR 4 is a steady underline. */
+    CHECK_OK(tt_session_set_setting(s, "window.cursor_ctrl_allowed", "on"));
+    static const char cursor_style[] = "\033[4 q";
+    tt_session_feed(s, (const uint8_t *)cursor_style, sizeof cursor_style - 1);
+    TtCursor cur;
+    tt_session_cursor(s, &cur);
+    CHECK(cur.shape == TT_CURSOR_SHAPE_HORIZONTAL);
+    CHECK(cur.nonblinking);
 
     /* A round trip through a file, including a key nothing here knows about:
      * a TERATERM.INI shared with a real Tera Term has to survive being

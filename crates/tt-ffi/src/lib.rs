@@ -734,7 +734,19 @@ pub extern "C" fn tt_session_url_at(session: *mut TtSession, line: u64, x: usize
     s.url.as_ptr()
 }
 
-/// Where the cursor is and whether to draw it.
+/// The live text-cursor shape, in DECSCUSR's numbering.
+///
+/// It is live terminal state rather than only the value loaded from the file:
+/// a host may change it with DECSCUSR when `CursorCtrlSequence` permits that.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TtCursorShape {
+    Block = 1,
+    Horizontal = 3,
+    Vertical = 5,
+}
+
+/// Where the cursor is and how to draw it.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct TtCursor {
@@ -749,6 +761,11 @@ pub struct TtCursor {
     /// *next* one wraps. Worth having because it explains a cursor that looks
     /// stuck on the last column.
     pub pending_wrap: bool,
+    /// The shape as it stands now, after both the setting and any accepted
+    /// DECSCUSR sequence.
+    pub shape: TtCursorShape,
+    /// `NonblinkingCursor`, likewise live after DECSET 12 or DECSCUSR.
+    pub nonblinking: bool,
 }
 
 #[no_mangle]
@@ -758,11 +775,18 @@ pub extern "C" fn tt_session_cursor(session: *const TtSession, out: *mut TtCurso
         return;
     };
     let c = s.session.grid().cursor;
+    let config = s.session.vt().config();
     *out = TtCursor {
         x: c.x,
         y: c.y,
         visible: s.session.vt().cursor_visible(),
         pending_wrap: c.pending_wrap,
+        shape: match config.cursor_shape {
+            3 => TtCursorShape::Horizontal,
+            5 => TtCursorShape::Vertical,
+            _ => TtCursorShape::Block,
+        },
+        nonblinking: config.nonblinking_cursor,
     };
 }
 
