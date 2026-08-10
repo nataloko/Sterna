@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 374
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 376
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4298,8 +4298,11 @@ terminal and owns real shortcuts on `QAction`. This includes the complete
 Japanese-style `設定(&S)` marker rather than leaving a stray `(S)`.
 
 This begins Stage 3 rather than completing its language item. The catalog,
-main menus and generated settings UI are wired; the specialized connection,
-transfer and macro dialogs still need their existing keys mapped.
+main menus, generated settings UI, and the serial, SSH and telnet connection
+forms are wired. The forms attach a catalog key only where its upstream field
+has the same meaning; the ssh-agent, legacy-algorithm and telnet-mode controls
+are Sterna additions and deliberately keep their source wording. SSH prompts,
+transfer dialogs and macro dialogs remain to map.
 
 ### 🔵 Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
@@ -4370,9 +4373,11 @@ Adoption hinges on "my existing setup just works." Budget real time here.
 - **`.lng` files** — 🔵 **in progress 2026-08-10.** The exact 14 files are
   vendored, loaded through `tt-i18n`, installed with the shell, selected by the
   compatible `UILanguageFile` setting, and used by the main menus and generated
-  settings UI. Do **not** migrate to Qt `.ts`: that throws away 17,610 lines of
-  donated translation and the translator workflow. The specialized dialogs
-  remain to map.
+  settings UI. The serial, SSH and telnet connection forms also use every
+  catalog key whose upstream field has the same meaning. Do **not** migrate to
+  Qt `.ts`: that throws away 17,610 lines of donated translation and the
+  translator workflow. SSH prompts and the transfer and macro dialogs remain
+  to map.
 - **TTX plugins** — replace in order: (1) fold the ones that matter into core —
   `TTXProxy` (~1k Rust), `TTXKanjiMenu`, `TTXResizeMenu`, `TTXttyrec`; (2) a
   **Lua plugin API** — menu items, key bindings, connect/disconnect hooks,

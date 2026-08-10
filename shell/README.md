@@ -527,9 +527,12 @@ from the displayed translation, including Japanese-style `設定(&S)`, so loadin
 a language cannot silently make Meta keystrokes open a menu.
 
 This is the translation foundation, not a claim that every dialog is done.
-The generated settings UI and the main menu are wired; the specialized serial,
-SSH, telnet, transfer and macro dialogs still need their existing `.lng` keys
-mapped as Stage 3 proceeds.
+The generated settings UI, main menu, and the serial, SSH and telnet connection
+forms are wired. Those forms use catalog text only where an upstream field has
+the same meaning; Sterna's ssh-agent, legacy-algorithm and telnet-mode controls
+keep their source wording instead of borrowing a misleading translation. SSH
+host-key/authentication prompts and the transfer and macro dialogs remain to
+map as Stage 3 proceeds.
 
 Native Wayland is the platform exception. Qt 6.11 retains the opacity property
 but has no backend operation to give it to the compositor; Fedora's xcb backend
