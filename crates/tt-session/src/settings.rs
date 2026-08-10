@@ -106,6 +106,7 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
         mouse_tracking_enabled: s.mouse_tracking,
         disable_mouse_tracking_by_ctrl: s.mouse_ctrl_disables_tracking,
         translate_wheel_to_cursor: s.mouse_wheel_to_cursor,
+        disable_wheel_to_cursor_by_ctrl: s.mouse_ctrl_disables_wheel_to_cursor,
         // A log setting in the terminal's configuration, because that is where
         // upstream reads it: the tap it gates is `vtterm.c`'s, and it feeds a
         // macro's received-line buffer as well as the log.

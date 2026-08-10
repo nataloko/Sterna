@@ -802,6 +802,15 @@ typedef struct {
 } TtCursor;
 
 /**
+ * What `ShiftKey()`/`AltKey()`/`ControlKey()` would have answered.
+ */
+typedef struct {
+    bool shift;
+    bool alt;
+    bool ctrl;
+} TtModifiers;
+
+/**
  * One setting, as data — the row a generated dialog builds a widget from.
  *
  * **This is the point of having a schema at all.** `PLAN.md` puts ~13.8k
@@ -984,15 +993,6 @@ typedef struct {
 } TtTransferResult;
 
 /**
- * What `ShiftKey()`/`AltKey()`/`ControlKey()` would have answered.
- */
-typedef struct {
-    bool shift;
-    bool alt;
-    bool ctrl;
-} TtModifiers;
-
-/**
  * The serial line settings, one field per `commlib.c` DCB field that Tera
  * Term actually sets.
  */
@@ -1042,11 +1042,15 @@ typedef uint32_t TtTelnetMode;
  */
 typedef struct {
     /**
-     * [`TT_TELNET_RAW`], [`TT_TELNET_AUTO`] or [`TT_TELNET_NEGOTIATE`].
+     * [`TT_TELNET_RAW`], [`TT_TELNET_AUTO`], [`TT_TELNET_NEGOTIATE`] or
+     * [`TT_TELNET_FRAMED`] — four, because the framing and the opening burst
+     * are two questions rather than one.
      *
      * [`tt_telnet_params_default`] sets it from the port, which is upstream's
-     * rule: negotiate on 23, auto-detect elsewhere. **Do not "improve" that
-     * to always negotiating** — a terminal server is not a telnet server, and
+     * rule: negotiate on 23, **frame** elsewhere. Not auto-detect: the
+     * framing is on from the first byte at any port, and all that the port
+     * decides is whether the burst goes out. **Do not "improve" this to
+     * always negotiating** — a terminal server is not a telnet server, and
      * opening at one with `WILL TERMINAL-TYPE` puts five bytes of protocol
      * into somebody's serial console.
      */
@@ -2399,6 +2403,24 @@ bool tt_session_reverse_video(const TtSession *session);
  * keyboard rather than as a mode.
  */
 bool tt_session_backspace_sends_bs(const TtSession *session);
+
+/**
+ * Whether a wheel notch should go out as a cursor key rather than scroll the
+ * window's own view — `vtterm.c:WheelToCursorMode`.
+ *
+ * Four terms, and a frontend that assembles them itself will get one wrong:
+ * `DECSET 7786`, the application cursor mode, `DisableAppCursor` — which
+ * vetoes that mode without unsetting it, so DECRQM still reports it set — and
+ * Ctrl under `DisableWheelToCursorByCtrl`, which is the escape hatch that
+ * reaches the terminal's history while a full-screen program is up. Hence the
+ * modifiers, the same way [`tt_session_mouse`] takes them.
+ *
+ * Ask *after* [`tt_session_mouse`] has declined the wheel: mouse tracking
+ * comes first (`vtwin.cpp:2543`), and `less` scrolling its own buffer is not
+ * the same thing as the window scrolling ours.
+ */
+bool tt_session_wheel_to_cursor(const TtSession *session,
+                                TtModifiers mods);
 
 /**
  * Whether the frontend should be tracking the mouse at all, and therefore

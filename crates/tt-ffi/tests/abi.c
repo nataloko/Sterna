@@ -164,14 +164,17 @@ static void test_scrollback_viewport(void)
     tt_session_set_view_offset(s, 1);
     CHECK(!tt_session_cursor_view_row(s, &crow));
 
-    /* And the core moves the offset itself so the view stays on the same
-     * lines — which is why a frontend has to re-read it rather than trusting
-     * what it last wrote. */
+    /* And the core moves the offset itself, which is why a frontend has to
+     * re-read it rather than trusting what it last wrote. Which way it moves
+     * is `AutoScrollOnlyInBottomLine`: shipped off, so output drags the view
+     * back to the cursor, and on, so it holds the lines it was showing.
+     * `tt-session`'s viewport tests have both; here the point is only that it
+     * moved without anybody calling the setter. */
     tt_session_set_view_offset(s, 2);
     static const char more[] = "g\r\nh\r\n";
     tt_session_feed(s, (const uint8_t *)more, sizeof more - 1);
-    CHECK(tt_session_view_offset(s) == 4);
-    expect_row(s, 0, "b");
+    CHECK(tt_session_view_offset(s) == 0);
+    expect_row(s, 0, "f");
 
     tt_session_free(s);
 }
@@ -706,8 +709,8 @@ static void test_cmdline(void)
     free_startup(&st);
 
     /* A bare host name is telnet, and the port decides the protocol: 23
-     * negotiates, anything else auto-detects, because a terminal server's
-     * per-line port is not a telnet server. */
+     * negotiates and anything else frames without offering a word, because a
+     * terminal server's per-line port is not a telnet server. */
     const char *host[] = {"myhost"};
     CHECK(startup(host, 1, s, &st) == TT_STARTUP_OPEN);
     CHECK(st.target == TT_TARGET_TELNET);
@@ -720,7 +723,7 @@ static void test_cmdline(void)
     const char *hostport[] = {"myhost:2323", "/T=1"};
     CHECK(startup(hostport, 2, s, &st) == TT_STARTUP_OPEN);
     CHECK(st.port == 2323);
-    CHECK(st.telnet.mode == TT_TELNET_AUTO);
+    CHECK(st.telnet.mode == TT_TELNET_FRAMED);
     free_startup(&st);
 
     /* SSH, which is not opened here: it has prompts, so it goes to
@@ -1175,11 +1178,13 @@ static void test_telnet(void)
 {
     TtTelnetParams p;
     /* Upstream's rule, and the one thing here that is easy to get wrong: the
-     * mode comes from the port. */
+     * mode comes from the port, and the answer away from 23 is FRAMED rather
+     * than AUTO — the framing is on from the first byte, it is only the
+     * opening burst that is held back. */
     tt_telnet_params_default(&p, 23);
     CHECK(p.mode == TT_TELNET_NEGOTIATE);
     tt_telnet_params_default(&p, 2001);
-    CHECK(p.mode == TT_TELNET_AUTO);
+    CHECK(p.mode == TT_TELNET_FRAMED);
     CHECK(p.input_speed == 38400);
     CHECK(!p.binary);
     CHECK(p.term_type == NULL); /* null means the default, not empty */

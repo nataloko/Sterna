@@ -784,6 +784,27 @@ pub extern "C" fn tt_session_backspace_sends_bs(session: *const TtSession) -> bo
         .backspace_sends_bs()
 }
 
+/// Whether a wheel notch should go out as a cursor key rather than scroll the
+/// window's own view — `vtterm.c:WheelToCursorMode`.
+///
+/// Four terms, and a frontend that assembles them itself will get one wrong:
+/// `DECSET 7786`, the application cursor mode, `DisableAppCursor` — which
+/// vetoes that mode without unsetting it, so DECRQM still reports it set — and
+/// Ctrl under `DisableWheelToCursorByCtrl`, which is the escape hatch that
+/// reaches the terminal's history while a full-screen program is up. Hence the
+/// modifiers, the same way [`tt_session_mouse`] takes them.
+///
+/// Ask *after* [`tt_session_mouse`] has declined the wheel: mouse tracking
+/// comes first (`vtwin.cpp:2543`), and `less` scrolling its own buffer is not
+/// the same thing as the window scrolling ours.
+#[no_mangle]
+pub extern "C" fn tt_session_wheel_to_cursor(session: *const TtSession, mods: Modifiers) -> bool {
+    session_ref!(session, false)
+        .session
+        .vt()
+        .wheel_to_cursor_now(mods)
+}
+
 /// Whether the frontend should be tracking the mouse at all, and therefore
 /// whether a drag belongs to the host or to text selection.
 #[no_mangle]
@@ -2051,11 +2072,15 @@ pub const TT_TELNET_FRAMED: TtTelnetMode = 3;
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct TtTelnetParams {
-    /// [`TT_TELNET_RAW`], [`TT_TELNET_AUTO`] or [`TT_TELNET_NEGOTIATE`].
+    /// [`TT_TELNET_RAW`], [`TT_TELNET_AUTO`], [`TT_TELNET_NEGOTIATE`] or
+    /// [`TT_TELNET_FRAMED`] — four, because the framing and the opening burst
+    /// are two questions rather than one.
     ///
     /// [`tt_telnet_params_default`] sets it from the port, which is upstream's
-    /// rule: negotiate on 23, auto-detect elsewhere. **Do not "improve" that
-    /// to always negotiating** — a terminal server is not a telnet server, and
+    /// rule: negotiate on 23, **frame** elsewhere. Not auto-detect: the
+    /// framing is on from the first byte at any port, and all that the port
+    /// decides is whether the burst goes out. **Do not "improve" this to
+    /// always negotiating** — a terminal server is not a telnet server, and
     /// opening at one with `WILL TERMINAL-TYPE` puts five bytes of protocol
     /// into somebody's serial console.
     pub mode: TtTelnetMode,

@@ -263,6 +263,11 @@ pub struct Config {
     /// `ts.TranslateWheelToCursor` (`ttset.c:1515`, key default on). Gates
     /// `DECSET 7786`, and is what a reset restores that mode to.
     pub translate_wheel_to_cursor: bool,
+    /// `ts.DisableWheelToCursorByCtrl` (`ttset.c:1594`, key default on).
+    /// Holding Ctrl cancels the translation, so the wheel reaches the
+    /// terminal's own history while a full-screen program is up. Read at the
+    /// wheel rather than at DECSET time — see [`Vt::wheel_to_cursor_now`].
+    pub disable_wheel_to_cursor_by_ctrl: bool,
     /// `WF_CURSORCHANGE` (`ttset.c:1656` `CursorCtrlSequence`, key default
     /// **off**). Gates DECSCUSR and `DECSET 12`, and shifts what DECRQM
     /// answers for the three cursor modes by two.
@@ -398,6 +403,7 @@ impl Default for Config {
             cell_w: 8,
             cell_h: 16,
             translate_wheel_to_cursor: true,
+            disable_wheel_to_cursor_by_ctrl: true,
             cursor_ctrl_sequence: false,
             local_echo: false,
             cr_send: CrSend::Cr,
@@ -905,6 +911,23 @@ impl Vt {
     /// application cursor mode is on.
     pub fn wheel_to_cursor(&self) -> bool {
         self.state.modes.wheel_to_cursor
+    }
+
+    /// Whether a wheel notch should go out as a cursor key rather than scroll
+    /// the frontend's own view — `vtterm.c:WheelToCursorMode`, whole.
+    ///
+    /// Four terms, and the frontend has no business assembling them: the mode,
+    /// the application cursor mode, the setting that vetoes that mode without
+    /// unsetting it, and Ctrl under `DisableWheelToCursorByCtrl`. The last is
+    /// why this takes the modifiers, the same way [`Vt::mouse`] does — Ctrl is
+    /// the escape hatch that gets the history back while a full-screen program
+    /// is up.
+    pub fn wheel_to_cursor_now(&self, mods: Modifiers) -> bool {
+        let m = &self.state.modes;
+        m.wheel_to_cursor
+            && m.appli_cursor
+            && !self.state.config.disable_app_cursor
+            && !(mods.ctrl && self.state.config.disable_wheel_to_cursor_by_ctrl)
     }
 
     /// The modes [`Key::encode`] reads, as the terminal currently stands.
