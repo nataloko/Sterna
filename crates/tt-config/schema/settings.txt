@@ -290,6 +290,88 @@ terminal.allow_wrong_sequence | bool | Tera Term | AllowWrongSequence | off | -
 # so the key is retained until that parser feature exists.
 terminal.status_line_enabled | bool | Tera Term | EnableStatusLine | on | -
 
+# --- encoding ---------------------------------------------------------------
+#
+# Sterna's terminal stream is UTF-8 and the roadmap explicitly defers the CJK
+# decoder and IME depth. These rows still reproduce the existing file: they
+# remain visible to the generated dialog and scripts, and will already be in
+# the right shape if that scope is revived.
+
+# `ttset.c:670` calls `GetKanjiCodeFromStr`, whose table is compared with
+# case-sensitive `strcmp` (`ttlib_charset.cpp:147`). Empty and unknown values
+# become UTF-8. Aliases are ordered with the spelling `GetKanjiCodeStr` writes
+# first: EUC is written as `EUC-JP`, and CP1251 as `Windows-1251`.
+encoding.receive | enum_exact(UTF-8/*=Utf8,ISO8859-1=Iso8859_1,ISO8859-2=Iso8859_2,ISO8859-3=Iso8859_3,ISO8859-4=Iso8859_4,ISO8859-5=Iso8859_5,ISO8859-6=Iso8859_6,ISO8859-7=Iso8859_7,ISO8859-8=Iso8859_8,ISO8859-9=Iso8859_9,ISO8859-10=Iso8859_10,ISO8859-11=Iso8859_11,ISO8859-13=Iso8859_13,ISO8859-14=Iso8859_14,ISO8859-15=Iso8859_15,ISO8859-16=Iso8859_16,SJIS=Sjis,EUC-JP/EUC=Euc,JIS=Jis,Windows-1251/CP1251=Windows1251,KOI8-R=Koi8R,CP866=Cp866,KS5601=Ks5601,GB2312=Gb2312,BIG5=Big5,CP437=Cp437,CP737=Cp737,CP775=Cp775,CP850=Cp850,CP852=Cp852,CP855=Cp855,CP857=Cp857,CP860=Cp860,CP861=Cp861,CP862=Cp862,CP863=Cp863,CP864=Cp864,CP865=Cp865,CP869=Cp869,CP874=Cp874,CP1250=Cp1250,CP1252=Cp1252,CP1253=Cp1253,CP1254=Cp1254,CP1255=Cp1255,CP1256=Cp1256,CP1257=Cp1257,CP1258=Cp1258) | Tera Term | KanjiReceive | UTF-8 | DLG_TERMK_KANJI
+
+# `ttset.c:683`, the same exact table and UTF-8 fallback for transmitted text.
+encoding.send | enum_exact(UTF-8/*=Utf8,ISO8859-1=Iso8859_1,ISO8859-2=Iso8859_2,ISO8859-3=Iso8859_3,ISO8859-4=Iso8859_4,ISO8859-5=Iso8859_5,ISO8859-6=Iso8859_6,ISO8859-7=Iso8859_7,ISO8859-8=Iso8859_8,ISO8859-9=Iso8859_9,ISO8859-10=Iso8859_10,ISO8859-11=Iso8859_11,ISO8859-13=Iso8859_13,ISO8859-14=Iso8859_14,ISO8859-15=Iso8859_15,ISO8859-16=Iso8859_16,SJIS=Sjis,EUC-JP/EUC=Euc,JIS=Jis,Windows-1251/CP1251=Windows1251,KOI8-R=Koi8R,CP866=Cp866,KS5601=Ks5601,GB2312=Gb2312,BIG5=Big5,CP437=Cp437,CP737=Cp737,CP775=Cp775,CP850=Cp850,CP852=Cp852,CP855=Cp855,CP857=Cp857,CP860=Cp860,CP861=Cp861,CP862=Cp862,CP863=Cp863,CP864=Cp864,CP865=Cp865,CP869=Cp869,CP874=Cp874,CP1250=Cp1250,CP1252=Cp1252,CP1253=Cp1253,CP1254=Cp1254,CP1255=Cp1255,CP1256=Cp1256,CP1257=Cp1257,CP1258=Cp1258) | Tera Term | KanjiSend | UTF-8 | DLG_TERMK_KANJISEND
+
+# `ttset.c:675`; only the literal `7` selects seven-bit JIS Katakana, and the
+# empty default and every other value select eight-bit.
+encoding.katakana_receive | enum(7=Seven,8/*=Eight) | Tera Term | KatakanaReceive | 8 | -
+
+# `ttset.c:688`, the transmit-side copy of the same switch.
+encoding.katakana_send | enum(7=Seven,8/*=Eight) | Tera Term | KatakanaSend | 8 | -
+
+# `ttset.c:696` and `makeoutputstring.cpp:72`; exact `@` selects the 1978 JIS
+# designation and exact `B` plus everything else selects the 1983 one.
+encoding.kanji_in | enum_exact(@=At,B/*=B) | Tera Term | KanjiIn | B | DLG_TERM_KIN
+
+# `ttset.c:701` and `makeoutputstring.cpp:83`; exact `B`, `J` and `H` are the
+# three designations and an absent or unknown value takes `J`.
+encoding.kanji_out | enum_exact(B=B,J/*=J,H=H) | Tera Term | KanjiOut | J | DLG_TERM_KOUT
+
+# `ttset.c:1158`, `TF_CTRLINKANJI`, default on. It lets C0 controls interrupt a
+# two-byte Japanese character; retained until those decoders exist here.
+encoding.ctrl_in_kanji | bool | Tera Term | CtrlInKanji | on | -
+
+# `ttset.c:1194`, `TF_FIXEDJIS`, default off. The writer does not emit this
+# legacy hand-edited key, but a changed generated setting must still be able to.
+encoding.fixed_jis | bool | Tera Term | FixedJIS | off | -
+
+# `ttset.c:1957`, default off. Upstream's experimental fallback decodes bytes
+# that are invalid UTF-8 as CP932; the decoder is part of the deferred CJK work.
+encoding.fallback_cp932 | bool | Tera Term | FallbackToCP932 | off | -
+
+# `ttset.c:911`. Only `KOI8-R`, case-insensitively, selects that keyboard map;
+# the `Windows` spelling and everything else select the Windows map.
+encoding.russian_keyboard | enum(KOI8-R=Koi8R,Windows/*=Windows) | Tera Term | RussKeyb | Windows | -
+
+# `ttset.c:1537`. Values 0, 1 and 2 select Unicode-to-DEC, DEC-to-Unicode and
+# no mapping. An out-of-range integer falls back to the first, not to the file
+# default of 2, so `*` records the separate else arm.
+encoding.dec_special_direction | enum(0/*=UnicodeToDec,1=DecToUnicode,2=Off) | Tera Term | DecSpMappingDir | 2 | -
+
+# `ttset.c:1547`, assigned to a `WORD`. The low three bits choose the symbol
+# groups mapped to DEC special graphics; unknown high bits survive a save.
+encoding.unicode_to_dec_special | uint16 | Tera Term | UnicodeToDecSpMapping | 3 | -
+
+# `ttset.c:1965`. Only 1 and 2 are valid, and either invalid end takes
+# `GetDefaultUnicodeWidth()`, which is 1 in this upstream tree.
+encoding.ambiguous_width | int_default(1..2) | Tera Term | UnicodeAmbiguousWidth | 1 | -
+
+# `ttset.c:1969`, default off. When enabled, Emoji-property characters use the
+# explicit width below instead of their East Asian Width property.
+encoding.emoji_override | bool | Tera Term | UnicodeEmojiOverride | off | -
+
+# `ttset.c:1970`, the same accept-only-1-or-2 rule and default 1 as ambiguous
+# width. Width policy remains deliberately deferred with CJK.
+encoding.emoji_width | int_default(1..2) | Tera Term | UnicodeEmojiWidth | 1 | -
+
+# --- input method -----------------------------------------------------------
+
+# `ttset.c:1198`, default on. This is Win32 IME enablement; Qt input-method
+# integration remains deferred with CJK, so the compatibility key is carried.
+ime.enabled | bool | Tera Term | IME | on | -
+
+# `ttset.c:1201`, default on. Selects inline composition in upstream and acts
+# on nothing until the input-method surface exists here.
+ime.inline | bool | Tera Term | IMEInline | on | -
+
+# `ttset.c:1684`, `WF_IMECURSORCHANGE`, default off. Changes the cursor while
+# an IME composition is active; the setting is retained with that deferred UI.
+ime.cursor_related | bool | Tera Term | IMERelatedCursor | off | DLG_TAB_GENERAL_CURSOR_CHANGE_IME
+
 # --- keyboard ----------------------------------------------------------------
 
 # **`ttset.c:877` reads this with an empty fallback and only the literal `DEL`

@@ -226,6 +226,911 @@ impl Default for TerminalCrSend {
     }
 }
 
+/// `ttset.c:670` calls `GetKanjiCodeFromStr`, whose table is compared with
+/// case-sensitive `strcmp` (`ttlib_charset.cpp:147`). Empty and unknown values
+/// become UTF-8. Aliases are ordered with the spelling `GetKanjiCodeStr` writes
+/// first: EUC is written as `EUC-JP`, and CP1251 as `Windows-1251`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EncodingReceive {
+    /// `UTF-8`
+    Utf8,
+    /// `ISO8859-1`
+    Iso8859_1,
+    /// `ISO8859-2`
+    Iso8859_2,
+    /// `ISO8859-3`
+    Iso8859_3,
+    /// `ISO8859-4`
+    Iso8859_4,
+    /// `ISO8859-5`
+    Iso8859_5,
+    /// `ISO8859-6`
+    Iso8859_6,
+    /// `ISO8859-7`
+    Iso8859_7,
+    /// `ISO8859-8`
+    Iso8859_8,
+    /// `ISO8859-9`
+    Iso8859_9,
+    /// `ISO8859-10`
+    Iso8859_10,
+    /// `ISO8859-11`
+    Iso8859_11,
+    /// `ISO8859-13`
+    Iso8859_13,
+    /// `ISO8859-14`
+    Iso8859_14,
+    /// `ISO8859-15`
+    Iso8859_15,
+    /// `ISO8859-16`
+    Iso8859_16,
+    /// `SJIS`
+    Sjis,
+    /// `EUC-JP`, `EUC` — the first is written back, the rest are aliases the
+    /// file may hold because upstream's own table has them.
+    Euc,
+    /// `JIS`
+    Jis,
+    /// `Windows-1251`, `CP1251` — the first is written back, the rest are aliases the
+    /// file may hold because upstream's own table has them.
+    Windows1251,
+    /// `KOI8-R`
+    Koi8R,
+    /// `CP866`
+    Cp866,
+    /// `KS5601`
+    Ks5601,
+    /// `GB2312`
+    Gb2312,
+    /// `BIG5`
+    Big5,
+    /// `CP437`
+    Cp437,
+    /// `CP737`
+    Cp737,
+    /// `CP775`
+    Cp775,
+    /// `CP850`
+    Cp850,
+    /// `CP852`
+    Cp852,
+    /// `CP855`
+    Cp855,
+    /// `CP857`
+    Cp857,
+    /// `CP860`
+    Cp860,
+    /// `CP861`
+    Cp861,
+    /// `CP862`
+    Cp862,
+    /// `CP863`
+    Cp863,
+    /// `CP864`
+    Cp864,
+    /// `CP865`
+    Cp865,
+    /// `CP869`
+    Cp869,
+    /// `CP874`
+    Cp874,
+    /// `CP1250`
+    Cp1250,
+    /// `CP1252`
+    Cp1252,
+    /// `CP1253`
+    Cp1253,
+    /// `CP1254`
+    Cp1254,
+    /// `CP1255`
+    Cp1255,
+    /// `CP1256`
+    Cp1256,
+    /// `CP1257`
+    Cp1257,
+    /// `CP1258`
+    Cp1258,
+}
+
+impl EncodingReceive {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Utf8 => "UTF-8",
+            Self::Iso8859_1 => "ISO8859-1",
+            Self::Iso8859_2 => "ISO8859-2",
+            Self::Iso8859_3 => "ISO8859-3",
+            Self::Iso8859_4 => "ISO8859-4",
+            Self::Iso8859_5 => "ISO8859-5",
+            Self::Iso8859_6 => "ISO8859-6",
+            Self::Iso8859_7 => "ISO8859-7",
+            Self::Iso8859_8 => "ISO8859-8",
+            Self::Iso8859_9 => "ISO8859-9",
+            Self::Iso8859_10 => "ISO8859-10",
+            Self::Iso8859_11 => "ISO8859-11",
+            Self::Iso8859_13 => "ISO8859-13",
+            Self::Iso8859_14 => "ISO8859-14",
+            Self::Iso8859_15 => "ISO8859-15",
+            Self::Iso8859_16 => "ISO8859-16",
+            Self::Sjis => "SJIS",
+            Self::Euc => "EUC-JP",
+            Self::Jis => "JIS",
+            Self::Windows1251 => "Windows-1251",
+            Self::Koi8R => "KOI8-R",
+            Self::Cp866 => "CP866",
+            Self::Ks5601 => "KS5601",
+            Self::Gb2312 => "GB2312",
+            Self::Big5 => "BIG5",
+            Self::Cp437 => "CP437",
+            Self::Cp737 => "CP737",
+            Self::Cp775 => "CP775",
+            Self::Cp850 => "CP850",
+            Self::Cp852 => "CP852",
+            Self::Cp855 => "CP855",
+            Self::Cp857 => "CP857",
+            Self::Cp860 => "CP860",
+            Self::Cp861 => "CP861",
+            Self::Cp862 => "CP862",
+            Self::Cp863 => "CP863",
+            Self::Cp864 => "CP864",
+            Self::Cp865 => "CP865",
+            Self::Cp869 => "CP869",
+            Self::Cp874 => "CP874",
+            Self::Cp1250 => "CP1250",
+            Self::Cp1252 => "CP1252",
+            Self::Cp1253 => "CP1253",
+            Self::Cp1254 => "CP1254",
+            Self::Cp1255 => "CP1255",
+            Self::Cp1256 => "CP1256",
+            Self::Cp1257 => "CP1257",
+            Self::Cp1258 => "CP1258",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised is `Utf8`** — which
+    /// is *not* this type's default. Upstream reads the key with a
+    /// default string and then runs a chain of comparisons whose last
+    /// arm catches everything, so an absent key and a misspelt value
+    /// are two different settings.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s == "UTF-8" {
+            return Self::Utf8;
+        }
+        if s == "ISO8859-1" {
+            return Self::Iso8859_1;
+        }
+        if s == "ISO8859-2" {
+            return Self::Iso8859_2;
+        }
+        if s == "ISO8859-3" {
+            return Self::Iso8859_3;
+        }
+        if s == "ISO8859-4" {
+            return Self::Iso8859_4;
+        }
+        if s == "ISO8859-5" {
+            return Self::Iso8859_5;
+        }
+        if s == "ISO8859-6" {
+            return Self::Iso8859_6;
+        }
+        if s == "ISO8859-7" {
+            return Self::Iso8859_7;
+        }
+        if s == "ISO8859-8" {
+            return Self::Iso8859_8;
+        }
+        if s == "ISO8859-9" {
+            return Self::Iso8859_9;
+        }
+        if s == "ISO8859-10" {
+            return Self::Iso8859_10;
+        }
+        if s == "ISO8859-11" {
+            return Self::Iso8859_11;
+        }
+        if s == "ISO8859-13" {
+            return Self::Iso8859_13;
+        }
+        if s == "ISO8859-14" {
+            return Self::Iso8859_14;
+        }
+        if s == "ISO8859-15" {
+            return Self::Iso8859_15;
+        }
+        if s == "ISO8859-16" {
+            return Self::Iso8859_16;
+        }
+        if s == "SJIS" {
+            return Self::Sjis;
+        }
+        if s == "EUC-JP" || s == "EUC" {
+            return Self::Euc;
+        }
+        if s == "JIS" {
+            return Self::Jis;
+        }
+        if s == "Windows-1251" || s == "CP1251" {
+            return Self::Windows1251;
+        }
+        if s == "KOI8-R" {
+            return Self::Koi8R;
+        }
+        if s == "CP866" {
+            return Self::Cp866;
+        }
+        if s == "KS5601" {
+            return Self::Ks5601;
+        }
+        if s == "GB2312" {
+            return Self::Gb2312;
+        }
+        if s == "BIG5" {
+            return Self::Big5;
+        }
+        if s == "CP437" {
+            return Self::Cp437;
+        }
+        if s == "CP737" {
+            return Self::Cp737;
+        }
+        if s == "CP775" {
+            return Self::Cp775;
+        }
+        if s == "CP850" {
+            return Self::Cp850;
+        }
+        if s == "CP852" {
+            return Self::Cp852;
+        }
+        if s == "CP855" {
+            return Self::Cp855;
+        }
+        if s == "CP857" {
+            return Self::Cp857;
+        }
+        if s == "CP860" {
+            return Self::Cp860;
+        }
+        if s == "CP861" {
+            return Self::Cp861;
+        }
+        if s == "CP862" {
+            return Self::Cp862;
+        }
+        if s == "CP863" {
+            return Self::Cp863;
+        }
+        if s == "CP864" {
+            return Self::Cp864;
+        }
+        if s == "CP865" {
+            return Self::Cp865;
+        }
+        if s == "CP869" {
+            return Self::Cp869;
+        }
+        if s == "CP874" {
+            return Self::Cp874;
+        }
+        if s == "CP1250" {
+            return Self::Cp1250;
+        }
+        if s == "CP1252" {
+            return Self::Cp1252;
+        }
+        if s == "CP1253" {
+            return Self::Cp1253;
+        }
+        if s == "CP1254" {
+            return Self::Cp1254;
+        }
+        if s == "CP1255" {
+            return Self::Cp1255;
+        }
+        if s == "CP1256" {
+            return Self::Cp1256;
+        }
+        if s == "CP1257" {
+            return Self::Cp1257;
+        }
+        if s == "CP1258" {
+            return Self::Cp1258;
+        }
+        Self::Utf8
+    }
+}
+
+impl Default for EncodingReceive {
+    fn default() -> Self {
+        Self::Utf8
+    }
+}
+
+/// `ttset.c:683`, the same exact table and UTF-8 fallback for transmitted text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EncodingSend {
+    /// `UTF-8`
+    Utf8,
+    /// `ISO8859-1`
+    Iso8859_1,
+    /// `ISO8859-2`
+    Iso8859_2,
+    /// `ISO8859-3`
+    Iso8859_3,
+    /// `ISO8859-4`
+    Iso8859_4,
+    /// `ISO8859-5`
+    Iso8859_5,
+    /// `ISO8859-6`
+    Iso8859_6,
+    /// `ISO8859-7`
+    Iso8859_7,
+    /// `ISO8859-8`
+    Iso8859_8,
+    /// `ISO8859-9`
+    Iso8859_9,
+    /// `ISO8859-10`
+    Iso8859_10,
+    /// `ISO8859-11`
+    Iso8859_11,
+    /// `ISO8859-13`
+    Iso8859_13,
+    /// `ISO8859-14`
+    Iso8859_14,
+    /// `ISO8859-15`
+    Iso8859_15,
+    /// `ISO8859-16`
+    Iso8859_16,
+    /// `SJIS`
+    Sjis,
+    /// `EUC-JP`, `EUC` — the first is written back, the rest are aliases the
+    /// file may hold because upstream's own table has them.
+    Euc,
+    /// `JIS`
+    Jis,
+    /// `Windows-1251`, `CP1251` — the first is written back, the rest are aliases the
+    /// file may hold because upstream's own table has them.
+    Windows1251,
+    /// `KOI8-R`
+    Koi8R,
+    /// `CP866`
+    Cp866,
+    /// `KS5601`
+    Ks5601,
+    /// `GB2312`
+    Gb2312,
+    /// `BIG5`
+    Big5,
+    /// `CP437`
+    Cp437,
+    /// `CP737`
+    Cp737,
+    /// `CP775`
+    Cp775,
+    /// `CP850`
+    Cp850,
+    /// `CP852`
+    Cp852,
+    /// `CP855`
+    Cp855,
+    /// `CP857`
+    Cp857,
+    /// `CP860`
+    Cp860,
+    /// `CP861`
+    Cp861,
+    /// `CP862`
+    Cp862,
+    /// `CP863`
+    Cp863,
+    /// `CP864`
+    Cp864,
+    /// `CP865`
+    Cp865,
+    /// `CP869`
+    Cp869,
+    /// `CP874`
+    Cp874,
+    /// `CP1250`
+    Cp1250,
+    /// `CP1252`
+    Cp1252,
+    /// `CP1253`
+    Cp1253,
+    /// `CP1254`
+    Cp1254,
+    /// `CP1255`
+    Cp1255,
+    /// `CP1256`
+    Cp1256,
+    /// `CP1257`
+    Cp1257,
+    /// `CP1258`
+    Cp1258,
+}
+
+impl EncodingSend {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Utf8 => "UTF-8",
+            Self::Iso8859_1 => "ISO8859-1",
+            Self::Iso8859_2 => "ISO8859-2",
+            Self::Iso8859_3 => "ISO8859-3",
+            Self::Iso8859_4 => "ISO8859-4",
+            Self::Iso8859_5 => "ISO8859-5",
+            Self::Iso8859_6 => "ISO8859-6",
+            Self::Iso8859_7 => "ISO8859-7",
+            Self::Iso8859_8 => "ISO8859-8",
+            Self::Iso8859_9 => "ISO8859-9",
+            Self::Iso8859_10 => "ISO8859-10",
+            Self::Iso8859_11 => "ISO8859-11",
+            Self::Iso8859_13 => "ISO8859-13",
+            Self::Iso8859_14 => "ISO8859-14",
+            Self::Iso8859_15 => "ISO8859-15",
+            Self::Iso8859_16 => "ISO8859-16",
+            Self::Sjis => "SJIS",
+            Self::Euc => "EUC-JP",
+            Self::Jis => "JIS",
+            Self::Windows1251 => "Windows-1251",
+            Self::Koi8R => "KOI8-R",
+            Self::Cp866 => "CP866",
+            Self::Ks5601 => "KS5601",
+            Self::Gb2312 => "GB2312",
+            Self::Big5 => "BIG5",
+            Self::Cp437 => "CP437",
+            Self::Cp737 => "CP737",
+            Self::Cp775 => "CP775",
+            Self::Cp850 => "CP850",
+            Self::Cp852 => "CP852",
+            Self::Cp855 => "CP855",
+            Self::Cp857 => "CP857",
+            Self::Cp860 => "CP860",
+            Self::Cp861 => "CP861",
+            Self::Cp862 => "CP862",
+            Self::Cp863 => "CP863",
+            Self::Cp864 => "CP864",
+            Self::Cp865 => "CP865",
+            Self::Cp869 => "CP869",
+            Self::Cp874 => "CP874",
+            Self::Cp1250 => "CP1250",
+            Self::Cp1252 => "CP1252",
+            Self::Cp1253 => "CP1253",
+            Self::Cp1254 => "CP1254",
+            Self::Cp1255 => "CP1255",
+            Self::Cp1256 => "CP1256",
+            Self::Cp1257 => "CP1257",
+            Self::Cp1258 => "CP1258",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised is `Utf8`** — which
+    /// is *not* this type's default. Upstream reads the key with a
+    /// default string and then runs a chain of comparisons whose last
+    /// arm catches everything, so an absent key and a misspelt value
+    /// are two different settings.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s == "UTF-8" {
+            return Self::Utf8;
+        }
+        if s == "ISO8859-1" {
+            return Self::Iso8859_1;
+        }
+        if s == "ISO8859-2" {
+            return Self::Iso8859_2;
+        }
+        if s == "ISO8859-3" {
+            return Self::Iso8859_3;
+        }
+        if s == "ISO8859-4" {
+            return Self::Iso8859_4;
+        }
+        if s == "ISO8859-5" {
+            return Self::Iso8859_5;
+        }
+        if s == "ISO8859-6" {
+            return Self::Iso8859_6;
+        }
+        if s == "ISO8859-7" {
+            return Self::Iso8859_7;
+        }
+        if s == "ISO8859-8" {
+            return Self::Iso8859_8;
+        }
+        if s == "ISO8859-9" {
+            return Self::Iso8859_9;
+        }
+        if s == "ISO8859-10" {
+            return Self::Iso8859_10;
+        }
+        if s == "ISO8859-11" {
+            return Self::Iso8859_11;
+        }
+        if s == "ISO8859-13" {
+            return Self::Iso8859_13;
+        }
+        if s == "ISO8859-14" {
+            return Self::Iso8859_14;
+        }
+        if s == "ISO8859-15" {
+            return Self::Iso8859_15;
+        }
+        if s == "ISO8859-16" {
+            return Self::Iso8859_16;
+        }
+        if s == "SJIS" {
+            return Self::Sjis;
+        }
+        if s == "EUC-JP" || s == "EUC" {
+            return Self::Euc;
+        }
+        if s == "JIS" {
+            return Self::Jis;
+        }
+        if s == "Windows-1251" || s == "CP1251" {
+            return Self::Windows1251;
+        }
+        if s == "KOI8-R" {
+            return Self::Koi8R;
+        }
+        if s == "CP866" {
+            return Self::Cp866;
+        }
+        if s == "KS5601" {
+            return Self::Ks5601;
+        }
+        if s == "GB2312" {
+            return Self::Gb2312;
+        }
+        if s == "BIG5" {
+            return Self::Big5;
+        }
+        if s == "CP437" {
+            return Self::Cp437;
+        }
+        if s == "CP737" {
+            return Self::Cp737;
+        }
+        if s == "CP775" {
+            return Self::Cp775;
+        }
+        if s == "CP850" {
+            return Self::Cp850;
+        }
+        if s == "CP852" {
+            return Self::Cp852;
+        }
+        if s == "CP855" {
+            return Self::Cp855;
+        }
+        if s == "CP857" {
+            return Self::Cp857;
+        }
+        if s == "CP860" {
+            return Self::Cp860;
+        }
+        if s == "CP861" {
+            return Self::Cp861;
+        }
+        if s == "CP862" {
+            return Self::Cp862;
+        }
+        if s == "CP863" {
+            return Self::Cp863;
+        }
+        if s == "CP864" {
+            return Self::Cp864;
+        }
+        if s == "CP865" {
+            return Self::Cp865;
+        }
+        if s == "CP869" {
+            return Self::Cp869;
+        }
+        if s == "CP874" {
+            return Self::Cp874;
+        }
+        if s == "CP1250" {
+            return Self::Cp1250;
+        }
+        if s == "CP1252" {
+            return Self::Cp1252;
+        }
+        if s == "CP1253" {
+            return Self::Cp1253;
+        }
+        if s == "CP1254" {
+            return Self::Cp1254;
+        }
+        if s == "CP1255" {
+            return Self::Cp1255;
+        }
+        if s == "CP1256" {
+            return Self::Cp1256;
+        }
+        if s == "CP1257" {
+            return Self::Cp1257;
+        }
+        if s == "CP1258" {
+            return Self::Cp1258;
+        }
+        Self::Utf8
+    }
+}
+
+impl Default for EncodingSend {
+    fn default() -> Self {
+        Self::Utf8
+    }
+}
+
+/// `ttset.c:675`; only the literal `7` selects seven-bit JIS Katakana, and the
+/// empty default and every other value select eight-bit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EncodingKatakanaReceive {
+    /// `7`
+    Seven,
+    /// `8`
+    Eight,
+}
+
+impl EncodingKatakanaReceive {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Seven => "7",
+            Self::Eight => "8",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised is `Eight`** — which
+    /// is *not* this type's default. Upstream reads the key with a
+    /// default string and then runs a chain of comparisons whose last
+    /// arm catches everything, so an absent key and a misspelt value
+    /// are two different settings.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("7") {
+            return Self::Seven;
+        }
+        if s.eq_ignore_ascii_case("8") {
+            return Self::Eight;
+        }
+        Self::Eight
+    }
+}
+
+impl Default for EncodingKatakanaReceive {
+    fn default() -> Self {
+        Self::Eight
+    }
+}
+
+/// `ttset.c:688`, the transmit-side copy of the same switch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EncodingKatakanaSend {
+    /// `7`
+    Seven,
+    /// `8`
+    Eight,
+}
+
+impl EncodingKatakanaSend {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Seven => "7",
+            Self::Eight => "8",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised is `Eight`** — which
+    /// is *not* this type's default. Upstream reads the key with a
+    /// default string and then runs a chain of comparisons whose last
+    /// arm catches everything, so an absent key and a misspelt value
+    /// are two different settings.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("7") {
+            return Self::Seven;
+        }
+        if s.eq_ignore_ascii_case("8") {
+            return Self::Eight;
+        }
+        Self::Eight
+    }
+}
+
+impl Default for EncodingKatakanaSend {
+    fn default() -> Self {
+        Self::Eight
+    }
+}
+
+/// `ttset.c:696` and `makeoutputstring.cpp:72`; exact `@` selects the 1978 JIS
+/// designation and exact `B` plus everything else selects the 1983 one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EncodingKanjiIn {
+    /// `@`
+    At,
+    /// `B`
+    B,
+}
+
+impl EncodingKanjiIn {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::At => "@",
+            Self::B => "B",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised is `B`** — which
+    /// is *not* this type's default. Upstream reads the key with a
+    /// default string and then runs a chain of comparisons whose last
+    /// arm catches everything, so an absent key and a misspelt value
+    /// are two different settings.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s == "@" {
+            return Self::At;
+        }
+        if s == "B" {
+            return Self::B;
+        }
+        Self::B
+    }
+}
+
+impl Default for EncodingKanjiIn {
+    fn default() -> Self {
+        Self::B
+    }
+}
+
+/// `ttset.c:701` and `makeoutputstring.cpp:83`; exact `B`, `J` and `H` are the
+/// three designations and an absent or unknown value takes `J`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EncodingKanjiOut {
+    /// `B`
+    B,
+    /// `J`
+    J,
+    /// `H`
+    H,
+}
+
+impl EncodingKanjiOut {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::B => "B",
+            Self::J => "J",
+            Self::H => "H",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised is `J`** — which
+    /// is *not* this type's default. Upstream reads the key with a
+    /// default string and then runs a chain of comparisons whose last
+    /// arm catches everything, so an absent key and a misspelt value
+    /// are two different settings.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s == "B" {
+            return Self::B;
+        }
+        if s == "J" {
+            return Self::J;
+        }
+        if s == "H" {
+            return Self::H;
+        }
+        Self::J
+    }
+}
+
+impl Default for EncodingKanjiOut {
+    fn default() -> Self {
+        Self::J
+    }
+}
+
+/// `ttset.c:911`. Only `KOI8-R`, case-insensitively, selects that keyboard map;
+/// the `Windows` spelling and everything else select the Windows map.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EncodingRussianKeyboard {
+    /// `KOI8-R`
+    Koi8R,
+    /// `Windows`
+    Windows,
+}
+
+impl EncodingRussianKeyboard {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Koi8R => "KOI8-R",
+            Self::Windows => "Windows",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised is `Windows`** — which
+    /// is *not* this type's default. Upstream reads the key with a
+    /// default string and then runs a chain of comparisons whose last
+    /// arm catches everything, so an absent key and a misspelt value
+    /// are two different settings.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("KOI8-R") {
+            return Self::Koi8R;
+        }
+        if s.eq_ignore_ascii_case("Windows") {
+            return Self::Windows;
+        }
+        Self::Windows
+    }
+}
+
+impl Default for EncodingRussianKeyboard {
+    fn default() -> Self {
+        Self::Windows
+    }
+}
+
+/// `ttset.c:1537`. Values 0, 1 and 2 select Unicode-to-DEC, DEC-to-Unicode and
+/// no mapping. An out-of-range integer falls back to the first, not to the file
+/// default of 2, so `*` records the separate else arm.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EncodingDecSpecialDirection {
+    /// `0`
+    UnicodeToDec,
+    /// `1`
+    DecToUnicode,
+    /// `2`
+    Off,
+}
+
+impl EncodingDecSpecialDirection {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::UnicodeToDec => "0",
+            Self::DecToUnicode => "1",
+            Self::Off => "2",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised is `UnicodeToDec`** — which
+    /// is *not* this type's default. Upstream reads the key with a
+    /// default string and then runs a chain of comparisons whose last
+    /// arm catches everything, so an absent key and a misspelt value
+    /// are two different settings.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("0") {
+            return Self::UnicodeToDec;
+        }
+        if s.eq_ignore_ascii_case("1") {
+            return Self::DecToUnicode;
+        }
+        if s.eq_ignore_ascii_case("2") {
+            return Self::Off;
+        }
+        Self::UnicodeToDec
+    }
+}
+
+impl Default for EncodingDecSpecialDirection {
+    fn default() -> Self {
+        Self::Off
+    }
+}
+
 /// **`ttset.c:877` reads this with an empty fallback and only the literal `DEL`
 /// takes the other arm**, so an absent key means BS. That is Tera Term's default
 /// and it is probably not what a Linux user wants: a `getty` usually has
@@ -1381,6 +2286,61 @@ pub struct Settings {
     /// (`vtterm.c:3827`). `tt-grid` deliberately has no third status-line buffer yet,
     /// so the key is retained until that parser feature exists.
     pub terminal_status_line_enabled: bool,
+    /// `ttset.c:670` calls `GetKanjiCodeFromStr`, whose table is compared with
+    /// case-sensitive `strcmp` (`ttlib_charset.cpp:147`). Empty and unknown values
+    /// become UTF-8. Aliases are ordered with the spelling `GetKanjiCodeStr` writes
+    /// first: EUC is written as `EUC-JP`, and CP1251 as `Windows-1251`.
+    pub encoding_receive: EncodingReceive,
+    /// `ttset.c:683`, the same exact table and UTF-8 fallback for transmitted text.
+    pub encoding_send: EncodingSend,
+    /// `ttset.c:675`; only the literal `7` selects seven-bit JIS Katakana, and the
+    /// empty default and every other value select eight-bit.
+    pub encoding_katakana_receive: EncodingKatakanaReceive,
+    /// `ttset.c:688`, the transmit-side copy of the same switch.
+    pub encoding_katakana_send: EncodingKatakanaSend,
+    /// `ttset.c:696` and `makeoutputstring.cpp:72`; exact `@` selects the 1978 JIS
+    /// designation and exact `B` plus everything else selects the 1983 one.
+    pub encoding_kanji_in: EncodingKanjiIn,
+    /// `ttset.c:701` and `makeoutputstring.cpp:83`; exact `B`, `J` and `H` are the
+    /// three designations and an absent or unknown value takes `J`.
+    pub encoding_kanji_out: EncodingKanjiOut,
+    /// `ttset.c:1158`, `TF_CTRLINKANJI`, default on. It lets C0 controls interrupt a
+    /// two-byte Japanese character; retained until those decoders exist here.
+    pub encoding_ctrl_in_kanji: bool,
+    /// `ttset.c:1194`, `TF_FIXEDJIS`, default off. The writer does not emit this
+    /// legacy hand-edited key, but a changed generated setting must still be able to.
+    pub encoding_fixed_jis: bool,
+    /// `ttset.c:1957`, default off. Upstream's experimental fallback decodes bytes
+    /// that are invalid UTF-8 as CP932; the decoder is part of the deferred CJK work.
+    pub encoding_fallback_cp932: bool,
+    /// `ttset.c:911`. Only `KOI8-R`, case-insensitively, selects that keyboard map;
+    /// the `Windows` spelling and everything else select the Windows map.
+    pub encoding_russian_keyboard: EncodingRussianKeyboard,
+    /// `ttset.c:1537`. Values 0, 1 and 2 select Unicode-to-DEC, DEC-to-Unicode and
+    /// no mapping. An out-of-range integer falls back to the first, not to the file
+    /// default of 2, so `*` records the separate else arm.
+    pub encoding_dec_special_direction: EncodingDecSpecialDirection,
+    /// `ttset.c:1547`, assigned to a `WORD`. The low three bits choose the symbol
+    /// groups mapped to DEC special graphics; unknown high bits survive a save.
+    pub encoding_unicode_to_dec_special: i32,
+    /// `ttset.c:1965`. Only 1 and 2 are valid, and either invalid end takes
+    /// `GetDefaultUnicodeWidth()`, which is 1 in this upstream tree.
+    pub encoding_ambiguous_width: i32,
+    /// `ttset.c:1969`, default off. When enabled, Emoji-property characters use the
+    /// explicit width below instead of their East Asian Width property.
+    pub encoding_emoji_override: bool,
+    /// `ttset.c:1970`, the same accept-only-1-or-2 rule and default 1 as ambiguous
+    /// width. Width policy remains deliberately deferred with CJK.
+    pub encoding_emoji_width: i32,
+    /// `ttset.c:1198`, default on. This is Win32 IME enablement; Qt input-method
+    /// integration remains deferred with CJK, so the compatibility key is carried.
+    pub ime_enabled: bool,
+    /// `ttset.c:1201`, default on. Selects inline composition in upstream and acts
+    /// on nothing until the input-method surface exists here.
+    pub ime_inline: bool,
+    /// `ttset.c:1684`, `WF_IMECURSORCHANGE`, default off. Changes the cursor while
+    /// an IME composition is active; the setting is retained with that deferred UI.
+    pub ime_cursor_related: bool,
     /// **`ttset.c:877` reads this with an empty fallback and only the literal `DEL`
     /// takes the other arm**, so an absent key means BS. That is Tera Term's default
     /// and it is probably not what a Linux user wants: a `getty` usually has
@@ -2438,6 +3398,24 @@ impl Default for Settings {
             terminal_max_osc_buffer: 4096,
             terminal_allow_wrong_sequence: false,
             terminal_status_line_enabled: true,
+            encoding_receive: EncodingReceive::default(),
+            encoding_send: EncodingSend::default(),
+            encoding_katakana_receive: EncodingKatakanaReceive::default(),
+            encoding_katakana_send: EncodingKatakanaSend::default(),
+            encoding_kanji_in: EncodingKanjiIn::default(),
+            encoding_kanji_out: EncodingKanjiOut::default(),
+            encoding_ctrl_in_kanji: true,
+            encoding_fixed_jis: false,
+            encoding_fallback_cp932: false,
+            encoding_russian_keyboard: EncodingRussianKeyboard::default(),
+            encoding_dec_special_direction: EncodingDecSpecialDirection::default(),
+            encoding_unicode_to_dec_special: 3,
+            encoding_ambiguous_width: 1,
+            encoding_emoji_override: false,
+            encoding_emoji_width: 1,
+            ime_enabled: true,
+            ime_inline: true,
+            ime_cursor_related: false,
             keyboard_backspace: KeyboardBackspace::default(),
             keyboard_meta: KeyboardMeta::default(),
             keyboard_delete_sends_del: false,
@@ -2779,6 +3757,78 @@ impl Settings {
             terminal_status_line_enabled: crate::schema::on_off(
                 ini.get("Tera Term", "EnableStatusLine"),
                 true,
+            ),
+            encoding_receive: match ini.get("Tera Term", "KanjiReceive") {
+                Some(v) => EncodingReceive::from_ini(v),
+                None => d.encoding_receive,
+            },
+            encoding_send: match ini.get("Tera Term", "KanjiSend") {
+                Some(v) => EncodingSend::from_ini(v),
+                None => d.encoding_send,
+            },
+            encoding_katakana_receive: match ini.get("Tera Term", "KatakanaReceive") {
+                Some(v) => EncodingKatakanaReceive::from_ini(v),
+                None => d.encoding_katakana_receive,
+            },
+            encoding_katakana_send: match ini.get("Tera Term", "KatakanaSend") {
+                Some(v) => EncodingKatakanaSend::from_ini(v),
+                None => d.encoding_katakana_send,
+            },
+            encoding_kanji_in: match ini.get("Tera Term", "KanjiIn") {
+                Some(v) => EncodingKanjiIn::from_ini(v),
+                None => d.encoding_kanji_in,
+            },
+            encoding_kanji_out: match ini.get("Tera Term", "KanjiOut") {
+                Some(v) => EncodingKanjiOut::from_ini(v),
+                None => d.encoding_kanji_out,
+            },
+            encoding_ctrl_in_kanji: crate::schema::on_off(
+                ini.get("Tera Term", "CtrlInKanji"),
+                true,
+            ),
+            encoding_fixed_jis: crate::schema::on_off(ini.get("Tera Term", "FixedJIS"), false),
+            encoding_fallback_cp932: crate::schema::on_off(
+                ini.get("Tera Term", "FallbackToCP932"),
+                false,
+            ),
+            encoding_russian_keyboard: match ini.get("Tera Term", "RussKeyb") {
+                Some(v) => EncodingRussianKeyboard::from_ini(v),
+                None => d.encoding_russian_keyboard,
+            },
+            encoding_dec_special_direction: match ini.get("Tera Term", "DecSpMappingDir") {
+                Some(v) => EncodingDecSpecialDirection::from_ini(v),
+                None => d.encoding_dec_special_direction,
+            },
+            encoding_unicode_to_dec_special: crate::schema::word(ini.get_int(
+                "Tera Term",
+                "UnicodeToDecSpMapping",
+                d.encoding_unicode_to_dec_special,
+            ) as i32),
+            encoding_ambiguous_width: crate::schema::validated(
+                ini.get_int(
+                    "Tera Term",
+                    "UnicodeAmbiguousWidth",
+                    d.encoding_ambiguous_width,
+                ) as i32,
+                d.encoding_ambiguous_width,
+                1,
+                2,
+            ),
+            encoding_emoji_override: crate::schema::on_off(
+                ini.get("Tera Term", "UnicodeEmojiOverride"),
+                false,
+            ),
+            encoding_emoji_width: crate::schema::validated(
+                ini.get_int("Tera Term", "UnicodeEmojiWidth", d.encoding_emoji_width) as i32,
+                d.encoding_emoji_width,
+                1,
+                2,
+            ),
+            ime_enabled: crate::schema::on_off(ini.get("Tera Term", "IME"), true),
+            ime_inline: crate::schema::on_off(ini.get("Tera Term", "IMEInline"), true),
+            ime_cursor_related: crate::schema::on_off(
+                ini.get("Tera Term", "IMERelatedCursor"),
+                false,
             ),
             keyboard_backspace: match ini.get("Tera Term", "BSKey") {
                 Some(v) => KeyboardBackspace::from_ini(v),
@@ -3781,6 +4831,111 @@ impl Settings {
                 "off"
             }
             .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "KanjiReceive",
+            &self.encoding_receive.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "KanjiSend",
+            &self.encoding_send.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "KatakanaReceive",
+            &self.encoding_katakana_receive.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "KatakanaSend",
+            &self.encoding_katakana_send.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "KanjiIn",
+            &self.encoding_kanji_in.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "KanjiOut",
+            &self.encoding_kanji_out.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "CtrlInKanji",
+            &if self.encoding_ctrl_in_kanji {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "FixedJIS",
+            &if self.encoding_fixed_jis { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "FallbackToCP932",
+            &if self.encoding_fallback_cp932 {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "RussKeyb",
+            &self.encoding_russian_keyboard.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "DecSpMappingDir",
+            &self.encoding_dec_special_direction.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "UnicodeToDecSpMapping",
+            &self.encoding_unicode_to_dec_special.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "UnicodeAmbiguousWidth",
+            &self.encoding_ambiguous_width.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "UnicodeEmojiOverride",
+            &if self.encoding_emoji_override {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "UnicodeEmojiWidth",
+            &self.encoding_emoji_width.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "IME",
+            &if self.ime_enabled { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "IMEInline",
+            &if self.ime_inline { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "IMERelatedCursor",
+            &if self.ime_cursor_related { "on" } else { "off" }.to_string(),
         );
         ini.set(
             "Tera Term",
@@ -5422,6 +6577,41 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "encoding.receive" => self.encoding_receive.as_ini().to_string(),
+            "encoding.send" => self.encoding_send.as_ini().to_string(),
+            "encoding.katakana_receive" => self.encoding_katakana_receive.as_ini().to_string(),
+            "encoding.katakana_send" => self.encoding_katakana_send.as_ini().to_string(),
+            "encoding.kanji_in" => self.encoding_kanji_in.as_ini().to_string(),
+            "encoding.kanji_out" => self.encoding_kanji_out.as_ini().to_string(),
+            "encoding.ctrl_in_kanji" => if self.encoding_ctrl_in_kanji {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "encoding.fixed_jis" => if self.encoding_fixed_jis { "on" } else { "off" }.to_string(),
+            "encoding.fallback_cp932" => if self.encoding_fallback_cp932 {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "encoding.russian_keyboard" => self.encoding_russian_keyboard.as_ini().to_string(),
+            "encoding.dec_special_direction" => {
+                self.encoding_dec_special_direction.as_ini().to_string()
+            }
+            "encoding.unicode_to_dec_special" => self.encoding_unicode_to_dec_special.to_string(),
+            "encoding.ambiguous_width" => self.encoding_ambiguous_width.to_string(),
+            "encoding.emoji_override" => if self.encoding_emoji_override {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "encoding.emoji_width" => self.encoding_emoji_width.to_string(),
+            "ime.enabled" => if self.ime_enabled { "on" } else { "off" }.to_string(),
+            "ime.inline" => if self.ime_inline { "on" } else { "off" }.to_string(),
+            "ime.cursor_related" => if self.ime_cursor_related { "on" } else { "off" }.to_string(),
             "keyboard.backspace" => self.keyboard_backspace.as_ini().to_string(),
             "keyboard.meta" => self.keyboard_meta.as_ini().to_string(),
             "keyboard.delete_sends_del" => if self.keyboard_delete_sends_del {
@@ -6152,6 +7342,61 @@ impl Settings {
             }
             "terminal.status_line_enabled" => {
                 self.terminal_status_line_enabled = crate::schema::on_off(Some(value), true)
+            }
+            "encoding.receive" => self.encoding_receive = EncodingReceive::from_ini(value),
+            "encoding.send" => self.encoding_send = EncodingSend::from_ini(value),
+            "encoding.katakana_receive" => {
+                self.encoding_katakana_receive = EncodingKatakanaReceive::from_ini(value)
+            }
+            "encoding.katakana_send" => {
+                self.encoding_katakana_send = EncodingKatakanaSend::from_ini(value)
+            }
+            "encoding.kanji_in" => self.encoding_kanji_in = EncodingKanjiIn::from_ini(value),
+            "encoding.kanji_out" => self.encoding_kanji_out = EncodingKanjiOut::from_ini(value),
+            "encoding.ctrl_in_kanji" => {
+                self.encoding_ctrl_in_kanji = crate::schema::on_off(Some(value), true)
+            }
+            "encoding.fixed_jis" => {
+                self.encoding_fixed_jis = crate::schema::on_off(Some(value), false)
+            }
+            "encoding.fallback_cp932" => {
+                self.encoding_fallback_cp932 = crate::schema::on_off(Some(value), false)
+            }
+            "encoding.russian_keyboard" => {
+                self.encoding_russian_keyboard = EncodingRussianKeyboard::from_ini(value)
+            }
+            "encoding.dec_special_direction" => {
+                self.encoding_dec_special_direction = EncodingDecSpecialDirection::from_ini(value)
+            }
+            "encoding.unicode_to_dec_special" => {
+                self.encoding_unicode_to_dec_special = crate::schema::word(crate::schema::int(
+                    value,
+                    self.encoding_unicode_to_dec_special,
+                ))
+            }
+            "encoding.ambiguous_width" => {
+                self.encoding_ambiguous_width = crate::schema::validated(
+                    crate::schema::int(value, self.encoding_ambiguous_width),
+                    1,
+                    1,
+                    2,
+                )
+            }
+            "encoding.emoji_override" => {
+                self.encoding_emoji_override = crate::schema::on_off(Some(value), false)
+            }
+            "encoding.emoji_width" => {
+                self.encoding_emoji_width = crate::schema::validated(
+                    crate::schema::int(value, self.encoding_emoji_width),
+                    1,
+                    1,
+                    2,
+                )
+            }
+            "ime.enabled" => self.ime_enabled = crate::schema::on_off(Some(value), true),
+            "ime.inline" => self.ime_inline = crate::schema::on_off(Some(value), true),
+            "ime.cursor_related" => {
+                self.ime_cursor_related = crate::schema::on_off(Some(value), false)
             }
             "keyboard.backspace" => self.keyboard_backspace = KeyboardBackspace::from_ini(value),
             "keyboard.meta" => self.keyboard_meta = KeyboardMeta::from_ini(value),
@@ -7048,6 +8293,186 @@ pub const FIELDS: &[Field] = &[
         default: "on",
         label: None,
         doc: "`ttset.c:1187`, `TF_ENABLESLINE`, default **on**. Gates DECSSDT/DECSASD (`vtterm.c:3827`). `tt-grid` deliberately has no third status-line buffer yet, so the key is retained until that parser feature exists.",
+    },
+    Field {
+        name: "encoding.receive",
+        page: "encoding",
+        section: "Tera Term",
+        key: "KanjiReceive",
+        kind: Kind::Enum(&["UTF-8", "ISO8859-1", "ISO8859-2", "ISO8859-3", "ISO8859-4", "ISO8859-5", "ISO8859-6", "ISO8859-7", "ISO8859-8", "ISO8859-9", "ISO8859-10", "ISO8859-11", "ISO8859-13", "ISO8859-14", "ISO8859-15", "ISO8859-16", "SJIS", "EUC-JP", "JIS", "Windows-1251", "KOI8-R", "CP866", "KS5601", "GB2312", "BIG5", "CP437", "CP737", "CP775", "CP850", "CP852", "CP855", "CP857", "CP860", "CP861", "CP862", "CP863", "CP864", "CP865", "CP869", "CP874", "CP1250", "CP1252", "CP1253", "CP1254", "CP1255", "CP1256", "CP1257", "CP1258"]),
+        default: "UTF-8",
+        label: Some("DLG_TERMK_KANJI"),
+        doc: "`ttset.c:670` calls `GetKanjiCodeFromStr`, whose table is compared with case-sensitive `strcmp` (`ttlib_charset.cpp:147`). Empty and unknown values become UTF-8. Aliases are ordered with the spelling `GetKanjiCodeStr` writes first: EUC is written as `EUC-JP`, and CP1251 as `Windows-1251`.",
+    },
+    Field {
+        name: "encoding.send",
+        page: "encoding",
+        section: "Tera Term",
+        key: "KanjiSend",
+        kind: Kind::Enum(&["UTF-8", "ISO8859-1", "ISO8859-2", "ISO8859-3", "ISO8859-4", "ISO8859-5", "ISO8859-6", "ISO8859-7", "ISO8859-8", "ISO8859-9", "ISO8859-10", "ISO8859-11", "ISO8859-13", "ISO8859-14", "ISO8859-15", "ISO8859-16", "SJIS", "EUC-JP", "JIS", "Windows-1251", "KOI8-R", "CP866", "KS5601", "GB2312", "BIG5", "CP437", "CP737", "CP775", "CP850", "CP852", "CP855", "CP857", "CP860", "CP861", "CP862", "CP863", "CP864", "CP865", "CP869", "CP874", "CP1250", "CP1252", "CP1253", "CP1254", "CP1255", "CP1256", "CP1257", "CP1258"]),
+        default: "UTF-8",
+        label: Some("DLG_TERMK_KANJISEND"),
+        doc: "`ttset.c:683`, the same exact table and UTF-8 fallback for transmitted text.",
+    },
+    Field {
+        name: "encoding.katakana_receive",
+        page: "encoding",
+        section: "Tera Term",
+        key: "KatakanaReceive",
+        kind: Kind::Enum(&["7", "8"]),
+        default: "8",
+        label: None,
+        doc: "`ttset.c:675`; only the literal `7` selects seven-bit JIS Katakana, and the empty default and every other value select eight-bit.",
+    },
+    Field {
+        name: "encoding.katakana_send",
+        page: "encoding",
+        section: "Tera Term",
+        key: "KatakanaSend",
+        kind: Kind::Enum(&["7", "8"]),
+        default: "8",
+        label: None,
+        doc: "`ttset.c:688`, the transmit-side copy of the same switch.",
+    },
+    Field {
+        name: "encoding.kanji_in",
+        page: "encoding",
+        section: "Tera Term",
+        key: "KanjiIn",
+        kind: Kind::Enum(&["@", "B"]),
+        default: "B",
+        label: Some("DLG_TERM_KIN"),
+        doc: "`ttset.c:696` and `makeoutputstring.cpp:72`; exact `@` selects the 1978 JIS designation and exact `B` plus everything else selects the 1983 one.",
+    },
+    Field {
+        name: "encoding.kanji_out",
+        page: "encoding",
+        section: "Tera Term",
+        key: "KanjiOut",
+        kind: Kind::Enum(&["B", "J", "H"]),
+        default: "J",
+        label: Some("DLG_TERM_KOUT"),
+        doc: "`ttset.c:701` and `makeoutputstring.cpp:83`; exact `B`, `J` and `H` are the three designations and an absent or unknown value takes `J`.",
+    },
+    Field {
+        name: "encoding.ctrl_in_kanji",
+        page: "encoding",
+        section: "Tera Term",
+        key: "CtrlInKanji",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1158`, `TF_CTRLINKANJI`, default on. It lets C0 controls interrupt a two-byte Japanese character; retained until those decoders exist here.",
+    },
+    Field {
+        name: "encoding.fixed_jis",
+        page: "encoding",
+        section: "Tera Term",
+        key: "FixedJIS",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1194`, `TF_FIXEDJIS`, default off. The writer does not emit this legacy hand-edited key, but a changed generated setting must still be able to.",
+    },
+    Field {
+        name: "encoding.fallback_cp932",
+        page: "encoding",
+        section: "Tera Term",
+        key: "FallbackToCP932",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1957`, default off. Upstream's experimental fallback decodes bytes that are invalid UTF-8 as CP932; the decoder is part of the deferred CJK work.",
+    },
+    Field {
+        name: "encoding.russian_keyboard",
+        page: "encoding",
+        section: "Tera Term",
+        key: "RussKeyb",
+        kind: Kind::Enum(&["KOI8-R", "Windows"]),
+        default: "Windows",
+        label: None,
+        doc: "`ttset.c:911`. Only `KOI8-R`, case-insensitively, selects that keyboard map; the `Windows` spelling and everything else select the Windows map.",
+    },
+    Field {
+        name: "encoding.dec_special_direction",
+        page: "encoding",
+        section: "Tera Term",
+        key: "DecSpMappingDir",
+        kind: Kind::Enum(&["0", "1", "2"]),
+        default: "2",
+        label: None,
+        doc: "`ttset.c:1537`. Values 0, 1 and 2 select Unicode-to-DEC, DEC-to-Unicode and no mapping. An out-of-range integer falls back to the first, not to the file default of 2, so `*` records the separate else arm.",
+    },
+    Field {
+        name: "encoding.unicode_to_dec_special",
+        page: "encoding",
+        section: "Tera Term",
+        key: "UnicodeToDecSpMapping",
+        kind: Kind::IntWord,
+        default: "3",
+        label: None,
+        doc: "`ttset.c:1547`, assigned to a `WORD`. The low three bits choose the symbol groups mapped to DEC special graphics; unknown high bits survive a save.",
+    },
+    Field {
+        name: "encoding.ambiguous_width",
+        page: "encoding",
+        section: "Tera Term",
+        key: "UnicodeAmbiguousWidth",
+        kind: Kind::IntRange(1, 2),
+        default: "1",
+        label: None,
+        doc: "`ttset.c:1965`. Only 1 and 2 are valid, and either invalid end takes `GetDefaultUnicodeWidth()`, which is 1 in this upstream tree.",
+    },
+    Field {
+        name: "encoding.emoji_override",
+        page: "encoding",
+        section: "Tera Term",
+        key: "UnicodeEmojiOverride",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1969`, default off. When enabled, Emoji-property characters use the explicit width below instead of their East Asian Width property.",
+    },
+    Field {
+        name: "encoding.emoji_width",
+        page: "encoding",
+        section: "Tera Term",
+        key: "UnicodeEmojiWidth",
+        kind: Kind::IntRange(1, 2),
+        default: "1",
+        label: None,
+        doc: "`ttset.c:1970`, the same accept-only-1-or-2 rule and default 1 as ambiguous width. Width policy remains deliberately deferred with CJK.",
+    },
+    Field {
+        name: "ime.enabled",
+        page: "ime",
+        section: "Tera Term",
+        key: "IME",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1198`, default on. This is Win32 IME enablement; Qt input-method integration remains deferred with CJK, so the compatibility key is carried.",
+    },
+    Field {
+        name: "ime.inline",
+        page: "ime",
+        section: "Tera Term",
+        key: "IMEInline",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1201`, default on. Selects inline composition in upstream and acts on nothing until the input-method surface exists here.",
+    },
+    Field {
+        name: "ime.cursor_related",
+        page: "ime",
+        section: "Tera Term",
+        key: "IMERelatedCursor",
+        kind: Kind::Bool,
+        default: "off",
+        label: Some("DLG_TAB_GENERAL_CURSOR_CHANGE_IME"),
+        doc: "`ttset.c:1684`, `WF_IMECURSORCHANGE`, default off. Changes the cursor while an IME composition is active; the setting is retained with that deferred UI.",
     },
     Field {
         name: "keyboard.backspace",

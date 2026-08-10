@@ -2,9 +2,9 @@
 
 use tt_config::gen;
 use tt_config::{
-    ConnectionPortType, FontQuality, Ini, KeyboardBackspace, KeyboardMeta8bit, Kind,
-    LogTimestampType, SerialDataBits, SerialFlow, SerialParity, SerialStopBits, Settings,
-    TerminalCrReceive, TerminalId, FIELDS,
+    ConnectionPortType, EncodingDecSpecialDirection, EncodingReceive, EncodingSend, FontQuality,
+    Ini, KeyboardBackspace, KeyboardMeta8bit, Kind, LogTimestampType, SerialDataBits, SerialFlow,
+    SerialParity, SerialStopBits, Settings, TerminalCrReceive, TerminalId, FIELDS,
 };
 
 #[test]
@@ -24,6 +24,41 @@ fn the_defaults_are_upstreams() {
     assert_eq!(d.terminal_cols, 80);
     assert_eq!(d.terminal_rows, 24);
     assert_eq!(d.color_normal, [0, 0, 0, 255, 255, 255], "black on white");
+}
+
+#[test]
+fn the_deferred_encoding_settings_keep_upstreams_parsers() {
+    let d = Settings::default();
+    assert_eq!(d.encoding_receive, EncodingReceive::Utf8);
+    assert_eq!(d.encoding_send, EncodingSend::Utf8);
+    assert!(d.encoding_ctrl_in_kanji);
+    assert!(!d.encoding_fixed_jis && !d.encoding_fallback_cp932);
+    assert!(d.ime_enabled && d.ime_inline && !d.ime_cursor_related);
+    assert_eq!(d.encoding_ambiguous_width, 1);
+    assert_eq!(d.encoding_emoji_width, 1);
+
+    let s = Settings::load(&Ini::parse(
+        b"[Tera Term]\r\nKanjiReceive=SJIS\r\nKanjiSend=sjis\r\n\
+          DecSpMappingDir=9\r\nUnicodeAmbiguousWidth=2\r\nUnicodeEmojiWidth=9\r\n\
+          UnicodeToDecSpMapping=-1\r\n",
+    ));
+    assert_eq!(s.encoding_receive, EncodingReceive::Sjis);
+    assert_eq!(
+        s.encoding_send,
+        EncodingSend::Utf8,
+        "the charset table uses strcmp"
+    );
+    assert_eq!(
+        s.encoding_dec_special_direction,
+        EncodingDecSpecialDirection::UnicodeToDec,
+        "an invalid number takes the switch's else arm, not its default"
+    );
+    assert_eq!(s.encoding_ambiguous_width, 2);
+    assert_eq!(
+        s.encoding_emoji_width, 1,
+        "this range defaults above its ceiling rather than capping"
+    );
+    assert_eq!(s.encoding_unicode_to_dec_special, 65_535);
 }
 
 #[test]

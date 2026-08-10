@@ -19,8 +19,8 @@ pub mod cygterm;
 pub mod ssh;
 
 use crate::{
-    ClipboardRemoteAccess, ConnectionPortType, SerialDataBits, SerialFlow, SerialParity,
-    SerialStopBits, Settings,
+    ClipboardRemoteAccess, ConnectionPortType, EncodingReceive, EncodingSend, SerialDataBits,
+    SerialFlow, SerialParity, SerialStopBits, Settings,
 };
 
 /// `GetParam` (`ttlib.c:879`) — one token and what is left after it.
@@ -350,11 +350,11 @@ pub struct CommandLine {
     pub hide_window: bool,
     /// `/K=` — the keyboard file, default extension `.CNF`.
     pub key_cnf_file: Option<Vec<u8>>,
-    /// `/KR=` and `/KT=` — the receive and send character sets, **unresolved**.
+    /// `/KR=` and `/KT=` — the receive and send character sets.
     /// `GetKanjiCodeFromStr` (`ttlib_charset.cpp:147`) is a case-*sensitive*
-    /// match over a 55-entry table with a default of UTF-8, and neither
-    /// `tt-charset` nor this schema has the identifiers yet; resolving here
-    /// would mean a second copy of that table to keep in step.
+    /// match over a 55-entry table with a default of UTF-8. Resolution happens
+    /// in [`apply`](CommandLine::apply), through the generated schema's table,
+    /// so the command line and `TERATERM.INI` cannot drift apart.
     pub kanji_recv: Option<Vec<u8>>,
     pub kanji_send: Option<Vec<u8>>,
     /// `/L=` — the log file, resolved against the *log* directory rather than
@@ -507,10 +507,9 @@ impl CommandLine {
     ///   setting**. `ts.HostName` has no INI key and `_ParseParam` clears it on
     ///   every call, so where to connect is the session's and not the file's.
     ///   `tcp_port` *is* a setting and is written.
-    /// - `/KR=`, `/KT=`, `/VTICON=`, `/TEKICON=`, `/THEME=`, `/K=`, `/MN=`,
-    ///   `/L=`, `/R=` — no character-set identifiers, no icon table, no
-    ///   background themes, no `KEYBOARD.CNF`, no tab bar, and no `ts.LogFN`
-    ///   (which upstream has no key for either).
+    /// - `/VTICON=`, `/TEKICON=`, `/THEME=`, `/K=`, `/MN=`, `/L=`, `/R=` — no
+    ///   icon table, no background themes, no `KEYBOARD.CNF`, no tab bar, and
+    ///   no `ts.LogFN` (which upstream has no key for either).
     /// - `/M` and `/D=` are one-shot launch state rather than edits to
     ///   `macro.startup_file`: the frontend uses [`MacroArg`] to replace or
     ///   cancel that setting for this launch. Keeping the file value intact
@@ -615,6 +614,12 @@ impl CommandLine {
             if std::path::Path::new(&dir).is_dir() {
                 settings.transfer_dir = dir;
             }
+        }
+        if let Some(code) = &self.kanji_recv {
+            settings.encoding_receive = EncodingReceive::from_ini(&String::from_utf8_lossy(code));
+        }
+        if let Some(code) = &self.kanji_send {
+            settings.encoding_send = EncodingSend::from_ini(&String::from_utf8_lossy(code));
         }
         if self.hide_title {
             settings.window_hide_title = true;
@@ -1371,6 +1376,15 @@ mod tests {
         assert_eq!(s.clipboard_remote_access, ClipboardRemoteAccess::ReadWrite);
         parse("tt /OSC52=nonsense").apply(&mut s);
         assert_eq!(s.clipboard_remote_access, ClipboardRemoteAccess::Off);
+
+        let mut s = Settings::default();
+        parse("tt /KR=SJIS /KT=cp437").apply(&mut s);
+        assert_eq!(s.encoding_receive, EncodingReceive::Sjis);
+        assert_eq!(
+            s.encoding_send,
+            EncodingSend::Utf8,
+            "GetKanjiCodeFromStr uses strcmp"
+        );
     }
 
     /// An option that was not given must not overwrite the file's value, which
