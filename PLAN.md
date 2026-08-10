@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 405
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 406
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4592,6 +4592,13 @@ The remaining macro connection case now names `cmd.exe` correctly but still
 needs native Windows because it reads real ConPTY output, below the same Wine 9
 console-host limit already recorded for `tt-conn`. Both native Linux packages
 remain green.
+
+The standalone Lua surface is Windows-clean as well. Its MinGW test binary
+passes all 59 unit cases plus the documentation example under Wine, covering
+byte strings, neighbouring `require`, cancellation hooks, dialogs, logs,
+serial controls and transfer plans. The threaded seven-case Lua/session join
+is part of the 43 macro checks above; together these leave no Lua-specific
+native-Windows exception to carry forward.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
