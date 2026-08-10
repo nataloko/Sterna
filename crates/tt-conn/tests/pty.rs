@@ -1,8 +1,11 @@
+#![cfg(unix)]
+
 //! The local shell, against real forked processes.
 //!
 //! Unlike every other suite in this crate these need no hardware, no server
 //! and no environment variables — a pty is always available — so they run
-//! everywhere, unconditionally. That is worth saying out loud, because the
+//! on every POSIX build, unconditionally. That is worth saying out loud,
+//! because the
 //! serial, SSH and telnet suites all skip themselves when their rig is absent
 //! and it would be easy to assume this one does too.
 

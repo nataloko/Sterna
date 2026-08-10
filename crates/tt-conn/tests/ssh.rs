@@ -457,6 +457,7 @@ fn a_break_says_so_rather_than_pretending() {
 }
 
 #[test]
+#[cfg(unix)]
 fn the_descriptor_survives_the_handover() {
     let s = server_or_skip!();
     let scratch = Scratch::new("fd");

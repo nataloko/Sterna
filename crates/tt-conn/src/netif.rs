@@ -98,6 +98,7 @@ pub fn local_ip_addresses(_v6: bool) -> Option<Vec<String>> {
 /// because `InetNtop` was not available on the oldest Windows it supported,
 /// and a script that has been comparing against that string for a decade is
 /// the reason to keep it.
+#[cfg(any(unix, test))]
 fn render_v6(bytes: &[u8; 16]) -> String {
     let mut s = String::with_capacity(39);
     for (i, b) in bytes.iter().enumerate() {

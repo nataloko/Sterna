@@ -25,8 +25,10 @@ shared, the *server* simply refuses to be hammered. OpenSSH's `MaxStartups`
 defaults to `10:30:100` and dropbear's ceiling is lower, so running them in
 parallel produces a scatter of unrelated failures that all pass on their own.
 
-The pty suite is the exception to all of that: it needs no rig, no server and no
-variables, so `cargo test -p tt-conn` runs all nineteen of its cases anywhere.
+The pty suite is the exception to all of that on POSIX: it needs no rig, no
+server and no variables, so `cargo test -p tt-conn` runs all nineteen cases
+there. Windows compiles the ConPTY construction path but has its own runtime
+tests still to come; `/bin/sh`, `poll(2)` and signals are not portable tests.
 
 Without those two variables the hardware tests **skip loudly** rather than pass
 quietly, so a machine with no rig still gets a green `cargo test` without
@@ -178,11 +180,13 @@ until there was a second transport to decide them against.
 
 **Async lives inside `tt-conn`, not above it.** The terminal core, the C ABI and
 the Qt shell are all synchronous, and a terminal wants nothing from a connection
-but bytes. So the tokio runtime is private to `ssh/conn.rs`: one thread, one
-current-thread runtime, and a self-pipe (`ssh/wakeup.rs`) so a frontend can wait
-on SSH exactly the way it waits on a serial port. The alternative — an async
-shell, or polling on a timer — would have spread `russh`'s runtime through three
-layers with no use for it.
+but bytes. So the tokio runtime is private to `ssh/conn.rs`: one thread and one
+current-thread runtime. Unix adds a self-pipe (`ssh/wakeup.rs`) so a frontend
+can wait on SSH exactly the way it waits on a serial port. Windows keeps the
+same state machine but has no pollable descriptor; the Windows Qt pass still
+needs to connect it to a native event or a bounded timer. The alternative — an
+async shell — would spread `russh`'s runtime through three layers with no use
+for it.
 
 **Connecting is a state machine the caller drives.** `SshConnect::poll` returns
 the question — host key, password, keyboard-interactive challenge, key
@@ -193,6 +197,8 @@ raise a modal dialog from the wrong one.
 Authentication follows the server's `remaining_methods` rather than a fixed
 list: agent, then key files, then what has to be typed. A device that only does
 `keyboard-interactive` is never asked for a password it will reject.
+The agent is `SSH_AUTH_SOCK` on Unix and Pageant on Windows, both through
+russh's own transports; an absent or broken agent falls through to key files.
 
 `SshParams::legacy` is spike 5's first finding as a switch. russh keeps SHA-1
 key exchange, CBC ciphers and `ssh-rsa` host keys out of its default preference
@@ -308,5 +314,8 @@ no feature to switch it off — the crate carries a "serial port as a pty" mode
 nothing here uses. Twenty-seven packages in total. Accepted rather than fixed,
 because what it supplies is the part that is genuinely hard and genuinely
 platform-specific: the `setsid`/`TIOCSCTTY` dance in the forked child, and
-ConPTY when Stage 3 arrives. Writing that twice to save a dependency would be
-the wrong trade in the direction the project keeps choosing against.
+ConPTY. The Windows backend now constructs and resizes, but its byte reader,
+writer and frontend wakeup are still Stage 3 work; cross-compiling a type is
+not the same as having run a local shell. Writing either backend again to save
+a dependency would be the wrong trade in the direction the project keeps
+choosing against.

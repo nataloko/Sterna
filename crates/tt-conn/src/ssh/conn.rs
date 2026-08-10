@@ -8,10 +8,11 @@
 //! ABI and the Qt shell are all synchronous, and a terminal needs nothing from
 //! a connection but bytes. So the tokio runtime is a private implementation
 //! detail of this module: one thread, one current-thread runtime, and a
-//! self-pipe (`wakeup.rs`) so the frontend can wait on SSH exactly the way it
-//! waits on a serial port. The alternative — making the shell async, or
-//! polling on a timer — would have spread `russh`'s runtime through three
-//! layers that have no use for it.
+//! self-pipe (`wakeup.rs`) on Unix so the frontend can wait on SSH exactly the
+//! way it waits on a serial port. Windows has no pollable descriptor and keeps
+//! the same state machine behind a polling boundary until the shell grows its
+//! native-event notifier. The alternative — making the shell async — would
+//! have spread `russh`'s runtime through three layers that have no use for it.
 //!
 //! **Connecting is a state machine the caller drives, not a callback.** SSH
 //! asks questions: is this host key acceptable, what is the password, what
@@ -990,9 +991,28 @@ async fn try_agent(
     handle: &mut client::Handle<Handler>,
     rsa_hash: Option<HashAlg>,
 ) -> Result<Option<Outcome>> {
-    let Ok(mut agent) = russh::keys::agent::client::AgentClient::connect_env().await else {
+    #[cfg(unix)]
+    let agent = russh::keys::agent::client::AgentClient::connect_env().await;
+    #[cfg(windows)]
+    let agent = russh::keys::agent::client::AgentClient::connect_pageant().await;
+    #[cfg(not(any(unix, windows)))]
+    return Ok(None);
+
+    let Ok(agent) = agent else {
         return Ok(None);
     };
+    try_agent_client(params, handle, rsa_hash, agent).await
+}
+
+async fn try_agent_client<S>(
+    params: &SshParams,
+    handle: &mut client::Handle<Handler>,
+    rsa_hash: Option<HashAlg>,
+    mut agent: russh::keys::agent::client::AgentClient<S>,
+) -> Result<Option<Outcome>>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
+{
     let Ok(identities) = agent.request_identities().await else {
         return Ok(None);
     };

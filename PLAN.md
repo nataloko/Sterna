@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 382
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 383
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4327,6 +4327,16 @@ calls on both sides, so the core cannot put up an unmanaged Win32 window. The
 vendored files remain byte-for-byte upstream; `x86_64-pc-windows-gnu` now
 checks this crate cleanly and the Linux interop suite remains 12/12. This is a
 transfer-layer landing, not yet a shippable Windows shell.
+
+The next compiler stop was `tt-conn`: SSH's self-pipe and agent discovery and
+the pty's name were Unix-only. They are now explicit platform seams. Unix keeps
+the non-blocking pipe and `SSH_AUTH_SOCK`; Windows keeps the same synchronous
+SSH state machine, uses russh's Pageant transport, and reports no pollable file
+descriptor. `portable-pty`'s ConPTY construction and resize path compile, while
+its byte I/O and a frontend wakeup remain open. The fork/`poll(2)` pty suite and
+the SSH descriptor assertion are gated as POSIX tests rather than being made
+to pass vacuously on Windows. `tt-conn` now cross-checks cleanly for the full
+Windows target, including all targets.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

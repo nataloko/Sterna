@@ -1,5 +1,4 @@
-//! A self-pipe, so an async transport can be waited on by a frontend that is
-//! not async.
+//! Wake an ordinary frontend from an async SSH worker.
 //!
 //! [`Transport::poll_fd`](crate::Transport::poll_fd) exists because the Qt
 //! shell has no timer in its event loop and does not want one — a serial
@@ -8,25 +7,28 @@
 //! that trivially: it *is* a descriptor.
 //!
 //! SSH does not. `russh` is `tokio`, its readable thing is a task, and there
-//! is no fd to hand out. So one is manufactured: a pipe whose read end goes to
-//! the frontend and whose write end the worker thread pokes whenever the
-//! terminal has something to collect.
+//! is no fd to hand out. On Unix one is manufactured: a pipe whose read end
+//! goes to the frontend and whose write end the worker thread pokes whenever
+//! the terminal has something to collect.
 //!
 //! The alternative — the shell running its own tokio reactor, or polling on a
 //! timer — was rejected for the same reason the timer was rejected everywhere
 //! else. This keeps the whole async story inside `tt-conn`, which is where
 //! `PLAN.md` said it belonged.
 
+#[cfg(unix)]
 use std::os::unix::io::RawFd;
 
 use crate::error::Result;
 
 /// The classic self-pipe. Both ends non-blocking, both `O_CLOEXEC`.
+#[cfg(unix)]
 pub(crate) struct Wakeup {
     read: RawFd,
     write: RawFd,
 }
 
+#[cfg(unix)]
 impl Wakeup {
     pub(crate) fn new() -> Result<Wakeup> {
         let mut fds = [0 as libc::c_int; 2];
@@ -80,6 +82,7 @@ impl Wakeup {
     }
 }
 
+#[cfg(unix)]
 impl Drop for Wakeup {
     fn drop(&mut self) {
         // SAFETY: both are ours and are closed exactly once.
@@ -88,4 +91,22 @@ impl Drop for Wakeup {
             libc::close(self.write);
         }
     }
+}
+
+/// Windows has no descriptor that `QSocketNotifier` can wait on. The worker's
+/// state is still safe to poll, so keep the signal operations as no-ops until
+/// the Windows shell supplies its native-event notifier in the next layer.
+/// This is deliberately a platform limit rather than a fake file descriptor.
+#[cfg(not(unix))]
+pub(crate) struct Wakeup;
+
+#[cfg(not(unix))]
+impl Wakeup {
+    pub(crate) fn new() -> Result<Wakeup> {
+        Ok(Wakeup)
+    }
+
+    pub(crate) fn signal(&self) {}
+
+    pub(crate) fn drain(&self) {}
 }

@@ -22,6 +22,7 @@
 //! and ConPTY when Stage 3 arrives. The byte-level read and write are ours,
 //! for the reason [`PtyConn::read`] gives.
 
+#[cfg(unix)]
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -179,7 +180,10 @@ impl PtyConn {
         drop(pair.slave);
 
         let master = pair.master;
+        #[cfg(unix)]
         let tty_name = master.tty_name();
+        #[cfg(not(unix))]
+        let tty_name = None;
 
         #[cfg(unix)]
         let fd = {
@@ -259,6 +263,7 @@ impl PtyConn {
     /// Bounded like `Drop`'s, and for the same reason. A child that closed the
     /// slave and kept running — a daemon detaching — is the case that spends
     /// the whole deadline, once, at the end of a connection.
+    #[cfg(unix)]
     fn died(&mut self) -> Error {
         self.dead = true;
         self.wait_briefly();
@@ -498,7 +503,7 @@ fn describe_argv(argv: &[String], shell: &str) -> String {
 }
 
 fn basename(path: &str) -> String {
-    path.rsplit('/').next().unwrap_or(path).to_string()
+    path.rsplit(['/', '\\']).next().unwrap_or(path).to_string()
 }
 
 #[cfg(unix)]
@@ -531,9 +536,15 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_default_shell_is_a_path() {
         assert!(shell_for(&PtyParams::default()).starts_with('/'));
+    }
+
+    #[test]
+    fn a_windows_path_is_named_by_its_basename() {
+        assert_eq!(basename(r"C:\Windows\System32\cmd.exe"), "cmd.exe");
     }
 
     /// A caller that names a shell in `env` gets that shell, rather than the
