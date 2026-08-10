@@ -1088,18 +1088,18 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (193 settings over 180 keys: 39 for the terminal,
+  `crates/tt-config/` (197 settings over 184 keys: 39 for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
   writes into, 2026-08-09, plus the whole log family, then the whole
   file-transfer family, then the seven the terminal and the two the *transports*
   were already honouring with no key to read, then the clipboard's sixteen,
   2026-08-09, then the bell's, the serial port's, telnet's, the scrollback's
   and the parser's own eight switches, then the painter's four draw-attribute
-  switches, the custom ANSI palette and the URL family, 2026-08-10), the map
-  onto a running terminal in
-  `tt-session`, the schema as data over the C ABI, and a Qt dialog that builds
+  switches, the custom ANSI palette, the URL family and the four menu keys,
+  2026-08-10), the map onto a running terminal in `tt-session`, the schema as
+  data over the C ABI, and a Qt dialog that builds
   itself from it. What remains is the *rest of the settings*, which is a line
-  and a citation each — 92 keys as of 2026-08-10, and `tests/upstream.rs`
+  and a citation each — 88 keys as of 2026-08-10, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -3830,6 +3830,41 @@ opening a real browser and launches itself as a detached helper to pin argument
 ordering.
 
 193 settings over 180 keys, 92 to go.
+
+#### The menu bar, where hiding it and getting it back are three keys
+
+`crates/tt-config/` and the shell, 2026-08-10. Four keys: the ordinary menu
+bar, the Ctrl+left-click replacement, the recovery command, and the dynamic
+list of other windows.
+
+**`PopupMenu` does not enable a popup.** It hides the ordinary bar;
+`EnablePopupMenu` independently decides whether Ctrl+left-click opens the full
+menu while that bar is gone (`vtwin.cpp:863`). `HideTitle` removes the menu bar
+too, without changing `PopupMenu` (`:3461`), so the replacement predicate has
+three terms rather than one. It also runs before mouse reporting upstream: a
+full-screen program asking for Ctrl-modified clicks cannot take away the only
+route back to the terminal's own controls.
+
+There is still only one menu tree. Qt associates the menu bar's existing top-
+level actions with a temporary `QMenu`, so enabled states, shortcuts and new
+commands cannot drift between two copies. The matching mouse release normally
+belongs to that popup's grab and is guarded from leaking to the host if it
+comes back to the terminal view.
+
+**`EnableShowMenu` is neither of those switches.** Upstream adds "Show menu
+bar" to the Win32 system menu while the bar is hidden (`vtwin.cpp:3509`). A Qt
+client cannot add application actions to the compositor-owned system menu, so
+the shell puts the same recovery command at the bottom of the Ctrl+left-click
+popup. Like upstream it clears only `PopupMenu`; a hidden title still keeps the
+bar hidden.
+
+`WindowMenu` ships on and is carried but acts on nothing. Upstream fills it
+with every VT and TEK window; this process has one terminal window and no TEK
+window, so Stage 3's multi-session UI is the first honest thing it could list.
+The offscreen window test pins the three settings that do act now, including
+the reuse of the menu bar's actual `QAction`s.
+
+197 settings over 184 keys, 88 to go.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 

@@ -1200,6 +1200,25 @@ And for the title, which is two strings in three places:
   one function between them is the tidy thing and changes what goes on the
   wire.
 
+And for the menu, where three plausible names are three independent controls:
+
+- **`PopupMenu` hides the menu bar; `EnablePopupMenu` gates its replacement.**
+  Ctrl+left-click opens the full menu only when the ordinary bar is absent,
+  and `HideTitle` makes it absent without touching `PopupMenu`
+  (`vtwin.cpp:863`, `:3461`). The gesture runs before mouse reporting, so a
+  host cannot capture the only route back to the menu by asking for
+  Ctrl-modified clicks.
+- **`EnableShowMenu` adds a recovery command and does not show anything by
+  itself.** Upstream puts "Show menu bar" in the Win32 system menu
+  (`vtwin.cpp:3509`). A Qt client cannot add an application action to the
+  compositor's system menu, so this shell puts it in the Ctrl+left-click popup
+  and clears only `PopupMenu`, the same assignment upstream makes. If
+  `HideTitle` is still on, the bar correctly stays hidden.
+- **The popup reuses the menu bar's `QAction`s.** Building a second tree would
+  duplicate every enabled state and shortcut and let the two drift as soon as
+  a command was added. A `QAction` may belong to both widgets; destroying the
+  temporary `QMenu` only removes that association.
+
 And for the command line, which is two parsers and one of them is a plugin:
 
 - **A bare host name cancels `/C=`.** Its arm assigns `ParamPort = IdTCPIP`
