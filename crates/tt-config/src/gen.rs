@@ -33,6 +33,12 @@ struct Setting {
     /// off, and preserving an existing line there is part of round-tripping a
     /// real file rather than cosmetic output.
     write_if: Option<String>,
+    /// Another integer setting whose loaded value is this setting's fallback.
+    /// `AlphaBlendActive` is read after `AlphaBlend` and passes the latter to
+    /// `GetPrivateProfileInt`, so an absent or empty active value follows the
+    /// inactive one rather than a constant. A non-numeric value remains zero,
+    /// which is the Win32 integer parser's separate rule.
+    default_from: Option<String>,
     doc: Vec<String>,
 }
 
@@ -157,21 +163,29 @@ fn parse(text: &str) -> Vec<Setting> {
         let mut head = trimmed.splitn(5, '|');
         let f: Vec<&str> = head.by_ref().take(4).map(str::trim).collect();
         let rest = head.next().unwrap_or("");
-        // An optional seventh field is recognisable from its prefix, so a
-        // default remains free to contain `|` — `DelimList` uses one.
-        let (rest, write_if) = match rest.rsplit_once('|') {
-            Some((before, tail)) if tail.trim().starts_with("write-if=") => (
-                before,
-                Some(
-                    tail.trim()
-                        .strip_prefix("write-if=")
-                        .expect("tested")
-                        .trim()
-                        .to_string(),
-                ),
-            ),
-            _ => (rest, None),
-        };
+        // Optional fields are recognisable from their prefixes, so a default
+        // remains free to contain `|` — `DelimList` uses one. Peel only known
+        // suffixes and leave everything else as part of the default.
+        let mut rest = rest;
+        let mut write_if = None;
+        let mut default_from = None;
+        while let Some((before, tail)) = rest.rsplit_once('|') {
+            let tail = tail.trim();
+            if let Some(value) = tail.strip_prefix("write-if=") {
+                assert!(write_if.is_none(), "two write-if options: {trimmed}");
+                write_if = Some(value.trim().to_string());
+                rest = before;
+            } else if let Some(value) = tail.strip_prefix("default-from=") {
+                assert!(
+                    default_from.is_none(),
+                    "two default-from options: {trimmed}"
+                );
+                default_from = Some(value.trim().to_string());
+                rest = before;
+            } else {
+                break;
+            }
+        }
         let (default, label) = rest
             .rsplit_once('|')
             .unwrap_or_else(|| panic!("want 6 fields: {trimmed}"));
@@ -186,6 +200,7 @@ fn parse(text: &str) -> Vec<Setting> {
             default: default.trim().to_string(),
             label: label.trim().to_string(),
             write_if,
+            default_from,
             doc: std::mem::take(&mut doc),
         });
     }
@@ -201,6 +216,23 @@ fn parse(text: &str) -> Vec<Setting> {
         assert!(
             matches!(&referenced.kind, Kind::Bool),
             "{}: write condition {condition} is not a bool",
+            setting.name
+        );
+    }
+    for setting in &out {
+        let Some(source) = &setting.default_from else {
+            continue;
+        };
+        let referenced = out
+            .iter()
+            .find(|candidate| candidate.name == *source)
+            .unwrap_or_else(|| panic!("{}: no default source named {source}", setting.name));
+        assert!(
+            matches!(
+                (&setting.kind, &referenced.kind),
+                (Kind::Int { field: None, .. }, Kind::Int { field: None, .. })
+            ),
+            "{}: default source {source} is not a scalar int",
             setting.name
         );
     }
@@ -503,7 +535,7 @@ fn emit(settings: &[Setting]) -> String {
          \x20   /// Read every setting, taking the default for anything absent.\n\
          \x20   pub fn load(ini: &Ini) -> Settings {\n\
          \x20       let d = Settings::default();\n\
-         \x20       Settings {\n",
+         \x20       let mut settings = Settings {\n",
     );
     for s in settings {
         let field = field_name(&s.name);
@@ -552,7 +584,31 @@ fn emit(settings: &[Setting]) -> String {
         };
         writeln!(out, "            {field}: {expr},").expect("string");
     }
-    out.push_str("        }\n    }\n\n");
+    out.push_str("        };\n");
+    for s in settings {
+        let Some(source) = &s.default_from else {
+            continue;
+        };
+        let field = field_name(&s.name);
+        let source = field_name(source);
+        let (section, key) = (escape(&s.section), escape(&s.key));
+        let Kind::Int { bound, .. } = &s.kind else {
+            unreachable!("default-from was validated as an int")
+        };
+        let read = format!("ini.get_int(\"{section}\", \"{key}\", settings.{source}) as i32");
+        let expr = match bound {
+            None => read,
+            Some(Bound::Ranged(lo, hi)) => {
+                format!("crate::schema::ranged({read}, settings.{source}, {lo}, {hi})")
+            }
+            Some(Bound::Floor(lo)) => format!("crate::schema::floored({read}, {lo})"),
+            Some(Bound::Clamped(lo, hi)) => {
+                format!("crate::schema::clamped({read}, {lo}, {hi})")
+            }
+        };
+        writeln!(out, "        settings.{field} = {expr};").expect("string");
+    }
+    out.push_str("        settings\n    }\n\n");
 
     out.push_str(
         "    /// Write every setting back, leaving the rest of the file alone.\n\

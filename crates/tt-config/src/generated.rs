@@ -1332,6 +1332,17 @@ pub struct Settings {
     /// thing in the unit a compositor cares about. Carried so a file round-trips,
     /// the way `bell.notify_sound` is.
     pub window_scroll_threshold: i32,
+    /// `ttset.c:1466`, clamped at both ends. `255` is fully opaque and `0` fully
+    /// transparent. Upstream applies this value when the window loses focus
+    /// (`vtwin.cpp:1537`).
+    pub window_opacity_inactive: i32,
+    /// `ttset.c:1470`, also clamped at both ends. Its fallback is the *loaded
+    /// inactive opacity*, not the constant 255: `AlphaBlend=120` without this key
+    /// makes both window states 120. An empty value inherits too; a non-numeric one
+    /// is zero under `GetPrivateProfileInt`'s own rules. Applied at startup, after
+    /// settings changes and whenever the window gains focus (`vtwin.cpp:780`,
+    /// `:1357`, `:1539`).
+    pub window_opacity_active: i32,
     /// `ttset.c:1568`. How the title the host set and `terminal.title` combine, and
     /// **`off` means the host's title is not even stored** (`vtterm.c:5112`), which
     /// also switches off the title stack at `CSI 22 t` / `CSI 23 t`.
@@ -2132,6 +2143,8 @@ impl Default for Settings {
             window_remote_clears_buffer: true,
             window_auto_scroll_only_at_bottom: false,
             window_scroll_threshold: 12,
+            window_opacity_inactive: 255,
+            window_opacity_active: 255,
             window_title_change: WindowTitleChange::default(),
             window_title_report: WindowTitleReport::default(),
             mouse_tracking: true,
@@ -2284,7 +2297,7 @@ impl Settings {
     /// Read every setting, taking the default for anything absent.
     pub fn load(ini: &Ini) -> Settings {
         let d = Settings::default();
-        Settings {
+        let mut settings = Settings {
             terminal_cols: crate::schema::ranged(
                 crate::schema::nth_int_zero(
                     ini.get("Tera Term", "TerminalSize"),
@@ -2517,6 +2530,16 @@ impl Settings {
                 "ScrollThreshold",
                 d.window_scroll_threshold,
             ) as i32,
+            window_opacity_inactive: crate::schema::clamped(
+                ini.get_int("Tera Term", "AlphaBlend", d.window_opacity_inactive) as i32,
+                0,
+                255,
+            ),
+            window_opacity_active: crate::schema::clamped(
+                ini.get_int("Tera Term", "AlphaBlendActive", d.window_opacity_active) as i32,
+                0,
+                255,
+            ),
             window_title_change: match ini.get("Tera Term", "AcceptTitleChangeRequest") {
                 Some(v) => WindowTitleChange::from_ini(v),
                 None => d.window_title_change,
@@ -3055,7 +3078,17 @@ impl Settings {
             ),
             window_x: crate::schema::nth_int_zero(ini.get("Tera Term", "VTPos"), 0, d.window_x),
             window_y: crate::schema::nth_int_zero(ini.get("Tera Term", "VTPos"), 1, d.window_y),
-        }
+        };
+        settings.window_opacity_active = crate::schema::clamped(
+            ini.get_int(
+                "Tera Term",
+                "AlphaBlendActive",
+                settings.window_opacity_inactive,
+            ) as i32,
+            0,
+            255,
+        );
+        settings
     }
 
     /// Write every setting back, leaving the rest of the file alone.
@@ -3503,6 +3536,16 @@ impl Settings {
             "Tera Term",
             "ScrollThreshold",
             &self.window_scroll_threshold.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "AlphaBlend",
+            &self.window_opacity_inactive.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "AlphaBlendActive",
+            &self.window_opacity_active.to_string(),
         );
         ini.set(
             "Tera Term",
@@ -4705,6 +4748,8 @@ impl Settings {
             }
             .to_string(),
             "window.scroll_threshold" => self.window_scroll_threshold.to_string(),
+            "window.opacity_inactive" => self.window_opacity_inactive.to_string(),
+            "window.opacity_active" => self.window_opacity_active.to_string(),
             "window.title_change" => self.window_title_change.as_ini().to_string(),
             "window.title_report" => self.window_title_report.as_ini().to_string(),
             "mouse.tracking" => if self.mouse_tracking { "on" } else { "off" }.to_string(),
@@ -5268,6 +5313,20 @@ impl Settings {
             "window.scroll_threshold" => {
                 self.window_scroll_threshold =
                     crate::schema::int(value, self.window_scroll_threshold)
+            }
+            "window.opacity_inactive" => {
+                self.window_opacity_inactive = crate::schema::clamped(
+                    crate::schema::int(value, self.window_opacity_inactive),
+                    0,
+                    255,
+                )
+            }
+            "window.opacity_active" => {
+                self.window_opacity_active = crate::schema::clamped(
+                    crate::schema::int(value, self.window_opacity_active),
+                    0,
+                    255,
+                )
             }
             "window.title_change" => self.window_title_change = WindowTitleChange::from_ini(value),
             "window.title_report" => self.window_title_report = WindowTitleReport::from_ini(value),
@@ -6345,6 +6404,26 @@ pub const FIELDS: &[Field] = &[
         default: "12",
         label: None,
         doc: "`ttset.c:1273`. How many scrolled lines upstream lets accumulate before it repaints (`vtdisp.c:3132`) — a coalescing governor, counted in lines rather than in time.  Read and written and acting on nothing, said here rather than discovered: the equivalent is `TerminalView`'s 8 ms frame floor, which measures the same thing in the unit a compositor cares about. Carried so a file round-trips, the way `bell.notify_sound` is.",
+    },
+    Field {
+        name: "window.opacity_inactive",
+        page: "window",
+        section: "Tera Term",
+        key: "AlphaBlend",
+        kind: Kind::IntClamp(0, 255),
+        default: "255",
+        label: Some("DLG_TAB_VISUAL_ALPHA_INACTIVE"),
+        doc: "`ttset.c:1466`, clamped at both ends. `255` is fully opaque and `0` fully transparent. Upstream applies this value when the window loses focus (`vtwin.cpp:1537`).",
+    },
+    Field {
+        name: "window.opacity_active",
+        page: "window",
+        section: "Tera Term",
+        key: "AlphaBlendActive",
+        kind: Kind::IntClamp(0, 255),
+        default: "255",
+        label: Some("DLG_TAB_VISUAL_ALPHA_ACTIVE"),
+        doc: "`ttset.c:1470`, also clamped at both ends. Its fallback is the *loaded inactive opacity*, not the constant 255: `AlphaBlend=120` without this key makes both window states 120. An empty value inherits too; a non-numeric one is zero under `GetPrivateProfileInt`'s own rules. Applied at startup, after settings changes and whenever the window gains focus (`vtwin.cpp:780`, `:1357`, `:1539`).",
     },
     Field {
         name: "window.title_change",

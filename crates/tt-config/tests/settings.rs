@@ -171,6 +171,36 @@ fn setup_backups_are_on_by_default() {
 }
 
 #[test]
+fn active_opacity_inherits_the_loaded_inactive_value() {
+    let defaults = Settings::default();
+    assert_eq!(defaults.window_opacity_inactive, 255);
+    assert_eq!(defaults.window_opacity_active, 255);
+
+    // `AlphaBlendActive` passes the inactive value as
+    // GetPrivateProfileInt's fallback, after that value has itself been
+    // clamped. Missing and empty values therefore inherit.
+    for line in ["", "AlphaBlendActive="] {
+        let ini = Ini::parse(format!("[Tera Term]\r\nAlphaBlend=120\r\n{line}\r\n").as_bytes());
+        let settings = Settings::load(&ini);
+        assert_eq!(settings.window_opacity_inactive, 120);
+        assert_eq!(settings.window_opacity_active, 120);
+    }
+
+    // A present value that cannot be parsed is Win32's separate integer trap:
+    // it becomes zero rather than the fallback.
+    let invalid = Settings::load(&Ini::parse(
+        b"[Tera Term]\r\nAlphaBlend=120\r\nAlphaBlendActive=not-a-number\r\n",
+    ));
+    assert_eq!(invalid.window_opacity_active, 0);
+
+    let explicit = Settings::load(&Ini::parse(
+        b"[Tera Term]\r\nAlphaBlend=-1\r\nAlphaBlendActive=300\r\n",
+    ));
+    assert_eq!(explicit.window_opacity_inactive, 0);
+    assert_eq!(explicit.window_opacity_active, 255);
+}
+
+#[test]
 fn writing_settings_leaves_the_rest_of_the_file_alone() {
     let original = b"; my notes\r\n[Tera Term]\r\nCRReceive=LF\r\n[Extra]\r\nMine=1\r\n";
     let mut ini = Ini::parse(original);

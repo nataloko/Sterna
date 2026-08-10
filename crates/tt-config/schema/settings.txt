@@ -8,7 +8,7 @@
 # a 909-line struct surfaced by ~13.8k lines of dialog code across 76 templates,
 # and hand-porting it is where the motivation goes to die.
 #
-#   name | type | section | key | default | label [| write-if=name.of.bool]
+#   name | type | section | key | default | label [| option...]
 #
 # `name` is dotted: the part before the first dot is the dialog page, and the
 # whole thing is what a script says. It becomes a Rust field with the dots
@@ -22,6 +22,11 @@
 # when it saves. It names another boolean setting. Leaving the old line alone
 # when that boolean is off matters: deleting it or writing a default would
 # change a shared `TERATERM.INI` that the user did not ask this program to own.
+#
+# `default-from=name.of.int` is the other optional field. It reproduces a key
+# whose fallback is another setting's already-loaded value rather than a
+# constant. Both fields must be scalar integers. The constant default remains
+# the value used when neither key exists and the value shown in metadata.
 #
 # Types:
 #   bool          `GetOnOff`, which is **not** a symmetric parse. See below.
@@ -471,6 +476,19 @@ window.auto_scroll_only_at_bottom | bool | Tera Term | AutoScrollOnlyInBottomLin
 # thing in the unit a compositor cares about. Carried so a file round-trips,
 # the way `bell.notify_sound` is.
 window.scroll_threshold | int | Tera Term | ScrollThreshold | 12 | -
+
+# `ttset.c:1466`, clamped at both ends. `255` is fully opaque and `0` fully
+# transparent. Upstream applies this value when the window loses focus
+# (`vtwin.cpp:1537`).
+window.opacity_inactive | int_clamp(0..255) | Tera Term | AlphaBlend | 255 | DLG_TAB_VISUAL_ALPHA_INACTIVE
+
+# `ttset.c:1470`, also clamped at both ends. Its fallback is the *loaded
+# inactive opacity*, not the constant 255: `AlphaBlend=120` without this key
+# makes both window states 120. An empty value inherits too; a non-numeric one
+# is zero under `GetPrivateProfileInt`'s own rules. Applied at startup, after
+# settings changes and whenever the window gains focus (`vtwin.cpp:780`,
+# `:1357`, `:1539`).
+window.opacity_active | int_clamp(0..255) | Tera Term | AlphaBlendActive | 255 | DLG_TAB_VISUAL_ALPHA_ACTIVE | default-from=window.opacity_inactive
 
 # `ttset.c:1568`. How the title the host set and `terminal.title` combine, and
 # **`off` means the host's title is not even stored** (`vtterm.c:5112`), which
