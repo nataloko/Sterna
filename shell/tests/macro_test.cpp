@@ -14,6 +14,7 @@
 // It needs no server and no hardware — the one connected case forks `/bin/sh`.
 
 #include <QApplication>
+#include <QAbstractButton>
 #include <QDialog>
 #include <QDir>
 #include <QElapsedTimer>
@@ -25,6 +26,7 @@
 #include <cstdio>
 
 #include "Macro.h"
+#include "I18n.h"
 #include "Session.h"
 #include "TerminalView.h"
 
@@ -117,6 +119,7 @@ public:
         m_timer.start();
     }
     int answered() const { return m_count; }
+    const QStringList &buttonTexts() const { return m_buttonTexts; }
 
 private:
     void answer()
@@ -124,6 +127,10 @@ private:
         auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
         if (!dialog) {
             return;
+        }
+        for (const QAbstractButton *button :
+             dialog->findChildren<QAbstractButton *>()) {
+            m_buttonTexts.append(button->text());
         }
         if (!writeDir.isEmpty()) {
             // `adjustSize` first for the reason every other dialog test here
@@ -143,6 +150,7 @@ private:
 
     QTimer m_timer;
     QString m_tag;
+    QStringList m_buttonTexts;
     int m_count = 0;
 };
 
@@ -230,7 +238,10 @@ void test_a_macro_drives_a_shell()
 void test_the_dialogs()
 {
     Session session(60, 12);
-    Macro macro(&session, nullptr);
+    QString error;
+    I18n i18n;
+    CHECK(i18n.load(QStringLiteral("lang\\ja_JP.lng"), QString(), &error));
+    Macro macro(&session, nullptr, nullptr, &i18n);
     int finished = 0;
     QObject::connect(&macro, &Macro::finished, [&](int) { finished++; });
 
@@ -242,10 +253,11 @@ void test_the_dialogs()
                                  "listbox 'pick' 'Macro test' items 1\n"
                                  "dispstr inputstr ' and ' items[result]\n"));
     Answerer answerer(QStringLiteral("dialog"));
-    QString error;
     CHECK(macro.start({script.path}, &error));
     CHECK(spin([&] { return finished > 0; }, 15000));
     CHECK(answerer.answered() == 3);
+    CHECK(answerer.buttonTexts().contains(QStringLiteral("はい(&Y)")));
+    CHECK(answerer.buttonTexts().contains(QStringLiteral("キャンセル")));
     // `inputbox` accepted with its default in it, and the list box on the item
     // the macro asked to start on — so both answers travelled back through the
     // callbacks and into the interpreter's variables.
@@ -377,16 +389,20 @@ void test_a_lua_script_drives_a_shell()
 void test_a_lua_error_reaches_the_dialog()
 {
     Session session(40, 10);
-    Macro macro(&session, nullptr);
+    QString error;
+    I18n i18n;
+    CHECK(i18n.load(QStringLiteral("lang\\ja_JP.lng"), QString(), &error));
+    Macro macro(&session, nullptr, nullptr, &i18n);
     int finished = 0;
     QObject::connect(&macro, &Macro::finished, [&](int) { finished++; });
 
     Script script = luaScript(QStringLiteral("error('deliberate')\n"));
     Answerer answerer(QStringLiteral("lua-error"));
-    QString error;
     CHECK(macro.start({script.path}, &error));
     CHECK(spin([&] { return finished > 0; }, 5000));
     CHECK(answerer.answered() == 1);
+    CHECK(answerer.buttonTexts().contains(QStringLiteral("マクロ停止(&S)")));
+    CHECK(answerer.buttonTexts().contains(QStringLiteral("続行(&C)")));
 }
 
 /// The trap this exists for: a Lua loop that calls nothing still answers End.

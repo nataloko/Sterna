@@ -19,6 +19,7 @@
 #include <QVBoxLayout>
 #include <QVector>
 
+#include "I18n.h"
 #include "Session.h"
 
 namespace {
@@ -181,10 +182,12 @@ static bool cbSetClipboardText(void *user, const char *text)
 
 } // extern "C"
 
-Macro::Macro(Session *session, QWidget *window, QObject *parent)
+Macro::Macro(Session *session, QWidget *window, QObject *parent,
+             const I18n *i18n)
     : QObject(parent)
     , m_session(session)
     , m_window(window)
+    , m_i18n(i18n)
 {
 }
 
@@ -402,9 +405,13 @@ void Macro::setDialogPos(const TtDialogPos *pos)
 
 bool Macro::showError(const TtMacroError *err)
 {
+    const auto text = [this](const char *key, const QString &fallback) {
+        return m_i18n ? m_i18n->text(key, fallback) : fallback;
+    };
     QMessageBox box(m_window);
     box.setIcon(QMessageBox::Warning);
-    box.setWindowTitle(tr("Macro error"));
+    box.setWindowTitle(m_i18n ? m_i18n->plainText("MSG_ERROR", tr("Macro error"))
+                              : tr("Macro error"));
     box.setText(str(err->message));
     // `code` 0 is an error from a language `ttmparse.h` never numbered, which
     // is every Lua one — and those carry their own `file:line:` in the message
@@ -419,8 +426,10 @@ bool Macro::showError(const TtMacroError *err)
     // Upstream's two buttons, and Continue is the one that is not the
     // default: a script that has gone wrong should stop unless the user says
     // otherwise.
-    QPushButton *stop = box.addButton(tr("Stop"), QMessageBox::AcceptRole);
-    box.addButton(tr("Continue"), QMessageBox::RejectRole);
+    QPushButton *stop =
+        box.addButton(text("BTN_STOP", tr("Stop")), QMessageBox::AcceptRole);
+    box.addButton(text("BTN_CONTINUE", tr("Continue")),
+                  QMessageBox::RejectRole);
     box.setDefaultButton(stop);
     place(&box);
     box.exec();
@@ -429,12 +438,19 @@ bool Macro::showError(const TtMacroError *err)
 
 TtDialogEnd Macro::showMessage(const QString &text, const QString &title, bool yesNo)
 {
+    const auto buttonText = [this](const char *key, const QString &fallback) {
+        return m_i18n ? m_i18n->text(key, fallback) : fallback;
+    };
     QMessageBox box(m_window);
-    box.setWindowTitle(title.isEmpty() ? tr("Macro") : title);
+    box.setWindowTitle(
+        title.isEmpty() && yesNo && m_i18n
+            ? m_i18n->plainText("MSG_MACRO_CONF", tr("Macro"))
+            : title.isEmpty() ? tr("Macro") : title);
     box.setText(text);
     if (!yesNo) {
         box.setIcon(QMessageBox::Information);
-        box.addButton(QMessageBox::Ok);
+        QPushButton *ok = box.addButton(QMessageBox::Ok);
+        ok->setText(buttonText("BTN_OK", tr("OK")));
         place(&box);
         box.exec();
         return TT_DIALOG_OK;
@@ -442,7 +458,9 @@ TtDialogEnd Macro::showMessage(const QString &text, const QString &title, bool y
 
     box.setIcon(QMessageBox::Question);
     QPushButton *yes = box.addButton(QMessageBox::Yes);
-    box.addButton(QMessageBox::No);
+    yes->setText(buttonText("BTN_YES", tr("Yes")));
+    QPushButton *no = box.addButton(QMessageBox::No);
+    no->setText(buttonText("BTN_NO", tr("No")));
     place(&box);
     box.exec();
     // **No and the close box are one answer here and two upstream**, where
@@ -510,6 +528,11 @@ TtDialogEnd Macro::showList(const QString &text, const QString &title,
     layout->addWidget(list);
     auto *buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)
+        ->setText(m_i18n ? m_i18n->text("BTN_YES", tr("OK")) : tr("OK"));
+    buttons->button(QDialogButtonBox::Cancel)
+        ->setText(m_i18n ? m_i18n->text("BTN_CANCEL", tr("Cancel"))
+                         : tr("Cancel"));
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -550,6 +573,10 @@ TtDialogEnd Macro::showInput(const QString &text, const QString &title,
     dialog.setTextValue(initial);
     dialog.setTextEchoMode(password ? QLineEdit::Password : QLineEdit::Normal);
     dialog.setInputMode(QInputDialog::TextInput);
+    dialog.setOkButtonText(m_i18n ? m_i18n->text("BTN_OK", tr("OK"))
+                                  : tr("OK"));
+    dialog.setCancelButtonText(
+        m_i18n ? m_i18n->text("BTN_CANCEL", tr("Cancel")) : tr("Cancel"));
     place(&dialog);
     if (dialog.exec() != QDialog::Accepted) {
         return TT_DIALOG_CANCEL;

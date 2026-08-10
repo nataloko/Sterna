@@ -239,7 +239,7 @@ MainWindow::MainWindow(const QString &settingsPath)
     connect(m_session, &Session::transferFinished, this,
             &MainWindow::onTransferFinished);
 
-    m_macro = new Macro(m_session, this, this);
+    m_macro = new Macro(m_session, this, this, m_i18n);
     connect(m_macro, &Macro::finished, this, &MainWindow::onMacroFinished);
     connect(m_macro, &Macro::keyboardEnabled, m_view,
             &TerminalView::setKeyboardEnabled);
@@ -1205,7 +1205,9 @@ void MainWindow::runMacro()
     // extension, so there is nothing here to ask the user about. `.ttl` leads
     // because that is the one a converted shortcut names.
     const QString path = QFileDialog::getOpenFileName(
-        this, tr("Run macro"), m_lastMacroDir,
+        this,
+        m_i18n->plainText("FILEDLG_OPEN_MACRO_TITLE", tr("Run macro")),
+        m_lastMacroDir,
         tr("Scripts (*.ttl *.TTL *.lua);;Tera Term macros (*.ttl *.TTL);;Lua "
            "scripts (*.lua);;All files (*)"));
     if (path.isEmpty()) {

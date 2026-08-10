@@ -15,6 +15,7 @@ class QDialog;
 class QLabel;
 class QSocketNotifier;
 class QWidget;
+class I18n;
 class Session;
 
 /// One running macro, and the window it asks things of.
@@ -40,7 +41,8 @@ public:
     /// windowless Tera Term is still driven by a `ttpmacro.exe` that has its
     /// own dialogs. The two commands that are *about* the window refuse
     /// instead, because there is nothing to measure or raise.
-    Macro(Session *session, QWidget *window, QObject *parent = nullptr);
+    Macro(Session *session, QWidget *window, QObject *parent = nullptr,
+          const I18n *i18n = nullptr);
     ~Macro() override;
 
     /// Start `args`' macro — `ttpmacro`'s command line, already split, without
@@ -110,6 +112,7 @@ private:
 
     Session *m_session;
     QWidget *m_window;
+    const I18n *m_i18n;
     TtMacro *m_macro = nullptr;
     QSocketNotifier *m_notifier = nullptr;
     QString m_name;
