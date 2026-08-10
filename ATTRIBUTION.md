@@ -30,6 +30,7 @@ points to
 | One local bug fix, applied to a build copy | `oracle/patches/` | Fix only; upstream source unmodified. |
 | Behavioural specification for the Rust port | `crates/` | No code copied. |
 | **Vendored and shipped** — the file-transfer protocols | `vendor/ttpfile/` | **Redistributed**, verbatim, notices retained. See below. |
+| **Vendored and shipped** — the language files | `vendor/lang/` | **Redistributed**, verbatim, project notice retained here. See below. |
 | **Transcribed and shipped** — one data table | `crates/tt-config/src/services.rs` | **Redistributed** as data. See below. |
 
 ### `vendor/ttpfile/` — what is shipped
@@ -44,6 +45,18 @@ copies are still byte-identical to that revision.
 This is the only Tera Term code the distribution contains. Because our own
 licence is the same 3-clause BSD, the shipped tree needs one licence text
 rather than two — which is why `LICENSE` says what it says.
+
+### `vendor/lang/` — what is shipped
+
+14 UTF-8 `.lng` files, copied unmodified from upstream revision
+`827a35b050c974b0fdf2a77ef73ed882301eb6c4` (`v5.6.0-496-g827a35b05`,
+2026-08-06). `vendor/lang/sync.sh --check` proves the copies are still
+byte-identical to that revision.
+
+The files carry no individual headers. Tera Term's copyright page places no
+separate terms on translations or contributed content, so the project-wide
+3-clause BSD licence applies. The notice at the top of this file and the
+repository's `LICENSE` accompany them in source and binary distributions.
 
 ### `crates/tt-config/src/services.rs` — one transcribed table
 
