@@ -1589,6 +1589,11 @@ And for the macro language:
   macro command lines still carry one. Normalise both spellings and the one
   separator after `<dir>`/`<home>`/`<exedir>`; matching only `Path::display()`
   leaves six Windows-only golden diffs that look like interpreter failures.
+- **Do not bless the TTL script goldens on Windows.** Five scripts intentionally
+  expose drive, separator or shell-folder answers, and Wine is not their
+  authority. The Windows gate runs all 53 against the portable goldens and
+  requires exactly those five names to differ; `TTL_BLESS` is refused before
+  it can overwrite anything.
 - **A missing reserved word is not diagnosed as a missing command — it is
   diagnosed as a bad assignment.** An unrecognised name is read as a *variable*,
   so a command left out of the table falls into `ExecCmnd`'s `else` arm

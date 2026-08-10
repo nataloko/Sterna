@@ -78,6 +78,14 @@
 //! cargo test -p tt-ttl --test scripts
 //! TTL_BLESS=1 cargo test -p tt-ttl --test scripts   # ...then read the diff
 //! ```
+//!
+//! The reviewed goldens are the portable/Linux answers. Windows compares all
+//! 53 against them too, then permits exactly [`WINDOWS_PLATFORM_DIFFS`] to
+//! differ. That is deliberately not a set of Wine-blessed Windows goldens: the
+//! allowlist makes the common 48 a gate and makes any new divergence a failure,
+//! while native Windows remains the authority for the five platform-shaped
+//! transcripts. Blessing is refused on Windows so it cannot overwrite the
+//! reviewed set.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -102,6 +110,12 @@ const MAX_LINES: usize = 500_000;
 
 /// The clock every run believes in: 2023-11-14 22:13:20 UTC.
 const NOW: i64 = 1_700_000_000;
+
+/// Scripts whose purpose or output includes a Windows filesystem or shell
+/// answer. Keep this exact: a missing member is as interesting as a new one.
+#[cfg(windows)]
+const WINDOWS_PLATFORM_DIFFS: &[&str] =
+    &["#31050", "#31971", "#39452", "getspecialfolder", "spfolder"];
 
 // ---------------------------------------------------------------------------
 // The tape
@@ -1150,6 +1164,11 @@ fn the_upstream_macros_run() {
 
     let goldens = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scripts");
     let bless = std::env::var_os("TTL_BLESS").is_some();
+    #[cfg(windows)]
+    assert!(
+        !bless,
+        "TTL_BLESS is Linux-only: Windows has five reviewed platform divergences"
+    );
     if bless {
         std::fs::create_dir_all(&goldens).unwrap();
     }
@@ -1164,6 +1183,7 @@ fn the_upstream_macros_run() {
     assert!(!scripts.is_empty(), "no .ttl scripts in {upstream:?}");
 
     let mut failed: Vec<String> = Vec::new();
+    let mut failed_names: Vec<String> = Vec::new();
     let mut blessed = 0;
     for script in &scripts {
         let name = script.file_stem().unwrap().to_string_lossy().into_owned();
@@ -1180,8 +1200,14 @@ fn the_upstream_macros_run() {
         }
         match std::fs::read_to_string(&golden) {
             Ok(want) if want == got => {}
-            Ok(want) => failed.push(format!("{name}: differs\n{}", diff(&want, &got))),
-            Err(_) => failed.push(format!("{name}: no golden at {}\n{got}", golden.display())),
+            Ok(want) => {
+                failed_names.push(name.clone());
+                failed.push(format!("{name}: differs\n{}", diff(&want, &got)));
+            }
+            Err(_) => {
+                failed_names.push(name.clone());
+                failed.push(format!("{name}: no golden at {}\n{got}", golden.display()));
+            }
         }
     }
 
@@ -1192,6 +1218,23 @@ fn the_upstream_macros_run() {
         assert_eq!(blessed, 0, "{blessed} golden(s) rewritten — now read them");
         return;
     }
+
+    #[cfg(windows)]
+    {
+        assert_eq!(
+            failed_names.iter().map(String::as_str).collect::<Vec<_>>(),
+            WINDOWS_PLATFORM_DIFFS,
+            "Windows script divergences changed:\n\n{}",
+            failed.join("\n")
+        );
+        eprintln!(
+            "{} common scripts match; {} platform-shaped scripts remain quarantined",
+            scripts.len() - failed.len(),
+            failed.len()
+        );
+    }
+
+    #[cfg(not(windows))]
     assert!(
         failed.is_empty(),
         "{} of {} scripts differ:\n\n{}",

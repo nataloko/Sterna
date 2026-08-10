@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 403
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 404
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4570,6 +4570,15 @@ machine-shaped diffs disappear without changing a Linux golden; a direct unit
 case guards both Windows spellings. Five deliberately platform-shaped scripts
 remain. They are recorded rather than blessed from Wine; a native Windows run
 remains the authority for their expected transcripts.
+
+That boundary is now executable. On Windows the script harness still runs all
+53 scripts and compares them against the reviewed portable goldens, then
+requires the divergence names to be exactly `#31050`, `#31971`, `#39452`,
+`getspecialfolder` and `spfolder`. A missing member fails just like a new one,
+so 48 common transcripts are a byte-for-byte gate without pretending Wine
+defines the other five. The MinGW test is green under Wine in 6.9 seconds and
+reports the 48/5 split. `TTL_BLESS` aborts immediately on Windows, before it can
+replace reviewed files with platform-shaped or Wine-specific answers.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
