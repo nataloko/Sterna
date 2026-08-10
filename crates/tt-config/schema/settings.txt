@@ -881,6 +881,15 @@ connection.timeout | int | Tera Term | ConnectingTimeout | 0 | -
 # `/DS` suppresses and `/ES` asks for.
 connection.host_dialog_on_startup | bool | Tera Term | HostDialogOnStartup | on | -
 
+# --- macro ------------------------------------------------------------------
+
+# `ttset.c:1291`, a wide string whose empty default means no automatic macro.
+# `CVTWindow::Startup` (`vtwin.cpp:1413`) consumes it once when the window
+# starts; a leading `*` makes TTPMACRO put up its file picker
+# (`ttmmain.cpp:285`). `/M` can replace it and a `/D=` topic clears it, so a
+# terminal launched by a macro does not recursively launch another one.
+macro.startup_file | string | Tera Term | StartupMacro |  | -
+
 # --- serial ------------------------------------------------------------------
 #
 # The four enumerated ones share their spellings with `/CPARITY=` and friends,
