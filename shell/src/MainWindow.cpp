@@ -92,6 +92,51 @@ QString settingsBackupPath(const QString &path)
     return QDir(info.absolutePath()).filePath(prefix + info.fileName());
 }
 
+/// Tera Term's common-dialog mask is semicolon-separated (`*.txt;*.log`),
+/// while Qt puts spaces between the patterns in one name-filter arm.
+QString transferNameFilter(const QString &mask)
+{
+    if (mask.isEmpty()) {
+        return QCoreApplication::translate("MainWindow", "All files (*)");
+    }
+    QString patterns = mask;
+    patterns.replace(QLatin1Char(';'), QLatin1Char(' '));
+    return QCoreApplication::translate(
+               "MainWindow", "User defined (%1);;All files (*)")
+        .arg(patterns);
+}
+
+/// `GetFileDir`: use an existing configured directory, after Win32-style
+/// environment expansion, and otherwise fall back to the desktop's Downloads
+/// location. Keeping `%NAME%` expansion matters for a TERATERM.INI shared with
+/// Windows; unknown variables are left untouched and therefore fail the
+/// existence check instead of silently naming a different directory.
+QString transferDirectory(const Session &session)
+{
+    QString dir = session.setting(QStringLiteral("transfer.dir"));
+    int at = 0;
+    while ((at = dir.indexOf(QLatin1Char('%'), at)) >= 0) {
+        const int end = dir.indexOf(QLatin1Char('%'), at + 1);
+        if (end < 0) {
+            break;
+        }
+        const QByteArray name = dir.mid(at + 1, end - at - 1).toLocal8Bit();
+        if (!name.isEmpty() && qEnvironmentVariableIsSet(name.constData())) {
+            const QString value = qEnvironmentVariable(name.constData());
+            dir.replace(at, end - at + 1, value);
+            at += value.size();
+        } else {
+            at = end + 1;
+        }
+    }
+    if (!dir.isEmpty() && QDir(dir).exists()) {
+        return dir;
+    }
+    const QString downloads =
+        QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    return downloads.isEmpty() ? QDir::homePath() : downloads;
+}
+
 } // namespace
 
 MainWindow::MainWindow(const QString &settingsPath)
@@ -930,9 +975,13 @@ void MainWindow::sendFile()
     // Kermit's `Send` does too, but a user who picked XMODEM and three files
     // would be surprised by which one arrived.
     const bool batch = options.job().protocol != TT_XFER_PROTOCOL_X_MODEM;
+    const QString dir = transferDirectory(*m_session);
+    const QString filter = transferNameFilter(
+        m_session->setting(QStringLiteral("transfer.send_filter")));
     const QStringList paths =
-        batch ? QFileDialog::getOpenFileNames(this, tr("Send"))
-              : QStringList{QFileDialog::getOpenFileName(this, tr("Send"))};
+        batch ? QFileDialog::getOpenFileNames(this, tr("Send"), dir, filter)
+              : QStringList{QFileDialog::getOpenFileName(this, tr("Send"), dir,
+                                                         filter)};
     if (paths.isEmpty() || paths.first().isEmpty()) {
         return;
     }
@@ -960,7 +1009,8 @@ void MainWindow::receiveFile()
         return;
     }
     const QString dir =
-        QFileDialog::getExistingDirectory(this, tr("Receive into"));
+        QFileDialog::getExistingDirectory(this, tr("Receive into"),
+                                          transferDirectory(*m_session));
     if (dir.isEmpty()) {
         return;
     }
