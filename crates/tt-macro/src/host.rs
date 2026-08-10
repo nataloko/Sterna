@@ -652,6 +652,17 @@ impl ScriptHost for SessionHost {
         Ok(())
     }
 
+    fn load_key_map(&mut self, path: &[u8]) -> Result<(), TtlError> {
+        // `loadkeymap` uses the same current file directory as transfers and
+        // logging (`ttdde.c:706`). The parser treats a missing file as an
+        // empty map, just as upstream's profile reads do; other I/O failures
+        // are the command's ordinary cannot-open error.
+        let path = resolve(&self.transfer_dir, path);
+        self.ask(move |s| s.load_key_map(&path))?
+            .map(|_| ())
+            .map_err(|_| TtlError::CantOpen)
+    }
+
     fn local_ip_addresses(&mut self, v6: bool) -> Option<Vec<Vec<u8>>> {
         // Answered here rather than posted as a job: it is a property of the
         // machine, not of the session, so making the frontend's thread look it
@@ -685,9 +696,10 @@ impl ScriptHost for SessionHost {
     // `send_broadcast`, `send_multicast`, `set_multicast_name`, `wait_for_all`
     //   — all four are about the *other* sessions, and this crate is handed
     //   one. They belong to whatever owns the tab bar.
-    // `send_key_code` — needs `KEYBOARD.CNF`, which is Stage 2's other half.
-    // `load_key_map`, `restore_setup` — the same file, and `TERATERM.INI`.
-    //   `restore_setup` is also the half of `connect` that is missing: a `/F=`
+    // `send_key_code` — now has the map, but actions which belong to the
+    //   frontend (paste, a menu command or another macro) need a result path
+    //   through `MacroUi`, rather than silently doing only the wire actions.
+    // `restore_setup` — a `/F=`
     //   naming a *different* settings file makes upstream re-read it and
     //   re-apply it (`ttdde.c:622`), and nothing here knows where the settings
     //   came from. The option is parsed and applied; the file is not re-read.

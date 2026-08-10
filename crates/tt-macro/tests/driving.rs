@@ -10,7 +10,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use tt_macro::{channel, NullUi, SessionHost};
-use tt_session::{MemoryTransport, Session};
+use tt_session::{KeyCodeResult, MemoryTransport, Session};
 use tt_ttl::Interp;
 use tt_vt::Config;
 
@@ -339,6 +339,26 @@ fn setdebug_changes_how_the_terminal_displays_the_reply() {
     assert_eq!(r.sent, b"go\r");
     assert_eq!(r.screen[0], "41 0A");
     assert_eq!(r.session.vt().debug_mode(), tt_vt::DebugMode::Hex);
+}
+
+#[test]
+fn loadkeymap_replaces_the_sessions_physical_map() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("KEYBOARD.CNF"),
+        "[User keys]\nUser1=59,2,from-loaded-map.ttl\n",
+    )
+    .unwrap();
+    let script = format!(
+        "changedir '{}'\nloadkeymap 'KEYBOARD.CNF'",
+        dir.path().display()
+    );
+
+    let mut r = drive(&script, |_| Vec::new());
+    assert_eq!(
+        r.session.send_key_code(59).unwrap(),
+        KeyCodeResult::RunMacro("from-loaded-map.ttl".into())
+    );
 }
 
 /// `clearscreen` is a terminal operation and not a wire one — nothing goes
