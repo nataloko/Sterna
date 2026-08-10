@@ -86,6 +86,7 @@ use tt_conn::telnet::{TelnetConn, TelnetMode, TelnetParams};
 use tt_conn::Error;
 use tt_ctl::{CtlHost, MacroStatus, NullHost, RunError, Server as CtlServer};
 use tt_grid::Cell;
+use tt_i18n::Catalog;
 use tt_macro::{MacroError, MacroReceiver, MacroUi, NullUi, SessionHost};
 use tt_session::open::{Startup, Target};
 use tt_session::{
@@ -262,6 +263,86 @@ fn cstring(s: &str) -> CString {
     let mut bytes = s.as_bytes().to_vec();
     bytes.retain(|&b| b != 0);
     CString::new(bytes).expect("NULs removed above")
+}
+
+// --- language catalogs ---------------------------------------------------
+
+/// One loaded Tera Term `.lng` file. Opaque.
+pub struct TtI18n {
+    catalog: Catalog,
+    /// The last lookup, kept alive until the next one. This is bytes rather
+    /// than a `CString`: upstream's file-dialog filters contain embedded NULs.
+    text: Vec<u8>,
+}
+
+/// Load a Tera Term `.lng` catalog. Null on an unreadable path, with the
+/// reason in [`tt_last_error`].
+#[no_mangle]
+pub extern "C" fn tt_i18n_load(path: *const c_char) -> *mut TtI18n {
+    let path = match unsafe { str_arg(path, usize::MAX) } {
+        Ok(path) => path,
+        Err(_) => return ptr::null_mut(),
+    };
+    match Catalog::load(Path::new(path)) {
+        Ok(catalog) => Box::into_raw(Box::new(TtI18n {
+            catalog,
+            text: Vec::new(),
+        })),
+        Err(e) => {
+            set_error(e.to_string());
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Free a language catalog. Does nothing for null.
+#[no_mangle]
+pub extern "C" fn tt_i18n_free(catalog: *mut TtI18n) {
+    if !catalog.is_null() {
+        drop(unsafe { Box::from_raw(catalog) });
+    }
+}
+
+/// Look up one translated UTF-8 string.
+///
+/// `fallback` is returned when the key is absent; it may be null to ask for a
+/// null result instead. `out_len` receives the byte length. The result is
+/// **not NUL-terminated and may contain embedded NULs**, so use the length. It
+/// is borrowed from `catalog` and valid until the next lookup or free.
+#[no_mangle]
+pub extern "C" fn tt_i18n_text(
+    catalog: *mut TtI18n,
+    section: *const c_char,
+    key: *const c_char,
+    fallback: *const c_char,
+    out_len: *mut usize,
+) -> *const u8 {
+    if let Some(len) = unsafe { out_len.as_mut() } {
+        *len = 0;
+    }
+    let Some(catalog) = (unsafe { catalog.as_mut() }) else {
+        set_error("null TtI18n");
+        return ptr::null();
+    };
+    let (section, key) = match (unsafe { str_arg(section, usize::MAX) }, unsafe {
+        str_arg(key, usize::MAX)
+    }) {
+        (Ok(section), Ok(key)) => (section, key),
+        _ => return ptr::null(),
+    };
+    let value = match catalog.catalog.get(section, key) {
+        Some(value) => value,
+        None if fallback.is_null() => return ptr::null(),
+        None => match unsafe { str_arg(fallback, usize::MAX) } {
+            Ok(value) => value.to_owned(),
+            Err(_) => return ptr::null(),
+        },
+    };
+    catalog.text = value.into_bytes();
+    if let Some(len) = unsafe { out_len.as_mut() } {
+        *len = catalog.text.len();
+    }
+    catalog.text.as_ptr()
 }
 
 // --- configuration --------------------------------------------------------

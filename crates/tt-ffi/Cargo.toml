@@ -20,6 +20,7 @@ tt-conn.workspace = true
 # a descriptor to wait on, a service call, and callbacks that fire inside it.
 tt-ctl.workspace = true
 tt-grid.workspace = true
+tt-i18n.workspace = true
 tt-lua.workspace = true
 tt-macro.workspace = true
 tt-session.workspace = true

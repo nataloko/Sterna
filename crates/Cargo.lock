@@ -2319,6 +2319,7 @@ dependencies = [
  "tt-conn",
  "tt-ctl",
  "tt-grid",
+ "tt-i18n",
  "tt-lua",
  "tt-macro",
  "tt-session",

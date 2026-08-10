@@ -709,6 +709,11 @@ typedef struct TtCmdLine TtCmdLine;
 typedef struct TtCtl TtCtl;
 
 /**
+ * One loaded Tera Term `.lng` file. Opaque.
+ */
+typedef struct TtI18n TtI18n;
+
+/**
  * A macro running against a session, on a thread of its own.
  *
  * Free it with [`tt_macro_free`] whether or not it has finished.
@@ -2320,6 +2325,31 @@ const char *tt_last_error(void);
  * pick up a stale library.
  */
 const char *tt_version(void);
+
+/**
+ * Load a Tera Term `.lng` catalog. Null on an unreadable path, with the
+ * reason in [`tt_last_error`].
+ */
+TtI18n *tt_i18n_load(const char *path);
+
+/**
+ * Free a language catalog. Does nothing for null.
+ */
+void tt_i18n_free(TtI18n *catalog);
+
+/**
+ * Look up one translated UTF-8 string.
+ *
+ * `fallback` is returned when the key is absent; it may be null to ask for a
+ * null result instead. `out_len` receives the byte length. The result is
+ * **not NUL-terminated and may contain embedded NULs**, so use the length. It
+ * is borrowed from `catalog` and valid until the next lookup or free.
+ */
+const uint8_t *tt_i18n_text(TtI18n *catalog,
+                            const char *section,
+                            const char *key,
+                            const char *fallback,
+                            size_t *out_len);
 
 /**
  * Fill `out` with the defaults — 80x24, 10000 lines of scrollback, VT100.

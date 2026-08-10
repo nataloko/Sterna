@@ -77,6 +77,44 @@ static size_t read_file(const char *path, char *buf, size_t cap)
     return got;
 }
 
+static void test_i18n(void)
+{
+    TtI18n *ja = tt_i18n_load("../../vendor/lang/ja_JP.lng");
+    CHECK(ja != NULL);
+    if (!ja)
+        return;
+
+    size_t len = 123;
+    const uint8_t *text =
+        tt_i18n_text(ja, "Tera Term", "MENU_FILE", "fallback", &len);
+    static const char japanese[] = "ファイル(&F)";
+    CHECK(text != NULL);
+    CHECK(len == sizeof japanese - 1);
+    CHECK(text && memcmp(text, japanese, len) == 0);
+
+    text = tt_i18n_text(ja, "Tera Term", "NO_SUCH_KEY", "source text", &len);
+    CHECK(text != NULL && len == 11 && memcmp(text, "source text", len) == 0);
+    CHECK(tt_i18n_text(ja, "Tera Term", "NO_SUCH_KEY", NULL, &len) == NULL);
+    CHECK(len == 0);
+    tt_i18n_free(ja);
+
+    /* The result is a byte span, not a C string: upstream's file-dialog
+     * filters use embedded NULs, and the ABI must not truncate them. */
+    TtI18n *en = tt_i18n_load("../../vendor/lang/en_US.lng");
+    CHECK(en != NULL);
+    if (en) {
+        text = tt_i18n_text(en, "Tera Term", "FILEDLG_OPEN_LOGFILE_FILTER",
+                            NULL, &len);
+        static const uint8_t filter[] = {'a', 'l', 'l', '(', '*', '.', '*', ')',
+                                         0,   '*', '.', '*', 0,   0};
+        CHECK(text != NULL && len == sizeof filter);
+        CHECK(text && memcmp(text, filter, sizeof filter) == 0);
+        tt_i18n_free(en);
+    }
+
+    CHECK(tt_i18n_load("/tmp/sterna-no-such-language.lng") == NULL);
+}
+
 /* Read a row and compare its base codepoints against ASCII. */
 static void expect_row(const TtSession *s, size_t y, const char *want)
 {
@@ -1069,6 +1107,9 @@ static void test_cmdline(void)
 
 static void test_null_safety(void)
 {
+    CHECK(tt_i18n_load(NULL) == NULL);
+    CHECK(tt_i18n_text(NULL, "Tera Term", "MENU_FILE", "File", NULL) == NULL);
+    tt_i18n_free(NULL);
     tt_config_default(NULL);
     CHECK(tt_session_new(NULL) == NULL);
     tt_session_free(NULL);
@@ -2186,6 +2227,7 @@ static void test_ctl_without_a_frontend(void)
 int main(void)
 {
     printf("Sterna core %s\n", tt_version());
+    test_i18n();
     test_screen();
     test_remote_clipboard();
     test_attributes();
