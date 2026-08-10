@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-09 · **Stage:** 1 complete, 2 in progress · **Commits:** 234
+**Last updated:** 2026-08-10 · **Stage:** 1 complete, 2 in progress · **Commits:** 289
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1088,15 +1088,17 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (141 settings over 128 keys: 39 for the terminal,
+  `crates/tt-config/` (180 settings over 167 keys: 39 for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
   writes into, 2026-08-09, plus the whole log family, then the whole
   file-transfer family, then the seven the terminal and the two the *transports*
   were already honouring with no key to read, then the clipboard's sixteen,
-  2026-08-09), the map onto a running terminal in
+  2026-08-09, then the bell's, the serial port's, telnet's, the scrollback's
+  and the parser's own eight switches, 2026-08-10), the map onto a running
+  terminal in
   `tt-session`, the schema as data over the C ABI, and a Qt dialog that builds
   itself from it. What remains is the *rest of the settings*, which is a line
-  and a citation each — 137 keys as of 2026-08-09, and `tests/upstream.rs`
+  and a citation each — 98 keys as of 2026-08-10, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -3627,6 +3629,99 @@ existed. Corrected here rather than left.
 
 172 settings over 159 keys, 106 to go.
 
+#### And the parser's own switches, which found three older bugs under them
+
+`oracle/`, `crates/tt-config/`, `tt-grid`, `tt-vt`, `tt-session` and
+`tt-dump`, 2026-08-10. Eight keys, and the first family where the *engine* was
+the thing that had to be corrected before the settings could be trusted rather
+than the other way round.
+
+The eight are `BackWrap`, `VTCompatTab`, `TabStopModifySequence`,
+`UseInvalidDECRQSSResponse`, `TerminalUID`, `LockTUID`, `AutoInvoke` and
+`MaxOSCBufferSize` — everything left in `ttset.c` that changes what the VT
+state machine *does* rather than what the window draws. Two of them the engine
+was already honouring with the default hardcoded and a comment saying so
+(`BackWrap`'s dead arm in `Grid::backspace`, `VTCompatTab`'s in
+`forward_tab`); four had no code at all; and two are sequences that were
+unreachable.
+
+**The oracle answered the tertiary DA with eight spaces.** `ts.TerminalUID`
+was never set in `settings_defaults`, and a zeroed `char[9]` through
+`_snprintf_s_l("!|%8s", …)` is a right-aligned empty string. Same shape as
+every other missing default on the list, and it would have made the port
+agree with a Tera Term that has no unit ID. `ttset.c:1688` validates as it
+reads — eight characters, all hex, upper-cased — and falls back to
+`FFFFFFFF`, so the default is also what an invalid key gives, in the file and
+again at `vtterm.c:4567` when DECSTUI arrives off the wire. `LockTUID` ships
+**on**, so as Tera Term ships that sequence is read and dropped: the identity
+a terminal answers with is not the host's to change unless the file says so.
+
+**Three bugs came out from under the family, all older than it and none
+covered by a case.**
+
+The first is the widest. **A broken multi-byte sequence is one U+FFFD per
+byte** in Tera Term's decoder and one per maximal subpart in `vte`, so
+`E2 82 'b'` was one replacement character here and two upstream, and every
+wider sequence widened the gap — three for a cut emoji. Ordinary text on a
+line that is dropping bytes, which is the case the replacement character
+exists for. Case 97 could not see it, because the only broken sequence in
+`cases/` was a *bare C1 byte* and that is one byte either way. The fix is four
+lines in `rewrite_c1`, which already tracks where the sequence started because
+`Vt::held` needs it.
+
+The second: **an OSC's string is everything after the first semicolon**, and
+`vte` splits on every one — so a window title of `a;b` had been arriving as
+`a` since titles were implemented. `Vt::osc_string` is the join, and it is
+also where `MaxOSCBufferSize` bounds the result, one byte short of the setting
+because upstream's test is `StrLen + 1 < StrBuffSize`.
+
+The third: **`CSI = c` never reached its arm.** `csi_plain` drops anything
+carrying an intermediate — right, since running a sequence as its
+no-intermediate namesake is worse than dropping it — and `vte` reports `?`,
+`>` and `=` there because it has nowhere else to put a private marker. So the
+tertiary DA was unreachable with its code sitting in front of us looking
+correct, which is the second time this port has had a feature that was
+"implemented" and dead. `CSI > 1 c` also answered where upstream stays silent:
+the primary DA takes any parameter and the other two insist on zero.
+
+**HTS is the one C1 that must not be folded**, and that is the design decision
+worth keeping. `rewrite_c1` turns every 8-bit control into its `ESC` form so
+one arm can answer for both spellings — but `TABF_HTS7` and `TABF_HTS8` are
+*different bits*, so the fold is exactly what makes the setting unenforceable.
+`0x88` now goes through raw and `Perform::execute` answers for it, which is
+the only channel `vte` has that an `ESC H` cannot arrive on; the refusal stays
+in `rewrite_c1`, where the byte is still eight-bit. The first attempt gated the
+folded `ESC H` on `TABF_HTS7` and let each spelling through under the other's
+key — and the first differential case for it passed anyway, because the stop
+it set happened to be one of the default ones. Both HTS cases now put the
+refused spelling somewhere the screen can show it.
+
+Two more that are named after less than they do. `VTCompatTab` is two changes
+and the second is not "leave the wrap alone" — `buffer.c:5211` stashes `Wrap`
+and puts it back after `MoveCursor` has cleared it, so a tab on a line that was
+already full comes out still full. And `AutoInvoke`'s G0→GL shift sits
+*outside* the switch that handled the designation, so `ESC ( Z` invokes too,
+and it is the one locking shift `ts.ISO2022Flag` does not gate.
+
+Thirteen differential cases (115–127) and one `xfail` (128), which is the half
+of the UTF-8 fix that cannot be made here: a sequence cut off by an **OSC
+terminator** is decoded at stream level in this port and at string level
+upstream, so upstream never sees the terminator break it and discards the tail
+without a word. Fixing it means `rewrite_c1` knowing which parser state it is
+in, which `vte` does not expose — the same wall case 51 hit for DEL. Costs two
+replacement characters at the end of a title whose last character the sender
+cut in half.
+
+One thing the setting cannot do here, said where it is declared: **the
+allocation bound is `vte`'s and is not enforced.** Under the `std` feature
+`vte` collects an OSC into an unbounded `Vec`, so an OSC that never terminates
+still grows without limit; `MaxOSCBufferSize` reproduces the *truncation*,
+which is what the terminal shows, and not the ceiling, which is what the
+setting exists for. Worth revisiting if the parser is ever forked — it is the
+same fork the two `xfail`s want.
+
+180 settings over 167 keys, 98 to go.
+
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
 Windows build, ConPTY, Win32 serial edge cases, NSIS installer. All 14 `.lng`
@@ -3727,7 +3822,8 @@ file/dir 1k, connection/terminal 2k, dialogs 0.8k, misc 1k — **~9.3k Rust vs
 1. **✅ Differential testing against real Tera Term** — `oracle/` built and
    green, and as of Stage 1 actually wired up: `./run_diff.sh` feeds identical
    byte streams to it and to the Rust engine and diffs the grid dumps *and the
-   replies*, in CI on every commit. 103 cases. Since the oracle also takes
+   replies*, in CI on every commit. 128 cases, two of them `xfail`. Since the
+   oracle also takes
    injected mouse, focus and **key** events — and compiles `keyboard.c` for the
    last of those — this covers both halves of the frontend seam. **This is
    the asset the whole project rests on**, and it is now a gate rather than a

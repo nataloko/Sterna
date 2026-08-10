@@ -55,7 +55,7 @@ S-shaped flight path.
 ## Build and test
 
 ```sh
-./run_diff.sh                    # THE gate: Rust engine vs Tera Term, 92 cases
+./run_diff.sh                    # THE gate: Rust engine vs Tera Term, 128 cases
 ./run_diff.sh 27                 # just the cases matching "27"
 ./run_upstream.sh                # the same diff over Tera Term's OWN exercisers
 
@@ -961,6 +961,80 @@ something other than what they do:
   (`vtdisp.c:3132`), which is `TerminalView`'s 8 ms frame floor measuring the
   same thing in a different unit. Carried and acting on nothing, like
   `NotifySound`.
+
+And for the parser's own switches, where three of the eight are two settings
+wearing one name:
+
+- **A broken multi-byte sequence is one U+FFFD per *byte*, and `vte` says one
+  per run.** Tera Term's decoder emits a replacement character for every byte
+  it had already taken when the sequence breaks, so `E2 82 'b'` is two and
+  `F0 9F 98 'b'` is three; `vte` follows the WHATWG rule and emits one for the
+  whole maximal subpart. **Case 97 could not see it** — a bare C1 byte is one
+  byte either way, which is the only broken sequence the suite had. The fix is
+  in `rewrite_c1`, which already tracks where the sequence started because
+  `Vt::held` needs it. The half that stays divergent is case 128: a sequence
+  cut off by an *OSC terminator* is decoded here at stream level and upstream
+  at string level, so upstream never sees the terminator break it and discards
+  the tail in silence.
+- **An OSC's string is everything after the FIRST semicolon.** `vte` splits on
+  every one and hands over a slice per parameter, so `params[1]` is a window
+  title of `a;b` truncated to `a`. `ParseString` (`vtterm.c:5297`) reads digits
+  into `Param[1]` until one `;` sets `HasParamStr`, and every byte after that
+  including the next semicolon is the string. `Vt::osc_string` is the join, and
+  `ts.MaxOSCBufferSize` bounds it — one byte *short* of the setting, because
+  the test is `StrLen + 1 < StrBuffSize`.
+- **`=` is a private marker and not an intermediate, and `csi_plain` drops
+  intermediates.** `vte` reports `?`, `>` and `=` in the same place as a real
+  intermediate because it has nowhere else to put them, so a guard written as
+  "anything with an intermediate is a sequence we have not ported" silently
+  ate the tertiary DA — with the arm for it sitting there looking right. The
+  primary DA answers whatever its parameter is; `CSI > Ps c` and `CSI = Ps c`
+  both insist on zero (`vtterm.c:CSGT`, `CSEQ`).
+- **HTS is the one C1 that must not be folded into its 7-bit form.**
+  `TABF_HTS7` and `TABF_HTS8` are separate bits (`vtterm.c:1512` and `:1160`),
+  so a file can accept `ESC H` and refuse `0x88` — and `rewrite_c1`'s fold is
+  exactly what makes the two indistinguishable. `0x88` therefore goes through
+  raw and `Perform::execute` answers for it, which is the only channel `vte`
+  has that an `ESC H` cannot arrive on; the refusal stays in `rewrite_c1`,
+  where the byte is still eight-bit. Gating the folded `ESC H` on both bits
+  instead reads as correct and lets each spelling through under the other's
+  key.
+- **`VTCompatTab` is two changes, and the second is not "leave the wrap
+  alone".** Off — as shipped — a tab is like a printed character at the end of
+  a line: `Tab` (`vtterm.c:713`) breaks the line before tabbing, and
+  `CursorForwardTab` arms the pending wrap when it runs out of stops. On,
+  `buffer.c:5211` stashes `Wrap` on the way in and *puts it back* after
+  `MoveCursor` has cleared it, so a tab on a line that was already full comes
+  out still full. CHT never sees the first half — it calls `CursorForwardTab`
+  directly.
+- **`BackWrap` lands on the right margin, not the last column**, and does not
+  scroll: `MoveCursor(CursorRightM, CursorY-1)` under `CursorY > 0`
+  (`vtterm.c:664`). With DECSLRM in force a BS at the left margin comes back
+  *inside* the margins.
+- **`TabStopModifySequence` is a flag list whose `on` never reaches the list.**
+  `on`/`all` and `off`/`none` are tested against the whole value and assign the
+  whole word; anything else starts from `TABF_NONE` and only adds, so a value
+  with no recognised word in it — `HTS9`, or an empty string — is a terminal
+  that refuses all four. Same shape as `ISO2022ShiftFunction` and one arm less
+  surprising, since `on` is a value the list arm cannot see.
+- **`LockTUID` defaults on, so DECSTUI does nothing as Tera Term ships**, and
+  `TerminalUID` is validated in two places with the same rule — eight
+  characters, all hex, upper-cased (`ttset.c:1691` for the file,
+  `vtterm.c:4567` for the wire). Nine digits is not eight: the old value
+  stands rather than being truncated to fit. The file keeps whatever was
+  written and the terminal answers with the valid form, which is why the
+  validation is at the boundary and not in the schema.
+- **`AutoInvoke`'s invoke is outside the switch and outside the ISO-2022
+  gate.** `ESCSBCSSelect` (`vtterm.c:1409`) performs the G0→GL locking shift
+  after the `switch` that handled the final byte, so `ESC ( Z` — a designation
+  of nothing — still invokes; and it is the one locking shift in the parser
+  that `ts.ISO2022Flag` does not gate, so `ISO2022ShiftFunction=off` does not
+  stop it.
+- **`UseInvalidDECRQSSResponse` flips the digit and keeps the body**
+  (`vtterm.c:4400`), so an "I did not understand" reply still carries the value
+  it was about to send. Upstream's comment is "(for testing)": it exists to
+  exercise the *host's* parser, and it is the only setting in the terminal
+  whose purpose is to lie.
 
 And for the clipboard, where the surprise is what happens to a line break:
 
