@@ -1912,6 +1912,25 @@ pub struct Settings {
     /// minimised and invisible — have no keys at all: `_ReadIniFile` zeroes both at
     /// `:554` and never reads one, so they are command-line-only.
     pub window_hide_title: bool,
+    /// `ttset.c:731`. Hide the ordinary menu bar. When it is hidden, upstream opens
+    /// the same menus as a popup on Ctrl+left-click (`vtwin.cpp:863`); this is not a
+    /// choice between two different menus. `HideTitle` also removes the menu bar,
+    /// independently of this key (`vtwin.cpp:3461`).
+    pub window_popup_menu: bool,
+    /// `ttset.c:1179`, default **on**. The gate on Ctrl+left-click opening the full
+    /// menu while the bar is hidden. It does not decide whether the bar is hidden —
+    /// that is `window.popup_menu`, or `window.hide_title` as a side effect.
+    pub window_popup_menu_enabled: bool,
+    /// `ttset.c:1183`, default **on**. With the bar hidden, upstream adds "Show menu
+    /// bar" to the Win32 system menu (`vtwin.cpp:3509`). Qt cannot add application
+    /// actions to a compositor-owned system menu, so the shell puts the recovery
+    /// action in the Ctrl+left-click popup instead.
+    pub window_show_menu_enabled: bool,
+    /// `ttset.c:1380`, default **on**. Adds the dynamic Window menu, whose entries
+    /// are every open VT and TEK window (`vtwin.cpp:1116`). This process owns one
+    /// terminal window and TEK is out of scope, so it is read and written and acts
+    /// on nothing until Stage 3 gives the shell multiple sessions to list.
+    pub window_window_menu: bool,
 }
 
 impl Default for Settings {
@@ -2110,6 +2129,10 @@ impl Default for Settings {
             transfer_quickvan_log: false,
             transfer_raw_autostop: 5,
             window_hide_title: false,
+            window_popup_menu: false,
+            window_popup_menu_enabled: true,
+            window_show_menu_enabled: true,
+            window_window_menu: true,
         }
     }
 }
@@ -2835,6 +2858,16 @@ impl Settings {
                 d.transfer_raw_autostop,
             ) as i32,
             window_hide_title: crate::schema::on_off(ini.get("Tera Term", "HideTitle"), false),
+            window_popup_menu: crate::schema::on_off(ini.get("Tera Term", "PopupMenu"), false),
+            window_popup_menu_enabled: crate::schema::on_off(
+                ini.get("Tera Term", "EnablePopupMenu"),
+                true,
+            ),
+            window_show_menu_enabled: crate::schema::on_off(
+                ini.get("Tera Term", "EnableShowMenu"),
+                true,
+            ),
+            window_window_menu: crate::schema::on_off(ini.get("Tera Term", "WindowMenu"), true),
         }
     }
 
@@ -4161,6 +4194,36 @@ impl Settings {
             "HideTitle",
             &if self.window_hide_title { "on" } else { "off" }.to_string(),
         );
+        ini.set(
+            "Tera Term",
+            "PopupMenu",
+            &if self.window_popup_menu { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "EnablePopupMenu",
+            &if self.window_popup_menu_enabled {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "EnableShowMenu",
+            &if self.window_show_menu_enabled {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "WindowMenu",
+            &if self.window_window_menu { "on" } else { "off" }.to_string(),
+        );
     }
 
     /// One setting by its dotted name, in the INI's own spelling.
@@ -4703,6 +4766,20 @@ impl Settings {
             .to_string(),
             "transfer.raw_autostop" => self.transfer_raw_autostop.to_string(),
             "window.hide_title" => if self.window_hide_title { "on" } else { "off" }.to_string(),
+            "window.popup_menu" => if self.window_popup_menu { "on" } else { "off" }.to_string(),
+            "window.popup_menu_enabled" => if self.window_popup_menu_enabled {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "window.show_menu_enabled" => if self.window_show_menu_enabled {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "window.window_menu" => if self.window_window_menu { "on" } else { "off" }.to_string(),
             _ => return None,
         })
     }
@@ -5267,6 +5344,18 @@ impl Settings {
             }
             "window.hide_title" => {
                 self.window_hide_title = crate::schema::on_off(Some(value), false)
+            }
+            "window.popup_menu" => {
+                self.window_popup_menu = crate::schema::on_off(Some(value), false)
+            }
+            "window.popup_menu_enabled" => {
+                self.window_popup_menu_enabled = crate::schema::on_off(Some(value), true)
+            }
+            "window.show_menu_enabled" => {
+                self.window_show_menu_enabled = crate::schema::on_off(Some(value), true)
+            }
+            "window.window_menu" => {
+                self.window_window_menu = crate::schema::on_off(Some(value), true)
             }
             _ => return false,
         }
@@ -7208,5 +7297,45 @@ pub const FIELDS: &[Field] = &[
         default: "off",
         label: None,
         doc: "`ttset.c:728`. No title bar, which `/H` also asks for. `/I` and `/V` — minimised and invisible — have no keys at all: `_ReadIniFile` zeroes both at `:554` and never reads one, so they are command-line-only.",
+    },
+    Field {
+        name: "window.popup_menu",
+        page: "window",
+        section: "Tera Term",
+        key: "PopupMenu",
+        kind: Kind::Bool,
+        default: "off",
+        label: Some("DLG_WIN_HIDEMENU"),
+        doc: "`ttset.c:731`. Hide the ordinary menu bar. When it is hidden, upstream opens the same menus as a popup on Ctrl+left-click (`vtwin.cpp:863`); this is not a choice between two different menus. `HideTitle` also removes the menu bar, independently of this key (`vtwin.cpp:3461`).",
+    },
+    Field {
+        name: "window.popup_menu_enabled",
+        page: "window",
+        section: "Tera Term",
+        key: "EnablePopupMenu",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1179`, default **on**. The gate on Ctrl+left-click opening the full menu while the bar is hidden. It does not decide whether the bar is hidden — that is `window.popup_menu`, or `window.hide_title` as a side effect.",
+    },
+    Field {
+        name: "window.show_menu_enabled",
+        page: "window",
+        section: "Tera Term",
+        key: "EnableShowMenu",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1183`, default **on**. With the bar hidden, upstream adds \"Show menu bar\" to the Win32 system menu (`vtwin.cpp:3509`). Qt cannot add application actions to a compositor-owned system menu, so the shell puts the recovery action in the Ctrl+left-click popup instead.",
+    },
+    Field {
+        name: "window.window_menu",
+        page: "window",
+        section: "Tera Term",
+        key: "WindowMenu",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1380`, default **on**. Adds the dynamic Window menu, whose entries are every open VT and TEK window (`vtwin.cpp:1116`). This process owns one terminal window and TEK is out of scope, so it is read and written and acts on nothing until Stage 3 gives the shell multiple sessions to list.",
     },
 ];

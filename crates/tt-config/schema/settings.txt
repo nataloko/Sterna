@@ -1297,3 +1297,26 @@ transfer.raw_autostop | int | Tera Term | ReceivefileAutoStopWaitTime | 5 | -
 # minimised and invisible — have no keys at all: `_ReadIniFile` zeroes both at
 # `:554` and never reads one, so they are command-line-only.
 window.hide_title | bool | Tera Term | HideTitle | off | -
+
+# `ttset.c:731`. Hide the ordinary menu bar. When it is hidden, upstream opens
+# the same menus as a popup on Ctrl+left-click (`vtwin.cpp:863`); this is not a
+# choice between two different menus. `HideTitle` also removes the menu bar,
+# independently of this key (`vtwin.cpp:3461`).
+window.popup_menu | bool | Tera Term | PopupMenu | off | DLG_WIN_HIDEMENU
+
+# `ttset.c:1179`, default **on**. The gate on Ctrl+left-click opening the full
+# menu while the bar is hidden. It does not decide whether the bar is hidden —
+# that is `window.popup_menu`, or `window.hide_title` as a side effect.
+window.popup_menu_enabled | bool | Tera Term | EnablePopupMenu | on | -
+
+# `ttset.c:1183`, default **on**. With the bar hidden, upstream adds "Show menu
+# bar" to the Win32 system menu (`vtwin.cpp:3509`). Qt cannot add application
+# actions to a compositor-owned system menu, so the shell puts the recovery
+# action in the Ctrl+left-click popup instead.
+window.show_menu_enabled | bool | Tera Term | EnableShowMenu | on | -
+
+# `ttset.c:1380`, default **on**. Adds the dynamic Window menu, whose entries
+# are every open VT and TEK window (`vtwin.cpp:1116`). This process owns one
+# terminal window and TEK is out of scope, so it is read and written and acts
+# on nothing until Stage 3 gives the shell multiple sessions to list.
+window.window_menu | bool | Tera Term | WindowMenu | on | -
