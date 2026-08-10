@@ -526,13 +526,18 @@ terminal and puts its actual shortcuts on `QAction`. Those markers are removed
 from the displayed translation, including Japanese-style `設定(&S)`, so loading
 a language cannot silently make Meta keystrokes open a menu.
 
-This is the translation foundation, not a claim that every dialog is done.
-The generated settings UI, main menu, and the serial, SSH and telnet connection
-forms are wired. Those forms use catalog text only where an upstream field has
-the same meaning; Sterna's ssh-agent, legacy-algorithm and telnet-mode controls
-keep their source wording instead of borrowing a misleading translation. SSH
-host-key/authentication prompts and the transfer and macro dialogs remain to
-map as Stage 3 proceeds.
+Every shell family with a matching upstream key is now wired: the generated
+settings UI, menus, serial/SSH/telnet connection forms, SSH prompts, transfer
+dialogs, macro dialogs, paste and disconnect confirmation, and common
+file-picker captions. The tests load the real Japanese catalog for each family;
+the SSH and macro dialogs are rendered as well as inspected.
+
+This is not a claim that a Tera Term catalog contains words for Sterna's new
+UI. The ssh-agent, legacy-algorithm and telnet-mode controls, the safer host-key
+explanation, Lua file filters and other Sterna-only copy keep their source text.
+Attaching a nearby key with a different meaning would produce a more translated
+but less truthful interface; translating those strings needs a future Sterna
+catalog extension.
 
 Native Wayland is the platform exception. Qt 6.11 retains the opacity property
 but has no backend operation to give it to the compositor; Fedora's xcb backend

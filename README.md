@@ -6,9 +6,9 @@ shell — for Linux and Windows. Compatible with Tera Term; not Tera Term.
 > **Status: Stage 2 complete; Stage 3 in progress.** The Linux application has
 > all four transports, the oracle-diffed VT engine, six file-transfer
 > protocols, TTL and Lua scripting, the generated settings UI, a control
-> socket, an AppImage, `KEYBOARD.CNF`, and the first `.lng`-translated shell
-> surfaces. Windows/ConPTY, tabs, printing, and translation of the specialized
-> dialogs remain. See [PLAN.md](PLAN.md).
+> socket, an AppImage, `KEYBOARD.CNF`, and all compatible surfaces wired to
+> Tera Term's 14 `.lng` catalogs. Windows/ConPTY, tabs, and printing remain.
+> See [PLAN.md](PLAN.md).
 
 The name is settled. See [PLAN.md](PLAN.md) for scope and status,
 [ATTRIBUTION.md](ATTRIBUTION.md) for what is borrowed from Tera Term and under

@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 376
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 381
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4297,12 +4297,19 @@ and printed `Alt+…` captions are removed because Sterna reserves Alt for the
 terminal and owns real shortcuts on `QAction`. This includes the complete
 Japanese-style `設定(&S)` marker rather than leaving a stray `(S)`.
 
-This begins Stage 3 rather than completing its language item. The catalog,
-main menus, generated settings UI, and the serial, SSH and telnet connection
-forms are wired. The forms attach a catalog key only where its upstream field
-has the same meaning; the ssh-agent, legacy-algorithm and telnet-mode controls
-are Sterna additions and deliberately keep their source wording. SSH prompts,
-transfer dialogs and macro dialogs remain to map.
+This completes Stage 3's language-file item. The main menus, generated settings
+UI, serial/SSH/telnet connection forms, SSH prompts, transfer dialogs, macro
+dialogs, paste confirmation, disconnect confirmation and common file-picker
+captions all use the catalog where an upstream key means the same thing. The
+tests load the real Japanese file and exercise each family; the SSH and macro
+dialogs were also rendered and read.
+
+The boundary is deliberate: Sterna's ssh-agent, legacy-algorithm and
+telnet-mode controls, its safer host-key explanation, Lua file filters and
+other new copy have no upstream translation. They retain the clear source text
+instead of being assigned a nearby key with a different meaning. Translating
+those would be a Sterna catalog extension, not more wiring of Tera Term's
+unchanged files.
 
 ### 🔵 Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
@@ -4370,14 +4377,15 @@ Adoption hinges on "my existing setup just works." Budget real time here.
 - **Hosts and keys** — read Tera Term's `ssh_known_hosts` *and*
   `~/.ssh/known_hosts`; read `~/.ssh/id_*` and `~/.ssh/config`; write OpenSSH
   format.
-- **`.lng` files** — 🔵 **in progress 2026-08-10.** The exact 14 files are
+- **`.lng` files** — ✅ **done 2026-08-10.** The exact 14 files are
   vendored, loaded through `tt-i18n`, installed with the shell, selected by the
   compatible `UILanguageFile` setting, and used by the main menus and generated
-  settings UI. The serial, SSH and telnet connection forms also use every
-  catalog key whose upstream field has the same meaning. Do **not** migrate to
+  settings UI. Connection forms and prompts, transfer and macro dialogs, paste
+  and disconnect confirmation, and common file-picker captions use every
+  catalog key whose upstream field has the same meaning. Sterna-only text stays
+  source-language rather than taking an inaccurate key. Do **not** migrate to
   Qt `.ts`: that throws away 17,610 lines of donated translation and the
-  translator workflow. SSH prompts and the transfer and macro dialogs remain
-  to map.
+  translator workflow.
 - **TTX plugins** — replace in order: (1) fold the ones that matter into core —
   `TTXProxy` (~1k Rust), `TTXKanjiMenu`, `TTXResizeMenu`, `TTXttyrec`; (2) a
   **Lua plugin API** — menu items, key bindings, connect/disconnect hooks,
