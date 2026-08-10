@@ -973,9 +973,35 @@ fn portable(text: String, dir: &Path, home: &Path, exe_dir: &Path) -> String {
     // Longest first: the script's directory is under the scratch root, which is
     // not under the home, but the exe directory can be anywhere.
     for (path, name) in [(dir, "<dir>"), (home, "<home>"), (exe_dir, "<exedir>")] {
-        out = out.replace(&path.to_string_lossy().into_owned(), name);
+        let raw = path.to_string_lossy().into_owned();
+        // Most host calls pass paths through `esc` before they reach the tape.
+        // A Unix path contains no escapable byte, so replacing only `raw`
+        // worked there by accident; every Windows separator is doubled.
+        let escaped = esc(raw.as_bytes());
+        out = out.replace(&escaped[1..escaped.len() - 1], name);
+        out = out.replace(&raw, name);
+
+        // Once the machine-shaped prefix is gone, make the one separator that
+        // follows it portable as well. There are two spellings: raw command
+        // lines carry one backslash and `esc` output carries two.
+        out = out.replace(&format!(r"{name}\\"), &format!("{name}/"));
+        out = out.replace(&format!(r"{name}\"), &format!("{name}/"));
     }
     out
+}
+
+#[test]
+fn portable_recognises_raw_and_escaped_windows_paths() {
+    let text = r#"message "C:\\work\\run\\chosen.txt" raw C:\work\run\macro.ttl"#.to_string();
+    assert_eq!(
+        portable(
+            text,
+            Path::new(r"C:\work\run"),
+            Path::new(r"C:\users\tester"),
+            Path::new(r"C:\bin"),
+        ),
+        r#"message "<dir>/chosen.txt" raw <dir>/macro.ttl"#
+    );
 }
 
 /// How a script is launched, as the command line `ttpmacro.exe` would have

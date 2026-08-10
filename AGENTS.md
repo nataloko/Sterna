@@ -1584,6 +1584,11 @@ And for the macro language:
   The transcript harness substitutes one guaranteed-missing program name on
   both targets. Do not remove that isolation just because the Linux gate stays
   green without it.
+- **A path already passed through the transcript's `esc` is not the path
+  anymore.** Every Windows `\` is doubled before `portable` sees it, while raw
+  macro command lines still carry one. Normalise both spellings and the one
+  separator after `<dir>`/`<home>`/`<exedir>`; matching only `Path::display()`
+  leaves six Windows-only golden diffs that look like interpreter failures.
 - **A missing reserved word is not diagnosed as a missing command — it is
   diagnosed as a bad assignment.** An unrecognised name is read as a *variable*,
   so a command left out of the table falls into `ExecCmnd`'s `else` arm

@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 402
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 403
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4559,12 +4559,17 @@ The upstream TTL script gate can now finish on Windows rather than opening
 Notepad and waiting forever. `#35797.ttl` is the suite's one external `exec`;
 the harness replaces only its program name with a guaranteed miss on both
 platforms, preserving the parse, wait and failure path without launching a GUI.
-The native suite remains green. The MinGW suite under Wine now completes in
-6.7 seconds and exposes 11 transcript differences: six are escaped Windows
-paths the portability pass does not yet recognise, while the others are real
-platform shapes (drive syntax, special folders and path separators). They are
-recorded rather than blessed from Wine; a native Windows run remains the
-authority.
+The native suite remains green. The first MinGW suite under Wine completed in
+6.7 seconds and exposed 11 transcript differences: six machine paths plus five
+real platform shapes (drive syntax, special folders and path separators).
+
+The transcript portability pass now recognises paths after `esc` has doubled
+every Windows separator, as well as raw command-line paths, and canonicalises
+the separator immediately after `<dir>`, `<home>` and `<exedir>`. The six
+machine-shaped diffs disappear without changing a Linux golden; a direct unit
+case guards both Windows spellings. Five deliberately platform-shaped scripts
+remain. They are recorded rather than blessed from Wine; a native Windows run
+remains the authority for their expected transcripts.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
