@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 399
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 400
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4536,6 +4536,15 @@ joins and `?`. These are test corrections rather than conditional production
 answers—the generic implementations were already returning the Windows forms.
 The MinGW binary now reaches 331/332 under Wine; the one remaining failure is
 the real `fileunlock` mismatch handled next.
+
+That last TTL failure was an API mismatch rather than a Wine exception. Rust's
+standard whole-file lock uses `LockFileEx`; upstream uses `LockFile` and then
+`UnlockFile` over `(0, 0, DWORD_MAX, DWORD_MAX)`. Wine accepted the first form
+but refused the unlock, so one handle reported a successful `filelock` followed
+by a failed `fileunlock`. Windows now uses upstream's exact pair and range;
+Unix retains its advisory standard-library lock. The complete MinGW TTL unit
+binary is 332/332 under Wine, as is the native Linux run, and the upstream
+script suite remains green.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

@@ -2,11 +2,10 @@
 //!
 //! Nothing here goes through [`ScriptHost`](crate::ScriptHost): the handle
 //! table is the macro's own state, and reading bytes out of a file is not a
-//! decision the way loading a *macro* is. What that costs is Windows: upstream
-//! opens with `CreateFileW` and locks with `LockFile`, and the two differ from
-//! `open` and `flock` in ways a script can see — most of all that a Windows
-//! lock is mandatory and a POSIX one is advisory, so `filelock` here keeps
-//! other well-behaved programs out and nothing else.
+//! decision the way loading a *macro* is. Windows uses upstream's exact
+//! `LockFile`/`UnlockFile` range; Unix uses its advisory whole-file lock. The
+//! distinction is visible: Windows prevents overlapping I/O, while Unix keeps
+//! only other well-behaved programs out.
 //!
 //! Two behaviours are deliberately **not** upstream's, both in `filelock`, and
 //! both are called out on that command.

@@ -41,6 +41,7 @@ onig_sys = { version = "69.9", default-features = false }
 # needs to be initialised for this call.
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_UI_Shell",
 ] }

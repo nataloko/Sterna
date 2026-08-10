@@ -181,7 +181,7 @@ impl Files {
     /// `filelock`'s `LockFile` over the whole file, once.
     pub fn try_lock(&mut self, fhi: i32) -> bool {
         match self.slot(fhi) {
-            Some(slot) => slot.file.try_lock().is_ok(),
+            Some(slot) => try_lock(&slot.file),
             None => false,
         }
     }
@@ -189,10 +189,40 @@ impl Files {
     /// `fileunlock`'s `UnlockFile`.
     pub fn unlock(&mut self, fhi: i32) -> bool {
         match self.slot(fhi) {
-            Some(slot) => slot.file.unlock().is_ok(),
+            Some(slot) => unlock(&slot.file),
             None => false,
         }
     }
+}
+
+#[cfg(not(windows))]
+fn try_lock(file: &File) -> bool {
+    file.try_lock().is_ok()
+}
+
+#[cfg(not(windows))]
+fn unlock(file: &File) -> bool {
+    file.unlock().is_ok()
+}
+
+#[cfg(windows)]
+fn try_lock(file: &File) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::LockFile;
+
+    // SAFETY: `file` owns a live handle for the duration of the call. The
+    // offset and length are exactly TTLFileLock's five LockFile arguments.
+    unsafe { LockFile(file.as_raw_handle(), 0, 0, u32::MAX, u32::MAX) != 0 }
+}
+
+#[cfg(windows)]
+fn unlock(file: &File) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::UnlockFile;
+
+    // SAFETY: as above; Windows requires the unlock range to exactly match
+    // the range passed to LockFile.
+    unsafe { UnlockFile(file.as_raw_handle(), 0, 0, u32::MAX, u32::MAX) != 0 }
 }
 
 /// A TTL string is bytes; a path on this platform may not be.

@@ -1567,6 +1567,12 @@ And for the macro language:
   out-of-bounds accesses have been found in `ttpmacro` by reading; none is
   reproduced, all are listed in `PLAN.md`. Assume the next array is unchecked
   until you have looked.
+- **Rust's whole-file lock is not TTL's Windows lock.** The standard library
+  uses `LockFileEx`; upstream pairs `LockFile` and `UnlockFile` over the exact
+  range `(0, 0, DWORD_MAX, DWORD_MAX)`. Wine accepts the standard lock and then
+  refuses its unlock, leaving `filelock` reporting success and `fileunlock`
+  failure on the same handle. `tt-ttl::files` uses the exact Win32 pair on
+  Windows and keeps the portable advisory lock only on Unix.
 - **A missing reserved word is not diagnosed as a missing command — it is
   diagnosed as a bad assignment.** An unrecognised name is read as a *variable*,
   so a command left out of the table falls into `ExecCmnd`'s `else` arm
