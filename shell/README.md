@@ -142,6 +142,14 @@ Three things that look like painter bugs and are not:
   default. Painting index 0 there gives a black-on-black screen, which reads as
   a parser bug.
 
+`ANSIColor` is the exception that cannot be read as one more Qt colour. It
+changes the palette used by the core's nearest-colour search *while SGR is
+parsed*, as well as the RGB the painter uses later. `Theme::applySettings`
+therefore asks `Session::paletteRgb` for the live 256-entry table instead of
+parsing the setting itself. The first sixteen entries arrive already converted
+from the file's legacy order; keeping that conversion on the core side gives
+the search and the painter one answer.
+
 Four settings act only at this last step. Bold and underline each have an
 independent font gate and colour gate, so a cell may be blue in a regular face
 or bold in the normal colour. `UseNormalBGColor` replaces an attribute pair's

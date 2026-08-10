@@ -429,6 +429,16 @@ And for the AppImage, where two of the three failures are silent:
   flip the real one applies, so every truecolor SGR resolved to the wrong
   index. When a manual stub reimplements upstream logic, diff it against the
   original — `vtdisp.c` is not compiled into the oracle, so nothing else will.
+- **`ANSIColor` is parser state as well as paint.** Truecolor is reduced to a
+  palette index while SGR is parsed, so parsing this key only in Qt paints a
+  grid whose indices were chosen against a different table. Its first sixteen
+  entries also have two orders: the file's legacy 1–7 are the bright colours,
+  and `GetIndex256From16` moves them to drawing indices 9–15. The value itself
+  wraps rather than validates: `colorid & 15`, channels narrowed to `BYTE`,
+  duplicate IDs winning last, and incomplete groups ignored — after a
+  259-byte whole-value limit and a fourteen-byte per-field limit. The live
+  256-entry table belongs to `tt-vt::Config`; both nearest-colour search and
+  `tt_session_palette_rgb` read it.
 
 And for the vendored protocol C, which two compilers disagree about:
 

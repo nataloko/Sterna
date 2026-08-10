@@ -30,12 +30,11 @@ public:
 
     /// Take the colour settings from a session's `TERATERM.INI`.
     ///
-    /// Addressed by name through the C ABI, so this holds no list of settings
-    /// and no parser: `color.normal` and its four siblings arrive as the six
-    /// numbers the file spells them with, and the four enable flags as `on` or
-    /// `off`. A name the schema does not have leaves the compiled-in default
-    /// standing, which is what makes adding a colour setting to the schema the
-    /// only change needed to honour it.
+    /// Scalar colours and switches are addressed by name through the C ABI,
+    /// so this holds no list of settings and no file parser. The palette is
+    /// read as the session's already-parsed table because it also participates
+    /// in truecolor resolution on the core side. A name the schema does not
+    /// have leaves the compiled-in default standing.
     void applySettings(const class Session &session);
 
     /// Resolve one cell to the two colours it is painted with.

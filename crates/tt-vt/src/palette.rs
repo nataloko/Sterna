@@ -69,9 +69,9 @@ pub fn default_palette() -> &'static [Rgb; 256] {
 /// The final flip is the part that surprises: with any full-colour mode on —
 /// and 256-colour is on by default — a result inside the base 16 with a
 /// non-zero low three bits is XORed with 8, so pure red resolves to index 1
-/// ("dark red") rather than 9. The drawing path applies the inverse when it
-/// converts a sequence index back to a palette index, so the round trip is
-/// consistent; index 1 is simply what the cell stores.
+/// ("dark red") rather than 9. The full-colour drawing path uses that index as
+/// is, so dark red is what gets painted too; odd as it looks, the flip is not
+/// undone later.
 pub fn find_closest(palette: &[Rgb; 256], r: i32, g: i32, b: i32, full_color: bool) -> Option<u32> {
     if !(0..=255).contains(&r) || !(0..=255).contains(&g) || !(0..=255).contains(&b) {
         return None;

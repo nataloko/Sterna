@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 1 complete, 2 in progress · **Commits:** 290
+**Last updated:** 2026-08-10 · **Stage:** 1 complete, 2 in progress · **Commits:** 296
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1088,18 +1088,18 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (180 settings over 167 keys: 39 for the terminal,
+  `crates/tt-config/` (185 settings over 172 keys: 39 for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
   writes into, 2026-08-09, plus the whole log family, then the whole
   file-transfer family, then the seven the terminal and the two the *transports*
   were already honouring with no key to read, then the clipboard's sixteen,
   2026-08-09, then the bell's, the serial port's, telnet's, the scrollback's
   and the parser's own eight switches, then the painter's four draw-attribute
-  switches, 2026-08-10), the map onto a running
+  switches and the custom ANSI palette, 2026-08-10), the map onto a running
   terminal in
   `tt-session`, the schema as data over the C ABI, and a Qt dialog that builds
   itself from it. What remains is the *rest of the settings*, which is a line
-  and a citation each — 101 keys as of 2026-08-10, and `tests/upstream.rs`
+  and a citation each — 100 keys as of 2026-08-10, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -3755,6 +3755,40 @@ background. Reversal turns that normal background into the foreground; an
 explicit SGR background still overrides it afterwards.
 
 184 settings over 171 keys, 101 to go.
+
+#### `ANSIColor`, where a drawing setting changes the parser's answer
+
+`crates/tt-config/`, `tt-vt`, `tt-session`, the C ABI and the shell,
+2026-08-10. One setting, but one that crosses every layer because Tera Term
+stores a palette *index* in each cell: `SGR 38;2;r;g;b` resolves to its nearest
+index while the escape sequence is parsed, and the painter later turns that
+same index back into RGB. Giving only the painter the custom palette would make
+those two halves disagree.
+
+**The value is a small language with two C buffer limits.** `ttset.c:797`
+reads at most 259 bytes into `Temp[MAX_PATH]`, divides complete comma-separated
+fields into `(id,r,g,b)` groups, and then lets `GetNthNum` see only fourteen
+bytes of each field through `char T[15]`. An ID is masked with `& 15`, each
+channel narrows to `BYTE`, a failed number is zero, an incomplete group is
+ignored, a duplicate ID wins last, and a partial list leaves the other live
+entries alone. `tt-session::ansi_palette` reproduces all of those rather than
+turning the value into a stricter list the user's own terminal would accept.
+
+**The first sixteen entries have two orders.** `ts.ANSIColor[16]` uses the
+legacy table in which 1 is bright red and 9 is dark red;
+`vtdisp.c:GetIndex256From16` places those at 9 and 1 in the drawing table. The
+session holds the already-permuted 256-entry table so `DispFindClosestColor`'s
+ported search and Qt's painter consume one source of truth. Entries 16–255
+remain the fixed xterm cube and greyscale ramp.
+
+The C ABI now exposes `tt_session_palette_rgb`; the old `tt_palette_rgb`
+remains as the compiled-in fallback for a caller that has no session. Qt asks
+the live session whenever settings are applied and carries no parser of its
+own. Rust tests pin the buffer and narrowing quirks, the C test pins the ABI
+and legacy permutation, and `render_test` pins both a custom SGR colour and a
+truecolor value resolved and painted through the same custom table.
+
+185 settings over 172 keys, 100 to go.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 

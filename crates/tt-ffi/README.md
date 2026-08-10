@@ -49,7 +49,7 @@ Two things about how it is generated, both learned the hard way:
 | | |
 |---|---|
 | Lifecycle | `tt_session_new` / `_free`, `tt_config_default` |
-| Screen | `tt_session_row` (borrowed, zero-copy), `_cols`, `_rows`, `_cursor`, `_title`, `_reverse_video`, `tt_palette_rgb` |
+| Screen | `tt_session_row` (borrowed, zero-copy), `_cols`, `_rows`, `_cursor`, `_title`, `_reverse_video`, `_palette_rgb`; `tt_palette_rgb` is the sessionless default fallback |
 | Viewport | `_scrollback_len`, `_view_offset`, `_set_view_offset`, `_cursor_view_row`, `_line_at`, `_top_line`, `_line` |
 | Input | `_send_key`, `_send_text`, `_paste`, `_mouse`, `_focus`, `_resize`, `_set_cell_pixels`, `_send_break`, `_feed` |
 | Connection | `_connect_serial`, `_connect_telnet`, `_connect_pty`, `_disconnect`, `_is_connected`, `_describe`, `_close_note`, `_pump`, `_drain_events` |
@@ -90,6 +90,11 @@ Deliberately absent, and each for a reason rather than for lack of time:
   `TT_ATTR2_BACK` is set.** Without the bit the cell is asking for the
   *configured* default text colour, which the frontend owns. Painting index 0
   there gives a black-on-black screen — and it will look like a parser bug.
+- **A live painter uses `tt_session_palette_rgb`, not the sessionless
+  fallback.** `ANSIColor` changes both what an index looks like and which index
+  truecolor resolves to, so the renderer must consume the same per-session
+  table the parser searched. `tt_palette_rgb` remains for code that needs the
+  compiled-in defaults before it owns a session.
 - **A wide character occupies two cells**, and the second has
   `width_class == TT_WIDTH_PAD` and no text. Painting per cell without skipping
   the pad draws the glyph twice.

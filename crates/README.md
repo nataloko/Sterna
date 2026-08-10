@@ -128,8 +128,9 @@ behaviour looks like a bug until you check. Reproduced deliberately:
   return, not RI, and `U+009B` is an ESC, not a CSI introducer. Above VT100 the
   mask does not apply. `vtterm.c:1053`.
 - **`DispFindClosestColor` flips bright and dim.** Truecolor red resolves to
-  palette index 1, "dark red", not 9; the drawing path applies the inverse, so
-  the round trip is consistent and index 1 is what the cell stores.
+  palette index 1, "dark red", not 9, and the full-colour drawing path uses
+  that index as-is. Dark red is therefore both what the cell stores and what
+  is painted; the surprising flip is not undone later.
 - **DECSCA's protect bit survives `SGR 0`.** `vtterm.c:2178` ORs it back in
   explicitly, so only another DECSCA clears it. And a *selective* erase is not
   an erase: `BuffSelectedEraseCharsInLine` masks the cell's own attributes to
@@ -307,10 +308,14 @@ Things that look wrong in isolation and are upstream's:
   matching a stub. Note the title reports answer with an **empty** OSC string:
   that is `TitleReportSequence`'s shipped default and an answerback mitigation,
   not a hole.
-- **The colour palette is not in the engine.** Upstream's OSC 4/5/10-19/104/105
-  go through `vtdisp.c`'s `DispGetColor`/`DispSetColor`, so the palette is the
-  display layer's there and the frontend's here. Nothing answers a colour
-  query; `esctest/expected` records the 47 tests that want one.
+- **The startup colour palette is terminal configuration here.** Upstream
+  keeps it in `vtdisp.c`, but `DispFindClosestColor` consults it while parsing
+  truecolor SGR, so `tt-vt::Config` has to carry the same 256 entries the Qt
+  painter later reads. `ANSIColor` can replace the first sixteen; the xterm
+  cube and greyscale ramp after them are fixed. Host-side palette changes are
+  still absent: OSC 4/5/10-19/104/105 go through upstream's
+  `DispGetColor`/`DispSetColor`, nothing here answers those colour queries, and
+  `esctest/expected` records the 47 tests that want one.
 - **DECSCNM, DECPEX and `DECSET 12` are tracked but do nothing**, because what
   they change belongs to the renderer or the printer. They are here so DECRQM
   answers honestly and so the shell can read `reverse_video` when it paints.
