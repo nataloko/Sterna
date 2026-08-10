@@ -21,9 +21,7 @@ pub use enumerate::{enumerate, number_of_port, port_by_number, PortInfo, UsbInfo
 use std::io::{Read, Write};
 #[cfg(windows)]
 use std::os::windows::io::RawHandle;
-use std::time::Duration;
-#[cfg(unix)]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serialport::SerialPort;
 
@@ -329,10 +327,12 @@ impl SerialConn {
                 events.push(SerialEvent::Break);
             }
             if !notice.receive {
-                self.wake
-                    .as_ref()
-                    .expect("the wakeup is still present")
-                    .acknowledge(false)?;
+                if notice.worker {
+                    self.wake
+                        .as_ref()
+                        .expect("the wakeup is still present")
+                        .acknowledge(false)?;
+                }
                 return Ok(0);
             }
         }
@@ -402,22 +402,30 @@ impl SerialConn {
             .acknowledge(more)
     }
 
-    /// Write `data`, honouring DSR flow control if it is on.
+    /// Write `data` for at most `timeout`, honouring DSR flow control if it is
+    /// on.
     ///
     /// Linux has `CRTSCTS` and `IXON`/`IXOFF` and **no DSR flow-control bit at
     /// all** — `commlib.c:219`'s `fOutxDsrFlow` has no kernel equivalent, and
     /// that is a kernel limitation rather than a missing crate feature. So
     /// when the mode is on, the write is gated in userspace: poll DSR, send
     /// only while it is asserted, and give up after `timeout` rather than
-    /// blocking a UI thread forever.
+    /// blocking a UI thread forever. Win32 expresses the same deadline with a
+    /// temporary write-only `COMMTIMEOUTS`; the port's read timeout is restored
+    /// unchanged after every attempt.
     pub fn write(&mut self, data: &[u8], timeout: Duration) -> Result<usize> {
         if self.dead {
             return Err(Error::Disconnected);
         }
         #[cfg(windows)]
         {
-            let _ = timeout;
-            self.write_raw(data)
+            match windows::write(&mut self.port, data, timeout) {
+                Ok(n) => Ok(n),
+                Err(e) => {
+                    self.dead = e.is_disconnected();
+                    Err(e)
+                }
+            }
         }
 
         #[cfg(unix)]
@@ -462,12 +470,13 @@ impl SerialConn {
     /// whether the queue actually emptied.
     ///
     /// **This takes a timeout because the obvious implementation hangs.**
-    /// `tcdrain` — which is what `serialport-rs`'s `flush` calls — waits for
-    /// the output queue to empty, and flow control can hold that off
-    /// indefinitely: drop CTS on the far end and a flush never returns. On a
-    /// GUI thread that is a frozen application, and it is not a rare state,
-    /// it is what a device asserting backpressure looks like. So the queue
-    /// depth is polled instead, and the caller decides how long to care.
+    /// `tcdrain` on Unix and `FlushFileBuffers` on Windows — which are what
+    /// `serialport-rs`'s `flush` calls — wait for the output queue to empty,
+    /// and flow control can hold that off indefinitely: drop CTS on the far
+    /// end and a flush never returns. On a GUI thread that is a frozen
+    /// application, and it is not a rare state, it is what a device asserting
+    /// backpressure looks like. So the queue depth is polled instead, and the
+    /// caller decides how long to care.
     pub fn flush(&mut self, timeout: Duration) -> Result<bool> {
         #[cfg(unix)]
         {
@@ -484,11 +493,25 @@ impl SerialConn {
                 std::thread::sleep(Duration::from_millis(1));
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         {
-            let _ = timeout;
-            self.port.flush().map_err(Error::from_io)?;
-            Ok(true)
+            let deadline = Instant::now() + timeout;
+            loop {
+                let status = windows::output_queue(&self.port)?;
+                if status.broken {
+                    self.wake
+                        .as_mut()
+                        .expect("an open Windows serial port has a wakeup")
+                        .record_break();
+                }
+                if status.bytes == 0 {
+                    return Ok(true);
+                }
+                if Instant::now() >= deadline {
+                    return Ok(false);
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
         }
     }
 

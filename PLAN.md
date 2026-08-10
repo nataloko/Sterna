@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 395
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 396
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4494,6 +4494,18 @@ violation are the actionable “in use” error, while missing/path/invalid-name
 disconnected and every other failure retains its native source. A missing COM
 test passes under Wine; the second-open-is-busy assertion sits with the native
 loopback cases because Wine cannot finish configuring its PTY-backed port.
+
+Windows serial output is bounded now as well. `serialport-rs` gives a COM port
+one timeout for reads and writes, so a short caller write quietly inherited the
+cached 50 ms read value; it also implements flush with `FlushFileBuffers`,
+which can wait forever while CTS or DSR holds the driver queue. A write now
+temporarily changes only the Win32 write timeout and restores the full original
+`COMMTIMEOUTS` even after failure. Flush polls `COMSTAT.cbOutQue` to its own
+deadline. Because that snapshot is obtained through the destructive
+`ClearCommError`, any `CE_BREAK` it observes is put onto the existing manual
+event without consuming a worker notice. Pure timeout and event-ordering tests
+pass under Wine; a native loopback case lowers CTS against a five-second read
+timeout and requires both a 40 ms write and flush to return promptly.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

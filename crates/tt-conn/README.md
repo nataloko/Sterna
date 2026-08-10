@@ -92,10 +92,12 @@ than blocking, because the alternative is a frozen UI whenever a device
 deasserts the line.
 
 **`flush` takes a timeout because the obvious implementation hangs.** `tcdrain`
-waits for the output queue to empty, and flow control can hold that off
-indefinitely — drop CTS on the far end and a flush never returns. That is not a
-rare state; it is what backpressure looks like. The queue depth is polled
-(`TIOCOUTQ`) instead, and the caller decides how long to care.
+on Unix and `FlushFileBuffers` on Windows wait for the output queue to empty,
+and flow control can hold that off indefinitely — drop CTS on the far end and a
+flush never returns. That is not a rare state; it is what backpressure looks
+like. The queue depth is polled (`TIOCOUTQ`/`COMSTAT.cbOutQue`) instead, and the
+caller decides how long to care. Windows preserves a `CE_BREAK` observed by
+that destructive `ClearCommError` snapshot through the normal receive event.
 
 **`/dev/ttyUSB<n>` is not an identity.** It is assigned in attach order, so
 unplugging two adapters and replugging them the other way round swaps their

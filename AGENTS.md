@@ -725,9 +725,12 @@ And for the serial side:
   mapping says "unplugged" when the truth is "`minicom` is still running".
   Both that and the `BrokenPipe`-means-disconnect mapping are wrapped in
   `tt-conn/src/error.rs` — one place to fix.
-- **Never call `tcdrain` from a thread that must stay responsive.** Flow
-  control can hold the output queue forever. `tt-conn::SerialConn::flush` takes
-  a timeout and polls `TIOCOUTQ`.
+- **Never call `tcdrain` or `FlushFileBuffers` from a thread that must stay
+  responsive.** Flow control can hold the output queue forever.
+  `tt-conn::SerialConn::flush` takes a timeout and polls `TIOCOUTQ` on Unix or
+  `COMSTAT.cbOutQue` on Windows. The latter comes from `ClearCommError`, so a
+  `CE_BREAK` found during the snapshot has to be retained for the receive path
+  or checking whether output drained can silently eat an input event.
 - **A Win32 COM handle does not become readable by waiting on the handle.**
   `serialport-rs` opens it synchronously, so the Windows wakeup duplicates the
   handle into a worker blocked in `WaitCommEvent`, publishes one notice, and

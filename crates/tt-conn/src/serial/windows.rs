@@ -6,15 +6,16 @@
 //! to acknowledge it before arming the next wait. This is the same handshake
 //! as Tera Term's `CommThread` and `ReadEnd` event (`commlib.c:638`).
 
+use std::io::Write;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError};
 use std::sync::Arc;
 
 use serialport::COMPort;
 use windows_sys::Win32::Devices::Communication::{
-    ClearCommError, GetCommState, SetCommMask, SetCommState, SetupComm, WaitCommEvent, CE_BREAK,
-    DCB, EVENPARITY, EV_BREAK, EV_ERR, EV_RXCHAR, MARKPARITY, NOPARITY, ODDPARITY, ONESTOPBIT,
-    SPACEPARITY, TWOSTOPBITS,
+    ClearCommError, GetCommState, GetCommTimeouts, SetCommMask, SetCommState, SetCommTimeouts,
+    SetupComm, WaitCommEvent, CE_BREAK, COMMTIMEOUTS, COMSTAT, DCB, EVENPARITY, EV_BREAK, EV_ERR,
+    EV_RXCHAR, MARKPARITY, NOPARITY, ODDPARITY, ONESTOPBIT, SPACEPARITY, TWOSTOPBITS,
 };
 use windows_sys::Win32::Foundation::{
     ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_INVALID_NAME, ERROR_PATH_NOT_FOUND,
@@ -32,6 +33,11 @@ const OUTPUT_QUEUE: u32 = 4 * 1024;
 const XON_LIMIT: u16 = 768;
 const XOFF_LIMIT: u16 = 3328;
 const CONTROLLED_FLAGS: u32 = 0x7fff;
+
+pub(super) struct QueueStatus {
+    pub(super) bytes: u32,
+    pub(super) broken: bool,
+}
 
 /// Open a COM port without losing Win32's reason for failure.
 ///
@@ -109,6 +115,62 @@ pub(super) fn apply(port: &COMPort, params: &SerialParams) -> Result<()> {
         return Err(Error::from_io(std::io::Error::last_os_error()));
     }
     verify_dcb(&expected, &actual)
+}
+
+/// One synchronous write with the caller's deadline, without changing the
+/// read timeout cached by `serialport-rs`.
+pub(super) fn write(
+    port: &mut COMPort,
+    data: &[u8],
+    timeout: std::time::Duration,
+) -> Result<usize> {
+    let handle = port.as_raw_handle() as HANDLE;
+    let mut original = COMMTIMEOUTS::default();
+    // SAFETY: the handle and output structure are live.
+    if unsafe { GetCommTimeouts(handle, &mut original) } == 0 {
+        return Err(Error::from_io(std::io::Error::last_os_error()));
+    }
+    let mut temporary = original;
+    temporary.WriteTotalTimeoutMultiplier = 0;
+    temporary.WriteTotalTimeoutConstant = timeout_constant(timeout);
+    // SAFETY: the handle and input structure are live.
+    if unsafe { SetCommTimeouts(handle, &temporary) } == 0 {
+        return Err(Error::from_io(std::io::Error::last_os_error()));
+    }
+
+    let written = port.write(data).map_err(Error::from_io);
+    // Always put the read and ordinary write policy back, including after a
+    // failed WriteFile. A temporary timeout leaking into the next read is a
+    // connection-wide state bug, not just a slow write.
+    // SAFETY: as above.
+    let restored = if unsafe { SetCommTimeouts(handle, &original) } == 0 {
+        Err(Error::from_io(std::io::Error::last_os_error()))
+    } else {
+        Ok(())
+    };
+    match (written, restored) {
+        (Err(e), _) => Err(e),
+        (Ok(_), Err(e)) => Err(e),
+        (Ok(n), Ok(())) => Ok(n),
+    }
+}
+
+fn timeout_constant(timeout: std::time::Duration) -> u32 {
+    timeout.as_millis().clamp(1, u32::MAX as u128 - 1) as u32
+}
+
+/// Output depth, retaining a break which `ClearCommError` would otherwise eat.
+pub(super) fn output_queue(port: &COMPort) -> Result<QueueStatus> {
+    let mut errors = 0;
+    let mut status = COMSTAT::default();
+    // SAFETY: the handle and both output structures are live.
+    if unsafe { ClearCommError(port.as_raw_handle() as HANDLE, &mut errors, &mut status) } == 0 {
+        return Err(Error::from_io(std::io::Error::last_os_error()));
+    }
+    Ok(QueueStatus {
+        bytes: status.cbOutQue,
+        broken: errors & CE_BREAK != 0,
+    })
 }
 
 fn build_dcb(params: &SerialParams) -> Result<DCB> {
@@ -210,6 +272,7 @@ fn verify_dcb(expected: &DCB, actual: &DCB) -> Result<()> {
 pub(super) struct Notice {
     pub(super) receive: bool,
     pub(super) broken: bool,
+    pub(super) worker: bool,
 }
 
 enum Message {
@@ -221,6 +284,8 @@ pub(super) struct WindowsSerialWake {
     notices: Receiver<Message>,
     acknowledge: SyncSender<bool>,
     wake: Arc<ManualEvent>,
+    held: Option<Message>,
+    pending_break: bool,
     /// Borrowed from the port. `SerialConn::drop` cancels while it is live.
     cancel_handle: usize,
 }
@@ -253,6 +318,7 @@ impl WindowsSerialWake {
                         Notice {
                             receive: true,
                             broken: false,
+                            worker: true,
                         }
                     } else {
                         let mut events = 0;
@@ -294,6 +360,7 @@ impl WindowsSerialWake {
                         Notice {
                             receive: events & EV_RXCHAR != 0,
                             broken: events & EV_BREAK != 0 || errors & CE_BREAK != 0,
+                            worker: true,
                         }
                     };
 
@@ -314,17 +381,47 @@ impl WindowsSerialWake {
             notices: notice_rx,
             acknowledge: ack_tx,
             wake,
+            held: None,
+            pending_break: false,
             cancel_handle,
         })
     }
 
     pub(super) fn take(&mut self) -> Result<Option<Notice>> {
         self.wake.reset();
-        match self.notices.try_recv() {
+        if self.pending_break {
+            self.pending_break = false;
+            if self.held.is_none() {
+                self.held = match self.notices.try_recv() {
+                    Ok(message) => Some(message),
+                    Err(TryRecvError::Disconnected) => Some(Message::End),
+                    Err(TryRecvError::Empty) => None,
+                };
+            }
+            if self.held.is_some() {
+                self.wake.signal();
+            }
+            return Ok(Some(Notice {
+                receive: false,
+                broken: true,
+                worker: false,
+            }));
+        }
+
+        let message = match self.held.take() {
+            Some(message) => Ok(message),
+            None => self.notices.try_recv(),
+        };
+        match message {
             Ok(Message::Notice(notice)) => Ok(Some(notice)),
             Ok(Message::End) | Err(TryRecvError::Disconnected) => Err(Error::Disconnected),
             Err(TryRecvError::Empty) => Ok(None),
         }
+    }
+
+    pub(super) fn record_break(&mut self) {
+        self.pending_break = true;
+        self.wake.signal();
     }
 
     /// Let the worker arm its next native wait. `more` synthesises another
@@ -413,5 +510,49 @@ mod tests {
             ..SerialParams::default()
         };
         assert!(matches!(build_dcb(&params), Err(Error::Unsupported(_))));
+    }
+
+    #[test]
+    fn write_timeout_is_bounded_and_monotonic() {
+        assert_eq!(timeout_constant(std::time::Duration::ZERO), 1);
+        assert_eq!(timeout_constant(std::time::Duration::from_nanos(1)), 1);
+        assert_eq!(timeout_constant(std::time::Duration::from_millis(25)), 25);
+        assert_eq!(
+            timeout_constant(std::time::Duration::from_millis(u32::MAX as u64)),
+            u32::MAX - 1
+        );
+    }
+
+    #[test]
+    fn a_polled_break_does_not_consume_a_worker_notice() {
+        let (notice_tx, notice_rx) = std::sync::mpsc::sync_channel(1);
+        let (ack_tx, _ack_rx) = std::sync::mpsc::sync_channel(1);
+        let wake = Arc::new(ManualEvent::new().unwrap());
+        notice_tx
+            .send(Message::Notice(Notice {
+                receive: true,
+                broken: false,
+                worker: true,
+            }))
+            .unwrap();
+        let mut serial = WindowsSerialWake {
+            notices: notice_rx,
+            acknowledge: ack_tx,
+            wake,
+            held: None,
+            pending_break: false,
+            cancel_handle: 0,
+        };
+
+        serial.record_break();
+        let polled = serial.take().unwrap().unwrap();
+        assert!(polled.broken);
+        assert!(!polled.receive);
+        assert!(!polled.worker);
+
+        let worker = serial.take().unwrap().unwrap();
+        assert!(worker.receive);
+        assert!(!worker.broken);
+        assert!(worker.worker);
     }
 }
