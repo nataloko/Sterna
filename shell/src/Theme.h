@@ -78,6 +78,11 @@ public:
 
     int cellWidth() const { return m_cellW; }
     int cellHeight() const { return m_cellH; }
+    /// The unpadded width `DrawingResizedFont` fits one cell's glyph into.
+    int fontWidth() const { return m_fontW; }
+    /// `VTFontSpace`'s left inset. Ordinary text uses it once; upstream's
+    /// resized wide-glyph path multiplies it by the glyph's cell count.
+    int textOffsetX() const { return m_spaceLeft; }
     /// Distance from the top of the cell to the text baseline.
     int baseline() const { return m_baseline; }
 
@@ -111,6 +116,12 @@ private:
 
     QFont m_font;
     QFont m_boldFont;
+    int m_fontW = 8;
+    int m_fontH = 16;
+    int m_spaceLeft = 0;
+    int m_spaceRight = 0;
+    int m_spaceTop = 0;
+    int m_spaceBottom = 0;
     int m_cellW = 8;
     int m_cellH = 16;
     int m_baseline = 12;

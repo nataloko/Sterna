@@ -45,6 +45,13 @@ bool readFlag(const Session &session, const char *name, bool fallback)
     return value == QLatin1String("on");
 }
 
+int readInt(const Session &session, const char *name, int fallback)
+{
+    bool ok = false;
+    const int value = session.setting(QString::fromLatin1(name)).toInt(&ok);
+    return ok ? value : fallback;
+}
+
 } // namespace
 
 Theme::Theme()
@@ -116,6 +123,19 @@ void Theme::applySettings(const Session &session)
     m_drawResizedFont =
         readFlag(session, "font.draw_resized", m_drawResizedFont);
 
+    const int left = readInt(session, "font.space_left", m_spaceLeft);
+    const int right = readInt(session, "font.space_right", m_spaceRight);
+    const int top = readInt(session, "font.space_top", m_spaceTop);
+    const int bottom = readInt(session, "font.space_bottom", m_spaceBottom);
+    if (left != m_spaceLeft || right != m_spaceRight || top != m_spaceTop ||
+        bottom != m_spaceBottom) {
+        m_spaceLeft = left;
+        m_spaceRight = right;
+        m_spaceTop = top;
+        m_spaceBottom = bottom;
+        recomputeMetrics();
+    }
+
     // Win32 exposes four rasterisation requests. Qt has the same default,
     // antialiased and non-antialiased choices; ClearType's subpixel details
     // remain the platform paint engine's decision, so it maps to the explicit
@@ -152,6 +172,10 @@ void Theme::setFont(const QFont &font)
 
 void Theme::recomputeMetrics()
 {
+    // Measure the face without the cell advance installed by the previous
+    // pass. `applySettings` can change `VTFontSpace` repeatedly, and measuring
+    // our own old spacing would make each Apply grow the cell again.
+    m_font.setLetterSpacing(QFont::AbsoluteSpacing, 0.0);
     QFontMetricsF fm(m_font);
 
     // A run of text is drawn in one `drawText` call, which means the font's
@@ -165,11 +189,13 @@ void Theme::recomputeMetrics()
     // batched freely rather than being drawn a cell at a time to keep them
     // honest.
     const qreal advance = fm.horizontalAdvance(QLatin1Char('M'));
-    m_cellW = qMax(1, qRound(advance));
+    m_fontW = qMax(1, qRound(advance));
+    m_fontH = qMax(1, qCeil(fm.height()));
+    m_cellW = qMax(1, m_fontW + m_spaceLeft + m_spaceRight);
     m_font.setLetterSpacing(QFont::AbsoluteSpacing, m_cellW - advance);
 
-    m_cellH = qMax(1, qCeil(fm.height()));
-    m_baseline = qCeil(fm.ascent());
+    m_cellH = qMax(1, m_fontH + m_spaceTop + m_spaceBottom);
+    m_baseline = qCeil(fm.ascent()) + m_spaceTop;
 
     m_boldFont = m_font;
     m_boldFont.setBold(true);
@@ -190,7 +216,10 @@ bool Theme::shouldResizeGlyph(const QString &text, bool bold, int cells) const
     }
     const QFontMetricsF fm(bold ? m_boldFont : m_font);
     const qreal advance = fm.horizontalAdvance(text);
-    const qreal target = cells * m_cellW;
+    // `DrawingResizedFont` scales into FontWidth, not CellWidth: the latter
+    // includes `VTFontSpace` and stretching through that padding would turn a
+    // margin into a wider glyph (`vtdisp.c:2759`).
+    const qreal target = cells * m_fontW;
     return advance > 0.0 && qAbs(advance - target) > 1.0;
 }
 

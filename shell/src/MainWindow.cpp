@@ -327,7 +327,9 @@ void MainWindow::applyWindowOpacity(bool active)
 
 void MainWindow::onSettingsChanged()
 {
+    const QSize oldCell = m_view->sizeForCells(1, 1);
     m_view->applySettings();
+    const bool cellSizeChanged = oldCell != m_view->sizeForCells(1, 1);
 
     // Tera Term's four accelerators are resources whose handlers consult
     // these switches (`vtwin.cpp:1454`). Qt actions own their shortcuts, so a
@@ -374,7 +376,8 @@ void MainWindow::onSettingsChanged()
     const int cols = m_session->setting(QStringLiteral("terminal.cols")).toInt();
     const int rows = m_session->setting(QStringLiteral("terminal.rows")).toInt();
     if (isVisible() && cols > 0 && rows > 0
-        && (cols != m_session->cols() || rows != m_session->rows())) {
+        && (cellSizeChanged || cols != m_session->cols()
+            || rows != m_session->rows())) {
         const QSize want = m_view->sizeForCells(cols, rows);
         resize(size() + (want - m_view->size()));
     }

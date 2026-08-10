@@ -1243,6 +1243,59 @@ void test_font_quality_and_resizing_are_live_settings()
     CHECK(h.view.theme().font().styleStrategy() == QFont::PreferDefault);
 }
 
+void test_vt_font_space_changes_the_cell_and_glyph_origin()
+{
+    Harness h;
+    QString error;
+    h.feed("\033[?25lA");
+    h.render();
+
+    const int oldWidth = h.view.theme().cellWidth();
+    const int oldHeight = h.view.theme().cellHeight();
+    const int oldBaseline = h.view.theme().baseline();
+    auto firstInk = [&h]() {
+        QPoint first(-1, -1);
+        for (int y = 0; y < h.view.theme().cellHeight(); y++) {
+            for (int x = 0; x < h.view.theme().cellWidth(); x++) {
+                if (h.image.pixelColor(x, y) != kWhite) {
+                    if (first.x() < 0 || x < first.x()) {
+                        first.setX(x);
+                    }
+                    if (first.y() < 0 || y < first.y()) {
+                        first.setY(y);
+                    }
+                }
+            }
+        }
+        return first;
+    };
+    const QPoint oldInk = firstInk();
+    CHECK(oldInk.x() >= 0 && oldInk.y() >= 0);
+
+    CHECK(h.session.setSetting(QStringLiteral("font.space_left"),
+                               QStringLiteral("3"), &error));
+    CHECK(h.session.setSetting(QStringLiteral("font.space_right"),
+                               QStringLiteral("4"), &error));
+    CHECK(h.session.setSetting(QStringLiteral("font.space_top"),
+                               QStringLiteral("5"), &error));
+    CHECK(h.session.setSetting(QStringLiteral("font.space_bottom"),
+                               QStringLiteral("6"), &error));
+    h.view.applySettings();
+    h.render();
+
+    CHECK(h.view.theme().cellWidth() == oldWidth + 7);
+    CHECK(h.view.theme().cellHeight() == oldHeight + 11);
+    CHECK(h.view.theme().baseline() == oldBaseline + 5);
+    CHECK(h.view.theme().textOffsetX() == 3);
+    CHECK(firstInk() == oldInk + QPoint(3, 5));
+
+    // Applying an unchanged file must not measure the old cell spacing as if
+    // it were part of the font and grow the grid a second time.
+    h.view.applySettings();
+    CHECK(h.view.theme().cellWidth() == oldWidth + 7);
+    CHECK(h.view.theme().cellHeight() == oldHeight + 11);
+}
+
 void test_attribute_colours_can_keep_the_normal_background()
 {
     Harness h;
@@ -1794,6 +1847,7 @@ int main(int argc, char **argv)
     test_url_colour_and_underline_are_independent();
     test_the_font_attribute_switches_are_independent_of_the_colours();
     test_font_quality_and_resizing_are_live_settings();
+    test_vt_font_space_changes_the_cell_and_glyph_origin();
     test_attribute_colours_can_keep_the_normal_background();
     test_use_text_colour_repairs_only_the_three_same_colour_pairs();
     test_the_settings_dialog_is_built_from_the_schema();

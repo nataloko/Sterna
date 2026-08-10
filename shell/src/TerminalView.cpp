@@ -488,7 +488,9 @@ void TerminalView::paintEvent(QPaintEvent *)
             p.fillRect(box, runBg);
             p.setPen(runFg);
             p.setFont(runBold ? m_theme.boldFont() : m_theme.font());
-            p.drawText(QPoint(box.left(), y * ch + m_theme.baseline()), runText);
+            p.drawText(QPoint(box.left() + m_theme.textOffsetX(),
+                              y * ch + m_theme.baseline()),
+                       runText);
             if (runUnder) {
                 const int uy = y * ch + m_theme.baseline() + 1;
                 p.drawLine(box.left(), uy, box.right(), uy);
@@ -508,8 +510,13 @@ void TerminalView::paintEvent(QPaintEvent *)
                 QFontMetricsF(p.font()).horizontalAdvance(text);
             p.save();
             p.setClipRect(box);
-            p.translate(box.left(), 0);
-            p.scale(box.width() / advance, 1.0);
+            // Upstream's resized path fits the glyph into the unpadded font
+            // box and multiplies the left inset by a wide glyph's cell count
+            // (`vtdisp.c:2759`). The background and clip remain the full cell.
+            p.translate(box.left() + m_theme.textOffsetX() * (box.width() / cw),
+                        0);
+            p.scale(qreal(m_theme.fontWidth() * (box.width() / cw)) / advance,
+                    1.0);
             p.drawText(QPointF(0, y * ch + m_theme.baseline()), text);
             p.restore();
             if (under) {
@@ -628,7 +635,8 @@ void TerminalView::paintEvent(QPaintEvent *)
                         p.setPen(bg);
                         p.setFont(m_theme.paintsBold(cell.attrs) ? m_theme.boldFont()
                                                                  : m_theme.font());
-                        p.drawText(QPoint(box.left(), cursorRow * ch + m_theme.baseline()),
+                        p.drawText(QPoint(box.left() + m_theme.textOffsetX(),
+                                           cursorRow * ch + m_theme.baseline()),
                                    cellText(cell));
                         break;
                     }
