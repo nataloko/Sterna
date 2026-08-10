@@ -658,7 +658,7 @@ void MainWindow::buildMenus()
 
 void MainWindow::showConnectDialog()
 {
-    SerialDialog dialog(this);
+    SerialDialog dialog(this, m_i18n);
     dialog.setInitial(m_lastPort, m_lastParams);
     if (dialog.exec() != QDialog::Accepted) {
         return;
@@ -864,7 +864,7 @@ void MainWindow::connectSerial(const QString &path, const TtSerialParams &params
 
 void MainWindow::showSshDialog()
 {
-    SshDialog dialog(this);
+    SshDialog dialog(this, m_i18n);
     dialog.setInitial(m_lastSshHost, m_lastSshUser, m_lastSshPort,
                       m_lastSshIdentity, m_lastSshLegacy);
     if (dialog.exec() != QDialog::Accepted) {
@@ -934,7 +934,7 @@ void MainWindow::onSshAuthWanted(const AuthRequest &request)
 
 void MainWindow::showTelnetDialog()
 {
-    TelnetDialog dialog(this);
+    TelnetDialog dialog(this, m_i18n);
     dialog.setInitial(m_lastTelnetHost, m_lastTelnetPort, m_lastTelnetMode);
     if (dialog.exec() != QDialog::Accepted) {
         return;

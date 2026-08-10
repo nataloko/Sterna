@@ -6,8 +6,11 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QIntValidator>
+#include <QPushButton>
 #include <QTimer>
 #include <QVBoxLayout>
+
+#include "I18n.h"
 
 namespace {
 
@@ -21,10 +24,17 @@ const int kBaudRates[] = {
 
 } // namespace
 
-SerialDialog::SerialDialog(QWidget *parent)
+SerialDialog::SerialDialog(QWidget *parent, const I18n *i18n)
     : QDialog(parent)
 {
-    setWindowTitle(tr("Serial connection"));
+    const auto text = [i18n](const char *key, const QString &fallback) {
+        return i18n ? i18n->text(key, fallback) : fallback;
+    };
+    const auto plainText = [i18n](const char *key, const QString &fallback) {
+        return i18n ? i18n->plainText(key, fallback) : fallback;
+    };
+
+    setWindowTitle(plainText("DLG_SERIAL_TITLE", tr("Serial connection")));
 
     m_port = new QComboBox(this);
     m_port->setMinimumWidth(360);
@@ -64,15 +74,19 @@ SerialDialog::SerialDialog(QWidget *parent)
     m_flow->addItem(tr("DSR/DTR"), TT_FLOW_CONTROL_DSR_DTR);
 
     auto *form = new QFormLayout;
-    form->addRow(tr("Port:"), m_port);
-    form->addRow(tr("Baud rate:"), m_baud);
-    form->addRow(tr("Data bits:"), m_dataBits);
-    form->addRow(tr("Parity:"), m_parity);
-    form->addRow(tr("Stop bits:"), m_stopBits);
-    form->addRow(tr("Flow control:"), m_flow);
+    form->addRow(text("DLG_SERIAL_PORT", tr("Port:")), m_port);
+    form->addRow(text("DLG_SERIAL_BAUD", tr("Baud rate:")), m_baud);
+    form->addRow(text("DLG_SERIAL_DATA", tr("Data bits:")), m_dataBits);
+    form->addRow(text("DLG_SERIAL_PARITY", tr("Parity:")), m_parity);
+    form->addRow(text("DLG_SERIAL_STOP", tr("Stop bits:")), m_stopBits);
+    form->addRow(text("DLG_SERIAL_FLOW", tr("Flow control:")), m_flow);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                          this);
+    buttons->button(QDialogButtonBox::Ok)
+        ->setText(text("BTN_OK", tr("OK")));
+    buttons->button(QDialogButtonBox::Cancel)
+        ->setText(text("BTN_CANCEL", tr("Cancel")));
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 

@@ -13,6 +13,7 @@ class QCheckBox;
 class QComboBox;
 class QLineEdit;
 class QSpinBox;
+class I18n;
 
 /// Where to connect, and how much of the protocol to speak there.
 ///
@@ -26,7 +27,7 @@ class TelnetDialog : public QDialog {
     Q_OBJECT
 
 public:
-    explicit TelnetDialog(QWidget *parent = nullptr);
+    explicit TelnetDialog(QWidget *parent = nullptr, const I18n *i18n = nullptr);
 
     QString host() const;
     quint16 port() const;

@@ -14,9 +14,16 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 
-SshDialog::SshDialog(QWidget *parent)
+#include "I18n.h"
+
+SshDialog::SshDialog(QWidget *parent, const I18n *i18n)
     : QDialog(parent)
 {
+    const auto text = [i18n](const char *key, const QString &fallback,
+                             const char *section = "TTSSH") {
+        return i18n ? i18n->text(key, fallback, section) : fallback;
+    };
+
     setWindowTitle(tr("SSH connection"));
 
     m_host = new QComboBox(this);
@@ -71,16 +78,20 @@ SshDialog::SshDialog(QWidget *parent)
     m_useConfig->setChecked(true);
 
     auto *form = new QFormLayout;
-    form->addRow(tr("Host:"), m_host);
-    form->addRow(tr("User:"), m_user);
-    form->addRow(tr("Port:"), m_port);
-    form->addRow(tr("Private key:"), identityRow);
+    form->addRow(text("DLG_HOST_TCPIPHOST", tr("Host:")), m_host);
+    form->addRow(text("DLG_AUTH_USERNAME", tr("User:")), m_user);
+    form->addRow(text("DLG_HOST_TCPIPPORT", tr("Port:")), m_port);
+    form->addRow(text("DLG_AUTH_PRIVATEKEY", tr("Private key:")), identityRow);
     form->addRow(QString(), m_agent);
     form->addRow(QString(), m_useConfig);
     form->addRow(QString(), m_legacy);
 
     auto *buttons =
         new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    buttons->button(QDialogButtonBox::Ok)
+        ->setText(text("BTN_OK", tr("OK")));
+    buttons->button(QDialogButtonBox::Cancel)
+        ->setText(text("BTN_CANCEL", tr("Cancel")));
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 

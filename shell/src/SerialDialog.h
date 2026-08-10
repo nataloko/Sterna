@@ -11,6 +11,7 @@
 
 class QComboBox;
 class QTimer;
+class I18n;
 
 /// Pick a port and its line settings.
 ///
@@ -22,7 +23,7 @@ class SerialDialog : public QDialog {
     Q_OBJECT
 
 public:
-    explicit SerialDialog(QWidget *parent = nullptr);
+    explicit SerialDialog(QWidget *parent = nullptr, const I18n *i18n = nullptr);
 
     /// The `open_path` of the chosen port — never the `/dev/ttyUSB<n>` name,
     /// which is assigned in attach order and can point at a different physical

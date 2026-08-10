@@ -29,6 +29,7 @@
 #include <cstring>
 
 #include <QComboBox>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QEventLoop>
 #include <QFile>
@@ -37,6 +38,7 @@
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
+#include <QPushButton>
 #include <QScreen>
 #include <QStandardPaths>
 #include <QTabWidget>
@@ -48,8 +50,11 @@
 #include "MainWindow.h"
 #include "I18n.h"
 #include "PasteDialog.h"
+#include "SerialDialog.h"
 #include "Session.h"
 #include "SettingsDialog.h"
+#include "SshDialog.h"
+#include "TelnetDialog.h"
 #include "TerminalView.h"
 
 static int failures = 0;
@@ -1432,6 +1437,43 @@ void test_the_settings_dialog_uses_a_language_catalog()
     }
 }
 
+void test_the_connection_dialogs_use_the_language_catalog()
+{
+    QString error;
+    I18n i18n;
+    CHECK(i18n.load(QStringLiteral("lang\\ja_JP.lng"), QString(), &error));
+
+    const auto hasLabel = [](const QDialog &dialog, const QString &wanted) {
+        for (const QLabel *label : dialog.findChildren<QLabel *>()) {
+            if (label->text() == wanted) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto cancelText = [](const QDialog &dialog) {
+        const auto *buttons = dialog.findChild<QDialogButtonBox *>();
+        return buttons && buttons->button(QDialogButtonBox::Cancel)
+                   ? buttons->button(QDialogButtonBox::Cancel)->text()
+                   : QString();
+    };
+
+    SerialDialog serial(nullptr, &i18n);
+    CHECK(serial.windowTitle() == QStringLiteral("シリアルポート"));
+    CHECK(hasLabel(serial, QStringLiteral("フロー制御(&F):")));
+    CHECK(cancelText(serial) == QStringLiteral("キャンセル"));
+
+    SshDialog ssh(nullptr, &i18n);
+    CHECK(hasLabel(ssh, QStringLiteral("ユーザ名(&N):")));
+    CHECK(hasLabel(ssh, QStringLiteral("秘密鍵(&K):")));
+    CHECK(cancelText(ssh) == QStringLiteral("キャンセル"));
+
+    TelnetDialog telnet(nullptr, &i18n);
+    CHECK(hasLabel(telnet, QStringLiteral("ホスト(&O):")));
+    CHECK(hasLabel(telnet, QStringLiteral("ポート#(&P):")));
+    CHECK(cancelText(telnet) == QStringLiteral("キャンセル"));
+}
+
 /// Only what changed. A dialog that wrote every field would pin all of them
 /// into the user's file the first time it was opened, and a pinned setting
 /// stops following upstream's default for ever.
@@ -1891,6 +1933,7 @@ int main(int argc, char **argv)
     test_use_text_colour_repairs_only_the_three_same_colour_pairs();
     test_the_settings_dialog_is_built_from_the_schema();
     test_the_settings_dialog_uses_a_language_catalog();
+    test_the_connection_dialogs_use_the_language_catalog();
     test_the_dialog_writes_only_what_changed();
     test_window_opacity_follows_activation();
     test_the_window_opens_at_the_configured_size();

@@ -13,6 +13,7 @@ class QCheckBox;
 class QComboBox;
 class QLineEdit;
 class QSpinBox;
+class I18n;
 
 /// Where to connect, and the two switches that are not obvious.
 ///
@@ -25,7 +26,7 @@ class SshDialog : public QDialog {
     Q_OBJECT
 
 public:
-    explicit SshDialog(QWidget *parent = nullptr);
+    explicit SshDialog(QWidget *parent = nullptr, const I18n *i18n = nullptr);
 
     /// Fill `out` from the fields. The strings it points at live in this
     /// dialog, so `out` must not outlive it — which it never does: the caller

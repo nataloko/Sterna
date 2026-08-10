@@ -8,13 +8,23 @@
 #include <QFormLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPushButton>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
-TelnetDialog::TelnetDialog(QWidget *parent)
+#include "I18n.h"
+
+TelnetDialog::TelnetDialog(QWidget *parent, const I18n *i18n)
     : QDialog(parent)
 {
-    setWindowTitle(tr("Telnet connection"));
+    const auto text = [i18n](const char *key, const QString &fallback) {
+        return i18n ? i18n->text(key, fallback) : fallback;
+    };
+    const auto plainText = [i18n](const char *key, const QString &fallback) {
+        return i18n ? i18n->plainText(key, fallback) : fallback;
+    };
+
+    setWindowTitle(plainText("DLG_TCPIP_TITLE", tr("Telnet connection")));
 
     m_host = new QLineEdit(this);
     m_host->setMinimumWidth(320);
@@ -44,13 +54,17 @@ TelnetDialog::TelnetDialog(QWidget *parent)
     connect(m_mode, &QComboBox::activated, this, [this] { m_modePinned = true; });
 
     auto *form = new QFormLayout;
-    form->addRow(tr("Host:"), m_host);
-    form->addRow(tr("Port:"), m_port);
+    form->addRow(text("DLG_HOST_TCPIPHOST", tr("Host:")), m_host);
+    form->addRow(text("DLG_TCPIP_PORT", tr("Port:")), m_port);
     form->addRow(tr("Protocol:"), m_mode);
     form->addRow(QString(), m_binary);
 
     auto *buttons =
         new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    buttons->button(QDialogButtonBox::Ok)
+        ->setText(text("BTN_OK", tr("OK")));
+    buttons->button(QDialogButtonBox::Cancel)
+        ->setText(text("BTN_CANCEL", tr("Cancel")));
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
