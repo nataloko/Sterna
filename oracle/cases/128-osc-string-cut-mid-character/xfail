@@ -1,0 +1,19 @@
+A UTF-8 sequence cut off by an OSC's terminator is decoded in two different
+places, and the two disagree about whether that is an error.
+
+Upstream collects the OSC's bytes RAW into `StrBuff` and decodes the whole
+string once, at the end, with `ConvertUTF16` (`vtterm.c:4960`) -- so the
+terminator is never one of the bytes the decoder sees, the sequence simply
+runs out, and `CharSetFinish` discards it without a word. The title is `ab`.
+
+Here the decoding happens a layer earlier: `Vt::rewrite_c1` walks the whole
+byte stream before `vte` sees any of it, because that is the only place a
+bare C1 byte can be told from a continuation byte (see case 97). It has no
+idea an OSC is open, so the BEL is just the byte that broke the sequence,
+and a broken sequence is one U+FFFD per byte -- which is exactly right in
+the middle of a line and wrong here.
+
+Costs two replacement characters at the end of a title whose last character
+was cut in half by the sender. Fixing it means the C1 rewrite knowing which
+parser state it is in, which `vte` does not expose -- the same wall case 51
+hit for DEL. Revisit if the parser is ever forked.

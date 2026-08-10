@@ -27,7 +27,8 @@ use tt_config::{
     TerminalCrReceive, TerminalCrSend, WindowTitleChange, WindowTitleReport,
 };
 use tt_vt::{
-    Beep, ColorFlags, Config, CrReceive, CrSend, ShiftFlags, TermId, TitleChange, TitleReport,
+    valid_terminal_uid, Beep, ColorFlags, Config, CrReceive, CrSend, ShiftFlags, TabStopFlags,
+    TermId, TitleChange, TitleReport, DEFAULT_TERMINAL_UID,
 };
 
 /// `CRSend` → the engine's, named because `TCPCRSend` restores this one.
@@ -129,6 +130,22 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
         // what they wrote. 32 is the C buffer this filled (`tttypes.h:350`),
         // and it truncates rather than refusing, as it does there.
         answerback: hex_decode(&s.terminal_answerback, 32),
+        back_wrap: s.terminal_back_wrap,
+        vt_compat_tab: s.terminal_vt_compat_tab,
+        tab_stop_modify: TabStopFlags::parse_ini(&s.terminal_tab_stop_modify),
+        invalid_decrqss: s.terminal_invalid_decrqss,
+        // Validated here rather than held validated, the way the answerback's
+        // `$xx` is decoded here rather than stored decoded: the file keeps
+        // whatever the user wrote and the terminal answers with the form
+        // `ttset.c:1691` would have produced. An invalid value takes the key's
+        // own default, which is what upstream's fallback is.
+        terminal_uid: valid_terminal_uid(&s.terminal_uid)
+            .unwrap_or_else(|| DEFAULT_TERMINAL_UID.to_string()),
+        lock_uid: s.terminal_lock_uid,
+        auto_invoke: s.terminal_auto_invoke,
+        // `GetPrivateProfileInt` cannot return a negative (`ini-audit/`), so
+        // the floor is only for a caller that set the field by hand.
+        max_osc_buffer: s.terminal_max_osc_buffer.max(0) as usize,
         ..*base
     }
 }

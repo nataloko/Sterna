@@ -278,6 +278,13 @@ pub struct Grid {
     /// are subject to it: upstream funnels the window, XTWINOPS and DECCOLM
     /// through the one `BuffChangeTerminalSize`.
     clear_on_resize: bool,
+    /// `TF_BACKWRAP` (key `BackWrap`, default off) — see [`Grid::backspace`].
+    back_wrap: bool,
+    /// `ts.VTCompatTab` (default off) — see [`Grid::forward_tab`]. The parser
+    /// reads the same setting for its own half of it, which is why this is a
+    /// copy rather than the only one: `vtterm.c` and `buffer.c` each consult
+    /// `ts` where they stand.
+    vt_compat_tab: bool,
 }
 
 impl Grid {
@@ -307,12 +314,24 @@ impl Grid {
             saved: [None, None],
             stashed: None,
             clear_on_resize: false,
+            back_wrap: false,
+            vt_compat_tab: false,
         }
     }
 
     /// `TF_CLEARONRESIZE` (`ttset.c:1676`, key default off).
     pub fn set_clear_on_resize(&mut self, on: bool) {
         self.clear_on_resize = on;
+    }
+
+    /// `TF_BACKWRAP` (`ttset.c:1108`, key default off).
+    pub fn set_back_wrap(&mut self, on: bool) {
+        self.back_wrap = on;
+    }
+
+    /// `ts.VTCompatTab` (`ttset.c:1343`, key default off).
+    pub fn set_vt_compat_tab(&mut self, on: bool) {
+        self.vt_compat_tab = on;
     }
 
     /// `BuffSaveScreen` — park a copy of the visible page.
@@ -906,8 +925,18 @@ impl Grid {
     /// BS — `vtterm.c:BackSpace`. It stops dead *on* the left margin rather
     /// than stepping past it, and `TF_BACKWRAP` (off by default) is the only
     /// thing that would move it to the previous line.
+    ///
+    /// Where the back-wrap lands is the right **margin**, not the last column:
+    /// upstream is `MoveCursor(CursorRightM, CursorY-1)`, so with DECSLRM in
+    /// force a BS at the left margin comes back inside the margins. And it does
+    /// not scroll — row 0 has nowhere to go, and upstream tests `CursorY > 0`
+    /// rather than reaching for `CursorUpWithScroll`.
     pub fn backspace(&mut self) {
-        if self.cursor.x != self.left && self.cursor.x > 0 {
+        if self.cursor.x == self.left || self.cursor.x == 0 {
+            if self.back_wrap && self.cursor.y > 0 {
+                self.move_cursor(self.right, self.cursor.y - 1);
+            }
+        } else if self.cursor.x > 0 {
             self.move_cursor(self.cursor.x - 1, self.cursor.y);
         }
     }
@@ -975,7 +1004,14 @@ impl Grid {
     /// pending wrap**, because `ts.VTCompatTab` is off by default
     /// (`ttset.c:1343`). So a tab at the end of a line behaves like a printed
     /// character there, not like a cursor move.
+    ///
+    /// With the setting on it is not merely "leave the wrap alone": upstream
+    /// stashes `Wrap` on the way in and puts it back, and `MoveCursor` clears
+    /// it in between — so a tab on a line that was *already* full comes out
+    /// still full, and the next character wraps as though the tab had not
+    /// happened.
     pub fn forward_tab(&mut self, n: usize) {
+        let was_pending = self.cursor.pending_wrap;
         let line_end = if self.cursor.x > self.right || !self.cursor_in_region() {
             self.cols - 1
         } else {
@@ -990,7 +1026,11 @@ impl Grid {
             Some(&s) if s <= line_end => self.move_cursor(s, self.cursor.y),
             _ => {
                 self.move_cursor(line_end, self.cursor.y);
-                self.cursor.pending_wrap = self.autowrap;
+                self.cursor.pending_wrap = if self.vt_compat_tab {
+                    was_pending
+                } else {
+                    self.autowrap
+                };
             }
         }
     }

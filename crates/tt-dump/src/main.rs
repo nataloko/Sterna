@@ -5,7 +5,9 @@
 //! ```text
 //! tt-dump [--cols N] [--rows N] [--term ID] [--attrs] [--scrollback]
 //!         [--crreceive cr|lf|crlf|auto] [--clearonresize]
-//!         [--noscrollwindowclear] [FILE]
+//!         [--noscrollwindowclear] [--backwrap] [--vtcompattab]
+//!         [--tabstop SPEC] [--invaliddecrqss] [--autoinvoke] [--nolocktuid]
+//!         [--maxoscbuffer N] [FILE]
 //! ```
 //!
 //! `run_diff.sh` runs both engines over every case in `oracle/cases/` and diffs
@@ -22,11 +24,14 @@ use tt_grid::{
     char_width, Cell, ATTR2_BACK, ATTR2_FORE, ATTR2_PROTECT, ATTR_BLINK, ATTR_BOLD, ATTR_REVERSE,
     ATTR_SPECIAL, ATTR_UNDER, WIDTH_PAD,
 };
-use tt_vt::{Config, CrReceive, Key, Modifiers, MouseEvent, TermId, Vt};
+use tt_vt::{Config, CrReceive, Key, Modifiers, MouseEvent, TabStopFlags, TermId, Vt};
 
 const USAGE: &str = "usage: tt-dump [--cols N] [--rows N] [--term ID] [--attrs]\n\
                      \x20              [--scrollback] [--crreceive cr|lf|crlf|auto]\n\
-                     \x20              [--clearonresize] [--noscrollwindowclear] [FILE]\n";
+                     \x20              [--clearonresize] [--noscrollwindowclear]\n\
+                     \x20              [--backwrap] [--vtcompattab] [--tabstop SPEC]\n\
+                     \x20              [--invaliddecrqss] [--autoinvoke] [--nolocktuid]\n\
+                     \x20              [--maxoscbuffer N] [FILE]\n";
 
 /// `TermWidthMax` / `TermHeightMax` from Tera Term's `ttcommon.h`, so the two
 /// engines reject the same sizes.
@@ -42,6 +47,13 @@ struct Args {
     clear_on_resize: bool,
     home_erase_clears_screen: bool,
     cr_receive: CrReceive,
+    back_wrap: bool,
+    vt_compat_tab: bool,
+    tab_stop_modify: TabStopFlags,
+    invalid_decrqss: bool,
+    auto_invoke: bool,
+    lock_uid: bool,
+    max_osc_buffer: usize,
     path: Option<String>,
 }
 
@@ -96,6 +108,13 @@ fn main() {
         scrollback_max: SCROLL_BUFF_SIZE.saturating_sub(args.rows),
         clear_on_resize: args.clear_on_resize,
         home_erase_clears_screen: args.home_erase_clears_screen,
+        back_wrap: args.back_wrap,
+        vt_compat_tab: args.vt_compat_tab,
+        tab_stop_modify: args.tab_stop_modify,
+        invalid_decrqss: args.invalid_decrqss,
+        auto_invoke: args.auto_invoke,
+        lock_uid: args.lock_uid,
+        max_osc_buffer: args.max_osc_buffer,
         ..Config::default()
     });
     // `oracle/src/main.c` opens with `BuffChangeTerminalSize(cols, rows)` after
@@ -233,6 +252,13 @@ fn parse_args() -> Result<Option<Args>, String> {
         clear_on_resize: false,
         home_erase_clears_screen: true,
         cr_receive: CrReceive::Cr,
+        back_wrap: false,
+        vt_compat_tab: false,
+        tab_stop_modify: TabStopFlags::ALL,
+        invalid_decrqss: false,
+        auto_invoke: false,
+        lock_uid: true,
+        max_osc_buffer: 4096,
         path: None,
     };
 
@@ -262,6 +288,23 @@ fn parse_args() -> Result<Option<Args>, String> {
             "--scrollback" => args.scrollback = true,
             "--clearonresize" => args.clear_on_resize = true,
             "--noscrollwindowclear" => args.home_erase_clears_screen = false,
+            "--backwrap" => args.back_wrap = true,
+            "--vtcompattab" => args.vt_compat_tab = true,
+            "--invaliddecrqss" => args.invalid_decrqss = true,
+            "--autoinvoke" => args.auto_invoke = true,
+            "--nolocktuid" => args.lock_uid = false,
+            "--maxoscbuffer" => {
+                args.max_osc_buffer = next(&mut i)?
+                    .parse()
+                    .map_err(|_| "tt-dump: bad --maxoscbuffer".to_string())?
+            }
+            // The INI's own spelling, so a case's `cmd` reads the way the file
+            // would. `TabStopFlags::parse_ini` is the schema's parser, which
+            // means a typo here disables every one of the four rather than
+            // failing — the oracle's copy refuses instead, and that asymmetry
+            // is deliberate: the oracle is where a mistyped case would
+            // otherwise pass by agreeing with a wrong Rust parse.
+            "--tabstop" => args.tab_stop_modify = TabStopFlags::parse_ini(&next(&mut i)?),
             "--crreceive" => {
                 let v = next(&mut i)?;
                 args.cr_receive = match v.as_str() {

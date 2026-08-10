@@ -182,6 +182,128 @@ impl TitleChange {
     }
 }
 
+/// `ts.TabStopFlag` — which sequences a *host* may move the tab stops with.
+///
+/// `tttypes.h:196`. Four bits and two pairs: `HTS7` is `ESC H`, `HTS8` is the
+/// 8-bit C1 at `0x88`, `TBC0` is `CSI 0 g` and `TBC3` is `CSI 3 g`. Upstream
+/// gates each at its own site (`vtterm.c:1512`, `:1160`, `buffer.c:5266`,
+/// `:5280`) rather than in one place, so the four are genuinely independent —
+/// a terminal can accept `ESC H` and refuse the C1 spelling of the same thing.
+///
+/// It exists because a host that clears all the stops and sets its own leaves
+/// the terminal unusable for whatever runs next, and the user has no way back
+/// short of a reset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TabStopFlags(pub u16);
+
+impl TabStopFlags {
+    pub const HTS7: u16 = 1;
+    pub const HTS8: u16 = 2;
+    pub const TBC0: u16 = 4;
+    pub const TBC3: u16 = 8;
+    pub const HTS: u16 = Self::HTS7 | Self::HTS8;
+    pub const TBC: u16 = Self::TBC0 | Self::TBC3;
+
+    pub const NONE: TabStopFlags = TabStopFlags(0);
+    pub const ALL: TabStopFlags = TabStopFlags(Self::HTS | Self::TBC);
+
+    /// The names the file spells, longest-matching irrelevant because the
+    /// comparison is whole-word — `ttset.c:1724`.
+    const NAMES: [(&'static str, u16); 6] = [
+        ("HTS", Self::HTS),
+        ("HTS7", Self::HTS7),
+        ("HTS8", Self::HTS8),
+        ("TBC", Self::TBC),
+        ("TBC0", Self::TBC0),
+        ("TBC3", Self::TBC3),
+    ];
+
+    pub fn allows(self, bit: u16) -> bool {
+        self.0 & bit != 0
+    }
+
+    /// `TabStopModifySequence`'s value — `ttset.c:1717`.
+    ///
+    /// `on`/`all` and `off`/`none` are tested against the **whole** value and
+    /// assign the whole word; anything else is a comma list starting from
+    /// nothing, so a spelling with no recognised word in it — including an
+    /// empty value — is a terminal that refuses every one of the four.
+    ///
+    /// Unlike [`ShiftFlags::parse_ini`] there is no `-` prefix and no
+    /// subtraction: the list only ever adds. The trap that key carries, where
+    /// a present value starts from zero rather than from the default, is the
+    /// same here and one arm less surprising, because `on` is a value the list
+    /// arm never sees.
+    pub fn parse_ini(value: &str) -> TabStopFlags {
+        let whole = value.trim();
+        if whole.eq_ignore_ascii_case("on") || whole.eq_ignore_ascii_case("all") {
+            return TabStopFlags::ALL;
+        }
+        if whole.eq_ignore_ascii_case("off") || whole.eq_ignore_ascii_case("none") {
+            return TabStopFlags::NONE;
+        }
+        let mut out = TabStopFlags::NONE;
+        for item in value.split(',') {
+            let name = item.trim();
+            if let Some(&(_, bit)) = Self::NAMES
+                .iter()
+                .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            {
+                out.0 |= bit;
+            }
+        }
+        out
+    }
+
+    /// The spelling upstream's writer produces — `ttset.c:3072`. `on` and `off`
+    /// for the two whole-word states, and otherwise at most one HTS word and
+    /// one TBC word, in that order.
+    pub fn to_ini(self) -> String {
+        if self == TabStopFlags::ALL {
+            return "on".into();
+        }
+        if self == TabStopFlags::NONE {
+            return "off".into();
+        }
+        let mut parts: Vec<&str> = Vec::new();
+        match self.0 & Self::HTS {
+            Self::HTS7 => parts.push("HTS7"),
+            Self::HTS8 => parts.push("HTS8"),
+            Self::HTS => parts.push("HTS"),
+            _ => {}
+        }
+        match self.0 & Self::TBC {
+            Self::TBC0 => parts.push("TBC0"),
+            Self::TBC3 => parts.push("TBC3"),
+            Self::TBC => parts.push("TBC"),
+            _ => {}
+        }
+        // Upstream's own "shouldn't happen but just in case" arm, which is
+        // reachable: TabStopFlag has bits for nothing else, so an empty list
+        // here means NONE and the arm above already answered.
+        if parts.is_empty() {
+            return "off".into();
+        }
+        parts.join(",")
+    }
+}
+
+/// The eight hex digits the tertiary DA answers with — `ts.TerminalUID`.
+///
+/// Validated the same way in the two places it is assigned: `ttset.c:1691`
+/// reading the file and `vtterm.c:4567` taking DECSTUI off the wire. Both want
+/// exactly eight characters, every one a hex digit, upper-cased in place;
+/// anything else leaves the field as it was, which for the file means the
+/// default and for DECSTUI means whatever the file gave.
+pub fn valid_terminal_uid(value: &str) -> Option<String> {
+    let uid: String = value.to_ascii_uppercase();
+    (uid.len() == 8 && uid.bytes().all(|b| b.is_ascii_hexdigit())).then_some(uid)
+}
+
+/// Upstream's fallback for a `TerminalUID` that is not eight hex digits, which
+/// is also the key's default (`ttset.c:1702`).
+pub const DEFAULT_TERMINAL_UID: &str = "FFFFFFFF";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     pub cols: usize,
@@ -322,6 +444,39 @@ pub struct Config {
     /// bytes upstream's buffer holds. Empty by default, which is a terminal
     /// that answers ENQ with nothing at all.
     pub answerback: Vec<u8>,
+    /// `TF_BACKWRAP` (`ttset.c:1108`, key default off). Whether a BS on the
+    /// left margin steps back to the previous line. Held here as well as in the
+    /// grid because the grid is where it acts and this is where it is read.
+    pub back_wrap: bool,
+    /// `ts.VTCompatTab` (`ttset.c:1343`, key default off). Off — as shipped —
+    /// a tab is like a printed character at the end of a line: `Tab`
+    /// (`vtterm.c:713`) breaks the line before tabbing and `CursorForwardTab`
+    /// arms the pending wrap. On, a tab is only ever a cursor move.
+    pub vt_compat_tab: bool,
+    /// `ts.TabStopFlag` (`ttset.c:1717`, key default `on`). See
+    /// [`TabStopFlags`].
+    pub tab_stop_modify: TabStopFlags,
+    /// `TF_INVALIDDECRPSS` (`ttset.c:1756`, key default off), and upstream's
+    /// comment on it is "(for testing)". Flips the leading digit of every
+    /// DECRQSS reply, so a request the terminal understood is answered as one
+    /// it did not and the other way round. It exists to exercise a *host's*
+    /// error handling.
+    pub invalid_decrqss: bool,
+    /// `ts.TerminalUID` (`ttset.c:1688`), the eight hex digits the tertiary DA
+    /// answers with. Held validated — see [`valid_terminal_uid`].
+    pub terminal_uid: String,
+    /// `TF_LOCKTUID` (`ttset.c:1711`, key default **on**). With it on DECSTUI
+    /// is read and dropped, which is how Tera Term ships: a host cannot change
+    /// the identity the terminal reports.
+    pub lock_uid: bool,
+    /// `TF_AUTOINVOKE` (`ttset.c:1101`, key default off). Whether designating
+    /// into G0 also invokes G0 into GL — see [`Vt::esc_dispatch`]'s designation
+    /// arm for the two things about it that the name does not say.
+    pub auto_invoke: bool,
+    /// `ts.MaxOSCBufferSize` (`ttset.c:1789`, default 4096). The ceiling on a
+    /// string collected out of an OSC; upstream drops every byte past it and
+    /// lets the sequence terminate normally, so a long title arrives cut.
+    pub max_osc_buffer: usize,
 }
 
 /// The private and ANSI modes that are one flag each. Grouped so a reset can
@@ -414,6 +569,14 @@ impl Default for Config {
             continued_line_copy: false,
             beep: Beep::On,
             answerback: Vec::new(),
+            back_wrap: false,
+            vt_compat_tab: false,
+            tab_stop_modify: TabStopFlags::ALL,
+            invalid_decrqss: false,
+            terminal_uid: String::from(DEFAULT_TERMINAL_UID),
+            lock_uid: true,
+            auto_invoke: false,
+            max_osc_buffer: 4096,
         }
     }
 }
@@ -511,6 +674,8 @@ impl Vt {
     pub fn new(config: Config) -> Self {
         let mut grid = Grid::new(config.cols, config.rows, config.scrollback_max);
         grid.set_clear_on_resize(config.clear_on_resize);
+        grid.set_back_wrap(config.back_wrap);
+        grid.set_vt_compat_tab(config.vt_compat_tab);
         // `vtterm.c:ChangeTerminalID` — level 1 never sends 8-bit controls,
         // whatever the setting says.
         let vt_level = config.term_id.vt_level();
@@ -571,6 +736,15 @@ impl Vt {
     fn rewrite_c1(&mut self, bytes: &[u8]) -> Vec<u8> {
         let accept = self.state.config.accept_8bit_ctrl;
         let level = self.state.vt_level;
+        // **HTS is the one C1 that must not be folded**, because
+        // `ts.TabStopFlag` has a separate bit for each of its two spellings
+        // (`vtterm.c:1160` for `0x88`, `:1512` for `ESC H`) and the fold is
+        // what makes them the same sequence. So `0x88` goes through raw and
+        // `Perform::execute` answers for it — the one channel `vte` has that
+        // an `ESC H` cannot arrive on. Everything else is folded, because
+        // `vte` does *not* route a raw C1 into its sequence: `0x9B` arrives at
+        // `execute` too, rather than opening a CSI.
+        let hts8 = self.state.config.tab_stop_modify.allows(TabStopFlags::HTS8);
         // Whatever was held back last time leads off, already vetted. If it is
         // there at all then `utf8_left` is non-zero, so the loop below picks up
         // mid-sequence exactly where it left off.
@@ -587,7 +761,16 @@ impl Vt {
                     if !accept {
                         continue; // dropped, as upstream drops it
                     } else if level < 2 {
+                        // C1 folds to C0 below VT level 2, so `0x88` is a BS
+                        // here and never reaches HTS at all — which is why the
+                        // gate above it is not consulted on this arm.
                         out.push(b & 0x7f);
+                    } else if b == 0x88 {
+                        // Refused, exactly as upstream refuses it: the control
+                        // is consumed and no stop is set.
+                        if hts8 {
+                            out.push(0x88);
+                        }
                     } else {
                         out.push(0x1b);
                         out.push(b - 0x40);
@@ -605,6 +788,20 @@ impl Vt {
                 }
                 // The sequence was cut short. Whatever this byte is, it starts
                 // something new rather than continuing what came before.
+                //
+                // **The two decoders disagree about how loud that is.** Tera
+                // Term's `ParseFirst` emits one U+FFFD for *every byte* it had
+                // taken (`charset.c`'s fallback path), and `vte` emits one for
+                // the whole maximal subpart — so `E2 82 'b'` is two
+                // replacement characters upstream and one here, and every
+                // wider sequence widens the gap. Nothing caught it, because
+                // the only broken sequence in `cases/` was a bare C1 byte,
+                // which is one byte either way.
+                let taken = out.len() - seq_start;
+                out.truncate(seq_start);
+                for _ in 0..taken {
+                    out.extend_from_slice("\u{fffd}".as_bytes());
+                }
                 self.utf8_left = 0;
             }
 
@@ -699,6 +896,8 @@ impl Vt {
 
         s.grid.set_scrollback_max(s.config.scrollback_max);
         s.grid.set_clear_on_resize(s.config.clear_on_resize);
+        s.grid.set_back_wrap(s.config.back_wrap);
+        s.grid.set_vt_compat_tab(s.config.vt_compat_tab);
         s.grid.resize(s.config.cols, s.config.rows);
 
         // `SetupTerm` opens with `ResetCharSet()`, so a G1 designation made by
@@ -1973,7 +2172,17 @@ impl State {
             }
             _ => None,
         };
-        let body = body.unwrap_or_else(|| "0$r".to_string());
+        let mut body = body.unwrap_or_else(|| "0$r".to_string());
+        // `TF_INVALIDDECRPSS` (`vtterm.c:4400`) — flip the leading digit, so a
+        // request the terminal understood is answered as one it did not and
+        // the other way round. It flips the *character*, not the meaning: an
+        // "invalid" reply still carries the value it was about to send, which
+        // is what makes it a test of the host's parser rather than of its
+        // arithmetic.
+        if self.config.invalid_decrqss {
+            let flipped = if body.starts_with('0') { "1" } else { "0" };
+            body = flipped.to_string() + body.get(1..).unwrap_or("");
+        }
         self.send_dcs(&body);
     }
 
@@ -2426,7 +2635,14 @@ impl State {
         // DECSTBM and friends take no intermediate; anything that arrives with
         // one is a sequence we have not ported, and running it as its
         // no-intermediate namesake would be worse than dropping it.
-        if matches!(inter, Some(b) if b != b'?' && b != b'>') {
+        //
+        // The three exceptions are not intermediates at all — `?`, `>` and `=`
+        // are *private markers*, in the parameter byte range (0x30..=0x3F)
+        // rather than the intermediate one, and `vte` reports them here
+        // because it has nowhere else to put them. Leaving `=` out of this
+        // list is what kept the tertiary DA unreachable while its arm was
+        // written and looked right.
+        if matches!(inter, Some(b) if b != b'?' && b != b'>' && b != b'=') {
             return;
         }
         match action {
@@ -2527,9 +2743,24 @@ impl State {
                 }
             }
             'c' => {
+                // The primary form answers whatever the parameter is
+                // (`vtterm.c:4098`); the other two insist on `Param[1] == 0`,
+                // which upstream's reset seeds to 0 (`:218`) so a bare request
+                // qualifies and `CSI > 1 c` is silence.
                 if gt {
                     // Secondary DA: VT382(>32) + xterm rev 331 (vtterm.c:2841).
-                    self.send_csi(">32;331;0c");
+                    if arg0(params, 0) == 0 {
+                        self.send_csi(">32;331;0c");
+                    }
+                } else if inter == Some(b'=') {
+                    // Tertiary DA — `vtterm.c:CSEQ`, which answers with the
+                    // terminal's unit ID in a DCS. `ts.TerminalUID` is
+                    // validated at eight hex digits wherever it is assigned, so
+                    // upstream's `%8s` never pads and this is a plain join.
+                    if arg0(params, 0) == 0 {
+                        let uid = self.config.terminal_uid.clone();
+                        self.send_dcs(&format!("!|{uid}"));
+                    }
                 } else if !private {
                     self.primary_da();
                 }
@@ -2547,9 +2778,18 @@ impl State {
                 let y = arg(params, 0, 1).saturating_sub(1) as usize;
                 self.grid.move_to_row(y);
             }
+            // TBC, and each of the two forms has its own bit
+            // (`buffer.c:5266`, `:5280`). Note where upstream puts the gate:
+            // inside `ClearTabStop`, under an `if (NTabStops>0)` — so with no
+            // stops at all neither arm runs, which is the same outcome by a
+            // different route and the reason this reads as one test here.
             'g' => match arg0(params, 0) {
-                0 => self.grid.clear_tab(),
-                3 => self.grid.clear_all_tabs(),
+                0 if self.config.tab_stop_modify.allows(TabStopFlags::TBC0) => {
+                    self.grid.clear_tab()
+                }
+                3 if self.config.tab_stop_modify.allows(TabStopFlags::TBC3) => {
+                    self.grid.clear_all_tabs()
+                }
                 _ => {}
             },
             'h' => self.set_mode(private, params, true),
@@ -2730,6 +2970,45 @@ fn arg0(params: &Params, n: usize) -> u16 {
         .unwrap_or(0)
 }
 
+impl State {
+    /// Everything after the OSC's first `;`, bounded by `ts.MaxOSCBufferSize`.
+    ///
+    /// **`vte` splits on every semicolon and upstream splits on the first**,
+    /// so the parameters after the leading number have to be joined back up:
+    /// `ParseString` (`vtterm.c:5297`) reads digits into `Param[1]` until a
+    /// `;` sets `HasParamStr`, and from then on *every* byte including the
+    /// next semicolon goes into the string. Taking `params[1]` alone turns a
+    /// window title of `a;b` into `a`, which is what this used to do.
+    ///
+    /// The bound is upstream's `StrLen + 1 < StrBuffSize` against a buffer that
+    /// doubles up to `ts.MaxOSCBufferSize` (`:5265`) — so the ceiling is one
+    /// byte short of the setting, further bytes are dropped, and the sequence
+    /// still terminates normally. It counts **bytes**, not characters, and
+    /// cutting a UTF-8 sequence in half is reachable; `from_utf8_lossy` is
+    /// what the caller does with the result and gives U+FFFD, which is what
+    /// Tera Term's own decoder gives for the same tail.
+    ///
+    /// What this cannot do is bound the *allocation*: `vte` collects the OSC
+    /// into a `Vec` of its own with no ceiling under the `std` feature, so an
+    /// OSC that never terminates still grows without limit. That half of the
+    /// setting is `vte`'s to enforce and is recorded in `PLAN.md`.
+    fn osc_string(&self, params: &[&[u8]]) -> Vec<u8> {
+        let limit = self.config.max_osc_buffer.saturating_sub(1);
+        let mut out: Vec<u8> = Vec::new();
+        for (i, part) in params.iter().skip(1).enumerate() {
+            if i > 0 {
+                out.push(b';');
+            }
+            out.extend_from_slice(part);
+            if out.len() >= limit {
+                break;
+            }
+        }
+        out.truncate(limit);
+        out
+    }
+}
+
 impl Perform for State {
     fn print(&mut self, c: char) {
         let cp = c as u32;
@@ -2808,9 +3087,11 @@ impl Perform for State {
                 // `vtterm.c:Tab()` — a plain HT takes the *pending wrap first*
                 // and only then tabs, so a tab arriving on a full line starts
                 // the next one. CHT (`CSI Ps I`) does not do this; it calls
-                // `CursorForwardTab` directly. `ts.VTCompatTab` would suppress
-                // it, but it is off by default.
-                if self.grid.cursor.pending_wrap {
+                // `CursorForwardTab` directly. `ts.VTCompatTab` suppresses it,
+                // and that is one of the setting's two halves: the other is in
+                // `Grid::forward_tab`, which stops arming the wrap on the way
+                // out.
+                if self.grid.cursor.pending_wrap && !self.config.vt_compat_tab {
                     // `CarriageReturn(FALSE); LineFeed(LF,FALSE);` — the second
                     // of the two places the wrap generates a line break, and
                     // so the second `ts.EnableContinuedLineCopy` suppresses.
@@ -2832,6 +3113,13 @@ impl Perform for State {
             }
             0x0e => self.shift(Shift::Ls1), // SO
             0x0f => self.shift(Shift::Ls0), // SI
+            // HTS, the 8-bit spelling — `vtterm.c:1160`. The only C1 that
+            // reaches here rather than being folded into its `ESC` form by
+            // `Vt::rewrite_c1`, and the reason is `TABF_HTS8`: it is a
+            // different bit from `TABF_HTS7`, so the two spellings have to
+            // stay apart. The gate was applied on the way in, where the byte
+            // was still eight-bit; there is nothing left to test here.
+            0x88 => self.grid.set_tab(),
             // LF, VT and FF all line-feed (vtterm.c treats them alike).
             //
             // Not quite: upstream sends VT and FF straight to `LineFeed` and
@@ -2953,8 +3241,21 @@ impl Perform for State {
                 if let Some(cs) = sbcs_final(byte, self.config.japanese) {
                     self.charset.designate(gset_from_intermediate(i), cs);
                 }
-                // TF_AUTOINVOKE would fold G0 into GL here, but the key
-                // defaults off (ttset.c:1102) so there is nothing to do.
+                // `TF_AUTOINVOKE` (`ttset.c:1101`, key default off) — a
+                // designation into G0 invokes G0 into GL, so `ESC ( B` puts
+                // ASCII back without an SI.
+                //
+                // Two things `ESCSBCSSelect` (`vtterm.c:1409`) does that the
+                // name would not give. The invoke sits **outside** the switch
+                // that handled the final byte, so `ESC ( Z` — a designation of
+                // nothing — still performs it; and it is not gated on
+                // `ts.ISO2022Flag`, unlike every other locking shift in the
+                // parser, so `ISO2022ShiftFunction=off` does not stop it.
+                // Hence `self.charset.invoke` here rather than `self.shift`,
+                // which is the gated path.
+                if self.config.auto_invoke && gset_from_intermediate(i) == 0 {
+                    self.charset.invoke(Shift::Ls0);
+                }
             }
             // Multi-byte designations (ESC $ ...) are Kanji, deferred with CJK.
             return;
@@ -2975,7 +3276,14 @@ impl Perform for State {
             // DECID, the obsolete spelling of Primary DA — `vtterm.c:1539`
             // hands it to the same `AnswerTerminalType`.
             b'Z' => self.primary_da(),
-            b'H' => self.grid.set_tab(),
+            // HTS, the 7-bit spelling — `vtterm.c:1512`, gated on `TABF_HTS7`.
+            // The 8-bit `0x88` is a separate bit, so a file can accept one and
+            // refuse the other.
+            b'H' => {
+                if self.config.tab_stop_modify.allows(TabStopFlags::HTS7) {
+                    self.grid.set_tab();
+                }
+            }
             b'M' => self.grid.reverse_index(),
             // DECBI / DECFI (vtterm.c:1482, :1493). Both are no-ops when the
             // cursor is outside the scroll region, and scroll the region
@@ -3046,10 +3354,12 @@ impl Perform for State {
     }
 
     fn put(&mut self, byte: u8) {
-        // `ts.MaxOSCBufferSize` bounds the OSC buffer upstream; the DCS one is
-        // a fixed 256 in `DeviceControl`. Either way an unterminated DCS must
+        // `ts.MaxOSCBufferSize` bounds the *OSC* buffer upstream; the DCS one
+        // is a separate `static unsigned char StrBuff[256]` in `DeviceControl`
+        // (`vtterm.c:4601`) filled under `StrLen < sizeof(StrBuff)-1`, so 255
+        // bytes and no setting reaches it. Either way an unterminated DCS must
         // not be able to grow without limit.
-        if self.dcs.is_some() && self.dcs_buf.len() < 256 {
+        if self.dcs.is_some() && self.dcs_buf.len() < 255 {
             self.dcs_buf.push(byte);
         }
     }
@@ -3058,11 +3368,26 @@ impl Perform for State {
         let Some((inter, action)) = self.dcs.take() else {
             return;
         };
-        // `+q` is xterm's termcap query and `!{` is DECSTUI; neither is
-        // implemented, and both are dropped rather than answered wrongly.
+        // `+q` is xterm's termcap query, which is not implemented and is
+        // dropped rather than answered wrongly.
         if inter == Some(b'$') && action == 'q' {
             let req = std::mem::take(&mut self.dcs_buf);
             self.decrqss(&req);
+        }
+        // DECSTUI — `vtterm.c:4565`. It sets the unit ID the tertiary DA
+        // reports, and `TF_LOCKTUID` defaults **on**, so as Tera Term ships
+        // the sequence is read and dropped. That is the point of it: the
+        // identity a terminal answers with is not the host's to change unless
+        // the file says otherwise.
+        //
+        // The same eight-hex-digit validation as the file's, in a second
+        // place — a nine-digit argument leaves the old value alone rather than
+        // truncating to eight.
+        if inter == Some(b'!') && action == '{' && !self.config.lock_uid {
+            let req = std::mem::take(&mut self.dcs_buf);
+            if let Some(uid) = std::str::from_utf8(&req).ok().and_then(valid_terminal_uid) {
+                self.config.terminal_uid = uid;
+            }
         }
     }
 
@@ -3081,10 +3406,14 @@ impl Perform for State {
         // `ts.AcceptTitleChangeRequest` before `cv.TitleRemoteW` is touched, so
         // a title that arrived while the setting was off is not there to be
         // shown if it is turned on afterwards.
-        if matches!(kind, 0..=2) && self.config.accept_title_change != TitleChange::Off {
-            if let Some(text) = params.get(1) {
-                self.title = String::from_utf8_lossy(text).into_owned();
-            }
+        // The `params.len() > 1` is upstream's `if (StrBuff)`: an OSC with no
+        // string at all leaves the title alone, where one with an *empty*
+        // string clears it.
+        if matches!(kind, 0..=2)
+            && self.config.accept_title_change != TitleChange::Off
+            && params.len() > 1
+        {
+            self.title = String::from_utf8_lossy(&self.osc_string(params)).into_owned();
         }
     }
 }
@@ -3418,6 +3747,214 @@ mod tests {
         assert_eq!(vt.reply(), b"\x1bP1$r2;5r\x1b\\");
         let vt = run(b"\x1bP$qZ\x1b\\", 20, 4);
         assert_eq!(vt.reply(), b"\x1bP0$r\x1b\\");
+    }
+
+    /// `TF_INVALIDDECRPSS` flips the leading digit and nothing else, so the
+    /// "I did not understand" reply still carries the value it was about to
+    /// send. That is the whole of what makes it a test of the host's parser.
+    #[test]
+    fn the_invalid_decrqss_response_flips_the_digit_and_keeps_the_body() {
+        let cfg = Config {
+            cols: 20,
+            rows: 4,
+            invalid_decrqss: true,
+            ..Config::default()
+        };
+        let mut vt = Vt::new(cfg.clone());
+        vt.feed(b"\x1b[2;4r\x1bP$qr\x1b\\");
+        assert_eq!(vt.reply(), b"\x1bP0$r2;4r\x1b\\");
+        let mut vt = Vt::new(cfg);
+        vt.feed(b"\x1bP$qZ\x1b\\");
+        assert_eq!(vt.reply(), b"\x1bP1$r\x1b\\");
+    }
+
+    /// The tertiary DA, and the two things that make it more than a constant:
+    /// it insists on a zero parameter, and DECSTUI can move what it answers —
+    /// but only with `LockTUID` off, which is not how Tera Term ships.
+    #[test]
+    fn the_tertiary_da_answers_with_the_unit_id_and_decstui_is_locked() {
+        let vt320 = |lock_uid| Config {
+            cols: 20,
+            rows: 4,
+            term_id: TermId::Vt320,
+            lock_uid,
+            ..Config::default()
+        };
+
+        let mut vt = Vt::new(vt320(true));
+        vt.feed(b"\x1b[=c");
+        assert_eq!(vt.reply(), b"\x1bP!|FFFFFFFF\x1b\\");
+
+        // A parameter that is not zero is not a request (`vtterm.c:CSEQ`).
+        let mut vt = Vt::new(vt320(true));
+        vt.feed(b"\x1b[=1c");
+        assert_eq!(vt.reply(), b"");
+
+        // Locked, which is the default: read and dropped.
+        let mut vt = Vt::new(vt320(true));
+        vt.feed(b"\x1bP!{deadBEEF\x1b\\\x1b[=c");
+        assert_eq!(vt.reply(), b"\x1bP!|FFFFFFFF\x1b\\");
+
+        // Unlocked, and upper-cased on the way in.
+        let mut vt = Vt::new(vt320(false));
+        vt.feed(b"\x1bP!{deadBEEF\x1b\\\x1b[=c");
+        assert_eq!(vt.reply(), b"\x1bP!|DEADBEEF\x1b\\");
+
+        // Nine digits is not eight: the old value stands rather than the
+        // string being truncated to fit.
+        let mut vt = Vt::new(vt320(false));
+        vt.feed(b"\x1bP!{123456789\x1b\\\x1b[=c");
+        assert_eq!(vt.reply(), b"\x1bP!|FFFFFFFF\x1b\\");
+    }
+
+    /// The four bits are independent, and the 8-bit spelling of HTS has to be
+    /// refused where the byte still exists — before `rewrite_c1` folds it into
+    /// `ESC H` and the two become indistinguishable.
+    #[test]
+    fn the_tab_stop_bits_gate_each_spelling_on_its_own() {
+        let cfg = |flags| Config {
+            cols: 40,
+            rows: 2,
+            term_id: TermId::Vt320,
+            tab_stop_modify: flags,
+            ..Config::default()
+        };
+        // `CSI 3 g` clears every stop, then HTS sets one at column 4 and a
+        // tab from home lands on it. With the HTS refused there is no stop at
+        // all, so the tab parks on the last column and arms the wrap instead —
+        // which is `VTCompatTab` being off, and is what makes the refusal
+        // visible on the screen rather than only in the stop table.
+        let seven = b"\x1b[3g\x1b[5G\x1bH\x1b[H\tA".to_vec();
+        let eight = "\x1b[3g\x1b[5G\u{88}\x1b[H\tA".as_bytes().to_vec();
+        let hts7 = TabStopFlags(TabStopFlags::HTS7 | TabStopFlags::TBC3);
+        let hts8 = TabStopFlags(TabStopFlags::HTS8 | TabStopFlags::TBC3);
+
+        for (stream, taken, refused) in [(&seven, hts7, hts8), (&eight, hts8, hts7)] {
+            let mut vt = Vt::new(cfg(TabStopFlags::ALL));
+            vt.feed(stream);
+            assert_eq!(row(&vt, 0), "    A");
+
+            let mut vt = Vt::new(cfg(taken));
+            vt.feed(stream);
+            assert_eq!(row(&vt, 0), "    A");
+
+            let mut vt = Vt::new(cfg(refused));
+            vt.feed(stream);
+            assert_eq!(row(&vt, 0), "");
+            assert_eq!(row(&vt, 1), "A");
+        }
+    }
+
+    /// `TabStopModifySequence`'s two whole-word spellings and its list, held
+    /// against the writer that has to produce them again.
+    #[test]
+    fn the_tab_stop_list_round_trips_through_the_files_own_spelling() {
+        let of = TabStopFlags::parse_ini;
+        assert_eq!(of("on"), TabStopFlags::ALL);
+        assert_eq!(of("ALL"), TabStopFlags::ALL);
+        assert_eq!(of("off"), TabStopFlags::NONE);
+        assert_eq!(of("none"), TabStopFlags::NONE);
+        // A list starts from nothing, so naming one word disables the rest.
+        assert_eq!(of("HTS7"), TabStopFlags(TabStopFlags::HTS7));
+        assert_eq!(
+            of("hts,tbc3"),
+            TabStopFlags(TabStopFlags::HTS | TabStopFlags::TBC3)
+        );
+        // And a value with no word in it is a terminal that refuses all four,
+        // which is the same trap `ISO2022ShiftFunction` carries.
+        assert_eq!(of("HTS9"), TabStopFlags::NONE);
+        assert_eq!(of(""), TabStopFlags::NONE);
+
+        assert_eq!(TabStopFlags::ALL.to_ini(), "on");
+        assert_eq!(TabStopFlags::NONE.to_ini(), "off");
+        assert_eq!(TabStopFlags(TabStopFlags::HTS7).to_ini(), "HTS7");
+        assert_eq!(
+            TabStopFlags(TabStopFlags::HTS | TabStopFlags::TBC3).to_ini(),
+            "HTS,TBC3"
+        );
+        for f in [
+            TabStopFlags::HTS7,
+            TabStopFlags::HTS8,
+            TabStopFlags::TBC0,
+            TabStopFlags::TBC3,
+            TabStopFlags::HTS | TabStopFlags::TBC0,
+        ] {
+            let f = TabStopFlags(f);
+            assert_eq!(TabStopFlags::parse_ini(&f.to_ini()), f);
+        }
+    }
+
+    /// `TF_AUTOINVOKE`, and the two things about it the name does not say: an
+    /// unrecognised designation still invokes, and the ISO-2022 shift gate
+    /// does not apply.
+    #[test]
+    fn auto_invoke_folds_g0_into_gl_even_for_a_designation_that_did_nothing() {
+        let cfg = |auto_invoke, iso2022_flags| Config {
+            cols: 20,
+            rows: 2,
+            auto_invoke,
+            iso2022_flags,
+            ..Config::default()
+        };
+        // G1 is DEC special graphics and SO has invoked it, so `q` is a line.
+        // `ESC ( B` designates G0 and, with the key on, puts G0 back in GL.
+        let stream = b"\x1b)0\x0eq\x1b(Bq";
+        let mut vt = Vt::new(cfg(true, ShiftFlags::ALL));
+        vt.feed(stream);
+        assert_eq!(vt.grid().line(0)[0].attrs & ATTR_SPECIAL, ATTR_SPECIAL);
+        assert_eq!(vt.grid().line(0)[1].attrs & ATTR_SPECIAL, 0);
+
+        let mut vt = Vt::new(cfg(false, ShiftFlags::ALL));
+        vt.feed(stream);
+        assert_eq!(vt.grid().line(0)[1].attrs & ATTR_SPECIAL, ATTR_SPECIAL);
+
+        // `ESC ( Z` designates nothing — the invoke is outside the switch.
+        let mut vt = Vt::new(cfg(true, ShiftFlags::ALL));
+        vt.feed(b"\x1b)0\x0eq\x1b(Zq");
+        assert_eq!(vt.grid().line(0)[1].attrs & ATTR_SPECIAL, 0);
+
+        // And it is not one of the shifts `ISO2022ShiftFunction` can switch
+        // off, unlike the SO that got GL here in the first place.
+        let mut vt = Vt::new(cfg(true, ShiftFlags::NONE));
+        vt.feed(b"\x1b)0\x0eq\x1b(Bq");
+        assert_eq!(vt.grid().line(0)[1].attrs & ATTR_SPECIAL, 0);
+    }
+
+    /// `ts.MaxOSCBufferSize`, and the semicolon rule the bound sits on top of.
+    #[test]
+    fn the_osc_string_keeps_its_semicolons_and_stops_at_the_buffer() {
+        let mut vt = Vt::new(Config {
+            cols: 20,
+            rows: 2,
+            ..Config::default()
+        });
+        vt.feed(b"\x1b]2;a;b;c\x07");
+        assert_eq!(vt.remote_title(), "a;b;c");
+
+        let mut vt = Vt::new(Config {
+            cols: 20,
+            rows: 2,
+            max_osc_buffer: 8,
+            ..Config::default()
+        });
+        vt.feed(b"\x1b]2;abcdefghij\x07");
+        // Seven, not eight: upstream's test is `StrLen + 1 < StrBuffSize`.
+        assert_eq!(vt.remote_title(), "abcdefg");
+    }
+
+    /// A broken multi-byte sequence is one replacement character **per byte**,
+    /// which is Tera Term's decoder and not `vte`'s.
+    #[test]
+    fn a_broken_utf8_sequence_is_one_replacement_per_byte() {
+        let vt = run("a\u{fffd}".as_bytes(), 10, 1); // sanity: a real one is one
+        assert_eq!(row(&vt, 0), "a\u{fffd}");
+        let vt = run(b"a\xe2\x82b", 10, 1);
+        assert_eq!(row(&vt, 0), "a\u{fffd}\u{fffd}b");
+        let vt = run(b"a\xf0\x9f\x98b", 10, 1);
+        assert_eq!(row(&vt, 0), "a\u{fffd}\u{fffd}\u{fffd}b");
+        // One byte in, one out — the case that already agreed.
+        let vt = run(b"a\xc3b", 10, 1);
+        assert_eq!(row(&vt, 0), "a\u{fffd}b");
     }
 
     #[test]
