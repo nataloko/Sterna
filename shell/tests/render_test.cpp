@@ -1078,11 +1078,21 @@ void test_a_paste_with_a_line_break_is_confirmed()
 
     // The dialog opens at the size the settings hold, which is the whole
     // reason `PasteDialogSize` is a setting: upstream writes it back.
-    PasteDialog dialog(QStringLiteral("two\nlines"), QSize(400, 300));
+    QString error;
+    I18n i18n;
+    CHECK(i18n.load(QStringLiteral("lang\\ja_JP.lng"), QString(), &error));
+    PasteDialog dialog(QStringLiteral("two\nlines"), QSize(400, 300), nullptr,
+                       &i18n);
     dialog.adjustSize();
     dialog.resize(400, 300);
     CHECK(dialog.text() == QStringLiteral("two\nlines"));
     CHECK(dialog.size() == QSize(400, 300));
+    auto *buttons = dialog.findChild<QDialogButtonBox *>();
+    CHECK(buttons != nullptr);
+    if (buttons) {
+        CHECK(buttons->button(QDialogButtonBox::Cancel)->text()
+              == QStringLiteral("キャンセル"));
+    }
 }
 
 /// OSC 52 stops at the core/toolkit boundary: the parser decides whether the

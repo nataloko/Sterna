@@ -11,7 +11,10 @@
 #include <QTextStream>
 #include <QVBoxLayout>
 
-PasteDialog::PasteDialog(const QString &text, QSize size, QWidget *parent)
+#include "I18n.h"
+
+PasteDialog::PasteDialog(const QString &text, QSize size, QWidget *parent,
+                         const I18n *i18n)
     : QDialog(parent)
 {
     setWindowTitle(tr("Confirm paste"));
@@ -31,6 +34,11 @@ PasteDialog::PasteDialog(const QString &text, QSize size, QWidget *parent)
 
     auto *buttons =
         new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    buttons->button(QDialogButtonBox::Ok)
+        ->setText(i18n ? i18n->text("BTN_OK", tr("OK")) : tr("OK"));
+    buttons->button(QDialogButtonBox::Cancel)
+        ->setText(i18n ? i18n->text("BTN_CANCEL", tr("Cancel"))
+                       : tr("Cancel"));
     // Escape and the title bar's close both reach Cancel, which is the answer
     // that sends nothing — the safe way round for a box that exists to stop
     // something being sent by accident.

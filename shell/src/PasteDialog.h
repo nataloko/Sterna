@@ -6,6 +6,7 @@
 #include <QString>
 
 class QPlainTextEdit;
+class I18n;
 
 /// `ConfirmChangePaste`'s dialog — `clipboarddlg` (`clipboar.c:174`).
 ///
@@ -22,7 +23,8 @@ class PasteDialog : public QDialog {
     Q_OBJECT
 
 public:
-    PasteDialog(const QString &text, QSize size, QWidget *parent = nullptr);
+    PasteDialog(const QString &text, QSize size, QWidget *parent = nullptr,
+                const I18n *i18n = nullptr);
 
     /// The text as it stands, which may not be the text it was given.
     QString text() const;

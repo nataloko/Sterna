@@ -379,9 +379,10 @@ AltSide altSide(const QKeyEvent *e)
 
 } // namespace
 
-TerminalView::TerminalView(Session *session, QWidget *parent)
+TerminalView::TerminalView(Session *session, QWidget *parent, const I18n *i18n)
     : QWidget(parent)
     , m_session(session)
+    , m_i18n(i18n)
 {
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
@@ -1759,7 +1760,10 @@ void TerminalView::pasteText(const QString &text)
         }
     }
     if (m_clipboard.confirmPaste && PasteDialog::shouldConfirm(body, m_clipboard.dictionary)) {
-        PasteDialog dialog(body, QSize(m_clipboard.dialogWidth, m_clipboard.dialogHeight), this);
+        PasteDialog dialog(body,
+                           QSize(m_clipboard.dialogWidth,
+                                 m_clipboard.dialogHeight),
+                           this, m_i18n);
         if (dialog.exec() != QDialog::Accepted) {
             return;
         }

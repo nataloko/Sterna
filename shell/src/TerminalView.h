@@ -12,6 +12,7 @@
 #include "sterna.h"
 
 class QTimer;
+class I18n;
 class Session;
 struct KeyCodeAction;
 
@@ -45,7 +46,8 @@ class TerminalView : public QWidget {
     Q_OBJECT
 
 public:
-    explicit TerminalView(Session *session, QWidget *parent = nullptr);
+    explicit TerminalView(Session *session, QWidget *parent = nullptr,
+                          const I18n *i18n = nullptr);
 
     Theme &theme() { return m_theme; }
     const Theme &theme() const { return m_theme; }
@@ -161,6 +163,7 @@ private:
     void refit();
 
     Session *m_session;
+    const I18n *m_i18n;
     Theme m_theme;
 
     /// `KeybEnabled`. A macro's `enablekeyb 0` clears it.

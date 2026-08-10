@@ -448,6 +448,7 @@ void test_the_language_file_translates_menus_without_stealing_alt()
     CHECK(fileMenu != nullptr);
     CHECK(send != nullptr);
     CHECK(setup != nullptr);
+    CHECK(window.windowTitle().contains(QStringLiteral("[未接続]")));
 
     // The catalog advertises Win32 mnemonics and accelerator captions. Sterna
     // keeps Alt for the terminal and puts shortcuts on QAction itself, so

@@ -19,6 +19,7 @@
 #include <QScreen>
 #include <QScrollBar>
 #include <QSignalBlocker>
+#include <QPushButton>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QLocale>
@@ -177,7 +178,7 @@ MainWindow::MainWindow(const QString &settingsPath)
 {
     m_session = new Session(80, 24, this);
     m_i18n = new I18n(this);
-    m_view = new TerminalView(m_session, this);
+    m_view = new TerminalView(m_session, this, m_i18n);
 
     // A plain QWidget plus a scrollbar rather than a QAbstractScrollArea: the
     // painter draws straight onto the widget in cell coordinates, and a scroll
@@ -1026,10 +1027,19 @@ bool MainWindow::confirmDisconnect()
     // Cancel is the default button, as it is upstream (`MB_DEFBUTTON2`): the
     // question is asked at the moment somebody may have hit the wrong thing,
     // so Return must not be the answer that loses the session.
-    const auto answer = QMessageBox::warning(
-        this, tr("Sterna"), tr("Disconnect?"), QMessageBox::Ok | QMessageBox::Cancel,
-        QMessageBox::Cancel);
-    return answer == QMessageBox::Ok;
+    QMessageBox box(QMessageBox::Warning, tr("Sterna"),
+                    m_i18n->text("MSG_DISCONNECT_CONF", tr("Disconnect?")),
+                    QMessageBox::NoButton, this);
+    QPushButton *disconnect =
+        box.addButton(m_i18n->text("BTN_OK", tr("OK")),
+                      QMessageBox::AcceptRole);
+    QPushButton *cancel =
+        box.addButton(m_i18n->text("BTN_CANCEL", tr("Cancel")),
+                      QMessageBox::RejectRole);
+    box.setDefaultButton(cancel);
+    box.setEscapeButton(cancel);
+    box.exec();
+    return box.clickedButton() == disconnect;
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -1433,7 +1443,8 @@ void MainWindow::toggleLogging()
     // file says `&h-%Y%m%d.log` is offered today's file for this host rather
     // than a name this window made up.
     const QString path = QFileDialog::getSaveFileName(
-        this, tr("Log session to"), m_session->logName(),
+        this, m_i18n->plainText("FILEDLG_TRANS_TITLE_LOG", tr("Log session to")),
+        m_session->logName(),
         tr("Log files (*.log);;All files (*)"));
     if (path.isEmpty()) {
         return;
@@ -1464,7 +1475,8 @@ void MainWindow::chooseFont()
 void MainWindow::chooseKeyMap()
 {
     const QString path = QFileDialog::getOpenFileName(
-        this, tr("Load key map"), m_keyMapPath,
+        this, m_i18n->plainText("MENU_SETUP_LOADKEYMAP", tr("Load key map")),
+        m_keyMapPath,
         tr("Tera Term key maps (*.cnf *.CNF);;All files (*)"));
     if (!path.isEmpty()) {
         loadKeyMap(path);
@@ -1495,8 +1507,10 @@ void MainWindow::showTitle(const QString &title)
         state.endpoint = m_session->describe();
     }
 
-    setWindowTitle(formatWindowTitle(state, tr("[connecting...]"),
-                                     tr("[disconnected]")));
+    setWindowTitle(formatWindowTitle(
+        state,
+        m_i18n->text("DLG_MAIN_TITLE_CONNECTING", tr("[connecting...]")),
+        m_i18n->text("DLG_MAIN_TITLE_DISCONNECTED", tr("[disconnected]"))));
 }
 
 void MainWindow::onNotice(const QString &text)
