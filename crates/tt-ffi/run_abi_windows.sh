@@ -29,9 +29,8 @@ trap 'rm -rf "$out"' EXIT
     -I include tests/abi_windows.c -o "$out/abi-windows.exe" \
     -L "$lib" -lsterna
 
-printf '#include <sterna.h>\nint main() { return tt_version() == nullptr; }\n' \
-    > "$out/compat.cpp"
-"$cxx" -std=c++17 -Wall -Wextra -Werror -I include "$out/compat.cpp" \
+"$cxx" -std=c++17 -Wall -Wextra -Werror -I include \
+    tests/abi_windows_compat.cpp \
     -o "$out/compat-windows.exe" -L "$lib" -lsterna
 
 cp "$lib/sterna.dll" "$out/sterna.dll"

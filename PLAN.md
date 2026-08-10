@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 408
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 409
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4622,6 +4622,15 @@ C++17. That focused harness passes under Wine, while the unchanged native
 Linux C/C++ ABI harness remains green including its pty and ZMODEM paths.
 This does not move the native-Windows boundary: ConPTY, real COM hardware and
 Wine's two missing pipe-namespace operations still require the Windows runner.
+
+That ABI source is now wired into the existing native `windows-latest` job as
+well. A PowerShell runner activates the installed Visual Studio toolchain,
+builds the MSVC DLL/import library, treats C11 and C++17 header warnings as
+errors, and runs the Win32 consumer beside the DLL. The same job now installs
+`clippy` and `rustfmt` explicitly, lints every Windows target, runs the whole
+native Rust workspace, and checks that cbindgen left the committed header
+unchanged. The MinGW/Wine path remains green locally; the MSVC path is written
+but cannot be called verified until that native job runs on a pushed commit.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

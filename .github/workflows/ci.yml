@@ -246,17 +246,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: crates -> target
       # Only the core: the oracle needs a POSIX toolchain and the differential
-      # suite needs the oracle. This job exists to catch Linux-only assumptions
-      # creeping into the core while Windows is still three stages away — and
-      # tt-conn is where they will creep in, since its patch layer is termios.
+      # suite needs the oracle. Native Windows is nevertheless authoritative
+      # for ConPTY, COM, named-pipe namespace behavior and the CRT-backed
+      # generator check; Wine is only the focused local seam smoke.
       # tt-conn's hardware tests skip without TT_SERIAL_A/B, so they are inert
       # here rather than failing.
+      - name: Lint
+        run: cd crates; cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings
       - name: Build and test
-        run: cd crates && cargo build --locked && cargo test --locked
+        run: cd crates; cargo test --locked
+      # A Rust test cannot prove a C header or import library. Compile the
+      # generated header under MSVC as C11 and C++17, then load the real DLL
+      # and drive its Win32 event handles and named-pipe control channel.
+      - name: C ABI, from native Windows C and C++
+        shell: pwsh
+        run: .\crates\tt-ffi\run_abi_windows.ps1
+      - name: The committed header matches the source
+        run: git diff --exit-code -- crates/tt-ffi/include/sterna.h
 
   shell:
     name: shell — the Qt frontend, and what it paints

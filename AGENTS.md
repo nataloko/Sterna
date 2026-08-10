@@ -258,7 +258,7 @@ something other than what it is.
   no Rust-side seam tests: Rust calling Rust cannot prove the generated header
   compiles or the shared library links from C. Run `tt-ffi/run_abi.sh` for the
   Unix ABI and `tt-ffi/run_abi_windows.sh` for the focused Win32 DLL, HANDLE
-  and named-pipe smoke.
+  and named-pipe smoke; native Windows uses `run_abi_windows.ps1` under MSVC.
 - **`UTF32ToUTF16` is not optional.** `buffer.c:234` uses it to fill
   `buff_char_t::wc2`, and `expand_wchar()` reads back from `wc2`, not `u32`.
   Stub it and you get a screen holding all the right codepoints that renders

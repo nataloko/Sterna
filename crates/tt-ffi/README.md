@@ -16,6 +16,7 @@ Builds as `libsterna.so` / `sterna.a` on Linux and `sterna.dll` /
 cargo build -p tt-ffi     # also regenerates include/sterna.h
 ./run_abi.sh              # compile the header and drive it from C and C++
 ./run_abi_windows.sh      # the Win32 header, DLL, HANDLEs and named pipe
+# .\run_abi_windows.ps1   # the same source with native MSVC on Windows
 ```
 
 ## The header is generated, committed, and gated
