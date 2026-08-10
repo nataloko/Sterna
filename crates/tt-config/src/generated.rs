@@ -1001,6 +1001,52 @@ impl Default for TransferXmodemOpt {
     }
 }
 
+/// `ttset.c:1501`. What the non-realtime broadcast dialog appends. The else arm
+/// is `None`, so an unrecognised value and an absent key agree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BroadcastSubmitKey {
+    /// `None`
+    None,
+    /// `Enter`
+    Enter,
+    /// `CTRL+M`
+    CtrlM,
+}
+
+impl BroadcastSubmitKey {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Enter => "Enter",
+            Self::CtrlM => "CTRL+M",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised takes the default**
+    /// rather than failing — which is how upstream spells most of its
+    /// defaults, as the `else` branch of a chain of comparisons.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("None") {
+            return Self::None;
+        }
+        if s.eq_ignore_ascii_case("Enter") {
+            return Self::Enter;
+        }
+        if s.eq_ignore_ascii_case("CTRL+M") {
+            return Self::CtrlM;
+        }
+        Self::default()
+    }
+}
+
+impl Default for BroadcastSubmitKey {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 /// Every setting this project reads out of `TERATERM.INI`.
 ///
 /// Generated from the schema, so the field, its default, its INI key and
@@ -2085,6 +2131,62 @@ pub struct Settings {
     pub window_x: i32,
     /// `ttset.c:600`, second half of the same pair and the same sentinel.
     pub window_y: i32,
+    /// `ttset.c:706`, default off. Upstream switches between its VT and TEK windows
+    /// when either parser sees the other terminal's sequence. TEK is deliberately
+    /// out of scope here, so the key round-trips and acts on nothing.
+    pub window_auto_vt_tek_switch: bool,
+    /// `ttset.c:1476`. The trailing space is in upstream's **reader literal** and
+    /// the writer at `:2250` omits it. Backticks retain that space in the schema;
+    /// `write-key` reproduces the writer. This is a Windows Cygwin install path, not
+    /// the local pty's working directory, so it has no runtime effect here.
+    pub connection_cygwin_directory: String,
+    /// `ttset.c:1483`. The external editor used by View log. Sterna has no View log
+    /// command yet, so the Windows default is preserved and the key round-trips.
+    pub log_viewer: String,
+    /// `ttset.c:1485`; the allocated-string helper's null fallback becomes empty.
+    /// Arguments for `log.viewer`, carried until that command exists.
+    pub log_viewer_args: String,
+    /// `ttset.c:1493`, default off. Whether the broadcast dialog records commands.
+    /// Broadcast is a multi-window feature and this shell owns one terminal today.
+    pub broadcast_command_history: bool,
+    /// `ttset.c:1497`, default **on**. Whether this terminal accepts a command from
+    /// another Tera Term window. There is no broadcast channel in Sterna yet.
+    pub broadcast_accept: bool,
+    /// `ttset.c:1501`. What the non-realtime broadcast dialog appends. The else arm
+    /// is `None`, so an unrecognised value and an absent key agree.
+    pub broadcast_submit_key: BroadcastSubmitKey,
+    /// `ttset.c:1319`. Upstream's misspelling is the public key and is preserved.
+    /// It caps the broadcast command history, which is not built yet.
+    pub broadcast_max_history: i32,
+    /// `ttset.c:1452`. Suppresses Alt+B while leaving Control > Send break alone.
+    pub menu_disable_accelerator_send_break: bool,
+    /// `ttset.c:1606`. Greys Control > Send break even when the transport supports
+    /// it. This is independent of the accelerator switch above.
+    pub menu_disable_send_break: bool,
+    /// `ttset.c:1614`. Suppresses Alt+D. Duplicate session is a Stage 3 feature, so
+    /// the setting is carried but has no action to bind yet.
+    pub menu_disable_accelerator_duplicate: bool,
+    /// `ttset.c:1617`, default **on**. Enables Alt+N for New connection.
+    pub menu_accelerator_new_connection: bool,
+    /// `ttset.c:1620`, default **on**. Enables Alt+G for Cygwin connection; Sterna's
+    /// equivalent command is Local shell.
+    pub menu_accelerator_local_shell: bool,
+    /// `ttset.c:1624`. Greys Duplicate session. The action arrives with Stage 3.
+    pub menu_disable_duplicate: bool,
+    /// `ttset.c:1628`. While already connected, greys New connection rather than
+    /// allowing the current line to be replaced.
+    pub menu_disable_new_connection: bool,
+    /// `ttset.c:1602`, default off. Upstream mirrors received text into shared
+    /// memory only under this switch so `wait4all` can inspect every macro process.
+    /// Sterna has no process-global DDE ring; the command remains explicitly
+    /// unsupported and the compatibility key still round-trips.
+    pub macro_wait4all: bool,
+    /// `ttset.c:1714`, default **on**. Adds recent connections to the Windows taskbar
+    /// jump list. Qt/Linux has no equivalent owned by this process.
+    pub window_jump_list: bool,
+    /// `ttset.c:1993`, default off. Requests square corners from Windows 11 DWM.
+    /// Window decoration belongs to the compositor on Linux, so it is carried only.
+    pub window_corner_dontround: bool,
 }
 
 impl Default for Settings {
@@ -2301,6 +2403,24 @@ impl Default for Settings {
             window_save_position: false,
             window_x: -2147483648,
             window_y: -2147483648,
+            window_auto_vt_tek_switch: false,
+            connection_cygwin_directory: String::from("c:\\cygwin"),
+            log_viewer: String::from("notepad.exe"),
+            log_viewer_args: String::from(""),
+            broadcast_command_history: false,
+            broadcast_accept: true,
+            broadcast_submit_key: BroadcastSubmitKey::default(),
+            broadcast_max_history: 99,
+            menu_disable_accelerator_send_break: false,
+            menu_disable_send_break: false,
+            menu_disable_accelerator_duplicate: false,
+            menu_accelerator_new_connection: true,
+            menu_accelerator_local_shell: true,
+            menu_disable_duplicate: false,
+            menu_disable_new_connection: false,
+            macro_wait4all: false,
+            window_jump_list: true,
+            window_corner_dontround: false,
         }
     }
 }
@@ -3095,6 +3215,74 @@ impl Settings {
             ),
             window_x: crate::schema::nth_int_zero(ini.get("Tera Term", "VTPos"), 0, d.window_x),
             window_y: crate::schema::nth_int_zero(ini.get("Tera Term", "VTPos"), 1, d.window_y),
+            window_auto_vt_tek_switch: crate::schema::on_off(
+                ini.get("Tera Term", "AutoWinSwitch"),
+                false,
+            ),
+            connection_cygwin_directory: ini
+                .get_or(
+                    "Tera Term",
+                    "CygwinDirectory ",
+                    &d.connection_cygwin_directory,
+                )
+                .to_string(),
+            log_viewer: ini
+                .get_or("Tera Term", "ViewlogEditor", &d.log_viewer)
+                .to_string(),
+            log_viewer_args: ini
+                .get_or("Tera Term", "ViewlogEditorArg", &d.log_viewer_args)
+                .to_string(),
+            broadcast_command_history: crate::schema::on_off(
+                ini.get("Tera Term", "BroadcastCommandHistory"),
+                false,
+            ),
+            broadcast_accept: crate::schema::on_off(ini.get("Tera Term", "AcceptBroadcast"), true),
+            broadcast_submit_key: match ini.get("Tera Term", "BroadcastSubmitKey") {
+                Some(v) => BroadcastSubmitKey::from_ini(v),
+                None => d.broadcast_submit_key,
+            },
+            broadcast_max_history: ini.get_int(
+                "Tera Term",
+                "MaxBroadcatHistory",
+                d.broadcast_max_history,
+            ) as i32,
+            menu_disable_accelerator_send_break: crate::schema::on_off(
+                ini.get("Tera Term", "DisableAcceleratorSendBreak"),
+                false,
+            ),
+            menu_disable_send_break: crate::schema::on_off(
+                ini.get("Tera Term", "DisableMenuSendBreak"),
+                false,
+            ),
+            menu_disable_accelerator_duplicate: crate::schema::on_off(
+                ini.get("Tera Term", "DisableAcceleratorDuplicateSession"),
+                false,
+            ),
+            menu_accelerator_new_connection: crate::schema::on_off(
+                ini.get("Tera Term", "AcceleratorNewConnection"),
+                true,
+            ),
+            menu_accelerator_local_shell: crate::schema::on_off(
+                ini.get("Tera Term", "AcceleratorCygwinConnection"),
+                true,
+            ),
+            menu_disable_duplicate: crate::schema::on_off(
+                ini.get("Tera Term", "DisableMenuDuplicateSession"),
+                false,
+            ),
+            menu_disable_new_connection: crate::schema::on_off(
+                ini.get("Tera Term", "DisableMenuNewConnection"),
+                false,
+            ),
+            macro_wait4all: crate::schema::on_off(
+                ini.get("Tera Term", "Wait4allMacroCommand"),
+                false,
+            ),
+            window_jump_list: crate::schema::on_off(ini.get("Tera Term", "JumpList"), true),
+            window_corner_dontround: crate::schema::on_off(
+                ini.get("Tera Term", "WindowCornerDontround"),
+                false,
+            ),
         };
         settings.window_opacity_active = crate::schema::clamped(
             ini.get_int(
@@ -4561,6 +4749,142 @@ impl Settings {
                 &crate::schema::with_nth(ini.get("Tera Term", "VTPos"), 1, self.window_y),
             );
         }
+        ini.set(
+            "Tera Term",
+            "AutoWinSwitch",
+            &if self.window_auto_vt_tek_switch {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "CygwinDirectory",
+            &self.connection_cygwin_directory.clone(),
+        );
+        ini.set("Tera Term", "ViewlogEditor", &self.log_viewer.clone());
+        ini.set(
+            "Tera Term",
+            "ViewlogEditorArg",
+            &self.log_viewer_args.clone(),
+        );
+        ini.set(
+            "Tera Term",
+            "BroadcastCommandHistory",
+            &if self.broadcast_command_history {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "AcceptBroadcast",
+            &if self.broadcast_accept { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "BroadcastSubmitKey",
+            &self.broadcast_submit_key.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "MaxBroadcatHistory",
+            &self.broadcast_max_history.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "DisableAcceleratorSendBreak",
+            &if self.menu_disable_accelerator_send_break {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "DisableMenuSendBreak",
+            &if self.menu_disable_send_break {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "DisableAcceleratorDuplicateSession",
+            &if self.menu_disable_accelerator_duplicate {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "AcceleratorNewConnection",
+            &if self.menu_accelerator_new_connection {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "AcceleratorCygwinConnection",
+            &if self.menu_accelerator_local_shell {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "DisableMenuDuplicateSession",
+            &if self.menu_disable_duplicate {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "DisableMenuNewConnection",
+            &if self.menu_disable_new_connection {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "Wait4allMacroCommand",
+            &if self.macro_wait4all { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "JumpList",
+            &if self.window_jump_list { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "WindowCornerDontround",
+            &if self.window_corner_dontround {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
     }
 
     /// One setting by its dotted name, in the INI's own spelling.
@@ -5161,6 +5485,74 @@ impl Settings {
             .to_string(),
             "window.x" => self.window_x.to_string(),
             "window.y" => self.window_y.to_string(),
+            "window.auto_vt_tek_switch" => if self.window_auto_vt_tek_switch {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "connection.cygwin_directory" => self.connection_cygwin_directory.clone(),
+            "log.viewer" => self.log_viewer.clone(),
+            "log.viewer_args" => self.log_viewer_args.clone(),
+            "broadcast.command_history" => if self.broadcast_command_history {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "broadcast.accept" => if self.broadcast_accept { "on" } else { "off" }.to_string(),
+            "broadcast.submit_key" => self.broadcast_submit_key.as_ini().to_string(),
+            "broadcast.max_history" => self.broadcast_max_history.to_string(),
+            "menu.disable_accelerator_send_break" => if self.menu_disable_accelerator_send_break {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "menu.disable_send_break" => if self.menu_disable_send_break {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "menu.disable_accelerator_duplicate" => if self.menu_disable_accelerator_duplicate {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "menu.accelerator_new_connection" => if self.menu_accelerator_new_connection {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "menu.accelerator_local_shell" => if self.menu_accelerator_local_shell {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "menu.disable_duplicate" => if self.menu_disable_duplicate {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "menu.disable_new_connection" => if self.menu_disable_new_connection {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "macro.wait4all" => if self.macro_wait4all { "on" } else { "off" }.to_string(),
+            "window.jump_list" => if self.window_jump_list { "on" } else { "off" }.to_string(),
+            "window.corner_dontround" => if self.window_corner_dontround {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             _ => return None,
         })
     }
@@ -5781,6 +6173,48 @@ impl Settings {
             }
             "window.x" => self.window_x = crate::schema::int(value, self.window_x),
             "window.y" => self.window_y = crate::schema::int(value, self.window_y),
+            "window.auto_vt_tek_switch" => {
+                self.window_auto_vt_tek_switch = crate::schema::on_off(Some(value), false)
+            }
+            "connection.cygwin_directory" => self.connection_cygwin_directory = value.to_string(),
+            "log.viewer" => self.log_viewer = value.to_string(),
+            "log.viewer_args" => self.log_viewer_args = value.to_string(),
+            "broadcast.command_history" => {
+                self.broadcast_command_history = crate::schema::on_off(Some(value), false)
+            }
+            "broadcast.accept" => self.broadcast_accept = crate::schema::on_off(Some(value), true),
+            "broadcast.submit_key" => {
+                self.broadcast_submit_key = BroadcastSubmitKey::from_ini(value)
+            }
+            "broadcast.max_history" => {
+                self.broadcast_max_history = crate::schema::int(value, self.broadcast_max_history)
+            }
+            "menu.disable_accelerator_send_break" => {
+                self.menu_disable_accelerator_send_break = crate::schema::on_off(Some(value), false)
+            }
+            "menu.disable_send_break" => {
+                self.menu_disable_send_break = crate::schema::on_off(Some(value), false)
+            }
+            "menu.disable_accelerator_duplicate" => {
+                self.menu_disable_accelerator_duplicate = crate::schema::on_off(Some(value), false)
+            }
+            "menu.accelerator_new_connection" => {
+                self.menu_accelerator_new_connection = crate::schema::on_off(Some(value), true)
+            }
+            "menu.accelerator_local_shell" => {
+                self.menu_accelerator_local_shell = crate::schema::on_off(Some(value), true)
+            }
+            "menu.disable_duplicate" => {
+                self.menu_disable_duplicate = crate::schema::on_off(Some(value), false)
+            }
+            "menu.disable_new_connection" => {
+                self.menu_disable_new_connection = crate::schema::on_off(Some(value), false)
+            }
+            "macro.wait4all" => self.macro_wait4all = crate::schema::on_off(Some(value), false),
+            "window.jump_list" => self.window_jump_list = crate::schema::on_off(Some(value), true),
+            "window.corner_dontround" => {
+                self.window_corner_dontround = crate::schema::on_off(Some(value), false)
+            }
             _ => return false,
         }
         true
@@ -7901,5 +8335,185 @@ pub const FIELDS: &[Field] = &[
         default: "-2147483648",
         label: None,
         doc: "`ttset.c:600`, second half of the same pair and the same sentinel.",
+    },
+    Field {
+        name: "window.auto_vt_tek_switch",
+        page: "window",
+        section: "Tera Term",
+        key: "AutoWinSwitch",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:706`, default off. Upstream switches between its VT and TEK windows when either parser sees the other terminal's sequence. TEK is deliberately out of scope here, so the key round-trips and acts on nothing.",
+    },
+    Field {
+        name: "connection.cygwin_directory",
+        page: "connection",
+        section: "Tera Term",
+        key: "CygwinDirectory ",
+        kind: Kind::Str,
+        default: "c:\\cygwin",
+        label: None,
+        doc: "`ttset.c:1476`. The trailing space is in upstream's **reader literal** and the writer at `:2250` omits it. Backticks retain that space in the schema; `write-key` reproduces the writer. This is a Windows Cygwin install path, not the local pty's working directory, so it has no runtime effect here.",
+    },
+    Field {
+        name: "log.viewer",
+        page: "log",
+        section: "Tera Term",
+        key: "ViewlogEditor",
+        kind: Kind::Str,
+        default: "notepad.exe",
+        label: None,
+        doc: "`ttset.c:1483`. The external editor used by View log. Sterna has no View log command yet, so the Windows default is preserved and the key round-trips.",
+    },
+    Field {
+        name: "log.viewer_args",
+        page: "log",
+        section: "Tera Term",
+        key: "ViewlogEditorArg",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "`ttset.c:1485`; the allocated-string helper's null fallback becomes empty. Arguments for `log.viewer`, carried until that command exists.",
+    },
+    Field {
+        name: "broadcast.command_history",
+        page: "broadcast",
+        section: "Tera Term",
+        key: "BroadcastCommandHistory",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1493`, default off. Whether the broadcast dialog records commands. Broadcast is a multi-window feature and this shell owns one terminal today.",
+    },
+    Field {
+        name: "broadcast.accept",
+        page: "broadcast",
+        section: "Tera Term",
+        key: "AcceptBroadcast",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1497`, default **on**. Whether this terminal accepts a command from another Tera Term window. There is no broadcast channel in Sterna yet.",
+    },
+    Field {
+        name: "broadcast.submit_key",
+        page: "broadcast",
+        section: "Tera Term",
+        key: "BroadcastSubmitKey",
+        kind: Kind::Enum(&["None", "Enter", "CTRL+M"]),
+        default: "None",
+        label: None,
+        doc: "`ttset.c:1501`. What the non-realtime broadcast dialog appends. The else arm is `None`, so an unrecognised value and an absent key agree.",
+    },
+    Field {
+        name: "broadcast.max_history",
+        page: "broadcast",
+        section: "Tera Term",
+        key: "MaxBroadcatHistory",
+        kind: Kind::Int,
+        default: "99",
+        label: None,
+        doc: "`ttset.c:1319`. Upstream's misspelling is the public key and is preserved. It caps the broadcast command history, which is not built yet.",
+    },
+    Field {
+        name: "menu.disable_accelerator_send_break",
+        page: "menu",
+        section: "Tera Term",
+        key: "DisableAcceleratorSendBreak",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1452`. Suppresses Alt+B while leaving Control > Send break alone.",
+    },
+    Field {
+        name: "menu.disable_send_break",
+        page: "menu",
+        section: "Tera Term",
+        key: "DisableMenuSendBreak",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1606`. Greys Control > Send break even when the transport supports it. This is independent of the accelerator switch above.",
+    },
+    Field {
+        name: "menu.disable_accelerator_duplicate",
+        page: "menu",
+        section: "Tera Term",
+        key: "DisableAcceleratorDuplicateSession",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1614`. Suppresses Alt+D. Duplicate session is a Stage 3 feature, so the setting is carried but has no action to bind yet.",
+    },
+    Field {
+        name: "menu.accelerator_new_connection",
+        page: "menu",
+        section: "Tera Term",
+        key: "AcceleratorNewConnection",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1617`, default **on**. Enables Alt+N for New connection.",
+    },
+    Field {
+        name: "menu.accelerator_local_shell",
+        page: "menu",
+        section: "Tera Term",
+        key: "AcceleratorCygwinConnection",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1620`, default **on**. Enables Alt+G for Cygwin connection; Sterna's equivalent command is Local shell.",
+    },
+    Field {
+        name: "menu.disable_duplicate",
+        page: "menu",
+        section: "Tera Term",
+        key: "DisableMenuDuplicateSession",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1624`. Greys Duplicate session. The action arrives with Stage 3.",
+    },
+    Field {
+        name: "menu.disable_new_connection",
+        page: "menu",
+        section: "Tera Term",
+        key: "DisableMenuNewConnection",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1628`. While already connected, greys New connection rather than allowing the current line to be replaced.",
+    },
+    Field {
+        name: "macro.wait4all",
+        page: "macro",
+        section: "Tera Term",
+        key: "Wait4allMacroCommand",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1602`, default off. Upstream mirrors received text into shared memory only under this switch so `wait4all` can inspect every macro process. Sterna has no process-global DDE ring; the command remains explicitly unsupported and the compatibility key still round-trips.",
+    },
+    Field {
+        name: "window.jump_list",
+        page: "window",
+        section: "Tera Term",
+        key: "JumpList",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1714`, default **on**. Adds recent connections to the Windows taskbar jump list. Qt/Linux has no equivalent owned by this process.",
+    },
+    Field {
+        name: "window.corner_dontround",
+        page: "window",
+        section: "Tera Term",
+        key: "WindowCornerDontround",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1993`, default off. Requests square corners from Windows 11 DWM. Window decoration belongs to the compositor on Linux, so it is carried only.",
     },
 ];

@@ -97,6 +97,28 @@ fn the_window_position_is_written_only_when_its_switch_is_on() {
 }
 
 #[test]
+fn cygwin_directory_keeps_upstreams_reader_writer_mismatch() {
+    // `ttset.c:1476` really has a trailing space in the reader literal, while
+    // `:2250` writes the ordinary spelling. Keep both facts in the generated
+    // code: hiding the typo in the schema makes the upstream-key diff lie.
+    let field = FIELDS
+        .iter()
+        .find(|f| f.name == "connection.cygwin_directory")
+        .expect("the Cygwin setting");
+    assert_eq!(field.key, "CygwinDirectory ");
+
+    let input = Ini::parse(b"[Tera Term]\r\nCygwinDirectory=D:\\cygwin64\r\n");
+    let settings = Settings::load(&input);
+    assert_eq!(settings.connection_cygwin_directory, "D:\\cygwin64");
+
+    let mut output = Ini::new();
+    settings.store(&mut output);
+    let text = String::from_utf8(output.to_bytes()).expect("utf8");
+    assert!(text.contains("CygwinDirectory=D:\\cygwin64\r\n"));
+    assert!(!text.contains("CygwinDirectory ="));
+}
+
+#[test]
 fn the_two_comma_field_helpers_disagree_about_an_omitted_field() {
     // Sizes use `GetNthNum`, where a present value's missing field is zero.
     let s = Settings::load(&Ini::parse(b"[Tera Term]\r\nPasteDialogSize=400\r\n"));

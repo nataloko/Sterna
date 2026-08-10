@@ -23,7 +23,13 @@ struct Setting {
     name: String,
     kind: Kind,
     section: String,
+    /// The key upstream reads. Backtick quoting in the schema preserves
+    /// leading or trailing whitespace for the one reader whose literal has
+    /// it (`CygwinDirectory `).
     key: String,
+    /// The key upstream writes when it differs from the reader's spelling.
+    /// Almost always identical to `key`.
+    write_key: String,
     /// The INI's own spelling of the default, kept verbatim so the writer and
     /// the reader agree about it without a second conversion.
     default: String,
@@ -171,6 +177,7 @@ fn parse(text: &str) -> Vec<Setting> {
         let mut rest = rest;
         let mut write_if = None;
         let mut default_from = None;
+        let mut write_key = None;
         while let Some((before, tail)) = rest.rsplit_once('|') {
             let tail = tail.trim();
             if let Some(value) = tail.strip_prefix("write-if=") {
@@ -184,6 +191,10 @@ fn parse(text: &str) -> Vec<Setting> {
                 );
                 default_from = Some(value.trim().to_string());
                 rest = before;
+            } else if let Some(value) = tail.strip_prefix("write-key=") {
+                assert!(write_key.is_none(), "two write-key options: {trimmed}");
+                write_key = Some(value.trim().to_string());
+                rest = before;
             } else {
                 break;
             }
@@ -193,12 +204,18 @@ fn parse(text: &str) -> Vec<Setting> {
             .unwrap_or_else(|| panic!("want 6 fields: {trimmed}"));
         assert!(f.len() == 4, "want 6 fields: {trimmed}");
 
-        let (key, kind) = parse_kind(f[1], f[3]);
+        let key = match f[3].strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
+            Some(quoted) => quoted.to_string(),
+            None => f[3].to_string(),
+        };
+        let (key, kind) = parse_kind(f[1], &key);
+        let write_key = write_key.unwrap_or_else(|| key.clone());
         out.push(Setting {
             name: f[0].to_string(),
             kind,
             section: f[2].to_string(),
             key,
+            write_key,
             default: default.trim().to_string(),
             label: label.trim().to_string(),
             write_if,
@@ -622,7 +639,7 @@ fn emit(settings: &[Setting]) -> String {
     );
     for s in settings {
         let field = field_name(&s.name);
-        let (section, key) = (escape(&s.section), escape(&s.key));
+        let (section, key) = (escape(&s.section), escape(&s.write_key));
         let expr = match &s.kind {
             Kind::Bool => format!("if self.{field} {{ \"on\" }} else {{ \"off\" }}.to_string()"),
             Kind::Int { field: None, .. } => format!("self.{field}.to_string()"),

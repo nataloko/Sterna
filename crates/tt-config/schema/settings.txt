@@ -22,6 +22,9 @@
 # when it saves. It names another boolean setting. Leaving the old line alone
 # when that boolean is off matters: deleting it or writing a default would
 # change a shared `TERATERM.INI` that the user did not ask this program to own.
+# `write-key=Key` records the one upstream reader/writer mismatch. A key may be
+# enclosed in backticks when leading or trailing whitespace is significant;
+# the backticks are schema punctuation and are not part of the key.
 #
 # `default-from=name.of.int` is the other optional field. It reproduces a key
 # whose fallback is another setting's already-loaded value rather than a
@@ -1448,3 +1451,79 @@ window.x | int_zero | Tera Term | VTPos.1 | -2147483648 | - | write-if=window.sa
 
 # `ttset.c:600`, second half of the same pair and the same sentinel.
 window.y | int_zero | Tera Term | VTPos.2 | -2147483648 | - | write-if=window.save_position
+
+# --- shell integration and multi-window compatibility ------------------------
+
+# `ttset.c:706`, default off. Upstream switches between its VT and TEK windows
+# when either parser sees the other terminal's sequence. TEK is deliberately
+# out of scope here, so the key round-trips and acts on nothing.
+window.auto_vt_tek_switch | bool | Tera Term | AutoWinSwitch | off | -
+
+# `ttset.c:1476`. The trailing space is in upstream's **reader literal** and
+# the writer at `:2250` omits it. Backticks retain that space in the schema;
+# `write-key` reproduces the writer. This is a Windows Cygwin install path, not
+# the local pty's working directory, so it has no runtime effect here.
+connection.cygwin_directory | string | Tera Term | `CygwinDirectory ` | c:\cygwin | - | write-key=CygwinDirectory
+
+# `ttset.c:1483`. The external editor used by View log. Sterna has no View log
+# command yet, so the Windows default is preserved and the key round-trips.
+log.viewer | string | Tera Term | ViewlogEditor | notepad.exe | -
+
+# `ttset.c:1485`; the allocated-string helper's null fallback becomes empty.
+# Arguments for `log.viewer`, carried until that command exists.
+log.viewer_args | string | Tera Term | ViewlogEditorArg |  | -
+
+# `ttset.c:1493`, default off. Whether the broadcast dialog records commands.
+# Broadcast is a multi-window feature and this shell owns one terminal today.
+broadcast.command_history | bool | Tera Term | BroadcastCommandHistory | off | -
+
+# `ttset.c:1497`, default **on**. Whether this terminal accepts a command from
+# another Tera Term window. There is no broadcast channel in Sterna yet.
+broadcast.accept | bool | Tera Term | AcceptBroadcast | on | -
+
+# `ttset.c:1501`. What the non-realtime broadcast dialog appends. The else arm
+# is `None`, so an unrecognised value and an absent key agree.
+broadcast.submit_key | enum(None=None,Enter=Enter,CTRL+M=CtrlM) | Tera Term | BroadcastSubmitKey | None | -
+
+# `ttset.c:1319`. Upstream's misspelling is the public key and is preserved.
+# It caps the broadcast command history, which is not built yet.
+broadcast.max_history | int | Tera Term | MaxBroadcatHistory | 99 | -
+
+# `ttset.c:1452`. Suppresses Alt+B while leaving Control > Send break alone.
+menu.disable_accelerator_send_break | bool | Tera Term | DisableAcceleratorSendBreak | off | -
+
+# `ttset.c:1606`. Greys Control > Send break even when the transport supports
+# it. This is independent of the accelerator switch above.
+menu.disable_send_break | bool | Tera Term | DisableMenuSendBreak | off | -
+
+# `ttset.c:1614`. Suppresses Alt+D. Duplicate session is a Stage 3 feature, so
+# the setting is carried but has no action to bind yet.
+menu.disable_accelerator_duplicate | bool | Tera Term | DisableAcceleratorDuplicateSession | off | -
+
+# `ttset.c:1617`, default **on**. Enables Alt+N for New connection.
+menu.accelerator_new_connection | bool | Tera Term | AcceleratorNewConnection | on | -
+
+# `ttset.c:1620`, default **on**. Enables Alt+G for Cygwin connection; Sterna's
+# equivalent command is Local shell.
+menu.accelerator_local_shell | bool | Tera Term | AcceleratorCygwinConnection | on | -
+
+# `ttset.c:1624`. Greys Duplicate session. The action arrives with Stage 3.
+menu.disable_duplicate | bool | Tera Term | DisableMenuDuplicateSession | off | -
+
+# `ttset.c:1628`. While already connected, greys New connection rather than
+# allowing the current line to be replaced.
+menu.disable_new_connection | bool | Tera Term | DisableMenuNewConnection | off | -
+
+# `ttset.c:1602`, default off. Upstream mirrors received text into shared
+# memory only under this switch so `wait4all` can inspect every macro process.
+# Sterna has no process-global DDE ring; the command remains explicitly
+# unsupported and the compatibility key still round-trips.
+macro.wait4all | bool | Tera Term | Wait4allMacroCommand | off | -
+
+# `ttset.c:1714`, default **on**. Adds recent connections to the Windows taskbar
+# jump list. Qt/Linux has no equivalent owned by this process.
+window.jump_list | bool | Tera Term | JumpList | on | -
+
+# `ttset.c:1993`, default off. Requests square corners from Windows 11 DWM.
+# Window decoration belongs to the compositor on Linux, so it is carried only.
+window.corner_dontround | bool | Tera Term | WindowCornerDontround | off | -
