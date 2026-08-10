@@ -458,6 +458,16 @@ Applying reaches the running terminal, and **it overwrites modes the host set** 
 `ts.BSKey` is the same variable DECBKM writes, upstream and here. The size is
 the window's business rather than the painter's: the *window* is resized and
 the view fits the terminal to it, the same path a remote NAWS resize takes.
+`AlphaBlendActive` and `AlphaBlend` likewise reach the top-level window: their
+0..255 values become Qt opacity and switch as focus enters and leaves. An
+active value omitted from the file inherits the loaded inactive one.
+
+Native Wayland is the platform exception. Qt 6.11 retains the opacity property
+but has no backend operation to give it to the compositor; Fedora's xcb backend
+does. The render test therefore pins the setting and the focus policy, not
+visible transparency on Wayland. Run with `QT_QPA_PLATFORM=xcb` when that
+effect is wanted on this desktop.
+
 `Setup > Save setup` writes the file, which is upstream's bargain — a change
 applies now and outlives the session only if it is saved. With the default-on
 `IniAutoBackup`, an existing file is first copied byte-for-byte to a timestamped

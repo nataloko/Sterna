@@ -1240,6 +1240,18 @@ And for the bell, where the surprise is that a beep is a state machine:
   result — so the first copy in a second wins, and a failed backup does not
   stop the save. Putting the switch inside the generic INI writer would back
   up operations upstream does not and risks recursively backing up a backup.
+- **`AlphaBlendActive` defaults to the loaded `AlphaBlend`, not to 255.** The
+  inactive value is read and clamped first, then passed as
+  `GetPrivateProfileInt`'s fallback at `ttset.c:1471`. An absent or empty
+  active key therefore follows it; a non-numeric value is still zero, which is
+  the Win32 integer parser's separate rule. This is what the schema's
+  `default-from=` option exists for.
+- **`windowOpacity()` succeeding does not mean Wayland changed a pixel.** Qt
+  6.11's X11 library has `QXcbWindow::setOpacity`; its Wayland client has no
+  backend override and sends no alpha-modifier request. The property still
+  round-trips, the activation test passes and no warning is printed, while the
+  native Wayland window remains opaque. Use xcb to inspect visible opacity;
+  do not treat a property assertion as a compositor test.
 - **`BPAuto=on` silently discards `Answerback=`.** `ttset.c:1132` overwrites
   `ts.Answerback` with B Plus's five-byte activation string, four hundred lines
   after reading the key. It is the only setting in the file that another
