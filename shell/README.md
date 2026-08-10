@@ -456,9 +456,12 @@ before the ordinary UTF-8 text path encodes it. Those are different byte
 streams and the real-pty test asserts each one.
 
 `StrictKeyMapping` means a special key with no `KEYBOARD.CNF` entry has no
-built-in fallback; it does not mean stricter validation. The mapping file is
-still to come, so strict mode currently suppresses those special keys.
-`DeleteKey=on` is upstream's explicit exception and sends DEL anyway.
+built-in fallback; it does not mean stricter validation. The file is loaded
+beside the active settings file, can be replaced with `/K=` or Setup > Load key
+map, and maps physical PC scan codes rather than layout-dependent characters.
+Wayland, X11 and Windows native codes are normalised before the Shift, Ctrl and
+Alt bits are added. `DeleteKey=on` is upstream's explicit exception and sends
+DEL anyway.
 
 Font rasterisation is applied at the painter boundary. `FontQuality` maps to
 Qt's default, antialiased or non-antialiased request; ClearType uses the

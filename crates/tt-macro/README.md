@@ -122,5 +122,7 @@ is quietly lied to is worse than one that is refused. In short: the serial
 control lines are on `SerialConn` rather than on `Transport`, so a `Session`
 cannot reach them through the box it holds; `sendfile` is the File menu's path
 rather than a protocol; `scp` wants an SSH channel `tt-conn` does not open; the
-key-map commands want `KEYBOARD.CNF`; and the broadcasts and `wait4all` are
-about the *other* sessions and belong to whatever owns the tab bar.
+unmapped fallback and frontend actions make `sendkcode` more than a session
+send; and the broadcasts and `wait4all` are about the *other* sessions and
+belong to whatever owns the tab bar. `loadkeymap` is answered now: it replaces
+the live session map and resolves a relative name through `changedir`.

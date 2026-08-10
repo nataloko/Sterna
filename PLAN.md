@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 1 complete, 2 in progress · **Commits:** 361
+**Last updated:** 2026-08-10 · **Stage:** 1 complete, 2 in progress · **Commits:** 367
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -1115,9 +1115,10 @@ before anything else in every session.
   out of scope; their settings round-trip as compatibility data rather than
   pretending those subsystems exist.
   See below.
-- `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
-  against a real Win32 rather than against a reading of the documentation;
-  `KEYBOARD.CNF` is an INI and reads with the same layer.
+- `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **both done** — `TERATERM.INI`,
+  2026-08-08, held against a real Win32 rather than against a reading of the
+  documentation; `KEYBOARD.CNF`, 2026-08-10, parsed through that same INI
+  layer and wired through the session, C ABI, Qt shell and TTL `loadkeymap`.
 
 #### The settings schema, and an oracle for a file format
 
@@ -4238,6 +4239,36 @@ are carried and saved with their upstream conversion rules. In particular,
 `atoi` before narrowing to a `WORD`; treating it as a bool would silently alter
 a shared file.
 
+#### `KEYBOARD.CNF`, where a key is a physical scan code
+
+`crates/tt-config/`, `tt-session`, the C ABI, the Qt shell and `tt-macro`,
+2026-08-10. The second compatibility file now reads through the same measured
+INI layer as `TERATERM.INI`: every fixed section and all 99 `[User keys]`
+entries, including binary, text, macro and menu-command actions. Its small
+parser quirks are reproduced too. Fixed values are read through a ten-character
+buffer and only exact `off` disables one; user values get 255 characters and
+any `off...` prefix disables one; signed numbers narrow into words; and when
+two entries name the same physical code the higher internal Tera Term key id
+wins, not the later line in the file.
+
+The map lives on the session because terminal keys have to use the live
+application-cursor/keypad and 7/8-bit modes. The C ABI reports the non-wire
+actions to the frontend instead of pretending a terminal owns a clipboard,
+menu or macro runner. Qt translates Wayland's evdev codes, X11's evdev-plus-8
+codes and Windows' set-1 codes into the PC/AT numbers the file stores, then ORs
+the same Shift, Ctrl and Alt bits upstream does. The real-pty test proves a
+remapped function key and a modified user key reach the far end as the expected
+bytes.
+
+The shell loads `KEYBOARD.CNF` beside the active settings file by default,
+accepts `/K=` with upstream's relative-path and implicit `.CNF` rules, warns
+about duplicate physical assignments and exposes Setup > Load key map. This is
+what makes `StrictKeyMapping` useful rather than merely suppressive. TTL's
+`loadkeymap` replaces the same live map and resolves a relative name through
+`changedir`, as its other file commands do. DEC UDK definitions and a few local
+window shortcuts still wait for their own missing subsystems; the file reader
+does not claim those exist.
+
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
 Windows build, ConPTY, Win32 serial edge cases, NSIS installer. All 14 `.lng`
@@ -4296,7 +4327,11 @@ Adoption hinges on "my existing setup just works." Budget real time here.
   Linux configuration file belongs, since the executable may be inside a
   read-only AppImage — and `Setup > Save setup` writes it back, touching only
   the keys the schema owns.
-- **`KEYBOARD.CNF`** — it's an INI. Read as-is, 1–2 days.
+- **`KEYBOARD.CNF`** — ✅ **done 2026-08-10**, `crates/tt-config/` through the
+  same `GetPrivateProfile*`-compatible INI layer, then wired to the session,
+  C ABI, Qt shell and TTL `loadkeymap`. Physical scan codes stay physical
+  across Wayland, X11 and Windows; duplicate resolution and the two different
+  `off` parsing rules match upstream.
 - **Hosts and keys** — read Tera Term's `ssh_known_hosts` *and*
   `~/.ssh/known_hosts`; read `~/.ssh/id_*` and `~/.ssh/config`; write OpenSSH
   format.

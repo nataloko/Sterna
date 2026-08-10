@@ -127,8 +127,21 @@ all 272 distinct keys read by `ttset.c`**. Tuple-valued keys such as
 lists and fails on either a missing or an invented key, so this is a checked
 property rather than a maintained count.
 
+## `KEYBOARD.CNF` uses the same INI, but not the same values
+
+`KeyboardMap` reads every fixed keyboard section and `[User keys]` 1 through
+99. The values stay faithful to `_ReadKeyboardCnf`: fixed entries are truncated
+to ten characters and only exact `off` disables one, user entries are truncated
+to 255 characters and any `off` prefix disables one, decimal values narrow to
+16 bits, and the higher internal key id wins when two entries use the same scan
+code. The duplicate codes are retained so a frontend can issue upstream's
+warning without putting UI in this crate.
+
+The result distinguishes terminal keys, DEC UDKs, local shortcuts, and all
+four user-key types. It does not send anything: live terminal modes and
+frontend-owned actions belong to `tt-session` and the shell respectively.
+
 ## Still to come
 
 - **`.lng` labels.** The metadata carries the label key and nothing looks it
   up, so the dialog derives a name from the setting instead. That is `tt-i18n`.
-- **`KEYBOARD.CNF`**, which is an INI and reads with the same layer.
