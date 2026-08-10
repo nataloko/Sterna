@@ -8,7 +8,9 @@
  *
  *   oracle [--cols N] [--rows N] [--term ID] [--attrs] [--scrollback]
  *          [--crreceive cr|lf|crlf|auto] [--clearonresize]
- *          [--noscrollwindowclear] [FILE]
+ *          [--noscrollwindowclear] [--backwrap] [--vtcompattab]
+ *          [--tabstop SPEC] [--invaliddecrqss] [--autoinvoke] [--nolocktuid]
+ *          [--maxoscbuffer N] [FILE]
  *
  * With no FILE, reads stdin. Output goes to stdout.
  */
@@ -37,6 +39,76 @@ extern TTTSet ts;
 extern TComVar cv;
 
 /* ---- settings ----------------------------------------------------------- */
+
+/*
+ * What argv is allowed to say about ts.
+ *
+ * One struct rather than a parameter per option: every setting whose
+ * non-default half a differential case needs to reach adds one, and the
+ * signature had already reached six. The fields are the *settings*, not the
+ * dump's own options — --attrs and --scrollback stay in main(), because they
+ * change what is printed rather than what Tera Term does.
+ */
+struct opts {
+	int cols, rows;
+	const char *term_id;
+	int cr_receive;                 /* ttset.c:631 */
+	int clear_on_resize;            /* ttset.c:1676 */
+	int scroll_window_clear_screen; /* ttset.c:1444 */
+	int back_wrap;                  /* ttset.c:1108 */
+	int vt_compat_tab;              /* ttset.c:1343 */
+	int tab_stop_flag;              /* ttset.c:1717 */
+	int invalid_decrqss;            /* ttset.c:1756 */
+	int auto_invoke;                /* ttset.c:1101 */
+	int lock_tuid;                  /* ttset.c:1711 */
+	int max_osc_buffer;             /* ttset.c:1789 */
+};
+
+/*
+ * ttset.c:1717's TabStopModifySequence, which is a comma list rather than a
+ * flag: `on`/`all` and `off`/`none` assign the whole word, and anything else
+ * starts from TABF_NONE and ORs the named bits in. Transcribed rather than
+ * borrowed because ttset.c is not compiled here — the rest of this file's
+ * defaults are the same kind of transcription, and the same rule applies:
+ * find the key, not the initialiser.
+ *
+ * Returns -1 for a spec with no recognised word in it, so a typo on the
+ * command line is a failed run rather than a silently disabled HTS.
+ */
+static int parse_tab_stop_flag(const char *spec)
+{
+	const char *p = spec;
+	int flag = 0, seen = 0;
+
+	if (_stricmp(spec, "on") == 0 || _stricmp(spec, "all") == 0) {
+		return TABF_ALL;
+	}
+	if (_stricmp(spec, "off") == 0 || _stricmp(spec, "none") == 0) {
+		return TABF_NONE;
+	}
+	while (*p != '\0') {
+		char word[16];
+		size_t n = 0;
+
+		while (*p != '\0' && *p != ',') {
+			if (n + 1 < sizeof(word)) {
+				word[n++] = *p;
+			}
+			p++;
+		}
+		word[n] = '\0';
+		if (*p == ',') {
+			p++;
+		}
+		if (_stricmp(word, "HTS") == 0)       { flag |= TABF_HTS;  seen = 1; }
+		else if (_stricmp(word, "HTS7") == 0) { flag |= TABF_HTS7; seen = 1; }
+		else if (_stricmp(word, "HTS8") == 0) { flag |= TABF_HTS8; seen = 1; }
+		else if (_stricmp(word, "TBC") == 0)  { flag |= TABF_TBC;  seen = 1; }
+		else if (_stricmp(word, "TBC0") == 0) { flag |= TABF_TBC0; seen = 1; }
+		else if (_stricmp(word, "TBC3") == 0) { flag |= TABF_TBC3; seen = 1; }
+	}
+	return seen ? flag : -1;
+}
 
 /*
  * Tera Term populates TTTSet while parsing TERATERM.INI, with defaults applied
@@ -80,17 +152,16 @@ static int resolve_term_id(const char *name)
 	return 0;
 }
 
-static void settings_defaults(int cols, int rows, const char *term_id, int cr_receive,
-                              int clear_on_resize, int scroll_window_clear_screen)
+static void settings_defaults(const struct opts *o)
 {
 	memset(&ts, 0, sizeof(ts));
 	memset(&cv, 0, sizeof(cv));
 
-	ts.TerminalWidth = cols;
-	ts.TerminalHeight = rows;
-	ts.TerminalID = resolve_term_id(term_id);
+	ts.TerminalWidth = o->cols;
+	ts.TerminalHeight = o->rows;
+	ts.TerminalID = resolve_term_id(o->term_id);
 	if (ts.TerminalID == 0) {
-		fprintf(stderr, "oracle: unknown terminal id '%s'\n", term_id);
+		fprintf(stderr, "oracle: unknown terminal id '%s'\n", o->term_id);
 		exit(2);
 	}
 
@@ -100,12 +171,20 @@ static void settings_defaults(int cols, int rows, const char *term_id, int cr_re
 	 * branch and become IdCR. Do not "improve" these to IdCRLF: the oracle's
 	 * job is to reproduce shipped Tera Term, and newline handling silently
 	 * shifts every row in the dump. Override with --crreceive. */
-	ts.CRReceive = cr_receive;
+	ts.CRReceive = o->cr_receive;
 	ts.CRSend = IdCR;
 	ts.ScrollBuffSize = 100;        /* ttset.c:750 */
 	ts.ScrollBuffMax = 10000;       /* ttset.c:1213 */
-	ts.MaxOSCBufferSize = 4096;     /* ttset.c:1789 */
-	ts.TabStopFlag = TABF_ALL;      /* ttset.c:1719, key default "on" */
+	/* ttset.c:1789 and :1717. Both overridable — --maxoscbuffer bounds the
+	 * OSC string and --tabstop is what HTS and TBC are allowed to change. */
+	ts.MaxOSCBufferSize = o->max_osc_buffer;
+	ts.TabStopFlag = o->tab_stop_flag;
+	/* ttset.c:1688, and this was missing: a zeroed TerminalUID is an empty
+	 * string, so the tertiary DA at vtterm.c:2829 answered `!|` and eight
+	 * spaces where a shipped Tera Term answers FFFFFFFF. The key validates
+	 * as it reads — eight characters, all hex, upper-cased — and anything
+	 * else becomes this same string, so the default is also the fallback. */
+	strncpy_s(ts.TerminalUID, sizeof(ts.TerminalUID), "FFFFFFFF", _TRUNCATE);
 	/* ttset.c:1112's real default is IdBeepOn -- the else branch of an
 	 * _stricmp chain that tests only "off" and "visual". IdBeepOff here is a
 	 * deliberate divergence rather than the initialiser trap: MessageBeep on
@@ -133,9 +212,14 @@ static void settings_defaults(int cols, int rows, const char *term_id, int cr_re
 	/* ttset.c:1444, GetOnOff(..., TRUE). Not a gate on ED 2 -- it decides
 	 * only whether an ED 0 at the home position is promoted to one
 	 * (vtterm.c:1728). Override with --noscrollwindowclear. */
-	ts.ScrollWindowClearScreen = scroll_window_clear_screen;
+	ts.ScrollWindowClearScreen = o->scroll_window_clear_screen;
 	/* ttset.c:1568 defaults this to "overwrite", not off. */
 	ts.AcceptTitleChangeRequest = IdTitleChangeRequestOverwrite;
+	/* ttset.c:1343, GetOnOff(..., FALSE). Off means a tab that runs out of
+	 * stops arms the pending wrap and a tab arriving on a full line breaks
+	 * the line first (vtterm.c:713, buffer.c:5228). --vtcompattab is the
+	 * other half, where a tab is only ever a cursor move. */
+	ts.VTCompatTab = o->vt_compat_tab;
 
 	/*
 	 * THE FLAG WORDS ARE NOT ZERO.
@@ -166,11 +250,27 @@ static void settings_defaults(int cols, int rows, const char *term_id, int cr_re
 	 * EnableStatusLine=on, :1681 AlternateScreenBuffer=on, :1711 LockTUID=on,
 	 * :1950 ClearScrollBufferFromRemote=on. */
 	ts.TermFlag = TF_ACCEPT8BITCTRL | TF_CTRLINKANJI | TF_ENABLESLINE |
-	              TF_ALTSCR | TF_LOCKTUID | TF_REMOTECLEARSBUFF;
-	/* ttset.c:1676 ClearOnResize=off, which is why it is not in the word
-	 * above. --clearonresize is the other half of that key. */
-	if (clear_on_resize) {
+	              TF_ALTSCR | TF_REMOTECLEARSBUFF;
+	/* :1711 LockTUID=on, and --nolocktuid is the half that lets DECSTUI
+	 * (`DCS ! { … ST`) write ts.TerminalUID, which the tertiary DA reports. */
+	if (o->lock_tuid) {
+		ts.TermFlag |= TF_LOCKTUID;
+	}
+	/* ttset.c:1676 ClearOnResize=off, :1108 BackWrap=off, :1101
+	 * AutoInvoke=off and :1756 UseInvalidDECRQSSResponse=off, which is why
+	 * none of them is in the word above. Each flag is the other half of a key
+	 * whose GetOnOff default is FALSE. */
+	if (o->clear_on_resize) {
 		ts.TermFlag |= TF_CLEARONRESIZE;
+	}
+	if (o->back_wrap) {
+		ts.TermFlag |= TF_BACKWRAP;
+	}
+	if (o->auto_invoke) {
+		ts.TermFlag |= TF_AUTOINVOKE;
+	}
+	if (o->invalid_decrqss) {
+		ts.TermFlag |= TF_INVALIDDECRPSS;
 	}
 
 	/* ttset.c:1653 WindowCtrlSequence=on, :1661 WindowReportSequence=on,
@@ -626,9 +726,19 @@ static void run_stream(const unsigned char *input, size_t len)
 
 int main(int argc, char **argv)
 {
-	int cols = 80, rows = 24, want_attrs = 0, want_scrollback = 0, cr_receive = IdCR;
-	int clear_on_resize = 0, scroll_window_clear_screen = 1;
-	const char *term_id = "vt100";
+	struct opts o = {
+		80, 24, "vt100", IdCR,
+		0,          /* ClearOnResize, ttset.c:1676 off */
+		1,          /* ScrollWindowClearScreen, ttset.c:1444 on */
+		0,          /* BackWrap, ttset.c:1108 off */
+		0,          /* VTCompatTab, ttset.c:1343 off */
+		TABF_ALL,   /* TabStopModifySequence, ttset.c:1717 "on" */
+		0,          /* UseInvalidDECRQSSResponse, ttset.c:1756 off */
+		0,          /* AutoInvoke, ttset.c:1101 off */
+		1,          /* LockTUID, ttset.c:1711 on */
+		4096,       /* MaxOSCBufferSize, ttset.c:1789 */
+	};
+	int want_attrs = 0, want_scrollback = 0;
 	const char *path = NULL;
 	unsigned char *input;
 	size_t len = 0, cap = 1 << 16;
@@ -637,31 +747,53 @@ int main(int argc, char **argv)
 
 	for (i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--cols") == 0 && i + 1 < argc) {
-			cols = atoi(argv[++i]);
+			o.cols = atoi(argv[++i]);
 		} else if (strcmp(argv[i], "--rows") == 0 && i + 1 < argc) {
-			rows = atoi(argv[++i]);
+			o.rows = atoi(argv[++i]);
 		} else if (strcmp(argv[i], "--term") == 0 && i + 1 < argc) {
-			term_id = argv[++i];
+			o.term_id = argv[++i];
 		} else if (strcmp(argv[i], "--attrs") == 0) {
 			want_attrs = 1;
 		} else if (strcmp(argv[i], "--scrollback") == 0) {
 			want_scrollback = 1;
 		} else if (strcmp(argv[i], "--clearonresize") == 0) {
-			clear_on_resize = 1;
+			o.clear_on_resize = 1;
 		} else if (strcmp(argv[i], "--noscrollwindowclear") == 0) {
-			scroll_window_clear_screen = 0;
+			o.scroll_window_clear_screen = 0;
+		} else if (strcmp(argv[i], "--backwrap") == 0) {
+			o.back_wrap = 1;
+		} else if (strcmp(argv[i], "--vtcompattab") == 0) {
+			o.vt_compat_tab = 1;
+		} else if (strcmp(argv[i], "--invaliddecrqss") == 0) {
+			o.invalid_decrqss = 1;
+		} else if (strcmp(argv[i], "--autoinvoke") == 0) {
+			o.auto_invoke = 1;
+		} else if (strcmp(argv[i], "--nolocktuid") == 0) {
+			o.lock_tuid = 0;
+		} else if (strcmp(argv[i], "--maxoscbuffer") == 0 && i + 1 < argc) {
+			o.max_osc_buffer = atoi(argv[++i]);
+		} else if (strcmp(argv[i], "--tabstop") == 0 && i + 1 < argc) {
+			const char *v = argv[++i];
+			o.tab_stop_flag = parse_tab_stop_flag(v);
+			if (o.tab_stop_flag < 0) {
+				fprintf(stderr, "oracle: bad --tabstop '%s'\n", v);
+				return 2;
+			}
 		} else if (strcmp(argv[i], "--crreceive") == 0 && i + 1 < argc) {
 			const char *v = argv[++i];
-			if (strcmp(v, "cr") == 0)        cr_receive = IdCR;
-			else if (strcmp(v, "lf") == 0)   cr_receive = IdLF;
-			else if (strcmp(v, "crlf") == 0) cr_receive = IdCRLF;
-			else if (strcmp(v, "auto") == 0) cr_receive = IdAUTO;
+			if (strcmp(v, "cr") == 0)        o.cr_receive = IdCR;
+			else if (strcmp(v, "lf") == 0)   o.cr_receive = IdLF;
+			else if (strcmp(v, "crlf") == 0) o.cr_receive = IdCRLF;
+			else if (strcmp(v, "auto") == 0) o.cr_receive = IdAUTO;
 			else { fprintf(stderr, "oracle: bad --crreceive '%s'\n", v); return 2; }
 		} else if (strcmp(argv[i], "--help") == 0) {
 			fprintf(stderr,
 			        "usage: oracle [--cols N] [--rows N] [--term ID] [--attrs]\n"
 			        "              [--scrollback] [--crreceive cr|lf|crlf|auto]\n"
-			        "              [--clearonresize] [--noscrollwindowclear] [FILE]\n");
+			        "              [--clearonresize] [--noscrollwindowclear]\n"
+			        "              [--backwrap] [--vtcompattab] [--tabstop SPEC]\n"
+			        "              [--invaliddecrqss] [--autoinvoke] [--nolocktuid]\n"
+			        "              [--maxoscbuffer N] [FILE]\n");
 			return 0;
 		} else if (argv[i][0] != '-') {
 			path = argv[i];
@@ -671,8 +803,8 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if (cols < 1 || cols > TermWidthMax || rows < 1 || rows > TermHeightMax) {
-		fprintf(stderr, "oracle: size %dx%d out of range\n", cols, rows);
+	if (o.cols < 1 || o.cols > TermWidthMax || o.rows < 1 || o.rows > TermHeightMax) {
+		fprintf(stderr, "oracle: size %dx%d out of range\n", o.cols, o.rows);
 		return 2;
 	}
 
@@ -698,21 +830,20 @@ int main(int argc, char **argv)
 		fclose(in);
 	}
 
-	settings_defaults(cols, rows, term_id, cr_receive, clear_on_resize,
-	                  scroll_window_clear_screen);
+	settings_defaults(&o);
 	oracle_clock_set_frozen(1);
 
-	NumOfColumns = cols;
-	NumOfLines = rows;
-	WinWidth = cols;
-	WinHeight = rows;
+	NumOfColumns = o.cols;
+	NumOfLines = o.rows;
+	WinWidth = o.cols;
+	WinHeight = o.rows;
 
 	InitBuffer(IdVtDrawAPIUnicode);
 	/* buffer.c:134 hardcodes CodePage = 932 (Shift-JIS). The oracle is
 	 * UTF-8, and this drives the per-cell ansi_char shadow. */
 	BuffSetDispCodePage(CP_UTF8);
 	ResetTerminal();
-	BuffChangeTerminalSize(cols, rows);
+	BuffChangeTerminalSize(o.cols, o.rows);
 
 	run_stream(input, len);
 
@@ -722,7 +853,7 @@ int main(int argc, char **argv)
 	 * that pads every row past its own width and reports a header the terminal
 	 * has outgrown.
 	 */
-	dump(stdout, NumOfColumns, NumOfLines, term_id, want_attrs, want_scrollback);
+	dump(stdout, NumOfColumns, NumOfLines, o.term_id, want_attrs, want_scrollback);
 
 	free(input);
 	return 0;
