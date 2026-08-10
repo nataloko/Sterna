@@ -770,13 +770,16 @@ mod tests {
         // Whether there *is* a port with that number is the rig's business, not
         // the resolution's — but the answer must be one of the two, never a
         // silently different device.
-        match Startup::of(&cmd, &ssh, &s, 80, 24) {
-            Startup::Open(Target::Serial { path, params }) => {
-                assert!(path.starts_with("/dev/"));
+        let first_port = port_by_number(1)
+            .expect("enumerate the first serial port")
+            .map(|p| p.open_path().to_string());
+        match (Startup::of(&cmd, &ssh, &s, 80, 24), first_port) {
+            (Startup::Open(Target::Serial { path, params }), Some(expected)) => {
+                assert_eq!(path, expected, "/C=1 is the picker's first port");
                 assert_eq!(params.baud, 115_200);
             }
-            Startup::Unsupported(why) => assert!(why.contains("no serial port")),
-            other => panic!("unexpected {other:?}"),
+            (Startup::Unsupported(why), None) => assert!(why.contains("no serial port")),
+            other => panic!("startup and enumeration disagreed: {other:?}"),
         }
     }
 
@@ -891,7 +894,7 @@ mod tests {
     #[test]
     fn a_shell_opens_and_ssh_says_who_should_open_it() {
         let shell = Target::Shell(Box::new(PtyParams {
-            argv: vec!["sh".into(), "-c".into(), "exit 0".into()],
+            argv: successful_command(),
             login_shell: false,
             ..Default::default()
         }));
@@ -1013,6 +1016,21 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    fn successful_command() -> Vec<String> {
+        vec!["/bin/sh".into(), "-c".into(), "exit 0".into()]
+    }
+
+    #[cfg(windows)]
+    fn successful_command() -> Vec<String> {
+        vec![
+            "cmd.exe".into(),
+            "/d".into(),
+            "/c".into(),
+            "exit /b 0".into(),
+        ]
+    }
+
     #[test]
     fn cygconnect_with_no_arguments_is_a_login_shell_where_we_are() {
         let p = pty("");
@@ -1043,11 +1061,18 @@ mod tests {
     /// upstream's `chdir` failure is a message and not a refusal.
     #[test]
     fn the_directory_options_decide_where_the_shell_starts() {
+        let dir = std::env::temp_dir();
+        let named = format!("-d '{}'", dir.display());
+        let home_and_named = format!("-cd -d '{}'", dir.display());
+        let missing = dir.join("sterna-tt-session-no-such-cygterm-directory");
+        assert!(!missing.is_dir(), "the missing-directory fixture exists");
+        let missing = format!("-d '{}'", missing.display());
+
         assert_eq!(pty("-cd").cwd, None, "None is the home directory");
-        assert_eq!(pty("-d /tmp").cwd, Some(PathBuf::from("/tmp")));
-        assert_eq!(pty("-cd -d /tmp").cwd, Some(PathBuf::from("/tmp")));
+        assert_eq!(pty(&named).cwd, Some(dir.clone()));
+        assert_eq!(pty(&home_and_named).cwd, Some(dir));
         assert_eq!(
-            pty("-d /no/such/directory").cwd,
+            pty(&missing).cwd,
             std::env::current_dir().ok(),
             "a directory that is not there is not a failed connection"
         );
@@ -1057,7 +1082,9 @@ mod tests {
     /// transport that needs nothing installed to prove it.
     #[test]
     fn what_cygconnect_produces_can_be_opened() {
-        let target = Target::cygterm(b"-s '/bin/sh -c :' -nols", 80, 24);
+        let shell = successful_command().join(" ");
+        let arg = format!("-s '{shell}' -nols");
+        let target = Target::cygterm(arg.as_bytes(), 80, 24);
         assert!(target.open().is_ok());
     }
 }

@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 404
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 405
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4579,6 +4579,19 @@ so 48 common transcripts are a byte-for-byte gate without pretending Wine
 defines the other five. The MinGW test is green under Wine in 6.9 seconds and
 reports the 48/5 split. `TTL_BLESS` aborts immediately on Windows, before it can
 replace reviewed files with platform-shaped or Wine-specific answers.
+
+The session and macro integration tests now ask Windows for Windows-shaped
+fixtures too. The session opener runs `cmd.exe` rather than `sh`, CygTerm's
+directory cases use the platform temporary directory rather than `/tmp`, and
+the serial command-line case compares `/C=1` with the enumerator's exact first
+port instead of requiring `/dev/`. This matters even under Wine: its `Z:` drive
+made `/bin/sh` and `/tmp` appear to work in a Windows binary, hiding tests that
+would fail on native Windows. The complete Windows `tt-session` suite is now
+167/167 under Wine; the 43 non-ConPTY `tt-macro` checks pass there as well.
+The remaining macro connection case now names `cmd.exe` correctly but still
+needs native Windows because it reads real ConPTY output, below the same Wine 9
+console-host limit already recorded for `tt-conn`. Both native Linux packages
+remain green.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

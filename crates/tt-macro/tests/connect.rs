@@ -96,11 +96,15 @@ fn screen(s: &Session) -> Vec<String> {
 /// macro then waits for.
 #[test]
 fn cygconnect_opens_a_shell_and_the_macro_reads_what_it_printed() {
-    let s = drive(
-        "cygconnect \"-s '/bin/echo sterna-ok' -nols\"\ntimeout = 5\nwait 'sterna-ok'\n\
-         if result = 1 then\n  dispstr 'matched'\nendif",
-        &mut NullUi,
+    #[cfg(unix)]
+    let command = "/bin/echo sterna-ok";
+    #[cfg(windows)]
+    let command = "cmd.exe /d /c echo sterna-ok";
+    let script = format!(
+        "cygconnect \"-s '{command}' -nols\"\ntimeout = 5\nwait 'sterna-ok'\n\
+         if result = 1 then\n  dispstr 'matched'\nendif"
     );
+    let s = drive(&script, &mut NullUi);
     assert!(
         screen(&s).iter().any(|l| l == "matched"),
         "{:?}",

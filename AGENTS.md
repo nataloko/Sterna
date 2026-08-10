@@ -564,6 +564,12 @@ And for telnet:
 
 And for the local pty:
 
+- **Wine's `Z:` drive can make Unix-only fixtures pass in a Windows binary.**
+  `/bin/sh` and `/tmp` name the host's files there, even though neither exists
+  on native Windows; a bare `sh` in the same suite then fails and makes the
+  production path look inconsistent. Cross-platform shell tests use
+  `cmd.exe` on Windows and `std::env::temp_dir()` for a real directory, and a
+  serial test compares against the enumerator rather than guessing `/dev/`.
 - **Hold the slave end open and nothing ever ends.** We own one end of the pty
   and the child owns the other; keeping ours after `spawn_command` means the
   master never sees the hangup when the child exits. No error, no data, no EOF
