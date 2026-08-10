@@ -18,12 +18,11 @@
 #[cfg(unix)]
 use std::os::unix::io::RawFd;
 #[cfg(windows)]
-use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
-
-#[cfg(windows)]
-use windows_sys::Win32::System::Threading::{CreateEventW, ResetEvent, SetEvent};
+use std::os::windows::io::RawHandle;
 
 use crate::error::Result;
+#[cfg(windows)]
+use crate::windows_event::ManualEvent;
 
 /// The classic self-pipe. Both ends non-blocking, both `O_CLOEXEC`.
 #[cfg(unix)]
@@ -103,44 +102,30 @@ impl Drop for Wakeup {
 /// produce one frontend wakeup, and the event stays signalled until `drain`.
 #[cfg(windows)]
 pub(crate) struct Wakeup {
-    event: OwnedHandle,
+    event: ManualEvent,
 }
 
 #[cfg(windows)]
 impl Wakeup {
     pub(crate) fn new() -> Result<Wakeup> {
-        // SAFETY: unnamed event, default security, manual reset, initially
-        // quiet. A non-null handle is uniquely owned by the returned object.
-        let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
-        if event.is_null() {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        // SAFETY: `event` is a fresh owned Win32 handle and is transferred
-        // exactly once into `OwnedHandle`.
-        let event = unsafe { OwnedHandle::from_raw_handle(event) };
-        Ok(Wakeup { event })
+        Ok(Wakeup {
+            event: ManualEvent::new()?,
+        })
     }
 
     pub(crate) fn handle(&self) -> RawHandle {
-        self.event.as_raw_handle()
+        self.event.handle()
     }
 
     pub(crate) fn signal(&self) {
-        // SAFETY: the event stays live for this borrow. A signal already set
-        // is the same coalesced wakeup, so the result needs no special case.
-        unsafe {
-            SetEvent(self.event.as_raw_handle());
-        }
+        self.event.signal();
     }
 
     pub(crate) fn drain(&self) {
         // Reset before the caller examines its queue. A signal racing after
         // this reset remains set; one racing before it has already published
         // its state and the caller will consume that state now.
-        // SAFETY: the event stays live for this borrow.
-        unsafe {
-            ResetEvent(self.event.as_raw_handle());
-        }
+        self.event.reset();
     }
 }
 

@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 390
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 391
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4416,8 +4416,26 @@ its self-pipe. All three set/wait/reset tests pass through the MinGW binaries
 under Wine, the Windows crates link cleanly, and the Unix Qt build remains
 clean with its pty, macro and control event-loop tests passing. A native
 Windows Qt build is still required before calling the frontend path proven;
-serial, telnet and ConPTY need their own Windows asynchronous I/O events rather
-than being folded into this worker-channel change.
+serial and telnet need their own Windows asynchronous I/O events rather than
+being folded into this worker-channel change.
+
+ConPTY is now a byte transport rather than a type that merely constructs. The
+anonymous pipes `portable-pty` creates are synchronous, so one blocking worker
+owns each direction: the reader feeds a bounded 1 MiB queue and signals a
+manual-reset event, while the writer's small bounded queue turns saturation
+back into the short-write path the session already retries. EOF is an ordered
+message behind the final bytes and is re-signalled when a manual event
+coalesces both, so the last line cannot hide the child's exit. `tt-host` waits
+on that same event instead of its temporary Windows sleep, and the Qt shell
+gets it through the session's existing `*_wait_handle` ABI.
+
+The worker, ordering and event transition pass as a MinGW binary under Wine.
+The two real `cmd.exe` integration cases compile and are written to answer
+ConPTY's initial `CSI 6 n` cursor query, but Wine 9 cannot run them: its console
+host rejects the internal `--inheritcursor` switch selected by `portable-pty`
+and closes the output pipe empty. Keep the native Windows runner as the
+authority; Wine's failure happens below Sterna before the child produces a
+byte.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

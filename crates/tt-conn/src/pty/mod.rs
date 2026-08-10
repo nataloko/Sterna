@@ -19,18 +19,175 @@
 //!
 //! `portable-pty` supplies the parts that are genuinely hard and genuinely
 //! platform-specific — `openpty`, the `setsid`/`TIOCSCTTY` dance in the child,
-//! and ConPTY when Stage 3 arrives. The byte-level read and write are ours,
-//! for the reason [`PtyConn::read`] gives.
+//! and ConPTY on Windows. The byte-level read and write are ours, for the
+//! reason [`PtyConn::read`] gives.
 
 #[cfg(unix)]
 use std::io::ErrorKind;
+#[cfg(windows)]
+use std::io::{ErrorKind, Read, Write};
+#[cfg(windows)]
+use std::os::windows::io::RawHandle;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
+use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError};
+#[cfg(windows)]
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 
 use crate::error::{Error, Result};
 use crate::transport::{Transport, TransportEvent};
+#[cfg(windows)]
+use crate::windows_event::ManualEvent;
+
+#[cfg(windows)]
+const READ_QUEUE_DEPTH: usize = 128;
+#[cfg(windows)]
+const WRITE_QUEUE_DEPTH: usize = 16;
+
+/// The blocking anonymous pipes behind ConPTY, kept off the frontend thread.
+///
+/// `portable-pty` deliberately creates synchronous pipes with `CreatePipe`.
+/// Waiting on or reading those handles from Qt would block its event loop, so
+/// one worker owns each direction. The bounded read queue is the backpressure:
+/// at 128 8-KiB chunks the worker stops reading and ConPTY's pipe fills instead
+/// of an open modal dialog growing this process without limit.
+#[cfg(windows)]
+struct WindowsPtyIo {
+    read: Receiver<ReadMessage>,
+    write: SyncSender<Vec<u8>>,
+    wake: Arc<ManualEvent>,
+    held: Option<ReadMessage>,
+    read_ended: bool,
+}
+
+#[cfg(windows)]
+enum ReadMessage {
+    Data(Vec<u8>),
+    End,
+}
+
+#[cfg(windows)]
+impl WindowsPtyIo {
+    fn start(
+        mut reader: Box<dyn Read + Send>,
+        mut writer: Box<dyn Write + Send>,
+    ) -> Result<WindowsPtyIo> {
+        let wake = Arc::new(ManualEvent::new()?);
+        let (read_tx, read_rx) = std::sync::mpsc::sync_channel(READ_QUEUE_DEPTH);
+        let read_wake = Arc::clone(&wake);
+        std::thread::Builder::new()
+            .name("sterna-conpty-read".into())
+            .spawn(move || {
+                let mut buf = [0u8; 8192];
+                loop {
+                    match reader.read(&mut buf) {
+                        Ok(0) => {
+                            if read_tx.send(ReadMessage::End).is_ok() {
+                                read_wake.signal();
+                            }
+                            return;
+                        }
+                        Ok(n) => {
+                            if read_tx.send(ReadMessage::Data(buf[..n].to_vec())).is_err() {
+                                return;
+                            }
+                            read_wake.signal();
+                        }
+                        Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                        Err(_) => {
+                            if read_tx.send(ReadMessage::End).is_ok() {
+                                read_wake.signal();
+                            }
+                            return;
+                        }
+                    }
+                }
+            })
+            .map_err(Error::from_io)?;
+
+        let (write_tx, write_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(WRITE_QUEUE_DEPTH);
+        std::thread::Builder::new()
+            .name("sterna-conpty-write".into())
+            .spawn(move || {
+                while let Ok(bytes) = write_rx.recv() {
+                    if writer.write_all(&bytes).is_err() {
+                        return;
+                    }
+                }
+            })
+            .map_err(Error::from_io)?;
+
+        Ok(WindowsPtyIo {
+            read: read_rx,
+            write: write_tx,
+            wake,
+            held: None,
+            read_ended: false,
+        })
+    }
+
+    fn read(&mut self, data: &mut Vec<u8>) -> Result<usize> {
+        self.wake.reset();
+        if self.read_ended {
+            return Err(Error::Disconnected);
+        }
+
+        let message = match self.held.take() {
+            Some(message) => message,
+            None => match self.read.try_recv() {
+                Ok(message) => message,
+                Err(TryRecvError::Empty) => return Ok(0),
+                Err(TryRecvError::Disconnected) => {
+                    self.read_ended = true;
+                    return Err(Error::Disconnected);
+                }
+            },
+        };
+
+        match message {
+            ReadMessage::End => {
+                self.read_ended = true;
+                Err(Error::Disconnected)
+            }
+            ReadMessage::Data(bytes) => {
+                let n = bytes.len();
+                data.extend_from_slice(&bytes);
+
+                // One 8-KiB chunk per pump, matching the Unix path. A queued
+                // second message needs another edge because resetting a
+                // manual event coalesced the worker's earlier signals. Holding
+                // it here preserves order: the second message can be EOF.
+                self.held = match self.read.try_recv() {
+                    Ok(next) => Some(next),
+                    Err(TryRecvError::Disconnected) => Some(ReadMessage::End),
+                    Err(TryRecvError::Empty) => None,
+                };
+                if self.held.is_some() {
+                    self.wake.signal();
+                }
+                Ok(n)
+            }
+        }
+    }
+
+    fn write(&self, data: &[u8]) -> Result<usize> {
+        if data.is_empty() {
+            return Ok(0);
+        }
+        match self.write.try_send(data.to_vec()) {
+            Ok(()) => Ok(data.len()),
+            Err(TrySendError::Full(_)) => Ok(0),
+            Err(TrySendError::Disconnected(_)) => Err(Error::Disconnected),
+        }
+    }
+
+    fn wait_handle(&self) -> RawHandle {
+        self.wake.handle()
+    }
+}
 
 /// What to run, and what to tell it about itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,6 +264,8 @@ pub struct PtyConn {
     /// directly. Borrowed from `master` and invalid once that is dropped.
     #[cfg(unix)]
     fd: std::os::unix::io::RawFd,
+    #[cfg(windows)]
+    io: Option<WindowsPtyIo>,
     describe: String,
     tty_name: Option<PathBuf>,
     exit: Option<PtyExit>,
@@ -138,6 +297,19 @@ impl PtyConn {
         let pair = native_pty_system()
             .openpty(size)
             .map_err(|e| Error::Unsupported(format!("cannot open a pty: {e}")))?;
+
+        #[cfg(windows)]
+        let windows_reader = pair.master.try_clone_reader().map_err(|e| {
+            Error::Io(std::io::Error::other(format!(
+                "cannot clone the ConPTY output pipe: {e}"
+            )))
+        })?;
+        #[cfg(windows)]
+        let windows_writer = pair.master.take_writer().map_err(|e| {
+            Error::Io(std::io::Error::other(format!(
+                "cannot take the ConPTY input pipe: {e}"
+            )))
+        })?;
 
         let shell = shell_for(params);
         let mut cmd = if params.argv.is_empty() {
@@ -171,6 +343,21 @@ impl PtyConn {
             source: std::io::Error::other(e.to_string()),
         })?;
 
+        // Do not start the blocking reader before a process is attached. An
+        // empty ConPTY is allowed to close its output side, which looks like
+        // the child exited before it was even spawned. Once CreateProcessW
+        // returns, the pipe's lifetime is the process's.
+        #[cfg(windows)]
+        let mut child = child;
+        #[cfg(windows)]
+        let windows_io = match WindowsPtyIo::start(windows_reader, windows_writer) {
+            Ok(io) => io,
+            Err(e) => {
+                let _ = child.kill();
+                return Err(e);
+            }
+        };
+
         // **Drop the slave, and do it here.** We hold one end of the pty and
         // the child holds the other; keeping ours open means the master never
         // sees the hangup when the child exits, so the shell dies and the
@@ -199,6 +386,8 @@ impl PtyConn {
             child,
             #[cfg(unix)]
             fd,
+            #[cfg(windows)]
+            io: Some(windows_io),
             describe: describe_argv(&params.argv, &shell),
             tty_name,
             exit: None,
@@ -263,7 +452,6 @@ impl PtyConn {
     /// Bounded like `Drop`'s, and for the same reason. A child that closed the
     /// slave and kept running — a daemon detaching — is the case that spends
     /// the whole deadline, once, at the end of a connection.
-    #[cfg(unix)]
     fn died(&mut self) -> Error {
         self.dead = true;
         self.wait_briefly();
@@ -335,7 +523,15 @@ impl Transport for PtyConn {
         {
             self.read_once(data)
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            let result = self.io.as_mut().expect("live ConPTY has I/O").read(data);
+            match result {
+                Err(e) if e.is_disconnected() => Err(self.died()),
+                other => other,
+            }
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = data;
             Err(Error::Unsupported("a local shell on this platform".into()))
@@ -380,7 +576,19 @@ impl Transport for PtyConn {
         }
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    fn write(&mut self, data: &[u8], _timeout: Duration) -> Result<usize> {
+        if self.dead {
+            return Err(Error::Disconnected);
+        }
+        let result = self.io.as_ref().expect("live ConPTY has I/O").write(data);
+        match result {
+            Err(e) if e.is_disconnected() => Err(self.died()),
+            other => other,
+        }
+    }
+
+    #[cfg(not(any(unix, windows)))]
     fn write(&mut self, _data: &[u8], _timeout: Duration) -> Result<usize> {
         Err(Error::Unsupported("a local shell on this platform".into()))
     }
@@ -422,6 +630,11 @@ impl Transport for PtyConn {
         Some(self.fd)
     }
 
+    #[cfg(windows)]
+    fn wait_handle(&self) -> Option<RawHandle> {
+        self.io.as_ref().map(WindowsPtyIo::wait_handle)
+    }
+
     fn describe(&self) -> String {
         self.describe.clone()
     }
@@ -448,6 +661,8 @@ impl Drop for PtyConn {
     /// process that survives even that is stuck in the kernel, and leaving a
     /// zombie is better than hanging the window that is trying to close.
     fn drop(&mut self) {
+        #[cfg(windows)]
+        self.io.take();
         self.master.take();
         if self.wait_briefly() {
             return;
@@ -516,6 +731,64 @@ fn set_nonblocking(fd: std::os::unix::io::RawFd) -> Result<()> {
         return Err(Error::from_io(std::io::Error::last_os_error()));
     }
     Ok(())
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+    use std::io::Cursor;
+    use std::sync::Mutex;
+    use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+    #[derive(Clone)]
+    struct SharedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for SharedWriter {
+        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(data);
+            Ok(data.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn workers_order_final_bytes_before_the_event_reports_eof() {
+        let written = Arc::new(Mutex::new(Vec::new()));
+        let mut io = WindowsPtyIo::start(
+            Box::new(Cursor::new(b"final bytes".to_vec())),
+            Box::new(SharedWriter(Arc::clone(&written))),
+        )
+        .unwrap();
+
+        // SAFETY: `io` owns a live waitable event for the duration.
+        assert_eq!(
+            unsafe { WaitForSingleObject(io.wait_handle(), 5000) },
+            WAIT_OBJECT_0
+        );
+        let mut data = Vec::new();
+        assert_eq!(io.read(&mut data).unwrap(), 11);
+        assert_eq!(data, b"final bytes");
+
+        // Data and EOF can be published before the first read. `read`
+        // re-signals in that case so the EOF is not lost behind the bytes.
+        // SAFETY: as above.
+        assert_eq!(
+            unsafe { WaitForSingleObject(io.wait_handle(), 5000) },
+            WAIT_OBJECT_0
+        );
+        assert!(matches!(io.read(&mut data), Err(Error::Disconnected)));
+
+        assert_eq!(io.write(b"input").unwrap(), 5);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while written.lock().unwrap().as_slice() != b"input" {
+            assert!(Instant::now() < deadline, "writer worker did not run");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
 }
 
 #[cfg(test)]

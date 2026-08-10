@@ -587,6 +587,18 @@ And for the local pty:
   feature to disable it. Accepted; don't "fix" it by hand-rolling the pty —
   what it buys is the child-side `setsid`/`TIOCSCTTY` dance and ConPTY in
   Stage 3.
+- **ConPTY's pipes are synchronous `CreatePipe` handles.** Reading or writing
+  either one on the UI thread can wait forever, and the handle itself is not a
+  readiness notification. Windows therefore owns a blocking worker per
+  direction, a bounded 1 MiB read queue for backpressure, and a manual-reset
+  event for the frontend. Do not replace that event with a timer or make the
+  queue unbounded to simplify the workers.
+- **`PSEUDOCONSOLE_INHERIT_CURSOR` begins with a terminal conversation.**
+  ConPTY asks for `CSI 6 n` and waits for the reply before ordinary child
+  output; a raw transport test must answer it, while a real `Session` does so
+  through the VT engine. Wine 9 cannot exercise this path: its console host
+  rejects the internal `--inheritcursor` switch and closes the output pipe
+  empty. That is a Wine gap, not evidence about the reader.
 
 And for SSH:
 

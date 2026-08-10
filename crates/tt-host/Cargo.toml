@@ -16,3 +16,8 @@ tt-vt.workspace = true
 # does with a QSocketNotifier, minus Qt.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# Wait on ConPTY's manual-reset event, the same native object Qt watches with
+# QWinEventNotifier in the windowed frontend.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Threading"] }

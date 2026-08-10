@@ -32,6 +32,8 @@ pub mod serial;
 pub mod ssh;
 pub mod telnet;
 pub mod transport;
+#[cfg(windows)]
+mod windows_event;
 
 pub use error::{Error, Result};
 pub use netif::local_ip_addresses;

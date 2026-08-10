@@ -27,8 +27,10 @@ parallel produces a scatter of unrelated failures that all pass on their own.
 
 The pty suite is the exception to all of that on POSIX: it needs no rig, no
 server and no variables, so `cargo test -p tt-conn` runs all nineteen cases
-there. Windows compiles the ConPTY construction path but has its own runtime
-tests still to come; `/bin/sh`, `poll(2)` and signals are not portable tests.
+there. Windows has a separate `pty_windows` suite against `cmd.exe`; `/bin/sh`,
+`poll(2)` and signals are not portable tests. It must run on native Windows:
+Wine 9's console host rejects ConPTY's `--inheritcursor` mode before a child
+can produce output.
 
 Without those two variables the hardware tests **skip loudly** rather than pass
 quietly, so a machine with no rig still gets a green `cargo test` without
@@ -288,6 +290,23 @@ fires forever against a read that never returns anything. **A dead shell would
 present as a terminal at 100% CPU.** So the byte-level read and write are ours,
 straight on the master's descriptor, and `EIO` means disconnected.
 
+**ConPTY's anonymous pipes are synchronous.** `portable-pty` creates them with
+`CreatePipe`, so a `ReadFile` or `WriteFile` on the frontend thread can block
+for as long as the child does. Windows gives each direction a worker instead.
+The reader feeds a bounded 128×8 KiB queue; when a dialog stops the frontend,
+the queue fills and backpressure returns to ConPTY rather than memory growing
+without a ceiling. A manual-reset event wakes `QWinEventNotifier`, and EOF is
+queued behind the final bytes and re-signalled if both coalesced into one
+wakeup. The writer has a small bounded queue and reports full as a short write,
+which lets the session's existing pending-output timer retry it.
+
+`portable-pty` also requests `PSEUDOCONSOLE_INHERIT_CURSOR`. ConPTY begins by
+asking the terminal for `CSI 6 n` and waits for the cursor report; a raw test
+has to answer it, while `Session`'s VT engine already does. Wine 9 launches its
+console host with that mode but the host rejects the internal
+`--inheritcursor` switch and closes the pipe empty. The worker/event unit test
+runs there; the real `cmd.exe` cases remain native-Windows tests.
+
 ### What it adds to the seam
 
 `Transport::closing_note` — asked once, after a disconnect and before the
@@ -314,8 +333,8 @@ no feature to switch it off — the crate carries a "serial port as a pty" mode
 nothing here uses. Twenty-seven packages in total. Accepted rather than fixed,
 because what it supplies is the part that is genuinely hard and genuinely
 platform-specific: the `setsid`/`TIOCSCTTY` dance in the forked child, and
-ConPTY. The Windows backend now constructs and resizes, but its byte reader,
-writer and frontend wakeup are still Stage 3 work; cross-compiling a type is
-not the same as having run a local shell. Writing either backend again to save
-a dependency would be the wrong trade in the direction the project keeps
-choosing against.
+ConPTY. The Windows backend now constructs and resizes and has a byte reader,
+writer and frontend event around its synchronous pipes. A native Windows run
+is still required before the `cmd.exe` path is called proven. Writing either
+backend again to save a dependency would be the wrong trade in the direction
+the project keeps choosing against.

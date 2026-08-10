@@ -2356,6 +2356,7 @@ dependencies = [
  "tt-grid",
  "tt-session",
  "tt-vt",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
