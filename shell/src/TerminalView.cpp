@@ -648,6 +648,18 @@ void TerminalView::keyPressEvent(QKeyEvent *event)
 
 void TerminalView::mousePressEvent(QMouseEvent *event)
 {
+    // Upstream's replacement for a hidden menu bar is Ctrl+left-click, and it
+    // runs *before* mouse reporting (`vtwin.cpp:863`). That ordering matters:
+    // a full-screen application asking for Ctrl-modified clicks must not make
+    // the only route back to the terminal's menus disappear.
+    if (m_popupMenuEnabled && event->button() == Qt::LeftButton &&
+        (event->modifiers() & Qt::ControlModifier)) {
+        m_popupMenuPressed = true;
+        emit popupMenuRequested(event->globalPosition().toPoint());
+        event->accept();
+        return;
+    }
+
     uint8_t button = TT_BUTTON_LEFT;
     if (event->button() == Qt::MiddleButton) {
         button = TT_BUTTON_MIDDLE;
@@ -706,6 +718,10 @@ void TerminalView::startSelection(SelPoint at, const QPointF &pos)
 
 void TerminalView::mouseMoveEvent(QMouseEvent *event)
 {
+    if (m_popupMenuPressed) {
+        return;
+    }
+
     const QPointF p = event->position();
     if (m_selecting) {
         dragTo(p);
@@ -733,6 +749,12 @@ void TerminalView::mouseMoveEvent(QMouseEvent *event)
 
 void TerminalView::mouseReleaseEvent(QMouseEvent *event)
 {
+    if (m_popupMenuPressed && event->button() == Qt::LeftButton) {
+        m_popupMenuPressed = false;
+        event->accept();
+        return;
+    }
+
     if (m_selecting) {
         m_selecting = false;
         m_autoScroll->stop();

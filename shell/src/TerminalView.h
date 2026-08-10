@@ -54,6 +54,14 @@ public:
     /// the window's business, not the painter's — see `MainWindow`.
     void applySettings();
 
+    /// Whether Ctrl+left-click should ask the window for its full popup menu.
+    /// The window decides this from all three terms: the menu bar is hidden,
+    /// `EnablePopupMenu` is on, and this is the terminal view under the click.
+    void setPopupMenuEnabled(bool enabled) { m_popupMenuEnabled = enabled; }
+    /// Release the gesture guard after the popup gives up its mouse grab. The
+    /// button release normally belongs to QMenu rather than to this widget.
+    void popupMenuClosed() { m_popupMenuPressed = false; }
+
     QSize sizeHint() const override;
     /// The pixel size this many cells needs, at the current font.
     QSize sizeForCells(int cols, int rows) const;
@@ -86,6 +94,9 @@ signals:
     /// rather than assuming its own last write is still current — the core
     /// moves the offset itself to keep a scrolled-back view on the same lines.
     void viewChanged();
+    /// Ctrl+left-click while the ordinary menu bar is hidden. The menu itself
+    /// belongs to `MainWindow`; the view only owns the mouse gesture.
+    void popupMenuRequested(const QPoint &globalPos);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -145,6 +156,13 @@ private:
 
     /// `KeybEnabled`. A macro's `enablekeyb 0` clears it.
     bool m_keyboardEnabled = true;
+
+    /// The two menu settings and the bar's current visibility, combined by
+    /// `MainWindow`. `m_popupMenuPressed` consumes the matching release after
+    /// the popup took the press, so a menu gesture never leaks a mouse-up to
+    /// the host.
+    bool m_popupMenuEnabled = false;
+    bool m_popupMenuPressed = false;
 
     /// The `clipboard.*` settings this widget acts on, refreshed by
     /// `applySettings` rather than read per event.

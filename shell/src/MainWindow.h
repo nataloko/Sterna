@@ -144,6 +144,10 @@ private slots:
     /// bargain: a change applies to this session immediately and outlives it
     /// only if it is saved.
     void saveSettings();
+    /// Open the ordinary menu tree as one popup. This is upstream's
+    /// Ctrl+left-click replacement for a menu bar hidden by `PopupMenu` or
+    /// `HideTitle`.
+    void showPopupMenu(const QPoint &globalPos);
     /// Re-read everything derived from a setting: the painter's colours, and
     /// the terminal's size.
     void onSettingsChanged();

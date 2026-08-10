@@ -7,6 +7,7 @@
 #include <QFontDialog>
 #include <QLabel>
 #include <QHBoxLayout>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QScrollBar>
@@ -75,6 +76,8 @@ MainWindow::MainWindow(const QString &settingsPath)
     setCentralWidget(central);
 
     connect(m_view, &TerminalView::viewChanged, this, &MainWindow::syncScrollBar);
+    connect(m_view, &TerminalView::popupMenuRequested, this,
+            &MainWindow::showPopupMenu);
     connect(m_scroll, &QScrollBar::valueChanged, this, [this](int value) {
         // The scrollbar counts down from the top of the history; the session
         // counts back from the live screen. One subtraction, in one place.
@@ -216,7 +219,52 @@ void MainWindow::onSettingsChanged()
             show();
         }
     }
+
+    // `PopupMenu` is named for what replaces the bar, not for the gesture
+    // itself: it hides the bar, while `EnablePopupMenu` independently gates
+    // Ctrl+left-click. `HideTitle` removes the bar too (`vtwin.cpp:3461`), so
+    // it participates in the same replacement without changing PopupMenu.
+    const bool popupMenu =
+        m_session->setting(QStringLiteral("window.popup_menu")) == QLatin1String("on");
+    const bool menuHidden = hideTitle || popupMenu;
+    menuBar()->setVisible(!menuHidden);
+    m_view->setPopupMenuEnabled(
+        menuHidden && m_session->setting(QStringLiteral("window.popup_menu_enabled"))
+                          == QLatin1String("on"));
     updateStatus();
+}
+
+void MainWindow::showPopupMenu(const QPoint &globalPos)
+{
+    // The menu bar's own actions carry the real submenus, enabled states and
+    // shortcuts. Associating those same actions with this temporary menu gives
+    // the popup exactly the ordinary tree instead of building a second copy
+    // that will drift as commands are added.
+    auto *popup = new QMenu(this);
+    popup->setObjectName(QStringLiteral("terminalPopupMenu"));
+    for (QAction *action : menuBar()->actions()) {
+        popup->addAction(action);
+    }
+
+    // Upstream adds this to the Win32 system menu (`vtwin.cpp:3509`). A Qt
+    // application cannot add an action to the compositor-owned menu, so it is
+    // kept reachable in the replacement popup. Like upstream's command it
+    // clears PopupMenu only; HideTitle still keeps the bar hidden.
+    if (m_session->setting(QStringLiteral("window.show_menu_enabled"))
+        == QLatin1String("on")) {
+        popup->addSeparator();
+        popup->addAction(tr("Show menu bar"), this, [this] {
+            QString error;
+            if (!m_session->setSetting(QStringLiteral("window.popup_menu"),
+                                       QStringLiteral("off"), &error)) {
+                onNotice(tr("Could not show the menu bar: %1").arg(error));
+            }
+        });
+    }
+
+    connect(popup, &QMenu::aboutToHide, m_view, &TerminalView::popupMenuClosed);
+    connect(popup, &QMenu::aboutToHide, popup, &QObject::deleteLater);
+    popup->popup(globalPos);
 }
 
 void MainWindow::showSettingsDialog()

@@ -34,6 +34,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QLineEdit>
+#include <QMenu>
+#include <QMenuBar>
 #include <QStandardPaths>
 #include <QTabWidget>
 #include <QTemporaryDir>
@@ -1213,6 +1215,95 @@ void test_the_window_opens_at_the_configured_size()
     QStandardPaths::setTestModeEnabled(false);
 }
 
+/// `PopupMenu` hides the ordinary bar and Ctrl+left-click puts the same menu
+/// tree under the pointer. `EnablePopupMenu` gates that gesture independently,
+/// and `EnableShowMenu` is the route back — three settings whose names make
+/// them look like one switch.
+void test_the_hidden_menu_is_the_ordinary_menu_as_a_popup()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    MainWindow window(dir.filePath(QStringLiteral("sterna.ini")));
+    window.show();
+    qApp->processEvents();
+
+    auto *view = window.findChild<TerminalView *>();
+    CHECK(view != nullptr);
+    CHECK(!window.menuBar()->isHidden());
+
+    QString error;
+    CHECK(window.session()->setSetting(QStringLiteral("window.popup_menu"),
+                                       QStringLiteral("on"), &error));
+    CHECK(window.menuBar()->isHidden());
+
+    const QPointF local(4, 4);
+    const auto ctrlClick = [&] {
+        QMouseEvent press(QEvent::MouseButtonPress, local,
+                          view->mapToGlobal(local), Qt::LeftButton,
+                          Qt::LeftButton, Qt::ControlModifier);
+        QCoreApplication::sendEvent(view, &press);
+        qApp->processEvents();
+        return window.findChild<QMenu *>(QStringLiteral("terminalPopupMenu"));
+    };
+
+    QMenu *popup = ctrlClick();
+    CHECK(popup != nullptr);
+    if (popup) {
+        // The File menu's own action, rather than a copy of its text and
+        // commands, is associated with the popup too.
+        CHECK(popup->actions().contains(window.menuBar()->actions().constFirst()));
+
+        QAction *show = nullptr;
+        for (QAction *action : popup->actions()) {
+            if (action->text() == QStringLiteral("Show menu bar")) {
+                show = action;
+            }
+        }
+        CHECK(show != nullptr);
+        if (show) {
+            show->trigger();
+            CHECK(window.session()->setting(QStringLiteral("window.popup_menu"))
+                  == QStringLiteral("off"));
+            CHECK(!window.menuBar()->isHidden());
+        }
+        popup->close();
+        popup->deleteLater();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+
+    // Hiding the title removes the menu independently of `PopupMenu`, which
+    // is why the popup predicate combines the two.
+    CHECK(window.session()->setSetting(QStringLiteral("window.hide_title"),
+                                       QStringLiteral("on"), &error));
+    CHECK(window.menuBar()->isHidden());
+    CHECK(window.session()->setSetting(QStringLiteral("window.hide_title"),
+                                       QStringLiteral("off"), &error));
+    CHECK(!window.menuBar()->isHidden());
+
+    // The popup gate does not show the bar and does not change PopupMenu; it
+    // makes the Ctrl-click inert. No temporary QMenu should be constructed.
+    CHECK(window.session()->setSetting(QStringLiteral("window.popup_menu"),
+                                       QStringLiteral("on"), &error));
+    CHECK(window.session()->setSetting(
+        QStringLiteral("window.popup_menu_enabled"), QStringLiteral("off"), &error));
+    CHECK(ctrlClick() == nullptr);
+
+    CHECK(window.session()->setSetting(
+        QStringLiteral("window.popup_menu_enabled"), QStringLiteral("on"), &error));
+    CHECK(window.session()->setSetting(
+        QStringLiteral("window.show_menu_enabled"), QStringLiteral("off"), &error));
+    popup = ctrlClick();
+    CHECK(popup != nullptr);
+    if (popup) {
+        bool hasShow = false;
+        for (QAction *action : popup->actions()) {
+            hasShow |= action->text() == QStringLiteral("Show menu bar");
+        }
+        CHECK(!hasShow);
+        popup->close();
+    }
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -1277,6 +1368,7 @@ int main(int argc, char **argv)
     test_the_settings_dialog_is_built_from_the_schema();
     test_the_dialog_writes_only_what_changed();
     test_the_window_opens_at_the_configured_size();
+    test_the_hidden_menu_is_the_ordinary_menu_as_a_popup();
 
     // `--write <dir>` dumps what was rendered, for looking at a failure rather
     // than guessing at it.
