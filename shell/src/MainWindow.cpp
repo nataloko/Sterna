@@ -5,6 +5,7 @@
 #include <QAction>
 #include <QCloseEvent>
 #include <QDateTime>
+#include <QEvent>
 #include <QFile>
 #include <QFontDialog>
 #include <QGuiApplication>
@@ -259,9 +260,33 @@ QString MainWindow::settingsPath()
     return QDir(dir).filePath(QStringLiteral("sterna.ini"));
 }
 
+bool MainWindow::event(QEvent *event)
+{
+    const QEvent::Type type = event->type();
+    const bool handled = QMainWindow::event(event);
+    if (m_session && (type == QEvent::WindowActivate
+                      || type == QEvent::WindowDeactivate)) {
+        applyWindowOpacity(type == QEvent::WindowActivate);
+    }
+    return handled;
+}
+
+void MainWindow::applyWindowOpacity(bool active)
+{
+    const QString name = active ? QStringLiteral("window.opacity_active")
+                                : QStringLiteral("window.opacity_inactive");
+    const int opacity = m_session->setting(name).toInt();
+    setWindowOpacity(static_cast<qreal>(opacity) / 255.0);
+}
+
 void MainWindow::onSettingsChanged()
 {
     m_view->applySettings();
+
+    // Before the first show, upstream explicitly applies the active value
+    // (`vtwin.cpp:780`). Afterwards the desktop's activation state decides,
+    // including while the settings dialog is still the active window.
+    applyWindowOpacity(!isVisible() || isActiveWindow());
 
     // The *window* is resized rather than the grid, the same way a remote
     // resize is handled: the view fits the terminal to the space it has, so

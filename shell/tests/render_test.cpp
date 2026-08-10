@@ -1323,6 +1323,43 @@ void test_the_dialog_writes_only_what_changed()
           == QStringLiteral("before"));
 }
 
+/// `AlphaBlendActive` and `AlphaBlend` are two focus states, both expressed
+/// as bytes in the file and as a 0.0..1.0 property in Qt. The inactive value
+/// is also the active value's fallback when that key is absent.
+void test_window_opacity_follows_activation()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("sterna.ini"));
+    {
+        QFile file(path);
+        CHECK(file.open(QIODevice::WriteOnly));
+        file.write("[Tera Term]\r\nAlphaBlend=120\r\n");
+    }
+
+    MainWindow window(path);
+    const auto opacity = [&window] {
+        return qRound(window.windowOpacity() * 255.0);
+    };
+
+    // Startup uses the active value, which inherited the inactive one here.
+    CHECK(opacity() == 120);
+
+    QString error;
+    CHECK(window.session()->setSetting(QStringLiteral("window.opacity_active"),
+                                       QStringLiteral("210"), &error));
+    CHECK(window.session()->setSetting(QStringLiteral("window.opacity_inactive"),
+                                       QStringLiteral("70"), &error));
+    CHECK(opacity() == 210);
+
+    QEvent deactivate(QEvent::WindowDeactivate);
+    QCoreApplication::sendEvent(&window, &deactivate);
+    CHECK(opacity() == 70);
+
+    QEvent activate(QEvent::WindowActivate);
+    QCoreApplication::sendEvent(&window, &activate);
+    CHECK(opacity() == 210);
+}
 
 /// A configured terminal size has to be the size the window *opens* at, not a
 /// resize the user watches happen — which means it reaches `sizeHint` before
@@ -1726,6 +1763,7 @@ int main(int argc, char **argv)
     test_use_text_colour_repairs_only_the_three_same_colour_pairs();
     test_the_settings_dialog_is_built_from_the_schema();
     test_the_dialog_writes_only_what_changed();
+    test_window_opacity_follows_activation();
     test_the_window_opens_at_the_configured_size();
     test_the_hidden_menu_is_the_ordinary_menu_as_a_popup();
     test_an_auto_close_request_respects_window_state();

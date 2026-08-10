@@ -112,6 +112,9 @@ public:
     static QString settingsPath();
 
 protected:
+    /// Switch between `AlphaBlendActive` and `AlphaBlend` when the desktop
+    /// activates or deactivates this top-level window.
+    bool event(QEvent *event) override;
     /// Ask before closing a window with a live TCP session on it —
     /// `ConfirmDisconnect`, which is on by default.
     void closeEvent(QCloseEvent *event) override;
@@ -165,6 +168,8 @@ private slots:
 private:
     void buildMenus();
     void updateStatus();
+    /// Apply one of the two 0..255 opacity settings as Qt's 0.0..1.0 value.
+    void applyWindowOpacity(bool active);
     /// Apply `VTPos` once, after the settings file is loaded and before a
     /// command line gets its later chance to override it with `/X` and `/Y`.
     void applySavedPosition();
@@ -204,7 +209,7 @@ private:
     /// Where the settings came from, and where `Save setup` puts them back.
     /// Not always [`settingsPath()`] — `/F=` names another one.
     QString m_settingsPath;
-    Session *m_session;
+    Session *m_session = nullptr;
     TerminalView *m_view;
     QScrollBar *m_scroll;
     QLabel *m_status;
