@@ -1343,6 +1343,17 @@ pub struct Settings {
     /// settings changes and whenever the window gains focus (`vtwin.cpp:780`,
     /// `:1357`, `:1539`).
     pub window_opacity_active: i32,
+    /// `ttset.c:1339`, a six-bit word rather than an enum: 1 shows the endpoint,
+    /// 2 the process-wide session number, 4 the `VT`/`TEK` suffix, 8 puts the
+    /// endpoint before the configured/remote title, 16 includes a TCP port and 32
+    /// includes a serial speed (`ttwinman.c:79`). The shipped 13 is 1|4|8:
+    /// `<endpoint> - <title> VT`.
+    ///
+    /// Kept as one integer because that is what the file exposes and unknown high
+    /// bits round-trip through upstream unchanged. Upstream's dialog presents the
+    /// low six as checkboxes; the generated first-pass dialog exposes the word
+    /// directly until it grows a bit-field widget.
+    pub window_title_format: i32,
     /// `ttset.c:1568`. How the title the host set and `terminal.title` combine, and
     /// **`off` means the host's title is not even stored** (`vtterm.c:5112`), which
     /// also switches off the title stack at `CSI 22 t` / `CSI 23 t`.
@@ -2145,6 +2156,7 @@ impl Default for Settings {
             window_scroll_threshold: 12,
             window_opacity_inactive: 255,
             window_opacity_active: 255,
+            window_title_format: 13,
             window_title_change: WindowTitleChange::default(),
             window_title_report: WindowTitleReport::default(),
             mouse_tracking: true,
@@ -2540,6 +2552,8 @@ impl Settings {
                 0,
                 255,
             ),
+            window_title_format: ini.get_int("Tera Term", "TitleFormat", d.window_title_format)
+                as i32,
             window_title_change: match ini.get("Tera Term", "AcceptTitleChangeRequest") {
                 Some(v) => WindowTitleChange::from_ini(v),
                 None => d.window_title_change,
@@ -3546,6 +3560,11 @@ impl Settings {
             "Tera Term",
             "AlphaBlendActive",
             &self.window_opacity_active.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "TitleFormat",
+            &self.window_title_format.to_string(),
         );
         ini.set(
             "Tera Term",
@@ -4750,6 +4769,7 @@ impl Settings {
             "window.scroll_threshold" => self.window_scroll_threshold.to_string(),
             "window.opacity_inactive" => self.window_opacity_inactive.to_string(),
             "window.opacity_active" => self.window_opacity_active.to_string(),
+            "window.title_format" => self.window_title_format.to_string(),
             "window.title_change" => self.window_title_change.as_ini().to_string(),
             "window.title_report" => self.window_title_report.as_ini().to_string(),
             "mouse.tracking" => if self.mouse_tracking { "on" } else { "off" }.to_string(),
@@ -5327,6 +5347,9 @@ impl Settings {
                     0,
                     255,
                 )
+            }
+            "window.title_format" => {
+                self.window_title_format = crate::schema::int(value, self.window_title_format)
             }
             "window.title_change" => self.window_title_change = WindowTitleChange::from_ini(value),
             "window.title_report" => self.window_title_report = WindowTitleReport::from_ini(value),
@@ -6424,6 +6447,16 @@ pub const FIELDS: &[Field] = &[
         default: "255",
         label: Some("DLG_TAB_VISUAL_ALPHA_ACTIVE"),
         doc: "`ttset.c:1470`, also clamped at both ends. Its fallback is the *loaded inactive opacity*, not the constant 255: `AlphaBlend=120` without this key makes both window states 120. An empty value inherits too; a non-numeric one is zero under `GetPrivateProfileInt`'s own rules. Applied at startup, after settings changes and whenever the window gains focus (`vtwin.cpp:780`, `:1357`, `:1539`).",
+    },
+    Field {
+        name: "window.title_format",
+        page: "window",
+        section: "Tera Term",
+        key: "TitleFormat",
+        kind: Kind::Int,
+        default: "13",
+        label: Some("DLG_TAB_GENERAL_TITLEFMT_GROUP"),
+        doc: "`ttset.c:1339`, a six-bit word rather than an enum: 1 shows the endpoint, 2 the process-wide session number, 4 the `VT`/`TEK` suffix, 8 puts the endpoint before the configured/remote title, 16 includes a TCP port and 32 includes a serial speed (`ttwinman.c:79`). The shipped 13 is 1|4|8: `<endpoint> - <title> VT`.  Kept as one integer because that is what the file exposes and unknown high bits round-trip through upstream unchanged. Upstream's dialog presents the low six as checkboxes; the generated first-pass dialog exposes the word directly until it grows a bit-field widget.",
     },
     Field {
         name: "window.title_change",

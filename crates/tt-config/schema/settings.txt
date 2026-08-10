@@ -490,6 +490,18 @@ window.opacity_inactive | int_clamp(0..255) | Tera Term | AlphaBlend | 255 | DLG
 # `:1357`, `:1539`).
 window.opacity_active | int_clamp(0..255) | Tera Term | AlphaBlendActive | 255 | DLG_TAB_VISUAL_ALPHA_ACTIVE | default-from=window.opacity_inactive
 
+# `ttset.c:1339`, a six-bit word rather than an enum: 1 shows the endpoint,
+# 2 the process-wide session number, 4 the `VT`/`TEK` suffix, 8 puts the
+# endpoint before the configured/remote title, 16 includes a TCP port and 32
+# includes a serial speed (`ttwinman.c:79`). The shipped 13 is 1|4|8:
+# `<endpoint> - <title> VT`.
+#
+# Kept as one integer because that is what the file exposes and unknown high
+# bits round-trip through upstream unchanged. Upstream's dialog presents the
+# low six as checkboxes; the generated first-pass dialog exposes the word
+# directly until it grows a bit-field widget.
+window.title_format | int | Tera Term | TitleFormat | 13 | DLG_TAB_GENERAL_TITLEFMT_GROUP
+
 # `ttset.c:1568`. How the title the host set and `terminal.title` combine, and
 # **`off` means the host's title is not even stored** (`vtterm.c:5112`), which
 # also switches off the title stack at `CSI 22 t` / `CSI 23 t`.

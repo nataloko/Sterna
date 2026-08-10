@@ -201,6 +201,22 @@ fn active_opacity_inherits_the_loaded_inactive_value() {
 }
 
 #[test]
+fn title_format_is_the_shipped_bit_word() {
+    let defaults = Settings::default();
+    assert_eq!(defaults.window_title_format, 13, "endpoint - title VT");
+
+    // It is an integer word, not an enum restricted to the six bits the
+    // dialog knows. Upstream preserves unknown bits and so must a shared file.
+    let ini = Ini::parse(b"[Tera Term]\r\nTitleFormat=77\r\n");
+    let settings = Settings::load(&ini);
+    assert_eq!(settings.window_title_format, 77);
+
+    let mut out = Ini::new();
+    settings.store(&mut out);
+    assert_eq!(out.get("Tera Term", "TitleFormat"), Some("77"));
+}
+
+#[test]
 fn writing_settings_leaves_the_rest_of_the_file_alone() {
     let original = b"; my notes\r\n[Tera Term]\r\nCRReceive=LF\r\n[Extra]\r\nMine=1\r\n";
     let mut ini = Ini::parse(original);
