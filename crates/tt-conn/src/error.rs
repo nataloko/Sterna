@@ -91,6 +91,7 @@ impl Error {
     /// the device node still exists separates "gone" from "there but
     /// unavailable" without depending on a string the crate is free to
     /// reword. The text only chooses between the two remaining reasons.
+    #[cfg(unix)]
     pub fn from_open(path: &str, e: serialport::Error) -> Error {
         let io = std::io::Error::from(e);
         #[cfg(unix)]

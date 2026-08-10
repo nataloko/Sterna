@@ -17,6 +17,14 @@ use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
 static RIG: Mutex<()> = Mutex::new(());
 
+#[test]
+fn a_missing_com_port_is_a_disconnect() {
+    assert!(matches!(
+        SerialConn::open("COM65535", &SerialParams::default()),
+        Err(tt_conn::Error::Disconnected)
+    ));
+}
+
 fn ports() -> Option<(String, String)> {
     let a = std::env::var("TT_SERIAL_A").ok();
     let b = std::env::var("TT_SERIAL_B").ok();
@@ -101,4 +109,17 @@ fn the_driver_reads_back_the_extended_dcb() {
     conn.apply(&software)
         .expect("reapply with software flow DCB");
     assert_eq!(conn.params(), &software);
+}
+
+#[test]
+fn an_exclusively_held_com_port_is_busy() {
+    let Some((a, _)) = ports() else {
+        return;
+    };
+    let _rig = RIG.lock().unwrap();
+    let _held = SerialConn::open(&a, &SerialParams::default()).expect("first open");
+    assert!(matches!(
+        SerialConn::open(&a, &SerialParams::default()),
+        Err(tt_conn::Error::Busy { .. })
+    ));
 }

@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 394
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 395
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4483,6 +4483,17 @@ error. The same native hardware file which covers `WaitCommEvent` opens a
 the readback itself is the assertion. Pure DCB construction and its CTS/DSR bit
 split pass under Wine; the driver readback still requires native Windows for
 the COM-emulation reason above.
+
+Windows also keeps the error at the COM-port open boundary now. The portable
+crate collapses `ERROR_FILE_NOT_FOUND`, `ERROR_PATH_NOT_FOUND` and
+`ERROR_ACCESS_DENIED` into one `NoDevice` value and retains only the localized
+message. The Unix fallback then tried `Path::exists("COM3")`, which is always
+false, so an exclusively held port was reported as unplugged. The Windows path
+uses the same exclusive `CreateFileW` call directly: access denied and sharing
+violation are the actionable “in use” error, while missing/path/invalid-name is
+disconnected and every other failure retains its native source. A missing COM
+test passes under Wine; the second-open-is-busy assertion sits with the native
+loopback cases because Wine cannot finish configuring its PTY-backed port.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

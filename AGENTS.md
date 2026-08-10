@@ -749,6 +749,13 @@ And for the serial side:
   and reads every controlled field back. DTR toggle is rejected before that
   call because Win32 has no such mode; do not turn the readback into a cached
   `SerialParams` comparison, which would merely prove what the caller asked.
+- **`serialport-rs` throws away the Win32 COM open error code.** Missing ports,
+  exclusive-use collisions and access denial all become `NoDevice` carrying
+  only a localized message, and `Path::exists("COM3")` is false whatever the
+  device's state. Windows opens with the same `CreateFileW` flags directly:
+  `ERROR_ACCESS_DENIED`/`ERROR_SHARING_VIOLATION` is busy, while missing/path/
+  invalid-name is disconnected. Do not route it back through
+  `COMPort::open` and try to parse the translated text.
 - **A test byte with bit 7 set cannot tell 7 data bits from 8.** At seven bits
   the stop bit lands in bit 7, so `0xA5` round-trips as `0xA5` either way and
   the test passes whatever the port is doing. Use `0x25`.

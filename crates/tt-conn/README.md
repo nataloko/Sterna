@@ -70,6 +70,12 @@ name. The DCB is applied once and read back field by field; a driver which
 accepts the call but silently keeps a different data size or line mode is an
 error rather than a successful-looking wrong port.
 
+The handle is opened directly too. `serialport-rs` merges Windows' missing and
+exclusive-use failures into `NoDevice` and discards `GetLastError`, after which
+no locale-independent classifier is possible. Keeping the code at
+`CreateFileW` lets a second window say “COM3 is in use” instead of telling the
+user that their adapter was unplugged.
+
 ## The four things that are not obvious
 
 **A break is not a NUL, and by default Linux says it is.** With default termios

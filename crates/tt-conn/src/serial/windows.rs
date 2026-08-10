@@ -6,7 +6,7 @@
 //! to acknowledge it before arming the next wait. This is the same handshake
 //! as Tera Term's `CommThread` and `ReadEnd` event (`commlib.c:638`).
 
-use std::os::windows::io::{AsRawHandle, RawHandle};
+use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError};
 use std::sync::Arc;
 
@@ -16,7 +16,11 @@ use windows_sys::Win32::Devices::Communication::{
     DCB, EVENPARITY, EV_BREAK, EV_ERR, EV_RXCHAR, MARKPARITY, NOPARITY, ODDPARITY, ONESTOPBIT,
     SPACEPARITY, TWOSTOPBITS,
 };
-use windows_sys::Win32::Foundation::HANDLE;
+use windows_sys::Win32::Foundation::{
+    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_INVALID_NAME, ERROR_PATH_NOT_FOUND,
+    ERROR_SHARING_VIOLATION, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
+};
+use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_ATTRIBUTE_NORMAL, OPEN_EXISTING};
 
 use crate::error::{Error, Result};
 use crate::windows_event::ManualEvent;
@@ -28,6 +32,54 @@ const OUTPUT_QUEUE: u32 = 4 * 1024;
 const XON_LIMIT: u16 = 768;
 const XOFF_LIMIT: u16 = 3328;
 const CONTROLLED_FLAGS: u32 = 0x7fff;
+
+/// Open a COM port without losing Win32's reason for failure.
+///
+/// `serialport-rs` maps missing, busy and access-denied handles to one
+/// `NoDevice` variant and retains only a localized message. There is no sound
+/// way to recover the distinction afterwards, so preserve `GetLastError` at
+/// the same `CreateFileW` boundary the crate uses.
+pub(super) fn open(path: &str) -> Result<COMPort> {
+    let mut name = Vec::with_capacity(path.len() + 5);
+    if !path.starts_with('\\') {
+        name.extend(r"\\.\".encode_utf16());
+    }
+    name.extend(path.encode_utf16());
+    name.push(0);
+
+    // SAFETY: `name` is NUL-terminated and live; no security/template handles
+    // are supplied. COM ports are exclusive, matching upstream and the crate.
+    let handle = unsafe {
+        CreateFileW(
+            name.as_ptr(),
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            std::ptr::null_mut(),
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        let source = std::io::Error::last_os_error();
+        return Err(match source.raw_os_error().map(|e| e as u32) {
+            Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION) => Error::Busy {
+                path: path.to_string(),
+            },
+            Some(ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND | ERROR_INVALID_NAME) => {
+                Error::Disconnected
+            }
+            _ => Error::Open {
+                path: path.to_string(),
+                source,
+            },
+        });
+    }
+
+    // SAFETY: CreateFileW returned a uniquely owned handle and COMPort takes
+    // ownership of it. Its cached name is irrelevant; SerialConn keeps `path`.
+    Ok(unsafe { COMPort::from_raw_handle(handle as RawHandle) })
+}
 
 /// Apply the DCB in one operation, then ask the driver what actually stuck.
 ///

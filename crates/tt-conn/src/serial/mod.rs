@@ -197,8 +197,13 @@ impl SerialConn {
     /// USB it should be: `ttyUSB<n>` is assigned in attach order, so
     /// reconnecting by that name can land on a different physical port.
     pub fn open(path: &str, params: &SerialParams) -> Result<Self> {
-        let builder = serialport::new(path, params.baud).timeout(params.read_timeout);
-        let port = NativePort::open(&builder).map_err(|e| Error::from_open(path, e))?;
+        #[cfg(unix)]
+        let port = {
+            let builder = serialport::new(path, params.baud).timeout(params.read_timeout);
+            NativePort::open(&builder).map_err(|e| Error::from_open(path, e))?
+        };
+        #[cfg(windows)]
+        let port = windows::open(path)?;
 
         let mut conn = SerialConn {
             port,
