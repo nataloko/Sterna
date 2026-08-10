@@ -310,6 +310,21 @@ color.underline | color2 | Tera Term | VTUnderlineColor | 255,0,255,255,255,255 
 # **off**, so reverse video uses the normal pair swapped instead.
 color.reverse | color2 | Tera Term | VTReverseColor | 255,255,255,0,0,0 | DLG_TAB_VISUAL_FGCOLOR
 
+# `ttset.c:775`. The pair applied to a cell carrying `AttrURL`: green on
+# white as shipped. URL is its own attribute rather than an SGR colour, and
+# an explicit SGR foreground or background still wins over the corresponding
+# half later in `vtdisp.c:GetDrawAttr` (`:2499`, then `:2522`).
+color.url | color2 | Tera Term | URLColor | 0,255,0,255,255,255 | DLG_WIN_URL
+
+# `ttset.c:776`, the `CF_URLCOLOR` bit. This gates only the URL colour pair;
+# URL detection and `URLUnderline` are independent, so turning it off leaves a
+# detected URL underlined in the ordinary text colour.
+color.url_enabled | bool | Tera Term | EnableURLColor | on | DLG_TAB_VISUAL_URL_COLOR
+
+# `ttset.c:780`, the `FF_URLUNDERLINE` bit. Independent of both the URL colour
+# and whether a double-click is allowed to open one.
+color.url_underline | bool | Tera Term | URLUnderline | on | DLG_TAB_VISUAL_URL_FONT
+
 # `ttset.c:758`.
 color.bold_enabled | bool | Tera Term | EnableBoldAttrColor | on | -
 
@@ -488,6 +503,33 @@ mouse.ctrl_disables_wheel_to_cursor | bool | Tera Term | DisableWheelToCursorByC
 # 255 (`vtwin.cpp:2500`). One setting, two meanings, the way `TelEcho` and
 # `ts.BSKey` each have two.
 mouse.wheel_scroll_line | int | Tera Term | MouseWheelScrollLine | 3 | DLG_TAB_GENERAL_MOUSEWHEEL_SCROLL_LINE
+
+# `ttset.c:771`. URL recognition, colouring and underlining happen regardless;
+# this controls only the hand cursor and the double-click that launches one
+# (`vtwin.cpp:2426`, `buffer.c:4411`). It ships off.
+mouse.clickable_url | bool | Tera Term | EnableClickableUrl | off | DLG_TAB_GENERAL_CLICKURL
+
+# --- URL ---------------------------------------------------------------------
+
+# `ttset.c:1760`. An empty string uses the operating system's URL handler.
+# A configured executable is tried only for HTTP, HTTPS and FTP; SFTP, TFTP,
+# NEWS and MMS still go straight to the system handler (`buffer.c:4084`).
+url.browser | string | Tera Term | ClickableUrlBrowser |  | -
+
+# `ttset.c:1762`. Prepended to the URL when `url.browser` is used; ignored for
+# the four schemes that always use the system handler.
+url.browser_args | string | Tera Term | ClickableUrlBrowserArg |  | -
+
+# `ttset.c:1792`. Read, written and documented, but never consulted anywhere
+# in upstream's current source: continued display lines are joined according
+# to `AttrLineContinued` regardless. Carried so the file round-trips; it acts
+# on nothing here for the same reason it acts on nothing there.
+url.join_split | bool | Tera Term | JoinSplitURL | off | -
+
+# `ttset.c:1794`. Upstream keeps only the first byte (a backslash by default),
+# but — like `JoinSplitURL` itself — no current code reads the result. Carried
+# in the file and deliberately not given invented behaviour.
+url.join_split_ignore_eol_char | string | Tera Term | JoinSplitURLIgnoreEOLChar | \ | -
 
 # --- bell --------------------------------------------------------------------
 #

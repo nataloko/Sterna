@@ -1151,6 +1151,18 @@ pub struct Settings {
     /// `ttset.c:767`. White on black — and unlike the other three this one ships
     /// **off**, so reverse video uses the normal pair swapped instead.
     pub color_reverse: [u8; 6],
+    /// `ttset.c:775`. The pair applied to a cell carrying `AttrURL`: green on
+    /// white as shipped. URL is its own attribute rather than an SGR colour, and
+    /// an explicit SGR foreground or background still wins over the corresponding
+    /// half later in `vtdisp.c:GetDrawAttr` (`:2499`, then `:2522`).
+    pub color_url: [u8; 6],
+    /// `ttset.c:776`, the `CF_URLCOLOR` bit. This gates only the URL colour pair;
+    /// URL detection and `URLUnderline` are independent, so turning it off leaves a
+    /// detected URL underlined in the ordinary text colour.
+    pub color_url_enabled: bool,
+    /// `ttset.c:780`, the `FF_URLUNDERLINE` bit. Independent of both the URL colour
+    /// and whether a double-click is allowed to open one.
+    pub color_url_underline: bool,
     /// `ttset.c:758`.
     pub color_bold_enabled: bool,
     /// `ttset.c:763`.
@@ -1293,6 +1305,26 @@ pub struct Settings {
     /// 255 (`vtwin.cpp:2500`). One setting, two meanings, the way `TelEcho` and
     /// `ts.BSKey` each have two.
     pub mouse_wheel_scroll_line: i32,
+    /// `ttset.c:771`. URL recognition, colouring and underlining happen regardless;
+    /// this controls only the hand cursor and the double-click that launches one
+    /// (`vtwin.cpp:2426`, `buffer.c:4411`). It ships off.
+    pub mouse_clickable_url: bool,
+    /// `ttset.c:1760`. An empty string uses the operating system's URL handler.
+    /// A configured executable is tried only for HTTP, HTTPS and FTP; SFTP, TFTP,
+    /// NEWS and MMS still go straight to the system handler (`buffer.c:4084`).
+    pub url_browser: String,
+    /// `ttset.c:1762`. Prepended to the URL when `url.browser` is used; ignored for
+    /// the four schemes that always use the system handler.
+    pub url_browser_args: String,
+    /// `ttset.c:1792`. Read, written and documented, but never consulted anywhere
+    /// in upstream's current source: continued display lines are joined according
+    /// to `AttrLineContinued` regardless. Carried so the file round-trips; it acts
+    /// on nothing here for the same reason it acts on nothing there.
+    pub url_join_split: bool,
+    /// `ttset.c:1794`. Upstream keeps only the first byte (a backslash by default),
+    /// but — like `JoinSplitURL` itself — no current code reads the result. Carried
+    /// in the file and deliberately not given invented behaviour.
+    pub url_join_split_ignore_eol_char: String,
     /// `ttset.c:1112`, read with an **empty** default and compared down an
     /// `_stricmp` chain that tests only `off` and `visual` — so the `on` spelling
     /// below matches nothing and lands on the same `else` the absent key does, which
@@ -1920,6 +1952,9 @@ impl Default for Settings {
             color_blink: [255, 0, 0, 255, 255, 255],
             color_underline: [255, 0, 255, 255, 255, 255],
             color_reverse: [255, 255, 255, 0, 0, 0],
+            color_url: [0, 255, 0, 255, 255, 255],
+            color_url_enabled: true,
+            color_url_underline: true,
             color_bold_enabled: true,
             color_blink_enabled: true,
             color_reverse_enabled: false,
@@ -1951,6 +1986,11 @@ impl Default for Settings {
             mouse_wheel_to_cursor: true,
             mouse_ctrl_disables_wheel_to_cursor: true,
             mouse_wheel_scroll_line: 3,
+            mouse_clickable_url: false,
+            url_browser: String::from(""),
+            url_browser_args: String::from(""),
+            url_join_split: false,
+            url_join_split_ignore_eol_char: String::from("\\"),
             bell_mode: BellMode::default(),
             bell_on_connect: false,
             bell_visual_wait_ms: 10,
@@ -2208,6 +2248,9 @@ impl Settings {
                 ini.get("Tera Term", "VTReverseColor"),
                 d.color_reverse,
             ),
+            color_url: crate::schema::color2(ini.get("Tera Term", "URLColor"), d.color_url),
+            color_url_enabled: crate::schema::on_off(ini.get("Tera Term", "EnableURLColor"), true),
+            color_url_underline: crate::schema::on_off(ini.get("Tera Term", "URLUnderline"), true),
             color_bold_enabled: crate::schema::on_off(
                 ini.get("Tera Term", "EnableBoldAttrColor"),
                 true,
@@ -2318,6 +2361,24 @@ impl Settings {
                 "MouseWheelScrollLine",
                 d.mouse_wheel_scroll_line,
             ) as i32,
+            mouse_clickable_url: crate::schema::on_off(
+                ini.get("Tera Term", "EnableClickableUrl"),
+                false,
+            ),
+            url_browser: ini
+                .get_or("Tera Term", "ClickableUrlBrowser", &d.url_browser)
+                .to_string(),
+            url_browser_args: ini
+                .get_or("Tera Term", "ClickableUrlBrowserArg", &d.url_browser_args)
+                .to_string(),
+            url_join_split: crate::schema::on_off(ini.get("Tera Term", "JoinSplitURL"), false),
+            url_join_split_ignore_eol_char: ini
+                .get_or(
+                    "Tera Term",
+                    "JoinSplitURLIgnoreEOLChar",
+                    &d.url_join_split_ignore_eol_char,
+                )
+                .to_string(),
             bell_mode: match ini.get("Tera Term", "Beep") {
                 Some(v) => BellMode::from_ini(v),
                 None => d.bell_mode,
@@ -3004,6 +3065,26 @@ impl Settings {
         );
         ini.set(
             "Tera Term",
+            "URLColor",
+            &crate::schema::color2_str(&self.color_url),
+        );
+        ini.set(
+            "Tera Term",
+            "EnableURLColor",
+            &if self.color_url_enabled { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "URLUnderline",
+            &if self.color_url_underline {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
             "EnableBoldAttrColor",
             &if self.color_bold_enabled { "on" } else { "off" }.to_string(),
         );
@@ -3232,6 +3313,36 @@ impl Settings {
             "Tera Term",
             "MouseWheelScrollLine",
             &self.mouse_wheel_scroll_line.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "EnableClickableUrl",
+            &if self.mouse_clickable_url {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "ClickableUrlBrowser",
+            &self.url_browser.clone(),
+        );
+        ini.set(
+            "Tera Term",
+            "ClickableUrlBrowserArg",
+            &self.url_browser_args.clone(),
+        );
+        ini.set(
+            "Tera Term",
+            "JoinSplitURL",
+            &if self.url_join_split { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "JoinSplitURLIgnoreEOLChar",
+            &self.url_join_split_ignore_eol_char.clone(),
         );
         ini.set("Tera Term", "Beep", &self.bell_mode.as_ini().to_string());
         ini.set(
@@ -4150,6 +4261,14 @@ impl Settings {
             "color.blink" => crate::schema::color2_str(&self.color_blink),
             "color.underline" => crate::schema::color2_str(&self.color_underline),
             "color.reverse" => crate::schema::color2_str(&self.color_reverse),
+            "color.url" => crate::schema::color2_str(&self.color_url),
+            "color.url_enabled" => if self.color_url_enabled { "on" } else { "off" }.to_string(),
+            "color.url_underline" => if self.color_url_underline {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "color.bold_enabled" => if self.color_bold_enabled { "on" } else { "off" }.to_string(),
             "color.blink_enabled" => if self.color_blink_enabled {
                 "on"
@@ -4261,6 +4380,16 @@ impl Settings {
             }
             .to_string(),
             "mouse.wheel_scroll_line" => self.mouse_wheel_scroll_line.to_string(),
+            "mouse.clickable_url" => if self.mouse_clickable_url {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "url.browser" => self.url_browser.clone(),
+            "url.browser_args" => self.url_browser_args.clone(),
+            "url.join_split" => if self.url_join_split { "on" } else { "off" }.to_string(),
+            "url.join_split_ignore_eol_char" => self.url_join_split_ignore_eol_char.clone(),
             "bell.mode" => self.bell_mode.as_ini().to_string(),
             "bell.on_connect" => if self.bell_on_connect { "on" } else { "off" }.to_string(),
             "bell.visual_wait_ms" => self.bell_visual_wait_ms.to_string(),
@@ -4676,6 +4805,13 @@ impl Settings {
             "color.reverse" => {
                 self.color_reverse = crate::schema::color2(Some(value), self.color_reverse)
             }
+            "color.url" => self.color_url = crate::schema::color2(Some(value), self.color_url),
+            "color.url_enabled" => {
+                self.color_url_enabled = crate::schema::on_off(Some(value), true)
+            }
+            "color.url_underline" => {
+                self.color_url_underline = crate::schema::on_off(Some(value), true)
+            }
             "color.bold_enabled" => {
                 self.color_bold_enabled = crate::schema::on_off(Some(value), true)
             }
@@ -4752,6 +4888,15 @@ impl Settings {
             "mouse.wheel_scroll_line" => {
                 self.mouse_wheel_scroll_line =
                     crate::schema::int(value, self.mouse_wheel_scroll_line)
+            }
+            "mouse.clickable_url" => {
+                self.mouse_clickable_url = crate::schema::on_off(Some(value), false)
+            }
+            "url.browser" => self.url_browser = value.to_string(),
+            "url.browser_args" => self.url_browser_args = value.to_string(),
+            "url.join_split" => self.url_join_split = crate::schema::on_off(Some(value), false),
+            "url.join_split_ignore_eol_char" => {
+                self.url_join_split_ignore_eol_char = value.to_string()
             }
             "bell.mode" => self.bell_mode = BellMode::from_ini(value),
             "bell.on_connect" => self.bell_on_connect = crate::schema::on_off(Some(value), false),
@@ -5485,6 +5630,36 @@ pub const FIELDS: &[Field] = &[
         doc: "`ttset.c:767`. White on black — and unlike the other three this one ships **off**, so reverse video uses the normal pair swapped instead.",
     },
     Field {
+        name: "color.url",
+        page: "color",
+        section: "Tera Term",
+        key: "URLColor",
+        kind: Kind::Color2,
+        default: "0,255,0,255,255,255",
+        label: Some("DLG_WIN_URL"),
+        doc: "`ttset.c:775`. The pair applied to a cell carrying `AttrURL`: green on white as shipped. URL is its own attribute rather than an SGR colour, and an explicit SGR foreground or background still wins over the corresponding half later in `vtdisp.c:GetDrawAttr` (`:2499`, then `:2522`).",
+    },
+    Field {
+        name: "color.url_enabled",
+        page: "color",
+        section: "Tera Term",
+        key: "EnableURLColor",
+        kind: Kind::Bool,
+        default: "on",
+        label: Some("DLG_TAB_VISUAL_URL_COLOR"),
+        doc: "`ttset.c:776`, the `CF_URLCOLOR` bit. This gates only the URL colour pair; URL detection and `URLUnderline` are independent, so turning it off leaves a detected URL underlined in the ordinary text colour.",
+    },
+    Field {
+        name: "color.url_underline",
+        page: "color",
+        section: "Tera Term",
+        key: "URLUnderline",
+        kind: Kind::Bool,
+        default: "on",
+        label: Some("DLG_TAB_VISUAL_URL_FONT"),
+        doc: "`ttset.c:780`, the `FF_URLUNDERLINE` bit. Independent of both the URL colour and whether a double-click is allowed to open one.",
+    },
+    Field {
         name: "color.bold_enabled",
         page: "color",
         section: "Tera Term",
@@ -5793,6 +5968,56 @@ pub const FIELDS: &[Field] = &[
         default: "3",
         label: Some("DLG_TAB_GENERAL_MOUSEWHEEL_SCROLL_LINE"),
         doc: "`ttset.c:1276`. How many lines one notch of the wheel moves.  **Only when the notch arrives alone.** `vtwin.cpp:2539` multiplies under `line == 1`, where `line` is `abs(zDelta)/WHEEL_DELTA` — so a flick fast enough to coalesce two notches into one message scrolls two lines rather than six, and the setting stops applying exactly when the user is scrolling hardest. Not a clamp either: the guard is `> 0`, so `MouseWheelScrollLine=0` is one line per notch and so is a negative value.  It is also the step for something with no other name: with the pointer over the title bar the wheel changes the window's opacity, by this many units of 255 (`vtwin.cpp:2500`). One setting, two meanings, the way `TelEcho` and `ts.BSKey` each have two.",
+    },
+    Field {
+        name: "mouse.clickable_url",
+        page: "mouse",
+        section: "Tera Term",
+        key: "EnableClickableUrl",
+        kind: Kind::Bool,
+        default: "off",
+        label: Some("DLG_TAB_GENERAL_CLICKURL"),
+        doc: "`ttset.c:771`. URL recognition, colouring and underlining happen regardless; this controls only the hand cursor and the double-click that launches one (`vtwin.cpp:2426`, `buffer.c:4411`). It ships off.",
+    },
+    Field {
+        name: "url.browser",
+        page: "url",
+        section: "Tera Term",
+        key: "ClickableUrlBrowser",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "`ttset.c:1760`. An empty string uses the operating system's URL handler. A configured executable is tried only for HTTP, HTTPS and FTP; SFTP, TFTP, NEWS and MMS still go straight to the system handler (`buffer.c:4084`).",
+    },
+    Field {
+        name: "url.browser_args",
+        page: "url",
+        section: "Tera Term",
+        key: "ClickableUrlBrowserArg",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "`ttset.c:1762`. Prepended to the URL when `url.browser` is used; ignored for the four schemes that always use the system handler.",
+    },
+    Field {
+        name: "url.join_split",
+        page: "url",
+        section: "Tera Term",
+        key: "JoinSplitURL",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1792`. Read, written and documented, but never consulted anywhere in upstream's current source: continued display lines are joined according to `AttrLineContinued` regardless. Carried so the file round-trips; it acts on nothing here for the same reason it acts on nothing there.",
+    },
+    Field {
+        name: "url.join_split_ignore_eol_char",
+        page: "url",
+        section: "Tera Term",
+        key: "JoinSplitURLIgnoreEOLChar",
+        kind: Kind::Str,
+        default: "\\",
+        label: None,
+        doc: "`ttset.c:1794`. Upstream keeps only the first byte (a backslash by default), but — like `JoinSplitURL` itself — no current code reads the result. Carried in the file and deliberately not given invented behaviour.",
     },
     Field {
         name: "bell.mode",
