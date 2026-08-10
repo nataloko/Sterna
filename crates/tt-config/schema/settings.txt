@@ -1147,6 +1147,14 @@ macro.startup_file | string | Tera Term | StartupMacro |  | -
 # is that program; 5.7.0 is the current upstream fallback this schema targets.
 settings.source_version | string | Tera Term | Version | 5.7.0 | -
 
+# `ttset.c:1489` delegates this read to `GetUILanguageFileFullW`, whose own
+# fallback is `lang\Default.lng` (`common/ttlib_static_cpp.cpp:1041`). The
+# default catalog contains font choices only, so absent translations fall back
+# to the source-language text embedded in the application. Upstream resolves a
+# relative value beside its executable; the shell does the platform-specific
+# installed-data resolution after this compatible value has been read.
+settings.language_file | string | Tera Term | UILanguageFile | lang\Default.lng | DLG_GEN_LANG_UI
+
 # `ttset.c:1999`, default **on**. Before Setup > Save setup overwrites the
 # active file, upstream copies its old bytes to a sibling named
 # `YYYYMMDDTHHMMSS+zzzz_TERATERM.INI` (`vtwin.cpp:4738`,

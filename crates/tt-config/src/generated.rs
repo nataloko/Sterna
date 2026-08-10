@@ -3181,6 +3181,13 @@ pub struct Settings {
     /// Term version. Sterna preserves the source metadata without claiming that it
     /// is that program; 5.7.0 is the current upstream fallback this schema targets.
     pub settings_source_version: String,
+    /// `ttset.c:1489` delegates this read to `GetUILanguageFileFullW`, whose own
+    /// fallback is `lang\Default.lng` (`common/ttlib_static_cpp.cpp:1041`). The
+    /// default catalog contains font choices only, so absent translations fall back
+    /// to the source-language text embedded in the application. Upstream resolves a
+    /// relative value beside its executable; the shell does the platform-specific
+    /// installed-data resolution after this compatible value has been read.
+    pub settings_language_file: String,
     /// `ttset.c:1999`, default **on**. Before Setup > Save setup overwrites the
     /// active file, upstream copies its old bytes to a sibling named
     /// `YYYYMMDDTHHMMSS+zzzz_TERATERM.INI` (`vtwin.cpp:4738`,
@@ -3860,6 +3867,7 @@ impl Default for Settings {
             connection_line_mode: true,
             macro_startup_file: String::from(""),
             settings_source_version: String::from("5.7.0"),
+            settings_language_file: String::from("lang\\Default.lng"),
             settings_auto_backup: true,
             serial_com_port: 1,
             serial_baud: 9600,
@@ -4605,6 +4613,9 @@ impl Settings {
                 .to_string(),
             settings_source_version: ini
                 .get_or("Tera Term", "Version", &d.settings_source_version)
+                .to_string(),
+            settings_language_file: ini
+                .get_or("Tera Term", "UILanguageFile", &d.settings_language_file)
                 .to_string(),
             settings_auto_backup: crate::schema::on_off(
                 ini.get("Tera Term", "IniAutoBackup"),
@@ -6224,6 +6235,11 @@ impl Settings {
         );
         ini.set(
             "Tera Term",
+            "UILanguageFile",
+            &self.settings_language_file.clone(),
+        );
+        ini.set(
+            "Tera Term",
             "IniAutoBackup",
             &if self.settings_auto_backup {
                 "on"
@@ -7609,6 +7625,7 @@ impl Settings {
             .to_string(),
             "macro.startup_file" => self.macro_startup_file.clone(),
             "settings.source_version" => self.settings_source_version.clone(),
+            "settings.language_file" => self.settings_language_file.clone(),
             "settings.auto_backup" => if self.settings_auto_backup {
                 "on"
             } else {
@@ -8402,6 +8419,7 @@ impl Settings {
             }
             "macro.startup_file" => self.macro_startup_file = value.to_string(),
             "settings.source_version" => self.settings_source_version = value.to_string(),
+            "settings.language_file" => self.settings_language_file = value.to_string(),
             "settings.auto_backup" => {
                 self.settings_auto_backup = crate::schema::on_off(Some(value), true)
             }
@@ -10394,6 +10412,16 @@ pub const FIELDS: &[Field] = &[
         default: "5.7.0",
         label: None,
         doc: "`ttset.c:575`. Upstream parses the first two components to decide which compatibility migrations to apply, and its writer stamps the running Tera Term version. Sterna preserves the source metadata without claiming that it is that program; 5.7.0 is the current upstream fallback this schema targets.",
+    },
+    Field {
+        name: "settings.language_file",
+        page: "settings",
+        section: "Tera Term",
+        key: "UILanguageFile",
+        kind: Kind::Str,
+        default: "lang\\Default.lng",
+        label: Some("DLG_GEN_LANG_UI"),
+        doc: "`ttset.c:1489` delegates this read to `GetUILanguageFileFullW`, whose own fallback is `lang\\Default.lng` (`common/ttlib_static_cpp.cpp:1041`). The default catalog contains font choices only, so absent translations fall back to the source-language text embedded in the application. Upstream resolves a relative value beside its executable; the shell does the platform-specific installed-data resolution after this compatible value has been read.",
     },
     Field {
         name: "settings.auto_backup",
