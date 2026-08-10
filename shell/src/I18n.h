@@ -32,6 +32,12 @@ public:
     QString text(const char *key, const QString &fallback,
                  const char *section = "Tera Term") const;
 
+    /// A menu/dialog caption with upstream's Win32 mnemonic and displayed
+    /// accelerator removed. Qt actions own the real shortcuts, and leaving an
+    /// `&` in a top-level menu would steal Alt+letter from the terminal.
+    QString plainText(const char *key, const QString &fallback,
+                      const char *section = "Tera Term") const;
+
     /// The installed catalogs, named by their own metadata.
     static QVector<LanguageChoice> availableLanguages();
 

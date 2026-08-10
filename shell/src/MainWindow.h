@@ -214,6 +214,9 @@ private:
     /// Select the catalog named by `settings.language_file`. Missing catalogs
     /// leave the source-language UI in place, as upstream's defaults do.
     void reloadLanguage();
+    /// Resolve the language keys attached to the menu actions. The key lives
+    /// on each action as data, leaving the menu structure as the only list.
+    void translateMenus();
 
     /// Where the settings came from, and where `Save setup` puts them back.
     /// Not always [`settingsPath()`] — `/F=` names another one.

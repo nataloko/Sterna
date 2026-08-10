@@ -109,6 +109,18 @@ QString transferNameFilter(const QString &mask)
         .arg(patterns);
 }
 
+/// Attach a `.lng` key without creating a second menu table. The source text
+/// stays on the action as its fallback, so changing catalogs can retranslate
+/// the same objects in place.
+void languageAction(QAction *action, const char *key, const QString &fallback,
+                    const char *section = "Tera Term")
+{
+    action->setText(fallback);
+    action->setProperty("sternaLanguageKey", QByteArray(key));
+    action->setProperty("sternaLanguageSection", QByteArray(section));
+    action->setProperty("sternaLanguageFallback", fallback);
+}
+
 /// A `/K=` path in the active setup directory, with upstream's default `.CNF`
 /// extension when the file name contains no dot.
 QString keyboardFile(const QString &given, const QString &settingsPath)
@@ -496,6 +508,25 @@ void MainWindow::reloadLanguage()
     if (!m_i18n->load(configured, m_settingsPath, &error)) {
         onNotice(tr("Could not read the language file: %1").arg(error));
     }
+    translateMenus();
+}
+
+void MainWindow::translateMenus()
+{
+    for (QAction *action : findChildren<QAction *>()) {
+        const QByteArray key = action->property("sternaLanguageKey").toByteArray();
+        if (key.isEmpty()) {
+            continue;
+        }
+        const QByteArray section =
+            action->property("sternaLanguageSection").toByteArray();
+        const QString fallback =
+            action->property("sternaLanguageFallback").toString();
+        action->setText(
+            m_i18n->plainText(key.constData(), fallback, section.constData()));
+    }
+    // Its key depends on live state, so it cannot be a fixed action property.
+    updateStatus();
 }
 
 void MainWindow::saveSettings()
@@ -533,41 +564,61 @@ void MainWindow::buildMenus()
     // Linux line editor receives Meta. A menu that stole Alt+B from readline
     // would be a menu people disable the whole menu bar to escape.
     QMenu *file = menuBar()->addMenu(tr("File"));
+    languageAction(file->menuAction(), "MENU_FILE", tr("File"));
     m_serialConnectAction = file->addAction(tr("Connect to serial port..."), this,
                                              &MainWindow::showConnectDialog);
+    languageAction(m_serialConnectAction, "DLG_HOST_SERIAL",
+                   tr("Connect to serial port..."));
     m_sshConnectAction = file->addAction(tr("Connect over SSH..."), this,
                                           &MainWindow::showSshDialog);
+    languageAction(m_sshConnectAction, "MENU_SSH", tr("Connect over SSH..."),
+                   "TTSSH");
     m_telnetConnectAction = file->addAction(tr("Connect over telnet..."), this,
                                              &MainWindow::showTelnetDialog);
+    languageAction(m_telnetConnectAction, "DLG_TCPIP_TELNET",
+                   tr("Connect over telnet..."));
     // No dialog: there is nothing to ask. The shell, the size and the
     // environment are all already known, and a dialog whose only button is OK
     // is a dialog nobody wants twice.
     m_localShellAction =
         file->addAction(tr("Local shell"), this, [this] { connectPty(); });
+    languageAction(m_localShellAction, "MENU_FILE_GYGWIN", tr("Local shell"));
     m_disconnectAction = file->addAction(tr("Disconnect"), this,
                                          &MainWindow::disconnectPort);
+    languageAction(m_disconnectAction, "MENU_FILE_DISCONNECT", tr("Disconnect"));
     file->addSeparator();
-    file->addAction(tr("Quit"), QKeySequence::Quit, this, &QWidget::close);
+    QAction *quit = file->addAction(tr("Quit"), QKeySequence::Quit, this,
+                                    &QWidget::close);
+    languageAction(quit, "MENU_FILE_EXIT", tr("Quit"));
 
     QMenu *edit = menuBar()->addMenu(tr("Edit"));
-    edit->addAction(tr("Copy"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C),
-                    m_view, &TerminalView::copySelection);
-    edit->addAction(tr("Paste"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V),
-                    m_view, &TerminalView::pasteClipboard);
+    languageAction(edit->menuAction(), "MENU_EDIT", tr("Edit"));
+    QAction *copy = edit->addAction(
+        tr("Copy"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C), m_view,
+        &TerminalView::copySelection);
+    languageAction(copy, "MENU_EDIT_COPY", tr("Copy"));
+    QAction *paste = edit->addAction(
+        tr("Paste"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V), m_view,
+        &TerminalView::pasteClipboard);
+    languageAction(paste, "MENU_EDIT_PASTE", tr("Paste"));
 
     // Under File, next to the connection, because that is where upstream puts
     // it and because a transfer is a thing you do *to* a connection.
     file->insertSeparator(m_disconnectAction);
     m_sendAction = new QAction(tr("Send file..."), this);
+    languageAction(m_sendAction, "MENU_FILE_SENDFILE", tr("Send file..."));
     connect(m_sendAction, &QAction::triggered, this, &MainWindow::sendFile);
     m_receiveAction = new QAction(tr("Receive file..."), this);
+    languageAction(m_receiveAction, "MENU_FILE_RECVFILE", tr("Receive file..."));
     connect(m_receiveAction, &QAction::triggered, this, &MainWindow::receiveFile);
     file->insertAction(m_disconnectAction, m_sendAction);
     file->insertAction(m_disconnectAction, m_receiveAction);
     file->insertSeparator(m_disconnectAction);
 
     QMenu *terminal = menuBar()->addMenu(tr("Terminal"));
+    languageAction(terminal->menuAction(), "DLG_TERM_TITLE", tr("Terminal"));
     m_breakAction = terminal->addAction(tr("Send break"), this, &MainWindow::sendBreak);
+    languageAction(m_breakAction, "MENU_CONTROL_SENDBREAK", tr("Send break"));
     terminal->addSeparator();
     m_logAction = terminal->addAction(tr("Start logging..."), this,
                                       &MainWindow::toggleLogging);
@@ -577,18 +628,32 @@ void MainWindow::buildMenus()
     // control window — there is no second window here, so it belongs on the
     // one there is.
     QMenu *control = menuBar()->addMenu(tr("Control"));
-    control->addAction(tr("Run macro..."), this, &MainWindow::runMacro);
+    languageAction(control->menuAction(), "MENU_CONTROL", tr("Control"));
+    QAction *runMacroAction =
+        control->addAction(tr("Run macro..."), this, &MainWindow::runMacro);
+    languageAction(runMacroAction, "MENU_CONTROL_MACRO", tr("Run macro..."));
     m_stopMacroAction = control->addAction(tr("Stop macro"), this,
                                            &MainWindow::stopMacro);
+    languageAction(m_stopMacroAction, "BTN_STOP", tr("Stop macro"));
     m_stopMacroAction->setEnabled(false);
     // "Setup", which is Tera Term's own name for this menu, so that someone
     // arriving from it looks in the right place.
     QMenu *setup = menuBar()->addMenu(tr("Setup"));
-    setup->addAction(tr("Terminal..."), this, &MainWindow::showSettingsDialog);
-    setup->addAction(tr("Font..."), this, &MainWindow::chooseFont);
-    setup->addAction(tr("Load key map..."), this, &MainWindow::chooseKeyMap);
+    languageAction(setup->menuAction(), "MENU_SETUP", tr("Setup"));
+    QAction *terminalSetup =
+        setup->addAction(tr("Terminal..."), this, &MainWindow::showSettingsDialog);
+    languageAction(terminalSetup, "MENU_SETUP_ADDITION", tr("Terminal..."));
+    QAction *font = setup->addAction(tr("Font..."), this, &MainWindow::chooseFont);
+    languageAction(font, "MENU_SETUP_FONT", tr("Font..."));
+    QAction *keyMap =
+        setup->addAction(tr("Load key map..."), this, &MainWindow::chooseKeyMap);
+    languageAction(keyMap, "MENU_SETUP_LOADKEYMAP", tr("Load key map..."));
     setup->addSeparator();
-    setup->addAction(tr("Save setup"), this, &MainWindow::saveSettings);
+    QAction *save = setup->addAction(tr("Save setup"), this,
+                                     &MainWindow::saveSettings);
+    languageAction(save, "MENU_SETUP_SAVE", tr("Save setup"));
+
+    translateMenus();
 }
 
 void MainWindow::showConnectDialog()
@@ -1478,8 +1543,10 @@ void MainWindow::updateLogStatus()
 void MainWindow::updateStatus()
 {
     if (m_logAction) {
-        m_logAction->setText(m_session->isLogging() ? tr("Stop logging")
-                                                    : tr("Start logging..."));
+        m_logAction->setText(
+            m_session->isLogging()
+                ? m_i18n->plainText("MENU_FILE_STOPLOG", tr("Stop logging"))
+                : m_i18n->plainText("MENU_FILE_LOG", tr("Start logging...")));
     }
     updateLogStatus();
 

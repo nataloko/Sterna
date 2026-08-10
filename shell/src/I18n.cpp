@@ -88,6 +88,48 @@ QString I18n::text(const char *key, const QString &fallback,
                : fallback;
 }
 
+QString I18n::plainText(const char *key, const QString &fallback,
+                        const char *section) const
+{
+    QString translated = text(key, fallback, section);
+    translated.truncate(translated.indexOf(QLatin1Char('\t')) < 0
+                            ? translated.size()
+                            : translated.indexOf(QLatin1Char('\t')));
+
+    // Japanese-style `設定(&S)` mnemonics leave a stray `(S)` if only the
+    // ampersand is removed. Drop that complete marker wherever it occurs,
+    // including the space before it in strings such as `Receive file (&Z)`.
+    for (qsizetype at = translated.indexOf(QStringLiteral("(&")); at >= 0;
+         at = translated.indexOf(QStringLiteral("(&"), at)) {
+        const qsizetype close = translated.indexOf(QLatin1Char(')'), at + 2);
+        if (close != at + 3) {
+            break;
+        }
+        qsizetype start = at;
+        if (start > 0 && translated.at(start - 1).isSpace()) {
+            start--;
+        }
+        translated.remove(start, close - start + 1);
+        at = start;
+    }
+
+    QString plain;
+    plain.reserve(translated.size());
+    for (qsizetype i = 0; i < translated.size(); i++) {
+        if (translated.at(i) != QLatin1Char('&')) {
+            plain += translated.at(i);
+            continue;
+        }
+        // `&&` is a literal ampersand in a Win32/Qt caption.
+        if (i + 1 < translated.size()
+            && translated.at(i + 1) == QLatin1Char('&')) {
+            plain += QLatin1Char('&');
+            i++;
+        }
+    }
+    return plain.trimmed();
+}
+
 QVector<LanguageChoice> I18n::availableLanguages()
 {
     QVector<LanguageChoice> out;

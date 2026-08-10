@@ -431,6 +431,41 @@ void test_menu_and_accelerator_settings()
     CHECK(!sendBreak->isEnabled());
 }
 
+void test_the_language_file_translates_menus_without_stealing_alt()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("japanese.ini"));
+    QFile file(ini);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[Tera Term]\nUILanguageFile=lang\\ja_JP.lng\n");
+    file.close();
+
+    MainWindow window(ini);
+    QAction *fileMenu = findAction(window, QStringLiteral("ファイル"));
+    QAction *send = findAction(window, QStringLiteral("ファイル送信..."));
+    QAction *setup = findAction(window, QStringLiteral("設定"));
+    CHECK(fileMenu != nullptr);
+    CHECK(send != nullptr);
+    CHECK(setup != nullptr);
+
+    // The catalog advertises Win32 mnemonics and accelerator captions. Sterna
+    // keeps Alt for the terminal and puts shortcuts on QAction itself, so
+    // neither marker belongs in the displayed translated text.
+    for (QAction *action : window.findChildren<QAction *>()) {
+        CHECK(!action->text().contains(QLatin1Char('&')));
+        CHECK(!action->text().contains(QLatin1Char('\t')));
+    }
+
+    // A live change retranslates the existing actions rather than requiring a
+    // second menu tree or a restart.
+    QString error;
+    CHECK(window.session()->setSetting(QStringLiteral("settings.language_file"),
+                                       QStringLiteral("lang\\de_DE.lng"),
+                                       &error));
+    CHECK(findAction(window, QStringLiteral("Datei")) != nullptr);
+}
+
 /// `/OSC52=` is an override of the file's permission, not a second setting.
 /// The unrecognised-value arm matters because it clears both bits upstream.
 void test_osc52_overrides_the_file_for_this_launch()
@@ -592,6 +627,7 @@ int main(int argc, char **argv)
     test_a_settings_file_named_on_the_line();
     test_a_keyboard_file_named_on_the_line();
     test_menu_and_accelerator_settings();
+    test_the_language_file_translates_menus_without_stealing_alt();
     test_osc52_overrides_the_file_for_this_launch();
     test_the_startup_macro_setting_and_its_overrides();
     test_a_host_name_connects_and_logs();

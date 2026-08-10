@@ -131,7 +131,8 @@ QColor colorAt(const QStringList &parts, int i)
 SettingsDialog::SettingsDialog(Session *session, I18n *i18n, QWidget *parent)
     : QDialog(parent), m_session(session), m_i18n(i18n)
 {
-    setWindowTitle(tr("Setup"));
+    setWindowTitle(m_i18n ? m_i18n->plainText("MENU_SETUP", tr("Setup"))
+                          : tr("Setup"));
     build();
 }
 
@@ -300,6 +301,12 @@ void SettingsDialog::build()
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                          this);
+    if (m_i18n) {
+        buttons->button(QDialogButtonBox::Ok)
+            ->setText(m_i18n->plainText("BTN_OK", tr("OK")));
+        buttons->button(QDialogButtonBox::Cancel)
+            ->setText(m_i18n->plainText("BTN_CANCEL", tr("Cancel")));
+    }
     connect(buttons, &QDialogButtonBox::accepted, this, [this] {
         applyChanges();
         accept();
