@@ -469,6 +469,10 @@ static void test_input(void)
     CHECK(!sent);
 
     CHECK_OK(tt_session_send_text(s, "ls -l\r", SIZE_MAX));
+    static const uint8_t raw[] = {0xE1, 0x00, 0xFF};
+    CHECK_OK(tt_session_send_bytes(s, raw, sizeof raw));
+    CHECK_OK(tt_session_send_bytes(s, NULL, 0));
+    CHECK(tt_session_send_bytes(s, NULL, 1) == TT_ERR_INVALID);
     CHECK_OK(tt_session_paste(s, "one\ntwo", 7));
     CHECK_OK(tt_session_focus(s, true));
 
@@ -1034,6 +1038,7 @@ static void test_null_safety(void)
      * that lost its session sends DEL rather than reading through a null. */
     CHECK(!tt_session_backspace_sends_bs(NULL));
     CHECK(tt_session_send_text(NULL, "x", 1) == TT_ERR_INVALID);
+    CHECK(tt_session_send_bytes(NULL, NULL, 0) == TT_ERR_INVALID);
     CHECK(tt_session_focus(NULL, true) == TT_ERR_INVALID);
     CHECK(tt_session_send_break(NULL) == TT_ERR_INVALID);
     tt_session_feed(NULL, NULL, 0);

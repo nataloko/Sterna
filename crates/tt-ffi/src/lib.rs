@@ -2050,6 +2050,28 @@ pub extern "C" fn tt_session_send_text(
     }
 }
 
+/// Put bytes on the wire unchanged: no UTF-8 validation, key table, LNM or
+/// other text processing. Used by a macro's binary `send` and by
+/// `Meta8Bit=raw` in a frontend. An empty slice succeeds.
+#[no_mangle]
+pub extern "C" fn tt_session_send_bytes(
+    session: *mut TtSession,
+    bytes: *const u8,
+    len: usize,
+) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    if len == 0 {
+        return TT_OK;
+    }
+    if bytes.is_null() {
+        return fail(TT_ERR_INVALID, "null bytes");
+    }
+    match s.session.send_bytes(unsafe { slice::from_raw_parts(bytes, len) }) {
+        Ok(()) => TT_OK,
+        Err(e) => report(e),
+    }
+}
+
 /// Paste, bracketed when the host asked for it (`DECSET 2004`).
 ///
 /// Separate from [`tt_session_send_text`] because the brackets are the whole

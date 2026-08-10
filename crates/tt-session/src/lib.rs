@@ -1045,12 +1045,13 @@ impl Session {
     /// Put bytes on the wire exactly as given — no key table, no LNM, no
     /// encoding.
     ///
-    /// For a macro's `send`, and only for that. A TTL string is bytes rather
-    /// than text — `#255` is a legal escape and `send` is documented to put
-    /// what it was given on the line unchanged — so routing it through
-    /// [`send_text`](Session::send_text) would re-encode a byte the script
-    /// chose. Upstream keeps the same distinction one layer up: `SendData`
-    /// sniffs and `SendBinary` does not (`ttdde.c:368`).
+    /// For input which is bytes rather than text. A TTL string is the main
+    /// caller — `#255` is a legal escape and `send` is documented to put what
+    /// it was given on the line unchanged — and `Meta8Bit=raw` is the other:
+    /// it sets bit 7 on the keyboard byte before sending. Routing either
+    /// through [`send_text`](Session::send_text) would UTF-8-encode the byte
+    /// the caller chose. Upstream keeps the same distinction one layer up:
+    /// `SendData` sniffs and `SendBinary` does not (`ttdde.c:368`).
     ///
     /// Refused during a transfer, like everything else that could put a stray
     /// byte in the middle of a packet.

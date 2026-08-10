@@ -2834,6 +2834,15 @@ TtStatus tt_session_send_text(TtSession *session,
                               size_t len);
 
 /**
+ * Put bytes on the wire unchanged: no UTF-8 validation, key table, LNM or
+ * other text processing. Used by a macro's binary `send` and by
+ * `Meta8Bit=raw` in a frontend. An empty slice succeeds.
+ */
+TtStatus tt_session_send_bytes(TtSession *session,
+                               const uint8_t *bytes,
+                               size_t len);
+
+/**
  * Paste, bracketed when the host asked for it (`DECSET 2004`).
  *
  * Separate from [`tt_session_send_text`] because the brackets are the whole
