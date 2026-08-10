@@ -1612,6 +1612,11 @@ And for the macro language:
   locale-shaped diffs no native implementation bug caused. Its private copies
   get a BOM on Windows; `source.rs` tests the real ACP conversion separately.
   Do not grow the five-name platform allowlist to absorb an encoding locale.
+- **`ToU8W` is not `WideCharToMultiByte` for UTF-8.** `_WideCharToMultiByte`
+  diverts CP65001 through Tera Term's `WideCharToMBCP`, whose invalid UTF-16
+  answer is ASCII `?`, not U+FFFD. This affects a damaged UTF-16 macro file on
+  every platform; using Rust's `from_utf16_lossy` agrees with the API name and
+  disagrees with the code under it.
 - **A missing reserved word is not diagnosed as a missing command — it is
   diagnosed as a bad assignment.** An unrecognised name is read as a *variable*,
   so a command left out of the table falls into `ExecCmnd`'s `else` arm

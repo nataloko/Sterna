@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 410
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 411
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4649,6 +4649,15 @@ semantics. Wine's usual CP1252 is therefore neither blessed nor added to the
 five-name platform allowlist. The complete MinGW unit binary is 335/335 under
 Wine and the script gate retains its 48/5 split; native Linux remains 332 unit
 checks plus both script-harness checks, and both target clippy passes are clean.
+
+Reading that CP65001 path corrected the UTF-16 BOM branch beside it as a
+separate change. `ToU8W` sounds like a thin
+`WideCharToMultiByte(CP_UTF8, 0)` wrapper and is not: `_WideCharToMultiByte`
+routes UTF-8 through Tera Term's own `WideCharToMBCP`, which emits ASCII `?`
+for an unpaired surrogate. Rust's `from_utf16_lossy` had emitted U+FFFD in the
+one damaged-file case specifically preserved by `source.rs`. Both byte orders
+now use the shared upstream-shaped encoder and the focused regression runs on
+Unix and Windows.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

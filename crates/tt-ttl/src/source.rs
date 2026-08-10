@@ -154,6 +154,13 @@ fn from_code_page(raw: &[u8], code_page: u32) -> Option<Vec<u8>> {
 /// and low surrogate are joined by the UTF-16 intermediate representation.
 #[cfg(windows)]
 fn from_upstream_utf8(raw: &[u8]) -> Vec<u8> {
+    from_upstream_wide(&to_upstream_wide(raw))
+}
+
+/// Tera Term's permissive `UTF8ToWideChar`, shared with Win32 APIs which take
+/// the parser's UTF-8 strings through a UTF-16 boundary.
+#[cfg(windows)]
+pub(crate) fn to_upstream_wide(raw: &[u8]) -> Vec<u16> {
     fn continuation(byte: u8) -> bool {
         byte & 0xC0 == 0x80
     }
@@ -208,7 +215,13 @@ fn from_upstream_utf8(raw: &[u8]) -> Vec<u8> {
         }
     }
 
-    let mut out = Vec::with_capacity(raw.len());
+    wide
+}
+
+/// Tera Term's `WideCharToMBCP(CP_UTF8)`, including its `?` for an unpaired
+/// surrogate rather than Rust's replacement character.
+pub(crate) fn from_upstream_wide(wide: &[u16]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(wide.len());
     let mut at = 0;
     while at < wide.len() {
         let first = wide[at];
@@ -257,9 +270,9 @@ fn from_utf16(bytes: &[u8], read: fn([u8; 2]) -> u16) -> Vec<u8> {
             units.push(*odd as u16);
         }
     }
-    // `WideCharToMultiByte(CP_UTF8, 0, ...)` — with no `WC_ERR_INVALID_CHARS`,
-    // an unpaired surrogate becomes U+FFFD rather than failing the file.
-    String::from_utf16_lossy(&units).into_bytes()
+    // `ToU8W` uses Tera Term's own `WideCharToMBCP(CP_UTF8)`, not the Win32
+    // function its name resembles. An unpaired surrogate is therefore `?`.
+    from_upstream_wide(&units)
 }
 
 #[cfg(test)]
@@ -301,8 +314,8 @@ mod tests {
     }
 
     #[test]
-    fn an_unpaired_surrogate_is_replaced_rather_than_refused() {
-        assert_eq!(decode(b"\xFF\xFE\x00\xD8A\x00"), "\u{FFFD}A".as_bytes());
+    fn an_unpaired_surrogate_becomes_upstreams_question_mark() {
+        assert_eq!(decode(b"\xFF\xFE\x00\xD8A\x00"), b"?A");
     }
 
     /// The odd byte is the low half of its unit in *both* orders, because
