@@ -311,6 +311,15 @@ pub struct Config {
     pub term_id: TermId,
     pub cr_receive: CrReceive,
     pub color_flags: ColorFlags,
+    /// The terminal's 256 drawing colours. Entries 0-15 come from the
+    /// `ANSIColor` setting after `vtdisp.c:GetIndex256From16` swaps its legacy
+    /// bright/dim order; 16-255 are the fixed xterm cube and greyscale ramp.
+    ///
+    /// This belongs in the terminal rather than only in the painter because
+    /// truecolor SGR is resolved to the nearest *index* as it is parsed. A
+    /// custom palette therefore changes what the grid stores as well as what
+    /// that index looks like later.
+    pub palette: [palette::Rgb; 256],
     /// `ts.ISO2022Flag`. Defaults to every shift enabled.
     pub iso2022_flags: ShiftFlags,
     /// `LangIsJapanese(ts.KanjiCode)`. False for a UTF-8 terminal, which is all
@@ -528,6 +537,7 @@ impl Default for Config {
             term_id: TermId::Vt100,
             cr_receive: CrReceive::Cr,
             color_flags: ColorFlags::default(),
+            palette: *palette::default_palette(),
             iso2022_flags: ShiftFlags::ALL,
             japanese: false,
             accept_8bit_ctrl: true,
@@ -1803,7 +1813,9 @@ impl State {
                 38 | 48 => {
                     if self.config.color_flags.xterm256 {
                         let full = self.config.color_flags.full_color();
-                        if let Some((color, consumed)) = extended_color(groups, i, full) {
+                        if let Some((color, consumed)) =
+                            extended_color(groups, i, full, &self.config.palette)
+                        {
                             if p == 38 {
                                 set(attr, mask, ATTR2_FORE, true);
                                 attr.fg = color;
@@ -2867,9 +2879,15 @@ impl State {
 /// Decode `38;2;r;g;b` / `38;5;idx` in all the colon and semicolon spellings
 /// upstream accepts. Returns the colour and how many extra parameter groups it
 /// swallowed.
-fn extended_color(groups: &[Vec<u16>], i: usize, full_color: bool) -> Option<(u32, usize)> {
-    let rgb =
-        |r: u16, g: u16, b: u16| palette::find_closest(r as i32, g as i32, b as i32, full_color);
+fn extended_color(
+    groups: &[Vec<u16>],
+    i: usize,
+    full_color: bool,
+    palette: &[palette::Rgb; 256],
+) -> Option<(u32, usize)> {
+    let rgb = |r: u16, g: u16, b: u16| {
+        palette::find_closest(palette, r as i32, g as i32, b as i32, full_color)
+    };
 
     // Colon form: 38:5:idx arrives as a single group.
     let g = &groups[i];
@@ -3689,6 +3707,19 @@ mod tests {
     fn truecolor_resolves_through_the_palette() {
         let vt = run(b"\x1b[38;2;255;0;0mR", 16, 2);
         assert_eq!(vt.grid().line(0)[0].fg, 1);
+
+        // The palette is terminal state, not a painter lookup: changing it
+        // changes which index truecolor stores in the grid.
+        let mut palette = *palette::default_palette();
+        palette[42] = (1, 2, 3);
+        let mut vt = Vt::new(Config {
+            cols: 16,
+            rows: 2,
+            palette,
+            ..Config::default()
+        });
+        vt.feed(b"\x1b[38;2;1;2;3mR");
+        assert_eq!(vt.grid().line(0)[0].fg, 42);
     }
 
     #[test]

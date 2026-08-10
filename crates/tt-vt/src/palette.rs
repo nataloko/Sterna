@@ -72,11 +72,10 @@ pub fn default_palette() -> &'static [Rgb; 256] {
 /// ("dark red") rather than 9. The drawing path applies the inverse when it
 /// converts a sequence index back to a palette index, so the round trip is
 /// consistent; index 1 is simply what the cell stores.
-pub fn find_closest(r: i32, g: i32, b: i32, full_color: bool) -> Option<u32> {
+pub fn find_closest(palette: &[Rgb; 256], r: i32, g: i32, b: i32, full_color: bool) -> Option<u32> {
     if !(0..=255).contains(&r) || !(0..=255).contains(&g) || !(0..=255).contains(&b) {
         return None;
     }
-    let palette = default_palette();
     let mut best = 0usize;
     let mut best_d = i32::MAX;
     for (i, &(pr, pg, pb)) in palette.iter().enumerate() {
@@ -99,32 +98,42 @@ mod tests {
 
     #[test]
     fn exact_base_colours_flip_between_the_bright_and_dim_halves() {
-        assert_eq!(find_closest(255, 0, 0, true), Some(1));
-        assert_eq!(find_closest(0, 255, 0, true), Some(2));
-        assert_eq!(find_closest(0, 0, 255, true), Some(4));
-        assert_eq!(find_closest(255, 255, 255, true), Some(7));
+        let p = default_palette();
+        assert_eq!(find_closest(p, 255, 0, 0, true), Some(1));
+        assert_eq!(find_closest(p, 0, 255, 0, true), Some(2));
+        assert_eq!(find_closest(p, 0, 0, 255, true), Some(4));
+        assert_eq!(find_closest(p, 255, 255, 255, true), Some(7));
     }
 
     #[test]
     fn a_zero_low_nibble_is_left_alone() {
-        assert_eq!(find_closest(0, 0, 0, true), Some(0));
-        assert_eq!(find_closest(128, 128, 128, true), Some(8));
+        let p = default_palette();
+        assert_eq!(find_closest(p, 0, 0, 0, true), Some(0));
+        assert_eq!(find_closest(p, 128, 128, 128, true), Some(8));
     }
 
     #[test]
     fn without_full_colour_the_flip_does_not_happen() {
-        assert_eq!(find_closest(255, 0, 0, false), Some(9));
+        assert_eq!(find_closest(default_palette(), 255, 0, 0, false), Some(9));
     }
 
     #[test]
     fn out_of_range_is_rejected_rather_than_clamped() {
-        assert_eq!(find_closest(-1, 0, 0, true), None);
-        assert_eq!(find_closest(0, 256, 0, true), None);
+        let p = default_palette();
+        assert_eq!(find_closest(p, -1, 0, 0, true), None);
+        assert_eq!(find_closest(p, 0, 256, 0, true), None);
     }
 
     #[test]
     fn greyscale_ramp_is_reachable() {
         // #080808 is index 232, the first greyscale step.
-        assert_eq!(find_closest(10, 10, 10, true), Some(232));
+        assert_eq!(find_closest(default_palette(), 10, 10, 10, true), Some(232));
+    }
+
+    #[test]
+    fn the_search_uses_the_terminals_palette() {
+        let mut p = *default_palette();
+        p[42] = (1, 2, 3);
+        assert_eq!(find_closest(&p, 1, 2, 3, true), Some(42));
     }
 }

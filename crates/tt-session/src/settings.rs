@@ -73,6 +73,10 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
             pc_bold16: s.color_pc_bold_16,
             ansi_color: s.color_ansi_enabled,
         },
+        // `ANSIColor` joins this mapping in the next layer. Until then,
+        // preserve the caller's palette just like the other fields for which
+        // the settings schema has no key.
+        palette: base.palette,
         // DECSCUSR's numbering, which is what `Config::cursor_shape` holds and
         // what DECRQSS answers with: `vtterm.c:4270` maps IdBlkCur to 1,
         // IdHCur to 3 and IdVCur to **5**, so the enum's own order is not it.
