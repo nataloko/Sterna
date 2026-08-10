@@ -2,9 +2,10 @@
 
 use tt_config::gen;
 use tt_config::{
-    ConnectionPortType, EncodingDecSpecialDirection, EncodingReceive, EncodingSend, FontQuality,
-    Ini, KeyboardBackspace, KeyboardMeta8bit, Kind, LogTimestampType, SerialDataBits, SerialFlow,
-    SerialParity, SerialStopBits, Settings, TerminalCrReceive, TerminalId, FIELDS,
+    ConnectionPortType, EncodingDecSpecialDirection, EncodingReceive, EncodingSend, FontDrawApi,
+    FontQuality, Ini, KeyboardBackspace, KeyboardMeta8bit, Kind, LogTimestampType, SerialDataBits,
+    SerialFlow, SerialParity, SerialStopBits, Settings, TerminalCrReceive, TerminalId, WindowIcon,
+    FIELDS,
 };
 
 #[test]
@@ -94,6 +95,52 @@ fn the_deferred_printer_and_tek_settings_keep_their_shapes() {
     );
     assert_eq!((s.tek_x, s.tek_y), (30, 0));
     assert_eq!(s.tek_icon.as_ini(), "Default");
+}
+
+#[test]
+fn the_final_compatibility_settings_keep_upstreams_parsers() {
+    let d = Settings::default();
+    assert!(!d.debug_enabled && d.debug_modes == "all");
+    assert_eq!(d.settings_source_version, "5.7.0");
+    assert_eq!(d.font_draw_api, FontDrawApi::Auto);
+    assert_eq!(
+        (
+            d.font_space_left,
+            d.font_space_right,
+            d.font_space_top,
+            d.font_space_bottom,
+        ),
+        (0, 0, 0, 0)
+    );
+    assert_eq!((d.printer_vt_ppi_x, d.printer_vt_ppi_y), (0, 0));
+    assert_eq!(d.window_maximized_bug_tweak, 2);
+    assert_eq!(d.window_icon, WindowIcon::Default);
+
+    let s = Settings::load(&Ini::parse(
+        b"[Tera Term]\r\nVTDrawAPI=ansi\r\nVTFontSpace=-1,2,3\r\nVTPPI=96\r\n\
+          MaximizedBugTweak=-1\r\nVTIcon=VT_FLAT\r\n",
+    ));
+    assert_eq!(s.font_draw_api, FontDrawApi::Ansi);
+    assert_eq!(
+        (
+            s.font_space_left,
+            s.font_space_right,
+            s.font_space_top,
+            s.font_space_bottom,
+        ),
+        (-1, 2, 3, 0),
+        "GetNthNum supplies zero for a missing field"
+    );
+    assert_eq!((s.printer_vt_ppi_x, s.printer_vt_ppi_y), (96, 0));
+    assert_eq!(s.window_maximized_bug_tweak, 65_535);
+    assert_eq!(s.window_icon, WindowIcon::VtFlat);
+
+    let on = Settings::load(&Ini::parse(
+        b"[Tera Term]\r\nMaximizedBugTweak=ON\r\nVTDrawAPI=other\r\nVTIcon=other\r\n",
+    ));
+    assert_eq!(on.window_maximized_bug_tweak, 2);
+    assert_eq!(on.font_draw_api, FontDrawApi::Auto);
+    assert_eq!(on.window_icon, WindowIcon::Default);
 }
 
 #[test]

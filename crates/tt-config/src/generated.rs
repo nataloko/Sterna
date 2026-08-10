@@ -1489,6 +1489,53 @@ impl Default for FontQuality {
     }
 }
 
+/// `ttset.c:2017`, parsed by `VTDrawFromIni` (`vtdraw.cpp:63`). These are the
+/// three Win32 text APIs upstream can select; an unknown spelling returns to
+/// `Auto`. Qt always draws Unicode glyphs, so this remains compatibility data.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontDrawApi {
+    /// `Auto`
+    Auto,
+    /// `Unicode`
+    Unicode,
+    /// `ANSI`
+    Ansi,
+}
+
+impl FontDrawApi {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::Unicode => "Unicode",
+            Self::Ansi => "ANSI",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised takes the default**
+    /// rather than failing — which is how upstream spells most of its
+    /// defaults, as the `else` branch of a chain of comparisons.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("Auto") {
+            return Self::Auto;
+        }
+        if s.eq_ignore_ascii_case("Unicode") {
+            return Self::Unicode;
+        }
+        if s.eq_ignore_ascii_case("ANSI") {
+            return Self::Ansi;
+        }
+        Self::default()
+    }
+}
+
+impl Default for FontDrawApi {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
 /// `ttset.c:1112`, read with an **empty** default and compared down an
 /// `_stricmp` chain that tests only `off` and `visual` — so the `on` spelling
 /// below matches nothing and lands on the same `else` the absent key does, which
@@ -2155,6 +2202,103 @@ impl Default for TekIcon {
     }
 }
 
+/// `ttset.c:1550`, through `IconName2IconId`. The ten names compare
+/// case-insensitively and anything else becomes `Default`. Sterna keeps its own
+/// mark, so this is compatibility data for a shared Tera Term setup.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowIcon {
+    /// `tterm`
+    Tterm,
+    /// `vt`
+    Vt,
+    /// `tek`
+    Tek,
+    /// `tterm_classic`
+    TtermClassic,
+    /// `vt_classic`
+    VtClassic,
+    /// `tterm_3d`
+    Tterm3d,
+    /// `vt_3d`
+    Vt3d,
+    /// `tterm_flat`
+    TtermFlat,
+    /// `vt_flat`
+    VtFlat,
+    /// `cygterm`
+    Cygterm,
+    /// `Default`
+    Default,
+}
+
+impl WindowIcon {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Tterm => "tterm",
+            Self::Vt => "vt",
+            Self::Tek => "tek",
+            Self::TtermClassic => "tterm_classic",
+            Self::VtClassic => "vt_classic",
+            Self::Tterm3d => "tterm_3d",
+            Self::Vt3d => "vt_3d",
+            Self::TtermFlat => "tterm_flat",
+            Self::VtFlat => "vt_flat",
+            Self::Cygterm => "cygterm",
+            Self::Default => "Default",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised is `Default`** — which
+    /// is *not* this type's default. Upstream reads the key with a
+    /// default string and then runs a chain of comparisons whose last
+    /// arm catches everything, so an absent key and a misspelt value
+    /// are two different settings.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("tterm") {
+            return Self::Tterm;
+        }
+        if s.eq_ignore_ascii_case("vt") {
+            return Self::Vt;
+        }
+        if s.eq_ignore_ascii_case("tek") {
+            return Self::Tek;
+        }
+        if s.eq_ignore_ascii_case("tterm_classic") {
+            return Self::TtermClassic;
+        }
+        if s.eq_ignore_ascii_case("vt_classic") {
+            return Self::VtClassic;
+        }
+        if s.eq_ignore_ascii_case("tterm_3d") {
+            return Self::Tterm3d;
+        }
+        if s.eq_ignore_ascii_case("vt_3d") {
+            return Self::Vt3d;
+        }
+        if s.eq_ignore_ascii_case("tterm_flat") {
+            return Self::TtermFlat;
+        }
+        if s.eq_ignore_ascii_case("vt_flat") {
+            return Self::VtFlat;
+        }
+        if s.eq_ignore_ascii_case("cygterm") {
+            return Self::Cygterm;
+        }
+        if s.eq_ignore_ascii_case("Default") {
+            return Self::Default;
+        }
+        Self::Default
+    }
+}
+
+impl Default for WindowIcon {
+    fn default() -> Self {
+        Self::Default
+    }
+}
+
 /// `ttset.c:1501`. What the non-realtime broadcast dialog appends. The else arm
 /// is `None`, so an unrecognised value and an absent key agree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2651,6 +2795,24 @@ pub struct Settings {
     /// `ttset.c:1988`, default **on**. Upstream fits glyphs whose natural advance
     /// does not match the cell into the cell (`vtdisp.c:2902`).
     pub font_draw_resized: bool,
+    /// `ttset.c:2017`, parsed by `VTDrawFromIni` (`vtdraw.cpp:63`). These are the
+    /// three Win32 text APIs upstream can select; an unknown spelling returns to
+    /// `Auto`. Qt always draws Unicode glyphs, so this remains compatibility data.
+    pub font_draw_api: FontDrawApi,
+    /// `ttset.c:2021`. Zero asks the Windows renderer for the process ANSI code
+    /// page; a positive value overrides it. It has no effect on Qt's Unicode text
+    /// path, but preserving it matters to a settings file shared with Tera Term.
+    pub font_draw_ansi_code_page: i32,
+    /// `ttset.c:1346`, the first field of `VTFontSpace`. Upstream adds the left and
+    /// right values to the cell width and offsets the glyph by the left value.
+    pub font_space_left: i32,
+    /// The second field of `VTFontSpace`; it adds space after the glyph.
+    pub font_space_right: i32,
+    /// The third field of `VTFontSpace`; it offsets the glyph downward and adds to
+    /// the cell height (`vtdisp.c:2838`). Negative spacing remains meaningful.
+    pub font_space_top: i32,
+    /// The fourth field of `VTFontSpace`; it adds space below the glyph.
+    pub font_space_bottom: i32,
     /// `ttset.c:1640`, default off and marked "test". Its only consumer is inside a
     /// `#if 0` block at `vtwin.cpp:2718`, so carrying it without runtime behavior is
     /// faithful to current upstream rather than an omission.
@@ -2713,6 +2875,16 @@ pub struct Settings {
     /// but — like `JoinSplitURL` itself — no current code reads the result. Carried
     /// in the file and deliberately not given invented behaviour.
     pub url_join_split_ignore_eol_char: String,
+    /// `ttset.c:1162`, default off. When enabled, Shift+Escape cycles through the
+    /// receive-display modes selected by `debug.modes`; TTL's `setdebug` can select
+    /// one directly without changing this keyboard gate.
+    pub debug_enabled: bool,
+    /// `ttset.c:1798`. `all` permits normal, hex and no-output modes; otherwise a
+    /// comma-separated list of `normal`, `hex` and `noout` selects the cycle. `on`
+    /// is an alias for all, while `off`, `none`, or a list with no recognised word
+    /// also disables `Debug` upstream. Kept raw because order and duplicate words
+    /// are part of the file even though only the resulting mask affects cycling.
+    pub debug_modes: String,
     /// `ttset.c:1112`, read with an **empty** default and compared down an
     /// `_stricmp` chain that tests only `off` and `visual` — so the `on` spelling
     /// below matches nothing and lands on the same `else` the absent key does, which
@@ -3004,6 +3176,11 @@ pub struct Settings {
     /// (`ttmmain.cpp:285`). `/M` can replace it and a `/D=` topic clears it, so a
     /// terminal launched by a macro does not recursively launch another one.
     pub macro_startup_file: String,
+    /// `ttset.c:575`. Upstream parses the first two components to decide which
+    /// compatibility migrations to apply, and its writer stamps the running Tera
+    /// Term version. Sterna preserves the source metadata without claiming that it
+    /// is that program; 5.7.0 is the current upstream fallback this schema targets.
+    pub settings_source_version: String,
     /// `ttset.c:1999`, default **on**. Before Setup > Save setup overwrites the
     /// active file, upstream copies its old bytes to a sibling named
     /// `YYYYMMDDTHHMMSS+zzzz_TERATERM.INI` (`vtwin.cpp:4738`,
@@ -3391,6 +3568,12 @@ pub struct Settings {
     pub printer_margin_bottom: i32,
     /// `ttset.c:1263`, default off. Converts a form feed to a newline while printing.
     pub printer_convert_form_feed: bool,
+    /// `ttset.c:1368`, first field. A positive value overrides the printer's native
+    /// horizontal pixels per inch for VT printing; zero uses the device value.
+    pub printer_vt_ppi_x: i32,
+    /// The second field of `VTPPI`, the vertical printer resolution under the same
+    /// rule. Printing is Stage 3 work, so both fields currently round-trip only.
+    pub printer_vt_ppi_y: i32,
     /// `ttset.c:603`. The TEK window's x/y position, using the same `CW_USEDEFAULT`
     /// sentinel and `GetNthNum` zero-for-a-missing-field rule as `VTPos`.
     pub tek_x: i32,
@@ -3411,6 +3594,14 @@ pub struct Settings {
     pub tek_ppi_x: i32,
     /// The second field of `TEKPPI`, under the same `ttset.c:1374` rule.
     pub tek_ppi_y: i32,
+    /// `ttset.c:1527`. The string `on` means 2; every other present value goes
+    /// through `atoi`, then narrows into a Win32 `WORD`. This controls an old
+    /// maximised-window sizing workaround and has no corresponding Qt defect.
+    pub window_maximized_bug_tweak: i32,
+    /// `ttset.c:1550`, through `IconName2IconId`. The ten names compare
+    /// case-insensitively and anything else becomes `Default`. Sterna keeps its own
+    /// mark, so this is compatibility data for a shared Tera Term setup.
+    pub window_icon: WindowIcon,
     /// `ttset.c:728`. No title bar, which `/H` also asks for. `/I` and `/V` —
     /// minimised and invisible — have no keys at all: `_ReadIniFile` zeroes both at
     /// `:554` and never reads one, so they are command-line-only.
@@ -3601,6 +3792,12 @@ impl Default for Settings {
             window_title_report: WindowTitleReport::default(),
             font_quality: FontQuality::default(),
             font_draw_resized: true,
+            font_draw_api: FontDrawApi::default(),
+            font_draw_ansi_code_page: 0,
+            font_space_left: 0,
+            font_space_right: 0,
+            font_space_top: 0,
+            font_space_bottom: 0,
             font_scaling: false,
             mouse_tracking: true,
             mouse_ctrl_disables_tracking: true,
@@ -3613,6 +3810,8 @@ impl Default for Settings {
             url_browser_args: String::from(""),
             url_join_split: false,
             url_join_split_ignore_eol_char: String::from("\\"),
+            debug_enabled: false,
+            debug_modes: String::from("all"),
             bell_mode: BellMode::default(),
             bell_on_connect: false,
             bell_visual_wait_ms: 10,
@@ -3660,6 +3859,7 @@ impl Default for Settings {
             connection_host_dialog_on_startup: true,
             connection_line_mode: true,
             macro_startup_file: String::from(""),
+            settings_source_version: String::from("5.7.0"),
             settings_auto_backup: true,
             serial_com_port: 1,
             serial_baud: 9600,
@@ -3756,6 +3956,8 @@ impl Default for Settings {
             printer_margin_top: 50,
             printer_margin_bottom: 50,
             printer_convert_form_feed: false,
+            printer_vt_ppi_x: 0,
+            printer_vt_ppi_y: 0,
             tek_x: -2147483648,
             tek_y: -2147483648,
             tek_color: [0, 0, 0, 255, 255, 255],
@@ -3764,6 +3966,8 @@ impl Default for Settings {
             tek_icon: TekIcon::default(),
             tek_ppi_x: 0,
             tek_ppi_y: 0,
+            window_maximized_bug_tweak: 2,
+            window_icon: WindowIcon::default(),
             window_hide_title: false,
             window_popup_menu: false,
             window_popup_menu_enabled: true,
@@ -4150,6 +4354,35 @@ impl Settings {
                 ini.get("Tera Term", "DrawingResizedFont"),
                 true,
             ),
+            font_draw_api: match ini.get("Tera Term", "VTDrawAPI") {
+                Some(v) => FontDrawApi::from_ini(v),
+                None => d.font_draw_api,
+            },
+            font_draw_ansi_code_page: ini.get_int(
+                "Tera Term",
+                "VTDrawACP",
+                d.font_draw_ansi_code_page,
+            ) as i32,
+            font_space_left: crate::schema::nth_int_zero(
+                ini.get("Tera Term", "VTFontSpace"),
+                0,
+                d.font_space_left,
+            ),
+            font_space_right: crate::schema::nth_int_zero(
+                ini.get("Tera Term", "VTFontSpace"),
+                1,
+                d.font_space_right,
+            ),
+            font_space_top: crate::schema::nth_int_zero(
+                ini.get("Tera Term", "VTFontSpace"),
+                2,
+                d.font_space_top,
+            ),
+            font_space_bottom: crate::schema::nth_int_zero(
+                ini.get("Tera Term", "VTFontSpace"),
+                3,
+                d.font_space_bottom,
+            ),
             font_scaling: crate::schema::on_off(ini.get("Tera Term", "FontScaling"), false),
             mouse_tracking: crate::schema::on_off(ini.get("Tera Term", "MouseEventTracking"), true),
             mouse_ctrl_disables_tracking: crate::schema::on_off(
@@ -4189,6 +4422,10 @@ impl Settings {
                     "JoinSplitURLIgnoreEOLChar",
                     &d.url_join_split_ignore_eol_char,
                 )
+                .to_string(),
+            debug_enabled: crate::schema::on_off(ini.get("Tera Term", "Debug"), false),
+            debug_modes: ini
+                .get_or("Tera Term", "DebugModes", &d.debug_modes)
                 .to_string(),
             bell_mode: match ini.get("Tera Term", "Beep") {
                 Some(v) => BellMode::from_ini(v),
@@ -4365,6 +4602,9 @@ impl Settings {
             ),
             macro_startup_file: ini
                 .get_or("Tera Term", "StartupMacro", &d.macro_startup_file)
+                .to_string(),
+            settings_source_version: ini
+                .get_or("Tera Term", "Version", &d.settings_source_version)
                 .to_string(),
             settings_auto_backup: crate::schema::on_off(
                 ini.get("Tera Term", "IniAutoBackup"),
@@ -4747,6 +4987,16 @@ impl Settings {
                 ini.get("Tera Term", "PrnConvFF"),
                 false,
             ),
+            printer_vt_ppi_x: crate::schema::nth_int_zero(
+                ini.get("Tera Term", "VTPPI"),
+                0,
+                d.printer_vt_ppi_x,
+            ),
+            printer_vt_ppi_y: crate::schema::nth_int_zero(
+                ini.get("Tera Term", "VTPPI"),
+                1,
+                d.printer_vt_ppi_y,
+            ),
             tek_x: crate::schema::nth_int_zero(ini.get("Tera Term", "TEKPos"), 0, d.tek_x),
             tek_y: crate::schema::nth_int_zero(ini.get("Tera Term", "TEKPos"), 1, d.tek_y),
             tek_color: crate::schema::color2(ini.get("Tera Term", "TEKColor"), d.tek_color),
@@ -4762,6 +5012,16 @@ impl Settings {
             },
             tek_ppi_x: crate::schema::nth_int_zero(ini.get("Tera Term", "TEKPPI"), 0, d.tek_ppi_x),
             tek_ppi_y: crate::schema::nth_int_zero(ini.get("Tera Term", "TEKPPI"), 1, d.tek_ppi_y),
+            window_maximized_bug_tweak: crate::schema::word_alias(
+                ini.get("Tera Term", "MaximizedBugTweak"),
+                d.window_maximized_bug_tweak,
+                "on",
+                2,
+            ),
+            window_icon: match ini.get("Tera Term", "VTIcon") {
+                Some(v) => WindowIcon::from_ini(v),
+                None => d.window_icon,
+            },
             window_hide_title: crate::schema::on_off(ini.get("Tera Term", "HideTitle"), false),
             window_popup_menu: crate::schema::on_off(ini.get("Tera Term", "PopupMenu"), false),
             window_popup_menu_enabled: crate::schema::on_off(
@@ -5483,6 +5743,44 @@ impl Settings {
         );
         ini.set(
             "Tera Term",
+            "VTDrawAPI",
+            &self.font_draw_api.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "VTDrawACP",
+            &self.font_draw_ansi_code_page.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "VTFontSpace",
+            &crate::schema::with_nth(ini.get("Tera Term", "VTFontSpace"), 0, self.font_space_left),
+        );
+        ini.set(
+            "Tera Term",
+            "VTFontSpace",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "VTFontSpace"),
+                1,
+                self.font_space_right,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "VTFontSpace",
+            &crate::schema::with_nth(ini.get("Tera Term", "VTFontSpace"), 2, self.font_space_top),
+        );
+        ini.set(
+            "Tera Term",
+            "VTFontSpace",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "VTFontSpace"),
+                3,
+                self.font_space_bottom,
+            ),
+        );
+        ini.set(
+            "Tera Term",
             "FontScaling",
             &if self.font_scaling { "on" } else { "off" }.to_string(),
         );
@@ -5557,6 +5855,12 @@ impl Settings {
             "JoinSplitURLIgnoreEOLChar",
             &self.url_join_split_ignore_eol_char.clone(),
         );
+        ini.set(
+            "Tera Term",
+            "Debug",
+            &if self.debug_enabled { "on" } else { "off" }.to_string(),
+        );
+        ini.set("Tera Term", "DebugModes", &self.debug_modes.clone());
         ini.set("Tera Term", "Beep", &self.bell_mode.as_ini().to_string());
         ini.set(
             "Tera Term",
@@ -5911,6 +6215,11 @@ impl Settings {
             "Tera Term",
             "StartupMacro",
             &self.macro_startup_file.clone(),
+        );
+        ini.set(
+            "Tera Term",
+            "Version",
+            &self.settings_source_version.clone(),
         );
         ini.set(
             "Tera Term",
@@ -6567,6 +6876,16 @@ impl Settings {
         );
         ini.set(
             "Tera Term",
+            "VTPPI",
+            &crate::schema::with_nth(ini.get("Tera Term", "VTPPI"), 0, self.printer_vt_ppi_x),
+        );
+        ini.set(
+            "Tera Term",
+            "VTPPI",
+            &crate::schema::with_nth(ini.get("Tera Term", "VTPPI"), 1, self.printer_vt_ppi_y),
+        );
+        ini.set(
+            "Tera Term",
             "TEKPos",
             &crate::schema::with_nth(ini.get("Tera Term", "TEKPos"), 0, self.tek_x),
         );
@@ -6605,6 +6924,16 @@ impl Settings {
             "Tera Term",
             "TEKPPI",
             &crate::schema::with_nth(ini.get("Tera Term", "TEKPPI"), 1, self.tek_ppi_y),
+        );
+        ini.set(
+            "Tera Term",
+            "MaximizedBugTweak",
+            &self.window_maximized_bug_tweak.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "VTIcon",
+            &self.window_icon.as_ini().to_string(),
         );
         ini.set(
             "Tera Term",
@@ -7071,6 +7400,12 @@ impl Settings {
             "window.title_report" => self.window_title_report.as_ini().to_string(),
             "font.quality" => self.font_quality.as_ini().to_string(),
             "font.draw_resized" => if self.font_draw_resized { "on" } else { "off" }.to_string(),
+            "font.draw_api" => self.font_draw_api.as_ini().to_string(),
+            "font.draw_ansi_code_page" => self.font_draw_ansi_code_page.to_string(),
+            "font.space_left" => self.font_space_left.to_string(),
+            "font.space_right" => self.font_space_right.to_string(),
+            "font.space_top" => self.font_space_top.to_string(),
+            "font.space_bottom" => self.font_space_bottom.to_string(),
             "font.scaling" => if self.font_scaling { "on" } else { "off" }.to_string(),
             "mouse.tracking" => if self.mouse_tracking { "on" } else { "off" }.to_string(),
             "mouse.ctrl_disables_tracking" => if self.mouse_ctrl_disables_tracking {
@@ -7103,6 +7438,8 @@ impl Settings {
             "url.browser_args" => self.url_browser_args.clone(),
             "url.join_split" => if self.url_join_split { "on" } else { "off" }.to_string(),
             "url.join_split_ignore_eol_char" => self.url_join_split_ignore_eol_char.clone(),
+            "debug.enabled" => if self.debug_enabled { "on" } else { "off" }.to_string(),
+            "debug.modes" => self.debug_modes.clone(),
             "bell.mode" => self.bell_mode.as_ini().to_string(),
             "bell.on_connect" => if self.bell_on_connect { "on" } else { "off" }.to_string(),
             "bell.visual_wait_ms" => self.bell_visual_wait_ms.to_string(),
@@ -7270,6 +7607,7 @@ impl Settings {
             }
             .to_string(),
             "macro.startup_file" => self.macro_startup_file.clone(),
+            "settings.source_version" => self.settings_source_version.clone(),
             "settings.auto_backup" => if self.settings_auto_backup {
                 "on"
             } else {
@@ -7497,6 +7835,8 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "printer.vt_ppi_x" => self.printer_vt_ppi_x.to_string(),
+            "printer.vt_ppi_y" => self.printer_vt_ppi_y.to_string(),
             "tek.x" => self.tek_x.to_string(),
             "tek.y" => self.tek_y.to_string(),
             "tek.color" => crate::schema::color2_str(&self.tek_color),
@@ -7510,6 +7850,8 @@ impl Settings {
             "tek.icon" => self.tek_icon.as_ini().to_string(),
             "tek.ppi_x" => self.tek_ppi_x.to_string(),
             "tek.ppi_y" => self.tek_ppi_y.to_string(),
+            "window.maximized_bug_tweak" => self.window_maximized_bug_tweak.to_string(),
+            "window.icon" => self.window_icon.as_ini().to_string(),
             "window.hide_title" => if self.window_hide_title { "on" } else { "off" }.to_string(),
             "window.popup_menu" => if self.window_popup_menu { "on" } else { "off" }.to_string(),
             "window.popup_menu_enabled" => if self.window_popup_menu_enabled {
@@ -7866,6 +8208,23 @@ impl Settings {
             "font.draw_resized" => {
                 self.font_draw_resized = crate::schema::on_off(Some(value), true)
             }
+            "font.draw_api" => self.font_draw_api = FontDrawApi::from_ini(value),
+            "font.draw_ansi_code_page" => {
+                self.font_draw_ansi_code_page =
+                    crate::schema::int(value, self.font_draw_ansi_code_page)
+            }
+            "font.space_left" => {
+                self.font_space_left = crate::schema::int(value, self.font_space_left)
+            }
+            "font.space_right" => {
+                self.font_space_right = crate::schema::int(value, self.font_space_right)
+            }
+            "font.space_top" => {
+                self.font_space_top = crate::schema::int(value, self.font_space_top)
+            }
+            "font.space_bottom" => {
+                self.font_space_bottom = crate::schema::int(value, self.font_space_bottom)
+            }
             "font.scaling" => self.font_scaling = crate::schema::on_off(Some(value), false),
             "mouse.tracking" => self.mouse_tracking = crate::schema::on_off(Some(value), true),
             "mouse.ctrl_disables_tracking" => {
@@ -7891,6 +8250,8 @@ impl Settings {
             "url.join_split_ignore_eol_char" => {
                 self.url_join_split_ignore_eol_char = value.to_string()
             }
+            "debug.enabled" => self.debug_enabled = crate::schema::on_off(Some(value), false),
+            "debug.modes" => self.debug_modes = value.to_string(),
             "bell.mode" => self.bell_mode = BellMode::from_ini(value),
             "bell.on_connect" => self.bell_on_connect = crate::schema::on_off(Some(value), false),
             "bell.visual_wait_ms" => {
@@ -8039,6 +8400,7 @@ impl Settings {
                 self.connection_line_mode = crate::schema::on_off(Some(value), true)
             }
             "macro.startup_file" => self.macro_startup_file = value.to_string(),
+            "settings.source_version" => self.settings_source_version = value.to_string(),
             "settings.auto_backup" => {
                 self.settings_auto_backup = crate::schema::on_off(Some(value), true)
             }
@@ -8325,6 +8687,12 @@ impl Settings {
             "printer.convert_form_feed" => {
                 self.printer_convert_form_feed = crate::schema::on_off(Some(value), false)
             }
+            "printer.vt_ppi_x" => {
+                self.printer_vt_ppi_x = crate::schema::int(value, self.printer_vt_ppi_x)
+            }
+            "printer.vt_ppi_y" => {
+                self.printer_vt_ppi_y = crate::schema::int(value, self.printer_vt_ppi_y)
+            }
             "tek.x" => self.tek_x = crate::schema::int(value, self.tek_x),
             "tek.y" => self.tek_y = crate::schema::int(value, self.tek_y),
             "tek.color" => self.tek_color = crate::schema::color2(Some(value), self.tek_color),
@@ -8337,6 +8705,11 @@ impl Settings {
             "tek.icon" => self.tek_icon = TekIcon::from_ini(value),
             "tek.ppi_x" => self.tek_ppi_x = crate::schema::int(value, self.tek_ppi_x),
             "tek.ppi_y" => self.tek_ppi_y = crate::schema::int(value, self.tek_ppi_y),
+            "window.maximized_bug_tweak" => {
+                self.window_maximized_bug_tweak =
+                    crate::schema::word_alias(Some(value), self.window_maximized_bug_tweak, "on", 2)
+            }
+            "window.icon" => self.window_icon = WindowIcon::from_ini(value),
             "window.hide_title" => {
                 self.window_hide_title = crate::schema::on_off(Some(value), false)
             }
@@ -9341,6 +9714,66 @@ pub const FIELDS: &[Field] = &[
         doc: "`ttset.c:1988`, default **on**. Upstream fits glyphs whose natural advance does not match the cell into the cell (`vtdisp.c:2902`).",
     },
     Field {
+        name: "font.draw_api",
+        page: "font",
+        section: "Tera Term",
+        key: "VTDrawAPI",
+        kind: Kind::Enum(&["Auto", "Unicode", "ANSI"]),
+        default: "Auto",
+        label: None,
+        doc: "`ttset.c:2017`, parsed by `VTDrawFromIni` (`vtdraw.cpp:63`). These are the three Win32 text APIs upstream can select; an unknown spelling returns to `Auto`. Qt always draws Unicode glyphs, so this remains compatibility data.",
+    },
+    Field {
+        name: "font.draw_ansi_code_page",
+        page: "font",
+        section: "Tera Term",
+        key: "VTDrawACP",
+        kind: Kind::Int,
+        default: "0",
+        label: None,
+        doc: "`ttset.c:2021`. Zero asks the Windows renderer for the process ANSI code page; a positive value overrides it. It has no effect on Qt's Unicode text path, but preserving it matters to a settings file shared with Tera Term.",
+    },
+    Field {
+        name: "font.space_left",
+        page: "font",
+        section: "Tera Term",
+        key: "VTFontSpace",
+        kind: Kind::Int,
+        default: "0",
+        label: None,
+        doc: "`ttset.c:1346`, the first field of `VTFontSpace`. Upstream adds the left and right values to the cell width and offsets the glyph by the left value.",
+    },
+    Field {
+        name: "font.space_right",
+        page: "font",
+        section: "Tera Term",
+        key: "VTFontSpace",
+        kind: Kind::Int,
+        default: "0",
+        label: None,
+        doc: "The second field of `VTFontSpace`; it adds space after the glyph.",
+    },
+    Field {
+        name: "font.space_top",
+        page: "font",
+        section: "Tera Term",
+        key: "VTFontSpace",
+        kind: Kind::Int,
+        default: "0",
+        label: None,
+        doc: "The third field of `VTFontSpace`; it offsets the glyph downward and adds to the cell height (`vtdisp.c:2838`). Negative spacing remains meaningful.",
+    },
+    Field {
+        name: "font.space_bottom",
+        page: "font",
+        section: "Tera Term",
+        key: "VTFontSpace",
+        kind: Kind::Int,
+        default: "0",
+        label: None,
+        doc: "The fourth field of `VTFontSpace`; it adds space below the glyph.",
+    },
+    Field {
         name: "font.scaling",
         page: "font",
         section: "Tera Term",
@@ -9459,6 +9892,26 @@ pub const FIELDS: &[Field] = &[
         default: "\\",
         label: None,
         doc: "`ttset.c:1794`. Upstream keeps only the first byte (a backslash by default), but — like `JoinSplitURL` itself — no current code reads the result. Carried in the file and deliberately not given invented behaviour.",
+    },
+    Field {
+        name: "debug.enabled",
+        page: "debug",
+        section: "Tera Term",
+        key: "Debug",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1162`, default off. When enabled, Shift+Escape cycles through the receive-display modes selected by `debug.modes`; TTL's `setdebug` can select one directly without changing this keyboard gate.",
+    },
+    Field {
+        name: "debug.modes",
+        page: "debug",
+        section: "Tera Term",
+        key: "DebugModes",
+        kind: Kind::Str,
+        default: "all",
+        label: None,
+        doc: "`ttset.c:1798`. `all` permits normal, hex and no-output modes; otherwise a comma-separated list of `normal`, `hex` and `noout` selects the cycle. `on` is an alias for all, while `off`, `none`, or a list with no recognised word also disables `Debug` upstream. Kept raw because order and duplicate words are part of the file even though only the resulting mask affects cycling.",
     },
     Field {
         name: "bell.mode",
@@ -9929,6 +10382,16 @@ pub const FIELDS: &[Field] = &[
         default: "",
         label: None,
         doc: "`ttset.c:1291`, a wide string whose empty default means no automatic macro. `CVTWindow::Startup` (`vtwin.cpp:1413`) consumes it once when the window starts; a leading `*` makes TTPMACRO put up its file picker (`ttmmain.cpp:285`). `/M` can replace it and a `/D=` topic clears it, so a terminal launched by a macro does not recursively launch another one.",
+    },
+    Field {
+        name: "settings.source_version",
+        page: "settings",
+        section: "Tera Term",
+        key: "Version",
+        kind: Kind::Str,
+        default: "5.7.0",
+        label: None,
+        doc: "`ttset.c:575`. Upstream parses the first two components to decide which compatibility migrations to apply, and its writer stamps the running Tera Term version. Sterna preserves the source metadata without claiming that it is that program; 5.7.0 is the current upstream fallback this schema targets.",
     },
     Field {
         name: "settings.auto_backup",
@@ -10891,6 +11354,26 @@ pub const FIELDS: &[Field] = &[
         doc: "`ttset.c:1263`, default off. Converts a form feed to a newline while printing.",
     },
     Field {
+        name: "printer.vt_ppi_x",
+        page: "printer",
+        section: "Tera Term",
+        key: "VTPPI",
+        kind: Kind::Int,
+        default: "0",
+        label: None,
+        doc: "`ttset.c:1368`, first field. A positive value overrides the printer's native horizontal pixels per inch for VT printing; zero uses the device value.",
+    },
+    Field {
+        name: "printer.vt_ppi_y",
+        page: "printer",
+        section: "Tera Term",
+        key: "VTPPI",
+        kind: Kind::Int,
+        default: "0",
+        label: None,
+        doc: "The second field of `VTPPI`, the vertical printer resolution under the same rule. Printing is Stage 3 work, so both fields currently round-trip only.",
+    },
+    Field {
         name: "tek.x",
         page: "tek",
         section: "Tera Term",
@@ -10969,6 +11452,26 @@ pub const FIELDS: &[Field] = &[
         default: "0",
         label: None,
         doc: "The second field of `TEKPPI`, under the same `ttset.c:1374` rule.",
+    },
+    Field {
+        name: "window.maximized_bug_tweak",
+        page: "window",
+        section: "Tera Term",
+        key: "MaximizedBugTweak",
+        kind: Kind::IntWord,
+        default: "2",
+        label: None,
+        doc: "`ttset.c:1527`. The string `on` means 2; every other present value goes through `atoi`, then narrows into a Win32 `WORD`. This controls an old maximised-window sizing workaround and has no corresponding Qt defect.",
+    },
+    Field {
+        name: "window.icon",
+        page: "window",
+        section: "Tera Term",
+        key: "VTIcon",
+        kind: Kind::Enum(&["tterm", "vt", "tek", "tterm_classic", "vt_classic", "tterm_3d", "vt_3d", "tterm_flat", "vt_flat", "cygterm", "Default"]),
+        default: "Default",
+        label: None,
+        doc: "`ttset.c:1550`, through `IconName2IconId`. The ten names compare case-insensitively and anything else becomes `Default`. Sterna keeps its own mark, so this is compatibility data for a shared Tera Term setup.",
     },
     Field {
         name: "window.hide_title",

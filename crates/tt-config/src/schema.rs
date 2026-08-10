@@ -142,6 +142,15 @@ pub fn int_alias(value: Option<&str>, default: i32, alias: &str, aliased: i32) -
     }
 }
 
+/// [`int_alias`] followed by assignment to a Win32 `WORD`.
+///
+/// `MaximizedBugTweak` combines both oddities: its reader accepts `on` as 2,
+/// otherwise calls `atoi`, and then stores the result in a 16-bit field. Thus
+/// `-1` reads and writes back as 65535 rather than being rejected or clamped.
+pub fn word_alias(value: Option<&str>, default: i32, alias: &str, aliased: i32) -> i32 {
+    word(int_alias(value, default, alias, aliased))
+}
+
 /// Upstream's *other* bounds check, which really is a clamp — and the two must
 /// not be confused, because they disagree about exactly the values a
 /// hand-edited file is likely to hold.
@@ -262,7 +271,7 @@ pub fn color2_str(value: &[u8; 6]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{int_alias, validated};
+    use super::{int_alias, validated, word_alias};
 
     #[test]
     fn validated_ranges_default_at_both_ends() {
@@ -279,5 +288,13 @@ mod tests {
         assert_eq!(int_alias(Some("7"), 9, "on", 2), 7);
         assert_eq!(int_alias(Some(""), 9, "on", 2), 0);
         assert_eq!(int_alias(Some("other"), 9, "on", 2), 0);
+    }
+
+    #[test]
+    fn word_aliases_narrow_after_the_alias_or_number_is_resolved() {
+        assert_eq!(word_alias(None, 2, "on", 2), 2);
+        assert_eq!(word_alias(Some("ON"), 9, "on", 2), 2);
+        assert_eq!(word_alias(Some("-1"), 9, "on", 2), 65_535);
+        assert_eq!(word_alias(Some("65537"), 9, "on", 2), 1);
     }
 }

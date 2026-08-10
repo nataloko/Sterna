@@ -650,6 +650,27 @@ font.quality | enum(default=Default,nonantialiased=NonAntialiased,antialiased=An
 # does not match the cell into the cell (`vtdisp.c:2902`).
 font.draw_resized | bool | Tera Term | DrawingResizedFont | on | -
 
+# `ttset.c:2017`, parsed by `VTDrawFromIni` (`vtdraw.cpp:63`). These are the
+# three Win32 text APIs upstream can select; an unknown spelling returns to
+# `Auto`. Qt always draws Unicode glyphs, so this remains compatibility data.
+font.draw_api | enum(Auto=Auto,Unicode=Unicode,ANSI=Ansi) | Tera Term | VTDrawAPI | Auto | -
+
+# `ttset.c:2021`. Zero asks the Windows renderer for the process ANSI code
+# page; a positive value overrides it. It has no effect on Qt's Unicode text
+# path, but preserving it matters to a settings file shared with Tera Term.
+font.draw_ansi_code_page | int | Tera Term | VTDrawACP | 0 | -
+
+# `ttset.c:1346`, the first field of `VTFontSpace`. Upstream adds the left and
+# right values to the cell width and offsets the glyph by the left value.
+font.space_left | int_zero | Tera Term | VTFontSpace.1 | 0 | -
+# The second field of `VTFontSpace`; it adds space after the glyph.
+font.space_right | int_zero | Tera Term | VTFontSpace.2 | 0 | -
+# The third field of `VTFontSpace`; it offsets the glyph downward and adds to
+# the cell height (`vtdisp.c:2838`). Negative spacing remains meaningful.
+font.space_top | int_zero | Tera Term | VTFontSpace.3 | 0 | -
+# The fourth field of `VTFontSpace`; it adds space below the glyph.
+font.space_bottom | int_zero | Tera Term | VTFontSpace.4 | 0 | -
+
 # `ttset.c:1640`, default off and marked "test". Its only consumer is inside a
 # `#if 0` block at `vtwin.cpp:2718`, so carrying it without runtime behavior is
 # faithful to current upstream rather than an omission.
@@ -727,6 +748,20 @@ url.join_split | bool | Tera Term | JoinSplitURL | off | -
 # but — like `JoinSplitURL` itself — no current code reads the result. Carried
 # in the file and deliberately not given invented behaviour.
 url.join_split_ignore_eol_char | string | Tera Term | JoinSplitURLIgnoreEOLChar | \ | -
+
+# --- debug -------------------------------------------------------------------
+
+# `ttset.c:1162`, default off. When enabled, Shift+Escape cycles through the
+# receive-display modes selected by `debug.modes`; TTL's `setdebug` can select
+# one directly without changing this keyboard gate.
+debug.enabled | bool | Tera Term | Debug | off | -
+
+# `ttset.c:1798`. `all` permits normal, hex and no-output modes; otherwise a
+# comma-separated list of `normal`, `hex` and `noout` selects the cycle. `on`
+# is an alias for all, while `off`, `none`, or a list with no recognised word
+# also disables `Debug` upstream. Kept raw because order and duplicate words
+# are part of the file even though only the resulting mask affects cycling.
+debug.modes | string | Tera Term | DebugModes | all | -
 
 # --- bell --------------------------------------------------------------------
 #
@@ -1105,6 +1140,12 @@ connection.line_mode | bool | Tera Term | EnableLineMode | on | -
 macro.startup_file | string | Tera Term | StartupMacro |  | -
 
 # --- settings ---------------------------------------------------------------
+
+# `ttset.c:575`. Upstream parses the first two components to decide which
+# compatibility migrations to apply, and its writer stamps the running Tera
+# Term version. Sterna preserves the source metadata without claiming that it
+# is that program; 5.7.0 is the current upstream fallback this schema targets.
+settings.source_version | string | Tera Term | Version | 5.7.0 | -
 
 # `ttset.c:1999`, default **on**. Before Setup > Save setup overwrites the
 # active file, upstream copies its old bytes to a sibling named
@@ -1615,6 +1656,13 @@ printer.margin_bottom | int_zero | Tera Term | PrnMargin.4 | 50 | -
 # `ttset.c:1263`, default off. Converts a form feed to a newline while printing.
 printer.convert_form_feed | bool | Tera Term | PrnConvFF | off | -
 
+# `ttset.c:1368`, first field. A positive value overrides the printer's native
+# horizontal pixels per inch for VT printing; zero uses the device value.
+printer.vt_ppi_x | int_zero | Tera Term | VTPPI.1 | 0 | -
+# The second field of `VTPPI`, the vertical printer resolution under the same
+# rule. Printing is Stage 3 work, so both fields currently round-trip only.
+printer.vt_ppi_y | int_zero | Tera Term | VTPPI.2 | 0 | -
+
 # --- TEK compatibility -------------------------------------------------------
 #
 # The Tektronix 4010 window is permanently dropped by the roadmap. Its keys
@@ -1648,6 +1696,16 @@ tek.ppi_x | int_zero | Tera Term | TEKPPI.1 | 0 | -
 tek.ppi_y | int_zero | Tera Term | TEKPPI.2 | 0 | -
 
 # --- window ------------------------------------------------------------------
+
+# `ttset.c:1527`. The string `on` means 2; every other present value goes
+# through `atoi`, then narrows into a Win32 `WORD`. This controls an old
+# maximised-window sizing workaround and has no corresponding Qt defect.
+window.maximized_bug_tweak | uint16_alias(on=2) | Tera Term | MaximizedBugTweak | 2 | -
+
+# `ttset.c:1550`, through `IconName2IconId`. The ten names compare
+# case-insensitively and anything else becomes `Default`. Sterna keeps its own
+# mark, so this is compatibility data for a shared Tera Term setup.
+window.icon | enum(tterm=Tterm,vt=Vt,tek=Tek,tterm_classic=TtermClassic,vt_classic=VtClassic,tterm_3d=Tterm3d,vt_3d=Vt3d,tterm_flat=TtermFlat,vt_flat=VtFlat,cygterm=Cygterm,Default/*=Default) | Tera Term | VTIcon | Default | -
 
 # `ttset.c:728`. No title bar, which `/H` also asks for. `/I` and `/V` —
 # minimised and invisible — have no keys at all: `_ReadIniFile` zeroes both at

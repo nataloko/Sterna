@@ -76,6 +76,9 @@ enum Bound {
     /// `int_alias(spelling=value)`: recognise one non-numeric spelling before
     /// using the ordinary integer parser. `MaximizedBugTweak=on` means 2.
     Alias(String, i32),
+    /// `uint16_alias(spelling=value)`: the same alias rule, followed by the
+    /// narrowing assignment to a Win32 `WORD`.
+    WordAlias(String, i32),
 }
 
 /// What a missing comma-separated field becomes when the key itself exists.
@@ -302,8 +305,8 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
         );
     }
     // `int`, `int_zero`, their ranged forms, `int_min(floor)`,
-    // `int_clamp(min..max)`, `int_alias(spelling=value)` or a wrapping
-    // `uint16`.
+    // `int_clamp(min..max)`, `int_alias(spelling=value)`, its wrapping
+    // `uint16_alias` counterpart or a plain wrapping `uint16`.
     let (spec, bound, fallback) = if let Some(body) = spec
         .strip_prefix("int_clamp(")
         .and_then(|s| s.strip_suffix(')'))
@@ -373,19 +376,32 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
             Some(Bound::Floor(body.trim().parse::<i32>().expect("a number"))),
             FieldFallback::Default,
         )
-    } else if let Some(body) = spec
+    } else if let Some((body, word)) = spec
         .strip_prefix("int_alias(")
         .and_then(|s| s.strip_suffix(')'))
+        .map(|body| (body, false))
+        .or_else(|| {
+            spec.strip_prefix("uint16_alias(")
+                .and_then(|s| s.strip_suffix(')'))
+                .map(|body| (body, true))
+        })
     {
         let (alias, value) = body
             .split_once('=')
             .expect("an integer alias is `spelling=value`");
         (
             "int",
-            Some(Bound::Alias(
-                alias.trim().to_string(),
-                value.trim().parse::<i32>().expect("a number"),
-            )),
+            Some(if word {
+                Bound::WordAlias(
+                    alias.trim().to_string(),
+                    value.trim().parse::<i32>().expect("a number"),
+                )
+            } else {
+                Bound::Alias(
+                    alias.trim().to_string(),
+                    value.trim().parse::<i32>().expect("a number"),
+                )
+            }),
             FieldFallback::Default,
         )
     } else if spec == "uint16" {
@@ -611,10 +627,14 @@ fn emit(settings: &[Setting]) -> String {
                         "crate::schema::int_alias(ini.get(\"{section}\", \"{key}\"), d.{field}, \"{}\", {value})",
                         escape(alias)
                     ),
+                    (None, Some(Bound::WordAlias(alias, value))) => format!(
+                        "crate::schema::word_alias(ini.get(\"{section}\", \"{key}\"), d.{field}, \"{}\", {value})",
+                        escape(alias)
+                    ),
                     (None, _) => {
                         format!("ini.get_int(\"{section}\", \"{key}\", d.{field}) as i32")
                     }
-                    (Some(_), Some(Bound::Alias(_, _))) => {
+                    (Some(_), Some(Bound::Alias(_, _) | Bound::WordAlias(_, _))) => {
                         panic!("{field}: an integer alias cannot be one field of a list")
                     }
                     (Some(n), _) => match fallback {
@@ -640,6 +660,7 @@ fn emit(settings: &[Setting]) -> String {
                     }
                     Some(Bound::Word) => format!("crate::schema::word({read})"),
                     Some(Bound::Alias(_, _)) => read,
+                    Some(Bound::WordAlias(_, _)) => read,
                 }
             }
             Kind::Str => format!("ini.get_or(\"{section}\", \"{key}\", &d.{field}).to_string()"),
@@ -681,6 +702,10 @@ fn emit(settings: &[Setting]) -> String {
             Some(Bound::Word) => format!("crate::schema::word({read})"),
             Some(Bound::Alias(alias, aliased)) => format!(
                 "crate::schema::int_alias(ini.get(\"{section}\", \"{key}\"), settings.{source}, \"{}\", {aliased})",
+                escape(alias)
+            ),
+            Some(Bound::WordAlias(alias, aliased)) => format!(
+                "crate::schema::word_alias(ini.get(\"{section}\", \"{key}\"), settings.{source}, \"{}\", {aliased})",
                 escape(alias)
             ),
         };
@@ -779,6 +804,10 @@ fn emit(settings: &[Setting]) -> String {
                         "self.{field} = crate::schema::int_alias(Some(value), self.{field}, \"{}\", {aliased})",
                         escape(alias)
                     ),
+                    Some(Bound::WordAlias(alias, aliased)) => format!(
+                        "self.{field} = crate::schema::word_alias(Some(value), self.{field}, \"{}\", {aliased})",
+                        escape(alias)
+                    ),
                 }
             }
             Kind::Str => format!("self.{field} = value.to_string()"),
@@ -829,6 +858,10 @@ fn emit(settings: &[Setting]) -> String {
                 bound: Some(Bound::Alias(_, _)),
                 ..
             } => "Kind::Int".to_string(),
+            Kind::Int {
+                bound: Some(Bound::WordAlias(_, _)),
+                ..
+            } => "Kind::IntWord".to_string(),
             Kind::Str => "Kind::Str".to_string(),
             Kind::Color2 => "Kind::Color2".to_string(),
             Kind::Enum { variants, .. } => {

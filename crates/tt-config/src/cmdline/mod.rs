@@ -20,7 +20,7 @@ pub mod ssh;
 
 use crate::{
     ClipboardRemoteAccess, ConnectionPortType, EncodingReceive, EncodingSend, SerialDataBits,
-    SerialFlow, SerialParity, SerialStopBits, Settings, TekIcon,
+    SerialFlow, SerialParity, SerialStopBits, Settings, TekIcon, WindowIcon,
 };
 
 /// `GetParam` (`ttlib.c:879`) — one token and what is left after it.
@@ -508,9 +508,9 @@ impl CommandLine {
     ///   setting**. `ts.HostName` has no INI key and `_ParseParam` clears it on
     ///   every call, so where to connect is the session's and not the file's.
     ///   `tcp_port` *is* a setting and is written.
-    /// - `/VTICON=`, `/THEME=`, `/K=`, `/MN=`, `/L=`, `/R=` — no VT icon
-    ///   setting yet, no background themes, no `KEYBOARD.CNF`, no tab bar, and
-    ///   no `ts.LogFN` (which upstream has no key for either).
+    /// - `/THEME=`, `/K=`, `/MN=`, `/L=`, `/R=` — no background themes, no
+    ///   `KEYBOARD.CNF`, no tab bar, and no `ts.LogFN` (which upstream has no
+    ///   key for either).
     /// - `/M` and `/D=` are one-shot launch state rather than edits to
     ///   `macro.startup_file`: the frontend uses [`MacroArg`] to replace or
     ///   cancel that setting for this launch. Keeping the file value intact
@@ -624,6 +624,9 @@ impl CommandLine {
         }
         if let Some(icon) = &self.tek_icon {
             settings.tek_icon = TekIcon::from_ini(&String::from_utf8_lossy(icon));
+        }
+        if let Some(icon) = &self.vt_icon {
+            settings.window_icon = WindowIcon::from_ini(&String::from_utf8_lossy(icon));
         }
         if self.hide_title {
             settings.window_hide_title = true;
@@ -1598,6 +1601,7 @@ mod tests {
         let mut settings = Settings::default();
         cmd.apply(&mut settings);
         assert_eq!(settings.tek_icon, TekIcon::Tek);
+        assert_eq!(settings.window_icon, WindowIcon::Vt);
         // Case never matters, for any of them.
         assert!(parse("tt /h /duplicate").hide_title);
     }
