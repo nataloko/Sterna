@@ -163,6 +163,186 @@ bool mapKey(const QKeyEvent *e, TtKey *out)
     }
 }
 
+/// Linux input-event code to the PC/AT set-1 scan number `KEYBOARD.CNF`
+/// stores. The original 88 keys share their number in both tables; the later
+/// navigation block is where Linux's numbering and the `E0`-extended PC codes
+/// part company.
+quint16 evdevToPcScan(quint32 code)
+{
+    if (code >= 1 && code <= 88) {
+        return static_cast<quint16>(code);
+    }
+    switch (code) {
+    case 96: return 0x11C;  // keypad Enter
+    case 97: return 0x11D;  // right Ctrl
+    case 98: return 0x135;  // keypad slash
+    case 99: return 0x137;  // Print Screen
+    case 100: return 0x138; // right Alt
+    case 102: return 0x147; // Home
+    case 103: return 0x148; // Up
+    case 104: return 0x149; // Page Up
+    case 105: return 0x14B; // Left
+    case 106: return 0x14D; // Right
+    case 107: return 0x14F; // End
+    case 108: return 0x150; // Down
+    case 109: return 0x151; // Page Down
+    case 110: return 0x152; // Insert
+    case 111: return 0x153; // Delete
+    case 119: return 0x145; // Pause
+    case 125: return 0x15B; // left Super
+    case 126: return 0x15C; // right Super
+    default: return 0;
+    }
+}
+
+/// A fallback for synthetic Qt events (whose native scan is zero) and for
+/// Windows' extended keys, whose native representation varies across Qt
+/// versions. Ordinary real Linux keys take the physical-code path above, so a
+/// non-US layout keeps the physical mapping a copied file describes.
+quint16 qtToPcScan(const QKeyEvent *e)
+{
+    const bool keypad = e->modifiers().testFlag(Qt::KeypadModifier);
+    if (keypad) {
+        switch (e->key()) {
+        case Qt::Key_0: return 82;
+        case Qt::Key_1: return 79;
+        case Qt::Key_2: return 80;
+        case Qt::Key_3: return 81;
+        case Qt::Key_4: return 75;
+        case Qt::Key_5: return 76;
+        case Qt::Key_6: return 77;
+        case Qt::Key_7: return 71;
+        case Qt::Key_8: return 72;
+        case Qt::Key_9: return 73;
+        case Qt::Key_Minus: return 74;
+        case Qt::Key_Plus: return 78;
+        case Qt::Key_Asterisk: return 55;
+        case Qt::Key_Slash: return 0x135;
+        case Qt::Key_Period: return 83;
+        case Qt::Key_Enter: return 0x11C;
+        default: break;
+        }
+    }
+
+    switch (e->key()) {
+    case Qt::Key_Escape: return 1;
+    case Qt::Key_1: return 2;
+    case Qt::Key_2: return 3;
+    case Qt::Key_3: return 4;
+    case Qt::Key_4: return 5;
+    case Qt::Key_5: return 6;
+    case Qt::Key_6: return 7;
+    case Qt::Key_7: return 8;
+    case Qt::Key_8: return 9;
+    case Qt::Key_9: return 10;
+    case Qt::Key_0: return 11;
+    case Qt::Key_Minus: return 12;
+    case Qt::Key_Equal: return 13;
+    case Qt::Key_Backspace: return 14;
+    case Qt::Key_Tab:
+    case Qt::Key_Backtab: return 15;
+    case Qt::Key_Q: return 16;
+    case Qt::Key_W: return 17;
+    case Qt::Key_E: return 18;
+    case Qt::Key_R: return 19;
+    case Qt::Key_T: return 20;
+    case Qt::Key_Y: return 21;
+    case Qt::Key_U: return 22;
+    case Qt::Key_I: return 23;
+    case Qt::Key_O: return 24;
+    case Qt::Key_P: return 25;
+    case Qt::Key_BracketLeft: return 26;
+    case Qt::Key_BracketRight: return 27;
+    case Qt::Key_Return: return 28;
+    case Qt::Key_Control: return 29;
+    case Qt::Key_A: return 30;
+    case Qt::Key_S: return 31;
+    case Qt::Key_D: return 32;
+    case Qt::Key_F: return 33;
+    case Qt::Key_G: return 34;
+    case Qt::Key_H: return 35;
+    case Qt::Key_J: return 36;
+    case Qt::Key_K: return 37;
+    case Qt::Key_L: return 38;
+    case Qt::Key_Semicolon: return 39;
+    case Qt::Key_Apostrophe: return 40;
+    case Qt::Key_QuoteLeft: return 41;
+    case Qt::Key_Shift: return 42;
+    case Qt::Key_Backslash: return 43;
+    case Qt::Key_Z: return 44;
+    case Qt::Key_X: return 45;
+    case Qt::Key_C: return 46;
+    case Qt::Key_V: return 47;
+    case Qt::Key_B: return 48;
+    case Qt::Key_N: return 49;
+    case Qt::Key_M: return 50;
+    case Qt::Key_Comma: return 51;
+    case Qt::Key_Period: return 52;
+    case Qt::Key_Slash: return 53;
+    case Qt::Key_Alt: return 56;
+    case Qt::Key_Space: return 57;
+    case Qt::Key_F1: return 59;
+    case Qt::Key_F2: return 60;
+    case Qt::Key_F3: return 61;
+    case Qt::Key_F4: return 62;
+    case Qt::Key_F5: return 63;
+    case Qt::Key_F6: return 64;
+    case Qt::Key_F7: return 65;
+    case Qt::Key_F8: return 66;
+    case Qt::Key_F9: return 67;
+    case Qt::Key_F10: return 68;
+    case Qt::Key_F11: return 87;
+    case Qt::Key_F12: return 88;
+    case Qt::Key_Home: return 0x147;
+    case Qt::Key_Up: return 0x148;
+    case Qt::Key_PageUp: return 0x149;
+    case Qt::Key_Left: return 0x14B;
+    case Qt::Key_Right: return 0x14D;
+    case Qt::Key_End: return 0x14F;
+    case Qt::Key_Down: return 0x150;
+    case Qt::Key_PageDown: return 0x151;
+    case Qt::Key_Insert: return 0x152;
+    case Qt::Key_Delete: return 0x153;
+    default: return 0;
+    }
+}
+
+/// The whole legacy key code, including the modifier bits upstream ORs onto
+/// the physical scan in `keyboard.c:KeyDown`.
+quint16 legacyKeyCode(const QKeyEvent *e)
+{
+    quint16 scan = 0;
+    const QString platform = QGuiApplication::platformName();
+    const quint32 native = e->nativeScanCode();
+    if (platform.startsWith(QLatin1String("xcb")) && native >= 8) {
+        scan = evdevToPcScan(native - 8);
+    } else if (platform.startsWith(QLatin1String("wayland"))) {
+        scan = evdevToPcScan(native);
+    } else if (platform.startsWith(QLatin1String("windows")) && native != 0) {
+        // Qt's Windows scan is already set 1 for ordinary keys. Use the Qt
+        // table for E0 keys so the extended bit cannot be lost.
+        const quint16 fallback = qtToPcScan(e);
+        scan = fallback > 0xff ? fallback : static_cast<quint16>(native & 0xff);
+    }
+    if (scan == 0) {
+        scan = qtToPcScan(e);
+    }
+    if (scan == 0) {
+        return 0;
+    }
+    const Qt::KeyboardModifiers mods = e->modifiers();
+    if (mods.testFlag(Qt::ShiftModifier)) {
+        scan |= 0x200;
+    }
+    if (mods.testFlag(Qt::ControlModifier)) {
+        scan |= 0x400;
+    }
+    if (mods.testFlag(Qt::AltModifier)) {
+        scan |= 0x800;
+    }
+    return scan;
+}
+
 enum class AltSide { Unknown, Left, Right };
 
 /// Qt gives the character event only `AltModifier`, so remember which Alt key
@@ -733,6 +913,80 @@ SelPoint TerminalView::boundaryAt(const QPointF &pos) const
 
 // --- keyboard ----------------------------------------------------------------
 
+bool TerminalView::dispatchKeyCode(const KeyCodeAction &action)
+{
+    switch (action.kind) {
+    case TT_KEY_CODE_UNMAPPED:
+        return false;
+    case TT_KEY_CODE_SENT:
+    case TT_KEY_CODE_IGNORED:
+    case TT_KEY_CODE_UDK:
+        return true;
+    case TT_KEY_CODE_LOCAL_KEY:
+        if (action.value == TT_KEY_BREAK) {
+            m_session->sendBreak();
+        }
+        // Hold and Print have no implementation yet. They still consume the
+        // assigned physical key, as an undefined UDK does upstream.
+        return true;
+    case TT_KEY_CODE_MACRO:
+        emit keyMacroRequested(action.text);
+        return true;
+    case TT_KEY_CODE_COMMAND:
+        emit keyCommandRequested(static_cast<quint16>(action.value));
+        return true;
+    case TT_KEY_CODE_SHORTCUT:
+        break;
+    default:
+        return true;
+    }
+
+    switch (action.value) {
+    case TT_SHORTCUT_EDIT_COPY:
+        copySelection();
+        break;
+    case TT_SHORTCUT_EDIT_PASTE:
+        pasteClipboard();
+        break;
+    case TT_SHORTCUT_EDIT_PASTE_CR:
+        pasteText(QApplication::clipboard()->text(QClipboard::Clipboard)
+                      + QLatin1Char('\r'));
+        break;
+    case TT_SHORTCUT_LINE_UP:
+        setViewOffset(m_session->viewOffset() + 1);
+        break;
+    case TT_SHORTCUT_LINE_DOWN:
+        setViewOffset(m_session->viewOffset() - 1);
+        break;
+    case TT_SHORTCUT_PAGE_UP:
+        setViewOffset(m_session->viewOffset() + qMax(1, m_session->rows() - 1));
+        break;
+    case TT_SHORTCUT_PAGE_DOWN:
+        setViewOffset(m_session->viewOffset() - qMax(1, m_session->rows() - 1));
+        break;
+    case TT_SHORTCUT_BUFFER_TOP:
+        setViewOffset(m_session->scrollbackLen());
+        break;
+    case TT_SHORTCUT_BUFFER_BOTTOM:
+        setViewOffset(0);
+        break;
+    case TT_SHORTCUT_LOCAL_ECHO: {
+        const bool on = m_session->setting(QStringLiteral("terminal.local_echo"))
+                        == QLatin1String("on");
+        m_session->setSetting(QStringLiteral("terminal.local_echo"),
+                              on ? QStringLiteral("off") : QStringLiteral("on"),
+                              nullptr);
+        break;
+    }
+    default:
+        // TEK, clearing, multi-window and ScrollLock actions need the
+        // corresponding subsystem. The binding still consumes the key rather
+        // than falling through to a different built-in sequence.
+        break;
+    }
+    return true;
+}
+
 void TerminalView::keyPressEvent(QKeyEvent *event)
 {
     const Qt::KeyboardModifiers mods = event->modifiers();
@@ -756,15 +1010,37 @@ void TerminalView::keyPressEvent(QKeyEvent *event)
         return;
     }
 
-    // Scrolling the history, before anything else looks at these keys —
-    // PageUp is otherwise a `TtKey` and would go to the host.
-    if (mods.testFlag(Qt::ShiftModifier)) {
-        // Upstream handles this before its keyboard-enabled check: debug
-        // display remains controllable even while host input is locked.
-        if (event->key() == Qt::Key_Escape && m_session->cycleDebugMode()) {
-            QApplication::beep();
-            return;
+    // Upstream handles this before its keyboard map and keyboard-enabled
+    // check: debug display remains controllable even while host input is
+    // locked.
+    if (mods.testFlag(Qt::ShiftModifier) && event->key() == Qt::Key_Escape
+        && m_session->cycleDebugMode()) {
+        QApplication::beep();
+        return;
+    }
+
+    // A configured physical key outranks every built-in semantic mapping.
+    // `DeleteKey=on` is upstream's explicit exception: Delete sends DEL and
+    // its KEYBOARD.CNF assignment is skipped (the keypad decimal still maps).
+    if (m_keyboardEnabled
+        && !(event->key() == Qt::Key_Delete
+             && !mods.testFlag(Qt::KeypadModifier) && m_deleteSendsDel)) {
+        const quint16 code = legacyKeyCode(event);
+        if (code != 0) {
+            const KeyCodeAction action = m_session->sendKeyCode(code);
+            if (dispatchKeyCode(action)) {
+                if (action.kind == TT_KEY_CODE_SENT && m_session->viewOffset() != 0
+                    && !mods.testFlag(Qt::ControlModifier)) {
+                    setViewOffset(0);
+                }
+                return;
+            }
         }
+    }
+
+    // Scrolling the history after the configurable table has declined it —
+    // Shift+PageUp is otherwise a `TtKey` and would go to the host.
+    if (mods.testFlag(Qt::ShiftModifier)) {
         const int page = qMax(1, m_session->rows() - 1);
         if (event->key() == Qt::Key_PageUp) {
             setViewOffset(m_session->viewOffset() + page);

@@ -1005,13 +1005,15 @@ static void test_cmdline(void)
     free_startup(&st);
 
     /* The options a window acts on itself, none of which is a setting. */
-    const char *opts[] = {"/F=other.ini", "/L=out.log", "/M=setup.ttl",
-                          "/I",           "/X=100",     "/DS"};
-    TtCmdLine *cmd = tt_cmdline_parse(opts, 6, 0);
+    const char *opts[] = {"/F=other.ini", "/K=keys.cnf", "/L=out.log",
+                          "/M=setup.ttl", "/I",          "/X=100",
+                          "/DS"};
+    TtCmdLine *cmd = tt_cmdline_parse(opts, 7, 0);
     CHECK(cmd != NULL);
     TtCmdLineInfo info;
     CHECK(tt_cmdline_info(cmd, &info));
     CHECK(info.setup_file && strcmp(info.setup_file, "other.ini") == 0);
+    CHECK(info.key_cnf_file && strcmp(info.key_cnf_file, "keys.cnf") == 0);
     CHECK(info.log_file && strcmp(info.log_file, "out.log") == 0);
     CHECK(info.macro_kind == TT_MACRO_FILE);
     CHECK(info.macro_file && strcmp(info.macro_file, "setup.ttl") == 0);

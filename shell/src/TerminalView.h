@@ -13,6 +13,7 @@
 
 class QTimer;
 class Session;
+struct KeyCodeAction;
 
 /// One end of a selection.
 ///
@@ -97,6 +98,10 @@ signals:
     /// Ctrl+left-click while the ordinary menu bar is hidden. The menu itself
     /// belongs to `MainWindow`; the view only owns the mouse gesture.
     void popupMenuRequested(const QPoint &globalPos);
+    /// A type-2 user key. The window owns the macro runner.
+    void keyMacroRequested(const QString &path);
+    /// A type-3 user key. Values are upstream's menu command ids.
+    void keyCommandRequested(quint16 command);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -117,6 +122,9 @@ protected:
     virtual void openUrl(const QString &url);
 
 private:
+    /// Finish an action the core mapped from a physical `KEYBOARD.CNF` code.
+    /// False only for an unassigned code, which permits the built-in fallback.
+    bool dispatchKeyCode(const KeyCodeAction &action);
     /// Make the bell the core asked for: a noise, or a flash of the screen.
     ///
     /// The terminal's, rather than the window's, because it is the terminal

@@ -461,6 +461,45 @@ void Session::sendKey(TtKey key)
     rearm();
 }
 
+bool Session::loadKeyMap(const QString &path, QVector<quint16> *duplicates,
+                         QString *outError)
+{
+    const QByteArray utf8 = path.toUtf8();
+    if (tt_session_key_map_load(m_session, utf8.constData()) != TT_OK) {
+        if (outError) {
+            *outError = QString::fromUtf8(tt_last_error());
+        }
+        return false;
+    }
+    if (duplicates) {
+        duplicates->clear();
+        const size_t count = tt_session_key_map_duplicate_count(m_session);
+        duplicates->reserve(static_cast<qsizetype>(count));
+        for (size_t i = 0; i < count; i++) {
+            duplicates->append(tt_session_key_map_duplicate(m_session, i));
+        }
+    }
+    return true;
+}
+
+KeyCodeAction Session::sendKeyCode(quint16 scan)
+{
+    TtKeyCodeResult result {};
+    if (tt_session_send_key_code(m_session, scan, &result) != TT_OK) {
+        emit notice(QString::fromUtf8(tt_last_error()));
+        rearm();
+        return {};
+    }
+    KeyCodeAction out;
+    out.kind = result.kind;
+    out.value = result.value;
+    if (result.text) {
+        out.text = QString::fromUtf8(result.text);
+    }
+    rearm();
+    return out;
+}
+
 void Session::sendText(const QString &text)
 {
     if (text.isEmpty()) {

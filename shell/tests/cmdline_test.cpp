@@ -341,6 +341,29 @@ void test_a_settings_file_named_on_the_line()
           == QStringLiteral("300"));
 }
 
+/// `/K=` follows `/F=` into that setup file's directory and supplies the
+/// extension upstream supplies when the argument has none.
+void test_a_keyboard_file_named_on_the_line()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString setup = dir.filePath(QStringLiteral("other.ini"));
+    QFile file(dir.filePath(QStringLiteral("custom.CNF")));
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[User keys]\nUser1=59,2,from-keymap.ttl\n");
+    file.close();
+
+    MainWindow window(setup);
+    TtCmdLine *cmd = parse({QStringLiteral("/K=custom"), QStringLiteral("/DS")});
+    CHECK(cmd != nullptr);
+    window.startFrom(cmd);
+    tt_cmdline_free(cmd);
+
+    const KeyCodeAction action = window.session()->sendKeyCode(59);
+    CHECK(action.kind == TT_KEY_CODE_MACRO);
+    CHECK(action.text == QStringLiteral("from-keymap.ttl"));
+}
+
 void test_menu_and_accelerator_settings()
 {
     Listener listener;
@@ -567,6 +590,7 @@ int main(int argc, char **argv)
     test_a_window_that_is_never_shown();
     test_a_window_position();
     test_a_settings_file_named_on_the_line();
+    test_a_keyboard_file_named_on_the_line();
     test_menu_and_accelerator_settings();
     test_osc52_overrides_the_file_for_this_launch();
     test_the_startup_macro_setting_and_its_overrides();

@@ -78,6 +78,14 @@ struct TransferResult {
     quint32 elapsedMs = 0;
 };
 
+/// A copied `TtKeyCodeResult`; the ABI's macro path is borrowed and cannot
+/// survive the next core call made while the window handles it.
+struct KeyCodeAction {
+    TtKeyCodeKind kind = TT_KEY_CODE_UNMAPPED;
+    quint32 value = 0;
+    QString text;
+};
+
 /// Owns one `TtSession` and drives its loop from the Qt event loop.
 ///
 /// **There is no timer in the idle path**, which is the whole design of this
@@ -220,6 +228,12 @@ public:
     // --- input --------------------------------------------------------------
 
     void sendKey(TtKey key);
+    /// Load a Tera Term `KEYBOARD.CNF`. Duplicate legacy scan codes are copied
+    /// to `duplicates` so the window can report them without parsing the file.
+    bool loadKeyMap(const QString &path, QVector<quint16> *duplicates,
+                    QString *outError);
+    /// Dispatch one PC/AT set-1 scan code, modifier bits included.
+    KeyCodeAction sendKeyCode(quint16 scan);
     void sendText(const QString &text);
     /// Raw bytes: no UTF-8 encoding or LNM. `Meta8Bit=raw` is the frontend
     /// caller; macro binary sends use the same core path directly.

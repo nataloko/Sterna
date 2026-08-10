@@ -1431,6 +1431,12 @@ typedef struct {
      */
     const char *setup_file;
     /**
+     * `/K=`, as given. Null when there was none. A frontend resolves a
+     * relative name beside the active setup file and supplies `.CNF` when
+     * the file part has no extension, which is `GetFilePath`'s rule.
+     */
+    const char *key_cnf_file;
+    /**
      * `/L=`, as given, and **null when `/NOLOG` was there too**.
      *
      * That is the port's second documented divergence from upstream's code

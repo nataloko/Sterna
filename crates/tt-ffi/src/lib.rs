@@ -3638,6 +3638,7 @@ pub struct TtCmdLine {
     /// Backing store for what [`tt_cmdline_info`] hands out. Built once at
     /// parse time, so those pointers are good for the handle's whole life.
     setup_file: Option<CString>,
+    key_cnf_file: Option<CString>,
     log_file: Option<CString>,
     macro_file: Option<CString>,
     dde_topic: Option<CString>,
@@ -3669,6 +3670,10 @@ pub struct TtCmdLineInfo {
     /// here on purpose, because on a case-sensitive filesystem `work.INI` is
     /// not the `work.ini` the user has.
     pub setup_file: *const c_char,
+    /// `/K=`, as given. Null when there was none. A frontend resolves a
+    /// relative name beside the active setup file and supplies `.CNF` when
+    /// the file part has no extension, which is `GetFilePath`'s rule.
+    pub key_cnf_file: *const c_char,
     /// `/L=`, as given, and **null when `/NOLOG` was there too**.
     ///
     /// That is the port's second documented divergence from upstream's code
@@ -3817,6 +3822,7 @@ pub extern "C" fn tt_cmdline_parse(
 
     Box::into_raw(Box::new(TtCmdLine {
         setup_file: cmd.setup_file.as_deref().map(cbytes),
+        key_cnf_file: cmd.key_cnf_file.as_deref().map(cbytes),
         // `/NOLOG` wins over `/L=`, which is the manual's answer and not the
         // code's — see `TtCmdLineInfo::log_file`.
         log_file: cmd.log_file.as_deref().filter(|_| !cmd.no_log).map(cbytes),
@@ -3864,6 +3870,7 @@ pub extern "C" fn tt_cmdline_parse_line(line: *const c_char, max_com_port: u16) 
     );
     Box::into_raw(Box::new(TtCmdLine {
         setup_file: cmd.setup_file.as_deref().map(cbytes),
+        key_cnf_file: cmd.key_cnf_file.as_deref().map(cbytes),
         log_file: cmd.log_file.as_deref().filter(|_| !cmd.no_log).map(cbytes),
         macro_file: match &cmd.macro_file {
             MacroArg::File(f) => Some(cbytes(f)),
@@ -3894,6 +3901,7 @@ pub extern "C" fn tt_cmdline_info(cmd: *const TtCmdLine, out: *mut TtCmdLineInfo
     };
     *out = TtCmdLineInfo {
         setup_file: cptr(&c.setup_file),
+        key_cnf_file: cptr(&c.key_cnf_file),
         log_file: cptr(&c.log_file),
         macro_kind: match c.cmd.macro_file {
             MacroArg::Unset => TT_MACRO_UNSET,

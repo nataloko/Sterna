@@ -142,6 +142,7 @@ private slots:
     void runMacro();
     void onMacroFinished(int exitCode);
     void chooseFont();
+    void chooseKeyMap();
     void showSettingsDialog();
     /// Write the settings out — upstream's `Setup > Save setup`, and the same
     /// bargain: a change applies to this session immediately and outlives it
@@ -190,6 +191,10 @@ private:
     /// beside the active settings file, Sterna's stable equivalent of
     /// upstream's process-wide `HomeDirW`; a leading `*` asks the user.
     void startNamedMacro(const QString &name);
+    /// Install one `KEYBOARD.CNF` and report unreadable or duplicate entries.
+    void loadKeyMap(const QString &path);
+    /// A type-3 user key's upstream menu id, for the actions this window has.
+    void invokeMenuCommand(quint16 command);
     /// Connect what a command line resolved to. The SSH arm goes through the
     /// same state machine the SSH dialog uses, because it has the same
     /// prompts to answer.
@@ -209,6 +214,8 @@ private:
     /// Where the settings came from, and where `Save setup` puts them back.
     /// Not always [`settingsPath()`] — `/F=` names another one.
     QString m_settingsPath;
+    /// The active `KEYBOARD.CNF`, for reopening the file picker in its folder.
+    QString m_keyMapPath;
     Session *m_session = nullptr;
     TerminalView *m_view;
     QScrollBar *m_scroll;

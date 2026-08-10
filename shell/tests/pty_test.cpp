@@ -17,7 +17,9 @@
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFile>
 #include <QKeyEvent>
+#include <QTemporaryDir>
 #include <QTimer>
 
 #include <cstdio>
@@ -96,13 +98,17 @@ void key(TerminalView &view, QEvent::Type type, int code,
 /// test can type before the child has disabled canonical input and spend five
 /// seconds waiting for a newline that was intentionally never sent.
 QString captureKeys(int count, std::initializer_list<Setting> settings,
-                    const std::function<void(TerminalView &)> &send)
+                    const std::function<void(TerminalView &)> &send,
+                    const std::function<void(Session &)> &prepare = {})
 {
     Session session(40, 10);
     QString error;
     for (const Setting &setting : settings) {
         CHECK(session.setSetting(QString::fromLatin1(setting.name),
                                  QString::fromLatin1(setting.value), &error));
+    }
+    if (prepare) {
+        prepare(session);
     }
     TerminalView view(&session);
     view.applySettings();
@@ -299,6 +305,35 @@ void test_strict_mapping_and_delete()
     CHECK(screen.contains(QStringLiteral("7f 7a")));
 }
 
+void test_keyboard_cnf_overrides_the_builtin_key_and_maps_modifiers()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("KEYBOARD.CNF"));
+    QFile file(path);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[VT editor keypad]\nUp=59\n"
+               "[User keys]\nUser1=1054,0,$5A\n");
+    file.close();
+
+    const QString screen = captureKeys(
+        4, {{"keyboard.strict_mapping", "on"}},
+        [](TerminalView &view) {
+            // F1's physical code is assigned to the terminal's Up key. Ctrl+A
+            // is 30 | 0x400 and invokes a binary user key.
+            key(view, QEvent::KeyPress, Qt::Key_F1, Qt::NoModifier);
+            key(view, QEvent::KeyPress, Qt::Key_A, Qt::ControlModifier);
+        },
+        [&](Session &session) {
+            QString error;
+            QVector<quint16> duplicates;
+            CHECK(session.loadKeyMap(path, &duplicates, &error));
+            CHECK(error.isEmpty());
+            CHECK(duplicates.isEmpty());
+        });
+    CHECK(screen.contains(QStringLiteral("1b 5b 41 5a")));
+}
+
 void test_shift_escape_cycles_the_configured_debug_modes()
 {
     Session session(40, 10);
@@ -328,6 +363,7 @@ int main(int argc, char **argv)
     test_a_program_that_does_not_exist_reports_rather_than_connects();
     test_meta_key_modes();
     test_strict_mapping_and_delete();
+    test_keyboard_cnf_overrides_the_builtin_key_and_maps_modifiers();
     test_shift_escape_cycles_the_configured_debug_modes();
 
     if (failures) {

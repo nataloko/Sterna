@@ -3,6 +3,8 @@
 #include "MainWindow.h"
 
 #include <QAction>
+#include <QApplication>
+#include <QClipboard>
 #include <QCloseEvent>
 #include <QDateTime>
 #include <QEvent>
@@ -106,6 +108,23 @@ QString transferNameFilter(const QString &mask)
         .arg(patterns);
 }
 
+/// A `/K=` path in the active setup directory, with upstream's default `.CNF`
+/// extension when the file name contains no dot.
+QString keyboardFile(const QString &given, const QString &settingsPath)
+{
+    if (given.isEmpty()) {
+        return {};
+    }
+    QString path = given;
+    if (QFileInfo(path).isRelative()) {
+        path = QDir(QFileInfo(settingsPath).absolutePath()).filePath(path);
+    }
+    if (!QFileInfo(path).fileName().contains(QLatin1Char('.'))) {
+        path += QStringLiteral(".CNF");
+    }
+    return path;
+}
+
 /// `GetFileDir`: use an existing configured directory, after Win32-style
 /// environment expansion, and otherwise fall back to the desktop's Downloads
 /// location. Keeping `%NAME%` expansion matters for a TERATERM.INI shared with
@@ -162,6 +181,10 @@ MainWindow::MainWindow(const QString &settingsPath)
     connect(m_view, &TerminalView::viewChanged, this, &MainWindow::syncScrollBar);
     connect(m_view, &TerminalView::popupMenuRequested, this,
             &MainWindow::showPopupMenu);
+    connect(m_view, &TerminalView::keyMacroRequested, this,
+            &MainWindow::startNamedMacro);
+    connect(m_view, &TerminalView::keyCommandRequested, this,
+            &MainWindow::invokeMenuCommand);
     connect(m_scroll, &QScrollBar::valueChanged, this, [this](int value) {
         // The scrollbar counts down from the top of the history; the session
         // counts back from the live screen. One subtraction, in one place.
@@ -221,6 +244,8 @@ MainWindow::MainWindow(const QString &settingsPath)
         // open a terminal.
         onNotice(tr("Could not read the settings: %1").arg(error));
     }
+    loadKeyMap(QDir(QFileInfo(m_settingsPath).absolutePath())
+                   .filePath(QStringLiteral("KEYBOARD.CNF")));
     applySavedPosition();
 
     updateStatus();
@@ -544,6 +569,7 @@ void MainWindow::buildMenus()
     QMenu *setup = menuBar()->addMenu(tr("Setup"));
     setup->addAction(tr("Terminal..."), this, &MainWindow::showSettingsDialog);
     setup->addAction(tr("Font..."), this, &MainWindow::chooseFont);
+    setup->addAction(tr("Load key map..."), this, &MainWindow::chooseKeyMap);
     setup->addSeparator();
     setup->addAction(tr("Save setup"), this, &MainWindow::saveSettings);
 }
@@ -576,6 +602,11 @@ void MainWindow::startFrom(TtCmdLine *cmd)
 
     TtCmdLineInfo info = {};
     tt_cmdline_info(cmd, &info);
+
+    if (info.key_cnf_file && *info.key_cnf_file) {
+        loadKeyMap(keyboardFile(QString::fromUtf8(info.key_cnf_file),
+                                m_settingsPath));
+    }
 
     // Upstream's `/D=` is the DDE topic a window registers so the `ttpmacro`
     // it launched can find it. Here it names the control socket, which is the
@@ -1135,6 +1166,54 @@ void MainWindow::startNamedMacro(const QString &name)
     startMacro({path});
 }
 
+void MainWindow::loadKeyMap(const QString &path)
+{
+    QVector<quint16> duplicates;
+    QString error;
+    if (!m_session->loadKeyMap(path, &duplicates, &error)) {
+        onNotice(tr("Could not read the key map: %1").arg(error));
+        return;
+    }
+    m_keyMapPath = path;
+    if (!duplicates.isEmpty()) {
+        QStringList codes;
+        codes.reserve(duplicates.size());
+        for (quint16 code : duplicates) {
+            codes.append(QString::number(code));
+        }
+        onNotice(tr("Key codes used more than once: %1").arg(codes.join(", ")));
+    }
+}
+
+void MainWindow::invokeMenuCommand(quint16 command)
+{
+    // `tt_res.h`'s ids, limited to actions this window actually has. Unknown
+    // and deferred commands do nothing, which is what sending an unhandled
+    // WM_COMMAND to upstream's window does too.
+    switch (command) {
+    case 50110: showConnectDialog(); break;
+    case 50112: connectPty(); break;
+    case 50120: toggleLogging(); break;
+    case 50130: sendFile(); break;
+    case 50131: receiveFile(); break;
+    case 50190: disconnectPort(); break;
+    case 50199: close(); break;
+    case 50210: m_view->copySelection(); break;
+    case 50230: m_view->pasteClipboard(); break;
+    case 50240:
+        m_view->pasteText(QApplication::clipboard()->text(QClipboard::Clipboard)
+                          + QLatin1Char('\r'));
+        break;
+    case 50310: showSettingsDialog(); break;
+    case 50330: chooseFont(); break;
+    case 50380: saveSettings(); break;
+    case 50395: chooseKeyMap(); break;
+    case 50430: sendBreak(); break;
+    case 50470: runMacro(); break;
+    default: break;
+    }
+}
+
 bool MainWindow::runMacroFile(const QStringList &args, QString *outError,
                               bool *outBusy)
 {
@@ -1296,6 +1375,16 @@ void MainWindow::chooseFont()
                                             QFontDialog::MonospacedFonts);
     if (ok) {
         m_view->applyFont(font);
+    }
+}
+
+void MainWindow::chooseKeyMap()
+{
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Load key map"), m_keyMapPath,
+        tr("Tera Term key maps (*.cnf *.CNF);;All files (*)"));
+    if (!path.isEmpty()) {
+        loadKeyMap(path);
     }
 }
 
