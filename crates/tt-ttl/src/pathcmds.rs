@@ -234,9 +234,9 @@ impl Interp {
     /// wants the time must also take the size.
     ///
     /// The drive letter is the resolved path's first character, upper-cased if
-    /// it is a letter and `?` if it is not. That is exactly upstream's rule,
-    /// and on this platform it means every `filestat` answers `?` — which is
-    /// the truthful answer for a filesystem with no drives.
+    /// it is a letter and `?` if it is not. That is exactly upstream's rule:
+    /// Windows normally answers its drive, while Unix answers `?` for a
+    /// filesystem with no drives.
     fn cmd_file_stat(&mut self, host: &mut dyn ScriptHost) -> TtlResult<()> {
         let name = expr::get_str_val(&mut self.lx, &mut self.vars)?;
         if name.is_empty() {
@@ -693,7 +693,7 @@ mod tests {
     }
 
     #[test]
-    fn filestat_gives_the_size_the_time_and_a_question_mark_for_the_drive() {
+    fn filestat_gives_the_size_time_and_platform_drive() {
         let d = scratch("stat");
         std::fs::write(d.join("a.bin"), b"0123456789").unwrap();
         let h = run_in(
@@ -703,10 +703,19 @@ mod tests {
         );
         assert!(h.errors.is_empty(), "{:?}", h.errors);
         let got = String::from_utf8_lossy(&h.output).into_owned();
-        assert!(got.starts_with("0|10|?|"), "{got}");
+        let drive = d
+            .to_string_lossy()
+            .as_bytes()
+            .first()
+            .copied()
+            .filter(u8::is_ascii_alphabetic)
+            .map(|b| b.to_ascii_uppercase())
+            .unwrap_or(b'?');
+        let prefix = format!("0|10|{}|", drive as char);
+        assert!(got.starts_with(&prefix), "{got}");
         assert!(got.ends_with("|-1"), "{got}");
         // The time is `%Y-%m-%d %H:%M:%S` and nothing else.
-        let time = &got["0|10|?|".len()..got.len() - "|-1".len()];
+        let time = &got[prefix.len()..got.len() - "|-1".len()];
         assert_eq!(time.len(), 19, "{time:?}");
         assert_eq!(&time[4..5], "-");
         assert_eq!(&time[10..11], " ");
@@ -821,9 +830,10 @@ mod tests {
              makepath s '/teraterm/' 'test.txt'\ndispstr s",
         );
         assert!(h.errors.is_empty(), "{:?}", h.errors);
-        assert_eq!(
-            String::from_utf8_lossy(&h.output),
-            "test.txt|/teraterm|/|/teraterm/test.txt|/teraterm/test.txt"
-        );
+        #[cfg(unix)]
+        let expected = "test.txt|/teraterm|/|/teraterm/test.txt|/teraterm/test.txt";
+        #[cfg(windows)]
+        let expected = "test.txt|/teraterm|/|/teraterm\\test.txt|/teraterm/\\test.txt";
+        assert_eq!(String::from_utf8_lossy(&h.output), expected);
     }
 }

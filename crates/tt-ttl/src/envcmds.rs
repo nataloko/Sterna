@@ -1100,21 +1100,45 @@ mod tests {
 
     #[test]
     fn exec_runs_a_program_and_can_wait_for_it() {
-        assert_eq!(out("exec '/bin/true' 'show' 1\ndispstr result"), "0");
-        assert_eq!(out("exec '/bin/false' 'show' 1\ndispstr result"), "1");
+        #[cfg(unix)]
+        let (success, failure) = ("/bin/true", "/bin/false");
+        #[cfg(windows)]
+        let (success, failure) = ("cmd.exe /c exit 0", "cmd.exe /c exit 7");
+
         assert_eq!(
-            out("exec '/nonexistent/program' 'show' 1\ndispstr result"),
+            out(&format!("exec '{success}' 'show' 1\ndispstr result")),
+            "0"
+        );
+        assert_eq!(
+            out(&format!("exec '{failure}' 'show' 1\ndispstr result")),
+            if cfg!(windows) { "7" } else { "1" }
+        );
+        assert_eq!(
+            out("exec 'sterna-no-such-program-18327' 'show' 1\ndispstr result"),
             "-1"
         );
         // Without a wait, only "did it start" is reported.
-        assert_eq!(out("exec '/bin/true'\ndispstr result"), "0");
-        assert_eq!(out("exec '/nonexistent/program'\ndispstr result"), "-1");
+        assert_eq!(out(&format!("exec '{success}'\ndispstr result")), "0");
+        assert_eq!(
+            out("exec 'sterna-no-such-program-18327'\ndispstr result"),
+            "-1"
+        );
     }
 
     #[test]
     fn exec_validates_the_show_word_it_then_cannot_use() {
-        assert_eq!(out("exec '/bin/true' 'HIDE'\ndispstr result"), "0");
-        assert_eq!(err_of("exec '/bin/true' 'sideways'"), TtlError::Syntax);
+        #[cfg(unix)]
+        let success = "/bin/true";
+        #[cfg(windows)]
+        let success = "cmd.exe /c exit 0";
+        assert_eq!(
+            out(&format!("exec '{success}' 'HIDE'\ndispstr result")),
+            "0"
+        );
+        assert_eq!(
+            err_of(&format!("exec '{success}' 'sideways'")),
+            TtlError::Syntax
+        );
         assert_eq!(err_of("exec ''"), TtlError::Syntax);
     }
 
@@ -1152,12 +1176,15 @@ mod tests {
 
     #[test]
     fn exec_takes_a_directory_to_start_in() {
-        // `sh -c 'pwd > file'` would need a shell; `pwd` alone proves the
-        // directory reached the child, via its exit status.
-        let dir = std::env::temp_dir();
+        let dir = std::env::temp_dir().join("tt-ttl-exec-cwd");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("marker.txt"), b"here").unwrap();
+        #[cfg(unix)]
+        let command = "/bin/sh -c \"test -f marker.txt\"";
+        #[cfg(windows)]
+        let command = "cmd.exe /c if not exist marker.txt exit 7";
         let src = format!(
-            "exec '/bin/sh -c \"test \\\"$PWD\\\" = {}\"' 'show' 1 '{}'\ndispstr result",
-            dir.display(),
+            "exec '{command}' 'show' 1 '{}'\ndispstr result",
             dir.display()
         );
         assert_eq!(out(&src), "0");

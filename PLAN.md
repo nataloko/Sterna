@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 398
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 399
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4527,6 +4527,15 @@ unchanged: it still writes an empty string for an unknown or unavailable
 folder and reports `result=1` regardless, because `GetSpecialFolder` itself
 returns a literal one. Wine resolves all sixteen to Windows-absolute paths;
 the Unix XDG mapping and tests remain separate.
+
+The TTL unit suite now asks each platform its own questions around `exec` and
+paths. Windows runs `cmd.exe`, verifies the requested current directory with a
+marker, expects `makepath`'s native backslashes and expects `filestat` to name
+the temporary directory's drive; Unix retains `/bin/true`, `/bin/sh`, slash
+joins and `?`. These are test corrections rather than conditional production
+answers—the generic implementations were already returning the Windows forms.
+The MinGW binary now reaches 331/332 under Wine; the one remaining failure is
+the real `fileunlock` mismatch handled next.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
