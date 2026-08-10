@@ -14,6 +14,7 @@
  */
 #include "tt_xfer.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -76,19 +77,43 @@ struct TtXfer {
  * Thread-local rather than global because two windows may each be
  * transferring, and each pumps on its own thread.
  */
-static _Thread_local TtXfer *current;
+#ifdef _MSC_VER
+#define TT_THREAD_LOCAL __declspec(thread)
+#else
+#define TT_THREAD_LOCAL _Thread_local
+#endif
+
+static TT_THREAD_LOCAL TtXfer *current;
+
+static char *dup_str(const char *value)
+{
+	char *copy;
+	size_t n;
+
+	if (value == NULL)
+		return NULL;
+	n = strlen(value) + 1;
+	copy = malloc(n);
+	if (copy != NULL)
+		memcpy(copy, value, n);
+	return copy;
+}
 
 static double now_sec(void)
 {
+#ifdef _WIN32
+	return GetTickCount64() / 1000.0;
+#else
 	struct timespec t;
 	clock_gettime(CLOCK_MONOTONIC, &t);
 	return t.tv_sec + t.tv_nsec / 1e9;
+#endif
 }
 
 static void set_str(char **slot, const char *value)
 {
 	free(*slot);
-	*slot = (value != NULL) ? strdup(value) : NULL;
+	*slot = dup_str(value);
 }
 
 /* ------------------------------------------------------------------- TComm */
@@ -207,13 +232,13 @@ static char *svc_get_next_fname(TFileVarProto *fv)
 		return NULL;
 	/* Ownership passes to the protocol, which frees it — the same contract
 	 * as filesys_proto.cpp's ToU8W() result. */
-	return strdup(x->send_paths[x->send_index++]);
+	return dup_str(x->send_paths[x->send_index++]);
 }
 
 static char *svc_get_receive_path(TFileVarProto *fv)
 {
 	TtXfer *x = fv->Comm->private_data;
-	return strdup(x->recv_dir != NULL ? x->recv_dir : "./");
+	return dup_str(x->recv_dir != NULL ? x->recv_dir : "./");
 }
 
 static void svc_set_timeout(TFileVarProto *fv, int t)
@@ -308,7 +333,8 @@ static const TInfoOp info_op = {
  * after sending the cancel sequence". Dropping it would leave a cancelled
  * transfer waiting for a peer that has already been told to stop.
  */
-UINT_PTR SetTimer(HWND hWnd, UINT_PTR nIDEvent, UINT uElapse, void *lpTimerFunc)
+UINT_PTR tt_xfer_SetTimer(HWND hWnd, UINT_PTR nIDEvent, UINT uElapse,
+                         void *lpTimerFunc)
 {
 	(void)hWnd; (void)lpTimerFunc;
 	if (current != NULL)
@@ -316,7 +342,7 @@ UINT_PTR SetTimer(HWND hWnd, UINT_PTR nIDEvent, UINT uElapse, void *lpTimerFunc)
 	return nIDEvent;
 }
 
-BOOL KillTimer(HWND hWnd, UINT_PTR uIDEvent)
+BOOL tt_xfer_KillTimer(HWND hWnd, UINT_PTR uIDEvent)
 {
 	(void)hWnd; (void)uIDEvent;
 	if (current != NULL)
@@ -349,6 +375,16 @@ static void sink_message(void *ctx, const char *caption, const char *text)
 	         (caption && text) ? ": " : "", text ? text : "");
 	free(x->message);
 	x->message = joined;
+}
+
+int tt_xfer_MessageBoxA(HWND hWnd, const char *text, const char *caption,
+                        UINT type)
+{
+	(void)hWnd;
+	(void)type;
+	if (current != NULL)
+		sink_message(current, caption, text);
+	return IDOK;
 }
 
 int TTMessageBoxW(HWND hWnd, const TTMessageBoxInfoW *info,
@@ -557,7 +593,7 @@ int tt_xfer_add_send_file(TtXfer *x, const char *pathU8)
 	if (grown == NULL)
 		return 0;
 	x->send_paths = grown;
-	x->send_paths[x->send_count] = strdup(pathU8);
+	x->send_paths[x->send_count] = dup_str(pathU8);
 	if (x->send_paths[x->send_count] == NULL)
 		return 0;
 	x->send_count++;
@@ -593,10 +629,8 @@ int tt_xfer_init(TtXfer *x)
 	if (x == NULL)
 		return 0;
 	current = x;
-	winshim_set_message_sink(sink_message, x);
 	x->start = now_sec();
 	ok = x->proto->Op->Init(x->proto, &x->cv, &x->ts) ? 1 : 0;
-	winshim_set_message_sink(NULL, NULL);
 	current = NULL;
 	return ok;
 }
@@ -608,9 +642,7 @@ int tt_xfer_parse(TtXfer *x)
 	if (x == NULL)
 		return 0;
 	current = x;
-	winshim_set_message_sink(sink_message, x);
 	more = x->proto->Op->Parse(x->proto) ? 1 : 0;
-	winshim_set_message_sink(NULL, NULL);
 	current = NULL;
 
 	if (!more) {
@@ -637,10 +669,8 @@ void tt_xfer_timeout(TtXfer *x)
 	if (x == NULL)
 		return;
 	current = x;
-	winshim_set_message_sink(sink_message, x);
 	x->deadline = 0;   /* the protocol re-arms if it wants more */
 	x->proto->Op->TimeOutProc(x->proto);
-	winshim_set_message_sink(NULL, NULL);
 	current = NULL;
 }
 
@@ -649,9 +679,7 @@ void tt_xfer_cancel(TtXfer *x)
 	if (x == NULL)
 		return;
 	current = x;
-	winshim_set_message_sink(sink_message, x);
 	x->proto->Op->Cancel(x->proto);
-	winshim_set_message_sink(NULL, NULL);
 	current = NULL;
 	x->state |= TT_XFER_STATE_CANCELLED;
 }

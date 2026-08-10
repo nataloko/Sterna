@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 381
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 382
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4317,6 +4317,16 @@ Windows build, ConPTY, Win32 serial edge cases, NSIS installer. All 14 `.lng`
 languages wired through unchanged. VT320/VT525 depth and DEC private modes.
 Tabs and sessions; session duplication as an in-process concept rather than
 `CreateFileMapping`. Built-in HTTP/SOCKS proxy replacing `TTProxy`. Printing.
+
+**Windows build, first blocker cleared 2026-08-10.** `tt-xfer` had still
+force-included the POSIX `windows.h`/Secure-CRT shim and compiled
+`fileio_posix.c` for every target. It now selects the real Windows SDK, MSVC's
+C++ runtime and a wide-path file backend there, while POSIX keeps the existing
+shim. The common host redirects the protocols' `MessageBox` and window-timer
+calls on both sides, so the core cannot put up an unmanaged Win32 window. The
+vendored files remain byte-for-byte upstream; `x86_64-pc-windows-gnu` now
+checks this crate cleanly and the Linux interop suite remains 12/12. This is a
+transfer-layer landing, not yet a shippable Windows shell.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

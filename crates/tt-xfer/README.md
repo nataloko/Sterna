@@ -1,7 +1,8 @@
 # tt-xfer — X/Y/ZMODEM, Kermit, B-Plus and Quick-VAN
 
 ```sh
-cargo test -p tt-xfer          # 8 unit + 12 interop, against lrzsz and gkermit
+cargo test -p tt-xfer          # 9 unit + 12 interop, against lrzsz and gkermit
+cargo check -p tt-xfer --target x86_64-pc-windows-gnu
 ```
 
 The protocols are Tera Term's, vendored verbatim under `vendor/ttpfile/` and
@@ -21,7 +22,7 @@ Here:
 | Seam | Where |
 |---|---|
 | `TComm` — BinaryOut / Read1Byte / Insert1Byte / FlashReceiveBuf | `csrc/tt_xfer.c`, over a real `TComVar` |
-| `TFileIO` — 14 file ops | `csrc/fileio_posix.c`, replacing `filesys_win32.cpp` |
+| `TFileIO` — 14 file ops | `csrc/fileio_posix.c` / `fileio_windows.c`, replacing `filesys_win32.cpp` |
 | `TFileVarProto` — services + the `InfoOp` progress vtable | `csrc/tt_xfer.c` |
 | `SetTimer` / `KillTimer` / `ProtoEnd` / `TTMessageBoxW` | the same, as globals |
 
@@ -30,6 +31,14 @@ because it runs over the terminal's own link — the reader that normally feeds
 the VT engine hands its bytes here instead while a transfer is up. That is the
 one thing `xfer/`, which drove the same C from a file descriptor, could not
 test.
+
+The build has one explicit platform seam. POSIX compiles the small Win32/CRT
+shim which the vendored sources have always used here; Windows compiles
+against the real SDK and selects a wide-path `TFileIO` backend, so a UTF-8
+filename is not reinterpreted through the process ANSI code page. The vendored
+sources are unchanged on both sides. `csrc/platform.h` also redirects their
+window timers and message boxes into the per-transfer host: this library has no
+`HWND`, and an error in the core must not open a second dialog behind Qt's.
 
 **The comm side is `TComVar`-shaped, not merely vtable-shaped**, because three
 places in the protocol sources reach past the vtable: `raw.c:152` drains

@@ -26,11 +26,13 @@ const VENDOR_CXX: &[&str] = &["ttpfile/protolog.cpp", "common/asprintf.cpp"];
 
 /// The portability layer. Not vendored — ours, shared with `oracle/` and
 /// `xfer/`, which is why it is not under either of them.
-const SHIM_C: &[&str] = &["winshim.c", "msvc_crt.c", "swscanf_s.c", "codeconv_min.c"];
+const POSIX_SHIM_C: &[&str] = &["winshim.c", "msvc_crt.c", "swscanf_s.c"];
 
-const OURS_C: &[&str] = &["tt_xfer.c", "fileio_posix.c"];
+const OURS_C: &[&str] = &["tt_xfer.c"];
 
 fn main() {
+    let windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
+    let msvc = std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let root = manifest.join("../..").canonicalize().unwrap();
     let vendor = root.join("vendor/ttpfile");
@@ -41,32 +43,53 @@ fn main() {
         assert!(dir.is_dir(), "missing {}", dir.display());
     }
 
-    let includes = [
-        shim.clone(),
+    let mut includes = vec![
         csrc.clone(),
         vendor.join("common"),
         vendor.join("teraterm"),
         vendor.join("ttpfile"),
     ];
-    // msvc_compat.h is force-included rather than added to each source,
-    // because the sources it adapts are the ones we must not edit.
-    let force_include = shim.join("msvc_compat.h");
+    // Only POSIX wants our windows.h ahead of the system headers. On Windows
+    // that would shadow the real SDK with the oracle's deliberately tiny
+    // stand-in, which was the original reason this crate did not build there.
+    if !windows {
+        includes.insert(0, shim.clone());
+    }
+    // The protocols are vendored and remain unmodified. This header selects
+    // the real or shim windows.h, makes their implicit CRT includes explicit,
+    // and redirects the three HWND-shaped callbacks into this library.
+    let force_include = csrc.join("platform.h");
 
     let base = |build: &mut cc::Build| {
         for inc in &includes {
             build.include(inc);
         }
-        build.flag("-include").flag(force_include.to_str().unwrap());
+        if msvc {
+            build.flag(format!("/FI{}", force_include.display()));
+        } else {
+            build.flag("-include").flag(force_include.to_str().unwrap());
+        }
     };
 
     let mut theirs = cc::Build::new();
     base(&mut theirs);
-    theirs.warnings(false).extra_warnings(false).flag("-w");
+    theirs.warnings(false).extra_warnings(false);
+    if !msvc {
+        theirs.flag("-w");
+    }
     for f in VENDOR_C {
         theirs.file(vendor.join(f));
     }
-    for f in SHIM_C {
-        theirs.file(shim.join(f));
+    if windows {
+        // protolog.cpp is the only protocol source that reaches codeconv, and
+        // only for its two path conversions. Use the real Windows code pages;
+        // codeconv_min is the POSIX oracle's deliberately limited substitute.
+        theirs.file(csrc.join("codeconv_windows.c"));
+    } else {
+        theirs.file(shim.join("codeconv_min.c"));
+        for f in POSIX_SHIM_C {
+            theirs.file(shim.join(f));
+        }
     }
     theirs.compile("ttpfile_c");
 
@@ -80,10 +103,12 @@ fn main() {
         // C++17 and not at C++20. GCC 13 defaults to gnu++17 and GCC 16
         // defaults to C++20, which is why this built in one container and not
         // the other.
-        .std("gnu++17")
+        .std(if msvc { "c++17" } else { "gnu++17" })
         .warnings(false)
-        .extra_warnings(false)
-        .flag("-w");
+        .extra_warnings(false);
+    if !msvc {
+        theirs_cxx.flag("-w");
+    }
     for f in VENDOR_CXX {
         theirs_cxx.file(vendor.join(f));
     }
@@ -92,15 +117,24 @@ fn main() {
     let mut ours = cc::Build::new();
     base(&mut ours);
     ours.warnings(true)
-        .flag("-Wextra")
-        .flag("-Wno-unused-parameter");
+        .flag_if_supported("-Wextra")
+        .flag_if_supported("-Wno-unused-parameter");
     for f in OURS_C {
         ours.file(csrc.join(f));
     }
+    ours.file(csrc.join(if windows {
+        "fileio_windows.c"
+    } else {
+        "fileio_posix.c"
+    }));
     ours.compile("tt_xfer_host");
 
     // protolog.cpp and asprintf.cpp are C++; the C objects reference them.
-    println!("cargo:rustc-link-lib=dylib=stdc++");
+    // MSVC's C++ runtime is selected by the linker flags cc emits; there is
+    // no library named stdc++ in that toolchain.
+    if !msvc {
+        println!("cargo:rustc-link-lib=dylib=stdc++");
+    }
 
     for dir in [&vendor, &shim, &csrc] {
         rerun_if_changed_recursive(dir);
