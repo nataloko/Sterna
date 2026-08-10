@@ -1219,6 +1219,34 @@ And for the menu, where three plausible names are three independent controls:
   a command was added. A `QAction` may belong to both widgets; destroying the
   temporary `QMenu` only removes that association.
 
+And for remembered window geometry, where one switch controls writes rather
+than reads:
+
+- **`SaveVTWinPos` does not gate loading `VTPos`.** The position is read first
+  (`ttset.c:598`) and is applied even when the switch is off; off means both
+  Save setup and close must leave the old `VTPos` line byte-for-byte alone,
+  matched quotes included. The generated schema's `write-if=` expresses that
+  gate. Moving the read behind the switch makes an existing file open in the
+  wrong place.
+- **`GetNthNum` and `GetNthNum2` disagree about an omitted comma field.** The
+  first writes zero, so present `VTPos=12` is `(12,0)` and
+  `PasteDialogSize=400` is `(400,0)`; the second takes its caller's fallback,
+  which is why `XmodemTimeouts=5` keeps the other four defaults. An absent key
+  still takes the whole key's fallback. The schema spellings are `int_zero`
+  and `int`; sharing one helper silently changes whichever family did not
+  supply it.
+- **Close-time `SaveVTPos` is not Save setup.** It writes only `VTPos` and the
+  live `TerminalSize`, and only when `SaveVTWinPos` is on (`ttset.c:3338`). A
+  close path that calls the full writer pins every known default into a small
+  shared file; a writer that takes `TerminalSize` from the settings snapshot
+  saves the last loaded size rather than the grid the user resized.
+- **Wayland's `(0,0)` is not a window position to remember.** Wayland has no
+  client placement request, so both restoring `VTPos` and overwriting it from
+  `QWidget::pos()` are skipped there; the live terminal size is still saved.
+  On position-owning platforms upstream also rejects points beyond the virtual
+  desktop and clamps the twenty-pixel fringe at its top/left edge
+  (`vtdisp.c:1517`), which keeps a removed monitor from stranding the window.
+
 And for the command line, which is two parsers and one of them is a plugin:
 
 - **A bare host name cancels `/C=`.** Its arm assigns `ParamPort = IdTCPIP`

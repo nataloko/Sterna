@@ -1088,18 +1088,19 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (197 settings over 184 keys: 39 for the terminal,
+  `crates/tt-config/` (200 settings over 186 keys: 39 for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
   writes into, 2026-08-09, plus the whole log family, then the whole
   file-transfer family, then the seven the terminal and the two the *transports*
   were already honouring with no key to read, then the clipboard's sixteen,
   2026-08-09, then the bell's, the serial port's, telnet's, the scrollback's
   and the parser's own eight switches, then the painter's four draw-attribute
-  switches, the custom ANSI palette, the URL family and the four menu keys,
-  2026-08-10), the map onto a running terminal in `tt-session`, the schema as
-  data over the C ABI, and a Qt dialog that builds
-  itself from it. What remains is the *rest of the settings*, which is a line
-  and a citation each — 88 keys as of 2026-08-10, and `tests/upstream.rs`
+  switches, the custom ANSI palette, the URL family, the four menu keys and
+  the window-position pair and its save switch, 2026-08-10), the map onto a
+  running terminal in `tt-session`, the schema as data over the C ABI, and a
+  Qt dialog that builds itself from it. What remains is the *rest of the
+  settings*, which is a line
+  and a citation each — 86 keys as of 2026-08-10, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -3865,6 +3866,53 @@ The offscreen window test pins the three settings that do act now, including
 the reuse of the menu bar's actual `QAction`s.
 
 197 settings over 184 keys, 88 to go.
+
+#### Window position, where remembering it has two different save paths
+
+`crates/tt-config/`, the C ABI and the shell, 2026-08-10. `SaveVTWinPos` and
+the two fields of `VTPos` cross the file, a live Qt window and a close event,
+so treating them as three ordinary values would get both the read gate and the
+thing being saved wrong.
+
+**`SaveVTWinPos` gates writing, not reading.** `ttset.c:598` reads `VTPos`
+unconditionally and only reads the switch ten lines later. A file with
+`SaveVTWinPos=off` therefore still opens at its saved position; the old line is
+merely left byte-for-byte alone on both Save setup and close. The generated
+writer gained `write-if=` for that condition, rather than parsing and writing
+the line back with its matched quotes stripped. When the switch is on, Save
+setup writes every known setting and takes `VTPos` from the live window.
+
+**A missing key and a missing field have different defaults.** With no
+`VTPos`, `GetPrivateProfileString` supplies
+`-2147483648,-2147483648` (`CW_USEDEFAULT` twice); with `VTPos=12`,
+`GetNthNum` gets an empty second field and writes zero, making `(12,0)`.
+`GetNthNum2`, used by the transfer timeouts, instead supplies its caller's
+per-field default. The schema now spells those as `int_zero` and `int`
+respectively. The audit also corrected the two earlier `GetNthNum` users:
+`TerminalSize` and `PasteDialogSize` no longer borrow a field default that
+upstream never gives them (the terminal-size range check subsequently turns a
+zero row count into 24).
+
+**Closing is not a shortened Save setup.** Upstream's `SaveVTPos` writes only
+`VTPos` and `TerminalSize`, and does nothing at all when the switch is off
+(`ttset.c:3338`). The C ABI has a separate close-only operation for that
+reason. Both save paths snapshot the grid's live columns and rows: the settings
+object is the last loaded configuration, while upstream's
+`TerminalWidth`/`TerminalHeight` are live variables, so saving the snapshot
+after dragging an 80x24 window to 132x50 would confidently put 80x24 back.
+
+There are two platform edges. Upstream rejects a point that has fallen beyond
+the virtual desktop, tolerates one up to twenty pixels above or left of it and
+clamps that one to the edge (`vtdisp.c:1517`); the shell does the same, so
+removing a monitor does not strand the next window. Wayland has no client-side
+position request or meaningful `pos()` answer at all. Under Wayland the shell
+neither applies nor replaces `VTPos`, preserving a useful X11/Windows value
+while still saving the live terminal size. `/X` and `/Y` retain their later
+command-line override on platforms which can place a window. The offscreen Qt
+test pins restoration, both save paths, the write gate and the virtual-screen
+edges; the C ABI test pins exact preservation for the Wayland-shaped call.
+
+200 settings over 186 keys, 86 to go.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
