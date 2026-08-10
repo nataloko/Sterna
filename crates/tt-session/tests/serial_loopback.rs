@@ -311,8 +311,16 @@ fn setbaud_changes_the_port_and_not_only_the_setting() {
     let near = SerialConn::open(&a, &params()).expect("open the near end");
     let mut s = Session::new(Config::default());
     s.connect(Box::new(near));
+    s.drain_events();
 
     assert!(s.set_baud(19200));
+    assert_eq!(s.serial_baud(), Some(19200));
+    assert!(
+        s.drain_events()
+            .iter()
+            .any(|event| matches!(event, Event::Title(_))),
+        "the title bar was not told the displayed speed changed"
+    );
     // The speed is in what the status line shows, which is why upstream
     // repaints the title bar here.
     assert!(

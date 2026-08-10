@@ -181,12 +181,16 @@ QString Session::describe() const
     return d ? QString::fromUtf8(d) : QString();
 }
 
-/// What a log name's `&h` and `&p` expand to. Set from each of the four
-/// connect paths rather than from the window, so that a connection opened by
-/// the control socket or by a macro names itself the same way one opened from
-/// the dialog does.
+quint32 Session::serialBaud() const { return tt_session_serial_baud(m_session); }
+
+/// What a log name's `&h`/`&p` and a `TitleFormat` endpoint expand to. Set
+/// from each of the four connect paths rather than from the window, so that a
+/// connection opened by the control socket or by a macro names itself the
+/// same way one opened from the dialog does.
 void Session::setConnectionName(const QString &host, quint16 port)
 {
+    m_connectionHost = host;
+    m_connectionPort = port;
     const QByteArray utf8 = host.toUtf8();
     tt_session_set_connection_name(m_session, host.isEmpty() ? nullptr : utf8.constData(),
                                    port);
@@ -306,6 +310,7 @@ bool Session::startSsh(const TtSshParams &params, QString *outError)
     // the shell starts, and it is the *same* descriptor — so `rearm` keeps
     // the notifier it already has rather than swapping one in mid-burst.
     rearm();
+    emit connectionChanged();
     // Nothing will have happened yet, but polling once costs a function call
     // and covers the case where it already has.
     pollSsh();

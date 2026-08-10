@@ -34,6 +34,7 @@
 
 #include "MainWindow.h"
 #include "Session.h"
+#include "WindowTitle.h"
 
 static int failures = 0;
 
@@ -177,32 +178,95 @@ void test_the_title_and_the_title_bar()
 {
     {
         MainWindow window;
-        CHECK(window.windowTitle() == QStringLiteral("Sterna"));
+        CHECK(window.windowTitle()
+              == QStringLiteral("Sterna - [disconnected] VT"));
         CHECK(!window.windowFlags().testFlag(Qt::FramelessWindowHint));
 
         TtCmdLine *cmd = parse({QStringLiteral("/W=My Session"),
                                 QStringLiteral("/H"), QStringLiteral("/DS")});
         window.startFrom(cmd);
         tt_cmdline_free(cmd);
-        CHECK(window.windowTitle() == QStringLiteral("My Session"));
+        CHECK(window.windowTitle()
+              == QStringLiteral("My Session - [disconnected] VT"));
         CHECK(window.windowFlags().testFlag(Qt::FramelessWindowHint));
         CHECK(window.isVisible());
     }
 
     // A host's OSC title owns the title bar from then on: a later settings
-    // change must not take it back, which is what `m_baseTitle` is for.
+    // change must not take it back. Attach a line first because upstream
+    // ignores remote titles while disconnected.
     MainWindow window;
     TtCmdLine *cmd = parse({QStringLiteral("/DS")});
     window.startFrom(cmd);
     tt_cmdline_free(cmd);
+    QString error;
+    CHECK(window.session()->connectPty(
+        {QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+         QStringLiteral("sleep 30")},
+        &error));
     window.session()->feed(QByteArray("\033]0;from the host\007"));
     CHECK(spin([&] { return window.windowTitle()
-                            == QStringLiteral("from the host"); },
+                            == QStringLiteral("sh -c sleep 30 - from the host VT"); },
                1000));
-    QString error;
     CHECK(window.session()->setSetting(QStringLiteral("terminal.title"),
                                        QStringLiteral("late"), &error));
-    CHECK(window.windowTitle() == QStringLiteral("from the host"));
+    CHECK(window.windowTitle()
+          == QStringLiteral("sh -c sleep 30 - from the host VT"));
+}
+
+void test_title_format_bits()
+{
+    WindowTitleState state;
+    state.title = QStringLiteral("Tera Term");
+    state.configuredTitle = QStringLiteral("Tera Term");
+    state.upstreamDefaultTitle = QStringLiteral("Tera Term");
+    state.productTitle = QStringLiteral("Sterna");
+    state.titleChange = QStringLiteral("overwrite");
+    state.endpoint = QStringLiteral("router");
+    state.tcpPort = 2222;
+    state.linkKind = TT_LINK_NETWORK;
+    state.connected = true;
+
+    state.format = 13;
+    CHECK(formatWindowTitle(state, QStringLiteral("[connecting...]"),
+                            QStringLiteral("[disconnected]"))
+          == QStringLiteral("router - Sterna VT"));
+    state.format = 1;
+    CHECK(formatWindowTitle(state, QStringLiteral("[connecting...]"),
+                            QStringLiteral("[disconnected]"))
+          == QStringLiteral("Sterna - router"));
+    state.format = 17;
+    CHECK(formatWindowTitle(state, QStringLiteral("[connecting...]"),
+                            QStringLiteral("[disconnected]"))
+          == QStringLiteral("Sterna - router:2222"));
+
+    state.linkKind = TT_LINK_SERIAL;
+    state.endpoint = QStringLiteral("ttyUSB0");
+    state.serialBaud = 115200;
+    state.format = 33;
+    CHECK(formatWindowTitle(state, QStringLiteral("[connecting...]"),
+                            QStringLiteral("[disconnected]"))
+          == QStringLiteral("Sterna - ttyUSB0:115200bps"));
+
+    state.connected = false;
+    state.connecting = true;
+    state.format = 15;
+    CHECK(formatWindowTitle(state, QStringLiteral("[connecting...]"),
+                            QStringLiteral("[disconnected]"))
+          == QStringLiteral("Sterna - [connecting...] (1) VT"));
+    state.connecting = false;
+    CHECK(formatWindowTitle(state, QStringLiteral("[connecting...]"),
+                            QStringLiteral("[disconnected]"))
+          == QStringLiteral("Sterna - [disconnected] (1) VT"));
+
+    // Replace only the configured-title component of a combined OSC title.
+    state.connected = true;
+    state.titleChange = QStringLiteral("ahead");
+    state.title = QStringLiteral("remote Tera Term");
+    state.format = 0;
+    CHECK(formatWindowTitle(state, QStringLiteral("[connecting...]"),
+                            QStringLiteral("[disconnected]"))
+          == QStringLiteral("remote Sterna"));
 }
 
 /// `/V` is a session with no window at all, for one driven entirely by a
@@ -392,6 +456,14 @@ void test_a_host_name_connects_and_logs()
     // Started before the connection, so a console's opening banner is in the
     // file rather than just after it.
     CHECK(window.session()->isLogging());
+    CHECK(window.windowTitle() == QStringLiteral("127.0.0.1 - Sterna VT"));
+
+    QString error;
+    CHECK(window.session()->setSetting(QStringLiteral("window.title_format"),
+                                       QStringLiteral("29"), &error));
+    CHECK(window.windowTitle()
+          == QStringLiteral("127.0.0.1:%1 - Sterna VT")
+                 .arg(listener.port()));
 
     listener.accept("hello from the far end\r\n");
     CHECK(spin([&] { return window.session()->logBytes() > 0; }, 2000));
@@ -413,6 +485,7 @@ int main(int argc, char **argv)
 
     test_a_window_that_is_told_to_open_nothing();
     test_the_title_and_the_title_bar();
+    test_title_format_bits();
     test_a_window_that_is_never_shown();
     test_a_window_position();
     test_a_settings_file_named_on_the_line();

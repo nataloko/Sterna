@@ -155,8 +155,8 @@ private slots:
     /// the terminal's size.
     void onSettingsChanged();
     void onTitleChanged(const QString &title);
-    /// Put a title in the title bar, with the one substitution this window
-    /// makes: upstream's `Title=` default is its own product name.
+    /// Put a title in the title bar, applying `TitleFormat` and substituting
+    /// this program's name for upstream's `Title=` default.
     void showTitle(const QString &title);
     void onNotice(const QString &text);
     void onConnectionChanged();

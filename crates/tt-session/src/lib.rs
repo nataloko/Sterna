@@ -71,7 +71,8 @@ pub enum Event {
     /// link can dirty, so per-row damage is an optimisation to add when
     /// something says it is needed rather than a thing to design around now.
     Damage,
-    /// OSC 0 / OSC 2.
+    /// Something visible in the window caption changed: OSC 0 / OSC 2, or a
+    /// serial speed which `TitleFormat` asks the frontend to include.
     Title(String),
     /// A line break arrived from the far end. On a serial console this is how
     /// a host asks for attention, and dropping it is a real loss of function.
@@ -1224,6 +1225,18 @@ impl Session {
     /// session.
     pub fn link_kind(&self) -> Option<tt_conn::LinkKind> {
         self.conn.as_ref().map(|c| c.link_kind())
+    }
+
+    /// The current serial speed, or `None` on every other link.
+    ///
+    /// Read from the transport rather than the settings: a command-line open
+    /// need not have used the file's speed, and `setbaud` changes the live
+    /// port before a frontend asks again.
+    pub fn serial_baud(&self) -> Option<u32> {
+        match self.link_kind()? {
+            tt_conn::LinkKind::Serial { baud, .. } => Some(baud),
+            _ => None,
+        }
     }
 
     /// Feed bytes as though they had arrived from the far end. For local echo

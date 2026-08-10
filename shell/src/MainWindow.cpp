@@ -39,6 +39,7 @@
 #include "SshPrompts.h"
 #include "TelnetDialog.h"
 #include "TerminalView.h"
+#include "WindowTitle.h"
 #include "XferDialog.h"
 
 namespace {
@@ -312,8 +313,8 @@ void MainWindow::onSettingsChanged()
     // a line which sets them arrive at the same place.
     //
     // The core combines `terminal.title` with whatever the host set, the way
-    // `window.title_change` says (`ttwinman.c:95`), so there is nothing to
-    // decide here — only the substitution below, which is ours.
+    // `window.title_change` says (`ttwinman.c:95`). The shell adds the
+    // connection-dependent `TitleFormat` pieces because it owns the window.
     showTitle(m_session->title());
 
     const bool hideTitle =
@@ -1219,13 +1220,28 @@ void MainWindow::onTitleChanged(const QString &title) { showTitle(title); }
 
 void MainWindow::showTitle(const QString &title)
 {
-    // `Title=`'s default is upstream's own product name, so taking it
-    // literally would put "Tera Term" in this program's title bar. It is read
-    // as "no opinion" and means ours — which is the whole of what this window
-    // decides about the title now that the core combines it.
-    setWindowTitle(title.isEmpty() || title == settingDefault("terminal.title")
-                       ? tr("Sterna")
-                       : title);
+    WindowTitleState state;
+    state.title = title;
+    state.configuredTitle = m_session->setting(QStringLiteral("terminal.title"));
+    state.upstreamDefaultTitle = settingDefault("terminal.title");
+    state.productTitle = tr("Sterna");
+    state.titleChange = m_session->setting(QStringLiteral("window.title_change"));
+    state.endpoint = m_session->connectionHost();
+    state.tcpPort = m_session->connectionPort();
+    state.serialBaud = m_session->serialBaud();
+    state.linkKind = m_session->linkKind();
+    state.connected = m_session->isConnected();
+    state.connecting = m_session->isConnecting();
+    state.format = m_session->setting(QStringLiteral("window.title_format")).toInt();
+
+    // A local pty has no upstream `PortType`: CygTerm appears there as TCP.
+    // Its transport description is the useful equivalent of a host name.
+    if (state.endpoint.isEmpty() && state.linkKind == TT_LINK_LOCAL_PTY) {
+        state.endpoint = m_session->describe();
+    }
+
+    setWindowTitle(formatWindowTitle(state, tr("[connecting...]"),
+                                     tr("[disconnected]")));
 }
 
 void MainWindow::onNotice(const QString &text)
@@ -1235,6 +1251,7 @@ void MainWindow::onNotice(const QString &text)
 
 void MainWindow::onConnectionChanged()
 {
+    showTitle(m_session->title());
     updateStatus();
 }
 

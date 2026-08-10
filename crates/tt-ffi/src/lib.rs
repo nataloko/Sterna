@@ -2639,6 +2639,16 @@ pub extern "C" fn tt_session_link_kind(session: *const TtSession) -> TtLinkKind 
     }
 }
 
+/// The current serial speed, or zero when the attached link is not serial.
+///
+/// This is live transport state rather than the `serial.baud` setting: a
+/// command-line open can override the file, and a macro's `setbaud` changes it
+/// while the window is running.
+#[no_mangle]
+pub extern "C" fn tt_session_serial_baud(session: *const TtSession) -> u32 {
+    session_ref!(session, 0).session.serial_baud().unwrap_or(0)
+}
+
 /// A short name for the status line — `/dev/ttyUSB0`, `user@host`. Null when
 /// nothing is connected.
 ///

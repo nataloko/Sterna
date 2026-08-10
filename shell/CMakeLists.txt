@@ -67,6 +67,7 @@ set_target_properties(sterna_core PROPERTIES
 
 add_library(sterna_shell STATIC
     src/MainWindow.cpp
+    src/WindowTitle.cpp
     src/TerminalView.cpp
     src/Session.cpp
     src/Macro.cpp

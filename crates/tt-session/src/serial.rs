@@ -17,7 +17,7 @@
 use tt_config::SerialFlow;
 use tt_conn::serial::{FlowControl, ModemLines, SerialParams};
 
-use crate::Session;
+use crate::{Event, Session};
 
 impl Session {
     /// `setdtr` — raise or lower DTR by hand.
@@ -63,11 +63,6 @@ impl Session {
     /// Reproduced: guessing which one was meant would break the scripts
     /// written since.
     ///
-    /// The one thing not reproduced is the title bar: upstream posts
-    /// `WM_USER_CHANGETITLE` because the speed is in it, and this session's
-    /// [`describe`](Session::describe) carries the speed too — but nothing
-    /// asks it again on its own, and the frontend has no macros wired into it
-    /// yet to notice. It wants an event when it does.
     pub fn set_baud(&mut self, baud: u32) -> bool {
         if self.serial().is_none() {
             return false;
@@ -76,7 +71,15 @@ impl Session {
         // and the settings dialog reads it back — a speed changed by a script
         // must be the speed the dialog shows.
         self.settings.serial_baud = baud.min(i32::MAX as u32) as i32;
-        self.reset_serial(|p| p.baud = baud)
+        let applied = self.reset_serial(|p| p.baud = baud);
+        if applied {
+            // `CmdSetBaud` posts `WM_USER_CHANGETITLE` immediately after the
+            // reset (`ttdde.c:988`). The payload is still the terminal title;
+            // the event is the edge which tells a frontend to ask for the new
+            // transport speed while composing `TitleFormat`.
+            self.events.push(Event::Title(self.vt.window_title()));
+        }
+        applied
     }
 
     /// `setflowctrl`.

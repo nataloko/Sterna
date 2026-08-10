@@ -3010,6 +3010,15 @@ bool tt_session_supports_break(const TtSession *session);
 TtLinkKind tt_session_link_kind(const TtSession *session);
 
 /**
+ * The current serial speed, or zero when the attached link is not serial.
+ *
+ * This is live transport state rather than the `serial.baud` setting: a
+ * command-line open can override the file, and a macro's `setbaud` changes it
+ * while the window is running.
+ */
+uint32_t tt_session_serial_baud(const TtSession *session);
+
+/**
  * A short name for the status line — `/dev/ttyUSB0`, `user@host`. Null when
  * nothing is connected.
  *

@@ -110,6 +110,7 @@ static void test_screen(void)
     CHECK(tt_session_rows(s) == 4);
     CHECK(!tt_session_is_connected(s));
     CHECK(tt_session_describe(s) == NULL);
+    CHECK(tt_session_serial_baud(s) == 0);
 
     /* CR is a carriage RETURN by default, not CRLF — `ttset.c:643`'s else
      * branch. If this line lands on row 1 the settings are wrong, not the

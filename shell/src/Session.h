@@ -174,6 +174,11 @@ public:
     /// session, and so does `BeepOnConnect`.
     TtLinkKind linkKind() const;
     QString describe() const;
+    /// The address-side pieces Tera Term's `TitleFormat` presents. They are
+    /// retained across a disconnect, although the formatter hides them then.
+    QString connectionHost() const { return m_connectionHost; }
+    quint16 connectionPort() const { return m_connectionPort; }
+    quint32 serialBaud() const;
     /// Open a serial port. `path` should be a `TtPortInfo::open_path`.
     bool connectSerial(const QString &path, const TtSerialParams &params,
                        QString *outError);
@@ -355,7 +360,7 @@ signals:
     /// Something worth saying in the status bar — a break, a corrupt byte, a
     /// failed write.
     void notice(const QString &text);
-    /// Connected, disconnected, or dropped by the far end.
+    /// Connecting, connected, disconnected, or dropped by the far end.
     void connectionChanged();
     /// `AutoWinClose` after a network connection ended. The window decides
     /// whether it can close now; serial and local-pty sessions never ask.
@@ -424,6 +429,8 @@ private:
     /// line having gone *quiet*. See `kTickIntervalMs` for why it is cheap.
     QTimer *m_tick = nullptr;
     QString m_title;
+    QString m_connectionHost;
+    quint16 m_connectionPort = 0;
 
     /// Read the window title back from the core and emit an edge.
     ///

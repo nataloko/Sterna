@@ -73,6 +73,19 @@ fn a_quiet_line_costs_nothing_and_says_nothing() {
 }
 
 #[test]
+fn the_live_serial_speed_comes_from_the_transport() {
+    let mut s = Session::new(Config::default());
+    assert_eq!(s.serial_baud(), None);
+
+    let (transport, _handle) = MemoryTransport::with_kind(LinkKind::Serial {
+        baud: 115_200,
+        seven_bit: false,
+    });
+    s.connect(Box::new(transport));
+    assert_eq!(s.serial_baud(), Some(115_200));
+}
+
+#[test]
 fn keys_are_encoded_by_the_core_and_follow_the_modes() {
     let (mut s, h) = connected(20, 4);
 
