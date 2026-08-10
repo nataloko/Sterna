@@ -334,6 +334,7 @@ static char attr_char(const TCharAttr *a)
 	if (a->Attr & AttrUnder)   return 'U';
 	if (a->Attr & AttrBlink)   return 'K';
 	if (a->Attr & AttrSpecial) return 'S';
+	if (a->Attr & AttrURL)     return 'L';
 	if (a->Attr2 & Attr2Fore)  return 'f';
 	if (a->Attr2 & Attr2Back)  return 'b';
 	return '.';

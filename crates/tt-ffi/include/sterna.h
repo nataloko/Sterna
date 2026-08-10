@@ -48,6 +48,14 @@
 #define TT_ATTR_LINE_CONTINUED 32
 
 /**
+ * `AttrURL` (`buffer.h:52`) — set by the write path once one of Tera Term's
+ * seven lower-case URL schemes has been completed. Detection is unconditional:
+ * `EnableClickableUrl` gates the hand cursor and launch action, while
+ * `EnableURLColor` and `URLUnderline` independently gate how this bit is drawn.
+ */
+#define TT_ATTR_URL 64
+
+/**
  * `AttrSgrMask` (`buffer.h:58`) — the four attributes SGR itself can set, and
  * the only ones a selective erase leaves behind.
  */

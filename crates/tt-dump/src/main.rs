@@ -22,7 +22,7 @@ use std::io::{Read, Write};
 
 use tt_grid::{
     char_width, Cell, ATTR2_BACK, ATTR2_FORE, ATTR2_PROTECT, ATTR_BLINK, ATTR_BOLD, ATTR_REVERSE,
-    ATTR_SPECIAL, ATTR_UNDER, WIDTH_PAD,
+    ATTR_SPECIAL, ATTR_UNDER, ATTR_URL, WIDTH_PAD,
 };
 use tt_vt::{Config, CrReceive, Key, Modifiers, MouseEvent, TabStopFlags, TermId, Vt};
 
@@ -471,6 +471,8 @@ fn attr_char(attrs: u32) -> u8 {
         b'K'
     } else if attrs & ATTR_SPECIAL != 0 {
         b'S'
+    } else if attrs & ATTR_URL != 0 {
+        b'L'
     } else if attrs & ATTR2_FORE != 0 {
         b'f'
     } else if attrs & ATTR2_BACK != 0 {

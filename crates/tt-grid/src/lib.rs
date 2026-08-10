@@ -39,6 +39,11 @@ pub const ATTR_REVERSE: u32 = 0x0010;
 /// newline between them, and the terminal stops feeding the log and the macro
 /// tap a `CR LF` for a break the host never sent.
 pub const ATTR_LINE_CONTINUED: u32 = 0x0020;
+/// `AttrURL` (`buffer.h:52`) — set by the write path once one of Tera Term's
+/// seven lower-case URL schemes has been completed. Detection is unconditional:
+/// `EnableClickableUrl` gates the hand cursor and launch action, while
+/// `EnableURLColor` and `URLUnderline` independently gate how this bit is drawn.
+pub const ATTR_URL: u32 = 0x0040;
 
 /// `AttrSgrMask` (`buffer.h:58`) — the four attributes SGR itself can set, and
 /// the only ones a selective erase leaves behind.
@@ -80,6 +85,37 @@ pub const WIDTH_NARROW: u8 = 0;
 pub const WIDTH_WIDE: u8 = 1;
 /// The right half of a wide character. Holds no text of its own.
 pub const WIDTH_PAD: u8 = 2;
+
+/// The schemes in `buffer.c:2534`, longest first as upstream keeps them.
+const URL_SCHEMES: [&[u8]; 7] = [
+    b"https://",
+    b"http://",
+    b"sftp://",
+    b"tftp://",
+    b"news://",
+    b"ftp://",
+    b"mms://",
+];
+
+/// `buffer.c:isURLchar` — deliberately ASCII-only and deliberately not the
+/// more permissive character set accepted by modern browsers.
+fn is_url_char(cp: u32) -> bool {
+    let Ok(cp) = u8::try_from(cp) else {
+        return false;
+    };
+    matches!(
+        cp,
+        b'!' | b'#'..=b'&'
+            | b'+'..=b';'
+            | b'='
+            | b'?'
+            | b'@'..=b'Z'
+            | b'\\'
+            | b'_'
+            | b'a'..=b'z'
+            | b'~'
+    )
+}
 
 /// Display columns consumed by a codepoint.
 ///
@@ -1765,6 +1801,13 @@ impl Grid {
             self.lines[y][x].attrs |= ATTR_LINE_CONTINUED;
         }
 
+        // `buffer.c:3430` does this after the cell is written and before the
+        // cursor advances. It is terminal state, not a frontend convenience:
+        // the painter, mouse cursor, copy path and browser invocation all read
+        // the same AttrURL bit later.
+        let (written_x, written_y) = (self.cursor.x, self.cursor.y);
+        self.mark_url(written_x, written_y);
+
         let x = self.cursor.x;
         if w == 1 {
             // `vtterm.c:917` — the wrap is armed at the right *margin* as well
@@ -1784,6 +1827,192 @@ impl Grid {
             self.cursor.pending_wrap = false;
         }
         wrapped
+    }
+
+    /// `buffer.c:mark_url_w` — update URL state around one newly written cell.
+    ///
+    /// This intentionally follows upstream's incremental decisions instead of
+    /// re-running a modern URL parser over every line. In particular, only a
+    /// lower-case recognised scheme ending in `://` starts a run, and once a
+    /// run is long enough an allowed character merely extends it. Rewrites
+    /// near the scheme trigger the same local rescan as upstream.
+    fn mark_url(&mut self, x: usize, y: usize) {
+        let line = self.scrollback.len() + y;
+        let cp = self.buffer_cell(line, x).text[0];
+
+        let prev = if x > 0 {
+            self.buffer_cell(line, x - 1).attrs & ATTR_URL != 0
+        } else {
+            line > 0
+                && self.buffer_cell(line, 0).attrs & ATTR_LINE_CONTINUED != 0
+                && self.buffer_cell(line - 1, self.cols - 1).attrs & ATTR_URL != 0
+        };
+
+        let next = if x + 1 < self.cols {
+            self.buffer_cell(line, x + 1).attrs & ATTR_URL != 0
+        } else {
+            y + 1 < self.rows
+                && self.buffer_cell(line, x).attrs & ATTR_LINE_CONTINUED != 0
+                && self.buffer_cell(line + 1, 0).attrs & ATTR_URL != 0
+        };
+
+        if prev {
+            if next {
+                if is_url_char(cp) {
+                    self.buffer_cell_mut(line, x).attrs |= ATTR_URL;
+                } else {
+                    self.remark_url_line(line, x);
+                }
+                return;
+            }
+
+            // `get_url_len` uses nine as the point past which changing one
+            // character cannot invalidate any of the seven scheme prefixes.
+            if self.url_run_before(line, x) >= 9 {
+                if is_url_char(cp) {
+                    self.buffer_cell_mut(line, x).attrs |= ATTR_URL;
+                }
+            } else {
+                self.remark_url_line(line, x);
+            }
+            return;
+        }
+
+        // Detection begins only when the second slash of `://` is written.
+        // Case-sensitive matching is upstream's own, so HTTP:// is plain text.
+        if cp != b'/' as u32 {
+            return;
+        }
+        let end = line * self.cols + x;
+        for scheme in URL_SCHEMES {
+            let Some(start) = (end + 1).checked_sub(scheme.len()) else {
+                continue;
+            };
+            if self.match_url_bytes(start, scheme) {
+                for pos in start..=end {
+                    let (line, x) = (pos / self.cols, pos % self.cols);
+                    self.buffer_cell_mut(line, x).attrs |= ATTR_URL;
+                }
+                break;
+            }
+        }
+    }
+
+    /// Number of adjacent URL cells immediately before `(line, x)`.
+    fn url_run_before(&self, line: usize, x: usize) -> usize {
+        let mut pos = line * self.cols + x;
+        let mut len = 0;
+        while pos > 0 {
+            pos -= 1;
+            let (line, x) = (pos / self.cols, pos % self.cols);
+            if self.buffer_cell(line, x).attrs & ATTR_URL == 0 {
+                break;
+            }
+            len += 1;
+        }
+        len
+    }
+
+    /// Match bytes in the retained buffer, crossing a row boundary only when
+    /// the row says it was an automatic continuation.
+    fn match_url_bytes(&self, start: usize, bytes: &[u8]) -> bool {
+        let end = start + bytes.len();
+        if end > (self.scrollback.len() + self.rows) * self.cols {
+            return false;
+        }
+        bytes.iter().enumerate().all(|(i, &want)| {
+            let pos = start + i;
+            let (line, x) = (pos / self.cols, pos % self.cols);
+            if i > 0
+                && x == 0
+                && self.buffer_cell(line - 1, self.cols - 1).attrs & ATTR_LINE_CONTINUED == 0
+            {
+                return false;
+            }
+            self.buffer_cell(line, x).text[0] == u32::from(want)
+        })
+    }
+
+    /// `buffer.c:mark_url_line_w` without its drawing calls: begin at the URL
+    /// run immediately before the changed cell, clear that logical-line tail,
+    /// then find and mark every recognised scheme again.
+    fn remark_url_line(&mut self, line: usize, x: usize) {
+        let current = line * self.cols + x;
+        let mut start = current.saturating_sub(1);
+        loop {
+            let (line, x) = (start / self.cols, start % self.cols);
+            if self.buffer_cell(line, x).attrs & ATTR_URL == 0 {
+                start += 1;
+                break;
+            }
+            if start == 0 {
+                // Upstream tests the cell at pointer zero, stops there, and
+                // then increments unconditionally (`buffer.c:2654-2661`). A
+                // URL beginning in the buffer's first cell therefore rescans
+                // from its second character. Usually that finds no scheme and
+                // leaves only cell zero marked; `sftp://` and `tftp://` are the
+                // odd exceptions because their tail is itself `ftp://`.
+                start = 1;
+                break;
+            }
+            start -= 1;
+        }
+
+        let total_lines = self.scrollback.len() + self.rows;
+        let mut end_line = line;
+        while end_line + 1 < total_lines
+            && self.buffer_cell(end_line, self.cols - 1).attrs & ATTR_LINE_CONTINUED != 0
+        {
+            end_line += 1;
+        }
+        let end = (end_line + 1) * self.cols;
+
+        for pos in start..end {
+            let (line, x) = (pos / self.cols, pos % self.cols);
+            self.buffer_cell_mut(line, x).attrs &= !ATTR_URL;
+        }
+
+        let mut pos = start;
+        while pos < end {
+            let matched = URL_SCHEMES
+                .iter()
+                .find(|scheme| self.match_url_bytes(pos, scheme));
+            let Some(scheme) = matched else {
+                pos += 1;
+                continue;
+            };
+
+            let mut mark_end = pos + scheme.len();
+            while mark_end < end {
+                let (line, x) = (mark_end / self.cols, mark_end % self.cols);
+                if !is_url_char(self.buffer_cell(line, x).text[0]) {
+                    break;
+                }
+                mark_end += 1;
+            }
+            for mark in pos..mark_end {
+                let (line, x) = (mark / self.cols, mark % self.cols);
+                self.buffer_cell_mut(line, x).attrs |= ATTR_URL;
+            }
+            pos = mark_end.max(pos + 1);
+        }
+    }
+
+    fn buffer_cell(&self, line: usize, x: usize) -> &Cell {
+        if line < self.scrollback.len() {
+            &self.scrollback[line][x]
+        } else {
+            &self.lines[line - self.scrollback.len()][x]
+        }
+    }
+
+    fn buffer_cell_mut(&mut self, line: usize, x: usize) -> &mut Cell {
+        let back = self.scrollback.len();
+        if line < back {
+            &mut self.scrollback[line][x]
+        } else {
+            &mut self.lines[line - back][x]
+        }
     }
 
     fn place(&mut self, cp: u32, w: usize) {
@@ -2078,6 +2307,51 @@ mod tests {
         assert_eq!(g.cursor.x, 2);
         assert_eq!(g.line(0)[0].width_class, WIDTH_WIDE);
         assert_eq!(g.line(0)[1].width_class, WIDTH_PAD);
+    }
+
+    #[test]
+    fn url_attribute_starts_at_a_recognised_lower_case_scheme() {
+        let mut g = Grid::new(40, 2, 0);
+        for c in "x http://example.com HTTP://plain".chars() {
+            g.put(c as u32);
+        }
+
+        assert_eq!(g.line(0)[0].attrs & ATTR_URL, 0);
+        for cell in &g.line(0)[2..20] {
+            assert_ne!(cell.attrs & ATTR_URL, 0);
+        }
+        for cell in &g.line(0)[20..] {
+            assert_eq!(cell.attrs & ATTR_URL, 0);
+        }
+    }
+
+    #[test]
+    fn url_attribute_crosses_an_automatic_wrap() {
+        let mut g = Grid::new(10, 3, 0);
+        for c in "xxxhttp://x".chars() {
+            g.put(c as u32);
+        }
+
+        for cell in &g.line(0)[3..] {
+            assert_ne!(cell.attrs & ATTR_URL, 0);
+        }
+        assert_ne!(g.line(0)[9].attrs & ATTR_LINE_CONTINUED, 0);
+        assert_ne!(g.line(1)[0].attrs & ATTR_LINE_CONTINUED, 0);
+        assert_ne!(g.line(1)[0].attrs & ATTR_URL, 0);
+    }
+
+    /// `buffer.c:2658` advances after reaching allocation pointer zero. It is
+    /// strange, visible behavior, and the differential case protects it too.
+    #[test]
+    fn first_buffer_cell_has_upstreams_url_rescan_edge() {
+        let mut g = Grid::new(20, 2, 0);
+        for c in "http://x".chars() {
+            g.put(c as u32);
+        }
+        assert_ne!(g.line(0)[0].attrs & ATTR_URL, 0);
+        for cell in &g.line(0)[1..8] {
+            assert_eq!(cell.attrs & ATTR_URL, 0);
+        }
     }
 
     #[test]
