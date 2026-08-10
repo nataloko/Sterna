@@ -227,6 +227,10 @@ private:
     /// it is stored in `Hex2StrW`'s escape, so the raw setting reads
     /// `$20!"#$24%…` and only the core knows what that means.
     QString m_delimiters = QStringLiteral(" !\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~");
+    /// `DelimDBCS`. When on, a double-clicked non-delimiter word stops where
+    /// display width changes between one and multiple cells. Delimiter runs
+    /// use their same-character rule instead and do not consult this switch.
+    bool m_widthDelimitsWord = true;
 
     /// Since the last frame was painted, for the floor in `requestRepaint`.
     QElapsedTimer m_sincePaint;

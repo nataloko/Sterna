@@ -743,6 +743,19 @@ void test_a_double_click_selects_a_word()
     h.mouse(QEvent::MouseButtonPress, h.px(8), h.py(0));
     h.mouse(QEvent::MouseButtonDblClick, h.px(8), h.py(0));
     CHECK(h.copied() == QStringLiteral("def"));
+    h.mouse(QEvent::MouseButtonRelease, h.px(8), h.py(0));
+
+    // With `DelimDBCS` off, width is no longer a boundary. Clicking either
+    // half of a wide character still names that whole character, but the word
+    // now reaches through both the narrow and wide runs.
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("keyboard.width_delimits_word"),
+                               QStringLiteral("off"), &error));
+    h.view.applySettings();
+    h.mouse(QEvent::MouseButtonPress, h.px(4), h.py(0));
+    h.mouse(QEvent::MouseButtonDblClick, h.px(4), h.py(0));
+    CHECK(h.copied() ==
+          QString::fromUtf8("abc\xe5\x8c\x97\xe4\xba\xac" "def"));
 }
 
 void test_clickable_url_controls_only_the_cursor_and_launch()

@@ -293,6 +293,8 @@ void TerminalView::applySettings()
     // `Hex2StrW`'s `$xx` escape and its own default opens with one, so the raw
     // string has no space in it and every word runs into the next.
     m_delimiters = m_session->wordDelimiters();
+    m_widthDelimitsWord =
+        flag("keyboard.width_delimits_word", m_widthDelimitsWord);
 
     // The setting may have changed the live non-blinking flag. Let the next
     // paint decide whether to restart the clock, beginning from visible.
@@ -1084,11 +1086,11 @@ bool isDelimiter(const QString &delimiters, const TtCell &cell)
 /// `buffer.c:CheckDelimiterChar`, which has two rules rather than one. Starting
 /// on a delimiter takes the run of *that same character* — so double-clicking
 /// the gap between two columns of a table selects the gap, not the table.
-/// Starting anywhere else takes the run of non-delimiters, and stops as well
-/// where the character width changes, which is upstream's `DelimDBCS` and is on
-/// by default.
-void wordAt(const QString &delimiters, const TtCell *cells, int len, int at,
-            int *from, int *to)
+/// Starting anywhere else takes the run of non-delimiters. `DelimDBCS` decides
+/// whether a change between one-cell and multi-cell characters stops that run;
+/// it is on by default, but is not involved in the same-delimiter arm.
+void wordAt(const QString &delimiters, bool widthDelimits, const TtCell *cells,
+            int len, int at, int *from, int *to)
 {
     at = qBound(0, at, len - 1);
     if (cells[at].width_class == TT_WIDTH_PAD && at > 0) {
@@ -1110,7 +1112,8 @@ void wordAt(const QString &delimiters, const TtCell *cells, int len, int at,
             return glyph(cells[x]) == start;
         }
         return !isDelimiter(delimiters, cells[x]) &&
-               (cells[x].width_class == TT_WIDTH_WIDE) == startWide;
+               (!widthDelimits ||
+                (cells[x].width_class == TT_WIDTH_WIDE) == startWide);
     };
 
     *from = at;
@@ -1144,7 +1147,8 @@ SelPoint TerminalView::unitStart(SelPoint p) const
     }
     int from = 0;
     int to = 0;
-    wordAt(m_delimiters, cells, static_cast<int>(len), p.x, &from, &to);
+    wordAt(m_delimiters, m_widthDelimitsWord, cells,
+           static_cast<int>(len), p.x, &from, &to);
     p.x = from;
     return p;
 }
@@ -1163,7 +1167,8 @@ SelPoint TerminalView::unitEnd(SelPoint p) const
     int from = 0;
     int to = 0;
     // A boundary at `x` ends the character at `x - 1`.
-    wordAt(m_delimiters, cells, static_cast<int>(len), qMax(0, p.x - 1), &from, &to);
+    wordAt(m_delimiters, m_widthDelimitsWord, cells,
+           static_cast<int>(len), qMax(0, p.x - 1), &from, &to);
     p.x = to;
     return p;
 }
