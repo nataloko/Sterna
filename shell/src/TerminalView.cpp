@@ -6,10 +6,13 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QDesktopServices>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QProcess>
 #include <QTimer>
+#include <QUrl>
 #include <QWheelEvent>
 
 #include "DecGraphics.h"
@@ -240,6 +243,12 @@ void TerminalView::applySettings()
     m_clipboard.dialogWidth = number("clipboard.paste_dialog_width", m_clipboard.dialogWidth);
     m_clipboard.dialogHeight = number("clipboard.paste_dialog_height", m_clipboard.dialogHeight);
     m_wheelScrollLine = number("mouse.wheel_scroll_line", m_wheelScrollLine);
+    m_clickableUrl = flag("mouse.clickable_url", m_clickableUrl);
+    m_urlBrowser = m_session->setting(QStringLiteral("url.browser"));
+    m_urlBrowserArgs = m_session->setting(QStringLiteral("url.browser_args"));
+    if (!m_clickableUrl) {
+        setCursor(Qt::IBeamCursor);
+    }
 
     // Decoded by the core rather than read by name: `DelimList` is stored in
     // `Hex2StrW`'s `$xx` escape and its own default opens with one, so the raw
@@ -511,6 +520,19 @@ SelPoint TerminalView::cellAt(const QPointF &pos) const
     return SelPoint {m_session->lineAt(row), x};
 }
 
+bool TerminalView::urlAt(const QPointF &pos, SelPoint *at) const
+{
+    const SelPoint cell = cellAt(pos);
+    size_t len = 0;
+    const TtCell *cells = m_session->line(cell.line, &len);
+    const bool marked = cells && cell.x >= 0 && cell.x < static_cast<int>(len) &&
+                        (cells[cell.x].attrs & TT_ATTR_URL) != 0;
+    if (marked && at) {
+        *at = cell;
+    }
+    return marked;
+}
+
 SelPoint TerminalView::boundaryAt(const QPointF &pos) const
 {
     const int cw = m_theme.cellWidth();
@@ -690,6 +712,13 @@ void TerminalView::mouseMoveEvent(QMouseEvent *event)
         return;
     }
 
+    // Upstream changes the cursor only while no button is held. A URL remains
+    // marked and coloured with this setting off; it simply behaves like text.
+    if (event->buttons() == Qt::NoButton) {
+        setCursor(m_clickableUrl && urlAt(p) ? Qt::PointingHandCursor
+                                            : Qt::IBeamCursor);
+    }
+
     uint8_t button = TT_BUTTON_RELEASE;
     if (event->buttons() & Qt::LeftButton) {
         button = TT_BUTTON_LEFT;
@@ -763,6 +792,18 @@ void TerminalView::mouseDoubleClickEvent(QMouseEvent *event)
         return;
     }
 
+    SelPoint at;
+    if (m_clickableUrl && urlAt(p, &at)) {
+        const QString url = m_session->urlAt(at.line, at.x);
+        if (!url.isEmpty()) {
+            // `BuffUrlDblClk` drops a standing selection before invoking the
+            // browser, and does not turn the URL into a word selection.
+            clearSelection();
+            openUrl(url);
+            return;
+        }
+    }
+
     // The second press of the run. Qt sends this *instead of* a press, so the
     // counter has to be advanced here or a triple click never reaches three.
     m_clicks = 2;
@@ -772,6 +813,26 @@ void TerminalView::mouseDoubleClickEvent(QMouseEvent *event)
 
     m_selUnit = SelUnit::Word;
     startSelection(cellAt(p), p);
+}
+
+void TerminalView::openUrl(const QString &url)
+{
+    // `buffer.c:4084`: a configured browser is only for the three schemes a
+    // web browser is expected to own. SFTP, TFTP, NEWS and MMS always go to
+    // the platform handler, even when the setting names an executable.
+    const bool web = url.startsWith(QLatin1String("http://")) ||
+                     url.startsWith(QLatin1String("https://")) ||
+                     url.startsWith(QLatin1String("ftp://"));
+    if (web && !m_urlBrowser.isEmpty()) {
+        QStringList args = QProcess::splitCommand(m_urlBrowserArgs);
+        args.append(url);
+        if (QProcess::startDetached(m_urlBrowser, args)) {
+            return;
+        }
+        // ShellExecute failure falls through to the ordinary handler
+        // upstream. A stale browser path must not make every URL inert.
+    }
+    QDesktopServices::openUrl(QUrl(url));
 }
 
 void TerminalView::wheelEvent(QWheelEvent *event)

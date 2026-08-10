@@ -36,7 +36,9 @@
 #include <QLineEdit>
 #include <QStandardPaths>
 #include <QTabWidget>
+#include <QTemporaryDir>
 #include <QTemporaryFile>
+#include <QThread>
 #include <QTimer>
 
 #include "MainWindow.h"
@@ -57,9 +59,25 @@ static int failures = 0;
 
 namespace {
 
+class TestTerminalView : public TerminalView {
+public:
+    using TerminalView::TerminalView;
+
+    QString openedUrl;
+
+protected:
+    void openUrl(const QString &url) override { openedUrl = url; }
+};
+
+class ProductionTerminalView : public TerminalView {
+public:
+    using TerminalView::TerminalView;
+    using TerminalView::openUrl;
+};
+
 struct Harness {
     Session session { 80, 24 };
-    TerminalView view { &session };
+    TestTerminalView view { &session };
     QImage image;
 
     Harness()
@@ -105,6 +123,13 @@ struct Harness {
             type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton;
         QMouseEvent ev(type, QPointF(x, y), QPointF(x, y), Qt::LeftButton, held,
                        Qt::NoModifier);
+        QCoreApplication::sendEvent(&view, &ev);
+    }
+
+    void hover(int x, int y)
+    {
+        QMouseEvent ev(QEvent::MouseMove, QPointF(x, y), QPointF(x, y),
+                       Qt::NoButton, Qt::NoButton, Qt::NoModifier);
         QCoreApplication::sendEvent(&view, &ev);
     }
 
@@ -647,6 +672,61 @@ void test_a_double_click_selects_a_word()
     CHECK(h.copied() == QStringLiteral("def"));
 }
 
+void test_clickable_url_controls_only_the_cursor_and_launch()
+{
+    Harness h;
+    h.feed("x http://example.test end");
+
+    // Recognition, colour and underline happen with the setting off, but the
+    // cursor and double-click stay those of ordinary text.
+    h.hover(h.px(4), h.py(0));
+    CHECK(h.view.cursor().shape() == Qt::IBeamCursor);
+
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("mouse.clickable_url"),
+                               QStringLiteral("on"), &error));
+    h.view.applySettings();
+    h.hover(h.px(4), h.py(0));
+    CHECK(h.view.cursor().shape() == Qt::PointingHandCursor);
+    h.hover(h.px(0), h.py(0));
+    CHECK(h.view.cursor().shape() == Qt::IBeamCursor);
+
+    h.mouse(QEvent::MouseButtonPress, h.px(4), h.py(0));
+    h.mouse(QEvent::MouseButtonDblClick, h.px(4), h.py(0));
+    CHECK(h.view.openedUrl == QStringLiteral("http://example.test"));
+    CHECK(!h.view.hasSelection());
+}
+
+void test_configured_browser_receives_its_arguments_before_the_url()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString output = dir.filePath(QStringLiteral("browser-args"));
+
+    Session session { 80, 24 };
+    ProductionTerminalView view { &session };
+    QString error;
+    CHECK(session.setSetting(QStringLiteral("url.browser"),
+                             QCoreApplication::applicationFilePath(), &error));
+    CHECK(session.setSetting(
+        QStringLiteral("url.browser_args"),
+        QStringLiteral("--url-helper \"%1\" --flag \"two words\"").arg(output),
+        &error));
+    view.applySettings();
+    view.openUrl(QStringLiteral("http://example.test"));
+
+    QElapsedTimer wait;
+    wait.start();
+    while ((!QFileInfo::exists(output) || QFileInfo(output).size() == 0) &&
+           wait.elapsed() < 2000) {
+        qApp->processEvents();
+        QThread::msleep(10);
+    }
+    QFile file(output);
+    CHECK(file.open(QIODevice::ReadOnly));
+    CHECK(file.readAll() == QByteArray("--flag\ntwo words\nhttp://example.test\n"));
+}
+
 /// `DelimList` is a setting, and it is stored in `Hex2StrW`'s escape — so this
 /// is as much about the decoding as about the wiring. A list written the way a
 /// user would write it puts a `$20` at the front for the space.
@@ -1137,6 +1217,21 @@ void test_the_window_opens_at_the_configured_size()
 
 int main(int argc, char **argv)
 {
+    // The configured-browser test launches this executable detached. Handle
+    // that tiny mode before constructing Qt so it is also valid on a machine
+    // with no display server at all.
+    if (argc >= 3 && strcmp(argv[1], "--url-helper") == 0) {
+        QFile file(QString::fromUtf8(argv[2]));
+        if (!file.open(QIODevice::WriteOnly)) {
+            return 2;
+        }
+        for (int i = 3; i < argc; i++) {
+            file.write(argv[i]);
+            file.write("\n");
+        }
+        return 0;
+    }
+
     // Offscreen so this runs in CI, where there is no display. `grab()`
     // renders through the raster paint engine either way, so the pixels are
     // the same ones a real window would show.
@@ -1164,6 +1259,8 @@ int main(int argc, char **argv)
     test_the_wheel_goes_to_the_host_when_it_asked_for_it();
     test_a_drag_selects_the_characters_it_covers();
     test_a_double_click_selects_a_word();
+    test_clickable_url_controls_only_the_cursor_and_launch();
+    test_configured_browser_receives_its_arguments_before_the_url();
     test_the_delimiter_list_is_the_setting_and_not_a_constant();
     test_a_triple_click_selects_the_line();
     test_a_selection_holds_on_to_its_text_not_its_place();

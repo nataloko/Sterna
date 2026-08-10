@@ -99,6 +99,11 @@ protected:
     void focusInEvent(QFocusEvent *event) override;
     void focusOutEvent(QFocusEvent *event) override;
 
+    /// Launch one URL after the marked-cell and clickable-setting checks.
+    /// Virtual only so the render test can capture the request without opening
+    /// a real browser; production uses this implementation unchanged.
+    virtual void openUrl(const QString &url);
+
 private:
     /// Make the bell the core asked for: a noise, or a flash of the screen.
     ///
@@ -117,6 +122,7 @@ private:
     /// What a double or triple click acts on, where rounding to the nearest
     /// edge would sometimes pick the next word along.
     SelPoint cellAt(const QPointF &pos) const;
+    bool urlAt(const QPointF &pos, SelPoint *at = nullptr) const;
     /// Start a drag whose anchor covers the whole unit around `at`.
     void startSelection(SelPoint at, const QPointF &pos);
     /// The selection as an ordered pair, expanded to whole words or lines when
@@ -171,6 +177,12 @@ private:
     /// all: the alternative is a wheel that behaves differently here at
     /// exactly the speeds people scroll fastest.
     int m_wheelScrollLine = 3;
+
+    /// URL recognition and painting are unconditional; this is only the hand
+    /// cursor and double-click gate (`EnableClickableUrl`).
+    bool m_clickableUrl = false;
+    QString m_urlBrowser;
+    QString m_urlBrowserArgs;
 
     /// `DelimList`, decoded — what a double-click stops at. Refreshed by
     /// `applySettings` like the block above.
