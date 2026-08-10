@@ -317,6 +317,15 @@ public:
     /// Write every setting back, leaving comments, ordering and any setting
     /// this project does not know about alone.
     bool saveSettings(const QString &path, QString *outError) const;
+    /// The same save, with the live position of the window that owns this
+    /// session. `positionValid` is false on Wayland, where a client does not
+    /// own a position and a reported `(0,0)` must not replace a useful line.
+    bool saveSettingsForWindow(const QString &path, int x, int y,
+                               bool positionValid, QString *outError) const;
+    /// Upstream's close-time `SaveVTPos`: when enabled, touch only VTPos and
+    /// TerminalSize rather than pinning every schema value into the file.
+    bool saveWindowGeometry(const QString &path, int x, int y,
+                            bool positionValid, QString *outError) const;
 
     // --- the command line ---------------------------------------------------
 

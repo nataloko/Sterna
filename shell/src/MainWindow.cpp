@@ -5,6 +5,7 @@
 #include <QAction>
 #include <QCloseEvent>
 #include <QFontDialog>
+#include <QGuiApplication>
 #include <QLabel>
 #include <QHBoxLayout>
 #include <QMenu>
@@ -23,6 +24,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <limits>
 
 #include "Control.h"
 #include "Macro.h"
@@ -51,6 +53,17 @@ QString settingDefault(const char *name)
         }
     }
     return {};
+}
+
+/// Whether this window system gives a client coordinates it may restore.
+///
+/// Wayland intentionally does not: there is no set-position request in
+/// xdg-shell, `move()` is ignored and `pos()` commonly reports `(0,0)`. That
+/// pair must not overwrite the last useful X11/Windows position in a settings
+/// file shared across sessions.
+bool windowPositionIsMeaningful()
+{
+    return !QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
 }
 
 } // namespace
@@ -129,6 +142,7 @@ MainWindow::MainWindow(const QString &settingsPath)
         // open a terminal.
         onNotice(tr("Could not read the settings: %1").arg(error));
     }
+    applySavedPosition();
 
     updateStatus();
     m_view->setFocus();
@@ -137,6 +151,25 @@ MainWindow::MainWindow(const QString &settingsPath)
     // else on the machine can ask this session for things, and everything it
     // can ask about has to exist by then.
     startControl(QString());
+}
+
+void MainWindow::applySavedPosition()
+{
+    if (!windowPositionIsMeaningful()) {
+        return;
+    }
+    bool xOk = false;
+    bool yOk = false;
+    const int x = m_session->setting(QStringLiteral("window.x")).toInt(&xOk);
+    const int y = m_session->setting(QStringLiteral("window.y")).toInt(&yOk);
+
+    // Upstream tests X alone (`vtwin.cpp:682`): the pair's default is
+    // `CW_USEDEFAULT,CW_USEDEFAULT`, and a real X means both fields came out of
+    // the value. A present but short `VTPos=12` has already become `(12,0)` in
+    // the settings parser, because GetNthNum makes the omitted field zero.
+    if (xOk && yOk && x != std::numeric_limits<int>::min()) {
+        move(x, y);
+    }
 }
 
 void MainWindow::startControl(const QString &name)
@@ -280,7 +313,9 @@ void MainWindow::saveSettings()
     const QString path = m_settingsPath;
     QDir().mkpath(QFileInfo(path).absolutePath());
     QString error;
-    if (!m_session->saveSettings(path, &error)) {
+    const QPoint p = pos();
+    if (!m_session->saveSettingsForWindow(path, p.x(), p.y(),
+                                          windowPositionIsMeaningful(), &error)) {
         QMessageBox::warning(this, tr("Setup"),
                              tr("Could not save the settings: %1").arg(error));
         return;
@@ -719,6 +754,28 @@ void MainWindow::closeEvent(QCloseEvent *event)
         return;
     }
     QMainWindow::closeEvent(event);
+    if (!event->isAccepted()
+        || m_session->setting(QStringLiteral("window.save_position"))
+               != QLatin1String("on")) {
+        return;
+    }
+
+    // `SaveVTPos` runs on close upstream and is deliberately *not* Save
+    // setup: only the live geometry is written. Pinning every schema default
+    // merely because the user remembers a position would make their shared
+    // file stop following future upstream defaults.
+    QDir().mkpath(QFileInfo(m_settingsPath).absolutePath());
+    const QPoint p = pos();
+    QString error;
+    if (!m_session->saveWindowGeometry(m_settingsPath, p.x(), p.y(),
+                                       windowPositionIsMeaningful(), &error)) {
+        // The window is already closing, so a modal box would make quitting
+        // contingent on dismissing a failure from a convenience setting. Use
+        // stderr rather than qWarning: Fedora routes the latter to journald
+        // when the process did not start in a terminal.
+        fprintf(stderr, "Sterna: could not save the window position: %s\n",
+                qPrintable(error));
+    }
 }
 
 void MainWindow::disconnectPort()

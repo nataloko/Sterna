@@ -1304,6 +1304,127 @@ void test_the_hidden_menu_is_the_ordinary_menu_as_a_popup()
     }
 }
 
+/// `VTPos` is always read, but is written only when `SaveVTWinPos` is on. A
+/// full Save setup captures every setting plus the live geometry; closing the
+/// window writes the geometry alone.
+void test_window_geometry_has_full_and_close_only_saves()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const auto read = [](const QString &path) {
+        QFile file(path);
+        CHECK(file.open(QIODevice::ReadOnly));
+        return file.readAll();
+    };
+    const auto write = [](const QString &path, const QByteArray &bytes) {
+        QFile file(path);
+        CHECK(file.open(QIODevice::WriteOnly));
+        CHECK(file.write(bytes) == bytes.size());
+    };
+
+    // Save setup: current position and current grid size, not the values from
+    // the last load, alongside the rest of the changed settings.
+    const QString fullPath = dir.filePath(QStringLiteral("full.ini"));
+    write(fullPath,
+          "[Tera Term]\r\nSaveVTWinPos=on\r\nVTPos=120,80\r\n"
+          "TerminalSize=80,24\r\nTitle=before\r\n");
+    {
+        MainWindow window(fullPath);
+        CHECK(window.pos() == QPoint(120, 80));
+        QString error;
+        CHECK(window.session()->setSetting(QStringLiteral("terminal.title"),
+                                           QStringLiteral("after"), &error));
+        window.resize(window.sizeHint());
+        window.show();
+        qApp->processEvents();
+        window.move(210, 160);
+
+        auto *view = window.findChild<TerminalView *>();
+        CHECK(view != nullptr);
+        if (view) {
+            window.resize(window.size()
+                          + QSize(5 * view->theme().cellWidth(),
+                                  2 * view->theme().cellHeight()));
+            qApp->processEvents();
+        }
+        const int cols = window.session()->cols();
+        const int rows = window.session()->rows();
+
+        QAction *save = nullptr;
+        for (QAction *action : window.findChildren<QAction *>()) {
+            if (action->text() == QStringLiteral("Save setup")) {
+                save = action;
+            }
+        }
+        CHECK(save != nullptr);
+        if (save) {
+            save->trigger();
+        }
+
+        const QByteArray bytes = read(fullPath);
+        CHECK(bytes.contains("VTPos=210,160"));
+        const QByteArray expectedSize =
+            QStringLiteral("TerminalSize=%1,%2").arg(cols).arg(rows).toUtf8();
+        CHECK(bytes.contains(expectedSize));
+        CHECK(bytes.contains("Title=after"));
+
+        // Keep the scope's teardown from exercising the close-only arm too;
+        // that arm has its own file below.
+        CHECK(window.session()->setSetting(QStringLiteral("window.save_position"),
+                                           QStringLiteral("off"), &error));
+        window.close();
+    }
+
+    // Window close: geometry changes, an unrelated in-memory setting does not,
+    // and no defaults are added to a deliberately small file.
+    const QString closePath = dir.filePath(QStringLiteral("close.ini"));
+    write(closePath,
+          "[Tera Term]\r\nSaveVTWinPos=on\r\nVTPos=20,30\r\n"
+          "TerminalSize=80,24\r\nTitle=before\r\n");
+    int closeCols = 0;
+    int closeRows = 0;
+    {
+        MainWindow window(closePath);
+        QString error;
+        CHECK(window.session()->setSetting(QStringLiteral("terminal.title"),
+                                           QStringLiteral("not-written"), &error));
+        window.resize(window.sizeHint());
+        window.show();
+        qApp->processEvents();
+        window.move(220, 170);
+        window.resize(window.size() + QSize(30, 20));
+        qApp->processEvents();
+        closeCols = window.session()->cols();
+        closeRows = window.session()->rows();
+        CHECK(window.close());
+    }
+    const QByteArray closed = read(closePath);
+    CHECK(closed.contains("VTPos=220,170"));
+    const QByteArray expectedCloseSize = QStringLiteral("TerminalSize=%1,%2")
+                                             .arg(closeCols)
+                                             .arg(closeRows)
+                                             .toUtf8();
+    CHECK(closed.contains(expectedCloseSize));
+    CHECK(closed.contains("Title=before"));
+    CHECK(!closed.contains("not-written"));
+    CHECK(!closed.contains("CRReceive="));
+
+    // The switch gates writing, not reading. An old position is still applied
+    // with it off, and closing leaves even its quotes untouched.
+    const QString offPath = dir.filePath(QStringLiteral("off.ini"));
+    const QByteArray off =
+        "[Tera Term]\r\nSaveVTWinPos=off\r\nVTPos='12,34'\r\n";
+    write(offPath, off);
+    {
+        MainWindow window(offPath);
+        CHECK(window.pos() == QPoint(12, 34));
+        window.show();
+        window.move(300, 200);
+        CHECK(window.close());
+    }
+    CHECK(read(offPath) == off);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -1369,6 +1490,7 @@ int main(int argc, char **argv)
     test_the_dialog_writes_only_what_changed();
     test_the_window_opens_at_the_configured_size();
     test_the_hidden_menu_is_the_ordinary_menu_as_a_popup();
+    test_window_geometry_has_full_and_close_only_saves();
 
     // `--write <dir>` dumps what was rendered, for looking at a failure rather
     // than guessing at it.

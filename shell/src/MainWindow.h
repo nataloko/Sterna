@@ -165,6 +165,9 @@ private slots:
 private:
     void buildMenus();
     void updateStatus();
+    /// Apply `VTPos` once, after the settings file is loaded and before a
+    /// command line gets its later chance to override it with `/X` and `/Y`.
+    void applySavedPosition();
     /// `ConfirmDisconnect` (`ttset.c:1154`, on by default): whether to go ahead
     /// with dropping the connection.
     ///

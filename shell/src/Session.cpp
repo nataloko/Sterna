@@ -738,6 +738,36 @@ bool Session::saveSettings(const QString &path, QString *outError) const
     return true;
 }
 
+bool Session::saveSettingsForWindow(const QString &path, int x, int y,
+                                    bool positionValid, QString *outError) const
+{
+    const QByteArray utf8 = path.toUtf8();
+    if (tt_session_settings_save_for_window(m_session, utf8.constData(), x, y,
+                                            positionValid)
+        != TT_OK) {
+        if (outError) {
+            *outError = QString::fromUtf8(tt_last_error());
+        }
+        return false;
+    }
+    return true;
+}
+
+bool Session::saveWindowGeometry(const QString &path, int x, int y,
+                                 bool positionValid, QString *outError) const
+{
+    const QByteArray utf8 = path.toUtf8();
+    if (tt_session_window_geometry_save(m_session, utf8.constData(), x, y,
+                                        positionValid)
+        != TT_OK) {
+        if (outError) {
+            *outError = QString::fromUtf8(tt_last_error());
+        }
+        return false;
+    }
+    return true;
+}
+
 // --- the loop ----------------------------------------------------------------
 
 void Session::onReadable()
