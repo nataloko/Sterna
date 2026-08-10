@@ -324,6 +324,55 @@ impl Default for KeyboardMeta {
     }
 }
 
+/// `ttset.c:1643`. What an enabled Meta key does to a one-byte character: `raw`
+/// sets bit 7 on the byte, `text` sets U+0080 on the character before encoding,
+/// and `off` prefixes ESC. `on` is a read-only alias of `raw`; the writer emits
+/// `raw` (`ttset.c:3012`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyboardMeta8bit {
+    /// `off`
+    Off,
+    /// `raw`, `on` — the first is written back, the rest are aliases the
+    /// file may hold because upstream's own table has them.
+    Raw,
+    /// `text`
+    Text,
+}
+
+impl KeyboardMeta8bit {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Raw => "raw",
+            Self::Text => "text",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised takes the default**
+    /// rather than failing — which is how upstream spells most of its
+    /// defaults, as the `else` branch of a chain of comparisons.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("off") {
+            return Self::Off;
+        }
+        if s.eq_ignore_ascii_case("raw") || s.eq_ignore_ascii_case("on") {
+            return Self::Raw;
+        }
+        if s.eq_ignore_ascii_case("text") {
+            return Self::Text;
+        }
+        Self::default()
+    }
+}
+
+impl Default for KeyboardMeta8bit {
+    fn default() -> Self {
+        Self::Off
+    }
+}
+
 /// `ttset.c:718`, and the default is again the `else` branch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CursorShape {
@@ -480,6 +529,58 @@ impl WindowTitleReport {
 impl Default for WindowTitleReport {
     fn default() -> Self {
         Self::Empty
+    }
+}
+
+/// `ttset.c:1769`. The Win32 `LOGFONT` rasterisation request. Anything unknown
+/// falls to `default`; comparisons are case-insensitive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontQuality {
+    /// `default`
+    Default,
+    /// `nonantialiased`
+    NonAntialiased,
+    /// `antialiased`
+    Antialiased,
+    /// `cleartype`
+    ClearType,
+}
+
+impl FontQuality {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::NonAntialiased => "nonantialiased",
+            Self::Antialiased => "antialiased",
+            Self::ClearType => "cleartype",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised takes the default**
+    /// rather than failing — which is how upstream spells most of its
+    /// defaults, as the `else` branch of a chain of comparisons.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("default") {
+            return Self::Default;
+        }
+        if s.eq_ignore_ascii_case("nonantialiased") {
+            return Self::NonAntialiased;
+        }
+        if s.eq_ignore_ascii_case("antialiased") {
+            return Self::Antialiased;
+        }
+        if s.eq_ignore_ascii_case("cleartype") {
+            return Self::ClearType;
+        }
+        Self::default()
+    }
+}
+
+impl Default for FontQuality {
+    fn default() -> Self {
+        Self::Default
     }
 }
 
@@ -1271,6 +1372,15 @@ pub struct Settings {
     /// It is the only bound on a string a host controls the length of, which is why
     /// it is not merely cosmetic.
     pub terminal_max_osc_buffer: i32,
+    /// `ttset.c:1078`, `TF_ALLOWWRONGSEQUENCE`, default off. Its remaining upstream
+    /// consumer accepts a non-regular Japanese coding sequence (`coding_pp.cpp:247`)
+    /// and permits the otherwise-refused `KanjiOut=H`; CJK is deferred here, so the
+    /// compatibility switch round-trips and acts on nothing for now.
+    pub terminal_allow_wrong_sequence: bool,
+    /// `ttset.c:1187`, `TF_ENABLESLINE`, default **on**. Gates DECSSDT/DECSASD
+    /// (`vtterm.c:3827`). `tt-grid` deliberately has no third status-line buffer yet,
+    /// so the key is retained until that parser feature exists.
+    pub terminal_status_line_enabled: bool,
     /// **`ttset.c:877` reads this with an empty fallback and only the literal `DEL`
     /// takes the other arm**, so an absent key means BS. That is Tera Term's default
     /// and it is probably not what a Linux user wants: a `getty` usually has
@@ -1305,6 +1415,15 @@ pub struct Settings {
     /// the whole string. A run that starts on a delimiter is unaffected: upstream's
     /// other arm still groups consecutive copies of that same character.
     pub keyboard_width_delimits_word: bool,
+    /// `ttset.c:1598`, default off. With it on, a PC key that has no explicit
+    /// `KEYBOARD.CNF` entry sends nothing instead of falling back to Tera Term's
+    /// built-in VT sequence (`keyboard.c:960` onward).
+    pub keyboard_strict_mapping: bool,
+    /// `ttset.c:1643`. What an enabled Meta key does to a one-byte character: `raw`
+    /// sets bit 7 on the byte, `text` sets U+0080 on the character before encoding,
+    /// and `off` prefixes ESC. `on` is a read-only alias of `raw`; the writer emits
+    /// `raw` (`ttset.c:3012`).
+    pub keyboard_meta_8bit: KeyboardMeta8bit,
     /// `ttset.c:754`. Black on white, which is what Tera Term looks like out of the
     /// box and surprises people who expect a terminal to be dark.
     pub color_normal: [u8; 6],
@@ -1470,6 +1589,16 @@ pub struct Settings {
     /// can write to the screen put text in front of the shell. `accept` reports the
     /// real title, combined with `window.title_change`'s four spellings.
     pub window_title_report: WindowTitleReport,
+    /// `ttset.c:1769`. The Win32 `LOGFONT` rasterisation request. Anything unknown
+    /// falls to `default`; comparisons are case-insensitive.
+    pub font_quality: FontQuality,
+    /// `ttset.c:1988`, default **on**. Upstream fits glyphs whose natural advance
+    /// does not match the cell into the cell (`vtdisp.c:2902`).
+    pub font_draw_resized: bool,
+    /// `ttset.c:1640`, default off and marked "test". Its only consumer is inside a
+    /// `#if 0` block at `vtwin.cpp:2718`, so carrying it without runtime behavior is
+    /// faithful to current upstream rather than an omission.
+    pub font_scaling: bool,
     /// `ttset.c:1523`. **On**, and it was left zeroed here for a while, which
     /// silently disabled every mouse mode and made DECRQM answer "permanently
     /// reset" for all of them.
@@ -1808,6 +1937,11 @@ pub struct Settings {
     /// `ttset.c:1520`, on by default — the New Connection dialog at startup, which
     /// `/DS` suppresses and `/ES` asks for.
     pub connection_host_dialog_on_startup: bool,
+    /// `ttset.c:1673`, default **on**. A TCP connection begins in local line mode
+    /// until telnet negotiation says otherwise (`commlib.c:341`); serial is never
+    /// affected. The async transport currently sends keystrokes immediately, so the
+    /// key is carried pending a negotiated line buffer.
+    pub connection_line_mode: bool,
     /// `ttset.c:1291`, a wide string whose empty default means no automatic macro.
     /// `CVTWindow::Startup` (`vtwin.cpp:1413`) consumes it once when the window
     /// starts; a leading `*` makes TTPMACRO put up its file picker
@@ -2302,6 +2436,8 @@ impl Default for Settings {
             terminal_lock_uid: true,
             terminal_auto_invoke: false,
             terminal_max_osc_buffer: 4096,
+            terminal_allow_wrong_sequence: false,
+            terminal_status_line_enabled: true,
             keyboard_backspace: KeyboardBackspace::default(),
             keyboard_meta: KeyboardMeta::default(),
             keyboard_delete_sends_del: false,
@@ -2309,6 +2445,8 @@ impl Default for Settings {
             keyboard_disable_app_cursor: false,
             keyboard_word_delimiters: String::from("$20!\"#$24%&'()*+,-./:;<=>?@[\\]^`{|}~"),
             keyboard_width_delimits_word: true,
+            keyboard_strict_mapping: false,
+            keyboard_meta_8bit: KeyboardMeta8bit::default(),
             color_normal: [0, 0, 0, 255, 255, 255],
             color_bold: [0, 0, 255, 255, 255, 255],
             color_blink: [255, 0, 0, 255, 255, 255],
@@ -2347,6 +2485,9 @@ impl Default for Settings {
             window_title_format: 13,
             window_title_change: WindowTitleChange::default(),
             window_title_report: WindowTitleReport::default(),
+            font_quality: FontQuality::default(),
+            font_draw_resized: true,
+            font_scaling: false,
             mouse_tracking: true,
             mouse_ctrl_disables_tracking: true,
             mouse_wheel_to_cursor: true,
@@ -2403,6 +2544,7 @@ impl Default for Settings {
             connection_clear_screen_on_close: false,
             connection_timeout: 0,
             connection_host_dialog_on_startup: true,
+            connection_line_mode: true,
             macro_startup_file: String::from(""),
             settings_auto_backup: true,
             serial_com_port: 1,
@@ -2630,6 +2772,14 @@ impl Settings {
                 "MaxOSCBufferSize",
                 d.terminal_max_osc_buffer,
             ) as i32,
+            terminal_allow_wrong_sequence: crate::schema::on_off(
+                ini.get("Tera Term", "AllowWrongSequence"),
+                false,
+            ),
+            terminal_status_line_enabled: crate::schema::on_off(
+                ini.get("Tera Term", "EnableStatusLine"),
+                true,
+            ),
             keyboard_backspace: match ini.get("Tera Term", "BSKey") {
                 Some(v) => KeyboardBackspace::from_ini(v),
                 None => d.keyboard_backspace,
@@ -2657,6 +2807,14 @@ impl Settings {
                 ini.get("Tera Term", "DelimDBCS"),
                 true,
             ),
+            keyboard_strict_mapping: crate::schema::on_off(
+                ini.get("Tera Term", "StrictKeyMapping"),
+                false,
+            ),
+            keyboard_meta_8bit: match ini.get("Tera Term", "Meta8Bit") {
+                Some(v) => KeyboardMeta8bit::from_ini(v),
+                None => d.keyboard_meta_8bit,
+            },
             color_normal: crate::schema::color2(ini.get("Tera Term", "VTColor"), d.color_normal),
             color_bold: crate::schema::color2(ini.get("Tera Term", "VTBoldColor"), d.color_bold),
             color_blink: crate::schema::color2(ini.get("Tera Term", "VTBlinkColor"), d.color_blink),
@@ -2782,6 +2940,15 @@ impl Settings {
                 Some(v) => WindowTitleReport::from_ini(v),
                 None => d.window_title_report,
             },
+            font_quality: match ini.get("Tera Term", "FontQuality") {
+                Some(v) => FontQuality::from_ini(v),
+                None => d.font_quality,
+            },
+            font_draw_resized: crate::schema::on_off(
+                ini.get("Tera Term", "DrawingResizedFont"),
+                true,
+            ),
+            font_scaling: crate::schema::on_off(ini.get("Tera Term", "FontScaling"), false),
             mouse_tracking: crate::schema::on_off(ini.get("Tera Term", "MouseEventTracking"), true),
             mouse_ctrl_disables_tracking: crate::schema::on_off(
                 ini.get("Tera Term", "DisableMouseTrackingByCtrl"),
@@ -2988,6 +3155,10 @@ impl Settings {
                 as i32,
             connection_host_dialog_on_startup: crate::schema::on_off(
                 ini.get("Tera Term", "HostDialogOnStartup"),
+                true,
+            ),
+            connection_line_mode: crate::schema::on_off(
+                ini.get("Tera Term", "EnableLineMode"),
                 true,
             ),
             macro_startup_file: ini
@@ -3593,6 +3764,26 @@ impl Settings {
         );
         ini.set(
             "Tera Term",
+            "AllowWrongSequence",
+            &if self.terminal_allow_wrong_sequence {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "EnableStatusLine",
+            &if self.terminal_status_line_enabled {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
             "BSKey",
             &self.keyboard_backspace.as_ini().to_string(),
         );
@@ -3645,6 +3836,21 @@ impl Settings {
                 "off"
             }
             .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "StrictKeyMapping",
+            &if self.keyboard_strict_mapping {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "Meta8Bit",
+            &self.keyboard_meta_8bit.as_ini().to_string(),
         );
         ini.set(
             "Tera Term",
@@ -3906,6 +4112,21 @@ impl Settings {
             "Tera Term",
             "TitleReportSequence",
             &self.window_title_report.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "FontQuality",
+            &self.font_quality.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "DrawingResizedFont",
+            &if self.font_draw_resized { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "FontScaling",
+            &if self.font_scaling { "on" } else { "off" }.to_string(),
         );
         ini.set(
             "Tera Term",
@@ -4312,6 +4533,16 @@ impl Settings {
             "Tera Term",
             "HostDialogOnStartup",
             &if self.connection_host_dialog_on_startup {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "EnableLineMode",
+            &if self.connection_line_mode {
                 "on"
             } else {
                 "off"
@@ -5179,6 +5410,18 @@ impl Settings {
             }
             .to_string(),
             "terminal.max_osc_buffer" => self.terminal_max_osc_buffer.to_string(),
+            "terminal.allow_wrong_sequence" => if self.terminal_allow_wrong_sequence {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "terminal.status_line_enabled" => if self.terminal_status_line_enabled {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "keyboard.backspace" => self.keyboard_backspace.as_ini().to_string(),
             "keyboard.meta" => self.keyboard_meta.as_ini().to_string(),
             "keyboard.delete_sends_del" => if self.keyboard_delete_sends_del {
@@ -5206,6 +5449,13 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "keyboard.strict_mapping" => if self.keyboard_strict_mapping {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "keyboard.meta_8bit" => self.keyboard_meta_8bit.as_ini().to_string(),
             "color.normal" => crate::schema::color2_str(&self.color_normal),
             "color.bold" => crate::schema::color2_str(&self.color_bold),
             "color.blink" => crate::schema::color2_str(&self.color_blink),
@@ -5319,6 +5569,9 @@ impl Settings {
             "window.title_format" => self.window_title_format.to_string(),
             "window.title_change" => self.window_title_change.as_ini().to_string(),
             "window.title_report" => self.window_title_report.as_ini().to_string(),
+            "font.quality" => self.font_quality.as_ini().to_string(),
+            "font.draw_resized" => if self.font_draw_resized { "on" } else { "off" }.to_string(),
+            "font.scaling" => if self.font_scaling { "on" } else { "off" }.to_string(),
             "mouse.tracking" => if self.mouse_tracking { "on" } else { "off" }.to_string(),
             "mouse.ctrl_disables_tracking" => if self.mouse_ctrl_disables_tracking {
                 "on"
@@ -5505,6 +5758,12 @@ impl Settings {
             .to_string(),
             "connection.timeout" => self.connection_timeout.to_string(),
             "connection.host_dialog_on_startup" => if self.connection_host_dialog_on_startup {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "connection.line_mode" => if self.connection_line_mode {
                 "on"
             } else {
                 "off"
@@ -5888,6 +6147,12 @@ impl Settings {
                 self.terminal_max_osc_buffer =
                     crate::schema::int(value, self.terminal_max_osc_buffer)
             }
+            "terminal.allow_wrong_sequence" => {
+                self.terminal_allow_wrong_sequence = crate::schema::on_off(Some(value), false)
+            }
+            "terminal.status_line_enabled" => {
+                self.terminal_status_line_enabled = crate::schema::on_off(Some(value), true)
+            }
             "keyboard.backspace" => self.keyboard_backspace = KeyboardBackspace::from_ini(value),
             "keyboard.meta" => self.keyboard_meta = KeyboardMeta::from_ini(value),
             "keyboard.delete_sends_del" => {
@@ -5903,6 +6168,10 @@ impl Settings {
             "keyboard.width_delimits_word" => {
                 self.keyboard_width_delimits_word = crate::schema::on_off(Some(value), true)
             }
+            "keyboard.strict_mapping" => {
+                self.keyboard_strict_mapping = crate::schema::on_off(Some(value), false)
+            }
+            "keyboard.meta_8bit" => self.keyboard_meta_8bit = KeyboardMeta8bit::from_ini(value),
             "color.normal" => {
                 self.color_normal = crate::schema::color2(Some(value), self.color_normal)
             }
@@ -6007,6 +6276,11 @@ impl Settings {
             }
             "window.title_change" => self.window_title_change = WindowTitleChange::from_ini(value),
             "window.title_report" => self.window_title_report = WindowTitleReport::from_ini(value),
+            "font.quality" => self.font_quality = FontQuality::from_ini(value),
+            "font.draw_resized" => {
+                self.font_draw_resized = crate::schema::on_off(Some(value), true)
+            }
+            "font.scaling" => self.font_scaling = crate::schema::on_off(Some(value), false),
             "mouse.tracking" => self.mouse_tracking = crate::schema::on_off(Some(value), true),
             "mouse.ctrl_disables_tracking" => {
                 self.mouse_ctrl_disables_tracking = crate::schema::on_off(Some(value), true)
@@ -6174,6 +6448,9 @@ impl Settings {
             }
             "connection.host_dialog_on_startup" => {
                 self.connection_host_dialog_on_startup = crate::schema::on_off(Some(value), true)
+            }
+            "connection.line_mode" => {
+                self.connection_line_mode = crate::schema::on_off(Some(value), true)
             }
             "macro.startup_file" => self.macro_startup_file = value.to_string(),
             "settings.auto_backup" => {
@@ -6753,6 +7030,26 @@ pub const FIELDS: &[Field] = &[
         doc: "`ttset.c:1789`. The ceiling on the buffer an OSC or DCS string is collected into — `vtterm.c:5265` doubles the buffer from `sizeof(ts.Title)` up to this and then silently **drops** every further byte, so a title longer than this arrives truncated and the sequence still terminates normally.  It is the only bound on a string a host controls the length of, which is why it is not merely cosmetic.",
     },
     Field {
+        name: "terminal.allow_wrong_sequence",
+        page: "terminal",
+        section: "Tera Term",
+        key: "AllowWrongSequence",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1078`, `TF_ALLOWWRONGSEQUENCE`, default off. Its remaining upstream consumer accepts a non-regular Japanese coding sequence (`coding_pp.cpp:247`) and permits the otherwise-refused `KanjiOut=H`; CJK is deferred here, so the compatibility switch round-trips and acts on nothing for now.",
+    },
+    Field {
+        name: "terminal.status_line_enabled",
+        page: "terminal",
+        section: "Tera Term",
+        key: "EnableStatusLine",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1187`, `TF_ENABLESLINE`, default **on**. Gates DECSSDT/DECSASD (`vtterm.c:3827`). `tt-grid` deliberately has no third status-line buffer yet, so the key is retained until that parser feature exists.",
+    },
+    Field {
         name: "keyboard.backspace",
         page: "keyboard",
         section: "Tera Term",
@@ -6821,6 +7118,26 @@ pub const FIELDS: &[Field] = &[
         default: "on",
         label: None,
         doc: "`ttset.c:1176`. When a word starts on a non-delimiter, changing between a one-cell and a multi-cell character ends it (`buffer.c:4479`). On by default, so double-clicking `abc北京def` selects one of the three width runs rather than the whole string. A run that starts on a delimiter is unaffected: upstream's other arm still groups consecutive copies of that same character.",
+    },
+    Field {
+        name: "keyboard.strict_mapping",
+        page: "keyboard",
+        section: "Tera Term",
+        key: "StrictKeyMapping",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1598`, default off. With it on, a PC key that has no explicit `KEYBOARD.CNF` entry sends nothing instead of falling back to Tera Term's built-in VT sequence (`keyboard.c:960` onward).",
+    },
+    Field {
+        name: "keyboard.meta_8bit",
+        page: "keyboard",
+        section: "Tera Term",
+        key: "Meta8Bit",
+        kind: Kind::Enum(&["off", "raw", "text"]),
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1643`. What an enabled Meta key does to a one-byte character: `raw` sets bit 7 on the byte, `text` sets U+0080 on the character before encoding, and `off` prefixes ESC. `on` is a read-only alias of `raw`; the writer emits `raw` (`ttset.c:3012`).",
     },
     Field {
         name: "color.normal",
@@ -7201,6 +7518,36 @@ pub const FIELDS: &[Field] = &[
         default: "empty",
         label: None,
         doc: "`ttset.c:1664`, and it is `WindowFlag` again — with the extra turn that `IdTitleReportEmpty` is **24**, which is `WF_TITLEREPORT` entire. So the shipped `empty` sets both bits, lands on the `default:` arm, and answers `CSI 20 t` and `CSI 21 t` with an empty OSC string. That is deliberate: a terminal that echoes its own title into the input stream lets anything which can write to the screen put text in front of the shell. `accept` reports the real title, combined with `window.title_change`'s four spellings.",
+    },
+    Field {
+        name: "font.quality",
+        page: "font",
+        section: "Tera Term",
+        key: "FontQuality",
+        kind: Kind::Enum(&["default", "nonantialiased", "antialiased", "cleartype"]),
+        default: "default",
+        label: Some("DLG_TAB_VISUAL_FONT_QUALITY"),
+        doc: "`ttset.c:1769`. The Win32 `LOGFONT` rasterisation request. Anything unknown falls to `default`; comparisons are case-insensitive.",
+    },
+    Field {
+        name: "font.draw_resized",
+        page: "font",
+        section: "Tera Term",
+        key: "DrawingResizedFont",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1988`, default **on**. Upstream fits glyphs whose natural advance does not match the cell into the cell (`vtdisp.c:2902`).",
+    },
+    Field {
+        name: "font.scaling",
+        page: "font",
+        section: "Tera Term",
+        key: "FontScaling",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1640`, default off and marked \"test\". Its only consumer is inside a `#if 0` block at `vtwin.cpp:2718`, so carrying it without runtime behavior is faithful to current upstream rather than an omission.",
     },
     Field {
         name: "mouse.tracking",
@@ -7761,6 +8108,16 @@ pub const FIELDS: &[Field] = &[
         default: "on",
         label: None,
         doc: "`ttset.c:1520`, on by default — the New Connection dialog at startup, which `/DS` suppresses and `/ES` asks for.",
+    },
+    Field {
+        name: "connection.line_mode",
+        page: "connection",
+        section: "Tera Term",
+        key: "EnableLineMode",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1673`, default **on**. A TCP connection begins in local line mode until telnet negotiation says otherwise (`commlib.c:341`); serial is never affected. The async transport currently sends keystrokes immediately, so the key is carried pending a negotiated line buffer.",
     },
     Field {
         name: "macro.startup_file",

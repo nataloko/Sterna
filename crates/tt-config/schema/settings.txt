@@ -271,6 +271,17 @@ terminal.auto_invoke | bool | Tera Term | AutoInvoke | off | -
 # it is not merely cosmetic.
 terminal.max_osc_buffer | int | Tera Term | MaxOSCBufferSize | 4096 | -
 
+# `ttset.c:1078`, `TF_ALLOWWRONGSEQUENCE`, default off. Its remaining upstream
+# consumer accepts a non-regular Japanese coding sequence (`coding_pp.cpp:247`)
+# and permits the otherwise-refused `KanjiOut=H`; CJK is deferred here, so the
+# compatibility switch round-trips and acts on nothing for now.
+terminal.allow_wrong_sequence | bool | Tera Term | AllowWrongSequence | off | -
+
+# `ttset.c:1187`, `TF_ENABLESLINE`, default **on**. Gates DECSSDT/DECSASD
+# (`vtterm.c:3827`). `tt-grid` deliberately has no third status-line buffer yet,
+# so the key is retained until that parser feature exists.
+terminal.status_line_enabled | bool | Tera Term | EnableStatusLine | on | -
+
 # --- keyboard ----------------------------------------------------------------
 
 # **`ttset.c:877` reads this with an empty fallback and only the literal `DEL`
@@ -313,6 +324,17 @@ keyboard.word_delimiters | string | Tera Term | DelimList | $20!"#$24%&'()*+,-./
 # the whole string. A run that starts on a delimiter is unaffected: upstream's
 # other arm still groups consecutive copies of that same character.
 keyboard.width_delimits_word | bool | Tera Term | DelimDBCS | on | -
+
+# `ttset.c:1598`, default off. With it on, a PC key that has no explicit
+# `KEYBOARD.CNF` entry sends nothing instead of falling back to Tera Term's
+# built-in VT sequence (`keyboard.c:960` onward).
+keyboard.strict_mapping | bool | Tera Term | StrictKeyMapping | off | -
+
+# `ttset.c:1643`. What an enabled Meta key does to a one-byte character: `raw`
+# sets bit 7 on the byte, `text` sets U+0080 on the character before encoding,
+# and `off` prefixes ESC. `on` is a read-only alias of `raw`; the writer emits
+# `raw` (`ttset.c:3012`).
+keyboard.meta_8bit | enum(off=Off,raw/on=Raw,text=Text) | Tera Term | Meta8Bit | off | -
 
 # --- colour ------------------------------------------------------------------
 #
@@ -527,6 +549,21 @@ window.title_change | enum(overwrite/on=Overwrite,ahead=Ahead,last=Last,off/*=Of
 # can write to the screen put text in front of the shell. `accept` reports the
 # real title, combined with `window.title_change`'s four spellings.
 window.title_report | enum(empty=Empty,accept=Accept,ignore/off=Ignore) | Tera Term | TitleReportSequence | empty | -
+
+# --- font --------------------------------------------------------------------
+
+# `ttset.c:1769`. The Win32 `LOGFONT` rasterisation request. Anything unknown
+# falls to `default`; comparisons are case-insensitive.
+font.quality | enum(default=Default,nonantialiased=NonAntialiased,antialiased=Antialiased,cleartype=ClearType) | Tera Term | FontQuality | default | DLG_TAB_VISUAL_FONT_QUALITY
+
+# `ttset.c:1988`, default **on**. Upstream fits glyphs whose natural advance
+# does not match the cell into the cell (`vtdisp.c:2902`).
+font.draw_resized | bool | Tera Term | DrawingResizedFont | on | -
+
+# `ttset.c:1640`, default off and marked "test". Its only consumer is inside a
+# `#if 0` block at `vtwin.cpp:2718`, so carrying it without runtime behavior is
+# faithful to current upstream rather than an omission.
+font.scaling | bool | Tera Term | FontScaling | off | -
 
 # --- mouse -------------------------------------------------------------------
 
@@ -961,6 +998,12 @@ connection.timeout | int | Tera Term | ConnectingTimeout | 0 | -
 # `ttset.c:1520`, on by default — the New Connection dialog at startup, which
 # `/DS` suppresses and `/ES` asks for.
 connection.host_dialog_on_startup | bool | Tera Term | HostDialogOnStartup | on | -
+
+# `ttset.c:1673`, default **on**. A TCP connection begins in local line mode
+# until telnet negotiation says otherwise (`commlib.c:341`); serial is never
+# affected. The async transport currently sends keystrokes immediately, so the
+# key is carried pending a negotiated line buffer.
+connection.line_mode | bool | Tera Term | EnableLineMode | on | -
 
 # --- macro ------------------------------------------------------------------
 

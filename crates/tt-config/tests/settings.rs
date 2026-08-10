@@ -2,8 +2,9 @@
 
 use tt_config::gen;
 use tt_config::{
-    ConnectionPortType, Ini, KeyboardBackspace, Kind, LogTimestampType, SerialDataBits, SerialFlow,
-    SerialParity, SerialStopBits, Settings, TerminalCrReceive, TerminalId, FIELDS,
+    ConnectionPortType, FontQuality, Ini, KeyboardBackspace, KeyboardMeta8bit, Kind,
+    LogTimestampType, SerialDataBits, SerialFlow, SerialParity, SerialStopBits, Settings,
+    TerminalCrReceive, TerminalId, FIELDS,
 };
 
 #[test]
@@ -178,6 +179,26 @@ fn character_width_delimits_words_by_default() {
     // use for INI booleans.
     let numeric = Ini::parse(b"[Tera Term]\r\nDelimDBCS=1\r\n");
     assert!(Settings::load(&numeric).keyboard_width_delimits_word);
+}
+
+#[test]
+fn meta_8bit_keeps_raw_and_text_distinct() {
+    let load = |value: &str| {
+        Settings::load(&Ini::parse(
+            format!("[Tera Term]\r\nMeta8Bit={value}\r\n").as_bytes(),
+        ))
+        .keyboard_meta_8bit
+    };
+    assert_eq!(Settings::default().keyboard_meta_8bit, KeyboardMeta8bit::Off);
+    assert_eq!(load("raw"), KeyboardMeta8bit::Raw);
+    assert_eq!(load("on"), KeyboardMeta8bit::Raw, "the read-only alias");
+    assert_eq!(load("text"), KeyboardMeta8bit::Text);
+    assert_eq!(load("nonsense"), KeyboardMeta8bit::Off, "the else arm");
+
+    let font = Settings::load(&Ini::parse(
+        b"[Tera Term]\r\nFontQuality=NONANTIALIASED\r\n",
+    ));
+    assert_eq!(font.font_quality, FontQuality::NonAntialiased);
 }
 
 #[test]
