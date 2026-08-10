@@ -1036,6 +1036,25 @@ wearing one name:
   exercise the *host's* parser, and it is the only setting in the terminal
   whose purpose is to lie.
 
+And for the painter, whose decisions the differential dump cannot see:
+
+- **Bold and underline each have a font switch and a colour switch.**
+  `EnableBold`/`UnderlineAttrFont` select the face;
+  `EnableBoldAttrColor`/`UnderlineAttrColor` select the pair, independently.
+  All four ship on, which makes hardcoding the face look right until a file
+  turns only one half off. The attribute stays in the cell whatever either
+  switch says.
+- **`UseTextColor` repairs only three exact same-colour pairs, after
+  reversal.** Both explicit colour bits must be set, the indices must match,
+  and the foreground must be 0, 7 or 15 (`vtdisp.c:2542`); red-on-red is left
+  invisible. Under selection, SGR 7 or DECSCNM the repair uses the configured
+  reverse pair even when `EnableReverseAttrColor=off`, because this arm runs
+  after that gate. A broad "ensure contrast" implementation changes far more
+  output than upstream does.
+- **`UseNormalBGColor` substitutes only an attribute pair's background.**
+  Bold, blink, underline and URL use the normal background; reverse puts that
+  colour in the foreground, and a later explicit SGR background still wins.
+
 And for the clipboard, where the surprise is what happens to a line break:
 
 - **A paste is a keyboard, so every line break goes on the wire as a single

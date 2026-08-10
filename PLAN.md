@@ -1094,11 +1094,12 @@ before anything else in every session.
   file-transfer family, then the seven the terminal and the two the *transports*
   were already honouring with no key to read, then the clipboard's sixteen,
   2026-08-09, then the bell's, the serial port's, telnet's, the scrollback's
-  and the parser's own eight switches, 2026-08-10), the map onto a running
+  and the parser's own eight switches, then the painter's four draw-attribute
+  switches, 2026-08-10), the map onto a running
   terminal in
   `tt-session`, the schema as data over the C ABI, and a Qt dialog that builds
   itself from it. What remains is the *rest of the settings*, which is a line
-  and a citation each — 105 keys as of 2026-08-10, and `tests/upstream.rs`
+  and a citation each — 101 keys as of 2026-08-10, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -3723,6 +3724,37 @@ same fork the two `xfail`s want.
 180 settings over 167 keys, 105 to go. The earlier 98 omitted seven keys read
 through Win32's wide-character APIs; the extraction guard now covers those
 call shapes too.
+
+#### Four draw-attribute switches that the painter had hardcoded
+
+`crates/tt-config/` and `shell/`, 2026-08-10. `EnableBold`,
+`UnderlineAttrFont`, `UseTextColor` and `UseNormalBGColor`: four settings whose
+entire effect is after the grid, where the differential dump cannot see it.
+`render_test` is their oracle, with grabbed pixels rather than a second reading
+of the code.
+
+**Bold and underline are two switches each.** `EnableBoldAttrColor` and
+`UnderlineAttrColor` choose the attribute's colour pair; `EnableBold` and
+`UnderlineAttrFont` independently choose the bold or underlined face. All four
+ship on, so the shell's hardcoded bold face and underline looked right until a
+file turned one off. They now gate the font at the last point before a run is
+painted, leaving the attribute in the cell and its independently enabled colour
+untouched.
+
+**`UseTextColor` is much narrower than its documentation sounds.** After both
+explicit SGR colours have been applied, `vtdisp.c:2542` repairs a same-colour
+pair only when the two indices match and the foreground is 0, 7 or 15 — black,
+white or bright white. Red-on-red stays red-on-red. Under selection, SGR 7 or
+DECSCNM it substitutes the configured *reverse* pair even when
+`EnableReverseAttrColor=off`, because this arm runs after the ordinary reverse
+colour gate. Both the ordering and the exception are pinned in the pixel test.
+
+`UseNormalBGColor` is the simpler sibling: when a bold, blink, underline or URL
+colour pair wins, use the normal text background instead of that pair's own
+background. Reversal turns that normal background into the foreground; an
+explicit SGR background still overrides it afterwards.
+
+184 settings over 171 keys, 101 to go.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 

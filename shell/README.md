@@ -142,6 +142,15 @@ Three things that look like painter bugs and are not:
   default. Painting index 0 there gives a black-on-black screen, which reads as
   a parser bug.
 
+Four settings act only at this last step. Bold and underline each have an
+independent font gate and colour gate, so a cell may be blue in a regular face
+or bold in the normal colour. `UseNormalBGColor` replaces an attribute pair's
+background with the normal one. `UseTextColor` is not a general contrast fix:
+it replaces only an explicit black-on-black, white-on-white or bright-white
+pair, after reversal has been decided. In the reversed arm it uses the
+configured reverse pair even when that pair is otherwise disabled. The grabbed
+pixel tests pin these combinations because no core or differential dump can.
+
 ## Text is drawn in runs, and that needs the font's help
 
 One `drawText` per run of cells that look alike, because real console output is
