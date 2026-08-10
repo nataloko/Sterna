@@ -145,6 +145,9 @@ public:
     void scrollToBottom() { setViewOffset(0); }
 
     bool reverseVideo() const;
+    /// One entry from this terminal's live palette. Unlike the ABI's
+    /// sessionless fallback, the first sixteen entries reflect `ANSIColor`.
+    bool paletteRgb(uint32_t index, uint8_t *r, uint8_t *g, uint8_t *b) const;
     TtTracking mouseTracking() const;
     /// Whether a wheel notch belongs to the host as a cursor key rather than
     /// to the window's own scrollback. Four terms deep on the core's side, so

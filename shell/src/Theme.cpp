@@ -76,6 +76,16 @@ Theme::Theme()
 
 void Theme::applySettings(const Session &session)
 {
+    // The parser resolves truecolor against this same live table, so the
+    // painter must read it from the session too. Reading `ANSIColor` again in
+    // Qt would create two parsers for its masking, wrapping and buffer limits.
+    for (uint32_t i = 0; i < 256; i++) {
+        uint8_t r = 0, g = 0, b = 0;
+        if (session.paletteRgb(i, &r, &g, &b)) {
+            m_palette[i] = QColor(r, g, b);
+        }
+    }
+
     readPair(session, "color.normal", m_normal);
     readPair(session, "color.bold", m_bold);
     readPair(session, "color.blink", m_blink);

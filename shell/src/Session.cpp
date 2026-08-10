@@ -131,6 +131,11 @@ void Session::setViewOffset(int offset)
 
 bool Session::reverseVideo() const { return tt_session_reverse_video(m_session); }
 
+bool Session::paletteRgb(uint32_t index, uint8_t *r, uint8_t *g, uint8_t *b) const
+{
+    return tt_session_palette_rgb(m_session, index, r, g, b);
+}
+
 TtTracking Session::mouseTracking() const { return tt_session_mouse_tracking(m_session); }
 
 bool Session::wheelToCursor(TtModifiers mods) const

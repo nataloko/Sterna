@@ -242,6 +242,24 @@ void test_truecolor_resolves_through_upstreams_search()
     CHECK(h.at(0, 0) == kDarkRed);
 }
 
+void test_ansi_palette_changes_the_search_and_the_painter_together()
+{
+    Harness h;
+    QString error;
+
+    // The file uses the legacy order: 9 becomes drawing index 1. Index 0 does
+    // not move, and gives the nearest-colour search a result whose final
+    // bright/dim flip deliberately leaves it alone.
+    CHECK(h.session.setSetting(QStringLiteral("color.ansi_palette"),
+                               QStringLiteral("0,1,2,3,9,12,34,56"), &error));
+    h.view.applySettings();
+    h.feed("\033[41m \033[48;2;1;2;3m \033[0m");
+    h.render();
+
+    CHECK(h.bgAt(0, 0) == QColor(12, 34, 56));
+    CHECK(h.bgAt(1, 0) == QColor(1, 2, 3));
+}
+
 void test_reverse_and_screen_reverse()
 {
     Harness h;
@@ -1100,6 +1118,7 @@ int main(int argc, char **argv)
     test_text_is_drawn();
     test_sgr_background_colours();
     test_truecolor_resolves_through_upstreams_search();
+    test_ansi_palette_changes_the_search_and_the_painter_together();
     test_reverse_and_screen_reverse();
     test_a_visual_bell_inverts_the_screen_and_puts_it_back();
     test_bold_has_its_own_colour();
