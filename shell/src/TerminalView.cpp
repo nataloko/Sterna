@@ -239,6 +239,7 @@ void TerminalView::applySettings()
     };
     m_clipboard.dialogWidth = number("clipboard.paste_dialog_width", m_clipboard.dialogWidth);
     m_clipboard.dialogHeight = number("clipboard.paste_dialog_height", m_clipboard.dialogHeight);
+    m_wheelScrollLine = number("mouse.wheel_scroll_line", m_wheelScrollLine);
 
     // Decoded by the core rather than read by name: `DelimList` is stored in
     // `Hex2StrW`'s `$xx` escape and its own default opens with one, so the raw
@@ -782,18 +783,44 @@ void TerminalView::wheelEvent(QWheelEvent *event)
     // `vtwin.cpp:2542` passes `zDelta < 0`, so 0 is up and 1 is down.
     const uint8_t button = delta > 0 ? 0 : 1;
     const QPointF p = event->position();
+    const TtModifiers mods = modifiersOf(event->modifiers());
+
+    // How far one message is worth, `vtwin.cpp:2536`. The setting multiplies
+    // only a lone notch, and the guard is `> 0` rather than a clamp — so
+    // `MouseWheelScrollLine=0` is one line per notch, and so is a negative
+    // one.
+    int lines = qAbs(delta) / 120;
+    if (lines < 1) {
+        lines = 1;
+    }
+    if (lines == 1 && m_wheelScrollLine > 0) {
+        lines *= m_wheelScrollLine;
+    }
+
     // Offered to the terminal first: a full-screen application that asked for
     // mouse tracking wants the wheel, and `less` scrolling its own buffer is
     // not the same thing as us scrolling ours.
     if (m_session->mouse(TT_MOUSE_EVENT_WHEEL, button, static_cast<int>(p.x()),
-                         static_cast<int>(p.y()), modifiersOf(event->modifiers()))) {
+                         static_cast<int>(p.y()), mods)) {
         event->accept();
         return;
     }
 
-    const int lines = qMax(1, QApplication::wheelScrollLines());
-    const int steps = delta / 120 != 0 ? delta / 120 : (delta > 0 ? 1 : -1);
-    setViewOffset(m_session->viewOffset() + steps * lines);
+    // Then `DECSET 7786`: a host that asked for it gets cursor keys instead,
+    // which is how the wheel scrolls inside a program that has no mouse
+    // support and its own idea of a buffer. Holding Ctrl cancels it and gets
+    // the terminal's own history back — all four terms are the core's answer
+    // rather than ours, because getting one of them wrong makes the wheel
+    // dead rather than wrong.
+    if (m_session->wheelToCursor(mods)) {
+        for (int i = 0; i < lines; ++i) {
+            m_session->sendKey(delta > 0 ? TT_KEY_UP : TT_KEY_DOWN);
+        }
+        event->accept();
+        return;
+    }
+
+    setViewOffset(m_session->viewOffset() + (delta > 0 ? lines : -lines));
     event->accept();
 }
 

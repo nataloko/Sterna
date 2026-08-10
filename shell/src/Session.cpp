@@ -133,6 +133,11 @@ bool Session::reverseVideo() const { return tt_session_reverse_video(m_session);
 
 TtTracking Session::mouseTracking() const { return tt_session_mouse_tracking(m_session); }
 
+bool Session::wheelToCursor(TtModifiers mods) const
+{
+    return tt_session_wheel_to_cursor(m_session, mods);
+}
+
 QString Session::title() const { return m_title; }
 
 void Session::refreshTitle()

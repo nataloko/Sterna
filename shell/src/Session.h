@@ -146,6 +146,11 @@ public:
 
     bool reverseVideo() const;
     TtTracking mouseTracking() const;
+    /// Whether a wheel notch belongs to the host as a cursor key rather than
+    /// to the window's own scrollback. Four terms deep on the core's side, so
+    /// ask rather than assemble it — and ask only after `mouse()` has declined
+    /// the wheel.
+    bool wheelToCursor(TtModifiers mods) const;
     QString title() const;
     /// DECBKM. False means the Backspace key sends DEL rather than BS.
     bool backspaceSendsBs() const;

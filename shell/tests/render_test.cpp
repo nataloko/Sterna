@@ -22,6 +22,7 @@
 #include <QColor>
 #include <QImage>
 #include <QMouseEvent>
+#include <QWheelEvent>
 #include <QPixmap>
 
 #include <cstdio>
@@ -104,6 +105,17 @@ struct Harness {
             type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton;
         QMouseEvent ev(type, QPointF(x, y), QPointF(x, y), Qt::LeftButton, held,
                        Qt::NoModifier);
+        QCoreApplication::sendEvent(&view, &ev);
+    }
+
+    /// One notch of the wheel, posted the way a real one arrives. `notches`
+    /// above 1 is the coalesced message a fast flick produces, which upstream
+    /// deliberately does *not* multiply by `MouseWheelScrollLine`.
+    void wheel(int notches, Qt::KeyboardModifiers mods = Qt::NoModifier)
+    {
+        const QPointF p(px(0), py(0));
+        QWheelEvent ev(p, view.mapToGlobal(p), QPoint(), QPoint(0, 120 * notches),
+                       Qt::NoButton, mods, Qt::NoScrollPhase, false);
         QCoreApplication::sendEvent(&view, &ev);
     }
 
@@ -463,7 +475,13 @@ void test_output_does_not_move_a_scrolled_back_view()
     // The same claim `tt-session` tests, but through the painter — because
     // this is the one the user sees, and a frontend that re-read the offset
     // wrongly would undo it without any core test noticing.
+    //
+    // It needs the key: `AutoScrollOnlyInBottomLine` ships off, and a terminal
+    // with the shipped default is dragged back to the cursor instead.
     Harness h;
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("window.auto_scroll_only_at_bottom"),
+                               QStringLiteral("on"), &error));
     feedNumberedLines(h, 60);
     h.view.setViewOffset(5);
     h.render();
@@ -472,6 +490,55 @@ void test_output_does_not_move_a_scrolled_back_view()
     feedNumberedLines(h, 3);
     h.render();
     CHECK(h.bgAt(0, 0) == held);
+}
+
+void test_the_wheel_scrolls_by_the_setting()
+{
+    Harness h;
+    feedNumberedLines(h, 60);
+    CHECK(h.session.viewOffset() == 0);
+
+    // The shipped `MouseWheelScrollLine` is 3, and this is the whole reason
+    // the setting exists: `QApplication::wheelScrollLines()` is the desktop's
+    // answer to a different question and used to be what this read.
+    h.wheel(1);
+    CHECK(h.session.viewOffset() == 3);
+
+    // A coalesced flick is *not* multiplied (`vtwin.cpp:2539` tests
+    // `line == 1`), so two notches in one message move two lines rather than
+    // six. Upstream's quirk, reproduced.
+    h.wheel(2);
+    CHECK(h.session.viewOffset() == 5);
+
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("mouse.wheel_scroll_line"),
+                               QStringLiteral("10"), &error));
+    h.view.applySettings();
+    h.wheel(-1);
+    CHECK(h.session.viewOffset() == 0);
+}
+
+void test_the_wheel_goes_to_the_host_when_it_asked_for_it()
+{
+    Harness h;
+    feedNumberedLines(h, 60);
+    // `DECSET 7786` plus the application cursor mode is upstream's
+    // `WheelToCursorMode`, and it turns the wheel into cursor keys — which is
+    // how it scrolls inside a pager that has no mouse support.
+    h.feed("\x1b[?7786h\x1b[?1h");
+    h.wheel(1);
+    CHECK(h.session.viewOffset() == 0);
+
+    // Ctrl is the way back to the terminal's own history, and it is a setting
+    // rather than a convention.
+    h.wheel(1, Qt::ControlModifier);
+    CHECK(h.session.viewOffset() == 3);
+
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("mouse.ctrl_disables_wheel_to_cursor"),
+                               QStringLiteral("off"), &error));
+    h.wheel(1, Qt::ControlModifier);
+    CHECK(h.session.viewOffset() == 3);
 }
 
 // --- selection ---------------------------------------------------------------
@@ -964,6 +1031,8 @@ int main(int argc, char **argv)
     test_scrolling_back_paints_the_history();
     test_the_cursor_is_not_painted_onto_the_history();
     test_output_does_not_move_a_scrolled_back_view();
+    test_the_wheel_scrolls_by_the_setting();
+    test_the_wheel_goes_to_the_host_when_it_asked_for_it();
     test_a_drag_selects_the_characters_it_covers();
     test_a_double_click_selects_a_word();
     test_the_delimiter_list_is_the_setting_and_not_a_constant();

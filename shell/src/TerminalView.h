@@ -161,6 +161,17 @@ private:
         int dialogHeight = 220;
     } m_clipboard;
 
+    /// `MouseWheelScrollLine` — how many lines one notch of the wheel moves,
+    /// and how many cursor keys it sends when the host has asked for those.
+    /// Refreshed by `applySettings` like the block above.
+    ///
+    /// Upstream applies it **only to a notch that arrived alone**
+    /// (`vtwin.cpp:2539`), so a flick fast enough to coalesce two notches into
+    /// one message scrolls two lines rather than six. Reproduced, quirk and
+    /// all: the alternative is a wheel that behaves differently here at
+    /// exactly the speeds people scroll fastest.
+    int m_wheelScrollLine = 3;
+
     /// `DelimList`, decoded — what a double-click stops at. Refreshed by
     /// `applySettings` like the block above.
     ///
