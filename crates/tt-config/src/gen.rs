@@ -62,6 +62,8 @@ enum Bound {
     /// default for a negative value where upstream gives the floor, and
     /// `Floor` would leave a `PasteDelayPerLine=60000` at a minute a line.
     Clamped(i32, i32),
+    /// `uint16`: assignment to a Win32 `WORD`, which wraps modulo 65536.
+    Word,
 }
 
 /// What a missing comma-separated field becomes when the key itself exists.
@@ -276,8 +278,8 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
             },
         );
     }
-    // `int`, `int_zero`, their ranged forms, `int_min(floor)` or
-    // `int_clamp(min..max)`.
+    // `int`, `int_zero`, their ranged forms, `int_min(floor)`,
+    // `int_clamp(min..max)` or a wrapping `uint16`.
     let (spec, bound, fallback) = if let Some(body) = spec
         .strip_prefix("int_clamp(")
         .and_then(|s| s.strip_suffix(')'))
@@ -334,6 +336,8 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
             Some(Bound::Floor(body.trim().parse::<i32>().expect("a number"))),
             FieldFallback::Default,
         )
+    } else if spec == "uint16" {
+        ("int", Some(Bound::Word), FieldFallback::Default)
     } else if spec == "int_zero" {
         ("int", None, FieldFallback::Zero)
     } else {
@@ -570,6 +574,7 @@ fn emit(settings: &[Setting]) -> String {
                     Some(Bound::Clamped(lo, hi)) => {
                         format!("crate::schema::clamped({read}, {lo}, {hi})")
                     }
+                    Some(Bound::Word) => format!("crate::schema::word({read})"),
                 }
             }
             Kind::Str => format!("ini.get_or(\"{section}\", \"{key}\", &d.{field}).to_string()"),
@@ -605,6 +610,7 @@ fn emit(settings: &[Setting]) -> String {
             Some(Bound::Clamped(lo, hi)) => {
                 format!("crate::schema::clamped({read}, {lo}, {hi})")
             }
+            Some(Bound::Word) => format!("crate::schema::word({read})"),
         };
         writeln!(out, "        settings.{field} = {expr};").expect("string");
     }
@@ -690,6 +696,9 @@ fn emit(settings: &[Setting]) -> String {
                     Some(Bound::Clamped(lo, hi)) => {
                         format!("self.{field} = crate::schema::clamped({read}, {lo}, {hi})")
                     }
+                    Some(Bound::Word) => {
+                        format!("self.{field} = crate::schema::word({read})")
+                    }
                 }
             }
             Kind::Str => format!("self.{field} = value.to_string()"),
@@ -728,6 +737,10 @@ fn emit(settings: &[Setting]) -> String {
                 bound: Some(Bound::Clamped(lo, hi)),
                 ..
             } => format!("Kind::IntClamp({lo}, {hi})"),
+            Kind::Int {
+                bound: Some(Bound::Word),
+                ..
+            } => "Kind::IntWord".to_string(),
             Kind::Str => "Kind::Str".to_string(),
             Kind::Color2 => "Kind::Color2".to_string(),
             Kind::Enum { variants, .. } => {

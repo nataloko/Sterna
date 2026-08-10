@@ -1349,8 +1349,8 @@ pub struct Settings {
     /// includes a serial speed (`ttwinman.c:79`). The shipped 13 is 1|4|8:
     /// `<endpoint> - <title> VT`.
     ///
-    /// Kept as one integer because that is what the file exposes and unknown high
-    /// bits round-trip through upstream unchanged. Upstream's dialog presents the
+    /// Kept as one word because that is what the file exposes and unknown bits 6–15
+    /// round-trip through upstream unchanged. Upstream's dialog presents the
     /// low six as checkboxes; the generated first-pass dialog exposes the word
     /// directly until it grows a bit-field widget.
     pub window_title_format: i32,
@@ -2552,8 +2552,11 @@ impl Settings {
                 0,
                 255,
             ),
-            window_title_format: ini.get_int("Tera Term", "TitleFormat", d.window_title_format)
-                as i32,
+            window_title_format: crate::schema::word(ini.get_int(
+                "Tera Term",
+                "TitleFormat",
+                d.window_title_format,
+            ) as i32),
             window_title_change: match ini.get("Tera Term", "AcceptTitleChangeRequest") {
                 Some(v) => WindowTitleChange::from_ini(v),
                 None => d.window_title_change,
@@ -5349,7 +5352,8 @@ impl Settings {
                 )
             }
             "window.title_format" => {
-                self.window_title_format = crate::schema::int(value, self.window_title_format)
+                self.window_title_format =
+                    crate::schema::word(crate::schema::int(value, self.window_title_format))
             }
             "window.title_change" => self.window_title_change = WindowTitleChange::from_ini(value),
             "window.title_report" => self.window_title_report = WindowTitleReport::from_ini(value),
@@ -6453,10 +6457,10 @@ pub const FIELDS: &[Field] = &[
         page: "window",
         section: "Tera Term",
         key: "TitleFormat",
-        kind: Kind::Int,
+        kind: Kind::IntWord,
         default: "13",
         label: Some("DLG_TAB_GENERAL_TITLEFMT_GROUP"),
-        doc: "`ttset.c:1339`, a six-bit word rather than an enum: 1 shows the endpoint, 2 the process-wide session number, 4 the `VT`/`TEK` suffix, 8 puts the endpoint before the configured/remote title, 16 includes a TCP port and 32 includes a serial speed (`ttwinman.c:79`). The shipped 13 is 1|4|8: `<endpoint> - <title> VT`.  Kept as one integer because that is what the file exposes and unknown high bits round-trip through upstream unchanged. Upstream's dialog presents the low six as checkboxes; the generated first-pass dialog exposes the word directly until it grows a bit-field widget.",
+        doc: "`ttset.c:1339`, a six-bit word rather than an enum: 1 shows the endpoint, 2 the process-wide session number, 4 the `VT`/`TEK` suffix, 8 puts the endpoint before the configured/remote title, 16 includes a TCP port and 32 includes a serial speed (`ttwinman.c:79`). The shipped 13 is 1|4|8: `<endpoint> - <title> VT`.  Kept as one word because that is what the file exposes and unknown bits 6–15 round-trip through upstream unchanged. Upstream's dialog presents the low six as checkboxes; the generated first-pass dialog exposes the word directly until it grows a bit-field widget.",
     },
     Field {
         name: "window.title_change",

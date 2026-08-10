@@ -22,6 +22,9 @@ pub enum Kind {
     /// An int clamped at both ends — the third of the three, and see
     /// [`clamped`] for why it is not either of the others.
     IntClamp(i32, i32),
+    /// `GetPrivateProfileInt` narrowed into a Win32 `WORD`. The dialog range
+    /// is 0..65535, while the reader and name-addressed setter wrap into it.
+    IntWord,
     Str,
     /// The spellings the file accepts, in order. Anything else reads as the
     /// default, which is upstream's convention rather than an oversight.
@@ -141,6 +144,16 @@ pub fn floored(value: i32, lo: i32) -> i32 {
 /// `PasteDelayPerLine=60000` at a minute a line on a paste nobody could stop.
 pub fn clamped(value: i32, lo: i32, hi: i32) -> i32 {
     value.clamp(lo, hi)
+}
+
+/// Narrow a `GetPrivateProfileInt` result the way assignment to `WORD` does.
+///
+/// `TitleFormat` is the one integer setting currently held in a 16-bit word.
+/// Upstream therefore reads `-1` as 65535 and `65537` as 1, then writes that
+/// narrowed unsigned value back. A clamp or a range-default would give a
+/// different answer at both ends.
+pub fn word(value: i32) -> i32 {
+    i32::from(value as u16)
 }
 
 /// The `n`th comma-separated number of a value that holds several —

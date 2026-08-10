@@ -48,6 +48,9 @@
 #                 three bounds and a special case of neither: `int(lo..hi)`
 #                 would give the default below the floor, `int_min(lo)` has no
 #                 ceiling. Only `PasteDelayPerLine` is read this way
+#   uint16        `GetPrivateProfileInt` assigned to a `WORD`: modulo 65536,
+#                 then written back unsigned. `TitleFormat=-1` is 65535 and
+#                 `TitleFormat=65537` is 1
 #   string        the raw value
 #   enum(...)     `spelling=Variant`, compared case-insensitively (`_stricmp`,
 #                 which is what upstream uses for all but one of these);
@@ -496,11 +499,11 @@ window.opacity_active | int_clamp(0..255) | Tera Term | AlphaBlendActive | 255 |
 # includes a serial speed (`ttwinman.c:79`). The shipped 13 is 1|4|8:
 # `<endpoint> - <title> VT`.
 #
-# Kept as one integer because that is what the file exposes and unknown high
-# bits round-trip through upstream unchanged. Upstream's dialog presents the
+# Kept as one word because that is what the file exposes and unknown bits 6–15
+# round-trip through upstream unchanged. Upstream's dialog presents the
 # low six as checkboxes; the generated first-pass dialog exposes the word
 # directly until it grows a bit-field widget.
-window.title_format | int | Tera Term | TitleFormat | 13 | DLG_TAB_GENERAL_TITLEFMT_GROUP
+window.title_format | uint16 | Tera Term | TitleFormat | 13 | DLG_TAB_GENERAL_TITLEFMT_GROUP
 
 # `ttset.c:1568`. How the title the host set and `terminal.title` combine, and
 # **`off` means the host's title is not even stored** (`vtterm.c:5112`), which

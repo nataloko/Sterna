@@ -205,15 +205,19 @@ fn title_format_is_the_shipped_bit_word() {
     let defaults = Settings::default();
     assert_eq!(defaults.window_title_format, 13, "endpoint - title VT");
 
-    // It is an integer word, not an enum restricted to the six bits the
-    // dialog knows. Upstream preserves unknown bits and so must a shared file.
-    let ini = Ini::parse(b"[Tera Term]\r\nTitleFormat=77\r\n");
-    let settings = Settings::load(&ini);
-    assert_eq!(settings.window_title_format, 77);
+    // It is a WORD, not an enum restricted to the six bits the dialog knows.
+    // Unknown bits within the word survive, while values outside it narrow on
+    // assignment exactly as they do in C.
+    for (value, narrowed) in [("77", 77), ("-1", 65535), ("65537", 1)] {
+        let ini = Ini::parse(format!("[Tera Term]\r\nTitleFormat={value}\r\n").as_bytes());
+        let settings = Settings::load(&ini);
+        assert_eq!(settings.window_title_format, narrowed);
 
-    let mut out = Ini::new();
-    settings.store(&mut out);
-    assert_eq!(out.get("Tera Term", "TitleFormat"), Some("77"));
+        let mut out = Ini::new();
+        settings.store(&mut out);
+        let expected = narrowed.to_string();
+        assert_eq!(out.get("Tera Term", "TitleFormat"), Some(expected.as_str()));
+    }
 }
 
 #[test]
