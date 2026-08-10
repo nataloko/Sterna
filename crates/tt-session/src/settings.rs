@@ -27,9 +27,13 @@ use tt_config::{
     TerminalCrReceive, TerminalCrSend, WindowTitleChange, WindowTitleReport,
 };
 use tt_vt::{
-    valid_terminal_uid, Beep, ColorFlags, Config, CrReceive, CrSend, ShiftFlags, TabStopFlags,
-    TermId, TitleChange, TitleReport, DEFAULT_TERMINAL_UID,
+    palette::Rgb, valid_terminal_uid, Beep, ColorFlags, Config, CrReceive, CrSend, ShiftFlags,
+    TabStopFlags, TermId, TitleChange, TitleReport, DEFAULT_TERMINAL_UID,
 };
+
+/// `vtdisp.c:GetIndex256From16`: `ts.ANSIColor` keeps the legacy table order,
+/// while the renderer's 256-colour table swaps its bright and dim halves.
+const ANSI_256_FROM_16: [usize; 16] = [0, 9, 10, 11, 12, 13, 14, 15, 8, 1, 2, 3, 4, 5, 6, 7];
 
 /// `CRSend` → the engine's, named because `TCPCRSend` restores this one.
 pub(crate) fn cr_send_of(s: TerminalCrSend) -> CrSend {
@@ -73,10 +77,7 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
             pc_bold16: s.color_pc_bold_16,
             ansi_color: s.color_ansi_enabled,
         },
-        // `ANSIColor` joins this mapping in the next layer. Until then,
-        // preserve the caller's palette just like the other fields for which
-        // the settings schema has no key.
-        palette: base.palette,
+        palette: ansi_palette(&s.color_ansi_palette, base.palette),
         // DECSCUSR's numbering, which is what `Config::cursor_shape` holds and
         // what DECRQSS answers with: `vtterm.c:4270` maps IdBlkCur to 1,
         // IdHCur to 3 and IdVCur to **5**, so the enum's own order is not it.
@@ -152,6 +153,36 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
         max_osc_buffer: s.terminal_max_osc_buffer.max(0) as usize,
         ..*base
     }
+}
+
+/// Parse `ANSIColor` as `ttset.c:797` does, including its narrow buffers and
+/// integer casts.
+///
+/// The whole value lands in `char Temp[MAX_PATH]`, each field then lands in
+/// `char T[15]`, and only complete groups of four are read. IDs are masked to
+/// four bits, channels narrow to `BYTE`, and a duplicate ID overwrites the
+/// earlier group. Starting from the live palette matters for a partial value:
+/// upstream assigns only the entries it was actually handed.
+fn ansi_palette(value: &str, mut palette: [Rgb; 256]) -> [Rgb; 256] {
+    let bytes = value.as_bytes();
+    let bytes = &bytes[..bytes.len().min(259)]; // `MAX_PATH` minus the NUL.
+    let mut fields = bytes.split(|&byte| byte == b',');
+
+    while let Some(id) = fields.next() {
+        let Some(red) = fields.next() else { break };
+        let Some(green) = fields.next() else { break };
+        let Some(blue) = fields.next() else { break };
+
+        let number = |field: &[u8]| {
+            let field = &field[..field.len().min(14)]; // `T[15]` minus the NUL.
+            tt_config::services::scanf_int(field).unwrap_or(0)
+        };
+        let legacy = (number(id) & 15) as usize;
+        palette[ANSI_256_FROM_16[legacy]] =
+            (number(red) as u8, number(green) as u8, number(blue) as u8);
+    }
+
+    palette
 }
 
 /// The three numbers behind `RingBell`'s governor (`vtterm.c:5791`).
@@ -415,6 +446,43 @@ mod tests {
             of(b"[Tera Term]\r\nISO2022ShiftFunction=SI,SO\r\n").iso2022_flags,
             ShiftFlags(ShiftFlags::SI | ShiftFlags::SO)
         );
+    }
+
+    #[test]
+    fn the_ansi_palette_reaches_the_terminals_table_order() {
+        let base = Config::default();
+        let c = vt_config(
+            &Settings::load(&Ini::parse(b"[Tera Term]\r\nANSIColor=1,1,2,3,9,4,5,6\r\n")),
+            &base,
+        );
+
+        // Legacy 1 is bright index 9 in the drawing table; legacy 9 is dim
+        // index 1. A partial list leaves every entry it did not name alone.
+        assert_eq!(c.palette[9], (1, 2, 3));
+        assert_eq!(c.palette[1], (4, 5, 6));
+        assert_eq!(c.palette[10], base.palette[10]);
+    }
+
+    #[test]
+    fn the_ansi_palette_keeps_upstreams_narrowing_quirks() {
+        let base = Config::default().palette;
+        let p = ansi_palette("2,-1,256,257,17,1,2,3,1,4,5,6,3,nope,7,8,4,9", base);
+
+        assert_eq!(p[10], (255, 0, 1), "channels narrow to BYTE");
+        assert_eq!(p[9], (4, 5, 6), "IDs mask and the last group wins");
+        assert_eq!(p[11], (0, 7, 8), "a failed %d conversion is zero");
+        assert_eq!(p[12], base[12], "an incomplete group is not read");
+
+        // `GetNthNum` copies only fourteen bytes of an individual field.
+        let narrow = format!("4,{}9,2,3", " ".repeat(14));
+        assert_eq!(ansi_palette(&narrow, base)[12], (0, 2, 3));
+
+        // `GetPrivateProfileString` first truncates the entire value to 259
+        // bytes. Without that boundary the final group would overwrite 0.
+        let mut long = "0,1,2,3,".to_string();
+        long.push_str(&" ".repeat(251));
+        long.push_str("1,9,9,9");
+        assert_eq!(ansi_palette(&long, base)[0], (1, 2, 3));
     }
 
     /// The two of the parser's special options that are not scalars, and the
