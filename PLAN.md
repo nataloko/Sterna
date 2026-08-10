@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 401
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 402
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4554,6 +4554,17 @@ passes `hide`, `minimize`, `maximize` and the default `show` through with
 and verifies all five paths under Wine. The complete Windows TTL binary is now
 333/333 there; native Linux remains 332/332 plus the upstream script suite,
 and every Windows workspace target still links.
+
+The upstream TTL script gate can now finish on Windows rather than opening
+Notepad and waiting forever. `#35797.ttl` is the suite's one external `exec`;
+the harness replaces only its program name with a guaranteed miss on both
+platforms, preserving the parse, wait and failure path without launching a GUI.
+The native suite remains green. The MinGW suite under Wine now completes in
+6.7 seconds and exposes 11 transcript differences: six are escaped Windows
+paths the portability pass does not yet recognise, while the others are real
+platform shapes (drive syntax, special folders and path separators). They are
+recorded rather than blessed from Wine; a native Windows run remains the
+authority.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

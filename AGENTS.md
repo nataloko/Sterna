@@ -1578,6 +1578,12 @@ And for the macro language:
   argument is only the Unix compromise. The Windows launcher therefore calls
   `CreateProcessW` directly, which also keeps the original raw command line
   instead of splitting and reconstructing it.
+- **The upstream TTL script suite contains a blocking GUI program.**
+  `#35797.ttl` runs `notepad` with `wait=1`; it happened to fail immediately on
+  Linux, but a correct Windows `exec` opens it and waits for a person forever.
+  The transcript harness substitutes one guaranteed-missing program name on
+  both targets. Do not remove that isolation just because the Linux gate stays
+  green without it.
 - **A missing reserved word is not diagnosed as a missing command — it is
   diagnosed as a bad assignment.** An unrecognised name is read as a *variable*,
   so a command left out of the table falls into `ExecCmnd`'s `else` arm

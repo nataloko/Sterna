@@ -63,10 +63,12 @@
 //!    two files, so `macroparam.ttl` runs four times and each run is a separate
 //!    stretch of the same golden. Every other script is launched with its own
 //!    path and nothing else.
-//! 8. **`exec` is invisible.** It runs in the macro process upstream and does
-//!    here too, so there is no host method to record it — and the two scripts
-//!    that use it name Windows programs, so what the transcript shows is the
-//!    `result` of a failed spawn.
+//! 8. **`exec` is isolated.** It runs in the macro process upstream and does
+//!    here too, so there is no host method to record it. The one script using
+//!    it starts Notepad and waits for a human to close it; [`isolated_source`]
+//!    changes that program name to one which cannot exist on either platform,
+//!    leaving the command's parse and failure path under test without letting
+//!    the unattended suite start an external program.
 //!
 //! The scripts themselves are **not** copied into this tree: `../teraterm` is a
 //! read-only reference checkout and stays the one copy. A tree without it skips
@@ -942,6 +944,29 @@ fn replace_bytes(body: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Remove the one external side effect from upstream's otherwise headless
+/// suite.
+///
+/// `#35797.ttl` says `exec 'notepad' 'show' 1`. It failed to spawn on Linux,
+/// which happened to make the old transcript deterministic, but a Windows run
+/// correctly opens Notepad and waits forever for a person. Replacing only the
+/// executable name makes both targets exercise the same `CreateProcess`
+/// failure path. The exact-one assertion keeps an upstream edit from silently
+/// weakening the gate.
+fn isolated_source(name: &str, raw: Vec<u8>) -> Vec<u8> {
+    if name != "#35797.ttl" {
+        return raw;
+    }
+    const FROM: &[u8] = b"exec 'notepad' 'show' 1";
+    const TO: &[u8] = b"exec 'sterna-test-no-such-program' 'show' 1";
+    assert_eq!(
+        raw.windows(FROM.len()).filter(|w| *w == FROM).count(),
+        1,
+        "upstream #35797.ttl changed its exec line"
+    );
+    replace_bytes(&raw, FROM, TO)
+}
+
 /// Paths that are this machine's, replaced by names that are not.
 fn portable(text: String, dir: &Path, home: &Path, exe_dir: &Path) -> String {
     let mut out = text;
@@ -1006,7 +1031,7 @@ fn run_once(
     std::fs::create_dir_all(&dir).unwrap();
     seed(upstream, &dir);
 
-    let raw = std::fs::read(script).unwrap();
+    let raw = isolated_source(name, std::fs::read(script).unwrap());
     let path = dir.join(name);
     std::fs::write(&path, &raw).unwrap();
 
