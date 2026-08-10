@@ -20,6 +20,7 @@ pub mod cmdline;
 pub mod gen;
 pub mod hex;
 pub mod ini;
+pub mod keyboard;
 pub mod schema;
 pub mod services;
 
@@ -28,6 +29,7 @@ mod generated;
 pub use generated::*;
 pub use hex::{hex_decode, hex_decode_str};
 pub use ini::{Encoding, Ini};
+pub use keyboard::{KeyboardAction, KeyboardMap, Shortcut, UserKey, UserKeyType};
 pub use schema::{DebugModes, Field, Kind};
 
 impl Settings {

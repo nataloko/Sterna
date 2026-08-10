@@ -7,3 +7,4 @@ repository.workspace = true
 description = "TERATERM.INI, read and written the way GetPrivateProfile* does"
 
 [dependencies]
+tt-vt.workspace = true
