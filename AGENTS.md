@@ -1224,6 +1224,14 @@ And for the bell, where the surprise is that a beep is a state machine:
   `hex_decode_str`. And a setting stored this way must not be read through
   `tt_session_setting`, which gives the file's own spelling — that is why
   `tt_session_word_delimiters` exists.
+- **`DelimDBCS` is not a DBCS decoder switch.** `CheckDelimiterChar`
+  (`buffer.c:4479`) compares `b->cell == 1`, so with it on a double-clicked
+  non-delimiter word stops between any one-cell and multi-cell glyphs, emoji
+  included. It is consulted only in that arm: starting on a delimiter still
+  takes consecutive copies of the same character, whatever their widths.
+  Turning it off joins the width runs but does not make half a wide character
+  selectable; padding still resolves to its lead. It ships on, through
+  `GetOnOff(..., TRUE)` (`ttset.c:1176`).
 - **`BPAuto=on` silently discards `Answerback=`.** `ttset.c:1132` overwrites
   `ts.Answerback` with B Plus's five-byte activation string, four hundred lines
   after reading the key. It is the only setting in the file that another

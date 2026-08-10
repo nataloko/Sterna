@@ -293,7 +293,9 @@ original:
   one: starting on a delimiter takes the run of *that same character*, which is
   what makes double-clicking the gap between two columns of output select the
   gap. Starting anywhere else takes the run of non-delimiters, and stops where
-  the character width changes (`ts.DelimDBCS`, on by default).
+  the character width changes while `ts.DelimDBCS` is on. That setting ships
+  on; turning it off makes mixed-width non-delimiter text one selectable word,
+  without ever allowing half of a wide character into the selection.
 - **Triple click selects the line.** Qt has no triple-click event — the second
   press arrives as `mouseDoubleClickEvent` *instead of* a press — so the run is
   counted in the widget or the third click never reaches three.

@@ -621,7 +621,9 @@ the original turns up:
 - **`ts.DelimList`'s default word set** — a space and every ASCII punctuation
   mark **except** underscore — and `CheckDelimiterChar`'s two arms: starting on
   a delimiter takes the run of *that same character*, so double-clicking the
-  gap between two columns of output selects the gap.
+  gap between two columns of output selects the gap. Starting anywhere else
+  also stops between one-cell and multi-cell characters while `DelimDBCS` is
+  on, which is its default; the setting can remove that second boundary.
 - **The anchor is the whole unit the drag started on**, not the point it
   started at, which is what lets a double-clicked word be dragged leftwards and
   keep its right-hand edge. Upstream keeps the same pair.
@@ -1088,7 +1090,7 @@ before anything else in every session.
   from did. **A macro's `connect` opens one too**, 2026-08-09, through the same
   two parsers plus CygTerm's for `cygconnect`.
 - **Settings schema + generated dialogs**, first pass. ✅ **done, first pass** —
-  `crates/tt-config/` (206 settings over 192 keys: 39 for the terminal,
+  `crates/tt-config/` (207 settings over 193 keys: 39 for the terminal,
   2026-08-08, plus the connection, serial and transfer ones the command line
   writes into, 2026-08-09, plus the whole log family, then the whole
   file-transfer family, then the seven the terminal and the two the *transports*
@@ -1099,11 +1101,12 @@ before anything else in every session.
   the window-position pair and its save switch, the unfocused-cursor switch
   alongside the live cursor renderer, the startup macro's one-shot launch
   state, OSC 52's remote clipboard permissions and notification, and the
-  connection-close outcome pair, then the configured mouse pointer,
-  2026-08-10), the map onto a running terminal in `tt-session`, the schema as
+  connection-close outcome pair, then the configured mouse pointer and the
+  character-width word boundary, 2026-08-10), the map onto a running terminal
+  in `tt-session`, the schema as
   data over the C ABI, and a Qt dialog that builds itself from it.
   What remains is the *rest of the settings*, which is a line and a citation
-  each — 80 keys as of 2026-08-10, and `tests/upstream.rs`
+  each — 79 keys as of 2026-08-10, and `tests/upstream.rs`
   prints the count on every run rather than leaving it to a stale comment here.
   See below.
 - `TERATERM.INI` and `KEYBOARD.CNF` readers. ✅ **`TERATERM.INI` done**, held
@@ -4065,6 +4068,22 @@ to work, and an unknown hand-edited value survives both a save and a live
 settings change without being normalised to the default.
 
 206 settings over 192 keys, 80 to go.
+
+#### Character width is an optional word boundary
+
+`crates/tt-config/` and the shell, 2026-08-10. `DelimDBCS` controls the width
+boundary in a double-clicked word rather than decoding any DBCS. As shipped,
+`abc北京def` is three selectable runs: one-cell text, multi-cell text, then
+one-cell text. Turning it off makes the whole non-delimiter string one word.
+
+**It applies to only one of `CheckDelimiterChar`'s two arms.** A selection
+starting on a delimiter still takes consecutive copies of that same character,
+whatever their widths; a selection starting anywhere else takes
+non-delimiters and conditionally stops when `b->cell == 1` changes
+(`buffer.c:4479`). A wide character also remains indivisible when the setting
+is off: clicking its padding cell first resolves to its leading cell.
+
+207 settings over 193 keys, 79 to go.
 
 ### ⬜ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
