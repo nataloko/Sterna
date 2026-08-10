@@ -36,6 +36,7 @@ libc = "0.2"
 # Manual-reset events are the native frontend wakeup for worker channels and
 # blocking byte readers. They are borrowed through the flat ABI by Qt.
 windows-sys = { version = "0.61", features = [
+    "Win32_Devices_Communication",
     "Win32_Foundation",
     "Win32_System_Threading",
 ] }

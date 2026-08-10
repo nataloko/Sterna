@@ -12,11 +12,15 @@ pub use parmrk::SerialEvent;
 
 #[cfg(unix)]
 mod linux;
+#[cfg(windows)]
+mod windows;
 
 mod enumerate;
 pub use enumerate::{enumerate, number_of_port, port_by_number, PortInfo, UsbInfo};
 
 use std::io::{Read, Write};
+#[cfg(windows)]
+use std::os::windows::io::RawHandle;
 use std::time::{Duration, Instant};
 
 use serialport::SerialPort;
@@ -128,8 +132,9 @@ pub struct SerialParams {
     pub dtr: PinControl,
     pub rts: PinControl,
     /// Escape the input stream so a line break arrives as a
-    /// [`SerialEvent::Break`] instead of a `0x00`. Costs one `FF`-doubling
-    /// pass over the input; without it a break and a NUL are the same byte.
+    /// [`SerialEvent::Break`] instead of only a `0x00`. Unix pays one
+    /// `FF`-doubling pass over the input for `PARMRK`; Windows receives the
+    /// line event separately from the bytes through `WaitCommEvent`.
     pub detect_break: bool,
     /// How long a read waits before returning empty. Short enough that a
     /// disconnect is noticed promptly, long enough not to spin.
@@ -172,7 +177,10 @@ pub struct ModemLines {
 /// An open serial port.
 pub struct SerialConn {
     port: NativePort,
+    #[cfg(windows)]
+    wake: Option<windows::WindowsSerialWake>,
     params: SerialParams,
+    #[cfg(unix)]
     decoder: parmrk::Parmrk,
     path: String,
     /// Set once a read or write has reported the device gone, so later calls
@@ -192,12 +200,19 @@ impl SerialConn {
 
         let mut conn = SerialConn {
             port,
+            #[cfg(windows)]
+            wake: None,
             params: *params,
+            #[cfg(unix)]
             decoder: parmrk::Parmrk::new(),
             path: path.to_string(),
             dead: false,
         };
         conn.apply(params)?;
+        #[cfg(windows)]
+        {
+            conn.wake = Some(windows::WindowsSerialWake::start(&conn.port)?);
+        }
         Ok(conn)
     }
 
@@ -295,11 +310,46 @@ impl SerialConn {
         if self.dead {
             return Err(Error::Disconnected);
         }
+        #[cfg(windows)]
+        {
+            let Some(notice) = self
+                .wake
+                .as_mut()
+                .expect("an open Windows serial port has a wakeup")
+                .take()?
+            else {
+                return Ok(0);
+            };
+            if notice.broken && self.params.detect_break {
+                events.push(SerialEvent::Break);
+            }
+            if !notice.receive {
+                self.wake
+                    .as_ref()
+                    .expect("the wakeup is still present")
+                    .acknowledge(false)?;
+                return Ok(0);
+            }
+        }
+
+        #[cfg(unix)]
         let mut buf = [0u8; 4096];
+        // Tera Term's own input buffer is 64 KiB. Draining that much avoids a
+        // `ClearCommError`/COMSTAT peek here: that tempting queue-length check
+        // would clear a break which arrived while the worker was waiting for
+        // this read to finish.
+        #[cfg(windows)]
+        let mut buf = [0u8; 64 * 1024];
         let n = match self.port.read(&mut buf) {
             Ok(n) => n,
-            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => return Ok(0),
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                #[cfg(windows)]
+                self.acknowledge_windows_read(false)?;
+                return Ok(0);
+            }
             Err(e) => {
+                #[cfg(windows)]
+                let _ = self.acknowledge_windows_read(false);
                 let e = Error::from_io(e);
                 self.dead = e.is_disconnected();
                 return Err(e);
@@ -308,17 +358,43 @@ impl SerialConn {
         // A zero-length read on a character device is EOF, which for a serial
         // port means the far end is gone.
         if n == 0 {
+            #[cfg(windows)]
+            let _ = self.acknowledge_windows_read(false);
             self.dead = true;
             return Err(Error::Disconnected);
         }
 
         let before = data.len();
+        #[cfg(unix)]
         if self.params.detect_break {
             self.decoder.feed(&buf[..n], data, events);
         } else {
             data.extend_from_slice(&buf[..n]);
         }
+        // Win32 reports line errors through WaitCommEvent/ClearCommError; its
+        // bytes are not Linux PARMRK escapes. Feeding an ordinary 0xFF into
+        // that decoder would hold it forever while waiting for two more bytes.
+        #[cfg(windows)]
+        data.extend_from_slice(&buf[..n]);
+
+        #[cfg(windows)]
+        {
+            // A full read may have stopped at our buffer rather than at the
+            // driver's queue. Ask the worker for one immediate follow-up; a
+            // rare exactly-64-KiB burst then pays one ordinary read timeout,
+            // while a larger burst cannot be stranded without a new event.
+            let more = n == buf.len();
+            self.acknowledge_windows_read(more)?;
+        }
         Ok(data.len() - before)
+    }
+
+    #[cfg(windows)]
+    fn acknowledge_windows_read(&self, more: bool) -> Result<()> {
+        self.wake
+            .as_ref()
+            .expect("an open Windows serial port has a wakeup")
+            .acknowledge(more)
     }
 
     /// Write `data`, honouring DSR flow control if it is on.
@@ -538,6 +614,16 @@ impl crate::transport::Transport for SerialConn {
         Some(self.port.as_raw_fd())
     }
 
+    #[cfg(windows)]
+    fn wait_handle(&self) -> Option<RawHandle> {
+        if self.dead {
+            return None;
+        }
+        self.wake
+            .as_ref()
+            .map(windows::WindowsSerialWake::wait_handle)
+    }
+
     /// The one transport that answers this, and the whole reason it is asked.
     fn as_serial(&mut self) -> Option<&mut SerialConn> {
         Some(self)
@@ -553,6 +639,10 @@ impl Drop for SerialConn {
     /// modem is told to hang up. Errors are ignored because the usual reason
     /// for one here is the adapter having already been unplugged.
     fn drop(&mut self) {
+        #[cfg(windows)]
+        if let Some(wake) = &self.wake {
+            wake.cancel();
+        }
         let _ = self.port.write_data_terminal_ready(false);
     }
 }

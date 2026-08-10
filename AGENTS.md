@@ -728,6 +728,20 @@ And for the serial side:
 - **Never call `tcdrain` from a thread that must stay responsive.** Flow
   control can hold the output queue forever. `tt-conn::SerialConn::flush` takes
   a timeout and polls `TIOCOUTQ`.
+- **A Win32 COM handle does not become readable by waiting on the handle.**
+  `serialport-rs` opens it synchronously, so the Windows wakeup duplicates the
+  handle into a worker blocked in `WaitCommEvent`, publishes one notice, and
+  waits for the read to acknowledge it — the same handshake as upstream's
+  `CommThread`/`ReadEnd`. Cancel it with `SetCommMask(handle, 0)` before the
+  original handle dies; a timer brings the idle polling back. Wine's
+  PTY-backed COM mapping rejects ordinary port setup with
+  `ERROR_NOT_SUPPORTED`, so `tests/serial_windows.rs` needs native Windows.
+- **`ClearCommError` clears the error it reports.** `bytes_to_read()` calls it,
+  so using that apparently harmless queue-length check between a
+  `WaitCommEvent` notice and the read can eat a break which arrived meanwhile.
+  Windows reads up to upstream's 64 KiB input-buffer size and synthesises one
+  more notice only when that fills. And do not send its bytes through the Unix
+  `PARMRK` decoder: an ordinary `0xFF` would be held as an incomplete escape.
 - **A test byte with bit 7 set cannot tell 7 data bits from 8.** At seven bits
   the stop bit lands in bit 7, so `0xA5` round-trips as `0xA5` either way and
   the test passes whatever the port is doing. Use `0x25`.

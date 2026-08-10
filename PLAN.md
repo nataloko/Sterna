@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 392
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 393
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4416,8 +4416,7 @@ its self-pipe. All three set/wait/reset tests pass through the MinGW binaries
 under Wine, the Windows crates link cleanly, and the Unix Qt build remains
 clean with its pty, macro and control event-loop tests passing. A native
 Windows Qt build is still required before calling the frontend path proven;
-serial still needs its own Windows asynchronous I/O event rather than being
-folded into this worker-channel change. Telnet and ConPTY are recorded below.
+the transports which still needed native Windows waits are recorded below.
 
 ConPTY is now a byte transport rather than a type that merely constructs. The
 anonymous pipes `portable-pty` creates are synchronous, so one blocking worker
@@ -4448,6 +4447,24 @@ The local Winsock test proves a quiet connection leaves the event unsignalled,
 then orders data and EOF as two wakes; it and the shared ConPTY-worker regression
 pass from MinGW binaries under Wine. Serial is now the last transport without a
 native Windows wakeup.
+
+Serial closes that last transport wakeup. `serialport-rs` opens a synchronous
+COM handle, which is not itself a receive-readiness object, so a worker blocks
+in `WaitCommEvent` on a duplicate and publishes one bounded notice at a time.
+It waits for the frontend's acknowledgement before arming again, matching Tera
+Term's `CommThread`/`ReadEnd` handshake, and `SetCommMask(handle, 0)` cancels it
+on close. Breaks come from the native line event; Windows bytes no longer pass
+through Linux's `PARMRK` decoder, where an ordinary `0xFF` was otherwise held
+as the start of a three-byte escape. A 64 KiB read matches upstream's input
+buffer and avoids `bytes_to_read()`: that serialport call uses
+`ClearCommError`, which could clear a later break before the worker observed it.
+
+The complete Windows workspace links, and a hardware test asserts idle, data
+and reset transitions while sending a literal `0xFF` over a COM loopback pair.
+It still needs the native Windows runner. Wine's PTY-backed COM mapping rejects
+ordinary port setup with `ERROR_NOT_SUPPORTED` before the event worker can run,
+so it cannot serve even as the focused smoke test it did for sockets and plain
+Win32 events.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
