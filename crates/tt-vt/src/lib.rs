@@ -3211,6 +3211,23 @@ impl Perform for State {
                 }
                 self.send_8bit = !(self.vt_level < 2 || arg0(params, 1) == 1);
             }
+            // DECSCUSR. The even values are the non-blinking forms, and zero
+            // is the same blinking block as one (`vtterm.c:3966`). Like
+            // DECSET 12, the entire sequence is ignored unless the file has
+            // enabled host cursor control.
+            (Some(b' '), 'q') if self.config.cursor_ctrl_sequence => {
+                let (shape, nonblinking) = match arg0(params, 0) {
+                    0 | 1 => (1, false),
+                    2 => (1, true),
+                    3 => (3, false),
+                    4 => (3, true),
+                    5 => (5, false),
+                    6 => (5, true),
+                    _ => return,
+                };
+                self.config.cursor_shape = shape;
+                self.config.nonblinking_cursor = nonblinking;
+            }
             (Some(b'\''), _) => self.csi_quote(params, action),
             // DECRQM. `vte` puts the private marker in the intermediates, so
             // `CSI ? Ps $ p` arrives as `?$` and would otherwise fall through
@@ -3778,6 +3795,45 @@ mod tests {
         assert_eq!(vt.reply(), b"\x1bP1$r2;5r\x1b\\");
         let vt = run(b"\x1bP$qZ\x1b\\", 20, 4);
         assert_eq!(vt.reply(), b"\x1bP0$r\x1b\\");
+    }
+
+    #[test]
+    fn decscusr_is_gated_and_sets_each_live_cursor_style() {
+        // The shipped gate is off, so even a valid sequence leaves both
+        // halves where the settings put them.
+        let mut vt = Vt::new(Config {
+            cursor_shape: 5,
+            nonblinking_cursor: true,
+            ..Config::default()
+        });
+        vt.feed(b"\x1b[1 q");
+        assert_eq!(vt.config().cursor_shape, 5);
+        assert!(vt.config().nonblinking_cursor);
+
+        for (n, shape, nonblinking) in [
+            (0, 1, false),
+            (1, 1, false),
+            (2, 1, true),
+            (3, 3, false),
+            (4, 3, true),
+            (5, 5, false),
+            (6, 5, true),
+        ] {
+            let mut vt = Vt::new(Config {
+                cursor_ctrl_sequence: true,
+                cursor_shape: 5,
+                nonblinking_cursor: true,
+                ..Config::default()
+            });
+            vt.feed(format!("\x1b[{n} q").as_bytes());
+            assert_eq!(vt.config().cursor_shape, shape, "DECSCUSR {n}");
+            assert_eq!(vt.config().nonblinking_cursor, nonblinking, "DECSCUSR {n}");
+
+            // A value outside the table is ignored rather than reset.
+            vt.feed(b"\x1b[7 q");
+            assert_eq!(vt.config().cursor_shape, shape);
+            assert_eq!(vt.config().nonblinking_cursor, nonblinking);
+        }
     }
 
     /// `TF_INVALIDDECRPSS` flips the leading digit and nothing else, so the
