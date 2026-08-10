@@ -935,6 +935,15 @@ connection.host_dialog_on_startup | bool | Tera Term | HostDialogOnStartup | on 
 # terminal launched by a macro does not recursively launch another one.
 macro.startup_file | string | Tera Term | StartupMacro |  | -
 
+# --- settings ---------------------------------------------------------------
+
+# `ttset.c:1999`, default **on**. Before Setup > Save setup overwrites the
+# active file, upstream copies its old bytes to a sibling named
+# `YYYYMMDDTHHMMSS+zzzz_TERATERM.INI` (`vtwin.cpp:4738`,
+# `ttlib_static_cpp.cpp:1432`). A first save has no old file to copy, and the
+# smaller close-time geometry save does not take this path.
+settings.auto_backup | bool | Tera Term | IniAutoBackup | on | -
+
 # --- serial ------------------------------------------------------------------
 #
 # The four enumerated ones share their spellings with `/CPARITY=` and friends,

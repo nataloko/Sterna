@@ -159,6 +159,18 @@ fn character_width_delimits_words_by_default() {
 }
 
 #[test]
+fn setup_backups_are_on_by_default() {
+    assert!(Settings::default().settings_auto_backup);
+
+    let off = Ini::parse(b"[Tera Term]\r\nIniAutoBackup=off\r\n");
+    assert!(!Settings::load(&off).settings_auto_backup);
+
+    // This is another default-on `GetOnOff`: numeric values do not disable it.
+    let numeric = Ini::parse(b"[Tera Term]\r\nIniAutoBackup=0\r\n");
+    assert!(Settings::load(&numeric).settings_auto_backup);
+}
+
+#[test]
 fn writing_settings_leaves_the_rest_of_the_file_alone() {
     let original = b"; my notes\r\n[Tera Term]\r\nCRReceive=LF\r\n[Extra]\r\nMine=1\r\n";
     let mut ini = Ini::parse(original);

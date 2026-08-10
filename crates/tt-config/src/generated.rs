@@ -1694,6 +1694,12 @@ pub struct Settings {
     /// (`ttmmain.cpp:285`). `/M` can replace it and a `/D=` topic clears it, so a
     /// terminal launched by a macro does not recursively launch another one.
     pub macro_startup_file: String,
+    /// `ttset.c:1999`, default **on**. Before Setup > Save setup overwrites the
+    /// active file, upstream copies its old bytes to a sibling named
+    /// `YYYYMMDDTHHMMSS+zzzz_TERATERM.INI` (`vtwin.cpp:4738`,
+    /// `ttlib_static_cpp.cpp:1432`). A first save has no old file to copy, and the
+    /// smaller close-time geometry save does not take this path.
+    pub settings_auto_backup: bool,
     /// `ttset.c:916`. **The bound is a different setting and is not a clamp**:
     /// `:1223` resets the port to 1 when it is below 1 or above `MaxComPort`, which
     /// is read at `:1218` — after this key but before the check. Left as a plain int
@@ -2185,6 +2191,7 @@ impl Default for Settings {
             connection_timeout: 0,
             connection_host_dialog_on_startup: true,
             macro_startup_file: String::from(""),
+            settings_auto_backup: true,
             serial_com_port: 1,
             serial_baud: 9600,
             serial_data_bits: SerialDataBits::default(),
@@ -2729,6 +2736,10 @@ impl Settings {
             macro_startup_file: ini
                 .get_or("Tera Term", "StartupMacro", &d.macro_startup_file)
                 .to_string(),
+            settings_auto_backup: crate::schema::on_off(
+                ini.get("Tera Term", "IniAutoBackup"),
+                true,
+            ),
             serial_com_port: ini.get_int("Tera Term", "ComPort", d.serial_com_port) as i32,
             serial_baud: ini.get_int("Tera Term", "BaudRate", d.serial_baud) as i32,
             serial_data_bits: match ini.get("Tera Term", "DataBit") {
@@ -3919,6 +3930,16 @@ impl Settings {
             "StartupMacro",
             &self.macro_startup_file.clone(),
         );
+        ini.set(
+            "Tera Term",
+            "IniAutoBackup",
+            &if self.settings_auto_backup {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
         ini.set("Tera Term", "ComPort", &self.serial_com_port.to_string());
         ini.set("Tera Term", "BaudRate", &self.serial_baud.to_string());
         ini.set(
@@ -4878,6 +4899,12 @@ impl Settings {
             }
             .to_string(),
             "macro.startup_file" => self.macro_startup_file.clone(),
+            "settings.auto_backup" => if self.settings_auto_backup {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "serial.com_port" => self.serial_com_port.to_string(),
             "serial.baud" => self.serial_baud.to_string(),
             "serial.data_bits" => self.serial_data_bits.as_ini().to_string(),
@@ -5413,6 +5440,9 @@ impl Settings {
                 self.connection_host_dialog_on_startup = crate::schema::on_off(Some(value), true)
             }
             "macro.startup_file" => self.macro_startup_file = value.to_string(),
+            "settings.auto_backup" => {
+                self.settings_auto_backup = crate::schema::on_off(Some(value), true)
+            }
             "serial.com_port" => {
                 self.serial_com_port = crate::schema::int(value, self.serial_com_port)
             }
@@ -6905,6 +6935,16 @@ pub const FIELDS: &[Field] = &[
         default: "",
         label: None,
         doc: "`ttset.c:1291`, a wide string whose empty default means no automatic macro. `CVTWindow::Startup` (`vtwin.cpp:1413`) consumes it once when the window starts; a leading `*` makes TTPMACRO put up its file picker (`ttmmain.cpp:285`). `/M` can replace it and a `/D=` topic clears it, so a terminal launched by a macro does not recursively launch another one.",
+    },
+    Field {
+        name: "settings.auto_backup",
+        page: "settings",
+        section: "Tera Term",
+        key: "IniAutoBackup",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1999`, default **on**. Before Setup > Save setup overwrites the active file, upstream copies its old bytes to a sibling named `YYYYMMDDTHHMMSS+zzzz_TERATERM.INI` (`vtwin.cpp:4738`, `ttlib_static_cpp.cpp:1432`). A first save has no old file to copy, and the smaller close-time geometry save does not take this path.",
     },
     Field {
         name: "serial.com_port",
