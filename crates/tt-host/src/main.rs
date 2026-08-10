@@ -14,9 +14,11 @@
 //! other end; this is that terminal.
 //!
 //! It is deliberately the same stack the Qt shell runs — [`Session`] over
-//! `tt-conn`'s pty, waiting on `poll_fd` — rather than a private loop around
-//! [`Vt`](tt_vt::Vt). A conformance suite that exercised a second, simpler
-//! implementation of the loop would be answering a question nobody asked.
+//! `tt-conn`'s pty, waiting on `poll_fd` on Unix — rather than a private loop
+//! around [`Vt`](tt_vt::Vt). A conformance suite that exercised a second,
+//! simpler implementation of the loop would be answering a question nobody
+//! asked. Windows currently uses a bounded sleep until ConPTY has a native
+//! frontend wakeup; its byte-I/O path is still a Stage 3 task.
 //!
 //! The exit status is about the *hosting*, not about the program: 0 once the
 //! child has hung the line up, 1 if it had to be given up on, 2 for a bad
@@ -109,9 +111,12 @@ fn run(session: &mut Session, timeout: Duration) -> std::process::ExitCode {
         // arrive to wake us — the child is busy writing, not reading — so the
         // wait becomes a short one until they have gone out.
         let wait = if session.pending_out() > 0 { 20 } else { 200 };
+        #[cfg(unix)]
         if let Some(fd) = session.poll_fd() {
             wait_readable(fd, wait);
         }
+        #[cfg(not(unix))]
+        std::thread::sleep(Duration::from_millis(wait as u64));
 
         // A budget of zero reads exactly once. A burst therefore arrives over
         // several turns of this loop, which is what keeps one screenful of
@@ -138,9 +143,6 @@ fn wait_readable(fd: std::os::unix::io::RawFd, ms: libc::c_int) {
     };
     unsafe { libc::poll(&mut pfd, 1, ms) };
 }
-
-#[cfg(not(unix))]
-fn wait_readable(_fd: std::os::unix::io::RawFd, _ms: i32) {}
 
 /// The final screen, for looking at when a run goes wrong. Not a dump format —
 /// `tt-dump` owns that, and it is the one the two engines are compared in.

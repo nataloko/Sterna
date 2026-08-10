@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 384
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 385
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4346,6 +4346,13 @@ templates still go through the platform C runtime as upstream's do: Unix keeps
 including MSVC's `%#d` spelling. The ordinary date expansion remains covered
 on Linux; the Windows branch is cross-compiled but still needs a native MSVC
 run before it is called proven.
+
+`tt-host` was the next small stop: its nominal non-Unix wait function still
+named Unix's `RawFd`, and the run loop called the Unix-only session accessor
+unconditionally. Unix still sleeps on `poll(2)`; Windows now uses a bounded
+sleep, explicitly temporary until ConPTY supplies byte I/O and a native
+frontend wakeup. This makes the harness compile there without pretending that
+the missing transport path works.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
