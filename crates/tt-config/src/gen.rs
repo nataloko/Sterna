@@ -57,6 +57,9 @@ enum Bound {
     /// (`ttset.c:1214`) — upstream caps that one against a compile-time
     /// constant in `buffer.c` rather than on the way in.
     Ranged(i32, i32),
+    /// `int_default(lo..hi)`: outside either end takes the default. The two
+    /// Unicode width settings accept only 1 or 2 (`ttset.c:1965`).
+    Validated(i32, i32),
     /// `int_min(lo)`, `ttset.c:1822` onward: below `lo` takes `lo`. A real
     /// clamp, and the transfer timeouts are the only settings read this way —
     /// `XmodemTimeouts=0,0,0,0,0` is five one-second timeouts rather than
@@ -70,6 +73,9 @@ enum Bound {
     Clamped(i32, i32),
     /// `uint16`: assignment to a Win32 `WORD`, which wraps modulo 65536.
     Word,
+    /// `int_alias(spelling=value)`: recognise one non-numeric spelling before
+    /// using the ordinary integer parser. `MaximizedBugTweak=on` means 2.
+    Alias(String, i32),
 }
 
 /// What a missing comma-separated field becomes when the key itself exists.
@@ -296,7 +302,8 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
         );
     }
     // `int`, `int_zero`, their ranged forms, `int_min(floor)`,
-    // `int_clamp(min..max)` or a wrapping `uint16`.
+    // `int_clamp(min..max)`, `int_alias(spelling=value)` or a wrapping
+    // `uint16`.
     let (spec, bound, fallback) = if let Some(body) = spec
         .strip_prefix("int_clamp(")
         .and_then(|s| s.strip_suffix(')'))
@@ -305,6 +312,19 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
         (
             "int",
             Some(Bound::Clamped(
+                lo.trim().parse::<i32>().expect("a number"),
+                hi.trim().parse::<i32>().expect("a number"),
+            )),
+            FieldFallback::Default,
+        )
+    } else if let Some(body) = spec
+        .strip_prefix("int_default(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        let (lo, hi) = body.split_once("..").expect("a range is `min..max`");
+        (
+            "int",
+            Some(Bound::Validated(
                 lo.trim().parse::<i32>().expect("a number"),
                 hi.trim().parse::<i32>().expect("a number"),
             )),
@@ -351,6 +371,21 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
         (
             "int",
             Some(Bound::Floor(body.trim().parse::<i32>().expect("a number"))),
+            FieldFallback::Default,
+        )
+    } else if let Some(body) = spec
+        .strip_prefix("int_alias(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        let (alias, value) = body
+            .split_once('=')
+            .expect("an integer alias is `spelling=value`");
+        (
+            "int",
+            Some(Bound::Alias(
+                alias.trim().to_string(),
+                value.trim().parse::<i32>().expect("a number"),
+            )),
             FieldFallback::Default,
         )
     } else if spec == "uint16" {
@@ -571,9 +606,18 @@ fn emit(settings: &[Setting]) -> String {
                 bound,
                 fallback,
             } => {
-                let read = match nth {
-                    None => format!("ini.get_int(\"{section}\", \"{key}\", d.{field}) as i32"),
-                    Some(n) => match fallback {
+                let read = match (nth, bound) {
+                    (None, Some(Bound::Alias(alias, value))) => format!(
+                        "crate::schema::int_alias(ini.get(\"{section}\", \"{key}\"), d.{field}, \"{}\", {value})",
+                        escape(alias)
+                    ),
+                    (None, _) => {
+                        format!("ini.get_int(\"{section}\", \"{key}\", d.{field}) as i32")
+                    }
+                    (Some(_), Some(Bound::Alias(_, _))) => {
+                        panic!("{field}: an integer alias cannot be one field of a list")
+                    }
+                    (Some(n), _) => match fallback {
                         FieldFallback::Default => format!(
                             "crate::schema::nth_int(ini.get(\"{section}\", \"{key}\"), {n}, d.{field})"
                         ),
@@ -587,11 +631,15 @@ fn emit(settings: &[Setting]) -> String {
                     Some(Bound::Ranged(lo, hi)) => {
                         format!("crate::schema::ranged({read}, d.{field}, {lo}, {hi})")
                     }
+                    Some(Bound::Validated(lo, hi)) => {
+                        format!("crate::schema::validated({read}, d.{field}, {lo}, {hi})")
+                    }
                     Some(Bound::Floor(lo)) => format!("crate::schema::floored({read}, {lo})"),
                     Some(Bound::Clamped(lo, hi)) => {
                         format!("crate::schema::clamped({read}, {lo}, {hi})")
                     }
                     Some(Bound::Word) => format!("crate::schema::word({read})"),
+                    Some(Bound::Alias(_, _)) => read,
                 }
             }
             Kind::Str => format!("ini.get_or(\"{section}\", \"{key}\", &d.{field}).to_string()"),
@@ -623,11 +671,18 @@ fn emit(settings: &[Setting]) -> String {
             Some(Bound::Ranged(lo, hi)) => {
                 format!("crate::schema::ranged({read}, settings.{source}, {lo}, {hi})")
             }
+            Some(Bound::Validated(lo, hi)) => {
+                format!("crate::schema::validated({read}, settings.{source}, {lo}, {hi})")
+            }
             Some(Bound::Floor(lo)) => format!("crate::schema::floored({read}, {lo})"),
             Some(Bound::Clamped(lo, hi)) => {
                 format!("crate::schema::clamped({read}, {lo}, {hi})")
             }
             Some(Bound::Word) => format!("crate::schema::word({read})"),
+            Some(Bound::Alias(alias, aliased)) => format!(
+                "crate::schema::int_alias(ini.get(\"{section}\", \"{key}\"), settings.{source}, \"{}\", {aliased})",
+                escape(alias)
+            ),
         };
         writeln!(out, "        settings.{field} = {expr};").expect("string");
     }
@@ -707,6 +762,10 @@ fn emit(settings: &[Setting]) -> String {
                         "self.{field} = crate::schema::ranged({read}, {}, {lo}, {hi})",
                         s.default.parse::<i32>().expect("a number")
                     ),
+                    Some(Bound::Validated(lo, hi)) => format!(
+                        "self.{field} = crate::schema::validated({read}, {}, {lo}, {hi})",
+                        s.default.parse::<i32>().expect("a number")
+                    ),
                     Some(Bound::Floor(lo)) => {
                         format!("self.{field} = crate::schema::floored({read}, {lo})")
                     }
@@ -716,6 +775,10 @@ fn emit(settings: &[Setting]) -> String {
                     Some(Bound::Word) => {
                         format!("self.{field} = crate::schema::word({read})")
                     }
+                    Some(Bound::Alias(alias, aliased)) => format!(
+                        "self.{field} = crate::schema::int_alias(Some(value), self.{field}, \"{}\", {aliased})",
+                        escape(alias)
+                    ),
                 }
             }
             Kind::Str => format!("self.{field} = value.to_string()"),
@@ -747,6 +810,10 @@ fn emit(settings: &[Setting]) -> String {
                 ..
             } => format!("Kind::IntRange({lo}, {hi})"),
             Kind::Int {
+                bound: Some(Bound::Validated(lo, hi)),
+                ..
+            } => format!("Kind::IntRange({lo}, {hi})"),
+            Kind::Int {
                 bound: Some(Bound::Floor(lo)),
                 ..
             } => format!("Kind::IntMin({lo})"),
@@ -758,6 +825,10 @@ fn emit(settings: &[Setting]) -> String {
                 bound: Some(Bound::Word),
                 ..
             } => "Kind::IntWord".to_string(),
+            Kind::Int {
+                bound: Some(Bound::Alias(_, _)),
+                ..
+            } => "Kind::Int".to_string(),
             Kind::Str => "Kind::Str".to_string(),
             Kind::Color2 => "Kind::Color2".to_string(),
             Kind::Enum { variants, .. } => {

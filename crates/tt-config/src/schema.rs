@@ -112,6 +112,36 @@ pub fn ranged(value: i32, default: i32, lo: i32, hi: i32) -> i32 {
     }
 }
 
+/// A range where *either* invalid end takes the default.
+///
+/// The Unicode width settings use this fourth shape (`ttset.c:1965`): only 1
+/// and 2 are accepted, and every other value becomes the platform default.
+/// That differs from [`ranged`], which caps a value above its ceiling.
+pub fn validated(value: i32, default: i32, lo: i32, hi: i32) -> i32 {
+    if (lo..=hi).contains(&value) {
+        value
+    } else {
+        default
+    }
+}
+
+/// An integer with one textual alias before the ordinary Win32 parse.
+///
+/// `MaximizedBugTweak=on` is the sole upstream instance: `on` means 2 and
+/// every other spelling goes through `atoi` (`ttset.c:1527`). The writer emits
+/// the resulting number, so this returns an integer rather than preserving the
+/// alias as text.
+pub fn int_alias(value: Option<&str>, default: i32, alias: &str, aliased: i32) -> i32 {
+    match value {
+        None => default,
+        Some(value) if value.eq_ignore_ascii_case(alias) => aliased,
+        // This shape comes from `GetPrivateProfileString` followed by `atoi`,
+        // not `GetPrivateProfileInt`: a present empty or non-numeric value is
+        // zero rather than the fallback.
+        Some(value) => crate::ini::parse_int_public(value.trim()) as i32,
+    }
+}
+
 /// Upstream's *other* bounds check, which really is a clamp — and the two must
 /// not be confused, because they disagree about exactly the values a
 /// hand-edited file is likely to hold.
@@ -228,4 +258,26 @@ pub fn color2_str(value: &[u8; 6]) -> String {
         .map(|n| n.to_string())
         .collect::<Vec<_>>()
         .join(",")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{int_alias, validated};
+
+    #[test]
+    fn validated_ranges_default_at_both_ends() {
+        assert_eq!(validated(0, 1, 1, 2), 1);
+        assert_eq!(validated(1, 1, 1, 2), 1);
+        assert_eq!(validated(2, 1, 1, 2), 2);
+        assert_eq!(validated(3, 1, 1, 2), 1);
+    }
+
+    #[test]
+    fn integer_aliases_are_resolved_before_numbers() {
+        assert_eq!(int_alias(None, 2, "on", 2), 2);
+        assert_eq!(int_alias(Some("ON"), 9, "on", 2), 2);
+        assert_eq!(int_alias(Some("7"), 9, "on", 2), 7);
+        assert_eq!(int_alias(Some(""), 9, "on", 2), 0);
+        assert_eq!(int_alias(Some("other"), 9, "on", 2), 0);
+    }
 }

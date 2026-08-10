@@ -51,6 +51,14 @@
 #                 three bounds and a special case of neither: `int(lo..hi)`
 #                 would give the default below the floor, `int_min(lo)` has no
 #                 ceiling. Only `PasteDelayPerLine` is read this way
+#   int_default(lo..hi)
+#                 outside either end takes the default. Unlike `int(lo..hi)`,
+#                 a value above the ceiling is not capped; the Unicode width
+#                 settings accept only 1 or 2 and take 1 for everything else
+#   int_alias(word=n)
+#                 an integer with one textual alias recognised first. The
+#                 writer emits the resulting number; `MaximizedBugTweak=on`
+#                 therefore reads as 2 and writes back as `2`
 #   uint16        `GetPrivateProfileInt` assigned to a `WORD`: modulo 65536,
 #                 then written back unsigned. `TitleFormat=-1` is 65535 and
 #                 `TitleFormat=65537` is 1
