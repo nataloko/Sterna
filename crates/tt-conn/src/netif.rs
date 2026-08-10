@@ -30,10 +30,8 @@
 ///   adapter, up or down, loopback included, and asks only that Windows call
 ///   it `IP_ADAPTER_ADDRESS_DNS_ELIGIBLE` — which has no Linux equivalent:
 ///   the flag is Windows' own judgement about what may be published in DNS,
-///   and `getifaddrs` has nothing that means it. So the eligibility test is
-///   the one thing here that is not reproduced, and a link-local `fe80::`
-///   address that Windows might have withheld is listed. Check it against a
-///   real `ttpmacro` in Stage 3 with the rest.
+///   and `getifaddrs` has nothing that means it. So Linux lists a link-local
+///   `fe80::` address Windows might withhold; Windows uses the native flag.
 #[cfg(unix)]
 pub fn local_ip_addresses(v6: bool) -> Option<Vec<String>> {
     use std::ffi::CStr;
@@ -84,9 +82,169 @@ pub fn local_ip_addresses(v6: bool) -> Option<Vec<String>> {
     Some(out)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub fn local_ip_addresses(v6: bool) -> Option<Vec<String>> {
+    if v6 {
+        windows_ipv6()
+    } else {
+        windows_ipv4()
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 pub fn local_ip_addresses(_v6: bool) -> Option<Vec<String>> {
     None
+}
+
+#[cfg(windows)]
+fn windows_ipv4() -> Option<Vec<String>> {
+    use windows_sys::Win32::Networking::WinSock::{
+        WSAIoctl, WSASocketW, WSAStartup, AF_INET, IFF_LOOPBACK, IFF_UP, INTERFACE_INFO,
+        INVALID_SOCKET, IPPROTO_UDP, SOCKET_ERROR, SOCK_DGRAM, WSADATA,
+    };
+
+    // SIO_GET_INTERFACE_LIST is `_IOR('t', 127, u_long)`. windows-sys omits
+    // the macro-generated constant, so retain the SDK value beside its use.
+    const SIO_GET_INTERFACE_LIST: u32 = 0x4004_747f;
+    const MAX_IPADDR: usize = 30;
+
+    let mut data = WSADATA::default();
+    // SAFETY: `data` is a live output structure. Like upstream, failure to
+    // initialise Winsock is the one condition reported as "cannot retrieve".
+    if unsafe { WSAStartup(0x0202, &mut data) } != 0 {
+        return None;
+    }
+    let _winsock = WinsockCleanup;
+
+    // SAFETY: no protocol-info structure is supplied and no overlapped mode
+    // is requested. This is the same datagram socket upstream uses only for
+    // the interface-list ioctl.
+    let socket = unsafe {
+        WSASocketW(
+            i32::from(AF_INET),
+            SOCK_DGRAM,
+            IPPROTO_UDP,
+            std::ptr::null(),
+            0,
+            0,
+        )
+    };
+    if socket == INVALID_SOCKET {
+        return Some(Vec::new());
+    }
+    let socket = WinsockSocket(socket);
+
+    let mut interfaces = [INTERFACE_INFO::default(); MAX_IPADDR];
+    let mut bytes = 0;
+    // SAFETY: the input pointers are null with zero length, and `interfaces`
+    // is a writable output buffer whose exact byte length is supplied.
+    let result = unsafe {
+        WSAIoctl(
+            socket.0,
+            SIO_GET_INTERFACE_LIST,
+            std::ptr::null(),
+            0,
+            interfaces.as_mut_ptr().cast(),
+            std::mem::size_of_val(&interfaces) as u32,
+            &mut bytes,
+            std::ptr::null_mut(),
+            None,
+        )
+    };
+    if result == SOCKET_ERROR {
+        return Some(Vec::new());
+    }
+
+    let count = (bytes as usize / std::mem::size_of::<INTERFACE_INFO>()).min(MAX_IPADDR);
+    let mut out = Vec::new();
+    for interface in &interfaces[..count] {
+        if interface.iiFlags & IFF_UP == 0 || interface.iiFlags & IFF_LOOPBACK != 0 {
+            continue;
+        }
+        // SAFETY: SIO_GET_INTERFACE_LIST filled this union as `AddressIn` for
+        // the AF_INET socket. The byte fields avoid host-endian ambiguity.
+        let addr = unsafe { interface.iiAddress.AddressIn.sin_addr.S_un.S_un_b };
+        out.push(std::net::Ipv4Addr::new(addr.s_b1, addr.s_b2, addr.s_b3, addr.s_b4).to_string());
+    }
+    Some(out)
+}
+
+#[cfg(windows)]
+fn windows_ipv6() -> Option<Vec<String>> {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::NetworkManagement::IpHelper::{
+        GetAdaptersAddresses, IP_ADAPTER_ADDRESSES_LH, IP_ADAPTER_ADDRESS_DNS_ELIGIBLE,
+    };
+    use windows_sys::Win32::Networking::WinSock::{AF_INET6, SOCKADDR_IN6};
+
+    // Upstream hands GetAdaptersAddresses a fixed 256-entry buffer and treats
+    // every API error as a successful empty result. Keep both details rather
+    // than turning the usual size-probe/retry idiom into different behaviour.
+    let mut adapters = vec![IP_ADAPTER_ADDRESSES_LH::default(); 256];
+    let mut bytes = std::mem::size_of_val(adapters.as_slice()) as u32;
+    // SAFETY: `adapters` is a writable buffer of `bytes` bytes; the reserved
+    // pointer is required to be null.
+    if unsafe {
+        GetAdaptersAddresses(
+            u32::from(AF_INET6),
+            0,
+            std::ptr::null(),
+            adapters.as_mut_ptr(),
+            &mut bytes,
+        )
+    } != ERROR_SUCCESS
+    {
+        return Some(Vec::new());
+    }
+
+    let mut out = Vec::new();
+    let mut adapter = adapters.as_mut_ptr();
+    // SAFETY: a successful GetAdaptersAddresses call writes two linked lists
+    // whose nodes and socket addresses live inside `adapters` until return.
+    unsafe {
+        while !adapter.is_null() {
+            let mut unicast = (*adapter).FirstUnicastAddress;
+            while !unicast.is_null() {
+                let flags = (*unicast).Anonymous.Anonymous.Flags;
+                let address = (*unicast).Address;
+                if flags & IP_ADAPTER_ADDRESS_DNS_ELIGIBLE != 0
+                    && !address.lpSockaddr.is_null()
+                    && address.iSockaddrLength >= std::mem::size_of::<SOCKADDR_IN6>() as i32
+                {
+                    let socket = &*(address.lpSockaddr.cast::<SOCKADDR_IN6>());
+                    if socket.sin6_family == AF_INET6 {
+                        out.push(render_v6(&socket.sin6_addr.u.Byte));
+                    }
+                }
+                unicast = (*unicast).Next;
+            }
+            adapter = (*adapter).Next;
+        }
+    }
+    Some(out)
+}
+
+#[cfg(windows)]
+struct WinsockCleanup;
+
+#[cfg(windows)]
+impl Drop for WinsockCleanup {
+    fn drop(&mut self) {
+        // SAFETY: constructed only after a successful WSAStartup call.
+        let _ = unsafe { windows_sys::Win32::Networking::WinSock::WSACleanup() };
+    }
+}
+
+#[cfg(windows)]
+struct WinsockSocket(windows_sys::Win32::Networking::WinSock::SOCKET);
+
+#[cfg(windows)]
+impl Drop for WinsockSocket {
+    fn drop(&mut self) {
+        // SAFETY: the constructor excludes INVALID_SOCKET and owns this
+        // temporary socket until the interface query is complete.
+        let _ = unsafe { windows_sys::Win32::Networking::WinSock::closesocket(self.0) };
+    }
 }
 
 /// `myInetNtop` (`ttl.cpp:2499`), which is **not** RFC 5952 and not
@@ -98,7 +256,6 @@ pub fn local_ip_addresses(_v6: bool) -> Option<Vec<String>> {
 /// because `InetNtop` was not available on the oldest Windows it supported,
 /// and a script that has been comparing against that string for a decade is
 /// the reason to keep it.
-#[cfg(any(unix, test))]
 fn render_v6(bytes: &[u8; 16]) -> String {
     let mut s = String::with_capacity(39);
     for (i, b) in bytes.iter().enumerate() {
@@ -137,10 +294,11 @@ mod tests {
     }
 
     /// The enumeration itself, asserted on properties rather than on this
-    /// machine's addresses — which are a container's, and change.
+    /// machine's addresses — which belong to the current environment and
+    /// change.
     #[test]
     fn the_addresses_are_this_machines_own() {
-        let v4 = local_ip_addresses(false).expect("getifaddrs should answer");
+        let v4 = local_ip_addresses(false).expect("the platform interface API should answer");
         for a in &v4 {
             let parsed: std::net::Ipv4Addr = a.parse().expect(a);
             assert!(!parsed.is_loopback(), "loopback is filtered out: {a}");
@@ -153,7 +311,7 @@ mod tests {
         // The v6 form is long-hand, and the check is that it still parses:
         // an expanded address is valid input even though it is not what
         // `to_string` would produce.
-        for a in local_ip_addresses(true).expect("getifaddrs should answer") {
+        for a in local_ip_addresses(true).expect("the platform interface API should answer") {
             assert_eq!(a.len(), 39, "{a}");
             a.parse::<std::net::Ipv6Addr>().expect(&a);
         }

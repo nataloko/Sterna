@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 396
+**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 397
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4506,6 +4506,17 @@ deadline. Because that snapshot is obtained through the destructive
 event without consuming a worker notice. Pure timeout and event-ordering tests
 pass under Wine; a native loopback case lowers CTS against a five-second read
 timeout and requires both a 40 ms write and flush to return promptly.
+
+TTL's local-address commands no longer report `result=-1` unconditionally on
+Windows. The IPv4 half uses upstream's Winsock startup, datagram socket and
+`SIO_GET_INTERFACE_LIST` path, including its 30-interface ceiling and its
+up/non-loopback filter. The IPv6 half uses the same fixed 256-entry
+`GetAdaptersAddresses` buffer and, unlike the Linux approximation, applies the
+native `IP_ADAPTER_ADDRESS_DNS_ELIGIBLE` flag before rendering all sixteen
+bytes in upstream's long form. API-query failures remain a successful empty
+list just as they are upstream; only Winsock initialisation failure is “cannot
+retrieve.” Both families execute from the MinGW test binary under Wine, while
+Linux's existing interface assertions remain green.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
