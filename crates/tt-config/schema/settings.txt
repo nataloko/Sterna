@@ -724,6 +724,23 @@ clipboard.bracketed | bool | Tera Term | BracketedSupport | on | -
 # qualifies either way.
 clipboard.bracketed_control_only | bool | Tera Term | BracketedControlOnly | off | -
 
+# `ttset.c:1742`, `ts.CtrlFlag & CSF_CBMASK`. The two bits are independent:
+# `read` lets OSC 52 ask for the local clipboard, `write` lets it replace the
+# clipboard, and `on`/`readwrite` sets both. Anything else is off — including
+# an empty value — and the writer canonicalises the two-bit form to `on`.
+#
+# Off by default because a remote process reading the clipboard can disclose a
+# password or token which never went near this terminal, while writing it can
+# replace text the user is about to paste somewhere else. `/OSC52=` overrides
+# this setting for one launch through the same four-state value.
+clipboard.remote_access | enum(on/readwrite=ReadWrite,read=Read,write=Write,off/*=Off) | Tera Term | ClipboardAccessFromRemote | off | DLG_TAB_SEQUENCE_CLIPBOARD_ACCESS
+
+# `ttset.c:1753`, `GetOnOff(…, TRUE)`. Upstream raises a balloon for accepted
+# and rejected reads and writes. It does not change the permission above: with
+# access off (the default), this being on is what makes a rejected attempt
+# visible instead of silently dropping it.
+clipboard.remote_notify | bool | Tera Term | NotifyClipboardAccess | on | DLG_TAB_SEQUENCE_CLIPBOARD_NOTIFY
+
 # --- connection --------------------------------------------------------------
 #
 # The settings a command line is mostly about. `crates/tt-config/src/cmdline.rs`

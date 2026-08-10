@@ -19,7 +19,8 @@ pub mod cygterm;
 pub mod ssh;
 
 use crate::{
-    ConnectionPortType, SerialDataBits, SerialFlow, SerialParity, SerialStopBits, Settings,
+    ClipboardRemoteAccess, ConnectionPortType, SerialDataBits, SerialFlow, SerialParity,
+    SerialStopBits, Settings,
 };
 
 /// `GetParam` (`ttlib.c:879`) — one token and what is left after it.
@@ -600,6 +601,14 @@ impl CommandLine {
         // caller has to forget the name it was given separately.
         if self.no_log {
             settings.log_auto_start = false;
+        }
+        if let Some(access) = self.clipboard {
+            settings.clipboard_remote_access = match access {
+                ClipboardAccess::None => ClipboardRemoteAccess::Off,
+                ClipboardAccess::Read => ClipboardRemoteAccess::Read,
+                ClipboardAccess::Write => ClipboardRemoteAccess::Write,
+                ClipboardAccess::ReadWrite => ClipboardRemoteAccess::ReadWrite,
+            };
         }
         if let Some(dir) = &self.file_dir {
             let dir = String::from_utf8_lossy(dir).into_owned();
@@ -1356,6 +1365,12 @@ mod tests {
         // The host name is not a setting and never was: `ts.HostName` has no
         // key, so where to connect stays on the command line.
         assert_eq!(cmd.host_name, b"myhost");
+
+        let mut s = Settings::default();
+        parse("tt /OSC52=readwrite").apply(&mut s);
+        assert_eq!(s.clipboard_remote_access, ClipboardRemoteAccess::ReadWrite);
+        parse("tt /OSC52=nonsense").apply(&mut s);
+        assert_eq!(s.clipboard_remote_access, ClipboardRemoteAccess::Off);
     }
 
     /// An option that was not given must not overwrite the file's value, which

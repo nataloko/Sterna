@@ -532,6 +532,68 @@ impl Default for BellMode {
     }
 }
 
+/// `ttset.c:1742`, `ts.CtrlFlag & CSF_CBMASK`. The two bits are independent:
+/// `read` lets OSC 52 ask for the local clipboard, `write` lets it replace the
+/// clipboard, and `on`/`readwrite` sets both. Anything else is off — including
+/// an empty value — and the writer canonicalises the two-bit form to `on`.
+///
+/// Off by default because a remote process reading the clipboard can disclose a
+/// password or token which never went near this terminal, while writing it can
+/// replace text the user is about to paste somewhere else. `/OSC52=` overrides
+/// this setting for one launch through the same four-state value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClipboardRemoteAccess {
+    /// `on`, `readwrite` — the first is written back, the rest are aliases the
+    /// file may hold because upstream's own table has them.
+    ReadWrite,
+    /// `read`
+    Read,
+    /// `write`
+    Write,
+    /// `off`
+    Off,
+}
+
+impl ClipboardRemoteAccess {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::ReadWrite => "on",
+            Self::Read => "read",
+            Self::Write => "write",
+            Self::Off => "off",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised is `Off`** — which
+    /// is *not* this type's default. Upstream reads the key with a
+    /// default string and then runs a chain of comparisons whose last
+    /// arm catches everything, so an absent key and a misspelt value
+    /// are two different settings.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("on") || s.eq_ignore_ascii_case("readwrite") {
+            return Self::ReadWrite;
+        }
+        if s.eq_ignore_ascii_case("read") {
+            return Self::Read;
+        }
+        if s.eq_ignore_ascii_case("write") {
+            return Self::Write;
+        }
+        if s.eq_ignore_ascii_case("off") {
+            return Self::Off;
+        }
+        Self::Off
+    }
+}
+
+impl Default for ClipboardRemoteAccess {
+    fn default() -> Self {
+        Self::Off
+    }
+}
+
 /// `ttset.c:589`, and the default is the `else` branch: a `Port=` that says
 /// anything but `serial` is TCP/IP, including `Port=tcp` and `Port=`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1462,6 +1524,21 @@ pub struct Settings {
     /// again gives the same answer once they are CR, so any multi-line paste
     /// qualifies either way.
     pub clipboard_bracketed_control_only: bool,
+    /// `ttset.c:1742`, `ts.CtrlFlag & CSF_CBMASK`. The two bits are independent:
+    /// `read` lets OSC 52 ask for the local clipboard, `write` lets it replace the
+    /// clipboard, and `on`/`readwrite` sets both. Anything else is off — including
+    /// an empty value — and the writer canonicalises the two-bit form to `on`.
+    ///
+    /// Off by default because a remote process reading the clipboard can disclose a
+    /// password or token which never went near this terminal, while writing it can
+    /// replace text the user is about to paste somewhere else. `/OSC52=` overrides
+    /// this setting for one launch through the same four-state value.
+    pub clipboard_remote_access: ClipboardRemoteAccess,
+    /// `ttset.c:1753`, `GetOnOff(…, TRUE)`. Upstream raises a balloon for accepted
+    /// and rejected reads and writes. It does not change the permission above: with
+    /// access off (the default), this being on is what makes a rejected attempt
+    /// visible instead of silently dropping it.
+    pub clipboard_remote_notify: bool,
     /// `ttset.c:589`, and the default is the `else` branch: a `Port=` that says
     /// anything but `serial` is TCP/IP, including `Port=tcp` and `Port=`.
     pub connection_port_type: ConnectionPortType,
@@ -2059,6 +2136,8 @@ impl Default for Settings {
             clipboard_paste_dialog_height: 220,
             clipboard_bracketed: true,
             clipboard_bracketed_control_only: false,
+            clipboard_remote_access: ClipboardRemoteAccess::default(),
+            clipboard_remote_notify: true,
             connection_port_type: ConnectionPortType::default(),
             connection_tcp_port: 23,
             connection_telnet: true,
@@ -2547,6 +2626,14 @@ impl Settings {
             clipboard_bracketed_control_only: crate::schema::on_off(
                 ini.get("Tera Term", "BracketedControlOnly"),
                 false,
+            ),
+            clipboard_remote_access: match ini.get("Tera Term", "ClipboardAccessFromRemote") {
+                Some(v) => ClipboardRemoteAccess::from_ini(v),
+                None => d.clipboard_remote_access,
+            },
+            clipboard_remote_notify: crate::schema::on_off(
+                ini.get("Tera Term", "NotifyClipboardAccess"),
+                true,
             ),
             connection_port_type: match ini.get("Tera Term", "Port") {
                 Some(v) => ConnectionPortType::from_ini(v),
@@ -3623,6 +3710,21 @@ impl Settings {
         );
         ini.set(
             "Tera Term",
+            "ClipboardAccessFromRemote",
+            &self.clipboard_remote_access.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "NotifyClipboardAccess",
+            &if self.clipboard_remote_notify {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
             "Port",
             &self.connection_port_type.as_ini().to_string(),
         );
@@ -4632,6 +4734,13 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "clipboard.remote_access" => self.clipboard_remote_access.as_ini().to_string(),
+            "clipboard.remote_notify" => if self.clipboard_remote_notify {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "connection.port_type" => self.connection_port_type.as_ini().to_string(),
             "connection.tcp_port" => self.connection_tcp_port.to_string(),
             "connection.telnet" => if self.connection_telnet { "on" } else { "off" }.to_string(),
@@ -5165,6 +5274,12 @@ impl Settings {
             }
             "clipboard.bracketed_control_only" => {
                 self.clipboard_bracketed_control_only = crate::schema::on_off(Some(value), false)
+            }
+            "clipboard.remote_access" => {
+                self.clipboard_remote_access = ClipboardRemoteAccess::from_ini(value)
+            }
+            "clipboard.remote_notify" => {
+                self.clipboard_remote_notify = crate::schema::on_off(Some(value), true)
             }
             "connection.port_type" => {
                 self.connection_port_type = ConnectionPortType::from_ini(value)
@@ -6470,6 +6585,26 @@ pub const FIELDS: &[Field] = &[
         default: "off",
         label: None,
         doc: "`ttset.c:2003`. Brackets only a paste that **contains a control character** (`iswcntrl`, `clipboar.c:270`) — so a pasted word goes bare and a pasted block is bracketed. The test runs while the line breaks are still CR LF and again gives the same answer once they are CR, so any multi-line paste qualifies either way.",
+    },
+    Field {
+        name: "clipboard.remote_access",
+        page: "clipboard",
+        section: "Tera Term",
+        key: "ClipboardAccessFromRemote",
+        kind: Kind::Enum(&["on", "read", "write", "off"]),
+        default: "off",
+        label: Some("DLG_TAB_SEQUENCE_CLIPBOARD_ACCESS"),
+        doc: "`ttset.c:1742`, `ts.CtrlFlag & CSF_CBMASK`. The two bits are independent: `read` lets OSC 52 ask for the local clipboard, `write` lets it replace the clipboard, and `on`/`readwrite` sets both. Anything else is off — including an empty value — and the writer canonicalises the two-bit form to `on`.  Off by default because a remote process reading the clipboard can disclose a password or token which never went near this terminal, while writing it can replace text the user is about to paste somewhere else. `/OSC52=` overrides this setting for one launch through the same four-state value.",
+    },
+    Field {
+        name: "clipboard.remote_notify",
+        page: "clipboard",
+        section: "Tera Term",
+        key: "NotifyClipboardAccess",
+        kind: Kind::Bool,
+        default: "on",
+        label: Some("DLG_TAB_SEQUENCE_CLIPBOARD_NOTIFY"),
+        doc: "`ttset.c:1753`, `GetOnOff(…, TRUE)`. Upstream raises a balloon for accepted and rejected reads and writes. It does not change the permission above: with access off (the default), this being on is what makes a rejected attempt visible instead of silently dropping it.",
     },
     Field {
         name: "connection.port_type",
