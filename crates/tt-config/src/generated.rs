@@ -2059,6 +2059,102 @@ impl Default for TransferRawSendDelayType {
     }
 }
 
+/// `ttset.c:1555` passes the value through `IconName2IconId`. The ten known
+/// names compare case-insensitively; anything else becomes `Default`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TekIcon {
+    /// `tterm`
+    Tterm,
+    /// `vt`
+    Vt,
+    /// `tek`
+    Tek,
+    /// `tterm_classic`
+    TtermClassic,
+    /// `vt_classic`
+    VtClassic,
+    /// `tterm_3d`
+    Tterm3d,
+    /// `vt_3d`
+    Vt3d,
+    /// `tterm_flat`
+    TtermFlat,
+    /// `vt_flat`
+    VtFlat,
+    /// `cygterm`
+    Cygterm,
+    /// `Default`
+    Default,
+}
+
+impl TekIcon {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Tterm => "tterm",
+            Self::Vt => "vt",
+            Self::Tek => "tek",
+            Self::TtermClassic => "tterm_classic",
+            Self::VtClassic => "vt_classic",
+            Self::Tterm3d => "tterm_3d",
+            Self::Vt3d => "vt_3d",
+            Self::TtermFlat => "tterm_flat",
+            Self::VtFlat => "vt_flat",
+            Self::Cygterm => "cygterm",
+            Self::Default => "Default",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised is `Default`** — which
+    /// is *not* this type's default. Upstream reads the key with a
+    /// default string and then runs a chain of comparisons whose last
+    /// arm catches everything, so an absent key and a misspelt value
+    /// are two different settings.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("tterm") {
+            return Self::Tterm;
+        }
+        if s.eq_ignore_ascii_case("vt") {
+            return Self::Vt;
+        }
+        if s.eq_ignore_ascii_case("tek") {
+            return Self::Tek;
+        }
+        if s.eq_ignore_ascii_case("tterm_classic") {
+            return Self::TtermClassic;
+        }
+        if s.eq_ignore_ascii_case("vt_classic") {
+            return Self::VtClassic;
+        }
+        if s.eq_ignore_ascii_case("tterm_3d") {
+            return Self::Tterm3d;
+        }
+        if s.eq_ignore_ascii_case("vt_3d") {
+            return Self::Vt3d;
+        }
+        if s.eq_ignore_ascii_case("tterm_flat") {
+            return Self::TtermFlat;
+        }
+        if s.eq_ignore_ascii_case("vt_flat") {
+            return Self::VtFlat;
+        }
+        if s.eq_ignore_ascii_case("cygterm") {
+            return Self::Cygterm;
+        }
+        if s.eq_ignore_ascii_case("Default") {
+            return Self::Default;
+        }
+        Self::Default
+    }
+}
+
+impl Default for TekIcon {
+    fn default() -> Self {
+        Self::Default
+    }
+}
+
 /// `ttset.c:1501`. What the non-realtime broadcast dialog appends. The else arm
 /// is `None`, so an unrecognised value and an absent key agree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3275,6 +3371,46 @@ pub struct Settings {
     pub transfer_raw_send_skip_dialog: bool,
     /// `ttset.c:2030`. The corresponding switch for raw Receive file.
     pub transfer_raw_receive_skip_dialog: bool,
+    /// `ttset.c:1237`, assigned to the 16-bit `ts.PassThruDelay` and written
+    /// unsigned. It is the delay before controller-mode pass-through printing starts.
+    pub printer_passthrough_delay: i32,
+    /// `ttset.c:1241`. The raw printer device used for pass-through mode; empty lets
+    /// upstream choose its ordinary printer path.
+    pub printer_passthrough_port: String,
+    /// `ttset.c:1245`, `TF_PRINTERCTRL`, default off. Gates the printer control
+    /// sequences themselves, independently of whether a printer device was named.
+    pub printer_control_sequences: bool,
+    /// `ttset.c:1255`. Margins are hundredths of an inch, left, right, top and
+    /// bottom. `GetNthNum` makes a missing field zero in a present value.
+    pub printer_margin_left: i32,
+    /// The second field of `PrnMargin`, under the same `ttset.c:1255` rule.
+    pub printer_margin_right: i32,
+    /// The third field of `PrnMargin`, under the same `ttset.c:1255` rule.
+    pub printer_margin_top: i32,
+    /// The fourth field of `PrnMargin`, under the same `ttset.c:1255` rule.
+    pub printer_margin_bottom: i32,
+    /// `ttset.c:1263`, default off. Converts a form feed to a newline while printing.
+    pub printer_convert_form_feed: bool,
+    /// `ttset.c:603`. The TEK window's x/y position, using the same `CW_USEDEFAULT`
+    /// sentinel and `GetNthNum` zero-for-a-missing-field rule as `VTPos`.
+    pub tek_x: i32,
+    /// The second field of `TEKPos`, under the same `ttset.c:603` rule.
+    pub tek_y: i32,
+    /// `ttset.c:789`, black on white. The pair remains a pair even though no TEK
+    /// painter consumes it here.
+    pub tek_color: [u8; 6],
+    /// `ttset.c:860`, default off. Enables colour emulation in the dropped TEK parser.
+    pub tek_color_emulation: bool,
+    /// `ttset.c:1295`. The byte a TEK GIN mouse report uses, with no load-time range.
+    pub tek_gin_mouse_code: i32,
+    /// `ttset.c:1555` passes the value through `IconName2IconId`. The ten known
+    /// names compare case-insensitively; anything else becomes `Default`.
+    pub tek_icon: TekIcon,
+    /// `ttset.c:1374`. Both positive values override the printer's native pixels
+    /// per inch for a TEK print; zero in either axis means use the device values.
+    pub tek_ppi_x: i32,
+    /// The second field of `TEKPPI`, under the same `ttset.c:1374` rule.
+    pub tek_ppi_y: i32,
     /// `ttset.c:728`. No title bar, which `/H` also asks for. `/I` and `/V` —
     /// minimised and invisible — have no keys at all: `_ReadIniFile` zeroes both at
     /// `:554` and never reads one, so they are command-line-only.
@@ -3612,6 +3748,22 @@ impl Default for Settings {
             transfer_raw_send_sequential: false,
             transfer_raw_send_skip_dialog: false,
             transfer_raw_receive_skip_dialog: false,
+            printer_passthrough_delay: 3,
+            printer_passthrough_port: String::from(""),
+            printer_control_sequences: false,
+            printer_margin_left: 50,
+            printer_margin_right: 50,
+            printer_margin_top: 50,
+            printer_margin_bottom: 50,
+            printer_convert_form_feed: false,
+            tek_x: -2147483648,
+            tek_y: -2147483648,
+            tek_color: [0, 0, 0, 255, 255, 255],
+            tek_color_emulation: false,
+            tek_gin_mouse_code: 32,
+            tek_icon: TekIcon::default(),
+            tek_ppi_x: 0,
+            tek_ppi_y: 0,
             window_hide_title: false,
             window_popup_menu: false,
             window_popup_menu_enabled: true,
@@ -4559,6 +4711,57 @@ impl Settings {
                 ini.get("Tera Term", "ReceivefileSkipOptionDialog"),
                 false,
             ),
+            printer_passthrough_delay: crate::schema::word(ini.get_int(
+                "Tera Term",
+                "PassThruDelay",
+                d.printer_passthrough_delay,
+            ) as i32),
+            printer_passthrough_port: ini
+                .get_or("Tera Term", "PassThruPort", &d.printer_passthrough_port)
+                .to_string(),
+            printer_control_sequences: crate::schema::on_off(
+                ini.get("Tera Term", "PrinterCtrlSequence"),
+                false,
+            ),
+            printer_margin_left: crate::schema::nth_int_zero(
+                ini.get("Tera Term", "PrnMargin"),
+                0,
+                d.printer_margin_left,
+            ),
+            printer_margin_right: crate::schema::nth_int_zero(
+                ini.get("Tera Term", "PrnMargin"),
+                1,
+                d.printer_margin_right,
+            ),
+            printer_margin_top: crate::schema::nth_int_zero(
+                ini.get("Tera Term", "PrnMargin"),
+                2,
+                d.printer_margin_top,
+            ),
+            printer_margin_bottom: crate::schema::nth_int_zero(
+                ini.get("Tera Term", "PrnMargin"),
+                3,
+                d.printer_margin_bottom,
+            ),
+            printer_convert_form_feed: crate::schema::on_off(
+                ini.get("Tera Term", "PrnConvFF"),
+                false,
+            ),
+            tek_x: crate::schema::nth_int_zero(ini.get("Tera Term", "TEKPos"), 0, d.tek_x),
+            tek_y: crate::schema::nth_int_zero(ini.get("Tera Term", "TEKPos"), 1, d.tek_y),
+            tek_color: crate::schema::color2(ini.get("Tera Term", "TEKColor"), d.tek_color),
+            tek_color_emulation: crate::schema::on_off(
+                ini.get("Tera Term", "TEKColorEmulation"),
+                false,
+            ),
+            tek_gin_mouse_code: ini.get_int("Tera Term", "TEKGINMouseCode", d.tek_gin_mouse_code)
+                as i32,
+            tek_icon: match ini.get("Tera Term", "TEKIcon") {
+                Some(v) => TekIcon::from_ini(v),
+                None => d.tek_icon,
+            },
+            tek_ppi_x: crate::schema::nth_int_zero(ini.get("Tera Term", "TEKPPI"), 0, d.tek_ppi_x),
+            tek_ppi_y: crate::schema::nth_int_zero(ini.get("Tera Term", "TEKPPI"), 1, d.tek_ppi_y),
             window_hide_title: crate::schema::on_off(ini.get("Tera Term", "HideTitle"), false),
             window_popup_menu: crate::schema::on_off(ini.get("Tera Term", "PopupMenu"), false),
             window_popup_menu_enabled: crate::schema::on_off(
@@ -6298,6 +6501,113 @@ impl Settings {
         );
         ini.set(
             "Tera Term",
+            "PassThruDelay",
+            &self.printer_passthrough_delay.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "PassThruPort",
+            &self.printer_passthrough_port.clone(),
+        );
+        ini.set(
+            "Tera Term",
+            "PrinterCtrlSequence",
+            &if self.printer_control_sequences {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "PrnMargin",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "PrnMargin"),
+                0,
+                self.printer_margin_left,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "PrnMargin",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "PrnMargin"),
+                1,
+                self.printer_margin_right,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "PrnMargin",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "PrnMargin"),
+                2,
+                self.printer_margin_top,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "PrnMargin",
+            &crate::schema::with_nth(
+                ini.get("Tera Term", "PrnMargin"),
+                3,
+                self.printer_margin_bottom,
+            ),
+        );
+        ini.set(
+            "Tera Term",
+            "PrnConvFF",
+            &if self.printer_convert_form_feed {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "TEKPos",
+            &crate::schema::with_nth(ini.get("Tera Term", "TEKPos"), 0, self.tek_x),
+        );
+        ini.set(
+            "Tera Term",
+            "TEKPos",
+            &crate::schema::with_nth(ini.get("Tera Term", "TEKPos"), 1, self.tek_y),
+        );
+        ini.set(
+            "Tera Term",
+            "TEKColor",
+            &crate::schema::color2_str(&self.tek_color),
+        );
+        ini.set(
+            "Tera Term",
+            "TEKColorEmulation",
+            &if self.tek_color_emulation {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "TEKGINMouseCode",
+            &self.tek_gin_mouse_code.to_string(),
+        );
+        ini.set("Tera Term", "TEKIcon", &self.tek_icon.as_ini().to_string());
+        ini.set(
+            "Tera Term",
+            "TEKPPI",
+            &crate::schema::with_nth(ini.get("Tera Term", "TEKPPI"), 0, self.tek_ppi_x),
+        );
+        ini.set(
+            "Tera Term",
+            "TEKPPI",
+            &crate::schema::with_nth(ini.get("Tera Term", "TEKPPI"), 1, self.tek_ppi_y),
+        );
+        ini.set(
+            "Tera Term",
             "HideTitle",
             &if self.window_hide_title { "on" } else { "off" }.to_string(),
         );
@@ -7169,6 +7479,37 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "printer.passthrough_delay" => self.printer_passthrough_delay.to_string(),
+            "printer.passthrough_port" => self.printer_passthrough_port.clone(),
+            "printer.control_sequences" => if self.printer_control_sequences {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "printer.margin_left" => self.printer_margin_left.to_string(),
+            "printer.margin_right" => self.printer_margin_right.to_string(),
+            "printer.margin_top" => self.printer_margin_top.to_string(),
+            "printer.margin_bottom" => self.printer_margin_bottom.to_string(),
+            "printer.convert_form_feed" => if self.printer_convert_form_feed {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "tek.x" => self.tek_x.to_string(),
+            "tek.y" => self.tek_y.to_string(),
+            "tek.color" => crate::schema::color2_str(&self.tek_color),
+            "tek.color_emulation" => if self.tek_color_emulation {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "tek.gin_mouse_code" => self.tek_gin_mouse_code.to_string(),
+            "tek.icon" => self.tek_icon.as_ini().to_string(),
+            "tek.ppi_x" => self.tek_ppi_x.to_string(),
+            "tek.ppi_y" => self.tek_ppi_y.to_string(),
             "window.hide_title" => if self.window_hide_title { "on" } else { "off" }.to_string(),
             "window.popup_menu" => if self.window_popup_menu { "on" } else { "off" }.to_string(),
             "window.popup_menu_enabled" => if self.window_popup_menu_enabled {
@@ -7961,6 +8302,41 @@ impl Settings {
             "transfer.raw_receive_skip_dialog" => {
                 self.transfer_raw_receive_skip_dialog = crate::schema::on_off(Some(value), false)
             }
+            "printer.passthrough_delay" => {
+                self.printer_passthrough_delay =
+                    crate::schema::word(crate::schema::int(value, self.printer_passthrough_delay))
+            }
+            "printer.passthrough_port" => self.printer_passthrough_port = value.to_string(),
+            "printer.control_sequences" => {
+                self.printer_control_sequences = crate::schema::on_off(Some(value), false)
+            }
+            "printer.margin_left" => {
+                self.printer_margin_left = crate::schema::int(value, self.printer_margin_left)
+            }
+            "printer.margin_right" => {
+                self.printer_margin_right = crate::schema::int(value, self.printer_margin_right)
+            }
+            "printer.margin_top" => {
+                self.printer_margin_top = crate::schema::int(value, self.printer_margin_top)
+            }
+            "printer.margin_bottom" => {
+                self.printer_margin_bottom = crate::schema::int(value, self.printer_margin_bottom)
+            }
+            "printer.convert_form_feed" => {
+                self.printer_convert_form_feed = crate::schema::on_off(Some(value), false)
+            }
+            "tek.x" => self.tek_x = crate::schema::int(value, self.tek_x),
+            "tek.y" => self.tek_y = crate::schema::int(value, self.tek_y),
+            "tek.color" => self.tek_color = crate::schema::color2(Some(value), self.tek_color),
+            "tek.color_emulation" => {
+                self.tek_color_emulation = crate::schema::on_off(Some(value), false)
+            }
+            "tek.gin_mouse_code" => {
+                self.tek_gin_mouse_code = crate::schema::int(value, self.tek_gin_mouse_code)
+            }
+            "tek.icon" => self.tek_icon = TekIcon::from_ini(value),
+            "tek.ppi_x" => self.tek_ppi_x = crate::schema::int(value, self.tek_ppi_x),
+            "tek.ppi_y" => self.tek_ppi_y = crate::schema::int(value, self.tek_ppi_y),
             "window.hide_title" => {
                 self.window_hide_title = crate::schema::on_off(Some(value), false)
             }
@@ -10433,6 +10809,166 @@ pub const FIELDS: &[Field] = &[
         default: "off",
         label: None,
         doc: "`ttset.c:2030`. The corresponding switch for raw Receive file.",
+    },
+    Field {
+        name: "printer.passthrough_delay",
+        page: "printer",
+        section: "Tera Term",
+        key: "PassThruDelay",
+        kind: Kind::IntWord,
+        default: "3",
+        label: None,
+        doc: "`ttset.c:1237`, assigned to the 16-bit `ts.PassThruDelay` and written unsigned. It is the delay before controller-mode pass-through printing starts.",
+    },
+    Field {
+        name: "printer.passthrough_port",
+        page: "printer",
+        section: "Tera Term",
+        key: "PassThruPort",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "`ttset.c:1241`. The raw printer device used for pass-through mode; empty lets upstream choose its ordinary printer path.",
+    },
+    Field {
+        name: "printer.control_sequences",
+        page: "printer",
+        section: "Tera Term",
+        key: "PrinterCtrlSequence",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1245`, `TF_PRINTERCTRL`, default off. Gates the printer control sequences themselves, independently of whether a printer device was named.",
+    },
+    Field {
+        name: "printer.margin_left",
+        page: "printer",
+        section: "Tera Term",
+        key: "PrnMargin",
+        kind: Kind::Int,
+        default: "50",
+        label: None,
+        doc: "`ttset.c:1255`. Margins are hundredths of an inch, left, right, top and bottom. `GetNthNum` makes a missing field zero in a present value.",
+    },
+    Field {
+        name: "printer.margin_right",
+        page: "printer",
+        section: "Tera Term",
+        key: "PrnMargin",
+        kind: Kind::Int,
+        default: "50",
+        label: None,
+        doc: "The second field of `PrnMargin`, under the same `ttset.c:1255` rule.",
+    },
+    Field {
+        name: "printer.margin_top",
+        page: "printer",
+        section: "Tera Term",
+        key: "PrnMargin",
+        kind: Kind::Int,
+        default: "50",
+        label: None,
+        doc: "The third field of `PrnMargin`, under the same `ttset.c:1255` rule.",
+    },
+    Field {
+        name: "printer.margin_bottom",
+        page: "printer",
+        section: "Tera Term",
+        key: "PrnMargin",
+        kind: Kind::Int,
+        default: "50",
+        label: None,
+        doc: "The fourth field of `PrnMargin`, under the same `ttset.c:1255` rule.",
+    },
+    Field {
+        name: "printer.convert_form_feed",
+        page: "printer",
+        section: "Tera Term",
+        key: "PrnConvFF",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:1263`, default off. Converts a form feed to a newline while printing.",
+    },
+    Field {
+        name: "tek.x",
+        page: "tek",
+        section: "Tera Term",
+        key: "TEKPos",
+        kind: Kind::Int,
+        default: "-2147483648",
+        label: None,
+        doc: "`ttset.c:603`. The TEK window's x/y position, using the same `CW_USEDEFAULT` sentinel and `GetNthNum` zero-for-a-missing-field rule as `VTPos`.",
+    },
+    Field {
+        name: "tek.y",
+        page: "tek",
+        section: "Tera Term",
+        key: "TEKPos",
+        kind: Kind::Int,
+        default: "-2147483648",
+        label: None,
+        doc: "The second field of `TEKPos`, under the same `ttset.c:603` rule.",
+    },
+    Field {
+        name: "tek.color",
+        page: "tek",
+        section: "Tera Term",
+        key: "TEKColor",
+        kind: Kind::Color2,
+        default: "0,0,0,255,255,255",
+        label: None,
+        doc: "`ttset.c:789`, black on white. The pair remains a pair even though no TEK painter consumes it here.",
+    },
+    Field {
+        name: "tek.color_emulation",
+        page: "tek",
+        section: "Tera Term",
+        key: "TEKColorEmulation",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:860`, default off. Enables colour emulation in the dropped TEK parser.",
+    },
+    Field {
+        name: "tek.gin_mouse_code",
+        page: "tek",
+        section: "Tera Term",
+        key: "TEKGINMouseCode",
+        kind: Kind::Int,
+        default: "32",
+        label: None,
+        doc: "`ttset.c:1295`. The byte a TEK GIN mouse report uses, with no load-time range.",
+    },
+    Field {
+        name: "tek.icon",
+        page: "tek",
+        section: "Tera Term",
+        key: "TEKIcon",
+        kind: Kind::Enum(&["tterm", "vt", "tek", "tterm_classic", "vt_classic", "tterm_3d", "vt_3d", "tterm_flat", "vt_flat", "cygterm", "Default"]),
+        default: "Default",
+        label: None,
+        doc: "`ttset.c:1555` passes the value through `IconName2IconId`. The ten known names compare case-insensitively; anything else becomes `Default`.",
+    },
+    Field {
+        name: "tek.ppi_x",
+        page: "tek",
+        section: "Tera Term",
+        key: "TEKPPI",
+        kind: Kind::Int,
+        default: "0",
+        label: None,
+        doc: "`ttset.c:1374`. Both positive values override the printer's native pixels per inch for a TEK print; zero in either axis means use the device values.",
+    },
+    Field {
+        name: "tek.ppi_y",
+        page: "tek",
+        section: "Tera Term",
+        key: "TEKPPI",
+        kind: Kind::Int,
+        default: "0",
+        label: None,
+        doc: "The second field of `TEKPPI`, under the same `ttset.c:1374` rule.",
     },
     Field {
         name: "window.hide_title",

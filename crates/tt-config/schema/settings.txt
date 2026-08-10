@@ -1584,6 +1584,69 @@ transfer.raw_send_skip_dialog | bool | Tera Term | SendfileSkipOptionDialog | of
 # `ttset.c:2030`. The corresponding switch for raw Receive file.
 transfer.raw_receive_skip_dialog | bool | Tera Term | ReceivefileSkipOptionDialog | off | -
 
+# --- printer -----------------------------------------------------------------
+#
+# Printing is Stage 3 work. These settings are still first-class compatibility
+# data: a shared file keeps them, the generated dialog exposes them, and no
+# terminal or protocol behavior is invented in their absence.
+
+# `ttset.c:1237`, assigned to the 16-bit `ts.PassThruDelay` and written
+# unsigned. It is the delay before controller-mode pass-through printing starts.
+printer.passthrough_delay | uint16 | Tera Term | PassThruDelay | 3 | -
+
+# `ttset.c:1241`. The raw printer device used for pass-through mode; empty lets
+# upstream choose its ordinary printer path.
+printer.passthrough_port | string | Tera Term | PassThruPort |  | -
+
+# `ttset.c:1245`, `TF_PRINTERCTRL`, default off. Gates the printer control
+# sequences themselves, independently of whether a printer device was named.
+printer.control_sequences | bool | Tera Term | PrinterCtrlSequence | off | -
+
+# `ttset.c:1255`. Margins are hundredths of an inch, left, right, top and
+# bottom. `GetNthNum` makes a missing field zero in a present value.
+printer.margin_left | int_zero | Tera Term | PrnMargin.1 | 50 | -
+# The second field of `PrnMargin`, under the same `ttset.c:1255` rule.
+printer.margin_right | int_zero | Tera Term | PrnMargin.2 | 50 | -
+# The third field of `PrnMargin`, under the same `ttset.c:1255` rule.
+printer.margin_top | int_zero | Tera Term | PrnMargin.3 | 50 | -
+# The fourth field of `PrnMargin`, under the same `ttset.c:1255` rule.
+printer.margin_bottom | int_zero | Tera Term | PrnMargin.4 | 50 | -
+
+# `ttset.c:1263`, default off. Converts a form feed to a newline while printing.
+printer.convert_form_feed | bool | Tera Term | PrnConvFF | off | -
+
+# --- TEK compatibility -------------------------------------------------------
+#
+# The Tektronix 4010 window is permanently dropped by the roadmap. Its keys
+# remain readable and writable so using Sterna does not erase a Tera Term
+# setup's TEK preferences.
+
+# `ttset.c:603`. The TEK window's x/y position, using the same `CW_USEDEFAULT`
+# sentinel and `GetNthNum` zero-for-a-missing-field rule as `VTPos`.
+tek.x | int_zero | Tera Term | TEKPos.1 | -2147483648 | -
+# The second field of `TEKPos`, under the same `ttset.c:603` rule.
+tek.y | int_zero | Tera Term | TEKPos.2 | -2147483648 | -
+
+# `ttset.c:789`, black on white. The pair remains a pair even though no TEK
+# painter consumes it here.
+tek.color | color2 | Tera Term | TEKColor | 0,0,0,255,255,255 | -
+
+# `ttset.c:860`, default off. Enables colour emulation in the dropped TEK parser.
+tek.color_emulation | bool | Tera Term | TEKColorEmulation | off | -
+
+# `ttset.c:1295`. The byte a TEK GIN mouse report uses, with no load-time range.
+tek.gin_mouse_code | int | Tera Term | TEKGINMouseCode | 32 | -
+
+# `ttset.c:1555` passes the value through `IconName2IconId`. The ten known
+# names compare case-insensitively; anything else becomes `Default`.
+tek.icon | enum(tterm=Tterm,vt=Vt,tek=Tek,tterm_classic=TtermClassic,vt_classic=VtClassic,tterm_3d=Tterm3d,vt_3d=Vt3d,tterm_flat=TtermFlat,vt_flat=VtFlat,cygterm=Cygterm,Default/*=Default) | Tera Term | TEKIcon | Default | -
+
+# `ttset.c:1374`. Both positive values override the printer's native pixels
+# per inch for a TEK print; zero in either axis means use the device values.
+tek.ppi_x | int_zero | Tera Term | TEKPPI.1 | 0 | -
+# The second field of `TEKPPI`, under the same `ttset.c:1374` rule.
+tek.ppi_y | int_zero | Tera Term | TEKPPI.2 | 0 | -
+
 # --- window ------------------------------------------------------------------
 
 # `ttset.c:728`. No title bar, which `/H` also asks for. `/I` and `/V` —

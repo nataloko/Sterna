@@ -62,6 +62,41 @@ fn the_deferred_encoding_settings_keep_upstreams_parsers() {
 }
 
 #[test]
+fn the_deferred_printer_and_tek_settings_keep_their_shapes() {
+    let d = Settings::default();
+    assert_eq!(d.printer_passthrough_delay, 3);
+    assert_eq!(
+        (
+            d.printer_margin_left,
+            d.printer_margin_right,
+            d.printer_margin_top,
+            d.printer_margin_bottom,
+        ),
+        (50, 50, 50, 50)
+    );
+    assert_eq!((d.tek_x, d.tek_y), (i32::MIN, i32::MIN));
+    assert_eq!(d.tek_color, [0, 0, 0, 255, 255, 255]);
+
+    let s = Settings::load(&Ini::parse(
+        b"[Tera Term]\r\nPassThruDelay=-1\r\nPrnMargin=10,20\r\n\
+          TEKPos=30\r\nTEKIcon=unknown\r\n",
+    ));
+    assert_eq!(s.printer_passthrough_delay, 65_535);
+    assert_eq!(
+        (
+            s.printer_margin_left,
+            s.printer_margin_right,
+            s.printer_margin_top,
+            s.printer_margin_bottom,
+        ),
+        (10, 20, 0, 0),
+        "GetNthNum supplies zero for missing fields"
+    );
+    assert_eq!((s.tek_x, s.tek_y), (30, 0));
+    assert_eq!(s.tek_icon.as_ini(), "Default");
+}
+
+#[test]
 fn an_empty_file_gives_the_defaults() {
     let ini = Ini::parse(b"");
     assert_eq!(Settings::load(&ini), Settings::default());

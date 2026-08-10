@@ -20,7 +20,7 @@ pub mod ssh;
 
 use crate::{
     ClipboardRemoteAccess, ConnectionPortType, EncodingReceive, EncodingSend, SerialDataBits,
-    SerialFlow, SerialParity, SerialStopBits, Settings,
+    SerialFlow, SerialParity, SerialStopBits, Settings, TekIcon,
 };
 
 /// `GetParam` (`ttlib.c:879`) — one token and what is left after it.
@@ -384,9 +384,10 @@ pub struct CommandLine {
     pub com_auto_connect: bool,
     /// `/OSC52=`.
     pub clipboard: Option<ClipboardAccess>,
-    /// `/TEKICON=` and `/VTICON=` — icon names, unresolved, for the same
-    /// reason as the character sets: `IconName2IconId` (`ttset.c:256`) is ten
-    /// names and a default, and this port has no icon table to map them onto.
+    /// `/TEKICON=` and `/VTICON=` — icon names. `IconName2IconId`
+    /// (`ttset.c:256`) is ten names and a default. The schema owns that table;
+    /// the shell has only Sterna's own icon to draw, so these remain
+    /// compatibility choices rather than alternate artwork.
     pub tek_icon: Option<Vec<u8>>,
     pub vt_icon: Option<Vec<u8>>,
     /// `/THEME=` — a background theme file, which also switches `BGEnable` on.
@@ -507,8 +508,8 @@ impl CommandLine {
     ///   setting**. `ts.HostName` has no INI key and `_ParseParam` clears it on
     ///   every call, so where to connect is the session's and not the file's.
     ///   `tcp_port` *is* a setting and is written.
-    /// - `/VTICON=`, `/TEKICON=`, `/THEME=`, `/K=`, `/MN=`, `/L=`, `/R=` — no
-    ///   icon table, no background themes, no `KEYBOARD.CNF`, no tab bar, and
+    /// - `/VTICON=`, `/THEME=`, `/K=`, `/MN=`, `/L=`, `/R=` — no VT icon
+    ///   setting yet, no background themes, no `KEYBOARD.CNF`, no tab bar, and
     ///   no `ts.LogFN` (which upstream has no key for either).
     /// - `/M` and `/D=` are one-shot launch state rather than edits to
     ///   `macro.startup_file`: the frontend uses [`MacroArg`] to replace or
@@ -620,6 +621,9 @@ impl CommandLine {
         }
         if let Some(code) = &self.kanji_send {
             settings.encoding_send = EncodingSend::from_ini(&String::from_utf8_lossy(code));
+        }
+        if let Some(icon) = &self.tek_icon {
+            settings.tek_icon = TekIcon::from_ini(&String::from_utf8_lossy(icon));
         }
         if self.hide_title {
             settings.window_hide_title = true;
@@ -1591,6 +1595,9 @@ mod tests {
         assert!(!cmd.disable_tcp_echo_cr && !cmd.hide_window);
         assert_eq!(text(&cmd.vt_icon), "vt");
         assert_eq!(text(&cmd.tek_icon), "tek");
+        let mut settings = Settings::default();
+        cmd.apply(&mut settings);
+        assert_eq!(settings.tek_icon, TekIcon::Tek);
         // Case never matters, for any of them.
         assert!(parse("tt /h /duplicate").hide_title);
     }
