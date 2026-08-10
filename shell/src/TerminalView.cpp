@@ -180,6 +180,15 @@ TerminalView::TerminalView(Session *session, QWidget *parent)
         update();
     });
 
+    // A system caret normally owns this clock. This terminal paints its own,
+    // so use the same desktop setting and keep only the visible/hidden phase
+    // here. Whether it should blink is live terminal state, read at paint.
+    m_cursorBlink = new QTimer(this);
+    connect(m_cursorBlink, &QTimer::timeout, this, [this] {
+        m_cursorBlinkOn = !m_cursorBlinkOn;
+        update();
+    });
+
     connect(m_session, &Session::bellRang, this, &TerminalView::ring);
 
     connect(m_session, &Session::damaged, this, [this] {
@@ -190,6 +199,13 @@ TerminalView::TerminalView(Session *session, QWidget *parent)
         // that arrives without the widget changing size.
         if (m_hasSelection && m_selSize != QSize(m_session->cols(), m_session->rows())) {
             clearSelection();
+        }
+        // Like a native caret, become visible again when the terminal moves or
+        // redraws it instead of leaving a freshly moved cursor in its off
+        // phase until the next tick.
+        m_cursorBlinkOn = true;
+        if (m_cursorBlink->isActive()) {
+            m_cursorBlink->start();
         }
         requestRepaint();
         // Output can move the offset — the core keeps a scrolled-back view on
@@ -243,6 +259,8 @@ void TerminalView::applySettings()
     m_clipboard.dialogWidth = number("clipboard.paste_dialog_width", m_clipboard.dialogWidth);
     m_clipboard.dialogHeight = number("clipboard.paste_dialog_height", m_clipboard.dialogHeight);
     m_wheelScrollLine = number("mouse.wheel_scroll_line", m_wheelScrollLine);
+    m_showUnfocusedCursor =
+        flag("cursor.show_unfocused", m_showUnfocusedCursor);
     m_clickableUrl = flag("mouse.clickable_url", m_clickableUrl);
     m_urlBrowser = m_session->setting(QStringLiteral("url.browser"));
     m_urlBrowserArgs = m_session->setting(QStringLiteral("url.browser_args"));
@@ -254,6 +272,11 @@ void TerminalView::applySettings()
     // `Hex2StrW`'s `$xx` escape and its own default opens with one, so the raw
     // string has no space in it and every word runs into the next.
     m_delimiters = m_session->wordDelimiters();
+
+    // The setting may have changed the live non-blinking flag. Let the next
+    // paint decide whether to restart the clock, beginning from visible.
+    m_cursorBlink->stop();
+    m_cursorBlinkOn = true;
 
     update();
 }
@@ -443,6 +466,22 @@ void TerminalView::paintEvent(QPaintEvent *)
     // history it has nothing to do with.
     const TtCursor cur = m_session->cursor();
     const int cursorRow = m_session->cursorViewRow();
+    const int flashTime = QApplication::cursorFlashTime();
+    const bool shouldBlink = cur.visible && cursorRow >= 0 && hasFocus()
+                             && !cur.nonblinking && flashTime > 0;
+    if (shouldBlink) {
+        const int interval = qMax(1, flashTime / 2);
+        if (m_cursorBlink->interval() != interval) {
+            m_cursorBlink->setInterval(interval);
+        }
+        if (!m_cursorBlink->isActive()) {
+            m_cursorBlinkOn = true;
+            m_cursorBlink->start();
+        }
+    } else {
+        m_cursorBlink->stop();
+        m_cursorBlinkOn = true;
+    }
     if (cur.visible && cursorRow >= 0) {
         size_t len = 0;
         const TtCell *cells = m_session->row(cursorRow, &len);
@@ -452,19 +491,41 @@ void TerminalView::paintEvent(QPaintEvent *)
             const int width = cellWidthClass(cell);
             const QRect box(cx * cw, cursorRow * ch, width * cw, ch);
             if (hasFocus()) {
-                QColor fg;
-                QColor bg;
-                m_theme.resolve(cell, false, screenReverse, &fg, &bg);
-                p.fillRect(box, fg);
-                p.setPen(bg);
-                p.setFont(m_theme.paintsBold(cell.attrs) ? m_theme.boldFont()
-                                                         : m_theme.font());
-                p.drawText(QPoint(box.left(), cursorRow * ch + m_theme.baseline()),
-                           cellText(cell));
-            } else {
-                // Hollow when the window is not focused, which is the
-                // convention every terminal uses to say "typing goes
-                // elsewhere".
+                if (m_cursorBlinkOn) {
+                    QColor fg;
+                    QColor bg;
+                    m_theme.resolve(cell, false, screenReverse, &fg, &bg);
+                    switch (cur.shape) {
+                    case TT_CURSOR_SHAPE_HORIZONTAL: {
+                        // `CurWidth` is exactly two pixels upstream
+                        // (`vtdisp.c:51`), not a fraction of the font size.
+                        const int height = qMin(2, box.height());
+                        p.fillRect(QRect(box.left(), box.bottom() - height + 1,
+                                         box.width(), height),
+                                   fg);
+                        break;
+                    }
+                    case TT_CURSOR_SHAPE_VERTICAL:
+                        // A wide character still gets a two-pixel bar; only
+                        // block and underline span both cells upstream.
+                        p.fillRect(QRect(box.left(), box.top(), qMin(2, box.width()),
+                                         box.height()),
+                                   fg);
+                        break;
+                    case TT_CURSOR_SHAPE_BLOCK:
+                    default:
+                        p.fillRect(box, fg);
+                        p.setPen(bg);
+                        p.setFont(m_theme.paintsBold(cell.attrs) ? m_theme.boldFont()
+                                                                 : m_theme.font());
+                        p.drawText(QPoint(box.left(), cursorRow * ch + m_theme.baseline()),
+                                   cellText(cell));
+                        break;
+                    }
+                }
+            } else if (m_showUnfocusedCursor) {
+                // `KillFocusCursor=on`: a full-cell outline regardless of the
+                // active shape. Off means no inactive cursor at all.
                 p.setPen(m_theme.cursorColor());
                 p.drawRect(box.adjusted(0, 0, -1, -1));
             }
@@ -957,6 +1018,8 @@ void TerminalView::focusInEvent(QFocusEvent *event)
 {
     m_session->focus(true);
     QWidget::focusInEvent(event);
+    m_cursorBlink->stop();
+    m_cursorBlinkOn = true;
     update();
 }
 
@@ -964,6 +1027,8 @@ void TerminalView::focusOutEvent(QFocusEvent *event)
 {
     m_session->focus(false);
     QWidget::focusOutEvent(event);
+    m_cursorBlink->stop();
+    m_cursorBlinkOn = true;
     update();
 }
 

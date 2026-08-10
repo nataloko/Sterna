@@ -448,14 +448,84 @@ void test_the_cursor_is_drawn_where_the_core_says()
 
 void test_an_unfocused_cursor_is_hollow()
 {
-    // The convention every terminal uses to say "typing goes somewhere else",
-    // and the state a window spends most of its time in.
+    // `KillFocusCursor` ships on, so the state a window spends most of its
+    // time in is a full-cell outline regardless of the active shape.
     Harness h;
     h.feed("\033[5;10H");
     h.render();
     CHECK(h.at(9, 4) == kWhite);  // not filled
     CHECK(h.ink(9, 4) > 0);       // but outlined
     CHECK(h.ink(8, 4) == 0);
+
+    CHECK(h.session.setSetting(QStringLiteral("cursor.show_unfocused"),
+                               QStringLiteral("off"), nullptr));
+    h.view.applySettings();
+    h.render();
+    CHECK(h.ink(9, 4) == 0);
+}
+
+void test_cursor_shape_is_live_terminal_state()
+{
+    Harness h;
+    CHECK(h.session.setSetting(QStringLiteral("cursor.shape"),
+                               QStringLiteral("horizontal"), nullptr));
+    CHECK(h.session.setSetting(QStringLiteral("cursor.nonblinking"),
+                               QStringLiteral("on"), nullptr));
+    h.view.applySettings();
+    h.activate();
+    h.feed("\033[5;10H");
+    h.render();
+
+    const int cw = h.view.theme().cellWidth();
+    const int ch = h.view.theme().cellHeight();
+    QImage cursor = h.cell(9, 4);
+    CHECK(cursor.pixelColor(cw / 2, ch / 2) == kWhite);
+    CHECK(cursor.pixelColor(cw / 2, ch - 1) == kBlack);
+    CHECK(cursor.pixelColor(cw / 2, ch - 2) == kBlack);
+
+    // Once permitted, DECSCUSR changes what the painter sees without changing
+    // the file's setting. Six is a steady vertical bar.
+    CHECK(h.session.setSetting(QStringLiteral("window.cursor_ctrl_allowed"),
+                               QStringLiteral("on"), nullptr));
+    h.feed("\033[6 q");
+    h.render();
+    cursor = h.cell(9, 4);
+    CHECK(cursor.pixelColor(0, ch / 2) == kBlack);
+    CHECK(cursor.pixelColor(1, ch / 2) == kBlack);
+    CHECK(cursor.pixelColor(cw / 2, ch / 2) == kWhite);
+}
+
+void test_cursor_blinks_unless_the_live_style_is_steady()
+{
+    const int oldFlashTime = QApplication::cursorFlashTime();
+    QApplication::setCursorFlashTime(200);
+    {
+        Harness h;
+        h.activate();
+        h.render();
+        CHECK(h.at(0, 0) == kBlack);
+
+        // The view uses half the desktop flash cycle, as Qt's own text widgets
+        // do. This lands after one transition and before the second.
+        QEventLoop blink;
+        QTimer::singleShot(150, &blink, &QEventLoop::quit);
+        blink.exec();
+        h.render();
+        CHECK(h.at(0, 0) == kWhite);
+
+        CHECK(h.session.setSetting(QStringLiteral("cursor.nonblinking"),
+                                   QStringLiteral("on"), nullptr));
+        h.view.applySettings();
+        h.render();
+        CHECK(h.at(0, 0) == kBlack);
+
+        QEventLoop steady;
+        QTimer::singleShot(150, &steady, &QEventLoop::quit);
+        steady.exec();
+        h.render();
+        CHECK(h.at(0, 0) == kBlack);
+    }
+    QApplication::setCursorFlashTime(oldFlashTime);
 }
 
 /// Feed `n` lines, each a single space on its own background colour, so a
@@ -1492,6 +1562,8 @@ int main(int argc, char **argv)
     test_dec_special_graphics_draws_a_line();
     test_the_cursor_is_drawn_where_the_core_says();
     test_an_unfocused_cursor_is_hollow();
+    test_cursor_shape_is_live_terminal_state();
+    test_cursor_blinks_unless_the_live_style_is_steady();
     test_scrolling_back_paints_the_history();
     test_the_cursor_is_not_painted_onto_the_history();
     test_output_does_not_move_a_scrolled_back_view();

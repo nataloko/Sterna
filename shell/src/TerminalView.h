@@ -196,6 +196,16 @@ private:
     /// exactly the speeds people scroll fastest.
     int m_wheelScrollLine = 3;
 
+    /// `KillFocusCursor`. On, the inactive cursor is a full-cell outline
+    /// whatever shape the active one has; off, losing focus hides it.
+    bool m_showUnfocusedCursor = true;
+
+    /// The active cursor follows the desktop's caret flash time. The terminal
+    /// supplies whether blinking is enabled *now*, after both the setting and
+    /// accepted host control sequences; the timer supplies only the phase.
+    QTimer *m_cursorBlink;
+    bool m_cursorBlinkOn = true;
+
     /// URL recognition and painting are unconditional; this is only the hand
     /// cursor and double-click gate (`EnableClickableUrl`).
     bool m_clickableUrl = false;
