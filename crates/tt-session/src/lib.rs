@@ -55,7 +55,7 @@ pub use xfer::{
 // above all — takes the settings and the metadata that describes them from the
 // same place it takes the session they belong to.
 use tt_config::ConnectionTcpCrSend;
-pub use tt_config::{Field, Ini, Kind, Settings, FIELDS};
+pub use tt_config::{Field, Ini, KeyboardMap, Kind, Settings, Shortcut, UserKeyType, FIELDS};
 pub use tt_vt::DebugMode;
 
 use tt_conn::{Error, Result, Transport, TransportEvent};
@@ -124,6 +124,27 @@ pub enum Event {
     Clipboard(ClipboardRequest),
 }
 
+/// What pressing a legacy `KEYBOARD.CNF` scan code did.
+///
+/// Bytes are sent here, where the live terminal modes are. Everything else is
+/// handed back to the frontend which owns the window, clipboard, menus and
+/// macro runner. A mapped action which this build cannot perform is
+/// [`Ignored`](KeyCodeResult::Ignored), distinct from an unassigned physical
+/// key so `StrictKeyMapping` can suppress the built-in fallback correctly.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KeyCodeResult {
+    Unmapped,
+    Sent,
+    /// Hold, Print or Break — `Key` variants with no wire sequence.
+    LocalKey(Key),
+    /// A DEC user-defined key whose live definition belongs to the VT parser.
+    Udk(u8),
+    Shortcut(Shortcut),
+    RunMacro(String),
+    Command(u16),
+    Ignored,
+}
+
 /// A terminal, and optionally something for it to talk to.
 pub struct Session {
     vt: Vt,
@@ -151,6 +172,10 @@ pub struct Session {
     /// Every setting, including the ones this layer does not act on — see
     /// [`Session::settings`].
     settings: Settings,
+    /// The active `KEYBOARD.CNF`, empty until one is loaded. The frontend
+    /// still supplies its built-in semantic key when no physical binding
+    /// exists; `StrictKeyMapping` decides whether that fallback is allowed.
+    key_map: KeyboardMap,
     /// `TCPLocalEchoUsed` and `TCPCRSendUsed` (`vtwin.cpp:140`): whether this
     /// connection spent the terminal's own value and so owes it back. See
     /// [`Session::tcp_echo_cr_override`].
@@ -198,6 +223,7 @@ impl Session {
             tcp_cr_send_used: false,
             close_note: None,
             settings: Settings::default(),
+            key_map: KeyboardMap::default(),
             xfer: None,
             xfer_reply: None,
             macro_link: None,
@@ -1039,6 +1065,78 @@ impl Session {
         }
     }
 
+    /// Replace the physical-key map. Kept as a value operation so a frontend
+    /// can parse on its own thread and so tests need no filesystem.
+    pub fn set_key_map(&mut self, map: KeyboardMap) {
+        self.key_map = map;
+    }
+
+    /// Read and install a `KEYBOARD.CNF`, returning the duplicate scan codes
+    /// the UI may want to warn about.
+    ///
+    /// The old map survives an I/O error. A missing file is a successful empty
+    /// map, matching the `GetPrivateProfileStringW` reads upstream makes.
+    pub fn load_key_map(&mut self, path: &Path) -> std::io::Result<Vec<u16>> {
+        let map = KeyboardMap::load(path)?;
+        let duplicates = map.duplicates().to_vec();
+        self.key_map = map;
+        Ok(duplicates)
+    }
+
+    pub fn key_map(&self) -> &KeyboardMap {
+        &self.key_map
+    }
+
+    /// Press a PC/AT set-1 scan code from `KEYBOARD.CNF`.
+    ///
+    /// Modifier bits are already part of `scan`: Shift `0x200`, Ctrl `0x400`
+    /// and Alt `0x800`, exactly as `keyboard.c:KeyDown` builds the number.
+    /// The binding is cloned before dispatch because sending mutates the
+    /// session while the map is borrowed.
+    pub fn send_key_code(&mut self, scan: u16) -> Result<KeyCodeResult> {
+        use tt_config::KeyboardAction;
+
+        let Some(action) = self.key_map.get(scan).cloned() else {
+            return Ok(KeyCodeResult::Unmapped);
+        };
+        match action {
+            KeyboardAction::Terminal(key @ (Key::Hold | Key::Print | Key::Break)) => {
+                Ok(KeyCodeResult::LocalKey(key))
+            }
+            KeyboardAction::Terminal(key) => {
+                self.send_key(key)?;
+                Ok(KeyCodeResult::Sent)
+            }
+            KeyboardAction::Udk(n) => Ok(KeyCodeResult::Udk(n)),
+            KeyboardAction::Shortcut(action) => Ok(KeyCodeResult::Shortcut(action)),
+            KeyboardAction::User(user) => match user.kind {
+                UserKeyType::Binary => {
+                    // `Hex2StrW` first, then `SendBinary`: each UTF-16 code
+                    // unit below 256 narrows to its byte and every other one
+                    // becomes FF. A supplementary character is two units and
+                    // therefore two FF bytes, which a Rust `char` loop would
+                    // quietly collapse into one.
+                    let decoded = tt_config::hex_decode_str(&user.value);
+                    let bytes: Vec<u8> = decoded
+                        .encode_utf16()
+                        .map(|u| u8::try_from(u).unwrap_or(0xff))
+                        .collect();
+                    self.send_bytes(&bytes)?;
+                    Ok(KeyCodeResult::Sent)
+                }
+                UserKeyType::Text => {
+                    self.send_text(&tt_config::hex_decode_str(&user.value))?;
+                    Ok(KeyCodeResult::Sent)
+                }
+                UserKeyType::Macro => Ok(KeyCodeResult::RunMacro(user.value)),
+                UserKeyType::Command => Ok(command_id(&user.value)
+                    .map(KeyCodeResult::Command)
+                    .unwrap_or(KeyCodeResult::Ignored)),
+                UserKeyType::Unknown(_) => Ok(KeyCodeResult::Ignored),
+            },
+        }
+    }
+
     /// Send typed text. Ordinary characters do not go through the key table.
     ///
     /// A CR in it is expanded by LNM — see [`Vt::encode_text`]. That is how
@@ -1489,6 +1587,19 @@ pub fn paste_text(text: &str, s: &Settings) -> String {
         }
     }
     out
+}
+
+/// The `%hd` used when a type-3 user key is pressed. Leading whitespace and
+/// a numeric prefix are accepted, and the result narrows to the command word.
+fn command_id(s: &str) -> Option<u16> {
+    let s = s.trim_start_matches(char::is_whitespace);
+    let b = s.as_bytes();
+    let sign = matches!(b.first(), Some(b'+') | Some(b'-')) as usize;
+    let digits = b[sign..].iter().take_while(|c| c.is_ascii_digit()).count();
+    if digits == 0 {
+        return None;
+    }
+    s[..sign + digits].parse::<i64>().ok().map(|n| n as u16)
 }
 
 /// A [`Transport`] over two byte queues, for tests.

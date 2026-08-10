@@ -100,6 +100,57 @@ fn keys_are_encoded_by_the_core_and_follow_the_modes() {
 }
 
 #[test]
+fn keyboard_cnf_terminal_and_user_keys_are_dispatched_by_the_session() {
+    use tt_session::KeyCodeResult;
+
+    let (mut s, h) = connected(20, 4);
+    let ini = tt_config::Ini::parse(
+        b"[VT editor keypad]\nUp=328\n[User keys]\n\
+          User1=1083,0,$FF$00\nUser2=1084,1,$0D\n",
+    );
+    s.set_key_map(tt_config::KeyboardMap::from_ini(&ini));
+
+    assert_eq!(s.send_key_code(328).unwrap(), KeyCodeResult::Sent);
+    assert_eq!(s.send_key_code(1083).unwrap(), KeyCodeResult::Sent);
+    s.feed(b"\x1b[20h"); // LNM converts the type-1 CR, not the binary one.
+    assert_eq!(s.send_key_code(1084).unwrap(), KeyCodeResult::Sent);
+    assert_eq!(s.send_key_code(999).unwrap(), KeyCodeResult::Unmapped);
+    assert_eq!(h.outbound(), b"\x1b[A\xff\0\r\n");
+}
+
+#[test]
+fn keyboard_cnf_returns_actions_owned_by_the_frontend() {
+    use tt_session::{KeyCodeResult, Shortcut};
+
+    let (mut s, _h) = connected(20, 4);
+    let ini = tt_config::Ini::parse(
+        b"[VT function keys]\nBreak=69\nUDK6=1088\n\
+          [Shortcut keys]\nEditPaste=850\n\
+          [User keys]\nUser1=1083,2,test.ttl\nUser2=1084,3,50110tail\nUser3=1085,9,x\n",
+    );
+    s.set_key_map(tt_config::KeyboardMap::from_ini(&ini));
+
+    assert_eq!(
+        s.send_key_code(69).unwrap(),
+        KeyCodeResult::LocalKey(Key::Break)
+    );
+    assert_eq!(s.send_key_code(1088).unwrap(), KeyCodeResult::Udk(6));
+    assert_eq!(
+        s.send_key_code(850).unwrap(),
+        KeyCodeResult::Shortcut(Shortcut::EditPaste)
+    );
+    assert_eq!(
+        s.send_key_code(1083).unwrap(),
+        KeyCodeResult::RunMacro("test.ttl".into())
+    );
+    assert_eq!(
+        s.send_key_code(1084).unwrap(),
+        KeyCodeResult::Command(50110)
+    );
+    assert_eq!(s.send_key_code(1085).unwrap(), KeyCodeResult::Ignored);
+}
+
+#[test]
 fn a_reply_the_parser_owes_goes_out_on_the_same_pump() {
     // A host that sent DSR is usually blocked waiting for the answer, so
     // holding it until the next pump stalls the session by however long the
