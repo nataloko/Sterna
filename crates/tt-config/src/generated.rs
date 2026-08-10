@@ -1001,6 +1001,58 @@ impl Default for TransferXmodemOpt {
     }
 }
 
+/// `ttset.c:2006`. How raw Send file spaces writes. Anything unrecognised takes
+/// `NoDelay`, including an empty present value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransferRawSendDelayType {
+    /// `NoDelay`
+    NoDelay,
+    /// `PerChar`
+    PerChar,
+    /// `PerLine`
+    PerLine,
+    /// `PerSendSize`
+    PerSendSize,
+}
+
+impl TransferRawSendDelayType {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::NoDelay => "NoDelay",
+            Self::PerChar => "PerChar",
+            Self::PerLine => "PerLine",
+            Self::PerSendSize => "PerSendSize",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised takes the default**
+    /// rather than failing — which is how upstream spells most of its
+    /// defaults, as the `else` branch of a chain of comparisons.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("NoDelay") {
+            return Self::NoDelay;
+        }
+        if s.eq_ignore_ascii_case("PerChar") {
+            return Self::PerChar;
+        }
+        if s.eq_ignore_ascii_case("PerLine") {
+            return Self::PerLine;
+        }
+        if s.eq_ignore_ascii_case("PerSendSize") {
+            return Self::PerSendSize;
+        }
+        Self::default()
+    }
+}
+
+impl Default for TransferRawSendDelayType {
+    fn default() -> Self {
+        Self::NoDelay
+    }
+}
+
 /// `ttset.c:1501`. What the non-realtime broadcast dialog appends. The else arm
 /// is `None`, so an unrecognised value and an absent key agree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2095,6 +2147,40 @@ pub struct Settings {
     /// (`raw.c:168`), so a capture the host never answers waits for ever whatever
     /// this says.
     pub transfer_raw_autostop: i32,
+    /// `ttset.c:1063`. A file-dialog mask such as `*.txt;*.log`. Upstream uses it
+    /// for raw Send file and every protocol's send picker.
+    pub transfer_send_filter: String,
+    /// `ttset.c:2029`. The corresponding mask for raw Receive file. Protocols that
+    /// carry their own filename do not ask for one and therefore do not use it.
+    pub transfer_receive_filter: String,
+    /// `ttset.c:1068`. The destination directory offered by drag-and-drop SCP.
+    /// `scp` is one of the macro host's explicitly unsupported transport commands,
+    /// so this is retained for the file and the future implementation.
+    pub transfer_scp_send_dir: String,
+    /// `ttset.c:1191`, default **on**. The boosted raw sender is used only for a
+    /// binary serial send at 115200 baud or faster with no echo, telnet framing or
+    /// bracketed paste (`filesys.cpp:365`). It does not govern X/Y/ZMODEM or Kermit.
+    pub transfer_raw_high_speed: bool,
+    /// `ttset.c:1511`, default **on**. Whether dropping files opens the choice
+    /// between raw send, SCP and cancel. The shell has no file-drop target yet.
+    pub transfer_confirm_file_drop: bool,
+    /// `ttset.c:2006`. How raw Send file spaces writes. Anything unrecognised takes
+    /// `NoDelay`, including an empty present value.
+    pub transfer_raw_send_delay_type: TransferRawSendDelayType,
+    /// `ttset.c:2011`, in milliseconds. The delay selected above; zero is a real
+    /// value and means no wait.
+    pub transfer_raw_send_delay_tick: i32,
+    /// `ttset.c:2012`. The chunk size for `PerSendSize`, and the raw sender's read
+    /// size. Upstream applies no range at settings-load time.
+    pub transfer_raw_send_size: i32,
+    /// `ttset.c:2013`. Use Tera Term 4's sequential file reader rather than loading
+    /// chunks into memory before sending them. Off is the newer sender.
+    pub transfer_raw_send_sequential: bool,
+    /// `ttset.c:2014`. Skip raw Send file's option page and use the remembered
+    /// binary and delay settings directly.
+    pub transfer_raw_send_skip_dialog: bool,
+    /// `ttset.c:2030`. The corresponding switch for raw Receive file.
+    pub transfer_raw_receive_skip_dialog: bool,
     /// `ttset.c:728`. No title bar, which `/H` also asks for. `/I` and `/V` —
     /// minimised and invisible — have no keys at all: `_ReadIniFile` zeroes both at
     /// `:554` and never reads one, so they are command-line-only.
@@ -2395,6 +2481,17 @@ impl Default for Settings {
             transfer_quickvan_win_size: 8,
             transfer_quickvan_log: false,
             transfer_raw_autostop: 5,
+            transfer_send_filter: String::from(""),
+            transfer_receive_filter: String::from(""),
+            transfer_scp_send_dir: String::from(""),
+            transfer_raw_high_speed: true,
+            transfer_confirm_file_drop: true,
+            transfer_raw_send_delay_type: TransferRawSendDelayType::default(),
+            transfer_raw_send_delay_tick: 0,
+            transfer_raw_send_size: 4096,
+            transfer_raw_send_sequential: false,
+            transfer_raw_send_skip_dialog: false,
+            transfer_raw_receive_skip_dialog: false,
             window_hide_title: false,
             window_popup_menu: false,
             window_popup_menu_enabled: true,
@@ -3198,6 +3295,49 @@ impl Settings {
                 "ReceivefileAutoStopWaitTime",
                 d.transfer_raw_autostop,
             ) as i32,
+            transfer_send_filter: ini
+                .get_or("Tera Term", "FileSendFilter", &d.transfer_send_filter)
+                .to_string(),
+            transfer_receive_filter: ini
+                .get_or("Tera Term", "FileReceiveFilter", &d.transfer_receive_filter)
+                .to_string(),
+            transfer_scp_send_dir: ini
+                .get_or("Tera Term", "ScpSendDir", &d.transfer_scp_send_dir)
+                .to_string(),
+            transfer_raw_high_speed: crate::schema::on_off(
+                ini.get("Tera Term", "FileSendHighSpeedMode"),
+                true,
+            ),
+            transfer_confirm_file_drop: crate::schema::on_off(
+                ini.get("Tera Term", "ConfirmFileDragAndDrop"),
+                true,
+            ),
+            transfer_raw_send_delay_type: match ini.get("Tera Term", "SendfileDelayType") {
+                Some(v) => TransferRawSendDelayType::from_ini(v),
+                None => d.transfer_raw_send_delay_type,
+            },
+            transfer_raw_send_delay_tick: ini.get_int(
+                "Tera Term",
+                "SendfileDelayTick",
+                d.transfer_raw_send_delay_tick,
+            ) as i32,
+            transfer_raw_send_size: ini.get_int(
+                "Tera Term",
+                "SendfileSize",
+                d.transfer_raw_send_size,
+            ) as i32,
+            transfer_raw_send_sequential: crate::schema::on_off(
+                ini.get("Tera Term", "SendfileSequential"),
+                false,
+            ),
+            transfer_raw_send_skip_dialog: crate::schema::on_off(
+                ini.get("Tera Term", "SendfileSkipOptionDialog"),
+                false,
+            ),
+            transfer_raw_receive_skip_dialog: crate::schema::on_off(
+                ini.get("Tera Term", "ReceivefileSkipOptionDialog"),
+                false,
+            ),
             window_hide_title: crate::schema::on_off(ini.get("Tera Term", "HideTitle"), false),
             window_popup_menu: crate::schema::on_off(ini.get("Tera Term", "PopupMenu"), false),
             window_popup_menu_enabled: crate::schema::on_off(
@@ -4692,6 +4832,86 @@ impl Settings {
         );
         ini.set(
             "Tera Term",
+            "FileSendFilter",
+            &self.transfer_send_filter.clone(),
+        );
+        ini.set(
+            "Tera Term",
+            "FileReceiveFilter",
+            &self.transfer_receive_filter.clone(),
+        );
+        ini.set(
+            "Tera Term",
+            "ScpSendDir",
+            &self.transfer_scp_send_dir.clone(),
+        );
+        ini.set(
+            "Tera Term",
+            "FileSendHighSpeedMode",
+            &if self.transfer_raw_high_speed {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "ConfirmFileDragAndDrop",
+            &if self.transfer_confirm_file_drop {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "SendfileDelayType",
+            &self.transfer_raw_send_delay_type.as_ini().to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "SendfileDelayTick",
+            &self.transfer_raw_send_delay_tick.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "SendfileSize",
+            &self.transfer_raw_send_size.to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "SendfileSequential",
+            &if self.transfer_raw_send_sequential {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "SendfileSkipOptionDialog",
+            &if self.transfer_raw_send_skip_dialog {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
+            "ReceivefileSkipOptionDialog",
+            &if self.transfer_raw_receive_skip_dialog {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Tera Term",
             "HideTitle",
             &if self.window_hide_title { "on" } else { "off" }.to_string(),
         );
@@ -5462,6 +5682,44 @@ impl Settings {
             }
             .to_string(),
             "transfer.raw_autostop" => self.transfer_raw_autostop.to_string(),
+            "transfer.send_filter" => self.transfer_send_filter.clone(),
+            "transfer.receive_filter" => self.transfer_receive_filter.clone(),
+            "transfer.scp_send_dir" => self.transfer_scp_send_dir.clone(),
+            "transfer.raw_high_speed" => if self.transfer_raw_high_speed {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "transfer.confirm_file_drop" => if self.transfer_confirm_file_drop {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "transfer.raw_send_delay_type" => {
+                self.transfer_raw_send_delay_type.as_ini().to_string()
+            }
+            "transfer.raw_send_delay_tick" => self.transfer_raw_send_delay_tick.to_string(),
+            "transfer.raw_send_size" => self.transfer_raw_send_size.to_string(),
+            "transfer.raw_send_sequential" => if self.transfer_raw_send_sequential {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "transfer.raw_send_skip_dialog" => if self.transfer_raw_send_skip_dialog {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "transfer.raw_receive_skip_dialog" => if self.transfer_raw_receive_skip_dialog {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "window.hide_title" => if self.window_hide_title { "on" } else { "off" }.to_string(),
             "window.popup_menu" => if self.window_popup_menu { "on" } else { "off" }.to_string(),
             "window.popup_menu_enabled" => if self.window_popup_menu_enabled {
@@ -6152,6 +6410,34 @@ impl Settings {
             }
             "transfer.raw_autostop" => {
                 self.transfer_raw_autostop = crate::schema::int(value, self.transfer_raw_autostop)
+            }
+            "transfer.send_filter" => self.transfer_send_filter = value.to_string(),
+            "transfer.receive_filter" => self.transfer_receive_filter = value.to_string(),
+            "transfer.scp_send_dir" => self.transfer_scp_send_dir = value.to_string(),
+            "transfer.raw_high_speed" => {
+                self.transfer_raw_high_speed = crate::schema::on_off(Some(value), true)
+            }
+            "transfer.confirm_file_drop" => {
+                self.transfer_confirm_file_drop = crate::schema::on_off(Some(value), true)
+            }
+            "transfer.raw_send_delay_type" => {
+                self.transfer_raw_send_delay_type = TransferRawSendDelayType::from_ini(value)
+            }
+            "transfer.raw_send_delay_tick" => {
+                self.transfer_raw_send_delay_tick =
+                    crate::schema::int(value, self.transfer_raw_send_delay_tick)
+            }
+            "transfer.raw_send_size" => {
+                self.transfer_raw_send_size = crate::schema::int(value, self.transfer_raw_send_size)
+            }
+            "transfer.raw_send_sequential" => {
+                self.transfer_raw_send_sequential = crate::schema::on_off(Some(value), false)
+            }
+            "transfer.raw_send_skip_dialog" => {
+                self.transfer_raw_send_skip_dialog = crate::schema::on_off(Some(value), false)
+            }
+            "transfer.raw_receive_skip_dialog" => {
+                self.transfer_raw_receive_skip_dialog = crate::schema::on_off(Some(value), false)
             }
             "window.hide_title" => {
                 self.window_hide_title = crate::schema::on_off(Some(value), false)
@@ -8255,6 +8541,116 @@ pub const FIELDS: &[Field] = &[
         default: "5",
         label: None,
         doc: "`ttset.c:2031`, in seconds. How long a `recvfile` capture waits for the line to go quiet before stopping — and **the clock starts at the first byte** (`raw.c:168`), so a capture the host never answers waits for ever whatever this says.",
+    },
+    Field {
+        name: "transfer.send_filter",
+        page: "transfer",
+        section: "Tera Term",
+        key: "FileSendFilter",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "`ttset.c:1063`. A file-dialog mask such as `*.txt;*.log`. Upstream uses it for raw Send file and every protocol's send picker.",
+    },
+    Field {
+        name: "transfer.receive_filter",
+        page: "transfer",
+        section: "Tera Term",
+        key: "FileReceiveFilter",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "`ttset.c:2029`. The corresponding mask for raw Receive file. Protocols that carry their own filename do not ask for one and therefore do not use it.",
+    },
+    Field {
+        name: "transfer.scp_send_dir",
+        page: "transfer",
+        section: "Tera Term",
+        key: "ScpSendDir",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "`ttset.c:1068`. The destination directory offered by drag-and-drop SCP. `scp` is one of the macro host's explicitly unsupported transport commands, so this is retained for the file and the future implementation.",
+    },
+    Field {
+        name: "transfer.raw_high_speed",
+        page: "transfer",
+        section: "Tera Term",
+        key: "FileSendHighSpeedMode",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1191`, default **on**. The boosted raw sender is used only for a binary serial send at 115200 baud or faster with no echo, telnet framing or bracketed paste (`filesys.cpp:365`). It does not govern X/Y/ZMODEM or Kermit.",
+    },
+    Field {
+        name: "transfer.confirm_file_drop",
+        page: "transfer",
+        section: "Tera Term",
+        key: "ConfirmFileDragAndDrop",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "`ttset.c:1511`, default **on**. Whether dropping files opens the choice between raw send, SCP and cancel. The shell has no file-drop target yet.",
+    },
+    Field {
+        name: "transfer.raw_send_delay_type",
+        page: "transfer",
+        section: "Tera Term",
+        key: "SendfileDelayType",
+        kind: Kind::Enum(&["NoDelay", "PerChar", "PerLine", "PerSendSize"]),
+        default: "NoDelay",
+        label: None,
+        doc: "`ttset.c:2006`. How raw Send file spaces writes. Anything unrecognised takes `NoDelay`, including an empty present value.",
+    },
+    Field {
+        name: "transfer.raw_send_delay_tick",
+        page: "transfer",
+        section: "Tera Term",
+        key: "SendfileDelayTick",
+        kind: Kind::Int,
+        default: "0",
+        label: None,
+        doc: "`ttset.c:2011`, in milliseconds. The delay selected above; zero is a real value and means no wait.",
+    },
+    Field {
+        name: "transfer.raw_send_size",
+        page: "transfer",
+        section: "Tera Term",
+        key: "SendfileSize",
+        kind: Kind::Int,
+        default: "4096",
+        label: None,
+        doc: "`ttset.c:2012`. The chunk size for `PerSendSize`, and the raw sender's read size. Upstream applies no range at settings-load time.",
+    },
+    Field {
+        name: "transfer.raw_send_sequential",
+        page: "transfer",
+        section: "Tera Term",
+        key: "SendfileSequential",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:2013`. Use Tera Term 4's sequential file reader rather than loading chunks into memory before sending them. Off is the newer sender.",
+    },
+    Field {
+        name: "transfer.raw_send_skip_dialog",
+        page: "transfer",
+        section: "Tera Term",
+        key: "SendfileSkipOptionDialog",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:2014`. Skip raw Send file's option page and use the remembered binary and delay settings directly.",
+    },
+    Field {
+        name: "transfer.raw_receive_skip_dialog",
+        page: "transfer",
+        section: "Tera Term",
+        key: "ReceivefileSkipOptionDialog",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "`ttset.c:2030`. The corresponding switch for raw Receive file.",
     },
     Field {
         name: "window.hide_title",

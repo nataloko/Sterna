@@ -1406,6 +1406,51 @@ transfer.quickvan_log | bool | Tera Term | QVLog | off | -
 # this says.
 transfer.raw_autostop | int | Tera Term | ReceivefileAutoStopWaitTime | 5 | -
 
+# `ttset.c:1063`. A file-dialog mask such as `*.txt;*.log`. Upstream uses it
+# for raw Send file and every protocol's send picker.
+transfer.send_filter | string | Tera Term | FileSendFilter |  | -
+
+# `ttset.c:2029`. The corresponding mask for raw Receive file. Protocols that
+# carry their own filename do not ask for one and therefore do not use it.
+transfer.receive_filter | string | Tera Term | FileReceiveFilter |  | -
+
+# `ttset.c:1068`. The destination directory offered by drag-and-drop SCP.
+# `scp` is one of the macro host's explicitly unsupported transport commands,
+# so this is retained for the file and the future implementation.
+transfer.scp_send_dir | string | Tera Term | ScpSendDir |  | -
+
+# `ttset.c:1191`, default **on**. The boosted raw sender is used only for a
+# binary serial send at 115200 baud or faster with no echo, telnet framing or
+# bracketed paste (`filesys.cpp:365`). It does not govern X/Y/ZMODEM or Kermit.
+transfer.raw_high_speed | bool | Tera Term | FileSendHighSpeedMode | on | -
+
+# `ttset.c:1511`, default **on**. Whether dropping files opens the choice
+# between raw send, SCP and cancel. The shell has no file-drop target yet.
+transfer.confirm_file_drop | bool | Tera Term | ConfirmFileDragAndDrop | on | -
+
+# `ttset.c:2006`. How raw Send file spaces writes. Anything unrecognised takes
+# `NoDelay`, including an empty present value.
+transfer.raw_send_delay_type | enum(NoDelay=NoDelay,PerChar=PerChar,PerLine=PerLine,PerSendSize=PerSendSize) | Tera Term | SendfileDelayType | NoDelay | -
+
+# `ttset.c:2011`, in milliseconds. The delay selected above; zero is a real
+# value and means no wait.
+transfer.raw_send_delay_tick | int | Tera Term | SendfileDelayTick | 0 | -
+
+# `ttset.c:2012`. The chunk size for `PerSendSize`, and the raw sender's read
+# size. Upstream applies no range at settings-load time.
+transfer.raw_send_size | int | Tera Term | SendfileSize | 4096 | -
+
+# `ttset.c:2013`. Use Tera Term 4's sequential file reader rather than loading
+# chunks into memory before sending them. Off is the newer sender.
+transfer.raw_send_sequential | bool | Tera Term | SendfileSequential | off | -
+
+# `ttset.c:2014`. Skip raw Send file's option page and use the remembered
+# binary and delay settings directly.
+transfer.raw_send_skip_dialog | bool | Tera Term | SendfileSkipOptionDialog | off | -
+
+# `ttset.c:2030`. The corresponding switch for raw Receive file.
+transfer.raw_receive_skip_dialog | bool | Tera Term | ReceivefileSkipOptionDialog | off | -
+
 # --- window ------------------------------------------------------------------
 
 # `ttset.c:728`. No title bar, which `/H` also asks for. `/I` and `/V` —
