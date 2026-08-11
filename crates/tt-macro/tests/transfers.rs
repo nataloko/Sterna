@@ -119,8 +119,17 @@ fn recvfile_blocks_until_the_line_goes_quiet_and_then_reports_success() {
     // `result` is 1, and it was sent *after* the transfer — which is the
     // blocking, since the script has no other way to reach this line.
     assert_eq!(sent, b"1\r");
+    // Two clocks, and the slack is what stands between them. The transfer's
+    // deadline is `GetTickCount64` on Windows — faithfully, since upstream's
+    // `FTSetTimeOut` is `SetTimer` — whose resolution is one system tick, about
+    // 15.6 ms, on a counter `Instant`'s QPC knows nothing about. So a nominal
+    // second can measure 993 ms with nothing wrong, which is exactly what CI
+    // reported. What is being asserted is that it *waited*: a `recvfile` that
+    // returned as soon as it started comes back in milliseconds and still
+    // fails this by three orders of magnitude.
+    const TICK: Duration = Duration::from_millis(50);
     assert!(
-        started.elapsed() >= Duration::from_secs(1),
+        started.elapsed() + TICK >= Duration::from_secs(1),
         "it cannot have waited out a one-second auto-stop in {:?}",
         started.elapsed()
     );
