@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-10 · **Stage:** 2 complete, 3 in progress · **Commits:** 412
+**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 415
 
 | | Stage 0 spike | Status |
 |---|---|---|
