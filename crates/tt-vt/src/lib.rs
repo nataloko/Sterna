@@ -1806,6 +1806,9 @@ struct State {
     /// log, the macro and the printer (`vtterm.c:453`); here each tap keeps its
     /// own, for the reason [`MacroTap`] gives.
     printer_cr_hold: bool,
+    /// The line auto print dumped just before a wrap, reused rather than
+    /// allocated per character. See [`Perform::print`].
+    printer_line: String,
 }
 
 /// What a linked macro sees of the session — `ttdde.c`'s `DDEPut1` sink, and
@@ -1909,6 +1912,7 @@ impl State {
             printer_open: false,
             printer_events: Vec::new(),
             printer_cr_hold: false,
+            printer_line: String::new(),
         }
     }
 
@@ -4235,15 +4239,18 @@ impl Perform for State {
         // have come from a single byte; anything above U+00FF is text by
         // definition and never DEC special graphics.
         let special = cp <= 0xff && self.charset.is_special(cp);
-        // Auto print dumps the line the wrap is about to leave, so the text has
-        // to be taken before the character lands. Upstream gets this for free:
-        // its wrap calls `LineFeed(LF, FALSE)` explicitly, and the dump is at
-        // the top of that function.
-        let filled = if self.auto_print {
-            Some(self.line_dump_text(0x0a))
-        } else {
-            None
-        };
+        // Auto print dumps the line the wrap is about to leave, so the text
+        // has to be taken before the character lands. Upstream gets this for
+        // free: its wrap calls `LineFeed(LF, FALSE)` explicitly and the dump
+        // is at the top of that function.
+        //
+        // Into a field rather than a local, and the whole thing behind the
+        // flag: a `String` held across the write below is a destructor in
+        // every character's frame whether or not auto print is on, and that
+        // alone measured 4% of this parser's throughput.
+        if self.auto_print {
+            self.printer_line = self.line_dump_text(0x0a);
+        }
         let wrapped = if special {
             // Upstream builds a throwaway attribute for the one character
             // (`CharAttrTmp`), leaving the pen alone. Same here.
@@ -4265,26 +4272,39 @@ impl Perform for State {
         // `ts.EnableContinuedLineCopy` suppresses the pair and a macro sees
         // the host's line whole.
         if wrapped {
-            if let Some(text) = filled {
-                self.printer_write(&text);
-            }
+            // `CarriageReturn(FALSE)`, then `LineFeed(LF, FALSE)` — and the
+            // dump is at the *top* of the second, so it lands between the two
+            // taps rather than before them. Both taps reach the printer's copy
+            // through `NeedsOutputBufs`, which does not count the printer, so
+            // whether a wrapped line arrives at the printer as one line or two
+            // depends on whether a log or a macro is also running.
+            let bufs = self.needs_output_bufs();
             if !self.config.continued_line_copy {
                 self.tap(0x0d);
-                self.tap(0x0a);
-                // `CarriageReturn`/`LineFeed` reach the printer's copy through
-                // `NeedsOutputBufs`, which does not count the printer — so
-                // whether a wrapped line arrives at the printer as one line or
-                // two depends on whether a log or a macro is also running.
-                if self.needs_output_bufs() {
+                if bufs {
                     self.printer_tap(0x0d);
+                }
+            }
+            if self.auto_print {
+                let text = std::mem::take(&mut self.printer_line);
+                self.printer_write(&text);
+                self.printer_line = text;
+            }
+            if !self.config.continued_line_copy {
+                self.tap(0x0a);
+                if bufs {
                     self.printer_tap(0x0a);
                 }
             }
         }
         self.tap(cp);
         // `PutU32` reaches `OutputLogUTF32` directly rather than through
-        // `NeedsOutputBufs`, so the character itself is always copied.
-        self.printer_tap(cp);
+        // `NeedsOutputBufs`, so the character itself is always copied. The
+        // test is at the call site rather than inside: this is the hottest
+        // line in the engine and a call per character is not free.
+        if self.printer.is_on() {
+            self.printer_tap(cp);
+        }
         if let Some(log) = &mut self.log_text {
             log.push(c);
         }
