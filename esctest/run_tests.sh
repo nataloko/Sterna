@@ -86,6 +86,19 @@ if [ "$(git -C "$src" rev-parse HEAD 2>/dev/null)" != "$ESCTEST_REF" ]; then
 	git -C "$src" checkout --quiet FETCH_HEAD
 fi
 
+# Reapplied on every run, from a pristine tree, because the checkout survives
+# between runs and a half-applied patch is worse than an unpatched one. Same
+# convention as `oracle/patches/`: the reference is never edited in place, and
+# a change that a run needs lives in a file that says why.
+if [ -d patches ] && [ -n "$(echo patches/*.patch)" ]; then
+	git -C "$src" checkout --quiet -- . 2>/dev/null || true
+	for patch in "$PWD"/patches/*.patch; do
+		[ -e "$patch" ] || continue
+		git -C "$src" apply "$patch" || {
+			echo "esctest: cannot apply $(basename "$patch")" >&2; exit 2; }
+	done
+fi
+
 # cargo is on PATH only for login shells in the dev container.
 export PATH="$HOME/.cargo/bin:$PATH"
 echo "esctest: building tt-host" >&2

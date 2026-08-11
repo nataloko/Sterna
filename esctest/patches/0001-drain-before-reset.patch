@@ -1,0 +1,54 @@
+Drain the terminal's pending replies before each test's reset.
+
+A test that fails part-way through a read leaves the rest of the terminal's
+answer sitting in the pty, and esctest never takes it out again: the next
+test's `reset()` reads that stale byte where it expected a CSI, fails, and
+leaves *its* reply behind in turn. One assertion failure therefore fails every
+test after it, and the log fills with `Read f (0x66), expected CSI` in tests
+that have nothing to do with the one that broke.
+
+This is a property of the harness rather than of any terminal — the trigger is
+only that an answer differed from what a test asserted — and it hides the
+result the suite was run to get. `escio.Drain()` throws away whatever is
+already readable and `reset()` calls it before writing anything, so every test
+starts against a quiet pty.
+
+Not yet reported upstream; see README.md.
+
+diff --git a/esctest/escio.py b/esctest/escio.py
+index c12d05a..55f1cfa 100644
+--- a/esctest/escio.py
++++ b/esctest/escio.py
+@@ -30,6 +30,17 @@ def Write(s, sideChannelOk=True):
+     gSideChannel.write(escoding.to_binary(s))
+   stdout_fd.write(escoding.to_binary(s))
+ 
++def Drain():
++  """Throw away anything the terminal has already sent.
++
++  Called at the start of each test's reset so that a reply left unread by a
++  failed assertion cannot desynchronise every test after it.
++  """
++  f = sys.stdin.fileno()
++  while select.select([f], [], [], 0)[0]:
++    if not os.read(f, 4096):
++      return
++
+ def SetSideChannel(filename):
+   global gSideChannel
+   if filename is None:
+diff --git a/esctest/esctest.py b/esctest/esctest.py
+index 3312bea..89b6cdf 100755
+--- a/esctest/esctest.py
++++ b/esctest/esctest.py
+@@ -39,6 +39,10 @@ def shutdown():
+ 
+ def reset():
+   '''Reset terminal to known state, at the beginning of each unit test.'''
++  # Anything still readable belongs to a test that has already ended, and
++  # leaving it there fails every test after that one. See the patch note.
++  escio.Drain()
++
+   esccmd.DECSCL(60 + esc.vtLevel, 1)
+ 
+   escio.use8BitControls = False
