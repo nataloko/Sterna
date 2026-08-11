@@ -31,10 +31,16 @@ env:
   # TeraTermProject/teraterm, v5.6.0-496-g827a35b05
   TERATERM_REF: 827a35b050c974b0fdf2a77ef73ed882301eb6c4
 
+# Every job carries `timeout-minutes`. `cargo test` has no per-test timeout,
+# so one stuck test takes the whole six-hour default with it — a Windows job
+# that blocked in a serial open sat for 74 minutes before anyone looked. The
+# longest job here is about eleven minutes; the ceiling is the difference
+# between a failure and a wasted evening.
 jobs:
   oracle:
     name: oracle — Tera Term's VT engine, headless
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,6 +64,7 @@ jobs:
   xfer:
     name: xfer — file-transfer protocol interop
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -79,6 +86,7 @@ jobs:
   rust:
     name: rust — audits build and lint
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -100,6 +108,7 @@ jobs:
   core:
     name: core — Rust VT engine, diffed against Tera Term
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -220,6 +229,7 @@ jobs:
   esctest:
     name: esctest — conformance, run inside our own terminal
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -243,6 +253,7 @@ jobs:
   core-windows:
     name: core — builds and tests on Windows
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -273,6 +284,7 @@ jobs:
   shell:
     name: shell — the Qt frontend, and what it paints
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -382,6 +394,7 @@ jobs:
     name: fuzz — libFuzzer over the parser
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
@@ -416,6 +429,7 @@ jobs:
   ssh-audit:
     name: ssh-audit — russh vs legacy algorithms
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
