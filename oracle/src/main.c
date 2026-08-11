@@ -243,6 +243,44 @@ static void settings_defaults(const struct opts *o)
 	ts.ColorFlag = CF_XTERM256 | CF_ANSICOLOR | CF_BOLDCOLOR | CF_BLINKCOLOR |
 	               CF_URLCOLOR | CF_UNDERLINE;
 
+	/*
+	 * The colours themselves, which OSC 4/5/10-19 and their resets read and
+	 * write. `ts` holds what the settings asked for; the live copies the
+	 * window paints with are in stubs_manual.c, because that split is
+	 * vtdisp.c's and a query answers out of the half here.
+	 *
+	 * ANSIColor is ttset.c:797's default string in its own legacy order, dim
+	 * then bright — InitColorTable permutes it, so do NOT pre-swap it here.
+	 */
+	{
+		static const unsigned char ansi[16][3] = {
+			{  0,  0,  0}, {255,  0,  0}, {  0,255,  0}, {255,255,  0},
+			{  0,  0,255}, {255,  0,255}, {  0,255,255}, {255,255,255},
+			{128,128,128}, {128,  0,  0}, {  0,128,  0}, {128,128,  0},
+			{  0,  0,128}, {128,  0,128}, {  0,128,128}, {192,192,192},
+		};
+		int i;
+		for (i = 0; i < 16; i++) {
+			ts.ANSIColor[i] = RGB(ansi[i][0], ansi[i][1], ansi[i][2]);
+		}
+	}
+	/* ttset.c:754 VTColor, :757 VTBoldColor, :762 VTBlinkColor, :767
+	 * VTReverseColor, :775 URLColor, :786 VTUnderlineColor, and TEKColor. */
+	ts.VTColor[0] = RGB(0, 0, 0);
+	ts.VTColor[1] = RGB(255, 255, 255);
+	ts.VTBoldColor[0] = RGB(0, 0, 255);
+	ts.VTBoldColor[1] = RGB(255, 255, 255);
+	ts.VTBlinkColor[0] = RGB(255, 0, 0);
+	ts.VTBlinkColor[1] = RGB(255, 255, 255);
+	ts.VTReverseColor[0] = RGB(255, 255, 255);
+	ts.VTReverseColor[1] = RGB(0, 0, 0);
+	ts.URLColor[0] = RGB(0, 255, 0);
+	ts.URLColor[1] = RGB(255, 255, 255);
+	ts.VTUnderlineColor[0] = RGB(255, 0, 255);
+	ts.VTUnderlineColor[1] = RGB(255, 255, 255);
+	ts.TEKColor[0] = RGB(0, 0, 0);
+	ts.TEKColor[1] = RGB(255, 255, 255);
+
 	/* ttset.c:1875 — the key default string is "on", which means
 	 * ISO2022_SHIFT_ALL. SO/SI/SS2/SS3 and every locking shift are live. */
 	ts.ISO2022Flag = ISO2022_SHIFT_ALL;

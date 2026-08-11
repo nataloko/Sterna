@@ -400,77 +400,223 @@ BOOL DispWindowIconified(vtdraw_t *vt)
 
 /* ---- colours ------------------------------------------------------------ */
 /*
- * Palette state lives here rather than in a stub because OSC 4/10/11 queries
- * read it back, and those replies must be reproducible.
+ * vtdisp.c's DispSetColor / DispGetColor / DispResetColor, transcribed.
+ *
+ * These live here because vtdisp.c is not compiled into the oracle, and they
+ * are a transcription rather than something convenient because that file is
+ * the only specification for OSC 4/5/10-19 and their resets — vtterm.c does
+ * the parsing and then hands every decision to these three.
+ *
+ * The version this replaces was convenient, and it lied in three ways at once:
+ * one flat array indexed by the CS_ number, so a dynamic colour could be read
+ * back after it was set; no eight-colour permutation; and a DispResetColor
+ * that ignored its argument and put the whole table back. Same trap as
+ * DispFindClosestColor below, which held xterm's palette until it was caught.
+ *
+ * The split upstream keeps is the whole point of them. `vt->` is what the
+ * window paints with and `ts.` is what the settings asked for; the setter
+ * writes the first, the reset copies the second over the first, and the getter
+ * reads — for every colour except the palette and Tek — the *second*. So a
+ * host cannot read back a dynamic colour it just set. That is upstream's
+ * behaviour and this reproduces it; see PLAN.md.
  */
 
-#define ORACLE_NCOLORS 272
-static COLORREF g_colors[ORACLE_NCOLORS];
+/*
+ * `vtdraw_t`'s live colours. Upstream's names, upstream's [fg, bg] order.
+ */
+static COLORREF g_ansi[256];
+static COLORREF g_vt[2], g_bold[2], g_blink[2], g_reverse[2], g_url[2], g_under[2];
 static int g_colors_init;
 
+/* vtdisp.c:1400. Its own inverse, which is why GetIndex16From256 calls it. */
+static int oracle_index256_from16(int index16)
+{
+	static const int index256[] = { 0, 9, 10, 11, 12, 13, 14, 15, 8, 1, 2, 3, 4, 5, 6, 7 };
+	return index16 < (int)(sizeof(index256) / sizeof(index256[0])) ? index256[index16] : index16;
+}
+
+/*
+ * vtdisp.c:1429 InitColorTable, over `DefaultColorTable` above 15.
+ *
+ * ts.ANSIColor is the legacy sixteen, ordered dim-then-bright, so it is
+ * permuted on the way in. Entries 16.. are the xterm cube and greyscale ramp
+ * and are not configurable — ttset.c:797 masks a colour id to four bits, so
+ * the file cannot reach past 15.
+ */
+static void oracle_init_color_table(void)
+{
+	int i;
+
+	for (i = 0; i < 16; i++) {
+		g_ansi[oracle_index256_from16(i)] = ts.ANSIColor[i];
+	}
+	for (i = 16; i < 232; i++) {
+		int n = i - 16;
+		int r = (n / 36) % 6, g = (n / 6) % 6, b = n % 6;
+		g_ansi[i] = RGB(r ? r * 40 + 55 : 0, g ? g * 40 + 55 : 0, b ? b * 40 + 55 : 0);
+	}
+	for (i = 232; i < 256; i++) {
+		int v = (i - 232) * 10 + 8;
+		g_ansi[i] = RGB(v, v, v);
+	}
+}
+
+/* vtdisp.c:1154 BGInitialize, which is InitColorTable plus BGSetDefaultColor. */
 static void colors_init_once(void)
 {
 	int i;
-	/*
-	 * Tera Term's palette, NOT xterm's.
-	 *
-	 * These are ttset.c:797's default ANSIColor string (0,0,0 / 255,0,0 / ...)
-	 * already permuted through vtdisp.c:GetIndex256From16, which swaps the
-	 * bright and dim halves — the 16-colour table is ordered
-	 * dim-then-bright and ANSIColor[256] is ordered bright-then-dim.
-	 *
-	 * This used to hold xterm's palette (205/238/229/92), which is a
-	 * different set of colours, so every truecolor SGR resolved to the wrong
-	 * index. A stub is a place the oracle can lie, and this one did.
-	 */
-	static const unsigned char base[16][3] = {
-		{  0,  0,  0}, {128,  0,  0}, {  0,128,  0}, {128,128,  0},
-		{  0,  0,128}, {128,  0,128}, {  0,128,128}, {192,192,192},
-		{128,128,128}, {255,  0,  0}, {  0,255,  0}, {255,255,  0},
-		{  0,  0,255}, {255,  0,255}, {  0,255,255}, {255,255,255},
-	};
 
 	if (g_colors_init) {
 		return;
 	}
 	g_colors_init = 1;
-	for (i = 0; i < 16; i++) {
-		g_colors[i] = RGB(base[i][0], base[i][1], base[i][2]);
+	oracle_init_color_table();
+	for (i = 0; i < 2; i++) {
+		g_vt[i] = ts.VTColor[i];
+		g_bold[i] = ts.VTBoldColor[i];
+		g_blink[i] = ts.VTBlinkColor[i];
+		g_reverse[i] = ts.VTReverseColor[i];
+		g_url[i] = ts.URLColor[i];
+		g_under[i] = ts.VTUnderlineColor[i];
 	}
-	for (i = 16; i < 232; i++) {
-		int n = i - 16;
-		int r = (n / 36) % 6, g = (n / 6) % 6, b = n % 6;
-		g_colors[i] = RGB(r ? r * 40 + 55 : 0, g ? g * 40 + 55 : 0, b ? b * 40 + 55 : 0);
-	}
-	for (i = 232; i < 256; i++) {
-		int v = (i - 232) * 10 + 8;
-		g_colors[i] = RGB(v, v, v);
-	}
-	g_colors[CS_VT_NORMALFG] = RGB(255, 255, 255);
-	g_colors[CS_VT_NORMALBG] = RGB(0, 0, 0);
 }
 
+/* vtdisp.c:3376. */
 void DispSetColor(vtdraw_t *vt, unsigned int num, COLORREF color)
 {
 	(void)vt;
 	colors_init_once();
-	if (num < ORACLE_NCOLORS) {
-		g_colors[num] = color;
+	switch (num) {
+	case CS_VT_NORMALFG:  g_vt[0] = color; break;
+	case CS_VT_NORMALBG:  g_vt[1] = color; break;
+	case CS_VT_BOLDFG:    g_bold[0] = color; break;
+	case CS_VT_BOLDBG:    g_bold[1] = color; break;
+	case CS_VT_BLINKFG:   g_blink[0] = color; break;
+	case CS_VT_BLINKBG:   g_blink[1] = color; break;
+	case CS_VT_REVERSEFG: g_reverse[0] = color; break;
+	case CS_VT_REVERSEBG: g_reverse[1] = color; break;
+	case CS_VT_URLFG:     g_url[0] = color; break;
+	case CS_VT_URLBG:     g_url[1] = color; break;
+	case CS_VT_UNDERFG:   g_under[0] = color; break;
+	case CS_VT_UNDERBG:   g_under[1] = color; break;
+	/* Tek has no live copy: the setter writes the *setting*, which is why a
+	 * Tek colour is the one special colour a query can read back. */
+	case CS_TEK_FG:       ts.TEKColor[0] = color; break;
+	case CS_TEK_BG:       ts.TEKColor[1] = color; break;
+	default:
+		if (num <= 255) {
+			if ((ts.ColorFlag & CF_FULLCOLOR) == 0) {
+				g_ansi[oracle_index256_from16((int)num)] = color;
+			}
+			else {
+				g_ansi[num] = color;
+			}
+		}
+		break;
 	}
 }
 
+/* vtdisp.c:3561 — and every special colour comes out of `ts`, not `vt`. */
 COLORREF DispGetColor(vtdraw_t *vt, unsigned int num)
 {
 	(void)vt;
 	colors_init_once();
-	return num < ORACLE_NCOLORS ? g_colors[num] : 0;
+	switch (num) {
+	case CS_VT_NORMALFG:  return ts.VTColor[0];
+	case CS_VT_NORMALBG:  return ts.VTColor[1];
+	case CS_VT_BOLDFG:    return ts.VTBoldColor[0];
+	case CS_VT_BOLDBG:    return ts.VTBoldColor[1];
+	case CS_VT_BLINKFG:   return ts.VTBlinkColor[0];
+	case CS_VT_BLINKBG:   return ts.VTBlinkColor[1];
+	case CS_VT_REVERSEFG: return ts.VTReverseColor[0];
+	case CS_VT_REVERSEBG: return ts.VTReverseColor[1];
+	case CS_VT_URLFG:     return ts.URLColor[0];
+	case CS_VT_URLBG:     return ts.URLColor[1];
+	case CS_VT_UNDERFG:   return ts.VTUnderlineColor[0];
+	case CS_VT_UNDERBG:   return ts.VTUnderlineColor[1];
+	case CS_TEK_FG:       return ts.TEKColor[0];
+	case CS_TEK_BG:       return ts.TEKColor[1];
+	default:
+		if (num <= 255) {
+			if ((ts.ColorFlag & CF_FULLCOLOR) == 0) {
+				return g_ansi[oracle_index256_from16((int)num)];
+			}
+			return g_ansi[num];
+		}
+		return g_ansi[0];
+	}
 }
 
+/* vtdisp.c:3456. Both Tek arms are empty upstream, and so are they here. */
 void DispResetColor(vtdraw_t *vt, unsigned int num)
 {
-	(void)vt; (void)num;
-	g_colors_init = 0;
+	int i;
+
+	(void)vt;
 	colors_init_once();
+	if (num == CS_UNSPEC) {
+		return;
+	}
+	switch (num) {
+	case CS_VT_NORMALFG:  g_vt[0] = ts.VTColor[0]; break;
+	case CS_VT_NORMALBG:  g_vt[1] = ts.VTColor[1]; break;
+	case CS_VT_BOLDFG:    g_bold[0] = ts.VTBoldColor[0]; break;
+	case CS_VT_BOLDBG:    g_bold[1] = ts.VTBoldColor[1]; break;
+	case CS_VT_BLINKFG:   g_blink[0] = ts.VTBlinkColor[0]; break;
+	case CS_VT_BLINKBG:   g_blink[1] = ts.VTBlinkColor[1]; break;
+	case CS_VT_REVERSEFG: g_reverse[0] = ts.VTReverseColor[0]; break;
+	case CS_VT_REVERSEBG: g_reverse[1] = ts.VTReverseColor[1]; break;
+	case CS_VT_URLFG:     g_url[0] = ts.URLColor[0]; break;
+	case CS_VT_URLBG:     g_url[1] = ts.URLColor[1]; break;
+	case CS_VT_UNDERFG:   g_under[0] = ts.VTUnderlineColor[0]; break;
+	case CS_VT_UNDERBG:   g_under[1] = ts.VTUnderlineColor[1]; break;
+	case CS_TEK_FG:
+	case CS_TEK_BG:
+		break;
+	case CS_ANSICOLOR_ALL:
+		oracle_init_color_table();
+		break;
+	/* Three colours, not the special set — and not the underline, which
+	 * OSC 5 can set and OSC 105 therefore cannot put back. */
+	case CS_SP_ALL:
+		g_bold[0] = ts.VTBoldColor[0];
+		g_blink[0] = ts.VTBlinkColor[0];
+		g_reverse[1] = ts.VTReverseColor[1];
+		break;
+	case CS_ALL:
+		for (i = 0; i < 2; i++) {
+			g_vt[i] = ts.VTColor[i];
+			g_bold[i] = ts.VTBoldColor[i];
+			g_blink[i] = ts.VTBlinkColor[i];
+			g_reverse[i] = ts.VTReverseColor[i];
+			g_url[i] = ts.URLColor[i];
+			g_under[i] = ts.VTUnderlineColor[i];
+		}
+		oracle_init_color_table();
+		break;
+	default:
+		if (num <= 15) {
+			if ((ts.ColorFlag & CF_FULLCOLOR) == 0) {
+				g_ansi[oracle_index256_from16((int)num)] = ts.ANSIColor[num];
+			}
+			else {
+				g_ansi[num] = ts.ANSIColor[oracle_index256_from16((int)num)];
+			}
+		}
+		else if (num <= 255) {
+			int n = (int)num - 16;
+			if (num <= 231) {
+				int r = (n / 36) % 6, g = (n / 6) % 6, b = n % 6;
+				g_ansi[num] = RGB(r ? r * 40 + 55 : 0, g ? g * 40 + 55 : 0,
+				                  b ? b * 40 + 55 : 0);
+			}
+			else {
+				int v = ((int)num - 232) * 10 + 8;
+				g_ansi[num] = RGB(v, v, v);
+			}
+		}
+		break;
+	}
 }
 
 /*
@@ -497,9 +643,9 @@ int DispFindClosestColor(vtdraw_t *vt, int red, int green, int blue)
 
 	colors_init_once();
 	for (i = 0; i < 256; i++) {
-		long dr = (long)GetRValue(g_colors[i]) - red;
-		long dg = (long)GetGValue(g_colors[i]) - green;
-		long db = (long)GetBValue(g_colors[i]) - blue;
+		long dr = (long)GetRValue(g_ansi[i]) - red;
+		long dg = (long)GetGValue(g_ansi[i]) - green;
+		long db = (long)GetBValue(g_ansi[i]) - blue;
 		long d = dr * dr + dg * dg + db * db;
 		if (bestd < 0 || d < bestd) {
 			bestd = d;
