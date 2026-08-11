@@ -2749,16 +2749,24 @@ pub struct Settings {
     /// thing in the unit a compositor cares about. Carried so a file round-trips,
     /// the way `bell.notify_sound` is.
     pub window_scroll_threshold: i32,
-    /// `ttset.c:1466`, clamped at both ends. `255` is fully opaque and `0` fully
-    /// transparent. Upstream applies this value when the window loses focus
-    /// (`vtwin.cpp:1537`).
+    /// `ttset.c:1466`. `255` is fully opaque and `0` fully transparent; upstream
+    /// applies this value when the window loses focus (`vtwin.cpp:1537`).
+    ///
+    /// **The `max(0, …)`/`min(255, …)` pair on the next two lines is dead code**, and
+    /// reading it as the rule is how this row came to say `int_clamp(0..255)`.
+    /// `ts.AlphaBlendInactive` is a `BYTE`, so the assignment has already narrowed
+    /// the value and neither test can ever fire. It decides the answer for the one
+    /// value a person writes here: `AlphaBlend=-1` is `(UINT)-1`, which the `BYTE`
+    /// makes **255** — an opaque window — where the clamp reads a bare -1 as below
+    /// the floor and gives 0, a window nobody can see. `AlphaBlend=256` is 0 for the
+    /// same reason, not 255.
     pub window_opacity_inactive: i32,
-    /// `ttset.c:1470`, also clamped at both ends. Its fallback is the *loaded
-    /// inactive opacity*, not the constant 255: `AlphaBlend=120` without this key
-    /// makes both window states 120. An empty value inherits too; a non-numeric one
-    /// is zero under `GetPrivateProfileInt`'s own rules. Applied at startup, after
-    /// settings changes and whenever the window gains focus (`vtwin.cpp:780`,
-    /// `:1357`, `:1539`).
+    /// `ttset.c:1470`, with the same dead clamp behind the same narrowing. Its
+    /// fallback is the *loaded inactive opacity*, not the constant 255:
+    /// `AlphaBlend=120` without this key makes both window states 120. An empty
+    /// value inherits too; a non-numeric one is zero under `GetPrivateProfileInt`'s
+    /// own rules. Applied at startup, after settings changes and whenever the window
+    /// gains focus (`vtwin.cpp:780`, `:1357`, `:1539`).
     pub window_opacity_active: i32,
     /// `ttset.c:1339`, a six-bit word rather than an enum: 1 shows the endpoint,
     /// 2 the process-wide session number, 4 the `VT`/`TEK` suffix, 8 puts the
@@ -4180,11 +4188,11 @@ impl Settings {
                 d.encoding_unicode_to_dec_special,
             ) as i32),
             encoding_ambiguous_width: crate::schema::validated(
-                ini.get_int(
+                crate::schema::byte(ini.get_int(
                     "Tera Term",
                     "UnicodeAmbiguousWidth",
                     d.encoding_ambiguous_width,
-                ) as i32,
+                ) as i32),
                 d.encoding_ambiguous_width,
                 1,
                 2,
@@ -4194,7 +4202,11 @@ impl Settings {
                 false,
             ),
             encoding_emoji_width: crate::schema::validated(
-                ini.get_int("Tera Term", "UnicodeEmojiWidth", d.encoding_emoji_width) as i32,
+                crate::schema::byte(ini.get_int(
+                    "Tera Term",
+                    "UnicodeEmojiWidth",
+                    d.encoding_emoji_width,
+                ) as i32),
                 d.encoding_emoji_width,
                 1,
                 2,
@@ -4342,16 +4354,16 @@ impl Settings {
                 "ScrollThreshold",
                 d.window_scroll_threshold,
             ) as i32,
-            window_opacity_inactive: crate::schema::clamped(
-                ini.get_int("Tera Term", "AlphaBlend", d.window_opacity_inactive) as i32,
-                0,
-                255,
-            ),
-            window_opacity_active: crate::schema::clamped(
-                ini.get_int("Tera Term", "AlphaBlendActive", d.window_opacity_active) as i32,
-                0,
-                255,
-            ),
+            window_opacity_inactive: crate::schema::byte(ini.get_int(
+                "Tera Term",
+                "AlphaBlend",
+                d.window_opacity_inactive,
+            ) as i32),
+            window_opacity_active: crate::schema::byte(ini.get_int(
+                "Tera Term",
+                "AlphaBlendActive",
+                d.window_opacity_active,
+            ) as i32),
             window_title_format: crate::schema::word(ini.get_int(
                 "Tera Term",
                 "TitleFormat",
@@ -4563,10 +4575,17 @@ impl Settings {
                 Some(v) => ConnectionPortType::from_ini(v),
                 None => d.connection_port_type,
             },
-            connection_tcp_port: ini.get_int("Tera Term", "TCPPort", d.connection_tcp_port) as i32,
+            connection_tcp_port: crate::schema::word(ini.get_int(
+                "Tera Term",
+                "TCPPort",
+                d.connection_tcp_port,
+            ) as i32),
             connection_telnet: crate::schema::on_off(ini.get("Tera Term", "Telnet"), true),
-            connection_telnet_port: ini.get_int("Tera Term", "TelPort", d.connection_telnet_port)
-                as i32,
+            connection_telnet_port: crate::schema::word(ini.get_int(
+                "Tera Term",
+                "TelPort",
+                d.connection_telnet_port,
+            ) as i32),
             connection_telnet_binary: crate::schema::on_off(ini.get("Tera Term", "TelBin"), false),
             connection_telnet_auto_detect: crate::schema::on_off(
                 ini.get("Tera Term", "TelAutoDetect"),
@@ -4574,11 +4593,11 @@ impl Settings {
             ),
             connection_telnet_echo: crate::schema::on_off(ini.get("Tera Term", "TelEcho"), false),
             connection_telnet_log: crate::schema::on_off(ini.get("Tera Term", "TelLog"), false),
-            connection_telnet_keepalive: ini.get_int(
+            connection_telnet_keepalive: crate::schema::word(ini.get_int(
                 "Tera Term",
                 "TelKeepAliveInterval",
                 d.connection_telnet_keepalive,
-            ) as i32,
+            ) as i32),
             connection_tcp_local_echo: crate::schema::on_off(
                 ini.get("Tera Term", "TCPLocalEcho"),
                 false,
@@ -4654,10 +4673,16 @@ impl Settings {
                 Some(v) => SerialFlow::from_ini(v),
                 None => d.serial_flow,
             },
-            serial_delay_per_char: ini.get_int("Tera Term", "DelayPerChar", d.serial_delay_per_char)
-                as i32,
-            serial_delay_per_line: ini.get_int("Tera Term", "DelayPerLine", d.serial_delay_per_line)
-                as i32,
+            serial_delay_per_char: crate::schema::word(ini.get_int(
+                "Tera Term",
+                "DelayPerChar",
+                d.serial_delay_per_char,
+            ) as i32),
+            serial_delay_per_line: crate::schema::word(ini.get_int(
+                "Tera Term",
+                "DelayPerLine",
+                d.serial_delay_per_line,
+            ) as i32),
             serial_wait_com: crate::schema::on_off(ini.get("Tera Term", "WaitCom"), false),
             serial_max_com_port: crate::schema::clamped(
                 crate::schema::word(
@@ -4678,26 +4703,26 @@ impl Settings {
                 ini.get("Tera Term", "AutoComPortReconnect"),
                 true,
             ),
-            serial_auto_reconnect_delay: ini.get_int(
+            serial_auto_reconnect_delay: crate::schema::word(ini.get_int(
                 "Tera Term",
                 "AutoComPortReconnectDelayNormal",
                 d.serial_auto_reconnect_delay,
-            ) as i32,
-            serial_auto_reconnect_delay_unknown_port: ini.get_int(
+            ) as i32),
+            serial_auto_reconnect_delay_unknown_port: crate::schema::word(ini.get_int(
                 "Tera Term",
                 "AutoComPortReconnectDelayIllegal",
                 d.serial_auto_reconnect_delay_unknown_port,
-            ) as i32,
-            serial_auto_reconnect_retry_interval: ini.get_int(
+            ) as i32),
+            serial_auto_reconnect_retry_interval: crate::schema::word(ini.get_int(
                 "Tera Term",
                 "AutoComPortReconnectRetryInterval",
                 d.serial_auto_reconnect_retry_interval,
-            ) as i32,
-            serial_auto_reconnect_retries: ini.get_int(
+            ) as i32),
+            serial_auto_reconnect_retries: crate::schema::word(ini.get_int(
                 "Tera Term",
                 "AutoComPortReconnectRetryCount",
                 d.serial_auto_reconnect_retries,
-            ) as i32,
+            ) as i32),
             log_auto_start: crate::schema::on_off(ini.get("Tera Term", "LogAutoStart"), false),
             log_binary: crate::schema::on_off(ini.get("Tera Term", "LogBinary"), false),
             log_append: crate::schema::on_off(ini.get("Tera Term", "LogAppend"), false),
@@ -4722,12 +4747,16 @@ impl Settings {
                 .to_string(),
             log_rotate: ini.get_int("Tera Term", "LogRotate", d.log_rotate) as i32,
             log_rotate_size: ini.get_int("Tera Term", "LogRotateSize", d.log_rotate_size) as i32,
-            log_rotate_size_type: ini.get_int(
+            log_rotate_size_type: crate::schema::word(ini.get_int(
                 "Tera Term",
                 "LogRotateSizeType",
                 d.log_rotate_size_type,
-            ) as i32,
-            log_rotate_step: ini.get_int("Tera Term", "LogRotateStep", d.log_rotate_step) as i32,
+            ) as i32),
+            log_rotate_step: crate::schema::word(ini.get_int(
+                "Tera Term",
+                "LogRotateStep",
+                d.log_rotate_step,
+            ) as i32),
             log_hide_dialog: crate::schema::on_off(ini.get("Tera Term", "LogHideDialog"), false),
             log_include_screen_buffer: crate::schema::on_off(
                 ini.get("Tera Term", "LogIncludeScreenBuffer"),
@@ -4956,11 +4985,11 @@ impl Settings {
                 Some(v) => TransferRawSendDelayType::from_ini(v),
                 None => d.transfer_raw_send_delay_type,
             },
-            transfer_raw_send_delay_tick: ini.get_int(
+            transfer_raw_send_delay_tick: crate::schema::word(ini.get_int(
                 "Tera Term",
                 "SendfileDelayTick",
                 d.transfer_raw_send_delay_tick,
-            ) as i32,
+            ) as i32),
             transfer_raw_send_size: ini.get_int(
                 "Tera Term",
                 "SendfileSize",
@@ -5092,11 +5121,11 @@ impl Settings {
                 Some(v) => BroadcastSubmitKey::from_ini(v),
                 None => d.broadcast_submit_key,
             },
-            broadcast_max_history: ini.get_int(
+            broadcast_max_history: crate::schema::word(ini.get_int(
                 "Tera Term",
                 "MaxBroadcatHistory",
                 d.broadcast_max_history,
-            ) as i32,
+            ) as i32),
             menu_disable_accelerator_send_break: crate::schema::on_off(
                 ini.get("Tera Term", "DisableAcceleratorSendBreak"),
                 false,
@@ -5135,15 +5164,11 @@ impl Settings {
                 false,
             ),
         };
-        settings.window_opacity_active = crate::schema::clamped(
-            ini.get_int(
-                "Tera Term",
-                "AlphaBlendActive",
-                settings.window_opacity_inactive,
-            ) as i32,
-            0,
-            255,
-        );
+        settings.window_opacity_active = crate::schema::byte(ini.get_int(
+            "Tera Term",
+            "AlphaBlendActive",
+            settings.window_opacity_inactive,
+        ) as i32);
         settings.normalize();
         settings
     }
@@ -8093,7 +8118,7 @@ impl Settings {
             }
             "encoding.ambiguous_width" => {
                 self.encoding_ambiguous_width = crate::schema::validated(
-                    crate::schema::int(value, self.encoding_ambiguous_width),
+                    crate::schema::byte(crate::schema::int(value, self.encoding_ambiguous_width)),
                     1,
                     1,
                     2,
@@ -8104,7 +8129,7 @@ impl Settings {
             }
             "encoding.emoji_width" => {
                 self.encoding_emoji_width = crate::schema::validated(
-                    crate::schema::int(value, self.encoding_emoji_width),
+                    crate::schema::byte(crate::schema::int(value, self.encoding_emoji_width)),
                     1,
                     1,
                     2,
@@ -8219,18 +8244,12 @@ impl Settings {
                     crate::schema::int(value, self.window_scroll_threshold)
             }
             "window.opacity_inactive" => {
-                self.window_opacity_inactive = crate::schema::clamped(
-                    crate::schema::int(value, self.window_opacity_inactive),
-                    0,
-                    255,
-                )
+                self.window_opacity_inactive =
+                    crate::schema::byte(crate::schema::int(value, self.window_opacity_inactive))
             }
             "window.opacity_active" => {
-                self.window_opacity_active = crate::schema::clamped(
-                    crate::schema::int(value, self.window_opacity_active),
-                    0,
-                    255,
-                )
+                self.window_opacity_active =
+                    crate::schema::byte(crate::schema::int(value, self.window_opacity_active))
             }
             "window.title_format" => {
                 self.window_title_format =
@@ -8380,13 +8399,15 @@ impl Settings {
                 self.connection_port_type = ConnectionPortType::from_ini(value)
             }
             "connection.tcp_port" => {
-                self.connection_tcp_port = crate::schema::int(value, self.connection_tcp_port)
+                self.connection_tcp_port =
+                    crate::schema::word(crate::schema::int(value, self.connection_tcp_port))
             }
             "connection.telnet" => {
                 self.connection_telnet = crate::schema::on_off(Some(value), true)
             }
             "connection.telnet_port" => {
-                self.connection_telnet_port = crate::schema::int(value, self.connection_telnet_port)
+                self.connection_telnet_port =
+                    crate::schema::word(crate::schema::int(value, self.connection_telnet_port))
             }
             "connection.telnet_binary" => {
                 self.connection_telnet_binary = crate::schema::on_off(Some(value), false)
@@ -8402,7 +8423,7 @@ impl Settings {
             }
             "connection.telnet_keepalive" => {
                 self.connection_telnet_keepalive =
-                    crate::schema::int(value, self.connection_telnet_keepalive)
+                    crate::schema::word(crate::schema::int(value, self.connection_telnet_keepalive))
             }
             "connection.tcp_local_echo" => {
                 self.connection_tcp_local_echo = crate::schema::on_off(Some(value), false)
@@ -8449,10 +8470,12 @@ impl Settings {
             "serial.stop_bits" => self.serial_stop_bits = SerialStopBits::from_ini(value),
             "serial.flow" => self.serial_flow = SerialFlow::from_ini(value),
             "serial.delay_per_char" => {
-                self.serial_delay_per_char = crate::schema::int(value, self.serial_delay_per_char)
+                self.serial_delay_per_char =
+                    crate::schema::word(crate::schema::int(value, self.serial_delay_per_char))
             }
             "serial.delay_per_line" => {
-                self.serial_delay_per_line = crate::schema::int(value, self.serial_delay_per_line)
+                self.serial_delay_per_line =
+                    crate::schema::word(crate::schema::int(value, self.serial_delay_per_line))
             }
             "serial.wait_com" => self.serial_wait_com = crate::schema::on_off(Some(value), false),
             "serial.max_com_port" => {
@@ -8475,19 +8498,24 @@ impl Settings {
             }
             "serial.auto_reconnect_delay" => {
                 self.serial_auto_reconnect_delay =
-                    crate::schema::int(value, self.serial_auto_reconnect_delay)
+                    crate::schema::word(crate::schema::int(value, self.serial_auto_reconnect_delay))
             }
             "serial.auto_reconnect_delay_unknown_port" => {
-                self.serial_auto_reconnect_delay_unknown_port =
-                    crate::schema::int(value, self.serial_auto_reconnect_delay_unknown_port)
+                self.serial_auto_reconnect_delay_unknown_port = crate::schema::word(
+                    crate::schema::int(value, self.serial_auto_reconnect_delay_unknown_port),
+                )
             }
             "serial.auto_reconnect_retry_interval" => {
-                self.serial_auto_reconnect_retry_interval =
-                    crate::schema::int(value, self.serial_auto_reconnect_retry_interval)
+                self.serial_auto_reconnect_retry_interval = crate::schema::word(crate::schema::int(
+                    value,
+                    self.serial_auto_reconnect_retry_interval,
+                ))
             }
             "serial.auto_reconnect_retries" => {
-                self.serial_auto_reconnect_retries =
-                    crate::schema::int(value, self.serial_auto_reconnect_retries)
+                self.serial_auto_reconnect_retries = crate::schema::word(crate::schema::int(
+                    value,
+                    self.serial_auto_reconnect_retries,
+                ))
             }
             "log.auto_start" => self.log_auto_start = crate::schema::on_off(Some(value), false),
             "log.binary" => self.log_binary = crate::schema::on_off(Some(value), false),
@@ -8506,10 +8534,12 @@ impl Settings {
                 self.log_rotate_size = crate::schema::int(value, self.log_rotate_size)
             }
             "log.rotate_size_type" => {
-                self.log_rotate_size_type = crate::schema::int(value, self.log_rotate_size_type)
+                self.log_rotate_size_type =
+                    crate::schema::word(crate::schema::int(value, self.log_rotate_size_type))
             }
             "log.rotate_step" => {
-                self.log_rotate_step = crate::schema::int(value, self.log_rotate_step)
+                self.log_rotate_step =
+                    crate::schema::word(crate::schema::int(value, self.log_rotate_step))
             }
             "log.hide_dialog" => self.log_hide_dialog = crate::schema::on_off(Some(value), false),
             "log.include_screen_buffer" => {
@@ -8684,8 +8714,10 @@ impl Settings {
                 self.transfer_raw_send_delay_type = TransferRawSendDelayType::from_ini(value)
             }
             "transfer.raw_send_delay_tick" => {
-                self.transfer_raw_send_delay_tick =
-                    crate::schema::int(value, self.transfer_raw_send_delay_tick)
+                self.transfer_raw_send_delay_tick = crate::schema::word(crate::schema::int(
+                    value,
+                    self.transfer_raw_send_delay_tick,
+                ))
             }
             "transfer.raw_send_size" => {
                 self.transfer_raw_send_size = crate::schema::int(value, self.transfer_raw_send_size)
@@ -8783,7 +8815,8 @@ impl Settings {
                 self.broadcast_submit_key = BroadcastSubmitKey::from_ini(value)
             }
             "broadcast.max_history" => {
-                self.broadcast_max_history = crate::schema::int(value, self.broadcast_max_history)
+                self.broadcast_max_history =
+                    crate::schema::word(crate::schema::int(value, self.broadcast_max_history))
             }
             "menu.disable_accelerator_send_break" => {
                 self.menu_disable_accelerator_send_break = crate::schema::on_off(Some(value), false)
@@ -9688,20 +9721,20 @@ pub const FIELDS: &[Field] = &[
         page: "window",
         section: "Tera Term",
         key: "AlphaBlend",
-        kind: Kind::IntClamp(0, 255),
+        kind: Kind::IntByte,
         default: "255",
         label: Some("DLG_TAB_VISUAL_ALPHA_INACTIVE"),
-        doc: "`ttset.c:1466`, clamped at both ends. `255` is fully opaque and `0` fully transparent. Upstream applies this value when the window loses focus (`vtwin.cpp:1537`).",
+        doc: "`ttset.c:1466`. `255` is fully opaque and `0` fully transparent; upstream applies this value when the window loses focus (`vtwin.cpp:1537`).  **The `max(0, …)`/`min(255, …)` pair on the next two lines is dead code**, and reading it as the rule is how this row came to say `int_clamp(0..255)`. `ts.AlphaBlendInactive` is a `BYTE`, so the assignment has already narrowed the value and neither test can ever fire. It decides the answer for the one value a person writes here: `AlphaBlend=-1` is `(UINT)-1`, which the `BYTE` makes **255** — an opaque window — where the clamp reads a bare -1 as below the floor and gives 0, a window nobody can see. `AlphaBlend=256` is 0 for the same reason, not 255.",
     },
     Field {
         name: "window.opacity_active",
         page: "window",
         section: "Tera Term",
         key: "AlphaBlendActive",
-        kind: Kind::IntClamp(0, 255),
+        kind: Kind::IntByte,
         default: "255",
         label: Some("DLG_TAB_VISUAL_ALPHA_ACTIVE"),
-        doc: "`ttset.c:1470`, also clamped at both ends. Its fallback is the *loaded inactive opacity*, not the constant 255: `AlphaBlend=120` without this key makes both window states 120. An empty value inherits too; a non-numeric one is zero under `GetPrivateProfileInt`'s own rules. Applied at startup, after settings changes and whenever the window gains focus (`vtwin.cpp:780`, `:1357`, `:1539`).",
+        doc: "`ttset.c:1470`, with the same dead clamp behind the same narrowing. Its fallback is the *loaded inactive opacity*, not the constant 255: `AlphaBlend=120` without this key makes both window states 120. An empty value inherits too; a non-numeric one is zero under `GetPrivateProfileInt`'s own rules. Applied at startup, after settings changes and whenever the window gains focus (`vtwin.cpp:780`, `:1357`, `:1539`).",
     },
     Field {
         name: "window.title_format",
@@ -10228,7 +10261,7 @@ pub const FIELDS: &[Field] = &[
         page: "connection",
         section: "Tera Term",
         key: "TCPPort",
-        kind: Kind::Int,
+        kind: Kind::IntWord,
         default: "23",
         label: Some("DLG_HOST_TCPIPPORT"),
         doc: "**`ttset.c:966`, and its default is an initialiser rather than the setting it looks like.** The call is `GetPrivateProfileInt(…, \"TCPPort\", ts->TelPort, …)` — but `TelPort=` is not read until `:1311`, four hundred lines later, so the value in hand is the hardcoded `ts->TelPort = 23` from `:566`. A file with `TelPort=2323` and no `TCPPort=` therefore opens port **23**, not 2323. Reading the file's `TelPort` as the default here is the obvious thing and it is wrong.",
@@ -10248,7 +10281,7 @@ pub const FIELDS: &[Field] = &[
         page: "connection",
         section: "Tera Term",
         key: "TelPort",
-        kind: Kind::Int,
+        kind: Kind::IntWord,
         default: "23",
         label: Some("DLG_TCPIP_PORT"),
         doc: "`ttset.c:1311`. What the New Connection dialog fills the port box with when Telnet is chosen, and — as above — *not* what `TCPPort` defaults to.",
@@ -10298,7 +10331,7 @@ pub const FIELDS: &[Field] = &[
         page: "connection",
         section: "Tera Term",
         key: "TelKeepAliveInterval",
-        kind: Kind::Int,
+        kind: Kind::IntWord,
         default: "300",
         label: None,
         doc: "`ttset.c:1314`, in **seconds**, zero meaning no keepalive. An `IAC NOP` for a firewall that would otherwise drop an idle session.  Two things the name does not say. It is a **quiet** period, not a period: `telnet.c:913` compares against `cv.LastSendTime`, which `commlib.c:1062` stamps on every telnet send including the NOP itself, so a session that is being typed at never sends one. And it runs only where the opening burst ran — `TelStartKeepAliveThread` is called inside `vtwin.cpp:3666`'s `TCPPort == TelPort` arm — so a telnet-framed connection to a port that is not the telnet port gets no keepalive at all.",
@@ -10518,7 +10551,7 @@ pub const FIELDS: &[Field] = &[
         page: "serial",
         section: "Tera Term",
         key: "DelayPerChar",
-        kind: Kind::Int,
+        kind: Kind::IntWord,
         default: "0",
         label: Some("DLG_SERIAL_DELAYCHAR"),
         doc: "`ttset.c:951`, milliseconds between characters — for a device that cannot keep up with a paste.",
@@ -10528,7 +10561,7 @@ pub const FIELDS: &[Field] = &[
         page: "serial",
         section: "Tera Term",
         key: "DelayPerLine",
-        kind: Kind::Int,
+        kind: Kind::IntWord,
         default: "0",
         label: Some("DLG_SERIAL_DELAYLINE"),
         doc: "`ttset.c:955`, milliseconds between lines.",
@@ -10608,7 +10641,7 @@ pub const FIELDS: &[Field] = &[
         page: "serial",
         section: "Tera Term",
         key: "AutoComPortReconnectDelayNormal",
-        kind: Kind::Int,
+        kind: Kind::IntWord,
         default: "500",
         label: None,
         doc: "`ttset.c:1088`, milliseconds. The wait between the device arriving and the reopen, for the case where the arrival named the port it was about.",
@@ -10618,7 +10651,7 @@ pub const FIELDS: &[Field] = &[
         page: "serial",
         section: "Tera Term",
         key: "AutoComPortReconnectDelayIllegal",
-        kind: Kind::Int,
+        kind: Kind::IntWord,
         default: "2000",
         label: None,
         doc: "`ttset.c:1090`, milliseconds, and **\"illegal\" is about the notification and not about a value.** Some drivers send only `DBT_DEVTYP_DEVICEINTERFACE` and never the `DBT_DEVTYP_PORT` that would say *which* port arrived (`vtwin.cpp:335`), so this is the longer wait taken when the port number is unknown and the reopen is a guess.",
@@ -10628,7 +10661,7 @@ pub const FIELDS: &[Field] = &[
         page: "serial",
         section: "Tera Term",
         key: "AutoComPortReconnectRetryInterval",
-        kind: Kind::Int,
+        kind: Kind::IntWord,
         default: "1000",
         label: None,
         doc: "`ttset.c:1092`, milliseconds between one failed reopen and the next.",
@@ -10638,7 +10671,7 @@ pub const FIELDS: &[Field] = &[
         page: "serial",
         section: "Tera Term",
         key: "AutoComPortReconnectRetryCount",
-        kind: Kind::Int,
+        kind: Kind::IntWord,
         default: "3",
         label: None,
         doc: "`ttset.c:1094`. Retries **after** the first attempt, so three is four tries — and unlike `BeepOverUsedCount` the name is honest about it. Two details are not in the name: an attempt where the port is still absent costs a retry without opening anything (`vtwin.cpp:475`'s `CheckComPort` guard), and the *last* attempt is the one allowed to raise the error box, because the suppression tests `retry_left_ != 0` (`:481`).  The four above are `WORD` in `tttypes.h:602`, so upstream truncates them to 16 bits: a two-minute retry interval written as `120000` is 54464 ms there and 120000 here. Not reproduced — the schema has no type for it and the divergence only exists for values nobody means.",
@@ -10768,7 +10801,7 @@ pub const FIELDS: &[Field] = &[
         page: "log",
         section: "Tera Term",
         key: "LogRotateSizeType",
-        kind: Kind::Int,
+        kind: Kind::IntWord,
         default: "0",
         label: None,
         doc: "`ttset.c:1031`. 0 bytes, 1 KB, 2 MB (`log_pp.cpp:72`) — the unit the *dialog* shows `LogRotateSize` in, and nothing else. It is stored so that reopening the dialog offers the number the user typed rather than its expansion.",
@@ -10778,7 +10811,7 @@ pub const FIELDS: &[Field] = &[
         page: "log",
         section: "Tera Term",
         key: "LogRotateStep",
-        kind: Kind::Int,
+        kind: Kind::IntWord,
         default: "0",
         label: None,
         doc: "`ttset.c:1032`. How many generations to keep: `file.1` is the newest. **Zero is not \"none\"** — `filesys_log.cpp:507` leaves `loopmax` at its hardcoded 10000, so an unset step with rotation on keeps ten thousand files.",
@@ -11278,7 +11311,7 @@ pub const FIELDS: &[Field] = &[
         page: "transfer",
         section: "Tera Term",
         key: "SendfileDelayTick",
-        kind: Kind::Int,
+        kind: Kind::IntWord,
         default: "0",
         label: None,
         doc: "`ttset.c:2011`, in milliseconds. The delay selected above; zero is a real value and means no wait.",
@@ -11678,7 +11711,7 @@ pub const FIELDS: &[Field] = &[
         page: "broadcast",
         section: "Tera Term",
         key: "MaxBroadcatHistory",
-        kind: Kind::Int,
+        kind: Kind::IntWord,
         default: "99",
         label: None,
         doc: "`ttset.c:1319`. Upstream's misspelling is the public key and is preserved. It caps the broadcast command history, which is not built yet.",

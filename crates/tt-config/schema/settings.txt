@@ -348,7 +348,7 @@ encoding.unicode_to_dec_special | uint16 | Tera Term | UnicodeToDecSpMapping | 3
 
 # `ttset.c:1965`. Only 1 and 2 are valid, and either invalid end takes
 # `GetDefaultUnicodeWidth()`, which is 1 in this upstream tree.
-encoding.ambiguous_width | int_default(1..2) | Tera Term | UnicodeAmbiguousWidth | 1 | -
+encoding.ambiguous_width | uint8_default(1..2) | Tera Term | UnicodeAmbiguousWidth | 1 | -
 
 # `ttset.c:1969`, default off. When enabled, Emoji-property characters use the
 # explicit width below instead of their East Asian Width property.
@@ -356,7 +356,7 @@ encoding.emoji_override | bool | Tera Term | UnicodeEmojiOverride | off | -
 
 # `ttset.c:1970`, the same accept-only-1-or-2 rule and default 1 as ambiguous
 # width. Width policy remains deliberately deferred with CJK.
-encoding.emoji_width | int_default(1..2) | Tera Term | UnicodeEmojiWidth | 1 | -
+encoding.emoji_width | uint8_default(1..2) | Tera Term | UnicodeEmojiWidth | 1 | -
 
 # --- input method -----------------------------------------------------------
 
@@ -595,18 +595,26 @@ window.auto_scroll_only_at_bottom | bool | Tera Term | AutoScrollOnlyInBottomLin
 # the way `bell.notify_sound` is.
 window.scroll_threshold | int | Tera Term | ScrollThreshold | 12 | -
 
-# `ttset.c:1466`, clamped at both ends. `255` is fully opaque and `0` fully
-# transparent. Upstream applies this value when the window loses focus
-# (`vtwin.cpp:1537`).
-window.opacity_inactive | int_clamp(0..255) | Tera Term | AlphaBlend | 255 | DLG_TAB_VISUAL_ALPHA_INACTIVE
+# `ttset.c:1466`. `255` is fully opaque and `0` fully transparent; upstream
+# applies this value when the window loses focus (`vtwin.cpp:1537`).
+#
+# **The `max(0, …)`/`min(255, …)` pair on the next two lines is dead code**, and
+# reading it as the rule is how this row came to say `int_clamp(0..255)`.
+# `ts.AlphaBlendInactive` is a `BYTE`, so the assignment has already narrowed
+# the value and neither test can ever fire. It decides the answer for the one
+# value a person writes here: `AlphaBlend=-1` is `(UINT)-1`, which the `BYTE`
+# makes **255** — an opaque window — where the clamp reads a bare -1 as below
+# the floor and gives 0, a window nobody can see. `AlphaBlend=256` is 0 for the
+# same reason, not 255.
+window.opacity_inactive | uint8 | Tera Term | AlphaBlend | 255 | DLG_TAB_VISUAL_ALPHA_INACTIVE
 
-# `ttset.c:1470`, also clamped at both ends. Its fallback is the *loaded
-# inactive opacity*, not the constant 255: `AlphaBlend=120` without this key
-# makes both window states 120. An empty value inherits too; a non-numeric one
-# is zero under `GetPrivateProfileInt`'s own rules. Applied at startup, after
-# settings changes and whenever the window gains focus (`vtwin.cpp:780`,
-# `:1357`, `:1539`).
-window.opacity_active | int_clamp(0..255) | Tera Term | AlphaBlendActive | 255 | DLG_TAB_VISUAL_ALPHA_ACTIVE | default-from=window.opacity_inactive
+# `ttset.c:1470`, with the same dead clamp behind the same narrowing. Its
+# fallback is the *loaded inactive opacity*, not the constant 255:
+# `AlphaBlend=120` without this key makes both window states 120. An empty
+# value inherits too; a non-numeric one is zero under `GetPrivateProfileInt`'s
+# own rules. Applied at startup, after settings changes and whenever the window
+# gains focus (`vtwin.cpp:780`, `:1357`, `:1539`).
+window.opacity_active | uint8 | Tera Term | AlphaBlendActive | 255 | DLG_TAB_VISUAL_ALPHA_ACTIVE | default-from=window.opacity_inactive
 
 # `ttset.c:1339`, a six-bit word rather than an enum: 1 shows the endpoint,
 # 2 the process-wide session number, 4 the `VT`/`TEK` suffix, 8 puts the
@@ -983,7 +991,7 @@ connection.port_type | enum(serial=Serial,tcpip=TcpIp) | Tera Term | Port | tcpi
 # `TelPort=2323` and no `TCPPort=` therefore opens port **23**, not 2323.
 # Reading the file's `TelPort` as the default here is the obvious thing and it
 # is wrong.
-connection.tcp_port | int | Tera Term | TCPPort | 23 | DLG_HOST_TCPIPPORT
+connection.tcp_port | uint16 | Tera Term | TCPPort | 23 | DLG_HOST_TCPIPPORT
 
 # `ttset.c:958`, `GetOnOff(…, TRUE)` — so `Telnet=1` is **on** and `Telnet=off`
 # is the only way to turn it off. See `schema.rs`'s `on_off` for why that is
@@ -992,7 +1000,7 @@ connection.telnet | bool | Tera Term | Telnet | on | DLG_TCPIP_TELNET
 
 # `ttset.c:1311`. What the New Connection dialog fills the port box with when
 # Telnet is chosen, and — as above — *not* what `TCPPort` defaults to.
-connection.telnet_port | int | Tera Term | TelPort | 23 | DLG_TCPIP_PORT
+connection.telnet_port | uint16 | Tera Term | TelPort | 23 | DLG_TCPIP_PORT
 
 # `ttset.c:1301`, `GetOnOff(…, FALSE)` — so here `TelBin=1` reads as **off**,
 # which is the opposite of what the same value means for `Telnet=` above.
@@ -1043,7 +1051,7 @@ connection.telnet_log | bool | Tera Term | TelLog | off | -
 # — `TelStartKeepAliveThread` is called inside `vtwin.cpp:3666`'s
 # `TCPPort == TelPort` arm — so a telnet-framed connection to a port that is not
 # the telnet port gets no keepalive at all.
-connection.telnet_keepalive | int | Tera Term | TelKeepAliveInterval | 300 | -
+connection.telnet_keepalive | uint16 | Tera Term | TelKeepAliveInterval | 300 | -
 
 # `ttset.c:1322`. Local echo for a TCP connection that is **not** speaking
 # telnet, which is a separate key because the telnet one is negotiated and this
@@ -1207,10 +1215,10 @@ serial.flow | enum(none=None,x=XonXoff,hard/rtscts=Hardware,dsrdtr=DsrDtr) | Ter
 
 # `ttset.c:951`, milliseconds between characters — for a device that cannot
 # keep up with a paste.
-serial.delay_per_char | int | Tera Term | DelayPerChar | 0 | DLG_SERIAL_DELAYCHAR
+serial.delay_per_char | uint16 | Tera Term | DelayPerChar | 0 | DLG_SERIAL_DELAYCHAR
 
 # `ttset.c:955`, milliseconds between lines.
-serial.delay_per_line | int | Tera Term | DelayPerLine | 0 | DLG_SERIAL_DELAYLINE
+serial.delay_per_line | uint16 | Tera Term | DelayPerLine | 0 | DLG_SERIAL_DELAYLINE
 
 # `ttset.c:1151`. Wait for the port to appear instead of failing — a USB
 # adapter that has not been plugged in yet.
@@ -1294,17 +1302,17 @@ serial.auto_reconnect | bool | Tera Term | AutoComPortReconnect | on | -
 
 # `ttset.c:1088`, milliseconds. The wait between the device arriving and the
 # reopen, for the case where the arrival named the port it was about.
-serial.auto_reconnect_delay | int | Tera Term | AutoComPortReconnectDelayNormal | 500 | -
+serial.auto_reconnect_delay | uint16 | Tera Term | AutoComPortReconnectDelayNormal | 500 | -
 
 # `ttset.c:1090`, milliseconds, and **"illegal" is about the notification and
 # not about a value.** Some drivers send only `DBT_DEVTYP_DEVICEINTERFACE` and
 # never the `DBT_DEVTYP_PORT` that would say *which* port arrived
 # (`vtwin.cpp:335`), so this is the longer wait taken when the port number is
 # unknown and the reopen is a guess.
-serial.auto_reconnect_delay_unknown_port | int | Tera Term | AutoComPortReconnectDelayIllegal | 2000 | -
+serial.auto_reconnect_delay_unknown_port | uint16 | Tera Term | AutoComPortReconnectDelayIllegal | 2000 | -
 
 # `ttset.c:1092`, milliseconds between one failed reopen and the next.
-serial.auto_reconnect_retry_interval | int | Tera Term | AutoComPortReconnectRetryInterval | 1000 | -
+serial.auto_reconnect_retry_interval | uint16 | Tera Term | AutoComPortReconnectRetryInterval | 1000 | -
 
 # `ttset.c:1094`. Retries **after** the first attempt, so three is four tries —
 # and unlike `BeepOverUsedCount` the name is honest about it. Two details are
@@ -1317,7 +1325,7 @@ serial.auto_reconnect_retry_interval | int | Tera Term | AutoComPortReconnectRet
 # 16 bits: a two-minute retry interval written as `120000` is 54464 ms there
 # and 120000 here. Not reproduced — the schema has no type for it and the
 # divergence only exists for values nobody means.
-serial.auto_reconnect_retries | int | Tera Term | AutoComPortReconnectRetryCount | 3 | -
+serial.auto_reconnect_retries | uint16 | Tera Term | AutoComPortReconnectRetryCount | 3 | -
 
 # --- log ---------------------------------------------------------------------
 
@@ -1402,12 +1410,12 @@ log.rotate_size | int | Tera Term | LogRotateSize | 0 | -
 # `ttset.c:1031`. 0 bytes, 1 KB, 2 MB (`log_pp.cpp:72`) — the unit the *dialog*
 # shows `LogRotateSize` in, and nothing else. It is stored so that reopening
 # the dialog offers the number the user typed rather than its expansion.
-log.rotate_size_type | int | Tera Term | LogRotateSizeType | 0 | -
+log.rotate_size_type | uint16 | Tera Term | LogRotateSizeType | 0 | -
 
 # `ttset.c:1032`. How many generations to keep: `file.1` is the newest.
 # **Zero is not "none"** — `filesys_log.cpp:507` leaves `loopmax` at its
 # hardcoded 10000, so an unset step with rotation on keeps ten thousand files.
-log.rotate_step | int | Tera Term | LogRotateStep | 0 | -
+log.rotate_step | uint16 | Tera Term | LogRotateStep | 0 | -
 
 # `ttset.c:991`. Upstream puts a file-transfer-shaped progress window up for
 # the duration of a log; this port has a status-bar indicator instead, so the
@@ -1627,7 +1635,7 @@ transfer.raw_send_delay_type | enum(NoDelay=NoDelay,PerChar=PerChar,PerLine=PerL
 
 # `ttset.c:2011`, in milliseconds. The delay selected above; zero is a real
 # value and means no wait.
-transfer.raw_send_delay_tick | int | Tera Term | SendfileDelayTick | 0 | -
+transfer.raw_send_delay_tick | uint16 | Tera Term | SendfileDelayTick | 0 | -
 
 # `ttset.c:2012`. The chunk size for `PerSendSize`, and the raw sender's read
 # size. Upstream applies no range at settings-load time.
@@ -1805,7 +1813,7 @@ broadcast.submit_key | enum(None=None,Enter=Enter,CTRL+M=CtrlM) | Tera Term | Br
 
 # `ttset.c:1319`. Upstream's misspelling is the public key and is preserved.
 # It caps the broadcast command history, which is not built yet.
-broadcast.max_history | int | Tera Term | MaxBroadcatHistory | 99 | -
+broadcast.max_history | uint16 | Tera Term | MaxBroadcatHistory | 99 | -
 
 # `ttset.c:1452`. Suppresses Alt+B while leaving Control > Send break alone.
 menu.disable_accelerator_send_break | bool | Tera Term | DisableAcceleratorSendBreak | off | -

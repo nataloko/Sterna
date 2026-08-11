@@ -356,7 +356,7 @@ fn active_opacity_inherits_the_loaded_inactive_value() {
 
     // `AlphaBlendActive` passes the inactive value as
     // GetPrivateProfileInt's fallback, after that value has itself been
-    // clamped. Missing and empty values therefore inherit.
+    // narrowed. Missing and empty values therefore inherit.
     for line in ["", "AlphaBlendActive="] {
         let ini = Ini::parse(format!("[Tera Term]\r\nAlphaBlend=120\r\n{line}\r\n").as_bytes());
         let settings = Settings::load(&ini);
@@ -370,12 +370,57 @@ fn active_opacity_inherits_the_loaded_inactive_value() {
         b"[Tera Term]\r\nAlphaBlend=120\r\nAlphaBlendActive=not-a-number\r\n",
     ));
     assert_eq!(invalid.window_opacity_active, 0);
+}
 
-    let explicit = Settings::load(&Ini::parse(
-        b"[Tera Term]\r\nAlphaBlend=-1\r\nAlphaBlendActive=300\r\n",
-    ));
-    assert_eq!(explicit.window_opacity_inactive, 0);
-    assert_eq!(explicit.window_opacity_active, 255);
+/// Both opacity keys land in a `BYTE`, so the `max(0, …)`/`min(255, …)` pair
+/// upstream applies next (`ttset.c:1467`) is **dead code** — the assignment has
+/// already brought the value inside the range.
+///
+/// This row used to say `int_clamp(0..255)`, which is what that pair looks
+/// like, and it inverted the answer for the one value somebody writes:
+/// `AlphaBlend=-1` is an *opaque* window upstream and was a fully transparent
+/// one here.
+#[test]
+fn opacity_narrows_into_its_byte_rather_than_clamping() {
+    let load = |file: &str| {
+        let s = Settings::load(&Ini::parse(format!("[Tera Term]\r\n{file}").as_bytes()));
+        (s.window_opacity_inactive, s.window_opacity_active)
+    };
+    assert_eq!(load("AlphaBlend=-1\r\nAlphaBlendActive=300\r\n"), (255, 44));
+    assert_eq!(load("AlphaBlend=256\r\n"), (0, 0), "and not 255 either");
+    assert_eq!(load("AlphaBlend=120\r\n"), (120, 120));
+
+    // A script takes the same rule; the dialog is what keeps a person inside
+    // 0..255, and it is the only thing that ever did.
+    let mut s = Settings::default();
+    assert!(s.set_str("window.opacity_inactive", "-1"));
+    assert_eq!(s.window_opacity_inactive, 255);
+}
+
+/// The keys upstream reads straight into a `WORD` with no bounds test at all,
+/// where the narrowing is therefore the *whole* rule.
+///
+/// A port number is the honest case for it — 16 bits is what a port is — and
+/// the delays are where a plain `int` row would otherwise hand a negative
+/// number to something that has to wait for it.
+#[test]
+fn a_word_key_wraps_where_a_plain_int_row_would_not() {
+    let load = |key: &str, v: &str| {
+        Settings::load(&Ini::parse(
+            format!("[Tera Term]\r\n{key}={v}\r\n").as_bytes(),
+        ))
+    };
+    assert_eq!(load("TCPPort", "8080").connection_tcp_port, 8080);
+    assert_eq!(load("TCPPort", "65536").connection_tcp_port, 0);
+    assert_eq!(load("TCPPort", "-1").connection_tcp_port, 65535);
+    assert_eq!(load("TelPort", "-1").connection_telnet_port, 65535);
+    assert_eq!(load("DelayPerChar", "-1").serial_delay_per_char, 65535);
+    assert_eq!(load("DelayPerLine", "70000").serial_delay_per_line, 4464);
+    assert_eq!(load("LogRotateStep", "-1").log_rotate_step, 65535);
+    assert_eq!(
+        load("AutoComPortReconnectRetryCount", "-1").serial_auto_reconnect_retries,
+        65535
+    );
 }
 
 #[test]
