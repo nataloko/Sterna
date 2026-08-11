@@ -254,20 +254,22 @@ add_test(NAME cmdline COMMAND cmdline_test)
 
 # The control socket against the window's own event loop, which is the only
 # place the notifier, the nested loops and the window's four callbacks meet.
-# Needs nothing: it binds into a scratch runtime directory and talks to itself.
+# Needs nothing: it binds an endpoint of its own and talks to itself.
 #
-# UNIX only, and not because of a missing header. Its client half is a
-# `sockaddr_un` and a `poll(2)`, and the Windows control channel is a named
-# pipe under `\\.\pipe\` — a different address, a different client and a
-# different way to wait, all of which `tt-ctl` already has. Shimming the four
-# calls would compile and would prove nothing about the transport actually
-# used there, so the Windows client is a rewrite rather than a `#define`.
-if(UNIX)
-    add_executable(control_test tests/control_test.cpp)
-    target_link_libraries(control_test PRIVATE sterna_shell)
-    target_compile_options(control_test PRIVATE ${TT_WARNINGS})
-    add_test(NAME control COMMAND control_test)
+# Both platforms, and the client half is written twice rather than shimmed:
+# Unix is a `sockaddr_un` and a `poll(2)`, Windows is a byte-mode named pipe
+# opened with `CreateFileW` and drained with `PeekNamedPipe`. Four calls, and
+# the waiting above them is shared — because the interesting claim here is
+# that the wait has to be the *window's* event loop, which is a fact about the
+# window rather than about the address. `ws2_32` is for the listening socket
+# the `connect` case opens, not for the control channel.
+add_executable(control_test tests/control_test.cpp)
+target_link_libraries(control_test PRIVATE sterna_shell)
+if(WIN32)
+    target_link_libraries(control_test PRIVATE ws2_32)
 endif()
+target_compile_options(control_test PRIVATE ${TT_WARNINGS})
+add_test(NAME control COMMAND control_test)
 
 # --- the performance gate ----------------------------------------------------
 #

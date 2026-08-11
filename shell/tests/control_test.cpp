@@ -12,8 +12,9 @@
 // `tt_ctl_service` — which is a request asking to delete the object whose
 // stack frame it is running on.
 //
-// It needs no server and no hardware: it binds into a scratch runtime
-// directory and talks to itself over a Unix socket.
+// It needs no server and no hardware: it binds an endpoint of its own and
+// talks to itself — a Unix socket in a scratch runtime directory, or a
+// byte-mode named pipe under `\\.\pipe\`.
 
 #include <QApplication>
 #include <QDir>
@@ -28,16 +29,27 @@
 #include <cstdio>
 #include <cstring>
 
-// A raw socket rather than `QLocalSocket`, which lives in Qt6::Network — the
-// shell links Widgets and nothing else, and a test is the wrong reason to add
-// a module to what ships. It is also what a client actually looks like: the
-// whole claim is that this socket needs no library.
+// The platform's own calls rather than `QLocalSocket`, which lives in
+// Qt6::Network — the shell links Widgets and nothing else, and a test is the
+// wrong reason to add a module to what ships. It is also what a client
+// actually looks like: the whole claim is that this endpoint needs no library.
+#ifdef Q_OS_WIN
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+// Winsock first: `windows.h` pulls in the 1.1 header otherwise and the two
+// disagree about every name in them.
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#else
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#endif
 
 #include "Control.h"
 #include "MainWindow.h"
@@ -68,35 +80,149 @@ bool spin(F done, int ms)
     return done();
 }
 
+// --- the one thing that is two platforms -------------------------------------
+//
+// A client end, opened, written and drained. Everything above these four calls
+// is the same on both, and deliberately: the interesting half of this test is
+// that the wait has to be the *window's* event loop, and that is a fact about
+// the window rather than about the address.
+
+#ifdef Q_OS_WIN
+using Endpoint = HANDLE;
+// `const` rather than `constexpr`: `INVALID_HANDLE_VALUE` is a cast, which is
+// not something a constant expression may contain.
+const Endpoint kNoEndpoint = INVALID_HANDLE_VALUE;
+
+Endpoint openEnd(const QString &path)
+{
+    // `tt-ctl`'s own client retries on ERROR_PIPE_BUSY, because a window can
+    // be answering somebody else. Here nobody else is connected, so one open
+    // is the whole of it.
+    return CreateFileW(reinterpret_cast<const wchar_t *>(path.utf16()),
+                       GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+                       0, nullptr);
+}
+
+void closeEnd(Endpoint end) { CloseHandle(end); }
+
+bool writeAll(Endpoint end, const QByteArray &bytes)
+{
+    DWORD wrote = 0;
+    return WriteFile(end, bytes.constData(), DWORD(bytes.size()), &wrote,
+                     nullptr)
+           && wrote == DWORD(bytes.size());
+}
+
+/// Bytes taken, 0 for nothing waiting, -1 for a hang-up.
+///
+/// `PeekNamedPipe` first, and not a read with a timeout: the handle is a
+/// synchronous one, so a `ReadFile` with an empty pipe behind it blocks this
+/// thread — which is the thread that was going to produce the answer.
+int readAvailable(Endpoint end, char *buf, int cap)
+{
+    DWORD waiting = 0;
+    if (!PeekNamedPipe(end, nullptr, 0, nullptr, &waiting, nullptr)) {
+        return -1;
+    }
+    if (waiting == 0) {
+        return 0;
+    }
+    DWORD got = 0;
+    const DWORD want = waiting < DWORD(cap) ? waiting : DWORD(cap);
+    if (!ReadFile(end, buf, want, &got, nullptr)) {
+        return -1;
+    }
+    return got ? int(got) : -1;
+}
+#else
+using Endpoint = int;
+const Endpoint kNoEndpoint = -1;
+
+Endpoint openEnd(const QString &path)
+{
+    const Endpoint fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return kNoEndpoint;
+    }
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof addr);
+    addr.sun_family = AF_UNIX;
+    snprintf(addr.sun_path, sizeof addr.sun_path, "%s",
+             path.toUtf8().constData());
+    if (::connect(fd, reinterpret_cast<struct sockaddr *>(&addr), sizeof addr)
+        != 0) {
+        ::close(fd);
+        return kNoEndpoint;
+    }
+    return fd;
+}
+
+void closeEnd(Endpoint end) { ::close(end); }
+
+bool writeAll(Endpoint end, const QByteArray &bytes)
+{
+    return ::write(end, bytes.constData(), size_t(bytes.size()))
+           == bytes.size();
+}
+
+int readAvailable(Endpoint end, char *buf, int cap)
+{
+    struct pollfd pfd = {end, POLLIN, 0};
+    if (::poll(&pfd, 1, 0) <= 0) {
+        return 0;
+    }
+    const ssize_t n = ::read(end, buf, size_t(cap));
+    return n > 0 ? int(n) : -1;
+}
+#endif
+
+/// Whether the window's endpoint is still there.
+bool endpointExists(const QString &path)
+{
+#ifdef Q_OS_WIN
+    // A named pipe leaves no file behind, so there is nothing to look for on
+    // disk: the question is whether the name still resolves. Every instance
+    // busy is not the same answer as gone, and only the second one is what
+    // a closed window produces.
+    if (WaitNamedPipeW(reinterpret_cast<const wchar_t *>(path.utf16()), 1)) {
+        return true;
+    }
+    return GetLastError() != ERROR_FILE_NOT_FOUND;
+#else
+    return QFile::exists(path);
+#endif
+}
+
+/// A path inside a JSON string.
+///
+/// Qt spells even a Windows temporary directory with forward slashes, so in
+/// practice nothing here needs escaping — but a `\` in a JSON string opens an
+/// escape, and a hand-built request that met one would come back rejected as
+/// malformed rather than as the thing the case was about.
+QByteArray jsonPath(const QString &path)
+{
+    return path.toUtf8().replace('\\', "\\\\").replace('"', "\\\"");
+}
+
 /// A client on this thread, which is also the window's.
 ///
 /// It cannot block waiting for an answer — the window would never get round to
 /// producing one — so every call writes and then spins the event loop until
 /// the reply arrives. That is exactly the shape a GUI client would have, and
-/// it is why the socket's own threads are in the core rather than out here.
+/// it is why the endpoint's own threads are in the core rather than out here.
 class Client {
 public:
     ~Client()
     {
-        if (m_fd >= 0) {
-            ::close(m_fd);
+        if (m_end != kNoEndpoint) {
+            closeEnd(m_end);
         }
     }
 
     bool open(const QString &path)
     {
-        m_fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-        if (m_fd < 0) {
-            return false;
-        }
-        struct sockaddr_un addr;
-        memset(&addr, 0, sizeof addr);
-        addr.sun_family = AF_UNIX;
-        snprintf(addr.sun_path, sizeof addr.sun_path, "%s",
-                 path.toUtf8().constData());
-        return ::connect(m_fd, reinterpret_cast<struct sockaddr *>(&addr),
-                         sizeof addr)
-               == 0;
+        m_end = openEnd(path);
+        return m_end != kNoEndpoint;
     }
 
     /// One request, one line back. Empty on timeout.
@@ -105,22 +231,18 @@ public:
     /// thread's own event loop, so the wait has to *be* the event loop.
     QByteArray call(const QByteArray &request)
     {
-        const QByteArray line = request + "\n";
-        if (::write(m_fd, line.constData(), size_t(line.size())) < 0) {
+        if (!writeAll(m_end, request + "\n")) {
             return {};
         }
         QByteArray answer;
         spin(
             [&] {
-                struct pollfd pfd = {m_fd, POLLIN, 0};
-                if (::poll(&pfd, 1, 0) > 0) {
-                    char buf[4096];
-                    const ssize_t n = ::read(m_fd, buf, sizeof buf);
-                    if (n > 0) {
-                        answer.append(buf, int(n));
-                    } else {
-                        m_hungUp = true;
-                    }
+                char buf[4096];
+                const int n = readAvailable(m_end, buf, int(sizeof buf));
+                if (n > 0) {
+                    answer.append(buf, n);
+                } else if (n < 0) {
+                    m_hungUp = true;
                 }
                 return answer.contains('\n') || m_hungUp;
             },
@@ -128,32 +250,42 @@ public:
         return answer;
     }
 
-    /// Whether the far end is still there — a read of zero is the hang-up a
-    /// closed window produces.
+    /// Whether the far end is still there — the hang-up a closed window
+    /// produces, which is a read of zero on Unix and a broken pipe on Windows.
     bool connected()
     {
         if (m_hungUp) {
             return false;
         }
-        struct pollfd pfd = {m_fd, POLLIN, 0};
-        if (::poll(&pfd, 1, 0) > 0) {
-            char buf[64];
-            if (::read(m_fd, buf, sizeof buf) <= 0) {
-                m_hungUp = true;
-            }
+        char buf[64];
+        if (readAvailable(m_end, buf, int(sizeof buf)) < 0) {
+            m_hungUp = true;
         }
         return !m_hungUp;
     }
 
 private:
-    int m_fd = -1;
+    Endpoint m_end = kNoEndpoint;
     bool m_hungUp = false;
 };
 
 /// A runtime directory of its own, so a run inside a live session cannot find
 /// — or prune — the developer's own windows.
+///
+/// Windows has neither half of that problem, so this is a no-op there rather
+/// than a shim over something that is not present: the pipe namespace has no
+/// directory to redirect, a pipe leaves nothing behind to go stale, and every
+/// name here already carries this process's own id.
 class Scratch {
 public:
+#ifdef Q_OS_WIN
+    // Written out rather than `= default`, which would make this trivial —
+    // and a trivial type with no members is an *unused variable* at every one
+    // of the eight places that declares one, which is eight warnings in a
+    // build that treats them as worth reading.
+    Scratch() {}
+    ~Scratch() {}
+#else
     Scratch()
     {
         m_prev = qgetenv("XDG_RUNTIME_DIR");
@@ -164,45 +296,87 @@ public:
 private:
     QTemporaryDir m_dir;
     QByteArray m_prev;
+#endif
 };
+
+// The two spellings of the same handle. A Winsock `SOCKET` is *unsigned*, so
+// the `< 0` that means "no socket" on POSIX is a comparison that can never be
+// true there — see `cmdline_test`, where the same listener lives.
+#ifdef Q_OS_WIN
+using Socket = SOCKET;
+const Socket kNoSocket = INVALID_SOCKET;
+inline void closeSocket(Socket s) { ::closesocket(s); }
+inline int waitReadable(Socket s, int ms)
+{
+    WSAPOLLFD pfd = {s, POLLRDNORM, 0};
+    return ::WSAPoll(&pfd, 1, ms);
+}
+#else
+using Socket = int;
+const Socket kNoSocket = -1;
+inline void closeSocket(Socket s) { ::close(s); }
+inline int waitReadable(Socket s, int ms)
+{
+    struct pollfd pfd = {s, POLLIN, 0};
+    return ::poll(&pfd, 1, ms);
+}
+#endif
 
 /// A socket listening on localhost, so the case that connects needs no server.
 ///
-/// POSIX rather than `QTcpServer`, for the reason `cmdline_test`'s copy gives:
-/// the shell links Qt Widgets and nothing else, and a test is not a reason to
-/// put Qt Network into what the AppImage carries.
+/// The platform's own sockets rather than `QTcpServer`, for the reason
+/// `cmdline_test`'s copy gives: the shell links Qt Widgets and nothing else,
+/// and a test is not a reason to put Qt Network into what the AppImage
+/// carries.
 class Listener {
 public:
     Listener()
     {
+#ifdef Q_OS_WIN
+        // Winsock has to be started before the first socket call, and nothing
+        // else in this binary does it: the core is a DLL with its own copy of
+        // the initialisation, which does not count for this process's calls.
+        WSADATA wsa;
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+            return;
+        }
+        m_started = true;
+#endif
         m_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (m_fd < 0) {
+        if (m_fd == kNoSocket) {
             return;
         }
         int on = 1;
-        setsockopt(m_fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on);
+        ::setsockopt(m_fd, SOL_SOCKET, SO_REUSEADDR,
+                     reinterpret_cast<const char *>(&on), sizeof on);
         sockaddr_in addr = {};
         addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         addr.sin_port = 0;
         socklen_t len = sizeof addr;
-        if (::bind(m_fd, reinterpret_cast<sockaddr *>(&addr), len) < 0
-            || ::listen(m_fd, 1) < 0
-            || getsockname(m_fd, reinterpret_cast<sockaddr *>(&addr), &len) < 0) {
-            ::close(m_fd);
-            m_fd = -1;
+        if (::bind(m_fd, reinterpret_cast<sockaddr *>(&addr), len) != 0
+            || ::listen(m_fd, 1) != 0
+            || ::getsockname(m_fd, reinterpret_cast<sockaddr *>(&addr), &len)
+                   != 0) {
+            closeSocket(m_fd);
+            m_fd = kNoSocket;
             return;
         }
         m_port = ntohs(addr.sin_port);
     }
     ~Listener()
     {
-        if (m_client >= 0) {
-            ::close(m_client);
+        if (m_client != kNoSocket) {
+            closeSocket(m_client);
         }
-        if (m_fd >= 0) {
-            ::close(m_fd);
+        if (m_fd != kNoSocket) {
+            closeSocket(m_fd);
         }
+#ifdef Q_OS_WIN
+        if (m_started) {
+            WSACleanup();
+        }
+#endif
     }
     Listener(const Listener &) = delete;
     Listener &operator=(const Listener &) = delete;
@@ -215,22 +389,25 @@ public:
     /// rather than failing the check that was about to notice.
     bool accept(const char *text, int ms)
     {
-        struct pollfd pfd = {m_fd, POLLIN, 0};
-        if (::poll(&pfd, 1, ms) <= 0) {
+        if (waitReadable(m_fd, ms) <= 0) {
             return false;
         }
         m_client = ::accept(m_fd, nullptr, nullptr);
-        if (m_client < 0) {
+        if (m_client == kNoSocket) {
             return false;
         }
-        const ssize_t n = ::write(m_client, text, strlen(text));
-        return n > 0;
+        // `send` rather than `write`, which on Windows is a *file* call that a
+        // socket handle is not valid for.
+        return ::send(m_client, text, int(strlen(text)), 0) > 0;
     }
 
 private:
-    int m_fd = -1;
-    int m_client = -1;
+    Socket m_fd = kNoSocket;
+    Socket m_client = kNoSocket;
     quint16 m_port = 0;
+#ifdef Q_OS_WIN
+    bool m_started = false;
+#endif
 };
 
 QByteArray request(const char *method, const QByteArray &params = "{}")
@@ -319,13 +496,13 @@ void test_a_macro_runs_and_a_second_is_busy()
 
     const QByteArray start =
         client.call(request("macro.run",
-                            QByteArray("{\"path\":\"") + path.toUtf8() + "\"}"));
+                            QByteArray("{\"path\":\"") + jsonPath(path) + "\"}"));
     CHECK(start.contains("\"started\":true"));
     CHECK(window.macroRunning());
 
     const QByteArray second =
         client.call(request("macro.run",
-                            QByteArray("{\"path\":\"") + path.toUtf8() + "\"}"));
+                            QByteArray("{\"path\":\"") + jsonPath(path) + "\"}"));
     CHECK(second.contains("-32002"));
 
     // And the End button, which is the same request from the other side.
@@ -465,7 +642,7 @@ void test_the_socket_dies_with_the_window()
         CHECK(client.open(path));
         CHECK(client.connected());
     }
-    CHECK(!QFile::exists(path));
+    CHECK(!endpointExists(path));
     // The hang-up reaches the client rather than leaving it blocked.
     CHECK(spin([&] { return !client.connected(); }, 5000));
 }
