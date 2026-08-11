@@ -359,25 +359,56 @@ void DispConvScreenToWin(vtdraw_t *vt, int Xs, int Ys, int *Xw, int *Yw)
 	}
 }
 
+/*
+ * The notional window: no chrome, at the origin, on a 1920x1080 work area,
+ * with the nominal cell above. XTWINOPS' reports (CSI 11/13/14/15/16/19 t) are
+ * answered from it, and there is no honest alternative -- a headless build has
+ * no window, and GetWindowRect has nothing to measure.
+ *
+ * What it does buy is an adjudicable answer: tt_vt::WindowMetrics defaults to
+ * exactly these numbers, so esctest/run_diff.sh compares the two engines on
+ * the *logic* -- which reports are gated by which flag, which sub-parameters
+ * mean the frame and which the text area, and which of the two axes each
+ * report prints first -- rather than on a desktop neither of them has.
+ *
+ * Note that DispShowWindow, DispMoveWindow and DispResizeWin are generated
+ * no-op stubs, so the window never actually moves. That is faithful to a
+ * headless run and not a gap: a CSI 3;x;y t followed by CSI 13 t reports the
+ * origin in both engines, and on Wayland it would in a real one too.
+ */
+#define ORACLE_SCREEN_W 1920
+#define ORACLE_SCREEN_H 1080
+
 void DispGetWindowSize(vtdraw_t *vt, int *width, int *height, BOOL client)
 {
+	/* No chrome, so the frame and the text area are the same rectangle. */
 	(void)vt; (void)client;
 	if (width != NULL) {
-		*width = NumOfColumns * 8;
+		*width = NumOfColumns * ORACLE_CELL_W;
 	}
 	if (height != NULL) {
-		*height = NumOfLines * 16;
+		*height = NumOfLines * ORACLE_CELL_H;
 	}
 }
 
 void DispGetRootWinSize(vtdraw_t *vt, int *x, int *y, BOOL inPixels)
 {
-	(void)vt;
+	/* vtdisp.c:3713 subtracts this window's own chrome from the work area
+	 * before dividing by the cell. Written out rather than folded into a
+	 * constant: the chrome is zero here, and hardcoding the quotient would
+	 * hide the day it stops being. */
+	int win_w, win_h, client_w, client_h;
+
+	DispGetWindowSize(vt, &win_w, &win_h, FALSE);
+	DispGetWindowSize(vt, &client_w, &client_h, TRUE);
+
 	if (x != NULL) {
-		*x = inPixels ? 1920 : 240;
+		*x = inPixels ? ORACLE_SCREEN_W
+		              : (ORACLE_SCREEN_W - (win_w - client_w)) / ORACLE_CELL_W;
 	}
 	if (y != NULL) {
-		*y = inPixels ? 1080 : 67;
+		*y = inPixels ? ORACLE_SCREEN_H
+		              : (ORACLE_SCREEN_H - (win_h - client_h)) / ORACLE_CELL_H;
 	}
 }
 
