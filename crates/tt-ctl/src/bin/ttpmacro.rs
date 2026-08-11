@@ -72,7 +72,8 @@ fn run() -> Result<ExitCode, String> {
     // that decides so. Absolute, because the window's working directory is
     // wherever it was started and not where this was typed.
     let name = String::from_utf8_lossy(&cmd.fitted_file_name()).into_owned();
-    let path = std::fs::canonicalize(&name).map_err(|e| format!("{name}: {e}"))?;
+    let path =
+        tt_ctl::full_path(std::path::Path::new(&name)).map_err(|e| format!("{name}: {e}"))?;
     let params: Vec<String> = cmd
         .args
         .iter()

@@ -296,7 +296,26 @@ fn ttpmacro_runs_a_macro_in_the_window_and_carries_its_exit_code() {
         String::from_utf8_lossy(&out.stderr)
     );
     let r = w.record.lock().unwrap();
-    assert_eq!(r.macro_path.as_deref(), Some(script.as_path()));
+    // The same file, not the same string. The launcher resolves the path
+    // before sending it, and on Windows resolving `%TEMP%` also expands the
+    // 8.3 name the runner's environment holds — `RUNNER~1` becomes
+    // `runneradmin` — so comparing spellings compares the environment.
+    let got = r
+        .macro_path
+        .clone()
+        .expect("a macro path reached the window");
+    assert_eq!(
+        tt_ctl::full_path(&got).unwrap(),
+        tt_ctl::full_path(&script).unwrap()
+    );
+    // And it is a path a person would recognise: `canonicalize` alone would
+    // have handed the window `\\?\C:\...`, which is what the macro then sees
+    // as its own name.
+    assert!(
+        !got.to_string_lossy().starts_with(r"\\?\"),
+        "the window was given a verbatim path: {}",
+        got.display()
+    );
     assert_eq!(r.macro_params, vec!["first".to_string(), "second".into()]);
 }
 

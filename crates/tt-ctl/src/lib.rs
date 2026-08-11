@@ -56,3 +56,29 @@ pub use client::Client;
 pub use host::{CtlHost, MacroStatus, NullHost, RunError};
 pub use proto::{Request, Response, RpcError};
 pub use server::{Listener, Server};
+
+/// A path resolved where it was typed, in the spelling a person recognises.
+///
+/// Both command-line clients resolve a macro's path before sending it: a
+/// relative name means what it says in the shell it was typed in, and the
+/// window's working directory is wherever the window was started. The
+/// resolution is `canonicalize`, and on Windows that answers with the `\\?\`
+/// verbatim form — a spelling `ttpmacro.exe` never produced, which would then
+/// be what the macro sees as its own name in `params[1]`, what a failure
+/// message quotes back, and what the window's title bar shows. The prefix
+/// exists to escape `MAX_PATH`; a path that needs it is a path that will not
+/// survive being shown to anyone anyway.
+///
+/// Only the drive spelling is shortened. `\\?\UNC\server\share` loses its host
+/// if the prefix goes, which is a working path turned into a broken one.
+pub fn full_path(path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    let full = std::fs::canonicalize(path)?;
+    let text = full.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        let b = rest.as_bytes();
+        if b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\' {
+            return Ok(std::path::PathBuf::from(rest));
+        }
+    }
+    Ok(full)
+}

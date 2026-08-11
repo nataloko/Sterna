@@ -120,7 +120,8 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             // Resolved here rather than in the window: a path typed in a shell
             // means what it says in *that* shell, and the window's working
             // directory is wherever it was started.
-            let path = std::fs::canonicalize(path).map_err(|e| format!("{path}: {e}"))?;
+            let path = tt_ctl::full_path(std::path::Path::new(path))
+                .map_err(|e| format!("{path}: {e}"))?;
             (
                 "macro.run".to_string(),
                 json!({
