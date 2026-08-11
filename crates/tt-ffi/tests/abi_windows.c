@@ -7,6 +7,15 @@
  * control client, alongside the platform-neutral screen and file surface.
  */
 
+/* MSVC deprecates `fopen` in favour of `fopen_s`, and `/WX` turns that into an
+ * error. `fopen_s` is not the answer: this file is compiled by MinGW as well,
+ * for the Wine harness, where the bounds-checked interfaces are an option
+ * rather than a promise. The define is narrow — it silences the CRT's own
+ * C4996s and nothing else — and the warnings this compile exists to catch are
+ * the generated header's, which are not those. Before any include, which is
+ * where the CRT headers read it. */
+#define _CRT_SECURE_NO_WARNINGS
+
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
