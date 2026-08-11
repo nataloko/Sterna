@@ -12,6 +12,15 @@ endif()
 
 find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets)
 
+# `-Wall -Wextra` is GCC and Clang's spelling. MSVC takes `-` as a switch lead
+# too, so `-Wall` reaches it and means "every warning including the ones the
+# standard library trips over"; `-Wextra` is not a switch it has at all.
+if(MSVC)
+    set(TT_WARNINGS /W4)
+else()
+    set(TT_WARNINGS -Wall -Wextra)
+endif()
+
 # --- the Rust core -----------------------------------------------------------
 #
 # Cargo is driven from here so one `cmake --build` produces a runnable shell,
@@ -45,23 +54,81 @@ else()
     set(TT_CARGO_SUBDIR release)
 endif()
 
-set(TT_CORE_LIB "${TT_CARGO_DIR}/${TT_CARGO_SUBDIR}/${CMAKE_SHARED_LIBRARY_PREFIX}sterna${CMAKE_SHARED_LIBRARY_SUFFIX}")
+# Cross-compiling needs `--target`, and passing it moves cargo's output down a
+# directory named after the triple. A *native* build must not be given one:
+# `--target` even for the host disables the `[build]` config the workspace may
+# rely on and rebuilds proc macros, so the two cases genuinely differ. The
+# default is the MinGW triple because that is what a Fedora `mingw64-cmake`
+# build is, and the cache entry is what a different one overrides.
+if(NOT DEFINED TT_CARGO_TARGET)
+    if(CMAKE_CROSSCOMPILING AND WIN32)
+        set(TT_CARGO_TARGET "x86_64-pc-windows-gnu")
+    else()
+        set(TT_CARGO_TARGET "")
+    endif()
+endif()
+set(TT_CARGO_TARGET "${TT_CARGO_TARGET}" CACHE STRING
+    "Rust target triple for the core, empty for the host's own")
+
+if(TT_CARGO_TARGET)
+    set(TT_CARGO_TARGET_FLAGS --target "${TT_CARGO_TARGET}")
+    set(TT_CARGO_OUT "${TT_CARGO_DIR}/${TT_CARGO_TARGET}/${TT_CARGO_SUBDIR}")
+else()
+    set(TT_CARGO_TARGET_FLAGS "")
+    set(TT_CARGO_OUT "${TT_CARGO_DIR}/${TT_CARGO_SUBDIR}")
+endif()
+
+# Cargo's own names, not CMake's. `CMAKE_SHARED_LIBRARY_PREFIX` is `lib` for a
+# MinGW target, and cargo emits `sterna.dll` there — taking CMake's answer
+# looks right and points at a file that is never written. The import library
+# is the half a Windows link actually resolves against, and MSVC and MinGW
+# spell it differently.
+if(WIN32)
+    set(TT_CORE_LIB "${TT_CARGO_OUT}/sterna.dll")
+    if(MSVC)
+        set(TT_CORE_IMPLIB "${TT_CARGO_OUT}/sterna.dll.lib")
+    else()
+        set(TT_CORE_IMPLIB "${TT_CARGO_OUT}/libsterna.dll.a")
+    endif()
+else()
+    set(TT_CORE_LIB "${TT_CARGO_OUT}/libsterna.so")
+    set(TT_CORE_IMPLIB "")
+endif()
 
 # Always run: cargo does its own dependency tracking and is a no-op when
 # nothing changed, which is cheaper and more correct than globbing the
 # workspace's sources into a DEPENDS list that silently misses a new file.
+# The import library is a byproduct too, and on Windows it is the one the link
+# actually consumes — leave it out and the generator reports a missing input
+# with no rule to make it, naming a file cargo does in fact write.
 add_custom_target(tt_core ALL
-    BYPRODUCTS "${TT_CORE_LIB}"
+    BYPRODUCTS "${TT_CORE_LIB}" ${TT_CORE_IMPLIB}
     COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${TT_CARGO_DIR}"
             "${CARGO_EXECUTABLE}" build -p tt-ffi ${TT_CARGO_FLAGS}
+            ${TT_CARGO_TARGET_FLAGS}
     WORKING_DIRECTORY "${TT_CORE_ROOT}"
     COMMENT "cargo build -p tt-ffi"
     USES_TERMINAL VERBATIM)
+
+# Windows has no rpath, so the loader looks beside the executable and nowhere
+# else useful. Every binary here lands in the build root, so one copy serves
+# them all — and it belongs on `tt_core` rather than on `sterna`, because the
+# tests are run without ever building the application.
+if(WIN32)
+    add_custom_command(TARGET tt_core POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${TT_CORE_LIB}" "${CMAKE_BINARY_DIR}"
+        COMMENT "sterna.dll beside the executables")
+endif()
 
 add_library(sterna_core SHARED IMPORTED GLOBAL)
 set_target_properties(sterna_core PROPERTIES
     IMPORTED_LOCATION "${TT_CORE_LIB}"
     INTERFACE_INCLUDE_DIRECTORIES "${TT_CORE_ROOT}/tt-ffi/include")
+if(WIN32)
+    set_target_properties(sterna_core PROPERTIES
+        IMPORTED_IMPLIB "${TT_CORE_IMPLIB}")
+endif()
 
 # --- the shell ---------------------------------------------------------------
 
@@ -85,7 +152,7 @@ add_library(sterna_shell STATIC
 add_dependencies(sterna_shell tt_core)
 target_link_libraries(sterna_shell PUBLIC Qt6::Widgets sterna_core)
 target_include_directories(sterna_shell PUBLIC src)
-target_compile_options(sterna_shell PRIVATE -Wall -Wextra)
+target_compile_options(sterna_shell PRIVATE ${TT_WARNINGS})
 target_compile_definitions(sterna_shell PRIVATE
     TT_SOURCE_LANG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../vendor/lang")
 
@@ -95,9 +162,16 @@ add_executable(sterna
 if(WIN32)
     enable_language(RC)
     target_sources(sterna PRIVATE resources/sterna.rc)
+    # A GUI-subsystem binary, as `ttermpro.exe` is. A console-subsystem one
+    # opens a console window behind every session started from the desktop,
+    # and closing that window kills the terminal. `Qt6::Core` carries the
+    # `WinMain` this needs, so `main` is untouched — what changes is that
+    # there is no stderr unless the launcher supplied one, which is why
+    # `MainWindow::note` asks before writing to it.
+    set_target_properties(sterna PROPERTIES WIN32_EXECUTABLE ON)
 endif()
 target_link_libraries(sterna PRIVATE sterna_shell)
-target_compile_options(sterna PRIVATE -Wall -Wextra)
+target_compile_options(sterna PRIVATE ${TT_WARNINGS})
 
 # --- tests -------------------------------------------------------------------
 #
@@ -112,26 +186,26 @@ enable_testing()
 
 add_executable(render_test tests/render_test.cpp)
 target_link_libraries(render_test PRIVATE sterna_shell)
-target_compile_options(render_test PRIVATE -Wall -Wextra)
+target_compile_options(render_test PRIVATE ${TT_WARNINGS})
 add_test(NAME render COMMAND render_test)
 
 # The only thing that exercises the *window's* event loop against a real
 # server. Skips loudly without TT_SSH_HOST, so it is safe to leave in ctest.
 add_executable(ssh_test tests/ssh_test.cpp)
 target_link_libraries(ssh_test PRIVATE sterna_shell)
-target_compile_options(ssh_test PRIVATE -Wall -Wextra)
+target_compile_options(ssh_test PRIVATE ${TT_WARNINGS})
 add_test(NAME ssh COMMAND ssh_test)
 
 add_executable(telnet_test tests/telnet_test.cpp)
 target_link_libraries(telnet_test PRIVATE sterna_shell)
-target_compile_options(telnet_test PRIVATE -Wall -Wextra)
+target_compile_options(telnet_test PRIVATE ${TT_WARNINGS})
 add_test(NAME telnet COMMAND telnet_test)
 
 # The only connection test here that skips nothing — a pty needs no server and
 # no hardware — so it is what actually runs in CI.
 add_executable(pty_test tests/pty_test.cpp)
 target_link_libraries(pty_test PRIVATE sterna_shell)
-target_compile_options(pty_test PRIVATE -Wall -Wextra)
+target_compile_options(pty_test PRIVATE ${TT_WARNINGS})
 add_test(NAME pty COMMAND pty_test)
 
 # A file transfer, driven by the window's event loop rather than by a pump
@@ -139,7 +213,7 @@ add_test(NAME pty COMMAND pty_test)
 # the cancel case and the dialogs need nothing.
 add_executable(xfer_test tests/xfer_test.cpp)
 target_link_libraries(xfer_test PRIVATE sterna_shell)
-target_compile_options(xfer_test PRIVATE -Wall -Wextra)
+target_compile_options(xfer_test PRIVATE ${TT_WARNINGS})
 add_test(NAME xfer COMMAND xfer_test)
 
 # A TTL macro against the window's event loop rather than a pump loop, which
@@ -147,7 +221,7 @@ add_test(NAME xfer COMMAND xfer_test)
 # nothing: the one connected case forks `/bin/sh`.
 add_executable(macro_test tests/macro_test.cpp)
 target_link_libraries(macro_test PRIVATE sterna_shell)
-target_compile_options(macro_test PRIVATE -Wall -Wextra)
+target_compile_options(macro_test PRIVATE ${TT_WARNINGS})
 add_test(NAME macro COMMAND macro_test)
 
 # A Tera Term command line, from `argv` to a window that has connected. Needs
@@ -155,16 +229,28 @@ add_test(NAME macro COMMAND macro_test)
 # opens itself.
 add_executable(cmdline_test tests/cmdline_test.cpp)
 target_link_libraries(cmdline_test PRIVATE sterna_shell)
-target_compile_options(cmdline_test PRIVATE -Wall -Wextra)
+if(WIN32)
+    target_link_libraries(cmdline_test PRIVATE ws2_32)
+endif()
+target_compile_options(cmdline_test PRIVATE ${TT_WARNINGS})
 add_test(NAME cmdline COMMAND cmdline_test)
 
 # The control socket against the window's own event loop, which is the only
 # place the notifier, the nested loops and the window's four callbacks meet.
 # Needs nothing: it binds into a scratch runtime directory and talks to itself.
-add_executable(control_test tests/control_test.cpp)
-target_link_libraries(control_test PRIVATE sterna_shell)
-target_compile_options(control_test PRIVATE -Wall -Wextra)
-add_test(NAME control COMMAND control_test)
+#
+# UNIX only, and not because of a missing header. Its client half is a
+# `sockaddr_un` and a `poll(2)`, and the Windows control channel is a named
+# pipe under `\\.\pipe\` — a different address, a different client and a
+# different way to wait, all of which `tt-ctl` already has. Shimming the four
+# calls would compile and would prove nothing about the transport actually
+# used there, so the Windows client is a rewrite rather than a `#define`.
+if(UNIX)
+    add_executable(control_test tests/control_test.cpp)
+    target_link_libraries(control_test PRIVATE sterna_shell)
+    target_compile_options(control_test PRIVATE ${TT_WARNINGS})
+    add_test(NAME control COMMAND control_test)
+endif()
 
 # --- the performance gate ----------------------------------------------------
 #
@@ -179,12 +265,18 @@ add_test(NAME control COMMAND control_test)
 # release binary is wanted here even when the shell is built Debug, and because
 # nothing else in this build needs it.
 
-set(TT_BENCH_EXE "${TT_CARGO_DIR}/release/tt-bench")
+if(TT_CARGO_TARGET)
+    set(TT_BENCH_DIR "${TT_CARGO_DIR}/${TT_CARGO_TARGET}/release")
+else()
+    set(TT_BENCH_DIR "${TT_CARGO_DIR}/release")
+endif()
+set(TT_BENCH_EXE "${TT_BENCH_DIR}/tt-bench${CMAKE_EXECUTABLE_SUFFIX}")
 
 add_custom_target(tt_bench_emitter
     BYPRODUCTS "${TT_BENCH_EXE}"
     COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${TT_CARGO_DIR}"
             "${CARGO_EXECUTABLE}" build -p tt-bench --release
+            ${TT_CARGO_TARGET_FLAGS}
     WORKING_DIRECTORY "${TT_CORE_ROOT}"
     COMMENT "cargo build -p tt-bench --release (the bench corpus generator)"
     USES_TERMINAL VERBATIM)
@@ -196,7 +288,7 @@ add_custom_target(tt_bench_emitter
 add_executable(bench_shell EXCLUDE_FROM_ALL tests/bench_shell.cpp)
 add_dependencies(bench_shell tt_bench_emitter)
 target_link_libraries(bench_shell PRIVATE sterna_shell)
-target_compile_options(bench_shell PRIVATE -Wall -Wextra)
+target_compile_options(bench_shell PRIVATE ${TT_WARNINGS})
 target_compile_definitions(bench_shell PRIVATE TT_BENCH_EXE="${TT_BENCH_EXE}")
 
 # So the build tree runs without LD_LIBRARY_PATH, and so an installed one finds
@@ -209,7 +301,7 @@ target_compile_definitions(bench_shell PRIVATE TT_BENCH_EXE="${TT_BENCH_EXE}")
 # only from the build directory until that was fixed.
 set_target_properties(sterna render_test ssh_test telnet_test pty_test cmdline_test
                       bench_shell PROPERTIES
-    BUILD_RPATH "${TT_CARGO_DIR}/${TT_CARGO_SUBDIR}"
+    BUILD_RPATH "${TT_CARGO_OUT}"
     INSTALL_RPATH "$ORIGIN/../lib")
 
 # --- install -----------------------------------------------------------------
@@ -219,7 +311,14 @@ set_target_properties(sterna render_test ssh_test telnet_test pty_test cmdline_t
 # `lib64` while everything downstream — linuxdeploy, the AppRun it writes —
 # expects `usr/lib`. A packaging layout is not a distribution layout.
 install(TARGETS sterna RUNTIME DESTINATION bin)
-install(FILES "${TT_CORE_LIB}" DESTINATION lib)
+# The DLL goes beside the executable, because that is where the Windows loader
+# looks — an installed `lib/sterna.dll` is a program that will not start, and
+# there is no rpath to say otherwise.
+if(WIN32)
+    install(FILES "${TT_CORE_LIB}" DESTINATION bin)
+else()
+    install(FILES "${TT_CORE_LIB}" DESTINATION lib)
+endif()
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../vendor/lang/"
         DESTINATION share/sterna/lang
         FILES_MATCHING PATTERN "*.lng")

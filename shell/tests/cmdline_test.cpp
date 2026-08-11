@@ -25,10 +25,18 @@
 #include <QTemporaryDir>
 #include <QTimer>
 
+#ifdef Q_OS_WIN
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#endif
 
 #include <cstdio>
 #include <cstring>
@@ -80,45 +88,77 @@ QString screenText(const Session &session)
     return out;
 }
 
+// The two spellings of the same handle. A Winsock `SOCKET` is *unsigned*, so
+// the `< 0` that means "no socket" on POSIX is a comparison that can never be
+// true there — the failure would be a listener that reports success and has
+// no descriptor, which is worse than not compiling.
+#ifdef Q_OS_WIN
+using Socket = SOCKET;
+constexpr Socket kNoSocket = INVALID_SOCKET;
+inline void closeSocket(Socket s) { ::closesocket(s); }
+#else
+using Socket = int;
+constexpr Socket kNoSocket = -1;
+inline void closeSocket(Socket s) { ::close(s); }
+#endif
+
 /// A socket listening on localhost, so the one case that connects needs no
 /// server.
 ///
-/// POSIX rather than `QTcpServer`: the shell links Qt Widgets and nothing
-/// else, and a test is not a reason to put Qt Network into what the AppImage
-/// carries. Nothing has to accept before the client connects — the kernel
-/// completes the handshake off the backlog — so this stays single-threaded.
+/// The platform's own sockets rather than `QTcpServer`: the shell links Qt
+/// Widgets and nothing else, and a test is not a reason to put Qt Network into
+/// what the AppImage carries. Nothing has to accept before the client connects
+/// — the kernel completes the handshake off the backlog — so this stays
+/// single-threaded.
 class Listener {
 public:
     Listener()
     {
-        m_fd = socket(AF_INET, SOCK_STREAM, 0);
-        if (m_fd < 0) {
+#ifdef Q_OS_WIN
+        // Winsock has to be started before the first socket call, and nothing
+        // else in this binary does it: the core is a DLL with its own copy of
+        // the initialisation, which does not count for this process's calls.
+        WSADATA wsa;
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+            return;
+        }
+        m_started = true;
+#endif
+        m_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (m_fd == kNoSocket) {
             return;
         }
         int on = 1;
-        setsockopt(m_fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on);
+        ::setsockopt(m_fd, SOL_SOCKET, SO_REUSEADDR,
+                     reinterpret_cast<const char *>(&on), sizeof on);
         sockaddr_in addr = {};
         addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         addr.sin_port = 0;
         socklen_t len = sizeof addr;
-        if (bind(m_fd, reinterpret_cast<sockaddr *>(&addr), len) < 0
-            || listen(m_fd, 1) < 0
-            || getsockname(m_fd, reinterpret_cast<sockaddr *>(&addr), &len) < 0) {
-            close(m_fd);
-            m_fd = -1;
+        if (::bind(m_fd, reinterpret_cast<sockaddr *>(&addr), len) != 0
+            || ::listen(m_fd, 1) != 0
+            || ::getsockname(m_fd, reinterpret_cast<sockaddr *>(&addr), &len)
+                   != 0) {
+            closeSocket(m_fd);
+            m_fd = kNoSocket;
             return;
         }
         m_port = ntohs(addr.sin_port);
     }
     ~Listener()
     {
-        if (m_client >= 0) {
-            close(m_client);
+        if (m_client != kNoSocket) {
+            closeSocket(m_client);
         }
-        if (m_fd >= 0) {
-            close(m_fd);
+        if (m_fd != kNoSocket) {
+            closeSocket(m_fd);
         }
+#ifdef Q_OS_WIN
+        if (m_started) {
+            WSACleanup();
+        }
+#endif
     }
     Listener(const Listener &) = delete;
     Listener &operator=(const Listener &) = delete;
@@ -129,16 +169,21 @@ public:
     void accept(const char *text)
     {
         m_client = ::accept(m_fd, nullptr, nullptr);
-        if (m_client >= 0) {
-            const ssize_t n = write(m_client, text, strlen(text));
+        if (m_client != kNoSocket) {
+            // `send` rather than `write`, which on Windows is a *file* call
+            // that a socket handle is not valid for.
+            const int n = ::send(m_client, text, int(strlen(text)), 0);
             (void)n;
         }
     }
 
 private:
-    int m_fd = -1;
-    int m_client = -1;
+    Socket m_fd = kNoSocket;
+    Socket m_client = kNoSocket;
     quint16 m_port = 0;
+#ifdef Q_OS_WIN
+    bool m_started = false;
+#endif
 };
 
 /// Parse a command line the way `main` does, minus the program name.

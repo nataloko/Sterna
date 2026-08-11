@@ -62,6 +62,39 @@ on the other.
 build without. It is the Fedora spelling of the `libudev-dev` that the Ubuntu
 container already needed.
 
+## The Windows build
+
+The same container cross-compiles it, with `mingw64-qt6-qtbase` — Fedora ships
+that at the same 6.11.1 as the native package, so this is the desktop's Qt for
+another target rather than an older one standing in.
+
+```sh
+mingw64-cmake -S . -B build-win -G Ninja      # the toolchain file comes with
+cmake --build build-win                       # mingw64-filesystem
+```
+
+It also needs `mingw64-gcc-c++` and **`nasm`** — the latter is `aws-lc-sys`'s
+assembler for the Windows target, so its absence stops the *core* several
+minutes into what looks like a Qt build.
+
+`TT_CARGO_TARGET` is what the two builds disagree about. Cross-compiling needs
+`--target`, which moves cargo's output under a directory named after the
+triple; a native build must not be given one. It defaults to
+`x86_64-pc-windows-gnu` when CMake is cross-compiling to Windows and to empty
+otherwise, and everything downstream — the library, the import library, the
+bench emitter — is derived from it rather than assumed.
+
+The DLL is copied beside the executables after the core builds, because
+Windows has no rpath and the loader will not go looking in the cargo tree.
+`sterna.exe` is a GUI-subsystem binary like `ttermpro.exe`; the console
+subsystem would open a console window behind every session started from the
+desktop, and closing that window would kill the terminal.
+
+`control_test` is not part of that build. Its client half is a `sockaddr_un`
+and a `poll(2)`, and the Windows control channel is a named pipe — a different
+address, a different client and a different way to wait. Shimming the calls
+would compile and prove nothing about the transport actually used there.
+
 ## The event loop has no timer in it
 
 This is the design decision everything else hangs off.

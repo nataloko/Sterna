@@ -4669,6 +4669,36 @@ environment values and upstream's `?` replacement for an invalid TTL byte.
 Those focused MinGW cases pass under Wine and the 53-script gate keeps its
 48/5 split; the native Windows job remains the authority for the kernel API.
 
+The Qt shell builds for Windows now, which was the last layer that had never
+been compiled there at all. Fedora's `mingw64-qt6-qtbase` is 6.11.1 — the same
+version as the native one, so this is the desktop's Qt cross-compiled rather
+than an older one standing in — and `sterna.exe` plus seven test binaries link
+against `sterna.dll` and Qt with no warnings. Four things were wrong and none
+of them was in the C++: cargo's library names are not CMake's, and
+`CMAKE_SHARED_LIBRARY_PREFIX` composes `libsterna.dll`, which nothing writes;
+the import library is what a Windows link actually consumes and had to be
+declared a byproduct before the generator would believe in it; `--target`
+belongs only to a cross build, since passing the host's own moves every output
+path; and the DLL has to be copied beside the executables, because Windows has
+no rpath to point at the cargo tree.
+
+`sterna.exe` is a GUI-subsystem binary, as `ttermpro.exe` is — a console
+subsystem would open a console window behind every desktop-launched session,
+and closing it would kill the terminal. That leaves the windowless `/V`
+diagnostics with no stderr to fall back to, so `MainWindow::note` now asks
+`QCommandLineParser`'s own question — an inherited console, or standard
+handles named in the startup information — and puts up a parentless message
+box when the answer is no.
+
+`cmdline_test`'s listening socket is the platform's own on both sides now:
+Winsock's `SOCKET` is unsigned, so the POSIX "no socket" test could never fire
+there. `control_test` is deliberately still UNIX-only. Its client half is a
+`sockaddr_un` and a `poll(2)` while the Windows control channel is a named
+pipe, so shimming the four calls would compile and prove nothing about the
+transport that is actually used — the Windows client is the next piece of work
+rather than a `#define`. The Linux build, its four event-loop tests and the
+Windows cross build are all green; nothing here has been *run* on Windows yet.
+
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
 DEC special graphics (line drawing — not CJK, and needed), macro reference docs,

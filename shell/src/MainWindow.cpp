@@ -33,6 +33,16 @@
 #include <cstring>
 #include <limits>
 
+#ifdef Q_OS_WIN
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include "Control.h"
 #include "I18n.h"
 #include "Macro.h"
@@ -827,6 +837,30 @@ void MainWindow::openTarget(const TtStartup &startup)
     }
 }
 
+#ifdef Q_OS_WIN
+namespace {
+
+/// Is there anywhere for a windowless message to be *printed*?
+///
+/// This is `QCommandLineParser`'s own test (`qcommandlineparser.cpp`),
+/// reproduced rather than approximated, because the two want the same answer
+/// on the same line: an inherited console means a `cmd` prompt or a `.bat`
+/// file is watching, and standard handles named in the startup information
+/// mean whoever launched this redirected them and is reading.
+bool hasSomewhereToPrint()
+{
+    if (GetConsoleWindow()) {
+        return true;
+    }
+    STARTUPINFOW startup;
+    startup.cb = sizeof startup;
+    GetStartupInfoW(&startup);
+    return (startup.dwFlags & STARTF_USESTDHANDLES) != 0;
+}
+
+} // namespace
+#endif
+
 /// Say something the user has to see, whether or not there is a window to say
 /// it in. `/V` means there is not, and a modal dialog nobody can find is worse
 /// than a line on stderr.
@@ -838,13 +872,26 @@ void MainWindow::openTarget(const TtStartup &startup)
 /// The message would be findable with `journalctl` and nowhere a user would
 /// look. `QCommandLineParser` writes its own errors the same way for the same
 /// reason.
+///
+/// **On Windows the fallback needs a fallback of its own.** `sterna.exe` is a
+/// GUI-subsystem binary, like `ttermpro.exe`, so unless the launcher supplied
+/// a console or redirected the handles there is no stderr for the line to
+/// reach — and a windowless session started from Explorer or a shortcut is
+/// exactly that case. A parentless box is then the only thing the user can
+/// see, which is again what `QCommandLineParser` does with its own errors.
 void MainWindow::note(const QString &title, const QString &text)
 {
     if (isVisible()) {
         QMessageBox::information(this, title, text);
-    } else {
-        fprintf(stderr, "%s: %s\n", qUtf8Printable(title), qUtf8Printable(text));
+        return;
     }
+#ifdef Q_OS_WIN
+    if (!hasSomewhereToPrint()) {
+        QMessageBox::information(nullptr, title, text);
+        return;
+    }
+#endif
+    fprintf(stderr, "%s: %s\n", qUtf8Printable(title), qUtf8Printable(text));
 }
 
 void MainWindow::connectSerial(const QString &path, const TtSerialParams &params)

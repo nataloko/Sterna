@@ -119,6 +119,8 @@ QT_QPA_PLATFORM=offscreen \
 ./build/sterna --shell         # a local login shell
 ./build/sterna /ssh /auth=publickey myrouter   # ...and Tera Term's own line,
                                # which a `/OPTION` anywhere switches to
+mingw64-cmake -S . -B build-win -G Ninja      # ...and the same shell, for
+cmake --build build-win                       # Windows — sterna-fedora only
 
 ./bench/bench.py --core          # the perf gate's half that runs anywhere
 ./bench/bench.py                 # ...and the Qt half, in sterna-fedora only
@@ -248,6 +250,17 @@ That glibc asymmetry is also why `shell/CMakeLists.txt` points
 shared target directory would let a library linked in one container be reused
 by a binary built in the other — fine in one direction, a confusing loader
 error in the other.
+
+**The Windows cross build of the shell lives there too**, added 2026-08-11:
+`mingw64-qt6-qtbase` (6.11.1, the same version as the native one — Fedora
+ships the pair in step), `mingw64-gcc-c++`, and **`nasm`**, which is
+`aws-lc-sys`'s assembler for the Windows target and whose absence stops the
+*core* rather than the shell, several minutes into a build that looked like a
+Qt one. `mingw64-cmake` is the wrapper that supplies the toolchain file; it
+comes with `mingw64-filesystem` and needs no install. Fedora's `updates` repo
+metalink failed here on the day, so all three went in with
+`--setopt=updates.metalink= --setopt=updates.baseurl=https://dl.fedoraproject.org/pub/fedora/linux/updates/44/Everything/x86_64/`
+— worth knowing before concluding the container has no network.
 
 ## Traps
 
@@ -1911,6 +1924,39 @@ And for the C ABI:
   table to get wrong — but it means reordering `tt_vt::Key` silently renumbers
   the ABI. CI regenerates the header and fails on a diff, so it becomes a
   review question instead of a runtime mystery.
+
+And for the shell's Windows build, where CMake's own answers are the wrong
+ones:
+
+- **`CMAKE_SHARED_LIBRARY_PREFIX` is `lib` for a MinGW target and cargo does
+  not use it.** The core is `sterna.dll` there, so the composed name is
+  `libsterna.dll` — a file nothing writes, in a build that configures cleanly
+  and fails at the link naming a library that plainly exists a directory away.
+  The names are cargo's on every platform now, including the import library,
+  which MSVC spells `sterna.dll.lib` and MinGW spells `libsterna.dll.a`.
+- **The import library has to be a `BYPRODUCTS` entry as well.** It is the
+  half a Windows link consumes, and an imported target's `IMPORTED_IMPLIB`
+  gives the generator a dependency it has no rule for: Ninja stops with
+  "missing and no known rule to make it" against a path cargo does in fact
+  write, one step after the custom target that writes it.
+- **`--target` and no `--target` are different builds, not the same one spelt
+  twice.** Passing the host's own triple moves cargo's output under a triple
+  directory and re-does what a native invocation would reuse, so
+  `TT_CARGO_TARGET` is empty unless cross-compiling and every path is derived
+  from it rather than assumed.
+- **A GUI-subsystem binary has no stderr, and that is the right subsystem.**
+  `ttermpro.exe` is one; a console-subsystem terminal opens a console window
+  behind every desktop-launched session, and closing that window kills the
+  terminal. So `WIN32_EXECUTABLE` is on and the windowless `/V` diagnostics
+  need somewhere else to go — `MainWindow::note` uses `QCommandLineParser`'s
+  own test (an inherited console, or `STARTF_USESTDHANDLES`) and puts up a
+  parentless box when the answer is no. Same shape as the `qWarning`-to-
+  journald trap: the message is not lost, it is *never written*.
+- **A Winsock `SOCKET` is unsigned**, so `fd < 0` — the POSIX way to spell "no
+  socket" — is a comparison that can never be true. `cmdline_test`'s listener
+  compares against `INVALID_SOCKET` on both sides instead; the failure the old
+  spelling would have given is a listener reporting success with no descriptor.
+  `write` is a *file* call there too, so it sends with `send`.
 
 And for the desktop side:
 

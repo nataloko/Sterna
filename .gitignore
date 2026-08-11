@@ -8,6 +8,8 @@ build/
 # A second build tree, Release, for the perf gate — the numbers are wrong out
 # of a Debug one. See bench/README.md.
 /shell/build-release
+# A third, for the Windows cross build. See shell/README.md.
+/shell/build-win
 *.o
 *.so
 *.a
