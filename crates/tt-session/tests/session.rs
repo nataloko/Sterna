@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use tt_conn::LinkKind;
-use tt_session::{Event, MemoryHandle, MemoryTransport, Session};
+use tt_session::{Event, MemoryHandle, MemoryTransport, Session, WindowMetrics, WindowRequest};
 use tt_vt::{Config, Key, Modifiers, MouseEvent};
 
 const TICK: Duration = Duration::from_millis(20);
@@ -177,6 +177,36 @@ fn a_colour_osc_off_the_wire_says_the_painters_cache_is_stale() {
     // And it is not repeated for a pump that moved no colour.
     h.feed(b"x");
     assert!(!pump(&mut s).contains(&Event::ColorsChanged));
+}
+
+/// The window half of XTWINOPS crosses the session as a request going out and
+/// a snapshot going in, and both directions are the frontend's.
+#[test]
+fn the_window_operations_reach_the_frontend_in_both_directions() {
+    let (mut s, h) = connected(80, 24);
+    s.set_window_metrics(WindowMetrics {
+        pos: (300, 120),
+        client_pos: (308, 156),
+        size: Some((1288, 800)),
+        client_size: Some((1280, 768)),
+        cell: (16, 32),
+        screen: (2560, 1440),
+        iconified: false,
+    });
+
+    h.feed(b"\x1b[2t\x1b[13t\x1b[16t\x1b[5t");
+    let events = pump(&mut s);
+    assert_eq!(
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::WindowRequest(r) => Some(*r),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        vec![WindowRequest::Iconify, WindowRequest::Raise]
+    );
+    assert_eq!(h.outbound(), b"\x1b[3;300;120t\x1b[6;32;16t");
 }
 
 #[test]

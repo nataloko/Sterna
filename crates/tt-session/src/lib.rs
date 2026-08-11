@@ -57,6 +57,7 @@ pub use xfer::{
 use tt_config::ConnectionTcpCrSend;
 pub use tt_config::{Field, Ini, KeyboardMap, Kind, Settings, Shortcut, UserKeyType, FIELDS};
 pub use tt_vt::DebugMode;
+pub use tt_vt::{WindowMetrics, WindowRequest};
 
 use tt_conn::{Error, Result, Transport, TransportEvent};
 use tt_grid::{Cell, Grid, ATTR_LINE_CONTINUED, ATTR_URL, WIDTH_PAD, WIDTH_WIDE};
@@ -130,6 +131,15 @@ pub enum Event {
     /// pay for it constantly. Upstream's equivalent is the `InvalidateRect` at
     /// the end of `DispSetColor`.
     ColorsChanged,
+    /// `CSI 1`-`10 t` asked the window to iconify, move, resize in pixels,
+    /// raise, lower, repaint or maximise.
+    ///
+    /// The core has no window, so this is a request and not a report. A
+    /// frontend that cannot honour one — a Wayland client asked to move, which
+    /// has no protocol request for it — should drop it rather than pretend:
+    /// the terminal answers `CSI 13 t` from what the frontend last said its
+    /// window was, so a lie here becomes a lie on the wire.
+    WindowRequest(WindowRequest),
 }
 
 /// What pressing a legacy `KEYBOARD.CNF` scan code did.
@@ -564,6 +574,16 @@ impl Session {
     /// reads — cursor visibility, bracketed paste, reverse video.
     pub fn vt(&self) -> &Vt {
         &self.vt
+    }
+
+    /// Tell the terminal what its window is, so `CSI 11`/`13`/`14`/`15`/`16`
+    /// `/19 t` can answer. See [`WindowMetrics`].
+    ///
+    /// Push on every move, resize and window-state change. A frontend with no
+    /// window never calls this and gets the notional one, which is what
+    /// `tt-host` and the oracle both report from.
+    pub fn set_window_metrics(&mut self, metrics: WindowMetrics) {
+        self.vt.set_window_metrics(metrics);
     }
 
     /// TTL's `setdebug`: select the receive display directly, independently
@@ -1081,6 +1101,7 @@ impl Session {
         self.collect_title();
         self.collect_bells();
         self.collect_colors();
+        self.collect_window_requests();
         Ok(total)
     }
 
@@ -1400,6 +1421,7 @@ impl Session {
         self.collect_title();
         self.collect_bells();
         self.collect_colors();
+        self.collect_window_requests();
     }
 
     /// Run the governor over whatever the parser asked for, and emit at most
@@ -1565,6 +1587,15 @@ impl Session {
         if self.vt.take_colors_changed() {
             self.events.push(Event::ColorsChanged);
         }
+    }
+
+    fn collect_window_requests(&mut self) {
+        self.events.extend(
+            self.vt
+                .take_window_requests()
+                .into_iter()
+                .map(Event::WindowRequest),
+        );
     }
 
     fn collect_clipboard(&mut self) {
