@@ -172,6 +172,15 @@ fn accept_loop(mut listener: IpcListener, tx: CtlSender, stop: Stop, conns: Arc<
         }
         // The directory is `0700` and the socket `0600`, so this should be
         // unreachable. It is the second lock, and it is cheap.
+        //
+        // **Unix only, because Windows cannot answer yet.** `SO_PEERCRED` is a
+        // property of the connection and needs no traffic, so the check
+        // belongs here, before a byte has been read. Windows refuses outright:
+        // `ImpersonateNamedPipeClient` returns `ERROR_CANNOT_IMPERSONATE` —
+        // "unable to impersonate using a named pipe until data has been read
+        // from that pipe" — so there its check is the first thing `serve` does
+        // once a line has arrived, and still before the line is looked at.
+        #[cfg(unix)]
         if !addr::peer_is_us(&stream) {
             continue;
         }
@@ -201,6 +210,10 @@ fn serve(stream: Stream, tx: &CtlSender) {
     };
     let mut reader = BufReader::new(stream);
     let mut line = Vec::new();
+    // Windows' half of the peer check, which cannot run until something has
+    // been read. See the note at the accept loop's Unix check.
+    #[cfg(windows)]
+    let mut identified = false;
     loop {
         line.clear();
         // One line at a time with a ceiling on each, so a peer that never
@@ -214,6 +227,17 @@ fn serve(stream: Stream, tx: &CtlSender) {
             Ok(n) => n,
             Err(_) => return,
         };
+        // Reading is not acting. The line is in hand and nothing has looked at
+        // it, which is the earliest moment Windows will say who sent it — and
+        // a peer that is not us is dropped here without an answer, before the
+        // over-length reply below and before any parsing.
+        #[cfg(windows)]
+        if !identified {
+            if !addr::peer_is_us(reader.get_ref()) {
+                return;
+            }
+            identified = true;
+        }
         if n > MAX_LINE {
             // The framing is gone: there is no way to find where this line was
             // meant to end, so there is nothing to answer and nothing to

@@ -486,12 +486,24 @@ mod windows_tests {
     /// Through `peer_check` rather than `peer_is_us`, so that a Win32 call
     /// which failed says which one and why instead of arriving as a bare
     /// "this peer is not us" — the same answer a correct refusal gives.
+    ///
+    /// **The byte is the point of the test as much as the SID is.** Windows
+    /// will not impersonate a named-pipe client until something has been read
+    /// from the pipe — `ERROR_CANNOT_IMPERSONATE`, in those words — so a check
+    /// at accept can never work and the server's runs after the first line
+    /// instead. Written the obvious way round, this test asserts that the
+    /// impossible order is the one that works.
     #[test]
     fn our_own_connection_passes_the_token_check() {
+        use std::io::{Read, Write};
+
         let path = path_of(&name()).unwrap();
         let mut listener = bind(&path).unwrap();
-        let _client = Stream::connect(&path).unwrap();
-        let server = listener.accept().unwrap();
+        let mut client = Stream::connect(&path).unwrap();
+        let mut server = listener.accept().unwrap();
+        client.write_all(b"x").unwrap();
+        let mut byte = [0u8; 1];
+        server.read_exact(&mut byte).unwrap();
         assert!(server.peer_check().expect("the token check ran"));
     }
 }
