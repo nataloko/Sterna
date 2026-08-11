@@ -118,7 +118,11 @@ something other than what it is.
   testing here for that reason. `WAYLAND_DEBUG=1` and a grep for
   `get_xdg_surface` is the check that actually distinguishes them, and it is
   what the verification below uses. `EXTRA_PLUGINS` is meant to cover this and
-  was ignored by the plugin, so the directories are copied by hand.
+  was ignored by the plugin, so the directories are copied by hand — and
+  `printsupport` is copied with them, for the same reason one step quieter:
+  without `libcupsprintersupport.so`, `QPrinter` finds no printers and the
+  window says "no printer is configured", which is a true sentence on a machine
+  that has none and indistinguishable from one that has.
 - **Distributions do not agree on the platform plugin's name.** Upstream Qt
   splits Wayland into `libqwayland-generic.so` and `libqwayland-egl.so`; Fedora
   ships one `libqwayland.so`. Naming a missing one is a hard error from the Qt

@@ -194,8 +194,13 @@ echo "appimage: bundling ($want)" >&2
 # first round of testing here. `EXTRA_PLUGINS` is meant to cover this and was
 # ignored, so they are copied straight from the Qt tree, which is also where
 # the repair below would have fetched them from.
+#
+# `printsupport` is the same shape of gap for the same reason: File > Print and
+# the media copy sequences reach `QPrinter`, which finds no printers at all
+# without `libcupsprintersupport.so` — and says nothing, because "no printer is
+# configured" is a real answer on a machine that has none.
 for d in wayland-shell-integration wayland-decoration-client \
-         wayland-graphics-integration-client; do
+         wayland-graphics-integration-client printsupport; do
 	[ -d "$qt_plugins/$d" ] && cp -r "$qt_plugins/$d" "$appdir/usr/plugins/"
 done
 [ -e "$appdir/usr/plugins/wayland-shell-integration/libxdg-shell.so" ] || {
