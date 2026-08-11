@@ -25,6 +25,7 @@
 #include <QWheelEvent>
 #include <QPixmap>
 
+#include <climits>
 #include <cstdio>
 #include <cstring>
 
@@ -1289,30 +1290,35 @@ void test_vt_font_space_changes_the_cell_and_glyph_origin()
 {
     Harness h;
     QString error;
-    h.feed("\033[?25lA");
+    // In the *second* column, with a blank one to its left. A glyph may put
+    // ink slightly outside its own advance — DejaVu Sans Mono's `A` does, by a
+    // pixel, at the size Qt 6.4.2 picks here — and measured from column 0 that
+    // pixel is off the image, so the search saturates at x=0 and reports the
+    // margin as one less than it is. It cost a CI failure on a painter that
+    // was doing exactly the right thing.
+    h.feed("\033[?25l A");
     h.render();
 
     const int oldWidth = h.view.theme().cellWidth();
     const int oldHeight = h.view.theme().cellHeight();
     const int oldBaseline = h.view.theme().baseline();
+    /// Where the ink in column 1 starts, relative to that column's left edge —
+    /// so a leftward overhang is a negative number rather than a clamp.
     auto firstInk = [&h]() {
-        QPoint first(-1, -1);
+        const int cell = h.view.theme().cellWidth();
+        QPoint first(INT_MAX, INT_MAX);
         for (int y = 0; y < h.view.theme().cellHeight(); y++) {
-            for (int x = 0; x < h.view.theme().cellWidth(); x++) {
+            for (int x = cell - 4; x < 2 * cell; x++) {
                 if (h.image.pixelColor(x, y) != kWhite) {
-                    if (first.x() < 0 || x < first.x()) {
-                        first.setX(x);
-                    }
-                    if (first.y() < 0 || y < first.y()) {
-                        first.setY(y);
-                    }
+                    first.setX(qMin(first.x(), x - cell));
+                    first.setY(qMin(first.y(), y));
                 }
             }
         }
         return first;
     };
     const QPoint oldInk = firstInk();
-    CHECK(oldInk.x() >= 0 && oldInk.y() >= 0);
+    CHECK(oldInk.x() != INT_MAX && oldInk.y() != INT_MAX);
 
     CHECK(h.session.setSetting(QStringLiteral("font.space_left"),
                                QStringLiteral("3"), &error));

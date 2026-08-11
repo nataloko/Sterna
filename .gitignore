@@ -10,6 +10,11 @@ build/
 /shell/build-release
 # A third, for the Windows cross build. See shell/README.md.
 /shell/build-win
+# A fourth, built in the *Ubuntu* container against its Qt 6.4.2 — which is
+# what CI has. The sanctioned container is sterna-fedora and its 6.11.1, so a
+# painting assertion can pass there and fail in CI; this is where to reproduce
+# that. It is not for measuring anything. See AGENTS.md.
+/shell/build-ubuntu
 *.o
 *.so
 *.a
