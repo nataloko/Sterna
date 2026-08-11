@@ -1889,10 +1889,19 @@ And for the macro language:
   every platform; using Rust's `from_utf16_lossy` agrees with the API name and
   disagrees with the code under it.
 - **`expandenv` is a Win32 parser, not just `%NAME%` replacement.** Windows
-  calls `ExpandEnvironmentStringsW`; its closing percent for an unknown name
-  is consumed and cannot also open the next name. Unix mirrors that measured
-  delimiter rule. Keep the Windows API call: a tidy shared parser puts the
-  old Stage 2 guess back into the shipping platform.
+  calls `ExpandEnvironmentStringsW`; an unknown name's closing percent is
+  **not** consumed — it is emitted as the opener of the next name, so
+  `%UNSET%KNOWN%` is `%UNSET` followed by `KNOWN`'s value rather than the
+  whole string left alone. Unix mirrors that. Keep the Windows API call: a
+  tidy shared parser puts the old Stage 2 guess back into the shipping
+  platform.
+  **This entry said the opposite until a native Windows run corrected it**,
+  and every test agreed with the wrong rule, because the only input that can
+  tell the two apart is two names in a row with the first one unset — which is
+  now the last assertion in that test, with a note saying so. The lesson is
+  the one this file already gives for transcriptions: a rule about a Win32
+  parser is worth exactly the platform it was measured on, and Wine is not
+  that platform.
 - **A missing reserved word is not diagnosed as a missing command — it is
   diagnosed as a bad assignment.** An unrecognised name is read as a *variable*,
   so a command left out of the table falls into `ExecCmnd`'s `else` arm

@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 472
+**Last updated:** 2026-08-12 · **Stage:** 2 complete, 3 in progress · **Commits:** 475
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4782,6 +4782,17 @@ is `GetTickCount64` there, faithfully, since upstream's `FTSetTimeOut` is
 `Instant`'s QPC knows nothing about. A one-second auto-stop measured 993 ms. The
 assertion now allows a tick; what it is for is a `recvfile` that returns as soon
 as it starts, which misses by three orders of magnitude.
+
+51 binaries after that, and the first thing the native runner has contradicted
+rather than merely exposed. `expandenv`'s delimiter rule was recorded as "an
+unknown name's closing percent is consumed and cannot also open the next name",
+and `ExpandEnvironmentStringsW` does the opposite: it resumes scanning *at* the
+delimiter, so `%UNSET%KNOWN%` is `%UNSET` followed by `KNOWN`'s value. The Unix
+mirror implemented the wrong rule and 335 of 336 tests agreed with it, because
+the only input that can separate the two is two names in a row with the first
+one unset. That case is now the last assertion in the test with a note saying
+what it is for, and the trap in `AGENTS.md` is corrected rather than deleted —
+the rule had been measured somewhere that was not Windows.
 
 The last deferred TTL file branch is now back where it has meaning. On Windows,
 a macro with no BOM is converted from `GetACP()` exactly where the initial file
