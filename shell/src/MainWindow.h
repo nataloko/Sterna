@@ -24,6 +24,8 @@ class XferProgressDialog;
 /// session, which is the thing that has to be threaded through everything
 /// later — and threading it through six actions then is cheaper than carrying
 /// the indirection through the whole of Stage 1.
+class Printer;
+
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
@@ -237,6 +239,8 @@ private:
     I18n *m_i18n = nullptr;
     QString m_languageSetting;
     Session *m_session = nullptr;
+    /// The other end of the media-copy sequences, and of File > Print.
+    Printer *m_printer = nullptr;
     TerminalView *m_view;
     QScrollBar *m_scroll;
     QLabel *m_status;

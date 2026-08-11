@@ -2,6 +2,8 @@
 
 #include "MainWindow.h"
 
+#include "Printer.h"
+
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
@@ -187,6 +189,7 @@ MainWindow::MainWindow(const QString &settingsPath)
                                             : settingsPath)
 {
     m_session = new Session(80, 24, this);
+    m_printer = new Printer(m_session, this);
     m_i18n = new I18n(this);
     m_view = new TerminalView(m_session, this, m_i18n);
 
@@ -246,6 +249,8 @@ MainWindow::MainWindow(const QString &settingsPath)
     connect(m_session, &Session::remoteResize, this, &MainWindow::onRemoteResize);
     connect(m_session, &Session::windowOperationRequested, this,
             &MainWindow::onWindowOperation);
+    connect(m_session, &Session::printerEvent, m_printer, &Printer::handle);
+    connect(m_printer, &Printer::notice, this, &MainWindow::onNotice);
     connect(m_session, &Session::settingsChanged, this, &MainWindow::onSettingsChanged);
     connect(m_session, &Session::transferProgressed, this,
             &MainWindow::onTransferProgressed);
@@ -701,6 +706,13 @@ void MainWindow::buildMenus()
     m_disconnectAction = file->addAction(tr("Disconnect"), this,
                                          &MainWindow::disconnectPort);
     languageAction(m_disconnectAction, "MENU_FILE_DISCONNECT", tr("Disconnect"));
+    file->addSeparator();
+    // Upstream's File > Print, which is the same `BuffPrint` call `CSI 0 i`
+    // makes — the menu asks for the screen and the sequence can ask for the
+    // scroll region instead.
+    QAction *print = file->addAction(tr("Print..."), QKeySequence::Print, this,
+                                     [this] { m_printer->printScreen(false); });
+    languageAction(print, "MENU_FILE_PRINT", tr("Print..."));
     file->addSeparator();
     QAction *quit = file->addAction(tr("Quit"), QKeySequence::Quit, this,
                                     &QWidget::close);

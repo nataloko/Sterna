@@ -129,6 +129,10 @@ public:
 
     int cols() const;
     int rows() const;
+    /// DECSTBM's rows, zero-based and inclusive — the whole screen unless a
+    /// host has narrowed it. One caller: `CSI 0 i` prints the region rather
+    /// than the screen when DECPEX is reset.
+    void scrollRegion(size_t *top, size_t *bottom) const;
     /// One row of what is *shown* — the live screen until something scrolls
     /// back, and then history.
     const TtCell *row(int y, size_t *outLen) const;
@@ -416,6 +420,14 @@ signals:
     /// both. The window may decline any of them; see `MainWindow`, where
     /// Wayland declines the move because it has no way to honour it.
     void windowOperationRequested(const TtWindowRequest &request);
+
+    /// A media-copy sequence asked the printer for something — a job opening,
+    /// bytes for it, a job closing, or the screen.
+    ///
+    /// One per operation and in order, like the window operations and for the
+    /// stronger reason: a job is `Open`, `Write`s and `Close`, and a listener
+    /// that saw only the last of those would print nothing.
+    void printerEvent(const TtPrinterEvent &event);
 
     /// Logging started, stopped, or was stopped *for* us by a write failure —
     /// which is the case that matters, because a window still claiming to log

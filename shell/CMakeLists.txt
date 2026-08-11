@@ -10,7 +10,11 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "" FORCE)
 endif()
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets)
+# PrintSupport is a separate qtbase module, present in Fedora's native package
+# and in `mingw64-qt6-qtbase` alike. It is what File > Print and the media copy
+# sequences reach; without it a terminal that a host asks to print has nowhere
+# to send the page.
+find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets PrintSupport)
 
 # `-Wall -Wextra` is GCC and Clang's spelling. MSVC takes `-` as a switch lead
 # too, so `-Wall` reaches it and means "every warning including the ones the
@@ -142,6 +146,7 @@ add_library(sterna_shell STATIC
     src/I18n.cpp
     src/Theme.cpp
     src/PasteDialog.cpp
+    src/Printer.cpp
     src/SerialDialog.cpp
     src/SettingsDialog.cpp
     src/SshDialog.cpp
@@ -150,7 +155,7 @@ add_library(sterna_shell STATIC
     src/XferDialog.cpp)
 
 add_dependencies(sterna_shell tt_core)
-target_link_libraries(sterna_shell PUBLIC Qt6::Widgets sterna_core)
+target_link_libraries(sterna_shell PUBLIC Qt6::Widgets Qt6::PrintSupport sterna_core)
 target_include_directories(sterna_shell PUBLIC src)
 target_compile_options(sterna_shell PRIVATE ${TT_WARNINGS})
 target_compile_definitions(sterna_shell PRIVATE
@@ -236,6 +241,13 @@ endif()
 # A TTL macro against the window's event loop rather than a pump loop, which
 # is where a re-entered modal dialog or an unserviced notifier shows up. Needs
 # nothing: the one connected case forks `/bin/sh`.
+# Needs no printer: `PassThruPort` points at a file and the test reads back
+# what a device would have received.
+add_executable(print_test tests/print_test.cpp)
+target_link_libraries(print_test PRIVATE sterna_shell)
+target_compile_options(print_test PRIVATE ${TT_WARNINGS})
+add_test(NAME print COMMAND print_test)
+
 add_executable(macro_test tests/macro_test.cpp)
 target_link_libraries(macro_test PRIVATE sterna_shell)
 target_compile_options(macro_test PRIVATE ${TT_WARNINGS})

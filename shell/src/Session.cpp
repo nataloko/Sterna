@@ -89,6 +89,11 @@ Session::~Session()
 int Session::cols() const { return static_cast<int>(tt_session_cols(m_session)); }
 int Session::rows() const { return static_cast<int>(tt_session_rows(m_session)); }
 
+void Session::scrollRegion(size_t *top, size_t *bottom) const
+{
+    tt_session_scroll_region(m_session, top, bottom);
+}
+
 const TtCell *Session::row(int y, size_t *outLen) const
 {
     return tt_session_row(m_session, static_cast<size_t>(y), outLen);
@@ -887,6 +892,7 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
     bool dirty = false;
     bool colorsMoved = false;
     bool windowOps = false;
+    bool printerOps = false;
     bool connectionEnded = false;
     bool windowCloseRequested = false;
     bool transferMoved = false;
@@ -992,6 +998,11 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
             // there is one cache to refill however many colours moved.
             colorsMoved = true;
             break;
+        case TT_EVENT_KIND_PRINTER:
+            // Read once for the whole batch, below, for the same reason the
+            // window operations are: the payload does not fit in `TtEvent`.
+            printerOps = true;
+            break;
         case TT_EVENT_KIND_WINDOW_REQUEST:
             // Read once for the whole batch, below. The event says only that
             // there is something to read: `TtEvent` has no room for two ints,
@@ -1003,6 +1014,14 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
 
     // Before the repaint, because one of them is "repaint" and several change
     // the size the frame is about to be drawn at.
+    if (printerOps) {
+        const TtPrinterEvent *jobs = nullptr;
+        const size_t count = tt_session_printer_events(m_session, &jobs);
+        for (size_t i = 0; i < count; i++) {
+            emit printerEvent(jobs[i]);
+        }
+    }
+
     if (windowOps) {
         const TtWindowRequest *requests = nullptr;
         const size_t count = tt_session_window_requests(m_session, &requests);
