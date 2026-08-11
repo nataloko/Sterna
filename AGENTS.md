@@ -647,6 +647,20 @@ And for the local pty:
   through the VT engine. Wine 9 cannot exercise this path: its console host
   rejects the internal `--inheritcursor` switch and closes the output pipe
   empty. That is a Wine gap, not evidence about the reader.
+- **ConPTY's output pipe belongs to the console host, not to the child, so the
+  hangup trap has a second form here and it is the opposite way round.** On
+  Unix the child owns the slave and dropping our end hangs the master up; on
+  Windows the child can exit, its last output can arrive, and the reader goes
+  on blocking in `ReadFile` for ever — no error, no EOF, a window waiting on a
+  process that left. `ClosePseudoConsole`, which is what dropping the master
+  does, is the only thing that ends it, and it is the right thing rather than
+  simply declaring the connection dead: the console host flushes what it still
+  holds and *then* closes the pipe, so the trailing bytes keep their place
+  ahead of the disconnect. It is also on `tick`, because a child that exits
+  without printing produces no wakeup to read on — and once the pipe closes the
+  worker signals the frontend itself, which is the wakeup that was missing.
+  Wine cannot see any of this; only the native job could, and it presented as
+  both ConPTY tests spending their whole ten-second deadline.
 
 And for SSH:
 

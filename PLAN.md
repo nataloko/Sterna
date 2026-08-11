@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 458
+**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 461
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4688,6 +4688,23 @@ died the moment it started while `servers.sh` printed that the servers were up
 — surfacing three minutes later as a connection refused. `servers.sh` now waits
 for the listeners and prints the child's log when they never arrive. `print_test`
 was also written and never gated; it is a CI step now.
+
+With the shell job green, the Windows one has advanced twice more. It lints
+clean — so the vendored Tera Term C does compile under MSVC — and then found
+two things a Linux checkout cannot express. `core.autocrlf` is on by default on
+the runner, so `generated.rs` arrived with CRLF and its freshness test reported
+a file nobody had touched as stale; `.gitattributes` now pins our own sources,
+the generated header and the TTL transcripts to LF, and marks the vendored
+tree, the case inputs and `win32.txt` as bytes to leave alone. Behind that,
+both ConPTY tests spent their whole deadline: ConPTY's output pipe belongs to
+the console host rather than to the child, so `cmd.exe` exits, its output
+arrives, and the reader blocks in `ReadFile` for ever. Closing the
+pseudoconsole once the child is reaped is what ends it, and it keeps the
+trailing bytes ahead of the disconnect because the host flushes before it
+closes. That check is on `tick` as well as on the quiet read path — a child
+that exits without printing produces no wakeup to read on. Twelve test
+binaries reported before the ConPTY failure, against six before the CRLF one;
+the rest of the workspace is still unrun there.
 
 The last deferred TTL file branch is now back where it has meaning. On Windows,
 a macro with no BOM is converted from `GetACP()` exactly where the initial file
