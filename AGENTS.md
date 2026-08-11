@@ -958,6 +958,24 @@ And for the settings, all of which came out of `ini-audit/`:
   field floors at **0**, not 1, because 0 there means "never time out" on a
   network link — floor it at 1 and a stalled ZMODEM over SSH gives up after a
   second.
+- **The C field's *width* is part of the bound, and it runs first.** Most of
+  these settings live in a `WORD`, so `GetPrivateProfileInt`'s `UINT` wraps in
+  the assignment before any `if` can see it. `MaxComPort` is where that decides
+  the answer: `ttset.c:1218` floors at 4 and caps at 4096, and `MaxComPort=-1`
+  — what somebody writes meaning "no limit" — is 65535 and then **4096**, while
+  a bound that reads the -1 as a negative gives **4**. Opposite ends of the
+  range, from the same line. This port had `int(4..4096)`, which was wrong that
+  way *and* gave the default of 256 below the floor; `uint16_clamp` is the
+  spelling that composes the two, as `uint16_alias` already did for
+  `MaximizedBugTweak`. When a bound looks obvious, check the field's type in
+  `tttypes.h` before believing the `if`.
+- **`ComPort`'s ceiling is another setting and its answer is a reset**, which
+  is two departures at once. `ttset.c:1223` tests it against `ts.MaxComPort` —
+  read three hundred lines *later*, at `:1218` — and an out-of-range port
+  becomes **1**, the first port, rather than the nearest legal one. Neither
+  half is a schema row here, so it is in `Settings::normalize`; clamping
+  instead opens COM256 for a file that asked for COM300, which is a different
+  device on somebody's desk.
 - **`XmodemOpt`'s default is plain checksum**, the `else` branch of an
   `_stricmp` chain read with an empty default (`ttset.c:1039`) — eighth member
   of the family that holds `CRReceive`, `BSKey`, the flag words, `GetOnOff`,

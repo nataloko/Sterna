@@ -3194,14 +3194,18 @@ pub struct Settings {
     /// `ttlib_static_cpp.cpp:1432`). A first save has no old file to copy, and the
     /// smaller close-time geometry save does not take this path.
     pub settings_auto_backup: bool,
-    /// `ttset.c:916`. **The bound is a different setting and is not a clamp**:
-    /// `:1223` resets the port to 1 when it is below 1 or above `MaxComPort`, which
-    /// is read at `:1218` — after this key but before the check. Left as a plain int
-    /// here because the schema has no way to say "bounded by that other setting",
-    /// and `PLAN.md` carries it as an open item.
+    /// `ttset.c:916`, narrowed to a `WORD` by the assignment as `MaxComPort` is.
     ///
-    /// What a number means on Linux is also open: this port opens a device path, and
-    /// `/C=1` has to be resolved against enumeration rather than against `COM1`.
+    /// **The bound is a different setting and is not a clamp**: `:1223` resets the
+    /// port to 1 when it is below 1 or above `MaxComPort`, which is read at `:1218`
+    /// — after this key but before the check. That is a cross-field rule with an
+    /// order to it, which no row here can carry, so it lives in `Settings::normalize`
+    /// beside `Debug`/`DebugModes`. The narrowing has to be the row's, though,
+    /// because the reset compares the *narrowed* value: `ComPort=65538` is port 2
+    /// upstream rather than a number above every ceiling.
+    ///
+    /// What a number means on Linux is a separate question: this port opens a device
+    /// path, so `/C=1` is resolved against enumeration rather than against `COM1`.
     pub serial_com_port: i32,
     /// `ttset.c:919`. Unbounded, and the hardware decides what it can do with it —
     /// `tt-conn` reads the setting back after `tcsetattr` for exactly that reason.
@@ -4628,7 +4632,11 @@ impl Settings {
                 ini.get("Tera Term", "IniAutoBackup"),
                 true,
             ),
-            serial_com_port: ini.get_int("Tera Term", "ComPort", d.serial_com_port) as i32,
+            serial_com_port: crate::schema::word(ini.get_int(
+                "Tera Term",
+                "ComPort",
+                d.serial_com_port,
+            ) as i32),
             serial_baud: ini.get_int("Tera Term", "BaudRate", d.serial_baud) as i32,
             serial_data_bits: match ini.get("Tera Term", "DataBit") {
                 Some(v) => SerialDataBits::from_ini(v),
@@ -8430,7 +8438,8 @@ impl Settings {
                 self.settings_auto_backup = crate::schema::on_off(Some(value), true)
             }
             "serial.com_port" => {
-                self.serial_com_port = crate::schema::int(value, self.serial_com_port)
+                self.serial_com_port =
+                    crate::schema::word(crate::schema::int(value, self.serial_com_port))
             }
             "serial.baud" => self.serial_baud = crate::schema::int(value, self.serial_baud),
             "serial.data_bits" => self.serial_data_bits = SerialDataBits::from_ini(value),
@@ -10443,10 +10452,10 @@ pub const FIELDS: &[Field] = &[
         page: "serial",
         section: "Tera Term",
         key: "ComPort",
-        kind: Kind::Int,
+        kind: Kind::IntWord,
         default: "1",
         label: Some("DLG_SERIAL_PORT"),
-        doc: "`ttset.c:916`. **The bound is a different setting and is not a clamp**: `:1223` resets the port to 1 when it is below 1 or above `MaxComPort`, which is read at `:1218` — after this key but before the check. Left as a plain int here because the schema has no way to say \"bounded by that other setting\", and `PLAN.md` carries it as an open item.  What a number means on Linux is also open: this port opens a device path, and `/C=1` has to be resolved against enumeration rather than against `COM1`.",
+        doc: "`ttset.c:916`, narrowed to a `WORD` by the assignment as `MaxComPort` is.  **The bound is a different setting and is not a clamp**: `:1223` resets the port to 1 when it is below 1 or above `MaxComPort`, which is read at `:1218` — after this key but before the check. That is a cross-field rule with an order to it, which no row here can carry, so it lives in `Settings::normalize` beside `Debug`/`DebugModes`. The narrowing has to be the row's, though, because the reset compares the *narrowed* value: `ComPort=65538` is port 2 upstream rather than a number above every ceiling.  What a number means on Linux is a separate question: this port opens a device path, so `/C=1` is resolved against enumeration rather than against `COM1`.",
     },
     Field {
         name: "serial.baud",

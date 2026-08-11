@@ -657,6 +657,46 @@ fn max_com_port_is_narrowed_and_then_clamped() {
     assert_eq!(s.serial_max_com_port, 4096);
 }
 
+/// `ComPort`'s own bound is `MaxComPort`, and the two are read a thousand lines
+/// apart with the test after both (`ttset.c:1223`).
+///
+/// The rule is a **reset to 1**, not a clamp — the port that was out of range
+/// becomes the first one rather than the nearest legal one — and no schema row
+/// can carry a bound that is another setting's loaded value, which is why this
+/// lives in `Settings::normalize`.
+#[test]
+fn an_out_of_range_com_port_resets_to_the_first_one() {
+    let load = |file: &str| {
+        Settings::load(&Ini::parse(format!("[Tera Term]\r\n{file}").as_bytes())).serial_com_port
+    };
+    assert_eq!(load("ComPort=3\r\n"), 3);
+    // The default ceiling is 256, so this is the reset rather than a clamp to
+    // 256 — which is the whole difference, and it is what a user's own Tera
+    // Term does with the file.
+    assert_eq!(load("ComPort=300\r\n"), 1);
+    assert_eq!(load("ComPort=0\r\n"), 1);
+
+    // ...and the ceiling really is the file's own `MaxComPort`, whichever
+    // order the two keys appear in. Upstream's read order is fixed in the
+    // source; a file's is not.
+    assert_eq!(load("ComPort=8\r\nMaxComPort=4\r\n"), 1);
+    assert_eq!(load("MaxComPort=4\r\nComPort=8\r\n"), 1);
+    assert_eq!(load("ComPort=300\r\nMaxComPort=1024\r\n"), 300);
+
+    // The narrowing happens first, so a value that wraps back into range is a
+    // real port number rather than something above every ceiling.
+    assert_eq!(load("ComPort=65538\r\n"), 2);
+    assert_eq!(load("ComPort=-1\r\n"), 1, "65535, and then out of range");
+
+    // Changing either key by name re-runs the test, so a script and a file
+    // cannot disagree about which port is open.
+    let mut s = Settings::default();
+    assert!(s.set_str("serial.com_port", "9"));
+    assert_eq!(s.serial_com_port, 9);
+    assert!(s.set_str("serial.max_com_port", "4"));
+    assert_eq!(s.serial_com_port, 1, "the ceiling moved under it");
+}
+
 /// The third bound, and the reason it is a third rather than one of the other
 /// two: `min(max(0, v), 5000)` (`ttset.c:1633`) clamps at both ends, so it
 /// disagrees with `int(lo..hi)` below the floor and with `int_min(lo)` above

@@ -1171,15 +1171,19 @@ settings.auto_backup | bool | Tera Term | IniAutoBackup | on | -
 # the default in a file — the function returns FALSE without storing, and only
 # the file's reader has an `else` to catch it.
 
-# `ttset.c:916`. **The bound is a different setting and is not a clamp**:
-# `:1223` resets the port to 1 when it is below 1 or above `MaxComPort`, which
-# is read at `:1218` — after this key but before the check. Left as a plain int
-# here because the schema has no way to say "bounded by that other setting",
-# and `PLAN.md` carries it as an open item.
+# `ttset.c:916`, narrowed to a `WORD` by the assignment as `MaxComPort` is.
 #
-# What a number means on Linux is also open: this port opens a device path, and
-# `/C=1` has to be resolved against enumeration rather than against `COM1`.
-serial.com_port | int | Tera Term | ComPort | 1 | DLG_SERIAL_PORT
+# **The bound is a different setting and is not a clamp**: `:1223` resets the
+# port to 1 when it is below 1 or above `MaxComPort`, which is read at `:1218`
+# — after this key but before the check. That is a cross-field rule with an
+# order to it, which no row here can carry, so it lives in `Settings::normalize`
+# beside `Debug`/`DebugModes`. The narrowing has to be the row's, though,
+# because the reset compares the *narrowed* value: `ComPort=65538` is port 2
+# upstream rather than a number above every ceiling.
+#
+# What a number means on Linux is a separate question: this port opens a device
+# path, so `/C=1` is resolved against enumeration rather than against `COM1`.
+serial.com_port | uint16 | Tera Term | ComPort | 1 | DLG_SERIAL_PORT
 
 # `ttset.c:919`. Unbounded, and the hardware decides what it can do with it —
 # `tt-conn` reads the setting back after `tcsetattr` for exactly that reason.

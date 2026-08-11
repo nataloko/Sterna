@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 421
+**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 423
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -2351,10 +2351,29 @@ That is the right trade for a *command line*, which chooses afresh every time;
 anything that **remembers** a port still has to store the `by-path` id, and
 `number_of_port` goes the other way for writing one back.
 
-One open item left, and it is about the schema rather than about Linux:
-`ComPort`'s bound is a *different setting* and is a reset to 1 rather than a
-clamp (`ttset.c:1223`), which the schema has no way to express — so an
-out-of-range `ComPort=` in a file survives here where upstream would reset it.
+**Settled 2026-08-11: `ComPort`'s bound is a cross-field rule, so it is not a
+row.** The open item was that its ceiling is a *different setting* and its
+answer is a reset to 1 rather than a clamp (`ttset.c:1223`) — an out-of-range
+`ComPort=` therefore opens the **first** port, not the nearest legal one, which
+is a distinction a hand-edited file makes and a clamp would hide. No schema row
+can carry "bounded by whatever that other setting loaded", and the order is part
+of it: `ComPort` is read at `:916`, `MaxComPort` at `:1218`, the test after
+both. It lives in `Settings::normalize` beside the `Debug`/`DebugModes` rule
+that was already there for the same reason, which means a loaded file and
+`setsetting` agree and moving the *ceiling* re-tests the port under it.
+
+Reading the two together found a real defect in the ceiling itself, which the
+open item had been sitting next to. `serial.max_com_port` was `int(4..4096)`,
+and upstream is neither of that row's two ends: `ts.MaxComPort` is a `WORD`, so
+`GetPrivateProfileInt`'s result wraps in the assignment before either bounds
+test runs. Below 4 the row gave the default of 256 rather than upstream's 4,
+and `MaxComPort=-1` — which is what somebody writes meaning "no limit" — came
+out as **4** where upstream gives 4096, the opposite end of the range. The
+narrowing belongs to `ComPort` too, since the reset compares the narrowed value
+and `ComPort=65538` is port 2 upstream rather than a number above every ceiling.
+`uint16_clamp` is the new bound, beside the `uint16_alias` that already composes
+the same narrowing with the other integer rule — eight bounds now, for a file
+whose integers looked like one shape when this started.
 
 #### And what a command line says to open, which is three answers
 
