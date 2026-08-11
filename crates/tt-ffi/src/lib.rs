@@ -961,20 +961,10 @@ fn palette_rgb(
     let Ok(i) = usize::try_from(index) else {
         return false;
     };
-    let Some(&(pr, pg, pb)) = palette.get(i) else {
+    let Some(&color) = palette.get(i) else {
         return false;
     };
-    unsafe {
-        if let Some(r) = r.as_mut() {
-            *r = pr;
-        }
-        if let Some(g) = g.as_mut() {
-            *g = pg;
-        }
-        if let Some(b) = b.as_mut() {
-            *b = pb;
-        }
-    }
+    palette_rgb_one(color, r, g, b);
     true
 }
 
@@ -985,6 +975,11 @@ fn palette_rgb(
 /// story — `SGR 38;2;r;g;b` has already resolved to the nearest index by the
 /// time a cell holds it. Entries 0-15 reflect the session's `ANSIColor`
 /// setting; entries 16-255 are the fixed xterm cube and greyscale ramp.
+///
+/// **This is the live table, which a host can repaint with `OSC 4`.** Read it
+/// again after each pump rather than caching it at startup; the same sequence
+/// also moves which index a truecolor SGR resolves to, so the two would
+/// otherwise disagree about the same cell.
 ///
 /// Note what the cell says: `fg`/`bg` mean a palette index only when
 /// `TT_ATTR2_FORE` / `TT_ATTR2_BACK` is set in `attrs`. Without the bit the
@@ -1000,7 +995,76 @@ pub extern "C" fn tt_session_palette_rgb(
     b: *mut u8,
 ) -> bool {
     let session = session_ref!(session, false);
-    palette_rgb(&session.session.vt().config().palette, index, r, g, b)
+    palette_rgb(&session.session.vt().colors().ansi, index, r, g, b)
+}
+
+/// Which of the terminal's six attribute colour pairs
+/// [`tt_session_color_rgb`] is being asked about.
+///
+/// These are the pairs `vtdisp.c:GetDrawAttr` chooses between, in upstream's
+/// own priority order; the palette is a separate question and belongs to
+/// [`tt_session_palette_rgb`]. Tek's pair is not here because no window in this
+/// shell paints with it.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TtColorPair {
+    /// `VTColor` — ordinary text.
+    Normal,
+    /// `VTBoldColor`, which is also what a selection is drawn with.
+    Bold,
+    Blink,
+    Reverse,
+    Url,
+    Underline,
+}
+
+/// A live session's attribute colour, for the painter. False for a null
+/// session.
+///
+/// The counterpart of [`tt_session_palette_rgb`] for the colours that are not
+/// palette entries, and live for the same reason: `OSC 10`-`19` move them while
+/// the session runs, so reading the settings once at startup paints a window
+/// that ignores what the host asked for.
+///
+/// **The settings and these are not interchangeable even when nothing has
+/// changed them.** `tt_session_setting` gives what the file says, which is what
+/// a reset returns to; this gives what the terminal is painting with now.
+#[no_mangle]
+pub extern "C" fn tt_session_color_rgb(
+    session: *const TtSession,
+    pair: TtColorPair,
+    background: bool,
+    r: *mut u8,
+    g: *mut u8,
+    b: *mut u8,
+) -> bool {
+    let session = session_ref!(session, false);
+    let colors = session.session.vt().colors();
+    let pair = match pair {
+        TtColorPair::Normal => &colors.normal,
+        TtColorPair::Bold => &colors.bold,
+        TtColorPair::Blink => &colors.blink,
+        TtColorPair::Reverse => &colors.reverse,
+        TtColorPair::Url => &colors.url,
+        TtColorPair::Underline => &colors.underline,
+    };
+    palette_rgb_one(pair[usize::from(background)], r, g, b);
+    true
+}
+
+fn palette_rgb_one(color: tt_vt::palette::Rgb, r: *mut u8, g: *mut u8, b: *mut u8) {
+    let (pr, pg, pb) = color;
+    unsafe {
+        if let Some(r) = r.as_mut() {
+            *r = pr;
+        }
+        if let Some(g) = g.as_mut() {
+            *g = pg;
+        }
+        if let Some(b) = b.as_mut() {
+            *b = pb;
+        }
+    }
 }
 
 /// An entry from the compiled-in default palette. False for `index > 255`.
@@ -1509,6 +1573,13 @@ pub enum TtEventKind {
     /// `AutoWinClose` after a network connection ended. Close the window if
     /// it can close now; serial ports and local ptys never emit this.
     CloseRequested = 15,
+    /// A colour OSC moved something the painter caches. Re-read
+    /// [`tt_session_palette_rgb`] and [`tt_session_color_rgb`], then repaint.
+    ///
+    /// Separate from [`TtEventKind::Damage`], which says the cells changed:
+    /// re-reading 262 colours on every pump would pay for a change that
+    /// happens once a session, if at all.
+    ColorsChanged = 16,
 }
 
 #[repr(C)]
@@ -1552,6 +1623,7 @@ pub extern "C" fn tt_session_drain_events(
                 let p = s.event_texts.last().expect("just pushed").as_ptr();
                 (TtEventKind::Title, 0, p)
             }
+            Event::ColorsChanged => (TtEventKind::ColorsChanged, 0, ptr::null()),
             Event::Break => (TtEventKind::Break, 0, ptr::null()),
             Event::BadByte(b) => (TtEventKind::BadByte, b, ptr::null()),
             Event::Disconnected => (TtEventKind::Disconnected, 0, ptr::null()),

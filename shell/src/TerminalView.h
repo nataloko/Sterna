@@ -56,6 +56,9 @@ public:
     /// Take the colours from the session's settings and repaint. The size is
     /// the window's business, not the painter's — see `MainWindow`.
     void applySettings();
+    /// Re-read the colours the host can move and repaint. The narrow half of
+    /// `applySettings`, for `Session::colorsChanged`.
+    void refreshColors();
 
     /// Whether Ctrl+left-click should ask the window for its full popup menu.
     /// The window decides this from all three terms: the menu bar is hidden,

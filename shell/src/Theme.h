@@ -38,6 +38,13 @@ public:
     /// have leaves the compiled-in default standing.
     void applySettings(const class Session &session);
 
+    /// Re-read only the colours — the palette and the six attribute pairs.
+    ///
+    /// The half of `applySettings` a host can change on its own, so it is also
+    /// the whole answer to `Session::colorsChanged`. Everything else there is
+    /// a setting and cannot move without the settings moving.
+    void readColors(const class Session &session);
+
     /// Resolve one cell to the two colours it is painted with.
     ///
     /// `selected` is the frontend's own highlight and `screenReverse` is

@@ -1154,6 +1154,7 @@ impl Vt {
         // colours are refreshed here, which is what upstream's `SetColor` does
         // on the two paths where it still runs.
         s.colors = color::Colors::new(&s.config);
+        s.colors_dirty = true;
     }
 
     /// The colours the frontend should paint with — the live ones, which a host
@@ -1161,6 +1162,16 @@ impl Vt {
     /// asked for, which is a different question and is what a reset returns to.
     pub fn colors(&self) -> &color::Colors {
         &self.state.colors
+    }
+
+    /// Whether [`Vt::colors`] has moved since this was last asked, and clear.
+    ///
+    /// The frontend caches the colours — a painter that asked the core for one
+    /// per cell would cross the ABI a few thousand times a frame — so it needs
+    /// to be told when the cache is stale. Upstream's equivalent is the
+    /// `InvalidateRect` at the end of `DispSetColor` and `DispResetColor`.
+    pub fn take_colors_changed(&mut self) -> bool {
+        std::mem::take(&mut self.state.colors_dirty)
     }
 
     /// Bytes the terminal wants to send back to the host: DA, DSR, and friends.
@@ -1596,6 +1607,13 @@ struct State {
     clipboard_requests: Vec<ClipboardRequest>,
     /// The live colours — `vtdraw_t`'s, not `ts`'s. See [`color::Colors`].
     colors: color::Colors,
+    /// A colour OSC moved something and the painter has not been told.
+    ///
+    /// A flag rather than a repaint, for the reason `take_bells` is a count
+    /// rather than a noise: `InvalidateRect` is the one thing `DispSetColor`
+    /// does that this engine has no window to do. See
+    /// [`Vt::take_colors_changed`].
+    colors_dirty: bool,
 }
 
 /// What a linked macro sees of the session — `ttdde.c`'s `DDEPut1` sink, and
@@ -1690,6 +1708,7 @@ impl State {
             bell_reset: false,
             clipboard_requests: Vec::new(),
             colors: color::Colors::new(&Config::default()),
+            colors_dirty: false,
         }
     }
 
@@ -3500,6 +3519,7 @@ impl State {
             self.send_osc_terminated(&body, bell);
         } else if let Some(color) = color::parse_spec(spec) {
             self.colors.set(slot, color, full);
+            self.colors_dirty = true;
         }
     }
 
@@ -3507,6 +3527,7 @@ impl State {
         if let Some(slot) = color::slot_of(mode, number) {
             let full = self.config.color_flags.full_color();
             self.colors.reset(slot, &self.config, full);
+            self.colors_dirty = true;
         }
     }
 

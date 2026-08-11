@@ -10,29 +10,6 @@
 
 namespace {
 
-/// `fg_r,fg_g,fg_b,bg_r,bg_g,bg_b` into the pair upstream stores.
-///
-/// A short or unparseable value leaves the pair alone rather than throwing it
-/// away — the same rule `tt-config`'s reader applies to the file, so a colour
-/// that arrives half-written does not paint the screen black.
-void readPair(const Session &session, const char *name, QColor *pair)
-{
-    const QStringList parts = session.setting(QString::fromLatin1(name)).split(QLatin1Char(','));
-    if (parts.size() < 6) {
-        return;
-    }
-    int n[6];
-    for (int i = 0; i < 6; i++) {
-        bool ok = false;
-        n[i] = parts.at(i).trimmed().toInt(&ok);
-        if (!ok || n[i] < 0 || n[i] > 255) {
-            return;
-        }
-    }
-    pair[0] = QColor(n[0], n[1], n[2]);
-    pair[1] = QColor(n[3], n[4], n[5]);
-}
-
 /// The schema normalises a boolean to `on` or `off` on the way out, whatever
 /// the file said — so this is a comparison rather than a second parse of
 /// `GetOnOff`, which is default-biased and belongs in exactly one place.
@@ -83,11 +60,17 @@ Theme::Theme()
     setFont(m_font);
 }
 
-void Theme::applySettings(const Session &session)
+void Theme::readColors(const Session &session)
 {
     // The parser resolves truecolor against this same live table, so the
     // painter must read it from the session too. Reading `ANSIColor` again in
     // Qt would create two parsers for its masking, wrapping and buffer limits.
+    //
+    // And the pairs come from the same place for a second reason on top of
+    // that one: `OSC 4`/`5`/`10`-`19` move them while the session runs, so a
+    // painter that read `color.normal` out of the settings would be showing
+    // the file's answer to a question the host has since changed. The settings
+    // are still what a `OSC 110` reset returns to — the core keeps both.
     for (uint32_t i = 0; i < 256; i++) {
         uint8_t r = 0, g = 0, b = 0;
         if (session.paletteRgb(i, &r, &g, &b)) {
@@ -95,12 +78,32 @@ void Theme::applySettings(const Session &session)
         }
     }
 
-    readPair(session, "color.normal", m_normal);
-    readPair(session, "color.bold", m_bold);
-    readPair(session, "color.blink", m_blink);
-    readPair(session, "color.underline", m_underline);
-    readPair(session, "color.url", m_url);
-    readPair(session, "color.reverse", m_reverse);
+    const auto pair = [&session](TtColorPair which, QColor *out) {
+        for (int i = 0; i < 2; i++) {
+            uint8_t r = 0, g = 0, b = 0;
+            if (session.colorRgb(which, i == 1, &r, &g, &b)) {
+                out[i] = QColor(r, g, b);
+            }
+        }
+    };
+    pair(TT_COLOR_PAIR_NORMAL, m_normal);
+    pair(TT_COLOR_PAIR_BOLD, m_bold);
+    pair(TT_COLOR_PAIR_BLINK, m_blink);
+    pair(TT_COLOR_PAIR_UNDERLINE, m_underline);
+    pair(TT_COLOR_PAIR_URL, m_url);
+    pair(TT_COLOR_PAIR_REVERSE, m_reverse);
+
+    // The cursor is painted in the normal foreground, which is what upstream
+    // does when `VTCursorColor` is absent — and it is absent from the schema,
+    // so following the text colour is the only answer that cannot leave an
+    // invisible cursor on a reconfigured background. It follows an `OSC 10`
+    // for the same reason.
+    m_cursor = m_normal[0];
+}
+
+void Theme::applySettings(const Session &session)
+{
+    readColors(session);
 
     // The master switch, and the one flag here the core also reads: with it
     // off `SGR 30-37` still lands in the cell and `vtdisp.c:2417` declines to
@@ -153,12 +156,6 @@ void Theme::applySettings(const Session &session)
         font.setStyleStrategy(strategy);
         setFont(font);
     }
-
-    // The cursor is painted in the normal foreground, which is what upstream
-    // does when `VTCursorColor` is absent — and it is absent from the schema,
-    // so following the text colour is the only answer that cannot leave an
-    // invisible cursor on a reconfigured background.
-    m_cursor = m_normal[0];
 }
 
 void Theme::setFont(const QFont &font)

@@ -282,6 +282,41 @@ typedef uint32_t TtTracking;
 #endif // __cplusplus
 
 /**
+ * Which of the terminal's six attribute colour pairs
+ * [`tt_session_color_rgb`] is being asked about.
+ *
+ * These are the pairs `vtdisp.c:GetDrawAttr` chooses between, in upstream's
+ * own priority order; the palette is a separate question and belongs to
+ * [`tt_session_palette_rgb`]. Tek's pair is not here because no window in this
+ * shell paints with it.
+ */
+enum TtColorPair
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    /**
+     * `VTColor` — ordinary text.
+     */
+    TT_COLOR_PAIR_NORMAL,
+    /**
+     * `VTBoldColor`, which is also what a selection is drawn with.
+     */
+    TT_COLOR_PAIR_BOLD,
+    TT_COLOR_PAIR_BLINK,
+    TT_COLOR_PAIR_REVERSE,
+    TT_COLOR_PAIR_URL,
+    TT_COLOR_PAIR_UNDERLINE,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum TtColorPair TtColorPair;
+#else
+typedef uint32_t TtColorPair;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+/**
  * What a setting holds — enough for a dialog to pick a widget and no more.
  */
 enum TtSettingKind
@@ -422,6 +457,15 @@ enum TtEventKind
      * it can close now; serial ports and local ptys never emit this.
      */
     TT_EVENT_KIND_CLOSE_REQUESTED = 15,
+    /**
+     * A colour OSC moved something the painter caches. Re-read
+     * [`tt_session_palette_rgb`] and [`tt_session_color_rgb`], then repaint.
+     *
+     * Separate from [`TtEventKind::Damage`], which says the cells changed:
+     * re-reading 262 colours on every pump would pay for a change that
+     * happens once a session, if at all.
+     */
+    TT_EVENT_KIND_COLORS_CHANGED = 16,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -2626,6 +2670,11 @@ TtTracking tt_session_mouse_tracking(const TtSession *session);
  * time a cell holds it. Entries 0-15 reflect the session's `ANSIColor`
  * setting; entries 16-255 are the fixed xterm cube and greyscale ramp.
  *
+ * **This is the live table, which a host can repaint with `OSC 4`.** Read it
+ * again after each pump rather than caching it at startup; the same sequence
+ * also moves which index a truecolor SGR resolves to, so the two would
+ * otherwise disagree about the same cell.
+ *
  * Note what the cell says: `fg`/`bg` mean a palette index only when
  * `TT_ATTR2_FORE` / `TT_ATTR2_BACK` is set in `attrs`. Without the bit the
  * cell is asking for the terminal's *configured* default text colour, which
@@ -2637,6 +2686,26 @@ bool tt_session_palette_rgb(const TtSession *session,
                             uint8_t *r,
                             uint8_t *g,
                             uint8_t *b);
+
+/**
+ * A live session's attribute colour, for the painter. False for a null
+ * session.
+ *
+ * The counterpart of [`tt_session_palette_rgb`] for the colours that are not
+ * palette entries, and live for the same reason: `OSC 10`-`19` move them while
+ * the session runs, so reading the settings once at startup paints a window
+ * that ignores what the host asked for.
+ *
+ * **The settings and these are not interchangeable even when nothing has
+ * changed them.** `tt_session_setting` gives what the file says, which is what
+ * a reset returns to; this gives what the terminal is painting with now.
+ */
+bool tt_session_color_rgb(const TtSession *session,
+                          TtColorPair pair,
+                          bool background,
+                          uint8_t *r,
+                          uint8_t *g,
+                          uint8_t *b);
 
 /**
  * An entry from the compiled-in default palette. False for `index > 255`.

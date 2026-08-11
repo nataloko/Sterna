@@ -147,6 +147,12 @@ bool Session::paletteRgb(uint32_t index, uint8_t *r, uint8_t *g, uint8_t *b) con
     return tt_session_palette_rgb(m_session, index, r, g, b);
 }
 
+bool Session::colorRgb(TtColorPair pair, bool background, uint8_t *r, uint8_t *g,
+                       uint8_t *b) const
+{
+    return tt_session_color_rgb(m_session, pair, background, r, g, b);
+}
+
 TtTracking Session::mouseTracking() const { return tt_session_mouse_tracking(m_session); }
 
 bool Session::wheelToCursor(TtModifiers mods) const
@@ -874,6 +880,7 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
     const size_t n = tt_session_drain_events(m_session, &events);
 
     bool dirty = false;
+    bool colorsMoved = false;
     bool connectionEnded = false;
     bool windowCloseRequested = false;
     bool transferMoved = false;
@@ -974,9 +981,19 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
         case TT_EVENT_KIND_CLOSE_REQUESTED:
             windowCloseRequested = true;
             break;
+        case TT_EVENT_KIND_COLORS_CHANGED:
+            // Coalesced like damage: one `OSC 4` can carry a whole palette and
+            // there is one cache to refill however many colours moved.
+            colorsMoved = true;
+            break;
         }
     }
 
+    // Before the repaint, so the frame that shows the cells the host just sent
+    // is drawn with the colours it sent them in.
+    if (colorsMoved) {
+        emit colorsChanged();
+    }
     if (dirty) {
         emit damaged();
     }

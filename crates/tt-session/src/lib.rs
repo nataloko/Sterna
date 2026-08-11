@@ -122,6 +122,14 @@ pub enum Event {
     /// OSC 52, parsed and authorised by the terminal but waiting for the
     /// frontend which owns the operating system clipboard.
     Clipboard(ClipboardRequest),
+    /// `OSC 4`/`5`/`10`-`19` or one of their resets moved a colour the painter
+    /// caches. Re-read `tt_session_palette_rgb` and `tt_session_color_rgb`.
+    ///
+    /// Separate from [`Event::Damage`], which says the *cells* changed, because
+    /// a colour change is rare and re-reading 262 values on every pump would
+    /// pay for it constantly. Upstream's equivalent is the `InvalidateRect` at
+    /// the end of `DispSetColor`.
+    ColorsChanged,
 }
 
 /// What pressing a legacy `KEYBOARD.CNF` scan code did.
@@ -290,6 +298,12 @@ impl Session {
         // at a line that has moved between the page and the history.
         self.reanchor_after_resize();
         self.events.push(Event::Damage);
+        // Here rather than only in the pump: applying settings rebuilds the
+        // live colours, and a session with nothing arriving on it would
+        // otherwise not pump again until it did.
+        if self.vt.take_colors_changed() {
+            self.events.push(Event::ColorsChanged);
+        }
         let (cols, rows) = (self.vt.grid().cols(), self.vt.grid().rows());
         if let Some(c) = self.conn.as_mut() {
             let _ = c.resize(cols as u16, rows as u16);
@@ -1386,6 +1400,9 @@ impl Session {
         self.events.push(Event::Damage);
         self.collect_title();
         self.collect_bells();
+        if self.vt.take_colors_changed() {
+            self.events.push(Event::ColorsChanged);
+        }
     }
 
     /// Run the governor over whatever the parser asked for, and emit at most

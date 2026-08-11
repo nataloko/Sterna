@@ -387,6 +387,11 @@ TerminalView::TerminalView(Session *session, QWidget *parent, const I18n *i18n)
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
     setCursor(Qt::IBeamCursor);
+
+    // The theme is this widget's, so the subscription is too — a host's
+    // `OSC 4` has to reach the painter whether or not there is a MainWindow
+    // above it, which is what makes it testable from `render_test`.
+    connect(m_session, &Session::colorsChanged, this, &TerminalView::refreshColors);
     // Every pixel is painted every time, so there is nothing for Qt to clear
     // first — and the clear is a full-window fill we would immediately
     // overwrite.
@@ -461,6 +466,12 @@ QSize TerminalView::sizeHint() const
     // read before the window is laid out, so this is what makes a configured
     // 132x50 open at 132x50.
     return sizeForCells(m_session->cols(), m_session->rows());
+}
+
+void TerminalView::refreshColors()
+{
+    m_theme.readColors(*m_session);
+    update();
 }
 
 void TerminalView::applySettings()

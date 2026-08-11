@@ -82,6 +82,13 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
             ansi_color: s.color_ansi_enabled,
         },
         palette: ansi_palette(&s.color_ansi_palette, base.palette),
+        color_normal: color_pair(s.color_normal),
+        color_bold: color_pair(s.color_bold),
+        color_blink: color_pair(s.color_blink),
+        color_reverse: color_pair(s.color_reverse),
+        color_url: color_pair(s.color_url),
+        color_underline: color_pair(s.color_underline),
+        color_tek: color_pair(s.tek_color),
         // DECSCUSR's numbering, which is what `Config::cursor_shape` holds and
         // what DECRQSS answers with: `vtterm.c:4270` maps IdBlkCur to 1,
         // IdHCur to 3 and IdVCur to **5**, so the enum's own order is not it.
@@ -164,6 +171,16 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
         notify_clipboard_access: s.clipboard_remote_notify,
         ..*base
     }
+}
+
+/// One of the schema's `color2` values — six bytes, foreground then background
+/// — as the pair the terminal holds. These are the *configured* colours a
+/// `OSC 110`-style reset returns to; the live ones are `tt_vt::Colors`.
+fn color_pair(value: [u8; 6]) -> [Rgb; 2] {
+    [
+        (value[0], value[1], value[2]),
+        (value[3], value[4], value[5]),
+    ]
 }
 
 /// Parse `ANSIColor` as `ttset.c:797` does, including its narrow buffers and

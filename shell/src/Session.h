@@ -164,6 +164,10 @@ public:
     /// One entry from this terminal's live palette. Unlike the ABI's
     /// sessionless fallback, the first sixteen entries reflect `ANSIColor`.
     bool paletteRgb(uint32_t index, uint8_t *r, uint8_t *g, uint8_t *b) const;
+    /// One half of one of the terminal's six attribute colour pairs, live.
+    /// See `colorsChanged`.
+    bool colorRgb(TtColorPair pair, bool background, uint8_t *r, uint8_t *g,
+                  uint8_t *b) const;
     TtTracking mouseTracking() const;
     /// Whether a wheel notch belongs to the host as a cursor key rather than
     /// to the window's own scrollback. Four terms deep on the core's side, so
@@ -394,6 +398,10 @@ signals:
     /// the painter resolves with, and the terminal's size. Emitted once per
     /// applied change rather than per field, since the dialog applies on OK.
     void settingsChanged();
+    /// The *host* changed a colour — `OSC 4`, `OSC 10` and the rest of that
+    /// family. Re-read the palette and the pairs and repaint; nothing else the
+    /// theme holds can have moved.
+    void colorsChanged();
 
     /// Logging started, stopped, or was stopped *for* us by a write failure —
     /// which is the case that matters, because a window still claiming to log

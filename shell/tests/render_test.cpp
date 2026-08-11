@@ -296,6 +296,30 @@ void test_ansi_palette_changes_the_search_and_the_painter_together()
     CHECK(h.bgAt(1, 0) == QColor(1, 2, 3));
 }
 
+void test_osc_colours_reach_the_painter()
+{
+    Harness h;
+    // `OSC 4` moves a palette entry, and the painter has to hear about it
+    // without anyone applying settings: the core raises `colorsChanged` and
+    // the view refills its cache. Index 1 is `SGR 41`'s dark red.
+    h.feed("\033]4;1;#0c2238\033\\\033[41m \033[0m");
+    h.render();
+    CHECK(h.bgAt(0, 0) == QColor(0x0c, 0x22, 0x38));
+
+    // `OSC 10` and `OSC 11` are the default pair, which is where a cell with
+    // no explicit colour of its own is painted from — so this repaints the
+    // whole window and not one attribute.
+    h.feed("\033]10;#ffcc00;#102030\033\\");
+    h.render();
+    CHECK(h.bgAt(10, 0) == QColor(0x10, 0x20, 0x30));
+
+    // And `OSC 110` puts the pair back to what the settings say, which is
+    // Tera Term's black on white.
+    h.feed("\033]110;11\033\\");
+    h.render();
+    CHECK(h.bgAt(10, 0) == kWhite);
+}
+
 void test_reverse_and_screen_reverse()
 {
     Harness h;
@@ -1951,6 +1975,7 @@ int main(int argc, char **argv)
     test_sgr_background_colours();
     test_truecolor_resolves_through_upstreams_search();
     test_ansi_palette_changes_the_search_and_the_painter_together();
+    test_osc_colours_reach_the_painter();
     test_reverse_and_screen_reverse();
     test_a_visual_bell_inverts_the_screen_and_puts_it_back();
     test_bold_has_its_own_colour();
