@@ -3226,10 +3226,17 @@ pub struct Settings {
     /// `ttset.c:1151`. Wait for the port to appear instead of failing — a USB
     /// adapter that has not been plugged in yet.
     pub serial_wait_com: bool,
-    /// `ttset.c:1218`, floored at 4 and capped at `MAXCOMPORT` (4096, `tttypes.h:908`)
-    /// — so the range here is the *file's* and the floor is upstream's own. This is
-    /// the setting `/C=` is bounded against, which is why the parser takes it as an
-    /// argument.
+    /// `ttset.c:1218`, floored at 4 and capped at `MAXCOMPORT` (4096,
+    /// `tttypes.h:908`). This is the setting `/C=` is bounded against, which is why
+    /// the parser takes it as an argument.
+    ///
+    /// **A clamp at both ends and not a range**, and the narrowing in front of it is
+    /// load-bearing rather than pedantry. `ts.MaxComPort` is a `WORD`, so the
+    /// assignment wraps before either test runs: `MaxComPort=-1` — which is what
+    /// somebody writes meaning "no limit" — is 65535 and then 4096, where an
+    /// `int_clamp` would read the -1 as below the floor and answer **4**, the other
+    /// end of the range. `int(4..4096)` was wrong a second way as well, since below
+    /// the floor it gave the default of 256 rather than upstream's 4.
     pub serial_max_com_port: i32,
     /// **`ttset.c:2034`, and the default is a sentinel rather than a value.** Read
     /// with a default of `-1` and then derived from the flow control: RTS becomes
@@ -4644,9 +4651,8 @@ impl Settings {
             serial_delay_per_line: ini.get_int("Tera Term", "DelayPerLine", d.serial_delay_per_line)
                 as i32,
             serial_wait_com: crate::schema::on_off(ini.get("Tera Term", "WaitCom"), false),
-            serial_max_com_port: crate::schema::ranged(
+            serial_max_com_port: crate::schema::word_clamped(
                 ini.get_int("Tera Term", "MaxComPort", d.serial_max_com_port) as i32,
-                d.serial_max_com_port,
                 4,
                 4096,
             ),
@@ -8439,9 +8445,8 @@ impl Settings {
             }
             "serial.wait_com" => self.serial_wait_com = crate::schema::on_off(Some(value), false),
             "serial.max_com_port" => {
-                self.serial_max_com_port = crate::schema::ranged(
+                self.serial_max_com_port = crate::schema::word_clamped(
                     crate::schema::int(value, self.serial_max_com_port),
-                    256,
                     4,
                     4096,
                 )
@@ -10528,10 +10533,10 @@ pub const FIELDS: &[Field] = &[
         page: "serial",
         section: "Tera Term",
         key: "MaxComPort",
-        kind: Kind::IntRange(4, 4096),
+        kind: Kind::IntClamp(4, 4096),
         default: "256",
         label: None,
-        doc: "`ttset.c:1218`, floored at 4 and capped at `MAXCOMPORT` (4096, `tttypes.h:908`) — so the range here is the *file's* and the floor is upstream's own. This is the setting `/C=` is bounded against, which is why the parser takes it as an argument.",
+        doc: "`ttset.c:1218`, floored at 4 and capped at `MAXCOMPORT` (4096, `tttypes.h:908`). This is the setting `/C=` is bounded against, which is why the parser takes it as an argument.  **A clamp at both ends and not a range**, and the narrowing in front of it is load-bearing rather than pedantry. `ts.MaxComPort` is a `WORD`, so the assignment wraps before either test runs: `MaxComPort=-1` — which is what somebody writes meaning \"no limit\" — is 65535 and then 4096, where an `int_clamp` would read the -1 as below the floor and answer **4**, the other end of the range. `int(4..4096)` was wrong a second way as well, since below the floor it gave the default of 256 rather than upstream's 4.",
     },
     Field {
         name: "serial.rts",

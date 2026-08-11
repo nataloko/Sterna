@@ -73,6 +73,11 @@ enum Bound {
     Clamped(i32, i32),
     /// `uint16`: assignment to a Win32 `WORD`, which wraps modulo 65536.
     Word,
+    /// `uint16_clamp(lo..hi)`, `ttset.c:1218`: the same narrowing followed by
+    /// [`Bound::Clamped`]'s test. `MaxComPort` is the only setting read this
+    /// way and it needs both halves — the narrowing turns `-1` into 65535 and
+    /// the clamp then gives 4096, where the clamp alone would give 4.
+    WordClamped(i32, i32),
     /// `int_alias(spelling=value)`: recognise one non-numeric spelling before
     /// using the ordinary integer parser. `MaximizedBugTweak=on` means 2.
     Alias(String, i32),
@@ -305,19 +310,30 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
         );
     }
     // `int`, `int_zero`, their ranged forms, `int_min(floor)`,
-    // `int_clamp(min..max)`, `int_alias(spelling=value)`, its wrapping
-    // `uint16_alias` counterpart or a plain wrapping `uint16`.
-    let (spec, bound, fallback) = if let Some(body) = spec
+    // `int_clamp(min..max)` and its wrapping `uint16_clamp` counterpart,
+    // `int_alias(spelling=value)`, its wrapping `uint16_alias` counterpart or a
+    // plain wrapping `uint16`.
+    let (spec, bound, fallback) = if let Some((body, word)) = spec
         .strip_prefix("int_clamp(")
         .and_then(|s| s.strip_suffix(')'))
-    {
+        .map(|body| (body, false))
+        .or_else(|| {
+            spec.strip_prefix("uint16_clamp(")
+                .and_then(|s| s.strip_suffix(')'))
+                .map(|body| (body, true))
+        }) {
         let (lo, hi) = body.split_once("..").expect("a range is `min..max`");
+        let (lo, hi) = (
+            lo.trim().parse::<i32>().expect("a number"),
+            hi.trim().parse::<i32>().expect("a number"),
+        );
         (
             "int",
-            Some(Bound::Clamped(
-                lo.trim().parse::<i32>().expect("a number"),
-                hi.trim().parse::<i32>().expect("a number"),
-            )),
+            Some(if word {
+                Bound::WordClamped(lo, hi)
+            } else {
+                Bound::Clamped(lo, hi)
+            }),
             FieldFallback::Default,
         )
     } else if let Some(body) = spec
@@ -659,6 +675,9 @@ fn emit(settings: &[Setting]) -> String {
                         format!("crate::schema::clamped({read}, {lo}, {hi})")
                     }
                     Some(Bound::Word) => format!("crate::schema::word({read})"),
+                    Some(Bound::WordClamped(lo, hi)) => {
+                        format!("crate::schema::word_clamped({read}, {lo}, {hi})")
+                    }
                     Some(Bound::Alias(_, _)) => read,
                     Some(Bound::WordAlias(_, _)) => read,
                 }
@@ -700,6 +719,9 @@ fn emit(settings: &[Setting]) -> String {
                 format!("crate::schema::clamped({read}, {lo}, {hi})")
             }
             Some(Bound::Word) => format!("crate::schema::word({read})"),
+            Some(Bound::WordClamped(lo, hi)) => {
+                format!("crate::schema::word_clamped({read}, {lo}, {hi})")
+            }
             Some(Bound::Alias(alias, aliased)) => format!(
                 "crate::schema::int_alias(ini.get(\"{section}\", \"{key}\"), settings.{source}, \"{}\", {aliased})",
                 escape(alias)
@@ -800,6 +822,9 @@ fn emit(settings: &[Setting]) -> String {
                     Some(Bound::Word) => {
                         format!("self.{field} = crate::schema::word({read})")
                     }
+                    Some(Bound::WordClamped(lo, hi)) => {
+                        format!("self.{field} = crate::schema::word_clamped({read}, {lo}, {hi})")
+                    }
                     Some(Bound::Alias(alias, aliased)) => format!(
                         "self.{field} = crate::schema::int_alias(Some(value), self.{field}, \"{}\", {aliased})",
                         escape(alias)
@@ -848,8 +873,11 @@ fn emit(settings: &[Setting]) -> String {
                 bound: Some(Bound::Floor(lo)),
                 ..
             } => format!("Kind::IntMin({lo})"),
+            // The narrowing has nothing to say to a spin box, which cannot
+            // produce a value outside the range in the first place — so a
+            // wrapping clamp is the same control as a plain one.
             Kind::Int {
-                bound: Some(Bound::Clamped(lo, hi)),
+                bound: Some(Bound::Clamped(lo, hi) | Bound::WordClamped(lo, hi)),
                 ..
             } => format!("Kind::IntClamp({lo}, {hi})"),
             Kind::Int {

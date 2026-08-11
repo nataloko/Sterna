@@ -624,16 +624,37 @@ fn the_serial_tables_are_shared_with_the_command_line() {
     assert_eq!(s.serial_data_bits, SerialDataBits::Eight);
 }
 
-/// `MaxComPort` is floored as well as capped, which is the range the schema
-/// carries.
+/// `MaxComPort` is floored as well as capped, and the narrowing in front of
+/// both is what decides the one value somebody would actually write.
+///
+/// `ttset.c:1218`: the `GetPrivateProfileInt` result lands in a `WORD` before
+/// either test runs, so this is `uint16_clamp` rather than any of the three
+/// ordinary bounds. It used to be `int(4..4096)`, which was wrong at both ends
+/// — the default instead of the floor below 4, and 4 instead of 4096 for the
+/// negative value that wraps.
 #[test]
-fn max_com_port_has_a_floor_of_its_own() {
-    let ini = Ini::parse(b"[Tera Term]\r\nMaxComPort=1\r\n");
-    // At or below the floor takes the *default*, which is what `ranged` means
-    // here and is not the same as clamping to 4.
-    assert_eq!(Settings::load(&ini).serial_max_com_port, 256);
-    let ini = Ini::parse(b"[Tera Term]\r\nMaxComPort=99999\r\n");
-    assert_eq!(Settings::load(&ini).serial_max_com_port, 4096);
+fn max_com_port_is_narrowed_and_then_clamped() {
+    let load = |v: &str| {
+        Settings::load(&Ini::parse(
+            format!("[Tera Term]\r\nMaxComPort={v}\r\n").as_bytes(),
+        ))
+        .serial_max_com_port
+    };
+    assert_eq!(load("64"), 64);
+    assert_eq!(load("1"), 4, "the floor, not the default");
+    assert_eq!(load("99999"), 4096, "65535 short of itself, then the cap");
+    // The one a person writes: `-1` for "no limit" is `(UINT)-1`, narrowed to
+    // 65535 and capped — the *top* of the range. A plain clamp would read the
+    // -1 as below the floor and give 4, which is four COM ports.
+    assert_eq!(load("-1"), 4096, "not the floor");
+    // ...and 65540 wraps to 4, which is genuinely below the floor and stays
+    // there rather than becoming the ceiling.
+    assert_eq!(load("65540"), 4);
+
+    // A script takes the same rule, as it does for every other bound.
+    let mut s = Settings::default();
+    assert!(s.set_str("serial.max_com_port", "-1"));
+    assert_eq!(s.serial_max_com_port, 4096);
 }
 
 /// The third bound, and the reason it is a third rather than one of the other

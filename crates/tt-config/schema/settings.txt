@@ -1212,11 +1212,18 @@ serial.delay_per_line | int | Tera Term | DelayPerLine | 0 | DLG_SERIAL_DELAYLIN
 # adapter that has not been plugged in yet.
 serial.wait_com | bool | Tera Term | WaitCom | off | -
 
-# `ttset.c:1218`, floored at 4 and capped at `MAXCOMPORT` (4096, `tttypes.h:908`)
-# — so the range here is the *file's* and the floor is upstream's own. This is
-# the setting `/C=` is bounded against, which is why the parser takes it as an
-# argument.
-serial.max_com_port | int(4..4096) | Tera Term | MaxComPort | 256 | -
+# `ttset.c:1218`, floored at 4 and capped at `MAXCOMPORT` (4096,
+# `tttypes.h:908`). This is the setting `/C=` is bounded against, which is why
+# the parser takes it as an argument.
+#
+# **A clamp at both ends and not a range**, and the narrowing in front of it is
+# load-bearing rather than pedantry. `ts.MaxComPort` is a `WORD`, so the
+# assignment wraps before either test runs: `MaxComPort=-1` — which is what
+# somebody writes meaning "no limit" — is 65535 and then 4096, where an
+# `int_clamp` would read the -1 as below the floor and answer **4**, the other
+# end of the range. `int(4..4096)` was wrong a second way as well, since below
+# the floor it gave the default of 256 rather than upstream's 4.
+serial.max_com_port | uint16_clamp(4..4096) | Tera Term | MaxComPort | 256 | -
 
 # **`ttset.c:2034`, and the default is a sentinel rather than a value.** Read
 # with a default of `-1` and then derived from the flow control: RTS becomes

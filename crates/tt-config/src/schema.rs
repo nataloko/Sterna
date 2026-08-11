@@ -239,6 +239,24 @@ pub fn word(value: i32) -> i32 {
     i32::from(value as u16)
 }
 
+/// [`word`] and then [`clamped`], in that order, which is the order the C does
+/// it in and not an implementation detail.
+///
+/// ```text
+/// ts->MaxComPort = GetPrivateProfileInt(Section, "MaxComPort", 256, FName);
+/// if (ts->MaxComPort < 4) ts->MaxComPort = 4;
+/// if (ts->MaxComPort > MAXCOMPORT) ts->MaxComPort = MAXCOMPORT;
+/// ```
+///
+/// `ttset.c:1218`. The narrowing happens in the assignment, before either test
+/// can see the value, so `MaxComPort=-1` is 65535 and then **4096** — and a
+/// clamp on its own would read the -1 as below the floor and give 4, which is
+/// the opposite end of the range from what upstream does with the one negative
+/// value somebody might plausibly write meaning "no limit".
+pub fn word_clamped(value: i32, lo: i32, hi: i32) -> i32 {
+    clamped(word(value), lo, hi)
+}
+
 /// The `n`th comma-separated number of a value that holds several —
 /// `TerminalSize` is `80,24`, one key for two settings.
 pub fn nth_int(value: Option<&str>, n: usize, default: i32) -> i32 {
