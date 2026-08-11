@@ -838,11 +838,13 @@ impl Vt {
         // whatever the setting says.
         let vt_level = config.term_id.vt_level();
         let send_8bit = vt_level >= 2 && config.send_8bit_ctrl;
+        let colors = color::Colors::new(&config);
         Vt {
             parser: vte::Parser::new(),
             state: State {
                 grid,
                 modes: Modes::from_config(&config),
+                colors,
                 config,
                 vt_level,
                 send_8bit,
@@ -1139,6 +1141,26 @@ impl Vt {
         // the host does not survive the dialog. Reproduced rather than
         // improved on: it is the same rule as the three above.
         s.charset.reset();
+
+        // **Diverges, and the divergence is one line of upstream that has been
+        // commented out.** `ResetSetup` has a `BGInitialize(FALSE)` at
+        // `vtwin.cpp:1348` inside an `#if 0`, whose comment says it was removed
+        // because it would disable a theme that is only read at startup — so
+        // applying settings in Tera Term leaves every live colour alone, and a
+        // colour changed in the dialog does not appear until Setup > Restore
+        // setup or Control > Reset terminal. The reason for that is a theme
+        // file this port does not have, and the cost of copying it is a
+        // settings dialog whose colour tab silently does nothing. So the live
+        // colours are refreshed here, which is what upstream's `SetColor` does
+        // on the two paths where it still runs.
+        s.colors = color::Colors::new(&s.config);
+    }
+
+    /// The colours the frontend should paint with — the live ones, which a host
+    /// can move with `OSC 4`/`5`/`10`-`19`. [`Config`] holds what the settings
+    /// asked for, which is a different question and is what a reset returns to.
+    pub fn colors(&self) -> &color::Colors {
+        &self.state.colors
     }
 
     /// Bytes the terminal wants to send back to the host: DA, DSR, and friends.
@@ -1572,6 +1594,8 @@ struct State {
     bell_reset: bool,
     /// OSC 52 actions waiting for the toolkit which owns the clipboard.
     clipboard_requests: Vec<ClipboardRequest>,
+    /// The live colours — `vtdraw_t`'s, not `ts`'s. See [`color::Colors`].
+    colors: color::Colors,
 }
 
 /// What a linked macro sees of the session — `ttdde.c`'s `DDEPut1` sink, and
@@ -1665,6 +1689,7 @@ impl State {
             bells: 0,
             bell_reset: false,
             clipboard_requests: Vec::new(),
+            colors: color::Colors::new(&Config::default()),
         }
     }
 
@@ -2075,7 +2100,12 @@ impl State {
                     if self.config.color_flags.xterm256 {
                         let full = self.config.color_flags.full_color();
                         if let Some((color, consumed)) =
-                            extended_color(groups, i, full, &self.config.palette)
+                            // The **live** table, not the configured one: a host
+                            // that repainted the palette with `OSC 4` moves
+                            // which index this resolves to, exactly as
+                            // `DispFindClosestColor` searching `vt->ANSIColor`
+                            // does upstream.
+                            extended_color(groups, i, full, &self.colors.ansi)
                         {
                             if p == 38 {
                                 set(attr, mask, ATTR2_FORE, true);
@@ -2386,7 +2416,25 @@ impl State {
     /// `vtterm.c:SendOSCstr` — `ESC ] … ST`, terminated with ST rather than
     /// BEL because that is what the title reports pass.
     fn send_osc(&mut self, body: &str) {
-        if self.send_8bit {
+        self.send_osc_terminated(body, false);
+    }
+
+    /// The same, for the one reply that mirrors the request's terminator rather
+    /// than always answering with ST.
+    ///
+    /// `SendOSCstr` takes a `TermChar`, and only the colour replies pass the
+    /// byte the request arrived with (`vtterm.c:4912`); the title reports at
+    /// `:2699` and `:2740` pass a literal `ST`. So a `OSC 4;1;? BEL` is
+    /// answered with BEL and the same request ended with ST is answered with
+    /// ST — and the BEL form uses the 7-bit `ESC ]` introducer even on a
+    /// terminal sending 8-bit controls, because that arm of `SendOSCstrW` does
+    /// not consult `Send8BitMode` at all.
+    fn send_osc_terminated(&mut self, body: &str, bell: bool) {
+        if bell {
+            self.send(b"\x1b]");
+            self.send(body.as_bytes());
+            self.send(b"\x07");
+        } else if self.send_8bit {
             self.send(&[0x9d]);
             self.send(body.as_bytes());
             self.send(&[0x9c]);
@@ -3423,6 +3471,155 @@ impl State {
                 .push(ClipboardRequest::WriteRejected);
         }
     }
+
+    /// `vtterm.c:XsProcColor` — one colour, named by an OSC number and a colour
+    /// number, either set from a spec or read back by the literal `?`.
+    ///
+    /// A spec that is neither `?` nor a form [`color::parse_spec`] knows is
+    /// silently dropped: no colour changes and, unlike a query, nothing is sent
+    /// back. So a host that asks in `rgbi:` or one of the CIE spellings cannot
+    /// tell that from a terminal which took the colour and painted it.
+    fn osc_color(&mut self, mode: u32, number: u32, spec: &[u8], bell: bool) {
+        let Some(slot) = color::slot_of(mode, number) else {
+            return;
+        };
+        let full = self.config.color_flags.full_color();
+        if spec == b"?" {
+            let (r, g, b) = self.colors.get(slot, &self.config, full);
+            // `GetRValue(color)*257` — an eight-bit channel widened to
+            // sixteen by repeating it, which is the scaling `#RGB`'s `<< 4`
+            // notably does *not* use on the way in.
+            let (r, g, b) = (u32::from(r) * 257, u32::from(g) * 257, u32::from(b) * 257);
+            // Only `4` and `5` echo the colour number, because only they have
+            // one; `10`-`19` name the colour with the OSC number itself.
+            let body = if mode == 4 || mode == 5 {
+                format!("{mode};{number};rgb:{r:04x}/{g:04x}/{b:04x}")
+            } else {
+                format!("{mode};rgb:{r:04x}/{g:04x}/{b:04x}")
+            };
+            self.send_osc_terminated(&body, bell);
+        } else if let Some(color) = color::parse_spec(spec) {
+            self.colors.set(slot, color, full);
+        }
+    }
+
+    fn osc_reset(&mut self, mode: u32, number: u32) {
+        if let Some(slot) = color::slot_of(mode, number) {
+            let full = self.config.color_flags.full_color();
+            self.colors.reset(slot, &self.config, full);
+        }
+    }
+
+    /// `OSC 4` and `OSC 5`'s payload: `<number>;<spec>` repeated.
+    ///
+    /// The loop is upstream's, including where it gives up. Before the first
+    /// `;` only digits are allowed, and **any other byte abandons the whole
+    /// sequence** rather than skipping one pair — so `OSC 4;x;red;1;blue`
+    /// changes nothing at all. After it, everything up to the next `;` is the
+    /// spec, which is why a spec cannot contain one.
+    fn osc_palette(&mut self, mode: u32, s: &[u8], bell: bool) {
+        let mut number: u32 = 0;
+        let mut spec: Option<usize> = None;
+        for i in 0..s.len() {
+            match spec {
+                None => {
+                    if s[i].is_ascii_digit() {
+                        number = number.wrapping_mul(10).wrapping_add(u32::from(s[i] - b'0'));
+                    } else if s[i] == b';' {
+                        spec = Some(i + 1);
+                    } else {
+                        return;
+                    }
+                }
+                Some(start) => {
+                    if s[i] == b';' {
+                        self.osc_color(mode, number, &s[start..i], bell);
+                        number = 0;
+                        spec = None;
+                    }
+                }
+            }
+        }
+        if let Some(start) = spec {
+            self.osc_color(mode, number, &s[start..], bell);
+        }
+    }
+
+    /// `OSC 10` through `OSC 19`'s payload: one spec per colour, and **the OSC
+    /// number walks forward with each `;`**.
+    ///
+    /// So `OSC 10;#000;#fff` is a foreground *and* a background, and
+    /// `OSC 10;?;?;?` asks three questions of which the third — `OSC 12`, the
+    /// cursor — has no arm and goes unanswered. Reading the number as fixed
+    /// gives a terminal that sets its foreground three times.
+    fn osc_dynamic(&mut self, mode: u32, s: &[u8], bell: bool) {
+        let mut number = mode;
+        let mut start = 0;
+        for i in 0..s.len() {
+            if s[i] == b';' {
+                self.osc_color(number, 0, &s[start..i], bell);
+                number += 1;
+                start = i + 1;
+            }
+        }
+        self.osc_color(number, 0, &s[start..], bell);
+    }
+
+    /// `OSC 104` and `OSC 105`.
+    ///
+    /// With no parameter string at all this is the whole palette or the three
+    /// special colours; with one it is a `;`-separated list of numbers. The
+    /// two edges are upstream's and neither is what it looks like: an **empty**
+    /// list is not "no list", so `OSC 104;` resets palette entry 0 alone, and
+    /// a non-digit does not end the list — it poisons the number in hand, so
+    /// `OSC 104;1;x;2` resets 1, then *everything*, then 2.
+    fn osc_reset_palette(&mut self, mode: u32, s: Option<&[u8]>) {
+        let Some(s) = s else {
+            self.osc_reset(mode, color::UNSPEC);
+            return;
+        };
+        let mut number: u32 = 0;
+        for &b in s {
+            if b.is_ascii_digit() {
+                number = number.wrapping_mul(10).wrapping_add(u32::from(b - b'0'));
+            } else if b == b';' {
+                self.osc_reset(mode, number);
+                number = 0;
+            } else {
+                number = color::UNSPEC;
+            }
+        }
+        if number != color::UNSPEC {
+            self.osc_reset(mode, number);
+        }
+    }
+
+    /// `OSC 110` through `OSC 119`.
+    ///
+    /// Its own colour goes back first, unconditionally. Then — and this is not
+    /// xterm's reading of the sequence — any parameter string is a list of
+    /// further **OSC numbers** to reset, so `OSC 110;11` puts back the
+    /// foreground and the background. Here a non-digit does end the list,
+    /// which is the opposite of the arm above it.
+    fn osc_reset_dynamic(&mut self, mode: u32, s: Option<&[u8]>) {
+        self.osc_reset(mode, color::UNSPEC);
+        let Some(s) = s else { return };
+        let mut number: u32 = 0;
+        for &b in s {
+            if b.is_ascii_digit() {
+                number = number.wrapping_mul(10).wrapping_add(u32::from(b - b'0'));
+            } else if b == b';' {
+                self.osc_reset(number, color::UNSPEC);
+                number = 0;
+            } else {
+                number = color::UNSPEC;
+                break;
+            }
+        }
+        if number != color::UNSPEC {
+            self.osc_reset(number, color::UNSPEC);
+        }
+    }
 }
 
 impl Perform for State {
@@ -3824,7 +4021,7 @@ impl Perform for State {
         }
     }
 
-    fn osc_dispatch(&mut self, params: &[&[u8]], _bell_terminated: bool) {
+    fn osc_dispatch(&mut self, params: &[&[u8]], bell_terminated: bool) {
         let Some(&kind) = params.first() else { return };
         let Ok(kind) = std::str::from_utf8(kind).unwrap_or("").parse::<u32>() else {
             return;
@@ -3850,6 +4047,24 @@ impl Perform for State {
         }
         if kind == 52 {
             self.osc_clipboard(params);
+        }
+        // `HasParamStr`: whether a `;` followed the number at all, which four
+        // of the six colour arms below distinguish from an empty string.
+        let payload = (params.len() > 1).then(|| self.osc_string(params));
+        match kind {
+            4 | 5 => {
+                if let Some(s) = &payload {
+                    self.osc_palette(kind, s, bell_terminated);
+                }
+            }
+            10..=19 => {
+                if let Some(s) = &payload {
+                    self.osc_dynamic(kind, s, bell_terminated);
+                }
+            }
+            104 | 105 => self.osc_reset_palette(kind, payload.as_deref()),
+            110..=119 => self.osc_reset_dynamic(kind, payload.as_deref()),
+            _ => {}
         }
     }
 }
@@ -4572,6 +4787,155 @@ mod tests {
         assert!(!vt.clipboard_reply("cps01234567012", "too long"));
         assert!(!vt.clipboard_reply("c", "not\u{1}text"));
         assert!(vt.reply().is_empty());
+    }
+
+    #[test]
+    fn osc4_repaints_the_palette_and_moves_what_truecolor_resolves_to() {
+        let mut vt = Vt::new(Config::default());
+        // Nothing in the shipped table is near-black-but-not-black, so this
+        // resolves to 0 until entry 42 is moved onto it exactly.
+        vt.feed(b"\x1b[38;2;1;2;3m");
+        assert_eq!(vt.grid().pen.fg, 0);
+        vt.feed(b"\x1b]4;42;rgb:01/02/03\x1b\\\x1b[38;2;1;2;3m");
+        assert_eq!(vt.colors().ansi[42], (1, 2, 3));
+        assert_eq!(vt.grid().pen.fg, 42);
+    }
+
+    #[test]
+    fn an_osc4_query_answers_with_the_requests_own_terminator() {
+        let mut vt = Vt::new(Config::default());
+        vt.feed(b"\x1b]4;1;#f00\x1b\\\x1b]4;1;?\x1b\\");
+        // `#f00` is `<< 4`, so this reads back as f0f0 and not as ffff — the
+        // one place upstream's short-form scaling is visible on the wire.
+        assert_eq!(
+            vt.take_reply(),
+            b"\x1b]4;1;rgb:f0f0/0000/0000\x1b\\".to_vec()
+        );
+        vt.feed(b"\x1b]4;1;?\x07");
+        assert_eq!(vt.take_reply(), b"\x1b]4;1;rgb:f0f0/0000/0000\x07".to_vec());
+    }
+
+    #[test]
+    fn a_dynamic_colour_query_answers_from_the_settings_and_not_from_the_set() {
+        // `DispSetColor` writes `vt->BGVTColor` and `DispGetColor` reads
+        // `ts.VTColor`, so upstream cannot read back what it just set. The
+        // paint changes; the answer does not.
+        let mut vt = Vt::new(Config::default());
+        vt.feed(b"\x1b]10;rgb:12/34/56\x1b\\");
+        assert_eq!(vt.colors().normal[0], (0x12, 0x34, 0x56));
+        vt.feed(b"\x1b]10;?\x1b\\");
+        assert_eq!(
+            vt.take_reply(),
+            b"\x1b]10;rgb:0000/0000/0000\x1b\\".to_vec()
+        );
+    }
+
+    #[test]
+    fn osc10_walks_its_own_number_along_the_list() {
+        let mut vt = Vt::new(Config::default());
+        // Foreground, background, then the cursor — which has no arm, so the
+        // third spec is parsed and dropped rather than repainting either of
+        // the first two.
+        vt.feed(b"\x1b]10;#010101;#020202;#030303\x1b\\");
+        assert_eq!(vt.colors().normal, [(1, 1, 1), (2, 2, 2)]);
+    }
+
+    #[test]
+    fn a_bad_number_abandons_the_whole_osc4_list() {
+        let mut vt = Vt::new(Config::default());
+        let before = vt.colors().ansi;
+        vt.feed(b"\x1b]4;x;#ff0000;1;#00ff00\x1b\\");
+        assert_eq!(vt.colors().ansi, before);
+        // Two good pairs in one sequence, for contrast.
+        vt.feed(b"\x1b]4;1;#ff0000;2;#00ff00\x1b\\");
+        assert_eq!(vt.colors().ansi[1], (255, 0, 0));
+        assert_eq!(vt.colors().ansi[2], (0, 255, 0));
+    }
+
+    #[test]
+    fn osc104_with_an_empty_list_resets_one_colour_and_without_one_resets_all() {
+        let mut vt = Vt::new(Config::default());
+        let before = vt.colors().ansi;
+        vt.feed(b"\x1b]4;0;#111111;1;#222222\x1b\\");
+        // An empty parameter string is still a parameter string, and the
+        // number in hand is zero.
+        vt.feed(b"\x1b]104;\x1b\\");
+        assert_eq!(vt.colors().ansi[0], before[0]);
+        assert_eq!(vt.colors().ansi[1], (0x22, 0x22, 0x22));
+        vt.feed(b"\x1b]104\x1b\\");
+        assert_eq!(vt.colors().ansi, before);
+    }
+
+    #[test]
+    fn a_non_digit_inside_an_osc104_list_resets_everything_after_it() {
+        let mut vt = Vt::new(Config::default());
+        let before = vt.colors().ansi;
+        vt.feed(b"\x1b]4;1;#111111;2;#222222;3;#333333\x1b\\");
+        // 1, then the poisoned number reaching the `;` as CS_UNSPEC — which
+        // for 104 is the whole table — then 3, which is already back.
+        vt.feed(b"\x1b]104;1;x;3\x1b\\");
+        assert_eq!(vt.colors().ansi, before);
+    }
+
+    #[test]
+    fn osc110_resets_its_own_colour_and_any_it_is_handed() {
+        let mut vt = Vt::new(Config::default());
+        let normal = vt.colors().normal;
+        vt.feed(b"\x1b]10;#111111;#222222\x1b\\\x1b]110;11\x1b\\");
+        assert_eq!(vt.colors().normal, normal);
+
+        // Its own colour goes back whatever the list says, and a non-digit
+        // ends the list here rather than poisoning it.
+        vt.feed(b"\x1b]10;#111111;#222222\x1b\\\x1b]110;x\x1b\\");
+        assert_eq!(vt.colors().normal, [normal[0], (0x22, 0x22, 0x22)]);
+    }
+
+    #[test]
+    fn osc105_puts_back_three_of_the_four_colours_osc5_can_set() {
+        let mut vt = Vt::new(Config::default());
+        let config = Config::default();
+        vt.feed(b"\x1b]5;0;#111111;1;#222222;2;#333333;3;#444444\x1b\\");
+        assert_eq!(vt.colors().underline[0], (0x22, 0x22, 0x22));
+        vt.feed(b"\x1b]105\x1b\\");
+        assert_eq!(vt.colors().bold[0], config.color_bold[0]);
+        assert_eq!(vt.colors().blink[0], config.color_blink[0]);
+        assert_eq!(vt.colors().reverse[1], config.color_reverse[1]);
+        // `CS_SP_ALL` does not name the underline, so `OSC 5;1` is a colour
+        // the matching reset cannot undo.
+        assert_eq!(vt.colors().underline[0], (0x22, 0x22, 0x22));
+    }
+
+    #[test]
+    fn a_colour_spec_upstream_cannot_parse_changes_nothing_and_answers_nothing() {
+        let mut vt = Vt::new(Config::default());
+        let before = vt.colors().ansi;
+        for spec in [
+            &b"\x1b]4;1;rgbi:1.0/0.0/0.0\x1b\\"[..],
+            &b"\x1b]4;1;CIELab:50/0/0\x1b\\"[..],
+            &b"\x1b]4;1;RGB:ff/00/00\x1b\\"[..],
+            &b"\x1b]4;1;red\x1b\\"[..],
+        ] {
+            vt.feed(spec);
+        }
+        assert_eq!(vt.colors().ansi, before);
+        assert!(vt.reply().is_empty());
+    }
+
+    #[test]
+    fn eight_colour_mode_permutes_the_index_an_osc4_names() {
+        let mut vt = Vt::new(Config {
+            color_flags: ColorFlags {
+                xterm256: false,
+                aixterm16: false,
+                pc_bold16: false,
+                ..ColorFlags::default()
+            },
+            ..Config::default()
+        });
+        // With every full-colour bit off the wire's index is the legacy one,
+        // so 1 — "red" in the old ordering — is drawing index 9.
+        vt.feed(b"\x1b]4;1;#010203\x1b\\");
+        assert_eq!(vt.colors().ansi[9], (1, 2, 3));
     }
 
     /// A broken multi-byte sequence is one replacement character **per byte**,
