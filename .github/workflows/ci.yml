@@ -279,6 +279,13 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: crates -> target
+      # telnet-audit's `inetd.py` is a PEP 723 script run through `uv run
+      # --script`, so without this the two telnet servers die the instant they
+      # are started and `telnet_test` reports a connection refused — three
+      # minutes and a whole Qt build after the actual failure.
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: latest
       # qt6-base-dev is Qt 6.4.2 here and the desktop runs 6.11.1 — a gap that
       # has already produced one false finding, so this job's job is "does it
       # compile and does the painter still agree", NOT anything about
