@@ -417,8 +417,13 @@ jobs:
           cargo run --locked
           ./servers.sh stop
 
-# The Windows job covers `crates/` only. The oracle and xfer both need a POSIX
-# toolchain, and the shell is Linux-only until Stage 3 — its serial connect
-# path is the one thing `tt-conn` has not built for Windows. Add the release
-# matrix (linux-x64 + windows-x64) with the first shippable artifact, not
-# before.
+# The Windows job covers `crates/` only, and the oracle and xfer both need a
+# POSIX toolchain, so neither will ever join it.
+#
+# The shell is no longer the reason: it cross-builds for Windows out of the
+# `sterna-fedora` container against `mingw64-qt6-qtbase` (see shell/README.md),
+# which is what proved the source portable. What is missing here is a runner
+# with Qt on it — `windows-latest` ships none — so a shell job means an
+# installer action and a several-minute download before the first compile.
+# That belongs with the release matrix (linux-x64 + windows-x64) and the first
+# shippable artifact, which is still the trigger for adding both.

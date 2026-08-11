@@ -11,7 +11,8 @@
 // never serviced, a macro that ends without anyone noticing, and a modal dialog
 // re-entered by the notifier that fires inside its own nested event loop.
 //
-// It needs no server and no hardware — the one connected case forks `/bin/sh`.
+// It needs no server and no hardware — the connected cases open a local shell,
+// which is `/bin/sh` on Unix and `cmd.exe` through ConPTY on Windows.
 
 #include <QApplication>
 #include <QAbstractButton>
@@ -104,6 +105,24 @@ Script luaScript(const QString &body)
     return Script(body, QStringLiteral("m.lua"));
 }
 
+/// An interactive shell for a macro to type at — the platform's own.
+///
+/// `cmd.exe` on Windows for the reason `tt-session`'s own fixtures use it:
+/// under Wine a `/bin/sh` is reachable through the `Z:` drive and a real
+/// Windows has nothing there, so keeping the Unix spelling gives a test that
+/// passes in the emulator and fails on the target it was written for. The
+/// prompt is set on Unix because `sh -i` inherits whatever the container's
+/// is; `cmd.exe` prints its own and `echo`/`exit` mean the same in both.
+QStringList interactiveShell()
+{
+#ifdef Q_OS_WIN
+    return {QStringLiteral("cmd.exe")};
+#else
+    return {QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+            QStringLiteral("PS1='$ ' exec /bin/sh -i")};
+#endif
+}
+
 /// Answer whatever modal dialog is up, and photograph it on the way past.
 ///
 /// A repeating timer rather than a `singleShot`, because the dialog runs its
@@ -194,7 +213,8 @@ void test_a_macro_that_is_not_there()
     Session session(40, 10);
     Macro macro(&session, nullptr);
     QString error;
-    CHECK(!macro.start({QStringLiteral("/tmp/sterna-no-such-macro.ttl")}, &error));
+    CHECK(!macro.start({QDir(QDir::tempPath()).filePath(
+              QStringLiteral("sterna-no-such-macro.ttl"))}, &error));
     CHECK(!error.isEmpty());
     CHECK(!macro.running());
 }
@@ -208,9 +228,7 @@ void test_a_macro_drives_a_shell()
 {
     Session session(60, 12);
     QString error;
-    CHECK(session.connectPty({QStringLiteral("/bin/sh"), QStringLiteral("-c"),
-                              QStringLiteral("PS1='$ ' exec /bin/sh -i")},
-                             &error));
+    CHECK(session.connectPty(interactiveShell(), &error));
     CHECK(session.isConnected());
 
     Macro macro(&session, nullptr);
@@ -359,9 +377,7 @@ void test_a_lua_script_drives_a_shell()
 {
     Session session(60, 12);
     QString error;
-    CHECK(session.connectPty({QStringLiteral("/bin/sh"), QStringLiteral("-c"),
-                              QStringLiteral("PS1='$ ' exec /bin/sh -i")},
-                             &error));
+    CHECK(session.connectPty(interactiveShell(), &error));
     CHECK(session.isConnected());
 
     Macro macro(&session, nullptr);

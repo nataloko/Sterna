@@ -4699,6 +4699,30 @@ transport that is actually used — the Windows client is the next piece of work
 rather than a `#define`. The Linux build, its four event-loop tests and the
 Windows cross build are all green; nothing here has been *run* on Windows yet.
 
+The shell's test fixtures then split the same way the crates' did. `cmd.exe`
+rather than `/bin/sh` in `macro_test` and `cmdline_test`, and the platform's
+temporary directory rather than `/tmp` — the reason is Wine's `Z:` drive,
+which makes the Unix spellings work in the emulator and nowhere else, so
+keeping them would hide exactly the failures a Windows run exists to find.
+`cmdline_test`'s title assertion had to move with its fixture, since the
+caption is the program's basename and its arguments.
+
+`pty_test` and `xfer_test` are UNIX-only, and unlike `control_test` the
+obstacle is not the transport. Every `pty_test` case is a shell script —
+`stty raw -echo` to stop the child echoing, `od -An -t x1` to make the bytes
+visible, `stty size` to observe a resize — and naming a Windows shell would
+compile and then assert against output that was never going to arrive. The
+Windows equivalent is a different test; `macro_test` is what drives ConPTY
+through this event loop meanwhile. `xfer_test` needs `rz`, which is lrzsz, and
+the protocols themselves are already covered on Windows by `tt-xfer`'s own
+tests. The rpath block is UNIX-only too, for both reasons at once: an rpath is
+a Unix concept and `pty_test` is no longer a target to name there.
+
+`cmdline_test` now prints *why* a local shell would not open, because the
+three checks after it all hang off that one and a failure to spawn otherwise
+reads as three separate title bugs. The whole Linux suite — render, pty,
+macro, cmdline, control, xfer — is green after the change.
+
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
 DEC special graphics (line drawing — not CJK, and needed), macro reference docs,

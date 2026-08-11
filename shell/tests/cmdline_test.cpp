@@ -186,6 +186,32 @@ private:
 #endif
 };
 
+/// A local shell that stays open long enough to be titled, and what the title
+/// bar calls it — `describe_argv` is the program's basename plus its
+/// arguments, so the two halves have to be written together or the assertion
+/// is guessing.
+///
+/// Windows gets `cmd.exe` rather than `/bin/sh` for the reason every other
+/// fixture here now does: Wine's `Z:` drive makes the Unix spelling work in
+/// the emulator and nowhere else.
+struct IdleShell {
+    QStringList argv;
+    QString title;
+};
+
+IdleShell idleShell()
+{
+#ifdef Q_OS_WIN
+    return {{QStringLiteral("cmd.exe"), QStringLiteral("/c"),
+             QStringLiteral("pause")},
+            QStringLiteral("cmd.exe /c pause")};
+#else
+    return {{QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+             QStringLiteral("sleep 30")},
+            QStringLiteral("sh -c sleep 30")};
+#endif
+}
+
 /// Parse a command line the way `main` does, minus the program name.
 TtCmdLine *parse(const QStringList &args, uint16_t maxComPort = 0)
 {
@@ -256,18 +282,22 @@ void test_the_title_and_the_title_bar()
     window.startFrom(cmd);
     tt_cmdline_free(cmd);
     QString error;
-    CHECK(window.session()->connectPty(
-        {QStringLiteral("/bin/sh"), QStringLiteral("-c"),
-         QStringLiteral("sleep 30")},
-        &error));
+    const IdleShell shell = idleShell();
+    if (!window.session()->connectPty(shell.argv, &error)) {
+        // The three checks below all hang off this one, so the reason it
+        // failed is the only useful thing to print — otherwise a local shell
+        // that would not open reads as three separate title bugs.
+        fprintf(stderr, "could not open a local shell: %s\n",
+                qPrintable(error));
+        failures++;
+    }
+    const QString expected =
+        QStringLiteral("%1 - from the host VT").arg(shell.title);
     window.session()->feed(QByteArray("\033]0;from the host\007"));
-    CHECK(spin([&] { return window.windowTitle()
-                            == QStringLiteral("sh -c sleep 30 - from the host VT"); },
-               1000));
+    CHECK(spin([&] { return window.windowTitle() == expected; }, 1000));
     CHECK(window.session()->setSetting(QStringLiteral("terminal.title"),
                                        QStringLiteral("late"), &error));
-    CHECK(window.windowTitle()
-          == QStringLiteral("sh -c sleep 30 - from the host VT"));
+    CHECK(window.windowTitle() == expected);
 }
 
 void test_title_format_bits()

@@ -203,18 +203,35 @@ add_test(NAME telnet COMMAND telnet_test)
 
 # The only connection test here that skips nothing — a pty needs no server and
 # no hardware — so it is what actually runs in CI.
-add_executable(pty_test tests/pty_test.cpp)
-target_link_libraries(pty_test PRIVATE sterna_shell)
-target_compile_options(pty_test PRIVATE ${TT_WARNINGS})
-add_test(NAME pty COMMAND pty_test)
+#
+# UNIX only, and unlike `control_test` the obstacle is not the transport: every
+# case is a shell script. `stty raw -echo` is how the keyboard cases stop the
+# child echoing, `od -An -t x1` is how the bytes are made visible and
+# `stty size` is how a resize is observed — none of which `cmd.exe` can be
+# asked for. Naming a Windows shell would compile and then assert against
+# output that was never going to arrive; the Windows equivalent is a different
+# test, and `macro_test` is what drives ConPTY through this event loop
+# meanwhile.
+if(UNIX)
+    add_executable(pty_test tests/pty_test.cpp)
+    target_link_libraries(pty_test PRIVATE sterna_shell)
+    target_compile_options(pty_test PRIVATE ${TT_WARNINGS})
+    add_test(NAME pty COMMAND pty_test)
+endif()
 
 # A file transfer, driven by the window's event loop rather than by a pump
 # loop. It needs `lrzsz` for the transfer itself and skips loudly without it;
 # the cancel case and the dialogs need nothing.
-add_executable(xfer_test tests/xfer_test.cpp)
-target_link_libraries(xfer_test PRIVATE sterna_shell)
-target_compile_options(xfer_test PRIVATE ${TT_WARNINGS})
-add_test(NAME xfer COMMAND xfer_test)
+#
+# UNIX only for the counterparty rather than for the code: `rz` is lrzsz, and
+# there is no Windows build of it here to send to. The protocols themselves
+# are covered on Windows by `tt-xfer`'s own tests.
+if(UNIX)
+    add_executable(xfer_test tests/xfer_test.cpp)
+    target_link_libraries(xfer_test PRIVATE sterna_shell)
+    target_compile_options(xfer_test PRIVATE ${TT_WARNINGS})
+    add_test(NAME xfer COMMAND xfer_test)
+endif()
 
 # A TTL macro against the window's event loop rather than a pump loop, which
 # is where a re-entered modal dialog or an unserviced notifier shows up. Needs
@@ -299,10 +316,15 @@ target_compile_definitions(bench_shell PRIVATE TT_BENCH_EXE="${TT_BENCH_EXE}")
 # cdylib no `DT_SONAME` (see `tt-ffi/build.rs`), so what the binary records is
 # whatever path the linker was handed — which out of tree is *relative*, and ran
 # only from the build directory until that was fixed.
-set_target_properties(sterna render_test ssh_test telnet_test pty_test cmdline_test
-                      bench_shell PROPERTIES
-    BUILD_RPATH "${TT_CARGO_OUT}"
-    INSTALL_RPATH "$ORIGIN/../lib")
+# UNIX only twice over: an rpath is a Unix concept — Windows gets the copy of
+# the DLL beside the executables instead — and `pty_test` is not a target
+# there, which would be an error rather than a no-op.
+if(UNIX)
+    set_target_properties(sterna render_test ssh_test telnet_test pty_test
+                          cmdline_test bench_shell PROPERTIES
+        BUILD_RPATH "${TT_CARGO_OUT}"
+        INSTALL_RPATH "$ORIGIN/../lib")
+endif()
 
 # --- install -----------------------------------------------------------------
 #
