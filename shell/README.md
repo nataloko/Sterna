@@ -90,13 +90,14 @@ Windows has no rpath and the loader will not go looking in the cargo tree.
 subsystem would open a console window behind every session started from the
 desktop, and closing that window would kill the terminal.
 
-`control_test` is not part of that build. Its client half is a `sockaddr_un`
-and a `poll(2)`, and the Windows control channel is a named pipe — a different
-address, a different client and a different way to wait. Shimming the calls
-would compile and prove nothing about the transport actually used there.
-`pty_test` and `xfer_test` are out too, for their content rather than their
-transport: every `pty_test` case is a shell script built out of `stty` and
-`od`, and `xfer_test` needs `rz`.
+`pty_test` and `xfer_test` are the two left out, for their content rather than
+their transport: every `pty_test` case is a shell script built out of `stty`
+and `od`, and `xfer_test` needs `rz`. `control_test` builds, because its client
+half is written twice instead of shimmed — a `sockaddr_un` and a `poll(2)` on
+one side, `CreateFileW` and `PeekNamedPipe` on the other. Only those four calls
+differ. The waiting above them is shared on purpose: what the test is really
+about is that a client on the window's own thread has to wait *in the event
+loop*, and that is true of the window rather than of the address.
 
 Running them needs `wine-core` and this environment, which is two corrections
 away from the obvious one — see AGENTS.md for what each looks like when it is
@@ -110,12 +111,15 @@ export QT_PLUGIN_PATH='Z:\usr\x86_64-w64-mingw32\sys-root\mingw\lib\qt6\plugins'
 wine build-win/cmdline_test.exe
 ```
 
-What that proves and what it does not: `cmdline_test` passes everything but
-one check, and `macro_test` fails only the two cases that need a macro to read
-what `cmd.exe` printed — Wine's console host opens a ConPTY and then delivers
-no output. `render_test` runs its whole suite and fails six font metrics,
-which is Wine's font stack rather than an answer about Windows. Native Windows
-is still the authority for all three.
+What that proves and what it does not: `control_test` passes outright, which is
+the one of the four where Wine is a fair witness — a named pipe, a
+`QWinEventNotifier` and a queued close are all Wine implements properly.
+`cmdline_test` passes everything but one check, and `macro_test` fails only the
+two cases that need a macro to read what `cmd.exe` printed — Wine's console
+host opens a ConPTY and then delivers no output. `render_test` runs its whole
+suite and fails six font metrics, which is Wine's font stack rather than an
+answer about Windows. Native Windows is still the authority for the other
+three.
 
 ## The event loop has no timer in it
 
