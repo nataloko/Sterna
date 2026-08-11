@@ -371,6 +371,33 @@ impl PtyConn {
     }
 }
 
+#[cfg(windows)]
+impl PtyConn {
+    /// Close the pseudoconsole once the child is gone, because nothing else
+    /// will end the read.
+    ///
+    /// **ConPTY's output pipe belongs to the console host, not to the child.**
+    /// That is the opposite of the arrangement on Unix, where the child holds
+    /// the slave and dropping our end is what hangs the master up — so the
+    /// oldest trap in pty programming has a second form here that the POSIX
+    /// tests cannot see. The shell exits, its last output arrives, and the
+    /// worker blocks in `ReadFile` for ever: no error, no EOF, and the window
+    /// waits on a process that left. `ClosePseudoConsole` — which is what
+    /// dropping the master does — is Windows' own answer, and it is why this
+    /// is done here rather than by declaring the connection dead directly: the
+    /// console host flushes what it still holds and *then* closes the pipe, so
+    /// the trailing bytes reach the caller ahead of the disconnect.
+    ///
+    /// Only from the quiet path, so everything already queued has been handed
+    /// over first, and only once — after this the master is gone and `resize`
+    /// correctly does nothing.
+    fn hang_up_if_the_child_is_gone(&mut self) {
+        if self.master.is_some() && self.reap() {
+            self.master.take();
+        }
+    }
+}
+
 #[cfg(unix)]
 impl PtyConn {
     /// Read whatever is there, or nothing.
@@ -440,6 +467,10 @@ impl Transport for PtyConn {
             let result = self.io.as_mut().expect("live ConPTY has I/O").read(data);
             match result {
                 Err(e) if e.is_disconnected() => Err(self.died()),
+                Ok(0) => {
+                    self.hang_up_if_the_child_is_gone();
+                    Ok(0)
+                }
                 other => other,
             }
         }
@@ -503,6 +534,23 @@ impl Transport for PtyConn {
     #[cfg(not(any(unix, windows)))]
     fn write(&mut self, _data: &[u8], _timeout: Duration) -> Result<usize> {
         Err(Error::Unsupported("a local shell on this platform".into()))
+    }
+
+    /// The clock is the only thing that can notice a child which left
+    /// **quietly**, and on Windows that matters.
+    ///
+    /// A read is driven by the wakeup, the wakeup is driven by output, and a
+    /// process that exits without printing anything produces neither — so the
+    /// pseudoconsole would stay open with nothing left to come through it. One
+    /// timer call closes it; the worker then sees EOF and signals the frontend
+    /// on its own, which is the wakeup that was missing. Unix needs none of
+    /// this: there the hangup *is* the readable event.
+    #[cfg(windows)]
+    fn tick(&mut self) -> Result<()> {
+        if !self.dead {
+            self.hang_up_if_the_child_is_gone();
+        }
+        Ok(())
     }
 
     /// A pty has no break to send. There is no wire and no far end — the
