@@ -356,6 +356,13 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: cd shell && ./build/control_test
+      # A printer is a file when `PassThruPort` names one, so this needs no
+      # printer, no spooler and no CUPS — which is why it is here rather than
+      # out with `xfer_test`.
+      - name: The printer, which is a file
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: cd shell && ./build/print_test
       - name: Stop the servers
         if: always()
         run: |
