@@ -123,6 +123,14 @@ before each reset.
   half addresses palette entries 16 and 17 rather than the special colours it
   is named after, and its `OSC 5` half — which needs no offset — is the only
   one of the two that tests what the file says it tests.
+- **`tt-host` has no window, so half of `XtermWinopsTests` is asking the wrong
+  program.** `CSI 1`-`10 t` do not answer anything: they queue a request for
+  whoever owns a window, and this harness owns none, so the operation is
+  dropped and the readback afterwards is a window that never moved. That is
+  not a gap in the engine and blessing it away would hide the day it becomes
+  one — the same sequences are exercised against a real window in
+  `shell/tests/pty_test.cpp`. The *reports* are a different matter and do run
+  here, out of the notional window in `tt_vt::WindowMetrics`.
 - **A colour a test leaves behind outlives it.** esctest's `reset()` clears the
   palette with `OSC 104;`, and that is not `OSC 104`: an empty parameter string
   is still a parameter string, so upstream resets entry 0 alone. Two tests here
