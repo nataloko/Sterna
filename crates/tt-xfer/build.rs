@@ -34,7 +34,7 @@ fn main() {
     let windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
     let msvc = std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-    let root = manifest.join("../..").canonicalize().unwrap();
+    let root = plain(manifest.join("../..").canonicalize().unwrap());
     let vendor = root.join("vendor/ttpfile");
     let shim = root.join("winshim");
     let csrc = manifest.join("csrc");
@@ -158,6 +158,30 @@ fn main() {
     for dir in [&vendor, &shim, &csrc] {
         rerun_if_changed_recursive(dir);
     }
+}
+
+/// Drop the `\\?\` that `canonicalize` puts on a Windows path.
+///
+/// `cl.exe` cannot open a source file spelt that way, and it does not say so:
+/// it reports `C1083: Cannot open source file: '\\raw.c'` — a name that is not
+/// the one it was handed and that exists nowhere, so the obvious reading is
+/// that the vendored tree is missing rather than that the prefix is. MinGW
+/// takes it, which is why the cross build was green while the native one was
+/// not. The prefix's purpose is to escape `MAX_PATH`; every path here is a
+/// checkout of this repository and nowhere near it.
+///
+/// Only the drive spelling is shortened. `\\?\UNC\server\share` loses its host
+/// if the prefix goes, which would turn a working build on a network share
+/// into a mysterious one.
+fn plain(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        let b = rest.as_bytes();
+        if b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\' {
+            return PathBuf::from(rest);
+        }
+    }
+    path
 }
 
 fn rerun_if_changed_recursive(dir: &Path) {
