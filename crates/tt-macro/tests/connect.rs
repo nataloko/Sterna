@@ -175,10 +175,20 @@ fn a_connect_that_names_nothing_leaves_the_terminal_alone() {
 /// The line is parsed **into the settings** and what it set stays there, which
 /// is `ParseParam(commandline, &ts, NULL)` and is why a shortcut converted into
 /// a macro behaves the same way twice.
+///
+/// **The host name goes last, and that is the point rather than a detail.**
+/// `/BAUD=` selects the serial port as well as setting the speed, and a bare
+/// host name selects TCP — so the word order decides which, exactly as it does
+/// for `/C=`. Written the other way round this line is a *serial* connect: it
+/// opened `COM1` on Windows and `/dev/ttyS0` here, which is a unit test
+/// reaching for whatever is plugged into the machine running it. It also cost
+/// a CI run: the open blocked for over an hour on the Windows runner, and the
+/// harness's own ten-second limit could not fire because what was stuck was
+/// the frontend loop servicing the job, not the macro thread it watches.
 #[test]
 fn what_the_command_line_set_is_still_set_afterwards() {
     let s = drive(
-        "connect '127.0.0.1:1 /nossh /T=0 /BAUD=115200 /W=Router'",
+        "connect '/BAUD=115200 /W=Router 127.0.0.1:1 /nossh /T=0'",
         &mut NullUi,
     );
     assert_eq!(s.settings().serial_baud, 115200);
