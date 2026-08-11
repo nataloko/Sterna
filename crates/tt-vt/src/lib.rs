@@ -3498,6 +3498,103 @@ impl State {
     /// silently dropped: no colour changes and, unlike a query, nothing is sent
     /// back. So a host that asks in `rgbi:` or one of the CIE spellings cannot
     /// tell that from a terminal which took the colour and painted it.
+    /// `vtterm.c:TermcapString` — the value of one capability, or `None` for a
+    /// name upstream has nothing to say about.
+    ///
+    /// **One capability exists**, under two spellings, and its answer is the
+    /// colour flags rather than the palette: 256 when `Xterm256Color` is on,
+    /// 16 when one of the other two full-colour bits is, and 8 otherwise.
+    /// `EnableANSIColor` off answers *nothing at all* — which is the one place
+    /// that setting is visible on the wire, since it gates painting rather
+    /// than parsing and the grid looks identical either way.
+    fn termcap_value(&self, name: &[u8]) -> Option<&'static str> {
+        if name != b"Co" && name != b"colors" {
+            return None;
+        }
+        let cf = self.config.color_flags;
+        if !cf.ansi_color {
+            return None;
+        }
+        Some(if cf.xterm256 {
+            "256"
+        } else if cf.full_color() {
+            "16"
+        } else {
+            "8"
+        })
+    }
+
+    /// `vtterm.c:RequestTermcapString` — `DCS + q <hex name> ; … ST`.
+    ///
+    /// Names arrive hex-encoded and the reply repeats each name, hex-encoded
+    /// again, with `=<hex value>` after it. The lead digit is the whole
+    /// verdict: `1` when anything was answered and `0` when nothing was.
+    ///
+    /// Two shapes of malformed request are upstream's rather than tidy. A byte
+    /// that is not a hex pair, and a `;` with no name in front of it, both
+    /// abandon the rest of the list; and a name that *is* well formed but
+    /// unknown ends the list too — after its separator has already been
+    /// written, so the reply can end in a bare `;`.
+    fn termcap_query(&mut self, req: &[u8]) {
+        let mut reply = String::from("1+r");
+        let mut answered = false;
+        let mut name: Vec<u8> = Vec::new();
+        let mut i = 0;
+        let mut stop = false;
+        while i < req.len() && !stop {
+            if req[i] == b';' {
+                if name.is_empty() || name.len() >= 16 {
+                    break;
+                }
+                match self.termcap_append(&mut reply, &name, answered) {
+                    Some(()) => answered = true,
+                    None => stop = true,
+                }
+                name.clear();
+                i += 1;
+                continue;
+            }
+            let pair = req.get(i..i + 2).and_then(|p| {
+                let hex = |b: u8| (b as char).to_digit(16);
+                Some((hex(p[0])? * 16 + hex(p[1])?) as u8)
+            });
+            let Some(byte) = pair else { break };
+            if name.len() >= 15 {
+                break;
+            }
+            name.push(byte);
+            i += 2;
+        }
+        if !stop
+            && !name.is_empty()
+            && name.len() < 16
+            && self.termcap_append(&mut reply, &name, answered).is_some()
+        {
+            answered = true;
+        }
+        if !answered {
+            reply = String::from("0+r");
+        }
+        self.send_dcs(&reply);
+    }
+
+    /// One capability's `name=value`, hex for hex, with the separator upstream
+    /// writes *before* it knows whether there is anything to write.
+    fn termcap_append(&self, reply: &mut String, name: &[u8], any: bool) -> Option<()> {
+        if any {
+            reply.push(';');
+        }
+        let value = self.termcap_value(name)?;
+        for byte in name {
+            reply.push_str(&format!("{byte:02x}"));
+        }
+        reply.push('=');
+        for byte in value.as_bytes() {
+            reply.push_str(&format!("{byte:02x}"));
+        }
+        Some(())
+    }
+
     fn osc_color(&mut self, mode: u32, number: u32, spec: &[u8], bell: bool) {
         let Some(slot) = color::slot_of(mode, number) else {
             return;
@@ -4019,11 +4116,15 @@ impl Perform for State {
         let Some((inter, action)) = self.dcs.take() else {
             return;
         };
-        // `+q` is xterm's termcap query, which is not implemented and is
-        // dropped rather than answered wrongly.
         if inter == Some(b'$') && action == 'q' {
             let req = std::mem::take(&mut self.dcs_buf);
             self.decrqss(&req);
+        }
+        // XTGETTCAP — `vtterm.c:RequestTermcapString`, marked "xterm
+        // experimental" there and answering exactly one capability.
+        if inter == Some(b'+') && action == 'q' {
+            let req = std::mem::take(&mut self.dcs_buf);
+            self.termcap_query(&req);
         }
         // DECSTUI — `vtterm.c:4565`. It sets the unit ID the tertiary DA
         // reports, and `TF_LOCKTUID` defaults **on**, so as Tera Term ships
@@ -4808,6 +4909,56 @@ mod tests {
         assert!(!vt.clipboard_reply("cps01234567012", "too long"));
         assert!(!vt.clipboard_reply("c", "not\u{1}text"));
         assert!(vt.reply().is_empty());
+    }
+
+    #[test]
+    fn the_termcap_query_answers_for_colours_and_nothing_else() {
+        let mut vt = Vt::new(Config::default());
+        // "Co", hex-encoded, and its long spelling.
+        vt.feed(b"\x1bP+q436F\x1b\\");
+        assert_eq!(vt.take_reply(), b"\x1bP1+r436f=323536\x1b\\".to_vec());
+        vt.feed(b"\x1bP+q636f6c6f7273\x1b\\");
+        assert_eq!(
+            vt.take_reply(),
+            b"\x1bP1+r636f6c6f7273=323536\x1b\\".to_vec()
+        );
+
+        // Anything else is `0+r` — and a known capability followed by an
+        // unknown one keeps the separator upstream wrote before it found out.
+        vt.feed(b"\x1bP+q7878\x1b\\");
+        assert_eq!(vt.take_reply(), b"\x1bP0+r\x1b\\".to_vec());
+        vt.feed(b"\x1bP+q436F;7878\x1b\\");
+        assert_eq!(vt.take_reply(), b"\x1bP1+r436f=323536;\x1b\\".to_vec());
+    }
+
+    #[test]
+    fn the_colour_count_is_the_flags_and_ansi_colour_switches_it_off_entirely() {
+        let flags = |xterm256, aixterm16| ColorFlags {
+            xterm256,
+            aixterm16,
+            pc_bold16: false,
+            ansi_color: true,
+        };
+        let ask = |color_flags| {
+            let mut vt = Vt::new(Config {
+                color_flags,
+                ..Config::default()
+            });
+            vt.feed(b"\x1bP+q436F\x1b\\");
+            String::from_utf8(vt.take_reply()).expect("ascii")
+        };
+        assert!(ask(flags(true, false)).contains("=323536")); // 256
+        assert!(ask(flags(false, true)).contains("=3136")); // 16
+        assert!(ask(flags(false, false)).contains("=38")); // 8
+                                                           // `EnableANSIColor` gates painting rather than parsing, so this reply
+                                                           // is the only place in the protocol it shows.
+        assert_eq!(
+            ask(ColorFlags {
+                ansi_color: false,
+                ..flags(true, false)
+            }),
+            "\u{1b}P0+r\u{1b}\\"
+        );
     }
 
     #[test]
