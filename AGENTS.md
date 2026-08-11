@@ -1245,6 +1245,59 @@ And for the painter, whose decisions the differential dump cannot see:
   Bold, blink, underline and URL use the normal background; reverse puts that
   colour in the foreground, and a later explicit SGR background still wins.
 
+And for the colour OSCs, where the whole family lives in the file the oracle
+does not compile:
+
+- **A host cannot read back a colour it just set, and that is upstream.**
+  `DispSetColor` writes `vtdraw_t`'s live pair (`vtdisp.c:3376`) and
+  `DispGetColor` reads `ts` (`:3561`), so `OSC 10;#ff0000` then `OSC 10;?`
+  answers the *configured* foreground — the paint moves and the report does
+  not. Only the palette round-trips, both halves of it being `vt->ANSIColor`,
+  and Tek does, because its setter happens to write the same `ts` field the
+  getter reads. Thirty-first defect on file, and the reason `esctest`'s
+  `ChangeDynamicColor` cases cannot pass however the parser is written.
+- **`vtdisp.c` is not in the oracle, so `stubs_manual.c` is the specification —
+  and it was invented rather than transcribed.** One flat array indexed by the
+  `CS_` number let a dynamic colour be read back; there was no eight-colour
+  permutation; and `DispResetColor` ignored its argument and reset everything.
+  Same trap `DispFindClosestColor` fell into in the same file. **When a manual
+  stub reimplements upstream logic, diff it against the original**, and check
+  `esctest/run_diff.sh` — with the three transcribed it went from 25
+  disagreements to 5.
+- **`XsParseColor` accepts `rgb:` case-insensitively and parses it
+  case-sensitively.** The guard is `_strnicmp` and the parse is `sscanf`
+  against a lower-case literal, so `RGB:0/0/0` passes the first and fails the
+  second, in silence. It takes two forms and no others: `rgbi:` is a
+  commented-out arm at `:4773` and no CIE or TekHVC spelling was ever written.
+  `#RGB` is `<< 4`, so it is 0xF0 and not xterm's 0xFF, and a query shows it.
+- **`OSC 10;a;b;c` walks its own number along the list** (`vtterm.c:5156`), so
+  it sets the foreground, the background and then a cursor colour that has no
+  arm at all. Reading the number as fixed gives a terminal that sets its
+  foreground three times. `OSC 12`, `13`, `14` and `18` — and their resets —
+  are the four xterm colours `XtColor2TTColor` has no case for, so they do
+  nothing whatever.
+- **`OSC 104;` is not `OSC 104`, and the difference is 255 colours.** An empty
+  parameter string is still a parameter string, so the loop leaves `color_num`
+  at 0 and resets palette entry 0 alone; only a wholly absent one resets the
+  table. `OSC 105`'s "all" is three colours — bold and blink foregrounds and
+  the reverse background — not the four `OSC 5` can set, so the underline
+  foreground is a colour the matching reset cannot put back. And `OSC 110-119`
+  reads its parameter string as a list of further *OSC numbers*, which xterm
+  does not.
+- **`CS_UNSPEC` is a sentinel and not a flag**, so `OSC 105;4294967295` is a
+  bare `OSC 105`. Modelling "no number was given" as an `Option` loses that.
+- **The termcap query answers out of the colour flags and `EnableANSIColor`
+  silences it.** `Co`/`colors` is the only capability upstream has
+  (`vtterm.c:4444`), it says 256/16/8, and with `EnableANSIColor` off it says
+  nothing — the one place on the wire that setting is visible, since it gates
+  painting rather than parsing and the grid looks identical either way.
+- **Applying settings does not refresh the live colours upstream**, and this
+  port diverges. `ResetSetup`'s `BGInitialize(FALSE)` is inside an `#if 0`
+  (`vtwin.cpp:1348`) whose comment says it was removed to keep a startup-only
+  theme alive; only Restore setup and Reset terminal still reach
+  `DispResetColor(CS_ALL)`. There are no themes here, and copying it gives a
+  settings dialog whose colour tab silently does nothing.
+
 And for the clipboard, where the surprise is what happens to a line break:
 
 - **OSC 52 has two permission bits and notification is neither of them.**
@@ -2173,6 +2226,19 @@ steps under a `wp + 1 > str_len` test and then writes its NUL terminator at
 `Str[wp]` *after* the loop, so a decoded length that is an exact multiple of
 512 lands one `wchar_t` past the allocation. Reachable from a `TERATERM.INI`
 and from `keyboard.c:856`.
+
+**And a thirty-first, in `vtdisp.c`, which is the first defect on this list
+that is visible on the wire rather than in memory: a host cannot read back a
+colour it just set.** `DispSetColor` writes the live `vtdraw_t` pair (`:3376`)
+and `DispGetColor` reads `ts` (`:3561`), so `OSC 10;#ff0000` followed by
+`OSC 10;?` answers with the *configured* foreground — the window repaints and
+the report does not move. Only the palette round-trips, because both halves of
+it are `vt->ANSIColor`, and Tek does by accident, its setter writing the same
+`ts` field the getter reads. A program that queries a colour, changes it and
+restores what it read therefore restores the wrong thing. Reproduced, because
+the alternative is a terminal reporting something Tera Term never reports; it
+is also the reason `esctest`'s whole `ChangeDynamicColor` family cannot pass
+here.
 
 **And one in `vte`**, which is a dependency rather than the specification, so it
 is not in that file: `vte` 0.15.0's `advance_partial_utf8` (`lib.rs:687`) prints
