@@ -111,15 +111,15 @@ export QT_PLUGIN_PATH='Z:\usr\x86_64-w64-mingw32\sys-root\mingw\lib\qt6\plugins'
 wine build-win/cmdline_test.exe
 ```
 
-What that proves and what it does not: `control_test` passes outright, which is
-the one of the four where Wine is a fair witness — a named pipe, a
-`QWinEventNotifier` and a queued close are all Wine implements properly.
-`cmdline_test` passes everything but one check, and `macro_test` fails only the
-two cases that need a macro to read what `cmd.exe` printed — Wine's console
-host opens a ConPTY and then delivers no output. `render_test` runs its whole
-suite and fails six font metrics, which is Wine's font stack rather than an
-answer about Windows. Native Windows is still the authority for the other
-three.
+What that proves and what it does not: `control_test` and `cmdline_test` pass
+outright — the first is the one of the four where Wine is a fair witness, since
+a named pipe, a `QWinEventNotifier` and a queued close are all things Wine
+implements properly. `macro_test` fails only the two cases that need a macro to
+read what `cmd.exe` printed — Wine's console host opens a ConPTY and then
+delivers no output. `render_test` runs its whole suite and fails six font
+metrics, which is Wine's font stack rather than an answer about Windows.
+Nothing left failing there is ours; native Windows is still the authority for
+the other three.
 
 ## The event loop has no timer in it
 

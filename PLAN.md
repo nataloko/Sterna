@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 419
+**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 421
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4751,12 +4751,28 @@ The fourth is ours, and it is the kind of thing a Windows run exists to find.
 `cmdline_test`'s last check fails with *"failed to resize console to 80x24:
 HRESULT: -2147467263"* — `E_NOTIMPL`, Wine's answer for `ResizePseudoConsole`
 — from a call that was setting `terminal.title`. `Session::set_settings`
-assigns the settings and reconfigures the engine and *then* propagates the
-transport's resize error with `?`, so a caller that sees the failure and
-concludes nothing happened is wrong: everything happened except telling the
-far end. Not reproduced as a defect on real Windows, where that API exists,
-and not changed here either — the fix is an API decision about what a partial
-apply should report, not a Wine workaround. **Open.**
+assigned the settings and reconfigured the engine and *then* propagated the
+transport's resize error with `?`, so a caller that saw the failure and
+concluded nothing had happened was wrong: everything happened except telling
+the far end.
+
+**Settled: applying settings cannot fail, and the missing `Result` is the
+answer.** The question was what a partial apply should report, and the honest
+reading is that there is no partial apply — the only call under there that can
+refuse is the notification, and by the time it runs everything local has
+already happened. Both failures behind it are answered elsewhere: a link that
+has really gone reports `Event::Disconnected` at the next pump, and a platform
+without the call is not the session's news to break. Only two transports can
+refuse at all — telnet's NAWS write and the pty's `TIOCSWINSZ` or
+`ResizePseudoConsole` — since SSH already discards its own send error and
+serial has nothing to tell. Upstream has no error path here either, and the
+`?` was the outlier in this port rather than the careful one: `Session::connect`
+and the macro host's `connect` had both discarded the same error on their own,
+the second with a comment saying it was the transport's and not the command's
+to report. So `set_settings` returns nothing, `set_setting` returns the `bool`
+that says whether the *name* was in the schema, and the three C entry points
+that wrapped them can no longer fail on this path. `cmdline_test` passes
+outright under Wine now, which leaves that run with no failure that is ours.
 
 `control_test` now builds and runs on Windows too, which closes the one test
 that was deliberately left behind. `Control.cpp` already had the Windows half
