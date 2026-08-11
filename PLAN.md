@@ -5033,6 +5033,20 @@ wrapped line breaks in the printer's copy depends on whether a *log or a macro*
 is running, because the wrap's `CarriageReturn`/`LineFeed` pair sits behind
 `NeedsOutputBufs()` and that function does not count the printer.
 
+**It cost throughput, and the first version cost twice what the second does.**
+Auto print has to snapshot the line *before* the character lands, because
+upstream's wrap calls `LineFeed(LF, FALSE)` explicitly and the dump is at the
+top of that function — and holding that snapshot in an `Option<String>` local
+put a destructor in every character's stack frame whether or not anything was
+printing. Measured at 8% of `core.plain` against the commit before this work,
+and 4% of it was that one local; it is a field now, written only under the
+flag, and the printer's copy of a character is behind an explicit test at the
+call site rather than inside the function. What is left is about 3%, which no
+single line accounts for and which is the sort of code-layout shift any change
+to a hot parser produces. The gate's budget is 30% and it passes with the
+margin it had. The lesson is the local, not the branch: **a `String` that
+merely might be filled is not free in the caller that never fills it.**
+
 `PrnFont` is the one printer key still not in the schema: `ReadFont` packs a
 name, two sizes and a Windows character set into one value and the generator
 has no type for it, so pages are set in monospace and the key is left alone

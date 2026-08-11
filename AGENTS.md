@@ -1569,6 +1569,16 @@ take it away:
 - **The dump is of the *grid*, not of the stream**, so `hello\rH` prints as
   `Hello`. And upstream's version of it is the thirty-second defect on the list
   below; this port prints what it meant to.
+- **A `String` local that merely *might* be filled is not free in the caller
+  that never fills it**, and `Perform::print` is where that bill arrives. Auto
+  print has to snapshot the line before the character lands, and holding that
+  snapshot in an `Option<String>` put a destructor in every character's stack
+  frame — 4% of `core.plain`, in a session with no printer. It is a field on
+  `State` now, assigned only under the flag, and the printer's copy of a
+  character is behind an explicit test at the call site rather than inside the
+  function. Anything else added to that function wants measuring the same way:
+  `./bench/bench.py --core` against the commit before it, not against
+  `baseline.json`, which has its own drift.
 
 And for the title, which is two strings in three places:
 
