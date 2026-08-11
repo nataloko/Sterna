@@ -7,6 +7,7 @@
 //!         [--crreceive cr|lf|crlf|auto] [--clearonresize]
 //!         [--noscrollwindowclear] [--backwrap] [--vtcompattab]
 //!         [--tabstop SPEC] [--invaliddecrqss] [--autoinvoke] [--nolocktuid]
+//!         [--printerctrl] [--passthruport]
 //!         [--cursorctrl] [--maxoscbuffer N] [FILE]
 //! ```
 //!
@@ -31,6 +32,7 @@ const USAGE: &str = "usage: tt-dump [--cols N] [--rows N] [--term ID] [--attrs]\
                      \x20              [--clearonresize] [--noscrollwindowclear]\n\
                      \x20              [--backwrap] [--vtcompattab] [--tabstop SPEC]\n\
                      \x20              [--invaliddecrqss] [--autoinvoke] [--nolocktuid]\n\
+                     \x20              [--printerctrl] [--passthruport]\n\
                      \x20              [--cursorctrl] [--maxoscbuffer N] [FILE]\n";
 
 /// `TermWidthMax` / `TermHeightMax` from Tera Term's `ttcommon.h`, so the two
@@ -51,6 +53,8 @@ struct Args {
     vt_compat_tab: bool,
     tab_stop_modify: TabStopFlags,
     invalid_decrqss: bool,
+    printer_ctrl_sequence: bool,
+    printer_direct: bool,
     auto_invoke: bool,
     lock_uid: bool,
     cursor_ctrl_sequence: bool,
@@ -113,6 +117,8 @@ fn main() {
         vt_compat_tab: args.vt_compat_tab,
         tab_stop_modify: args.tab_stop_modify,
         invalid_decrqss: args.invalid_decrqss,
+        printer_ctrl_sequence: args.printer_ctrl_sequence,
+        printer_direct: args.printer_direct,
         auto_invoke: args.auto_invoke,
         lock_uid: args.lock_uid,
         cursor_ctrl_sequence: args.cursor_ctrl_sequence,
@@ -258,6 +264,8 @@ fn parse_args() -> Result<Option<Args>, String> {
         vt_compat_tab: false,
         tab_stop_modify: TabStopFlags::ALL,
         invalid_decrqss: false,
+        printer_ctrl_sequence: false,
+        printer_direct: false,
         auto_invoke: false,
         lock_uid: true,
         cursor_ctrl_sequence: false,
@@ -294,6 +302,8 @@ fn parse_args() -> Result<Option<Args>, String> {
             "--backwrap" => args.back_wrap = true,
             "--vtcompattab" => args.vt_compat_tab = true,
             "--invaliddecrqss" => args.invalid_decrqss = true,
+            "--printerctrl" => args.printer_ctrl_sequence = true,
+            "--passthruport" => args.printer_direct = true,
             "--autoinvoke" => args.auto_invoke = true,
             "--nolocktuid" => args.lock_uid = false,
             "--cursorctrl" => args.cursor_ctrl_sequence = true,

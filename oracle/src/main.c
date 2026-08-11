@@ -10,6 +10,7 @@
  *          [--crreceive cr|lf|crlf|auto] [--clearonresize]
  *          [--noscrollwindowclear] [--backwrap] [--vtcompattab]
  *          [--tabstop SPEC] [--invaliddecrqss] [--autoinvoke] [--nolocktuid]
+ *          [--printerctrl] [--passthruport]
  *          [--cursorctrl] [--maxoscbuffer N] [FILE]
  *
  * With no FILE, reads stdin. Output goes to stdout.
@@ -59,6 +60,8 @@ struct opts {
 	int vt_compat_tab;              /* ttset.c:1343 */
 	int tab_stop_flag;              /* ttset.c:1717 */
 	int invalid_decrqss;            /* ttset.c:1756 */
+	int printer_ctrl;               /* ttset.c:1245 */
+	int passthru_port;              /* ttset.c:1241 */
 	int auto_invoke;                /* ttset.c:1101 */
 	int lock_tuid;                  /* ttset.c:1711 */
 	int cursor_ctrl_sequence;       /* ttset.c:1656 */
@@ -310,6 +313,23 @@ static void settings_defaults(const struct opts *o)
 	}
 	if (o->invalid_decrqss) {
 		ts.TermFlag |= TF_INVALIDDECRPSS;
+	}
+	/* :1245 PrinterCtrlSequence=off. It gates four of the five media copy
+	 * sequences; the fifth, CSI ? 4 i, is deliberately ungated. Printer
+	 * controller mode is the only one of the five the dump can see, because it
+	 * stops the terminal executing controls — teraprn.cpp is not compiled here
+	 * and every WriteToPrnFile is a generated no-op, so what the printer would
+	 * have received is not comparable and what the *screen* did is. */
+	if (o->printer_ctrl) {
+		ts.TermFlag |= TF_PRINTERCTRL;
+	}
+	/* :1241 PassThruPort="". Only its emptiness is ever tested — vtterm.c:2095
+	 * samples `ts.PrnDev[0]!=0` into DirectPrn when controller mode starts, and
+	 * that decides whether the shifts and ISO-2022 designations arriving during
+	 * the job are the terminal's to interpret. The name itself is teraprn.cpp's,
+	 * which is not compiled here, so any non-empty string will do. */
+	if (o->passthru_port) {
+		strncpy_s(ts.PrnDev, sizeof(ts.PrnDev), "LPT1:", _TRUNCATE);
 	}
 
 	/* ttset.c:1653 WindowCtrlSequence=on, :1661 WindowReportSequence=on,
@@ -777,6 +797,8 @@ int main(int argc, char **argv)
 		0,          /* VTCompatTab, ttset.c:1343 off */
 		TABF_ALL,   /* TabStopModifySequence, ttset.c:1717 "on" */
 		0,          /* UseInvalidDECRQSSResponse, ttset.c:1756 off */
+		0,          /* PrinterCtrlSequence, ttset.c:1245 off */
+		0,          /* PassThruPort, ttset.c:1241 empty */
 		0,          /* AutoInvoke, ttset.c:1101 off */
 		1,          /* LockTUID, ttset.c:1711 on */
 		0,          /* CursorCtrlSequence, ttset.c:1656 off */
@@ -810,6 +832,10 @@ int main(int argc, char **argv)
 			o.vt_compat_tab = 1;
 		} else if (strcmp(argv[i], "--invaliddecrqss") == 0) {
 			o.invalid_decrqss = 1;
+		} else if (strcmp(argv[i], "--printerctrl") == 0) {
+			o.printer_ctrl = 1;
+		} else if (strcmp(argv[i], "--passthruport") == 0) {
+			o.passthru_port = 1;
 		} else if (strcmp(argv[i], "--autoinvoke") == 0) {
 			o.auto_invoke = 1;
 		} else if (strcmp(argv[i], "--nolocktuid") == 0) {
@@ -839,6 +865,7 @@ int main(int argc, char **argv)
 			        "              [--clearonresize] [--noscrollwindowclear]\n"
 			        "              [--backwrap] [--vtcompattab] [--tabstop SPEC]\n"
 			        "              [--invaliddecrqss] [--autoinvoke] [--nolocktuid]\n"
+		        "              [--printerctrl] [--passthruport]\n"
 			        "              [--cursorctrl] [--maxoscbuffer N] [FILE]\n");
 			return 0;
 		} else if (argv[i][0] != '-') {

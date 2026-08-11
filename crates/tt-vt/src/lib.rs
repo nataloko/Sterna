@@ -21,14 +21,16 @@ pub mod color;
 pub mod keys;
 pub mod mouse;
 pub mod palette;
+pub mod printer;
 pub mod term_id;
 pub mod window;
 pub use color::Colors;
 pub use keys::{CrSend, Key, KeyModes};
 pub use mouse::{Encoding, Modifiers, MouseEvent, Tracking};
-pub use term_id::TermId;
 /// Re-exported because [`Config`] has a field of this type, so a caller that
 /// builds one needs to be able to name it without depending on `tt-charset`.
+pub use printer::PrinterEvent;
+pub use term_id::TermId;
 pub use tt_charset::ShiftFlags;
 pub use window::{WindowMetrics, WindowRequest};
 
@@ -467,6 +469,17 @@ pub struct Config {
     /// an `ED 0` with the cursor at the home position is treated as `ED 2`.
     /// **Not** a gate on `ED 2`, which clears the screen either way.
     pub home_erase_clears_screen: bool,
+    /// `TF_PRINTERCTRL` (`ttset.c:1245` `PrinterCtrlSequence`, key default
+    /// **off**). Gates four of the five media-copy sequences — `CSI 0 i`,
+    /// `CSI 5 i`, `CSI ? 1 i` and `CSI ? 5 i`. The fifth, `CSI ? 4 i`, is
+    /// deliberately ungated so a host can always turn auto print off again.
+    pub printer_ctrl_sequence: bool,
+    /// `DirectPrn` — `ts.PrnDev[0] != 0` (`vtterm.c:2095`), i.e. whether
+    /// `PassThruPort` names a device. It is not a gate on printing: it decides
+    /// whether the locking shifts and ISO-2022 designations arriving during
+    /// controller mode are the *terminal's* to interpret or bytes the printer
+    /// should receive. The device name itself never reaches the engine.
+    pub printer_direct: bool,
     /// `WF_WINDOWCHANGE` (`ttset.c:1653`, key default on). Gates the XTWINOPS
     /// operations that *change* something, including the resize.
     pub window_change: bool,
@@ -692,6 +705,8 @@ impl Default for Config {
             remote_clears_buffer: true,
             clear_on_resize: false,
             home_erase_clears_screen: true,
+            printer_ctrl_sequence: false,
+            printer_direct: false,
             window_change: true,
             window_report: true,
             title_report: TitleReport::default(),
@@ -869,13 +884,100 @@ impl Vt {
         // Pure ASCII needs no rewriting at all, and almost every chunk is. The
         // test cannot be narrower than this: the walk has to see whole UTF-8
         // sequences to know a continuation byte from a bare one, so any byte
-        // over 0x7F puts it back in play.
-        if !self.pending_c2 && self.utf8_left == 0 && !bytes.iter().any(|&b| b >= 0x80) {
+        // over 0x7F puts it back in play. The two printer conditions are
+        // [`Vt::advance_split`]'s — with `PrinterCtrlSequence` off, which is how
+        // Tera Term ships, nothing can take the stream away from `vte` and this
+        // stays the one-call path it has always been.
+        if !self.pending_c2
+            && self.utf8_left == 0
+            && !self.state.printer.is_on()
+            && !self.state.config.printer_ctrl_sequence
+            && !bytes.iter().any(|&b| b >= 0x80)
+        {
             self.parser.advance(&mut self.state, bytes);
             return;
         }
         let rewritten = self.rewrite_c1(bytes);
-        self.parser.advance(&mut self.state, &rewritten);
+        self.advance_split(&rewritten);
+    }
+
+    /// Hand a rewritten chunk to `vte`, letting printer controller mode take the
+    /// stream away in the middle of it.
+    ///
+    /// `CSI 5 i` turns the controller on from inside `vte`'s own dispatch and
+    /// `advance` cannot be asked to stop there, so the chunk is cut after every
+    /// `i` — the only final byte that can change the answer, and cheap to find.
+    /// Nothing is needed in the other direction: while the controller is on the
+    /// only bytes `vte` is given are printable ones, so it cannot dispatch
+    /// anything at all, and `CSI 4 i` is [`printer::Controller`]'s to notice.
+    fn advance_split(&mut self, bytes: &[u8]) {
+        let mut rest = bytes;
+        while !rest.is_empty() {
+            if self.state.printer.is_on() {
+                let used = self.printer_consume(rest);
+                rest = &rest[used..];
+                continue;
+            }
+            if !self.state.config.printer_ctrl_sequence {
+                self.parser.advance(&mut self.state, rest);
+                return;
+            }
+            match rest.iter().position(|&b| b == b'i') {
+                Some(n) => {
+                    self.parser.advance(&mut self.state, &rest[..=n]);
+                    rest = &rest[n + 1..];
+                }
+                None => {
+                    self.parser.advance(&mut self.state, rest);
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Run [`printer::Controller`] over as much of the chunk as it wants, and
+    /// answer with how much it took.
+    ///
+    /// The interleaving is the point. Text still reaches the screen and is
+    /// copied to the printer from there, so a run of characters has to go
+    /// through `vte` *before* the next control byte is written — otherwise
+    /// `A LF B` prints as `LF A B`, which is the sort of thing that only shows
+    /// up on paper.
+    fn printer_consume(&mut self, bytes: &[u8]) -> usize {
+        let iso = self.state.config.iso2022_flags;
+        let mut for_vte: Vec<u8> = Vec::new();
+        let mut used = 0;
+        let mut exited = false;
+        for (i, &b) in bytes.iter().enumerate() {
+            used = i + 1;
+            let mut out = String::new();
+            match self.state.printer.step(b, iso, &mut out) {
+                printer::Step::Terminal => for_vte.push(b),
+                printer::Step::Replay(seq) => for_vte.extend_from_slice(&seq),
+                printer::Step::Drop => {}
+                printer::Step::Printer(cp) => printer::push_cp(&mut out, cp),
+                printer::Step::Exit => exited = true,
+            }
+            if !out.is_empty() {
+                if !for_vte.is_empty() {
+                    self.parser.advance(&mut self.state, &for_vte);
+                    for_vte.clear();
+                }
+                self.state.printer_write(&out);
+            }
+            if exited {
+                break;
+            }
+        }
+        if !for_vte.is_empty() {
+            self.parser.advance(&mut self.state, &for_vte);
+        }
+        // `PrnParseCS` closes the job on the way out unless auto print still
+        // owns it (`vtterm.c:4034`).
+        if exited && !self.state.auto_print {
+            self.state.printer_close();
+        }
+        used
     }
 
     /// `charset.cpp:PutDebugChar`: display one raw byte without letting the
@@ -1210,6 +1312,29 @@ impl Vt {
     /// has none either can drop these, which is what `tt-host` does.
     pub fn take_window_requests(&mut self) -> Vec<window::WindowRequest> {
         std::mem::take(&mut self.state.window_requests)
+    }
+
+    /// What the media-copy sequences asked the printer for, in order, and
+    /// clear. See [`printer::PrinterEvent`].
+    ///
+    /// A queue for the same reason [`Vt::take_window_requests`] is one, plus
+    /// one of its own: a job is `Open`, some `Write`s and a `Close`, and a
+    /// frontend that saw only the last of those would print nothing. A
+    /// frontend with no printer can drop them, which is what `tt-host` does.
+    pub fn take_printer_events(&mut self) -> Vec<printer::PrinterEvent> {
+        std::mem::take(&mut self.state.printer_events)
+    }
+
+    /// Whether printer controller mode has the stream — `PrinterMode`. The
+    /// frontend needs it for nothing; it is here because a test that cannot see
+    /// this mode cannot tell it from a terminal that has stopped responding.
+    pub fn printer_controller(&self) -> bool {
+        self.state.printer.is_on()
+    }
+
+    /// Whether every completed line is being printed — `AutoPrintMode`.
+    pub fn auto_print(&self) -> bool {
+        self.state.auto_print
     }
 
     /// Bytes the terminal wants to send back to the host: DA, DSR, and friends.
@@ -1664,6 +1789,23 @@ struct State {
     /// than it has room for until the next resize event puts it back. See
     /// [`Vt::take_terminal_resized`].
     terminal_resized: bool,
+    /// Printer controller mode — `CSI 5 i` until `CSI 4 i`.
+    printer: printer::Controller,
+    /// `AutoPrintMode` (`vtterm.c:178`): every completed line goes to the
+    /// printer as well as to the screen.
+    auto_print: bool,
+    /// Whether a job is open — upstream's `PrintFile_ != NULL`. The two modes
+    /// share one, which is why `CSI ? 1 i` closes the job it opened only when
+    /// auto print is off.
+    printer_open: bool,
+    /// What the printer has been asked for and not yet collected. See
+    /// [`Vt::take_printer_events`].
+    printer_events: Vec<printer::PrinterEvent>,
+    /// `CheckEOLData_st::cr_hold` for the printer's copy of the text. Upstream
+    /// runs *one* `CheckEOLCheck` per character and fans its answer out to the
+    /// log, the macro and the printer (`vtterm.c:453`); here each tap keeps its
+    /// own, for the reason [`MacroTap`] gives.
+    printer_cr_hold: bool,
 }
 
 /// What a linked macro sees of the session — `ttdde.c`'s `DDEPut1` sink, and
@@ -1762,6 +1904,11 @@ impl State {
             window: window::WindowMetrics::default(),
             window_requests: Vec::new(),
             terminal_resized: false,
+            printer: printer::Controller::default(),
+            auto_print: false,
+            printer_open: false,
+            printer_events: Vec::new(),
+            printer_cr_hold: false,
         }
     }
 
@@ -2021,6 +2168,192 @@ impl State {
         }
     }
 
+    // --- the printer ------------------------------------------------------
+
+    /// MC and DECMC — `CSI Ps i` (`vtterm.c:2079`) and `CSI ? Ps i`
+    /// (`CSQ_i_Mode`, `:3082`).
+    ///
+    /// Four of the five arms are behind `TF_PRINTERCTRL` and the fifth is not:
+    /// `CSI ? 4 i` turns auto print off whatever the setting says, so a host
+    /// cannot leave a terminal printing every line because the user turned the
+    /// gate off half way through. Everything not listed falls through in
+    /// silence, `CSI 4 i` included — with the controller already off there is
+    /// nothing for it to do, and while it is on this sequence never reaches
+    /// here at all, because [`printer::Controller`] takes it out of the stream.
+    fn media_copy(&mut self, params: &Params, private: bool) {
+        let gate = self.config.printer_ctrl_sequence;
+        match (private, arg0(params, 0)) {
+            // Print screen. Not a byte stream: upstream renders the grid
+            // through the print dialog, so the frontend is asked rather than
+            // fed. DECPEX picks the rectangle.
+            (false, 0) if gate => {
+                let scroll_region = !self.modes.print_ex;
+                self.printer_events
+                    .push(printer::PrinterEvent::Screen { scroll_region });
+            }
+            // Printer controller on. It shares auto print's job when there is
+            // one, which is why closing is conditional in three places.
+            (false, 5) if gate => {
+                if !self.auto_print {
+                    self.printer_open();
+                }
+                self.printer.start(self.config.printer_direct);
+            }
+            // Print the cursor's line, and print it *now* — this is the one
+            // arm that opens and closes a job by itself.
+            (true, 1) if gate => {
+                if !self.auto_print {
+                    self.printer_open();
+                }
+                self.dump_current_line(0x0a);
+                if !self.auto_print {
+                    self.printer_close();
+                }
+            }
+            // Auto print off — ungated, deliberately.
+            (true, 4) => {
+                if self.auto_print {
+                    self.printer_close();
+                    self.auto_print = false;
+                }
+            }
+            (true, 5) if gate && !self.auto_print => {
+                self.printer_open();
+                self.auto_print = true;
+            }
+            _ => {}
+        }
+    }
+
+    /// `OpenPrnFile`. Upstream can fail here and returns NULL, which every
+    /// caller then hands straight to `WriteToPrnFile` without a test; there is
+    /// nothing to fail at on this side of the seam.
+    fn printer_open(&mut self) {
+        self.printer_events.push(printer::PrinterEvent::Open);
+        self.printer_open = true;
+        self.printer_cr_hold = false;
+    }
+
+    /// `ClosePrnFile`, minus the `PassThruDelay` timer that starts the printing
+    /// — the engine has no clock, so waiting is the frontend's.
+    fn printer_close(&mut self) {
+        if self.printer_open {
+            self.printer_events.push(printer::PrinterEvent::Close);
+            self.printer_open = false;
+        }
+    }
+
+    /// `WriteToPrnFile`, coalesced. Consecutive writes join rather than
+    /// producing an event each, since the order that matters is the one against
+    /// [`printer::PrinterEvent::Open`] and `Close`.
+    fn printer_write(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(printer::PrinterEvent::Write(w)) = self.printer_events.last_mut() {
+            w.push_str(text);
+        } else {
+            self.printer_events
+                .push(printer::PrinterEvent::Write(text.to_string()));
+        }
+    }
+
+    /// The printer's branch of `OutputLogUTF32` (`vtterm.c:487`) — the copy of
+    /// the *displayed* text that controller mode makes, behind the same EOL
+    /// check the macro tap runs.
+    fn printer_tap(&mut self, u32: u32) {
+        if !self.printer.is_on() {
+            return;
+        }
+        let (eol, chr) = match u32 {
+            0x0d => {
+                self.printer_cr_hold = true;
+                (false, false)
+            }
+            0x0a if self.printer_cr_hold => {
+                self.printer_cr_hold = false;
+                (true, false)
+            }
+            0x0a => (false, true),
+            _ => {
+                self.printer_cr_hold = false;
+                (false, true)
+            }
+        };
+        let mut out = String::new();
+        if eol {
+            out.push_str("\r\n");
+        }
+        if chr {
+            if let Some(c) = char::from_u32(u32) {
+                out.push(c);
+            }
+        }
+        self.printer_write(&out);
+    }
+
+    /// `NeedsOutputBufs` (`vtterm.c:512`), which is the log **or** the macro and
+    /// pointedly not the printer — so a line break the wrap generated reaches
+    /// the printer's copy only when one of the other two happens to be running.
+    /// Reproduced rather than tidied: it is the only thing that decides whether
+    /// a printed wrapped line is one line or two.
+    fn needs_output_bufs(&self) -> bool {
+        self.macro_tap.is_some() || self.log_text.is_some()
+    }
+
+    /// `BuffDumpCurrentLine` (`buffer.c:2400`) — the cursor's line, trailing
+    /// spaces trimmed, followed by `CR` and the terminator when that terminator
+    /// is LF, VT or FF.
+    ///
+    /// **This is where the port stops transcribing, and it is deliberate.**
+    /// Upstream dumps `ansi_char`, the cell's code-page form, through four
+    /// faults in twenty-eight lines: it writes the *low* byte of a double-byte
+    /// character twice where `buffer.c:3597` a hundred lines away writes the
+    /// high byte and then the low one; it bounds the write loop by the column
+    /// count rather than by the bytes it produced, so those extra bytes are
+    /// dropped; a padding cell's zero byte reaches `WriteToPrnFile(0, FALSE)`,
+    /// which is the *clear the buffer* form, discarding everything accumulated
+    /// for the line so far; and `char bufA[TermWidthMax+1]` is a thousand and
+    /// one bytes holding up to two per column, so a wide line of full-width
+    /// characters runs about five hundred bytes off the end of a stack buffer
+    /// with content the host chose. Reproducing that means reproducing a remote
+    /// stack overflow, so this prints what upstream meant to print. For a line
+    /// of single-byte characters the two agree exactly, which is every line
+    /// that does not contain a full-width glyph.
+    fn dump_current_line(&mut self, term: u8) {
+        let text = self.line_dump_text(term);
+        self.printer_write(&text);
+    }
+
+    /// The same dump, composed but not yet written. The wrap needs it a moment
+    /// before it happens: upstream's `LineFeed` dumps at its top, while the
+    /// cursor is still on the line that filled up, and here the wrap is inside
+    /// [`tt_grid::Grid::put`] and reports itself afterwards.
+    fn line_dump_text(&self, term: u8) -> String {
+        let y = self.grid.cursor.y;
+        let line = self.grid.line(y);
+        let mut end = line.len();
+        while end > 0 && line[end - 1].text[0] == u32::from(b' ') {
+            end -= 1;
+        }
+        let mut out = String::new();
+        for cell in &line[..end] {
+            if cell.width_class == tt_grid::WIDTH_PAD {
+                continue;
+            }
+            for &cp in cell.text.iter().take_while(|&&cp| cp != 0) {
+                if let Some(c) = char::from_u32(cp) {
+                    out.push(c);
+                }
+            }
+        }
+        if (0x0a..=0x0c).contains(&term) {
+            out.push('\r');
+            out.push(char::from(term));
+        }
+        out
+    }
+
     /// `vtterm.c:CarriageReturn` — the move, and the tap upstream does inside
     /// it. Used at the sites that call that function and not at every cursor
     /// motion to column zero: `ESC E` moves with `MoveCursor` and so is silent.
@@ -2091,7 +2424,15 @@ impl State {
     /// the carriage too**, and that is the *receive* side of a mode everything
     /// else treats as being about what the keyboard sends. Upstream does it
     /// after the vertical move, not before (`vtterm.c:706`).
-    fn line_feed(&mut self) {
+    ///
+    /// `byte` is upstream's first argument and its only other use is auto
+    /// print: the line is dumped when the feed came from an LF, VT or FF byte
+    /// and not when it came from IND or NEL, which pass a zero (`vtterm.c:1153`,
+    /// `:1505`). So `ESC D` scrolls a line the printer never sees.
+    fn line_feed(&mut self, byte: u8) {
+        if self.auto_print && (0x0a..=0x0c).contains(&byte) {
+            self.dump_current_line(byte);
+        }
         self.tap(0x0a);
         self.grid.line_feed();
         if self.modes.lf_mode {
@@ -2104,23 +2445,23 @@ impl State {
     }
 
     /// `vtterm.c:747`.
-    fn process_lf(&mut self) {
+    fn process_lf(&mut self, byte: u8) {
         match self.config.cr_receive {
             CrReceive::Lf => {
                 // "the server sends LF alone" — so LF means CR+LF.
                 self.carriage_return(true);
-                self.line_feed();
+                self.line_feed(byte);
             }
             CrReceive::Auto => {
                 if !self.prev_was_cr || !self.auto_generated_crlf {
                     self.carriage_return(true);
-                    self.line_feed();
+                    self.line_feed(byte);
                     self.auto_generated_crlf = true;
                 } else {
                     self.auto_generated_crlf = false;
                 }
             }
-            _ => self.line_feed(),
+            _ => self.line_feed(byte),
         }
     }
 
@@ -3316,6 +3657,7 @@ impl State {
                 let bottom = arg(params, 1, rows).saturating_sub(1) as usize;
                 self.grid.set_scroll_region(top, bottom);
             }
+            'i' => self.media_copy(params, private),
             't' => self.window_op(params),
             // DECSLRM, but only while DECLRMM is on: otherwise the same final
             // byte is SCP, the ANSI.SYS save-cursor. `vtterm.c:4115`.
@@ -3893,6 +4235,15 @@ impl Perform for State {
         // have come from a single byte; anything above U+00FF is text by
         // definition and never DEC special graphics.
         let special = cp <= 0xff && self.charset.is_special(cp);
+        // Auto print dumps the line the wrap is about to leave, so the text has
+        // to be taken before the character lands. Upstream gets this for free:
+        // its wrap calls `LineFeed(LF, FALSE)` explicitly, and the dump is at
+        // the top of that function.
+        let filled = if self.auto_print {
+            Some(self.line_dump_text(0x0a))
+        } else {
+            None
+        };
         let wrapped = if special {
             // Upstream builds a throwaway attribute for the one character
             // (`CharAttrTmp`), leaving the pen alone. Same here.
@@ -3913,11 +4264,27 @@ impl Perform for State {
         // Both calls pass `logFlag` FALSE, so this is one of the two places
         // `ts.EnableContinuedLineCopy` suppresses the pair and a macro sees
         // the host's line whole.
-        if wrapped && !self.config.continued_line_copy {
-            self.tap(0x0d);
-            self.tap(0x0a);
+        if wrapped {
+            if let Some(text) = filled {
+                self.printer_write(&text);
+            }
+            if !self.config.continued_line_copy {
+                self.tap(0x0d);
+                self.tap(0x0a);
+                // `CarriageReturn`/`LineFeed` reach the printer's copy through
+                // `NeedsOutputBufs`, which does not count the printer — so
+                // whether a wrapped line arrives at the printer as one line or
+                // two depends on whether a log or a macro is also running.
+                if self.needs_output_bufs() {
+                    self.printer_tap(0x0d);
+                    self.printer_tap(0x0a);
+                }
+            }
         }
         self.tap(cp);
+        // `PutU32` reaches `OutputLogUTF32` directly rather than through
+        // `NeedsOutputBufs`, so the character itself is always copied.
+        self.printer_tap(cp);
         if let Some(log) = &mut self.log_text {
             log.push(c);
         }
@@ -3972,9 +4339,19 @@ impl Perform for State {
                     // `CarriageReturn(FALSE); LineFeed(LF,FALSE);` — the second
                     // of the two places the wrap generates a line break, and
                     // so the second `ts.EnableContinuedLineCopy` suppresses.
+                    if self.auto_print {
+                        self.dump_current_line(0x0a);
+                    }
                     self.carriage_return(false);
                     if !self.config.continued_line_copy {
                         self.tap(0x0a);
+                        // As in the character path: the printer's copy of a
+                        // generated line break rides `NeedsOutputBufs`, which
+                        // does not count the printer.
+                        if self.needs_output_bufs() {
+                            self.printer_tap(0x0d);
+                            self.printer_tap(0x0a);
+                        }
                     }
                     self.grid.line_feed();
                     // `SetLineContinued()` (`vtterm.c:717`). Unlike the
@@ -4007,7 +4384,7 @@ impl Perform for State {
                 if let Some(log) = &mut self.log_text {
                     log.push('\n');
                 }
-                self.process_lf();
+                self.process_lf(byte);
                 self.prev_was_lf = true;
                 self.prev_was_cr = false;
                 return;
@@ -4158,14 +4535,15 @@ impl Perform for State {
         match byte {
             b'7' => self.save_cursor(),
             b'8' => self.restore_cursor(),
-            // IND. The full `LineFeed`, LNM tail included.
-            b'D' => self.line_feed(),
+            // IND. The full `LineFeed`, LNM tail included — and its byte is a
+            // zero, so auto print does not dump the line it just left.
+            b'D' => self.line_feed(0),
             // NEL. `MoveCursor(0, CursorY)` and then a line feed
             // (`vtterm.c:1508`) — **column zero**, not the left margin and not
             // `CarriageReturn`, which is the one place the two differ.
             b'E' => {
                 self.grid.move_cursor(0, self.grid.cursor.y);
-                self.line_feed();
+                self.line_feed(0);
             }
             // DECID, the obsolete spelling of Primary DA — `vtterm.c:1539`
             // hands it to the same `AnswerTerminalType`.
@@ -4237,6 +4615,13 @@ impl Perform for State {
                 // is the one part of `ResetTerminal` that lives outside the
                 // engine. `SoftReset` does not.
                 self.bell_reset = true;
+                // `ResetTerminal` clears `PrinterMode` (`vtterm.c:327`) and
+                // stops there: it does not close the job and does not clear
+                // `AutoPrintMode`. So a RIS in the middle of controller-mode
+                // printing leaves an open job that nothing will print until
+                // some later sequence closes it. Reproduced — diverging means
+                // printing a page the user's own Tera Term does not.
+                self.printer.stop();
             }
             _ => {}
         }
@@ -5938,6 +6323,190 @@ mod tests {
             ]
         );
         assert!(vt.take_window_requests().is_empty(), "the queue drains");
+    }
+
+    // --- the printer ------------------------------------------------------
+
+    fn printing(cols: usize, rows: usize) -> Vt {
+        Vt::new(Config {
+            cols,
+            rows,
+            printer_ctrl_sequence: true,
+            ..Config::default()
+        })
+    }
+
+    /// `PrinterCtrlSequence` ships off, and with it off four of the five arms
+    /// do nothing at all. Missing this makes every other printer test pass
+    /// against a terminal that would print nothing for a real user.
+    #[test]
+    fn the_printer_gate_ships_off_and_covers_four_of_the_five() {
+        let mut vt = run(b"\x1b[0i\x1b[5i\x1b[?1i\x1b[?5i", 20, 3);
+        assert!(vt.take_printer_events().is_empty());
+        assert!(!vt.printer_controller());
+        assert!(!vt.auto_print());
+        // ...and the fifth is reachable whatever the setting says, so a host
+        // can always stop a terminal printing every line.
+        let mut on = printing(20, 3);
+        on.feed(b"\x1b[?5i");
+        assert!(on.auto_print());
+        on.set_config(Config {
+            cols: 20,
+            rows: 3,
+            printer_ctrl_sequence: false,
+            ..Config::default()
+        });
+        on.take_printer_events();
+        on.feed(b"\x1b[?4i");
+        assert!(!on.auto_print());
+        assert_eq!(on.take_printer_events(), vec![PrinterEvent::Close]);
+    }
+
+    /// The whole shape of a controller-mode job: the text still reaches the
+    /// screen, the controls reach the printer instead of being obeyed, and the
+    /// two arrive in the order they were sent.
+    #[test]
+    fn controller_mode_prints_the_controls_and_displays_the_text() {
+        let mut vt = printing(20, 3);
+        vt.feed(b"\x1b[5iA\r\nB\x1b[2J\x1b[4iC");
+        assert_eq!(
+            vt.take_printer_events(),
+            vec![
+                PrinterEvent::Open,
+                // `A`, then the CR/LF pair the EOL check folds, then `B`, then
+                // the erase upstream never performs.
+                PrinterEvent::Write("A\r\nB\u{1b}[2J".into()),
+                PrinterEvent::Close,
+            ]
+        );
+        // Nothing was cleared and nothing moved: the row is still `ABC`,
+        // because neither the CR, the LF nor the `ED 2` was executed.
+        assert_eq!(row(&vt, 0).trim_end(), "ABC");
+        assert!(!vt.printer_controller());
+    }
+
+    /// Auto print is the other mode, and it dumps the *grid* rather than the
+    /// stream — so the line that reaches the printer is what was displayed,
+    /// overwrites and all, with its trailing spaces trimmed.
+    #[test]
+    fn auto_print_dumps_each_finished_line_from_the_screen() {
+        let mut vt = printing(20, 3);
+        vt.feed(b"\x1b[?5ihello\rH\r\nworld\n");
+        assert_eq!(
+            vt.take_printer_events(),
+            vec![
+                PrinterEvent::Open,
+                // Two lines, one event: consecutive writes coalesce, since the
+                // order that matters is the one against `Open` and `Close`.
+                PrinterEvent::Write("Hello\r\nworld\r\n".into()),
+            ]
+        );
+        // The job stays open: only `CSI ? 4 i` closes it.
+        vt.feed(b"\x1b[?4i");
+        assert_eq!(vt.take_printer_events(), vec![PrinterEvent::Close]);
+    }
+
+    /// `LineFeed`'s byte argument is the whole of the difference: LF, VT and FF
+    /// dump the line and IND and NEL, which pass a zero, do not.
+    #[test]
+    fn ind_and_nel_scroll_a_line_the_printer_never_sees() {
+        let mut vt = printing(20, 4);
+        vt.feed(b"\x1b[?5ione\x1bDtwo\x1bEthree\n");
+        assert_eq!(
+            vt.take_printer_events(),
+            vec![
+                PrinterEvent::Open,
+                // Only the last line, and only because of its LF. `ESC D`
+                // kept its column and `ESC E` went to column zero, so the two
+                // lines the printer never saw are also the reason this one
+                // starts where it does.
+                PrinterEvent::Write("three\r\n".into()),
+            ]
+        );
+    }
+
+    /// `CSI ? 1 i` opens and closes a job of its own — unless auto print is
+    /// already holding one, which is the same shared-job rule `CSI 5 i` follows.
+    #[test]
+    fn print_this_line_is_a_job_by_itself() {
+        let mut vt = printing(20, 3);
+        vt.feed(b"line\x1b[?1i");
+        assert_eq!(
+            vt.take_printer_events(),
+            vec![
+                PrinterEvent::Open,
+                PrinterEvent::Write("line\r\n".into()),
+                PrinterEvent::Close,
+            ]
+        );
+    }
+
+    /// DECPEX picks the rectangle `CSI 0 i` prints, and the request crosses the
+    /// seam rather than being answered here: upstream renders it graphically.
+    #[test]
+    fn print_screen_is_a_request_and_decpex_chooses_the_rectangle() {
+        let mut vt = printing(20, 3);
+        vt.feed(b"\x1b[0i\x1b[?19l\x1b[0i\x1b[?19h\x1b[0i");
+        assert_eq!(
+            vt.take_printer_events(),
+            vec![
+                // DECPEX defaults set, so the whole screen.
+                PrinterEvent::Screen {
+                    scroll_region: false
+                },
+                PrinterEvent::Screen {
+                    scroll_region: true
+                },
+                PrinterEvent::Screen {
+                    scroll_region: false
+                },
+            ]
+        );
+    }
+
+    /// The controller has to be able to start and stop inside one chunk, which
+    /// is the ordinary case on a real connection and the reason `feed` cuts the
+    /// stream at every `i` rather than handing `vte` the lot.
+    #[test]
+    fn the_controller_starts_and_stops_inside_one_chunk() {
+        let mut vt = printing(20, 3);
+        vt.feed(b"a\x1b[5i\x07\x1b[4ib\x1b[5i\x08\x1b[4ic");
+        assert_eq!(
+            vt.take_printer_events(),
+            vec![
+                PrinterEvent::Open,
+                PrinterEvent::Write("\u{7}".into()),
+                PrinterEvent::Close,
+                PrinterEvent::Open,
+                PrinterEvent::Write("\u{8}".into()),
+                PrinterEvent::Close,
+            ]
+        );
+        // Neither the bell nor the backspace was executed, so all three
+        // characters are on the row in order.
+        assert_eq!(row(&vt, 0).trim_end(), "abc");
+        assert_eq!(vt.take_bells().count, 0);
+    }
+
+    /// `ResetTerminal` clears `PrinterMode`, and a host cannot reach it: while
+    /// the controller has the stream a RIS is four bytes of printer data like
+    /// any other sequence. So the reset that ends controller mode is the
+    /// *user's* — Reset terminal on the menu — and the flag clearing in
+    /// `vtterm.c:327` is unreachable from the wire.
+    #[test]
+    fn a_reset_off_the_wire_is_printer_data_and_does_not_reset() {
+        let mut vt = printing(20, 3);
+        vt.feed(b"x\x1b[5i\x1bcy");
+        assert!(vt.printer_controller());
+        assert_eq!(
+            vt.take_printer_events(),
+            // `y` is text, so it is displayed *and* copied to the printer
+            // through the tap — which is the half of controller mode that is
+            // not this machine's.
+            vec![PrinterEvent::Open, PrinterEvent::Write("\u{1b}cy".into())]
+        );
+        // Nothing was reset: `x` is still there and `y` followed it.
+        assert_eq!(row(&vt, 0).trim_end(), "xy");
     }
 
     /// `WF_WINDOWCHANGE` gates everything that moves and `WF_WINDOWREPORT`
