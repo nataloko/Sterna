@@ -20,6 +20,7 @@ distrobox-host-exec distrobox enter sterna-fedora --no-tty -- bash -lc '
   ./build/xfer_test --write /tmp # ...and the transfer dialogs, as PNGs
   ./build/macro_test             # a TTL macro, driven by the event loop
   ./build/macro_test --write /tmp # ...and the dialogs it raises, as PNGs
+  ./build/print_test             # a printer, which is a file — needs no printer
   ./build/sterna --port /dev/ttyUSB0 --baud 115200
   ./build/sterna myrouter      # an alias out of ~/.ssh/config
   ./build/sterna --telnet console-server:2001

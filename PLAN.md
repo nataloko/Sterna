@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 426
+**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 449
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4969,6 +4969,78 @@ the local echo take, so an `OSC 4` arriving over a real connection moved the
 palette and told the painter nothing. Fixed, with the regression test on the
 transport path rather than on `feed`.
 
+Printing is answered now — the five media-copy sequences, both modes they
+turn on, and a Qt frontend at the end of them — which closes the last item in
+Stage 3's scope list that had not been touched at all. `CSI 0 i` prints the
+screen, `CSI 5 i`/`CSI 4 i` are printer controller mode, `CSI ? 5 i`/`CSI ? 4 i`
+are auto print, `CSI ? 1 i` prints one line, and DECPEX chooses which rectangle
+the first of those means.
+
+**The mode named after taking the stream away does not take it away**, and
+that is the thing to know about this family. Printer controller mode stops the
+terminal *executing* controls — they reach the printer uninterpreted, so a line
+feed does not feed a line and an `ESC [ 2 J` clears nothing — while printable
+characters go on reaching the screen and are copied to the printer through
+`OutputLogUTF32` (`vtterm.c:487`), the same tap the session log and the macro
+language read. Building it as "send the bytes to the printer instead" gives a
+terminal that goes blank for the length of a print job.
+
+It crosses the seam the way the window operations do, for the same reason and
+with one queue instead of two: the engine has no printer, so it emits an
+ordered `Open`/`Write`/`Close` list and `Printer.cpp` — upstream's
+`teraprn.cpp` minus the parts that were Win32 by necessity — is what has one.
+`PassThruPort` chooses the destination exactly as `PrnFileStart` does: a named
+device gets the code points as they were sent, and an empty setting means the
+platform's printer through `QPrinter` with `PrnMargin`'s four numbers and
+`PrnConvFF` deciding whether a form feed starts a page. `PassThruDelay` is real
+and load-bearing: auto print closes and reopens a job around every line, so
+without the wait each one would be a page.
+
+Two settings decide more than their names suggest. `PrinterCtrlSequence` gates
+four of the five sequences and **not** `CSI ? 4 i`, so a host can always turn
+auto print off again; and `PassThruPort` is not a gate on printing at all but
+on *parsing* — `DirectPrn` is sampled when the controller starts and decides
+whether the locking shifts and ISO-2022 designations arriving during the job
+are the terminal's to interpret or bytes the printer should receive.
+Differential cases 133 and 134 are the same input under the two answers, and
+the oracle grew `--printerctrl` and `--passthruport` to arbitrate them. Case
+132 is the mode itself, which the dump *can* see: a terminal that stops
+executing controls is a terminal whose screen stops changing.
+
+**A thirty-second upstream defect came out of reading it, and it is the worst
+one on the list: `BuffDumpCurrentLine` (`buffer.c:2400`) smashes the stack.**
+Auto print calls it at every line feed and `CSI ? 1 i` calls it directly, so it
+is reachable from the wire wherever `PrinterCtrlSequence` is on. Four faults in
+twenty-eight lines, all about double-byte characters: `char bufA[TermWidthMax+1]`
+is a thousand and one bytes holding up to two per column, so a wide line of
+full-width text runs about five hundred bytes off the end with content the host
+chose; the fill writes the **low** byte of a double-byte code twice where
+`buffer.c:3597` a hundred lines away writes the high byte and then the low one;
+the write loop is bounded by the column count rather than by the bytes the fill
+produced; and a padding cell's zero reaches `WriteToPrnFile(0, FALSE)`, which
+is the *clear the buffer* form, discarding the line so far. `あab` prints as
+`a`. **Not reproduced**, and it is the only entry on that list whose reason is
+that reproducing it means reproducing a remote stack overflow — this port
+prints what upstream meant to print, which for any line without a full-width
+character is byte-for-byte the same.
+
+Two smaller things are recorded rather than fixed. `ResetTerminal` clears
+`PrinterMode` and no host can reach that code: while the controller has the
+stream an `ESC c` is four bytes of printer data, so the flag only ever clears
+for Reset terminal on the menu — and it neither closes the job nor stops auto
+print, so a RIS mid-job leaves a spool nothing will print. And whether a
+wrapped line breaks in the printer's copy depends on whether a *log or a macro*
+is running, because the wrap's `CarriageReturn`/`LineFeed` pair sits behind
+`NeedsOutputBufs()` and that function does not count the printer.
+
+`PrnFont` is the one printer key still not in the schema: `ReadFont` packs a
+name, two sizes and a Windows character set into one value and the generator
+has no type for it, so pages are set in monospace and the key is left alone
+rather than being given an invented spelling that the user's own Tera Term
+would ignore. `shell/tests/print_test.cpp` is the end-to-end gate and needs no
+printer — `PassThruPort` points at a file, which is what `PrintFileDirect`
+thinks a printer is.
+
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
 DEC special graphics (line drawing — not CJK, and needed), macro reference docs,
@@ -5072,7 +5144,7 @@ file/dir 1k, connection/terminal 2k, dialogs 0.8k, misc 1k — **~9.3k Rust vs
 1. **✅ Differential testing against real Tera Term** — `oracle/` built and
    green, and as of Stage 1 actually wired up: `./run_diff.sh` feeds identical
    byte streams to it and to the Rust engine and diffs the grid dumps *and the
-   replies*, in CI on every commit. 131 cases, two of them `xfail`. Since the
+   replies*, in CI on every commit. 134 cases, two of them `xfail`. Since the
    oracle also takes
    injected mouse, focus and **key** events — and compiles `keyboard.c` for the
    last of those — this covers both halves of the frontend seam. **This is

@@ -55,7 +55,7 @@ S-shaped flight path.
 ## Build and test
 
 ```sh
-./run_diff.sh                    # THE gate: Rust engine vs Tera Term, 131 cases
+./run_diff.sh                    # THE gate: Rust engine vs Tera Term, 134 cases
 ./run_diff.sh 27                 # just the cases matching "27"
 ./run_upstream.sh                # the same diff over Tera Term's OWN exercisers
 
@@ -110,6 +110,7 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/xfer_test --write /tmp   # ...and the transfer dialogs, as PNGs
 ./build/macro_test               # a TTL macro, driven by the event loop
 ./build/macro_test --write /tmp  # ...and the dialogs it raises, as PNGs
+./build/print_test               # the printer, which is a file, so it needs none
 QT_QPA_PLATFORM=offscreen \
   ./build/cmdline_test           # a Tera Term command line, argv to connected
                                  # — NOT under Wayland; see the traps
@@ -302,6 +303,14 @@ something other than what it is.
   `BuffGetCursorCharAttr` is screen-relative. `PageStart` maps between them.
 - **`vtterm.c` owns `CharSetInit`** — it holds `charset_data`. The runner must
   not call it.
+- **`struct opts` in `oracle/src/main.c` is a positional initialiser, and
+  adding a field in the middle silently reassigns every default after it.**
+  Inserting two settings after `invalid_decrqss` moved `AutoInvoke`'s zero onto
+  one of them, `LockTUID`'s **one** onto the other — switching a pass-through
+  printer port on for every case — and `MaxOSCBufferSize`'s 4096 two places
+  further along, leaving the OSC buffer at zero. What that looked like was an
+  *unrelated* differential case changing its answer while the case being added
+  passed. Add to the initialiser as well as to the struct, in the same place.
 - **Make's VPATH beats pattern rules.** Patched sources need *explicit* rules or
   the generic `%.o: %.c` finds the unpatched original via VPATH and silently
   wins.
@@ -1498,6 +1507,69 @@ And for the bell, where the surprise is that a beep is a state machine:
   after reading the key. It is the only setting in the file that another
   setting takes over.
 
+And for the printer, where the mode named after taking the stream away does not
+take it away:
+
+- **Printer controller mode is not a diverter.** `CSI 5 i` stops the terminal
+  *executing* controls — they go to the printer uninterpreted, so a line feed
+  does not feed a line and an `ESC [ 2 J` clears nothing — but printable
+  characters go on reaching the screen, and their copy to the printer rides
+  `OutputLogUTF32` (`vtterm.c:487`), the same tap the session log and the macro
+  language read. Building it as "send the bytes to the printer instead" gives a
+  terminal that goes blank for the length of a print job. The two halves also
+  have to be **interleaved**: text is handed to the parser and controls to the
+  printer, so a run of text has to go through before the next control byte is
+  written or `A LF B` prints as `LF A B`, which only shows up on paper.
+- **`CSI 5 i` turns the mode on from inside the parser, and `advance` cannot be
+  asked to stop there.** So `Vt::feed` cuts the chunk after every `i` while
+  `PrinterCtrlSequence` is on — the only final byte that can change the answer.
+  Handing `vte` the whole chunk instead loses everything after the sequence on
+  the ordinary case, which is a host that sends `CSI 5 i` and its data in one
+  segment. Nothing is needed the other way: while the mode is on the only bytes
+  `vte` is given are printable ones, so it cannot dispatch at all.
+- **Four of the five media-copy sequences are gated and the fifth is not.**
+  `TF_PRINTERCTRL` (`PrinterCtrlSequence`, **off** as Tera Term ships) gates
+  `CSI 0 i`, `CSI 5 i`, `CSI ? 1 i` and `CSI ? 5 i`; `CSI ? 4 i` — auto print
+  off — is deliberately reachable whatever the setting says, so a host can
+  always stop a terminal printing every line.
+- **`ts.PrnDev` is not a gate on printing, it is a gate on parsing.**
+  `DirectPrn` is sampled from `ts.PrnDev[0] != 0` when the controller starts
+  (`vtterm.c:2095`), and what it decides is whether the locking shifts and the
+  ISO-2022 designations arriving during the job are the terminal's to interpret
+  or bytes the printer should receive. With it off `ESC ( 0` still designates;
+  with it on the same four bytes are printed. Differential cases 133 and 134
+  are the same input under the two answers.
+- **The spool holds code points, not bytes.** `WriteToPrnFile` takes a `BYTE`
+  and stores it into a `char32_t` array (`teraprn.cpp:527`), and
+  `PrnFileDirectProc` converts each one back with `UTF32ToMBCP(u32, CP_ACP)` on
+  the way out — so a raw `0x1b` reaches the printer as U+001B and the encoding
+  is decided at the device, not at the parser.
+- **A control arriving inside a half-read sequence pushes that sequence out
+  ahead of itself.** `WriteToPrnFile(b, TRUE)` flushes the buffer and *then*
+  appends, so `ESC [ 12 BEL m` prints as `ESC [ 12 BEL m`. And the exit
+  sequence works only because the buffer is discarded rather than flushed:
+  `PrnParseCS`'s `CSI 4 i` arm calls `WriteToPrnFile(PrintFile_, 0, FALSE)`,
+  which is the *clear* form of the same function's four meanings.
+- **`RingBell`'s dead argument has a sibling here: `ResetTerminal` clears
+  `PrinterMode` and a host cannot reach it.** While the controller has the
+  stream an `ESC c` is four bytes of printer data, so the flag clearing at
+  `vtterm.c:327` only ever runs for Reset terminal on the menu. It also does
+  not close the job or clear `AutoPrintMode`, so a RIS mid-job leaves an open
+  spool nothing will print.
+- **Whether a wrapped line breaks in the printer's copy depends on whether a
+  log or a macro is running.** The wrap's `CarriageReturn`/`LineFeed` pair is
+  behind `NeedsOutputBufs()` (`vtterm.c:512`), which is the log **or** the
+  macro and pointedly not the printer — while the character itself reaches
+  `OutputLogUTF32` directly and is always copied. Reproduced; it is the only
+  thing that decides whether a printed wrapped line is one line or two.
+- **Auto print's byte argument is the whole of what it selects.** `LineFeed`
+  dumps the line for LF, VT and FF and not for IND or NEL, which pass a zero
+  (`vtterm.c:1153`, `:1505`) — so `ESC D` scrolls a line the printer never
+  sees, and the wrap's `LineFeed(LF, FALSE)` prints one.
+- **The dump is of the *grid*, not of the stream**, so `hello\rH` prints as
+  `Hello`. And upstream's version of it is the thirty-second defect on the list
+  below; this port prints what it meant to.
+
 And for the title, which is two strings in three places:
 
 - **OSC 1 sets the window title.** `vtterm.c:5109` is `case 0: case 1: case 2:`
@@ -2296,6 +2368,35 @@ restores what it read therefore restores the wrong thing. Reproduced, because
 the alternative is a terminal reporting something Tera Term never reports; it
 is also the reason `esctest`'s whole `ChangeDynamicColor` family cannot pass
 here.
+
+**And a thirty-second, in `buffer.c`, and it is the worst thing on this list:
+`BuffDumpCurrentLine` (`:2400`) smashes the stack, and prints the wrong bytes
+on its way there.** Twenty-eight lines with four faults in them, all in the
+handling of a double-byte character, and all reachable from the wire whenever
+`PrinterCtrlSequence` is on — auto print calls it at every line feed
+(`vtterm.c:693`) and `CSI ? 1 i` calls it directly.
+
+1. `char bufA[TermWidthMax+1]` is **1001 bytes** and the fill loop writes up to
+   **two per column**. A thousand-column terminal holding five hundred
+   full-width characters produces fifteen hundred bytes — five hundred past the
+   end of a stack buffer, with content the host chose.
+2. It writes the **low** byte of a double-byte code *twice* —
+   `*p++ = (c & 0xff); if (c > 0x100) *p++ = (c & 0xff);` — where
+   `buffer.c:3597`, the same file, correctly writes `(c >> 8)` and then
+   `(c & 0xff)`. And the boundary is `> 0x100` there against `< 0x100` here.
+3. The **write** loop is bounded by the column count rather than by the bytes
+   the fill produced, so whatever those doubled bytes pushed past it is
+   silently dropped.
+4. A padding cell's `ansi_char` is zero, and `WriteToPrnFile(handle, 0, FALSE)`
+   is the *clear the buffer* form of that function (`teraprn.cpp:504`) — so the
+   zero belonging to the second half of every wide character **discards
+   everything accumulated for the line so far**. `あab` prints as `a`.
+
+Not reproduced, and that is the only entry on this list where the reason is
+that reproducing it means reproducing a remote stack overflow.
+`Vt::dump_current_line` prints what upstream meant to print; for a line with no
+full-width character in it the two agree byte for byte, which is every line
+this port has been asked about so far.
 
 **And one in `vte`**, which is a dependency rather than the specification, so it
 is not in that file: `vte` 0.15.0's `advance_partial_utf8` (`lib.rs:687`) prints
