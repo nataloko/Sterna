@@ -4723,6 +4723,42 @@ three checks after it all hang off that one and a failure to spawn otherwise
 reads as three separate title bugs. The whole Linux suite — render, pty,
 macro, cmdline, control, xfer — is green after the change.
 
+The Windows shell has now been *run*, under Fedora's Wine 11 in the same
+container, with the offscreen platform. `cmdline_test` — the whole Tera Term
+command line, from `argv` to a window that has connected — passes every check
+but one, `macro_test` fails only its two shell-driving cases, `telnet_test`
+skips cleanly, and `render_test` executes its entire suite with six failures.
+That is the first evidence that this frontend does anything at all on Windows,
+and it took two harness corrections to get: `WINEPATH` is a list of *Windows*
+paths and a Unix one silently replaces `PATH` rather than adding to it, and
+`wineboot` does not finish in this container, so the prefix's registry `PATH`
+is never written either. Between them the process had no `PATH`, and what that
+looked like from inside Sterna was `CreateProcessW "cmd.exe /c pause" … File
+not found` about a `cmd.exe` sitting in `C:\windows\system32`.
+
+Three of the four remaining failures are Wine's rather than ours.
+`render_test`'s six are font metrics — ink in cells that should be blank, an
+underline no shorter than a letter, two cells that should differ and do not —
+and Wine's font stack is not Windows', so they are not Wine's question to
+answer; it also faults on exit, in a teardown no assertion had reached.
+`macro_test`'s are the two cases where a macro types at `cmd.exe` and waits
+for the echo: the connection opens and the caption names it, and then the
+screen stays blank, which is the same "Wine's console host does not deliver
+ConPTY output" limit already recorded for `tt-conn`. Everything else in that
+file — the dialogs, the notifier's re-entrancy, a macro starting and stopping
+— passes.
+
+The fourth is ours, and it is the kind of thing a Windows run exists to find.
+`cmdline_test`'s last check fails with *"failed to resize console to 80x24:
+HRESULT: -2147467263"* — `E_NOTIMPL`, Wine's answer for `ResizePseudoConsole`
+— from a call that was setting `terminal.title`. `Session::set_settings`
+assigns the settings and reconfigures the engine and *then* propagates the
+transport's resize error with `?`, so a caller that sees the failure and
+concludes nothing happened is wrong: everything happened except telling the
+far end. Not reproduced as a defect on real Windows, where that API exists,
+and not changed here either — the fix is an API decision about what a partial
+apply should report, not a Wine workaround. **Open.**
+
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
 DEC special graphics (line drawing — not CJK, and needed), macro reference docs,

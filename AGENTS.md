@@ -1958,6 +1958,41 @@ ones:
   spelling would have given is a listener reporting success with no descriptor.
   `write` is a *file* call there too, so it sends with `send`.
 
+And for running those binaries under Wine, where the harness lies before the
+code does:
+
+- **`WINEPATH` is a list of *Windows* paths, and a Unix one replaces `PATH`
+  rather than adding to it.** `WINEPATH=/usr/x86_64-w64-mingw32/sys-root/mingw/bin`
+  — the obvious way to let a cross-built binary find its Qt DLLs — leaves the
+  process with a `PATH` of exactly that string, so `C:\windows\system32` is no
+  longer on it. Spell it
+  `Z:\usr\x86_64-w64-mingw32\sys-root\mingw\bin;C:\windows\system32;C:\windows`.
+- **`wineboot` does not finish in this container**, so a prefix made by hand
+  never gets its registry `PATH` either and `%PATH%` comes back as the literal
+  string. Running the executable creates the prefix on its own, and the
+  explicit `WINEPATH` above is what makes up for the missing value. A killed
+  `wineboot` also leaves a `wineserver` behind that the *next* run waits on
+  for ever — kill that too, or every later run looks like a hang in whatever
+  it was testing.
+- **What those two look like from inside Sterna is a missing `cmd.exe`.**
+  `CreateProcessW "cmd.exe /c pause" … File not found`, about a file sitting
+  in `system32`: `portable-pty`'s Windows `search_path` gives up when there is
+  no `PATH` and hands the *bare* name to `CreateProcessW`, which does not
+  search `PATH` once it has been given an application name. It reads as a
+  broken pty and is a broken environment.
+- **Wine's fonts are not Windows' fonts, so `render_test` is not Wine's
+  question to answer.** Six of its assertions fail there — ink in cells that
+  should be blank, an underline no shorter than a letter, two cells that
+  should differ and do not — and all six are metrics. It also faults on exit,
+  after every assertion has run, and the crash handler then starts `winedbg`,
+  which wedges any script running the tests in a loop.
+- **Wine's ConPTY opens and then delivers nothing.** The connection succeeds
+  and the caption names the child, so a test that only checks it connected
+  passes; `macro_test`'s two shell-driving cases then sit in front of a blank
+  screen. Same limit already recorded for `tt-conn`, one layer up.
+  `ResizePseudoConsole` is `E_NOTIMPL` there, which is worth knowing because
+  the session propagates that error out of an unrelated settings change.
+
 And for the desktop side:
 
 - **The container's Qt is 6.4.2; the desktop's is 6.11.1.** Seven releases apart.

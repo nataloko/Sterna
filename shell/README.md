@@ -94,6 +94,28 @@ desktop, and closing that window would kill the terminal.
 and a `poll(2)`, and the Windows control channel is a named pipe — a different
 address, a different client and a different way to wait. Shimming the calls
 would compile and prove nothing about the transport actually used there.
+`pty_test` and `xfer_test` are out too, for their content rather than their
+transport: every `pty_test` case is a shell script built out of `stty` and
+`od`, and `xfer_test` needs `rz`.
+
+Running them needs `wine-core` and this environment, which is two corrections
+away from the obvious one — see AGENTS.md for what each looks like when it is
+wrong:
+
+```sh
+export WINEPREFIX=$HOME/.wine-sterna WINEDLLOVERRIDES="mscoree,mshtml="
+export WINEPATH='Z:\usr\x86_64-w64-mingw32\sys-root\mingw\bin;C:\windows\system32;C:\windows'
+export QT_QPA_PLATFORM=offscreen
+export QT_PLUGIN_PATH='Z:\usr\x86_64-w64-mingw32\sys-root\mingw\lib\qt6\plugins'
+wine build-win/cmdline_test.exe
+```
+
+What that proves and what it does not: `cmdline_test` passes everything but
+one check, and `macro_test` fails only the two cases that need a macro to read
+what `cmd.exe` printed — Wine's console host opens a ConPTY and then delivers
+no output. `render_test` runs its whole suite and fails six font metrics,
+which is Wine's font stack rather than an answer about Windows. Native Windows
+is still the authority for all three.
 
 ## The event loop has no timer in it
 

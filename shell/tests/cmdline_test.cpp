@@ -295,8 +295,13 @@ void test_the_title_and_the_title_bar()
         QStringLiteral("%1 - from the host VT").arg(shell.title);
     window.session()->feed(QByteArray("\033]0;from the host\007"));
     CHECK(spin([&] { return window.windowTitle() == expected; }, 1000));
-    CHECK(window.session()->setSetting(QStringLiteral("terminal.title"),
-                                       QStringLiteral("late"), &error));
+    if (!window.session()->setSetting(QStringLiteral("terminal.title"),
+                                      QStringLiteral("late"), &error)) {
+        // Applying settings resizes the connection, so this can fail for a
+        // reason that has nothing to do with the title. Say which.
+        fprintf(stderr, "could not set the title: %s\n", qPrintable(error));
+        failures++;
+    }
     CHECK(window.windowTitle() == expected);
 }
 
