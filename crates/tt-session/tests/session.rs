@@ -162,6 +162,23 @@ fn a_reply_the_parser_owes_goes_out_on_the_same_pump() {
     assert_eq!(h.outbound(), b"\x1b[1;1R");
 }
 
+/// The path a *host* takes, which is the one the colour event was missing
+/// from: `feed` covered the tests and the local echo, so an `OSC 4` arriving
+/// over a real connection moved the palette and told nobody.
+#[test]
+fn a_colour_osc_off_the_wire_says_the_painters_cache_is_stale() {
+    let (mut s, h) = connected(20, 4);
+    h.feed(b"\x1b]4;1;rgb:0c/22/38\x07");
+
+    let events = pump(&mut s);
+    assert!(events.contains(&Event::ColorsChanged), "{events:?}");
+    assert_eq!(s.vt().colors().ansi[1], (0x0c, 0x22, 0x38));
+
+    // And it is not repeated for a pump that moved no colour.
+    h.feed(b"x");
+    assert!(!pump(&mut s).contains(&Event::ColorsChanged));
+}
+
 #[test]
 fn paste_is_bracketed_only_when_the_host_asked() {
     let (mut s, h) = connected(20, 4);

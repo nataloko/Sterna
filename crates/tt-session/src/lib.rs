@@ -301,9 +301,7 @@ impl Session {
         // Here rather than only in the pump: applying settings rebuilds the
         // live colours, and a session with nothing arriving on it would
         // otherwise not pump again until it did.
-        if self.vt.take_colors_changed() {
-            self.events.push(Event::ColorsChanged);
-        }
+        self.collect_colors();
         let (cols, rows) = (self.vt.grid().cols(), self.vt.grid().rows());
         if let Some(c) = self.conn.as_mut() {
             let _ = c.resize(cols as u16, rows as u16);
@@ -1082,6 +1080,7 @@ impl Session {
 
         self.collect_title();
         self.collect_bells();
+        self.collect_colors();
         Ok(total)
     }
 
@@ -1400,9 +1399,7 @@ impl Session {
         self.events.push(Event::Damage);
         self.collect_title();
         self.collect_bells();
-        if self.vt.take_colors_changed() {
-            self.events.push(Event::ColorsChanged);
-        }
+        self.collect_colors();
     }
 
     /// Run the governor over whatever the parser asked for, and emit at most
@@ -1553,6 +1550,20 @@ impl Session {
         if title != self.last_title {
             self.last_title = title;
             self.events.push(Event::Title(self.last_title.clone()));
+        }
+    }
+
+    /// Say that a colour OSC moved something the painter caches.
+    ///
+    /// Called from all three places bytes reach the parser — the pump, `feed`,
+    /// and `set_settings`, which rebuilds the live colours from the file. It
+    /// was missing from the pump when the colour OSCs first landed, which is
+    /// the one path a *host* reaches: `feed` covered the tests and the local
+    /// echo, so an `OSC 4` over a real connection repainted nothing until
+    /// something else invalidated the cache.
+    fn collect_colors(&mut self) {
+        if self.vt.take_colors_changed() {
+            self.events.push(Event::ColorsChanged);
         }
     }
 
