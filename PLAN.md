@@ -4912,6 +4912,63 @@ says it was removed to keep a startup-only *theme* alive, and this port has no
 themes; copying it would buy a settings dialog whose colour tab silently does
 nothing.
 
+XTWINOPS is answered now — `CSI 1`-`10 t` and `CSI 11`/`13`/`14`/`15`/`16`/`19 t`
+alongside the `8`/`18`/`20`-`23` this port already had. It was the largest
+remaining cluster in `esctest/expected` that was ours rather than upstream's
+decision, and it is the family whose whole point is that the *frontend* is the
+authority: a VT engine has no window, and every one of these either describes
+one or moves one.
+
+So it crosses the seam in both directions, and the two directions are not
+symmetric. The **reports** are a snapshot the frontend pushes on every move,
+resize and window-state change (`tt_session_set_window_metrics`), because the
+answer to `CSI 14 t` is composed while the sequence is being parsed and there
+is nowhere inside `advance` to call into a toolkit. The **actions** are a
+bounded queue the frontend drains, the same split `Vt::take_bells` makes for
+the same reason. A frontend that never pushes gets a documented notional
+window — no chrome, at the origin, 8x16 cells, 1920x1080 work area — and the
+oracle's stubs answer with exactly those numbers, so `esctest/run_diff.sh`
+compares the two engines on the logic rather than on a desktop neither has.
+It now says **568 agree, 0 differ**: the five `XtermWinops_ResizePixels`
+disagreements that had been standing since before the colour work are gone,
+and nothing replaced them.
+
+Four things in the family are not what they look like. `CSI 13 t` reports x
+then y while every size report is **height then width**, which reads as a typo
+in upstream and in xterm and is neither. `CSI 13 t`'s sub-parameter 2 is the
+text area and 0/1 the frame, while `CSI 14 t`'s are the other way round — also
+xterm's, also not a slip. `CSI 10 t` is **not full screen**: upstream's comment
+says a PuTTY-style one is what it ought to be and that maximising is the
+shortcut it took, so 9 and 10 are one operation with 10 having a toggle 9 has
+not. And an unrecognised sub-parameter answers *nothing at all* — the
+`default: return` in cases 13 and 14 — rather than falling back to the plain
+form.
+
+`CSI 8 t` was already implemented and was half-broken: the engine resized the
+grid, correctly, because upstream's `ChangeTerminalSize` does and because the
+differential dump is taken at `NumOfColumns`/`NumOfLines` — but nothing told
+the window, so the painter drew the new number of cells into the old widget
+until some other resize undid it. `Vt::take_terminal_resized` is the flag that
+fixes it, and it is set by that sequence alone rather than by `Session::resize`,
+so a window resizing itself in response does not come back round as another
+request.
+
+Sixteen of the eighteen `XtermWinopsTests` still fail and their reasons are
+now four different sentences rather than one. Two now pass. Nine of the sixteen
+need a real window, which `tt-host` has not got — they are exercised against
+one in `shell/tests/pty_test.cpp` instead, where a child process asks
+`CSI 14 t` and reads the answer off its own stdin. The rest are upstream's:
+`CSI 9;2 t` and `9;3 t` are not operations Tera Term has, `CSI 8 t` substitutes
+the 24x80 default for a zero axis where xterm reads it as "the maximum in that
+direction", and the switch ends at case 23, so `CSI 24 t` — DECSLPP everywhere
+else — does nothing.
+
+One defect in the colour work above was found while wiring this: **the pump
+never emitted `ColorsChanged`.** Only `feed` did, which is the path tests and
+the local echo take, so an `OSC 4` arriving over a real connection moved the
+palette and told the painter nothing. Fixed, with the regression test on the
+transport path rather than on `feed`.
+
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
 DEC special graphics (line drawing — not CJK, and needed), macro reference docs,
