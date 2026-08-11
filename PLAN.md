@@ -4832,6 +4832,86 @@ under Wine, which is the one of the four binaries where Wine is a fair
 witness: named pipes, `QWinEventNotifier` and a queued close are all things it
 implements properly, unlike its fonts and its console host.
 
+The colour OSCs are answered now — `OSC 4`, `OSC 5`, `OSC 10`–`19` and the
+`104`/`105`/`110`–`119` resets — which is the first thing a host can change
+about this terminal's appearance and the last large family of sequences
+upstream implements that this port had not touched. `tt-vt` holds the live
+colours because upstream's handler does: `vtdraw_t` keeps six pairs and a
+256-entry table, `ts` keeps what the settings asked for, and a reset copies the
+second over the first. That split is not a detail — the palette decides which
+*index* a truecolor SGR resolves to, so a host repainting it changes the grid
+and not only how it looks.
+
+Four things in that family are not what their names promise, and all four are
+read off `vtterm.c` and `vtdisp.c` rather than guessed. `XsParseColor` accepts
+`rgb:` and `#` and nothing else — `rgbi:`'s arm is in the source commented out
+and no CIE or TekHVC form was ever written — and its `rgb:` guard is
+`_strnicmp` while its parse is a `sscanf` against a lower-case literal, so
+`RGB:0/0/0` passes the first test and fails the second. `OSC 10;a;b;c` walks
+its own number along the list, so it is a foreground *and* a background and
+then a cursor colour that has no arm at all. `OSC 104;` is not `OSC 104`: an
+empty parameter string is still a parameter string, so it resets palette entry
+0 alone. And `OSC 105`'s "all" is three colours — bold and blink foregrounds
+and the reverse background — not the four `OSC 5` can set, so the underline
+foreground is a colour the matching reset cannot put back.
+
+**A thirty-first upstream defect, and it is why `esctest`'s dynamic-colour
+tests cannot pass here: a host cannot read back a colour it just set.**
+`DispSetColor` writes `vtdraw_t`'s live pair (`vtdisp.c:3376`) and
+`DispGetColor` reads `ts` (`:3561`), so `OSC 10;#ff0000` followed by `OSC 10;?`
+answers with the *configured* foreground. The paint moves and the report does
+not. Only the palette round-trips, because both halves of it are
+`vt->ANSIColor`, and Tek does, because its setter happens to write the same
+`ts` field the getter reads. Reproduced, since the alternative is a terminal
+that reports something Tera Term never reports; found by reading, so it belongs
+here rather than in `docs/upstream-bugs.md`.
+
+The oracle could not have arbitrated any of this an hour earlier, and that is
+the more useful half of the change. `vtdisp.c` is not compiled into it, so
+those three functions live in `stubs_manual.c` — and the version there was
+convenient rather than transcribed: one flat array indexed by the `CS_` number,
+so a dynamic colour *could* be read back; no eight-colour permutation; and a
+`DispResetColor` that ignored its argument and put the whole table back. The
+same trap `DispFindClosestColor` fell into in that file, which held xterm's
+palette until it was caught. All three are transcriptions now, `ts`'s colour
+defaults are in `settings_defaults()` beside the flag words, and
+`esctest/run_diff.sh` went from 25 disagreements to 5 — the two engines now
+agree byte-for-byte on every colour test, including the read-back defect.
+
+`esctest` itself needed a patch, in a new `esctest/patches/` following
+`oracle/patches/`'s convention. A test that fails part-way through reading a
+reply leaves the rest of it in the pty and esctest never takes it out, so the
+next test's `reset()` reads a stale byte where it expected a CSI and leaves its
+own reply behind in turn: the first run that answered a colour query went from
+365 passing to **68**, with the log full of `Read f (0x66), expected CSI` in
+tests that have nothing to do with colour. It is a property of the harness
+rather than of any terminal — an unexpected answer is all it takes — so the
+patch drains whatever is readable before each reset. With it, 379 of 568 pass,
+up from 365, and the fourteen that moved are the six `ChangeColor` forms
+upstream can parse, five `ChangeSpecialColor` ones, `ResetColor_Standard` and
+two more.
+
+Answering `DCS + q` — XTGETTCAP — came with it, because esctest asks for the
+`Co` capability before it can name a special colour. Upstream implements
+exactly one capability under two spellings and answers it out of the colour
+flags rather than the palette: 256, 16 or 8, and **nothing at all** when
+`EnableANSIColor` is off, which is the one place on the wire that setting is
+visible at all. It changed no esctest result, because esctest compares the
+reply against its own upper-case request while every terminal answers in lower
+case, so `GetIndexedColors()` is 16 for xterm too.
+
+The frontend reads the live colours rather than the settings now, through a
+`tt_session_color_rgb` beside the existing palette call and a
+`TT_EVENT_KIND_COLORS_CHANGED` that says when the cache is stale — separate
+from `Damage`, because re-reading 262 values on every pump would pay constantly
+for something that happens once a session. One deliberate divergence:
+`ResetSetup`'s `BGInitialize(FALSE)` is inside an `#if 0` upstream, so applying
+settings in Tera Term leaves every live colour alone and a colour changed in
+the dialog does not appear until Restore setup or Reset terminal. The comment
+says it was removed to keep a startup-only *theme* alive, and this port has no
+themes; copying it would buy a settings dialog whose colour tab silently does
+nothing.
+
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
 DEC special graphics (line drawing — not CJK, and needed), macro reference docs,

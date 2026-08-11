@@ -78,6 +78,25 @@ HPB and VPB, and a VPA that had lost origin mode — plus DECDSR, where we had
 been answering the plain DSR reports to the private `CSI ? Ps n` form that
 upstream reserves for the locator.
 
+## `patches/`
+
+The checkout is pinned and never edited in place; anything a run needs goes in
+a patch here, with a note at the top saying why — the same convention
+`oracle/patches/` follows for Tera Term. `run_tests.sh` resets the tree and
+reapplies them on every run, so a half-applied patch cannot survive between
+runs.
+
+There is one, and it is a harness fix rather than a change to what any test
+asserts. **A test that fails part-way through reading a reply leaves the rest
+of it in the pty, and esctest never takes it out again** — the next test's
+`reset()` reads that stale byte where it expected a CSI, fails, and leaves its
+own reply behind in turn. One assertion failure therefore fails every test
+after it: the run that first answered `OSC 4;1;?` went from 365 passing to 68,
+and the log filled with `Read f (0x66), expected CSI` in tests with nothing to
+do with colour. Nothing about that is specific to this terminal — any answer a
+test does not expect does it — so the patch drains whatever is already readable
+before each reset.
+
 ## Traps
 
 - **The child does not start in this directory.** A pty is a terminal, not a
@@ -96,3 +115,18 @@ upstream reserves for the locator.
   category we do not answer at all costs a second per test rather than a
   failure per test. The full run is about a minute and a half; if it becomes
   ten, something has stopped answering.
+- **`GetIndexedColors()` is always 16, for every terminal.** It asks for the
+  `Co` termcap capability and then looks for its own **upper-case** `436F` in
+  the reply — while every terminal that answers, xterm and Tera Term included,
+  hex-encodes in lower case. So the comparison never matches and the fallback
+  stands. The visible consequence is that `ChangeSpecialColorTests`' `OSC 4`
+  half addresses palette entries 16 and 17 rather than the special colours it
+  is named after, and its `OSC 5` half — which needs no offset — is the only
+  one of the two that tests what the file says it tests.
+- **A colour a test leaves behind outlives it.** esctest's `reset()` clears the
+  palette with `OSC 104;`, and that is not `OSC 104`: an empty parameter string
+  is still a parameter string, so upstream resets entry 0 alone. Two tests here
+  therefore see the previous test's colours, and
+  `ResetSpecialColorTests.test_ResetSpecialColor_Single` **passes because of
+  it** — its "original" reading is the value the test before it left in palette
+  entry 16. Reorder the suite and it fails.
