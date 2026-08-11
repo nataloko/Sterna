@@ -289,6 +289,22 @@ MainWindow::MainWindow(const QString &settingsPath)
     startControl(QString());
 }
 
+MainWindow::~MainWindow()
+{
+    // The mirror of the constructor's last line, and for the same reason: the
+    // control socket publishes this window, so it stops answering before
+    // anything it can answer about goes away.
+    delete m_control;
+    m_control = nullptr;
+    // Then the macro, which is the one child that reaches back into another
+    // child while it is being destroyed — `~Macro` calls `Session::unlinkMacro`
+    // to take the terminal's tap off. Qt would delete the session first, since
+    // it deletes children in the order they were created. See the note on the
+    // declaration.
+    delete m_macro;
+    m_macro = nullptr;
+}
+
 void MainWindow::applySavedPosition()
 {
     if (!windowPositionIsMeaningful()) {

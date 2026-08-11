@@ -37,6 +37,19 @@ public:
     /// before the window is shown.
     explicit MainWindow(const QString &settingsPath = QString());
 
+    /// Tear the macro down before Qt gets to the children.
+    ///
+    /// `QObjectPrivate::deleteChildren` deletes in the order they were
+    /// created, and the session is created first — so with no destructor here
+    /// the session is freed and *then* `~Macro` calls `unlinkMacro` on it.
+    /// A use-after-free on every window that closes with a macro still
+    /// running, which is a script that outlives its window and the End button
+    /// not having been pressed. It presented as an intermittent
+    /// `malloc_consolidate(): unaligned fastbin chunk detected` in CI, in a
+    /// test that passes locally, because writing into freed memory only
+    /// corrupts the heap once something else has claimed it.
+    ~MainWindow() override;
+
     /// Do what a Tera Term command line says: apply it to the settings, shape
     /// the window, and open whatever it named.
     ///

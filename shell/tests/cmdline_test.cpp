@@ -581,6 +581,52 @@ void test_osc52_overrides_the_file_for_this_launch()
 /// replaces it and a `/D=` topic cancels it. Relative names live beside the
 /// active INI here instead of depending on a desktop launcher's working
 /// directory.
+/// A window closing while its macro is still running.
+///
+/// This asserts almost nothing by itself — that the macro really was running,
+/// so the case is the one intended — and the whole of its value is what it
+/// does *after* the brace. `QObjectPrivate::deleteChildren` deletes in the
+/// order the children were created, the session is created first, and
+/// `~Macro` calls `Session::unlinkMacro` to take the terminal's tap off: so a
+/// window torn down with a live macro read a freed session. Nothing here
+/// notices unless something else has claimed that memory, which is why CI saw
+/// it as an intermittent `malloc_consolidate(): unaligned fastbin chunk
+/// detected` and this file passed ten times out of ten locally.
+///
+/// **Run it under AddressSanitizer or it proves very little** — configure a
+/// build tree with `-DCMAKE_CXX_FLAGS="-fsanitize=address
+/// -fno-omit-frame-pointer -g"` and `-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address`,
+/// which is what named the free site here in one run.
+///
+/// `pause 30` rather than a script that ends, because the bug needs the macro
+/// to still be there; a macro that finishes first takes the `if (m_macro)`
+/// that guards the use-after-free out of the picture entirely.
+void test_a_window_that_closes_with_a_macro_still_running()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    if (!dir.isValid()) {
+        return;
+    }
+    const auto write = [](const QString &path, const QByteArray &body) {
+        QFile file(path);
+        return file.open(QIODevice::WriteOnly) && file.write(body) == body.size();
+    };
+    CHECK(write(dir.filePath(QStringLiteral("startup.ttl")),
+                QByteArray("pause 30\n")));
+    const QString ini = dir.filePath(QStringLiteral("settings.ini"));
+    CHECK(write(ini, QByteArray("[Tera Term]\nStartupMacro=startup.ttl\n")));
+
+    MainWindow window(ini);
+    TtCmdLine *cmd = parse({QStringLiteral("/DS")});
+    CHECK(cmd != nullptr);
+    window.startFrom(cmd);
+    tt_cmdline_free(cmd);
+    // Long enough for the thread to be in `pause`, short enough not to matter.
+    spin([] { return false; }, 200);
+    CHECK(window.macroRunning());
+}
+
 void test_the_startup_macro_setting_and_its_overrides()
 {
     QTemporaryDir dir;
@@ -710,6 +756,7 @@ int main(int argc, char **argv)
     test_menu_and_accelerator_settings();
     test_the_language_file_translates_menus_without_stealing_alt();
     test_osc52_overrides_the_file_for_this_launch();
+    test_a_window_that_closes_with_a_macro_still_running();
     test_the_startup_macro_setting_and_its_overrides();
     test_a_host_name_connects_and_logs();
 
