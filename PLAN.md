@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 466
+**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 469
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4732,6 +4732,37 @@ not fixed on a hunch: `tt-ttl`'s `set_dir` canonicalises into `cur_dir`**, which
 `getdir` reports — upstream's `GetCurrentDirectory` never returns a verbatim
 path, so this is the same defect one crate over, but whether it moves a golden
 is a question the Windows TTL gate has not been reached to answer yet.
+
+Then the run stopped being a failure and became a hang: 74 minutes in
+`tt-macro`'s `connect.rs`, against about eleven for the whole job. Two separate
+things, and only one of them is fixed.
+
+**The test was opening a real serial port, and that is fixed.** `/BAUD=` selects
+the serial port as well as setting the speed — faithfully, it is what upstream's
+does — and it sat *after* the host name, so word order made a nominally TCP test
+into a serial one. On the runner that is `COM1`; here it is `/dev/ttyS0`, which
+on the rig machine is a unit test reaching for whatever is plugged in. The
+options go first now, which is the order dependence the test is named for. The
+whole file runs in five seconds again, verified natively and under Wine.
+
+**A serial open blocking the caller indefinitely is not fixed, and needs a
+Windows machine.** `Session::connect` is serviced on the frontend's thread, so
+whatever blocked took the window's event loop with it — in the test that meant
+the harness's own ten-second limit could not fire, because the thread that
+checks it was the thread that was stuck. Wine faults instead of hanging, inside
+its own DLL and with no usable backtrace, and `AGENTS.md` already says Wine's
+PTY-backed COM mapping is not evidence about Windows; so this wants
+`tests/serial_windows.rs` and a real port rather than another guess. What is
+worth suspecting first is the pair the traps already name: `CreateFileW` on a
+device whose driver blocks, and the `WaitCommEvent` worker's acknowledgement
+handshake in `WindowsSerialWake::start`.
+
+Two smaller things came out of it. Every CI job now has `timeout-minutes: 30`,
+because `cargo test` has no per-test timeout and one stuck test otherwise takes
+the six-hour default with it. And the shell job failed once, separately, with
+`malloc_consolidate(): unaligned fastbin chunk detected` in `cmdline_test` —
+heap corruption, on Linux, in a test that passes ten times out of ten locally on
+the same Qt. Intermittent, unrelated to anything in this section, and open.
 
 The last deferred TTL file branch is now back where it has meaning. On Windows,
 a macro with no BOM is converted from `GetACP()` exactly where the initial file

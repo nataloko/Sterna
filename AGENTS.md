@@ -774,6 +774,23 @@ And for measuring anything:
 
 And for the serial side:
 
+- **A command line can select the serial port without looking as though it
+  does, and then a test opens whatever is plugged into the machine.** `/BAUD=`
+  and `/SPEED=` set `port_type` as well as the speed — as `/C=` and every
+  `/CDATABIT=`-shaped option do — so word order decides, exactly as it does for
+  a bare host name, and `connect '127.0.0.1:1 /T=0 /BAUD=115200'` is a *serial*
+  connect to `COM1` with a host name it never uses. That is faithful; what is
+  not is a unit test doing it. It cost a CI run of 74 minutes against a job
+  that normally takes eleven. Put the options before the host name when the
+  point is that they reached the settings.
+- **A `connect` is serviced on the frontend's thread, so a transport that
+  blocks while opening takes the window's event loop with it** — and in a test,
+  the watchdog too: `tt-macro`'s harness has a ten-second limit and it could
+  not fire, because the thread that checks it was the thread that was stuck. A
+  hang here is therefore never "the macro is slow"; look at what the *loop* is
+  inside. Whether the Windows serial open can block indefinitely is open and
+  needs a real port — Wine faults instead, inside its own DLL, and its
+  PTY-backed COM mapping is not evidence about Windows either way.
 - **`tcsetattr` returns success if it could apply *any* of what you asked.**
   The FTDI accepts `CS5` and then transmits eight bits anyway. Read settings
   back before believing them; `tt-conn`'s `set_data_bits` does.
