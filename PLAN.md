@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 461
+**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 464
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4705,6 +4705,22 @@ closes. That check is on `tick` as well as on the quiet read path — a child
 that exits without printing produces no wakeup to read on. Twelve test
 binaries reported before the ConPTY failure, against six before the CRLF one;
 the rest of the workspace is still unrun there.
+
+Sixteen now, and the control socket was next: five failures with one cause and
+one on its own. `ImpersonateNamedPipeClient` answers `ERROR_CANNOT_IMPERSONATE`
+until something has been read from the pipe, so the peer check at accept could
+never pass — every connection was refused as an intruder and every client saw
+the window hang up on it. It runs on the first line now, before that line is
+parsed or answered, while Unix keeps the stricter pre-read order that
+`SO_PEERCRED` allows. The separate one: `FindFirstFile` on `\\.\pipe` reports an
+empty match as `ERROR_NO_MORE_FILES` rather than `ERROR_FILE_NOT_FOUND`, so a
+machine with no window open failed every client that had to look.
+
+Worth recording as method rather than as fact: the first of those took a round
+trip to diagnose because a refusal and a broken check were the same `false`.
+Making the check keep its reason turned a guess about Win32 semantics into
+Windows stating the rule in its own error text. That is the cheaper move
+whenever the only machine that can answer is a CI runner.
 
 The last deferred TTL file branch is now back where it has meaning. On Windows,
 a macro with no BOM is converted from `GetACP()` exactly where the initial file

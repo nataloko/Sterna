@@ -2125,6 +2125,27 @@ And for the control socket:
   prunes dead names out of the directory — and without the pruning, "there is
   exactly one window, so I know which you meant" starts refusing a session that
   has exactly one window.
+- **Windows will not say who a named-pipe client is until it has spoken**, so
+  the peer check cannot sit where its Unix counterpart does.
+  `ImpersonateNamedPipeClient` answers `ERROR_CANNOT_IMPERSONATE` — "unable to
+  impersonate using a named pipe until data has been read from that pipe" — and
+  the accept loop had it before the first read, so *every* connection was
+  refused as an intruder and every client saw the window hang up on it. It runs
+  on the first line now, before that line is parsed or answered; reading is not
+  acting. `SO_PEERCRED` is a property of the connection rather than of the
+  traffic, so Unix keeps the stricter order and the two are deliberately not
+  the same code path.
+- **A refusal and a broken check were the same `false`, which is what made the
+  above take a round trip to find.** "This peer is not us" is the answer that
+  closes the connection, and it was also what a Win32 call failing produced —
+  so the symptom was five tests reporting a hang-up and nothing saying why.
+  `peer_check` keeps the reason and the tests assert through it; the library
+  itself still has nowhere to complain, which is why it is `cfg(test)`.
+- **`FindFirstFile` on `\\.\pipe` says `ERROR_NO_MORE_FILES` where a directory
+  says `ERROR_FILE_NOT_FOUND`.** So a namespace with no window in it — an
+  ordinary machine with no terminal open — failed every client that had to
+  look, rather than answering with an empty list. Wine gives the directory
+  spelling, so the focused ABI smoke could not see it.
 - **A modal dialog raised from inside `tt_ctl_service` holds the client open**,
   and neither of the two places it happens looks like a dialog. A `connect` that
   names nothing reaches `showConnectDialog`, and one that fails to open reaches
