@@ -576,10 +576,23 @@ fn expand_env(src: &[u8]) -> Vec<u8> {
             Some(rel) => {
                 let end = i + 1 + rel;
                 match get_env(&src[i + 1..end]) {
-                    Some(val) => out.extend_from_slice(&val),
-                    None => out.extend_from_slice(&src[i..=end]),
+                    Some(val) => {
+                        out.extend_from_slice(&val);
+                        i = end + 1;
+                    }
+                    // **The closing percent is not consumed.** Windows emits
+                    // the opener and the name and then resumes scanning *at*
+                    // the delimiter, so it opens the next name:
+                    // `%UNSET%KNOWN%` is `%UNSET` followed by `KNOWN`'s value,
+                    // not the whole string left alone. This file recorded the
+                    // opposite for a while, and every test agreed with it
+                    // because the only case that can tell them apart is two
+                    // names in a row with the first one unset.
+                    None => {
+                        out.extend_from_slice(&src[i..end]);
+                        i = end;
+                    }
                 }
-                i = end + 1;
             }
         }
     }
@@ -1041,10 +1054,13 @@ mod tests {
             expand_env(b"%STERNA_TTL_EXPAND%%STERNA_TTL_EXPAND%"),
             b"VALUEVALUE".to_vec(),
         );
+        // The one case that can tell the two delimiter rules apart, and the
+        // reason this was wrong until a native Windows run said so: everything
+        // above passes whether or not the closing percent is consumed.
         assert_eq!(
             expand_env(b"%STERNA_NOT_SET%STERNA_TTL_EXPAND%"),
-            b"%STERNA_NOT_SET%STERNA_TTL_EXPAND%".to_vec(),
-            "an unknown name's closing percent is not reused as an opener"
+            b"%STERNA_NOT_SETVALUE".to_vec(),
+            "an unknown name's closing percent opens the next name"
         );
     }
 
