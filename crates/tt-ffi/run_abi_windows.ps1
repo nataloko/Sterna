@@ -13,19 +13,29 @@ if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
     Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64" | Out-Null
 }
 
-$profile = if ($env:PROFILE) { $env:PROFILE } else { "debug" }
+# `debug` is the *directory* a dev build lands in and is not a profile name:
+# `cargo build --profile debug` is an error — "profile name `debug` is
+# reserved" — so the flag goes in only when the caller asked for a profile,
+# which is what `run_abi.sh` does. And this is deliberately not `$profile`:
+# that is one of PowerShell's automatic variables, holding the path to the
+# user's own profile script.
+$outDir = if ($env:PROFILE) { $env:PROFILE } else { "debug" }
 $target = if ($env:CARGO_TARGET_DIR) {
     $env:CARGO_TARGET_DIR
 } else {
     Join-Path $PSScriptRoot "..\target"
 }
-$lib = Join-Path $target $profile
+$lib = Join-Path $target $outDir
 $dll = Join-Path $lib "sterna.dll"
 $import = Join-Path $lib "sterna.dll.lib"
 $abi = Join-Path $lib "abi-windows.exe"
 $compat = Join-Path $lib "abi-windows-compat.exe"
 
-cargo build -p tt-ffi --profile $profile
+if ($env:PROFILE) {
+    cargo build -p tt-ffi --profile $env:PROFILE
+} else {
+    cargo build -p tt-ffi
+}
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 if (-not (Test-Path $dll)) { throw "no $dll" }
 if (-not (Test-Path $import)) { throw "no $import" }
