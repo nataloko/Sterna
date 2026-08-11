@@ -267,7 +267,21 @@ impl Session {
     /// Everything the core does not read is still stored, which is the point:
     /// a setting with no subsystem yet has to survive being written back to
     /// the file it came from.
-    pub fn set_settings(&mut self, settings: Settings) -> Result<()> {
+    ///
+    /// **It cannot fail, and the missing `Result` is the decision rather than
+    /// an omission.** Applying settings is local: the only call under here
+    /// that can refuse is the one telling the far end its new size, and by the
+    /// time it runs everything else has already happened. Returning that
+    /// error made the call say "this did not work" about a call that had
+    /// worked — which is how a `/W=` setting a *title* came back reporting
+    /// `ResizePseudoConsole`, and sent the reader looking at the command line.
+    /// The two failures behind it are both answered elsewhere: a link that has
+    /// really gone reports [`Event::Disconnected`] at the next pump, and a
+    /// platform without the call is not this session's news to break. Upstream
+    /// has no error path here at all, and both other callers of the same
+    /// `resize` — [`Session::connect`] and the macro host's `connect` — had
+    /// already discarded it on their own.
+    pub fn set_settings(&mut self, settings: Settings) {
         let config = vt_config(&settings, self.vt.config());
         self.settings = settings;
         self.vt.set_config(config);
@@ -278,9 +292,8 @@ impl Session {
         self.events.push(Event::Damage);
         let (cols, rows) = (self.vt.grid().cols(), self.vt.grid().rows());
         if let Some(c) = self.conn.as_mut() {
-            c.resize(cols as u16, rows as u16)?;
+            let _ = c.resize(cols as u16, rows as u16);
         }
-        Ok(())
     }
 
     /// What ends a word, for a double-click — `ts.DelimListW` (`ttset.c:1171`).
@@ -308,14 +321,18 @@ impl Session {
     ///
     /// The value is parsed exactly as the file would parse it, bounds and
     /// default-biased booleans included, so a script and a hand-edited
-    /// `TERATERM.INI` cannot disagree about what a value means.
-    pub fn set_setting(&mut self, name: &str, value: &str) -> Result<bool> {
+    /// `TERATERM.INI` cannot disagree about what a value means. An
+    /// out-of-range number is therefore not a failure — it lands where the
+    /// file would put it — and a name that is not in the schema is the only
+    /// thing this can refuse. See [`Session::set_settings`] for why applying
+    /// itself has no error to report.
+    pub fn set_setting(&mut self, name: &str, value: &str) -> bool {
         let mut settings = self.settings.clone();
         if !settings.set_str(name, value) {
-            return Ok(false);
+            return false;
         }
-        self.set_settings(settings)?;
-        Ok(true)
+        self.set_settings(settings);
+        true
     }
 
     /// Attach a connection. The terminal is not reset: reconnecting a serial

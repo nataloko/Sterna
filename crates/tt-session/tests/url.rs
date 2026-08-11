@@ -31,7 +31,7 @@ fn split_url_uses_upstreams_continued_copy_setting() {
 
     assert_eq!(session.url_at(0, 5).as_deref(), Some("http://\r\r\nx"));
     settings.clipboard_continued_line_copy = true;
-    session.set_settings(settings).unwrap();
+    session.set_settings(settings);
     assert_eq!(session.url_at(0, 5).as_deref(), Some("http://x"));
     assert_eq!(session.url_at(1, 0).as_deref(), Some("http://x"));
 }

@@ -68,7 +68,7 @@ fn applying_a_size_resizes_the_grid_and_tells_the_far_end() {
     let mut settings = s.settings().clone();
     settings.terminal_cols = 100;
     settings.terminal_rows = 40;
-    s.set_settings(settings).expect("apply");
+    s.set_settings(settings);
     assert_eq!((s.grid().cols(), s.grid().rows()), (100, 40));
     assert_eq!(handle.with(|m| m.last_resize), Some((100, 40)));
 }
@@ -83,7 +83,7 @@ fn applying_the_backspace_key_changes_what_the_key_sends() {
     let (mut s, _) = session();
     assert!(s.vt().backspace_sends_bs());
 
-    assert!(s.set_setting("keyboard.backspace", "DEL").expect("apply"));
+    assert!(s.set_setting("keyboard.backspace", "DEL"));
     assert!(!s.vt().backspace_sends_bs());
     assert_eq!(
         s.settings().keyboard_backspace,
@@ -97,19 +97,19 @@ fn applying_the_backspace_key_changes_what_the_key_sends() {
     s.feed(b"\x1b[?67h");
     assert!(s.vt().backspace_sends_bs());
     let settings = s.settings().clone();
-    s.set_settings(settings).expect("apply");
+    s.set_settings(settings);
     assert!(!s.vt().backspace_sends_bs());
 }
 
 #[test]
 fn a_name_that_is_not_ours_is_refused_rather_than_ignored() {
     let (mut s, _) = session();
-    assert!(!s.set_setting("terminal.nonesuch", "1").expect("apply"));
+    assert!(!s.set_setting("terminal.nonesuch", "1"));
     assert_eq!(s.setting("terminal.nonesuch"), None);
     // A value out of range is not a refusal: the file's own rule applies, so
     // zero columns is 80 rather than an error nobody could have got from
     // editing the INI by hand.
-    assert!(s.set_setting("terminal.cols", "0").expect("apply"));
+    assert!(s.set_setting("terminal.cols", "0"));
     assert_eq!(s.grid().cols(), 80);
 }
 
@@ -121,9 +121,7 @@ fn a_setting_the_core_ignores_is_still_kept() {
     // `$20`, not a space: `GetPrivateProfileString` strips the whitespace
     // around a value, which is exactly why upstream's own default spells the
     // space that way (`ttset.c`'s `DelimList`).
-    assert!(s
-        .set_setting("keyboard.word_delimiters", "$20,;")
-        .expect("apply"));
+    assert!(s.set_setting("keyboard.word_delimiters", "$20,;"));
     assert_eq!(
         s.setting("keyboard.word_delimiters").as_deref(),
         Some("$20,;")
@@ -143,7 +141,7 @@ fn turning_the_history_off_leaves_the_page_alone() {
     s.feed(b"hello\r\n");
     let mut settings = s.settings().clone();
     settings.terminal_scrollback_enabled = false;
-    s.set_settings(settings).expect("apply");
+    s.set_settings(settings);
     assert_eq!(s.grid().rows(), 24);
     assert_eq!(s.scrollback_len(), 0);
     assert_eq!(row(&s, 0), "hello");
@@ -167,7 +165,7 @@ fn applying_a_size_takes_a_scrolled_back_view_live() {
 
     let mut settings = s.settings().clone();
     settings.terminal_rows = 30;
-    s.set_settings(settings).expect("apply");
+    s.set_settings(settings);
     assert_eq!(s.view_offset(), 0);
 }
 

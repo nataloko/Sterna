@@ -205,7 +205,7 @@ fn applying_settings_at_the_same_size_leaves_the_view_alone() {
 
     let mut settings = s.settings().clone();
     assert!(settings.set_str("terminal.local_echo", "on"));
-    s.set_settings(settings).unwrap();
+    s.set_settings(settings);
     assert_eq!(s.view_offset(), 5);
 }
 

@@ -193,7 +193,7 @@ fn the_clipboard_settings_decide_what_a_paste_looks_like() {
         let (mut s, h) = connected(20, 4);
         let mut settings = s.settings().clone();
         edit(&mut settings);
-        s.set_settings(settings).unwrap();
+        s.set_settings(settings);
         s.feed(b"\x1b[?2004h");
         s.paste(text).unwrap();
         h.outbound()
@@ -267,7 +267,7 @@ fn send_break_reaches_the_transport_and_holds_for_what_the_file_says() {
 
     let mut settings = s.settings().clone();
     settings.serial_break_time = 5;
-    s.set_settings(settings).unwrap();
+    s.set_settings(settings);
     s.send_break().unwrap();
     assert_eq!(h.with(|st| st.last_break), Some(Duration::from_millis(5)));
 
@@ -308,7 +308,7 @@ fn a_window_that_stays_open_can_clear_on_disconnect() {
     settings.terminal_rows = 4;
     settings.connection_auto_win_close = false;
     settings.connection_clear_screen_on_close = true;
-    s.set_settings(settings).unwrap();
+    s.set_settings(settings);
     s.drain_events();
 
     h.feed(b"keep me");
@@ -341,7 +341,7 @@ fn auto_close_is_network_only() {
     settings.terminal_cols = 20;
     settings.terminal_rows = 4;
     settings.connection_clear_screen_on_close = true;
-    s.set_settings(settings).unwrap();
+    s.set_settings(settings);
     s.drain_events();
 
     let (transport, h) = MemoryTransport::with_kind(LinkKind::LocalPty);

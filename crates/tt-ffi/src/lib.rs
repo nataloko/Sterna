@@ -1239,8 +1239,10 @@ pub extern "C" fn tt_session_word_delimiters(session: *mut TtSession) -> *const 
 /// value means. An out-of-range number is therefore **not** an error; it lands
 /// where the file would put it.
 ///
-/// `TT_ERR_INVALID` for a name that is not in the schema. Applying can also
-/// resize the terminal, which is told to the far end and can fail there.
+/// `TT_ERR_INVALID` for a name that is not in the schema, which is the only
+/// thing this refuses: applying is local and cannot fail, so a failure here
+/// always means the *name* was wrong. See [`tt_session::Session::set_settings`]
+/// for why telling the far end about a resize is not part of that answer.
 ///
 /// **It overwrites modes the host set**, and that is upstream's behaviour
 /// rather than an oversight: in Tera Term the setting and the mode are the
@@ -1257,10 +1259,10 @@ pub extern "C" fn tt_session_set_setting(
         (Ok(n), Ok(v)) => (n, v),
         (Err(e), _) | (_, Err(e)) => return e,
     };
-    match s.session.set_setting(name, value) {
-        Ok(true) => TT_OK,
-        Ok(false) => fail(TT_ERR_INVALID, format!("no setting named {name}")),
-        Err(e) => report(e),
+    if s.session.set_setting(name, value) {
+        TT_OK
+    } else {
+        fail(TT_ERR_INVALID, format!("no setting named {name}"))
     }
 }
 
@@ -1282,10 +1284,8 @@ pub extern "C" fn tt_session_settings_load(
         Ok(ini) => ini,
         Err(e) => return fail(TT_ERR_IO, format!("{path}: {e}")),
     };
-    match s.session.set_settings(Settings::load(&ini)) {
-        Ok(()) => TT_OK,
-        Err(e) => report(e),
-    }
+    s.session.set_settings(Settings::load(&ini));
+    TT_OK
 }
 
 /// Where a full settings save gets the window position it may write.
@@ -4075,10 +4075,8 @@ pub extern "C" fn tt_cmdline_apply(cmd: *const TtCmdLine, session: *mut TtSessio
     };
     let mut settings = s.session.settings().clone();
     c.cmd.apply(&mut settings);
-    match s.session.set_settings(settings) {
-        Ok(()) => TT_OK,
-        Err(e) => report(e),
-    }
+    s.session.set_settings(settings);
+    TT_OK
 }
 
 /// What to open — `OnCommStart`, over a command line that

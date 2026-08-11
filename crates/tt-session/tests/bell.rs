@@ -79,8 +79,8 @@ fn a_bigger_allowance_applies_at_once() {
     s.feed(b"\x07");
     assert_eq!(bells(&mut s), Vec::<bool>::new(), "suppressed");
 
-    s.set_setting("bell.suppress_time", "0").unwrap();
-    s.set_setting("bell.over_used_time", "0").unwrap();
+    s.set_setting("bell.suppress_time", "0");
+    s.set_setting("bell.over_used_time", "0");
     s.feed(b"\x07");
     assert_eq!(bells(&mut s), [false], "a governor with no windows");
 }

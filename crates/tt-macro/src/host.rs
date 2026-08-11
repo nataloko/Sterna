@@ -367,10 +367,10 @@ impl ScriptHost for SessionHost {
         // `setecho` was a command that parsed, reported nothing and changed
         // nothing. Every write through this seam wants the schema's name.
         self.ask(move |s| {
-            // The error is the transport's — a resize on a line that has gone
-            // — and is not this command's to report. `Ok(false)` is the typo.
-            let r = s.set_setting("terminal.local_echo", if on { "on" } else { "off" });
-            debug_assert!(!matches!(r, Ok(false)), "no setting by that name");
+            // The only false here is a name that is not in the schema, which
+            // is a typo in the line above rather than anything a macro did.
+            let named = s.set_setting("terminal.local_echo", if on { "on" } else { "off" });
+            debug_assert!(named, "no setting by that name");
         })
     }
 
@@ -744,7 +744,7 @@ fn open(s: &mut Session, ui: &mut dyn crate::ui::MacroUi, arg: &[u8], cygwin: bo
         // so a `connect 'myhost'` must not quietly reset the modes the last
         // host set, which is what `set_settings` would do.
         if settings != *s.settings() {
-            let _ = s.set_settings(settings);
+            s.set_settings(settings);
         }
         startup
     };

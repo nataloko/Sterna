@@ -2701,8 +2701,10 @@ const char *tt_session_word_delimiters(TtSession *session);
  * value means. An out-of-range number is therefore **not** an error; it lands
  * where the file would put it.
  *
- * `TT_ERR_INVALID` for a name that is not in the schema. Applying can also
- * resize the terminal, which is told to the far end and can fail there.
+ * `TT_ERR_INVALID` for a name that is not in the schema, which is the only
+ * thing this refuses: applying is local and cannot fail, so a failure here
+ * always means the *name* was wrong. See [`tt_session::Session::set_settings`]
+ * for why telling the far end about a resize is not part of that answer.
  *
  * **It overwrites modes the host set**, and that is upstream's behaviour
  * rather than an oversight: in Tera Term the setting and the mode are the

@@ -287,7 +287,7 @@ fn the_control_lines_are_refused_while_the_driver_owns_them() {
     // The settings are what the guard reads, so they have to say what the
     // port was opened with — which is what the New Connection dialog and the
     // command line both arrange.
-    assert!(s.set_setting("serial.flow", "hard").expect("apply"));
+    assert!(s.set_setting("serial.flow", "hard"));
 
     assert!(!s.set_dtr(false), "DTR should have been refused");
     assert!(!s.set_rts(false), "RTS should have been refused");
@@ -448,7 +448,7 @@ fn what_arrived_before_the_session_did_is_kept_or_purged_by_the_setting() {
             ..tt_config::Settings::default()
         };
         let mut s = Session::new(Config::default());
-        s.set_settings(settings).expect("settings");
+        s.set_settings(settings);
         s.connect(Box::new(near));
         pump_until(&mut s, Duration::from_millis(600), |s| {
             !row(s, 0).is_empty()
