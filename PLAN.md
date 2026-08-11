@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-12 · **Stage:** 2 complete, 3 in progress · **Commits:** 475
+**Last updated:** 2026-08-12 · **Stage:** 2 complete, 3 in progress · **Commits:** 477
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4793,6 +4793,21 @@ the only input that can separate the two is two names in a row with the first
 one unset. That case is now the last assertion in the test with a note saying
 what it is for, and the trap in `AGENTS.md` is corrected rather than deleted —
 the rule had been measured somewhere that was not Windows.
+
+**And with that the whole Rust workspace passes on native Windows** — 69 test
+binaries, `cargo fmt` and `clippy` clean on every Windows target, which is the
+first time any of it has been true. Eight defects between the first run and this
+one, every one of them real and none of them findable anywhere else: a verbatim
+path MinGW accepts, CRLF from the runner's own checkout, ConPTY's pipe belonging
+to the console host, `ERROR_NO_MORE_FILES` from an empty pipe namespace, a peer
+check that could not run before the first read, a test opening `COM1`,
+`GetTickCount64` against QPC, and `ExpandEnvironmentStringsW`'s delimiter rule.
+
+The frontier is now the step after it, `run_abi_windows.ps1`, which had never
+run either: it passed `--profile debug`, and `debug` is the *directory* a dev
+build lands in rather than a profile name — cargo reserves it. The flag goes in
+only when `PROFILE` is set now, as `run_abi.sh` already did. The variable was
+also called `$profile`, which is one of PowerShell's automatic variables.
 
 The last deferred TTL file branch is now back where it has meaning. On Windows,
 a macro with no BOM is converted from `GetACP()` exactly where the initial file
