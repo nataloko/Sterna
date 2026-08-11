@@ -17,10 +17,12 @@ use tt_grid::{
 };
 use vte::{Params, Perform};
 
+pub mod color;
 pub mod keys;
 pub mod mouse;
 pub mod palette;
 pub mod term_id;
+pub use color::Colors;
 pub use keys::{CrSend, Key, KeyModes};
 pub use mouse::{Encoding, Modifiers, MouseEvent, Tracking};
 pub use term_id::TermId;
@@ -427,6 +429,23 @@ pub struct Config {
     /// custom palette therefore changes what the grid stores as well as what
     /// that index looks like later.
     pub palette: [palette::Rgb; 256],
+    /// The six attribute colour pairs and Tek's, foreground then background —
+    /// `ts.VTColor`, `ts.VTBoldColor`, `ts.VTBlinkColor`, `ts.VTReverseColor`,
+    /// `ts.URLColor`, `ts.VTUnderlineColor` and `ts.TEKColor`.
+    ///
+    /// These are the *configured* values, which is a distinct thing from what
+    /// the terminal is currently painting with: `OSC 10`-`19` change the live
+    /// copy in [`color::Colors`] and these are what a reset returns to. The
+    /// engine holds them because upstream's OSC handler does, and because
+    /// `DispGetColor` answers a query out of exactly these rather than out of
+    /// the live pair.
+    pub color_normal: [palette::Rgb; 2],
+    pub color_bold: [palette::Rgb; 2],
+    pub color_blink: [palette::Rgb; 2],
+    pub color_reverse: [palette::Rgb; 2],
+    pub color_url: [palette::Rgb; 2],
+    pub color_underline: [palette::Rgb; 2],
+    pub color_tek: [palette::Rgb; 2],
     /// `ts.ISO2022Flag`. Defaults to every shift enabled.
     pub iso2022_flags: ShiftFlags,
     /// `LangIsJapanese(ts.KanjiCode)`. False for a UTF-8 terminal, which is all
@@ -654,6 +673,16 @@ impl Default for Config {
             debug_modes: DebugModes::ALL,
             color_flags: ColorFlags::default(),
             palette: *palette::default_palette(),
+            // `ttset.c:754` and the keys around it: black on white, blue,
+            // red, white on black, green and magenta, then Tek's black on
+            // white. The backgrounds are all white except reverse's.
+            color_normal: [(0, 0, 0), (255, 255, 255)],
+            color_bold: [(0, 0, 255), (255, 255, 255)],
+            color_blink: [(255, 0, 0), (255, 255, 255)],
+            color_reverse: [(255, 255, 255), (0, 0, 0)],
+            color_url: [(0, 255, 0), (255, 255, 255)],
+            color_underline: [(255, 0, 255), (255, 255, 255)],
+            color_tek: [(0, 0, 0), (255, 255, 255)],
             iso2022_flags: ShiftFlags::ALL,
             japanese: false,
             accept_8bit_ctrl: true,
