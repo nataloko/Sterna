@@ -22,6 +22,7 @@ pub mod keys;
 pub mod mouse;
 pub mod palette;
 pub mod term_id;
+pub mod window;
 pub use color::Colors;
 pub use keys::{CrSend, Key, KeyModes};
 pub use mouse::{Encoding, Modifiers, MouseEvent, Tracking};
@@ -29,6 +30,7 @@ pub use term_id::TermId;
 /// Re-exported because [`Config`] has a field of this type, so a caller that
 /// builds one needs to be able to name it without depending on `tt-charset`.
 pub use tt_charset::ShiftFlags;
+pub use window::{WindowMetrics, WindowRequest};
 
 /// What an incoming CR and LF mean. Tera Term's `ts.CRReceive`.
 ///
@@ -1174,6 +1176,32 @@ impl Vt {
         std::mem::take(&mut self.state.colors_dirty)
     }
 
+    /// Tell the engine what its window is, so that `CSI 11`/`13`/`14`/`15`/`16`
+    /// `/19 t` can answer.
+    ///
+    /// A snapshot rather than a callback because the answer has to be composed
+    /// *while the sequence is parsed* — there is nowhere in `advance` to go and
+    /// ask a toolkit — so the frontend pushes on every move, resize and window
+    /// state change and the engine reads what it was last told. Stale between
+    /// the change and the push, which is one turn of an event loop and no
+    /// worse than what a host asking two questions in a row would see anyway.
+    pub fn set_window_metrics(&mut self, metrics: window::WindowMetrics) {
+        self.state.window = metrics;
+    }
+
+    pub fn window_metrics(&self) -> window::WindowMetrics {
+        self.state.window
+    }
+
+    /// What `CSI 1`-`10 t` asked the window to do, and clear.
+    ///
+    /// A queue rather than an immediate action for the reason
+    /// [`Vt::take_bells`] is a count: the engine has no window. A frontend that
+    /// has none either can drop these, which is what `tt-host` does.
+    pub fn take_window_requests(&mut self) -> Vec<window::WindowRequest> {
+        std::mem::take(&mut self.state.window_requests)
+    }
+
     /// Bytes the terminal wants to send back to the host: DA, DSR, and friends.
     pub fn reply(&self) -> &[u8] {
         &self.state.reply
@@ -1614,6 +1642,10 @@ struct State {
     /// does that this engine has no window to do. See
     /// [`Vt::take_colors_changed`].
     colors_dirty: bool,
+    /// What the frontend last said its window was. See [`WindowMetrics`].
+    window: window::WindowMetrics,
+    /// XTWINOPS operations waiting for the frontend which owns a window.
+    window_requests: Vec<window::WindowRequest>,
 }
 
 /// What a linked macro sees of the session — `ttdde.c`'s `DDEPut1` sink, and
@@ -1709,6 +1741,8 @@ impl State {
             clipboard_requests: Vec::new(),
             colors: color::Colors::new(&Config::default()),
             colors_dirty: false,
+            window: window::WindowMetrics::default(),
+            window_requests: Vec::new(),
         }
     }
 
@@ -2595,28 +2629,105 @@ impl State {
 
     /// `vtterm.c:CSSunSequence` — XTWINOPS, `CSI Ps ; ... t`.
     ///
-    /// Only the two operations that mean something without a window are here.
-    /// Everything else in that switch asks the display layer where the window
-    /// is or moves it, and the answers would come from the oracle's stubs
-    /// rather than from Tera Term, so matching them would be matching a stub.
+    /// The operations that move a window go on [`State::window_requests`] for
+    /// the frontend; the ones that describe it are answered from the snapshot
+    /// the frontend last pushed. See [`window::WindowMetrics`] for why it is a
+    /// snapshot.
+    ///
+    /// There is no `case 12`, no `case 17` and nothing above 23 — so `CSI 24 t`,
+    /// which is DECSLPP everywhere else, does nothing at all here.
     fn window_op(&mut self, params: &Params) {
+        let (cols, rows) = (self.grid.cols(), self.grid.rows());
+        let px = |v: u16| i32::from(v);
         match arg0(params, 0) {
+            1 if self.config.window_change => self.window_request(WindowRequest::Deiconify),
+            2 if self.config.window_change => self.window_request(WindowRequest::Iconify),
+            3 if self.config.window_change => {
+                let (x, y) = (px(arg0(params, 1)), px(arg0(params, 2)));
+                self.window_request(WindowRequest::Move(x, y));
+            }
+            // `CSI 4 ; height ; width t`. Height first, and a zero or absent
+            // axis keeps what the window already has (`vtdisp.c:3652`).
+            4 if self.config.window_change => {
+                let (height, width) = (px(arg0(params, 1)), px(arg0(params, 2)));
+                self.window_request(WindowRequest::ResizePixels { width, height });
+            }
+            5 if self.config.window_change => self.window_request(WindowRequest::Raise),
+            6 if self.config.window_change => self.window_request(WindowRequest::Lower),
+            7 if self.config.window_change => self.window_request(WindowRequest::Refresh),
             // Set terminal size. A height or width of 0 or 1 is refused and
             // replaced by the 24x80 default rather than honoured.
             8 if self.config.window_change => {
-                let mut rows = arg0(params, 1);
-                let mut cols = arg0(params, 2);
-                if rows <= 1 {
-                    rows = 24;
+                let mut want_rows = arg0(params, 1);
+                let mut want_cols = arg0(params, 2);
+                if want_rows <= 1 {
+                    want_rows = 24;
                 }
-                if cols <= 1 {
-                    cols = 80;
+                if want_cols <= 1 {
+                    want_cols = 80;
                 }
-                self.grid.resize(cols as usize, rows as usize);
+                self.grid.resize(want_cols as usize, want_rows as usize);
+            }
+            // Maximise and restore. Case 9 has arms for 0 and 1 and no toggle;
+            // case 10 has all three, and its 1 is *maximise* rather than full
+            // screen — see [`WindowRequest::Maximize`].
+            9 | 10 if self.config.window_change => {
+                let req = match (arg0(params, 0), arg0(params, 1)) {
+                    (_, 0) => WindowRequest::Unmaximize,
+                    (_, 1) => WindowRequest::Maximize,
+                    (10, 2) => WindowRequest::ToggleMaximize,
+                    _ => return,
+                };
+                self.window_request(req);
+            }
+            // Report whether the window is iconified. No sub-parameter, and no
+            // `RequiredParams` — the only arm of the switch with neither.
+            11 if self.config.window_report => {
+                let body = format!("{}t", if self.window.iconified { 2 } else { 1 });
+                self.send_csi(&body);
+            }
+            // Window position, `x` then `y` — the one report in the family
+            // that is not height-first. Sub-parameter 2 is the text area's
+            // origin, 0 and 1 the frame's, and anything else answers nothing.
+            13 if self.config.window_report => {
+                let (x, y) = match arg0(params, 1) {
+                    0 | 1 => self.window.pos,
+                    2 => self.window.client_pos,
+                    _ => return,
+                };
+                let body = format!("3;{x};{y}t");
+                self.send_csi(&body);
+            }
+            // Window size in pixels, height then width. The sub-parameters are
+            // the other way round from `CSI 13 t`: 0 and 1 are the *text area*
+            // and 2 is the frame, which is xterm's meaning and upstream's.
+            14 if self.config.window_report => {
+                let (w, h) = match arg0(params, 1) {
+                    0 | 1 => self.window.text_area(cols, rows),
+                    2 => self.window.frame(cols, rows),
+                    _ => return,
+                };
+                let body = format!("4;{h};{w}t");
+                self.send_csi(&body);
+            }
+            15 if self.config.window_report => {
+                let (w, h) = self.window.screen;
+                let body = format!("5;{h};{w}t");
+                self.send_csi(&body);
+            }
+            16 if self.config.window_report => {
+                let (w, h) = self.window.cell;
+                let body = format!("6;{h};{w}t");
+                self.send_csi(&body);
             }
             // Report terminal size, in the same spelling that sets it.
             18 if self.config.window_report => {
                 let body = format!("8;{};{}t", self.grid.rows(), self.grid.cols());
+                self.send_csi(&body);
+            }
+            19 if self.config.window_report => {
+                let (w, h) = self.window.screen_cells(cols, rows);
+                let body = format!("9;{h};{w}t");
                 self.send_csi(&body);
             }
             // Report icon label and window title. Gated on the *title* setting,
@@ -2640,6 +2751,21 @@ impl State {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Queue an XTWINOPS action for whoever owns a window.
+    ///
+    /// Bounded, because a host is allowed to send `CSI 5 t` forever and a
+    /// frontend is not obliged to drain: an unbounded queue would grow without
+    /// limit on a session nobody is watching. Dropping the *newest* is right
+    /// here where the macro ring drops the oldest — the ring holds a
+    /// conversation and this holds instructions, and the hundredth "raise the
+    /// window" is worth less than the first.
+    fn window_request(&mut self, req: window::WindowRequest) {
+        const MAX: usize = 64;
+        if self.window_requests.len() < MAX {
+            self.window_requests.push(req);
         }
     }
 
@@ -5691,5 +5817,143 @@ mod tests {
                 count: 1
             }
         );
+    }
+
+    // ---- XTWINOPS -----------------------------------------------------
+
+    /// A frontend that has said nothing leaves the notional window, which is
+    /// exactly the text area on a 1920x1080 work area with an 8x16 cell. Every
+    /// one of these numbers is what the oracle's stubs answer, so that
+    /// `esctest/run_diff.sh` compares the *logic* rather than a desktop.
+    #[test]
+    fn the_window_reports_answer_from_a_notional_window() {
+        let mut vt = run(
+            b"\x1b[11t\x1b[13t\x1b[14t\x1b[15t\x1b[16t\x1b[18t\x1b[19t",
+            80,
+            24,
+        );
+        assert_eq!(
+            String::from_utf8(vt.take_reply()).unwrap(),
+            concat!(
+                "\x1b[1t",         // not iconified
+                "\x1b[3;0;0t",     // position, x then y
+                "\x1b[4;384;640t", // text area, height then width
+                "\x1b[5;1080;1920t",
+                "\x1b[6;16;8t",  // the cell
+                "\x1b[8;24;80t", // the grid
+                "\x1b[9;67;240t",
+            )
+        );
+    }
+
+    /// `CSI 13 t` reports x then y and `CSI 14 t` reports height then width,
+    /// which is upstream's order and xterm's and looks like a typo in both.
+    #[test]
+    fn the_frontends_metrics_reach_the_reports() {
+        let mut vt = Vt::new(Config {
+            cols: 80,
+            rows: 24,
+            ..Config::default()
+        });
+        vt.set_window_metrics(WindowMetrics {
+            pos: (100, 50),
+            client_pos: (108, 86),
+            size: Some((660, 420)),
+            client_size: Some((640, 384)),
+            cell: (8, 16),
+            screen: (2560, 1440),
+            iconified: true,
+        });
+        vt.feed(b"\x1b[11t\x1b[13t\x1b[13;2t\x1b[14t\x1b[14;2t\x1b[19t");
+        assert_eq!(
+            String::from_utf8(vt.take_reply()).unwrap(),
+            concat!(
+                "\x1b[2t",         // iconified
+                "\x1b[3;100;50t",  // the frame
+                "\x1b[3;108;86t",  // the text area
+                "\x1b[4;384;640t", // the text area, height first
+                "\x1b[4;420;660t", // the frame
+                "\x1b[9;87;317t",  // (2560-20)/8 by (1440-36)/16
+            )
+        );
+    }
+
+    /// An unrecognised sub-parameter answers nothing at all — the `default:
+    /// return` in `vtterm.c`'s cases 13 and 14. Silence, not an error and not
+    /// a fallback to the plain form.
+    #[test]
+    fn an_unknown_sub_parameter_is_answered_with_silence() {
+        let mut vt = run(b"\x1b[13;3t\x1b[14;9t\x1b[12t\x1b[17t\x1b[24t", 80, 24);
+        assert!(vt.take_reply().is_empty());
+        assert!(vt.take_window_requests().is_empty());
+    }
+
+    #[test]
+    fn the_actions_queue_for_the_frontend() {
+        let mut vt = run(
+            b"\x1b[1t\x1b[2t\x1b[3;120;40t\x1b[4;480;0t\x1b[5t\x1b[6t\x1b[7t\
+              \x1b[9;1t\x1b[9;0t\x1b[10;2t\x1b[9;2t",
+            80,
+            24,
+        );
+        assert_eq!(
+            vt.take_window_requests(),
+            vec![
+                WindowRequest::Deiconify,
+                WindowRequest::Iconify,
+                WindowRequest::Move(120, 40),
+                // Height first on the wire, and the zero width means "leave
+                // that axis where it is" rather than "zero pixels wide".
+                WindowRequest::ResizePixels {
+                    width: 0,
+                    height: 480
+                },
+                WindowRequest::Raise,
+                WindowRequest::Lower,
+                WindowRequest::Refresh,
+                WindowRequest::Maximize,
+                WindowRequest::Unmaximize,
+                WindowRequest::ToggleMaximize,
+                // `CSI 9;2 t` is not a toggle: case 9 has no arm for it.
+            ]
+        );
+        assert!(vt.take_window_requests().is_empty(), "the queue drains");
+    }
+
+    /// `WF_WINDOWCHANGE` gates everything that moves and `WF_WINDOWREPORT`
+    /// everything that answers, and the two are separate keys.
+    #[test]
+    fn the_two_window_flags_gate_their_own_halves() {
+        let mut vt = Vt::new(Config {
+            window_change: false,
+            window_report: true,
+            ..Config::default()
+        });
+        vt.feed(b"\x1b[2t\x1b[3;1;1t\x1b[8;10;10t\x1b[18t");
+        assert!(vt.take_window_requests().is_empty());
+        assert_eq!(
+            String::from_utf8(vt.take_reply()).unwrap(),
+            "\x1b[8;24;80t",
+            "the resize was refused, so the report is still the default size"
+        );
+
+        let mut vt = Vt::new(Config {
+            window_change: true,
+            window_report: false,
+            ..Config::default()
+        });
+        vt.feed(b"\x1b[2t\x1b[11t\x1b[13t\x1b[14t\x1b[15t\x1b[16t\x1b[18t\x1b[19t");
+        assert_eq!(vt.take_window_requests(), vec![WindowRequest::Iconify]);
+        assert!(vt.take_reply().is_empty());
+    }
+
+    /// A host may ask forever and a frontend need not drain, so the queue has
+    /// a ceiling. Unlike the macro ring, which drops its oldest byte, this
+    /// drops the newest instruction.
+    #[test]
+    fn the_request_queue_has_a_ceiling() {
+        let mut vt = Vt::new(Config::default());
+        vt.feed(&b"\x1b[5t".repeat(500));
+        assert_eq!(vt.take_window_requests().len(), 64);
     }
 }
