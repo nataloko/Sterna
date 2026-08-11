@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 423
+**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 426
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -2371,9 +2371,28 @@ and `MaxComPort=-1` — which is what somebody writes meaning "no limit" — cam
 out as **4** where upstream gives 4096, the opposite end of the range. The
 narrowing belongs to `ComPort` too, since the reset compares the narrowed value
 and `ComPort=65538` is port 2 upstream rather than a number above every ceiling.
-`uint16_clamp` is the new bound, beside the `uint16_alias` that already composes
-the same narrowing with the other integer rule — eight bounds now, for a file
-whose integers looked like one shape when this started.
+**And then the same question asked of every integer row found seventeen more.**
+The narrowing turned out not to be a bound at all — it is the *field's* width,
+it always runs first, and composing it into a variant per bound was heading for
+an enum of pairs. It is now a `uint8`/`uint16` prefix on the ordinary integer
+spec, orthogonal to the bound, which retired `Bound::Word`, `WordClamped` and
+`WordAlias` and made every remaining combination free. The rows were then found
+the way this repository finds transcription errors everywhere else: extract both
+lists — every integer key's `ts` field out of `ttset.c`, every field's type out
+of `tttypes.h` — and diff, rather than read.
+
+All seventeen, and `AlphaBlend` is the one a user would have seen.
+`ts.AlphaBlendInactive` is a **`BYTE`**, so the `max(0, …)`/`min(255, …)` pair
+upstream applies next (`ttset.c:1467`) can never fire — it is dead code, and
+the schema had copied it as `int_clamp(0..255)` because it is what the rule
+looks like. `AlphaBlend=-1` is therefore an *opaque* window upstream and was a
+fully transparent one here, and `AlphaBlend=256` is 0 rather than 255. The other
+thirteen are keys upstream reads straight into a `WORD` with **no** bounds test
+at all — `TCPPort`, `TelPort`, `TelKeepAliveInterval`, the two serial delays, the
+four serial reconnect keys, two log-rotation keys, `SendfileDelayTick` and
+`MaxBroadcatHistory` — so for those the narrowing is the whole of the rule and a
+plain `int` row was simply storing a number the field could not hold. A port of
+-1 is 65535.
 
 #### And what a command line says to open, which is three answers
 

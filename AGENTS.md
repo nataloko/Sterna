@@ -958,17 +958,26 @@ And for the settings, all of which came out of `ini-audit/`:
   field floors at **0**, not 1, because 0 there means "never time out" on a
   network link — floor it at 1 and a stalled ZMODEM over SSH gives up after a
   second.
-- **The C field's *width* is part of the bound, and it runs first.** Most of
-  these settings live in a `WORD`, so `GetPrivateProfileInt`'s `UINT` wraps in
-  the assignment before any `if` can see it. `MaxComPort` is where that decides
-  the answer: `ttset.c:1218` floors at 4 and caps at 4096, and `MaxComPort=-1`
-  — what somebody writes meaning "no limit" — is 65535 and then **4096**, while
-  a bound that reads the -1 as a negative gives **4**. Opposite ends of the
-  range, from the same line. This port had `int(4..4096)`, which was wrong that
-  way *and* gave the default of 256 below the floor; `uint16_clamp` is the
-  spelling that composes the two, as `uint16_alias` already did for
-  `MaximizedBugTweak`. When a bound looks obvious, check the field's type in
-  `tttypes.h` before believing the `if`.
+- **The C field's *width* is part of the bound, and it runs first.** Many of
+  these settings live in a `WORD` or a `BYTE`, so `GetPrivateProfileInt`'s
+  `UINT` wraps in the assignment before any `if` can see it — which is why the
+  schema spells the width as a `uint8`/`uint16` prefix on the ordinary integer
+  spec rather than as another bound. Two places it decides the answer:
+  `MaxComPort=-1` — what somebody writes meaning "no limit" — is 65535 and then
+  **4096** (`ttset.c:1218`), while a bound that reads the -1 as a negative gives
+  **4**; and `AlphaBlend=-1` is **255**, an opaque window, where the same
+  mistake gives 0, a window nobody can see. `AlphaBlend`'s is the nastier of the
+  two because upstream *does* write a clamp there — `max(0, …)`/`min(255, …)` at
+  `ttset.c:1467` — and it is **dead code** behind the narrowing, so copying the
+  two lines that look like the rule is how the wrong answer gets in. When a
+  bound looks obvious, check the field's type in `tttypes.h` before believing
+  the `if`.
+- **Seventeen rows had this wrong, and reading them was never going to find
+  it.** They were found by extracting every integer key's `ts` field from
+  `ttset.c` and its type from `tttypes.h` and diffing that against the schema —
+  the same rule this file already states for `CheckReservedWord` and for the
+  invented INI keys. If you add an integer setting, do that rather than reading
+  the read.
 - **`ComPort`'s ceiling is another setting and its answer is a reset**, which
   is two departures at once. `ttset.c:1223` tests it against `ts.MaxComPort` —
   read three hundred lines *later*, at `:1218` — and an out-of-range port
