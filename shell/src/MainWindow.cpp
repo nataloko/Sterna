@@ -244,6 +244,8 @@ MainWindow::MainWindow(const QString &settingsPath)
     connect(m_session, &Session::sshAuthWanted, this, &MainWindow::onSshAuthWanted);
     connect(m_session, &Session::sshFailed, this, &MainWindow::onSshFailed);
     connect(m_session, &Session::remoteResize, this, &MainWindow::onRemoteResize);
+    connect(m_session, &Session::windowOperationRequested, this,
+            &MainWindow::onWindowOperation);
     connect(m_session, &Session::settingsChanged, this, &MainWindow::onSettingsChanged);
     connect(m_session, &Session::transferProgressed, this,
             &MainWindow::onTransferProgressed);
@@ -364,7 +366,109 @@ bool MainWindow::event(QEvent *event)
                       || type == QEvent::WindowDeactivate)) {
         applyWindowOpacity(type == QEvent::WindowActivate);
     }
+    // Everything that can move a number `CSI 13`/`14`/`15`/`16`/`19 t` reports.
+    // `ScreenChangeInternal` is here because the work area is the *screen's*,
+    // so dragging a window to the other monitor changes two of the answers
+    // without changing anything about the window.
+    if (m_session
+        && (type == QEvent::Move || type == QEvent::Resize
+            || type == QEvent::WindowStateChange || type == QEvent::Show
+            || type == QEvent::ScreenChangeInternal)) {
+        pushWindowMetrics();
+    }
     return handled;
+}
+
+void MainWindow::pushWindowMetrics()
+{
+    const QRect frame = frameGeometry();
+    const QPoint client = m_view->mapToGlobal(QPoint(0, 0));
+    const QSize cell = m_view->sizeForCells(1, 1);
+    // The *work* area, not the whole monitor: `GetDesktopRect`
+    // (`ttlib_static.c:135`) is `MONITORINFO::rcWork`, so a panel or a dock
+    // comes off before `CSI 15 t` and `CSI 19 t` are answered.
+    const QScreen *screen = this->screen();
+    const QSize work = screen ? screen->availableGeometry().size() : QSize(0, 0);
+
+    TtWindowMetrics m{};
+    m.x = frame.x();
+    m.y = frame.y();
+    m.client_x = client.x();
+    m.client_y = client.y();
+    m.width = frame.width();
+    m.height = frame.height();
+    m.client_width = m_view->width();
+    m.client_height = m_view->height();
+    m.cell_width = cell.width();
+    m.cell_height = cell.height();
+    m.screen_width = work.width();
+    m.screen_height = work.height();
+    m.iconified = isMinimized();
+    m_session->setWindowMetrics(m);
+}
+
+void MainWindow::onWindowOperation(const TtWindowRequest &request)
+{
+    switch (request.op) {
+    case TT_WINDOW_OP_DEICONIFY:
+    case TT_WINDOW_OP_UNMAXIMIZE:
+        // `SW_RESTORE` un-minimises *and* un-maximises, so upstream's
+        // de-iconify and its restore are one call. Qt spells it the same way.
+        showNormal();
+        break;
+    case TT_WINDOW_OP_ICONIFY:
+        showMinimized();
+        break;
+    case TT_WINDOW_OP_MOVE:
+        // Wayland has no request to place a surface — placement is the
+        // compositor's — so `move()` is silently ignored there. Declined out
+        // loud instead, because `CSI 13 t` answers from the metrics pushed
+        // above and reporting a position the window never took would put a
+        // lie on the wire.
+        if (QGuiApplication::platformName().startsWith(QLatin1String("wayland"))) {
+            onNotice(tr("The host asked to move the window; Wayland does not allow it"));
+        } else {
+            move(request.x, request.y);
+        }
+        break;
+    case TT_WINDOW_OP_RESIZE_PIXELS: {
+        // Upstream's `SetWindowPos` sizes the *frame*; `QWidget::resize` sizes
+        // the client area, so the chrome comes off first. A zero axis means
+        // "leave that one alone" (`vtdisp.c:3652`), not "zero pixels".
+        const QSize chrome = frameGeometry().size() - size();
+        const int w = request.x > 0 ? request.x - chrome.width() : width();
+        const int h = request.y > 0 ? request.y - chrome.height() : height();
+        resize(qMax(1, w), qMax(1, h));
+        break;
+    }
+    case TT_WINDOW_OP_RAISE:
+        // Deliberately without taking focus. Upstream has the
+        // `SetForegroundWindow` version in the source behind a `#if` nobody
+        // turns on, and flashes the taskbar instead when the raise left the
+        // window behind another one.
+        raise();
+        if (!isActiveWindow()) {
+            QApplication::alert(this);
+        }
+        break;
+    case TT_WINDOW_OP_LOWER:
+        lower();
+        break;
+    case TT_WINDOW_OP_REFRESH:
+        update();
+        m_view->update();
+        break;
+    case TT_WINDOW_OP_MAXIMIZE:
+        showMaximized();
+        break;
+    case TT_WINDOW_OP_TOGGLE_MAXIMIZE:
+        if (isMaximized()) {
+            showNormal();
+        } else {
+            showMaximized();
+        }
+        break;
+    }
 }
 
 void MainWindow::applyWindowOpacity(bool active)

@@ -120,6 +120,14 @@ protected:
     /// `ConfirmDisconnect`, which is on by default.
     void closeEvent(QCloseEvent *event) override;
 
+private:
+    /// Tell the terminal what its window is, for the XTWINOPS reports.
+    ///
+    /// Pushed on every move, resize and window-state change rather than asked
+    /// for on demand: the reply to `CSI 14 t` is composed while the sequence
+    /// is being parsed, and there is nowhere in there to call into Qt.
+    void pushWindowMetrics();
+
 private slots:
     void showConnectDialog();
     void showSshDialog();
@@ -133,6 +141,9 @@ private slots:
     /// The far end asked for a terminal size. Honoured, because a console
     /// server saying 132x43 is describing equipment the user cannot see.
     void onRemoteResize(int cols, int rows);
+    /// `CSI 1`-`10 t`: the host asked the window to move, resize in pixels,
+    /// iconify, raise, lower, repaint or maximise.
+    void onWindowOperation(const TtWindowRequest &request);
     void sendBreak();
     void sendFile();
     void receiveFile();

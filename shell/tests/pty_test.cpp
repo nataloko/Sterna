@@ -350,6 +350,71 @@ void test_shift_escape_cycles_the_configured_debug_modes()
     CHECK(screenText(session).contains(QStringLiteral("1B 5B 41")));
 }
 
+/// XTWINOPS' report half, all the way out to a program that asked.
+///
+/// The child sends the query and reads the answer off its own stdin, so this
+/// covers the whole seam — the frontend's snapshot, the engine's reply, and
+/// the write back down the pty — rather than any one layer's idea of it.
+void test_the_window_answers_what_a_program_asks_about_it()
+{
+    Session session(80, 24);
+
+    TtWindowMetrics m{};
+    m.x = 300; m.y = 120;
+    m.client_x = 308; m.client_y = 156;
+    m.width = 1288; m.height = 800;
+    m.client_width = 1280; m.client_height = 768;
+    m.cell_width = 16; m.cell_height = 32;
+    m.screen_width = 2560; m.screen_height = 1440;
+    session.setWindowMetrics(m);
+
+    QString error;
+    // Raw mode and a byte count, not `read`: the answer to `CSI 14 t` ends in
+    // `t` and carries no newline, so a line-oriented read waits for one that
+    // is never coming. `-echo` keeps the reply off the screen, and the leading
+    // ESC is stripped before it is printed back — otherwise echoing the answer
+    // to `CSI 14 t` would be read as `CSI 4 t`, a resize.
+    CHECK(session.connectPty(
+        sh(QStringLiteral("stty raw -echo; "
+                          "printf '\\033[14t'; a=$(head -c 13); "
+                          "printf '\\033[16t'; b=$(head -c 10); "
+                          "printf 'A=%s B=%s\\r\\n' \"${a#?}\" \"${b#?}\"")),
+        &error));
+
+    // Height then width for both, and the cell is the one the frontend pushed
+    // rather than the font's.
+    const bool seen = spin(
+        [&] { return screenText(session).contains(QStringLiteral("A=[4;768;1280t")); },
+        5000);
+    CHECK(seen);
+    CHECK(screenText(session).contains(QStringLiteral("B=[6;32;16t")));
+    if (!seen) {
+        fprintf(stderr, "screen was:\n%s\n", qPrintable(screenText(session)));
+    }
+    session.disconnectPort();
+}
+
+/// ...and the action half, which is a signal rather than a report because the
+/// core has no window to iconify.
+void test_the_window_operations_reach_the_frontend()
+{
+    Session session(40, 10);
+    QVector<TtWindowRequest> seen;
+    QObject::connect(&session, &Session::windowOperationRequested,
+                     [&](const TtWindowRequest &r) { seen.append(r); });
+
+    QString error;
+    CHECK(session.connectPty(sh(QStringLiteral("printf '\\033[5t\\033[3;40;50t'; sleep 0.2")),
+                             &error));
+    CHECK(spin([&] { return seen.size() >= 2; }, 5000));
+    if (seen.size() >= 2) {
+        CHECK(seen[0].op == TT_WINDOW_OP_RAISE);
+        CHECK(seen[1].op == TT_WINDOW_OP_MOVE);
+        CHECK(seen[1].x == 40 && seen[1].y == 50);
+    }
+    session.disconnectPort();
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -365,6 +430,8 @@ int main(int argc, char **argv)
     test_strict_mapping_and_delete();
     test_keyboard_cnf_overrides_the_builtin_key_and_maps_modifiers();
     test_shift_escape_cycles_the_configured_debug_modes();
+    test_the_window_answers_what_a_program_asks_about_it();
+    test_the_window_operations_reach_the_frontend();
 
     if (failures) {
         fprintf(stderr, "%d check(s) failed\n", failures);

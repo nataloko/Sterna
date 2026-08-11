@@ -255,6 +255,11 @@ public:
     void focus(bool focused);
     void resize(int cols, int rows);
     void setCellPixels(int w, int h);
+    /// Tell the terminal what its window looks like, so `CSI 11`/`13`/`14`/
+    /// `15`/`16`/`19 t` can answer. Push on every move, resize and window-state
+    /// change; a snapshot is needed because the reply is composed while the
+    /// sequence is parsed and there is nowhere in there to ask a toolkit.
+    void setWindowMetrics(const TtWindowMetrics &metrics);
     /// How long the line is held is `SendBreakTime`'s, so there is nothing to
     /// pass — see `tt_session_send_break`.
     void sendBreak();
@@ -402,6 +407,15 @@ signals:
     /// family. Re-read the palette and the pairs and repaint; nothing else the
     /// theme holds can have moved.
     void colorsChanged();
+
+    /// The host asked the window to move, resize in pixels, iconify, raise,
+    /// lower, repaint or maximise — `CSI 1`-`10 t`.
+    ///
+    /// One per operation rather than coalesced: they are instructions and not
+    /// a stale cache, and a host that asks to be lowered and then raised means
+    /// both. The window may decline any of them; see `MainWindow`, where
+    /// Wayland declines the move because it has no way to honour it.
+    void windowOperationRequested(const TtWindowRequest &request);
 
     /// Logging started, stopped, or was stopped *for* us by a write failure —
     /// which is the case that matters, because a window still claiming to log

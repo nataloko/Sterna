@@ -580,6 +580,11 @@ void Session::setCellPixels(int w, int h)
     tt_session_set_cell_pixels(m_session, w, h);
 }
 
+void Session::setWindowMetrics(const TtWindowMetrics &metrics)
+{
+    tt_session_set_window_metrics(m_session, &metrics);
+}
+
 void Session::sendBreak()
 {
     if (tt_session_send_break(m_session) != TT_OK) {
@@ -881,6 +886,7 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
 
     bool dirty = false;
     bool colorsMoved = false;
+    bool windowOps = false;
     bool connectionEnded = false;
     bool windowCloseRequested = false;
     bool transferMoved = false;
@@ -986,6 +992,22 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
             // there is one cache to refill however many colours moved.
             colorsMoved = true;
             break;
+        case TT_EVENT_KIND_WINDOW_REQUEST:
+            // Read once for the whole batch, below. The event says only that
+            // there is something to read: `TtEvent` has no room for two ints,
+            // and giving it some would break the ABI for every other event.
+            windowOps = true;
+            break;
+        }
+    }
+
+    // Before the repaint, because one of them is "repaint" and several change
+    // the size the frame is about to be drawn at.
+    if (windowOps) {
+        const TtWindowRequest *requests = nullptr;
+        const size_t count = tt_session_window_requests(m_session, &requests);
+        for (size_t i = 0; i < count; i++) {
+            emit windowOperationRequested(requests[i]);
         }
     }
 
