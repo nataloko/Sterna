@@ -4659,8 +4659,10 @@ impl Settings {
             serial_delay_per_line: ini.get_int("Tera Term", "DelayPerLine", d.serial_delay_per_line)
                 as i32,
             serial_wait_com: crate::schema::on_off(ini.get("Tera Term", "WaitCom"), false),
-            serial_max_com_port: crate::schema::word_clamped(
-                ini.get_int("Tera Term", "MaxComPort", d.serial_max_com_port) as i32,
+            serial_max_com_port: crate::schema::clamped(
+                crate::schema::word(
+                    ini.get_int("Tera Term", "MaxComPort", d.serial_max_com_port) as i32,
+                ),
                 4,
                 4096,
             ),
@@ -5037,12 +5039,12 @@ impl Settings {
             },
             tek_ppi_x: crate::schema::nth_int_zero(ini.get("Tera Term", "TEKPPI"), 0, d.tek_ppi_x),
             tek_ppi_y: crate::schema::nth_int_zero(ini.get("Tera Term", "TEKPPI"), 1, d.tek_ppi_y),
-            window_maximized_bug_tweak: crate::schema::word_alias(
+            window_maximized_bug_tweak: crate::schema::word(crate::schema::int_alias(
                 ini.get("Tera Term", "MaximizedBugTweak"),
                 d.window_maximized_bug_tweak,
                 "on",
                 2,
-            ),
+            )),
             window_icon: match ini.get("Tera Term", "VTIcon") {
                 Some(v) => WindowIcon::from_ini(v),
                 None => d.window_icon,
@@ -8454,8 +8456,8 @@ impl Settings {
             }
             "serial.wait_com" => self.serial_wait_com = crate::schema::on_off(Some(value), false),
             "serial.max_com_port" => {
-                self.serial_max_com_port = crate::schema::word_clamped(
-                    crate::schema::int(value, self.serial_max_com_port),
+                self.serial_max_com_port = crate::schema::clamped(
+                    crate::schema::word(crate::schema::int(value, self.serial_max_com_port)),
                     4,
                     4096,
                 )
@@ -8739,8 +8741,12 @@ impl Settings {
             "tek.ppi_x" => self.tek_ppi_x = crate::schema::int(value, self.tek_ppi_x),
             "tek.ppi_y" => self.tek_ppi_y = crate::schema::int(value, self.tek_ppi_y),
             "window.maximized_bug_tweak" => {
-                self.window_maximized_bug_tweak =
-                    crate::schema::word_alias(Some(value), self.window_maximized_bug_tweak, "on", 2)
+                self.window_maximized_bug_tweak = crate::schema::word(crate::schema::int_alias(
+                    Some(value),
+                    self.window_maximized_bug_tweak,
+                    "on",
+                    2,
+                ))
             }
             "window.icon" => self.window_icon = WindowIcon::from_ini(value),
             "window.hide_title" => {

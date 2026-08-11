@@ -48,8 +48,29 @@ struct Setting {
     doc: Vec<String>,
 }
 
-/// How upstream bounds an int on read. The two shapes are genuinely different
-/// and the difference is visible in a file somebody already has.
+/// The width of the `ts` field the value lands in, when it is narrower than
+/// an `int`.
+///
+/// This is not decoration and it is not part of the bound: `GetPrivateProfileInt`
+/// returns a `UINT` and C narrows it **in the assignment**, so it happens
+/// before any `if` upstream writes can see the value. Spelt as a `uint8`/
+/// `uint16` prefix on the ordinary integer spec — `uint16_clamp(4..4096)` is
+/// `int_clamp(4..4096)` with the narrowing in front of it.
+///
+/// Getting the order wrong lands on the opposite end of a range. `AlphaBlend=-1`
+/// is `(UINT)-1`, which a `BYTE` field makes **255** — an opaque window — while
+/// the clamp that follows it reads a bare -1 as below the floor and gives 0, a
+/// window nobody can see.
+enum Width {
+    /// `uint8`: a `BYTE` field.
+    Byte,
+    /// `uint16`: a `WORD` field.
+    Word,
+}
+
+/// How upstream bounds an int on read, *after* any [`Width`] narrowing. The
+/// shapes are genuinely different and the difference is visible in a file
+/// somebody already has.
 enum Bound {
     /// `int(lo..hi)`, `ttset.c:615`: below `lo` takes the **default**, above
     /// `hi` takes `hi`. Not a clamp in both directions. `int(lo..)` is the
@@ -71,19 +92,11 @@ enum Bound {
     /// default for a negative value where upstream gives the floor, and
     /// `Floor` would leave a `PasteDelayPerLine=60000` at a minute a line.
     Clamped(i32, i32),
-    /// `uint16`: assignment to a Win32 `WORD`, which wraps modulo 65536.
-    Word,
-    /// `uint16_clamp(lo..hi)`, `ttset.c:1218`: the same narrowing followed by
-    /// [`Bound::Clamped`]'s test. `MaxComPort` is the only setting read this
-    /// way and it needs both halves — the narrowing turns `-1` into 65535 and
-    /// the clamp then gives 4096, where the clamp alone would give 4.
-    WordClamped(i32, i32),
     /// `int_alias(spelling=value)`: recognise one non-numeric spelling before
-    /// using the ordinary integer parser. `MaximizedBugTweak=on` means 2.
+    /// using the ordinary integer parser. `MaximizedBugTweak=on` means 2. This
+    /// is a *parse* rule rather than a bound and is applied to the text, which
+    /// is why it cannot be one field of a comma-separated list.
     Alias(String, i32),
-    /// `uint16_alias(spelling=value)`: the same alias rule, followed by the
-    /// narrowing assignment to a Win32 `WORD`.
-    WordAlias(String, i32),
 }
 
 /// What a missing comma-separated field becomes when the key itself exists.
@@ -102,6 +115,9 @@ enum Kind {
         field: Option<usize>,
         bound: Option<Bound>,
         fallback: FieldFallback,
+        /// Applied between the parse and the bound, because that is where C
+        /// applies it.
+        width: Option<Width>,
     },
     Str,
     /// `spelling => Variant`, in the order they were written, and whether the
@@ -162,6 +178,20 @@ fn type_name(name: &str) -> String {
 /// `terminal.cr_receive` → `terminal_cr_receive`, for the struct field.
 fn field_name(name: &str) -> String {
     name.replace('.', "_")
+}
+
+/// Wrap a parsed integer in the narrowing its `ts` field applies, if any.
+///
+/// Always between the parse and the bound. The three callers below are the
+/// three places a setting is read — the file, a `default-from` second pass and
+/// `set_str` — and they have to agree, or a script and a file disagree about
+/// what a value means.
+fn narrowed(expr: String, width: &Option<Width>) -> String {
+    match width {
+        None => expr,
+        Some(Width::Byte) => format!("crate::schema::byte({expr})"),
+        Some(Width::Word) => format!("crate::schema::word({expr})"),
+    }
 }
 
 fn parse(text: &str) -> Vec<Setting> {
@@ -309,31 +339,33 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
             },
         );
     }
+    // A `uint8`/`uint16` prefix says the value lands in a field narrower than
+    // an `int`, and the rest of the spelling is the ordinary integer spec —
+    // `uint16_clamp(4..4096)` is `int_clamp(4..4096)` with the narrowing in
+    // front of it, `uint16` on its own is `int` with the narrowing and no
+    // bound. Rewriting it to the `int` spelling here means the bounds below are
+    // parsed once rather than once per width.
+    let (spec, width) = match [("uint8", Width::Byte), ("uint16", Width::Word)]
+        .into_iter()
+        .find_map(|(prefix, width)| spec.strip_prefix(prefix).map(|rest| (rest, width)))
+    {
+        Some((rest, width)) => (format!("int{rest}"), Some(width)),
+        None => (spec.to_string(), None),
+    };
+    let spec = spec.as_str();
     // `int`, `int_zero`, their ranged forms, `int_min(floor)`,
-    // `int_clamp(min..max)` and its wrapping `uint16_clamp` counterpart,
-    // `int_alias(spelling=value)`, its wrapping `uint16_alias` counterpart or a
-    // plain wrapping `uint16`.
-    let (spec, bound, fallback) = if let Some((body, word)) = spec
+    // `int_clamp(min..max)` or `int_alias(spelling=value)`.
+    let (spec, bound, fallback) = if let Some(body) = spec
         .strip_prefix("int_clamp(")
         .and_then(|s| s.strip_suffix(')'))
-        .map(|body| (body, false))
-        .or_else(|| {
-            spec.strip_prefix("uint16_clamp(")
-                .and_then(|s| s.strip_suffix(')'))
-                .map(|body| (body, true))
-        }) {
+    {
         let (lo, hi) = body.split_once("..").expect("a range is `min..max`");
-        let (lo, hi) = (
-            lo.trim().parse::<i32>().expect("a number"),
-            hi.trim().parse::<i32>().expect("a number"),
-        );
         (
             "int",
-            Some(if word {
-                Bound::WordClamped(lo, hi)
-            } else {
-                Bound::Clamped(lo, hi)
-            }),
+            Some(Bound::Clamped(
+                lo.trim().parse::<i32>().expect("a number"),
+                hi.trim().parse::<i32>().expect("a number"),
+            )),
             FieldFallback::Default,
         )
     } else if let Some(body) = spec
@@ -392,36 +424,21 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
             Some(Bound::Floor(body.trim().parse::<i32>().expect("a number"))),
             FieldFallback::Default,
         )
-    } else if let Some((body, word)) = spec
+    } else if let Some(body) = spec
         .strip_prefix("int_alias(")
         .and_then(|s| s.strip_suffix(')'))
-        .map(|body| (body, false))
-        .or_else(|| {
-            spec.strip_prefix("uint16_alias(")
-                .and_then(|s| s.strip_suffix(')'))
-                .map(|body| (body, true))
-        })
     {
         let (alias, value) = body
             .split_once('=')
             .expect("an integer alias is `spelling=value`");
         (
             "int",
-            Some(if word {
-                Bound::WordAlias(
-                    alias.trim().to_string(),
-                    value.trim().parse::<i32>().expect("a number"),
-                )
-            } else {
-                Bound::Alias(
-                    alias.trim().to_string(),
-                    value.trim().parse::<i32>().expect("a number"),
-                )
-            }),
+            Some(Bound::Alias(
+                alias.trim().to_string(),
+                value.trim().parse::<i32>().expect("a number"),
+            )),
             FieldFallback::Default,
         )
-    } else if spec == "uint16" {
-        ("int", Some(Bound::Word), FieldFallback::Default)
     } else if spec == "int_zero" {
         ("int", None, FieldFallback::Zero)
     } else {
@@ -438,6 +455,7 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
                     field: Some(n.parse::<usize>().expect("a digit") - 1),
                     bound,
                     fallback,
+                    width,
                 },
             ),
             _ => (
@@ -446,6 +464,7 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
                     field: None,
                     bound,
                     fallback,
+                    width,
                 },
             ),
         },
@@ -637,20 +656,17 @@ fn emit(settings: &[Setting]) -> String {
                 field: nth,
                 bound,
                 fallback,
+                width,
             } => {
                 let read = match (nth, bound) {
                     (None, Some(Bound::Alias(alias, value))) => format!(
                         "crate::schema::int_alias(ini.get(\"{section}\", \"{key}\"), d.{field}, \"{}\", {value})",
                         escape(alias)
                     ),
-                    (None, Some(Bound::WordAlias(alias, value))) => format!(
-                        "crate::schema::word_alias(ini.get(\"{section}\", \"{key}\"), d.{field}, \"{}\", {value})",
-                        escape(alias)
-                    ),
                     (None, _) => {
                         format!("ini.get_int(\"{section}\", \"{key}\", d.{field}) as i32")
                     }
-                    (Some(_), Some(Bound::Alias(_, _) | Bound::WordAlias(_, _))) => {
+                    (Some(_), Some(Bound::Alias(_, _))) => {
                         panic!("{field}: an integer alias cannot be one field of a list")
                     }
                     (Some(n), _) => match fallback {
@@ -662,8 +678,9 @@ fn emit(settings: &[Setting]) -> String {
                         ),
                     },
                 };
+                let read = narrowed(read, width);
                 match bound {
-                    None => read,
+                    None | Some(Bound::Alias(_, _)) => read,
                     Some(Bound::Ranged(lo, hi)) => {
                         format!("crate::schema::ranged({read}, d.{field}, {lo}, {hi})")
                     }
@@ -674,12 +691,6 @@ fn emit(settings: &[Setting]) -> String {
                     Some(Bound::Clamped(lo, hi)) => {
                         format!("crate::schema::clamped({read}, {lo}, {hi})")
                     }
-                    Some(Bound::Word) => format!("crate::schema::word({read})"),
-                    Some(Bound::WordClamped(lo, hi)) => {
-                        format!("crate::schema::word_clamped({read}, {lo}, {hi})")
-                    }
-                    Some(Bound::Alias(_, _)) => read,
-                    Some(Bound::WordAlias(_, _)) => read,
                 }
             }
             Kind::Str => format!("ini.get_or(\"{section}\", \"{key}\", &d.{field}).to_string()"),
@@ -702,12 +713,19 @@ fn emit(settings: &[Setting]) -> String {
         let field = field_name(&s.name);
         let source = field_name(source);
         let (section, key) = (escape(&s.section), escape(&s.key));
-        let Kind::Int { bound, .. } = &s.kind else {
+        let Kind::Int { bound, width, .. } = &s.kind else {
             unreachable!("default-from was validated as an int")
         };
-        let read = format!("ini.get_int(\"{section}\", \"{key}\", settings.{source}) as i32");
+        let read = match bound {
+            Some(Bound::Alias(alias, aliased)) => format!(
+                "crate::schema::int_alias(ini.get(\"{section}\", \"{key}\"), settings.{source}, \"{}\", {aliased})",
+                escape(alias)
+            ),
+            _ => format!("ini.get_int(\"{section}\", \"{key}\", settings.{source}) as i32"),
+        };
+        let read = narrowed(read, width);
         let expr = match bound {
-            None => read,
+            None | Some(Bound::Alias(_, _)) => read,
             Some(Bound::Ranged(lo, hi)) => {
                 format!("crate::schema::ranged({read}, settings.{source}, {lo}, {hi})")
             }
@@ -718,18 +736,6 @@ fn emit(settings: &[Setting]) -> String {
             Some(Bound::Clamped(lo, hi)) => {
                 format!("crate::schema::clamped({read}, {lo}, {hi})")
             }
-            Some(Bound::Word) => format!("crate::schema::word({read})"),
-            Some(Bound::WordClamped(lo, hi)) => {
-                format!("crate::schema::word_clamped({read}, {lo}, {hi})")
-            }
-            Some(Bound::Alias(alias, aliased)) => format!(
-                "crate::schema::int_alias(ini.get(\"{section}\", \"{key}\"), settings.{source}, \"{}\", {aliased})",
-                escape(alias)
-            ),
-            Some(Bound::WordAlias(alias, aliased)) => format!(
-                "crate::schema::word_alias(ini.get(\"{section}\", \"{key}\"), settings.{source}, \"{}\", {aliased})",
-                escape(alias)
-            ),
         };
         writeln!(out, "        settings.{field} = {expr};").expect("string");
     }
@@ -798,10 +804,17 @@ fn emit(settings: &[Setting]) -> String {
                 "self.{field} = crate::schema::on_off(Some(value), {})",
                 on_off_literal(&s.default)
             ),
-            Kind::Int { bound, .. } => {
-                let read = format!("crate::schema::int(value, self.{field})");
+            Kind::Int { bound, width, .. } => {
+                let read = match bound {
+                    Some(Bound::Alias(alias, aliased)) => format!(
+                        "crate::schema::int_alias(Some(value), self.{field}, \"{}\", {aliased})",
+                        escape(alias)
+                    ),
+                    _ => format!("crate::schema::int(value, self.{field})"),
+                };
+                let read = narrowed(read, width);
                 match bound {
-                    None => format!("self.{field} = {read}"),
+                    None | Some(Bound::Alias(_, _)) => format!("self.{field} = {read}"),
                     // The same rule the file gets: below the range takes the
                     // default, above it takes the ceiling. A script and a
                     // hand-edited INI must not disagree about a value.
@@ -819,20 +832,6 @@ fn emit(settings: &[Setting]) -> String {
                     Some(Bound::Clamped(lo, hi)) => {
                         format!("self.{field} = crate::schema::clamped({read}, {lo}, {hi})")
                     }
-                    Some(Bound::Word) => {
-                        format!("self.{field} = crate::schema::word({read})")
-                    }
-                    Some(Bound::WordClamped(lo, hi)) => {
-                        format!("self.{field} = crate::schema::word_clamped({read}, {lo}, {hi})")
-                    }
-                    Some(Bound::Alias(alias, aliased)) => format!(
-                        "self.{field} = crate::schema::int_alias(Some(value), self.{field}, \"{}\", {aliased})",
-                        escape(alias)
-                    ),
-                    Some(Bound::WordAlias(alias, aliased)) => format!(
-                        "self.{field} = crate::schema::word_alias(Some(value), self.{field}, \"{}\", {aliased})",
-                        escape(alias)
-                    ),
                 }
             }
             Kind::Str => format!("self.{field} = value.to_string()"),
@@ -858,40 +857,34 @@ fn emit(settings: &[Setting]) -> String {
     for s in settings {
         let kind = match &s.kind {
             Kind::Bool => "Kind::Bool".to_string(),
-            Kind::Int { bound: None, .. } => "Kind::Int".to_string(),
             // The dialog needs the bounds to build a spin box, and it must not
-            // hold its own copy of them.
+            // hold its own copy of them. A bound wins over the width, which
+            // only ever admits more: a spin box cannot produce a value outside
+            // the range in the first place, so the narrowing has nothing to
+            // say to one.
             Kind::Int {
-                bound: Some(Bound::Ranged(lo, hi)),
-                ..
-            } => format!("Kind::IntRange({lo}, {hi})"),
-            Kind::Int {
-                bound: Some(Bound::Validated(lo, hi)),
+                bound: Some(Bound::Ranged(lo, hi) | Bound::Validated(lo, hi)),
                 ..
             } => format!("Kind::IntRange({lo}, {hi})"),
             Kind::Int {
                 bound: Some(Bound::Floor(lo)),
                 ..
             } => format!("Kind::IntMin({lo})"),
-            // The narrowing has nothing to say to a spin box, which cannot
-            // produce a value outside the range in the first place — so a
-            // wrapping clamp is the same control as a plain one.
             Kind::Int {
-                bound: Some(Bound::Clamped(lo, hi) | Bound::WordClamped(lo, hi)),
+                bound: Some(Bound::Clamped(lo, hi)),
                 ..
             } => format!("Kind::IntClamp({lo}, {hi})"),
+            // Otherwise the field's own width is the only range there is, and
+            // it is a real one — the file cannot hold anything else.
             Kind::Int {
-                bound: Some(Bound::Word),
+                width: Some(Width::Byte),
+                ..
+            } => "Kind::IntByte".to_string(),
+            Kind::Int {
+                width: Some(Width::Word),
                 ..
             } => "Kind::IntWord".to_string(),
-            Kind::Int {
-                bound: Some(Bound::Alias(_, _)),
-                ..
-            } => "Kind::Int".to_string(),
-            Kind::Int {
-                bound: Some(Bound::WordAlias(_, _)),
-                ..
-            } => "Kind::IntWord".to_string(),
+            Kind::Int { .. } => "Kind::Int".to_string(),
             Kind::Str => "Kind::Str".to_string(),
             Kind::Color2 => "Kind::Color2".to_string(),
             Kind::Enum { variants, .. } => {

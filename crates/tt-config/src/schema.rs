@@ -25,6 +25,8 @@ pub enum Kind {
     /// `GetPrivateProfileInt` narrowed into a Win32 `WORD`. The dialog range
     /// is 0..65535, while the reader and name-addressed setter wrap into it.
     IntWord,
+    /// The same for a `BYTE`, so 0..255.
+    IntByte,
     Str,
     /// The spellings the file accepts, in order. Anything else reads as the
     /// default, which is upstream's convention rather than an oversight.
@@ -186,15 +188,6 @@ pub fn int_alias(value: Option<&str>, default: i32, alias: &str, aliased: i32) -
     }
 }
 
-/// [`int_alias`] followed by assignment to a Win32 `WORD`.
-///
-/// `MaximizedBugTweak` combines both oddities: its reader accepts `on` as 2,
-/// otherwise calls `atoi`, and then stores the result in a 16-bit field. Thus
-/// `-1` reads and writes back as 65535 rather than being rejected or clamped.
-pub fn word_alias(value: Option<&str>, default: i32, alias: &str, aliased: i32) -> i32 {
-    word(int_alias(value, default, alias, aliased))
-}
-
 /// Upstream's *other* bounds check, which really is a clamp — and the two must
 /// not be confused, because they disagree about exactly the values a
 /// hand-edited file is likely to hold.
@@ -229,32 +222,29 @@ pub fn clamped(value: i32, lo: i32, hi: i32) -> i32 {
     value.clamp(lo, hi)
 }
 
-/// Narrow a `GetPrivateProfileInt` result the way assignment to `WORD` does.
+/// Narrow a `GetPrivateProfileInt` result the way assignment to a `WORD` does.
 ///
-/// `TitleFormat` is the one integer setting currently held in a 16-bit word.
-/// Upstream therefore reads `-1` as 65535 and `65537` as 1, then writes that
-/// narrowed unsigned value back. A clamp or a range-default would give a
-/// different answer at both ends.
+/// **This runs before any bound, because C does it in the assignment.** The
+/// order decides the answer rather than tidying it: `MaxComPort=-1` is
+/// `(UINT)-1`, so upstream sees 65535 and its `min(4096, …)` gives **4096**,
+/// while a clamp applied to a bare -1 reads it as below the floor and gives 4.
+/// Opposite ends of the same range (`ttset.c:1218`). `TitleFormat` is the
+/// plainest instance, with no bound at all: upstream reads `-1` as 65535 and
+/// `65537` as 1, and writes the narrowed value back.
 pub fn word(value: i32) -> i32 {
     i32::from(value as u16)
 }
 
-/// [`word`] and then [`clamped`], in that order, which is the order the C does
-/// it in and not an implementation detail.
+/// The same, for a `BYTE` field.
 ///
-/// ```text
-/// ts->MaxComPort = GetPrivateProfileInt(Section, "MaxComPort", 256, FName);
-/// if (ts->MaxComPort < 4) ts->MaxComPort = 4;
-/// if (ts->MaxComPort > MAXCOMPORT) ts->MaxComPort = MAXCOMPORT;
-/// ```
-///
-/// `ttset.c:1218`. The narrowing happens in the assignment, before either test
-/// can see the value, so `MaxComPort=-1` is 65535 and then **4096** — and a
-/// clamp on its own would read the -1 as below the floor and give 4, which is
-/// the opposite end of the range from what upstream does with the one negative
-/// value somebody might plausibly write meaning "no limit".
-pub fn word_clamped(value: i32, lo: i32, hi: i32) -> i32 {
-    clamped(word(value), lo, hi)
+/// `AlphaBlend`'s two keys are where this decides something visible. They are
+/// `BYTE`s, so the `max(0, …)`/`min(255, …)` pair upstream applies next
+/// (`ttset.c:1467`) can never fire — **the clamp that looks like the rule is
+/// dead code**, and the narrowing is the whole of it. `AlphaBlend=-1` is
+/// therefore 255, an opaque window; reading the clamp as the rule gives 0, a
+/// window nobody can see.
+pub fn byte(value: i32) -> i32 {
+    i32::from(value as u8)
 }
 
 /// The `n`th comma-separated number of a value that holds several —
@@ -333,7 +323,7 @@ pub fn color2_str(value: &[u8; 6]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{int_alias, validated, word_alias, DebugModes};
+    use super::{byte, clamped, int_alias, validated, word, DebugModes};
 
     #[test]
     fn validated_ranges_default_at_both_ends() {
@@ -352,12 +342,30 @@ mod tests {
         assert_eq!(int_alias(Some("other"), 9, "on", 2), 0);
     }
 
+    /// The generator composes the narrowing around whatever produced the
+    /// number, which for `MaximizedBugTweak` is the alias parse. Same order as
+    /// the C: resolve the value, assign it to the field, and only then run
+    /// whatever `if` follows.
     #[test]
-    fn word_aliases_narrow_after_the_alias_or_number_is_resolved() {
-        assert_eq!(word_alias(None, 2, "on", 2), 2);
-        assert_eq!(word_alias(Some("ON"), 9, "on", 2), 2);
-        assert_eq!(word_alias(Some("-1"), 9, "on", 2), 65_535);
-        assert_eq!(word_alias(Some("65537"), 9, "on", 2), 1);
+    fn a_width_narrows_after_the_alias_or_number_is_resolved() {
+        assert_eq!(word(int_alias(None, 2, "on", 2)), 2);
+        assert_eq!(word(int_alias(Some("ON"), 9, "on", 2)), 2);
+        assert_eq!(word(int_alias(Some("-1"), 9, "on", 2)), 65_535);
+        assert_eq!(word(int_alias(Some("65537"), 9, "on", 2)), 1);
+    }
+
+    /// And the order against a *bound* is what `MaxComPort` and `AlphaBlend`
+    /// turn on: narrowing first puts `-1` at the top of the range, while the
+    /// bound alone puts it at the bottom.
+    #[test]
+    fn a_width_runs_before_the_bound_and_not_after() {
+        assert_eq!(clamped(word(-1), 4, 4096), 4096);
+        assert_eq!(clamped(-1, 4, 4096), 4, "which is the wrong answer");
+        // `AlphaBlend`'s clamp is dead code behind the same narrowing: a BYTE
+        // cannot be outside 0..255 for `max`/`min` to correct.
+        assert_eq!(byte(-1), 255);
+        assert_eq!(byte(256), 0);
+        assert_eq!(clamped(byte(-1), 0, 255), byte(-1));
     }
 
     #[test]

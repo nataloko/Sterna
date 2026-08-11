@@ -1122,6 +1122,7 @@ fn schema() -> &'static Schema {
                 // pair and nothing else.
                 tt_session::Kind::IntClamp(lo, hi) => (TtSettingKind::IntRange, lo, hi),
                 tt_session::Kind::IntWord => (TtSettingKind::IntRange, 0, u16::MAX as i32),
+                tt_session::Kind::IntByte => (TtSettingKind::IntRange, 0, u8::MAX as i32),
                 tt_session::Kind::Str => (TtSettingKind::Str, 0, 0),
                 tt_session::Kind::Enum(_) => (TtSettingKind::Enum, 0, 0),
                 tt_session::Kind::Color2 => (TtSettingKind::Color2, 0, 0),
