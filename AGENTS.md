@@ -2010,6 +2010,14 @@ And for the macro language:
   **remote** one — `kermit.c:1160` takes its basename before it goes in the `R`
   packet, so `kmtget 'sub/x'` asks the peer for `x`. `Job::needs_name` is the
   list.
+- **A transfer's clock is not `Instant`'s, and on Windows they disagree by a
+  system tick.** `tt_xfer.c`'s `now_sec` is `GetTickCount64` there — faithfully,
+  since upstream's `FTSetTimeOut` is `SetTimer` — and its resolution is about
+  15.6 ms on a counter QPC knows nothing about. So a one-second auto-stop can
+  measure **993 ms** to an `Instant`, and a test asserting `elapsed >= 1s`
+  against it is comparing two clocks rather than testing the transfer. Assert
+  that it waited, with a tick of slack; the failure worth catching returns in
+  milliseconds.
 - **A transfer is the one blocking command a macro cannot notice a dead
   frontend from.** Everything else either polls the ring — which goes quiet
   when the terminal does — or is a job that comes back empty. A transfer's

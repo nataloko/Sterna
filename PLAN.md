@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 469
+**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 472
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4762,7 +4762,26 @@ because `cargo test` has no per-test timeout and one stuck test otherwise takes
 the six-hour default with it. And the shell job failed once, separately, with
 `malloc_consolidate(): unaligned fastbin chunk detected` in `cmdline_test` —
 heap corruption, on Linux, in a test that passes ten times out of ten locally on
-the same Qt. Intermittent, unrelated to anything in this section, and open.
+the same Qt. Intermittent, unrelated to anything in this section — and now closed. It was a
+real use-after-free rather than a test artefact: `Session` and `Macro` are both
+children of `MainWindow`, `QObjectPrivate::deleteChildren` deletes in creation
+order, the session is created first, and `~Macro` calls `Session::unlinkMacro`
+to take the terminal's tap off. So a window closed with a macro still running
+read a freed session — which is a script outliving its window, not an exotic
+case. It only corrupts the heap once something else claims that memory, hence
+the intermittency and hence ten clean runs locally. `~MainWindow` now tears the
+control socket down and then the macro, mirroring the constructor. Twelve plain
+ASan runs found nothing; a probe that *forces* the condition — a `pause 30`
+startup macro and an immediate teardown — failed on the first attempt and named
+the free site, and it is now a permanent case in `cmdline_test`.
+
+With the connect hang gone the Windows job reached 33 test binaries, against 19
+before it, and stopped on a clock rather than a defect: the transfer's deadline
+is `GetTickCount64` there, faithfully, since upstream's `FTSetTimeOut` is
+`SetTimer` — one system tick of resolution, about 15.6 ms, on a counter
+`Instant`'s QPC knows nothing about. A one-second auto-stop measured 993 ms. The
+assertion now allows a tick; what it is for is a `recvfile` that returns as soon
+as it starts, which misses by three orders of magnitude.
 
 The last deferred TTL file branch is now back where it has meaning. On Windows,
 a macro with no BOM is converted from `GetACP()` exactly where the initial file
