@@ -15,6 +15,9 @@ build/
 # painting assertion can pass there and fail in CI; this is where to reproduce
 # that. It is not for measuring anything. See AGENTS.md.
 /shell/build-ubuntu
+# A fifth, instrumented. `cmdline_test`'s use-after-free was invisible without
+# it and named in one run with it; the flags are on the test that needs them.
+/shell/build-asan
 *.o
 *.so
 *.a
