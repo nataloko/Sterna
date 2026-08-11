@@ -483,12 +483,15 @@ mod windows_tests {
         assert_eq!(bind(&path).unwrap_err().kind(), io::ErrorKind::AddrInUse);
     }
 
+    /// Through `peer_check` rather than `peer_is_us`, so that a Win32 call
+    /// which failed says which one and why instead of arriving as a bare
+    /// "this peer is not us" — the same answer a correct refusal gives.
     #[test]
     fn our_own_connection_passes_the_token_check() {
         let path = path_of(&name()).unwrap();
         let mut listener = bind(&path).unwrap();
         let _client = Stream::connect(&path).unwrap();
         let server = listener.accept().unwrap();
-        assert!(peer_is_us(&server));
+        assert!(server.peer_check().expect("the token check ran"));
     }
 }

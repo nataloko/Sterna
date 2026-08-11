@@ -59,6 +59,17 @@ impl Stream {
             windows::peer_is_us(self)
         }
     }
+
+    /// The same question with the reason kept. Windows only, because it is the
+    /// only side where the check is several calls that can each fail.
+    ///
+    /// For the tests: the accept loop has to refuse either way and this
+    /// library has no channel to complain on, so the reason is of use exactly
+    /// where it can be acted on.
+    #[cfg(all(windows, test))]
+    pub(crate) fn peer_check(&self) -> io::Result<bool> {
+        windows::peer_check(self)
+    }
 }
 
 impl Read for Stream {
@@ -357,23 +368,45 @@ mod windows {
         }
     }
 
-    pub(super) fn peer_is_us(stream: &Stream) -> bool {
+    /// The identity check with its reason kept, which is the form the tests
+    /// use and the form a diagnosis needs.
+    ///
+    /// A refusal is a `false` and a broken check is an `Err`, and from outside
+    /// they had looked the same — so "this peer is not us", which is the
+    /// answer that closes the connection, was also what a Win32 call failing
+    /// for some unrelated reason produced. On Unix neither can really happen;
+    /// this is Windows' half, and it is the half nothing had run.
+    pub(super) fn peer_check(stream: &Stream) -> io::Result<bool> {
         if !stream.server {
-            return false;
+            return Err(io::Error::other("not the server end of a pipe"));
         }
-        let impersonated = unsafe { ImpersonateNamedPipeClient(stream.inner.as_raw_handle()) };
-        if impersonated == 0 {
-            return false;
+        // SAFETY: a live server-side pipe handle whose client has connected.
+        if unsafe { ImpersonateNamedPipeClient(stream.inner.as_raw_handle()) } == 0 {
+            let e = io::Error::last_os_error();
+            return Err(io::Error::new(e.kind(), format!("impersonate: {e}")));
         }
         let same = (|| -> io::Result<bool> {
-            let peer = Token::thread()?.user()?;
-            let us = Token::process()?.user()?;
+            let peer = Token::thread()
+                .map_err(|e| io::Error::new(e.kind(), format!("the client's token: {e}")))?
+                .user()
+                .map_err(|e| io::Error::new(e.kind(), format!("the client's user: {e}")))?;
+            let us = Token::process()
+                .map_err(|e| io::Error::new(e.kind(), format!("our token: {e}")))?
+                .user()
+                .map_err(|e| io::Error::new(e.kind(), format!("our user: {e}")))?;
             Ok(unsafe { EqualSid(peer.sid(), us.sid()) != 0 })
-        })()
-        .unwrap_or(false);
+        })();
         // Never let a failed identity check leave the accept thread running as
         // the client. A failed revert is therefore also a refusal.
-        (unsafe { RevertToSelf() != 0 }) && same
+        if unsafe { RevertToSelf() } == 0 {
+            let e = io::Error::last_os_error();
+            return Err(io::Error::new(e.kind(), format!("revert: {e}")));
+        }
+        same
+    }
+
+    pub(super) fn peer_is_us(stream: &Stream) -> bool {
+        peer_check(stream).unwrap_or(false)
     }
 
     pub(crate) fn list(pattern: &Path) -> io::Result<Vec<PathBuf>> {
@@ -387,7 +420,17 @@ mod windows {
         let find = unsafe { FindFirstFileW(wide_pattern.as_ptr(), &mut data) };
         if find == INVALID_HANDLE_VALUE {
             let e = io::Error::last_os_error();
-            if e.raw_os_error() == Some(ERROR_FILE_NOT_FOUND as i32) {
+            // A pattern that matches nothing is not an error, and the pipe
+            // namespace does not spell it the way a directory does: an empty
+            // `\\.\pipe` answers `ERROR_NO_MORE_FILES` from *FindFirstFile*,
+            // where a real directory answers `ERROR_FILE_NOT_FOUND`. Taking
+            // only the second turns "no window is listening" — the ordinary
+            // state of a machine with no terminal open — into a hard failure
+            // of every client that has to look.
+            if matches!(
+                e.raw_os_error(),
+                Some(x) if x == ERROR_FILE_NOT_FOUND as i32 || x == ERROR_NO_MORE_FILES as i32
+            ) {
                 return Ok(Vec::new());
             }
             return Err(e);
