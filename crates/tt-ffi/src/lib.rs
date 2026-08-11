@@ -511,6 +511,31 @@ pub extern "C" fn tt_session_rows(session: *const TtSession) -> usize {
     session_ref!(session, 0).session.grid().rows()
 }
 
+/// DECSTBM's rows, zero-based and inclusive — the whole screen unless a host
+/// has narrowed it.
+///
+/// One caller: `CSI 0 i` with DECPEX reset prints the scroll region rather than
+/// the screen (`vtterm.c:2085`), and the frontend that owns the printer has to
+/// know which rows those are. Nothing else above the core needs the margins,
+/// which is why this is the only half of them exposed.
+#[no_mangle]
+pub extern "C" fn tt_session_scroll_region(
+    session: *const TtSession,
+    top: *mut usize,
+    bottom: *mut usize,
+) {
+    let s = session_ref!(session);
+    let (t, b) = s.session.grid().scroll_region();
+    unsafe {
+        if let Some(top) = top.as_mut() {
+            *top = t;
+        }
+        if let Some(bottom) = bottom.as_mut() {
+            *bottom = b;
+        }
+    }
+}
+
 /// One row of what the window is **showing**, borrowed straight out of the
 /// grid — no copy and no allocation, which is the point of a POD [`Cell`].
 ///

@@ -724,13 +724,26 @@ static void test_printer(void)
     CHECK(jobs[1].op == TT_PRINTER_OP_WRITE);
     CHECK(jobs[1].text != NULL && strcmp(jobs[1].text, "B\r\n") == 0);
     CHECK(jobs[2].op == TT_PRINTER_OP_CLOSE);
-    /* DECPEX defaults set, so the whole screen rather than the region. */
+    /* DECPEX defaults set, so the whole screen rather than the region. The
+     * frontend needs the region's rows to honour the other answer. */
     CHECK(jobs[3].op == TT_PRINTER_OP_SCREEN && jobs[3].scroll_region == 0);
+    /* The whole screen until DECSTBM says otherwise. Against the live row
+     * count, not `cfg.rows`: applying a setting applies all of them, and the
+     * terminal size is one of them. */
+    size_t top = 99, bottom = 99;
+    tt_session_scroll_region(s, &top, &bottom);
+    CHECK(top == 0 && bottom == tt_session_rows(s) - 1);
     /* Reading does not consume, and the next drain replaces the batch. */
     CHECK(tt_session_printer_events(s, &jobs) == 4);
     CHECK(tt_session_drain_events(s, &events) == 0);
     CHECK(tt_session_printer_events(s, &jobs) == 0);
     CHECK(jobs == NULL);
+
+    /* ...and DECSTBM moves it, which is the answer `CSI 0 i` needs when
+     * DECPEX is reset. Inclusive rows, zero-based. */
+    tt_session_feed(s, (const uint8_t *)"\x1b[2;3r", 6);
+    tt_session_scroll_region(s, &top, &bottom);
+    CHECK(top == 1 && bottom == 2);
 
     tt_session_free(s);
 }

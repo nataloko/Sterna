@@ -2617,6 +2617,19 @@ size_t tt_session_cols(const TtSession *session);
 size_t tt_session_rows(const TtSession *session);
 
 /**
+ * DECSTBM's rows, zero-based and inclusive — the whole screen unless a host
+ * has narrowed it.
+ *
+ * One caller: `CSI 0 i` with DECPEX reset prints the scroll region rather than
+ * the screen (`vtterm.c:2085`), and the frontend that owns the printer has to
+ * know which rows those are. Nothing else above the core needs the margins,
+ * which is why this is the only half of them exposed.
+ */
+void tt_session_scroll_region(const TtSession *session,
+                              size_t *top,
+                              size_t *bottom);
+
+/**
  * One row of what the window is **showing**, borrowed straight out of the
  * grid — no copy and no allocation, which is the point of a POD [`Cell`].
  *
