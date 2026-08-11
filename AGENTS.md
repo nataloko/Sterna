@@ -483,6 +483,14 @@ And for the vendored protocol C, which two compilers disagree about:
   to the first while GCC 16 defaults to the second. `tt-xfer/build.rs` pins
   `gnu++17` for the vendored C++ rather than inheriting whatever the container
   has.
+- **`cl.exe` cannot open a source file spelt `\\?\D:\...`, and it misnames the
+  one it could not open.** `std::fs::canonicalize` answers with that verbatim
+  prefix on Windows, so `tt-xfer/build.rs` handed every vendored source to MSVC
+  that way and got `C1083: Cannot open source file: '\\raw.c'` — a path that
+  exists nowhere, which reads as a missing checkout rather than as a prefix.
+  MinGW accepts it, so the cross build was green throughout and only the native
+  job saw it. `plain()` strips it, and only for the drive spelling: the prefix
+  is load-bearing in `\\?\UNC\server\share`.
 
 And for telnet:
 
@@ -2228,6 +2236,21 @@ And for the desktop side:
   of that is true** — Mesa is never mapped, Wayland costs 3 MB more than X11,
   and the variable does nothing. Startup and RSS were also flattering by ~2x.
   A whole false optimisation, from one version gap. Use `sterna-fedora`.
+- **But CI's Qt is the Ubuntu container's, so that is where a CI paint failure
+  reproduces.** The two rules do not conflict: a *measurement* — footprint,
+  startup, protocol support — belongs in `sterna-fedora`, and a *verdict CI has
+  already given* belongs where CI gave it. `cmake -S . -B build-ubuntu` in this
+  container is that tree; it is gitignored and it is not for measuring
+  anything. Without it, "render ok" here and one failed check there is a
+  standoff with nothing to run.
+- **A glyph can put ink outside its own advance, so measuring a margin from
+  column 0 clamps.** `render_test`'s `VTFontSpace` case moved an `A` right by
+  three pixels and measured two: DejaVu Sans Mono's `A` overhangs to the left
+  by a pixel at the size Qt 6.4.2 picks, and the pixel before column 0 is off
+  the image, so the search saturated at x=0 and the *first* measurement was the
+  wrong one. It painted correctly throughout. Anything asserting where ink
+  begins measures a column with a blank one beside it, and lets the answer be
+  negative.
 - **You can screenshot your own widgets, not the desktop.**
   `org.gnome.Shell.Screenshot` returns `AccessDenied` (locked down since
   GNOME 45), `QScreen::grabWindow(0)` is uniform-blank under xcb — host windows

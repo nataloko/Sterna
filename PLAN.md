@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 449
+**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 458
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4667,6 +4667,27 @@ errors, and runs the Win32 consumer beside the DLL. The same job now installs
 native Rust workspace, and checks that cbindgen left the committed header
 unchanged. The MinGW/Wine path remains green locally; the MSVC path is written
 but cannot be called verified until that native job runs on a pushed commit.
+
+That job has now run, and it found one thing before it could reach any of the
+above: `std::fs::canonicalize` answers with a `\\?\` verbatim path on Windows
+and `cl.exe` cannot open a source file spelt that way, so `tt-xfer`'s build
+script stopped at the first vendored protocol. It reports the failure as
+`C1083: Cannot open source file: '\\raw.c'`, naming a path that exists nowhere
+— and MinGW accepts the prefix, which is why every cross build was green. The
+prefix is stripped for the drive spelling only; `\\?\UNC\server\share` needs
+it. Whether anything downstream of that first compile passes under MSVC is
+still open: the run got no further.
+
+Two failures in the shell job were the same kind of thing — a gate that had
+never been able to speak. Its `VTFontSpace` render case measured the left
+margin from column 0, where a glyph that overhangs its own advance clamps the
+search at zero; DejaVu Sans Mono's `A` does exactly that at the size Qt 6.4.2
+picks, so CI read three pixels of margin as two while the painter was right
+throughout. And the job installed no `uv`, so `telnet-audit`'s PEP 723 `inetd.py`
+died the moment it started while `servers.sh` printed that the servers were up
+— surfacing three minutes later as a connection refused. `servers.sh` now waits
+for the listeners and prints the child's log when they never arrive. `print_test`
+was also written and never gated; it is a CI step now.
 
 The last deferred TTL file branch is now back where it has meaning. On Windows,
 a macro with no BOM is converted from `GetACP()` exactly where the initial file
