@@ -7,7 +7,9 @@
 use std::time::Duration;
 
 use tt_conn::LinkKind;
-use tt_session::{Event, MemoryHandle, MemoryTransport, Session, WindowMetrics, WindowRequest};
+use tt_session::{
+    Event, MemoryHandle, MemoryTransport, PrinterEvent, Session, WindowMetrics, WindowRequest,
+};
 use tt_vt::{Config, Key, Modifiers, MouseEvent};
 
 const TICK: Duration = Duration::from_millis(20);
@@ -617,4 +619,56 @@ fn the_control_lines_are_declined_by_everything_that_is_not_a_serial_port() {
     let mut s = Session::new(Config::default());
     assert!(!s.set_dtr(true));
     assert!(s.modem_lines().is_none());
+}
+
+/// The printer is the second thing this session hands out that it cannot do
+/// itself, and like the window operations it has to survive the *transport*
+/// path — the one a real host reaches — rather than only `feed`.
+#[test]
+fn the_printer_events_reach_the_frontend_off_the_wire() {
+    let settings = tt_config::Settings {
+        printer_control_sequences: true,
+        ..tt_config::Settings::default()
+    };
+    let mut s = Session::new(Config {
+        cols: 24,
+        rows: 4,
+        ..Config::default()
+    });
+    let (transport, h) = MemoryTransport::new();
+    s.connect(Box::new(transport));
+    s.set_settings(settings);
+
+    h.feed(b"\x1b[5iA\r\nB\x1b[2J\x1b[4i");
+    let events = pump(&mut s);
+    assert_eq!(
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Printer(p) => Some(p.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            PrinterEvent::Open,
+            PrinterEvent::Write("A\r\nB\u{1b}[2J".into()),
+            PrinterEvent::Close,
+        ]
+    );
+    // The controls went to the printer instead of being obeyed, so nothing
+    // scrolled and nothing was erased.
+    assert_eq!(row(&s, 0), "AB");
+}
+
+/// And the gate is the file's: with `PrinterCtrlSequence` off — which is how
+/// Tera Term ships — the same stream is an ordinary one.
+#[test]
+fn the_printer_gate_comes_from_the_settings() {
+    let (mut s, h) = connected(24, 4);
+    h.feed(b"\x1b[5iA\r\nB\x1b[4i");
+    let events = pump(&mut s);
+    assert!(!events.iter().any(|e| matches!(e, Event::Printer(_))));
+    // The CR and LF were executed, so `B` is on the next row.
+    assert_eq!(row(&s, 0), "A");
+    assert_eq!(row(&s, 1), "B");
 }

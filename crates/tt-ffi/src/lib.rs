@@ -428,6 +428,11 @@ pub struct TtSession {
     /// same reason the strings above are: a C caller has nowhere to put them,
     /// and `TtEvent` has no room to carry two `int`s.
     window_requests: Vec<TtWindowRequest>,
+    /// And the printer's, for the same reason again — with the strings the
+    /// `Write` events point at kept alongside them, because `event_texts` is
+    /// cleared on the same schedule but is indexed by nothing.
+    printer_events: Vec<TtPrinterEvent>,
+    printer_texts: Vec<CString>,
 }
 
 /// Create a session. Returns null only if `config` is null.
@@ -472,6 +477,8 @@ pub extern "C" fn tt_session_new(config: *const TtConfig) -> *mut TtSession {
         xfer_message: CString::default(),
         transfer_result: None,
         window_requests: Vec::new(),
+        printer_events: Vec::new(),
+        printer_texts: Vec::new(),
     }))
 }
 
@@ -1189,6 +1196,66 @@ pub extern "C" fn tt_session_window_requests(
     s.window_requests.len()
 }
 
+/// Which media-copy operation a [`TtPrinterEvent`] is.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TtPrinterOp {
+    /// A job begins. Nothing prints until [`TtPrinterOp::Close`].
+    Open = 0,
+    /// Code points for the open job, in `text`.
+    Write = 1,
+    /// The job is complete and can be sent to the printer. Upstream waits
+    /// `PassThruDelay` seconds first, and that timer is the frontend's.
+    Close = 2,
+    /// `CSI 0 i` — print the screen. Not a byte stream: upstream renders the
+    /// grid graphically through the print dialog, so this is a request.
+    Screen = 3,
+}
+
+/// One thing `CSI Ps i` or `CSI ? Ps i` asked the printer for.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtPrinterEvent {
+    pub op: TtPrinterOp,
+    /// UTF-8 for [`TtPrinterOp::Write`], null otherwise.
+    ///
+    /// **Code points, not the printer's bytes.** Upstream spools UTF-32 and
+    /// converts with `UTF32ToMBCP(u32, CP_ACP)` on the way out, so a control
+    /// byte the host sent arrives here as the character of that value and the
+    /// encoding on the way to the device is the frontend's decision.
+    pub text: *const c_char,
+    /// For [`TtPrinterOp::Screen`]: nonzero when DECPEX asked for the scroll
+    /// region rather than the whole screen.
+    pub scroll_region: u8,
+}
+
+/// The printer operations the last [`tt_session_drain_events`] turned up, in
+/// the order the host asked for them.
+///
+/// Announced by [`TtEventKind::Printer`] and read separately for the reason
+/// [`tt_session_window_requests`] is. **The array and every `text` in it are
+/// borrowed and valid until the next event drain on this session**, and reading
+/// does not consume.
+///
+/// A frontend with no printer can drop the lot, and dropping is complete: the
+/// terminal never waits on a job and the host is told nothing either way. What
+/// it must not do is act on a `Write` it has not seen an `Open` for.
+#[no_mangle]
+pub extern "C" fn tt_session_printer_events(
+    session: *mut TtSession,
+    out: *mut *const TtPrinterEvent,
+) -> usize {
+    let s = session!(session, 0);
+    if let Some(out) = unsafe { out.as_mut() } {
+        *out = if s.printer_events.is_empty() {
+            ptr::null()
+        } else {
+            s.printer_events.as_ptr()
+        };
+    }
+    s.printer_events.len()
+}
+
 fn palette_rgb_one(color: tt_vt::palette::Rgb, r: *mut u8, g: *mut u8, b: *mut u8) {
     let (pr, pg, pb) = color;
     unsafe {
@@ -1721,6 +1788,10 @@ pub enum TtEventKind {
     /// repaint or maximise. Read [`tt_session_window_requests`] for what — one
     /// call answers however many of these came out of this drain.
     WindowRequest = 17,
+    /// `CSI Ps i` or `CSI ? Ps i` asked the printer for something. Read
+    /// [`tt_session_printer_events`] for what — one call answers however many
+    /// of these came out of this drain.
+    Printer = 18,
 }
 
 #[repr(C)]
@@ -1756,6 +1827,8 @@ pub extern "C" fn tt_session_drain_events(
     s.events.clear();
     s.event_texts.clear();
     s.window_requests.clear();
+    s.printer_events.clear();
+    s.printer_texts.clear();
     for ev in s.session.drain_events() {
         let mut size = (0u16, 0u16);
         let (kind, byte, text) = match ev {
@@ -1782,6 +1855,27 @@ pub extern "C" fn tt_session_drain_events(
                 };
                 s.window_requests.push(TtWindowRequest { op, x, y });
                 (TtEventKind::WindowRequest, 0, ptr::null())
+            }
+            Event::Printer(p) => {
+                use tt_session::PrinterEvent as P;
+                let (op, text, scroll_region) = match p {
+                    P::Open => (TtPrinterOp::Open, ptr::null(), 0),
+                    P::Write(w) => {
+                        s.printer_texts.push(cstring(&w));
+                        let ptr = s.printer_texts.last().expect("just pushed").as_ptr();
+                        (TtPrinterOp::Write, ptr, 0)
+                    }
+                    P::Close => (TtPrinterOp::Close, ptr::null(), 0),
+                    P::Screen { scroll_region } => {
+                        (TtPrinterOp::Screen, ptr::null(), u8::from(scroll_region))
+                    }
+                };
+                s.printer_events.push(TtPrinterEvent {
+                    op,
+                    text,
+                    scroll_region,
+                });
+                (TtEventKind::Printer, 0, ptr::null())
             }
             Event::Break => (TtEventKind::Break, 0, ptr::null()),
             Event::BadByte(b) => (TtEventKind::BadByte, b, ptr::null()),

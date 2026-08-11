@@ -113,6 +113,10 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
             WindowTitleChange::Ahead => TitleChange::Ahead,
             WindowTitleChange::Last => TitleChange::Last,
         },
+        printer_ctrl_sequence: s.printer_control_sequences,
+        // Only whether a device was named ever reaches the engine — the name
+        // itself is the frontend's, because everything it addresses is.
+        printer_direct: !s.printer_passthrough_port.is_empty(),
         cursor_ctrl_sequence: s.window_cursor_ctrl_allowed,
         accept_8bit_ctrl: s.window_accept_8bit_ctrl,
         send_8bit_ctrl: s.window_send_8bit_ctrl,

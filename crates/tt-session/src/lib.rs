@@ -57,7 +57,7 @@ pub use xfer::{
 use tt_config::ConnectionTcpCrSend;
 pub use tt_config::{Field, Ini, KeyboardMap, Kind, Settings, Shortcut, UserKeyType, FIELDS};
 pub use tt_vt::DebugMode;
-pub use tt_vt::{WindowMetrics, WindowRequest};
+pub use tt_vt::{PrinterEvent, WindowMetrics, WindowRequest};
 
 use tt_conn::{Error, Result, Transport, TransportEvent};
 use tt_grid::{Cell, Grid, ATTR_LINE_CONTINUED, ATTR_URL, WIDTH_PAD, WIDTH_WIDE};
@@ -151,6 +151,14 @@ pub enum Event {
     /// the terminal answers `CSI 13 t` from what the frontend last said its
     /// window was, so a lie here becomes a lie on the wire.
     WindowRequest(WindowRequest),
+    /// `CSI Ps i` and `CSI ? Ps i` asked the printer for something. See
+    /// [`PrinterEvent`].
+    ///
+    /// A frontend with no printer drops these, and dropping them is a complete
+    /// answer: nothing in the terminal waits on a job, and the host is told
+    /// nothing either way. What it must not do is act on a `Write` without
+    /// having seen its `Open`.
+    Printer(PrinterEvent),
 }
 
 /// What pressing a legacy `KEYBOARD.CNF` scan code did.
@@ -1112,6 +1120,7 @@ impl Session {
         self.collect_title();
         self.collect_bells();
         self.collect_colors();
+        self.collect_printer_events();
         self.collect_window_requests();
         Ok(total)
     }
@@ -1432,6 +1441,7 @@ impl Session {
         self.collect_title();
         self.collect_bells();
         self.collect_colors();
+        self.collect_printer_events();
         self.collect_window_requests();
     }
 
@@ -1598,6 +1608,20 @@ impl Session {
         if self.vt.take_colors_changed() {
             self.events.push(Event::ColorsChanged);
         }
+    }
+
+    /// Everything the media-copy sequences asked of a printer, in order.
+    ///
+    /// Beside [`Session::collect_window_requests`] and called from the same
+    /// three places, for the same reason: the sequences arrive while `advance`
+    /// is parsing and there is no printer down there to hand them to.
+    fn collect_printer_events(&mut self) {
+        self.events.extend(
+            self.vt
+                .take_printer_events()
+                .into_iter()
+                .map(Event::Printer),
+        );
     }
 
     fn collect_window_requests(&mut self) {

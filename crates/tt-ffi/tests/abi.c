@@ -685,6 +685,56 @@ static void test_window_ops(void)
     tt_session_free(s);
 }
 
+static void test_printer(void)
+{
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    cfg.cols = 24;
+    cfg.rows = 4;
+    TtSession *s = tt_session_new(&cfg);
+    CHECK(s != NULL);
+
+    /* PrinterCtrlSequence ships off, so four of the five sequences do
+     * nothing until the file turns them on. */
+    tt_session_feed(s, (const uint8_t *)"\x1b[5iA\x1b[4i", 10);
+    const TtEvent *events = NULL;
+    tt_session_drain_events(s, &events);
+    const TtPrinterEvent *jobs = NULL;
+    CHECK(tt_session_printer_events(s, &jobs) == 0);
+    CHECK(jobs == NULL);
+
+    CHECK(tt_session_set_setting(s, "printer.control_sequences", "on") == TT_OK);
+    tt_session_drain_events(s, &events);
+
+    /* A whole job: open, the controls the terminal did not execute, close.
+     * And a print-screen request, which carries no bytes at all. */
+    tt_session_feed(s, (const uint8_t *)"\x1b[5iB\r\n\x1b[4i\x1b[0i", 16);
+    size_t nev = tt_session_drain_events(s, &events);
+    int seen = 0;
+    for (size_t i = 0; i < nev; i++) {
+        if (events[i].kind == TT_EVENT_KIND_PRINTER) {
+            seen++;
+        }
+    }
+    CHECK(seen == 4);
+
+    CHECK(tt_session_printer_events(s, &jobs) == 4);
+    CHECK(jobs != NULL);
+    CHECK(jobs[0].op == TT_PRINTER_OP_OPEN && jobs[0].text == NULL);
+    CHECK(jobs[1].op == TT_PRINTER_OP_WRITE);
+    CHECK(jobs[1].text != NULL && strcmp(jobs[1].text, "B\r\n") == 0);
+    CHECK(jobs[2].op == TT_PRINTER_OP_CLOSE);
+    /* DECPEX defaults set, so the whole screen rather than the region. */
+    CHECK(jobs[3].op == TT_PRINTER_OP_SCREEN && jobs[3].scroll_region == 0);
+    /* Reading does not consume, and the next drain replaces the batch. */
+    CHECK(tt_session_printer_events(s, &jobs) == 4);
+    CHECK(tt_session_drain_events(s, &events) == 0);
+    CHECK(tt_session_printer_events(s, &jobs) == 0);
+    CHECK(jobs == NULL);
+
+    tt_session_free(s);
+}
+
 static void test_serial(void)
 {
     TtSerialParams p;
@@ -2304,6 +2354,7 @@ int main(void)
     test_input();
     test_palette();
     test_window_ops();
+    test_printer();
     test_serial();
     test_ssh();
     test_telnet();

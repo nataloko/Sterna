@@ -378,6 +378,41 @@ typedef uint32_t TtWindowOp;
 #endif // __cplusplus
 
 /**
+ * Which media-copy operation a [`TtPrinterEvent`] is.
+ */
+enum TtPrinterOp
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    /**
+     * A job begins. Nothing prints until [`TtPrinterOp::Close`].
+     */
+    TT_PRINTER_OP_OPEN = 0,
+    /**
+     * Code points for the open job, in `text`.
+     */
+    TT_PRINTER_OP_WRITE = 1,
+    /**
+     * The job is complete and can be sent to the printer. Upstream waits
+     * `PassThruDelay` seconds first, and that timer is the frontend's.
+     */
+    TT_PRINTER_OP_CLOSE = 2,
+    /**
+     * `CSI 0 i` — print the screen. Not a byte stream: upstream renders the
+     * grid graphically through the print dialog, so this is a request.
+     */
+    TT_PRINTER_OP_SCREEN = 3,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum TtPrinterOp TtPrinterOp;
+#else
+typedef uint32_t TtPrinterOp;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+/**
  * What a setting holds — enough for a dialog to pick a widget and no more.
  */
 enum TtSettingKind
@@ -533,6 +568,12 @@ enum TtEventKind
      * call answers however many of these came out of this drain.
      */
     TT_EVENT_KIND_WINDOW_REQUEST = 17,
+    /**
+     * `CSI Ps i` or `CSI ? Ps i` asked the printer for something. Read
+     * [`tt_session_printer_events`] for what — one call answers however many
+     * of these came out of this drain.
+     */
+    TT_EVENT_KIND_PRINTER = 18,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -1043,6 +1084,27 @@ typedef struct {
     int32_t x;
     int32_t y;
 } TtWindowRequest;
+
+/**
+ * One thing `CSI Ps i` or `CSI ? Ps i` asked the printer for.
+ */
+typedef struct {
+    TtPrinterOp op;
+    /**
+     * UTF-8 for [`TtPrinterOp::Write`], null otherwise.
+     *
+     * **Code points, not the printer's bytes.** Upstream spools UTF-32 and
+     * converts with `UTF32ToMBCP(u32, CP_ACP)` on the way out, so a control
+     * byte the host sent arrives here as the character of that value and the
+     * encoding on the way to the device is the frontend's decision.
+     */
+    const char *text;
+    /**
+     * For [`TtPrinterOp::Screen`]: nonzero when DECPEX asked for the scroll
+     * region rather than the whole screen.
+     */
+    uint8_t scroll_region;
+} TtPrinterEvent;
 
 /**
  * One setting, as data — the row a generated dialog builds a widget from.
@@ -2862,6 +2924,22 @@ void tt_session_set_window_metrics(TtSession *session,
  */
 size_t tt_session_window_requests(TtSession *session,
                                   const TtWindowRequest **out);
+
+/**
+ * The printer operations the last [`tt_session_drain_events`] turned up, in
+ * the order the host asked for them.
+ *
+ * Announced by [`TtEventKind::Printer`] and read separately for the reason
+ * [`tt_session_window_requests`] is. **The array and every `text` in it are
+ * borrowed and valid until the next event drain on this session**, and reading
+ * does not consume.
+ *
+ * A frontend with no printer can drop the lot, and dropping is complete: the
+ * terminal never waits on a job and the host is told nothing either way. What
+ * it must not do is act on a `Write` it has not seen an `Open` for.
+ */
+size_t tt_session_printer_events(TtSession *session,
+                                 const TtPrinterEvent **out);
 
 /**
  * An entry from the compiled-in default palette. False for `index > 255`.
