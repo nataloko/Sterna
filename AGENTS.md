@@ -1298,6 +1298,63 @@ does not compile:
   `DispResetColor(CS_ALL)`. There are no themes here, and copying it gives a
   settings dialog whose colour tab silently does nothing.
 
+And for the window operations, where the reports and the actions are the same
+switch and nothing else about them matches:
+
+- **The reports have to be answered out of a snapshot, and there is no second
+  option.** `CSI 14 t`'s reply is composed while `advance` is parsing, so there
+  is nowhere to call into a toolkit and ask; the frontend pushes
+  `WindowMetrics` on every move, resize and window-state change and the engine
+  reads what it was last told. The *actions* are a queue, which is
+  `take_bells`' split for `take_bells`' reason. Building either one the other
+  way round is what looks obvious and does not work.
+- **A frontend that pushes nothing gets a notional window, and the oracle's
+  stubs answer with the same numbers on purpose.** No chrome, at the origin,
+  8x16 cells, a 1920x1080 work area — so `esctest/run_diff.sh` compares the two
+  engines on which flag gates which report, which sub-parameter means the frame
+  and which axis is printed first, rather than on a desktop neither of them
+  has. Changing one side's constants without the other turns an adjudicable
+  suite into a disagreement about furniture.
+- **`CSI 13 t` reports x then y and every size report is height then width.**
+  It reads as a typo in `vtterm.c` and in xterm's own documentation and is
+  neither. Worse, the sub-parameters go the other way from each other: on
+  `CSI 13 t` the 2 is the *text area* and 0/1 the frame, and on `CSI 14 t` the
+  2 is the frame and 0/1 the text area. Both are upstream's and xterm's.
+- **An unknown sub-parameter answers nothing at all.** Cases 13 and 14 have a
+  `default: return`, so `CSI 13;3 t` is silence rather than a fallback to the
+  plain form — and a host waiting on it waits until its own timeout.
+- **`CSI 10 t` is maximise, not full screen**, and its comment says so: a
+  PuTTY-style full screen is what upstream meant to write and maximising is the
+  shortcut it took. So cases 9 and 10 are one operation, except that 10 has a
+  toggle and 9 does not — `CSI 9;2 t` falls off the end of its own switch.
+- **`CSI 8 t` resizes the grid in the engine and the window has to be told.**
+  Upstream's `ChangeTerminalSize` resizes too, and the differential dump is
+  taken at `NumOfColumns`/`NumOfLines`, so the engine cannot simply ask; but a
+  window that does not follow paints the new number of cells into the old
+  widget until something else resizes it. `Vt::take_terminal_resized` is the
+  flag, and it is deliberately not set by `Session::resize` — otherwise the
+  frontend's own resize comes back as another request and the two chase each
+  other.
+- **`CSI 4 t`'s zero axis means "leave it alone" and `CSI 8 t`'s means "use the
+  default".** `DispResizeWin` reads the current `GetWindowRect` for a missing
+  pixel axis (`vtdisp.c:3652`); `CSI 8 t` replaces a cell axis of 0 *or 1* with
+  24 or 80 (`vtterm.c:2545`), where xterm reads it as the maximum in that
+  direction. One sequence apart, opposite rules, and the same-looking parameter.
+- **`GetDesktopRect` is the work area of one monitor**, `MONITORINFO::rcWork`
+  (`ttlib_static.c:135`) — not the virtual desktop and not the whole screen. Qt
+  spells it `QScreen::availableGeometry()`. Reporting the full geometry
+  over-reports `CSI 15 t` and `CSI 19 t` by whatever the panel takes.
+- **Raise does not take focus, on purpose.** `WINDOW_RAISE` is
+  `BringWindowToTop` plus a `FlashWindow` if that left the window behind
+  another one; the `SetForegroundWindow` version is in the source behind a
+  `#if` nobody turns on. `QApplication::alert` is the flash.
+- **Wayland cannot honour `CSI 3 t` and must not pretend to.** There is no
+  placement request in `xdg_shell`, so `QWidget::move()` is silently ignored —
+  the same limit `/X=` and `VTPos` already have. The difference here is that
+  `CSI 13 t` answers from the metrics the frontend pushed, so a move that was
+  quietly dropped and then reported as done puts a lie on the wire rather than
+  merely in a window position.
+
 And for the clipboard, where the surprise is what happens to a line break:
 
 - **OSC 52 has two permission bits and notification is neither of them.**
