@@ -87,15 +87,26 @@ pub enum Event {
     /// close a window, so the frontend which owns one does it. Serial ports
     /// and local ptys never produce this request.
     CloseRequested,
-    /// The **far end** says the terminal should be this size.
+    /// The **far end** says the terminal should be this size. Resize the
+    /// window to suit, which is what upstream does — `buffer.c:5106` goes
+    /// through the window rather than round it.
     ///
-    /// Backwards from the usual direction and real: telnet's NAWS is defined
-    /// client-to-server, and a console server sends it the other way to say
-    /// what the equipment behind it actually is. The session does **not**
-    /// resize itself on it — the window owns its own size, and a core that
-    /// silently changed the grid would leave the frontend painting the wrong
-    /// number of cells. Honouring it is the frontend's decision, which is what
-    /// upstream does too (`buffer.c:5106` goes through the window).
+    /// Two sources, and the difference is which way the grid has already moved:
+    ///
+    /// - **Telnet's NAWS**, backwards from the usual direction and real: RFC
+    ///   1073 defines it client-to-server, and a console server sends it the
+    ///   other way to say what the equipment behind it actually is. The grid
+    ///   has **not** moved — the window owns its own size, and a core that
+    ///   silently changed it would leave the frontend painting the wrong
+    ///   number of cells. Honouring it is the frontend's decision.
+    /// - **`CSI 8 ; rows ; cols t`**, where the grid **has** already moved,
+    ///   because upstream's `ChangeTerminalSize` resizes there too. A window
+    ///   that does not follow paints more cells than it has room for until its
+    ///   next resize event undoes the change.
+    ///
+    /// A frontend does the same thing either way: resize the window and let
+    /// its own resize handler settle the grid. That is why they are one event
+    /// and not two.
     Resize { cols: u16, rows: u16 },
     /// The session log could not be written and has been closed. Reported
     /// once: a disk that filled up will not un-fill, and retrying on every
@@ -1596,6 +1607,22 @@ impl Session {
                 .into_iter()
                 .map(Event::WindowRequest),
         );
+        // `CSI 8 t` has already moved the grid — upstream resizes there too,
+        // and the differential dump is taken at the new size — so this is the
+        // window being told to follow rather than being asked whether to. It
+        // does not come back round: `take_terminal_resized` is set by that
+        // sequence alone and not by `Session::resize`.
+        if self.vt.take_terminal_resized() {
+            self.reanchor_after_resize();
+            let (cols, rows) = (self.vt.grid().cols(), self.vt.grid().rows());
+            if let Some(c) = self.conn.as_mut() {
+                let _ = c.resize(cols as u16, rows as u16);
+            }
+            self.events.push(Event::Resize {
+                cols: cols as u16,
+                rows: rows as u16,
+            });
+        }
     }
 
     fn collect_clipboard(&mut self) {

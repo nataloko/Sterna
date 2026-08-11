@@ -1193,6 +1193,16 @@ impl Vt {
         self.state.window
     }
 
+    /// Whether `CSI 8 t` has resized the terminal since this was last asked,
+    /// and clear.
+    ///
+    /// Only that sequence sets it — not [`Vt::resize`] — so a frontend can
+    /// resize its window in response without the answer coming back round as
+    /// another request.
+    pub fn take_terminal_resized(&mut self) -> bool {
+        std::mem::take(&mut self.state.terminal_resized)
+    }
+
     /// What `CSI 1`-`10 t` asked the window to do, and clear.
     ///
     /// A queue rather than an immediate action for the reason
@@ -1646,6 +1656,14 @@ struct State {
     window: window::WindowMetrics,
     /// XTWINOPS operations waiting for the frontend which owns a window.
     window_requests: Vec<window::WindowRequest>,
+    /// `CSI 8 t` resized the terminal and the window has not been told.
+    ///
+    /// The engine resizes here rather than asking, because upstream does and
+    /// because the differential dump is taken at `NumOfColumns`/`NumOfLines` —
+    /// but a window that does not follow leaves the painter drawing more cells
+    /// than it has room for until the next resize event puts it back. See
+    /// [`Vt::take_terminal_resized`].
+    terminal_resized: bool,
 }
 
 /// What a linked macro sees of the session — `ttdde.c`'s `DDEPut1` sink, and
@@ -1743,6 +1761,7 @@ impl State {
             colors_dirty: false,
             window: window::WindowMetrics::default(),
             window_requests: Vec::new(),
+            terminal_resized: false,
         }
     }
 
@@ -2667,6 +2686,7 @@ impl State {
                     want_cols = 80;
                 }
                 self.grid.resize(want_cols as usize, want_rows as usize);
+                self.terminal_resized = true;
             }
             // Maximise and restore. Case 9 has arms for 0 and 1 and no toggle;
             // case 10 has all three, and its 1 is *maximise* rather than full

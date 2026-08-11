@@ -209,6 +209,28 @@ fn the_window_operations_reach_the_frontend_in_both_directions() {
     assert_eq!(h.outbound(), b"\x1b[3;300;120t\x1b[6;32;16t");
 }
 
+/// `CSI 8 t` resizes the grid in the engine, so the window has to be told or
+/// it goes on painting the old number of cells.
+#[test]
+fn a_host_resize_moves_the_grid_and_says_so_once() {
+    let (mut s, h) = connected(80, 24);
+    h.feed(b"\x1b[8;30;100t");
+
+    let events = pump(&mut s);
+    assert!(events.contains(&Event::Resize {
+        cols: 100,
+        rows: 30
+    }));
+    assert_eq!((s.vt().grid().cols(), s.vt().grid().rows()), (100, 30));
+
+    // The frontend resizing its window must not come back round as another
+    // request, or the two chase each other.
+    s.resize(100, 30).expect("resize");
+    assert!(!pump(&mut s)
+        .iter()
+        .any(|e| matches!(e, Event::Resize { .. })));
+}
+
 #[test]
 fn paste_is_bracketed_only_when_the_host_asked() {
     let (mut s, h) = connected(20, 4);
