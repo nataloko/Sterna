@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 464
+**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 466
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4721,6 +4721,17 @@ trip to diagnose because a refusal and a broken check were the same `false`.
 Making the check keep its reason turned a guess about Win32 semantics into
 Windows stating the rule in its own error text. That is the cheaper move
 whenever the only machine that can answer is a CI runner.
+
+Nineteen binaries, and `\\?\` again — the third place it has surfaced.
+`ttpmacro` and `ttctl` both resolve a macro's path before sending it, because a
+relative name means what it says in the shell it was typed in; `canonicalize`
+answers with the verbatim form, so the window was handed a spelling
+`ttpmacro.exe` never produced and the macro would see it as its own name in
+`params[1]`. Both clients share `full_path` now. **Still open, and deliberately
+not fixed on a hunch: `tt-ttl`'s `set_dir` canonicalises into `cur_dir`**, which
+`getdir` reports — upstream's `GetCurrentDirectory` never returns a verbatim
+path, so this is the same defect one crate over, but whether it moves a golden
+is a question the Windows TTL gate has not been reached to answer yet.
 
 The last deferred TTL file branch is now back where it has meaning. On Windows,
 a macro with no BOM is converted from `GetACP()` exactly where the initial file
