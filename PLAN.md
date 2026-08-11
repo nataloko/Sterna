@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 415
+**Last updated:** 2026-08-11 · **Stage:** 2 complete, 3 in progress · **Commits:** 419
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4692,12 +4692,11 @@ box when the answer is no.
 
 `cmdline_test`'s listening socket is the platform's own on both sides now:
 Winsock's `SOCKET` is unsigned, so the POSIX "no socket" test could never fire
-there. `control_test` is deliberately still UNIX-only. Its client half is a
-`sockaddr_un` and a `poll(2)` while the Windows control channel is a named
-pipe, so shimming the four calls would compile and prove nothing about the
-transport that is actually used — the Windows client is the next piece of work
-rather than a `#define`. The Linux build, its four event-loop tests and the
-Windows cross build are all green; nothing here has been *run* on Windows yet.
+there. `control_test` was left UNIX-only at this point, on the grounds that
+shimming its client half would compile and prove nothing about the transport
+that is actually used; it has since been written twice instead — see below.
+The Linux build, its four event-loop tests and the Windows cross build are all
+green; nothing here has been *run* on Windows yet.
 
 The shell's test fixtures then split the same way the crates' did. `cmd.exe`
 rather than `/bin/sh` in `macro_test` and `cmdline_test`, and the platform's
@@ -4758,6 +4757,26 @@ concludes nothing happened is wrong: everything happened except telling the
 far end. Not reproduced as a defect on real Windows, where that API exists,
 and not changed here either — the fix is an API decision about what a partial
 apply should report, not a Wine workaround. **Open.**
+
+`control_test` now builds and runs on Windows too, which closes the one test
+that was deliberately left behind. `Control.cpp` already had the Windows half
+— `tt_ctl_wait_handle` and a `QWinEventNotifier` — so the missing piece was
+only a client, and it is written twice rather than shimmed: `openEnd`,
+`writeAll`, `readAvailable` and a hang-up test, four calls, `sockaddr_un` and
+`poll(2)` against `CreateFileW` and `PeekNamedPipe`. The peek is not
+decoration. The handle is synchronous, so a `ReadFile` with an empty pipe
+behind it blocks the thread that was going to produce the answer — which is
+the same shape as the reason the waiting *above* those four calls is shared:
+a client on the window's own thread has to wait in the event loop, and that is
+a fact about the window rather than about the address. Two smaller
+differences: `Scratch` is a no-op on Windows, because the pipe namespace has
+no directory to redirect and a pipe leaves nothing behind to go stale, and
+"the endpoint is gone" is `WaitNamedPipeW` reporting `ERROR_FILE_NOT_FOUND`
+rather than a missing file — every instance busy is a different answer and
+only one of the two is what a closed window produces. All eight cases pass
+under Wine, which is the one of the four binaries where Wine is a fair
+witness: named pipes, `QWinEventNotifier` and a queued close are all things it
+implements properly, unlike its fonts and its console host.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
