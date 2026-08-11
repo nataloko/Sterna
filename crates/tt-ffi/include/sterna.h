@@ -317,6 +317,67 @@ typedef uint32_t TtColorPair;
 #endif // __cplusplus
 
 /**
+ * Which XTWINOPS operation a [`TtWindowRequest`] is.
+ */
+enum TtWindowOp
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    /**
+     * `CSI 1 t`.
+     */
+    TT_WINDOW_OP_DEICONIFY = 0,
+    /**
+     * `CSI 2 t`.
+     */
+    TT_WINDOW_OP_ICONIFY = 1,
+    /**
+     * `CSI 3 ; x ; y t`. `x` and `y` are screen pixels for the outer frame.
+     */
+    TT_WINDOW_OP_MOVE = 2,
+    /**
+     * `CSI 4 ; height ; width t`. `x` is the width and `y` the height, in
+     * pixels — **and a zero means "leave that axis where it is"**, which is
+     * what upstream's `DispResizeWin` does with an omitted one.
+     */
+    TT_WINDOW_OP_RESIZE_PIXELS = 3,
+    /**
+     * `CSI 5 t`. Raise **without taking focus**, which is upstream's choice:
+     * `BringWindowToTop` and a taskbar flash, not `SetForegroundWindow`.
+     */
+    TT_WINDOW_OP_RAISE = 4,
+    /**
+     * `CSI 6 t`.
+     */
+    TT_WINDOW_OP_LOWER = 5,
+    /**
+     * `CSI 7 t` — repaint the whole window.
+     */
+    TT_WINDOW_OP_REFRESH = 6,
+    /**
+     * `CSI 9 ; 0 t` and `CSI 10 ; 0 t`.
+     */
+    TT_WINDOW_OP_UNMAXIMIZE = 7,
+    /**
+     * `CSI 9 ; 1 t` and `CSI 10 ; 1 t`. **`CSI 10 t` is maximise here, not
+     * full screen** — upstream's comment says so.
+     */
+    TT_WINDOW_OP_MAXIMIZE = 8,
+    /**
+     * `CSI 10 ; 2 t`.
+     */
+    TT_WINDOW_OP_TOGGLE_MAXIMIZE = 9,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum TtWindowOp TtWindowOp;
+#else
+typedef uint32_t TtWindowOp;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+/**
  * What a setting holds — enough for a dialog to pick a widget and no more.
  */
 enum TtSettingKind
@@ -466,6 +527,12 @@ enum TtEventKind
      * happens once a session, if at all.
      */
     TT_EVENT_KIND_COLORS_CHANGED = 16,
+    /**
+     * `CSI 1`-`10 t` asked the window to move, resize, iconify, raise, lower,
+     * repaint or maximise. Read [`tt_session_window_requests`] for what — one
+     * call answers however many of these came out of this drain.
+     */
+    TT_EVENT_KIND_WINDOW_REQUEST = 17,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -913,6 +980,69 @@ typedef struct {
     bool alt;
     bool ctrl;
 } TtModifiers;
+
+/**
+ * What a window looks like, for the XTWINOPS reports that describe one —
+ * `CSI 11`/`13`/`14`/`15`/`16`/`19 t`.
+ *
+ * Push this on every move, resize and window-state change. The terminal has
+ * to answer those reports while it is parsing, so it holds the last snapshot
+ * rather than asking; a frontend that never pushes leaves a notional 8x16-cell
+ * window at the origin on a 1920x1080 work area, which is what a headless
+ * build reports.
+ *
+ * Pixel sizes of zero mean "no frontend has said", and the terminal derives
+ * them from the grid and the cell. That is one value rather than a flag
+ * because a window of zero pixels is not a state a frontend can be in.
+ */
+typedef struct {
+    /**
+     * The outer frame's origin in screen pixels.
+     */
+    int32_t x;
+    int32_t y;
+    /**
+     * The text area's origin in screen pixels — the frame's, plus the border
+     * and the caption.
+     */
+    int32_t client_x;
+    int32_t client_y;
+    /**
+     * The outer frame in pixels.
+     */
+    int32_t width;
+    int32_t height;
+    /**
+     * The text area in pixels.
+     */
+    int32_t client_width;
+    int32_t client_height;
+    /**
+     * One cell in pixels, which is the font advance plus `VTFontSpace`.
+     */
+    int32_t cell_width;
+    int32_t cell_height;
+    /**
+     * The **work area** of the screen the window is on — what is left after
+     * the panels and docks, not the whole monitor. Qt spells it
+     * `QScreen::availableGeometry()`.
+     */
+    int32_t screen_width;
+    int32_t screen_height;
+    bool iconified;
+} TtWindowMetrics;
+
+/**
+ * One thing `CSI Ps t` asked the window to do.
+ */
+typedef struct {
+    TtWindowOp op;
+    /**
+     * Meaningful for [`TtWindowOp::Move`] and [`TtWindowOp::ResizePixels`].
+     */
+    int32_t x;
+    int32_t y;
+} TtWindowRequest;
 
 /**
  * One setting, as data — the row a generated dialog builds a widget from.
@@ -2706,6 +2836,32 @@ bool tt_session_color_rgb(const TtSession *session,
                           uint8_t *r,
                           uint8_t *g,
                           uint8_t *b);
+
+/**
+ * Tell the terminal what its window is. See [`TtWindowMetrics`].
+ */
+void tt_session_set_window_metrics(TtSession *session,
+                                   const TtWindowMetrics *metrics);
+
+/**
+ * The window operations the last [`tt_session_drain_events`] turned up, in
+ * the order the host asked for them.
+ *
+ * Announced by [`TtEventKind::WindowRequest`] and read separately for the
+ * reason a transfer's progress is: [`TtEvent`] is a fixed struct, and giving
+ * it fields for one event would be an ABI break for every other.
+ *
+ * **The array is borrowed and valid until the next event drain on this
+ * session**, and reading it does not consume it — one call answers however
+ * many of those events came out of that drain.
+ *
+ * A frontend that cannot honour an operation should drop it. Wayland has no
+ * request to place a window, so [`TtWindowOp::Move`] cannot be carried out
+ * there — and must not be pretended, because `CSI 13 t` answers from
+ * [`tt_session_set_window_metrics`] and a pretence becomes a lie on the wire.
+ */
+size_t tt_session_window_requests(TtSession *session,
+                                  const TtWindowRequest **out);
 
 /**
  * An entry from the compiled-in default palette. False for `index > 255`.

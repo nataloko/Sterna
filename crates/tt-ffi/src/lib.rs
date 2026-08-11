@@ -424,6 +424,10 @@ pub struct TtSession {
     xfer_file: CString,
     xfer_message: CString,
     transfer_result: Option<tt_session::TransferOutcome>,
+    /// The window operations the last event drain turned up. Kept here for the
+    /// same reason the strings above are: a C caller has nowhere to put them,
+    /// and `TtEvent` has no room to carry two `int`s.
+    window_requests: Vec<TtWindowRequest>,
 }
 
 /// Create a session. Returns null only if `config` is null.
@@ -467,6 +471,7 @@ pub extern "C" fn tt_session_new(config: *const TtConfig) -> *mut TtSession {
         xfer_file: CString::default(),
         xfer_message: CString::default(),
         transfer_result: None,
+        window_requests: Vec::new(),
     }))
 }
 
@@ -1052,6 +1057,138 @@ pub extern "C" fn tt_session_color_rgb(
     true
 }
 
+/// What a window looks like, for the XTWINOPS reports that describe one —
+/// `CSI 11`/`13`/`14`/`15`/`16`/`19 t`.
+///
+/// Push this on every move, resize and window-state change. The terminal has
+/// to answer those reports while it is parsing, so it holds the last snapshot
+/// rather than asking; a frontend that never pushes leaves a notional 8x16-cell
+/// window at the origin on a 1920x1080 work area, which is what a headless
+/// build reports.
+///
+/// Pixel sizes of zero mean "no frontend has said", and the terminal derives
+/// them from the grid and the cell. That is one value rather than a flag
+/// because a window of zero pixels is not a state a frontend can be in.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtWindowMetrics {
+    /// The outer frame's origin in screen pixels.
+    pub x: i32,
+    pub y: i32,
+    /// The text area's origin in screen pixels — the frame's, plus the border
+    /// and the caption.
+    pub client_x: i32,
+    pub client_y: i32,
+    /// The outer frame in pixels.
+    pub width: i32,
+    pub height: i32,
+    /// The text area in pixels.
+    pub client_width: i32,
+    pub client_height: i32,
+    /// One cell in pixels, which is the font advance plus `VTFontSpace`.
+    pub cell_width: i32,
+    pub cell_height: i32,
+    /// The **work area** of the screen the window is on — what is left after
+    /// the panels and docks, not the whole monitor. Qt spells it
+    /// `QScreen::availableGeometry()`.
+    pub screen_width: i32,
+    pub screen_height: i32,
+    pub iconified: bool,
+}
+
+/// Tell the terminal what its window is. See [`TtWindowMetrics`].
+#[no_mangle]
+pub extern "C" fn tt_session_set_window_metrics(
+    session: *mut TtSession,
+    metrics: *const TtWindowMetrics,
+) {
+    let s = session!(session);
+    let Some(m) = (unsafe { metrics.as_ref() }) else {
+        return;
+    };
+    let some = |w: i32, h: i32| (w > 0 && h > 0).then_some((w, h));
+    s.session.set_window_metrics(tt_vt::WindowMetrics {
+        pos: (m.x, m.y),
+        client_pos: (m.client_x, m.client_y),
+        size: some(m.width, m.height),
+        client_size: some(m.client_width, m.client_height),
+        cell: (m.cell_width, m.cell_height),
+        screen: (m.screen_width, m.screen_height),
+        iconified: m.iconified,
+    });
+}
+
+/// Which XTWINOPS operation a [`TtWindowRequest`] is.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TtWindowOp {
+    /// `CSI 1 t`.
+    Deiconify = 0,
+    /// `CSI 2 t`.
+    Iconify = 1,
+    /// `CSI 3 ; x ; y t`. `x` and `y` are screen pixels for the outer frame.
+    Move = 2,
+    /// `CSI 4 ; height ; width t`. `x` is the width and `y` the height, in
+    /// pixels — **and a zero means "leave that axis where it is"**, which is
+    /// what upstream's `DispResizeWin` does with an omitted one.
+    ResizePixels = 3,
+    /// `CSI 5 t`. Raise **without taking focus**, which is upstream's choice:
+    /// `BringWindowToTop` and a taskbar flash, not `SetForegroundWindow`.
+    Raise = 4,
+    /// `CSI 6 t`.
+    Lower = 5,
+    /// `CSI 7 t` — repaint the whole window.
+    Refresh = 6,
+    /// `CSI 9 ; 0 t` and `CSI 10 ; 0 t`.
+    Unmaximize = 7,
+    /// `CSI 9 ; 1 t` and `CSI 10 ; 1 t`. **`CSI 10 t` is maximise here, not
+    /// full screen** — upstream's comment says so.
+    Maximize = 8,
+    /// `CSI 10 ; 2 t`.
+    ToggleMaximize = 9,
+}
+
+/// One thing `CSI Ps t` asked the window to do.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtWindowRequest {
+    pub op: TtWindowOp,
+    /// Meaningful for [`TtWindowOp::Move`] and [`TtWindowOp::ResizePixels`].
+    pub x: i32,
+    pub y: i32,
+}
+
+/// The window operations the last [`tt_session_drain_events`] turned up, in
+/// the order the host asked for them.
+///
+/// Announced by [`TtEventKind::WindowRequest`] and read separately for the
+/// reason a transfer's progress is: [`TtEvent`] is a fixed struct, and giving
+/// it fields for one event would be an ABI break for every other.
+///
+/// **The array is borrowed and valid until the next event drain on this
+/// session**, and reading it does not consume it — one call answers however
+/// many of those events came out of that drain.
+///
+/// A frontend that cannot honour an operation should drop it. Wayland has no
+/// request to place a window, so [`TtWindowOp::Move`] cannot be carried out
+/// there — and must not be pretended, because `CSI 13 t` answers from
+/// [`tt_session_set_window_metrics`] and a pretence becomes a lie on the wire.
+#[no_mangle]
+pub extern "C" fn tt_session_window_requests(
+    session: *mut TtSession,
+    out: *mut *const TtWindowRequest,
+) -> usize {
+    let s = session!(session, 0);
+    if let Some(out) = unsafe { out.as_mut() } {
+        *out = if s.window_requests.is_empty() {
+            ptr::null()
+        } else {
+            s.window_requests.as_ptr()
+        };
+    }
+    s.window_requests.len()
+}
+
 fn palette_rgb_one(color: tt_vt::palette::Rgb, r: *mut u8, g: *mut u8, b: *mut u8) {
     let (pr, pg, pb) = color;
     unsafe {
@@ -1580,6 +1717,10 @@ pub enum TtEventKind {
     /// re-reading 262 colours on every pump would pay for a change that
     /// happens once a session, if at all.
     ColorsChanged = 16,
+    /// `CSI 1`-`10 t` asked the window to move, resize, iconify, raise, lower,
+    /// repaint or maximise. Read [`tt_session_window_requests`] for what — one
+    /// call answers however many of these came out of this drain.
+    WindowRequest = 17,
 }
 
 #[repr(C)]
@@ -1614,6 +1755,7 @@ pub extern "C" fn tt_session_drain_events(
     let s = session!(session, 0);
     s.events.clear();
     s.event_texts.clear();
+    s.window_requests.clear();
     for ev in s.session.drain_events() {
         let mut size = (0u16, 0u16);
         let (kind, byte, text) = match ev {
@@ -1624,6 +1766,23 @@ pub extern "C" fn tt_session_drain_events(
                 (TtEventKind::Title, 0, p)
             }
             Event::ColorsChanged => (TtEventKind::ColorsChanged, 0, ptr::null()),
+            Event::WindowRequest(req) => {
+                use tt_session::WindowRequest as W;
+                let (op, x, y) = match req {
+                    W::Deiconify => (TtWindowOp::Deiconify, 0, 0),
+                    W::Iconify => (TtWindowOp::Iconify, 0, 0),
+                    W::Move(x, y) => (TtWindowOp::Move, x, y),
+                    W::ResizePixels { width, height } => (TtWindowOp::ResizePixels, width, height),
+                    W::Raise => (TtWindowOp::Raise, 0, 0),
+                    W::Lower => (TtWindowOp::Lower, 0, 0),
+                    W::Refresh => (TtWindowOp::Refresh, 0, 0),
+                    W::Unmaximize => (TtWindowOp::Unmaximize, 0, 0),
+                    W::Maximize => (TtWindowOp::Maximize, 0, 0),
+                    W::ToggleMaximize => (TtWindowOp::ToggleMaximize, 0, 0),
+                };
+                s.window_requests.push(TtWindowRequest { op, x, y });
+                (TtEventKind::WindowRequest, 0, ptr::null())
+            }
             Event::Break => (TtEventKind::Break, 0, ptr::null()),
             Event::BadByte(b) => (TtEventKind::BadByte, b, ptr::null()),
             Event::Disconnected => (TtEventKind::Disconnected, 0, ptr::null()),

@@ -630,6 +630,61 @@ static void test_palette(void)
     tt_session_free(s);
 }
 
+static void test_window_ops(void)
+{
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    cfg.cols = 80;
+    cfg.rows = 24;
+    TtSession *s = tt_session_new(&cfg);
+    CHECK(s != NULL);
+
+    /* The reports go to the transport, which this unit has none of, so what
+     * they answer is asserted in tt-vt and end to end by esctest. What
+     * crosses the C seam is the snapshot going in and the actions coming
+     * out. */
+    TtWindowMetrics m;
+    memset(&m, 0, sizeof m);
+    m.x = 300; m.y = 120;
+    m.client_x = 308; m.client_y = 156;
+    m.width = 1288; m.height = 800;
+    m.client_width = 1280; m.client_height = 768;
+    m.cell_width = 16; m.cell_height = 32;
+    m.screen_width = 2560; m.screen_height = 1440;
+    m.iconified = true;
+    tt_session_set_window_metrics(s, &m);
+    /* Null is a no-op on both arguments rather than a crash. */
+    tt_session_set_window_metrics(s, NULL);
+    tt_session_set_window_metrics(NULL, &m);
+
+    /* The actions come out as events and are read once for the batch. */
+    tt_session_feed(s, (const uint8_t *)"\x1b[3;40;50t\x1b[2t", 14);
+    const TtEvent *events = NULL;
+    size_t nev = tt_session_drain_events(s, &events);
+    int seen = 0;
+    for (size_t i = 0; i < nev; i++) {
+        if (events[i].kind == TT_EVENT_KIND_WINDOW_REQUEST) {
+            seen++;
+        }
+    }
+    CHECK(seen == 2);
+
+    const TtWindowRequest *reqs = NULL;
+    CHECK(tt_session_window_requests(s, &reqs) == 2);
+    CHECK(reqs != NULL);
+    CHECK(reqs[0].op == TT_WINDOW_OP_MOVE && reqs[0].x == 40 && reqs[0].y == 50);
+    CHECK(reqs[1].op == TT_WINDOW_OP_ICONIFY);
+    /* Reading does not consume: a frontend may see several of the events. */
+    CHECK(tt_session_window_requests(s, &reqs) == 2);
+
+    /* ...but the next event drain replaces the batch. */
+    CHECK(tt_session_drain_events(s, &events) == 0);
+    CHECK(tt_session_window_requests(s, &reqs) == 0);
+    CHECK(reqs == NULL);
+
+    tt_session_free(s);
+}
+
 static void test_serial(void)
 {
     TtSerialParams p;
@@ -2248,6 +2303,7 @@ int main(void)
     test_cmdline();
     test_input();
     test_palette();
+    test_window_ops();
     test_serial();
     test_ssh();
     test_telnet();
