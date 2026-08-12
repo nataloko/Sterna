@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-12 · **Stage:** 2 complete, 3 in progress · **Commits:** 479
+**Last updated:** 2026-08-12 · **Stage:** 2 complete, 3 in progress · **Commits:** 483
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -5227,6 +5227,54 @@ rather than being given an invented spelling that the user's own Tera Term
 would ignore. `shell/tests/print_test.cpp` is the end-to-end gate and needs no
 printer — `PassThruPort` points at a file, which is what `PrintFileDirect`
 thinks a printer is.
+
+**There is a Windows artifact now, 2026-08-12** — an NSIS installer, 31 MB,
+carrying 106 MB across 50 files: the shell, the core, `ttctl`, `ttpmacro`, all
+fourteen `.lng` files, the Qt plugins that are not optional, about thirty DLLs
+and the licences. `packaging/windows/`, and its README is the second half of
+this entry.
+
+**It is cross-built, and that decided the format.** Upstream ships an Inno
+Setup script and `iscc.exe` is a Windows program, so matching upstream would
+have put Wine on the release path — and Wine has manufactured enough false
+findings on this project already. `makensis` is a Linux binary, so the whole
+artifact comes out of native tools. The stub is amd64 rather than the
+customary x86, which is two departures from convention in one file and the
+second follows from the first: an x86 stub cannot be *started* by the only
+Wine here, which is 64-bit with no WOW64, and a release artifact nobody can
+run before releasing it is the wrong trade for supporting a 32-bit Windows
+that could not run the 64-bit program inside it either.
+
+**The DLL set is closed out of the import tables rather than listed.** Qt's own
+deployment tooling does not exist for this target — `windeployqt` is a Windows
+program and the MinGW package ships no `qtpaths`, which CMake warns about
+during configuration. So the build walks `objdump -p` to a fixed point, and
+the rule for ours-versus-Windows' is whether the MinGW sysroot has the file.
+Forty-five names are left unresolved and every one is a real part of Windows:
+the API sets, `d3d11`/`d3d12`/`dxgi`/`DWrite`, `WINSPOOL.DRV`, `UxTheme`.
+
+Verified under the Ubuntu container's Wine, which is the half of this that can
+be checked from Linux: a silent install lands 51 files and writes the
+uninstall entry Add > Remove Programs reads; the installed `sterna.exe` starts
+and stays up, which is what says every DLL resolved and Qt found its platform
+plugin; and the uninstaller removes what it installed, leaves a file the user
+put in the program folder alone, and leaves the folder holding it. What Wine
+cannot answer is how any of it *behaves*, which is a Stage 3 item for a real
+machine along with the serial open.
+
+Three things it deliberately does not do, and one it cannot. It does not touch
+`PATH`, because `ttctl` and `ttpmacro` sit beside the executable and NSIS's own
+documentation describes how a naive registry `PATH` edit truncates somebody's.
+It does not touch `sterna.ini`, which is per-user and under AppData, so an
+uninstall that is really an upgrade does not take the settings with it. It does
+not associate `.ttl` yet, which upstream does and which is worth adding. And it
+is **unsigned**: SmartScreen will warn and the UAC prompt will say "Unknown
+publisher" until there is a certificate, which needs a legal entity. The build
+does not have to move when there is one — `osslsigncode` signs on Linux.
+
+`sterna.exe` also carries a version resource now. It already had its icon; what
+it had no version, company or description, so an executable whose installer
+writes all three into the registry declared none of them itself.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
