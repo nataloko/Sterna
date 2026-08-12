@@ -62,6 +62,7 @@ const PROBE: Duration = Duration::from_millis(250);
 pub struct SessionHost {
     tx: MacroSender,
     link: MacroLink,
+    link_owner: LinkOwner,
     /// Whether this macro still has the terminal — upstream's `Linked`, which
     /// `unlink` and `closett` clear and which every communication command
     /// tests before it does anything.
@@ -75,6 +76,17 @@ pub struct SessionHost {
     transfer_dir: Option<Vec<u8>>,
 }
 
+/// Which of the session's two script rings this host owns.
+///
+/// The macro ring deliberately remains single-owner for Tera Term
+/// compatibility. Plugins are a window-lifetime consumer beside it, so their
+/// worker has a separate slot and starting a macro cannot steal it.
+#[derive(Clone, Copy)]
+enum LinkOwner {
+    Macro,
+    Plugin,
+}
+
 impl SessionHost {
     /// `link` must be the one [`Session::link_macro`] returned, and `tx` the
     /// sender whose receiver that same frontend is servicing.
@@ -82,6 +94,21 @@ impl SessionHost {
         SessionHost {
             tx,
             link,
+            link_owner: LinkOwner::Macro,
+            linked: true,
+            transfer_dir: None,
+        }
+    }
+
+    /// The same host for a window's persistent Lua plugin worker.
+    ///
+    /// Its byte ring is independent of [`SessionHost::new`]'s macro ring;
+    /// every other command still crosses the same frontend job boundary.
+    pub fn new_plugin(tx: MacroSender, link: MacroLink) -> SessionHost {
+        SessionHost {
+            tx,
+            link,
+            link_owner: LinkOwner::Plugin,
             linked: true,
             transfer_dir: None,
         }
@@ -180,7 +207,11 @@ impl ScriptHost for SessionHost {
 
     fn unlink(&mut self) {
         self.linked = false;
-        let _ = self.tx.call(|s, _| s.unlink_macro());
+        let owner = self.link_owner;
+        let _ = self.tx.call(move |s, _| match owner {
+            LinkOwner::Macro => s.unlink_macro(),
+            LinkOwner::Plugin => s.unlink_plugin(),
+        });
     }
 
     fn connect(&mut self, cmdline: &[u8], cygwin: bool) -> Result<(), TtlError> {
@@ -190,7 +221,11 @@ impl ScriptHost for SessionHost {
         // is taking the ring back — and the only way to be here without a link
         // is to have given it up with `unlink` or `closett`.
         if !self.linked {
-            self.link = self.ask(|s| s.link_macro())?;
+            let owner = self.link_owner;
+            self.link = self.ask(move |s| match owner {
+                LinkOwner::Macro => s.link_macro(),
+                LinkOwner::Plugin => s.link_plugin(),
+            })?;
             self.linked = true;
         }
 

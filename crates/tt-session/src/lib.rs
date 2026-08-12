@@ -228,6 +228,12 @@ pub struct Session {
     /// linked, which is what turns the tap in `tt-vt` on. See
     /// [`Session::link_macro`].
     macro_link: Option<MacroLink>,
+    /// The Lua plugin worker's independent byte ring.
+    ///
+    /// Plugins live for the session rather than for one macro run, and a macro
+    /// started from the menu must not steal their receive stream. Both rings
+    /// are fed from the parser's one tap in [`Session::macro_bytes_in`].
+    plugin_link: Option<MacroLink>,
     /// `cv.ConnectedTime` (`commlib.c:787`) — when the current connection
     /// opened, for the one log timestamp that counts from there rather than
     /// from the log. `None` until something connects.
@@ -264,6 +270,7 @@ impl Session {
             xfer: None,
             xfer_reply: None,
             macro_link: None,
+            plugin_link: None,
             connected_at: None,
             conn_host: None,
             conn_port: None,
@@ -938,10 +945,10 @@ impl Session {
     /// Detach it — `DDELog = FALSE` and `DDEFreeBuf`. A no-op when none is
     /// linked.
     pub fn unlink_macro(&mut self) {
-        self.vt.set_macro_tap_enabled(false);
         if let Some(link) = self.macro_link.take() {
             link.clear();
         }
+        self.vt.set_macro_tap_enabled(self.plugin_link.is_some());
     }
 
     /// Whether a macro is driving this session.
@@ -949,16 +956,47 @@ impl Session {
         self.macro_link.is_some()
     }
 
+    /// Attach the window's long-lived Lua plugin worker.
+    ///
+    /// This is a second consumer of the same parser tap, not a second tap and
+    /// not the macro slot. A plugin callback can therefore wait for terminal
+    /// output while an ordinary `.ttl` or `.lua` macro runs, and starting that
+    /// macro does not silently strand the plugin on an old ring.
+    pub fn link_plugin(&mut self) -> MacroLink {
+        let link = MacroLink::new();
+        self.vt.set_macro_tap_enabled(true);
+        let _ = self.vt.take_macro_bytes();
+        self.plugin_link = Some(link.clone());
+        link
+    }
+
+    /// Detach the Lua plugin worker without disturbing an ordinary macro.
+    pub fn unlink_plugin(&mut self) {
+        if let Some(link) = self.plugin_link.take() {
+            link.clear();
+        }
+        self.vt.set_macro_tap_enabled(self.macro_link.is_some());
+    }
+
+    pub fn plugin_linked(&self) -> bool {
+        self.plugin_link.is_some()
+    }
+
     /// Move what the tap collected into the macro's ring.
     ///
     /// Called wherever the log is fed, and for the same reason: the tap fills
     /// as the parser runs and something has to take it away before it grows.
     fn macro_bytes_in(&mut self) {
-        let Some(link) = &self.macro_link else {
+        if self.macro_link.is_none() && self.plugin_link.is_none() {
             return;
-        };
+        }
         let bytes = self.vt.take_macro_bytes();
-        link.push(&bytes);
+        if let Some(link) = &self.macro_link {
+            link.push(&bytes);
+        }
+        if let Some(link) = &self.plugin_link {
+            link.push(&bytes);
+        }
     }
 
     /// Feed the log from whatever just arrived. Errors are reported once and

@@ -84,6 +84,30 @@ fn a_second_link_starts_empty() {
     assert_eq!(drain(&second), "new");
 }
 
+/// A plugin is a second script consumer, not a second macro. Both see the
+/// same parsed stream and unlinking either leaves the other one live.
+#[test]
+fn a_plugin_and_a_macro_have_independent_rings() {
+    let (mut s, far) = session();
+    let plugin = s.link_plugin();
+    let macro_ = s.link_macro();
+
+    far.feed(b"one\r\ntwo");
+    s.pump(Duration::from_millis(50)).unwrap();
+    assert_eq!(drain(&plugin), "one\r\ntwo");
+    assert_eq!(drain(&macro_), "one\r\ntwo");
+
+    s.unlink_macro();
+    assert!(!s.macro_linked());
+    assert!(s.plugin_linked());
+    far.feed(b"three");
+    s.pump(Duration::from_millis(50)).unwrap();
+    assert_eq!(drain(&plugin), "three");
+
+    s.unlink_plugin();
+    assert!(!s.plugin_linked());
+}
+
 /// A script that stops reading must not stop the terminal. Sixty-five
 /// kilobytes in and the oldest go, which is what keeps the parser running at
 /// the speed of the line rather than at the speed of the macro.
