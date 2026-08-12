@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-12 · **Stage:** 2 complete, 3 in progress · **Commits:** 477
+**Last updated:** 2026-08-12 · **Stage:** 2 complete, 3 in progress · **Commits:** 479
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4667,6 +4667,7 @@ errors, and runs the Win32 consumer beside the DLL. The same job now installs
 native Rust workspace, and checks that cbindgen left the committed header
 unchanged. The MinGW/Wine path remains green locally; the MSVC path is written
 but cannot be called verified until that native job runs on a pushed commit.
+*(It has since run, and is now verified — see the end of this section.)*
 
 That job has now run, and it found one thing before it could reach any of the
 above: `std::fs::canonicalize` answers with a `\\?\` verbatim path on Windows
@@ -4807,7 +4808,38 @@ The frontier is now the step after it, `run_abi_windows.ps1`, which had never
 run either: it passed `--profile debug`, and `debug` is the *directory* a dev
 build lands in rather than a profile name — cargo reserves it. The flag goes in
 only when `PROFILE` is set now, as `run_abi.sh` already did. The variable was
-also called `$profile`, which is one of PowerShell's automatic variables.
+also called `$profile`, which is one of PowerShell's automatic variables. Behind
+that, `/WX` turned MSVC's `fopen` deprecation into an error — answered with
+`_CRT_SECURE_NO_WARNINGS` rather than `fopen_s`, because MinGW compiles the same
+file for the Wine harness, and because the warnings that compile exists to catch
+are the generated header's.
+
+**And with that the run is green — all of it, for the first time.** The
+Windows job's four steps all pass: `fmt` and `clippy`, the whole workspace's
+tests, the MSVC C11 and C++17 compile of the generated header driving the real
+DLL through its Win32 event handles and named-pipe control channel, and the
+check that cbindgen left the committed header alone. The line in the section
+above — "the MSVC path is written but cannot be called verified until that
+native job runs on a pushed commit" — is now answered: it ran, it was wrong in
+ten places, and it is right.
+
+The ten, in the order the runner found them, because the order is the point:
+each one was hiding the next, and none of them is visible from Linux or from
+Wine. A `\\?\` verbatim path `cl.exe` cannot open; CRLF from the runner's own
+checkout against a byte-for-byte comparison; ConPTY's output pipe belonging to
+the console host rather than to the child; `ERROR_NO_MORE_FILES` from an empty
+pipe namespace; a peer check that cannot run before the first read; a `connect`
+test opening `COM1`; `GetTickCount64` measured against QPC;
+`ExpandEnvironmentStringsW`'s delimiter rule, which this file had recorded
+backwards; `--profile debug`, which cargo reserves; and `/WX` on a CRT
+deprecation. Two of them — the ConPTY hangup and the named-pipe peer check —
+are product defects rather than test or harness defects, and both would have
+presented to a user as a window that stopped responding.
+
+Still open from this sweep, and both written up above: whether a Windows serial
+open can block its caller indefinitely, which needs a real port; and
+`tt-ttl`'s `set_dir`, which canonicalises into `cur_dir` and so can report a
+verbatim path to a macro's `getdir`.
 
 The last deferred TTL file branch is now back where it has meaning. On Windows,
 a macro with no BOM is converted from `GetACP()` exactly where the initial file
