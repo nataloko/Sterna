@@ -4,10 +4,12 @@
 
 #pragma once
 
+#include <QString>
 #include <QWidget>
 
 class I18n;
 class Macro;
+class Plugins;
 class Printer;
 class QScrollBar;
 class Session;
@@ -17,13 +19,14 @@ class XferProgressDialog;
 /// The lifetime boundary for one tab.
 ///
 /// A session cannot safely be separated from its view, printer or macro: all
-/// three keep a pointer to it, and the macro may still have a worker and a
-/// native notifier alive when the page closes. Keeping the five together
+/// four keep a pointer to it, and the scripts may still have workers and
+/// native notifiers alive when the page closes. Keeping the six together
 /// makes closing a tab one destruction rather than an ordering convention in
 /// `MainWindow`.
 class TerminalPage : public QWidget {
 public:
     TerminalPage(const I18n *i18n, QWidget *macroWindow,
+                 const QString &pluginsDirectory,
                  QWidget *parent = nullptr);
     ~TerminalPage() override;
 
@@ -31,6 +34,7 @@ public:
     Printer *printer() const { return m_printer; }
     TerminalView *view() const { return m_view; }
     Macro *macro() const { return m_macro; }
+    Plugins *plugins() const { return m_plugins; }
     XferProgressDialog *transferDialog() const { return m_xferDialog; }
     /// Replace the modeless transfer dialog. The page owns it even though its
     /// visual parent is the window, so closing a tab cannot strand one.
@@ -45,5 +49,6 @@ private:
     TerminalView *m_view = nullptr;
     QScrollBar *m_scroll = nullptr;
     Macro *m_macro = nullptr;
+    Plugins *m_plugins = nullptr;
     XferProgressDialog *m_xferDialog = nullptr;
 };

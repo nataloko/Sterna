@@ -4,6 +4,7 @@
 
 #include <QMainWindow>
 #include <QString>
+#include <QVector>
 
 #include "sterna.h"
 
@@ -12,6 +13,7 @@
 class Control;
 class I18n;
 class Macro;
+class Plugins;
 class QLabel;
 class QTabWidget;
 class TerminalPage;
@@ -34,7 +36,8 @@ public:
     /// case; a Tera Term command line's `/F=` is the reason it can be
     /// anything else, and it has to be known here because the file is read
     /// before the window is shown.
-    explicit MainWindow(const QString &settingsPath = QString());
+    explicit MainWindow(const QString &settingsPath = QString(),
+                        const QString &pluginsPath = QString());
 
     /// Tear the control endpoint down before Qt gets to the session page.
     ///
@@ -118,6 +121,8 @@ public:
     /// at a real `TERATERM.INI` is a supported thing to do, and `--ini` is how
     /// it will be spelled.
     static QString settingsPath();
+    /// The directory whose direct `.lua` children are loaded as plugins.
+    static QString pluginsPath();
 
 protected:
     /// Switch between `AlphaBlendActive` and `AlphaBlend` when the desktop
@@ -249,10 +254,15 @@ private:
     /// Resolve the language keys attached to the menu actions. The key lives
     /// on each action as data, leaving the menu structure as the only list.
     void translateMenus();
+    /// Add the first page's declared Lua menu items and global shortcuts.
+    /// Every page loads the same directory; callbacks are dispatched to the
+    /// active page's VM and terminal.
+    void installPluginActions();
 
     /// Where the settings came from, and where `Save setup` puts them back.
     /// Not always [`settingsPath()`] — `/F=` names another one.
     QString m_settingsPath;
+    QString m_pluginsPath;
     /// The active `KEYBOARD.CNF`, for reopening the file picker in its folder.
     QString m_keyMapPath;
     I18n *m_i18n = nullptr;
@@ -284,6 +294,8 @@ private:
     /// upstream's rule too, since linking a second macro takes the terminal
     /// from the first.
     Macro *m_macro = nullptr;
+    Plugins *m_plugins = nullptr;
+    QVector<QAction *> m_pluginActions;
     /// This window's `ttctl` socket, for its lifetime. Null when it could not
     /// be bound, which is not fatal — a window with no way in is still a
     /// window.

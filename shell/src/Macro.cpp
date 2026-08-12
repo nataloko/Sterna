@@ -209,6 +209,30 @@ Macro::~Macro()
     delete m_statusBox;
 }
 
+TtMacroUi Macro::ui()
+{
+    TtMacroUi ui = {};
+    ui.user = this;
+    ui.error = cbError;
+    ui.message_box = cbMessageBox;
+    ui.yes_no_box = cbYesNoBox;
+    ui.status_box = cbStatusBox;
+    ui.close_status_box = cbCloseStatusBox;
+    ui.bringup_status_box = cbBringUpStatusBox;
+    ui.list_box = cbListBox;
+    ui.input_box = cbInputBox;
+    ui.filename_box = cbFilenameBox;
+    ui.dirname_box = cbDirnameBox;
+    ui.set_dialog_pos = cbSetDialogPos;
+    ui.beep = cbBeep;
+    ui.show_window = cbShowWindow;
+    ui.terminal_geometry = cbGeometry;
+    ui.enable_keyboard = cbEnableKeyboard;
+    ui.clipboard_text = cbClipboardText;
+    ui.set_clipboard_text = cbSetClipboardText;
+    return ui;
+}
+
 bool Macro::start(const QStringList &args, QString *outError)
 {
     if (m_macro) {
@@ -229,25 +253,7 @@ bool Macro::start(const QStringList &args, QString *outError)
     }
     argv << nullptr;
 
-    TtMacroUi ui = {};
-    ui.user = this;
-    ui.error = cbError;
-    ui.message_box = cbMessageBox;
-    ui.yes_no_box = cbYesNoBox;
-    ui.status_box = cbStatusBox;
-    ui.close_status_box = cbCloseStatusBox;
-    ui.bringup_status_box = cbBringUpStatusBox;
-    ui.list_box = cbListBox;
-    ui.input_box = cbInputBox;
-    ui.filename_box = cbFilenameBox;
-    ui.dirname_box = cbDirnameBox;
-    ui.set_dialog_pos = cbSetDialogPos;
-    ui.beep = cbBeep;
-    ui.show_window = cbShowWindow;
-    ui.terminal_geometry = cbGeometry;
-    ui.enable_keyboard = cbEnableKeyboard;
-    ui.clipboard_text = cbClipboardText;
-    ui.set_clipboard_text = cbSetClipboardText;
+    TtMacroUi ui = this->ui();
 
     m_macro = tt_macro_start(m_session->handle(), argv.constData(), &ui);
     if (!m_macro) {

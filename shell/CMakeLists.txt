@@ -143,6 +143,7 @@ add_library(sterna_shell STATIC
     src/TerminalView.cpp
     src/Session.cpp
     src/Macro.cpp
+    src/Plugins.cpp
     src/Control.cpp
     src/I18n.cpp
     src/Theme.cpp
@@ -258,6 +259,13 @@ target_link_libraries(macro_test PRIVATE sterna_shell)
 target_compile_options(macro_test PRIVATE ${TT_WARNINGS})
 add_test(NAME macro COMMAND macro_test)
 
+# Persistent Lua plugins use the same worker/frontend seam as macros, then add
+# window-owned menu actions, shortcuts and connection lifecycle edges above it.
+add_executable(plugin_test tests/plugin_test.cpp)
+target_link_libraries(plugin_test PRIVATE sterna_shell)
+target_compile_options(plugin_test PRIVATE ${TT_WARNINGS})
+add_test(NAME plugin COMMAND plugin_test)
+
 # A Tera Term command line, from `argv` to a window that has connected. Needs
 # nothing either: the one case that connects does so to a listening socket it
 # opens itself.
@@ -351,7 +359,7 @@ target_compile_definitions(bench_shell PRIVATE TT_BENCH_EXE="${TT_BENCH_EXE}")
 # there, which would be an error rather than a no-op.
 if(UNIX)
     set_target_properties(sterna render_test ssh_test telnet_test pty_test
-                          cmdline_test bench_shell PROPERTIES
+                          cmdline_test plugin_test bench_shell PROPERTIES
         BUILD_RPATH "${TT_CARGO_OUT}"
         INSTALL_RPATH "$ORIGIN/../lib")
 endif()

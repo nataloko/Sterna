@@ -69,6 +69,13 @@ public:
     /// The macro's file, for a status line. Empty when none is running.
     QString name() const { return m_name; }
 
+    /// The frontend callback table shared by macros and Lua plugins.
+    ///
+    /// It points back at this object and is copied by the core, so the value
+    /// itself may be temporary. The object must outlive whichever worker uses
+    /// it; `TerminalPage` owns both and destroys plugins first.
+    TtMacroUi ui();
+
     // --- what a running macro asks of the window -----------------------------
     //
     // Called from the ABI's callbacks, on this thread, from inside `service`.

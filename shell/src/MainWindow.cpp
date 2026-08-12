@@ -13,6 +13,8 @@
 #include <QFile>
 #include <QFontDialog>
 #include <QGuiApplication>
+#include <QHash>
+#include <QKeySequence>
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
@@ -46,6 +48,7 @@
 #include "Control.h"
 #include "I18n.h"
 #include "Macro.h"
+#include "Plugins.h"
 #include "SerialDialog.h"
 #include "Session.h"
 #include "SettingsDialog.h"
@@ -183,9 +186,11 @@ QString transferDirectory(const Session &session)
 
 } // namespace
 
-MainWindow::MainWindow(const QString &settingsPath)
+MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
     : m_settingsPath(settingsPath.isEmpty() ? MainWindow::settingsPath()
                                             : settingsPath)
+    , m_pluginsPath(pluginsPath.isEmpty() ? MainWindow::pluginsPath()
+                                          : pluginsPath)
 {
     m_i18n = new I18n(this);
     m_tabs = new QTabWidget(this);
@@ -218,6 +223,10 @@ MainWindow::MainWindow(const QString &settingsPath)
 
     buildMenus();
 
+    if (!m_plugins->error().isEmpty()) {
+        onNotice(tr("Could not load Lua plugins: %1").arg(m_plugins->error()));
+    }
+
     // Before the window is shown, so the size the file asks for is the size it
     // opens at rather than a resize the user watches happen. A file that is
     // not there is a first run: every setting takes its default and nothing is
@@ -244,7 +253,7 @@ MainWindow::MainWindow(const QString &settingsPath)
 
 TerminalPage *MainWindow::createPage()
 {
-    auto *page = new TerminalPage(m_i18n, this, m_tabs);
+    auto *page = new TerminalPage(m_i18n, this, m_pluginsPath, m_tabs);
     wirePage(page);
     return page;
 }
@@ -262,6 +271,7 @@ void MainWindow::activatePage(TerminalPage *page)
     m_printer = page->printer();
     m_view = page->view();
     m_macro = page->macro();
+    m_plugins = page->plugins();
     if (m_control) {
         m_control->setSession(m_session);
     }
@@ -283,6 +293,7 @@ void MainWindow::wirePage(TerminalPage *page)
     TerminalView *view = page->view();
     Printer *printer = page->printer();
     Macro *macro = page->macro();
+    Plugins *plugins = page->plugins();
 
     connect(view, &TerminalView::popupMenuRequested, this,
             [this, page](const QPoint &pos) {
@@ -425,6 +436,12 @@ void MainWindow::wirePage(TerminalPage *page)
             onNotice(text);
         }
     });
+    connect(plugins, &Plugins::notice, this,
+            [this, page](const QString &text) {
+                if (page == m_page) {
+                    onNotice(tr("Lua plugin: %1").arg(text));
+                }
+            });
 }
 
 TerminalPage *MainWindow::addBlankPage()
@@ -442,6 +459,9 @@ TerminalPage *MainWindow::addBlankPage()
                                      .filePath(QStringLiteral("KEYBOARD.CNF"))
                                : m_keyMapPath;
     loadKeyMap(keyMap);
+    if (!m_plugins->error().isEmpty()) {
+        onNotice(tr("Could not load Lua plugins: %1").arg(m_plugins->error()));
+    }
     updateTabTitle(page);
     updateTabBar();
     return page;
@@ -611,6 +631,13 @@ QString MainWindow::settingsPath()
     const QString dir =
         QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
     return QDir(dir).filePath(QStringLiteral("sterna.ini"));
+}
+
+QString MainWindow::pluginsPath()
+{
+    const QString dir =
+        QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    return QDir(dir).filePath(QStringLiteral("plugins"));
 }
 
 bool MainWindow::event(QEvent *event)
@@ -906,6 +933,97 @@ void MainWindow::translateMenus()
     updateStatus();
 }
 
+void MainWindow::installPluginActions()
+{
+    QHash<QString, QMenu *> menus = {
+        {QStringLiteral("File"), findChild<QMenu *>(QStringLiteral("fileMenu"))},
+        {QStringLiteral("Edit"), findChild<QMenu *>(QStringLiteral("editMenu"))},
+        {QStringLiteral("Terminal"),
+         findChild<QMenu *>(QStringLiteral("terminalMenu"))},
+        {QStringLiteral("Control"),
+         findChild<QMenu *>(QStringLiteral("controlMenu"))},
+        {QStringLiteral("Setup"), findChild<QMenu *>(QStringLiteral("setupMenu"))},
+    };
+
+    for (const PluginActionInfo &info : m_plugins->actions()) {
+        const QString shortcutText = info.shortcut.trimmed();
+        const QKeySequence shortcut = QKeySequence::fromString(
+            shortcutText, QKeySequence::PortableText);
+        const bool validShortcut = shortcutText.isEmpty() || !shortcut.isEmpty();
+        if (!validShortcut) {
+            onNotice(tr("Lua plugin %1 has an invalid shortcut: %2")
+                         .arg(info.plugin, info.shortcut));
+        }
+
+        auto *action = new QAction(this);
+        action->setObjectName(
+            QStringLiteral("luaPluginAction%1").arg(info.id));
+        action->setShortcutContext(Qt::WindowShortcut);
+
+        if (info.kind == TT_PLUGIN_ACTION_KEY) {
+            if (!validShortcut || shortcutText.isEmpty()) {
+                delete action;
+                continue;
+            }
+            action->setText(tr("%1 plugin shortcut").arg(info.plugin));
+            action->setShortcut(shortcut);
+            addAction(action);
+        } else {
+            QStringList parts;
+            for (const QString &part : info.menu.split(QLatin1Char('/'),
+                                                       Qt::SkipEmptyParts)) {
+                if (!part.trimmed().isEmpty()) {
+                    parts.append(part.trimmed());
+                }
+            }
+            if (parts.isEmpty()) {
+                onNotice(tr("Lua plugin %1 has an empty menu path.")
+                             .arg(info.plugin));
+                delete action;
+                continue;
+            }
+
+            QMenu *menu = nullptr;
+            QString path;
+            for (const QString &part : parts) {
+                path = path.isEmpty() ? part
+                                      : path + QLatin1Char('/') + part;
+                QMenu *next = menus.value(path, nullptr);
+                if (!next) {
+                    next = menu ? menu->addMenu(part) : menuBar()->addMenu(part);
+                    next->setObjectName(
+                        QStringLiteral("luaPluginMenu%1").arg(menus.size()));
+                    menus.insert(path, next);
+                }
+                menu = next;
+            }
+
+            action->setText(info.label);
+            if (validShortcut && !shortcutText.isEmpty()) {
+                action->setShortcut(shortcut);
+            }
+            menu->addAction(action);
+        }
+
+        connect(action, &QAction::triggered, this, [this, info] {
+            Plugins *plugins = m_page->plugins();
+            const QVector<PluginActionInfo> &actions = plugins->actions();
+            if (info.id >= static_cast<size_t>(actions.size())
+                || !(actions.at(static_cast<qsizetype>(info.id)) == info)) {
+                onNotice(tr("Lua plugins changed on disk; restart Sterna before "
+                            "using this action."));
+                return;
+            }
+
+            QString error;
+            if (!plugins->invoke(info.id, &error)) {
+                onNotice(tr("Lua plugin %1: %2").arg(info.plugin, error));
+            }
+        });
+        m_pluginActions.append(action);
+    }
+}
+
 void MainWindow::saveSettings()
 {
     // Back to the file it came from, which a `/F=` may have chosen. Writing to
@@ -941,6 +1059,7 @@ void MainWindow::buildMenus()
     // Linux line editor receives Meta. A menu that stole Alt+B from readline
     // would be a menu people disable the whole menu bar to escape.
     QMenu *file = menuBar()->addMenu(tr("File"));
+    file->setObjectName(QStringLiteral("fileMenu"));
     languageAction(file->menuAction(), "MENU_FILE", tr("File"));
     m_newTabAction = file->addAction(
         tr("New tab"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_T), this,
@@ -990,6 +1109,7 @@ void MainWindow::buildMenus()
     languageAction(quit, "MENU_FILE_EXIT", tr("Quit"));
 
     QMenu *edit = menuBar()->addMenu(tr("Edit"));
+    edit->setObjectName(QStringLiteral("editMenu"));
     languageAction(edit->menuAction(), "MENU_EDIT", tr("Edit"));
     QAction *copy = edit->addAction(
         tr("Copy"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C), this,
@@ -1014,6 +1134,7 @@ void MainWindow::buildMenus()
     file->insertSeparator(m_disconnectAction);
 
     QMenu *terminal = menuBar()->addMenu(tr("Terminal"));
+    terminal->setObjectName(QStringLiteral("terminalMenu"));
     languageAction(terminal->menuAction(), "DLG_TERM_TITLE", tr("Terminal"));
     m_breakAction = terminal->addAction(tr("Send break"), this, &MainWindow::sendBreak);
     languageAction(m_breakAction, "MENU_CONTROL_SENDBREAK", tr("Send break"));
@@ -1026,6 +1147,7 @@ void MainWindow::buildMenus()
     // control window — there is no second window here, so it belongs on the
     // one there is.
     QMenu *control = menuBar()->addMenu(tr("Control"));
+    control->setObjectName(QStringLiteral("controlMenu"));
     languageAction(control->menuAction(), "MENU_CONTROL", tr("Control"));
     QAction *runMacroAction =
         control->addAction(tr("Run macro..."), this, &MainWindow::runMacro);
@@ -1037,6 +1159,7 @@ void MainWindow::buildMenus()
     // "Setup", which is Tera Term's own name for this menu, so that someone
     // arriving from it looks in the right place.
     QMenu *setup = menuBar()->addMenu(tr("Setup"));
+    setup->setObjectName(QStringLiteral("setupMenu"));
     languageAction(setup->menuAction(), "MENU_SETUP", tr("Setup"));
     QAction *terminalSetup =
         setup->addAction(tr("Terminal..."), this, &MainWindow::showSettingsDialog);
@@ -1051,6 +1174,7 @@ void MainWindow::buildMenus()
                                      &MainWindow::saveSettings);
     languageAction(save, "MENU_SETUP_SAVE", tr("Save setup"));
 
+    installPluginActions();
     translateMenus();
 }
 

@@ -7,12 +7,14 @@
 #include <QSignalBlocker>
 
 #include "Macro.h"
+#include "Plugins.h"
 #include "Printer.h"
 #include "Session.h"
 #include "TerminalView.h"
 #include "XferDialog.h"
 
 TerminalPage::TerminalPage(const I18n *i18n, QWidget *macroWindow,
+                           const QString &pluginsDirectory,
                            QWidget *parent)
     : QWidget(parent)
     , m_session(new Session(80, 24, this))
@@ -20,6 +22,7 @@ TerminalPage::TerminalPage(const I18n *i18n, QWidget *macroWindow,
     , m_view(new TerminalView(m_session, this, i18n))
     , m_scroll(new QScrollBar(Qt::Vertical, this))
     , m_macro(new Macro(m_session, macroWindow, this, i18n))
+    , m_plugins(new Plugins(m_session, m_macro, pluginsDirectory, this))
 {
     // A plain QWidget plus a scrollbar rather than a QAbstractScrollArea: the
     // painter draws straight onto the widget in cell coordinates, and a
@@ -45,6 +48,10 @@ TerminalPage::~TerminalPage()
 {
     delete m_xferDialog;
     m_xferDialog = nullptr;
+    // The plugin callbacks point at Macro's UI adapter, and both point at the
+    // session. Stop that worker before either of its two dependencies.
+    delete m_plugins;
+    m_plugins = nullptr;
     // QObject children normally die in construction order. The session is
     // deliberately the first child, but Macro::~Macro unlinks itself from the
     // session, so that order would be a use-after-free. Make the one ordering
