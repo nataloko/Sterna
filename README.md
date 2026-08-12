@@ -7,8 +7,9 @@ shell — for Linux and Windows. Compatible with Tera Term; not Tera Term.
 > all four transports, the oracle-diffed VT engine, six file-transfer
 > protocols, TTL and Lua scripting, the generated settings UI, a control
 > socket, an AppImage, `KEYBOARD.CNF`, and all compatible surfaces wired to
-> Tera Term's 14 `.lng` catalogs. Native Windows validation, tabs, and printing
-> remain.
+> Tera Term's 14 `.lng` catalogs. The Windows build passes its native CI,
+> ships as an NSIS installer, and printing is wired end to end. Tabs and
+> multiple sessions remain.
 > See [PLAN.md](PLAN.md).
 
 The name is settled. See [PLAN.md](PLAN.md) for scope and status,
