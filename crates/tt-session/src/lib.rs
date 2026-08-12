@@ -29,6 +29,7 @@
 //! main thread. Baking a runtime in before the second transport exists would
 //! be guessing at the shape of a problem we have not met.
 
+use std::borrow::Cow;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -62,6 +63,31 @@ pub use tt_vt::{PrinterEvent, WindowMetrics, WindowRequest};
 use tt_conn::{Error, Result, Transport, TransportEvent};
 use tt_grid::{Cell, Grid, ATTR_LINE_CONTINUED, ATTR_URL, WIDTH_PAD, WIDTH_WIDE};
 use tt_vt::{ClipboardRequest, Config, CrSend, Key, Modifiers, MouseEvent, Tracking, Vt};
+
+/// Which half of the terminal byte stream a plugin filter is transforming.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StreamDirection {
+    Input,
+    Output,
+}
+
+/// Bytes and non-fatal failures from one stream-filter pass.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct StreamFilterResult {
+    pub bytes: Vec<u8>,
+    pub errors: Vec<String>,
+}
+
+/// A synchronous, bounded transform installed at the terminal stream seam.
+///
+/// Implementations own their runtime and must not wait on the terminal or a
+/// window: input filtering runs between a transport read and VT parsing, and
+/// output filtering runs before bytes enter the pending write queue. A failure
+/// belongs in [`StreamFilterResult::errors`]; the implementation should pass
+/// the corresponding bytes through so one bad extension cannot cut the line.
+pub trait StreamFilter: Send {
+    fn filter(&mut self, direction: StreamDirection, bytes: &[u8]) -> StreamFilterResult;
+}
 
 /// Something the frontend needs to know about. Drained, not delivered: a
 /// callback would have to be `Send` and would run on whichever thread the
@@ -112,6 +138,9 @@ pub enum Event {
     /// once: a disk that filled up will not un-fill, and retrying on every
     /// pump turns one problem into a stall.
     LogFailed(String),
+    /// A plugin's byte-stream filter failed and was bypassed. `String` names
+    /// the plugin and the error; bytes still crossed the seam unchanged.
+    StreamFilterFailed(String),
     /// A file transfer moved. Emitted once per pump while one is running,
     /// which is as often as anything changes.
     ///
@@ -234,6 +263,10 @@ pub struct Session {
     /// started from the menu must not steal their receive stream. Both rings
     /// are fed from the parser's one tap in [`Session::macro_bytes_in`].
     plugin_link: Option<MacroLink>,
+    /// The window's fast-path plugin filters. Kept separate from the plugin
+    /// receive ring: `tt.unlink()` detaches a callback from the ring but must
+    /// not silently remove a window-wide input/output policy.
+    stream_filter: Option<Box<dyn StreamFilter>>,
     /// `cv.ConnectedTime` (`commlib.c:787`) — when the current connection
     /// opened, for the one log timestamp that counts from there rather than
     /// from the log. `None` until something connects.
@@ -271,6 +304,7 @@ impl Session {
             xfer_reply: None,
             macro_link: None,
             plugin_link: None,
+            stream_filter: None,
             connected_at: None,
             conn_host: None,
             conn_port: None,
@@ -982,6 +1016,16 @@ impl Session {
         self.plugin_link.is_some()
     }
 
+    /// Install or replace the window's byte-stream filters.
+    pub fn set_stream_filter(&mut self, filter: Box<dyn StreamFilter>) {
+        self.stream_filter = Some(filter);
+    }
+
+    /// Remove the byte-stream filters without changing either script ring.
+    pub fn clear_stream_filter(&mut self) {
+        self.stream_filter = None;
+    }
+
     /// Move what the tap collected into the macro's ring.
     ///
     /// Called wherever the log is fed, and for the same reason: the tap fills
@@ -1128,8 +1172,9 @@ impl Session {
             if n > 0 {
                 total += n;
                 let bytes = std::mem::take(&mut self.rx);
-                self.vt.feed(&bytes);
-                self.log_bytes_in(&bytes);
+                let filtered = self.filter_stream(StreamDirection::Input, &bytes);
+                self.vt.feed(&filtered);
+                self.log_bytes_in(&filtered);
                 self.macro_bytes_in();
                 self.collect_clipboard();
                 self.rx = bytes;
@@ -1470,8 +1515,9 @@ impl Session {
     /// Feed bytes as though they had arrived from the far end. For local echo
     /// and for tests; it is also how a replayed session log would work.
     pub fn feed(&mut self, bytes: &[u8]) {
-        self.vt.feed(bytes);
-        self.log_bytes_in(bytes);
+        let bytes = self.filter_stream(StreamDirection::Input, bytes);
+        self.vt.feed(&bytes);
+        self.log_bytes_in(&bytes);
         self.macro_bytes_in();
         self.collect_clipboard();
         self.follow_scroll();
@@ -1587,7 +1633,25 @@ impl Session {
     }
 
     fn queue(&mut self, bytes: &[u8]) {
-        self.pending.extend_from_slice(bytes);
+        if bytes.is_empty() {
+            return;
+        }
+        let bytes = self.filter_stream(StreamDirection::Output, bytes);
+        self.pending.extend_from_slice(&bytes);
+    }
+
+    /// Apply the optional filter without paying for a copy in the ordinary
+    /// case. The filter is taken out for the call so reporting its failures can
+    /// append to `events` without overlapping the mutable borrow.
+    fn filter_stream<'a>(&mut self, direction: StreamDirection, bytes: &'a [u8]) -> Cow<'a, [u8]> {
+        let Some(mut filter) = self.stream_filter.take() else {
+            return Cow::Borrowed(bytes);
+        };
+        let result = filter.filter(direction, bytes);
+        self.stream_filter = Some(filter);
+        self.events
+            .extend(result.errors.into_iter().map(Event::StreamFilterFailed));
+        Cow::Owned(result.bytes)
     }
 
     /// Push what is queued, keeping whatever the transport would not take.

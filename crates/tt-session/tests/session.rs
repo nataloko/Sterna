@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use tt_conn::LinkKind;
 use tt_session::{
-    Event, MemoryHandle, MemoryTransport, PrinterEvent, Session, WindowMetrics, WindowRequest,
+    Event, MemoryHandle, MemoryTransport, PrinterEvent, Session, StreamDirection, StreamFilter,
+    StreamFilterResult, WindowMetrics, WindowRequest,
 };
 use tt_vt::{Config, Key, Modifiers, MouseEvent};
 
@@ -57,6 +58,55 @@ fn bytes_from_the_transport_reach_the_grid() {
     assert!(events.contains(&Event::Damage));
     assert_eq!(row(&s, 0), "hello");
     assert_eq!(row(&s, 2), "  world");
+}
+
+struct TestFilter;
+
+impl StreamFilter for TestFilter {
+    fn filter(&mut self, direction: StreamDirection, bytes: &[u8]) -> StreamFilterResult {
+        if direction == StreamDirection::Input && bytes == b"bad" {
+            return StreamFilterResult {
+                bytes: bytes.to_vec(),
+                errors: vec!["test filter failed".into()],
+            };
+        }
+        let bytes = match direction {
+            StreamDirection::Input => bytes.iter().map(u8::to_ascii_uppercase).collect(),
+            StreamDirection::Output => {
+                let mut out = b"<".to_vec();
+                out.extend_from_slice(bytes);
+                out.push(b'>');
+                out
+            }
+        };
+        StreamFilterResult {
+            bytes,
+            errors: Vec::new(),
+        }
+    }
+}
+
+#[test]
+fn stream_filters_cover_both_terminal_directions_and_fail_open() {
+    let (mut s, h) = connected(20, 4);
+    s.set_stream_filter(Box::new(TestFilter));
+
+    h.feed(b"lower");
+    pump(&mut s);
+    assert_eq!(row(&s, 0), "LOWER");
+
+    s.send_bytes(b"wire").unwrap();
+    assert_eq!(h.outbound(), b"<wire>");
+
+    h.feed(b"bad");
+    let events = pump(&mut s);
+    assert!(events.contains(&Event::StreamFilterFailed("test filter failed".into())));
+    assert_eq!(row(&s, 0), "LOWERbad");
+
+    s.clear_stream_filter();
+    h.feed(b" lower");
+    pump(&mut s);
+    assert_eq!(row(&s, 0), "LOWERbad lower");
 }
 
 #[test]
