@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_KEY = ROOT / ".private/updater-private.pem"
 DEFAULT_PASSWORD = ROOT / ".private/updater-password.txt"
 PUBLIC_KEY = ROOT / "packaging/update/public-key.txt"
+SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")
 
 
 def workspace_version() -> str:
@@ -46,8 +47,35 @@ def signing_key(args: argparse.Namespace) -> tuple[Path, str]:
 
     password_env = os.environ.get("STERNA_UPDATE_KEY_PASSWORD")
     if password_env is not None:
-        return key, f"pass:{password_env}"
+        # Keep the secret out of argv, where another process owned by the same
+        # account can read it. OpenSSL reads the already-present environment.
+        return key, "env:STERNA_UPDATE_KEY_PASSWORD"
     return key, f"file:{args.password_file}"
+
+
+def require_matching_public_key(key: Path, passin: str) -> None:
+    der = subprocess.run(
+        [
+            "openssl",
+            "pkey",
+            "-in",
+            str(key),
+            "-passin",
+            passin,
+            "-pubout",
+            "-outform",
+            "DER",
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+    ).stdout
+    if not der.startswith(SPKI_PREFIX) or len(der) != len(SPKI_PREFIX) + 32:
+        raise RuntimeError("the signing key is not Ed25519")
+    committed = base64.b64decode(PUBLIC_KEY.read_text().strip(), validate=True)
+    if der[len(SPKI_PREFIX) :] != committed:
+        raise RuntimeError(
+            "the private signing key does not match packaging/update/public-key.txt"
+        )
 
 
 def sign(path: Path, key: Path, passin: str) -> str:
@@ -105,6 +133,16 @@ def main() -> int:
         parser.error(f"signing key not found: {key}")
 
     version = workspace_version()
+    expected_linux = "sterna-x86_64.AppImage"
+    expected_windows = f"sterna-{version}-x86_64-setup.exe"
+    if args.linux.name != expected_linux:
+        parser.error(f"Linux artifact must be named {expected_linux}")
+    if args.windows.name != expected_windows:
+        parser.error(f"Windows artifact must be named {expected_windows}")
+    try:
+        require_matching_public_key(key, passin)
+    except (RuntimeError, ValueError) as error:
+        parser.error(str(error))
     tag = f"v{version}"
     base = f"https://github.com/{args.repository}/releases/download/{tag}"
     manifest = {

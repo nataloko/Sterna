@@ -20,6 +20,13 @@ them means existing installations cannot trust a replacement key and need one
 manual update; exposing them means an attacker can sign an update every
 existing installation will trust.
 
+The committed key's SHA-256 fingerprint is
+`9c778689a41f12ed5ac286138b912373825ca0535f80ff19d7d48d10dbdf278f`.
+`create.py` derives the public half from the supplied private key and refuses
+to produce a release if it does not match this committed root of trust. It
+also fixes both artifact names from the workspace version, so the signed URLs
+cannot quietly point at a differently named build.
+
 After building both release artifacts, sign them and create the two assets the
 updater reads:
 
