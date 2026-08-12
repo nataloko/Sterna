@@ -425,6 +425,10 @@ pub struct TtSession {
     delimiters: CString,
     /// The last AttrURL run returned to the frontend.
     url: CString,
+    /// Active-screen sixel descriptors rebuilt by
+    /// [`tt_session_sixel_images`]. Pixel storage remains in the terminal;
+    /// this owns only the flat structs a C caller can walk.
+    sixel_images: Vec<TtSixelImage>,
     /// The strings the last `TtTransferStatus` handed out, and the outcome of
     /// the last transfer to finish. Kept on the session because the C caller
     /// has nowhere to put them.
@@ -480,6 +484,7 @@ pub extern "C" fn tt_session_new(config: *const TtConfig) -> *mut TtSession {
         key_duplicates: Vec::new(),
         delimiters: CString::default(),
         url: CString::default(),
+        sixel_images: Vec::new(),
         xfer_protocol: CString::default(),
         xfer_file: CString::default(),
         xfer_message: CString::default(),
@@ -847,6 +852,60 @@ pub extern "C" fn tt_session_line(
         *len = cells.len();
     }
     cells.as_ptr()
+}
+
+/// One sixel raster on the active screen.
+///
+/// `line` is the same absolute content number as [`tt_session_line`];
+/// `column` is a zero-based cell. Pixels are RGBA8888 and retain their
+/// original device-pixel size. Transparent pixels let the text grid or an
+/// older sixel show through.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtSixelImage {
+    pub line: u64,
+    pub column: usize,
+    pub width: usize,
+    pub height: usize,
+    pub pixels: *const u8,
+    pub pixels_len: usize,
+}
+
+/// All sixel images belonging to the active screen, oldest first.
+///
+/// `*out` receives the borrowed array and the return value is its length.
+/// Each image's pixels are borrowed from the terminal. The descriptors remain
+/// valid until this function is called again; the pixels remain valid until a
+/// call which can change the terminal. A painter normally calls this once per
+/// frame and copies nothing: an RGBA image wrapper can read the memory for the
+/// duration of that frame.
+#[no_mangle]
+pub extern "C" fn tt_session_sixel_images(
+    session: *mut TtSession,
+    out: *mut *const TtSixelImage,
+) -> usize {
+    let s = session!(session, 0);
+    s.sixel_images = s
+        .session
+        .vt()
+        .sixel_images()
+        .map(|image| TtSixelImage {
+            line: image.line(),
+            column: image.column(),
+            width: image.width(),
+            height: image.height(),
+            pixels: image.pixels().as_ptr(),
+            pixels_len: image.pixels().len(),
+        })
+        .collect();
+    if let Some(out) = unsafe { out.as_mut() } {
+        *out = if s.sixel_images.is_empty() {
+            ptr::null()
+        } else {
+            s.sixel_images.as_ptr()
+        };
+    }
+    s.sixel_images.len()
 }
 
 /// The URL-marked run containing cell `(line, x)`.

@@ -997,6 +997,23 @@ typedef struct {
 typedef int32_t TtStatus;
 
 /**
+ * One sixel raster on the active screen.
+ *
+ * `line` is the same absolute content number as [`tt_session_line`];
+ * `column` is a zero-based cell. Pixels are RGBA8888 and retain their
+ * original device-pixel size. Transparent pixels let the text grid or an
+ * older sixel show through.
+ */
+typedef struct {
+    uint64_t line;
+    size_t column;
+    size_t width;
+    size_t height;
+    const uint8_t *pixels;
+    size_t pixels_len;
+} TtSixelImage;
+
+/**
  * Where the cursor is and how to draw it.
  */
 typedef struct {
@@ -2881,6 +2898,18 @@ uint64_t tt_session_top_line(const TtSession *session);
 const TtCell *tt_session_line(const TtSession *session,
                               uint64_t line,
                               size_t *out_len);
+
+/**
+ * All sixel images belonging to the active screen, oldest first.
+ *
+ * `*out` receives the borrowed array and the return value is its length.
+ * Each image's pixels are borrowed from the terminal. The descriptors remain
+ * valid until this function is called again; the pixels remain valid until a
+ * call which can change the terminal. A painter normally calls this once per
+ * frame and copies nothing: an RGBA image wrapper can read the memory for the
+ * duration of that frame.
+ */
+size_t tt_session_sixel_images(TtSession *session, const TtSixelImage **out);
 
 /**
  * The URL-marked run containing cell `(line, x)`.

@@ -183,6 +183,45 @@ static void test_screen(void)
     tt_session_free(s);
 }
 
+static void test_sixel(void)
+{
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    cfg.cols = 4;
+    cfg.rows = 3;
+    TtSession *s = tt_session_new(&cfg);
+    CHECK(s != NULL);
+
+    static const char image[] =
+        "\033P7;1q\"1;1;2;6#2;2;100;0;0~~\033\\";
+    tt_session_feed(s, (const uint8_t *)image, sizeof image - 1);
+
+    const TtSixelImage *images = NULL;
+    CHECK(tt_session_sixel_images(s, &images) == 1);
+    CHECK(images != NULL);
+    if (images) {
+        CHECK(images[0].line == 0);
+        CHECK(images[0].column == 0);
+        CHECK(images[0].width == 2 && images[0].height == 6);
+        CHECK(images[0].pixels_len == 2 * 6 * 4);
+        CHECK(images[0].pixels != NULL);
+        if (images[0].pixels) {
+            CHECK(images[0].pixels[0] == 255);
+            CHECK(images[0].pixels[1] == 0);
+            CHECK(images[0].pixels[2] == 0);
+            CHECK(images[0].pixels[3] == 255);
+        }
+    }
+
+    /* A later cell write clears the image tile through the core rather than
+     * leaving the painter to guess which output arrived first. */
+    tt_session_feed(s, (const uint8_t *)"\033[1;1HX", 7);
+    images = (const TtSixelImage *)1;
+    CHECK(tt_session_sixel_images(s, &images) == 0);
+    CHECK(images == NULL);
+    tt_session_free(s);
+}
+
 static void test_remote_clipboard(void)
 {
     TtConfig cfg;
@@ -1283,6 +1322,7 @@ static void test_null_safety(void)
     CHECK(tt_session_focus(NULL, true) == TT_ERR_INVALID);
     CHECK(tt_session_send_break(NULL) == TT_ERR_INVALID);
     tt_session_feed(NULL, NULL, 0);
+    CHECK(tt_session_sixel_images(NULL, NULL) == 0);
     CHECK(!tt_session_cycle_debug_mode(NULL));
     tt_session_disconnect(NULL);
     CHECK(!tt_session_is_connected(NULL));
@@ -2611,6 +2651,7 @@ int main(void)
     printf("Sterna core %s\n", tt_version());
     test_i18n();
     test_screen();
+    test_sixel();
     test_remote_clipboard();
     test_attributes();
     test_scrollback_viewport();
