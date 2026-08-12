@@ -2296,12 +2296,14 @@ paragraph predicted: the tokeniser moved, `_ParseParam`'s 39 options over its tw
 passes, TTXSSH's 30 more, `ParseHostName`, `ParsePortName`, `GetFilePath`, and 21
 new settings with `CommandLine::apply` to write into them. 66 tests.
 
-**The two halves compose through a string, not a struct**, and that is the thing
-a design would get wrong first. TTSSH hooks the parser, runs *first*, and blanks
-what it consumed out of the line — so `ssh://user@host/` is rewritten **into** a
-bare `host:22` token, and that is the only reason Tera Term's own parser can find
-a host in an SSH URL. `ssh::parse` therefore returns the options *and the line it
-left behind*; `ssh::parse_both` runs the pair in upstream's order.
+**The halves compose through a string, not a struct**, and that is the thing a
+design would get wrong first. TTSSH hooks the parser, runs *before* Tera Term's
+own, and blanks what it consumed out of the line — so `ssh://user@host/` is
+rewritten **into** a bare `host:22` token, and that is the only reason Tera
+Term's own parser can find a host in an SSH URL. `ssh::parse` therefore returns
+the options *and the line it left behind*. There turned out to be three of
+them rather than two — TTProxy hooks the same pointer and runs before TTSSH —
+so `cmdline::parse_all` is what runs them in upstream's order.
 
 `connect`'s argument needed one more thing: `ttdde.c:617` prepends a literal
 `"a "` — "`a` = dummy exe name" — because `_ParseParam` discards its first token.
