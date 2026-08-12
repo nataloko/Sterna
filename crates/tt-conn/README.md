@@ -399,6 +399,20 @@ handshake that leaves one byte of the proxy's reply behind gives a first screen
 with a stray character on it and an SSH key exchange that fails with a protocol
 error, neither of which points at the proxy.
 
+**`DebugLog` is the only way to see any of this go wrong.** All of it happens
+before the terminal has a session, so a refusal reaches the user as one
+sentence in a message box: no screen, no session log, and a transport that
+never opened. The key names a file and `Trace` appends every byte of the
+handshake to it in `TTProxy/Logger.h`'s two formats — `send: [ 05 01 00 ]` for
+the SOCKS relays, `send: "CONNECT h:22 HTTP/1.1\r\n"` for HTTP and the telnet
+proxy — so a trace taken here can be read beside one taken from Tera Term
+against the same proxy. It is appended to rather than truncated, as upstream's
+is, and the credentials are in it. A relative name lands in the **program's**
+log directory, which is `ts.LogDirW` and is not the one `LogDefaultPath` moves.
+The one departure: upstream creates the file while reading the INI file, so the
+key alone leaves an empty file behind in a session that never connects, and
+here the first handshake with something to say creates it.
+
 **The command line that configures all this is not here**, because upstream's
 is not either: `-proxy=<url>`, `-noproxy` and the bare
 `socks5://p:1080/realhost` token are a third parser hooked onto `_ParseParam`,

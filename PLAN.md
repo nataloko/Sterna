@@ -5423,11 +5423,48 @@ one-sided, no documented form of the option carries a trailing slash, and
 of the same arm is reproduced, because there the empty answer is about a token
 Tera Term is about to see.
 
-Also not carried: the plugin's `DebugLog` key, which names a file for a hex
-trace of the handshake. Carrying the key without writing the trace would be a
-setting that round-trips correctly and does nothing, which this file has
-complained about elsewhere; it is a small piece of work and the trace is the
-thing you want when a handshake fails at a customer site.
+**`DebugLog` landed the day after, and it is the only diagnostic a failing
+handshake has.** All of the above happens before the terminal has a session, so
+a refusal reaches the user as one sentence in a message box — no screen, no
+session log, and a transport that never opened. The key names a file and
+`proxy::Trace` appends every byte of the handshake to it in `TTProxy/Logger.h`'s
+two record formats: `send: [ 05 01 00 ]` for the two SOCKS relays and
+`send: "CONNECT h:22 HTTP/1.1\r\n"` for HTTP and the telnet proxy, which is the
+division upstream draws by calling `sendToSocket` in one and
+`sendToSocketFormat` in the other. Both are byte-exact, so a trace taken here
+can be read beside one taken from Tera Term against the same proxy — which is
+the strongest use the file has, and the reason the format was reproduced rather
+than improved on. It is appended to and never truncated, as upstream's is, so
+one file holds every attempt; there is deliberately no record between one
+handshake and the next, because a delimiter would be a line no Tera Term
+writes. **The credentials are in it**, Base64 being a spelling rather than a
+cipher, and that is worth knowing before sending one to somebody.
+
+Reproducing the format cost a small refactor rather than a `trace` argument on
+each of the four I/O helpers: `Wire` is the socket and the transcript together,
+so no relay can write a byte it did not record or record one it did not write.
+It also pays for itself in the one place the two implementations differ on the
+wire — a record is written per underlying read, exactly as upstream's is, so a
+reply that arrived in two segments is two records here and two records and a
+wrong answer there.
+
+Two departures, both stated where they are made. Upstream opens the file while
+*reading* the INI file, so the key alone leaves an empty file behind in a
+session that never connects; here the first handshake with something to say
+creates it. And a path that will not open leaves the handshake untraced and
+connecting, which is `Logger::open` keeping its `INVALID_HANDLE_VALUE` — a
+diagnostic that can break a session is not one.
+
+**It also found where the file goes, which was wrong in two other places.**
+A relative `DebugLog` resolves against `ts.LogDirW` (`TTProxy.h:198`), and
+`ts.LogDirW` is `GetLogDirW()` — the **program's** log and dump directory,
+which takes no settings at all. `GetTermLogDir` is the *terminal's* and
+consults `LogDefaultPath` and then `FileDir` before falling back to it, so the
+two coincide exactly when neither key is set: every default install and no
+configured one. `tttypes.h:579` says so in as many words and this port had one
+function for both, which put `TELNET.LOG` (`telnet.c:129`) and the six protocol
+logs (`ttpfile/zmodem.c:815` and its siblings) wherever the session log was
+configured to go. `logname::program_log_dir` is the second answer now.
 
 Interop is against in-process servers rather than a real `squid` or `dante`,
 for the reason `oracle/` exists — a test that needs a daemon installed is a

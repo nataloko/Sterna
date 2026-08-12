@@ -901,6 +901,8 @@ fn the_proxy_defaults_are_the_plugins() {
     assert_eq!(s.proxy_telnet_hostname_prompt, ">> Host name: ");
     assert_eq!(s.proxy_telnet_connected_message, "-- Connected to ");
     assert_eq!(s.proxy_telnet_error_message, "!!!!!!!!");
+    // `getStringW` with a NULL default, which `Logger::open` returns on.
+    assert_eq!(s.proxy_debug_log, "");
 }
 
 #[test]
