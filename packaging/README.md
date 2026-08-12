@@ -1,5 +1,9 @@
 # packaging
 
+This file is the AppImage's. The Windows installer is a second artifact with a
+README of its own — see [`windows/`](windows/README.md), which is where the
+NSIS build and its traps are written down.
+
 One artifact on Linux: an **AppImage**, and nothing else. No rpm, no deb —
 decided 2026-08-08, recorded in `PLAN.md`. One thing to build, one thing to
 test, and no per-distro packaging to keep alive alongside the Windows installer
