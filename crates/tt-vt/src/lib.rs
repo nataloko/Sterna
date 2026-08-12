@@ -1512,8 +1512,13 @@ impl Vt {
     /// Tell the core how big a character cell is, after a font change. It is
     /// used only to convert mouse positions and to answer pixel-mode reports.
     pub fn set_cell_pixels(&mut self, w: i32, h: i32) {
-        self.state.config.cell_w = w.max(1);
-        self.state.config.cell_h = h.max(1);
+        let cell = (w.max(1), h.max(1));
+        self.state.config.cell_w = cell.0;
+        self.state.config.cell_h = cell.1;
+        // A lightweight frontend may only have a terminal view rather than a
+        // top-level window whose full metrics it can report. Sixel placement
+        // and `CSI 16 t` still need the cell it did provide.
+        self.state.window.cell = cell;
     }
 
     /// DECCKM. The frontend sends `ESC O A` rather than `ESC [ A` while it is
