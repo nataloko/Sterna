@@ -398,3 +398,9 @@ after `dial` returns, the next byte read is the session's first byte. A
 handshake that leaves one byte of the proxy's reply behind gives a first screen
 with a stray character on it and an SSH key exchange that fails with a protocol
 error, neither of which points at the proxy.
+
+**The command line that configures all this is not here**, because upstream's
+is not either: `-proxy=<url>`, `-noproxy` and the bare
+`socks5://p:1080/realhost` token are a third parser hooked onto `_ParseParam`,
+and they live in `tt-config`'s `cmdline::proxy` with the other two. What
+reaches this crate is the settings they wrote.

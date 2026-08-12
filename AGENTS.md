@@ -654,14 +654,38 @@ And for the proxy, which is a Winsock hook upstream and so has no seam at all:
   but it is the one place the rule has a cost worth naming, since the user
   believes they are behind a proxy and is not. `none` is the spelling that says
   so on purpose.
-- **The command line is not ported yet and its options are therefore silent.**
-  `/proxy=<url>`, `/noproxy` and a bare `socks5://p:1080/realhost` token are
-  `TTProxy.h:133`'s second pass, the same shape as TTSSH's hook: it blanks what
-  it consumed and hands the rest on. Three quirks are already read and written
-  down in `PLAN.md` so the next session does not re-derive them — `/proxy=` throws
-  away any `/realhost` after the proxy, a bare URL *without* one silently clears
-  a proxy an earlier `/proxy=` set, and the recovered host is applied only if
-  Tera Term's own parser found none.
+- **There are three parsers on the command line and TTProxy's runs first**, so
+  `cmdline::parse_all` is the only way to ask: the plugins compose through the
+  *line*, blanking what they consumed, and asking one of them on its own gives
+  an answer the next one would have changed. The order is not the load order it
+  looks like — `TTXInternalGetSetupHooks` installs from the **end** of the
+  plugin table (`ttplug.cpp:664`), so the lowest `TTXExports` order hooks last
+  and is called first, and TTProxy's is 10 against TTSSH's 2500.
+- **A bare `socks5://p:1080/realhost` token is a proxy *and* a host name**, and
+  the host half arrives by a route nothing else uses: it is copied into
+  `ts.HostName` after `_ParseParam` has run and only if that found none
+  (`TTProxy.h:181`). That is a rule about two parsers rather than about either,
+  which is why `parse_all` owns it and neither module does.
+- **`proxy` is matched case-insensitively and `ssh` is not.** `/PROXY=` works
+  where `/SSH` silently does nothing — and the `=` is tested at a fixed offset
+  (`wcslen(option+1) >= 6 && option[6] == '='`) rather than as a prefix, so
+  exactly one five-letter word can reach the arm and `/noproxy` is only tried
+  when it did not.
+- **An unrecognised scheme leaves the configured proxy alone, and a recognised
+  one that yields no real host switches it off.** `ProxyInfo::parse` answers
+  NULL for the first and `parseURL` assigns nothing; for the second it assigns
+  a record whose type it has just overwritten with `TYPE_NONE`. So `myhost`
+  changes nothing, `socks5://p:1080` — the form upstream's own documentation
+  lists as unsupported — disables the proxy and is left in the line, and
+  `/proxy=socks5://p:1080/` disables it too. **That last one is the only thing
+  in the parser this port does not reproduce**; see the thirty-seventh defect
+  below.
+- **`/proxy=` replaces the whole record, so it clears credentials it does not
+  mention.** `instance().defaultProxy = proxy` assigns a freshly parsed
+  `ProxyInfo`, whose user and pass are NULL and whose port is 0 until a colon
+  was seen. A file's `ProxyUser` therefore does not survive a `/proxy=` that
+  named no user — which is right, and is not what "apply the command line over
+  the settings" does everywhere else in this parser.
 
 And for the local pty:
 
@@ -2672,6 +2696,24 @@ documentation, the `proxy.*` rows of the settings schema, and
 A fifth is real and small enough to mention rather than number:
 `status_code = atoi(strchr(buf, ' '))` (`:1314`) dereferences NULL when an HTTP
 proxy's first line has no space in it.
+
+**And a thirty-seventh, in the same plugin's command line, which is one
+character wide: `-proxy=socks5://p:1080/` is no proxy at all.** `parseURL`'s
+second argument exists to tell its two callers apart — `TRUE` from `-proxy=`,
+which wants the proxy and discards the real host, and `FALSE` from a bare
+token, which wants both. The arm that tests whether a real host came back
+consults it; the arm one line further down, which tests whether that host is
+*empty*, does not (`ProxyWSockHook.h:2143`), and assigns `TYPE_NONE` over the
+type it has just read. So the trailing slash decides, in silence, and it
+decides against the thing the option was written to ask for. Not reproduced —
+the only entry on this list where the divergence is a single `if` — because the
+harm is one-sided (a launcher script silently connects direct, believing it is
+proxied), because no documented form of the option carries a trailing slash,
+and because `-noproxy` and `-proxy=none://` are how "no proxy" is said and both
+still work. The bare-token half of the same arm **is** reproduced:
+`socks5://p:1080/` names no host, and that form's answer belongs to a token
+Tera Term is about to see. `cmdline::proxy::ProxyOptions::url` states both
+halves where it makes the choice.
 
 **And one in `vte`**, which is a dependency rather than the specification, so it
 is not in that file: `vte` 0.15.0's `advance_partial_utf8` (`lib.rs:687`) prints

@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-12 · **Stage:** 2 complete, 3 in progress · **Commits:** 490
+**Last updated:** 2026-08-12 · **Stage:** 2 complete, 3 in progress · **Commits:** 493
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -213,7 +213,7 @@ Stage 2 while morale is high, not Stage 3 when it hurts.
 | `ttssh2/` | 62,596 | **Delete** → `russh` |
 | `vtdisp.c` + `vtwin.cpp` + dialogs + `.rc` | ~28,000 | **Delete** → Qt + generated dialogs |
 | `ttpmacro/` | 16,472 | **Port to Rust** (~9–10k) |
-| `TTProxy/` | 8,314 | **Deleted**, reimplemented in core — `tt-conn/src/proxy.rs`, ~600 lines. The command line is still to do; see Stage 3 |
+| `TTProxy/` | 8,314 | **Deleted**, reimplemented in core — `tt-conn/src/proxy.rs` and `tt-config/src/cmdline/proxy.rs`, ~900 lines |
 | `ttptek`, `ttpmenu`, `susie_plugin`, `cygwin/` | ~11,000 | **Drop** |
 
 Net: ~10k LOC of C carried forward, ~30k as executable specification, ~115k deleted.
@@ -5357,30 +5357,69 @@ upstream's; `none` exists as the spelling that says so deliberately. It is the
 one place that rule has a cost worth naming, because the user believes they are
 behind a proxy and is not.
 
-**The command line is the remaining half and is deliberately not done yet**, so
-`/proxy=`, `/noproxy` and a bare `socks5://p:1080/realhost` token currently do
-nothing. It is `TTProxy.h:133`'s second pass and it is the same shape as
-TTSSH's hook — blank what you consumed, hand the rest on — which means
-extending `cmdline::ssh::parse_both` to run a third parser and return a third
-value, across four call sites. The parsing is read and recorded here so the
-next session does not re-derive it:
+**The command line landed the same day**, in
+`crates/tt-config/src/cmdline/proxy.rs`: `-proxy=<url>`, `-noproxy` and the
+bare `socks5://p:1080/realhost` token, with `/` and `-` both leading and
+`proxy` matched case-insensitively — which `ssh` is not, so `/PROXY=` works
+where `/SSH` does nothing.
 
-- `ProxyInfo::parse` (`ProxyWSockHook.h:270`) needs `://` or it returns NULL
+**It is a third parser and not a third branch, and the three run in an order
+that is not the one it looks like.** Each plugin hooks `_ParseParam` and blanks
+what it consumed before handing the line on, so they compose through the string
+rather than through a struct; `TTXInternalGetSetupHooks` installs them from the
+**end** of the plugin table (`ttplug.cpp:664`), so the lowest `TTXExports`
+order hooks last and is called first — TTProxy is 10 with `/* load first */`
+beside it, TTSSH is 2500. `cmdline::parse_all` is therefore the only way to ask
+for any of them, and `ssh::parse_both` is gone; `Parsed` is what four call sites
+now take apart. The shared machinery — `Action`, `apply_edits`, `switch_body`,
+`percent_decode` — moved to `cmdline/mod.rs`, because two plugins doing the same
+thing to the same line should not be two copies of how.
+
+The parsing, which is `ProxyInfo::parse` plus `parseURL`:
+
+- `ProxyInfo::parse` (`ProxyWSockHook.h:271`) needs `://` or it returns NULL
   and **leaves any configured proxy alone**, which is what keeps an ordinary
-  host name from clearing one.
+  host name from clearing one. An unrecognised scheme does the same.
 - The `@` search runs over the whole remainder *including* the `/realhost`
   part, so `socks5://p:1080/user@host` takes `p:1080/user` as the credentials.
+  They are percent-decoded; the same credentials given as settings are not.
 - The host loop reassigns `proxy.host` at every unbracketed colon, so the last
-  colon separates the port and `[v6]` has its brackets stripped. `parsePort`
-  refuses a leading zero, an empty field and 0 itself.
+  colon separates the port and `a:b:80` is a host of `b`. A `[v6]` literal has
+  its brackets stripped **only** in that arm — with no port it keeps them and
+  is a name nothing resolves. `parsePort` refuses a leading zero, an empty
+  field and 0 itself, and a refusal discards the whole URL rather than
+  defaulting.
+- `none://` and `ssl://` are the two types that need no host at all. The six
+  SSL spellings are in the table, so they clear a configured proxy exactly as
+  the others do, and they resolve here to no proxy — which is the schema's
+  answer for the same spellings and is the thirty-sixth defect not reproduced.
 - With no `/` the function returns the **whole URL** as the real host, and
   `parseURL(url, FALSE)` then sets the type to `TYPE_NONE` and assigns it — so
   a bare URL with no `/realhost` silently **clears** a proxy an earlier
-  `/proxy=` set, and the token is left in the line for Tera Term to misparse.
-- `/proxy=` discards the return value, so any `/realhost` after the proxy is
-  thrown away.
+  `-proxy=` set, and the token is left in the line for Tera Term to misparse.
+  Upstream's own documentation lists that form under "isn't supported", because
+  it collides with Tera Term's `telnet://host`; reproduced.
+- `-proxy=` discards the return value, so any `/realhost` after the proxy is
+  thrown away. Reproduced.
 - The recovered host is applied last and only if Tera Term's own parser found
-  none (`TTProxy.h:181`).
+  none (`TTProxy.h:181`) — a rule about two parsers rather than about either,
+  so `parse_all` owns it.
+- `instance().defaultProxy = proxy` assigns the **whole** record, so a
+  `-proxy=` naming no credentials clears a `ProxyUser` and `ProxyPass` the file
+  had. Reproduced, and it is the one place in this parser where applying the
+  command line over the settings is a replacement rather than an overlay.
+
+**A thirty-seventh upstream defect came out of writing it, and it is one
+character wide: `-proxy=socks5://p:1080/` is no proxy at all.** `parseURL`'s
+second argument exists to tell its two callers apart, and the arm testing
+whether the real host is *empty* does not consult it (`:2143`) — it assigns
+`TYPE_NONE` over the type it has just read. So a trailing slash decides, in
+silence, against the thing the option was written to ask for. **Not
+reproduced**, and it is the smallest divergence on the list: the harm is
+one-sided, no documented form of the option carries a trailing slash, and
+`-noproxy` and `-proxy=none://` are how "no proxy" is said. The bare-token half
+of the same arm is reproduced, because there the empty answer is about a token
+Tera Term is about to see.
 
 Also not carried: the plugin's `DebugLog` key, which names a file for a hex
 trace of the handshake. Carrying the key without writing the trace would be a
