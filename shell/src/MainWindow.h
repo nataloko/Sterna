@@ -13,6 +13,7 @@ class Control;
 class I18n;
 class Macro;
 class QLabel;
+class QTabWidget;
 class TerminalPage;
 class TerminalView;
 class XferProgressDialog;
@@ -180,6 +181,15 @@ private slots:
     void onNotice(const QString &text);
     void onConnectionChanged();
 private:
+    /// Construct and wire one page. Loading or copying its settings is the
+    /// caller's decision, because startup and a new tab have different
+    /// sources.
+    TerminalPage *createPage();
+    /// Make every window-level action refer to `page`.
+    void activatePage(TerminalPage *page);
+    /// Connect one page's asynchronous events without making an inactive page
+    /// mutate the active page's status or dialogs.
+    void wirePage(TerminalPage *page);
     void buildMenus();
     void updateStatus();
     /// Apply one of the two 0..255 opacity settings as Qt's 0.0..1.0 value.
@@ -237,6 +247,7 @@ private:
     QString m_keyMapPath;
     I18n *m_i18n = nullptr;
     QString m_languageSetting;
+    QTabWidget *m_tabs = nullptr;
     /// The lifetime boundary for everything that points at this session.
     TerminalPage *m_page = nullptr;
     /// Aliases into `m_page`, kept while the window has one active page so the
@@ -244,8 +255,8 @@ private:
     Session *m_session = nullptr;
     /// The other end of the media-copy sequences, and of File > Print.
     Printer *m_printer = nullptr;
-    TerminalView *m_view;
-    QLabel *m_status;
+    TerminalView *m_view = nullptr;
+    QLabel *m_status = nullptr;
     QAction *m_disconnectAction = nullptr;
     QAction *m_serialConnectAction = nullptr;
     QAction *m_sshConnectAction = nullptr;

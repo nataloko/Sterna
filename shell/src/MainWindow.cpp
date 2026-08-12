@@ -18,6 +18,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QScreen>
+#include <QTabWidget>
 #include <QPushButton>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -187,60 +188,29 @@ MainWindow::MainWindow(const QString &settingsPath)
                                             : settingsPath)
 {
     m_i18n = new I18n(this);
-    m_page = new TerminalPage(m_i18n, this, this);
-    m_session = m_page->session();
-    m_printer = m_page->printer();
-    m_view = m_page->view();
-    m_macro = m_page->macro();
-    setCentralWidget(m_page);
+    m_tabs = new QTabWidget(this);
+    // With one session the tab bar disappears completely. The page then has
+    // exactly the same cell area the pre-tab window did; the bar appears only
+    // when it has a choice to present.
+    m_tabs->setTabBarAutoHide(true);
+    m_tabs->setDocumentMode(true);
+    setCentralWidget(m_tabs);
 
-    connect(m_view, &TerminalView::popupMenuRequested, this,
-            &MainWindow::showPopupMenu);
-    connect(m_view, &TerminalView::keyMacroRequested, this,
-            &MainWindow::startNamedMacro);
-    connect(m_view, &TerminalView::keyCommandRequested, this,
-            &MainWindow::invokeMenuCommand);
+    m_page = createPage();
+    m_tabs->addTab(m_page, tr("Terminal"));
+    activatePage(m_page);
+    connect(m_tabs, &QTabWidget::currentChanged, this, [this](int index) {
+        if (index >= 0) {
+            activatePage(static_cast<TerminalPage *>(m_tabs->widget(index)));
+        }
+    });
+
     tt_serial_params_default(&m_lastParams);
 
     m_logStatus = new QLabel(this);
     statusBar()->addPermanentWidget(m_logStatus);
     m_status = new QLabel(this);
     statusBar()->addPermanentWidget(m_status);
-
-    connect(m_session, &Session::logStateChanged, this, &MainWindow::updateStatus);
-    connect(m_session, &Session::damaged, this, &MainWindow::updateLogStatus);
-
-    connect(m_session, &Session::titleChanged, this, &MainWindow::onTitleChanged);
-    connect(m_session, &Session::notice, this, &MainWindow::onNotice);
-    connect(m_session, &Session::connectionChanged, this,
-            &MainWindow::onConnectionChanged);
-    connect(m_session, &Session::closeRequested, this, [this] {
-        // Upstream checks IsWindowEnabled before AutoWinClose. A socket can
-        // disappear inside a modal dialog's nested event loop; closing its
-        // disabled parent out from under it would strand the dialog.
-        if (isEnabled()) {
-            close();
-        }
-    });
-    connect(m_session, &Session::sshHostKeyWanted, this,
-            &MainWindow::onSshHostKeyWanted);
-    connect(m_session, &Session::sshAuthWanted, this, &MainWindow::onSshAuthWanted);
-    connect(m_session, &Session::sshFailed, this, &MainWindow::onSshFailed);
-    connect(m_session, &Session::remoteResize, this, &MainWindow::onRemoteResize);
-    connect(m_session, &Session::windowOperationRequested, this,
-            &MainWindow::onWindowOperation);
-    connect(m_session, &Session::printerEvent, m_printer, &Printer::handle);
-    connect(m_printer, &Printer::notice, this, &MainWindow::onNotice);
-    connect(m_session, &Session::settingsChanged, this, &MainWindow::onSettingsChanged);
-    connect(m_session, &Session::transferProgressed, this,
-            &MainWindow::onTransferProgressed);
-    connect(m_session, &Session::transferFinished, this,
-            &MainWindow::onTransferFinished);
-
-    connect(m_macro, &Macro::finished, this, &MainWindow::onMacroFinished);
-    connect(m_macro, &Macro::keyboardEnabled, m_view,
-            &TerminalView::setKeyboardEnabled);
-    connect(m_macro, &Macro::notice, this, &MainWindow::onNotice);
 
     buildMenus();
 
@@ -266,6 +236,160 @@ MainWindow::MainWindow(const QString &settingsPath)
     // else on the machine can ask this session for things, and everything it
     // can ask about has to exist by then.
     startControl(QString());
+}
+
+TerminalPage *MainWindow::createPage()
+{
+    auto *page = new TerminalPage(m_i18n, this, m_tabs);
+    wirePage(page);
+    return page;
+}
+
+void MainWindow::activatePage(TerminalPage *page)
+{
+    if (!page) {
+        return;
+    }
+    if (m_tabs && m_tabs->currentWidget() != page) {
+        m_tabs->setCurrentWidget(page);
+    }
+    m_page = page;
+    m_session = page->session();
+    m_printer = page->printer();
+    m_view = page->view();
+    m_macro = page->macro();
+
+    // The constructor reaches here before the actions and status labels
+    // exist. Every later activation has a complete window to refresh.
+    if (m_status) {
+        reloadLanguage();
+        showTitle(m_session->title());
+        updateStatus();
+        pushWindowMetrics();
+        m_view->setFocus();
+    }
+}
+
+void MainWindow::wirePage(TerminalPage *page)
+{
+    Session *session = page->session();
+    TerminalView *view = page->view();
+    Printer *printer = page->printer();
+    Macro *macro = page->macro();
+
+    connect(view, &TerminalView::popupMenuRequested, this,
+            [this, page](const QPoint &pos) {
+                activatePage(page);
+                showPopupMenu(pos);
+            });
+    connect(view, &TerminalView::keyMacroRequested, this,
+            [this, page](const QString &path) {
+                activatePage(page);
+                startNamedMacro(path);
+            });
+    connect(view, &TerminalView::keyCommandRequested, this,
+            [this, page](quint16 command) {
+                activatePage(page);
+                invokeMenuCommand(command);
+            });
+
+    connect(session, &Session::logStateChanged, this, [this, page] {
+        if (page == m_page) {
+            updateStatus();
+        }
+    });
+    connect(session, &Session::damaged, this, [this, page] {
+        if (page == m_page) {
+            updateLogStatus();
+        }
+    });
+    connect(session, &Session::titleChanged, this,
+            [this, page](const QString &title) {
+                if (page == m_page) {
+                    showTitle(title);
+                }
+            });
+    connect(session, &Session::notice, this, [this, page](const QString &text) {
+        if (page == m_page) {
+            onNotice(text);
+        }
+    });
+    connect(session, &Session::connectionChanged, this, [this, page] {
+        if (page == m_page) {
+            onConnectionChanged();
+        }
+    });
+    connect(session, &Session::closeRequested, this, [this, page] {
+        // Upstream checks IsWindowEnabled before AutoWinClose. A socket can
+        // disappear inside a modal dialog's nested event loop; closing its
+        // disabled parent out from under it would strand the dialog.
+        if (page == m_page && isEnabled()) {
+            close();
+        }
+    });
+    connect(session, &Session::sshHostKeyWanted, this,
+            [this, page](const HostKeyRequest &request) {
+                activatePage(page);
+                onSshHostKeyWanted(request);
+            });
+    connect(session, &Session::sshAuthWanted, this,
+            [this, page](const AuthRequest &request) {
+                activatePage(page);
+                onSshAuthWanted(request);
+            });
+    connect(session, &Session::sshFailed, this,
+            [this, page](const QString &error) {
+                activatePage(page);
+                onSshFailed(error);
+            });
+    connect(session, &Session::remoteResize, this,
+            [this, page](int cols, int rows) {
+                activatePage(page);
+                onRemoteResize(cols, rows);
+            });
+    connect(session, &Session::windowOperationRequested, this,
+            [this, page](const TtWindowRequest &request) {
+                activatePage(page);
+                onWindowOperation(request);
+            });
+    connect(session, &Session::printerEvent, printer, &Printer::handle);
+    connect(printer, &Printer::notice, this, [this, page](const QString &text) {
+        if (page == m_page) {
+            onNotice(text);
+        }
+    });
+    connect(session, &Session::settingsChanged, this, [this, page] {
+        if (page == m_page) {
+            onSettingsChanged();
+        } else {
+            page->view()->applySettings();
+        }
+    });
+    connect(session, &Session::transferProgressed, this,
+            [this, page](const TransferProgress &progress) {
+                if (page == m_page) {
+                    onTransferProgressed(progress);
+                }
+            });
+    connect(session, &Session::transferFinished, this,
+            [this, page](const TransferResult &result) {
+                if (page == m_page) {
+                    onTransferFinished(result);
+                }
+            });
+
+    connect(macro, &Macro::finished, this, [this, page](int exitCode) {
+        if (page == m_page) {
+            onMacroFinished(exitCode);
+        }
+    });
+    connect(macro, &Macro::keyboardEnabled, view,
+            &TerminalView::setKeyboardEnabled);
+    connect(macro, &Macro::notice, this, [this, page](const QString &text) {
+        if (page == m_page) {
+            onNotice(text);
+        }
+    });
 }
 
 MainWindow::~MainWindow()
@@ -711,12 +835,12 @@ void MainWindow::buildMenus()
     QMenu *edit = menuBar()->addMenu(tr("Edit"));
     languageAction(edit->menuAction(), "MENU_EDIT", tr("Edit"));
     QAction *copy = edit->addAction(
-        tr("Copy"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C), m_view,
-        &TerminalView::copySelection);
+        tr("Copy"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C), this,
+        [this] { m_view->copySelection(); });
     languageAction(copy, "MENU_EDIT_COPY", tr("Copy"));
     QAction *paste = edit->addAction(
-        tr("Paste"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V), m_view,
-        &TerminalView::pasteClipboard);
+        tr("Paste"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V), this,
+        [this] { m_view->pasteClipboard(); });
     languageAction(paste, "MENU_EDIT_PASTE", tr("Paste"));
 
     // Under File, next to the connection, because that is where upstream puts

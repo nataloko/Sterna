@@ -551,6 +551,12 @@ void TerminalView::applySettings()
     m_cursorBlink->stop();
     m_cursorBlinkOn = true;
 
+    // `TerminalSize` and `VTFontSpace` both change `sizeHint`. A direct
+    // central widget happened to be queried again; a tab widget caches the
+    // page's hint until its child announces a geometry change. Without this,
+    // a configured 100x30 page opens at the 80x24 hint it had before the INI
+    // file was read.
+    updateGeometry();
     update();
 }
 
@@ -558,6 +564,7 @@ void TerminalView::applyFont(const QFont &font)
 {
     m_theme.setFont(font);
     m_session->setCellPixels(m_theme.cellWidth(), m_theme.cellHeight());
+    updateGeometry();
     refit();
     update();
 }
