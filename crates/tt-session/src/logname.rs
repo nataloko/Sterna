@@ -439,6 +439,9 @@ pub fn expand_name(template: &str, ctx: &LogContext, t: Civil) -> String {
 /// expands environment variables in it first; nothing does that here, because
 /// `%VAR%` is not what a Linux path holds and `$VAR` is not what upstream
 /// expands.
+///
+/// The third answer is [`program_log_dir`], which is a **different directory
+/// with a similar name** — see there.
 pub fn term_log_dir(settings: &Settings) -> PathBuf {
     if !settings.log_default_path.is_empty() {
         return PathBuf::from(&settings.log_default_path);
@@ -449,7 +452,24 @@ pub fn term_log_dir(settings: &Settings) -> PathBuf {
             return dir;
         }
     }
-    // Upstream's last resort is `%LOCALAPPDATA%\teraterm5`.
+    program_log_dir()
+}
+
+/// `GetLogDirW` (`ttlib_static_dir.cpp:229`), which is `ts.LogDirW`: where the
+/// *program's* own logs and dumps go.
+///
+/// **Not the terminal's log directory**, whatever the two names suggest, and
+/// `tttypes.h:579` says so in as many words. It takes no settings at all —
+/// `%LOCALAPPDATA%\teraterm5`, or `<exe>\log` in portable mode — where
+/// [`term_log_dir`] consults two keys before falling back to it. So the two
+/// coincide exactly when neither key is set, which is every default install
+/// and no configured one.
+///
+/// Three things land here rather than beside the session log: `TELNET.LOG`
+/// (`telnet.c:129`), the file-transfer protocols' own logs
+/// (`ttpfile/zmodem.c:815` and its five siblings), and the proxy's `DebugLog`
+/// (`TTProxy.h:198`, which is the `Logger`'s folder).
+pub fn program_log_dir() -> PathBuf {
     #[cfg(windows)]
     match std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()) {
         Some(v) => PathBuf::from(v).join("sterna"),

@@ -181,10 +181,12 @@ pub fn xfer_options(s: &Settings, link: Link) -> Options {
             quickvan: s.transfer_quickvan_log,
             ymodem: s.transfer_ymodem_log,
         },
-        // Upstream writes a protocol log beside the *transfer* directory, and
-        // `transfer.dir` is allowed to be empty — which is upstream's default
-        // and means the working directory, which is what `None` says here.
-        log_dir: Some(PathBuf::from(&s.transfer_dir)).filter(|p| !p.as_os_str().is_empty()),
+        // `ZMODEM.LOG` and its five siblings go in `ts.LogDirW`
+        // (`ttpfile/zmodem.c:815`), which is the **program's** log directory
+        // and not the transfer directory the files themselves land in, nor the
+        // terminal log's. It takes no settings at all. See
+        // [`crate::logname::program_log_dir`].
+        log_dir: Some(crate::logname::program_log_dir()),
         // Not a setting: it is the receive dialog's own checkbox, and
         // `transfer.auto_rename` is the setting that makes the answer moot.
         overwrite: Options::default().overwrite,
@@ -525,6 +527,10 @@ mod tests {
             xfer_options(&Settings::default(), link),
             Options {
                 link,
+                // The one field that is in neither list: a protocol log's
+                // directory is the program's own and comes from the
+                // environment rather than from the file.
+                log_dir: Some(crate::logname::program_log_dir()),
                 ..Options::default()
             }
         );
@@ -595,17 +601,22 @@ mod tests {
         assert!(!d.binary, "ttset.c:975");
     }
 
-    /// `transfer.dir` is empty by default, and an empty log directory means
-    /// the working directory rather than a path of `""`.
+    /// A protocol log does not go where the files go.
+    ///
+    /// `ZMODEM.LOG` is written to `ts.LogDirW` (`ttpfile/zmodem.c:815`), the
+    /// program's own log directory, which no key in the file moves — so
+    /// `FileDir` decides where a *received file* lands and has nothing to say
+    /// about the transcript of receiving it.
     #[test]
-    fn an_empty_transfer_dir_is_no_directory_at_all() {
+    fn a_protocol_log_ignores_the_transfer_directory() {
+        let expected = crate::logname::program_log_dir();
         assert_eq!(
             xfer_options(&Settings::default(), Link::Network).log_dir,
-            None
+            Some(expected.clone())
         );
         assert_eq!(
             xfer_options(&from_ini("FileDir=/tmp\r\n"), Link::Network).log_dir,
-            Some(PathBuf::from("/tmp"))
+            Some(expected)
         );
     }
 }

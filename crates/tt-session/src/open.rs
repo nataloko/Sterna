@@ -482,13 +482,14 @@ pub fn telnet_params(s: &Settings, port: u16, cols: u16, rows: u16) -> TelnetPar
             n if n > 0 => Some(Duration::from_secs(n as u64)),
             _ => None,
         },
-        // `telnet.c:128` puts it in `ts.LogDirW`, so it lands wherever the
-        // session log would — including the surprise that an empty
-        // `LogDefaultPath` sends it to the file-*transfer* directory. See
-        // [`crate::logname::term_log_dir`].
+        // `telnet.c:129` puts it in `ts.LogDirW`, which is the **program's**
+        // log directory and not the terminal's — a distinction the two names
+        // hide and `tttypes.h:579` spells out. `LogDefaultPath` therefore does
+        // not move this file, and neither does the file-transfer directory.
+        // See [`crate::logname::program_log_dir`].
         log: s
             .connection_telnet_log
-            .then(|| crate::logname::term_log_dir(s).join("TELNET.LOG")),
+            .then(|| crate::logname::program_log_dir().join("TELNET.LOG")),
         proxy: proxy_params(s).map(Box::new),
         // Every field is named now, and there is no `..default()` to fall
         // through to — so a field added to `TelnetParams` is a compile error
