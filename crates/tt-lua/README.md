@@ -90,3 +90,43 @@ script that wraps its own loop in one could otherwise report a clean finish
 after being told to stop. `Script::run` asks the host again at the boundary,
 which makes the *answer* honest — it does not make the script stop sooner, and
 nothing can: Lua has no uncatchable error.
+
+## Plugins
+
+`Plugin` is the long-lived form of the same interpreter. Its top-level chunk
+runs once, without a terminal attached, and declares window integration on the
+`sterna` table. Each callback later receives the ordinary `tt` command surface
+and keeps the plugin's globals and closure state from one event to the next.
+
+```lua
+local connects = 0
+
+sterna.menu {
+  menu = 'Control/Examples',
+  label = 'Send uptime',
+  shortcut = 'Ctrl+Alt+U',
+  action = function()
+    tt.sendln('uptime')
+  end,
+}
+
+sterna.key('Ctrl+Alt+L', function()
+  tt.sendln('logout')
+end)
+
+sterna.on('connect', function(event)
+  connects = connects + 1
+  print(event .. ' #' .. connects)
+end)
+
+sterna.on('disconnect', function(event)
+  print(event)
+end)
+```
+
+Menu paths are slash-separated. Shortcuts use Qt's portable spelling so the
+same file says the same keys on Linux and Windows. Registration closes when
+the top-level chunk ends: plugins cannot silently replace the window's menu or
+keys from an event callback. The VM is `Send` so a frontend can keep it on the
+same worker-thread boundary macros use; callbacks which wait or open a dialog
+therefore block the plugin, not the window.

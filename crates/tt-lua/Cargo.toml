@@ -14,4 +14,4 @@ tt-ttl.workspace = true
 # `liblua` and a `pkg-config` probe, which would make the build depend on
 # whether the container happens to have one — and the two containers here do
 # not have the same packages.
-mlua = { version = "0.12", features = ["lua54", "vendored"] }
+mlua = { version = "0.12", features = ["lua54", "vendored", "send"] }

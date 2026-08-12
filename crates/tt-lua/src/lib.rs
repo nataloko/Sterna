@@ -73,11 +73,13 @@ mod conn;
 mod dlg;
 mod env;
 mod log;
+mod plugin;
 mod serial;
 mod term;
 mod xfer;
 
 pub use conn::Recv;
+pub use plugin::{CallbackId, Hook, KeyBinding, MenuItem, Plugin};
 
 /// The host, shared between every callback in one run.
 ///
