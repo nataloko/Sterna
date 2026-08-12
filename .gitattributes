@@ -12,6 +12,10 @@
 /crates/tt-ffi/include/sterna.h text eol=lf
 # The TTL transcripts, which are the expected output of 53 upstream macros.
 /crates/tt-ttl/tests/scripts/*.txt text eol=lf
+# The macro manual is generated and byte-compared with the pinned source.
+/docs/macro/*.md text eol=lf linguist-generated=true
+/docs/macro/**/*.md text eol=lf linguist-generated=true
+/docs/macro/generate.py text eol=lf
 
 # And the three families whose bytes are the subject rather than the container.
 # Never convert these in either direction.

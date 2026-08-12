@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-12 · **Stage:** 4 active · **Commits:** 511
+**Last updated:** 2026-08-12 · **Stage:** 4 active · **Commits:** 513
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -5528,9 +5528,18 @@ languages, terminal depth, tabs and duplication, proxying, and printing.
 ### 🔵 Stage 4 — depth and polish (4–6 months)
 
 DEC special graphics (line drawing — not CJK) already landed with the Stage 1
-VT engine and renderer. What remains is macro reference documentation, a Lua
-plugin API, sixel and a self-updater. **No deb** — the AppImage-only decision
-in Stage 1 covers this too.
+VT engine and renderer. What remains is a Lua plugin API, sixel and a
+self-updater. **No deb** — the AppImage-only decision in Stage 1 covers this
+too.
+
+**The macro reference is generated, 2026-08-12.** `docs/macro/` converts all
+214 pages of the pinned English Tera Term macro manual to Markdown and retains
+its one diagram. The command index takes its 209 accepted spellings from
+`tt-ttl`'s live reserved-word table, maps them to 208 implementations, and
+generation fails if either the interpreter or the upstream index names a
+command the other does not. CI also byte-compares the committed tree against
+the pinned manual. The visible compatibility note distinguishes command
+semantics, which Sterna keeps, from upstream executable and UI instructions.
 
 **Realistic total to a credible replacement: 15–20 months solo with AI
 assistance.** Full parity is 3+ years and should be explicitly renounced in the

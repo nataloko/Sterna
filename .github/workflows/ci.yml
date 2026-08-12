@@ -156,6 +156,10 @@ jobs:
       # and minutes, and has a job of its own below.
       - name: Unit tests
         run: cd Sterna/crates && cargo test --locked
+      # The command index comes from tt-ttl's live reserved-word table; this
+      # also byte-compares all 214 converted pages against the pinned manual.
+      - name: Generated TTL reference
+        run: cd Sterna && ./docs/macro/generate.py --check
       # And again with the servers named, which is what turns the eleven
       # skipped SSH cases into eleven that ran. Both servers, because spike 5's
       # second finding was that embedded implementations are narrow in

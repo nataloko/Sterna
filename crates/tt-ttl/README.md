@@ -111,6 +111,10 @@ the host that is a real terminal rather than a recorder, and
 outside the process — including a `ttpmacro` entry point that parses the
 command line in `cmdline.rs` and then asks a window to run the file.
 
+The generated [TTL compatibility reference](../../docs/macro/README.md) carries
+the full syntax and command manual. Its command index comes from `rsv.rs`, so
+adding a reserved command without documenting it fails the generation check.
+
 ## An upstream defect, reproduced
 
 `waitn` turns off the line buffer's clear-on-newline so that it can count bytes

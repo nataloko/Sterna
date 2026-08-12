@@ -36,7 +36,8 @@ that nothing else on Linux does, done well:
 
 - first-class serial (break signalling, modem lines, flow control, hotplug)
 - SSH2 and telnet, plus `~/.ssh/config` and `known_hosts` (which Tera Term lacks)
-- real scripting — the TTL language, so existing `.ttl` scripts run unchanged
+- real scripting — the [TTL language](docs/macro/README.md), so existing `.ttl`
+  scripts run unchanged
 - the legacy file-transfer suite: XMODEM, YMODEM, ZMODEM, Kermit, B-Plus, Quick-VAN
 
 CJK input methods and the charset tables are **deferred indefinitely** — see

@@ -67,6 +67,7 @@ tt-ffi/run_abi_windows.sh        # ...and its Win32 DLL/HANDLE/pipe seam
 cargo test -p tt-xfer            # the protocols vs lrzsz and gkermit, over a pty
 cargo test -p tt-ttl             # the macro language, with no terminal attached
 cargo test -p tt-ttl --test scripts          # ...and upstream's own 53 macros
+./docs/macro/generate.py --check              # ...and the generated TTL manual
 cargo test -p tt-lua             # the other language, over the same host
 cargo test -p tt-macro           # ...and one driving a real session, threaded
 cargo test -p tt-macro --test lua   # ...in either language, same host

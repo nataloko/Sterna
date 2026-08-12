@@ -32,6 +32,7 @@ points to
 | **Vendored and shipped** — the file-transfer protocols | `vendor/ttpfile/` | **Redistributed**, verbatim, notices retained. See below. |
 | **Vendored and shipped** — the language files | `vendor/lang/` | **Redistributed**, verbatim, project notice retained here. See below. |
 | **Transcribed and shipped** — one data table | `crates/tt-config/src/services.rs` | **Redistributed** as data. See below. |
+| **Converted and shipped** — the English TTL manual | `docs/macro/` | **Redistributed** as generated Markdown, project notice retained here. See below. |
 
 ### `vendor/ttpfile/` — what is shipped
 
@@ -71,6 +72,16 @@ Not `/etc/services` and not `getservbyname`, deliberately: what `/P=telnet` or
 same number it was in 2003, so the specification is upstream's table rather
 than the host's. The data is facts about port numbers, but the selection is
 upstream's, so it is credited like code.
+
+### `docs/macro/` — the TTL manual
+
+The 214 English macro-manual pages and their one referenced PNG are converted
+mechanically from the same pinned upstream revision. The Markdown retains the
+TeraTerm Project copyright notice, and `docs/macro/generate.py --check` proves
+that the committed reference still matches both that source and `tt-ttl`'s
+implemented command table. The generated files are redistributed under the
+project-wide 3-clause BSD licence described above; the generator itself is
+Sterna code.
 
 ## Vendoring clearance
 
