@@ -19,6 +19,7 @@
 
 #include "Session.h"
 #include "I18n.h"
+#include "Plugins.h"
 
 namespace {
 
@@ -128,8 +129,9 @@ QColor colorAt(const QStringList &parts, int i)
 
 } // namespace
 
-SettingsDialog::SettingsDialog(Session *session, I18n *i18n, QWidget *parent)
-    : QDialog(parent), m_session(session), m_i18n(i18n)
+SettingsDialog::SettingsDialog(Session *session, Plugins *plugins, I18n *i18n,
+                               QWidget *parent)
+    : QDialog(parent), m_session(session), m_plugins(plugins), m_i18n(i18n)
 {
     setWindowTitle(m_i18n ? m_i18n->plainText("MENU_SETUP", tr("Setup"))
                           : tr("Setup"));
@@ -194,6 +196,9 @@ void SettingsDialog::build()
         row.name = name;
         row.page = page;
         row.original = current;
+        row.apply = [this, name](const QString &value, QString *error) {
+            return m_session->setSetting(name, value, error);
+        };
         const QString fallback = humanise(name);
         QString label = fallback;
         if (m_i18n && f.label) {
@@ -299,6 +304,91 @@ void SettingsDialog::build()
         m_rows.push_back(row);
     }
 
+    if (m_plugins) {
+        for (const PluginSettingInfo &f : m_plugins->settings()) {
+            const QString page = QStringLiteral("plugin:%1").arg(f.pageId);
+            const QString current = m_plugins->setting(f.id);
+
+            QFormLayout *form = pages.value(page);
+            if (!form) {
+                auto *body = new QWidget(m_tabs);
+                form = new QFormLayout(body);
+                form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+                auto *scroll = new QScrollArea(m_tabs);
+                scroll->setWidgetResizable(true);
+                scroll->setWidget(body);
+                m_tabs->addTab(scroll, f.page);
+                pages.insert(page, form);
+            }
+
+            Row row;
+            row.name = QStringLiteral("[%1] %2").arg(f.section, f.key);
+            row.page = page;
+            row.original = current;
+            row.label = new QLabel(f.label, this);
+            QString tip = QStringLiteral("<b>%1</b><br>%2<br>[%3] %4 = %5")
+                              .arg(f.plugin.toHtmlEscaped(), f.name.toHtmlEscaped(),
+                                   f.section.toHtmlEscaped(), f.key.toHtmlEscaped(),
+                                   f.defaultValue.toHtmlEscaped());
+            if (!f.description.isEmpty()) {
+                tip += QStringLiteral("<hr>%1").arg(f.description.toHtmlEscaped());
+            }
+            row.label->setToolTip(tip);
+            row.haystack = (f.plugin + QLatin1Char(' ') + f.page + QLatin1Char(' ')
+                            + f.section + QLatin1Char(' ') + f.key + QLatin1Char(' ')
+                            + f.name + QLatin1Char(' ') + f.label + QLatin1Char(' ')
+                            + f.description)
+                               .toLower();
+
+            switch (f.kind) {
+            case TT_SETTING_KIND_BOOL: {
+                auto *box = new QCheckBox(this);
+                box->setChecked(current == QLatin1String("on"));
+                row.editor = box;
+                row.value = [box] {
+                    return box->isChecked() ? QStringLiteral("on")
+                                            : QStringLiteral("off");
+                };
+                break;
+            }
+            case TT_SETTING_KIND_INT_RANGE: {
+                auto *spin = new QSpinBox(this);
+                spin->setRange(f.min, f.max);
+                spin->setValue(current.toInt());
+                row.editor = spin;
+                row.value = [spin] { return QString::number(spin->value()); };
+                break;
+            }
+            case TT_SETTING_KIND_ENUM: {
+                auto *combo = new QComboBox(this);
+                combo->addItems(f.choices);
+                const int at = combo->findText(current);
+                combo->setCurrentIndex(at >= 0 ? at : 0);
+                row.editor = combo;
+                row.value = [combo] { return combo->currentText(); };
+                break;
+            }
+            case TT_SETTING_KIND_STR:
+            default: {
+                auto *edit = new QLineEdit(current, this);
+                row.editor = edit;
+                row.value = [edit] { return edit->text(); };
+                break;
+            }
+            }
+
+            const size_t id = f.id;
+            row.apply = [this, id](const QString &value, QString *error) {
+                return m_plugins->setSetting(id, value, error);
+            };
+            row.editor->setObjectName(QStringLiteral("luaPluginSetting%1").arg(id));
+            row.editor->setToolTip(row.label->toolTip());
+            row.label->setBuddy(row.editor);
+            form->addRow(row.label, row.editor);
+            m_rows.push_back(row);
+        }
+    }
+
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                          this);
     if (m_i18n) {
@@ -329,7 +419,7 @@ void SettingsDialog::applyChanges()
             continue;
         }
         QString error;
-        if (!m_session->setSetting(row.name, value, &error)) {
+        if (!row.apply(value, &error)) {
             failures << QStringLiteral("%1: %2").arg(row.name, error);
         }
     }

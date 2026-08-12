@@ -253,7 +253,8 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
 
 TerminalPage *MainWindow::createPage()
 {
-    auto *page = new TerminalPage(m_i18n, this, m_pluginsPath, m_tabs);
+    auto *page =
+        new TerminalPage(m_i18n, this, m_pluginsPath, m_settingsPath, m_tabs);
     wirePage(page);
     return page;
 }
@@ -488,6 +489,7 @@ void MainWindow::duplicateSession()
     TerminalPage *destination = addBlankPage();
     QString error;
     if (!destination->session()->copySettingsFrom(*source->session(), &error)
+        || !destination->plugins()->copySettingsFrom(*source->plugins(), &error)
         || !source->session()->duplicateInto(destination->session(), &error)) {
         closePage(destination, false);
         activatePage(source);
@@ -896,7 +898,7 @@ void MainWindow::showPopupMenu(const QPoint &globalPos)
 
 void MainWindow::showSettingsDialog()
 {
-    SettingsDialog dialog(m_session, m_i18n, this);
+    SettingsDialog dialog(m_session, m_plugins, m_i18n, this);
     dialog.exec();
 }
 
@@ -1047,6 +1049,11 @@ void MainWindow::saveSettings()
                                           windowPositionIsMeaningful(), &error)) {
         QMessageBox::warning(this, tr("Setup"),
                              tr("Could not save the settings: %1").arg(error));
+        return;
+    }
+    if (!m_plugins->saveSettings(path, &error)) {
+        QMessageBox::warning(this, tr("Setup"),
+                             tr("Could not save the plugin settings: %1").arg(error));
         return;
     }
     onNotice(tr("Settings saved to %1").arg(path));

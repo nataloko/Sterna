@@ -6,6 +6,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 #include "sterna.h"
@@ -36,6 +37,25 @@ struct PluginActionInfo {
     }
 };
 
+/// A copied custom settings declaration. Its current value remains in the
+/// core's shared control; the dialog asks `Plugins::setting` when it opens.
+struct PluginSettingInfo {
+    size_t id = 0;
+    size_t pageId = 0;
+    QString plugin;
+    QString page;
+    QString section;
+    QString key;
+    QString name;
+    QString label;
+    QString description;
+    QString defaultValue;
+    TtSettingKind kind = TT_SETTING_KIND_STR;
+    int min = 0;
+    int max = 0;
+    QStringList choices;
+};
+
 /// Persistent Lua VMs and the notifier which services their host calls.
 ///
 /// There is one per page because a plugin callback is attached to one
@@ -47,10 +67,16 @@ class Plugins : public QObject {
 
 public:
     Plugins(Session *session, Macro *ui, const QString &directory,
+            const QString &settingsPath,
             QObject *parent = nullptr);
     ~Plugins() override;
 
     const QVector<PluginActionInfo> &actions() const { return m_actions; }
+    const QVector<PluginSettingInfo> &settings() const { return m_settings; }
+    QString setting(size_t id);
+    bool setSetting(size_t id, const QString &value, QString *outError = nullptr);
+    bool copySettingsFrom(const Plugins &source, QString *outError = nullptr);
+    bool saveSettings(const QString &path, QString *outError = nullptr) const;
     QString error() const { return m_error; }
     bool busy() const;
 
@@ -77,6 +103,7 @@ private:
     QSocketNotifier *m_notifier = nullptr;
 #endif
     QVector<PluginActionInfo> m_actions;
+    QVector<PluginSettingInfo> m_settings;
     QString m_error;
     bool m_wasConnected = false;
     bool m_active = false;

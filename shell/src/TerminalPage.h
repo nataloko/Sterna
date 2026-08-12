@@ -26,7 +26,7 @@ class XferProgressDialog;
 class TerminalPage : public QWidget {
 public:
     TerminalPage(const I18n *i18n, QWidget *macroWindow,
-                 const QString &pluginsDirectory,
+                 const QString &pluginsDirectory, const QString &settingsPath,
                  QWidget *parent = nullptr);
     ~TerminalPage() override;
 

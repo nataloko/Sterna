@@ -1452,7 +1452,7 @@ void test_the_settings_dialog_uses_a_language_catalog()
 
     CHECK(h.session.setSetting(QStringLiteral("settings.language_file"),
                                QStringLiteral("lang\\ja_JP.lng"), &error));
-    SettingsDialog dialog(&h.session, &i18n);
+    SettingsDialog dialog(&h.session, nullptr, &i18n);
 
     bool translated = false;
     for (QLabel *label : dialog.findChildren<QLabel *>()) {

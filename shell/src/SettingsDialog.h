@@ -14,6 +14,7 @@
 
 class QLabel;
 class I18n;
+class Plugins;
 class QLineEdit;
 class QTabWidget;
 class QWidget;
@@ -39,7 +40,8 @@ class SettingsDialog : public QDialog {
     Q_OBJECT
 
 public:
-    explicit SettingsDialog(Session *session, I18n *i18n = nullptr,
+    explicit SettingsDialog(Session *session, Plugins *plugins = nullptr,
+                            I18n *i18n = nullptr,
                             QWidget *parent = nullptr);
 
     /// Apply every changed row. Called on OK; public so a test can drive it
@@ -60,6 +62,7 @@ private:
         /// otherwise follow upstream.
         QString original;
         std::function<QString()> value;
+        std::function<bool(const QString &, QString *)> apply;
     };
 
     void build();
@@ -69,6 +72,7 @@ private:
     void applyFilter(const QString &text);
 
     Session *m_session;
+    Plugins *m_plugins;
     I18n *m_i18n;
     QTabWidget *m_tabs = nullptr;
     QLineEdit *m_search = nullptr;

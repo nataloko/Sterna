@@ -21,14 +21,17 @@ QString string(const char *value)
 } // namespace
 
 Plugins::Plugins(Session *session, Macro *ui, const QString &directory,
+                 const QString &settingsPath,
                  QObject *parent)
     : QObject(parent)
     , m_session(session)
     , m_wasConnected(session->isConnected())
 {
     const QByteArray path = directory.toUtf8();
+    const QByteArray ini = settingsPath.toUtf8();
     TtMacroUi callbacks = ui->ui();
-    m_plugins = tt_plugins_load(m_session->handle(), path.constData(), &callbacks);
+    m_plugins = tt_plugins_load_with_settings(m_session->handle(), path.constData(),
+                                              ini.constData(), &callbacks);
     if (!m_plugins) {
         m_error = QString::fromUtf8(tt_last_error());
         return;
@@ -44,6 +47,34 @@ Plugins::Plugins(Session *session, Macro *ui, const QString &directory,
         m_actions.append({action.id, action.kind, string(action.plugin),
                           string(action.menu), string(action.label),
                           string(action.shortcut)});
+    }
+
+    const size_t settingCount = tt_plugins_setting_count(m_plugins);
+    m_settings.reserve(static_cast<qsizetype>(settingCount));
+    for (size_t i = 0; i < settingCount; i++) {
+        TtPluginSetting setting = {};
+        if (!tt_plugins_setting(m_plugins, i, &setting)) {
+            continue;
+        }
+        PluginSettingInfo info;
+        info.id = setting.id;
+        info.pageId = setting.page_id;
+        info.plugin = string(setting.plugin);
+        info.page = string(setting.page);
+        info.section = string(setting.section);
+        info.key = string(setting.key);
+        info.name = string(setting.name);
+        info.label = string(setting.label);
+        info.description = string(setting.description);
+        info.defaultValue = string(setting.default_value);
+        info.kind = setting.kind;
+        info.min = setting.min;
+        info.max = setting.max;
+        for (size_t choice = 0; choice < setting.choices; choice++) {
+            info.choices.append(
+                string(tt_plugins_setting_choice(m_plugins, i, choice)));
+        }
+        m_settings.append(info);
     }
 
 #ifdef Q_OS_WIN
@@ -80,6 +111,55 @@ Plugins::~Plugins()
 bool Plugins::busy() const
 {
     return m_plugins && tt_plugins_busy(m_plugins);
+}
+
+QString Plugins::setting(size_t id)
+{
+    if (!m_plugins) {
+        return QString();
+    }
+    return string(tt_plugins_setting_value(m_plugins, id));
+}
+
+bool Plugins::setSetting(size_t id, const QString &value, QString *outError)
+{
+    if (!m_plugins) {
+        if (outError) {
+            *outError = m_error;
+        }
+        return false;
+    }
+    const QByteArray utf8 = value.toUtf8();
+    if (tt_plugins_set_setting(m_plugins, id, utf8.constData()) != TT_OK) {
+        if (outError) {
+            *outError = string(tt_last_error());
+        }
+        return false;
+    }
+    return true;
+}
+
+bool Plugins::copySettingsFrom(const Plugins &source, QString *outError)
+{
+    if (tt_plugins_copy_settings(m_plugins, source.m_plugins) != TT_OK) {
+        if (outError) {
+            *outError = string(tt_last_error());
+        }
+        return false;
+    }
+    return true;
+}
+
+bool Plugins::saveSettings(const QString &path, QString *outError) const
+{
+    const QByteArray utf8 = path.toUtf8();
+    if (tt_plugins_settings_save(m_plugins, utf8.constData()) != TT_OK) {
+        if (outError) {
+            *outError = string(tt_last_error());
+        }
+        return false;
+    }
+    return true;
 }
 
 bool Plugins::invoke(size_t id, QString *outError)

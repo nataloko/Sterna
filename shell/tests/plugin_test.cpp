@@ -15,13 +15,17 @@
 #include <QFile>
 #include <QKeySequence>
 #include <QMenu>
+#include <QLineEdit>
 #include <QStatusBar>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTimer>
 
 #include <cstdio>
 
 #include "MainWindow.h"
+#include "Plugins.h"
+#include "SettingsDialog.h"
 
 static int failures = 0;
 
@@ -80,9 +84,19 @@ void test_window_plugins()
     CHECK(source.open(QIODevice::WriteOnly));
     source.write(
         "local count = 0\n"
+        "local preferences = sterna.settings { title = 'Window plugin', "
+        "section = 'Lua Window Test', fields = {\n"
+        "  { name = 'enabled', label = 'Enabled', kind = 'bool', default = true },\n"
+        "  { name = 'retries', label = 'Retries', kind = 'int', min = 1, max = 9, default = 3 },\n"
+        "  { name = 'prefix', key = 'PromptPrefix', label = 'Prefix', "
+        "description = 'Text before setting probes', kind = 'string', default = 'default:' },\n"
+        "  { name = 'mode', label = 'Mode', kind = 'enum', "
+        "choices = {'fast', 'safe'}, default = 'fast' },\n"
+        "} }\n"
         "local inbound\n"
         "inbound = sterna.filter('input', function(bytes)\n"
         "  if bytes == 'probe' then return inbound.replacement end\n"
+        "  if bytes == 'setting' then return preferences.prefix end\n"
         "  if bytes == 'boom' then error('broken filter') end\n"
         "  return bytes\n"
         "end)\n"
@@ -104,8 +118,13 @@ void test_window_plugins()
         "sterna.on('disconnect', function() say('disconnected') end)\n");
     source.close();
 
-    MainWindow window(QDir(dir.path()).filePath(QStringLiteral("sterna.ini")),
-                      plugins);
+    const QString ini = QDir(dir.path()).filePath(QStringLiteral("sterna.ini"));
+    QFile settings(ini);
+    CHECK(settings.open(QIODevice::WriteOnly));
+    settings.write("[Lua Window Test]\nPromptPrefix=saved:\nMode=safe\n");
+    settings.close();
+
+    MainWindow window(ini, plugins);
     QAction *menuAction =
         window.findChild<QAction *>(QStringLiteral("luaPluginAction0"));
     QAction *keyAction =
@@ -123,6 +142,44 @@ void test_window_plugins()
     CHECK(keyAction->shortcut()
           == QKeySequence::fromString(QStringLiteral("Ctrl+Alt+K"),
                                       QKeySequence::PortableText));
+
+    Plugins *loaded = window.findChild<Plugins *>();
+    CHECK(loaded != nullptr);
+    if (loaded) {
+        CHECK(loaded->settings().size() == 4);
+        CHECK(loaded->setting(2) == QStringLiteral("saved:"));
+        CHECK(loaded->setting(3) == QStringLiteral("safe"));
+
+        SettingsDialog dialog(window.session(), loaded);
+        QTabWidget *tabs = dialog.findChild<QTabWidget *>();
+        CHECK(tabs != nullptr);
+        bool foundPluginPage = false;
+        if (tabs) {
+            for (int i = 0; i < tabs->count(); i++) {
+                foundPluginPage |= tabs->tabText(i) == QStringLiteral("Window plugin");
+            }
+        }
+        CHECK(foundPluginPage);
+        QLineEdit *prefix =
+            dialog.findChild<QLineEdit *>(QStringLiteral("luaPluginSetting2"));
+        CHECK(prefix != nullptr);
+        if (prefix) {
+            CHECK(prefix->text() == QStringLiteral("saved:"));
+            prefix->setText(QStringLiteral("live:"));
+            dialog.applyChanges();
+            CHECK(loaded->setting(2) == QStringLiteral("live:"));
+        }
+
+        window.session()->feed(QByteArray("setting"));
+        CHECK(screenText(*window.session()).contains(QStringLiteral("live:")));
+        window.session()->feed(QByteArray("\033[2J\033[H"));
+        QString saveError;
+        CHECK(loaded->saveSettings(ini, &saveError));
+        CHECK(saveError.isEmpty());
+        CHECK(settings.open(QIODevice::ReadOnly));
+        CHECK(settings.readAll().contains("PromptPrefix=live:"));
+        settings.close();
+    }
 
     bool nested = false;
     QMenu *control = window.findChild<QMenu *>(QStringLiteral("controlMenu"));

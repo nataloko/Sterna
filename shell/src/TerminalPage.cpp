@@ -15,6 +15,7 @@
 
 TerminalPage::TerminalPage(const I18n *i18n, QWidget *macroWindow,
                            const QString &pluginsDirectory,
+                           const QString &settingsPath,
                            QWidget *parent)
     : QWidget(parent)
     , m_session(new Session(80, 24, this))
@@ -22,7 +23,8 @@ TerminalPage::TerminalPage(const I18n *i18n, QWidget *macroWindow,
     , m_view(new TerminalView(m_session, this, i18n))
     , m_scroll(new QScrollBar(Qt::Vertical, this))
     , m_macro(new Macro(m_session, macroWindow, this, i18n))
-    , m_plugins(new Plugins(m_session, m_macro, pluginsDirectory, this))
+    , m_plugins(
+          new Plugins(m_session, m_macro, pluginsDirectory, settingsPath, this))
 {
     // A plain QWidget plus a scrollbar rather than a QAbstractScrollArea: the
     // painter draws straight onto the widget in cell coordinates, and a
