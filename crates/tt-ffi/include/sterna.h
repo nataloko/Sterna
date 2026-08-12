@@ -3976,14 +3976,16 @@ bool tt_plugins_action(const TtPlugins *plugins,
 TtStatus tt_plugins_invoke(TtPlugins *plugins, size_t id);
 
 /**
- * Start all callbacks registered for one lifecycle edge, in plugin filename
- * and declaration order. An edge with no listeners is an immediate success.
+ * Queue all callbacks registered for one lifecycle edge, in plugin filename
+ * and declaration order. Hooks queue behind a running callback so a real
+ * connection edge cannot be lost; an edge with no listeners is immediate.
  */
 TtStatus tt_plugins_emit(TtPlugins *plugins, TtPluginHook hook);
 
 /**
- * Whether a callback is still running. One plugin set serialises callbacks,
- * so a second action is refused rather than re-entering a Lua VM.
+ * Whether a callback is running or queued. One plugin set serialises
+ * callbacks; a second action is refused rather than re-entering a Lua VM,
+ * while lifecycle hooks queue in arrival order.
  */
 bool tt_plugins_busy(const TtPlugins *plugins);
 

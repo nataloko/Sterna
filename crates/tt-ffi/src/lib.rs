@@ -5669,7 +5669,7 @@ pub struct TtPlugins {
     commands: Option<std::sync::mpsc::Sender<PluginCommand>>,
     rx: Option<MacroReceiver>,
     thread: Option<std::thread::JoinHandle<()>>,
-    busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pending: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     ui: CUi,
     actions: Vec<PluginAction>,
     hooks: [bool; 2],
@@ -5680,7 +5680,7 @@ fn run_plugins(
     commands: std::sync::mpsc::Receiver<PluginCommand>,
     notify: tt_macro::MacroSender,
     mut host: SessionHost,
-    busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pending: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 ) {
     while let Ok(command) = commands.recv() {
         match command {
@@ -5708,7 +5708,7 @@ fn run_plugins(
             }
             PluginCommand::Stop => break,
         }
-        busy.store(false, std::sync::atomic::Ordering::Release);
+        pending.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
         // A callback which touched no host still needs to wake the frontend so
         // it can observe that the action finished and re-enable its UI.
         let _ = notify.post(Box::new(|_, _| {}));
@@ -5819,12 +5819,12 @@ pub extern "C" fn tt_plugins_load(
         hooks[1] |= plugin.has_hook(tt_lua::Hook::Disconnect);
     }
 
-    let busy = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let pending = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut handle = TtPlugins {
         commands: None,
         rx: None,
         thread: None,
-        busy: busy.clone(),
+        pending: pending.clone(),
         ui: CUi {
             vt: match unsafe { ui.as_ref() } {
                 Some(vt) => *vt,
@@ -5849,7 +5849,7 @@ pub extern "C" fn tt_plugins_load(
         let host = SessionHost::new_plugin(notify.clone(), link);
         let thread = std::thread::Builder::new()
             .name("lua-plugins".into())
-            .spawn(move || run_plugins(plugins, command_rx, notify, host, busy));
+            .spawn(move || run_plugins(plugins, command_rx, notify, host, pending));
         match thread {
             Ok(thread) => {
                 handle.commands = Some(command_tx);
@@ -5917,10 +5917,10 @@ fn start_plugin_command(plugins: &TtPlugins, command: PluginCommand) -> TtStatus
         return TT_OK;
     };
     if plugins
-        .busy
+        .pending
         .compare_exchange(
-            false,
-            true,
+            0,
+            1,
             std::sync::atomic::Ordering::AcqRel,
             std::sync::atomic::Ordering::Acquire,
         )
@@ -5930,8 +5930,8 @@ fn start_plugin_command(plugins: &TtPlugins, command: PluginCommand) -> TtStatus
     }
     if commands.send(command).is_err() {
         plugins
-            .busy
-            .store(false, std::sync::atomic::Ordering::Release);
+            .pending
+            .store(0, std::sync::atomic::Ordering::Release);
         return fail(TT_ERR_IO, "the Lua plugin worker has stopped");
     }
     TT_OK
@@ -5956,8 +5956,9 @@ pub extern "C" fn tt_plugins_invoke(plugins: *mut TtPlugins, id: usize) -> TtSta
     )
 }
 
-/// Start all callbacks registered for one lifecycle edge, in plugin filename
-/// and declaration order. An edge with no listeners is an immediate success.
+/// Queue all callbacks registered for one lifecycle edge, in plugin filename
+/// and declaration order. Hooks queue behind a running callback so a real
+/// connection edge cannot be lost; an edge with no listeners is immediate.
 #[no_mangle]
 pub extern "C" fn tt_plugins_emit(plugins: *mut TtPlugins, hook: TtPluginHook) -> TtStatus {
     let Some(plugins) = (unsafe { plugins.as_ref() }) else {
@@ -5971,15 +5972,28 @@ pub extern "C" fn tt_plugins_emit(plugins: *mut TtPlugins, hook: TtPluginHook) -
     if !plugins.hooks[index] {
         return TT_OK;
     }
-    start_plugin_command(plugins, PluginCommand::Hook(hook))
+    let Some(commands) = &plugins.commands else {
+        return TT_OK;
+    };
+    plugins
+        .pending
+        .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    if commands.send(PluginCommand::Hook(hook)).is_err() {
+        plugins
+            .pending
+            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        return fail(TT_ERR_IO, "the Lua plugin worker has stopped");
+    }
+    TT_OK
 }
 
-/// Whether a callback is still running. One plugin set serialises callbacks,
-/// so a second action is refused rather than re-entering a Lua VM.
+/// Whether a callback is running or queued. One plugin set serialises
+/// callbacks; a second action is refused rather than re-entering a Lua VM,
+/// while lifecycle hooks queue in arrival order.
 #[no_mangle]
 pub extern "C" fn tt_plugins_busy(plugins: *const TtPlugins) -> bool {
     unsafe { plugins.as_ref() }
-        .is_some_and(|plugins| plugins.busy.load(std::sync::atomic::Ordering::Acquire))
+        .is_some_and(|plugins| plugins.pending.load(std::sync::atomic::Ordering::Acquire) != 0)
 }
 
 /// The Unix descriptor which wakes for host calls and callback completion.

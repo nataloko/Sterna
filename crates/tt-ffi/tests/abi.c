@@ -2001,6 +2001,9 @@ static void test_plugins(void)
     /* The first callback blocks on `print` until this thread services it, so
      * the immediate second invocation is deterministically busy. */
     CHECK(tt_plugins_invoke(plugins, menu.id) == TT_ERR_BUSY);
+    /* Lifecycle edges are not user actions: losing one while a callback is
+     * active would leave the plugin's connection state wrong. It queues. */
+    CHECK(tt_plugins_emit(plugins, TT_PLUGIN_HOOK_CONNECT) == TT_OK);
     long deadline = now_ms() + 10000;
     while (tt_plugins_busy(plugins) && now_ms() < deadline) {
         wait_readable(fd, 10);
@@ -2009,23 +2012,17 @@ static void test_plugins(void)
     tt_plugins_service(plugins, s);
     CHECK(!tt_plugins_busy(plugins));
     expect_row(s, 0, "menu 1");
+    expect_row(s, 1, "connect");
 
     CHECK(tt_plugins_invoke(plugins, menu.id) == TT_OK);
+    deadline = now_ms() + 10000;
     while (tt_plugins_busy(plugins) && now_ms() < deadline) {
         wait_readable(fd, 10);
         tt_plugins_service(plugins, s);
     }
     tt_plugins_service(plugins, s);
     /* The Lua VM survived the first action, including its closure state. */
-    expect_row(s, 1, "menu 2");
-
-    CHECK(tt_plugins_emit(plugins, TT_PLUGIN_HOOK_CONNECT) == TT_OK);
-    while (tt_plugins_busy(plugins) && now_ms() < deadline) {
-        wait_readable(fd, 10);
-        tt_plugins_service(plugins, s);
-    }
-    tt_plugins_service(plugins, s);
-    expect_row(s, 2, "connect");
+    expect_row(s, 2, "menu 2");
     CHECK(tt_plugins_emit(plugins, TT_PLUGIN_HOOK_DISCONNECT) == TT_OK);
     CHECK(!tt_plugins_busy(plugins));
     CHECK(log.errors == 0);
