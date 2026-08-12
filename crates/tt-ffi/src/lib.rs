@@ -89,7 +89,7 @@ use tt_ctl::{CtlHost, MacroStatus, NullHost, RunError, Server as CtlServer};
 use tt_grid::Cell;
 use tt_i18n::Catalog;
 use tt_macro::{MacroError, MacroReceiver, MacroUi, NullUi, SessionHost};
-use tt_session::open::{Startup, Target};
+use tt_session::open::{proxy_params, Startup, Target};
 use tt_session::{
     Event, Ini, KeyCodeResult, LogMode, LogOptions, Session, Settings, Shortcut, Timestamp,
 };
@@ -3680,6 +3680,27 @@ pub struct TtSshConnect {
 /// is running — so nothing stores a `TtSession *` it does not own.
 #[no_mangle]
 pub extern "C" fn tt_ssh_connect(params: *const TtSshParams) -> *mut TtSshConnect {
+    ssh_connect(params, None)
+}
+
+/// Start connecting with the proxy configured on `session`, if any.
+///
+/// TTSSH has no proxy settings of its own upstream: TTProxy hooks the socket
+/// beneath it. The flat ABI keeps that relationship explicit, so a frontend
+/// passes the destination session whose `[TTProxy]` settings are live.
+#[no_mangle]
+pub extern "C" fn tt_ssh_connect_for_session(
+    params: *const TtSshParams,
+    session: *const TtSession,
+) -> *mut TtSshConnect {
+    let Some(session) = (unsafe { session.as_ref() }) else {
+        fail(TT_ERR_INVALID, "null session");
+        return ptr::null_mut();
+    };
+    ssh_connect(params, Some(session))
+}
+
+fn ssh_connect(params: *const TtSshParams, session: Option<&TtSession>) -> *mut TtSshConnect {
     let Some(p) = (unsafe { params.as_ref() }) else {
         fail(TT_ERR_INVALID, "null TtSshParams");
         return ptr::null_mut();
@@ -3764,6 +3785,9 @@ pub extern "C" fn tt_ssh_connect(params: *const TtSshParams) -> *mut TtSshConnec
             TT_HOST_KEY_POLICY_ACCEPT_ANY => HostKeyPolicy::AcceptAny,
             _ => HostKeyPolicy::Ask,
         };
+    }
+    if let Some(session) = session {
+        rust.proxy = proxy_params(session.session.settings()).map(Box::new);
     }
 
     match SshConnect::start(rust) {

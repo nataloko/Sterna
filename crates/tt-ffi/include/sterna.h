@@ -3581,6 +3581,16 @@ void tt_ssh_params_default(TtSshParams *out);
 TtSshConnect *tt_ssh_connect(const TtSshParams *params);
 
 /**
+ * Start connecting with the proxy configured on `session`, if any.
+ *
+ * TTSSH has no proxy settings of its own upstream: TTProxy hooks the socket
+ * beneath it. The flat ABI keeps that relationship explicit, so a frontend
+ * passes the destination session whose `[TTProxy]` settings are live.
+ */
+TtSshConnect *tt_ssh_connect_for_session(const TtSshParams *params,
+                                         const TtSession *session);
+
+/**
  * The descriptor to wait on.
  *
  * **The same one [`tt_session_poll_fd`] returns once the session is

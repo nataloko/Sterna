@@ -1292,6 +1292,7 @@ static void test_null_safety(void)
     tt_port_list_free(NULL);
     tt_ssh_params_default(NULL);
     CHECK(tt_ssh_connect(NULL) == NULL);
+    CHECK(tt_ssh_connect_for_session(NULL, NULL) == NULL);
     CHECK(tt_ssh_connect_poll_fd(NULL) == -1);
     CHECK(tt_ssh_connect_wait_handle(NULL) == NULL);
     CHECK(tt_ssh_connect_poll(NULL, NULL) == TT_SSH_FAILED);
@@ -1416,7 +1417,11 @@ static void test_ssh(void)
     p.port = 1;  /* nothing listens on tcpmux */
     p.use_ssh_config = false;
     p.connect_timeout_ms = 5000;
-    TtSshConnect *c = tt_ssh_connect(&p);
+    TtConfig probe_cfg;
+    tt_config_default(&probe_cfg);
+    TtSession *session = tt_session_new(&probe_cfg);
+    CHECK(session != NULL);
+    TtSshConnect *c = tt_ssh_connect_for_session(&p, session);
     CHECK(c != NULL);
     if (c) {
         CHECK(tt_ssh_connect_poll_fd(c) >= 0);
@@ -1432,6 +1437,7 @@ static void test_ssh(void)
         CHECK(strlen(tt_last_error()) > 0);
         tt_ssh_connect_free(c);
     }
+    tt_session_free(session);
 
     const char *host = getenv("TT_SSH_HOST");
     const char *key = getenv("TT_SSH_KEY");
@@ -1457,7 +1463,7 @@ static void test_ssh(void)
     tt_config_default(&cfg);
     TtSession *s = tt_session_new(&cfg);
 
-    c = tt_ssh_connect(&p);
+    c = tt_ssh_connect_for_session(&p, s);
     CHECK(c != NULL);
     if (!c) {
         tt_session_free(s);
