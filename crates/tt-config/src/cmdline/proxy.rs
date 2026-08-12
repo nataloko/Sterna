@@ -37,7 +37,8 @@
 //!   over the type it just read (`ProxyWSockHook.h:2143`), so
 //!   `/proxy=socks5://p:1080/` is *no proxy* where `/proxy=socks5://p:1080` is
 //!   a SOCKS5 one. The trailing slash is the whole difference, and nothing
-//!   says a word. See the thirty-seventh defect in `PLAN.md`.
+//!   says a word. That is the thirty-seventh defect in `PLAN.md` and the one
+//!   thing here this port does not reproduce — see [`ProxyOptions::url`].
 //! - **A bare URL with no `/realhost` also switches it off**, by the arm above
 //!   it: what is returned is then the whole URL, `://` and all, and
 //!   `parseURL(url, FALSE)` reads that as "this was not a proxy URL after
@@ -198,8 +199,21 @@ impl ProxyOptions {
     /// `prefix` is upstream's, and it means "this came from `/proxy=`". Without
     /// it a URL that yielded no real host is read as not having been a proxy
     /// URL, and the type is thrown away — but the record is assigned either
-    /// way, which is what makes both of those forms *disable* a configured
-    /// proxy rather than leave it alone.
+    /// way, which is what makes that form *disable* a configured proxy rather
+    /// than leave it alone.
+    ///
+    /// **The one divergence in this file is the second of those two arms.**
+    /// Upstream throws the type away for an *empty* real host as well, without
+    /// consulting `prefix` (`ProxyWSockHook.h:2143`) — so
+    /// `/proxy=socks5://p:1080/` is no proxy where `/proxy=socks5://p:1080` is
+    /// a SOCKS5 one, a trailing slash apart and in silence. That is the
+    /// thirty-seventh defect on the list in `PLAN.md`, and it is the whole
+    /// point of `prefix` that the two callers are not the same: `/proxy=`
+    /// discards the real host, so testing it there is testing a value the arm
+    /// has already decided not to use. The harm is one-sided — a launcher
+    /// script written with the slash silently connects direct — and no
+    /// documented form of the option has a trailing slash, so nothing means
+    /// "disable" by it. `-noproxy` and `-proxy=none://` are how that is said.
     fn url(&mut self, url: &[u8], prefix: bool) -> Option<Vec<u8>> {
         let (mut proxy, realhost) = parse_info(url)?;
         if !prefix && find(&realhost, b"://").is_some() {
@@ -207,7 +221,9 @@ impl ProxyOptions {
         }
         let out = match realhost.is_empty() {
             true => {
-                proxy.kind = ProxyType::None;
+                if !prefix {
+                    proxy.kind = ProxyType::None;
+                }
                 None
             }
             false => Some(realhost),
@@ -458,15 +474,26 @@ mod tests {
         assert_eq!(rest, "tt socks5://p:1080");
     }
 
-    /// The thirty-seventh defect, and the reason it is one: the trailing slash
-    /// is the only difference between these two lines.
+    /// The thirty-seventh defect, and the file's one divergence: upstream reads
+    /// the trailing slash as "no proxy", where the slash is the only difference
+    /// between these two lines and neither documented form has one.
     #[test]
-    fn a_trailing_slash_disables_the_proxy_it_just_parsed() {
+    fn a_trailing_slash_does_not_disable_the_proxy_here() {
         assert_eq!(proxy("tt /proxy=socks5://p:1080").kind, ProxyType::Socks5);
-        assert_eq!(proxy("tt /proxy=socks5://p:1080/").kind, ProxyType::None);
-        // ...and the host and port are still recorded, because the record is
-        // assigned entire and only the type is overwritten.
+        assert_eq!(proxy("tt /proxy=socks5://p:1080/").kind, ProxyType::Socks5);
         assert_eq!(proxy("tt /proxy=socks5://p:1080/").host, b"p");
+        assert_eq!(proxy("tt /proxy=socks5://p:1080/").port, 1080);
+        // The real host after it is still discarded, which is upstream's and is
+        // not the same defect: `/proxy=` throws `parseURL`'s answer away.
+        assert_eq!(opts("tt /proxy=socks5://p:1080/realhost").0.host, None);
+        // And the bare form is untouched, because there the empty answer is
+        // about a token Tera Term is going to see: `socks5://p:1080/` names no
+        // host, so it names nothing, and the proxy goes off exactly as
+        // upstream's does.
+        assert_eq!(
+            opts("tt socks5://p:1080/").0.proxy.expect("assigned").kind,
+            ProxyType::None
+        );
     }
 
     /// `/proxy=` with nothing behind it is consumed and changes nothing —
