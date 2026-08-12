@@ -5395,8 +5395,20 @@ socket and every case asserts what a byte-level test cannot: **after `dial`
 returns, the next byte read is the session's first byte.** A handshake that
 leaves one byte behind gives a first screen with a stray character on it and an
 SSH key exchange that fails with a protocol error, and neither points at the
-proxy. A check against a genuine SOCKS5 server is `ssh -D` over the rig in
-`ssh-audit/`, which is not yet wired up.
+proxy.
+
+**And there is one check against a server nobody here wrote**, which the four
+above cannot be: `a_real_socks_server_agrees` drives OpenSSH's `ssh -D`, which
+speaks SOCKS4 and SOCKS5 both and auto-detects by the version byte. Four cases
+— each protocol under `SocksResolve=local` with a literal and under `remote`
+with a name — and each one sends as well as receives, because a tunnel that
+only ever carries the server's greeting passes a handshake test without being
+a tunnel. Skipped without `TT_SOCKS_PROXY`; the recipe for the throwaway
+`sshd` is on the test. It needs no `sudo` and no account, unlike the SSH rig,
+because the SSH server it starts only has to accept a forwarding request from
+the user who started it. Run 2026-08-12: all four passed first time, which is
+the first evidence in this file that the SOCKS reading is right rather than
+merely self-consistent.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

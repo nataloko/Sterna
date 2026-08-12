@@ -370,3 +370,72 @@ fn an_unreachable_proxy_names_itself() {
     assert!(msg.contains("SOCKS5 proxy"), "{msg}");
     assert!(msg.contains("127.0.0.1"), "{msg}");
 }
+
+/// The four relays above are checked against servers written from the same
+/// reading of the protocols that wrote the client, which proves the two halves
+/// agree and nothing about whether either matches the world. This one closes
+/// that: it drives a **real** SOCKS5 server — OpenSSH's `ssh -D`, which speaks
+/// SOCKS4 and SOCKS5 both and auto-detects by the version byte.
+///
+/// ```sh
+/// D=$(mktemp -d)
+/// ssh-keygen -q -t ed25519 -N '' -f $D/hostkey
+/// ssh-keygen -q -t ed25519 -N '' -f $D/id && cp $D/id.pub $D/authorized_keys
+/// printf 'Port 2299\nListenAddress 127.0.0.1\nHostKey %s/hostkey\n\
+/// AuthorizedKeysFile %s/authorized_keys\nStrictModes no\nUsePAM no\n' $D $D \
+///   > $D/sshd_config
+/// /usr/sbin/sshd -f $D/sshd_config -D &
+/// ssh -q -N -D 127.0.0.1:11080 -p 2299 -i $D/id -o StrictHostKeyChecking=no \
+///   -o UserKnownHostsFile=$D/known_hosts -o IdentitiesOnly=yes 127.0.0.1 &
+/// TT_SOCKS_PROXY=127.0.0.1:11080 cargo test -p tt-conn --test proxy
+/// ```
+///
+/// Skipped without `TT_SOCKS_PROXY`, the way the SSH suite skips without its
+/// rig — a test that needs a daemon and fails when it is absent is a test
+/// somebody turns off.
+#[test]
+fn a_real_socks_server_agrees() {
+    let Ok(addr) = std::env::var("TT_SOCKS_PROXY") else {
+        eprintln!("skipped: set TT_SOCKS_PROXY=host:port to a real SOCKS server");
+        return;
+    };
+    let (phost, pport) = addr.rsplit_once(':').expect("TT_SOCKS_PROXY is host:port");
+    let pport: u16 = pport.parse().expect("a port");
+
+    for (kind, resolve, host) in [
+        (ProxyKind::Socks5, Resolve::Local, "127.0.0.1"),
+        (ProxyKind::Socks5, Resolve::Remote, "localhost"),
+        (ProxyKind::Socks4, Resolve::Local, "127.0.0.1"),
+        (ProxyKind::Socks4, Resolve::Remote, "localhost"),
+    ] {
+        // The target is ours, so what is being tested is the client and the
+        // server's agreement about the handshake in front of it. One per case:
+        // `serve` accepts once.
+        let target = serve(|sock| {
+            sock.write_all(MARKER).unwrap();
+            let mut echo = [0u8; 4];
+            sock.read_exact(&mut echo).unwrap();
+            sock.write_all(&echo).unwrap();
+        });
+        let mut p = params(kind, pport);
+        p.host = phost.to_string();
+        p.resolve = resolve;
+
+        let mut stream = dial(Some(&p), host, target, Duration::from_secs(5))
+            .unwrap_or_else(|e| panic!("{kind:?}/{resolve:?} through {addr}: {e}"));
+        stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
+
+        let mut got = vec![0u8; MARKER.len()];
+        stream
+            .read_exact(&mut got)
+            .unwrap_or_else(|e| panic!("{kind:?}/{resolve:?} read: {e}"));
+        assert_eq!(got, MARKER, "{kind:?}/{resolve:?}");
+
+        // ...and back the other way, which is the half a handshake test can
+        // pass without: a tunnel that only ever carries the server's greeting.
+        stream.write_all(b"ping").expect("session write");
+        let mut back = [0u8; 4];
+        stream.read_exact(&mut back).expect("echo");
+        assert_eq!(&back, b"ping", "{kind:?}/{resolve:?}");
+    }
+}
