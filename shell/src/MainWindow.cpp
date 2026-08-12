@@ -194,6 +194,7 @@ MainWindow::MainWindow(const QString &settingsPath)
     // when it has a choice to present.
     m_tabs->setTabBarAutoHide(true);
     m_tabs->setDocumentMode(true);
+    m_tabs->setMovable(true);
     setCentralWidget(m_tabs);
 
     m_page = createPage();
@@ -203,6 +204,9 @@ MainWindow::MainWindow(const QString &settingsPath)
         if (index >= 0) {
             activatePage(static_cast<TerminalPage *>(m_tabs->widget(index)));
         }
+    });
+    connect(m_tabs, &QTabWidget::tabCloseRequested, this, [this](int index) {
+        closePage(static_cast<TerminalPage *>(m_tabs->widget(index)));
     });
 
     tt_serial_params_default(&m_lastParams);
@@ -258,6 +262,9 @@ void MainWindow::activatePage(TerminalPage *page)
     m_printer = page->printer();
     m_view = page->view();
     m_macro = page->macro();
+    if (m_control) {
+        m_control->setSession(m_session);
+    }
 
     // The constructor reaches here before the actions and status labels
     // exist. Every later activation has a complete window to refresh.
@@ -305,6 +312,7 @@ void MainWindow::wirePage(TerminalPage *page)
     });
     connect(session, &Session::titleChanged, this,
             [this, page](const QString &title) {
+                updateTabTitle(page);
                 if (page == m_page) {
                     showTitle(title);
                 }
@@ -315,6 +323,7 @@ void MainWindow::wirePage(TerminalPage *page)
         }
     });
     connect(session, &Session::connectionChanged, this, [this, page] {
+        updateTabTitle(page);
         if (page == m_page) {
             onConnectionChanged();
         }
@@ -323,8 +332,17 @@ void MainWindow::wirePage(TerminalPage *page)
         // Upstream checks IsWindowEnabled before AutoWinClose. A socket can
         // disappear inside a modal dialog's nested event loop; closing its
         // disabled parent out from under it would strand the dialog.
-        if (page == m_page && isEnabled()) {
-            close();
+        if (isEnabled()) {
+            if (m_tabs->count() == 1) {
+                // `close()` hides this stack-owned window; it does not delete
+                // the page from inside the session's signal stack.
+                close();
+                return;
+            }
+            // Queued because this signal is emitted from the session's pump.
+            // Deleting the page here would free the object whose signal stack
+            // we are still unwinding through.
+            QTimer::singleShot(0, this, [this, page] { closePage(page, false); });
         }
     });
     connect(session, &Session::sshHostKeyWanted, this,
@@ -407,6 +425,87 @@ void MainWindow::wirePage(TerminalPage *page)
             onNotice(text);
         }
     });
+}
+
+TerminalPage *MainWindow::addBlankPage()
+{
+    auto *page = createPage();
+    m_tabs->addTab(page, tr("Terminal"));
+    activatePage(page);
+
+    QString error;
+    if (!m_session->loadSettings(m_settingsPath, &error)) {
+        onNotice(tr("Could not read the settings: %1").arg(error));
+    }
+    const QString keyMap = m_keyMapPath.isEmpty()
+                               ? QDir(QFileInfo(m_settingsPath).absolutePath())
+                                     .filePath(QStringLiteral("KEYBOARD.CNF"))
+                               : m_keyMapPath;
+    loadKeyMap(keyMap);
+    updateTabTitle(page);
+    updateTabBar();
+    return page;
+}
+
+void MainWindow::newTab() { addBlankPage(); }
+
+void MainWindow::ensureIdlePage()
+{
+    if (m_session->isConnected() || m_session->isConnecting()) {
+        addBlankPage();
+    }
+}
+
+void MainWindow::closeCurrentTab() { closePage(m_page); }
+
+void MainWindow::closePage(TerminalPage *page, bool confirm)
+{
+    const int index = m_tabs->indexOf(page);
+    if (index < 0) {
+        return;
+    }
+    if (m_tabs->count() == 1) {
+        close();
+        return;
+    }
+
+    TerminalPage *was = m_page;
+    activatePage(page);
+    if (confirm && m_session->isConnected() && !confirmDisconnect()) {
+        activatePage(was);
+        return;
+    }
+
+    m_tabs->removeTab(index);
+    page->deleteLater();
+    updateTabBar();
+}
+
+void MainWindow::updateTabTitle(TerminalPage *page)
+{
+    const int index = m_tabs->indexOf(page);
+    if (index < 0) {
+        return;
+    }
+    Session *session = page->session();
+    QString label = session->connectionHost();
+    if (label.isEmpty() && session->isConnected()) {
+        label = session->describe();
+    }
+    if (label.isEmpty()) {
+        label = session->isConnecting() ? tr("connecting...") : tr("Terminal");
+    }
+    m_tabs->setTabText(index, label);
+    m_tabs->setTabToolTip(index, session->describe());
+}
+
+void MainWindow::updateTabBar()
+{
+    const bool several = m_tabs->count() > 1;
+    m_tabs->setTabsClosable(several);
+    if (m_closeTabAction) {
+        m_closeTabAction->setEnabled(true);
+    }
 }
 
 MainWindow::~MainWindow()
@@ -816,6 +915,15 @@ void MainWindow::buildMenus()
     // would be a menu people disable the whole menu bar to escape.
     QMenu *file = menuBar()->addMenu(tr("File"));
     languageAction(file->menuAction(), "MENU_FILE", tr("File"));
+    m_newTabAction = file->addAction(
+        tr("New tab"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_T), this,
+        &MainWindow::newTab);
+    m_newTabAction->setObjectName(QStringLiteral("newTabAction"));
+    m_closeTabAction = file->addAction(
+        tr("Close tab"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_W), this,
+        &MainWindow::closeCurrentTab);
+    m_closeTabAction->setObjectName(QStringLiteral("closeTabAction"));
+    file->addSeparator();
     m_serialConnectAction = file->addAction(tr("Connect to serial port..."), this,
                                              &MainWindow::showConnectDialog);
     languageAction(m_serialConnectAction, "DLG_HOST_SERIAL",
@@ -1143,6 +1251,7 @@ void MainWindow::note(const QString &title, const QString &text)
 
 void MainWindow::connectSerial(const QString &path, const TtSerialParams &params)
 {
+    ensureIdlePage();
     QString error;
     if (!m_session->connectSerial(path, params, &error)) {
         // The core distinguishes busy from unplugged from permission-denied on
@@ -1194,6 +1303,7 @@ void MainWindow::connectSsh(const QString &host, const QString &user, int port)
 
 void MainWindow::startSsh(const TtSshParams &params, const QString &host)
 {
+    ensureIdlePage();
     QString error;
     if (!m_session->startSsh(params, &error)) {
         QMessageBox::critical(this, tr("SSH"),
@@ -1247,6 +1357,7 @@ void MainWindow::showTelnetDialog()
 void MainWindow::connectTelnet(const QString &host, quint16 port,
                                const TtTelnetParams *given)
 {
+    ensureIdlePage();
     TtTelnetParams params;
     if (given) {
         params = *given;
@@ -1270,6 +1381,7 @@ void MainWindow::connectTelnet(const QString &host, quint16 port,
 
 void MainWindow::connectPty(const QStringList &argv)
 {
+    ensureIdlePage();
     QString error;
     if (!m_session->connectPty(argv, &error)) {
         QMessageBox::critical(this, tr("Local shell"),
@@ -1341,10 +1453,20 @@ void MainWindow::closeEvent(QCloseEvent *event)
     // `CloseTT` is upstream's third condition here (`vtwin.cpp:1670`) — a
     // window closing because the *application* is quitting does not ask. There
     // is nothing equivalent yet: this process is one window.
-    if (m_session->isConnected() && !confirmDisconnect()) {
-        event->ignore();
-        return;
+    TerminalPage *original = m_page;
+    for (int i = 0; i < m_tabs->count(); i++) {
+        auto *page = static_cast<TerminalPage *>(m_tabs->widget(i));
+        if (!page->session()->isConnected()) {
+            continue;
+        }
+        activatePage(page);
+        if (!confirmDisconnect()) {
+            activatePage(original);
+            event->ignore();
+            return;
+        }
     }
+    activatePage(original);
     QMainWindow::closeEvent(event);
     if (!event->isAccepted()
         || m_session->setting(QStringLiteral("window.save_position"))
@@ -1811,6 +1933,9 @@ void MainWindow::updateStatus()
                 : m_i18n->plainText("MENU_FILE_LOG", tr("Start logging...")));
     }
     updateLogStatus();
+    if (m_stopMacroAction) {
+        m_stopMacroAction->setEnabled(m_macro->running());
+    }
 
     const bool connected = m_session->isConnected();
     const bool connecting = m_session->isConnecting();

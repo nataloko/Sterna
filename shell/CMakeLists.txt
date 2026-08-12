@@ -288,6 +288,14 @@ endif()
 target_compile_options(control_test PRIVATE ${TT_WARNINGS})
 add_test(NAME control COMMAND control_test)
 
+# Multiple sessions share one menu and status bar. This pins the active-page
+# routing and the stronger property underneath it: output in one tab never
+# changes another tab's grid.
+add_executable(tabs_test tests/tabs_test.cpp)
+target_link_libraries(tabs_test PRIVATE sterna_shell)
+target_compile_options(tabs_test PRIVATE ${TT_WARNINGS})
+add_test(NAME tabs COMMAND tabs_test)
+
 # --- the performance gate ----------------------------------------------------
 #
 # NOT a test, and deliberately not in `ctest`: it takes tens of seconds, its

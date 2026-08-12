@@ -58,6 +58,11 @@ public:
     /// the window it is running in.
     QString path() const { return m_path; }
 
+    /// Follow the window's active tab. The control endpoint is still
+    /// window-wide at this layer; changing the borrowed session keeps it from
+    /// retaining a page that has been closed.
+    void setSession(Session *session) { m_session = session; }
+
     // --- what a request asks of the window -----------------------------------
     //
     // Called from the ABI's callbacks, on this thread, from inside `service`.

@@ -178,6 +178,8 @@ private slots:
     void showTitle(const QString &title);
     void onNotice(const QString &text);
     void onConnectionChanged();
+    void newTab();
+    void closeCurrentTab();
 private:
     /// Construct and wire one page. Loading or copying its settings is the
     /// caller's decision, because startup and a new tab have different
@@ -188,6 +190,15 @@ private:
     /// Connect one page's asynchronous events without making an inactive page
     /// mutate the active page's status or dialogs.
     void wirePage(TerminalPage *page);
+    /// Load the active setup and key map into a fresh, disconnected page.
+    TerminalPage *addBlankPage();
+    /// New Connection opens another upstream window when this one is busy;
+    /// the in-process equivalent is another tab.
+    void ensureIdlePage();
+    /// Close one page, asking before a live network session is lost.
+    void closePage(TerminalPage *page, bool confirm = true);
+    void updateTabTitle(TerminalPage *page);
+    void updateTabBar();
     void buildMenus();
     void updateStatus();
     /// Apply one of the two 0..255 opacity settings as Qt's 0.0..1.0 value.
@@ -256,6 +267,8 @@ private:
     TerminalView *m_view = nullptr;
     QLabel *m_status = nullptr;
     QAction *m_disconnectAction = nullptr;
+    QAction *m_newTabAction = nullptr;
+    QAction *m_closeTabAction = nullptr;
     QAction *m_serialConnectAction = nullptr;
     QAction *m_sshConnectAction = nullptr;
     QAction *m_telnetConnectAction = nullptr;
