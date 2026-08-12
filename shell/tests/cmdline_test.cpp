@@ -577,6 +577,53 @@ void test_osc52_overrides_the_file_for_this_launch()
           == QStringLiteral("off"));
 }
 
+/// `-proxy=` is a third parser's option, and everything it carries is a
+/// setting — so this is the only place the window can be asked whether it
+/// arrived. It is also the one option here whose plugin replaces the record
+/// entire, which is why the file's user name does not survive it.
+void test_the_proxy_option_reaches_the_settings()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("proxy.ini"));
+    QFile file(ini);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[TTProxy]\nProxyType=\"http\"\nProxyHost=\"from.the.file\"\n"
+               "ProxyUser=\"bob\"\n");
+    file.close();
+
+    MainWindow window(ini);
+    const auto get = [&](const char *key) {
+        return window.session()->setting(QString::fromLatin1(key));
+    };
+    CHECK(get("proxy.type") == QStringLiteral("http"));
+    CHECK(get("proxy.user") == QStringLiteral("bob"));
+
+    QString error;
+    TtCmdLine *cmd = parse({QStringLiteral("-proxy=socks5://p.example:1080")});
+    CHECK(window.session()->applyCommandLine(cmd, &error));
+    tt_cmdline_free(cmd);
+    // `socks` and `socks5` are one type under two spellings, and the one that
+    // comes back is upstream's writer's — the first of the pair.
+    CHECK(get("proxy.type") == QStringLiteral("socks"));
+    CHECK(get("proxy.host") == QStringLiteral("p.example"));
+    CHECK(get("proxy.port") == QStringLiteral("1080"));
+    // The whole record was replaced, so the file's user went with it.
+    CHECK(get("proxy.user").isEmpty());
+
+    // `-noproxy` is a proxy of type `none`, which is no proxy.
+    cmd = parse({QStringLiteral("-noproxy")});
+    CHECK(window.session()->applyCommandLine(cmd, &error));
+    tt_cmdline_free(cmd);
+    CHECK(get("proxy.type") == QStringLiteral("none"));
+
+    // ...and a line that says nothing about it leaves it where it was.
+    cmd = parse({QStringLiteral("/DS")});
+    CHECK(window.session()->applyCommandLine(cmd, &error));
+    tt_cmdline_free(cmd);
+    CHECK(get("proxy.type") == QStringLiteral("none"));
+}
+
 /// `StartupMacro` is a file setting with two command-line overrides: `/M`
 /// replaces it and a `/D=` topic cancels it. Relative names live beside the
 /// active INI here instead of depending on a desktop launcher's working
@@ -756,6 +803,7 @@ int main(int argc, char **argv)
     test_menu_and_accelerator_settings();
     test_the_language_file_translates_menus_without_stealing_alt();
     test_osc52_overrides_the_file_for_this_launch();
+    test_the_proxy_option_reaches_the_settings();
     test_a_window_that_closes_with_a_macro_still_running();
     test_the_startup_macro_setting_and_its_overrides();
     test_a_host_name_connects_and_logs();
