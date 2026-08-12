@@ -25,6 +25,8 @@
 /vendor/** -text
 # Terminal input streams: a CR LF in one of these is data the parser sees.
 /oracle/cases/**/input -text
+# The updater signature covers this message byte for byte, including its LF.
+/packaging/update/test-message.txt -text
 # What `GetPrivateProfile*` really answered, recorded from Windows. One of the
 # recorded divergences is *about* line endings.
 /ini-audit/win32.txt -text
