@@ -5535,8 +5535,34 @@ per terminal tab; filters use an isolated, bounded fast-path VM so a wait or
 dialog cannot stop terminal I/O, with scalar filter and setting controls shared
 between the two. Typed plugin pages join the generated settings dialog, read
 and preserve the active INI, apply live, and copy with a duplicated tab. Sixel
-and a self-updater remain. **No deb** — the AppImage-only decision in Stage 1
-covers this too.
+landed on 2026-08-12; a self-updater remains. **No deb** — the AppImage-only
+decision in Stage 1 covers this too.
+
+**Sixel is inline, bounded and scrollback-aware, 2026-08-12.** `tt-vt` streams
+a DEC sixel DCS directly into an RGBA raster: repeat, raster attributes,
+RGB/DEC-HLS color registers, transparent or opaque background, graphics CR and
+graphics newline are all covered. A malformed or unterminated stream cannot
+become an unbounded input buffer, one raster is capped at 4096×4096 / 64 MiB,
+and the image history is capped at 128 MiB oldest-first. Netpbm 11.5.2's
+`ppmtosixel` output is a regression fixture rather than only a hand-written
+grammar test.
+
+The image is anchored to an absolute grid line and follows ordinary text into
+history. Cell snapshots make later text and erase operations punch out the
+corresponding image tiles without teaching every grid edit about images. The
+main and alternate screens keep separate image sets, and reset, resize and
+history eviction clean them up. The flat ABI lends RGBA8888 storage to the Qt
+shell, which paints text first, the image second and the cursor last; the render
+test proves both the red pixels and a later text cell replacing them.
+
+Modern xterm scrolling semantics won over the older DEC manual's opposite
+description: scrolling is on after reset, the cursor-relative image follows
+history, and `DECSET ?80` fixes it at the page origin without moving the
+cursor. `XTSMGRAPHICS` reports 256 registers plus current and maximum geometry.
+Primary DA remains Tera Term's byte-exact answer, so applications which require
+xterm's `;4` marker must be told to emit sixel; those which query the capability
+directly get a useful answer. The core, C ABI, Qt renderer and an external
+encoder each have an executable boundary. See `docs/sixel.md`.
 
 **The macro reference is generated, 2026-08-12.** `docs/macro/` converts all
 214 pages of the pinned English Tera Term macro manual to Markdown and retains

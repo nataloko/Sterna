@@ -5,7 +5,8 @@ shell — for Linux and Windows. Compatible with Tera Term; not Tera Term.
 
 > **Status: Stage 4 underway; Stage 3 complete.** The Linux application has
 > all four transports, the oracle-diffed VT engine, six file-transfer
-> protocols, TTL and Lua scripting, the generated settings UI, a control
+> protocols, inline [sixel graphics](docs/sixel.md), TTL and Lua scripting,
+> the generated settings UI, a control
 > socket, a Lua plugin API for menus, global keys, connection hooks and
 > byte-stream filters plus custom settings pages, an
 > AppImage, `KEYBOARD.CNF`, and all compatible surfaces wired to Tera Term's
@@ -41,6 +42,8 @@ that nothing else on Linux does, done well:
   scripts run unchanged
 - persistent [Lua plugins](docs/plugins.md) with menu actions, global shortcuts,
   connect/disconnect hooks, binary-safe stream filters and typed settings pages
+- inline [sixel graphics](docs/sixel.md), including scrollback and capability
+  discovery
 - the legacy file-transfer suite: XMODEM, YMODEM, ZMODEM, Kermit, B-Plus, Quick-VAN
 
 CJK input methods and the charset tables are **deferred indefinitely** — see
@@ -58,7 +61,7 @@ replaceable because it only ever sees POD types.
 
 ```
 ┌─ Qt 6 Widgets (C++) ──── swappable: Tauri / TUI / headless ─┐
-│  grid painter · .ui dialogs · clipboard · menus              │
+│  grid + sixel painter · .ui dialogs · clipboard · menus      │
 └──────────────────── C ABI (cbindgen) ───────────────────────┘
 ┌─ Sterna core (Rust) ────────────────────────────────────────┐
 │  vt · grid · charset · conn · xfer · script · config · i18n │

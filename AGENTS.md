@@ -479,6 +479,20 @@ And for the AppImage, where two of the three failures are silent:
   259-byte whole-value limit and a fourteen-byte per-field limit. The live
   256-entry table belongs to `tt-vt::Config`; both nearest-colour search and
   `tt_session_palette_rgb` read it.
+- **Modern sixel scrolling gives DECSDM the surprising sense.** Sixel
+  scrolling starts on; `DECSET ?80` turns scrolling *off*, fixes the image at
+  the page origin and leaves the cursor alone, while `DECRST ?80` restores a
+  cursor-relative image which follows text into history. The old DEC graphics
+  manual describes the mode from the other side; current xterm behavior and
+  `DECRQM` are the contract here.
+- **A sixel is painted after the old text and before the cursor.** Painting it
+  behind the grid makes the text it should cover remain visible; painting it
+  last hides text written afterwards. `SixelImage` snapshots the cells it
+  covered and clears a whole pixel tile when one changes, which is what lets
+  the ordinary grid stay unaware of images. Any caller which edits through
+  `grid_mut` must call `reconcile_sixels`, and a frontend must supply the live
+  cell size before decoding or those tile boundaries and cursor advancement
+  are wrong.
 
 And for the vendored protocol C, which two compilers disagree about:
 
