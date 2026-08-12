@@ -5609,6 +5609,447 @@ pub extern "C" fn tt_macro_free(m: *mut TtMacro) {
     }
 }
 
+// --- Lua plugins ----------------------------------------------------------
+
+/// What kind of window action a Lua plugin declared.
+pub type TtPluginActionKind = u32;
+/// A visible item in a slash-separated menu path.
+pub const TT_PLUGIN_ACTION_MENU: TtPluginActionKind = 0;
+/// A global shortcut with no menu item of its own.
+pub const TT_PLUGIN_ACTION_KEY: TtPluginActionKind = 1;
+
+/// A session lifecycle edge delivered to Lua plugins.
+pub type TtPluginHook = u32;
+pub const TT_PLUGIN_HOOK_CONNECT: TtPluginHook = 0;
+pub const TT_PLUGIN_HOOK_DISCONNECT: TtPluginHook = 1;
+
+/// One action declared while loading a Lua plugin.
+///
+/// All strings are UTF-8, borrowed from the [`TtPlugins`] handle and valid
+/// until [`tt_plugins_free`]. `menu` and `label` are null for a key binding;
+/// `shortcut` is null only when a menu item did not declare one. `id` is the
+/// value to pass to [`tt_plugins_invoke`].
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtPluginAction {
+    pub id: usize,
+    pub kind: TtPluginActionKind,
+    pub plugin: *const c_char,
+    pub menu: *const c_char,
+    pub label: *const c_char,
+    pub shortcut: *const c_char,
+}
+
+struct PluginAction {
+    plugin_index: usize,
+    callback: tt_lua::CallbackId,
+    kind: TtPluginActionKind,
+    plugin: CString,
+    menu: Option<CString>,
+    label: Option<CString>,
+    shortcut: Option<CString>,
+}
+
+enum PluginCommand {
+    Invoke {
+        plugin: usize,
+        callback: tt_lua::CallbackId,
+    },
+    Hook(tt_lua::Hook),
+    Stop,
+}
+
+/// The loaded plugin directory and its one worker.
+///
+/// The worker owns every Lua VM so callbacks can block without blocking the
+/// frontend. Host calls come back through `rx`, on the same event-loop seam as
+/// a macro; actions are copied out because their labels are needed before any
+/// callback runs.
+pub struct TtPlugins {
+    commands: Option<std::sync::mpsc::Sender<PluginCommand>>,
+    rx: Option<MacroReceiver>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ui: CUi,
+    actions: Vec<PluginAction>,
+    hooks: [bool; 2],
+}
+
+fn run_plugins(
+    plugins: Vec<tt_lua::Plugin>,
+    commands: std::sync::mpsc::Receiver<PluginCommand>,
+    notify: tt_macro::MacroSender,
+    mut host: SessionHost,
+    busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    while let Ok(command) = commands.recv() {
+        match command {
+            PluginCommand::Invoke { plugin, callback } => {
+                if let Some(plugin) = plugins.get(plugin) {
+                    if let Err(error) = plugin.invoke(callback, &mut host) {
+                        if !tt_lua::is_cancelled(&error) {
+                            let report =
+                                MacroError::elsewhere(error.to_string(), plugin.name().to_string());
+                            let _ = host.report(&report);
+                        }
+                    }
+                }
+            }
+            PluginCommand::Hook(hook) => {
+                for plugin in &plugins {
+                    if let Err(error) = plugin.emit(hook, &mut host) {
+                        if !tt_lua::is_cancelled(&error) {
+                            let report =
+                                MacroError::elsewhere(error.to_string(), plugin.name().to_string());
+                            let _ = host.report(&report);
+                        }
+                    }
+                }
+            }
+            PluginCommand::Stop => break,
+        }
+        busy.store(false, std::sync::atomic::Ordering::Release);
+        // A callback which touched no host still needs to wake the frontend so
+        // it can observe that the action finished and re-enable its UI.
+        let _ = notify.post(Box::new(|_, _| {}));
+    }
+}
+
+fn plugin_paths(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let path = entry?.path();
+        if path.is_file()
+            && path
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("lua"))
+        {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+/// Load every `.lua` file directly inside `dir`, in filename order.
+///
+/// A missing directory is a successful empty plugin set. A bad file rejects
+/// the whole set and [`tt_last_error`] names it, so the window never presents a
+/// half-loaded menu. Top-level chunks run during this call to declare actions
+/// and hooks; callbacks run later on one worker and reach the frontend only
+/// through [`tt_plugins_service`].
+///
+/// `ui` has the same lifetime and callback rules as [`tt_macro_start`] and is
+/// copied. The plugin receive tap is independent of a running macro's.
+#[no_mangle]
+pub extern "C" fn tt_plugins_load(
+    session: *mut TtSession,
+    dir: *const c_char,
+    ui: *const TtMacroUi,
+) -> *mut TtPlugins {
+    let s = session!(session, ptr::null_mut());
+    if dir.is_null() {
+        fail(TT_ERR_INVALID, "null plugin directory");
+        return ptr::null_mut();
+    }
+    let dir = PathBuf::from(
+        String::from_utf8_lossy(unsafe { CStr::from_ptr(dir) }.to_bytes()).into_owned(),
+    );
+    let paths = match plugin_paths(&dir) {
+        Ok(paths) => paths,
+        Err(error) => {
+            fail(TT_ERR_IO, format!("{}: {error}", dir.display()));
+            return ptr::null_mut();
+        }
+    };
+
+    let mut plugins = Vec::with_capacity(paths.len());
+    for path in paths {
+        let body = match std::fs::read(&path) {
+            Ok(body) => body,
+            Err(error) => {
+                fail(TT_ERR_IO, format!("{}: {error}", path.display()));
+                return ptr::null_mut();
+            }
+        };
+        match tt_lua::Plugin::load(path.display().to_string(), body) {
+            Ok(plugin) => plugins.push(plugin),
+            Err(error) => {
+                fail(TT_ERR_INVALID, format!("{}: {error}", path.display()));
+                return ptr::null_mut();
+            }
+        }
+    }
+
+    let mut actions = Vec::new();
+    let mut hooks = [false; 2];
+    for (plugin_index, plugin) in plugins.iter().enumerate() {
+        let name = Path::new(plugin.name())
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy();
+        for menu in plugin.menus() {
+            actions.push(PluginAction {
+                plugin_index,
+                callback: menu.callback,
+                kind: TT_PLUGIN_ACTION_MENU,
+                plugin: cstring(&name),
+                menu: Some(cstring(&menu.menu)),
+                label: Some(cstring(&menu.label)),
+                shortcut: menu.shortcut.as_deref().map(cstring),
+            });
+        }
+        for key in plugin.keys() {
+            actions.push(PluginAction {
+                plugin_index,
+                callback: key.callback,
+                kind: TT_PLUGIN_ACTION_KEY,
+                plugin: cstring(&name),
+                menu: None,
+                label: None,
+                shortcut: Some(cstring(&key.sequence)),
+            });
+        }
+        hooks[0] |= plugin.has_hook(tt_lua::Hook::Connect);
+        hooks[1] |= plugin.has_hook(tt_lua::Hook::Disconnect);
+    }
+
+    let busy = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut handle = TtPlugins {
+        commands: None,
+        rx: None,
+        thread: None,
+        busy: busy.clone(),
+        ui: CUi {
+            vt: match unsafe { ui.as_ref() } {
+                Some(vt) => *vt,
+                None => unsafe { std::mem::zeroed() },
+            },
+            exit_code: 0,
+        },
+        actions,
+        hooks,
+    };
+
+    if !plugins.is_empty() {
+        let (notify, rx) = match tt_macro::channel() {
+            Ok(pair) => pair,
+            Err(error) => {
+                fail(TT_ERR_IO, format!("cannot start Lua plugins: {error}"));
+                return ptr::null_mut();
+            }
+        };
+        let (command_tx, command_rx) = std::sync::mpsc::channel();
+        let link = s.session.link_plugin();
+        let host = SessionHost::new_plugin(notify.clone(), link);
+        let thread = std::thread::Builder::new()
+            .name("lua-plugins".into())
+            .spawn(move || run_plugins(plugins, command_rx, notify, host, busy));
+        match thread {
+            Ok(thread) => {
+                handle.commands = Some(command_tx);
+                handle.rx = Some(rx);
+                handle.thread = Some(thread);
+            }
+            Err(error) => {
+                s.session.unlink_plugin();
+                fail(TT_ERR_IO, format!("cannot start Lua plugins: {error}"));
+                return ptr::null_mut();
+            }
+        }
+    }
+
+    Box::into_raw(Box::new(handle))
+}
+
+/// How many menu and key actions the loaded plugins declared.
+#[no_mangle]
+pub extern "C" fn tt_plugins_action_count(plugins: *const TtPlugins) -> usize {
+    unsafe { plugins.as_ref() }.map_or(0, |plugins| plugins.actions.len())
+}
+
+/// Read one action by index. False for nulls or an out-of-range index.
+#[no_mangle]
+pub extern "C" fn tt_plugins_action(
+    plugins: *const TtPlugins,
+    index: usize,
+    out: *mut TtPluginAction,
+) -> bool {
+    let Some(plugins) = (unsafe { plugins.as_ref() }) else {
+        set_error("null TtPlugins");
+        return false;
+    };
+    let Some(action) = plugins.actions.get(index) else {
+        set_error("plugin action index out of range");
+        return false;
+    };
+    let Some(out) = (unsafe { out.as_mut() }) else {
+        set_error("null TtPluginAction");
+        return false;
+    };
+    *out = TtPluginAction {
+        id: index,
+        kind: action.kind,
+        plugin: action.plugin.as_ptr(),
+        menu: action
+            .menu
+            .as_ref()
+            .map_or(ptr::null(), |value| value.as_ptr()),
+        label: action
+            .label
+            .as_ref()
+            .map_or(ptr::null(), |value| value.as_ptr()),
+        shortcut: action
+            .shortcut
+            .as_ref()
+            .map_or(ptr::null(), |value| value.as_ptr()),
+    };
+    true
+}
+
+fn start_plugin_command(plugins: &TtPlugins, command: PluginCommand) -> TtStatus {
+    let Some(commands) = &plugins.commands else {
+        return TT_OK;
+    };
+    if plugins
+        .busy
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .is_err()
+    {
+        return fail(TT_ERR_BUSY, "a Lua plugin callback is already running");
+    }
+    if commands.send(command).is_err() {
+        plugins
+            .busy
+            .store(false, std::sync::atomic::Ordering::Release);
+        return fail(TT_ERR_IO, "the Lua plugin worker has stopped");
+    }
+    TT_OK
+}
+
+/// Start one declared action. The callback runs asynchronously; wait on the
+/// plugin descriptor and call [`tt_plugins_service`] just as for a macro.
+#[no_mangle]
+pub extern "C" fn tt_plugins_invoke(plugins: *mut TtPlugins, id: usize) -> TtStatus {
+    let Some(plugins) = (unsafe { plugins.as_ref() }) else {
+        return fail(TT_ERR_INVALID, "null TtPlugins");
+    };
+    let Some(action) = plugins.actions.get(id) else {
+        return fail(TT_ERR_INVALID, "plugin action index out of range");
+    };
+    start_plugin_command(
+        plugins,
+        PluginCommand::Invoke {
+            plugin: action.plugin_index,
+            callback: action.callback,
+        },
+    )
+}
+
+/// Start all callbacks registered for one lifecycle edge, in plugin filename
+/// and declaration order. An edge with no listeners is an immediate success.
+#[no_mangle]
+pub extern "C" fn tt_plugins_emit(plugins: *mut TtPlugins, hook: TtPluginHook) -> TtStatus {
+    let Some(plugins) = (unsafe { plugins.as_ref() }) else {
+        return fail(TT_ERR_INVALID, "null TtPlugins");
+    };
+    let (index, hook) = match hook {
+        TT_PLUGIN_HOOK_CONNECT => (0, tt_lua::Hook::Connect),
+        TT_PLUGIN_HOOK_DISCONNECT => (1, tt_lua::Hook::Disconnect),
+        _ => return fail(TT_ERR_INVALID, "unknown Lua plugin hook"),
+    };
+    if !plugins.hooks[index] {
+        return TT_OK;
+    }
+    start_plugin_command(plugins, PluginCommand::Hook(hook))
+}
+
+/// Whether a callback is still running. One plugin set serialises callbacks,
+/// so a second action is refused rather than re-entering a Lua VM.
+#[no_mangle]
+pub extern "C" fn tt_plugins_busy(plugins: *const TtPlugins) -> bool {
+    unsafe { plugins.as_ref() }
+        .is_some_and(|plugins| plugins.busy.load(std::sync::atomic::Ordering::Acquire))
+}
+
+/// The Unix descriptor which wakes for host calls and callback completion.
+/// Returns `-1` on Windows and for an empty plugin set.
+#[no_mangle]
+pub extern "C" fn tt_plugins_poll_fd(plugins: *const TtPlugins) -> c_int {
+    match unsafe { plugins.as_ref() }.and_then(|plugins| plugins.rx.as_ref()) {
+        #[cfg(unix)]
+        Some(rx) => rx.poll_fd(),
+        #[cfg(not(unix))]
+        Some(_) => -1,
+        None => -1,
+    }
+}
+
+/// The Windows waitable event corresponding to [`tt_plugins_poll_fd`].
+#[no_mangle]
+pub extern "C" fn tt_plugins_wait_handle(plugins: *const TtPlugins) -> *mut std::ffi::c_void {
+    match unsafe { plugins.as_ref() }.and_then(|plugins| plugins.rx.as_ref()) {
+        #[cfg(windows)]
+        Some(rx) => rx.wait_handle(),
+        #[cfg(not(windows))]
+        Some(_) => ptr::null_mut(),
+        None => ptr::null_mut(),
+    }
+}
+
+/// Service pending plugin host calls on the frontend's thread.
+#[no_mangle]
+pub extern "C" fn tt_plugins_service(plugins: *mut TtPlugins, session: *mut TtSession) -> usize {
+    let Some(plugins) = (unsafe { plugins.as_mut() }) else {
+        set_error("null TtPlugins");
+        return 0;
+    };
+    let s = session!(session, 0);
+    plugins
+        .rx
+        .as_ref()
+        .map_or(0, |rx| rx.service(&mut s.session, &mut plugins.ui))
+}
+
+/// Detach the persistent plugin receive tap from a session.
+#[no_mangle]
+pub extern "C" fn tt_session_unlink_plugins(session: *mut TtSession) {
+    let s = session!(session);
+    s.session.unlink_plugin();
+}
+
+/// Cancel any active callback, stop the worker and free the plugin set.
+/// Call [`tt_session_unlink_plugins`] as well so the terminal stops collecting
+/// bytes for it; the two handles deliberately do not retain pointers to one
+/// another.
+#[no_mangle]
+pub extern "C" fn tt_plugins_free(plugins: *mut TtPlugins) {
+    if plugins.is_null() {
+        return;
+    }
+    let mut plugins = unsafe { Box::from_raw(plugins) };
+    if let Some(rx) = plugins.rx.take() {
+        rx.cancel();
+        drop(rx);
+    }
+    if let Some(commands) = plugins.commands.take() {
+        let _ = commands.send(PluginCommand::Stop);
+    }
+    if let Some(thread) = plugins.thread.take() {
+        let _ = thread.join();
+    }
+}
+
 /// [`SerialParams`] the other way round — [`TtSerialParams::to_rust`]'s
 /// inverse, for handing a resolved target back to C.
 fn serial_params_c(p: &SerialParams) -> TtSerialParams {

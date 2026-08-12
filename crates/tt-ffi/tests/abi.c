@@ -1931,6 +1931,112 @@ static bool on_error(void *user, const TtMacroError *err)
     return true;
 }
 
+/* A persistent Lua plugin set over the same worker/frontend seam as macros.
+ * The callback prints locally so servicing it proves both directions: the
+ * worker asked for a host call, and the frontend applied it to this session. */
+static void test_plugins(void)
+{
+    char dir[] = "/tmp/sterna-abi-plugin-XXXXXX";
+    if (mkdtemp(dir) == NULL) {
+        CHECK(0);
+        return;
+    }
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/10-counter.lua", dir);
+    FILE *file = fopen(path, "wb");
+    CHECK(file != NULL);
+    if (!file) {
+        rmdir(dir);
+        return;
+    }
+    const char source[] =
+        "local count = 0\n"
+        "sterna.menu { menu = 'Control/ABI', label = 'Count', "
+        "shortcut = 'Ctrl+Alt+C', action = function()\n"
+        "  count = count + 1; print('menu ' .. count)\n"
+        "end }\n"
+        "sterna.key('Ctrl+Alt+K', function() print('key') end)\n"
+        "sterna.on('connect', function(event) print(event) end)\n";
+    CHECK(fwrite(source, 1, sizeof source - 1, file) == sizeof source - 1);
+    fclose(file);
+
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+    struct ui_log log = {0};
+    TtMacroUi ui = {0};
+    ui.user = &log;
+    ui.error = on_error;
+
+    TtPlugins *plugins = tt_plugins_load(s, dir, &ui);
+    CHECK(plugins != NULL);
+    if (!plugins) {
+        fprintf(stderr, "  %s\n", tt_last_error());
+        tt_session_free(s);
+        unlink(path);
+        rmdir(dir);
+        return;
+    }
+    CHECK(tt_plugins_action_count(plugins) == 2);
+    CHECK(tt_plugins_poll_fd(plugins) >= 0);
+    CHECK(tt_plugins_wait_handle(plugins) == NULL);
+
+    TtPluginAction menu = {0};
+    TtPluginAction key = {0};
+    CHECK(tt_plugins_action(plugins, 0, &menu));
+    CHECK(menu.id == 0 && menu.kind == TT_PLUGIN_ACTION_MENU);
+    CHECK(strcmp(menu.plugin, "10-counter.lua") == 0);
+    CHECK(strcmp(menu.menu, "Control/ABI") == 0);
+    CHECK(strcmp(menu.label, "Count") == 0);
+    CHECK(strcmp(menu.shortcut, "Ctrl+Alt+C") == 0);
+    CHECK(tt_plugins_action(plugins, 1, &key));
+    CHECK(key.kind == TT_PLUGIN_ACTION_KEY);
+    CHECK(key.menu == NULL && key.label == NULL);
+    CHECK(strcmp(key.shortcut, "Ctrl+Alt+K") == 0);
+    CHECK(!tt_plugins_action(plugins, 2, &key));
+
+    const int fd = tt_plugins_poll_fd(plugins);
+    CHECK(tt_plugins_invoke(plugins, menu.id) == TT_OK);
+    /* The first callback blocks on `print` until this thread services it, so
+     * the immediate second invocation is deterministically busy. */
+    CHECK(tt_plugins_invoke(plugins, menu.id) == TT_ERR_BUSY);
+    long deadline = now_ms() + 10000;
+    while (tt_plugins_busy(plugins) && now_ms() < deadline) {
+        wait_readable(fd, 10);
+        tt_plugins_service(plugins, s);
+    }
+    tt_plugins_service(plugins, s);
+    CHECK(!tt_plugins_busy(plugins));
+    expect_row(s, 0, "menu 1");
+
+    CHECK(tt_plugins_invoke(plugins, menu.id) == TT_OK);
+    while (tt_plugins_busy(plugins) && now_ms() < deadline) {
+        wait_readable(fd, 10);
+        tt_plugins_service(plugins, s);
+    }
+    tt_plugins_service(plugins, s);
+    /* The Lua VM survived the first action, including its closure state. */
+    expect_row(s, 1, "menu 2");
+
+    CHECK(tt_plugins_emit(plugins, TT_PLUGIN_HOOK_CONNECT) == TT_OK);
+    while (tt_plugins_busy(plugins) && now_ms() < deadline) {
+        wait_readable(fd, 10);
+        tt_plugins_service(plugins, s);
+    }
+    tt_plugins_service(plugins, s);
+    expect_row(s, 2, "connect");
+    CHECK(tt_plugins_emit(plugins, TT_PLUGIN_HOOK_DISCONNECT) == TT_OK);
+    CHECK(!tt_plugins_busy(plugins));
+    CHECK(log.errors == 0);
+
+    tt_plugins_free(plugins);
+    tt_session_unlink_plugins(s);
+    tt_session_free(s);
+    unlink(path);
+    rmdir(dir);
+}
+
 /* A macro against a real session, driven the way the shell's event loop will
  * drive it: wait on both descriptors, service the macro, pump the line. */
 static void test_macro(void)
@@ -2396,6 +2502,7 @@ int main(void)
     test_telnet();
     test_pty();
     test_transfer();
+    test_plugins();
     test_macro();
     test_macro_without_a_frontend();
     test_macro_ends_quietly();

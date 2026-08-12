@@ -873,6 +873,16 @@ typedef struct TtI18n TtI18n;
 typedef struct TtMacro TtMacro;
 
 /**
+ * The loaded plugin directory and its one worker.
+ *
+ * The worker owns every Lua VM so callbacks can block without blocking the
+ * frontend. Host calls come back through `rx`, on the same event-loop seam as
+ * a macro; actions are copied out because their labels are needed before any
+ * callback runs.
+ */
+typedef struct TtPlugins TtPlugins;
+
+/**
  * An owned list of ports. Free it with [`tt_port_list_free`].
  */
 typedef struct TtPortList TtPortList;
@@ -2102,6 +2112,33 @@ typedef struct {
 } TtMacroUi;
 
 /**
+ * What kind of window action a Lua plugin declared.
+ */
+typedef uint32_t TtPluginActionKind;
+
+/**
+ * One action declared while loading a Lua plugin.
+ *
+ * All strings are UTF-8, borrowed from the [`TtPlugins`] handle and valid
+ * until [`tt_plugins_free`]. `menu` and `label` are null for a key binding;
+ * `shortcut` is null only when a menu item did not declare one. `id` is the
+ * value to pass to [`tt_plugins_invoke`].
+ */
+typedef struct {
+    size_t id;
+    TtPluginActionKind kind;
+    const char *plugin;
+    const char *menu;
+    const char *label;
+    const char *shortcut;
+} TtPluginAction;
+
+/**
+ * A session lifecycle edge delivered to Lua plugins.
+ */
+typedef uint32_t TtPluginHook;
+
+/**
  * The window, as the control socket asks about it.
  *
  * The **second** place the ABI calls back into C, and the reasoning is the
@@ -2549,6 +2586,20 @@ typedef uint32_t TtShortcut;
 #define TT_WINDOW_MAXIMIZED 2
 
 #define TT_WINDOW_HIDDEN 3
+
+/**
+ * A visible item in a slash-separated menu path.
+ */
+#define TT_PLUGIN_ACTION_MENU 0
+
+/**
+ * A global shortcut with no menu item of its own.
+ */
+#define TT_PLUGIN_ACTION_KEY 1
+
+#define TT_PLUGIN_HOOK_CONNECT 0
+
+#define TT_PLUGIN_HOOK_DISCONNECT 1
 
 #ifdef __cplusplus
 extern "C" {
@@ -3889,6 +3940,81 @@ void tt_session_unlink_macro(TtSession *session);
  * never return.
  */
 void tt_macro_free(TtMacro *m);
+
+/**
+ * Load every `.lua` file directly inside `dir`, in filename order.
+ *
+ * A missing directory is a successful empty plugin set. A bad file rejects
+ * the whole set and [`tt_last_error`] names it, so the window never presents a
+ * half-loaded menu. Top-level chunks run during this call to declare actions
+ * and hooks; callbacks run later on one worker and reach the frontend only
+ * through [`tt_plugins_service`].
+ *
+ * `ui` has the same lifetime and callback rules as [`tt_macro_start`] and is
+ * copied. The plugin receive tap is independent of a running macro's.
+ */
+TtPlugins *tt_plugins_load(TtSession *session,
+                           const char *dir,
+                           const TtMacroUi *ui);
+
+/**
+ * How many menu and key actions the loaded plugins declared.
+ */
+size_t tt_plugins_action_count(const TtPlugins *plugins);
+
+/**
+ * Read one action by index. False for nulls or an out-of-range index.
+ */
+bool tt_plugins_action(const TtPlugins *plugins,
+                       size_t index,
+                       TtPluginAction *out);
+
+/**
+ * Start one declared action. The callback runs asynchronously; wait on the
+ * plugin descriptor and call [`tt_plugins_service`] just as for a macro.
+ */
+TtStatus tt_plugins_invoke(TtPlugins *plugins, size_t id);
+
+/**
+ * Start all callbacks registered for one lifecycle edge, in plugin filename
+ * and declaration order. An edge with no listeners is an immediate success.
+ */
+TtStatus tt_plugins_emit(TtPlugins *plugins, TtPluginHook hook);
+
+/**
+ * Whether a callback is still running. One plugin set serialises callbacks,
+ * so a second action is refused rather than re-entering a Lua VM.
+ */
+bool tt_plugins_busy(const TtPlugins *plugins);
+
+/**
+ * The Unix descriptor which wakes for host calls and callback completion.
+ * Returns `-1` on Windows and for an empty plugin set.
+ */
+int tt_plugins_poll_fd(const TtPlugins *plugins);
+
+/**
+ * The Windows waitable event corresponding to [`tt_plugins_poll_fd`].
+ */
+void *tt_plugins_wait_handle(const TtPlugins *plugins);
+
+/**
+ * Service pending plugin host calls on the frontend's thread.
+ */
+size_t tt_plugins_service(TtPlugins *plugins, TtSession *session);
+
+/**
+ * Detach the persistent plugin receive tap from a session.
+ */
+void tt_session_unlink_plugins(TtSession *session);
+
+/**
+ * Cancel any active callback, stop the worker and free the plugin set.
+ * Call [`tt_session_unlink_plugins`] as well so the terminal stops collecting
+ * bytes for it; the two handles deliberately do not retain pointers to one
+ * another.
+ */
+void tt_plugins_free(TtPlugins *plugins);
 
 /**
  * Bind this window's control socket and start listening.
