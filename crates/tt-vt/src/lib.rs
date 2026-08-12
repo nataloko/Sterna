@@ -3310,6 +3310,44 @@ impl State {
         self.send_osc(&format!("{lead}{body}"));
     }
 
+    /// XTSMGRAPHICS — xterm's capability query for palette and sixel raster
+    /// limits. Sterna's limits are fixed, so reset is a successful no-op and
+    /// set fails. The current geometry follows xterm in being the smaller of
+    /// the drawable text area and the decoder's allocation ceiling.
+    fn xtsmgraphics(&mut self, params: &Params) {
+        let item = arg0(params, 0);
+        let action = arg0(params, 1);
+        let response = match (item, action) {
+            // Number of sixel colour registers.
+            (1, 1 | 2 | 4) => "?1;0;256S".to_owned(),
+            // Current sixel geometry in pixels.
+            (2, 1 | 2) => {
+                let cell_width = usize::try_from(self.window.cell.0.max(1)).unwrap_or(1);
+                let cell_height = usize::try_from(self.window.cell.1.max(1)).unwrap_or(1);
+                let width = self
+                    .grid
+                    .cols()
+                    .saturating_mul(cell_width)
+                    .min(sixel::MAX_WIDTH);
+                let height = self
+                    .grid
+                    .rows()
+                    .saturating_mul(cell_height)
+                    .min(sixel::MAX_HEIGHT);
+                format!("?2;0;{width};{height}S")
+            }
+            // Maximum raster the bounded decoder will accept.
+            (2, 4) => format!("?2;0;{};{}S", sixel::MAX_WIDTH, sixel::MAX_HEIGHT),
+            // ReGIS is a known item which this terminal does not implement.
+            (3, 1..=4) => "?3;3;0S".to_owned(),
+            // The two supported attributes are read-only.
+            (1 | 2, 3) => format!("?{item};3;0S"),
+            (1..=3, _) => format!("?{item};2;0S"),
+            _ => format!("?{item};1;0S"),
+        };
+        self.send_csi(&response);
+    }
+
     /// DECRQM — `vtterm.c:CSDolRequestMode`. Answers `CSI [?]Ps;Ps $ y`, where
     /// the second parameter is 1 set, 2 reset, 3 permanently set, 4 permanently
     /// reset, and 0 "not recognised".
@@ -3711,6 +3749,9 @@ impl State {
             'L' => self.grid.insert_lines(arg(params, 0, 1) as usize),
             'M' => self.grid.delete_lines(arg(params, 0, 1) as usize),
             'P' => self.grid.delete_chars(arg(params, 0, 1) as usize),
+            // XTSMGRAPHICS shares SU's final byte and is selected by the DEC
+            // private marker.
+            'S' if private => self.xtsmgraphics(params),
             'S' => self.grid.scroll_up(arg(params, 0, 1) as usize),
             'T' => self.grid.scroll_down(arg(params, 0, 1) as usize),
             'X' => self.grid.erase_chars(arg(params, 0, 1) as usize),
@@ -5035,6 +5076,35 @@ mod tests {
     fn primary_da_identifies_as_vt100() {
         let vt = run(b"\x1b[c", 20, 2);
         assert_eq!(vt.reply(), b"\x1b[?1;2c");
+    }
+
+    #[test]
+    fn xtsmgraphics_reports_sixel_limits_without_changing_them() {
+        let mut vt = Vt::new(Config {
+            cols: 4,
+            rows: 3,
+            ..Config::default()
+        });
+        vt.set_window_metrics(WindowMetrics {
+            cell: (9, 17),
+            ..WindowMetrics::default()
+        });
+
+        vt.feed(b"\x1b[?1;1;0S\x1b[?1;4;0S\x1b[?2;1;0S\x1b[?2;4;0S\x1b[?1;3;512S");
+        assert_eq!(
+            vt.take_reply(),
+            concat!(
+                "\x1b[?1;0;256S",
+                "\x1b[?1;0;256S",
+                "\x1b[?2;0;36;51S",
+                "\x1b[?2;0;4096;4096S",
+                "\x1b[?1;3;0S",
+            )
+            .as_bytes()
+        );
+
+        vt.feed(b"\x1b[?3;1;0S\x1b[?9;1;0S\x1b[?2;9;0S");
+        assert_eq!(vt.take_reply(), b"\x1b[?3;3;0S\x1b[?9;1;0S\x1b[?2;2;0S");
     }
 
     #[test]
