@@ -2351,6 +2351,17 @@ do to a machine that is not the one it was built on:
   and 106 after, `libstdc++-6.dll` alone accounting for 29.7 of the 48.
   Stripping a PE file is safe — the export table a DLL is loaded through is
   part of the image, not of the symbol table.
+- **The obvious `.ttl` registration points at `ttpmacro.exe` and fails
+  silently.** It is what upstream writes (`teraterm.iss:225`) and it does not
+  transfer, because upstream's `ttpmacro.exe` is the interpreter and ours is a
+  *client* of a running window — so double-clicking a macro on a machine with
+  no window open finds nothing to talk to, and being a console-subsystem
+  program it says so into a console Explorer created and immediately
+  destroyed. The command is `sterna.exe /M="%1"`, which is upstream's own
+  `ttermpro /M=`. And `.ttl` is Turtle as well as Tera Term, so the entry goes
+  under `.ttl\OpenWithProgids` — additive — and comes out again only
+  `/ifempty`, or an uninstall takes the extension away from whoever else had
+  it.
 
 And for the desktop side:
 

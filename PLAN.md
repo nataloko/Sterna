@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-12 · **Stage:** 2 complete, 3 in progress · **Commits:** 483
+**Last updated:** 2026-08-12 · **Stage:** 2 complete, 3 in progress · **Commits:** 486
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -5266,8 +5266,7 @@ Three things it deliberately does not do, and one it cannot. It does not touch
 `PATH`, because `ttctl` and `ttpmacro` sit beside the executable and NSIS's own
 documentation describes how a naive registry `PATH` edit truncates somebody's.
 It does not touch `sterna.ini`, which is per-user and under AppData, so an
-uninstall that is really an upgrade does not take the settings with it. It does
-not associate `.ttl` yet, which upstream does and which is worth adding. And it
+uninstall that is really an upgrade does not take the settings with it. And it
 is **unsigned**: SmartScreen will warn and the UAC prompt will say "Unknown
 publisher" until there is a certificate, which needs a legal entity. The build
 does not have to move when there is one — `osslsigncode` signs on Linux.
@@ -5275,6 +5274,22 @@ does not have to move when there is one — `osslsigncode` signs on Linux.
 `sterna.exe` also carries a version resource now. It already had its icon; what
 it had no version, company or description, so an executable whose installer
 writes all three into the registry declared none of them itself.
+
+**And it offers `.ttl` to Explorer, off by default** — `/S /ASSOC` for a silent
+install, a components entry otherwise. Off is upstream's answer too, and the
+reason is better than the one its comment gives: `.ttl` is Turtle as well as
+Tera Term, so the registration is the additive `OpenWithProgids` form and the
+uninstall gives the extension keys back `/ifempty`. Checked against a `.ttl`
+seeded with another program's ProgID, which survives both halves untouched.
+The command is `sterna.exe /M="%1"` where upstream's is `ttpmacro.exe "%1"`,
+because upstream's `ttpmacro` is the interpreter and this port's is a client of
+a running window — the literal registration would find nothing to talk to on a
+machine with no window open, and would say so into a console Explorer created
+and destroyed in the same instant. What that costs is one open question rather
+than a defect: a macro launched from Explorer opens a *new* window where
+upstream would run it in the session already on screen, and closing that gap
+means giving `ttpmacro` a fallback that starts a window — which changes what a
+`.bat` wrapper does today, so it wants deciding rather than assuming.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
