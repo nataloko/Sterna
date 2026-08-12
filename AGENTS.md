@@ -134,6 +134,10 @@ cd packaging/appimage            # the only Linux artifact — build it in
 ./build.sh --clean               # ...from scratch
 ./build.sh --run                 # ...and start it
 
+cd packaging/windows             # the only Windows artifact — sterna-fedora
+./build.sh                       # → build/sterna-0.0.0-x86_64-setup.exe
+./build.sh --stage               # ...the file tree, without makensis
+
 cd esctest                       # conformance, from inside our own terminal
 ./run_tests.sh                   # 568 cases; gates on drift from `expected`
 ./run_tests.sh CUPTests          # just the ones matching (a regex)
@@ -262,6 +266,13 @@ comes with `mingw64-filesystem` and needs no install. Fedora's `updates` repo
 metalink failed here on the day, so all three went in with
 `--setopt=updates.metalink= --setopt=updates.baseurl=https://dl.fedoraproject.org/pub/fedora/linux/updates/44/Everything/x86_64/`
 — worth knowing before concluding the container has no network.
+
+**And the Windows installer, added 2026-08-12**: `mingw32-nsis` and
+`mingw64-nsis`, which between them are one native Linux `makensis` — from
+`mingw-nsis-base`, which both depend on — plus the compiled stubs, x86 in the
+first package and amd64 in the second. `packaging/windows/sterna.nsi` targets
+amd64, so the second one is the one that matters and the first one carries the
+compiler.
 
 ## Traps
 
@@ -2288,6 +2299,58 @@ code does:
   screen. Same limit already recorded for `tt-conn`, one layer up.
   `ResizePseudoConsole` is `E_NOTIMPL` there, which is worth knowing because
   the session propagates that error out of an unrelated settings change.
+- **The two containers have different Wines, and neither one is "the" Wine.**
+  `sterna-fedora` has the full `wine`/`wine64` pair and wedges in `wineboot`
+  on a fresh prefix, exactly as the entry above describes — the run sits there
+  and a `wineserver` outlives it. The Ubuntu box has no `wine` on `PATH` at
+  all, only `/usr/lib/wine/wine64`, and an already-booted `~/.wine` that
+  `ini-audit` made; copying that prefix skips the boot rather than fighting it,
+  which is how the installer was smoke-tested. Ask which one you are in before
+  concluding anything about Wine.
+- **And that `wine64` has no WOW64, so a 32-bit Windows binary cannot start at
+  all.** It fails with `failed to open C:\windows\syswow64\rundll32.exe`,
+  naming a file the prefix genuinely does not have — which reads as a broken
+  program rather than as a Wine without the other half. It is the reason the
+  installer's stub is amd64; see below.
+
+And for the Windows installer, where the traps are about what an installer can
+do to a machine that is not the one it was built on:
+
+- **The finish page must not start the program.** The installer asks for
+  administrator rights, so anything it launches inherits them — and Sterna's
+  settings are under the *running user's* AppData. A first run as
+  Administrator writes `sterna.ini` into the administrator's profile, and the
+  user's own later runs start from defaults, permanently, with nothing
+  anywhere to see. `StartSterna` goes through `explorer.exe`, which is already
+  running as the user and hands the program back its proper token.
+- **`RMDir /r "$INSTDIR"` is a recursive delete of a path the user typed into
+  the directory page.** So `build.sh` generates the uninstall list out of the
+  staging tree — every file by name, every directory with a plain `RMDir`,
+  which refuses one that is not empty. Verified under Wine: a file left in the
+  program folder survives the uninstall and so does the folder.
+- **An upgrade in place leaves the old version's files behind, and a stale Qt
+  DLL is not inert.** The loader finds it first and the program dies before
+  `main` with a missing-entry-point box naming a symbol nobody has heard of.
+  `.onInit` runs the previous uninstaller first, and `_?=` is what keeps it in
+  place long enough to be waited on rather than having it copy itself to the
+  temp directory and return immediately.
+- **The licence page is a RichEdit control and renders LF-only text as one
+  unreadable line.** Every text file a user reads gets CRLF on the way in; the
+  `.lng` files do not, because they are read by us.
+- **Qt's deployment tooling does not exist for this target.** `windeployqt` is
+  a Windows program and the MinGW package ships no `qtpaths` — CMake says so
+  during configuration, which is a warning worth not dismissing. The DLL set is
+  therefore closed by walking `objdump -p` to a fixed point, and the rule for
+  ours-versus-Windows' is whether the MinGW sysroot has the file: that tree
+  holds only the 76 the cross toolchain provides and none of `kernel32`,
+  `msvcrt`, `shell32`, `user32`, `advapi32` or `ole32`. Checked rather than
+  assumed — shipping a private copy of a system DLL is worse than shipping
+  none.
+- **Fedora's MinGW packages are shipped unstripped**, and so is everything
+  cargo and the CMake tree produce: 154 MB staged before `--strip-unneeded`
+  and 106 after, `libstdc++-6.dll` alone accounting for 29.7 of the 48.
+  Stripping a PE file is safe — the export table a DLL is loaded through is
+  part of the image, not of the symbol table.
 
 And for the desktop side:
 
@@ -2541,7 +2604,8 @@ CLAUDE.md        one `@AGENTS.md` import, so Claude Code reads the same text
 ATTRIBUTION.md   licensing, and what still needs clearing before vendoring
 oracle/          Tera Term's real VT engine, headless on Linux (see its README)
 esctest/         the conformance suite, run inside our own terminal (see its README)
-packaging/       the AppImage, which is the whole of Linux packaging (see its README)
+packaging/       the AppImage and the NSIS installer, which are the whole of
+                 Linux and Windows packaging (see the README in each)
 xfer/            Stage 0 spike 2 — ttpfile's protocols, running and interoperating
 serial-audit/    Stage 0 spike 4 — serialport-rs vs commlib.c, on real hardware
 telnet-audit/    a real telnetd, so the telnet port has an independent check
