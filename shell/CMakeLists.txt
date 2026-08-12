@@ -166,7 +166,11 @@ add_executable(sterna
     resources/branding.qrc)
 if(WIN32)
     enable_language(RC)
-    target_sources(sterna PRIVATE resources/sterna.rc)
+    file(TO_CMAKE_PATH
+        "${CMAKE_CURRENT_SOURCE_DIR}/../assets/branding/sterna/sterna.ico"
+        TT_ICON)
+    configure_file(resources/sterna.rc.in sterna.rc @ONLY)
+    target_sources(sterna PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/sterna.rc")
     # A GUI-subsystem binary, as `ttermpro.exe` is. A console-subsystem one
     # opens a console window behind every session started from the desktop,
     # and closing that window kills the terminal. `Qt6::Core` carries the
