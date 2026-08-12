@@ -93,6 +93,8 @@ nothing can: Lua has no uncatchable error.
 
 ## Plugins
 
+The user-facing installation and API guide is [docs/plugins.md](../../docs/plugins.md).
+
 `Plugin` is the long-lived form of the same interpreter. Its top-level chunk
 runs once, without a terminal attached, and declares window integration on the
 `sterna` table. Each callback later receives the ordinary `tt` command surface

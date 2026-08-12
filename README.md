@@ -6,11 +6,11 @@ shell — for Linux and Windows. Compatible with Tera Term; not Tera Term.
 > **Status: Stage 4 underway; Stage 3 complete.** The Linux application has
 > all four transports, the oracle-diffed VT engine, six file-transfer
 > protocols, TTL and Lua scripting, the generated settings UI, a control
-> socket, an AppImage, `KEYBOARD.CNF`, and all compatible surfaces wired to
-> Tera Term's 14 `.lng` catalogs. The Windows build passes its native CI,
-> ships as an NSIS installer, and printing is wired end to end. Both platforms
-> have multiple sessions in movable tabs, including live SSH/telnet session
-> duplication.
+> socket, a Lua plugin API for menus, global keys and connection hooks, an
+> AppImage, `KEYBOARD.CNF`, and all compatible surfaces wired to Tera Term's
+> 14 `.lng` catalogs. The Windows build passes its native CI, ships as an NSIS
+> installer, and printing is wired end to end. Both platforms have multiple
+> sessions in movable tabs, including live SSH/telnet session duplication.
 > See [PLAN.md](PLAN.md).
 
 The name is settled. See [PLAN.md](PLAN.md) for scope and status,
@@ -38,6 +38,8 @@ that nothing else on Linux does, done well:
 - SSH2 and telnet, plus `~/.ssh/config` and `known_hosts` (which Tera Term lacks)
 - real scripting — the [TTL language](docs/macro/README.md), so existing `.ttl`
   scripts run unchanged
+- persistent [Lua plugins](docs/plugins.md) with menu actions, global shortcuts
+  and connect/disconnect hooks
 - the legacy file-transfer suite: XMODEM, YMODEM, ZMODEM, Kermit, B-Plus, Quick-VAN
 
 CJK input methods and the charset tables are **deferred indefinitely** — see

@@ -5528,9 +5528,11 @@ languages, terminal depth, tabs and duplication, proxying, and printing.
 ### 🔵 Stage 4 — depth and polish (4–6 months)
 
 DEC special graphics (line drawing — not CJK) already landed with the Stage 1
-VT engine and renderer. What remains is a Lua plugin API, sixel and a
-self-updater. **No deb** — the AppImage-only decision in Stage 1 covers this
-too.
+VT engine and renderer. The first Lua plugin surface landed 2026-08-12: menu
+items, global key bindings and connect/disconnect hooks, backed by a persistent
+VM per terminal tab. Byte-stream filters and settings pages remain, along with
+sixel and a self-updater. **No deb** — the AppImage-only decision in Stage 1
+covers this too.
 
 **The macro reference is generated, 2026-08-12.** `docs/macro/` converts all
 214 pages of the pinned English Tera Term macro manual to Markdown and retains
@@ -5608,9 +5610,12 @@ Adoption hinges on "my existing setup just works." Budget real time here.
   **Lua plugin API** — menu items, key bindings, connect/disconnect hooks,
   byte-stream filters, settings pages, covering what the 17 samples in
   `TTXSamples/` actually do; (3) WASM component plugins only if someone asks.
-  The Lua is already here as of Stage 2 (`crates/tt-lua/`); what a plugin API
-  adds is the *hooks*, which is a different question from the command surface
-  and a much smaller one now that the surface exists.
+  The first three surfaces are **done 2026-08-12**: direct `.lua` files load in
+  filename order, each tab retains its own VM and callback state, Qt installs
+  their stable menu paths and portable shortcuts, and lifecycle edges queue
+  rather than disappearing behind an active callback. Byte filters and
+  settings pages remain. The Lua command surface itself has been here since
+  Stage 2 (`crates/tt-lua/`); hooks are a separate layer above it.
 - **Docs** — 751 HTML files / 97k lines, 214 of them macro reference. Convert to
   Markdown mechanically; **generate** the settings and macro references from the
   schema and command table.
