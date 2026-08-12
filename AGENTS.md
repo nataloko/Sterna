@@ -686,6 +686,29 @@ And for the proxy, which is a Winsock hook upstream and so has no seam at all:
   was seen. A file's `ProxyUser` therefore does not survive a `/proxy=` that
   named no user — which is right, and is not what "apply the command line over
   the settings" does everywhere else in this parser.
+- **There are two log directories and their names do not distinguish them.**
+  `ts.LogDirW` is `GetLogDirW()` (`ttlib_static_dir.cpp:229`) — the *program's*
+  logs and dumps, `%LOCALAPPDATA%\teraterm5`, which no key in the file moves.
+  `GetTermLogDir` (`ttlib_types.cpp:63`) is the *terminal's* and consults
+  `LogDefaultPath`, then `FileDir`, and only then falls back to the first. So
+  the two coincide exactly when neither key is set — every default install and
+  no configured one, which is why one function for both passed every test here
+  for months. `tttypes.h:579` says which is which in as many words. Three
+  things take the program's: `TELNET.LOG` (`telnet.c:129`), the six protocol
+  logs (`ttpfile/zmodem.c:815` and its siblings) and the proxy's `DebugLog`
+  (`TTProxy.h:198`). `logname::program_log_dir` is that one;
+  `logname::term_log_dir` is the other, and it ends by calling it.
+- **`DebugLog` is the only thing that can see a proxy handshake fail**, because
+  all of it happens before the terminal has a session — no screen, no session
+  log, and a message box with one sentence in it. `Logger.h` writes two record
+  forms and which one you get is the *relay*, not the bytes: binary
+  (`send: [ 05 01 00 ]`) for the two SOCKS relays, because they call
+  `sendToSocket`, and quoted text for HTTP and the telnet proxy, because they
+  call `sendToSocketFormat`. Both are reproduced byte-exactly, including one
+  record per *line* of an HTTP request that this port writes in one go, so a
+  trace can be read beside one Tera Term took against the same proxy. That
+  comparison is the whole value; "improving" the format costs it. And the
+  credentials are in it.
 
 And for the local pty:
 
