@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-12 · **Stage:** 3 complete · **Commits:** 509
+**Last updated:** 2026-08-12 · **Stage:** 4 active · **Commits:** 511
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -5525,11 +5525,12 @@ ok` under Wine. The live-settings ABI is also compiled and driven from C.
 and an executable test boundary: Windows, ConPTY and serial, the installer,
 languages, terminal depth, tabs and duplication, proxying, and printing.
 
-### ⬜ Stage 4 — depth and polish (4–6 months)
+### 🔵 Stage 4 — depth and polish (4–6 months)
 
-DEC special graphics (line drawing — not CJK, and needed), macro reference docs,
-Lua plugin API, sixel, self-updater. **No deb** — the AppImage-only decision in
-Stage 1 covers this too.
+DEC special graphics (line drawing — not CJK) already landed with the Stage 1
+VT engine and renderer. What remains is macro reference documentation, a Lua
+plugin API, sixel and a self-updater. **No deb** — the AppImage-only decision
+in Stage 1 covers this too.
 
 **Realistic total to a credible replacement: 15–20 months solo with AI
 assistance.** Full parity is 3+ years and should be explicitly renounced in the

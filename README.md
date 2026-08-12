@@ -3,7 +3,7 @@
 A cross-platform **communications terminal** — serial, SSH, telnet and local
 shell — for Linux and Windows. Compatible with Tera Term; not Tera Term.
 
-> **Status: Stage 3 complete.** The Linux application has
+> **Status: Stage 4 underway; Stage 3 complete.** The Linux application has
 > all four transports, the oracle-diffed VT engine, six file-transfer
 > protocols, TTL and Lua scripting, the generated settings UI, a control
 > socket, an AppImage, `KEYBOARD.CNF`, and all compatible surfaces wired to
