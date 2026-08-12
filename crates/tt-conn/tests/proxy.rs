@@ -439,3 +439,40 @@ fn a_real_socks_server_agrees() {
         assert_eq!(&back, b"ping", "{kind:?}/{resolve:?}");
     }
 }
+
+/// `DebugLog` over a real socket, which the unit tests cannot check: they
+/// drive the relays from a byte buffer, so they prove the format and not that
+/// the file survives `dial` — the timeouts it sets and clears, the connect to
+/// the proxy in front of it, and a handshake ending in a live session.
+///
+/// The property is the one the trace exists for: **after the connection is
+/// made, the file holds every byte that made it**, and the session's own bytes
+/// are not in it. A trace that went on recording would put the user's typing
+/// and the host's output into a file they are about to send to somebody.
+#[test]
+fn a_debug_log_holds_the_handshake_and_stops_at_the_session() {
+    let port = serve(|sock| {
+        assert_eq!(read_exact_n(sock, 3), vec![5, 1, 0]);
+        sock.write_all(&[5, 0]).unwrap();
+        read_exact_n(sock, 4 + 4 + 2);
+        sock.write_all(&[5, 0, 0, 1, 127, 0, 0, 1, 0, 22]).unwrap();
+        sock.write_all(MARKER).unwrap();
+    });
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("proxy.log");
+    let mut p = params(ProxyKind::Socks5, port);
+    p.debug_log = Some(path.clone());
+
+    let stream = dial(Some(&p), "203.0.113.7", 22, Duration::from_secs(5)).expect("dial");
+    assert_eq!(session_first_bytes(stream), MARKER);
+
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("the trace was written"),
+        "send: [ 05 01 00 ]\r\n\
+         recv: [ 05 00 ]\r\n\
+         send: [ 05 01 00 01 cb 00 71 07 00 16 ]\r\n\
+         recv: [ 05 00 00 01 ]\r\n\
+         recv: [ 7f 00 00 01 00 16 ]\r\n"
+    );
+}
