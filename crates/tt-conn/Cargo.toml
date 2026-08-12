@@ -46,6 +46,11 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Threading",
 ] }
 
+[dev-dependencies]
+# The proxy's `DebugLog` transcript is asserted against a real file, because
+# what it is for is being read as one.
+tempfile = "3"
+
 [target.'cfg(unix)'.dev-dependencies]
 # The pty tests poll the descriptor and check the child is gone, which is the
 # frontend's own event loop in miniature.

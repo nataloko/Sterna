@@ -3397,6 +3397,22 @@ pub struct Settings {
     pub proxy_telnet_connected_message: String,
     /// `ProxyWSockHook.h:2003`. Seeing this ends the relay as a refusal.
     pub proxy_telnet_error_message: String,
+    /// `ProxyWSockHook.h:2005`, and the only diagnostic there is for a handshake
+    /// that fails: everything the relay does happens before the terminal has a
+    /// session, so a refusal reaches the user as one sentence in a box and nothing
+    /// else. Empty is no trace.
+    ///
+    /// `TTProxy/Logger.h` appends two kinds of record — `send: [ 05 01 00 ]` for the
+    /// two SOCKS relays and `send: "…"` for HTTP and the telnet proxy — and Sterna
+    /// writes the same two, so a trace taken here reads beside one taken from Tera
+    /// Term. **The credentials are in it**, Base64 being no more than a spelling.
+    ///
+    /// A relative name resolves against `ts.LogDirW` (`TTProxy.h:198`), which is the
+    /// **program's** log directory and not the terminal's; no key in this file moves
+    /// it. The one departure is when the file appears: upstream opens it as it reads
+    /// this key, so the key alone creates an empty file in a session that never
+    /// connects, and here the first handshake with something to say creates it.
+    pub proxy_debug_log: String,
     /// `ttset.c:1291`, a wide string whose empty default means no automatic macro.
     /// `CVTWindow::Startup` (`vtwin.cpp:1413`) consumes it once when the window
     /// starts; a leading `*` makes TTPMACRO put up its file picker
@@ -4115,6 +4131,7 @@ impl Default for Settings {
             proxy_telnet_password_prompt: String::from("Password:"),
             proxy_telnet_connected_message: String::from("-- Connected to "),
             proxy_telnet_error_message: String::from("!!!!!!!!"),
+            proxy_debug_log: String::from(""),
             macro_startup_file: String::from(""),
             settings_source_version: String::from("5.7.0"),
             settings_language_file: String::from("lang\\Default.lng"),
@@ -4917,6 +4934,10 @@ impl Settings {
             proxy_telnet_error_message: match ini.get("TTProxy", "TelnetErrorMessage") {
                 Some(v) => crate::esc::unescape(v),
                 None => d.proxy_telnet_error_message.clone(),
+            },
+            proxy_debug_log: match ini.get("TTProxy", "DebugLog") {
+                Some(v) => crate::esc::unescape(v),
+                None => d.proxy_debug_log.clone(),
             },
             macro_startup_file: ini
                 .get_or("Tera Term", "StartupMacro", &d.macro_startup_file)
@@ -6589,6 +6610,11 @@ impl Settings {
             &crate::esc::quote(&self.proxy_telnet_error_message),
         );
         ini.set(
+            "TTProxy",
+            "DebugLog",
+            &crate::esc::quote(&self.proxy_debug_log),
+        );
+        ini.set(
             "Tera Term",
             "StartupMacro",
             &self.macro_startup_file.clone(),
@@ -8000,6 +8026,7 @@ impl Settings {
             "proxy.telnet_password_prompt" => self.proxy_telnet_password_prompt.clone(),
             "proxy.telnet_connected_message" => self.proxy_telnet_connected_message.clone(),
             "proxy.telnet_error_message" => self.proxy_telnet_error_message.clone(),
+            "proxy.debug_log" => self.proxy_debug_log.clone(),
             "macro.startup_file" => self.macro_startup_file.clone(),
             "settings.source_version" => self.settings_source_version.clone(),
             "settings.language_file" => self.settings_language_file.clone(),
@@ -8813,6 +8840,7 @@ impl Settings {
                 self.proxy_telnet_connected_message = value.to_string()
             }
             "proxy.telnet_error_message" => self.proxy_telnet_error_message = value.to_string(),
+            "proxy.debug_log" => self.proxy_debug_log = value.to_string(),
             "macro.startup_file" => self.macro_startup_file = value.to_string(),
             "settings.source_version" => self.settings_source_version = value.to_string(),
             "settings.language_file" => self.settings_language_file = value.to_string(),
@@ -10924,6 +10952,16 @@ pub const FIELDS: &[Field] = &[
         default: "!!!!!!!!",
         label: None,
         doc: "`ProxyWSockHook.h:2003`. Seeing this ends the relay as a refusal.",
+    },
+    Field {
+        name: "proxy.debug_log",
+        page: "proxy",
+        section: "TTProxy",
+        key: "DebugLog",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "`ProxyWSockHook.h:2005`, and the only diagnostic there is for a handshake that fails: everything the relay does happens before the terminal has a session, so a refusal reaches the user as one sentence in a box and nothing else. Empty is no trace.  `TTProxy/Logger.h` appends two kinds of record — `send: [ 05 01 00 ]` for the two SOCKS relays and `send: \"…\"` for HTTP and the telnet proxy — and Sterna writes the same two, so a trace taken here reads beside one taken from Tera Term. **The credentials are in it**, Base64 being no more than a spelling.  A relative name resolves against `ts.LogDirW` (`TTProxy.h:198`), which is the **program's** log directory and not the terminal's; no key in this file moves it. The one departure is when the file appears: upstream opens it as it reads this key, so the key alone creates an empty file in a session that never connects, and here the first handshake with something to say creates it.",
     },
     Field {
         name: "macro.startup_file",

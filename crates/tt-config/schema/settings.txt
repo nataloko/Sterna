@@ -1257,6 +1257,23 @@ proxy.telnet_connected_message | string_esc | TTProxy | TelnetConnectedMessage |
 # `ProxyWSockHook.h:2003`. Seeing this ends the relay as a refusal.
 proxy.telnet_error_message | string_esc | TTProxy | TelnetErrorMessage | !!!!!!!! | -
 
+# `ProxyWSockHook.h:2005`, and the only diagnostic there is for a handshake
+# that fails: everything the relay does happens before the terminal has a
+# session, so a refusal reaches the user as one sentence in a box and nothing
+# else. Empty is no trace.
+#
+# `TTProxy/Logger.h` appends two kinds of record — `send: [ 05 01 00 ]` for the
+# two SOCKS relays and `send: "…"` for HTTP and the telnet proxy — and Sterna
+# writes the same two, so a trace taken here reads beside one taken from Tera
+# Term. **The credentials are in it**, Base64 being no more than a spelling.
+#
+# A relative name resolves against `ts.LogDirW` (`TTProxy.h:198`), which is the
+# **program's** log directory and not the terminal's; no key in this file moves
+# it. The one departure is when the file appears: upstream opens it as it reads
+# this key, so the key alone creates an empty file in a session that never
+# connects, and here the first handshake with something to say creates it.
+proxy.debug_log | string_esc | TTProxy | DebugLog | | -
+
 # --- macro ------------------------------------------------------------------
 
 # `ttset.c:1291`, a wide string whose empty default means no automatic macro.

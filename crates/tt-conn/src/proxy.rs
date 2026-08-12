@@ -20,7 +20,16 @@
 //! `[TTProxy]` in the same INI file, because the plugin hooks `ReadIniFile`
 //! rather than adding keys to `[Tera Term]` (`TTProxy.h:63`). `ProxyType`,
 //! `ProxyHost`, `ProxyPort`, `ProxyUser`, `ProxyPass`, `ConnectionTimeout`,
-//! `SocksResolve` and the five `Telnet*` prompt strings.
+//! `SocksResolve`, the five `Telnet*` prompt strings and `DebugLog`.
+//!
+//! # There is no other way to see a handshake fail
+//!
+//! Everything above happens before the terminal has a session, so a refusal
+//! reaches the user as one sentence in a message box and nothing else — no
+//! screen, no session log, and a transport that never opened. `DebugLog` is
+//! upstream's answer to that and [`Trace`] is this one: every byte of the
+//! handshake, in the same format, so a trace taken here can be read beside one
+//! taken from Tera Term against the same proxy.
 //!
 //! # What is deliberately not reproduced
 //!
@@ -48,7 +57,7 @@
 //!   for, and every SOCKS caller checks only for the error. A SOCKS4 reply
 //!   split across two segments therefore has its result byte read out of
 //!   uninitialised stack, which can read as 90 — granted — on a connection
-//!   the proxy refused. [`read_exactly`] reads all of it.
+//!   the proxy refused. `Wire::recv_exact` reads all of it.
 //! - **`ProxyType=http+ssl` and its four siblings parse and then do
 //!   nothing.** They are in the type table (`:139`) and the relay `switch`
 //!   has no arm for them, so they fall to `default: result = 0` (`:1822`) —
@@ -64,8 +73,11 @@
 //! the one place in this file where the rule has a cost worth naming, which
 //! is why `none` exists as a spelling that says so on purpose.
 
+use std::cell::RefCell;
+use std::fs::{File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use data_encoding::BASE64;
@@ -182,6 +194,14 @@ pub struct ProxyParams {
     /// blocking.
     pub timeout: Duration,
     pub prompts: TelnetPrompts,
+    /// `DebugLog` — where to append a transcript of the handshake, or `None`
+    /// for no transcript. See [`Trace`], which is what this opens.
+    ///
+    /// It must already be absolute: upstream resolves a relative name against
+    /// the *program's* log directory (`TTProxy.h:198` hands the `Logger`
+    /// `ts.LogDirW`), and that directory is a settings question rather than a
+    /// transport one — `tt_session::logname::program_log_dir` answers it.
+    pub debug_log: Option<PathBuf>,
 }
 
 impl ProxyParams {
@@ -200,6 +220,216 @@ impl ProxyParams {
     /// (`ProxyWSockHook.h:1977`) rather than trying to dial an empty name.
     pub fn is_active(&self) -> bool {
         self.kind != ProxyKind::None && !self.host.is_empty()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The handshake transcript
+// ---------------------------------------------------------------------------
+
+/// `DebugLog` — every byte of the handshake, in upstream's `Logger` format.
+///
+/// `TTProxy/Logger.h` writes two kinds of record and nothing else, each one a
+/// line ending in CRLF:
+///
+/// ```text
+/// send: [ 05 01 00 ]
+/// recv: "HTTP/1.1 200 Connection established\r\n"
+/// ```
+///
+/// Binary for the two SOCKS relays, quoted text for HTTP and the telnet proxy,
+/// which is the division upstream draws by calling `sendToSocket` in one and
+/// `sendToSocketFormat` in the other. The text form escapes `\n`, `\r`, `\t`,
+/// `\` and `"` and passes every other byte through, so an escape sequence in a
+/// terminal server's banner reaches the file raw — as it does upstream.
+///
+/// Three things about the file, all upstream's:
+///
+/// - **It is appended to, never truncated**, so a trace holds every attempt
+///   since it was last deleted. There is no record between one handshake and
+///   the next, which is a real cost when reading one and is what the file
+///   looks like in Tera Term; a delimiter here would be a line no Tera Term
+///   writes, in a file whose whole purpose is to be compared against one.
+/// - **The credentials are in it.** A `Proxy-Authorization` header is Base64,
+///   which is not encryption, and SOCKS5's are in the clear. Upstream's are
+///   too — the trace is a thing you turn on to send somebody, so it is worth
+///   knowing what is in it before you do.
+/// - **It cannot fail.** A path that will not open leaves the handshake
+///   untraced and connecting normally, which is `Logger::open` keeping its
+///   `INVALID_HANDLE_VALUE` and every write testing for it.
+///
+/// The one departure is *when* the file appears: upstream opens it while
+/// reading the INI file, so the key alone creates an empty file in a session
+/// that never connects. Here it is opened by the first handshake that has
+/// something to write into it.
+pub struct Trace {
+    file: RefCell<File>,
+}
+
+impl Trace {
+    /// Open `path` for appending, or answer `None` and say nothing.
+    ///
+    /// `None` is also what an empty path gives, which is the `DebugLog=` a
+    /// dialog leaves behind when the box is cleared.
+    pub fn open(path: &Path) -> Option<Trace> {
+        if path.as_os_str().is_empty() {
+            return None;
+        }
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .ok()
+            .map(|file| Trace {
+                file: RefCell::new(file),
+            })
+    }
+
+    /// `Logger::debuglog_binary` — `label: [ xx xx ]`.
+    fn bytes(&self, label: &str, data: &[u8]) {
+        let mut line = format!("{label}: [");
+        for b in data {
+            line.push_str(&format!(" {b:02x}"));
+        }
+        line.push_str(" ]\r\n");
+        self.put(line.as_bytes());
+    }
+
+    /// `Logger::debuglog_string` — `label: "…"`, with five escapes.
+    ///
+    /// Upstream is handed a C string, so it is bytes rather than characters
+    /// and anything not one of the five goes through as it stands. A UTF-8
+    /// banner therefore reaches the file as its own bytes, which is what makes
+    /// the two programs' traces comparable.
+    fn text(&self, label: &str, data: &[u8]) {
+        let mut line = format!("{label}: \"").into_bytes();
+        for &b in data {
+            match b {
+                b'\n' => line.extend_from_slice(b"\\n"),
+                b'\r' => line.extend_from_slice(b"\\r"),
+                b'\t' => line.extend_from_slice(b"\\t"),
+                b'\\' => line.extend_from_slice(b"\\\\"),
+                b'"' => line.extend_from_slice(b"\\\""),
+                other => line.push(other),
+            }
+        }
+        line.extend_from_slice(b"\"\r\n");
+        self.put(&line);
+    }
+
+    /// A failed write is dropped rather than reported: a trace that breaks a
+    /// connection is worse than no trace.
+    fn put(&self, bytes: &[u8]) {
+        let mut file = self.file.borrow_mut();
+        let _ = file.write_all(bytes);
+        let _ = file.flush();
+    }
+}
+
+/// The socket plus the transcript, so that no relay can write a byte it did
+/// not record or record one it did not write.
+///
+/// The alternative — a `trace` argument on each of the four I/O helpers — was
+/// the same code with two ways to get it wrong. Each relay speaks in one of
+/// the two record forms throughout, which is why the form is chosen by the
+/// method rather than carried in the struct.
+struct Wire<'a, S> {
+    stream: &'a mut S,
+    trace: Option<&'a Trace>,
+}
+
+impl<S: Read + Write> Wire<'_, S> {
+    /// `sendToSocket` — one binary record, written before the send, so a send
+    /// that then fails still leaves what it was trying to say.
+    fn send_bytes(&mut self, bytes: &[u8]) -> Result<()> {
+        if let Some(t) = self.trace {
+            t.bytes("send", bytes);
+        }
+        self.write_all(bytes)
+    }
+
+    /// `sendToSocketFormat` — one text record **per line**.
+    ///
+    /// Upstream calls it once per line and this builds the whole request
+    /// before writing, so splitting here is what keeps the two files
+    /// record-for-record identical: an HTTP `CONNECT` is four records in both,
+    /// and a telnet proxy's answer is one.
+    fn send_text(&mut self, text: &str) -> Result<()> {
+        if let Some(t) = self.trace {
+            for line in text.split_inclusive('\n') {
+                t.text("send", line.as_bytes());
+            }
+        }
+        self.write_all(text.as_bytes())
+    }
+
+    fn write_all(&mut self, bytes: &[u8]) -> Result<()> {
+        self.stream.write_all(bytes).map_err(proxy_io)?;
+        self.stream.flush().map_err(proxy_io)
+    }
+
+    /// Fill `buf` completely, or fail.
+    ///
+    /// The difference from upstream's `recieveFromSocket`, which is one `recv`
+    /// and may return fewer bytes than asked for while every caller behaves as
+    /// if it did not. See the module documentation — and the trace shows it,
+    /// because a record is written per underlying read exactly as upstream's
+    /// is, so a reply that arrived in two segments is two records here and two
+    /// records and a wrong answer there.
+    fn recv_exact(&mut self, buf: &mut [u8]) -> Result<()> {
+        let mut done = 0;
+        while done < buf.len() {
+            match self.stream.read(&mut buf[done..]) {
+                Ok(0) => {
+                    return Err(Error::Proxy(
+                        "the proxy hung up in the middle of its reply".into(),
+                    ))
+                }
+                Ok(n) => {
+                    if let Some(t) = self.trace {
+                        t.bytes("recv", &buf[done..done + n]);
+                    }
+                    done += n;
+                }
+                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) => return Err(proxy_io(e)),
+            }
+        }
+        Ok(())
+    }
+
+    /// Upstream's `line_input` (`ProxyWSockHook.h:1201`): one byte at a time to
+    /// the newline, which is the only way to read a line without consuming what
+    /// comes after it.
+    ///
+    /// Its 1024-byte buffer is kept, and so is what it does when a line is
+    /// longer: nothing. The line comes back truncated and the rest is read as
+    /// the next one, which for a header the caller only compares against
+    /// `"\r\n"` is the same answer.
+    fn recv_line(&mut self) -> Result<String> {
+        let mut out = Vec::with_capacity(64);
+        let mut byte = [0u8; 1];
+        while out.len() < 1023 {
+            match self.stream.read(&mut byte) {
+                Ok(0) => break,
+                Ok(_) => {
+                    out.push(byte[0]);
+                    if byte[0] == b'\n' {
+                        break;
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) => return Err(proxy_io(e)),
+            }
+        }
+        // Upstream logs the assembled line rather than each byte, and only
+        // once it has one: a read that ends the stream logs nothing.
+        if let Some(t) = self.trace {
+            if !out.is_empty() {
+                t.text("recv", &out);
+            }
+        }
+        Ok(String::from_utf8_lossy(&out).into_owned())
     }
 }
 
@@ -280,18 +510,26 @@ fn tcp_connect(host: &str, port: u16, timeout: Duration) -> Result<TcpStream> {
 /// Split out from [`dial`] so the relays can be driven from a byte buffer as
 /// well as from a socket, which is how the wire format is asserted without a
 /// server. `host`/`port` are the *real* destination.
+///
+/// [`ProxyParams::debug_log`] is opened here rather than in [`dial`], so a
+/// caller driving a relay over anything else gets the transcript too.
 pub fn handshake<S: Read + Write>(
     stream: &mut S,
     params: &ProxyParams,
     host: &str,
     port: u16,
 ) -> Result<()> {
+    let trace = params.debug_log.as_deref().and_then(Trace::open);
+    let wire = &mut Wire {
+        stream,
+        trace: trace.as_ref(),
+    };
     match params.kind {
         ProxyKind::None => Ok(()),
-        ProxyKind::Http => relay_http(stream, params, host, port),
-        ProxyKind::Socks5 => relay_socks5(stream, params, host, port),
-        ProxyKind::Socks4 => relay_socks4(stream, params, host, port),
-        ProxyKind::Telnet => relay_telnet(stream, params, host, port),
+        ProxyKind::Http => relay_http(wire, params, host, port),
+        ProxyKind::Socks5 => relay_socks5(wire, params, host, port),
+        ProxyKind::Socks4 => relay_socks4(wire, params, host, port),
+        ProxyKind::Telnet => relay_telnet(wire, params, host, port),
     }
 }
 
@@ -323,7 +561,7 @@ fn authority(host: &str, port: u16) -> String {
 // ---------------------------------------------------------------------------
 
 fn relay_http<S: Read + Write>(
-    stream: &mut S,
+    wire: &mut Wire<'_, S>,
     params: &ProxyParams,
     host: &str,
     port: u16,
@@ -340,9 +578,9 @@ fn relay_http<S: Read + Write>(
         req.push_str(&format!("Proxy-Authorization: Basic {encoded}\r\n"));
     }
     req.push_str("\r\n");
-    write_all(stream, req.as_bytes())?;
+    wire.send_text(&req)?;
 
-    let status = read_line(stream)?;
+    let status = wire.recv_line()?;
     // `atoi(strchr(buf, ' '))` (`:1314`), which dereferences NULL when the
     // line has no space in it. The number is whatever follows the first one.
     let code = status
@@ -363,7 +601,7 @@ fn relay_http<S: Read + Write>(
     // a bare LF is accepted here too, which costs nothing and is the
     // difference between working and timing out against a sloppy proxy.
     loop {
-        let line = read_line(stream)?;
+        let line = wire.recv_line()?;
         if line == "\r\n" || line == "\n" {
             break;
         }
@@ -402,7 +640,7 @@ const SOCKS5_AUTH_USERPASS: u8 = 2;
 const SOCKS5_AUTH_SUBNEGOVER: u8 = 1;
 
 fn relay_socks5<S: Read + Write>(
-    stream: &mut S,
+    wire: &mut Wire<'_, S>,
     params: &ProxyParams,
     host: &str,
     port: u16,
@@ -417,10 +655,10 @@ fn relay_socks5<S: Read + Write>(
         }
         _ => hello.extend_from_slice(&[1, SOCKS5_AUTH_NOAUTH]),
     }
-    write_all(stream, &hello)?;
+    wire.send_bytes(&hello)?;
 
     let mut reply = [0u8; 2];
-    read_exactly(stream, &mut reply)?;
+    wire.recv_exact(&mut reply)?;
     if reply[0] != SOCKS5_VERSION || reply[1] == SOCKS5_REJECT {
         return Err(Error::Proxy(format!(
             "the SOCKS5 proxy accepted none of the offered authentication methods \
@@ -447,10 +685,10 @@ fn relay_socks5<S: Read + Write>(
             auth.extend_from_slice(user.as_bytes());
             auth.push(plen as u8);
             auth.extend_from_slice(pass.as_bytes());
-            write_all(stream, &auth)?;
+            wire.send_bytes(&auth)?;
 
             let mut ok = [0u8; 2];
-            read_exactly(stream, &mut ok)?;
+            wire.recv_exact(&mut ok)?;
             if ok[1] != 0 {
                 return Err(Error::Proxy(
                     "the SOCKS5 proxy rejected the credentials".into(),
@@ -488,10 +726,10 @@ fn relay_socks5<S: Read + Write>(
     }
     req.push((port >> 8) as u8);
     req.push((port & 0xFF) as u8);
-    write_all(stream, &req)?;
+    wire.send_bytes(&req)?;
 
     let mut head = [0u8; 4];
-    read_exactly(stream, &mut head)?;
+    wire.recv_exact(&mut head)?;
     if head[0] != SOCKS5_VERSION || head[1] != 0 {
         return Err(Error::Proxy(format!(
             "{} (SOCKS5: VER {} REP {} ATYP {})",
@@ -504,13 +742,13 @@ fn relay_socks5<S: Read + Write>(
     // The bound address, which nothing here wants but which has to come off
     // the socket before the session's own bytes start.
     match head[3] {
-        SOCKS5_ATYP_IPV4 => read_exactly(stream, &mut [0u8; 4 + 2])?,
-        SOCKS5_ATYP_IPV6 => read_exactly(stream, &mut [0u8; 16 + 2])?,
+        SOCKS5_ATYP_IPV4 => wire.recv_exact(&mut [0u8; 4 + 2])?,
+        SOCKS5_ATYP_IPV6 => wire.recv_exact(&mut [0u8; 16 + 2])?,
         SOCKS5_ATYP_DOMAIN => {
             let mut len = [0u8; 1];
-            read_exactly(stream, &mut len)?;
+            wire.recv_exact(&mut len)?;
             let mut rest = vec![0u8; len[0] as usize + 2];
-            read_exactly(stream, &mut rest)?;
+            wire.recv_exact(&mut rest)?;
         }
         other => {
             return Err(Error::Proxy(format!(
@@ -550,7 +788,7 @@ const SOCKS4_REP_IDENT_FAIL: u8 = 92;
 const SOCKS4_REP_USERID: u8 = 93;
 
 fn relay_socks4<S: Read + Write>(
-    stream: &mut S,
+    wire: &mut Wire<'_, S>,
     params: &ProxyParams,
     host: &str,
     port: u16,
@@ -592,10 +830,10 @@ fn relay_socks4<S: Read + Write>(
         req.extend_from_slice(name.as_bytes());
         req.push(0);
     }
-    write_all(stream, &req)?;
+    wire.send_bytes(&req)?;
 
     let mut reply = [0u8; 8];
-    read_exactly(stream, &mut reply)?;
+    wire.recv_exact(&mut reply)?;
     // `VN` is 0 in a reply, not 4 — the protocol's own asymmetry, and
     // upstream checks it.
     let complaint = if reply[0] != 0 {
@@ -621,7 +859,7 @@ fn relay_socks4<S: Read + Write>(
 // ---------------------------------------------------------------------------
 
 fn relay_telnet<S: Read + Write>(
-    stream: &mut S,
+    wire: &mut Wire<'_, S>,
     params: &ProxyParams,
     host: &str,
     port: u16,
@@ -635,19 +873,10 @@ fn relay_telnet<S: Read + Write>(
         p.error.as_str(),
     ];
     loop {
-        match wait_for_prompt(stream, &table)? {
-            0 => {
-                let line = format!("{}\n", authority(host, port));
-                write_all(stream, line.as_bytes())?;
-            }
-            1 => {
-                let line = format!("{}\n", params.user.as_deref().unwrap_or(""));
-                write_all(stream, line.as_bytes())?;
-            }
-            2 => {
-                let line = format!("{}\n", params.pass.as_deref().unwrap_or(""));
-                write_all(stream, line.as_bytes())?;
-            }
+        match wait_for_prompt(wire, &table)? {
+            0 => wire.send_text(&format!("{}\n", authority(host, port)))?,
+            1 => wire.send_text(&format!("{}\n", params.user.as_deref().unwrap_or("")))?,
+            2 => wire.send_text(&format!("{}\n", params.pass.as_deref().unwrap_or("")))?,
             3 => return Ok(()),
             _ => {
                 return Err(Error::Proxy(
@@ -709,60 +938,6 @@ fn destination(resolve: Resolve, host: &str) -> Result<Destination> {
 // Reading and writing
 // ---------------------------------------------------------------------------
 
-fn write_all<S: Write>(stream: &mut S, bytes: &[u8]) -> Result<()> {
-    stream.write_all(bytes).map_err(proxy_io)?;
-    stream.flush().map_err(proxy_io)
-}
-
-/// Fill `buf` completely, or fail.
-///
-/// The difference from upstream's `recieveFromSocket`, which is one `recv`
-/// and may return fewer bytes than asked for while every caller behaves as if
-/// it did not. See the module documentation.
-fn read_exactly<S: Read>(stream: &mut S, buf: &mut [u8]) -> Result<()> {
-    let mut done = 0;
-    while done < buf.len() {
-        match stream.read(&mut buf[done..]) {
-            Ok(0) => {
-                return Err(Error::Proxy(
-                    "the proxy hung up in the middle of its reply".into(),
-                ))
-            }
-            Ok(n) => done += n,
-            Err(e) if e.kind() == ErrorKind::Interrupted => {}
-            Err(e) => return Err(proxy_io(e)),
-        }
-    }
-    Ok(())
-}
-
-/// Upstream's `line_input` (`ProxyWSockHook.h:1201`): one byte at a time to
-/// the newline, which is the only way to read a line without consuming what
-/// comes after it.
-///
-/// Its 1024-byte buffer is kept, and so is what it does when a line is longer:
-/// nothing. The line comes back truncated and the rest is read as the next
-/// one, which for a header the caller only compares against `"\r\n"` is the
-/// same answer.
-fn read_line<S: Read>(stream: &mut S) -> Result<String> {
-    let mut out = Vec::with_capacity(64);
-    let mut byte = [0u8; 1];
-    while out.len() < 1023 {
-        match stream.read(&mut byte) {
-            Ok(0) => break,
-            Ok(_) => {
-                out.push(byte[0]);
-                if byte[0] == b'\n' {
-                    break;
-                }
-            }
-            Err(e) if e.kind() == ErrorKind::Interrupted => {}
-            Err(e) => return Err(proxy_io(e)),
-        }
-    }
-    Ok(String::from_utf8_lossy(&out).into_owned())
-}
-
 /// Read lines until one contains one of `prompts`, and answer with its index.
 ///
 /// Upstream discards a line that matches nothing (`:1228`), so the search is
@@ -770,9 +945,9 @@ fn read_line<S: Read>(stream: &mut S) -> Result<String> {
 /// banner wraps the prompt onto its own line still works, and one that splits
 /// a prompt across two lines does not — which is upstream's behaviour and the
 /// reason the five strings are configurable in the first place.
-fn wait_for_prompt<S: Read>(stream: &mut S, prompts: &[&str]) -> Result<usize> {
+fn wait_for_prompt<S: Read + Write>(wire: &mut Wire<'_, S>, prompts: &[&str]) -> Result<usize> {
     loop {
-        let line = read_line(stream)?;
+        let line = wire.recv_line()?;
         if line.is_empty() {
             return Err(Error::Proxy(
                 "the telnet proxy hung up before it said anything recognisable".into(),
@@ -1208,5 +1383,126 @@ mod tests {
             Destination::Name(n) => assert_eq!(n, name),
             _ => panic!("remote must never resolve"),
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // DebugLog
+    // -----------------------------------------------------------------------
+
+    /// Run a handshake with a trace switched on and hand back the file.
+    fn traced(kind: ProxyKind, server_says: &[u8], edit: fn(&mut ProxyParams)) -> String {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("proxy.log");
+        let mut p = params(kind);
+        p.debug_log = Some(path.clone());
+        edit(&mut p);
+        let mut s = Mock::new(server_says);
+        let _ = handshake(&mut s, &p, "203.0.113.7", 22);
+        std::fs::read_to_string(&path).expect("the trace was written")
+    }
+
+    /// The two SOCKS relays are `sendToSocket`/`recieveFromSocket` throughout,
+    /// which is `Logger`'s binary record: `label: [ xx xx ]`, CRLF.
+    #[test]
+    fn a_socks5_trace_is_upstreams_binary_record() {
+        let log = traced(
+            ProxyKind::Socks5,
+            &[5, 0, 5, 0, 0, 1, 127, 0, 0, 1, 0, 80],
+            |_| {},
+        );
+        assert_eq!(
+            log,
+            "send: [ 05 01 00 ]\r\n\
+             recv: [ 05 00 ]\r\n\
+             send: [ 05 01 00 01 cb 00 71 07 00 16 ]\r\n\
+             recv: [ 05 00 00 01 ]\r\n\
+             recv: [ 7f 00 00 01 00 50 ]\r\n"
+        );
+    }
+
+    /// HTTP is `sendToSocketFormat`/`line_input` throughout, which is the
+    /// quoted-text record — and upstream sends the request a line at a time,
+    /// so four records come out of what is one write here.
+    #[test]
+    fn an_http_trace_is_upstreams_text_record_one_line_at_a_time() {
+        let log = traced(
+            ProxyKind::Http,
+            b"HTTP/1.1 200 Connection established\r\n\r\n",
+            |p| p.user = Some("bob".into()),
+        );
+        assert_eq!(
+            log,
+            "send: \"CONNECT 203.0.113.7:22 HTTP/1.1\\r\\n\"\r\n\
+             send: \"Host: 203.0.113.7:22\\r\\n\"\r\n\
+             send: \"Proxy-Authorization: Basic Ym9iOg==\\r\\n\"\r\n\
+             send: \"\\r\\n\"\r\n\
+             recv: \"HTTP/1.1 200 Connection established\\r\\n\"\r\n\
+             recv: \"\\r\\n\"\r\n"
+        );
+    }
+
+    /// `Logger::debuglog_string`'s five escapes and nothing else: a byte that
+    /// is not one of them goes through as it stands, including UTF-8 and
+    /// including a control character a terminal server put in its banner.
+    #[test]
+    fn the_text_record_escapes_five_characters_and_passes_the_rest() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("escapes.log");
+        let trace = Trace::open(&path).expect("open");
+        trace.text("recv", b"a\tb\\c\"d\x1b[0m\xc3\xa9\r\n");
+        drop(trace);
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"recv: \"a\\tb\\\\c\\\"d\x1b[0m\xc3\xa9\\r\\n\"\r\n"
+        );
+    }
+
+    /// Upstream appends (`OPEN_ALWAYS` and a seek to the end), so a trace
+    /// holds every attempt since it was last deleted rather than only the
+    /// last one — which is the whole of what makes it useful for a proxy that
+    /// fails intermittently.
+    #[test]
+    fn a_second_handshake_is_appended_rather_than_replacing_the_first() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("append.log");
+        let mut p = params(ProxyKind::Socks5);
+        p.debug_log = Some(path.clone());
+        for _ in 0..2 {
+            let mut s = Mock::new(&[5, 0, 5, 0, 0, 1, 127, 0, 0, 1, 0, 80]);
+            handshake(&mut s, &p, "203.0.113.7", 22).unwrap();
+        }
+        let log = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(log.matches("send: [ 05 01 00 ]").count(), 2);
+    }
+
+    /// A trace that cannot be opened is `Logger::open` keeping its
+    /// `INVALID_HANDLE_VALUE`: nothing is written and the connection is made
+    /// anyway. A diagnostic that can break a session is not one.
+    #[test]
+    fn a_trace_that_cannot_be_opened_does_not_stop_the_handshake() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut p = params(ProxyKind::Socks5);
+        // A directory that is not there, so the file cannot be created.
+        p.debug_log = Some(dir.path().join("no/such/dir/proxy.log"));
+        let mut s = Mock::new(&[5, 0, 5, 0, 0, 1, 127, 0, 0, 1, 0, 80]);
+        handshake(&mut s, &p, "203.0.113.7", 22).expect("the handshake still runs");
+
+        // And an empty path is the cleared dialog box, which is no trace
+        // rather than a file called nothing.
+        assert!(Trace::open(Path::new("")).is_none());
+    }
+
+    /// The record is written before the send, so the last thing a broken
+    /// handshake tried to say is in the file — which is the case the trace
+    /// exists for.
+    #[test]
+    fn a_refused_handshake_still_records_what_it_sent() {
+        // CD 91: request rejected.
+        let log = traced(ProxyKind::Socks4, &[0, 91, 0, 0, 0, 0, 0, 0], |_| {});
+        assert!(
+            log.starts_with("send: [ 04 01 00 16 cb 00 71 07 00 ]\r\n"),
+            "{log}"
+        );
+        assert!(log.contains("recv: [ 00 5b 00 00 00 00 00 00 ]"), "{log}");
     }
 }

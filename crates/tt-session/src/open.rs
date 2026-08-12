@@ -535,6 +535,23 @@ pub fn proxy_params(s: &Settings) -> Option<ProxyParams> {
             connected: s.proxy_telnet_connected_message.clone(),
             error: s.proxy_telnet_error_message.clone(),
         },
+        // `Logger::open` (`TTProxy/Logger.h:82`) resolves a relative name
+        // against the folder `TTProxy.h:198` handed it, which is `ts.LogDirW`
+        // — the *program's* log directory, not the terminal's. See
+        // [`crate::logname::program_log_dir`].
+        //
+        // `has_root` rather than `is_absolute` because upstream's own test
+        // (`IsRelativePathW`, `ttlib_static_cpp.cpp:1313`) is "does it start
+        // with a separator, or is the second character a colon" — so a
+        // Windows `\logs\proxy.log` is already absolute to it, and Rust
+        // reserves `is_absolute` for one that also names a drive.
+        debug_log: (!s.proxy_debug_log.is_empty()).then(|| {
+            let named = PathBuf::from(&s.proxy_debug_log);
+            match named.has_root() {
+                true => named,
+                false => crate::logname::program_log_dir().join(named),
+            }
+        }),
     };
     params.is_active().then_some(params)
 }
@@ -981,6 +998,44 @@ mod tests {
         assert_eq!(p.prompts.hostname, "Host? ");
         assert_eq!(p.prompts.connected, "-- Connected to ");
         assert_eq!(p.port(), 23);
+    }
+
+    /// `DebugLog` is the handshake's only diagnostic, and a relative name for
+    /// it lands in the **program's** log directory — the one `LogDefaultPath`
+    /// and `FileDir` cannot move.
+    #[test]
+    fn a_relative_debug_log_goes_to_the_programs_own_log_directory() {
+        let of = |bytes: &[u8]| Settings::load(&tt_config::Ini::parse(bytes));
+        let head = "[TTProxy]\r\nProxyType=socks5\r\nProxyHost=\"p\"\r\n";
+
+        assert_eq!(
+            proxy_params(&of(head.as_bytes())).unwrap().debug_log,
+            None,
+            "no key is no trace"
+        );
+        assert_eq!(
+            proxy_params(&of(format!("{head}DebugLog=\"\"\r\n").as_bytes()))
+                .unwrap()
+                .debug_log,
+            None,
+            "and neither is a cleared box"
+        );
+        assert_eq!(
+            proxy_params(&of(format!("{head}DebugLog=\"proxy.log\"\r\n").as_bytes()))
+                .unwrap()
+                .debug_log,
+            Some(crate::logname::program_log_dir().join("proxy.log")),
+        );
+        // An absolute one is taken as written, wherever `LogDefaultPath`
+        // points — the two directories are unrelated.
+        let s = of(format!(
+            "{head}DebugLog=\"/tmp/p.log\"\r\n[Tera Term]\r\nLogDefaultPath=/var/log\r\n"
+        )
+        .as_bytes());
+        assert_eq!(
+            proxy_params(&s).unwrap().debug_log,
+            Some(PathBuf::from("/tmp/p.log"))
+        );
     }
 
     /// ...and the command line reaches the same place, which is three parsers
