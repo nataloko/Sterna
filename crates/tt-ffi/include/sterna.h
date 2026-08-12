@@ -2669,6 +2669,20 @@ const char *tt_last_error(void);
 const char *tt_version(void);
 
 /**
+ * Verify bytes against Sterna's release-signing key.
+ *
+ * The updater calls this twice: first for the manifest, before trusting its
+ * version, sizes or URLs, and then for the downloaded AppImage or NSIS
+ * installer. The signature is raw 64-byte Ed25519, normally decoded from the
+ * manifest's base64 by the frontend. False covers null pointers, a signature
+ * of any other length and ordinary verification failure.
+ */
+bool tt_update_verify(const uint8_t *data,
+                      size_t len,
+                      const uint8_t *signature,
+                      size_t signature_len);
+
+/**
  * Load a Tera Term `.lng` catalog. Null on an unreadable path, with the
  * reason in [`tt_last_error`].
  */

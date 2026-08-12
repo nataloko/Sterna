@@ -2318,6 +2318,7 @@ name = "tt-ffi"
 version = "0.1.0"
 dependencies = [
  "cbindgen",
+ "ed25519-dalek",
  "tt-config",
  "tt-conn",
  "tt-ctl",

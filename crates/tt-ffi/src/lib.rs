@@ -64,6 +64,8 @@
 
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
+mod update;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{c_char, c_int, CStr, CString};
@@ -200,6 +202,32 @@ pub extern "C" fn tt_last_error() -> *const c_char {
 #[no_mangle]
 pub extern "C" fn tt_version() -> *const c_char {
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast()
+}
+
+/// Verify bytes against Sterna's release-signing key.
+///
+/// The updater calls this twice: first for the manifest, before trusting its
+/// version, sizes or URLs, and then for the downloaded AppImage or NSIS
+/// installer. The signature is raw 64-byte Ed25519, normally decoded from the
+/// manifest's base64 by the frontend. False covers null pointers, a signature
+/// of any other length and ordinary verification failure.
+#[no_mangle]
+pub extern "C" fn tt_update_verify(
+    data: *const u8,
+    len: usize,
+    signature: *const u8,
+    signature_len: usize,
+) -> bool {
+    if (data.is_null() && len != 0) || signature.is_null() || signature_len != 64 {
+        return false;
+    }
+    let bytes = if len == 0 {
+        &[]
+    } else {
+        unsafe { slice::from_raw_parts(data, len) }
+    };
+    let signature = unsafe { slice::from_raw_parts(signature, signature_len) };
+    update::verify(bytes, signature)
 }
 
 // --- helpers --------------------------------------------------------------

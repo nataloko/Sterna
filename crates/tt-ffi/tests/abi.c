@@ -1279,6 +1279,9 @@ static void test_cmdline(void)
 
 static void test_null_safety(void)
 {
+    uint8_t signature[64] = {0};
+    CHECK(!tt_update_verify(NULL, 1, signature, sizeof signature));
+    CHECK(!tt_update_verify(NULL, 0, NULL, 0));
     CHECK(tt_i18n_load(NULL) == NULL);
     CHECK(tt_i18n_text(NULL, "Tera Term", "MENU_FILE", "File", NULL) == NULL);
     tt_i18n_free(NULL);

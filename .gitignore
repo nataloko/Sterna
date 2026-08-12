@@ -1,6 +1,7 @@
 # Rust
 target/
 **/*.rs.bk
+__pycache__/
 
 # CMake / Qt
 build/
@@ -36,3 +37,7 @@ compile_commands.json
 # Deliberately not tracked: the repository is public and this is not about the
 # code. `AGENTS.md` tells an agent to read it if it is there.
 /AGENTS.local.md
+
+# The self-updater's release signing key and password. The public key is
+# committed under packaging/update; these two files must never be.
+/.private/
