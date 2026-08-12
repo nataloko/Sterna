@@ -13,17 +13,15 @@ class Control;
 class I18n;
 class Macro;
 class QLabel;
-class QScrollBar;
+class TerminalPage;
 class TerminalView;
 class XferProgressDialog;
 
-/// One window, one session.
+/// One window, one active terminal page.
 ///
-/// Tabs and multiple sessions are Stage 3. Keeping it one-to-one now means the
-/// menu actions talk to a member rather than to a notion of a "current"
-/// session, which is the thing that has to be threaded through everything
-/// later — and threading it through six actions then is cheaper than carrying
-/// the indirection through the whole of Stage 1.
+/// The page owns everything whose lifetime is tied to a session. The window's
+/// actions still talk to aliases for the active page; tab switching changes
+/// those aliases rather than teaching every dialog about a container.
 class Printer;
 
 class MainWindow : public QMainWindow {
@@ -37,17 +35,10 @@ public:
     /// before the window is shown.
     explicit MainWindow(const QString &settingsPath = QString());
 
-    /// Tear the macro down before Qt gets to the children.
+    /// Tear the control endpoint down before Qt gets to the session page.
     ///
-    /// `QObjectPrivate::deleteChildren` deletes in the order they were
-    /// created, and the session is created first — so with no destructor here
-    /// the session is freed and *then* `~Macro` calls `unlinkMacro` on it.
-    /// A use-after-free on every window that closes with a macro still
-    /// running, which is a script that outlives its window and the End button
-    /// not having been pressed. It presented as an intermittent
-    /// `malloc_consolidate(): unaligned fastbin chunk detected` in CI, in a
-    /// test that passes locally, because writing into freed memory only
-    /// corrupts the heap once something else has claimed it.
+    /// `TerminalPage` owns the macro-before-session ordering. The window still
+    /// has to unpublish its control socket before that whole page disappears.
     ~MainWindow() override;
 
     /// Do what a Tera Term command line says: apply it to the settings, shape
@@ -188,11 +179,6 @@ private slots:
     void showTitle(const QString &title);
     void onNotice(const QString &text);
     void onConnectionChanged();
-    /// Track the viewport: the core moves the offset itself to keep a
-    /// scrolled-back view on the same lines, so the scrollbar follows the
-    /// session rather than the session following the scrollbar.
-    void syncScrollBar();
-
 private:
     void buildMenus();
     void updateStatus();
@@ -251,11 +237,14 @@ private:
     QString m_keyMapPath;
     I18n *m_i18n = nullptr;
     QString m_languageSetting;
+    /// The lifetime boundary for everything that points at this session.
+    TerminalPage *m_page = nullptr;
+    /// Aliases into `m_page`, kept while the window has one active page so the
+    /// menu and dialog code stays expressed in terms of the active session.
     Session *m_session = nullptr;
     /// The other end of the media-copy sequences, and of File > Print.
     Printer *m_printer = nullptr;
     TerminalView *m_view;
-    QScrollBar *m_scroll;
     QLabel *m_status;
     QAction *m_disconnectAction = nullptr;
     QAction *m_serialConnectAction = nullptr;

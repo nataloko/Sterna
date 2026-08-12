@@ -14,13 +14,10 @@
 #include <QFontDialog>
 #include <QGuiApplication>
 #include <QLabel>
-#include <QHBoxLayout>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QScreen>
-#include <QScrollBar>
-#include <QSignalBlocker>
 #include <QPushButton>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -54,6 +51,7 @@
 #include "SshDialog.h"
 #include "SshPrompts.h"
 #include "TelnetDialog.h"
+#include "TerminalPage.h"
 #include "TerminalView.h"
 #include "WindowTitle.h"
 #include "XferDialog.h"
@@ -188,38 +186,20 @@ MainWindow::MainWindow(const QString &settingsPath)
     : m_settingsPath(settingsPath.isEmpty() ? MainWindow::settingsPath()
                                             : settingsPath)
 {
-    m_session = new Session(80, 24, this);
-    m_printer = new Printer(m_session, this);
     m_i18n = new I18n(this);
-    m_view = new TerminalView(m_session, this, m_i18n);
+    m_page = new TerminalPage(m_i18n, this, this);
+    m_session = m_page->session();
+    m_printer = m_page->printer();
+    m_view = m_page->view();
+    m_macro = m_page->macro();
+    setCentralWidget(m_page);
 
-    // A plain QWidget plus a scrollbar rather than a QAbstractScrollArea: the
-    // painter draws straight onto the widget in cell coordinates, and a scroll
-    // area would add a viewport child and a coordinate translation to hold a
-    // scrollbar we can place in a layout for nothing.
-    m_scroll = new QScrollBar(Qt::Vertical, this);
-    auto *central = new QWidget(this);
-    auto *layout = new QHBoxLayout(central);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
-    layout->addWidget(m_view, 1);
-    layout->addWidget(m_scroll);
-    setCentralWidget(central);
-
-    connect(m_view, &TerminalView::viewChanged, this, &MainWindow::syncScrollBar);
     connect(m_view, &TerminalView::popupMenuRequested, this,
             &MainWindow::showPopupMenu);
     connect(m_view, &TerminalView::keyMacroRequested, this,
             &MainWindow::startNamedMacro);
     connect(m_view, &TerminalView::keyCommandRequested, this,
             &MainWindow::invokeMenuCommand);
-    connect(m_scroll, &QScrollBar::valueChanged, this, [this](int value) {
-        // The scrollbar counts down from the top of the history; the session
-        // counts back from the live screen. One subtraction, in one place.
-        m_view->setViewOffset(m_scroll->maximum() - value);
-    });
-    syncScrollBar();
-
     tt_serial_params_default(&m_lastParams);
 
     m_logStatus = new QLabel(this);
@@ -257,7 +237,6 @@ MainWindow::MainWindow(const QString &settingsPath)
     connect(m_session, &Session::transferFinished, this,
             &MainWindow::onTransferFinished);
 
-    m_macro = new Macro(m_session, this, this, m_i18n);
     connect(m_macro, &Macro::finished, this, &MainWindow::onMacroFinished);
     connect(m_macro, &Macro::keyboardEnabled, m_view,
             &TerminalView::setKeyboardEnabled);
@@ -296,13 +275,8 @@ MainWindow::~MainWindow()
     // anything it can answer about goes away.
     delete m_control;
     m_control = nullptr;
-    // Then the macro, which is the one child that reaches back into another
-    // child while it is being destroyed — `~Macro` calls `Session::unlinkMacro`
-    // to take the terminal's tap off. Qt would delete the session first, since
-    // it deletes children in the order they were created. See the note on the
-    // declaration.
-    delete m_macro;
-    m_macro = nullptr;
+    // `TerminalPage` owns the macro/session ordering. It remains alive until
+    // the central widget is destroyed, after this control endpoint is gone.
 }
 
 void MainWindow::applySavedPosition()
@@ -1701,23 +1675,6 @@ void MainWindow::onConnectionChanged()
 {
     showTitle(m_session->title());
     updateStatus();
-}
-
-void MainWindow::syncScrollBar()
-{
-    const int history = m_session->scrollbackLen();
-    const int offset = m_session->viewOffset();
-    // Blocked because this is a *reaction* to the session moving: letting it
-    // emit would turn every pump into a write back into the session, and the
-    // rounding would fight the offset the core just chose.
-    const QSignalBlocker block(m_scroll);
-    m_scroll->setRange(0, history);
-    m_scroll->setPageStep(qMax(1, m_session->rows()));
-    m_scroll->setSingleStep(1);
-    m_scroll->setValue(history - offset);
-    // Hidden when there is nothing to scroll, so an 80x24 window is not
-    // permanently a few pixels narrower than the terminal in it.
-    m_scroll->setVisible(history > 0);
 }
 
 void MainWindow::updateLogStatus()
