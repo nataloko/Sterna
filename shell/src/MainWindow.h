@@ -180,6 +180,7 @@ private slots:
     void onConnectionChanged();
     void newTab();
     void closeCurrentTab();
+    void duplicateSession();
 private:
     /// Construct and wire one page. Loading or copying its settings is the
     /// caller's decision, because startup and a new tab have different
@@ -269,6 +270,7 @@ private:
     QAction *m_disconnectAction = nullptr;
     QAction *m_newTabAction = nullptr;
     QAction *m_closeTabAction = nullptr;
+    QAction *m_duplicateAction = nullptr;
     QAction *m_serialConnectAction = nullptr;
     QAction *m_sshConnectAction = nullptr;
     QAction *m_telnetConnectAction = nullptr;

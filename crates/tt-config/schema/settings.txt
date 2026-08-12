@@ -1958,8 +1958,7 @@ menu.disable_accelerator_send_break | bool | Tera Term | DisableAcceleratorSendB
 # it. This is independent of the accelerator switch above.
 menu.disable_send_break | bool | Tera Term | DisableMenuSendBreak | off | -
 
-# `ttset.c:1614`. Suppresses Alt+D. Duplicate session is a Stage 3 feature, so
-# the setting is carried but has no action to bind yet.
+# `ttset.c:1614`. Suppresses Alt+D while leaving File > Duplicate session.
 menu.disable_accelerator_duplicate | bool | Tera Term | DisableAcceleratorDuplicateSession | off | -
 
 # `ttset.c:1617`, default **on**. Enables Alt+N for New connection.
@@ -1969,7 +1968,7 @@ menu.accelerator_new_connection | bool | Tera Term | AcceleratorNewConnection | 
 # equivalent command is Local shell.
 menu.accelerator_local_shell | bool | Tera Term | AcceleratorCygwinConnection | on | -
 
-# `ttset.c:1624`. Greys Duplicate session. The action arrives with Stage 3.
+# `ttset.c:1624`. Greys Duplicate session.
 menu.disable_duplicate | bool | Tera Term | DisableMenuDuplicateSession | off | -
 
 # `ttset.c:1628`. While already connected, greys New connection rather than

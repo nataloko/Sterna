@@ -3931,15 +3931,14 @@ pub struct Settings {
     /// `ttset.c:1606`. Greys Control > Send break even when the transport supports
     /// it. This is independent of the accelerator switch above.
     pub menu_disable_send_break: bool,
-    /// `ttset.c:1614`. Suppresses Alt+D. Duplicate session is a Stage 3 feature, so
-    /// the setting is carried but has no action to bind yet.
+    /// `ttset.c:1614`. Suppresses Alt+D while leaving File > Duplicate session.
     pub menu_disable_accelerator_duplicate: bool,
     /// `ttset.c:1617`, default **on**. Enables Alt+N for New connection.
     pub menu_accelerator_new_connection: bool,
     /// `ttset.c:1620`, default **on**. Enables Alt+G for Cygwin connection; Sterna's
     /// equivalent command is Local shell.
     pub menu_accelerator_local_shell: bool,
-    /// `ttset.c:1624`. Greys Duplicate session. The action arrives with Stage 3.
+    /// `ttset.c:1624`. Greys Duplicate session.
     pub menu_disable_duplicate: bool,
     /// `ttset.c:1628`. While already connected, greys New connection rather than
     /// allowing the current line to be replaced.
@@ -12261,7 +12260,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "off",
         label: None,
-        doc: "`ttset.c:1614`. Suppresses Alt+D. Duplicate session is a Stage 3 feature, so the setting is carried but has no action to bind yet.",
+        doc: "`ttset.c:1614`. Suppresses Alt+D while leaving File > Duplicate session.",
     },
     Field {
         name: "menu.accelerator_new_connection",
@@ -12291,7 +12290,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "off",
         label: None,
-        doc: "`ttset.c:1624`. Greys Duplicate session. The action arrives with Stage 3.",
+        doc: "`ttset.c:1624`. Greys Duplicate session.",
     },
     Field {
         name: "menu.disable_new_connection",

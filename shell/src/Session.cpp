@@ -37,6 +37,15 @@ constexpr uint32_t kWriteTimeoutMs = 10;
 /// no descriptor wakeup and that is precisely the socket it exists for.
 constexpr int kTickIntervalMs = 1000;
 
+QStringList copiedStrings(const char *const *values)
+{
+    QStringList out;
+    for (size_t i = 0; values && values[i]; i++) {
+        out.append(QString::fromUtf8(values[i]));
+    }
+    return out;
+}
+
 } // namespace
 
 Session::Session(int cols, int rows, QObject *parent)
@@ -185,6 +194,69 @@ bool Session::backspaceSendsBs() const
 
 bool Session::isConnected() const { return tt_session_is_connected(m_session); }
 
+bool Session::canDuplicate() const
+{
+    return isConnected() && m_duplicateKind != DuplicateKind::None;
+}
+
+bool Session::duplicateInto(Session *destination, QString *outError) const
+{
+    if (!destination || !canDuplicate()) {
+        if (outError) {
+            *outError = tr("Only a live SSH or telnet session can be duplicated.");
+        }
+        return false;
+    }
+
+    if (m_duplicateKind == DuplicateKind::Telnet) {
+        TtTelnetParams params = m_duplicateTelnet.params;
+        const QByteArray term = m_duplicateTelnet.termType.toUtf8();
+        const QByteArray log = m_duplicateTelnet.logPath.toUtf8();
+        params.term_type = m_duplicateTelnet.hasTermType ? term.constData() : nullptr;
+        params.log_path = m_duplicateTelnet.hasLogPath ? log.constData() : nullptr;
+        return destination->connectTelnet(m_duplicateTelnet.host,
+                                          m_duplicateTelnet.port, params,
+                                          outError);
+    }
+
+    TtSshParams params = m_duplicateSsh.params;
+    const QByteArray host = m_duplicateSsh.host.toUtf8();
+    const QByteArray user = m_duplicateSsh.user.toUtf8();
+    const QByteArray term = m_duplicateSsh.term.toUtf8();
+    params.host = host.constData();
+    params.user = m_duplicateSsh.hasUser ? user.constData() : nullptr;
+    params.term = m_duplicateSsh.hasTerm ? term.constData() : nullptr;
+
+    QVector<QByteArray> identityBytes;
+    QVector<const char *> identityPtrs;
+    identityBytes.reserve(m_duplicateSsh.identities.size());
+    identityPtrs.reserve(m_duplicateSsh.identities.size() + 1);
+    for (const QString &path : m_duplicateSsh.identities) {
+        identityBytes.append(path.toUtf8());
+    }
+    for (const QByteArray &path : identityBytes) {
+        identityPtrs.append(path.constData());
+    }
+    identityPtrs.append(nullptr);
+    params.identities = m_duplicateSsh.hasIdentities ? identityPtrs.constData()
+                                                     : nullptr;
+
+    QVector<QByteArray> knownBytes;
+    QVector<const char *> knownPtrs;
+    knownBytes.reserve(m_duplicateSsh.knownHosts.size());
+    knownPtrs.reserve(m_duplicateSsh.knownHosts.size() + 1);
+    for (const QString &path : m_duplicateSsh.knownHosts) {
+        knownBytes.append(path.toUtf8());
+    }
+    for (const QByteArray &path : knownBytes) {
+        knownPtrs.append(path.constData());
+    }
+    knownPtrs.append(nullptr);
+    params.known_hosts = m_duplicateSsh.hasKnownHosts ? knownPtrs.constData()
+                                                     : nullptr;
+    return destination->startSsh(params, outError);
+}
+
 bool Session::supportsBreak() const { return tt_session_supports_break(m_session); }
 
 TtLinkKind Session::linkKind() const { return tt_session_link_kind(m_session); }
@@ -223,6 +295,7 @@ bool Session::connectSerial(const QString &path, const TtSerialParams &params,
     // Upstream's `&h` on a serial line is `COM<n>`; the device's own name is
     // the counterpart, and the leading `/dev/` would be swept to underscores.
     setConnectionName(path.section(QLatin1Char('/'), -1), 0);
+    m_duplicateKind = DuplicateKind::None;
     rearm();
     emit connectionChanged();
     return true;
@@ -240,6 +313,7 @@ bool Session::connectTelnet(const QString &host, quint16 port,
         return false;
     }
     setConnectionName(host, port);
+    rememberTelnet(host, port, params);
     rearm();
     emit connectionChanged();
     return true;
@@ -278,6 +352,7 @@ bool Session::connectPty(const QStringList &argv, QString *outError)
     // Nothing: upstream's escape has no arm for a local shell, so `&h` in a
     // log name expands to nothing rather than to the shell's path.
     setConnectionName(QString(), 0);
+    m_duplicateKind = DuplicateKind::None;
     rearm();
     emit connectionChanged();
     return true;
@@ -312,7 +387,7 @@ void Session::disconnectPort()
 bool Session::startSsh(const TtSshParams &params, QString *outError)
 {
     cancelSsh();
-    m_ssh = tt_ssh_connect(&params);
+    m_ssh = tt_ssh_connect_for_session(&params, m_session);
     if (!m_ssh) {
         if (outError) {
             *outError = QString::fromUtf8(tt_last_error());
@@ -320,6 +395,7 @@ bool Session::startSsh(const TtSshParams &params, QString *outError)
         return false;
     }
     setConnectionName(QString::fromUtf8(params.host), params.port);
+    rememberSsh(params);
     // The descriptor moves from the connection to the session at the moment
     // the shell starts, and it is the *same* descriptor — so `rearm` keeps
     // the notifier it already has rather than swapping one in mid-burst.
@@ -329,6 +405,51 @@ bool Session::startSsh(const TtSshParams &params, QString *outError)
     // and covers the case where it already has.
     pollSsh();
     return true;
+}
+
+void Session::rememberTelnet(const QString &host, quint16 port,
+                             const TtTelnetParams &params)
+{
+    m_duplicateTelnet = TelnetDuplicate{};
+    m_duplicateTelnet.host = host;
+    m_duplicateTelnet.port = port;
+    m_duplicateTelnet.params = params;
+    m_duplicateTelnet.hasTermType = params.term_type != nullptr;
+    m_duplicateTelnet.hasLogPath = params.log_path != nullptr;
+    if (params.term_type) {
+        m_duplicateTelnet.termType = QString::fromUtf8(params.term_type);
+    }
+    if (params.log_path) {
+        m_duplicateTelnet.logPath = QString::fromUtf8(params.log_path);
+    }
+    m_duplicateTelnet.params.term_type = nullptr;
+    m_duplicateTelnet.params.log_path = nullptr;
+    m_duplicateKind = DuplicateKind::Telnet;
+}
+
+void Session::rememberSsh(const TtSshParams &params)
+{
+    m_duplicateSsh = SshDuplicate{};
+    m_duplicateSsh.params = params;
+    m_duplicateSsh.host = QString::fromUtf8(params.host);
+    m_duplicateSsh.hasUser = params.user != nullptr;
+    m_duplicateSsh.hasTerm = params.term != nullptr;
+    m_duplicateSsh.hasIdentities = params.identities != nullptr;
+    m_duplicateSsh.hasKnownHosts = params.known_hosts != nullptr;
+    if (params.user) {
+        m_duplicateSsh.user = QString::fromUtf8(params.user);
+    }
+    if (params.term) {
+        m_duplicateSsh.term = QString::fromUtf8(params.term);
+    }
+    m_duplicateSsh.identities = copiedStrings(params.identities);
+    m_duplicateSsh.knownHosts = copiedStrings(params.known_hosts);
+    m_duplicateSsh.params.host = nullptr;
+    m_duplicateSsh.params.user = nullptr;
+    m_duplicateSsh.params.term = nullptr;
+    m_duplicateSsh.params.identities = nullptr;
+    m_duplicateSsh.params.known_hosts = nullptr;
+    m_duplicateKind = DuplicateKind::Ssh;
 }
 
 void Session::cancelSsh()
@@ -788,6 +909,19 @@ bool Session::loadSettings(const QString &path, QString *outError)
 {
     const QByteArray utf8 = path.toUtf8();
     if (tt_session_settings_load(m_session, utf8.constData()) != TT_OK) {
+        if (outError) {
+            *outError = QString::fromUtf8(tt_last_error());
+        }
+        return false;
+    }
+    emit settingsChanged();
+    emit damaged();
+    return true;
+}
+
+bool Session::copySettingsFrom(const Session &source, QString *outError)
+{
+    if (tt_session_copy_settings(m_session, source.m_session) != TT_OK) {
         if (outError) {
             *outError = QString::fromUtf8(tt_last_error());
         }

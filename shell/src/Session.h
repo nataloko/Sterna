@@ -185,6 +185,11 @@ public:
     // --- the connection -----------------------------------------------------
 
     bool isConnected() const;
+    /// Upstream permits Duplicate session for live SSH and telnet only.
+    bool canDuplicate() const;
+    /// Reopen this session's target in `destination`. Passwords are not
+    /// retained; SSH authentication may ask again.
+    bool duplicateInto(Session *destination, QString *outError) const;
     /// Whether `sendBreak` will do anything. False when nothing is connected,
     /// and false over SSH — which has no break at all.
     bool supportsBreak() const;
@@ -357,6 +362,8 @@ public:
     /// Read a `TERATERM.INI` and apply all of it. A file that is not there is
     /// a first run, not a failure.
     bool loadSettings(const QString &path, QString *outError);
+    /// Replace this session's settings with another page's live values.
+    bool copySettingsFrom(const Session &source, QString *outError);
     /// Write every setting back, leaving comments, ordering and any setting
     /// this project does not know about alone.
     bool saveSettings(const QString &path, QString *outError) const;
@@ -459,6 +466,32 @@ private slots:
     void onTransferDeadline();
 
 private:
+    enum class DuplicateKind { None, Telnet, Ssh };
+    struct TelnetDuplicate {
+        QString host;
+        quint16 port = 23;
+        TtTelnetParams params {};
+        QString termType;
+        QString logPath;
+        bool hasTermType = false;
+        bool hasLogPath = false;
+    };
+    struct SshDuplicate {
+        TtSshParams params {};
+        QString host;
+        QString user;
+        QString term;
+        QStringList identities;
+        QStringList knownHosts;
+        bool hasUser = false;
+        bool hasTerm = false;
+        bool hasIdentities = false;
+        bool hasKnownHosts = false;
+    };
+
+    void rememberTelnet(const QString &host, quint16 port,
+                        const TtTelnetParams &params);
+    void rememberSsh(const TtSshParams &params);
     /// Pump, then turn what came out into signals.
     void pumpAndDispatch(uint32_t budgetMs);
     /// Point the notifier at whatever descriptor the session has *now*, and
@@ -472,6 +505,9 @@ private:
     void setConnectionName(const QString &host, quint16 port);
 
     TtSession *m_session = nullptr;
+    DuplicateKind m_duplicateKind = DuplicateKind::None;
+    TelnetDuplicate m_duplicateTelnet;
+    SshDuplicate m_duplicateSsh;
 #ifdef Q_OS_WIN
     QWinEventNotifier *m_notifier = nullptr;
 #else

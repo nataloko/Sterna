@@ -458,6 +458,26 @@ void MainWindow::ensureIdlePage()
 
 void MainWindow::closeCurrentTab() { closePage(m_page); }
 
+void MainWindow::duplicateSession()
+{
+    TerminalPage *source = m_page;
+    if (!source->session()->canDuplicate()) {
+        return;
+    }
+
+    TerminalPage *destination = addBlankPage();
+    QString error;
+    if (!destination->session()->copySettingsFrom(*source->session(), &error)
+        || !source->session()->duplicateInto(destination->session(), &error)) {
+        closePage(destination, false);
+        activatePage(source);
+        QMessageBox::critical(this, tr("Duplicate session"), error);
+        return;
+    }
+    updateTabTitle(destination);
+    updateStatus();
+}
+
 void MainWindow::closePage(TerminalPage *page, bool confirm)
 {
     const int index = m_tabs->indexOf(page);
@@ -724,8 +744,7 @@ void MainWindow::onSettingsChanged()
     // Tera Term's four accelerators are resources whose handlers consult
     // these switches (`vtwin.cpp:1454`). Qt actions own their shortcuts, so a
     // disabled accelerator is represented by no shortcut while the menu item
-    // remains available. There is no Duplicate session action until Stage 3;
-    // its two settings still round-trip in the schema.
+    // remains available.
     if (m_serialConnectAction) {
         const bool enabled =
             m_session->setting(QStringLiteral("menu.accelerator_new_connection"))
@@ -746,6 +765,14 @@ void MainWindow::onSettingsChanged()
             == QLatin1String("on");
         m_breakAction->setShortcut(
             disabled ? QKeySequence() : QKeySequence(Qt::ALT | Qt::Key_B));
+    }
+    if (m_duplicateAction) {
+        const bool disabled =
+            m_session->setting(
+                QStringLiteral("menu.disable_accelerator_duplicate"))
+            == QLatin1String("on");
+        m_duplicateAction->setShortcut(
+            disabled ? QKeySequence() : QKeySequence(Qt::ALT | Qt::Key_D));
     }
 
     // Before the first show, upstream explicitly applies the active value
@@ -942,6 +969,11 @@ void MainWindow::buildMenus()
     m_localShellAction =
         file->addAction(tr("Local shell"), this, [this] { connectPty(); });
     languageAction(m_localShellAction, "MENU_FILE_GYGWIN", tr("Local shell"));
+    m_duplicateAction = file->addAction(tr("Duplicate session"), this,
+                                         &MainWindow::duplicateSession);
+    m_duplicateAction->setObjectName(QStringLiteral("duplicateSessionAction"));
+    languageAction(m_duplicateAction, "MENU_FILE_DUPLICATE",
+                   tr("Duplicate session"));
     m_disconnectAction = file->addAction(tr("Disconnect"), this,
                                          &MainWindow::disconnectPort);
     languageAction(m_disconnectAction, "MENU_FILE_DISCONNECT", tr("Disconnect"));
@@ -1671,6 +1703,7 @@ void MainWindow::invokeMenuCommand(quint16 command)
     // WM_COMMAND to upstream's window does too.
     switch (command) {
     case 50110: showConnectDialog(); break;
+    case 50111: duplicateSession(); break;
     case 50112: connectPty(); break;
     case 50120: toggleLogging(); break;
     case 50130: sendFile(); break;
@@ -1946,6 +1979,12 @@ void MainWindow::updateStatus()
         // Enabled while connecting too: stopping an attempt that is waiting on
         // a slow key exchange is a thing people need to be able to do.
         m_disconnectAction->setEnabled(connected || connecting);
+    }
+    if (m_duplicateAction) {
+        const bool disabled =
+            m_session->setting(QStringLiteral("menu.disable_duplicate"))
+            == QLatin1String("on");
+        m_duplicateAction->setEnabled(!disabled && m_session->canDuplicate());
     }
     if (m_breakAction) {
         // Asked of the core rather than inferred from the transport: SSH has

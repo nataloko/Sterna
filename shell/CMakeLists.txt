@@ -293,6 +293,9 @@ add_test(NAME control COMMAND control_test)
 # changes another tab's grid.
 add_executable(tabs_test tests/tabs_test.cpp)
 target_link_libraries(tabs_test PRIVATE sterna_shell)
+if(WIN32)
+    target_link_libraries(tabs_test PRIVATE ws2_32)
+endif()
 target_compile_options(tabs_test PRIVATE ${TT_WARNINGS})
 add_test(NAME tabs COMMAND tabs_test)
 
