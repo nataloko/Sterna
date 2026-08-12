@@ -21,10 +21,13 @@ distrobox-host-exec distrobox enter sterna-fedora --no-tty -- bash -lc '
 '
 ```
 
-Measured from the image on the desktop, 2026-08-08: **37 MB on disk**, **43 MB
-RSS / 33 MB PSS** with a shell attached under Wayland, and about **144 ms** from
-exec to a mapped window — which includes mounting the SquashFS, a cost the build
-tree does not pay.
+Measured from the image on the desktop after signed updates landed, 2026-08-12:
+**48 MB on disk**, **46 MB RSS / 39 MB PSS** with a shell attached under
+Wayland. The earlier image was 37 MB; Qt Network, its TLS backend and the
+on-demand updater library are the increase. They are not mapped until Check for
+Updates is chosen; the direct-link prototype used about 5 MB more idle PSS.
+Startup was previously measured at about **144 ms** to a mapped window —
+including the SquashFS mount, which the build tree does not pay.
 
 ## One file, three programs
 
@@ -170,3 +173,25 @@ QT_QPA_PLATFORM=offscreen ./sterna-x86_64.AppImage --shell & sleep 2
 Check 3 matters because the desktop this is developed on *has* Qt 6.11.1
 installed. An image that quietly used the host's would pass every other test
 here and fail on the first machine that has none.
+
+## Signed in-app updates
+
+Help > Check for Updates works only when Sterna is running from an AppImage in
+a writable directory. It checks only on that explicit action, verifies the
+detached manifest signature, then verifies both SHA-256 and a second Ed25519
+signature over the complete downloaded image. `QSaveFile` writes beside the
+old image, restores its execute permissions on the temporary file and renames
+it atomically; the running session stays on its mounted old image and the new
+one is used at the next start. A loose build opens the release page instead of
+guessing what file should be replaced.
+
+The release metadata and key procedure are in
+[`update/`](update/README.md). The AppImage format also supports zsync and an
+external AppImageUpdate tool, but Sterna uses the same signed full-artifact
+path on Linux and Windows so there is one trust format and one UI.
+
+Qt Network is deliberately in `libsterna_updater.so`, which the terminal loads
+by name only for this action. Linking it into the main shell measured about 5
+MB of extra idle PSS before a request existed. The packaged binary's maps are
+part of the verification: `libQt6Network.so.6` must be absent before the action
+and present after the updater library is loaded.

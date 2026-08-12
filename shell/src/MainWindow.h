@@ -16,6 +16,7 @@ class Macro;
 class Plugins;
 class QLabel;
 class QTabWidget;
+class QLibrary;
 class TerminalPage;
 class TerminalView;
 class XferProgressDialog;
@@ -186,6 +187,9 @@ private slots:
     void newTab();
     void closeCurrentTab();
     void duplicateSession();
+    /// Load the network updater only when asked, keeping its TLS stack out of
+    /// an ordinary terminal's startup and idle RSS.
+    void checkForUpdates();
 private:
     /// Construct and wire one page. Loading or copying its settings is the
     /// caller's decision, because startup and a new tab have different
@@ -295,6 +299,8 @@ private:
     /// from the first.
     Macro *m_macro = nullptr;
     Plugins *m_plugins = nullptr;
+    QLibrary *m_updateLibrary = nullptr;
+    QObject *m_updater = nullptr;
     QVector<QAction *> m_pluginActions;
     /// This window's `ttctl` socket, for its lifetime. Null when it could not
     /// be bound, which is not fatal — a window with no way in is still a

@@ -14,7 +14,7 @@ endif()
 # and in `mingw64-qt6-qtbase` alike. It is what File > Print and the media copy
 # sequences reach; without it a terminal that a host asks to print has nowhere
 # to send the page.
-find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets PrintSupport)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets PrintSupport Network)
 
 # `-Wall -Wextra` is GCC and Clang's spelling. MSVC takes `-` as a switch lead
 # too, so `-Wall` reaches it and means "every warning including the ones the
@@ -163,9 +163,24 @@ target_compile_options(sterna_shell PRIVATE ${TT_WARNINGS})
 target_compile_definitions(sterna_shell PRIVATE
     TT_SOURCE_LANG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../vendor/lang")
 
+# The network stack is loaded only after Help > Check for Updates. Linking it
+# into `sterna_shell` raised an idle AppImage's PSS by about 5 MB even when no
+# request was made; a local library keeps the dialogs in-process and pays that
+# memory only on the explicit action.
+add_library(sterna_updater SHARED src/Updater.cpp)
+add_dependencies(sterna_updater tt_core)
+target_link_libraries(sterna_updater PUBLIC Qt6::Widgets Qt6::Network sterna_core)
+target_include_directories(sterna_updater PUBLIC src)
+target_compile_options(sterna_updater PRIVATE ${TT_WARNINGS})
+if(WIN32)
+    set_target_properties(sterna_updater PROPERTIES PREFIX "")
+    target_link_libraries(sterna_updater PRIVATE shell32)
+endif()
+
 add_executable(sterna
     src/main.cpp
     resources/branding.qrc)
+add_dependencies(sterna sterna_updater)
 if(WIN32)
     enable_language(RC)
     file(TO_CMAKE_PATH
@@ -307,6 +322,27 @@ endif()
 target_compile_options(tabs_test PRIVATE ${TT_WARNINGS})
 add_test(NAME tabs COMMAND tabs_test)
 
+# Signed metadata is parsed without a socket; the fixture also crosses the C
+# ABI and proves the committed signer matches the public key compiled into the
+# core. No release server or private key is involved.
+add_executable(update_test tests/update_test.cpp)
+target_link_libraries(update_test PRIVATE sterna_updater)
+target_compile_options(update_test PRIVATE ${TT_WARNINGS})
+target_compile_definitions(update_test PRIVATE
+    TT_UPDATE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../packaging/update")
+add_test(NAME update COMMAND update_test)
+
+# The terminal does not link the updater. This proves the packaged seam it
+# actually uses: load the local library, resolve its single C symbol, create
+# the QObject, then destroy it before unloading its code.
+add_executable(update_load_test tests/update_load_test.cpp)
+add_dependencies(update_load_test sterna_updater)
+target_link_libraries(update_load_test PRIVATE Qt6::Widgets)
+target_compile_options(update_load_test PRIVATE ${TT_WARNINGS})
+target_compile_definitions(update_load_test PRIVATE
+    TT_UPDATE_LIBRARY="$<TARGET_FILE:sterna_updater>")
+add_test(NAME update_load COMMAND update_load_test)
+
 # --- the performance gate ----------------------------------------------------
 #
 # NOT a test, and deliberately not in `ctest`: it takes tens of seconds, its
@@ -358,8 +394,11 @@ target_compile_definitions(bench_shell PRIVATE TT_BENCH_EXE="${TT_BENCH_EXE}")
 # the DLL beside the executables instead — and `pty_test` is not a target
 # there, which would be an error rather than a no-op.
 if(UNIX)
+    set_target_properties(sterna_updater PROPERTIES
+        BUILD_RPATH "${TT_CARGO_OUT}"
+        INSTALL_RPATH "$ORIGIN")
     set_target_properties(sterna render_test ssh_test telnet_test pty_test
-                          cmdline_test plugin_test bench_shell PROPERTIES
+                          cmdline_test plugin_test update_test bench_shell PROPERTIES
         BUILD_RPATH "${TT_CARGO_OUT}"
         INSTALL_RPATH "$ORIGIN/../lib")
 endif()
@@ -371,6 +410,9 @@ endif()
 # `lib64` while everything downstream — linuxdeploy, the AppRun it writes —
 # expects `usr/lib`. A packaging layout is not a distribution layout.
 install(TARGETS sterna RUNTIME DESTINATION bin)
+install(TARGETS sterna_updater
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib)
 # The DLL goes beside the executable, because that is where the Windows loader
 # looks — an installed `lib/sterna.dll` is a program that will not start, and
 # there is no rpath to say otherwise.

@@ -108,7 +108,8 @@ clients=$build/cmake/cargo/x86_64-pc-windows-gnu/release
 # `lang` beside the executable as its Windows case; the `../share/sterna/lang`
 # it prefers cannot exist here, which is what makes the fallback the answer.
 mkdir -p "$stage"
-cp "$build/prefix/bin/sterna.exe" "$build/prefix/bin/sterna.dll" "$stage/" || exit 2
+cp "$build/prefix/bin/sterna.exe" "$build/prefix/bin/sterna.dll" \
+   "$build/prefix/bin/sterna_updater.dll" "$stage/" || exit 2
 cp "$clients/ttctl.exe" "$clients/ttpmacro.exe" "$stage/" || exit 2
 mkdir -p "$stage/lang"
 cp "$build/prefix/share/sterna/lang"/*.lng "$stage/lang/" || exit 2
@@ -119,11 +120,16 @@ cp "$build/prefix/share/sterna/lang"/*.lng "$stage/lang/" || exit 2
 # program fails. `styles` is: without `qmodernwindowsstyle.dll` the window
 # still opens, wearing the Fusion look on a desktop where every other program
 # is native — visible to a user and invisible to a test.
-mkdir -p "$stage/platforms" "$stage/styles"
+mkdir -p "$stage/platforms" "$stage/styles" "$stage/tls"
 cp "$qt_plugins/platforms/qwindows.dll" "$stage/platforms/" || exit 2
 cp "$qt_plugins/platforms/qoffscreen.dll" "$stage/platforms/" || exit 2
 cp "$qt_plugins/platforms/qminimal.dll" "$stage/platforms/" || exit 2
 cp "$qt_plugins/styles"/*.dll "$stage/styles/" 2>/dev/null
+# Qt Network is present only for the on-demand signed updater, and HTTPS still
+# does not exist without one of its dynamically loaded TLS backends. Schannel
+# uses Windows' own certificate store and crypto, avoiding a second OpenSSL
+# distribution whose DLLs and security updates this installer would own.
+cp "$qt_plugins/tls/qschannelbackend.dll" "$stage/tls/" || exit 2
 
 # --- the DLLs Windows does not have ------------------------------------------
 #
@@ -160,6 +166,14 @@ done
 for dll in Qt6Core.dll Qt6Gui.dll Qt6Widgets.dll Qt6PrintSupport.dll; do
 	[ -e "$stage/$dll" ] || { echo "windows: $dll was not resolved" >&2; exit 2; }
 done
+[ -e "$stage/Qt6Network.dll" ] || {
+    echo "windows: Qt6Network.dll was not resolved for the updater" >&2
+    exit 2
+}
+[ -e "$stage/tls/qschannelbackend.dll" ] || {
+    echo "windows: the Schannel TLS backend was not staged" >&2
+    exit 2
+}
 
 # Fedora's MinGW packages are shipped unstripped, and so is everything cargo
 # and this CMake tree produce, so a third of what has just been staged is

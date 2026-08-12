@@ -9,6 +9,7 @@
 #include <QClipboard>
 #include <QCloseEvent>
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QEvent>
 #include <QFile>
 #include <QFontDialog>
@@ -25,8 +26,10 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QLocale>
+#include <QLibrary>
 #include <QStatusBar>
 #include <QTimer>
+#include <QUrl>
 
 #include <QDir>
 #include <QStandardPaths>
@@ -552,6 +555,13 @@ void MainWindow::updateTabBar()
 
 MainWindow::~MainWindow()
 {
+    // The updater's code lives in the library, so its QObject must be
+    // destroyed before QLibrary unloads that code. QObject's ordinary child
+    // order is not a lifetime contract to entrust a function pointer to.
+    delete m_updater;
+    m_updater = nullptr;
+    delete m_updateLibrary;
+    m_updateLibrary = nullptr;
     // The mirror of the constructor's last line, and for the same reason: the
     // control socket publishes this window, so it stops answering before
     // anything it can answer about goes away.
@@ -1181,8 +1191,61 @@ void MainWindow::buildMenus()
                                      &MainWindow::saveSettings);
     languageAction(save, "MENU_SETUP_SAVE", tr("Save setup"));
 
+    // Deliberately user-initiated. There is no startup request or timer: this
+    // action is the user's permission to contact GitHub, and the signed
+    // manifest is still verified before any URL in it is trusted.
+    QMenu *help = menuBar()->addMenu(tr("Help"));
+    help->setObjectName(QStringLiteral("helpMenu"));
+    help->addAction(tr("Check for Updates..."), this,
+                    &MainWindow::checkForUpdates);
+    help->addAction(tr("Release page"), this, [] {
+        QDesktopServices::openUrl(
+            QUrl(QStringLiteral("https://github.com/nataloko/Sterna/releases")));
+    });
+
     installPluginActions();
     translateMenus();
+}
+
+void MainWindow::checkForUpdates()
+{
+    if (!m_updater) {
+        // Installed/AppImage layout first, then the build tree. The updater is
+        // a local library rather than a process so its dialogs remain modal to
+        // this window; not linking it keeps Qt Network and its TLS backends out
+        // of startup and idle RSS until this action is chosen.
+        const QDir bin(QCoreApplication::applicationDirPath());
+        QStringList candidates;
+#ifdef Q_OS_WIN
+        candidates << bin.filePath(QStringLiteral("sterna_updater.dll"));
+#else
+        candidates
+            << QDir(bin.filePath(QStringLiteral("../lib")))
+                   .filePath(QStringLiteral("libsterna_updater.so"))
+            << bin.filePath(QStringLiteral("libsterna_updater.so"));
+#endif
+        QString error;
+        for (const QString &path : candidates) {
+            auto *library = new QLibrary(path, this);
+            using Factory = QObject *(*)(QWidget *);
+            const auto factory = reinterpret_cast<Factory>(
+                library->resolve("sterna_updater_new"));
+            if (factory) {
+                m_updater = factory(this);
+                m_updateLibrary = library;
+                break;
+            }
+            error = library->errorString();
+            delete library;
+        }
+        if (!m_updater) {
+            QMessageBox::warning(
+                this, tr("Sterna update"),
+                tr("The updater could not be loaded: %1").arg(error));
+            return;
+        }
+    }
+    QMetaObject::invokeMethod(m_updater, "check", Qt::QueuedConnection);
 }
 
 void MainWindow::showConnectDialog()

@@ -46,6 +46,9 @@ SetCompressor /SOLID lzma
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}"
 !define PROGID "Sterna.MacroFile"
 
+Var UpdateRestart
+Var UpdateInstaller
+
 Name "${NAME} ${VERSION}"
 OutFile "${OUTFILE}"
 InstallDir "$PROGRAMFILES64\${NAME}"
@@ -185,6 +188,35 @@ Function .onInit
   ; for it. Upstream's installer takes `/TASKS=macroassoc` for the same reason;
   ; Inno supplies that itself, and NSIS does not.
   ${GetParameters} $R8
+
+  ; A signed in-app update starts this installer with the old process id. Wait
+  ; before running its uninstaller: Windows cannot delete an executable which
+  ; is still running, and leaving the old `sterna.exe` beside new DLLs produces
+  ; a loader failure before `main`. OpenProcess failing means the process
+  ; already ended. A timeout aborts before touching the installed files.
+  ClearErrors
+  ${GetOptions} $R8 "/UPDATEPID=" $R7
+  ${IfNot} ${Errors}
+  ${AndIf} $R7 != ""
+    StrCpy $UpdateInstaller 1
+    System::Call 'kernel32::OpenProcess(i 0x00100000, i 0, i $R7) p .r0'
+    ${If} $0 != 0
+      System::Call 'kernel32::WaitForSingleObject(p r0, i 120000) i .r1'
+      System::Call 'kernel32::CloseHandle(p r0)'
+      ${If} $1 != 0
+        MessageBox MB_OK|MB_ICONSTOP \
+          "Sterna did not close in time. The existing installation was not changed."
+        Abort
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+  ClearErrors
+  ${GetOptions} $R8 "/RESTART" $R9
+  ${IfNot} ${Errors}
+    StrCpy $UpdateRestart 1
+  ${EndIf}
+  ClearErrors
+
   ClearErrors
   ${GetOptions} $R8 "/ASSOC" $R9
   ${IfNot} ${Errors}
@@ -212,6 +244,20 @@ Function .onInit
     Delete "$R1\uninstall.exe"
     RMDir "$R1"
   keep:
+  ${EndIf}
+FunctionEnd
+
+Function .onInstSuccess
+  ${If} $UpdateRestart == 1
+    ; Same de-elevation route as the finish page: the updater installer is
+    ; elevated, while the terminal must read the desktop user's AppData.
+    Exec '"$WINDIR\explorer.exe" "$INSTDIR\sterna.exe"'
+  ${EndIf}
+  ${If} $UpdateInstaller == 1
+    ; The downloaded setup is in the user's temp directory. Its executing file
+    ; is locked, so queue deletion for reboot rather than accumulating one per
+    ; release forever.
+    Delete /REBOOTOK "$EXEPATH"
   ${EndIf}
 FunctionEnd
 

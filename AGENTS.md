@@ -383,6 +383,21 @@ something other than what it is.
   not the initialiser.
 And for the AppImage, where two of the three failures are silent:
 
+- **The update signature covers bytes, not an AppImage identity.** Verify the
+  detached manifest before trusting even its URL or size, then check the
+  downloaded file's signed size, SHA-256 and its own Ed25519 signature before
+  touching the current image. On Linux, set the old executable permissions on
+  `QSaveFile` *before* `commit()` so the atomic rename never exposes a valid
+  but non-executable AppImage. On Windows, the NSIS updater must wait for the
+  running pid before invoking the old uninstaller; Windows will not replace a
+  live `sterna.exe`, and mixing it with the new Qt DLLs fails before `main`.
+- **Qt Network can load while HTTPS remains entirely absent.** Its TLS
+  implementations are plugins, not PE/ELF imports, so the deployment closure
+  cannot discover them. Linuxdeploy's Qt plugin carries the OpenSSL backend;
+  the Windows stage copies `tls/qschannelbackend.dll` explicitly and uses the
+  operating system's certificate store. A packaged updater test that only sees
+  `Qt6Network.dll` has proved no encrypted connection.
+
 - **linuxdeploy's `patchelf` corrupts every library it bundles on Fedora 44.**
   It predates `.relr.dyn`, the compact relocation format the base uses
   everywhere. Its `strip` hits the same wall and says so out loud — "unknown

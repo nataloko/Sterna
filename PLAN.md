@@ -426,8 +426,9 @@ sending BS because that is what Tera Term does).
   image**. That is a build step, not a note in a README, and
   `packaging/appimage/build.sh` does it.
 
-  **Measured from the image on the desktop:** 37 MB on disk, 43 MB RSS / 33 MB
-  PSS with a shell attached under Wayland, ~144 ms from exec to a mapped window
+  **Measured from the image on the desktop:** 48 MB on disk after the signed
+  updater brought Qt Network, 46 MB RSS / 39 MB PSS with a shell attached under
+  Wayland, ~144 ms from exec to a mapped window
   — the last of which includes mounting the SquashFS, a cost the build tree does
   not pay. The base is `sterna-fedora`, so the **glibc floor is 2.43**: this
   image runs on Fedora 44 and not much else yet, which is deliberate and
@@ -5230,8 +5231,9 @@ would ignore. `shell/tests/print_test.cpp` is the end-to-end gate and needs no
 printer — `PassThruPort` points at a file, which is what `PrintFileDirect`
 thinks a printer is.
 
-**There is a Windows artifact now, 2026-08-12** — an NSIS installer, 31 MB,
-carrying 106 MB across 50 files: the shell, the core, `ttctl`, `ttpmacro`, all
+**There is a Windows artifact now, 2026-08-12** — an NSIS installer, 33 MB,
+carrying 114 MB across 55 installed files: the shell, the core, `ttctl`,
+`ttpmacro`, all
 fourteen `.lng` files, the Qt plugins that are not optional, about thirty DLLs
 and the licences. `packaging/windows/`, and its README is the second half of
 this entry.
@@ -5256,7 +5258,7 @@ Forty-five names are left unresolved and every one is a real part of Windows:
 the API sets, `d3d11`/`d3d12`/`dxgi`/`DWrite`, `WINSPOOL.DRV`, `UxTheme`.
 
 Verified under the Ubuntu container's Wine, which is the half of this that can
-be checked from Linux: a silent install lands 51 files and writes the
+be checked from Linux: a silent install lands 55 files and writes the
 uninstall entry Add > Remove Programs reads; the installed `sterna.exe` starts
 and stays up, which is what says every DLL resolved and Qt found its platform
 plugin; and the uninstaller removes what it installed, leaves a file the user

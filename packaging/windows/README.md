@@ -12,10 +12,12 @@ distrobox-host-exec distrobox enter sterna-fedora --no-tty -- bash -lc '
 '
 ```
 
-Measured 2026-08-12: **31 MB installed by a 31 MB installer** — 106 MB on
-disk from 50 files, LZMA solid down to 31. A third of the staged tree was
-symbol tables before `--strip-unneeded`; `libstdc++-6.dll` alone came to
-29.7 MB, because Fedora ships its MinGW packages unstripped.
+Measured 2026-08-12 after signed updates landed: a **33 MB installer** puts
+**114 MB across 55 files** on disk. The pre-updater build was 31 MB / 106 MB;
+the on-demand updater DLL, Qt Network and its dependency are the increase. A
+third of the staged tree was symbol tables before `--strip-unneeded`;
+`libstdc++-6.dll` alone came to 29.7 MB, because Fedora ships its MinGW
+packages unstripped.
 
 ## Why NSIS and not Inno Setup
 
@@ -35,7 +37,7 @@ Wine has manufactured several false findings on this project already (see
 | `sterna.exe`, `sterna.dll` | the shell and the Rust core |
 | `ttctl.exe`, `ttpmacro.exe` | the two control-socket clients |
 | `lang\*.lng` | all 14 languages, verbatim from upstream |
-| `platforms\`, `styles\` | the Qt plugins that are not optional; see below |
+| `platforms\`, `styles\`, `tls\` | the Qt plugins that are not optional; see below |
 | ~30 DLLs | Qt, and what Qt needs, and the MinGW runtime |
 | `doc\` | the licences, and `BUILD-INFO.txt` naming the exact Qt |
 
@@ -119,6 +121,30 @@ and uninstall untouched. Upstream leaves `.ttl` behind outright.
   rather than the program folder, there is one per user on a machine that may
   have several, and an uninstall that is really an upgrade would take them.
 
+## Signed in-app updates
+
+Help > Check for Updates downloads a signed release manifest and a signed copy
+of this same NSIS installer. The application starts it with
+`/S /UPDATEPID=<pid> /RESTART` after both signatures and the SHA-256 have been
+verified. `.onInit` waits up to two minutes for that process to leave before
+the old uninstaller runs; a timeout aborts without touching the installation.
+After a successful silent upgrade, Explorer starts Sterna with the desktop
+user's token and the temporary installer is queued for deletion.
+
+The pid wait is load-bearing. Windows will not replace the running
+`sterna.exe`; mixing it with the new Qt DLL set produces the same pre-`main`
+missing-entry-point failure an ordinary upgrade's stale DLL cleanup prevents.
+The updater therefore also refuses a loose executable: `uninstall.exe` beside
+the running program is its proof that there is an installed tree to upgrade.
+
+See [`../update/`](../update/README.md) for the signing key and manifest.
+
+`Qt6Network.dll` is not enough to speak HTTPS. TLS is a dynamically loaded Qt
+plugin, so the installer carries `tls\qschannelbackend.dll`; Schannel uses
+Windows' own certificate store and crypto, avoiding a bundled OpenSSL whose
+security updates would become Sterna's job. The import-table closure cannot
+discover this plugin because no PE import points at it.
+
 ## Traps
 
 - **The finish page must not start the program itself.** The installer asks for
@@ -159,7 +185,7 @@ the boot entirely.
 export WINEPREFIX=$(mktemp -d)/wp && cp -r ~/.wine "$WINEPREFIX"
 setup=packaging/windows/build/sterna-0.1.0-x86_64-setup.exe
 
-# 1. it installs, silently, and lands 51 files
+# 1. it installs, silently, and lands 55 files
 /usr/lib/wine/wine64 "$setup" /S
 find "$WINEPREFIX/drive_c/Program Files/Sterna" -type f | wc -l
 
