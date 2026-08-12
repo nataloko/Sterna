@@ -41,3 +41,7 @@ compile_commands.json
 # The self-updater's release signing key and password. The public key is
 # committed under packaging/update; these two files must never be.
 /.private/
+
+# Generated release assets. They are uploaded beside the two platform
+# artifacts, not kept in the source tree.
+/release-update/
