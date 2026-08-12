@@ -141,6 +141,9 @@ bool Plugins::setSetting(size_t id, const QString &value, QString *outError)
 
 bool Plugins::copySettingsFrom(const Plugins &source, QString *outError)
 {
+    if (!m_plugins && !source.m_plugins) {
+        return true;
+    }
     if (tt_plugins_copy_settings(m_plugins, source.m_plugins) != TT_OK) {
         if (outError) {
             *outError = string(tt_last_error());
@@ -152,6 +155,11 @@ bool Plugins::copySettingsFrom(const Plugins &source, QString *outError)
 
 bool Plugins::saveSettings(const QString &path, QString *outError) const
 {
+    // A plugin load error was already reported when the page was created. It
+    // must not turn the built-in settings' later Save setup into a failure.
+    if (!m_plugins) {
+        return true;
+    }
     const QByteArray utf8 = path.toUtf8();
     if (tt_plugins_settings_save(m_plugins, utf8.constData()) != TT_OK) {
         if (outError) {
