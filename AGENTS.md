@@ -135,7 +135,7 @@ cd packaging/appimage            # the only Linux artifact — build it in
 ./build.sh --run                 # ...and start it
 
 cd packaging/windows             # the only Windows artifact — sterna-fedora
-./build.sh                       # → build/sterna-0.0.0-x86_64-setup.exe
+./build.sh                       # → build/sterna-0.1.0-x86_64-setup.exe
 ./build.sh --stage               # ...the file tree, without makensis
 
 cd esctest                       # conformance, from inside our own terminal
