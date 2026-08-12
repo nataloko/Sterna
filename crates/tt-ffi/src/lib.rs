@@ -72,6 +72,7 @@ use std::slice;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use tt_config::cmdline::proxy::ProxyOptions;
 use tt_config::cmdline::ssh::SshOptions;
 use tt_config::cmdline::{self, CommandLine, MacroArg};
 use tt_conn::pty::{PtyConn, PtyParams};
@@ -4115,6 +4116,10 @@ pub const TT_TARGET_SHELL: TtTargetKind = 3;
 pub struct TtCmdLine {
     cmd: CommandLine,
     ssh: SshOptions,
+    /// TTProxy's half, which has no accessor of its own: everything it holds
+    /// is a setting, so [`tt_cmdline_apply`] is where it comes out and
+    /// `tt_session_setting("proxy.type")` is where it is read back.
+    proxy: ProxyOptions,
     /// Backing store for what [`tt_cmdline_info`] hands out. Built once at
     /// parse time, so those pointers are good for the handle's whole life.
     setup_file: Option<CString>,
@@ -4291,9 +4296,8 @@ pub extern "C" fn tt_cmdline_parse(
         }
     }
 
-    let (ssh, rest) = cmdline::ssh::parse_args(&args);
-    let cmd = CommandLine::from_args(
-        &rest,
+    let cmdline::Parsed { cmd, ssh, proxy } = cmdline::parse_all_args_with(
+        &args,
         match max_com_port {
             0 => cmdline::DEFAULT_MAX_COM_PORT,
             n => n,
@@ -4314,6 +4318,7 @@ pub extern "C" fn tt_cmdline_parse(
         unknown: ssh.unknown.iter().map(|u| cbytes(u)).collect(),
         cmd,
         ssh,
+        proxy,
         resolved: Vec::new(),
         identities: Vec::new(),
         argv: Vec::new(),
@@ -4341,7 +4346,7 @@ pub extern "C" fn tt_cmdline_parse_line(line: *const c_char, max_com_port: u16) 
         return ptr::null_mut();
     }
     let arg = unsafe { CStr::from_ptr(line) }.to_bytes().to_vec();
-    let (cmd, ssh) = cmdline::ssh::parse_both_argument(
+    let cmdline::Parsed { cmd, ssh, proxy } = cmdline::parse_all_argument(
         &arg,
         match max_com_port {
             0 => cmdline::DEFAULT_MAX_COM_PORT,
@@ -4360,6 +4365,7 @@ pub extern "C" fn tt_cmdline_parse_line(line: *const c_char, max_com_port: u16) 
         unknown: ssh.unknown.iter().map(|u| cbytes(u)).collect(),
         cmd,
         ssh,
+        proxy,
         resolved: Vec::new(),
         identities: Vec::new(),
         argv: Vec::new(),
@@ -4432,6 +4438,10 @@ pub extern "C" fn tt_cmdline_apply(cmd: *const TtCmdLine, session: *mut TtSessio
     };
     let mut settings = s.session.settings().clone();
     c.cmd.apply(&mut settings);
+    // The proxy plugin's half, which is a settings record of its own upstream
+    // and is replaced entire — so a `/proxy=` naming no credentials clears the
+    // file's, and `/noproxy` is a proxy of type `none`.
+    c.proxy.apply(&mut settings);
     s.session.set_settings(settings);
     TT_OK
 }

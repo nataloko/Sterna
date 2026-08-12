@@ -16,12 +16,96 @@
 //! in the documentation and disagrees on the first path with a space in it.
 
 pub mod cygterm;
+pub mod proxy;
 pub mod ssh;
 
 use crate::{
     ClipboardRemoteAccess, ConnectionPortType, EncodingReceive, EncodingSend, SerialDataBits,
     SerialFlow, SerialParity, SerialStopBits, Settings, TekIcon, WindowIcon,
 };
+
+/// One command line, read by all three parsers.
+///
+/// They are not independent, which is why there is no way to ask for one of
+/// them on its own: an `ssh://` URL only becomes a host name because TTSSH
+/// rewrote it into one, and a bare `socks5://p:1080/realhost` only becomes one
+/// because TTProxy took the proxy off the front and handed the tail over
+/// afterwards.
+#[derive(Clone, Debug)]
+pub struct Parsed {
+    /// `_ParseParam` — Tera Term's own, which runs last and sees least.
+    pub cmd: CommandLine,
+    /// TTSSH's.
+    pub ssh: ssh::SshOptions,
+    /// TTProxy's, which runs first.
+    pub proxy: proxy::ProxyOptions,
+}
+
+/// All three, in the order upstream runs them.
+///
+/// TTProxy is outermost — `TTXInternalGetSetupHooks` installs from the end of
+/// the plugin table (`ttplug.cpp:664`) so the lowest `TTXExports` order hooks
+/// last and is called first, and TTProxy's is 10 against TTSSH's 2500. Then
+/// TTSSH over what it left, then the terminal over what *that* left.
+///
+/// The last step is upstream's tail: TTProxy copies the host it recovered into
+/// `ts.HostName` **after** `_ParseParam` has run and only if that found none
+/// (`TTProxy.h:181`), which is a rule about the two parsers together and so
+/// belongs to neither of them.
+pub fn parse_all(line: &[u8], max_com_port: u16) -> Parsed {
+    let (proxy, rest) = proxy::parse(line);
+    let (ssh, rest) = ssh::parse(&rest);
+    let mut cmd = CommandLine::parse(&rest, max_com_port);
+    recover_host(&mut cmd, &proxy);
+    Parsed { cmd, ssh, proxy }
+}
+
+/// [`parse_all`] for the argument of a macro's `connect`, which has no program
+/// name in front of it — `ttdde.c:617` prepends a literal `"a "` for exactly
+/// that reason, since the first token is always discarded.
+pub fn parse_all_argument(arg: &[u8], max_com_port: u16) -> Parsed {
+    let mut line = b"a ".to_vec();
+    line.extend_from_slice(arg);
+    let (proxy, rest) = proxy::parse(&line);
+    let (ssh, rest) = ssh::parse(&rest);
+    let mut cmd = CommandLine::parse_argument(&rest[2..], max_com_port);
+    cmd.raw = line;
+    recover_host(&mut cmd, &proxy);
+    Parsed { cmd, ssh, proxy }
+}
+
+/// The same over arguments the platform has already split — Unix `argv` with
+/// `argv[0]` dropped.
+pub fn parse_all_args<I, S>(args: I) -> Parsed
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<[u8]>,
+{
+    parse_all_args_with(args, DEFAULT_MAX_COM_PORT)
+}
+
+/// [`parse_all_args`] with a `MaxComPort` other than the shipped one.
+pub fn parse_all_args_with<I, S>(args: I, max_com_port: u16) -> Parsed
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<[u8]>,
+{
+    let (proxy, rest) = proxy::parse_args(args);
+    let (ssh, rest) = ssh::parse_args(&rest);
+    let mut cmd = CommandLine::from_args(&rest, max_com_port);
+    recover_host(&mut cmd, &proxy);
+    Parsed { cmd, ssh, proxy }
+}
+
+/// `if (ts->HostName[0] == '\0' && realhost != NULL)` (`TTProxy.h:181`).
+///
+/// `_ParseParam` always clears `ts.HostName` first, so "empty" here is "the
+/// ordinary parser found no host", never "the settings file had none".
+fn recover_host(cmd: &mut CommandLine, proxy: &proxy::ProxyOptions) {
+    if let (true, Some(host)) = (cmd.host_name.is_empty(), &proxy.host) {
+        cmd.host_name.clone_from(host);
+    }
+}
 
 /// `GetParam` (`ttlib.c:879`) — one token and what is left after it.
 ///
@@ -140,6 +224,118 @@ pub fn token_spans(line: &[u8], size: usize) -> Vec<(std::ops::Range<usize>, Vec
         cur = next;
     }
     out
+}
+
+/// What a plugin did with one token — `action`, which is `OPTION_NONE`,
+/// `OPTION_CLEAR` or `OPTION_REPLACE` (`ttxssh.h`, and the same three values
+/// spelled again in `TTProxy.h:21`).
+///
+/// Both plugins hook `_ParseParam`, and both compose with what runs after them
+/// through the *line* rather than through a shared struct — so this and
+/// [`apply_edits`] are the mechanism they share, not a convenience.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Action {
+    /// Not this plugin's, or deliberately left for the next parser to read.
+    Keep,
+    /// Consumed: blanked out of the line.
+    Clear,
+    /// Rewritten in place — an `ssh://` URL, a `user@host`, or a proxy URL the
+    /// terminal is meant to have another go at.
+    ///
+    /// The payload is the option buffer **as upstream leaves it**, which is
+    /// always as long as the token was: the URL arm space-fills the tail and the
+    /// `user@host` arm turns the user part into leading spaces. The line keeps
+    /// that padding, since it is what the next parser reads; the token path
+    /// trims it, since there is no line for it to sit in.
+    Replace(Vec<u8>),
+}
+
+/// `OPTION_CLEAR` and `OPTION_REPLACE`, applied back to front so the earlier
+/// spans keep their offsets.
+///
+/// Clearing fills the whole span — separator included — with spaces. Replacing
+/// fills it and then writes the new text one character in, which is upstream's
+/// `wmemcpy(cur+1, option, …)` and is why the span always has room: `cur` is
+/// where the previous token ended, so at least one separator is inside it.
+pub(super) fn apply_edits(
+    line: &mut [u8],
+    mut edits: Vec<(std::ops::Range<usize>, Option<Vec<u8>>)>,
+) {
+    edits.sort_by_key(|(s, _)| s.start);
+    for (span, replacement) in edits.into_iter().rev() {
+        line[span.clone()].fill(b' ');
+        if let Some(text) = replacement {
+            let at = span.start + 1;
+            let end = (at + text.len()).min(line.len());
+            if at < end {
+                line[at..end].copy_from_slice(&text[..end - at]);
+            }
+        }
+    }
+}
+
+/// `option[0] == '-' || option[0] == '/'` — and the rest of the token.
+///
+/// Both leaders, which is the plugins' alone: Tera Term's own parser tests for
+/// `/` only, so `-nolog` reaches nobody. TTSSH and TTProxy spell the test
+/// identically (`ttxssh.c:1498`, `TTProxy.h:137`).
+pub(super) fn switch_body(tok: &[u8]) -> Option<&[u8]> {
+    match tok.first() {
+        Some(b'-') | Some(b'/') => Some(&tok[1..]),
+        _ => None,
+    }
+}
+
+/// `%` and two hex digits, and anything else copied through.
+///
+/// **Two upstream functions, and they agree**: TTSSH's `percent_decode`
+/// (`ttxssh.c:1438`) and TTProxy's `urldecode` (`ProxyWSockHook.h:393`). The
+/// one difference is that TTProxy's copies a DBCS lead byte and the character
+/// behind it as a pair, which is a no-op outside a DBCS ACP — and everything
+/// here is UTF-8 bytes rather than ACP ones.
+///
+/// Only the URL forms decode. TTSSH's `/user=` and `/passwd=` do not, so the
+/// same password is written two different ways depending on which spelling of
+/// the option carried it.
+pub(super) fn percent_decode(src: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(src.len());
+    let mut i = 0;
+    while i < src.len() {
+        let hex = |b: u8| b.is_ascii_hexdigit().then(|| hex_val(b));
+        match (src.get(i), src.get(i + 1).copied(), src.get(i + 2).copied()) {
+            (Some(b'%'), Some(h), Some(l)) => match (hex(h), hex(l)) {
+                (Some(h), Some(l)) => {
+                    out.push(h << 4 | l);
+                    i += 3;
+                }
+                _ => {
+                    out.push(src[i]);
+                    i += 1;
+                }
+            },
+            _ => {
+                out.push(src[i]);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+fn hex_val(b: u8) -> u8 {
+    match b.is_ascii_alphabetic() {
+        true => (b | 0x20) - b'a' + 10,
+        false => b - b'0',
+    }
+}
+
+/// `strstr` — where `needle` begins in `haystack`. An empty needle is at zero,
+/// which is C's answer and not `windows(0)`'s panic.
+pub(super) fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    match needle.is_empty() {
+        true => Some(0),
+        false => haystack.windows(needle.len()).position(|w| w == needle),
+    }
 }
 
 /// `MaxStrLen` (`ttset.c:75`) — the buffer `_ParseParam` reads a token into,

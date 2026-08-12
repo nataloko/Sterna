@@ -27,7 +27,9 @@
 //!   ("SSH") and deletes it; for any other value it sets `Enabled = 0` and
 //!   deliberately leaves the option in place for Tera Term to read as telnet.
 
-use super::{after_ci, eq_ci, lower, token_spans};
+use super::{
+    after_ci, apply_edits, eq_ci, lower, percent_decode, switch_body, token_spans, Action,
+};
 use crate::services::scanf_int;
 
 /// The four icons `/ssh-icon=` can name (`ttxssh.c:1604`), which are resource
@@ -139,24 +141,6 @@ pub struct SshOptions {
     /// in a message box — the only diagnostic anywhere in either parser. Kept
     /// so a frontend can show it rather than swallowing a typo.
     pub unknown: Vec<Vec<u8>>,
-}
-
-/// What TTSSH did with one token — `action`, which is `OPTION_NONE`,
-/// `OPTION_CLEAR` or `OPTION_REPLACE` (`ttxssh.h`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Action {
-    /// Not TTSSH's, or deliberately left for Tera Term to read.
-    Keep,
-    /// Consumed: blanked out of the line.
-    Clear,
-    /// Rewritten in place — an `ssh://` URL or a `user@host`.
-    ///
-    /// The payload is the option buffer **as upstream leaves it**, which is
-    /// always as long as the token was: the URL arm space-fills the tail and the
-    /// `user@host` arm turns the user part into leading spaces. The line keeps
-    /// that padding, since it is what the next parser reads; the token path
-    /// trims it, since there is no line for it to sit in.
-    Replace(Vec<u8>),
 }
 
 /// `TTXParseParam` — the options, and the line with them taken out.
@@ -484,17 +468,6 @@ fn padded(mut v: Vec<u8>, len: usize) -> Vec<u8> {
     v
 }
 
-/// `option[0] == '-' || option[0] == '/'` — and the rest of the token.
-///
-/// Both leaders, which is TTSSH's alone: Tera Term's own parser tests for `/`
-/// only, so `-nolog` reaches nobody.
-fn switch_body(tok: &[u8]) -> Option<&[u8]> {
-    match tok.first() {
-        Some(b'-') | Some(b'/') => Some(&tok[1..]),
-        _ => None,
-    }
-}
-
 /// `wcsncmp(a, b, n) == 0` — a case-**sensitive** prefix, which is what most of
 /// this file uses and is the reason `/SSH` does nothing.
 fn after_cs<'a>(t: &'a [u8], prefix: &[u8]) -> Option<&'a [u8]> {
@@ -503,84 +476,6 @@ fn after_cs<'a>(t: &'a [u8], prefix: &[u8]) -> Option<&'a [u8]> {
 
 fn strip_cs<'a>(t: &'a [u8], prefix: &[u8]) -> Option<&'a [u8]> {
     t.strip_prefix(prefix)
-}
-
-/// `percent_decode` (`ttxssh.c:1438`) — `%` and two hex digits, and anything
-/// else copied through. Only the URL form decodes; `/user=` and `/passwd=` do
-/// not, so the same password is written two different ways.
-fn percent_decode(src: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(src.len());
-    let mut i = 0;
-    while i < src.len() {
-        let hex = |b: u8| b.is_ascii_hexdigit().then(|| hex_val(b));
-        match (src.get(i), src.get(i + 1).copied(), src.get(i + 2).copied()) {
-            (Some(b'%'), Some(h), Some(l)) => match (hex(h), hex(l)) {
-                (Some(h), Some(l)) => {
-                    out.push(h << 4 | l);
-                    i += 3;
-                }
-                _ => {
-                    out.push(src[i]);
-                    i += 1;
-                }
-            },
-            _ => {
-                out.push(src[i]);
-                i += 1;
-            }
-        }
-    }
-    out
-}
-
-fn hex_val(b: u8) -> u8 {
-    match b.is_ascii_alphabetic() {
-        true => (b | 0x20) - b'a' + 10,
-        false => b - b'0',
-    }
-}
-
-/// `OPTION_CLEAR` and `OPTION_REPLACE`, applied back to front so the earlier
-/// spans keep their offsets.
-///
-/// Clearing fills the whole span — separator included — with spaces. Replacing
-/// fills it and then writes the new text one character in, which is upstream's
-/// `wmemcpy(cur+1, option, …)` and is why the span always has room: `cur` is
-/// where the previous token ended, so at least one separator is inside it.
-fn apply_edits(line: &mut [u8], mut edits: Vec<(std::ops::Range<usize>, Option<Vec<u8>>)>) {
-    edits.sort_by_key(|(s, _)| s.start);
-    for (span, replacement) in edits.into_iter().rev() {
-        line[span.clone()].fill(b' ');
-        if let Some(text) = replacement {
-            let at = span.start + 1;
-            let end = (at + text.len()).min(line.len());
-            if at < end {
-                line[at..end].copy_from_slice(&text[..end - at]);
-            }
-        }
-    }
-}
-
-/// Both halves, in the order upstream runs them: the plugin first, then the
-/// terminal over what it left.
-///
-/// This is what a frontend or a macro's `connect` wants — the two parsers are
-/// not independent, since an `ssh://` URL only becomes a host name because
-/// TTSSH rewrote it into one.
-pub fn parse_both(line: &[u8], max_com_port: u16) -> (super::CommandLine, SshOptions) {
-    let (opts, rest) = parse(line);
-    (super::CommandLine::parse(&rest, max_com_port), opts)
-}
-
-/// [`parse_both`] for the argument of a macro's `connect`, which has no program
-/// name in front of it.
-pub fn parse_both_argument(arg: &[u8], max_com_port: u16) -> (super::CommandLine, SshOptions) {
-    let mut line = b"a ".to_vec();
-    line.extend_from_slice(arg);
-    let (opts, rest) = parse(&line);
-    let mut cmd = super::CommandLine::parse_argument(&rest[2..], max_com_port);
-    cmd.raw = line;
-    (cmd, opts)
 }
 
 #[cfg(test)]
@@ -594,7 +489,8 @@ mod tests {
     }
 
     fn both(line: &str) -> (CommandLine, SshOptions) {
-        parse_both(line.as_bytes(), DEFAULT_MAX_COM_PORT)
+        let p = crate::cmdline::parse_all(line.as_bytes(), DEFAULT_MAX_COM_PORT);
+        (p.cmd, p.ssh)
     }
 
     fn text(v: &Option<Vec<u8>>) -> String {
@@ -939,7 +835,7 @@ mod tests {
     /// open an SSH session.
     #[test]
     fn a_connect_argument_goes_through_both_halves() {
-        let (cmd, o) = parse_both_argument(
+        let crate::cmdline::Parsed { cmd, ssh: o, .. } = crate::cmdline::parse_all_argument(
             b"myhost:22 /ssh /auth=password /user=me /passwd=pw",
             DEFAULT_MAX_COM_PORT,
         );

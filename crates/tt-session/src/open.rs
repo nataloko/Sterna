@@ -190,10 +190,15 @@ impl Startup {
         rows: u16,
     ) -> (Startup, CommandLine) {
         let max = settings.serial_max_com_port.clamp(0, i32::from(u16::MAX)) as u16;
-        let (cmd, ssh) = tt_config::cmdline::ssh::parse_both_argument(arg, max);
-        cmd.apply(settings);
-        let startup = Startup::of(&cmd, &ssh, settings, cols, rows);
-        (startup, cmd)
+        let p = tt_config::cmdline::parse_all_argument(arg, max);
+        p.cmd.apply(settings);
+        // After the terminal's own, because upstream's plugin owns a settings
+        // record of its own and replaces it entire — so a `/proxy=` in a
+        // macro's `connect` outlives the connection it was given for, exactly
+        // as the line's `/BAUD=` and `/T=` do.
+        p.proxy.apply(settings);
+        let startup = Startup::of(&p.cmd, &p.ssh, settings, cols, rows);
+        (startup, p.cmd)
     }
 }
 
@@ -629,10 +634,11 @@ mod tests {
     /// A command line, applied, and then resolved — which is the order the
     /// frontend has to use and the order upstream uses.
     fn startup(line: &str) -> Startup {
-        let (cmd, ssh) = tt_config::cmdline::ssh::parse_both(line.as_bytes(), DEFAULT_MAX_COM_PORT);
+        let p = tt_config::cmdline::parse_all(line.as_bytes(), DEFAULT_MAX_COM_PORT);
         let mut s = Settings::default();
-        cmd.apply(&mut s);
-        Startup::of(&cmd, &ssh, &s, 80, 24)
+        p.cmd.apply(&mut s);
+        p.proxy.apply(&mut s);
+        Startup::of(&p.cmd, &p.ssh, &s, 80, 24)
     }
 
     /// The three answers, and which test belongs to which transport.
@@ -805,7 +811,7 @@ mod tests {
     /// already been applied to — so this is one path and not two.
     #[test]
     fn the_serial_parameters_come_through_the_settings() {
-        let (cmd, ssh) = tt_config::cmdline::ssh::parse_both(
+        let tt_config::cmdline::Parsed { cmd, ssh, .. } = tt_config::cmdline::parse_all(
             b"ttermpro /C=1 /SPEED=115200 /CPARITY=even /CDATABIT=7 /CSTOPBIT=2 /CFLOWCTRL=rtscts",
             DEFAULT_MAX_COM_PORT,
         );
@@ -974,6 +980,56 @@ mod tests {
         assert_eq!(p.prompts.hostname, "Host? ");
         assert_eq!(p.prompts.connected, "-- Connected to ");
         assert_eq!(p.port(), 23);
+    }
+
+    /// ...and the command line reaches the same place, which is three parsers
+    /// and two settings layers between `/proxy=` and a socket.
+    #[test]
+    fn a_command_line_proxy_reaches_the_transport() {
+        let of = |line: &[u8]| {
+            let p = tt_config::cmdline::parse_all(line, DEFAULT_MAX_COM_PORT);
+            let mut s = Settings::default();
+            p.cmd.apply(&mut s);
+            p.proxy.apply(&mut s);
+            (p, s)
+        };
+
+        let (p, s) = of(b"ttermpro -proxy=socks5://bob:secret@p.example:1080 myhost /ssh");
+        assert_eq!(p.cmd.host_name, b"myhost", "the host is Tera Term's own");
+        let proxy = proxy_params(&s).expect("the line named a proxy");
+        assert_eq!(proxy.kind, ProxyKind::Socks5);
+        assert_eq!(proxy.host, "p.example");
+        assert_eq!(proxy.port(), 1080);
+        assert_eq!(proxy.user.as_deref(), Some("bob"));
+        assert_eq!(proxy.pass.as_deref(), Some("secret"));
+        // The five prompts are still the schema's: the URL cannot carry them,
+        // so they are the one part of the record `/proxy=` does not replace.
+        assert_eq!(proxy.prompts.connected, "-- Connected to ");
+        assert_eq!(
+            ssh_params(&p.ssh, &s, "myhost", 80, 24).proxy.as_deref(),
+            Some(&proxy)
+        );
+
+        // `-noproxy` is a proxy of type `none`, which is no proxy.
+        let (_, s) = of(b"ttermpro -proxy=http://p:8080 -noproxy myhost");
+        assert!(proxy_params(&s).is_none());
+
+        // The bare form, whose whole point is that it carries the host too —
+        // and which upstream applies only because `_ParseParam` found none.
+        let (p, s) = of(b"ttermpro telnet://p.example:8023/realhost");
+        assert_eq!(p.cmd.host_name, b"realhost");
+        let proxy = proxy_params(&s).expect("the token named a proxy");
+        assert_eq!(proxy.kind, ProxyKind::Telnet);
+        assert_eq!(proxy.host, "p.example");
+        assert_eq!(proxy.port(), 8023);
+        assert!(matches!(
+            Startup::of(&p.cmd, &p.ssh, &s, 80, 24),
+            Startup::Open(Target::Telnet { .. })
+        ));
+
+        // ...and a host Tera Term found for itself is not overwritten by one.
+        let (p, _) = of(b"ttermpro socks5://p:1080/other realhost");
+        assert_eq!(p.cmd.host_name, b"realhost");
     }
 
     /// The two transports upstream has and this does not say so, rather than
