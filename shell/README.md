@@ -122,6 +122,29 @@ metrics, which is Wine's font stack rather than an answer about Windows.
 Nothing left failing there is ours; native Windows is still the authority for
 the other three.
 
+## The updater is loaded only when asked for
+
+Help > Check for Updates is the only trigger. Sterna makes no startup request
+and has no update timer. The action loads `sterna_updater` from the installed
+tree, creates its `QObject` through one C symbol and invokes `check` by name.
+The main executable therefore does not link Qt Network or map a TLS backend
+during an ordinary terminal session; the direct-link prototype cost about 5 MB
+of idle PSS before it had made a request.
+
+The updater verifies the detached manifest signature before it reads a version,
+URL or size from that file. A confirmed download is bounded by the signed size
+as it arrives, then checked for exact size, SHA-256 and an artifact Ed25519
+signature. Linux atomically replaces the current AppImage for the next start;
+Windows launches the verified NSIS installer elevated and lets that installer
+wait for this process before it touches the installed tree. A loose build opens
+the release page rather than replacing an arbitrary file.
+
+`update_test` covers the committed signer fixture, strict manifest parsing and
+atomic executable replacement. `update_load_test` links no Qt Network and
+proves the exact dynamic-library seam the terminal uses, including destruction
+before unload. Package-specific signing, TLS and installer details live under
+`packaging/`.
+
 ## The event loop has no timer in it
 
 This is the design decision everything else hangs off.

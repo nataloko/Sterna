@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-12 · **Stage:** 4 active · **Commits:** 528
+**Last updated:** 2026-08-12 · **Stage:** 4 complete · **Commits:** 541
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -5527,7 +5527,7 @@ ok` under Wine. The live-settings ABI is also compiled and driven from C.
 and an executable test boundary: Windows, ConPTY and serial, the installer,
 languages, terminal depth, tabs and duplication, proxying, and printing.
 
-### 🔵 Stage 4 — depth and polish (4–6 months)
+### ✅ Stage 4 — depth and polish — **COMPLETE 2026-08-12**
 
 DEC special graphics (line drawing — not CJK) already landed with the Stage 1
 VT engine and renderer. The Lua plugin surface is complete as of 2026-08-12:
@@ -5537,7 +5537,7 @@ per terminal tab; filters use an isolated, bounded fast-path VM so a wait or
 dialog cannot stop terminal I/O, with scalar filter and setting controls shared
 between the two. Typed plugin pages join the generated settings dialog, read
 and preserve the active INI, apply live, and copy with a duplicated tab. Sixel
-landed on 2026-08-12; a self-updater remains. **No deb** — the AppImage-only
+and the signed self-updater landed on 2026-08-12. **No deb** — the AppImage-only
 decision in Stage 1 covers this too.
 
 **Sixel is inline, bounded and scrollback-aware, 2026-08-12.** `tt-vt` streams
@@ -5566,6 +5566,27 @@ xterm's `;4` marker must be told to emit sixel; those which query the capability
 directly get a useful answer. The core, C ABI, Qt renderer and an external
 encoder each have an executable boundary. See `docs/sixel.md`.
 
+**Signed, user-initiated updates close Stage 4, 2026-08-12.** Nothing contacts
+the release server at startup. Help > Check for Updates loads a local updater
+library on demand, verifies a detached Ed25519 signature before trusting the
+manifest's version, URL or size, and then checks the selected artifact's exact
+size, SHA-256 and its own signature. The 256 KiB manifest, 1 KiB signature and
+128 MiB artifact ceilings are enforced while bytes arrive, not after an
+unbounded download. The signing tool derives the public half from the encrypted
+release key and refuses a key that does not match the one compiled into the C
+ABI; its public fixture crosses that ABI in both Rust and Qt tests.
+
+On Linux, `QSaveFile` writes beside the running AppImage, restores its execute
+permissions before the atomic rename and leaves the mounted old image running
+until the next start. On Windows, the verified NSIS installer waits for the old
+process before uninstalling anything, upgrades silently and restarts through
+Explorer rather than leaving an elevated terminal. Loose builds open the
+release page instead of guessing what to replace. Qt Network and its TLS stack
+are absent from an ordinary terminal's maps: linking them directly measured
+about 5 MB more idle PSS, so `sterna_updater` is loaded only for the explicit
+action. Both packages carry the TLS plugin their platform needs, including the
+Windows Schannel backend which import-table discovery cannot see.
+
 **The macro reference is generated, 2026-08-12.** `docs/macro/` converts all
 214 pages of the pinned English Tera Term macro manual to Markdown and retains
 its one diagram. The command index takes its 209 accepted spellings from
@@ -5574,6 +5595,11 @@ generation fails if either the interpreter or the upstream index names a
 command the other does not. CI also byte-compares the committed tree against
 the pinned manual. The visible compatibility note distinguishes command
 semantics, which Sterna keeps, from upstream executable and UI instructions.
+
+**Stage 4 is complete.** Its scope now has executable boundaries for DEC line
+graphics, Lua extensions, sixel and both signed package-update paths. The
+four-stage roadmap is complete without widening into deb packaging or any of
+the permanently dropped compatibility surfaces below.
 
 **Realistic total to a credible replacement: 15–20 months solo with AI
 assistance.** Full parity is 3+ years and should be explicitly renounced in the
