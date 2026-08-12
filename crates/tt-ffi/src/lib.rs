@@ -65,6 +65,7 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::ptr;
@@ -5669,6 +5670,30 @@ pub struct TtPluginAction {
     pub shortcut: *const c_char,
 }
 
+/// One typed field on a Lua plugin's custom settings page.
+///
+/// Strings are UTF-8, borrowed from [`TtPlugins`], and valid until
+/// [`tt_plugins_free`]. `id` addresses the field in the value, choice and set
+/// calls; `page_id` groups adjacent fields into one dialog tab.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtPluginSetting {
+    pub id: usize,
+    pub page_id: usize,
+    pub plugin: *const c_char,
+    pub page: *const c_char,
+    pub section: *const c_char,
+    pub key: *const c_char,
+    pub name: *const c_char,
+    pub label: *const c_char,
+    pub description: *const c_char,
+    pub default_value: *const c_char,
+    pub kind: TtSettingKind,
+    pub min: i32,
+    pub max: i32,
+    pub choices: usize,
+}
+
 struct PluginAction {
     plugin_index: usize,
     callback: tt_lua::CallbackId,
@@ -5677,6 +5702,24 @@ struct PluginAction {
     menu: Option<CString>,
     label: Option<CString>,
     shortcut: Option<CString>,
+}
+
+struct PluginSetting {
+    page_id: usize,
+    page: tt_lua::SettingPage,
+    field_index: usize,
+    plugin: CString,
+    title: CString,
+    section: CString,
+    key: CString,
+    name: CString,
+    label: CString,
+    description: CString,
+    default_value: CString,
+    kind: TtSettingKind,
+    min: i32,
+    max: i32,
+    choices: Vec<CString>,
 }
 
 enum PluginCommand {
@@ -5701,6 +5744,8 @@ pub struct TtPlugins {
     pending: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     ui: CUi,
     actions: Vec<PluginAction>,
+    settings: Vec<PluginSetting>,
+    setting_value: CString,
     hooks: [bool; 2],
 }
 
@@ -5765,6 +5810,19 @@ fn plugin_paths(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
+fn plugin_stored_settings(path: &Path) -> std::io::Result<tt_lua::StoredSettings> {
+    let ini = Ini::load(path)?;
+    let mut stored = tt_lua::StoredSettings::default();
+    for section in ini.sections() {
+        for key in ini.keys(&section) {
+            if let Some(value) = ini.get(&section, &key) {
+                stored.insert(&section, &key, value);
+            }
+        }
+    }
+    Ok(stored)
+}
+
 /// Load every `.lua` file directly inside `dir`, in filename order.
 ///
 /// A missing directory is a successful empty plugin set. A bad file rejects
@@ -5782,13 +5840,47 @@ pub extern "C" fn tt_plugins_load(
     ui: *const TtMacroUi,
 ) -> *mut TtPlugins {
     let s = session!(session, ptr::null_mut());
-    if dir.is_null() {
-        fail(TT_ERR_INVALID, "null plugin directory");
+    let Ok(dir) = (unsafe { str_arg(dir, usize::MAX) }) else {
         return ptr::null_mut();
-    }
-    let dir = PathBuf::from(
-        String::from_utf8_lossy(unsafe { CStr::from_ptr(dir) }.to_bytes()).into_owned(),
-    );
+    };
+    load_plugins(s, PathBuf::from(dir), tt_lua::StoredSettings::default(), ui)
+}
+
+/// Load plugins with their custom values from `settings_path`.
+///
+/// This is the frontend path. The values are supplied while each top-level
+/// chunk declares its page, so code after `sterna.settings` observes the saved
+/// value immediately. [`tt_plugins_load`] remains the defaults-only seam for
+/// an embedding which has no settings file.
+#[no_mangle]
+pub extern "C" fn tt_plugins_load_with_settings(
+    session: *mut TtSession,
+    dir: *const c_char,
+    settings_path: *const c_char,
+    ui: *const TtMacroUi,
+) -> *mut TtPlugins {
+    let s = session!(session, ptr::null_mut());
+    let (dir, settings_path) =
+        match unsafe { (str_arg(dir, usize::MAX), str_arg(settings_path, usize::MAX)) } {
+            (Ok(dir), Ok(settings_path)) => (PathBuf::from(dir), PathBuf::from(settings_path)),
+            _ => return ptr::null_mut(),
+        };
+    let stored = match plugin_stored_settings(&settings_path) {
+        Ok(stored) => stored,
+        Err(error) => {
+            fail(TT_ERR_IO, format!("{}: {error}", settings_path.display()));
+            return ptr::null_mut();
+        }
+    };
+    load_plugins(s, dir, stored, ui)
+}
+
+fn load_plugins(
+    s: &mut TtSession,
+    dir: PathBuf,
+    stored: tt_lua::StoredSettings,
+    ui: *const TtMacroUi,
+) -> *mut TtPlugins {
     let paths = match plugin_paths(&dir) {
         Ok(paths) => paths,
         Err(error) => {
@@ -5807,7 +5899,11 @@ pub extern "C" fn tt_plugins_load(
                 return ptr::null_mut();
             }
         };
-        match tt_lua::Plugin::load(path.display().to_string(), body.clone()) {
+        match tt_lua::Plugin::load_with_settings(
+            path.display().to_string(),
+            body.clone(),
+            stored.clone(),
+        ) {
             Ok(plugin) => {
                 plugins.push(plugin);
                 sources.push(body);
@@ -5833,6 +5929,9 @@ pub extern "C" fn tt_plugins_load(
     let stream_filters = tt_lua::StreamFilters::new(stream_plugins);
 
     let mut actions = Vec::new();
+    let mut settings = Vec::new();
+    let mut setting_addresses = HashMap::<(String, String), String>::new();
+    let mut page_id = 0;
     let mut hooks = [false; 2];
     for (plugin_index, plugin) in plugins.iter().enumerate() {
         let name = Path::new(plugin.name())
@@ -5861,6 +5960,55 @@ pub extern "C" fn tt_plugins_load(
                 shortcut: Some(cstring(&key.sequence)),
             });
         }
+        for page in plugin.settings() {
+            for (field_index, field) in page.fields.iter().enumerate() {
+                let address = (
+                    page.section.trim().to_ascii_lowercase(),
+                    field.key.trim().to_ascii_lowercase(),
+                );
+                if let Some(other) = setting_addresses.insert(address, name.to_string()) {
+                    fail(
+                        TT_ERR_INVALID,
+                        format!(
+                            "Lua plugins {other} and {name} both declare [{}] {}",
+                            page.section, field.key
+                        ),
+                    );
+                    return ptr::null_mut();
+                }
+                let (kind, min, max, choices) = match &field.kind {
+                    tt_lua::SettingKind::Bool => (TtSettingKind::Bool, 0, 0, Vec::new()),
+                    tt_lua::SettingKind::Integer { min, max } => {
+                        (TtSettingKind::IntRange, *min, *max, Vec::new())
+                    }
+                    tt_lua::SettingKind::String => (TtSettingKind::Str, 0, 0, Vec::new()),
+                    tt_lua::SettingKind::Enum(choices) => (
+                        TtSettingKind::Enum,
+                        0,
+                        0,
+                        choices.iter().map(|choice| cstring(choice)).collect(),
+                    ),
+                };
+                settings.push(PluginSetting {
+                    page_id,
+                    page: page.clone(),
+                    field_index,
+                    plugin: cstring(&name),
+                    title: cstring(&page.title),
+                    section: cstring(&page.section),
+                    key: cstring(&field.key),
+                    name: cstring(&field.name),
+                    label: cstring(&field.label),
+                    description: cstring(&field.description),
+                    default_value: cstring(&page.default_value(field_index).unwrap_or_default()),
+                    kind,
+                    min,
+                    max,
+                    choices,
+                });
+            }
+            page_id += 1;
+        }
         hooks[0] |= plugin.has_hook(tt_lua::Hook::Connect);
         hooks[1] |= plugin.has_hook(tt_lua::Hook::Disconnect);
     }
@@ -5879,6 +6027,8 @@ pub extern "C" fn tt_plugins_load(
             exit_code: 0,
         },
         actions,
+        settings,
+        setting_value: CString::default(),
         hooks,
     };
 
@@ -5960,6 +6110,184 @@ pub extern "C" fn tt_plugins_action(
             .map_or(ptr::null(), |value| value.as_ptr()),
     };
     true
+}
+
+/// How many custom setting fields the loaded plugins declared.
+#[no_mangle]
+pub extern "C" fn tt_plugins_setting_count(plugins: *const TtPlugins) -> usize {
+    unsafe { plugins.as_ref() }.map_or(0, |plugins| plugins.settings.len())
+}
+
+/// Describe one custom setting field. False for nulls or an invalid index.
+#[no_mangle]
+pub extern "C" fn tt_plugins_setting(
+    plugins: *const TtPlugins,
+    index: usize,
+    out: *mut TtPluginSetting,
+) -> bool {
+    let Some(plugins) = (unsafe { plugins.as_ref() }) else {
+        set_error("null TtPlugins");
+        return false;
+    };
+    let Some(setting) = plugins.settings.get(index) else {
+        set_error("plugin setting index out of range");
+        return false;
+    };
+    let Some(out) = (unsafe { out.as_mut() }) else {
+        set_error("null TtPluginSetting");
+        return false;
+    };
+    *out = TtPluginSetting {
+        id: index,
+        page_id: setting.page_id,
+        plugin: setting.plugin.as_ptr(),
+        page: setting.title.as_ptr(),
+        section: setting.section.as_ptr(),
+        key: setting.key.as_ptr(),
+        name: setting.name.as_ptr(),
+        label: setting.label.as_ptr(),
+        description: setting.description.as_ptr(),
+        default_value: setting.default_value.as_ptr(),
+        kind: setting.kind,
+        min: setting.min,
+        max: setting.max,
+        choices: setting.choices.len(),
+    };
+    true
+}
+
+/// The `n`th spelling accepted by an enum plugin setting, or null.
+#[no_mangle]
+pub extern "C" fn tt_plugins_setting_choice(
+    plugins: *const TtPlugins,
+    index: usize,
+    n: usize,
+) -> *const c_char {
+    unsafe { plugins.as_ref() }
+        .and_then(|plugins| plugins.settings.get(index))
+        .and_then(|setting| setting.choices.get(n))
+        .map_or(ptr::null(), |choice| choice.as_ptr())
+}
+
+/// One custom setting's current value in its INI spelling.
+///
+/// Borrowed until the next value call on this plugin handle.
+#[no_mangle]
+pub extern "C" fn tt_plugins_setting_value(plugins: *mut TtPlugins, index: usize) -> *const c_char {
+    let Some(plugins) = (unsafe { plugins.as_mut() }) else {
+        set_error("null TtPlugins");
+        return ptr::null();
+    };
+    let Some(setting) = plugins.settings.get(index) else {
+        set_error("plugin setting index out of range");
+        return ptr::null();
+    };
+    plugins.setting_value = cstring(&setting.page.value(setting.field_index).unwrap_or_default());
+    plugins.setting_value.as_ptr()
+}
+
+/// Set one custom value and publish it to the plugin's callback and stream VMs.
+#[no_mangle]
+pub extern "C" fn tt_plugins_set_setting(
+    plugins: *mut TtPlugins,
+    index: usize,
+    value: *const c_char,
+) -> TtStatus {
+    let Some(plugins) = (unsafe { plugins.as_mut() }) else {
+        return fail(TT_ERR_INVALID, "null TtPlugins");
+    };
+    let Ok(value) = (unsafe { str_arg(value, usize::MAX) }) else {
+        return TT_ERR_INVALID;
+    };
+    let Some(setting) = plugins.settings.get(index) else {
+        return fail(TT_ERR_INVALID, "plugin setting index out of range");
+    };
+    match setting.page.set(setting.field_index, value) {
+        Ok(()) => TT_OK,
+        Err(error) => fail(TT_ERR_INVALID, error),
+    }
+}
+
+/// Copy live plugin values between two tabs with the same declarations.
+#[no_mangle]
+pub extern "C" fn tt_plugins_copy_settings(
+    destination: *mut TtPlugins,
+    source: *const TtPlugins,
+) -> TtStatus {
+    if destination.cast_const() == source {
+        return TT_OK;
+    }
+    let Some(destination) = (unsafe { destination.as_mut() }) else {
+        return fail(TT_ERR_INVALID, "null destination TtPlugins");
+    };
+    let Some(source) = (unsafe { source.as_ref() }) else {
+        return fail(TT_ERR_INVALID, "null source TtPlugins");
+    };
+    if destination.settings.len() != source.settings.len() {
+        return fail(TT_ERR_INVALID, "Lua plugin settings declarations differ");
+    }
+    for (destination, source) in destination.settings.iter().zip(&source.settings) {
+        if !destination
+            .section
+            .as_bytes()
+            .eq_ignore_ascii_case(source.section.as_bytes())
+            || !destination
+                .key
+                .as_bytes()
+                .eq_ignore_ascii_case(source.key.as_bytes())
+            || destination.kind != source.kind
+        {
+            return fail(TT_ERR_INVALID, "Lua plugin settings declarations differ");
+        }
+        let value = source.page.value(source.field_index).unwrap_or_default();
+        if let Err(error) = destination.page.set(destination.field_index, &value) {
+            return fail(TT_ERR_INVALID, error);
+        }
+    }
+    TT_OK
+}
+
+/// Write every declared plugin value into its INI section.
+///
+/// The existing file is parsed and preserved just like the core settings
+/// save: comments, ordering, encoding and keys no plugin owns survive.
+#[no_mangle]
+pub extern "C" fn tt_plugins_settings_save(
+    plugins: *const TtPlugins,
+    path: *const c_char,
+) -> TtStatus {
+    let Some(plugins) = (unsafe { plugins.as_ref() }) else {
+        return fail(TT_ERR_INVALID, "null TtPlugins");
+    };
+    let Ok(path) = (unsafe { str_arg(path, usize::MAX) }) else {
+        return TT_ERR_INVALID;
+    };
+    let path = Path::new(path);
+    let mut ini = match Ini::load(path) {
+        Ok(ini) => ini,
+        Err(error) => return fail(TT_ERR_IO, format!("{}: {error}", path.display())),
+    };
+    for setting in &plugins.settings {
+        let value = setting.page.value(setting.field_index).unwrap_or_default();
+        if !ini.set(
+            setting.section.to_string_lossy().as_ref(),
+            setting.key.to_string_lossy().as_ref(),
+            &value,
+        ) {
+            return fail(
+                TT_ERR_INVALID,
+                format!(
+                    "plugin setting [{}] {} cannot be written",
+                    setting.section.to_string_lossy(),
+                    setting.key.to_string_lossy()
+                ),
+            );
+        }
+    }
+    match ini.save(path) {
+        Ok(()) => TT_OK,
+        Err(error) => fail(TT_ERR_IO, format!("{}: {error}", path.display())),
+    }
 }
 
 fn start_plugin_command(plugins: &TtPlugins, command: PluginCommand) -> TtStatus {

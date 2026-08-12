@@ -1952,9 +1952,20 @@ static void test_plugins(void)
     }
     const char source[] =
         "local count = 0\n"
+        "local preferences = sterna.settings { title = 'ABI plugin', "
+        "section = 'Lua ABI', fields = {\n"
+        "  { name = 'enabled', label = 'Enabled', kind = 'bool', default = true },\n"
+        "  { name = 'retries', label = 'Retries', kind = 'int', min = 1, max = 9, default = 3 },\n"
+        "  { name = 'prefix', key = 'PromptPrefix', label = 'Prefix', "
+        "description = 'Input prefix', kind = 'string', default = 'default:' },\n"
+        "  { name = 'mode', label = 'Mode', kind = 'enum', "
+        "choices = {'fast', 'safe'}, default = 'fast' },\n"
+        "} }\n"
+        "local loaded_prefix = preferences.prefix\n"
         "local inbound\n"
         "inbound = sterna.filter('input', function(bytes)\n"
         "  if bytes == 'probe' then return inbound.replacement end\n"
+        "  if bytes == 'setting' then return loaded_prefix .. preferences.prefix end\n"
         "  if bytes == 'boom' then error('broken filter') end\n"
         "  return bytes\n"
         "end)\n"
@@ -1968,6 +1979,21 @@ static void test_plugins(void)
     CHECK(fwrite(source, 1, sizeof source - 1, file) == sizeof source - 1);
     fclose(file);
 
+    char settings_path[512];
+    snprintf(settings_path, sizeof settings_path, "%s/sterna.ini", dir);
+    file = fopen(settings_path, "wb");
+    CHECK(file != NULL);
+    if (!file) {
+        unlink(path);
+        rmdir(dir);
+        return;
+    }
+    const char saved_settings[] =
+        "[Lua ABI]\nEnabled=off\nRetries=7\nPromptPrefix=saved:\nMode=safe\n";
+    CHECK(fwrite(saved_settings, 1, sizeof saved_settings - 1, file)
+          == sizeof saved_settings - 1);
+    fclose(file);
+
     TtConfig cfg;
     tt_config_default(&cfg);
     TtSession *s = tt_session_new(&cfg);
@@ -1976,7 +2002,8 @@ static void test_plugins(void)
     ui.user = &log;
     ui.error = on_error;
 
-    TtPlugins *plugins = tt_plugins_load(s, dir, &ui);
+    TtPlugins *plugins =
+        tt_plugins_load_with_settings(s, dir, settings_path, &ui);
     CHECK(plugins != NULL);
     if (!plugins) {
         fprintf(stderr, "  %s\n", tt_last_error());
@@ -1986,6 +2013,7 @@ static void test_plugins(void)
         return;
     }
     CHECK(tt_plugins_action_count(plugins) == 2);
+    CHECK(tt_plugins_setting_count(plugins) == 4);
     CHECK(tt_plugins_poll_fd(plugins) >= 0);
     CHECK(tt_plugins_wait_handle(plugins) == NULL);
 
@@ -2010,6 +2038,46 @@ static void test_plugins(void)
     CHECK(key.menu == NULL && key.label == NULL);
     CHECK(strcmp(key.shortcut, "Ctrl+Alt+K") == 0);
     CHECK(!tt_plugins_action(plugins, 2, &key));
+
+    TtPluginSetting enabled = {0};
+    TtPluginSetting retries = {0};
+    TtPluginSetting prefix = {0};
+    TtPluginSetting mode = {0};
+    CHECK(tt_plugins_setting(plugins, 0, &enabled));
+    CHECK(tt_plugins_setting(plugins, 1, &retries));
+    CHECK(tt_plugins_setting(plugins, 2, &prefix));
+    CHECK(tt_plugins_setting(plugins, 3, &mode));
+    CHECK(!tt_plugins_setting(plugins, 4, &mode));
+    CHECK(enabled.id == 0 && enabled.page_id == 0);
+    CHECK(strcmp(enabled.plugin, "10-counter.lua") == 0);
+    CHECK(strcmp(enabled.page, "ABI plugin") == 0);
+    CHECK(strcmp(enabled.section, "Lua ABI") == 0);
+    CHECK(strcmp(enabled.name, "enabled") == 0);
+    CHECK(strcmp(enabled.key, "enabled") == 0);
+    CHECK(strcmp(enabled.label, "Enabled") == 0);
+    CHECK(enabled.kind == TT_SETTING_KIND_BOOL);
+    CHECK(strcmp(tt_plugins_setting_value(plugins, enabled.id), "off") == 0);
+    CHECK(retries.kind == TT_SETTING_KIND_INT_RANGE);
+    CHECK(retries.min == 1 && retries.max == 9);
+    CHECK(strcmp(tt_plugins_setting_value(plugins, retries.id), "7") == 0);
+    CHECK(prefix.kind == TT_SETTING_KIND_STR);
+    CHECK(strcmp(prefix.key, "PromptPrefix") == 0);
+    CHECK(strcmp(prefix.description, "Input prefix") == 0);
+    CHECK(strcmp(prefix.default_value, "default:") == 0);
+    CHECK(strcmp(tt_plugins_setting_value(plugins, prefix.id), "saved:") == 0);
+    CHECK(mode.kind == TT_SETTING_KIND_ENUM && mode.choices == 2);
+    CHECK(strcmp(tt_plugins_setting_choice(plugins, mode.id, 0), "fast") == 0);
+    CHECK(strcmp(tt_plugins_setting_choice(plugins, mode.id, 1), "safe") == 0);
+    CHECK(tt_plugins_setting_choice(plugins, mode.id, 2) == NULL);
+    CHECK(strcmp(tt_plugins_setting_value(plugins, mode.id), "safe") == 0);
+    CHECK(tt_plugins_set_setting(plugins, retries.id, "10") == TT_ERR_INVALID);
+    CHECK(tt_plugins_set_setting(plugins, prefix.id, "live:") == TT_OK);
+
+    /* The saved value was visible before the rest of the top level copied it,
+     * while the stream VM sees the live value through the shared proxy. */
+    tt_session_feed(s, (const uint8_t *)"setting", 7);
+    expect_row(s, 0, "saved:live:");
+    tt_session_feed(s, (const uint8_t *)"\033[2J\033[H", 7);
 
     const int fd = tt_plugins_poll_fd(plugins);
     CHECK(tt_plugins_invoke(plugins, menu.id) == TT_OK);
@@ -2063,9 +2131,35 @@ static void test_plugins(void)
     CHECK(saw_filter_error);
     expect_row(s, 0, "afterboom");
 
+    CHECK(tt_plugins_settings_save(plugins, settings_path) == TT_OK);
+    TtSession *copy_session = tt_session_new(&cfg);
+    TtPlugins *copy = tt_plugins_load(copy_session, dir, &ui);
+    CHECK(copy != NULL);
+    if (copy) {
+        CHECK(strcmp(tt_plugins_setting_value(copy, prefix.id), "default:") == 0);
+        CHECK(tt_plugins_copy_settings(copy, plugins) == TT_OK);
+        CHECK(strcmp(tt_plugins_setting_value(copy, prefix.id), "live:") == 0);
+        CHECK(strcmp(tt_plugins_setting_value(copy, enabled.id), "off") == 0);
+        tt_plugins_free(copy);
+        tt_session_unlink_plugins(copy_session);
+    }
+    tt_session_free(copy_session);
+
+    TtSession *reloaded_session = tt_session_new(&cfg);
+    TtPlugins *reloaded =
+        tt_plugins_load_with_settings(reloaded_session, dir, settings_path, &ui);
+    CHECK(reloaded != NULL);
+    if (reloaded) {
+        CHECK(strcmp(tt_plugins_setting_value(reloaded, prefix.id), "live:") == 0);
+        tt_plugins_free(reloaded);
+        tt_session_unlink_plugins(reloaded_session);
+    }
+    tt_session_free(reloaded_session);
+
     tt_plugins_free(plugins);
     tt_session_unlink_plugins(s);
     tt_session_free(s);
+    unlink(settings_path);
     unlink(path);
     rmdir(dir);
 }

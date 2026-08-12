@@ -80,8 +80,8 @@ mod xfer;
 
 pub use conn::Recv;
 pub use plugin::{
-    CallbackId, Hook, KeyBinding, MenuItem, Plugin, StreamDirection, StreamFilterResult,
-    StreamFilters, StreamPlugin,
+    CallbackId, Hook, KeyBinding, MenuItem, Plugin, SettingKind, SettingPage, StoredSettings,
+    StreamDirection, StreamFilterResult, StreamFilters, StreamPlugin,
 };
 
 /// The host, shared between every callback in one run.

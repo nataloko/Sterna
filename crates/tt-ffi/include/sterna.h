@@ -2140,6 +2140,30 @@ typedef struct {
 } TtPluginAction;
 
 /**
+ * One typed field on a Lua plugin's custom settings page.
+ *
+ * Strings are UTF-8, borrowed from [`TtPlugins`], and valid until
+ * [`tt_plugins_free`]. `id` addresses the field in the value, choice and set
+ * calls; `page_id` groups adjacent fields into one dialog tab.
+ */
+typedef struct {
+    size_t id;
+    size_t page_id;
+    const char *plugin;
+    const char *page;
+    const char *section;
+    const char *key;
+    const char *name;
+    const char *label;
+    const char *description;
+    const char *default_value;
+    TtSettingKind kind;
+    int32_t min;
+    int32_t max;
+    size_t choices;
+} TtPluginSetting;
+
+/**
  * A session lifecycle edge delivered to Lua plugins.
  */
 typedef uint32_t TtPluginHook;
@@ -3964,6 +3988,19 @@ TtPlugins *tt_plugins_load(TtSession *session,
                            const TtMacroUi *ui);
 
 /**
+ * Load plugins with their custom values from `settings_path`.
+ *
+ * This is the frontend path. The values are supplied while each top-level
+ * chunk declares its page, so code after `sterna.settings` observes the saved
+ * value immediately. [`tt_plugins_load`] remains the defaults-only seam for
+ * an embedding which has no settings file.
+ */
+TtPlugins *tt_plugins_load_with_settings(TtSession *session,
+                                         const char *dir,
+                                         const char *settings_path,
+                                         const TtMacroUi *ui);
+
+/**
  * How many menu and key actions the loaded plugins declared.
  */
 size_t tt_plugins_action_count(const TtPlugins *plugins);
@@ -3974,6 +4011,53 @@ size_t tt_plugins_action_count(const TtPlugins *plugins);
 bool tt_plugins_action(const TtPlugins *plugins,
                        size_t index,
                        TtPluginAction *out);
+
+/**
+ * How many custom setting fields the loaded plugins declared.
+ */
+size_t tt_plugins_setting_count(const TtPlugins *plugins);
+
+/**
+ * Describe one custom setting field. False for nulls or an invalid index.
+ */
+bool tt_plugins_setting(const TtPlugins *plugins,
+                        size_t index,
+                        TtPluginSetting *out);
+
+/**
+ * The `n`th spelling accepted by an enum plugin setting, or null.
+ */
+const char *tt_plugins_setting_choice(const TtPlugins *plugins,
+                                      size_t index,
+                                      size_t n);
+
+/**
+ * One custom setting's current value in its INI spelling.
+ *
+ * Borrowed until the next value call on this plugin handle.
+ */
+const char *tt_plugins_setting_value(TtPlugins *plugins, size_t index);
+
+/**
+ * Set one custom value and publish it to the plugin's callback and stream VMs.
+ */
+TtStatus tt_plugins_set_setting(TtPlugins *plugins,
+                                size_t index,
+                                const char *value);
+
+/**
+ * Copy live plugin values between two tabs with the same declarations.
+ */
+TtStatus tt_plugins_copy_settings(TtPlugins *destination,
+                                  const TtPlugins *source);
+
+/**
+ * Write every declared plugin value into its INI section.
+ *
+ * The existing file is parsed and preserved just like the core settings
+ * save: comments, ordering, encoding and keys no plugin owns survive.
+ */
+TtStatus tt_plugins_settings_save(const TtPlugins *plugins, const char *path);
 
 /**
  * Start one declared action. The callback runs asynchronously; wait on the

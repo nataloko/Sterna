@@ -205,8 +205,8 @@ impl SettingField {
                 Ok(SettingValue::Integer(value))
             }
             SettingKind::String => {
-                if value.contains('\r') || value.contains('\n') {
-                    return Err("a plugin setting cannot contain a line break".into());
+                if value.contains('\0') || value.contains('\r') || value.contains('\n') {
+                    return Err("a plugin setting cannot contain NUL or a line break".into());
                 }
                 Ok(SettingValue::String(value.to_string()))
             }
@@ -848,6 +848,9 @@ fn install_settings(
             if title.trim().is_empty() {
                 return Err(mlua::Error::runtime("settings title is empty"));
             }
+            if title.contains('\0') {
+                return Err(mlua::Error::runtime("settings title contains NUL"));
+            }
             validate_ini_section(&section)?;
 
             let mut fields = Vec::with_capacity(field_specs.raw_len());
@@ -932,6 +935,7 @@ fn install_settings(
 
 fn validate_ini_section(section: &str) -> mlua::Result<()> {
     if section.trim().is_empty()
+        || section.contains('\0')
         || section.contains(']')
         || section.contains('\r')
         || section.contains('\n')
@@ -942,7 +946,12 @@ fn validate_ini_section(section: &str) -> mlua::Result<()> {
 }
 
 fn validate_ini_key(key: &str) -> mlua::Result<()> {
-    if key.trim().is_empty() || key.contains('=') || key.contains('\r') || key.contains('\n') {
+    if key.trim().is_empty()
+        || key.contains('\0')
+        || key.contains('=')
+        || key.contains('\r')
+        || key.contains('\n')
+    {
         return Err(mlua::Error::runtime("settings INI key is invalid"));
     }
     Ok(())
@@ -969,9 +978,15 @@ fn parse_setting_field(spec: &Table) -> mlua::Result<SettingField> {
     if name.trim().is_empty() {
         return Err(mlua::Error::runtime("settings property name is empty"));
     }
+    if name.contains('\0') {
+        return Err(mlua::Error::runtime("settings property name contains NUL"));
+    }
     validate_ini_key(&key)?;
     if label.trim().is_empty() {
         return Err(mlua::Error::runtime("settings label is empty"));
+    }
+    if label.contains('\0') || description.contains('\0') {
+        return Err(mlua::Error::runtime("settings text contains NUL"));
     }
 
     let (kind, default) = match kind.as_str() {
@@ -1022,9 +1037,9 @@ fn parse_setting_field(spec: &Table) -> mlua::Result<SettingField> {
                 .to_str()
                 .map_err(|_| mlua::Error::runtime("a string setting must be UTF-8"))?
                 .to_string();
-            if default.contains('\r') || default.contains('\n') {
+            if default.contains('\0') || default.contains('\r') || default.contains('\n') {
                 return Err(mlua::Error::runtime(
-                    "a string setting's default cannot contain a line break",
+                    "a string setting's default cannot contain NUL or a line break",
                 ));
             }
             (SettingKind::String, SettingValue::String(default))
@@ -1036,9 +1051,9 @@ fn parse_setting_field(spec: &Table) -> mlua::Result<SettingField> {
             let mut values = Vec::with_capacity(choices.raw_len());
             for index in 1..=choices.raw_len() {
                 let choice: String = choices.get(index)?;
-                if choice.contains('\r') || choice.contains('\n') {
+                if choice.contains('\0') || choice.contains('\r') || choice.contains('\n') {
                     return Err(mlua::Error::runtime(
-                        "an enum choice cannot contain a line break",
+                        "an enum choice cannot contain NUL or a line break",
                     ));
                 }
                 if values.contains(&choice) {
