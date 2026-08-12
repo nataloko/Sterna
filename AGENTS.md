@@ -609,6 +609,60 @@ And for telnet:
   `ini-audit/` measured rather than assumed. A hand-rolled lookup that compares
   bytes silently loses four settings already in the schema.
 
+And for the proxy, which is a Winsock hook upstream and so has no seam at all:
+
+- **`TTProxy` is 2,155 lines for four protocols worth three hundred, and the
+  difference is all about recovering a host name.** It replaces `connect`,
+  `gethostbyname`, `WSAAsyncGetHostByName`, `WSAAsyncGetAddrInfo`, `send`,
+  `recv` and four more, because by the time `connect(2)` runs the name is
+  already a `sockaddr` and a name is what a proxy needs. Reading it as a
+  protocol implementation and porting what looks load-bearing gets the ratio
+  exactly backwards: `proxy.rs` is the four `begin_relay_*` functions and
+  nothing else, because the transports here say where they are going.
+- **The same hook is why TTSSH has no proxy and why this port needs one on
+  `SshParams`.** Both plugins are in one process upstream and neither knows
+  about the other. And the handshake here runs on a *blocking* socket even for
+  SSH, with `spawn_blocking` and `client::connect_stream`, so the four wire
+  formats have one implementation; a second async copy of a wire format is a
+  copy that drifts.
+- **`[TTProxy]`'s strings are C-escaped and quoted and `[Tera Term]`'s are
+  not**, because the section belongs to a plugin with its own INI layer —
+  `YCL`'s `IniFile::setString` wraps every value in `"` after escaping it
+  (`YCL/IniFile.h:258`) and `getString` unescapes what comes back. That is
+  load-bearing rather than tidy: `GetPrivateProfileString` trims whitespace, so
+  `TelnetConnectedMessage=-- Connected to ` loses the trailing space that makes
+  it a prompt rather than a prefix of one. The schema's `string_esc` is that
+  layer, the generator refuses a section that mixes it with `string`, and
+  `tt-config`'s round-trip test is what caught the omission.
+- **The escaping is C's with two departures, both in the decoder.** `\x` is
+  accepted and never produced — `escape` only ever emits three-digit octal — and
+  **an escape that decodes to NUL is left exactly as written**, because the test
+  for "did that decode to anything" is `ch != '\0'` (`StringUtil.h:255`). An
+  unrecognised escape keeps its backslash, which is what lets a Windows path
+  survive; `\t` is *not* unrecognised, so a hand-edited `C:\temp` comes back
+  with a tab in it.
+- **The four relay defects are in the schema and the module, not only in
+  `PLAN.md`**, because they are the four places somebody diffing the two
+  implementations will think this port is wrong. Short form: a blank
+  `ProxyPort` disables the relay while still dialling the proxy; a username
+  with no password is `strlen(NULL)` on the first HTTP connection; every SOCKS
+  reply is read with one `recv` and a short read is taken as a full one; and
+  the five `+ssl` spellings parse and then fall to `default: result = 0`.
+- **An unrecognised `ProxyType` is a direct connection, and that one *is*
+  reproduced.** It is the schema's ordinary rule for an enumerated setting, so
+  diverging here would be diverging from this file rather than from upstream —
+  but it is the one place the rule has a cost worth naming, since the user
+  believes they are behind a proxy and is not. `none` is the spelling that says
+  so on purpose.
+- **The command line is not ported yet and its options are therefore silent.**
+  `/proxy=<url>`, `/noproxy` and a bare `socks5://p:1080/realhost` token are
+  `TTProxy.h:133`'s second pass, the same shape as TTSSH's hook: it blanks what
+  it consumed and hands the rest on. Three quirks are already read and written
+  down in `PLAN.md` so the next session does not re-derive them — `/proxy=` throws
+  away any `/realhost` after the proxy, a bare URL *without* one silently clears
+  a proxy an earlier `/proxy=` set, and the recovered host is applied only if
+  Tera Term's own parser found none.
+
 And for the local pty:
 
 - **Wine's `Z:` drive can make Unix-only fixtures pass in a Windows binary.**
@@ -2573,6 +2627,51 @@ that reproducing it means reproducing a remote stack overflow.
 `Vt::dump_current_line` prints what upstream meant to print; for a line with no
 full-width character in it the two agree byte for byte, which is every line
 this port has been asked about so far.
+
+**And four more in `TTProxy`, which is a plugin rather than the terminal —
+thirty-three to thirty-six, and the first two are reachable from the shipped
+dialog with nothing hand-edited.** All four are in `ProxyWSockHook.h`, none is
+reproduced, and each is stated where somebody comparing the two
+implementations will look: `crates/tt-conn/src/proxy.rs`'s module
+documentation, the `proxy.*` rows of the settings schema, and
+`crates/tt-conn/README.md`.
+
+1. **An absent `ProxyPort` disables the relay entirely.** `getPort()` (`:442`)
+   supplies 1080 for either SOCKS, 23 for the telnet proxy and 80 for HTTP, and
+   the connect hook uses it for the *address* (`:1770`) — and then the guard
+   deciding whether to speak the protocol at all tests the raw stored port
+   instead (`if (info == NULL || info->proxy.port == 0) return result;`,
+   `:1792`). So a proxy whose port box was left blank is dialled correctly and
+   never spoken to, and the terminal talks telnet or SSH straight at a SOCKS
+   server. The dialog reaches it in one step: `onOK` explicitly permits an empty
+   port field (`:956`) and `onChanged` stores it as `GetDlgItemInt` → 0.
+2. **A username with no password crashes an HTTP proxy connection.**
+   `onChanged` stores an empty password box as NULL (`:1013`), `_save` then
+   *deletes* the key, `_load` reads `ProxyPass` only when `ProxyUser` is
+   non-NULL — and `begin_relay_http` reaches `strlen(proxy.pass)` under a test
+   of the **user** alone (`:1275`). Type a username, leave the password blank,
+   connect: `strlen(NULL)`. A clean NULL dereference rather than anything
+   exploitable, and the terminal still dies on connect.
+3. **A short read is treated as a full one, in all four SOCKS reads.**
+   `recieveFromSocket` (`:1193`) is a single `recv` whose own comment says the
+   count may be less than asked for — `1以上 受信データ数(byte)。sizeより小さい
+   場合もある。` — and every caller checks only for `SOCKET_ERROR`. The buffers
+   are uninitialised stack (`unsigned char buf[256]`), so a SOCKS4 reply split
+   across two segments has its `CD` byte read out of whatever was there, which
+   can read as 90 — request granted — on a connection the proxy refused. The
+   SOCKS5 method-selection reply has the same shape one arm earlier.
+4. **`ProxyType=http+ssl` and its four siblings parse and then do nothing.**
+   `ssl`, `none+ssl`, `http+ssl`, `socks+ssl`, `socks4+ssl`, `socks5+ssl` and
+   `telnet+ssl` are all in the type table (`:139`) and the relay `switch` has no
+   arm for any of them, so they fall to `default: result = 0` (`:1822`) —
+   reported as connected, with no handshake performed — because `SSLSocket.h`
+   and `SSLLIB.h` sit in the source tree included by nothing and listed in no
+   build file. Whatever the setting once meant, what it means now is a
+   connection to the proxy that the terminal treats as a connection to the host.
+
+A fifth is real and small enough to mention rather than number:
+`status_code = atoi(strchr(buf, ' '))` (`:1314`) dereferences NULL when an HTTP
+proxy's first line has no space in it.
 
 **And one in `vte`**, which is a dependency rather than the specification, so it
 is not in that file: `vte` 0.15.0's `advance_partial_utf8` (`lib.rs:687`) prints

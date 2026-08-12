@@ -353,3 +353,48 @@ writer and frontend event around its synchronous pipes. A native Windows run
 is still required before the `cmd.exe` path is called proven. Writing either
 backend again to save a dependency would be the wrong trade in the direction
 the project keeps choosing against.
+
+## The proxy
+
+`proxy.rs` — HTTP `CONNECT`, SOCKS4/4a, SOCKS5 and the prompt-driven "telnet
+proxy" a terminal server puts in front of a line. Both TCP transports call
+`proxy::dial`, which is the ordinary direct connection when `[TTProxy]` names
+nothing, so neither of them has a branch.
+
+**Upstream's is a Winsock hook, and that is why its file is 2,155 lines for
+four protocols worth about three hundred.** `TTProxy` replaces `connect`,
+`gethostbyname`, `WSAAsyncGetHostByName`, `WSAAsyncGetAddrInfo`, `send`, `recv`
+and four more so that Tera Term below it goes on believing it dialled the host
+directly — and most of that code exists to remember, behind the API, the host
+name the terminal asked for, because by the time `connect(2)` runs the name is
+already a `sockaddr` and a name is what a proxy needs. Nothing here has that
+problem: the transports say where they are going.
+
+The same hook is why **TTSSH needs no proxy of its own**. Both plugins are
+loaded into one process and neither knows about the other; here the seam is
+named, `SshParams::proxy` beside `TelnetParams::proxy`, and an SSH connection
+through a proxy does its handshake on a blocking socket before russh is handed
+the connected stream. That keeps one implementation of the four wire formats
+rather than a synchronous one for telnet and an async one for SSH.
+
+**Four upstream defects are deliberately not reproduced**, each of them a
+crash, a silent no-op or a misread reply rather than a behaviour:
+
+| | |
+|---|---|
+| An absent `ProxyPort` disables the relay | `getPort()` supplies 1080/23/80 for the *address* (`:1770`) and the guard deciding whether to speak the protocol tests the raw stored port (`:1792`), so a blank port box dials the proxy and then talks telnet at it |
+| `ProxyUser` with no `ProxyPass` crashes HTTP | the dialog stores an empty password box as NULL (`:1013`) and `begin_relay_http` reaches `strlen(proxy.pass)` under a test of the *user* alone (`:1275`) |
+| A short read is taken as a full one | `recieveFromSocket` (`:1193`) is one `recv` whose own comment says the count may be short, and every SOCKS caller checks only for the error — a split SOCKS4 reply reads its result byte out of uninitialised stack, which can read as 90, granted |
+| `http+ssl` and its four siblings do nothing | they are in the type table (`:139`) and the relay `switch` has no arm for them, so they reach `default: result = 0` — connected, no handshake — because `SSLSocket.h` and `SSLLIB.h` are in the tree, included by nothing and in no build |
+
+One thing that *is* reproduced and reads like a defect: an unrecognised
+`ProxyType` is no proxy at all, so a typo is a direct connection. That is this
+schema's ordinary rule for an enumerated setting and it is upstream's; `none`
+exists as the spelling that says so on purpose.
+
+`tests/proxy.rs` drives all four against in-process servers on a real socket,
+and every case asserts the property the byte-level unit tests cannot reach:
+after `dial` returns, the next byte read is the session's first byte. A
+handshake that leaves one byte of the proxy's reply behind gives a first screen
+with a stray character on it and an SSH key exchange that fails with a protocol
+error, neither of which points at the proxy.

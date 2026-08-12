@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-12 · **Stage:** 2 complete, 3 in progress · **Commits:** 486
+**Last updated:** 2026-08-12 · **Stage:** 2 complete, 3 in progress · **Commits:** 490
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -213,7 +213,7 @@ Stage 2 while morale is high, not Stage 3 when it hurts.
 | `ttssh2/` | 62,596 | **Delete** → `russh` |
 | `vtdisp.c` + `vtwin.cpp` + dialogs + `.rc` | ~28,000 | **Delete** → Qt + generated dialogs |
 | `ttpmacro/` | 16,472 | **Port to Rust** (~9–10k) |
-| `TTProxy/` | 8,314 | **Delete**, reimplement in core (~1k Rust) |
+| `TTProxy/` | 8,314 | **Deleted**, reimplemented in core — `tt-conn/src/proxy.rs`, ~600 lines. The command line is still to do; see Stage 3 |
 | `ttptek`, `ttpmenu`, `susie_plugin`, `cygwin/` | ~11,000 | **Drop** |
 
 Net: ~10k LOC of C carried forward, ~30k as executable specification, ~115k deleted.
@@ -5290,6 +5290,113 @@ than a defect: a macro launched from Explorer opens a *new* window where
 upstream would run it in the session already on screen, and closing that gap
 means giving `ttpmacro` a fallback that starts a window — which changes what a
 `.bat` wrapper does today, so it wants deciding rather than assuming.
+
+**The proxy is in the core now, 2026-08-12** — HTTP `CONNECT`, SOCKS4/4a,
+SOCKS5 and the prompt-driven "telnet proxy", in `crates/tt-conn/src/proxy.rs`,
+with `[TTProxy]`'s twelve keys in the settings schema and both TCP transports
+dialling through `proxy::dial`. This is `TTProxy/`'s 8,314 lines answered in
+about 600, which is roughly the estimate on the disposition table and worth
+saying why rather than claiming efficiency.
+
+**Upstream's proxy is a Winsock hook, and that is where its size goes.** It
+replaces `connect`, `gethostbyname`, `WSAAsyncGetHostByName`,
+`WSAAsyncGetAddrInfo`, `send`, `recv`, `sendto`, `recvfrom`, `WSAAsyncSelect`
+and `closesocket`, so that Tera Term underneath goes on believing it dialled
+the host directly — and most of that machinery exists to recover, behind the
+API, the host name the terminal asked for, because by the time `connect(2)`
+runs the name is a `sockaddr` and a name is what a proxy needs. The four
+`begin_relay_*` functions are three hundred lines of the file. Here the
+transports say where they are going, so what is left is the four wire formats.
+
+**It is also why TTSSH has no proxy of its own**: two plugins in one process,
+neither aware of the other, both under the same hook. `SshParams::proxy` names
+that seam, and the handshake runs on a **blocking** socket even for SSH —
+`spawn_blocking`, then `client::connect_stream` — so the wire formats have one
+implementation rather than a synchronous copy for telnet and an async copy for
+SSH. Two copies of a wire format drift.
+
+**The `[TTProxy]` section brought a schema feature with it, and the round-trip
+test is what found the need.** It is the first section that is not
+`[Tera Term]`, and its strings go through the plugin's own INI layer: `YCL`'s
+`IniFile::setString` C-escapes every value and wraps it in double quotes
+(`YCL/IniFile.h:258`), `getString` unescapes what comes back. That is
+load-bearing — `GetPrivateProfileString` trims whitespace, so
+`TelnetConnectedMessage=-- Connected to ` loses the trailing space that makes
+it a prompt rather than a prefix of one, and `every_setting_round_trips_through_a_file`
+failed on exactly that. So the schema grew `string_esc`, the generator refuses
+a section that mixes it with `string`, backticks now quote a *default* as well
+as a key, and `tests/upstream.rs` learned which upstream file reads which
+section — checking `ProxyType` against `ttset.c` would have called all twelve
+keys invented.
+
+**Four upstream defects came out of reading it, thirty-three to thirty-six on
+the list in `AGENTS.md`, and the first two are reachable from the shipped
+dialog with nothing hand-edited.** An absent `ProxyPort` dials the proxy at the
+correct default port and then **skips the relay entirely** — `getPort()`
+supplies the default for the address (`:1770`) and the guard tests the raw
+stored port (`:1792`), while the dialog explicitly permits an empty port box
+(`:956`). A username with a blank password is `strlen(NULL)` on the first HTTP
+proxy connection, because `begin_relay_http` reads `proxy.pass` under a test of
+the *user* alone (`:1275`) and the dialog stores a blank password box as NULL
+(`:1013`). Every SOCKS reply is read with one `recv` whose own comment says the
+count may be short, and the callers check only for the error — so a SOCKS4
+reply split across two segments reads its result byte out of uninitialised
+stack, which can read as 90, granted. And `ProxyType=http+ssl` and its four
+siblings parse into types the relay `switch` has no arm for, reaching
+`default: result = 0` — connected, no handshake — because `SSLSocket.h` and
+`SSLLIB.h` are in the tree, included by nothing and in no build file. A fifth
+is small: `atoi(strchr(buf, ' '))` faults when an HTTP proxy's first line has
+no space in it. None is reproduced; all five are stated in the module, the
+schema and `crates/tt-conn/README.md`, which are the three places somebody
+comparing the implementations will look.
+
+One thing that **is** reproduced and reads like a defect: an unrecognised
+`ProxyType` is no proxy at all, so a typo is a direct connection rather than a
+refusal. That is the schema's ordinary rule for an enumerated setting and it is
+upstream's; `none` exists as the spelling that says so deliberately. It is the
+one place that rule has a cost worth naming, because the user believes they are
+behind a proxy and is not.
+
+**The command line is the remaining half and is deliberately not done yet**, so
+`/proxy=`, `/noproxy` and a bare `socks5://p:1080/realhost` token currently do
+nothing. It is `TTProxy.h:133`'s second pass and it is the same shape as
+TTSSH's hook — blank what you consumed, hand the rest on — which means
+extending `cmdline::ssh::parse_both` to run a third parser and return a third
+value, across four call sites. The parsing is read and recorded here so the
+next session does not re-derive it:
+
+- `ProxyInfo::parse` (`ProxyWSockHook.h:270`) needs `://` or it returns NULL
+  and **leaves any configured proxy alone**, which is what keeps an ordinary
+  host name from clearing one.
+- The `@` search runs over the whole remainder *including* the `/realhost`
+  part, so `socks5://p:1080/user@host` takes `p:1080/user` as the credentials.
+- The host loop reassigns `proxy.host` at every unbracketed colon, so the last
+  colon separates the port and `[v6]` has its brackets stripped. `parsePort`
+  refuses a leading zero, an empty field and 0 itself.
+- With no `/` the function returns the **whole URL** as the real host, and
+  `parseURL(url, FALSE)` then sets the type to `TYPE_NONE` and assigns it — so
+  a bare URL with no `/realhost` silently **clears** a proxy an earlier
+  `/proxy=` set, and the token is left in the line for Tera Term to misparse.
+- `/proxy=` discards the return value, so any `/realhost` after the proxy is
+  thrown away.
+- The recovered host is applied last and only if Tera Term's own parser found
+  none (`TTProxy.h:181`).
+
+Also not carried: the plugin's `DebugLog` key, which names a file for a hex
+trace of the handshake. Carrying the key without writing the trace would be a
+setting that round-trips correctly and does nothing, which this file has
+complained about elsewhere; it is a small piece of work and the trace is the
+thing you want when a handshake fails at a customer site.
+
+Interop is against in-process servers rather than a real `squid` or `dante`,
+for the reason `oracle/` exists — a test that needs a daemon installed is a
+test that does not run. `tests/proxy.rs` drives all four protocols over a real
+socket and every case asserts what a byte-level test cannot: **after `dial`
+returns, the next byte read is the session's first byte.** A handshake that
+leaves one byte behind gives a first screen with a stray character on it and an
+SSH key exchange that fails with a protocol error, and neither points at the
+proxy. A check against a genuine SOCKS5 server is `ssh -D` over the rig in
+`ssh-audit/`, which is not yet wired up.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 
