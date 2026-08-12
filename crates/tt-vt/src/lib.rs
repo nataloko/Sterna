@@ -5128,6 +5128,51 @@ mod tests {
     }
 
     #[test]
+    fn sixel_survives_every_transport_split() {
+        let input = b"\x1b[2;2H\x1bP7;1q\"1;1;2;6#2;2;100;0;0!2~\x1b\\";
+        let make_vt = || {
+            let mut vt = Vt::new(Config {
+                cols: 4,
+                rows: 3,
+                ..Config::default()
+            });
+            vt.set_window_metrics(WindowMetrics {
+                cell: (1, 6),
+                ..WindowMetrics::default()
+            });
+            vt
+        };
+        let snapshot = |vt: &Vt| {
+            let image = vt.sixel_images().next().expect("sixel image");
+            (
+                image.line(),
+                image.column(),
+                image.width(),
+                image.height(),
+                image.pixels().to_vec(),
+                vt.grid().cursor,
+            )
+        };
+
+        let mut whole = make_vt();
+        whole.feed(input);
+        let expected = snapshot(&whole);
+
+        for split in 0..=input.len() {
+            let mut vt = make_vt();
+            vt.feed(&input[..split]);
+            vt.feed(&input[split..]);
+            assert_eq!(snapshot(&vt), expected, "split at byte {split}");
+        }
+
+        let mut bytewise = make_vt();
+        for byte in input {
+            bytewise.feed(std::slice::from_ref(byte));
+        }
+        assert_eq!(snapshot(&bytewise), expected);
+    }
+
+    #[test]
     fn sixel_scrolls_with_the_lines_and_survives_in_history() {
         let mut vt = Vt::new(Config {
             cols: 4,
