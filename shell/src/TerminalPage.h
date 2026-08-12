@@ -12,6 +12,7 @@ class Printer;
 class QScrollBar;
 class Session;
 class TerminalView;
+class XferProgressDialog;
 
 /// The lifetime boundary for one tab.
 ///
@@ -30,6 +31,10 @@ public:
     Printer *printer() const { return m_printer; }
     TerminalView *view() const { return m_view; }
     Macro *macro() const { return m_macro; }
+    XferProgressDialog *transferDialog() const { return m_xferDialog; }
+    /// Replace the modeless transfer dialog. The page owns it even though its
+    /// visual parent is the window, so closing a tab cannot strand one.
+    void setTransferDialog(XferProgressDialog *dialog);
 
     /// Follow the core's viewport after output or a scroll gesture.
     void syncScrollBar();
@@ -40,4 +45,5 @@ private:
     TerminalView *m_view = nullptr;
     QScrollBar *m_scroll = nullptr;
     Macro *m_macro = nullptr;
+    XferProgressDialog *m_xferDialog = nullptr;
 };

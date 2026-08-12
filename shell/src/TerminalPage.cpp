@@ -10,6 +10,7 @@
 #include "Printer.h"
 #include "Session.h"
 #include "TerminalView.h"
+#include "XferDialog.h"
 
 TerminalPage::TerminalPage(const I18n *i18n, QWidget *macroWindow,
                            QWidget *parent)
@@ -42,12 +43,27 @@ TerminalPage::TerminalPage(const I18n *i18n, QWidget *macroWindow,
 
 TerminalPage::~TerminalPage()
 {
+    delete m_xferDialog;
+    m_xferDialog = nullptr;
     // QObject children normally die in construction order. The session is
     // deliberately the first child, but Macro::~Macro unlinks itself from the
     // session, so that order would be a use-after-free. Make the one ordering
     // dependency explicit at the lifetime boundary which owns both.
     delete m_macro;
     m_macro = nullptr;
+}
+
+void TerminalPage::setTransferDialog(XferProgressDialog *dialog)
+{
+    if (dialog == m_xferDialog) {
+        return;
+    }
+    delete m_xferDialog;
+    m_xferDialog = dialog;
+    if (m_xferDialog) {
+        connect(m_xferDialog, &QObject::destroyed, this,
+                [this] { m_xferDialog = nullptr; });
+    }
 }
 
 void TerminalPage::syncScrollBar()

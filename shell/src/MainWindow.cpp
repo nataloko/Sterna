@@ -367,15 +367,32 @@ void MainWindow::wirePage(TerminalPage *page)
     });
     connect(session, &Session::transferProgressed, this,
             [this, page](const TransferProgress &progress) {
-                if (page == m_page) {
-                    onTransferProgressed(progress);
+                if (auto *dialog = page->transferDialog()) {
+                    dialog->update(progress);
                 }
             });
     connect(session, &Session::transferFinished, this,
             [this, page](const TransferResult &result) {
-                if (page == m_page) {
-                    onTransferFinished(result);
+                if (auto *dialog = page->transferDialog()) {
+                    // Left open rather than closed. A transfer that failed has
+                    // something to say — often the protocol's own words — and
+                    // a dialog that vanished would say it to nobody.
+                    dialog->finish(result);
                 }
+                if (page != m_page) {
+                    return;
+                }
+                if (result.success) {
+                    m_status->setText(tr("Transfer complete"));
+                } else if (result.cancelled) {
+                    m_status->setText(tr("Transfer cancelled"));
+                } else {
+                    m_status->setText(
+                        result.message.isEmpty()
+                            ? tr("Transfer failed")
+                            : tr("Transfer failed: %1").arg(result.message));
+                }
+                updateStatus();
             });
 
     connect(macro, &Macro::finished, this, [this, page](int exitCode) {
@@ -1396,12 +1413,12 @@ void MainWindow::sendFile()
         return;
     }
 
-    m_xferDialog = new XferProgressDialog(title, this, m_i18n);
-    m_xferDialog->setAttribute(Qt::WA_DeleteOnClose);
-    connect(m_xferDialog, &XferProgressDialog::cancelled, m_session,
+    auto *dialog = new XferProgressDialog(title, this, m_i18n);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    m_page->setTransferDialog(dialog);
+    connect(dialog, &XferProgressDialog::cancelled, m_session,
             &Session::cancelTransfer);
-    connect(m_xferDialog, &QObject::destroyed, this, [this] { m_xferDialog = nullptr; });
-    m_xferDialog->show();
+    dialog->show();
     updateStatus();
 }
 
@@ -1438,42 +1455,12 @@ void MainWindow::receiveFile()
         return;
     }
 
-    m_xferDialog = new XferProgressDialog(title, this, m_i18n);
-    m_xferDialog->setAttribute(Qt::WA_DeleteOnClose);
-    connect(m_xferDialog, &XferProgressDialog::cancelled, m_session,
+    auto *dialog = new XferProgressDialog(title, this, m_i18n);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    m_page->setTransferDialog(dialog);
+    connect(dialog, &XferProgressDialog::cancelled, m_session,
             &Session::cancelTransfer);
-    connect(m_xferDialog, &QObject::destroyed, this, [this] { m_xferDialog = nullptr; });
-    m_xferDialog->show();
-    updateStatus();
-}
-
-void MainWindow::onTransferProgressed(const TransferProgress &progress)
-{
-    if (m_xferDialog) {
-        m_xferDialog->update(progress);
-    }
-}
-
-void MainWindow::onTransferFinished(const TransferResult &result)
-{
-    if (m_xferDialog) {
-        // Left open rather than closed. A transfer that failed has something
-        // to say — often the protocol's own words, which are the only account
-        // of the failure there is — and a dialog that vanished at the moment
-        // of failure would say it to nobody.
-        m_xferDialog->finish(result);
-    }
-    // The status line gets it too, because the dialog may already have been
-    // dismissed and because this is the sentence that survives.
-    if (result.success) {
-        m_status->setText(tr("Transfer complete"));
-    } else if (result.cancelled) {
-        m_status->setText(tr("Transfer cancelled"));
-    } else {
-        m_status->setText(result.message.isEmpty() ? tr("Transfer failed")
-                                                   : tr("Transfer failed: %1")
-                                                         .arg(result.message));
-    }
+    dialog->show();
     updateStatus();
 }
 

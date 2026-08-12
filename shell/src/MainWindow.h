@@ -154,8 +154,6 @@ private slots:
     void sendBreak();
     void sendFile();
     void receiveFile();
-    void onTransferProgressed(const TransferProgress &progress);
-    void onTransferFinished(const TransferResult &result);
     void toggleLogging();
     /// Ask for a `.ttl` or a `.lua` and run it. Upstream's Control > Macro.
     void runMacro();
@@ -279,11 +277,6 @@ private:
     /// the process's working directory every time.
     QString m_lastMacroDir;
     QLabel *m_logStatus = nullptr;
-    /// The progress dialog, while one is up. Modeless, and owned here rather
-    /// than on the stack: the transfer is driven by this window's event loop,
-    /// so a dialog that blocked it would block the transfer it is showing.
-    XferProgressDialog *m_xferDialog = nullptr;
-
     // Remembered so reopening the dialog does not start from the defaults
     // again. A session profile on disk is Stage 2's, with the settings schema.
     QString m_lastPort;
