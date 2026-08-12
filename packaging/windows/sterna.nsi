@@ -22,6 +22,7 @@ SetCompressor /SOLID lzma
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "FileFunc.nsh"
+!include "Sections.nsh"
 
 !ifndef VERSION
   !error "VERSION is not defined — run build.sh, not makensis"
@@ -43,6 +44,7 @@ SetCompressor /SOLID lzma
 !define PUBLISHER "The Sterna authors"
 !define URL "https://github.com/nataloko/Sterna"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}"
+!define PROGID "Sterna.MacroFile"
 
 Name "${NAME} ${VERSION}"
 OutFile "${OUTFILE}"
@@ -134,11 +136,43 @@ Section "Desktop shortcut" SecDesktop
   CreateShortcut "$DESKTOP\${NAME}.lnk" "$INSTDIR\sterna.exe"
 SectionEnd
 
+; Off by default, which is upstream's answer too (`teraterm.iss:285`, a task
+; flagged `unchecked`) and a better one than it looks: `.ttl` is also Turtle,
+; the RDF serialisation, and on a machine that edits those this extension is
+; already spoken for. So this registers through `OpenWithProgids` rather than
+; by writing `.ttl`'s default value — the additive form, which adds Sterna to
+; Open with and to the Windows 8+ "how do you want to open this" list without
+; taking the extension away from whatever already holds it.
+;
+; **The command is `sterna.exe /M=`, not `ttpmacro.exe`, and upstream's is the
+; other way round** (`teraterm.iss:225`). Upstream's `ttpmacro.exe` is the
+; interpreter and runs the script in its own process; here the interpreter is
+; inside the window and `ttpmacro` is a *client* of one, so the literal
+; registration fails on a machine with no window open — which is most of what
+; double-clicking a file means. It would fail invisibly, too: `ttpmacro` is a
+; console-subsystem program, so Explorer would give it a console window that
+; flashes and is gone with the diagnostic in it. `/M=` is upstream's own
+; `ttermpro /M=script.ttl`, and what it costs is that a macro opens a *new*
+; window rather than running in one that is already up.
+Section /o "Associate .ttl macro files" SecAssoc
+  WriteRegStr HKLM "Software\Classes\${PROGID}" "" "${NAME} macro"
+  WriteRegStr HKLM "Software\Classes\${PROGID}\DefaultIcon" "" '"$INSTDIR\sterna.exe",0'
+  WriteRegStr HKLM "Software\Classes\${PROGID}\shell\open\command" "" \
+    '"$INSTDIR\sterna.exe" /M="%1"'
+  WriteRegStr HKLM "Software\Classes\.ttl\OpenWithProgids" "${PROGID}" ""
+
+  ; Explorer caches associations and does not re-read the registry on its own,
+  ; so without this the entry appears at the next login rather than now.
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
+SectionEnd
+
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SecCore} \
     "The terminal, its core, the two control-socket clients (ttctl and ttpmacro) and the language files."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecDesktop} \
     "A shortcut on the desktop as well as in the Start menu."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecAssoc} \
+    "Offer Sterna in Explorer's Open with menu for .ttl macro files. It does not take the extension over from another program."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 Function StartSterna
@@ -146,6 +180,18 @@ Function StartSterna
 FunctionEnd
 
 Function .onInit
+  ; The components page is the ordinary way to turn the association on, and a
+  ; silent install has no page — so `/S /ASSOC` is how a deployment script asks
+  ; for it. Upstream's installer takes `/TASKS=macroassoc` for the same reason;
+  ; Inno supplies that itself, and NSIS does not.
+  ${GetParameters} $R8
+  ClearErrors
+  ${GetOptions} $R8 "/ASSOC" $R9
+  ${IfNot} ${Errors}
+    !insertmacro SelectSection ${SecAssoc}
+  ${EndIf}
+  ClearErrors
+
   ; Upgrade in place over an older install and the files that version had and
   ; this one does not are left behind — which for a Qt DLL is not inert: the
   ; loader finds the stale one first and the program dies before `main` with a
@@ -186,6 +232,18 @@ Section "Uninstall"
 
   DeleteRegKey HKLM "${UNINST_KEY}"
   DeleteRegKey HKLM "Software\${NAME}"
+
+  ; Unconditional, because the uninstaller does not know which sections ran and
+  ; removing a value that was never written is a no-op. `/ifempty` on the two
+  ; extension keys is what keeps this from taking `.ttl` away from a program
+  ; that owns it: whichever of them somebody else has a value in stays, and
+  ; one we created and emptied goes. Upstream leaves `.ttl` behind outright
+  ; (`teraterm.iss:262`, a comment saying so).
+  DeleteRegKey HKLM "Software\Classes\${PROGID}"
+  DeleteRegValue HKLM "Software\Classes\.ttl\OpenWithProgids" "${PROGID}"
+  DeleteRegKey /ifempty HKLM "Software\Classes\.ttl\OpenWithProgids"
+  DeleteRegKey /ifempty HKLM "Software\Classes\.ttl"
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
 
   ; `sterna.ini` is deliberately not touched. It is under the user's own
   ; AppData rather than in the program folder, it is one file per user on a

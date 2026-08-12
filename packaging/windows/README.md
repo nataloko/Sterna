@@ -75,6 +75,39 @@ supporting a 32-bit Windows that could not run the 64-bit program inside it
 either. What it costs: on 32-bit Windows the refusal now comes from Windows
 ("this app can't run on your PC") rather than from a message of ours.
 
+## The `.ttl` association, which is off by default
+
+Upstream offers one and ships it unchecked (`teraterm.iss:285`), and that is
+the right default for a reason its comment does not give: **`.ttl` is also
+Turtle**, the RDF serialisation, so on a machine that edits those the extension
+is already spoken for. Both halves of the answer follow from that — off by
+default, and registered through `.ttl\OpenWithProgids` rather than by writing
+`.ttl`'s own default value, which is the additive form. It offers Sterna in
+Open with and in the Windows 8+ "how do you want to open this" list, and takes
+the extension away from nobody.
+
+The components page is where it is normally turned on. A silent install has no
+page, so `/S /ASSOC` asks for it — upstream's installer takes
+`/TASKS=macroassoc` for exactly that reason, and Inno supplies it where NSIS
+does not.
+
+**The command is `sterna.exe /M=`, and upstream's is `ttpmacro.exe "%1"`.**
+That is the port's architecture showing through: upstream's `ttpmacro.exe` is
+the interpreter and runs the script in its own process, whereas here the
+interpreter is inside the window and `ttpmacro` is a *client* of one. The
+literal registration would therefore fail on a machine with no window open —
+which is most of what double-clicking a file means — and fail invisibly, since
+`ttpmacro` is a console-subsystem program and Explorer would give it a console
+window that flashes and is gone with the diagnostic in it. `/M=` is upstream's
+own `ttermpro /M=script.ttl`. What it costs is that a macro opens a *new*
+window rather than running in one that is already up.
+
+The uninstall guards the same collision from the other side: the ProgID key
+goes unconditionally, our value under `OpenWithProgids` goes by name, and the
+two extension keys go only `/ifempty`. Verified — a `.ttl` seeded with another
+program's ProgID and its own `OpenWithProgids` entry comes through an install
+and uninstall untouched. Upstream leaves `.ttl` behind outright.
+
 ## Two things the installer deliberately does not do
 
 - **It does not put anything on `PATH`.** `ttctl` and `ttpmacro` sit beside
@@ -138,7 +171,15 @@ timeout 12 /usr/lib/wine/wine64 sterna.exe -platform offscreen; echo $?   # 124
 # 3. the uninstaller removes what it installed and nothing else
 echo hello > notes.txt
 /usr/lib/wine/wine64 uninstall.exe /S && sleep 3 && ls        # only notes.txt
+
+# 4. the association, which is registry-only and so is checkable here. Wine
+#    flushes the registry when the last process goes, hence the -k.
+/usr/lib/wine/wine64 "$setup" /S /ASSOC; sleep 4; /usr/lib/wine/wineserver -k
+grep -A3 'Classes\\\\Sterna.MacroFile' "$WINEPREFIX/system.reg"
 ```
+
+Whether Explorer then *offers* it is not a question Wine can answer, and it is
+not one this recipe pretends to ask.
 
 ## Not done yet
 
@@ -146,9 +187,11 @@ echo hello > notes.txt
   prompt says "Unknown publisher". This needs a certificate, which needs a
   legal entity; `signtool` has an `osslsigncode` equivalent that runs on Linux,
   so the build does not have to move when there is something to sign with.
-- **No `.ttl` file association.** Upstream associates macro files with
-  `ttpmacro`. Worth doing, and it is one `WriteRegStr` block plus the
-  `SHChangeNotify` that makes Explorer notice.
+- **A macro opened from Explorer starts a new window.** Upstream would run it
+  in the session already on screen. Closing that gap means `ttpmacro` finding a
+  running window and falling back to launching one, which changes a shipped
+  program's contract — a `.bat` wrapper that today reports "no window" would
+  start opening terminals — so it wants deciding rather than assuming.
 - **Not in CI.** The same position as the AppImage: the artifact is a release
   step, and what CI covers is everything it is made of — the Windows cross
   build and the whole workspace's tests on a native Windows runner.
