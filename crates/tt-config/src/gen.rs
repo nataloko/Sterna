@@ -119,7 +119,14 @@ enum Kind {
         /// applies it.
         width: Option<Width>,
     },
-    Str,
+    Str {
+        /// `string_esc`: the value is C-escaped and quoted on the way out and
+        /// unescaped on the way back, which is what `[TTProxy]`'s own INI
+        /// layer does to every string it writes (`YCL/IniFile.h:258`). It is
+        /// not a per-setting choice — it belongs to the section — so
+        /// [`parse`] refuses a section that mixes the two.
+        escaped: bool,
+    },
     /// `spelling => Variant`, in the order they were written, and whether the
     /// comparison is case-sensitive. Almost every enumerated setting upstream
     /// is read with `_stricmp`; `TerminalID` alone uses `strcmp`.
@@ -155,7 +162,7 @@ impl Kind {
         match self {
             Kind::Bool => "bool".into(),
             Kind::Int { .. } => "i32".into(),
-            Kind::Str => "String".into(),
+            Kind::Str { .. } => "String".into(),
             Kind::Enum { .. } => type_name(&setting.name),
             Kind::Color2 => "[u8; 6]".into(),
         }
@@ -248,10 +255,7 @@ fn parse(text: &str) -> Vec<Setting> {
             .unwrap_or_else(|| panic!("want 6 fields: {trimmed}"));
         assert!(f.len() == 4, "want 6 fields: {trimmed}");
 
-        let key = match f[3].strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
-            Some(quoted) => quoted.to_string(),
-            None => f[3].to_string(),
-        };
+        let key = unquote(f[3]);
         let (key, kind) = parse_kind(f[1], &key);
         let write_key = write_key.unwrap_or_else(|| key.clone());
         out.push(Setting {
@@ -260,7 +264,7 @@ fn parse(text: &str) -> Vec<Setting> {
             section: f[2].to_string(),
             key,
             write_key,
-            default: default.trim().to_string(),
+            default: unquote(default.trim()),
             label: label.trim().to_string(),
             write_if,
             default_from,
@@ -268,6 +272,29 @@ fn parse(text: &str) -> Vec<Setting> {
         });
     }
 
+    // Escaping belongs to the section rather than to the setting: it is what
+    // that section's INI layer does to every string it writes, so one row
+    // spelt `string` in a `string_esc` section is a value the file's own
+    // reader gives back trimmed. Checked here rather than trusted, because
+    // the failure is silent and appears only for a value with a space on the
+    // end or a backslash in the middle.
+    for setting in &out {
+        let Kind::Str { escaped } = &setting.kind else {
+            continue;
+        };
+        for other in &out {
+            let Kind::Str { escaped: theirs } = &other.kind else {
+                continue;
+            };
+            assert!(
+                other.section != setting.section || theirs == escaped,
+                "{}: section [{}] mixes `string` and `string_esc`, and {} is the other one",
+                setting.name,
+                setting.section,
+                other.name
+            );
+        }
+    }
     for setting in &out {
         let Some(condition) = &setting.write_if else {
             continue;
@@ -300,6 +327,21 @@ fn parse(text: &str) -> Vec<Setting> {
         );
     }
     out
+}
+
+/// Strip a surrounding pair of backticks, which is the schema's way of saying
+/// that leading or trailing whitespace in a field is part of the value.
+///
+/// It applies to the key — `` `CygwinDirectory ` `` is a real upstream spelling
+/// with a space on the end — and to the default, because the proxy's five
+/// prompt strings include one whose trailing space is what makes it match a
+/// prompt rather than a prefix of one. Both fields are trimmed otherwise, so
+/// without this there is no way to write either down.
+fn unquote(field: &str) -> String {
+    match field.strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
+        Some(quoted) => quoted.to_string(),
+        None => field.to_string(),
+    }
 }
 
 fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
@@ -446,7 +488,8 @@ fn parse_kind(spec: &str, key: &str) -> (String, Kind) {
     };
     match spec {
         "bool" => (key.to_string(), Kind::Bool),
-        "string" => (key.to_string(), Kind::Str),
+        "string" => (key.to_string(), Kind::Str { escaped: false }),
+        "string_esc" => (key.to_string(), Kind::Str { escaped: true }),
         "color2" => (key.to_string(), Kind::Color2),
         "int" => match key.rsplit_once('.') {
             Some((base, n)) if n.chars().all(|c| c.is_ascii_digit()) => (
@@ -628,7 +671,7 @@ fn emit(settings: &[Setting]) -> String {
         let value = match &s.kind {
             Kind::Bool => on_off_literal(&s.default).to_string(),
             Kind::Int { .. } => format!("{}", s.default.parse::<i32>().expect("a number")),
-            Kind::Str => format!("String::from(\"{}\")", escape(&s.default)),
+            Kind::Str { .. } => format!("String::from(\"{}\")", escape(&s.default)),
             Kind::Enum { .. } => format!("{}::default()", type_name(&s.name)),
             Kind::Color2 => color2_literal(&s.default),
         };
@@ -693,7 +736,13 @@ fn emit(settings: &[Setting]) -> String {
                     }
                 }
             }
-            Kind::Str => format!("ini.get_or(\"{section}\", \"{key}\", &d.{field}).to_string()"),
+            Kind::Str { escaped: true } => format!(
+                "match ini.get(\"{section}\", \"{key}\") {{ \
+                 Some(v) => crate::esc::unescape(v), None => d.{field}.clone() }}"
+            ),
+            Kind::Str { .. } => {
+                format!("ini.get_or(\"{section}\", \"{key}\", &d.{field}).to_string()")
+            }
             Kind::Enum { .. } => format!(
                 "match ini.get(\"{section}\", \"{key}\") {{ \
                  Some(v) => {}::from_ini(v), None => d.{field} }}",
@@ -754,7 +803,8 @@ fn emit(settings: &[Setting]) -> String {
             Kind::Int { field: Some(n), .. } => format!(
                 "crate::schema::with_nth(ini.get(\"{section}\", \"{key}\"), {n}, self.{field})"
             ),
-            Kind::Str => format!("self.{field}.clone()"),
+            Kind::Str { escaped: true } => format!("crate::esc::quote(&self.{field})"),
+            Kind::Str { .. } => format!("self.{field}.clone()"),
             Kind::Enum { .. } => format!("self.{field}.as_ini().to_string()"),
             Kind::Color2 => format!("crate::schema::color2_str(&self.{field})"),
         };
@@ -783,7 +833,7 @@ fn emit(settings: &[Setting]) -> String {
         let expr = match &s.kind {
             Kind::Bool => format!("if self.{field} {{ \"on\" }} else {{ \"off\" }}.to_string()"),
             Kind::Int { .. } => format!("self.{field}.to_string()"),
-            Kind::Str => format!("self.{field}.clone()"),
+            Kind::Str { .. } => format!("self.{field}.clone()"),
             Kind::Enum { .. } => format!("self.{field}.as_ini().to_string()"),
             Kind::Color2 => format!("crate::schema::color2_str(&self.{field})"),
         };
@@ -834,7 +884,7 @@ fn emit(settings: &[Setting]) -> String {
                     }
                 }
             }
-            Kind::Str => format!("self.{field} = value.to_string()"),
+            Kind::Str { .. } => format!("self.{field} = value.to_string()"),
             Kind::Enum { .. } => format!("self.{field} = {}::from_ini(value)", type_name(&s.name)),
             Kind::Color2 => {
                 format!("self.{field} = crate::schema::color2(Some(value), self.{field})")
@@ -885,7 +935,7 @@ fn emit(settings: &[Setting]) -> String {
                 ..
             } => "Kind::IntWord".to_string(),
             Kind::Int { .. } => "Kind::Int".to_string(),
-            Kind::Str => "Kind::Str".to_string(),
+            Kind::Str { .. } => "Kind::Str".to_string(),
             Kind::Color2 => "Kind::Color2".to_string(),
             Kind::Enum { variants, .. } => {
                 // The canonical spelling only: a dialog offers one item per

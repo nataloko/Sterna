@@ -17,6 +17,7 @@
 //! ```
 
 pub mod cmdline;
+pub mod esc;
 pub mod gen;
 pub mod hex;
 pub mod ini;

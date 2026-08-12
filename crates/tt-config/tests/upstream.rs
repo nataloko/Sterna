@@ -19,13 +19,32 @@ use tt_config::{Kind, FIELDS};
 
 /// `../teraterm` is the sibling read-only checkout; `TERATERM_SRC` overrides
 /// the root of it.
-fn ttset_c() -> Option<PathBuf> {
-    let root = match std::env::var_os("TERATERM_SRC") {
+fn upstream_root() -> PathBuf {
+    match std::env::var_os("TERATERM_SRC") {
         Some(p) => PathBuf::from(p),
         None => Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../teraterm"),
-    };
-    let f = root.join("teraterm/ttpset/ttset.c");
+    }
+}
+
+fn ttset_c() -> Option<PathBuf> {
+    let f = upstream_root().join("teraterm/ttpset/ttset.c");
     f.is_file().then_some(f)
+}
+
+/// Which upstream file reads a section's keys.
+///
+/// `[Tera Term]` is `ttset.c` and everything else is a plugin: `TTProxy` hooks
+/// `ReadIniFile` and reads its own section (`TTProxy/TTProxy.h:63`), so its
+/// keys appear nowhere in `ttset.c` and checking them against it would report
+/// every one of them as invented. A section with no file here is a section
+/// nobody has said where to check, which is a schema mistake rather than a
+/// pass.
+fn source_for(section: &str) -> &'static str {
+    match section {
+        "Tera Term" => "teraterm/ttpset/ttset.c",
+        "TTProxy" => "TTProxy/ProxyWSockHook.h",
+        other => panic!("no upstream source is recorded for section [{other}]"),
+    }
 }
 
 /// Is `key` read or written as a quoted INI key anywhere in `src`?
@@ -50,20 +69,27 @@ fn every_key_is_one_upstream_reads() {
     };
     let src = std::fs::read_to_string(&path).unwrap();
 
+    let root = upstream_root();
+    let mut sources: std::collections::BTreeMap<&str, String> = Default::default();
     let mut invented = Vec::new();
     for f in FIELDS {
+        let relative = source_for(f.section);
+        let source = sources.entry(relative).or_insert_with(|| {
+            std::fs::read_to_string(root.join(relative))
+                .unwrap_or_else(|e| panic!("cannot read {relative}: {e}"))
+        });
         // `TerminalSize.1` and `.2` are the schema's two halves of one key,
         // which is how a `cols,rows` pair becomes two settings a dialog can
         // show. Upstream spells it once.
         let key = f.key.split('.').next().unwrap();
-        if !mentions(&src, key) {
-            invented.push(format!("{} -> {}", f.name, f.key));
+        if !mentions(source, key) {
+            invented.push(format!("{} -> {} (in {relative})", f.name, f.key));
         }
     }
     assert!(
         invented.is_empty(),
-        "these keys appear nowhere in ttset.c, so they read as the default \
-         from a file that sets them:\n  {}",
+        "these keys appear nowhere in the file that reads their section, so \
+         they read as the default from a file that sets them:\n  {}",
         invented.join("\n  ")
     );
 

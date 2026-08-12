@@ -1738,6 +1738,136 @@ impl Default for ConnectionTcpCrSend {
     }
 }
 
+/// `ProxyWSockHook.h:1972`, through `ProxyInfo::parseType` (`:158`), which
+/// lower-cases the value and compares it against a table — so it is
+/// case-insensitive, and **anything unrecognised is no proxy at all**. A typo
+/// is therefore a direct connection rather than an error, which is this file's
+/// ordinary rule for an enumerated setting and is worth naming here because the
+/// cost is different: the user believes they are behind a proxy and is not.
+/// `none` is the spelling that says so on purpose.
+///
+/// `socks` and `socks5` are one type and `socks` is what upstream writes back —
+/// `getTypeName` walks the same table and returns the first row for the type,
+/// which is `socks` (`:181`).
+///
+/// **Five more spellings are in upstream's table and are not here**:
+/// `ssl`, `none+ssl`, `http+ssl`, `socks+ssl`, `socks4+ssl`, `socks5+ssl` and
+/// `telnet+ssl` parse to types the relay `switch` has no arm for, so they fall
+/// to its `default: result = 0` (`:1822`) — reported as connected, with no
+/// handshake done — because `SSLSocket.h` and `SSLLIB.h` are in the source tree,
+/// included by nothing and listed in no build. Leaving them out puts them on the
+/// unrecognised arm, which is the honest place for a spelling that has never
+/// meant anything.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProxyType {
+    /// `none`
+    None,
+    /// `http`
+    Http,
+    /// `telnet`
+    Telnet,
+    /// `socks4`
+    Socks4,
+    /// `socks`, `socks5` — the first is written back, the rest are aliases the
+    /// file may hold because upstream's own table has them.
+    Socks5,
+}
+
+impl ProxyType {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Http => "http",
+            Self::Telnet => "telnet",
+            Self::Socks4 => "socks4",
+            Self::Socks5 => "socks",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised takes the default**
+    /// rather than failing — which is how upstream spells most of its
+    /// defaults, as the `else` branch of a chain of comparisons.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("none") {
+            return Self::None;
+        }
+        if s.eq_ignore_ascii_case("http") {
+            return Self::Http;
+        }
+        if s.eq_ignore_ascii_case("telnet") {
+            return Self::Telnet;
+        }
+        if s.eq_ignore_ascii_case("socks4") {
+            return Self::Socks4;
+        }
+        if s.eq_ignore_ascii_case("socks") || s.eq_ignore_ascii_case("socks5") {
+            return Self::Socks5;
+        }
+        Self::default()
+    }
+}
+
+impl Default for ProxyType {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+/// `ProxyWSockHook.h:1990`. Who turns the host name into an address — `local`
+/// resolves here and fails if it cannot, `remote` never resolves here and sends
+/// the name, `auto` resolves here and falls back to sending the name. Compared
+/// case-insensitively with an `else` of `auto`.
+///
+/// Only the two SOCKS relays consult it; HTTP and the telnet proxy send the name
+/// as text and have no choice to make. For SOCKS4 it is also what decides
+/// whether the request is a 4a one, since that protocol expresses an unresolved
+/// name by an address of `0.0.0.1` and a name after the user ID.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProxySocksResolve {
+    /// `auto`
+    Auto,
+    /// `local`
+    Local,
+    /// `remote`
+    Remote,
+}
+
+impl ProxySocksResolve {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Local => "local",
+            Self::Remote => "remote",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised takes the default**
+    /// rather than failing — which is how upstream spells most of its
+    /// defaults, as the `else` branch of a chain of comparisons.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("auto") {
+            return Self::Auto;
+        }
+        if s.eq_ignore_ascii_case("local") {
+            return Self::Local;
+        }
+        if s.eq_ignore_ascii_case("remote") {
+            return Self::Remote;
+        }
+        Self::default()
+    }
+}
+
+impl Default for ProxySocksResolve {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
 /// `ttset.c:929`, default `IdDataBit8` from the `if (!…)` arm. Upstream's dialog
 /// offers only these two; `tt-conn` can do 5 and 6 as well, which is a widening
 /// and not a setting.
@@ -3178,6 +3308,95 @@ pub struct Settings {
     /// affected. The async transport currently sends keystrokes immediately, so the
     /// key is carried pending a negotiated line buffer.
     pub connection_line_mode: bool,
+    /// `ProxyWSockHook.h:1972`, through `ProxyInfo::parseType` (`:158`), which
+    /// lower-cases the value and compares it against a table — so it is
+    /// case-insensitive, and **anything unrecognised is no proxy at all**. A typo
+    /// is therefore a direct connection rather than an error, which is this file's
+    /// ordinary rule for an enumerated setting and is worth naming here because the
+    /// cost is different: the user believes they are behind a proxy and is not.
+    /// `none` is the spelling that says so on purpose.
+    ///
+    /// `socks` and `socks5` are one type and `socks` is what upstream writes back —
+    /// `getTypeName` walks the same table and returns the first row for the type,
+    /// which is `socks` (`:181`).
+    ///
+    /// **Five more spellings are in upstream's table and are not here**:
+    /// `ssl`, `none+ssl`, `http+ssl`, `socks+ssl`, `socks4+ssl`, `socks5+ssl` and
+    /// `telnet+ssl` parse to types the relay `switch` has no arm for, so they fall
+    /// to its `default: result = 0` (`:1822`) — reported as connected, with no
+    /// handshake done — because `SSLSocket.h` and `SSLLIB.h` are in the source tree,
+    /// included by nothing and listed in no build. Leaving them out puts them on the
+    /// unrecognised arm, which is the honest place for a spelling that has never
+    /// meant anything.
+    pub proxy_type: ProxyType,
+    /// `ProxyWSockHook.h:1976`. Empty is no proxy however `proxy.type` is set —
+    /// `_load` demotes a type it has no host for rather than dialling an empty name.
+    pub proxy_host: String,
+    /// `ProxyWSockHook.h:1980`, read with `getInteger`'s default of **0** and
+    /// assigned to an `unsigned short`, which is why this is `uint16` rather than a
+    /// bounded `int`: `ProxyPort=65537` is port 1.
+    ///
+    /// **Zero means the type's default here and disables the relay upstream**, which
+    /// is the first of the four defects in `tt-conn/src/proxy.rs`. `getPort()`
+    /// (`:442`) supplies 1080 for either SOCKS, 23 for the telnet proxy and 80 for
+    /// HTTP, and the connect hook uses it for the address (`:1770`) — and then the
+    /// guard deciding whether to speak the protocol at all tests the raw stored port
+    /// instead (`:1792`). Leaving the dialog's port box empty is enough to reach it.
+    pub proxy_port: i32,
+    /// `ProxyWSockHook.h:1981`. The proxy's own credentials, not the host's: Basic
+    /// authentication for HTTP, RFC 1929 for SOCKS5, and the user ID field for
+    /// SOCKS4 — which is not a password at all, being what the proxy hands to the
+    /// client's identd.
+    ///
+    /// An empty value and an absent key mean the same thing here, which is not this
+    /// file's usual rule. Upstream keeps them apart as `""` and NULL, and the
+    /// distinction reaches exactly one place: a SOCKS5 method list that offers
+    /// username/password with two empty strings in hand. No server accepts that, so
+    /// nothing observable is lost by treating both as "no credentials".
+    pub proxy_user: String,
+    /// `ProxyWSockHook.h:1983`, and it is stored in plain text, as upstream stores
+    /// it. Upstream reads it only when `ProxyUser` is set and then uses it without
+    /// checking — `begin_relay_http` reaches `strlen(proxy.pass)` under a test of
+    /// the *user* alone (`:1275`), so a username with no password is a NULL
+    /// dereference on the first HTTP proxy connection, and the dialog produces
+    /// exactly that pair from an empty password box (`:1013`). Here an absent
+    /// password is the empty string, which is what `user:` means to Basic.
+    pub proxy_pass: String,
+    /// `ProxyWSockHook.h:1987`, in seconds. It bounds every send and receive of the
+    /// handshake, as a `select` timeout there and as a socket timeout here, and
+    /// **zero is upstream's "wait forever"** — a null `timeval` — which is kept.
+    ///
+    /// The floor is a divergence with no cost: a negative value makes upstream's
+    /// `timeval` invalid, so `select` fails with `EINVAL` and every proxy connection
+    /// breaks. Below zero takes the default instead.
+    pub proxy_timeout: i32,
+    /// `ProxyWSockHook.h:1990`. Who turns the host name into an address — `local`
+    /// resolves here and fails if it cannot, `remote` never resolves here and sends
+    /// the name, `auto` resolves here and falls back to sending the name. Compared
+    /// case-insensitively with an `else` of `auto`.
+    ///
+    /// Only the two SOCKS relays consult it; HTTP and the telnet proxy send the name
+    /// as text and have no choice to make. For SOCKS4 it is also what decides
+    /// whether the request is a 4a one, since that protocol expresses an unresolved
+    /// name by an address of `0.0.0.1` and a name after the user ID.
+    pub proxy_socks_resolve: ProxySocksResolve,
+    /// `ProxyWSockHook.h:1999`. The five strings the `telnet` proxy type watches for
+    /// and answers, which exist because that "protocol" is a person's session with a
+    /// terminal server and every vendor's prompts are different.
+    ///
+    /// Each is matched as a substring of **one line**: `wait_for_prompt` (`:1228`)
+    /// reads to a newline and then looks for each of the five in what it has, so a
+    /// prompt split across two lines is never found and a line holding two of them
+    /// takes the first. The trailing space in this one is part of the value.
+    pub proxy_telnet_hostname_prompt: String,
+    /// `ProxyWSockHook.h:2000`. Answered with `proxy.user`.
+    pub proxy_telnet_username_prompt: String,
+    /// `ProxyWSockHook.h:2001`. Answered with `proxy.pass`.
+    pub proxy_telnet_password_prompt: String,
+    /// `ProxyWSockHook.h:2002`. Seeing this ends the relay and starts the session.
+    pub proxy_telnet_connected_message: String,
+    /// `ProxyWSockHook.h:2003`. Seeing this ends the relay as a refusal.
+    pub proxy_telnet_error_message: String,
     /// `ttset.c:1291`, a wide string whose empty default means no automatic macro.
     /// `CVTWindow::Startup` (`vtwin.cpp:1413`) consumes it once when the window
     /// starts; a leading `*` makes TTPMACRO put up its file picker
@@ -3884,6 +4103,18 @@ impl Default for Settings {
             connection_timeout: 0,
             connection_host_dialog_on_startup: true,
             connection_line_mode: true,
+            proxy_type: ProxyType::default(),
+            proxy_host: String::from(""),
+            proxy_port: 0,
+            proxy_user: String::from(""),
+            proxy_pass: String::from(""),
+            proxy_timeout: 10,
+            proxy_socks_resolve: ProxySocksResolve::default(),
+            proxy_telnet_hostname_prompt: String::from(">> Host name: "),
+            proxy_telnet_username_prompt: String::from("Username:"),
+            proxy_telnet_password_prompt: String::from("Password:"),
+            proxy_telnet_connected_message: String::from("-- Connected to "),
+            proxy_telnet_error_message: String::from("!!!!!!!!"),
             macro_startup_file: String::from(""),
             settings_source_version: String::from("5.7.0"),
             settings_language_file: String::from("lang\\Default.lng"),
@@ -4638,6 +4869,55 @@ impl Settings {
                 ini.get("Tera Term", "EnableLineMode"),
                 true,
             ),
+            proxy_type: match ini.get("TTProxy", "ProxyType") {
+                Some(v) => ProxyType::from_ini(v),
+                None => d.proxy_type,
+            },
+            proxy_host: match ini.get("TTProxy", "ProxyHost") {
+                Some(v) => crate::esc::unescape(v),
+                None => d.proxy_host.clone(),
+            },
+            proxy_port: crate::schema::word(
+                ini.get_int("TTProxy", "ProxyPort", d.proxy_port) as i32
+            ),
+            proxy_user: match ini.get("TTProxy", "ProxyUser") {
+                Some(v) => crate::esc::unescape(v),
+                None => d.proxy_user.clone(),
+            },
+            proxy_pass: match ini.get("TTProxy", "ProxyPass") {
+                Some(v) => crate::esc::unescape(v),
+                None => d.proxy_pass.clone(),
+            },
+            proxy_timeout: crate::schema::ranged(
+                ini.get_int("TTProxy", "ConnectionTimeout", d.proxy_timeout) as i32,
+                d.proxy_timeout,
+                0,
+                2147483647,
+            ),
+            proxy_socks_resolve: match ini.get("TTProxy", "SocksResolve") {
+                Some(v) => ProxySocksResolve::from_ini(v),
+                None => d.proxy_socks_resolve,
+            },
+            proxy_telnet_hostname_prompt: match ini.get("TTProxy", "TelnetHostnamePrompt") {
+                Some(v) => crate::esc::unescape(v),
+                None => d.proxy_telnet_hostname_prompt.clone(),
+            },
+            proxy_telnet_username_prompt: match ini.get("TTProxy", "TelnetUsernamePrompt") {
+                Some(v) => crate::esc::unescape(v),
+                None => d.proxy_telnet_username_prompt.clone(),
+            },
+            proxy_telnet_password_prompt: match ini.get("TTProxy", "TelnetPasswordPrompt") {
+                Some(v) => crate::esc::unescape(v),
+                None => d.proxy_telnet_password_prompt.clone(),
+            },
+            proxy_telnet_connected_message: match ini.get("TTProxy", "TelnetConnectedMessage") {
+                Some(v) => crate::esc::unescape(v),
+                None => d.proxy_telnet_connected_message.clone(),
+            },
+            proxy_telnet_error_message: match ini.get("TTProxy", "TelnetErrorMessage") {
+                Some(v) => crate::esc::unescape(v),
+                None => d.proxy_telnet_error_message.clone(),
+            },
             macro_startup_file: ini
                 .get_or("Tera Term", "StartupMacro", &d.macro_startup_file)
                 .to_string(),
@@ -6265,6 +6545,50 @@ impl Settings {
             .to_string(),
         );
         ini.set(
+            "TTProxy",
+            "ProxyType",
+            &self.proxy_type.as_ini().to_string(),
+        );
+        ini.set("TTProxy", "ProxyHost", &crate::esc::quote(&self.proxy_host));
+        ini.set("TTProxy", "ProxyPort", &self.proxy_port.to_string());
+        ini.set("TTProxy", "ProxyUser", &crate::esc::quote(&self.proxy_user));
+        ini.set("TTProxy", "ProxyPass", &crate::esc::quote(&self.proxy_pass));
+        ini.set(
+            "TTProxy",
+            "ConnectionTimeout",
+            &self.proxy_timeout.to_string(),
+        );
+        ini.set(
+            "TTProxy",
+            "SocksResolve",
+            &self.proxy_socks_resolve.as_ini().to_string(),
+        );
+        ini.set(
+            "TTProxy",
+            "TelnetHostnamePrompt",
+            &crate::esc::quote(&self.proxy_telnet_hostname_prompt),
+        );
+        ini.set(
+            "TTProxy",
+            "TelnetUsernamePrompt",
+            &crate::esc::quote(&self.proxy_telnet_username_prompt),
+        );
+        ini.set(
+            "TTProxy",
+            "TelnetPasswordPrompt",
+            &crate::esc::quote(&self.proxy_telnet_password_prompt),
+        );
+        ini.set(
+            "TTProxy",
+            "TelnetConnectedMessage",
+            &crate::esc::quote(&self.proxy_telnet_connected_message),
+        );
+        ini.set(
+            "TTProxy",
+            "TelnetErrorMessage",
+            &crate::esc::quote(&self.proxy_telnet_error_message),
+        );
+        ini.set(
             "Tera Term",
             "StartupMacro",
             &self.macro_startup_file.clone(),
@@ -7664,6 +7988,18 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "proxy.type" => self.proxy_type.as_ini().to_string(),
+            "proxy.host" => self.proxy_host.clone(),
+            "proxy.port" => self.proxy_port.to_string(),
+            "proxy.user" => self.proxy_user.clone(),
+            "proxy.pass" => self.proxy_pass.clone(),
+            "proxy.timeout" => self.proxy_timeout.to_string(),
+            "proxy.socks_resolve" => self.proxy_socks_resolve.as_ini().to_string(),
+            "proxy.telnet_hostname_prompt" => self.proxy_telnet_hostname_prompt.clone(),
+            "proxy.telnet_username_prompt" => self.proxy_telnet_username_prompt.clone(),
+            "proxy.telnet_password_prompt" => self.proxy_telnet_password_prompt.clone(),
+            "proxy.telnet_connected_message" => self.proxy_telnet_connected_message.clone(),
+            "proxy.telnet_error_message" => self.proxy_telnet_error_message.clone(),
             "macro.startup_file" => self.macro_startup_file.clone(),
             "settings.source_version" => self.settings_source_version.clone(),
             "settings.language_file" => self.settings_language_file.clone(),
@@ -8454,6 +8790,29 @@ impl Settings {
             "connection.line_mode" => {
                 self.connection_line_mode = crate::schema::on_off(Some(value), true)
             }
+            "proxy.type" => self.proxy_type = ProxyType::from_ini(value),
+            "proxy.host" => self.proxy_host = value.to_string(),
+            "proxy.port" => {
+                self.proxy_port = crate::schema::word(crate::schema::int(value, self.proxy_port))
+            }
+            "proxy.user" => self.proxy_user = value.to_string(),
+            "proxy.pass" => self.proxy_pass = value.to_string(),
+            "proxy.timeout" => {
+                self.proxy_timeout = crate::schema::ranged(
+                    crate::schema::int(value, self.proxy_timeout),
+                    10,
+                    0,
+                    2147483647,
+                )
+            }
+            "proxy.socks_resolve" => self.proxy_socks_resolve = ProxySocksResolve::from_ini(value),
+            "proxy.telnet_hostname_prompt" => self.proxy_telnet_hostname_prompt = value.to_string(),
+            "proxy.telnet_username_prompt" => self.proxy_telnet_username_prompt = value.to_string(),
+            "proxy.telnet_password_prompt" => self.proxy_telnet_password_prompt = value.to_string(),
+            "proxy.telnet_connected_message" => {
+                self.proxy_telnet_connected_message = value.to_string()
+            }
+            "proxy.telnet_error_message" => self.proxy_telnet_error_message = value.to_string(),
             "macro.startup_file" => self.macro_startup_file = value.to_string(),
             "settings.source_version" => self.settings_source_version = value.to_string(),
             "settings.language_file" => self.settings_language_file = value.to_string(),
@@ -10445,6 +10804,126 @@ pub const FIELDS: &[Field] = &[
         default: "on",
         label: None,
         doc: "`ttset.c:1673`, default **on**. A TCP connection begins in local line mode until telnet negotiation says otherwise (`commlib.c:341`); serial is never affected. The async transport currently sends keystrokes immediately, so the key is carried pending a negotiated line buffer.",
+    },
+    Field {
+        name: "proxy.type",
+        page: "proxy",
+        section: "TTProxy",
+        key: "ProxyType",
+        kind: Kind::Enum(&["none", "http", "telnet", "socks4", "socks"]),
+        default: "none",
+        label: None,
+        doc: "`ProxyWSockHook.h:1972`, through `ProxyInfo::parseType` (`:158`), which lower-cases the value and compares it against a table — so it is case-insensitive, and **anything unrecognised is no proxy at all**. A typo is therefore a direct connection rather than an error, which is this file's ordinary rule for an enumerated setting and is worth naming here because the cost is different: the user believes they are behind a proxy and is not. `none` is the spelling that says so on purpose.  `socks` and `socks5` are one type and `socks` is what upstream writes back — `getTypeName` walks the same table and returns the first row for the type, which is `socks` (`:181`).  **Five more spellings are in upstream's table and are not here**: `ssl`, `none+ssl`, `http+ssl`, `socks+ssl`, `socks4+ssl`, `socks5+ssl` and `telnet+ssl` parse to types the relay `switch` has no arm for, so they fall to its `default: result = 0` (`:1822`) — reported as connected, with no handshake done — because `SSLSocket.h` and `SSLLIB.h` are in the source tree, included by nothing and listed in no build. Leaving them out puts them on the unrecognised arm, which is the honest place for a spelling that has never meant anything.",
+    },
+    Field {
+        name: "proxy.host",
+        page: "proxy",
+        section: "TTProxy",
+        key: "ProxyHost",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "`ProxyWSockHook.h:1976`. Empty is no proxy however `proxy.type` is set — `_load` demotes a type it has no host for rather than dialling an empty name.",
+    },
+    Field {
+        name: "proxy.port",
+        page: "proxy",
+        section: "TTProxy",
+        key: "ProxyPort",
+        kind: Kind::IntWord,
+        default: "0",
+        label: None,
+        doc: "`ProxyWSockHook.h:1980`, read with `getInteger`'s default of **0** and assigned to an `unsigned short`, which is why this is `uint16` rather than a bounded `int`: `ProxyPort=65537` is port 1.  **Zero means the type's default here and disables the relay upstream**, which is the first of the four defects in `tt-conn/src/proxy.rs`. `getPort()` (`:442`) supplies 1080 for either SOCKS, 23 for the telnet proxy and 80 for HTTP, and the connect hook uses it for the address (`:1770`) — and then the guard deciding whether to speak the protocol at all tests the raw stored port instead (`:1792`). Leaving the dialog's port box empty is enough to reach it.",
+    },
+    Field {
+        name: "proxy.user",
+        page: "proxy",
+        section: "TTProxy",
+        key: "ProxyUser",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "`ProxyWSockHook.h:1981`. The proxy's own credentials, not the host's: Basic authentication for HTTP, RFC 1929 for SOCKS5, and the user ID field for SOCKS4 — which is not a password at all, being what the proxy hands to the client's identd.  An empty value and an absent key mean the same thing here, which is not this file's usual rule. Upstream keeps them apart as `\"\"` and NULL, and the distinction reaches exactly one place: a SOCKS5 method list that offers username/password with two empty strings in hand. No server accepts that, so nothing observable is lost by treating both as \"no credentials\".",
+    },
+    Field {
+        name: "proxy.pass",
+        page: "proxy",
+        section: "TTProxy",
+        key: "ProxyPass",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "`ProxyWSockHook.h:1983`, and it is stored in plain text, as upstream stores it. Upstream reads it only when `ProxyUser` is set and then uses it without checking — `begin_relay_http` reaches `strlen(proxy.pass)` under a test of the *user* alone (`:1275`), so a username with no password is a NULL dereference on the first HTTP proxy connection, and the dialog produces exactly that pair from an empty password box (`:1013`). Here an absent password is the empty string, which is what `user:` means to Basic.",
+    },
+    Field {
+        name: "proxy.timeout",
+        page: "proxy",
+        section: "TTProxy",
+        key: "ConnectionTimeout",
+        kind: Kind::IntRange(0, 2147483647),
+        default: "10",
+        label: None,
+        doc: "`ProxyWSockHook.h:1987`, in seconds. It bounds every send and receive of the handshake, as a `select` timeout there and as a socket timeout here, and **zero is upstream's \"wait forever\"** — a null `timeval` — which is kept.  The floor is a divergence with no cost: a negative value makes upstream's `timeval` invalid, so `select` fails with `EINVAL` and every proxy connection breaks. Below zero takes the default instead.",
+    },
+    Field {
+        name: "proxy.socks_resolve",
+        page: "proxy",
+        section: "TTProxy",
+        key: "SocksResolve",
+        kind: Kind::Enum(&["auto", "local", "remote"]),
+        default: "auto",
+        label: None,
+        doc: "`ProxyWSockHook.h:1990`. Who turns the host name into an address — `local` resolves here and fails if it cannot, `remote` never resolves here and sends the name, `auto` resolves here and falls back to sending the name. Compared case-insensitively with an `else` of `auto`.  Only the two SOCKS relays consult it; HTTP and the telnet proxy send the name as text and have no choice to make. For SOCKS4 it is also what decides whether the request is a 4a one, since that protocol expresses an unresolved name by an address of `0.0.0.1` and a name after the user ID.",
+    },
+    Field {
+        name: "proxy.telnet_hostname_prompt",
+        page: "proxy",
+        section: "TTProxy",
+        key: "TelnetHostnamePrompt",
+        kind: Kind::Str,
+        default: ">> Host name: ",
+        label: None,
+        doc: "`ProxyWSockHook.h:1999`. The five strings the `telnet` proxy type watches for and answers, which exist because that \"protocol\" is a person's session with a terminal server and every vendor's prompts are different.  Each is matched as a substring of **one line**: `wait_for_prompt` (`:1228`) reads to a newline and then looks for each of the five in what it has, so a prompt split across two lines is never found and a line holding two of them takes the first. The trailing space in this one is part of the value.",
+    },
+    Field {
+        name: "proxy.telnet_username_prompt",
+        page: "proxy",
+        section: "TTProxy",
+        key: "TelnetUsernamePrompt",
+        kind: Kind::Str,
+        default: "Username:",
+        label: None,
+        doc: "`ProxyWSockHook.h:2000`. Answered with `proxy.user`.",
+    },
+    Field {
+        name: "proxy.telnet_password_prompt",
+        page: "proxy",
+        section: "TTProxy",
+        key: "TelnetPasswordPrompt",
+        kind: Kind::Str,
+        default: "Password:",
+        label: None,
+        doc: "`ProxyWSockHook.h:2001`. Answered with `proxy.pass`.",
+    },
+    Field {
+        name: "proxy.telnet_connected_message",
+        page: "proxy",
+        section: "TTProxy",
+        key: "TelnetConnectedMessage",
+        kind: Kind::Str,
+        default: "-- Connected to ",
+        label: None,
+        doc: "`ProxyWSockHook.h:2002`. Seeing this ends the relay and starts the session.",
+    },
+    Field {
+        name: "proxy.telnet_error_message",
+        page: "proxy",
+        section: "TTProxy",
+        key: "TelnetErrorMessage",
+        kind: Kind::Str,
+        default: "!!!!!!!!",
+        label: None,
+        doc: "`ProxyWSockHook.h:2003`. Seeing this ends the relay as a refusal.",
     },
     Field {
         name: "macro.startup_file",

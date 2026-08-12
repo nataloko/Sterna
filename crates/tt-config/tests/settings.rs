@@ -3,9 +3,9 @@
 use tt_config::gen;
 use tt_config::{
     ConnectionPortType, EncodingDecSpecialDirection, EncodingReceive, EncodingSend, FontDrawApi,
-    FontQuality, Ini, KeyboardBackspace, KeyboardMeta8bit, Kind, LogTimestampType, SerialDataBits,
-    SerialFlow, SerialParity, SerialStopBits, Settings, TerminalCrReceive, TerminalId, WindowIcon,
-    FIELDS,
+    FontQuality, Ini, KeyboardBackspace, KeyboardMeta8bit, Kind, LogTimestampType,
+    ProxySocksResolve, ProxyType, SerialDataBits, SerialFlow, SerialParity, SerialStopBits,
+    Settings, TerminalCrReceive, TerminalId, WindowIcon, FIELDS,
 };
 
 #[test]
@@ -887,4 +887,101 @@ fn the_serial_defaults_are_upstreams() {
     ));
     assert!(s.serial_clear_buffer_on_open);
     assert!(s.serial_auto_reconnect);
+}
+
+#[test]
+fn the_proxy_defaults_are_the_plugins() {
+    let s = Settings::load(&Ini::parse(b"[Tera Term]\r\n"));
+    assert_eq!(s.proxy_type, ProxyType::None);
+    assert_eq!(s.proxy_port, 0);
+    assert_eq!(s.proxy_timeout, 10);
+    assert_eq!(s.proxy_socks_resolve, ProxySocksResolve::Auto);
+    // The trailing spaces are part of the strings, and losing one turns a
+    // prompt into a prefix of one.
+    assert_eq!(s.proxy_telnet_hostname_prompt, ">> Host name: ");
+    assert_eq!(s.proxy_telnet_connected_message, "-- Connected to ");
+    assert_eq!(s.proxy_telnet_error_message, "!!!!!!!!");
+}
+
+#[test]
+fn the_proxy_type_takes_both_socks_spellings_and_writes_one() {
+    // `ProxyInfo::parseType` lower-cases and compares against a table with
+    // `socks` and `socks5` both mapping to SOCKS5; `getTypeName` returns the
+    // first row for the type, which is `socks`.
+    for spelling in ["socks", "socks5", "SOCKS5", "Socks"] {
+        let ini = Ini::parse(format!("[TTProxy]\r\nProxyType={spelling}\r\n").as_bytes());
+        assert_eq!(
+            Settings::load(&ini).proxy_type,
+            ProxyType::Socks5,
+            "{spelling}"
+        );
+    }
+    let mut out = Ini::new();
+    let s = Settings {
+        proxy_type: ProxyType::Socks5,
+        ..Default::default()
+    };
+    s.store(&mut out);
+    let text = String::from_utf8(out.to_bytes()).unwrap();
+    assert!(text.contains("ProxyType=socks\r\n"), "{text}");
+
+    // The five `+ssl` spellings are in upstream's table and do nothing there,
+    // so they are not in the schema and take the unrecognised arm.
+    for spelling in ["socks5+ssl", "http+ssl", "ssl", "none+ssl", "wat"] {
+        let ini = Ini::parse(format!("[TTProxy]\r\nProxyType={spelling}\r\n").as_bytes());
+        assert_eq!(
+            Settings::load(&ini).proxy_type,
+            ProxyType::None,
+            "{spelling}"
+        );
+    }
+}
+
+#[test]
+fn the_proxy_section_is_quoted_the_way_its_own_plugin_quotes_it() {
+    // `YCL`'s `IniFile::setString` escapes and wraps every string, which is
+    // the only reason a trailing space survives `GetPrivateProfileString`.
+    let mut out = Ini::new();
+    let s = Settings {
+        proxy_host: "proxy.example".into(),
+        proxy_pass: "a\"b\\c".into(),
+        ..Default::default()
+    };
+    s.store(&mut out);
+    let text = String::from_utf8(out.to_bytes()).unwrap();
+    assert!(text.contains("ProxyHost=\"proxy.example\"\r\n"), "{text}");
+    assert!(
+        text.contains("TelnetHostnamePrompt=\">> Host name: \"\r\n"),
+        "{text}"
+    );
+    assert!(text.contains("ProxyPass=\"a\\\"b\\\\c\"\r\n"), "{text}");
+
+    let back = Settings::load(&Ini::parse(&out.to_bytes()));
+    assert_eq!(back.proxy_pass, "a\"b\\c");
+    assert_eq!(back.proxy_telnet_hostname_prompt, ">> Host name: ");
+
+    // And a file upstream wrote reads the same way here.
+    let ini = Ini::parse(
+        b"[TTProxy]\r\nTelnetErrorMessage=\"\\033[31mrefused\"\r\nProxyUser=\"a\\\\b\"\r\n",
+    );
+    let s = Settings::load(&ini);
+    assert_eq!(s.proxy_telnet_error_message, "\x1b[31mrefused");
+    assert_eq!(s.proxy_user, "a\\b");
+}
+
+#[test]
+fn a_negative_proxy_timeout_takes_the_default() {
+    // Upstream would hand `select` an invalid `timeval` and break every proxy
+    // connection; below the floor takes the default here.
+    let ini = Ini::parse(b"[TTProxy]\r\nConnectionTimeout=-1\r\n");
+    assert_eq!(Settings::load(&ini).proxy_timeout, 10);
+    let ini = Ini::parse(b"[TTProxy]\r\nConnectionTimeout=0\r\n");
+    assert_eq!(Settings::load(&ini).proxy_timeout, 0);
+}
+
+#[test]
+fn the_proxy_port_is_a_word_like_every_other_narrow_field() {
+    // `getInteger` returns a `long` and the field is an `unsigned short`.
+    let ini = Ini::parse(b"[TTProxy]\r\nProxyPort=65537\r\n");
+    assert_eq!(Settings::load(&ini).proxy_port, 1);
 }

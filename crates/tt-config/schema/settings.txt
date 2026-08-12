@@ -22,9 +22,12 @@
 # when it saves. It names another boolean setting. Leaving the old line alone
 # when that boolean is off matters: deleting it or writing a default would
 # change a shared `TERATERM.INI` that the user did not ask this program to own.
-# `write-key=Key` records the one upstream reader/writer mismatch. A key may be
-# enclosed in backticks when leading or trailing whitespace is significant;
-# the backticks are schema punctuation and are not part of the key.
+# `write-key=Key` records the one upstream reader/writer mismatch. A key **or a
+# default** may be enclosed in backticks when leading or trailing whitespace is
+# significant; the backticks are schema punctuation and are not part of the
+# value. Both fields are trimmed otherwise, so a value like the proxy's
+# `` `>> Host name: ` `` — whose trailing space is what makes it match a prompt
+# rather than a prefix of one — has no other way to be written down.
 #
 # `default-from=name.of.int` is the other optional field. It reproduces a key
 # whose fallback is another setting's already-loaded value rather than a
@@ -1137,6 +1140,122 @@ connection.host_dialog_on_startup | bool | Tera Term | HostDialogOnStartup | on 
 # affected. The async transport currently sends keystrokes immediately, so the
 # key is carried pending a negotiated line buffer.
 connection.line_mode | bool | Tera Term | EnableLineMode | on | -
+
+# --- proxy -------------------------------------------------------------------
+#
+# **The first section here that is not `[Tera Term]`**, and the reason is that
+# the proxy is a plugin upstream: `TTProxy` hooks `ReadIniFile`/`WriteIniFile`
+# and reads its own keys out of a `[TTProxy]` section of the same file
+# (`TTProxy/TTProxy.h:63`). Every read below is `YCL`'s `IniFile`, which is
+# `GetPrivateProfile*` with a thin wrapper, so the family of traps that applies
+# to the rest of this file applies here — with the one difference that `IniFile`
+# has no `GetOnOff`, so there is no default-biased boolean in the section.
+#
+# The plugin's own `DebugLog` key is deliberately **not** here. It names a file
+# for a hex trace of the handshake, and carrying the key without writing the
+# trace would be a setting that reads back correctly and does nothing. See
+# `PLAN.md`.
+
+# `ProxyWSockHook.h:1972`, through `ProxyInfo::parseType` (`:158`), which
+# lower-cases the value and compares it against a table — so it is
+# case-insensitive, and **anything unrecognised is no proxy at all**. A typo
+# is therefore a direct connection rather than an error, which is this file's
+# ordinary rule for an enumerated setting and is worth naming here because the
+# cost is different: the user believes they are behind a proxy and is not.
+# `none` is the spelling that says so on purpose.
+#
+# `socks` and `socks5` are one type and `socks` is what upstream writes back —
+# `getTypeName` walks the same table and returns the first row for the type,
+# which is `socks` (`:181`).
+#
+# **Five more spellings are in upstream's table and are not here**:
+# `ssl`, `none+ssl`, `http+ssl`, `socks+ssl`, `socks4+ssl`, `socks5+ssl` and
+# `telnet+ssl` parse to types the relay `switch` has no arm for, so they fall
+# to its `default: result = 0` (`:1822`) — reported as connected, with no
+# handshake done — because `SSLSocket.h` and `SSLLIB.h` are in the source tree,
+# included by nothing and listed in no build. Leaving them out puts them on the
+# unrecognised arm, which is the honest place for a spelling that has never
+# meant anything.
+proxy.type | enum(none=None,http=Http,telnet=Telnet,socks4=Socks4,socks/socks5=Socks5) | TTProxy | ProxyType | none | -
+
+# `ProxyWSockHook.h:1976`. Empty is no proxy however `proxy.type` is set —
+# `_load` demotes a type it has no host for rather than dialling an empty name.
+proxy.host | string_esc | TTProxy | ProxyHost | | -
+
+# `ProxyWSockHook.h:1980`, read with `getInteger`'s default of **0** and
+# assigned to an `unsigned short`, which is why this is `uint16` rather than a
+# bounded `int`: `ProxyPort=65537` is port 1.
+#
+# **Zero means the type's default here and disables the relay upstream**, which
+# is the first of the four defects in `tt-conn/src/proxy.rs`. `getPort()`
+# (`:442`) supplies 1080 for either SOCKS, 23 for the telnet proxy and 80 for
+# HTTP, and the connect hook uses it for the address (`:1770`) — and then the
+# guard deciding whether to speak the protocol at all tests the raw stored port
+# instead (`:1792`). Leaving the dialog's port box empty is enough to reach it.
+proxy.port | uint16 | TTProxy | ProxyPort | 0 | -
+
+# `ProxyWSockHook.h:1981`. The proxy's own credentials, not the host's: Basic
+# authentication for HTTP, RFC 1929 for SOCKS5, and the user ID field for
+# SOCKS4 — which is not a password at all, being what the proxy hands to the
+# client's identd.
+#
+# An empty value and an absent key mean the same thing here, which is not this
+# file's usual rule. Upstream keeps them apart as `""` and NULL, and the
+# distinction reaches exactly one place: a SOCKS5 method list that offers
+# username/password with two empty strings in hand. No server accepts that, so
+# nothing observable is lost by treating both as "no credentials".
+proxy.user | string_esc | TTProxy | ProxyUser | | -
+
+# `ProxyWSockHook.h:1983`, and it is stored in plain text, as upstream stores
+# it. Upstream reads it only when `ProxyUser` is set and then uses it without
+# checking — `begin_relay_http` reaches `strlen(proxy.pass)` under a test of
+# the *user* alone (`:1275`), so a username with no password is a NULL
+# dereference on the first HTTP proxy connection, and the dialog produces
+# exactly that pair from an empty password box (`:1013`). Here an absent
+# password is the empty string, which is what `user:` means to Basic.
+proxy.pass | string_esc | TTProxy | ProxyPass | | -
+
+# `ProxyWSockHook.h:1987`, in seconds. It bounds every send and receive of the
+# handshake, as a `select` timeout there and as a socket timeout here, and
+# **zero is upstream's "wait forever"** — a null `timeval` — which is kept.
+#
+# The floor is a divergence with no cost: a negative value makes upstream's
+# `timeval` invalid, so `select` fails with `EINVAL` and every proxy connection
+# breaks. Below zero takes the default instead.
+proxy.timeout | int(0..) | TTProxy | ConnectionTimeout | 10 | -
+
+# `ProxyWSockHook.h:1990`. Who turns the host name into an address — `local`
+# resolves here and fails if it cannot, `remote` never resolves here and sends
+# the name, `auto` resolves here and falls back to sending the name. Compared
+# case-insensitively with an `else` of `auto`.
+#
+# Only the two SOCKS relays consult it; HTTP and the telnet proxy send the name
+# as text and have no choice to make. For SOCKS4 it is also what decides
+# whether the request is a 4a one, since that protocol expresses an unresolved
+# name by an address of `0.0.0.1` and a name after the user ID.
+proxy.socks_resolve | enum(auto=Auto,local=Local,remote=Remote) | TTProxy | SocksResolve | auto | -
+
+# `ProxyWSockHook.h:1999`. The five strings the `telnet` proxy type watches for
+# and answers, which exist because that "protocol" is a person's session with a
+# terminal server and every vendor's prompts are different.
+#
+# Each is matched as a substring of **one line**: `wait_for_prompt` (`:1228`)
+# reads to a newline and then looks for each of the five in what it has, so a
+# prompt split across two lines is never found and a line holding two of them
+# takes the first. The trailing space in this one is part of the value.
+proxy.telnet_hostname_prompt | string_esc | TTProxy | TelnetHostnamePrompt | `>> Host name: ` | -
+
+# `ProxyWSockHook.h:2000`. Answered with `proxy.user`.
+proxy.telnet_username_prompt | string_esc | TTProxy | TelnetUsernamePrompt | Username: | -
+
+# `ProxyWSockHook.h:2001`. Answered with `proxy.pass`.
+proxy.telnet_password_prompt | string_esc | TTProxy | TelnetPasswordPrompt | Password: | -
+
+# `ProxyWSockHook.h:2002`. Seeing this ends the relay and starts the session.
+proxy.telnet_connected_message | string_esc | TTProxy | TelnetConnectedMessage | `-- Connected to ` | -
+
+# `ProxyWSockHook.h:2003`. Seeing this ends the relay as a refusal.
+proxy.telnet_error_message | string_esc | TTProxy | TelnetErrorMessage | !!!!!!!! | -
 
 # --- macro ------------------------------------------------------------------
 
