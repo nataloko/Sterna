@@ -516,12 +516,12 @@ mod tests {
         #[cfg(unix)]
         assert!(path.exists());
         #[cfg(windows)]
-        assert!(crate::addr::list().unwrap().contains(&path));
+        crate::addr::assert_eventually_listed(&path, true);
         drop(server);
         #[cfg(unix)]
         assert!(!path.exists());
         #[cfg(windows)]
-        assert!(!crate::addr::list().unwrap().contains(&path));
+        crate::addr::assert_eventually_listed(&path, false);
     }
 
     /// A client holding an open connection does not keep the window alive.

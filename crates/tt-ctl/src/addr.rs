@@ -291,6 +291,30 @@ pub(crate) fn peer_is_us(stream: &Stream) -> bool {
     stream.peer_is_us()
 }
 
+/// Assert an endpoint's eventual namespace state in native Windows tests.
+///
+/// `FindFirstFileW` does not give a stable snapshot while the parallel test
+/// binary is creating and dropping other named pipes. The endpoint itself is
+/// already live (or gone); give the namespace enumeration a bounded chance to
+/// observe that state instead of making one concurrent scan authoritative.
+#[cfg(all(test, windows))]
+pub(crate) fn assert_eventually_listed(path: &Path, expected: bool) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        let got = list().expect("the named-pipe namespace is enumerable");
+        if got.iter().any(|candidate| candidate == path) == expected {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "expected {} to be {} in the named-pipe namespace; last scan: {got:?}",
+            path.display(),
+            if expected { "present" } else { "absent" }
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -473,7 +497,7 @@ mod windows_tests {
         let path = path_of(&name).unwrap();
         let _listener = bind(&path).unwrap();
         assert_eq!(name_of(&path).as_deref(), Some(name.as_str()));
-        assert!(list().unwrap().contains(&path));
+        assert_eventually_listed(&path, true);
     }
 
     #[test]
