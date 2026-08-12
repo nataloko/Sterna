@@ -3049,6 +3049,17 @@ TtStatus tt_session_settings_load(TtSession *session,
                                   const char *path);
 
 /**
+ * Copy the live settings from one session to another.
+ *
+ * Session duplication needs the source window's current values, not a second
+ * read of its INI file. The live grid size is folded in for the same reason
+ * [`settings_for_save`] does it: a user resize updates the terminal, while
+ * the schema remains the snapshot last loaded from disk.
+ */
+TtStatus tt_session_copy_settings(TtSession *destination,
+                                  const TtSession *source);
+
+/**
  * Write every setting back, leaving the rest of the file alone.
  *
  * The file is re-read first and only the keys the schema owns are touched, so

@@ -1589,6 +1589,32 @@ pub extern "C" fn tt_session_settings_load(
     TT_OK
 }
 
+/// Copy the live settings from one session to another.
+///
+/// Session duplication needs the source window's current values, not a second
+/// read of its INI file. The live grid size is folded in for the same reason
+/// [`settings_for_save`] does it: a user resize updates the terminal, while
+/// the schema remains the snapshot last loaded from disk.
+#[no_mangle]
+pub extern "C" fn tt_session_copy_settings(
+    destination: *mut TtSession,
+    source: *const TtSession,
+) -> TtStatus {
+    if destination.is_null() || source.is_null() {
+        return fail(TT_ERR_INVALID, "null session");
+    }
+    if std::ptr::eq(destination.cast_const(), source) {
+        return TT_OK;
+    }
+    let source = unsafe { &*source };
+    let mut settings = source.session.settings().clone();
+    settings.terminal_cols = source.session.grid().cols() as i32;
+    settings.terminal_rows = source.session.grid().rows() as i32;
+    let destination = unsafe { &mut *destination };
+    destination.session.set_settings(settings);
+    TT_OK
+}
+
 /// Where a full settings save gets the window position it may write.
 enum SavedWindowPosition {
     /// The values already in `Settings`, for a caller with no window.
