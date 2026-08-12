@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-12 · **Stage:** 4 active · **Commits:** 523
+**Last updated:** 2026-08-12 · **Stage:** 4 active · **Commits:** 528
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -5528,13 +5528,15 @@ languages, terminal depth, tabs and duplication, proxying, and printing.
 ### 🔵 Stage 4 — depth and polish (4–6 months)
 
 DEC special graphics (line drawing — not CJK) already landed with the Stage 1
-VT engine and renderer. The Lua plugin surface landed 2026-08-12: menu items,
-global key bindings, connect/disconnect hooks and binary-safe byte-stream
-filters. Ordinary callbacks retain a VM per terminal tab; filters use an
-isolated, bounded fast-path VM so a wait or dialog cannot stop terminal I/O,
-with scalar control proxies shared between the two. Settings pages remain,
-along with sixel and a self-updater. **No deb** — the AppImage-only decision in
-Stage 1 covers this too.
+VT engine and renderer. The Lua plugin surface is complete as of 2026-08-12:
+menu items, global key bindings, connect/disconnect hooks, binary-safe
+byte-stream filters and custom settings pages. Ordinary callbacks retain a VM
+per terminal tab; filters use an isolated, bounded fast-path VM so a wait or
+dialog cannot stop terminal I/O, with scalar filter and setting controls shared
+between the two. Typed plugin pages join the generated settings dialog, read
+and preserve the active INI, apply live, and copy with a duplicated tab. Sixel
+and a self-updater remain. **No deb** — the AppImage-only decision in Stage 1
+covers this too.
 
 **The macro reference is generated, 2026-08-12.** `docs/macro/` converts all
 214 pages of the pinned English Tera Term macro manual to Markdown and retains
@@ -5612,14 +5614,16 @@ Adoption hinges on "my existing setup just works." Budget real time here.
   **Lua plugin API** — menu items, key bindings, connect/disconnect hooks,
   byte-stream filters, settings pages, covering what the 17 samples in
   `TTXSamples/` actually do; (3) WASM component plugins only if someone asks.
-  The first four surfaces are **done 2026-08-12**: direct `.lua` files load in
+  All five surfaces are **done 2026-08-12**: direct `.lua` files load in
   filename order, each tab retains its own callback and stream state, Qt
   installs stable menu paths and portable shortcuts, lifecycle edges queue
   rather than disappearing behind an active callback, and ordered input/output
   filters cover the terminal stream without touching file-transfer packets.
-  Filter failures disable only that callback and pass bytes through. Settings
-  pages remain. The Lua command surface itself has been here since Stage 2
-  (`crates/tt-lua/`); hooks are a separate layer above it.
+  Filter failures disable only that callback and pass bytes through. Typed
+  bool, bounded-int, string and enum pages join Setup, share live state with
+  both Lua VMs, and persist in plugin-owned INI sections without disturbing
+  the rest of the file. The Lua command surface itself has been here since
+  Stage 2 (`crates/tt-lua/`); hooks are a separate layer above it.
 - **Docs** — 751 HTML files / 97k lines, 214 of them macro reference. Convert to
   Markdown mechanically; **generate** the settings and macro references from the
   schema and command table.

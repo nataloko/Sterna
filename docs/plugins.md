@@ -2,9 +2,9 @@
 
 Sterna plugins are ordinary Lua files which keep their state for the life of a
 terminal tab. They can add menu items, install window-wide shortcuts, react
-when that tab connects or disconnects, and transform bytes in either direction.
-An ordinary callback receives the same `tt` terminal API as a standalone
-`.lua` macro.
+when that tab connects or disconnects, add typed settings pages, and transform
+bytes in either direction. An ordinary callback receives the same `tt`
+terminal API as a standalone `.lua` macro.
 
 This is Sterna's portable replacement for the useful part of Tera Term's TTX
 extension surface. It is not compatible with TTX DLLs.
@@ -40,12 +40,15 @@ never installed.
 
 ```lua
 local connections = 0
-local view_only
+local preferences = sterna.settings {
+  title = 'Router tools', section = 'Lua Router Tools', fields = {
+    {name = 'view_only', label = 'View-only mode', kind = 'bool', default = false},
+  },
+}
 
-view_only = sterna.filter('output', function(bytes)
-  return nil -- discard this chunk while the filter is enabled
+sterna.filter('output', function(bytes)
+  return preferences.view_only and nil or bytes
 end)
-view_only.enabled = false
 
 sterna.menu {
   menu = 'Control/Router',
@@ -64,7 +67,7 @@ sterna.menu {
   menu = 'Control/Router',
   label = 'Toggle view-only mode',
   action = function()
-    view_only.enabled = not view_only.enabled
+    preferences.view_only = not preferences.view_only
   end,
 }
 
@@ -81,8 +84,9 @@ end)
 The `connections` value demonstrates the important difference from a macro:
 the callback VM's globals and closures remain alive. Each tab has separate
 state, so the value is not shared between sessions. A file which declares a
-stream filter also gets an isolated fast-path VM; see [Stream filters](#stream-filters)
-for why and for the small state bridge between them.
+settings page or stream filter can share those typed controls with the
+isolated fast-path VM; see [Settings pages](#settings-pages) and
+[Stream filters](#stream-filters).
 
 ## Registration API
 
@@ -146,6 +150,79 @@ sterna.menu {
 Control values may be `nil`, booleans, numbers, or strings. `direction` is a
 read-only property. Tables and functions cannot cross between Lua states.
 
+### `sterna.settings(spec)`
+
+Adds a searchable tab to Setup > Terminal and returns a typed control proxy.
+The declaration has a title, an INI section, and one or more fields:
+
+```lua
+local preferences = sterna.settings {
+  title = 'Router tools',
+  section = 'Lua Router Tools',
+  fields = {
+    {
+      name = 'enabled', label = 'Enable router tools',
+      kind = 'bool', default = true,
+    },
+    {
+      name = 'retries', label = 'Login attempts',
+      description = 'How many times to retry authentication',
+      kind = 'int', min = 1, max = 10, default = 3,
+    },
+    {
+      name = 'prompt', key = 'PromptPrefix', label = 'Prompt prefix',
+      kind = 'string', default = '[router] ',
+    },
+    {
+      name = 'mode', label = 'Safety mode', kind = 'enum',
+      choices = {'fast', 'safe'}, default = 'safe',
+    },
+  },
+}
+
+sterna.menu {
+  menu = 'Control/Router', label = 'Send probe', action = function()
+    if preferences.enabled then
+      tt.sendln(preferences.prompt .. preferences.mode)
+    end
+  end,
+}
+```
+
+The page fields are:
+
+- `name` — required property name on the returned proxy. Lua property names
+  are case-sensitive.
+- `key` — optional key in the page's INI section; defaults to `name`.
+- `label` — required text beside the editor.
+- `description` — optional help text shown in the tooltip and included in
+  settings search.
+- `kind` — `bool`, `int`, `string`, or `enum`.
+- `default` — required, with the Lua type implied by `kind`.
+- `min` and `max` — required inclusive bounds for an `int`.
+- `choices` — required ordered string list for an `enum`; `default` must be
+  one of them.
+
+The section and key are ordinary `sterna.ini` names. Their comparison follows
+the file's case-insensitive rules, and two plugins cannot claim the same
+section/key pair. Use a plugin-specific section such as `Lua Router Tools` to
+avoid collisions. Strings and enum values must be UTF-8 and cannot contain NUL
+or a line break.
+
+Saved values are installed while `sterna.settings` runs. Code immediately
+after the declaration therefore sees the saved value, not a temporary default.
+A missing or invalid saved value takes the declared default. Reading and
+assigning proxy properties is typed: a boolean property accepts a boolean, an
+integer observes its bounds, and enum assignments must be one of the declared
+strings.
+
+The dialog applies changes when the user chooses OK; Cancel leaves the live
+values alone. Setup > Save setup writes them into the active `sterna.ini`
+without replacing comments or unrelated keys. A new tab starts from that file,
+while Duplicate tab copies the source tab's live values even when they have not
+been saved yet. Like every plugin state, values remain separate between
+ordinary tabs.
+
 ## Callback behavior
 
 Callbacks run on a worker, so waiting for terminal input or opening a dialog
@@ -185,9 +262,9 @@ and returning an empty string both emit no bytes for that chunk.
 
 An ordinary callback may wait for terminal input or hold a dialog open. A
 filter has to keep moving bytes while that happens, so filter callbacks run in
-a separate fast-path VM with no `tt` API. Scalar properties on the filter's
-control proxy are the explicit bridge between the two VMs; this is how a menu
-action can enable or reconfigure a live filter safely.
+a separate fast-path VM with no `tt` API. Scalar properties on filter and
+settings control proxies are the explicit bridges between the two VMs; this is
+how a menu action or settings page can reconfigure a live filter safely.
 
 Lua functions cannot be moved between VMs. For a file which declares a filter,
 Sterna evaluates the top level once for the ordinary callback VM and once for
@@ -204,5 +281,6 @@ again. These failures do not disconnect the terminal.
 
 ## Current limits
 
-Custom settings pages remain on the Stage 4 roadmap. Sterna deliberately does
-not load native TTX or WASM plugins.
+Settings pages intentionally use the four portable controls above; a plugin
+cannot inject a native widget or arbitrary code into the dialog. Sterna
+deliberately does not load native TTX or WASM plugins.

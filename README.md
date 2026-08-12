@@ -7,7 +7,7 @@ shell — for Linux and Windows. Compatible with Tera Term; not Tera Term.
 > all four transports, the oracle-diffed VT engine, six file-transfer
 > protocols, TTL and Lua scripting, the generated settings UI, a control
 > socket, a Lua plugin API for menus, global keys, connection hooks and
-> byte-stream filters, an
+> byte-stream filters plus custom settings pages, an
 > AppImage, `KEYBOARD.CNF`, and all compatible surfaces wired to Tera Term's
 > 14 `.lng` catalogs. The Windows build passes its native CI, ships as an NSIS
 > installer, and printing is wired end to end. Both platforms have multiple
@@ -40,7 +40,7 @@ that nothing else on Linux does, done well:
 - real scripting — the [TTL language](docs/macro/README.md), so existing `.ttl`
   scripts run unchanged
 - persistent [Lua plugins](docs/plugins.md) with menu actions, global shortcuts,
-  connect/disconnect hooks and binary-safe stream filters
+  connect/disconnect hooks, binary-safe stream filters and typed settings pages
 - the legacy file-transfer suite: XMODEM, YMODEM, ZMODEM, Kermit, B-Plus, Quick-VAN
 
 CJK input methods and the charset tables are **deferred indefinitely** — see
