@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build Sterna as an AppImage — the only Linux artifact there is going to be.
 #
-#   ./build.sh              build it into build/
+#   ./build.sh              build the AppImage and its zsync metadata into build/
 #   ./build.sh --run        ...and then start it, to prove it does
 #   ./build.sh --clean      throw the build tree away first
 #
@@ -81,6 +81,12 @@ export NO_STRIP=1
 export PATH="$HOME/.cargo/bin:$tools:$PATH"
 command -v cargo >/dev/null || { echo "appimage: cargo not found" >&2; exit 2; }
 command -v qmake6 >/dev/null || { echo "appimage: qmake6 not found — is this the Qt container?" >&2; exit 2; }
+command -v readelf >/dev/null || { echo "appimage: readelf not found — dnf install binutils" >&2; exit 2; }
+command -v zsyncmake >/dev/null || { echo "appimage: zsyncmake not found — dnf install zsync" >&2; exit 2; }
+
+version=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' \
+	"$root/crates/Cargo.toml" | head -1)
+[ -n "$version" ] || { echo "appimage: no version in crates/Cargo.toml" >&2; exit 2; }
 
 qt_plugins=$(qmake6 -query QT_INSTALL_PLUGINS)
 qt_libs=$(qmake6 -query QT_INSTALL_LIBS)
@@ -315,13 +321,24 @@ rm -f "$appdir/AppRun.wrapped"
 # --- pack --------------------------------------------------------------------
 echo "appimage: packing" >&2
 out=sterna-x86_64.AppImage
-rm -f "$build/$out"
-"$tools/appimagetool" "$appdir" "$build/$out" >/dev/null 2>&1 || {
+zsync=$out.zsync
+update_info='gh-releases-zsync|nataloko|Sterna|latest|sterna-x86_64.AppImage.zsync'
+rm -f "$build/$out" "$build/$zsync" "$PWD/$zsync"
+export VERSION="$version"
+"$tools/appimagetool" -u "$update_info" "$appdir" "$build/$out" >/dev/null 2>&1 || {
 	echo "appimage: appimagetool failed" >&2; exit 2; }
+# appimagetool versions disagree on whether zsyncmake's output follows the
+# destination or the current directory. Put it beside the AppImage either way.
+[ ! -f "$PWD/$zsync" ] || mv "$PWD/$zsync" "$build/$zsync"
+[ -f "$build/$zsync" ] || { echo "appimage: appimagetool produced no $zsync" >&2; exit 2; }
+readelf --string-dump=.upd_info "$build/$out" | grep -Fq "$update_info" || {
+	echo "appimage: update information is missing from $out" >&2; exit 2; }
 
 echo
 echo "appimage: $build/$out"
 echo "          $(du -h "$build/$out" | cut -f1), glibc floor $(ldd --version | head -1 | grep -o '[0-9]\+\.[0-9]\+$')"
+echo "appimage: $build/$zsync"
+echo "          $(du -h "$build/$zsync" | cut -f1)"
 
 if [ "$RUN" = 1 ]; then
 	echo "appimage: starting it" >&2

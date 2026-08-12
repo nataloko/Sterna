@@ -36,11 +36,13 @@ updater reads:
   --windows packaging/windows/build/sterna-0.1.1-x86_64-setup.exe
 ```
 
-Upload both programs plus `release-update/latest.json` and
-`release-update/latest.json.sig` to the matching `vX.Y.Z` GitHub release. The
-manifest uses immutable tag URLs, not the moving `latest` URL. Publish the
-release only when all four assets are present; until then an installed copy's
-explicit check reports that no signed update is available.
+Upload both programs, `sterna-x86_64.AppImage.zsync`,
+`release-update/latest.json` and `release-update/latest.json.sig` to the
+matching `vX.Y.Z` GitHub release. The manifest uses immutable tag URLs, not the
+moving `latest` URL. Publish the release only when all five assets are present;
+until then an installed copy's explicit check reports that no signed update is
+available. The zsync file is for external AppImage tools; it does not replace
+the signed manifest used by Sterna itself.
 
 For an automated release, provide `STERNA_UPDATE_PRIVATE_KEY` as a path to the
 encrypted PEM and `STERNA_UPDATE_KEY_PASSWORD` as its password. Those are

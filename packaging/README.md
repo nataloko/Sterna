@@ -15,7 +15,7 @@ path and a self-contained binary is the ordinary one.
 # Qt work happens in the sterna-fedora container. See AGENTS.md for why.
 distrobox-host-exec distrobox enter sterna-fedora --no-tty -- bash -lc '
   cd ~/Projects/Sterna/packaging/appimage
-  ./build.sh              # → build/sterna-x86_64.AppImage
+  ./build.sh              # → build/sterna-x86_64.AppImage + .zsync
   ./build.sh --clean      # ...from scratch
   ./build.sh --run        # ...and start it
 '
@@ -186,9 +186,11 @@ one is used at the next start. A loose build opens the release page instead of
 guessing what file should be replaced.
 
 The release metadata and key procedure are in
-[`update/`](update/README.md). The AppImage format also supports zsync and an
-external AppImageUpdate tool, but Sterna uses the same signed full-artifact
-path on Linux and Windows so there is one trust format and one UI.
+[`update/`](update/README.md). The build also embeds GitHub zsync update
+information and produces `sterna-x86_64.AppImage.zsync` for Gear Lever,
+AppImageUpdate and other external tools. Sterna's own updater still uses the
+same signed full-artifact path on Linux and Windows, so there is one trust
+format and one UI inside the application.
 
 Qt Network is deliberately in `libsterna_updater.so`, which the terminal loads
 by name only for this action. Linking it into the main shell measured about 5
