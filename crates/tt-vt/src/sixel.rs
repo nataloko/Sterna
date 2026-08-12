@@ -651,4 +651,21 @@ mod tests {
         assert_eq!((raster.width, raster.height), (MAX_WIDTH, 6));
         assert_eq!(raster.pixels.len(), MAX_WIDTH * 6 * 4);
     }
+
+    #[test]
+    fn netpbm_color_planes_overprint_into_one_image() {
+        // The payload emitted by Netpbm 11.5.2's `ppmtosixel -7bit` for a
+        // 4-by-6 red PPM. Its line breaks are formatting, and each `$` sends
+        // the next one-bit colour plane back over the same four columns.
+        let raster = decode(
+            (8, 0),
+            b"\"1;1\n#0;2;100;0;0\n#0!4@$\n#0!4A$\n#0!4C$\n#0!4G$\n#0!4O$\n#0!4_$\n-\n",
+        );
+
+        assert_eq!((raster.width, raster.height), (4, 6));
+        assert!(raster
+            .pixels
+            .chunks_exact(4)
+            .all(|pixel| pixel == [255, 0, 0, 255]));
+    }
 }
