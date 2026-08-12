@@ -143,6 +143,11 @@ pub const TT_ERR_HOST_KEY: TtStatus = -8;
 /// names what the server said it would still accept, which is the only thing
 /// that makes the message actionable.
 pub const TT_ERR_AUTH: TtStatus = -9;
+/// The proxy in front of the host refused, failed, or is not a proxy.
+/// **Separate from [`TT_ERR_SSH`] and [`TT_ERR_IO`] because it sends the user
+/// to a different page of the settings**: nothing about the host or its
+/// credentials is wrong when a SOCKS server answers `REP 2`.
+pub const TT_ERR_PROXY: TtStatus = -10;
 
 thread_local! {
     static LAST_ERROR: RefCell<CString> = RefCell::new(CString::default());
@@ -170,6 +175,7 @@ fn report(e: Error) -> TtStatus {
         Error::Unsupported(_) => TT_ERR_UNSUPPORTED,
         Error::Ssh(_) => TT_ERR_SSH,
         Error::HostKey(_) => TT_ERR_HOST_KEY,
+        Error::Proxy(_) => TT_ERR_PROXY,
         Error::Auth { .. } => TT_ERR_AUTH,
         Error::Io(_) => TT_ERR_IO,
     };

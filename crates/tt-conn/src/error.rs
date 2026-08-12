@@ -40,6 +40,12 @@ pub enum Error {
     /// **not** offer to retry: this is the one failure where the right
     /// affordance is no affordance.
     HostKey(String),
+    /// The proxy in front of the host refused, failed, or is not a proxy.
+    /// Separate from [`Ssh`](Error::Ssh) because the two send the user to
+    /// different settings: this one is `[TTProxy]`, and saying "SSH failed"
+    /// about a SOCKS server that answered `REP 2` sends them to the wrong
+    /// dialog.
+    Proxy(String),
     /// Every authentication method either failed or was not on offer.
     /// `offered` is what the server said it would still accept, which is the
     /// only thing that makes the message actionable — "the server wants
@@ -150,6 +156,7 @@ impl fmt::Display for Error {
             Error::Unsupported(what) => write!(f, "not supported on this platform: {what}"),
             Error::Ssh(what) => write!(f, "{what}"),
             Error::HostKey(what) => write!(f, "{what}"),
+            Error::Proxy(what) => write!(f, "{what}"),
             Error::Auth { offered } if offered.is_empty() => {
                 write!(
                     f,

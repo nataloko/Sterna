@@ -27,6 +27,7 @@
 
 pub mod error;
 pub mod netif;
+pub mod proxy;
 pub mod pty;
 pub mod serial;
 pub mod ssh;
@@ -39,4 +40,5 @@ mod windows_reader;
 
 pub use error::{Error, Result};
 pub use netif::local_ip_addresses;
+pub use proxy::{ProxyKind, ProxyParams, Resolve as ProxyResolve, TelnetPrompts};
 pub use transport::{LinkKind, Transport, TransportEvent};

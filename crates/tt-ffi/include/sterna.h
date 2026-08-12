@@ -2238,6 +2238,14 @@ typedef uint32_t TtShortcut;
  */
 #define TT_ERR_AUTH -9
 
+/**
+ * The proxy in front of the host refused, failed, or is not a proxy.
+ * **Separate from [`TT_ERR_SSH`] and [`TT_ERR_IO`] because it sends the user
+ * to a different page of the settings**: nothing about the host or its
+ * credentials is wrong when a SOCKS server answers `REP 2`.
+ */
+#define TT_ERR_PROXY -10
+
 #define TT_KEY_CODE_UNMAPPED 0
 
 #define TT_KEY_CODE_SENT 1
