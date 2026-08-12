@@ -113,6 +113,11 @@ const TtCell *Session::line(quint64 n, size_t *outLen) const
     return tt_session_line(m_session, n, outLen);
 }
 
+size_t Session::sixelImages(const TtSixelImage **out)
+{
+    return tt_session_sixel_images(m_session, out);
+}
+
 quint64 Session::lineAt(int y) const
 {
     return tt_session_line_at(m_session, static_cast<size_t>(qMax(0, y)));

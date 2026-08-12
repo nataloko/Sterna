@@ -143,6 +143,9 @@ public:
     /// prints; this is which line it *is*, and does not. Anything that has to
     /// survive output — the selection — holds one of these.
     const TtCell *line(quint64 n, size_t *outLen) const;
+    /// Active-screen sixel rasters, oldest first. Borrowed until the next
+    /// terminal mutation; the painter consumes them within one frame.
+    size_t sixelImages(const TtSixelImage **out);
     /// The absolute number of the line at viewport row `y`.
     quint64 lineAt(int y) const;
     /// The URL-marked run containing one cell, or an empty string when the

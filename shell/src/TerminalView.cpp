@@ -3,11 +3,13 @@
 #include "TerminalView.h"
 
 #include <cstring>
+#include <limits>
 
 #include <QApplication>
 #include <QClipboard>
 #include <QDesktopServices>
 #include <QFontMetricsF>
+#include <QImage>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -772,6 +774,46 @@ void TerminalView::paintEvent(QPaintEvent *)
             }
         }
         flush();
+    }
+
+    // Sixel pixels are drawn after the grid they replaced and before the
+    // cursor. The core has already made tiles transparent wherever later text
+    // changed a covered cell, so this order expresses both halves without a
+    // second damage model in Qt: old text is covered by the image; new text
+    // shows through the cleared tile.
+    const TtSixelImage *sixels = nullptr;
+    const size_t sixelCount = m_session->sixelImages(&sixels);
+    const quint64 viewTop = m_session->lineAt(0);
+    const quint64 viewBottom = m_session->lineAt(qMax(0, rows - 1));
+    for (size_t i = 0; i < sixelCount; i++) {
+        const TtSixelImage &image = sixels[i];
+        if (!image.pixels || image.width == 0 || image.height == 0
+            || image.width > static_cast<size_t>(std::numeric_limits<int>::max())
+            || image.height > static_cast<size_t>(std::numeric_limits<int>::max())
+            || image.width > std::numeric_limits<size_t>::max() / 4) {
+            continue;
+        }
+        const size_t stride = image.width * 4;
+        if (image.height > std::numeric_limits<size_t>::max() / stride
+            || image.pixels_len < stride * image.height) {
+            continue;
+        }
+        const quint64 imageRows = (image.height + static_cast<size_t>(ch) - 1)
+                                  / static_cast<size_t>(ch);
+        const quint64 imageBottom = image.line > std::numeric_limits<quint64>::max() - imageRows
+                                        ? std::numeric_limits<quint64>::max()
+                                        : image.line + imageRows;
+        if (imageBottom <= viewTop || image.line > viewBottom) {
+            continue;
+        }
+        const qint64 y = image.line >= viewTop
+                             ? static_cast<qint64>(image.line - viewTop) * ch
+                             : -static_cast<qint64>(viewTop - image.line) * ch;
+        const QImage raster(image.pixels, static_cast<int>(image.width),
+                            static_cast<int>(image.height),
+                            static_cast<qsizetype>(stride), QImage::Format_RGBA8888);
+        p.drawImage(QPoint(static_cast<int>(image.column) * cw, static_cast<int>(y)),
+                    raster);
     }
 
     // The cursor last, so it is never painted over by the row it sits on.

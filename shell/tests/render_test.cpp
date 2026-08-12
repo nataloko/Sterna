@@ -246,6 +246,34 @@ void test_text_is_drawn()
     CHECK(h.bgAt(0, 0) == kWhite);
 }
 
+void test_sixel_is_painted_and_later_text_erases_it()
+{
+    Harness h;
+    const int cw = h.view.theme().cellWidth();
+    const int ch = h.view.theme().cellHeight();
+    QByteArray sixel = QByteArrayLiteral("\033P7;1q\"1;1;")
+                       + QByteArray::number(cw) + ';' + QByteArray::number(ch)
+                       + QByteArrayLiteral("#2;2;100;0;0");
+    for (int y = 0; y < ch; y += 6) {
+        if (y != 0) {
+            sixel += '-';
+        }
+        const int bits = (1 << qMin(6, ch - y)) - 1;
+        sixel += '!';
+        sixel += QByteArray::number(cw);
+        sixel += static_cast<char>('?' + bits);
+    }
+    sixel += QByteArrayLiteral("\033\\");
+    h.session.feed(sixel);
+    h.render();
+    CHECK(h.at(0, 0) == QColor(255, 0, 0));
+    CHECK(h.bgAt(0, 0) == QColor(255, 0, 0));
+
+    h.feed("\033[1;1HX");
+    h.render();
+    CHECK(h.bgAt(0, 0) == kWhite);
+}
+
 void test_sgr_background_colours()
 {
     Harness h;
@@ -1978,6 +2006,7 @@ int main(int argc, char **argv)
 
     test_default_screen();
     test_text_is_drawn();
+    test_sixel_is_painted_and_later_text_erases_it();
     test_sgr_background_colours();
     test_truecolor_resolves_through_upstreams_search();
     test_ansi_palette_changes_the_search_and_the_painter_together();
