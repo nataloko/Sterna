@@ -707,18 +707,7 @@ impl Session {
     /// that has not been printed yet — both of which a frontend holding an old
     /// number has to be able to ask about without guessing at the range first.
     pub fn line(&self, line: u64) -> Option<&[Cell]> {
-        let grid = self.vt.grid();
-        let back = grid.scrollback_len();
-        // The oldest line still held, one page-worth of scrollback below the
-        // top of the page.
-        let first = self.top_line() - back as u64;
-        let i = usize::try_from(line.checked_sub(first)?).ok()?;
-        if i < back {
-            grid.scrollback_line(i)
-        } else {
-            let y = i - back;
-            (y < grid.rows()).then(|| grid.line(y))
-        }
+        self.vt.grid().absolute_line(line)
     }
 
     /// The AttrURL run containing one cell, by absolute line number.
@@ -1447,6 +1436,7 @@ impl Session {
     /// ioctl.
     pub fn resize(&mut self, cols: usize, rows: usize) -> Result<()> {
         self.vt.grid_mut().resize(cols, rows);
+        self.vt.reconcile_sixels();
         // A resize moves lines between the page and the scrollback in both
         // directions, so whatever the view was anchored to has moved and the
         // honest answer is to stop guessing and go live.
@@ -1775,6 +1765,7 @@ impl Session {
         if self.settings.connection_clear_screen_on_close {
             self.vt.grid_mut().clear_screen();
             self.vt.grid_mut().move_cursor(0, 0);
+            self.vt.reconcile_sixels();
             self.follow_scroll();
             self.events.push(Event::Damage);
         }

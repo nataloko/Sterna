@@ -22,6 +22,7 @@ pub mod keys;
 pub mod mouse;
 pub mod palette;
 pub mod printer;
+mod sixel;
 pub mod term_id;
 pub mod window;
 pub use color::Colors;
@@ -30,6 +31,7 @@ pub use mouse::{Encoding, Modifiers, MouseEvent, Tracking};
 /// Re-exported because [`Config`] has a field of this type, so a caller that
 /// builds one needs to be able to name it without depending on `tt-charset`.
 pub use printer::PrinterEvent;
+pub use sixel::SixelImage;
 pub use term_id::TermId;
 pub use tt_charset::ShiftFlags;
 pub use window::{WindowMetrics, WindowRequest};
@@ -654,6 +656,11 @@ struct Modes {
     /// DECPEX. Starts **set** — `vtterm.c:176` initialises it TRUE and
     /// nothing resets it, so DECRQM reports 1 on a fresh terminal.
     print_ex: bool,
+    /// Sixel scrolling, in xterm's modern sense. It starts on: a graphic is
+    /// anchored at the text cursor, follows scrollback, and leaves the cursor
+    /// below it. DECSDM (`?80`) has the opposite sense, so setting that mode
+    /// clears this flag and resetting it sets the flag.
+    sixel_scrolling: bool,
     /// `DECSET 2004`.
     bracketed_paste: bool,
     /// `DECSET 7786`, `AcceptWheelToCursor`.
@@ -769,6 +776,7 @@ impl Modes {
             auto_repeat: true,
             caret: true,
             print_ex: self.print_ex,
+            sixel_scrolling: true,
             bracketed_paste: false,
             wheel_to_cursor: config.translate_wheel_to_cursor,
             clear_then_home: false,
@@ -789,6 +797,7 @@ impl Modes {
         self.appli_key = false;
         self.appli_escape = 0;
         self.wheel_to_cursor = config.translate_wheel_to_cursor;
+        self.sixel_scrolling = true;
     }
 
     fn from_config(config: &Config) -> Modes {
@@ -799,6 +808,7 @@ impl Modes {
             auto_repeat: true,
             caret: true,
             print_ex: true,
+            sixel_scrolling: true,
             bracketed_paste: false,
             wheel_to_cursor: config.translate_wheel_to_cursor,
             clear_then_home: false,
@@ -879,6 +889,7 @@ impl Vt {
             for &byte in bytes {
                 self.debug_byte(byte);
             }
+            self.state.reconcile_sixels();
             return;
         }
         // Pure ASCII needs no rewriting at all, and almost every chunk is. The
@@ -895,10 +906,12 @@ impl Vt {
             && !bytes.iter().any(|&b| b >= 0x80)
         {
             self.parser.advance(&mut self.state, bytes);
+            self.state.reconcile_sixels();
             return;
         }
         let rewritten = self.rewrite_c1(bytes);
         self.advance_split(&rewritten);
+        self.state.reconcile_sixels();
     }
 
     /// Hand a rewritten chunk to `vte`, letting printer controller mode take the
@@ -1192,6 +1205,22 @@ impl Vt {
         &mut self.state.grid
     }
 
+    /// Images belonging to the active screen, in painting order.
+    pub fn sixel_images(&self) -> impl Iterator<Item = &SixelImage> {
+        let alternate = self.state.alt_screen;
+        self.state
+            .sixel_images
+            .iter()
+            .filter(move |image| image.alternate() == alternate)
+    }
+
+    /// Reconcile image tiles after a caller changed the grid directly through
+    /// [`Vt::grid_mut`]. Incoming bytes do this automatically; resize and the
+    /// few user-side screen operations use this seam after their edit.
+    pub fn reconcile_sixels(&mut self) {
+        self.state.reconcile_sixels();
+    }
+
     /// The settings the terminal is running under.
     ///
     /// A settings dialog starts from this rather than from the defaults, so
@@ -1259,6 +1288,7 @@ impl Vt {
         // on the two paths where it still runs.
         s.colors = color::Colors::new(&s.config);
         s.colors_dirty = true;
+        s.reconcile_sixels();
     }
 
     /// The colours the frontend should paint with — the live ones, which a host
@@ -1716,6 +1746,24 @@ impl Vt {
     }
 }
 
+enum Dcs {
+    /// Tera Term's 255-byte request strings: DECRQSS, XTGETTCAP and DECSTUI.
+    Short {
+        intermediate: Option<u8>,
+        action: char,
+    },
+    /// A sixel DCS is decoded as it arrives rather than collected. `line` and
+    /// `column` name the text position where its first pixel belongs even if
+    /// completing the image later scrolls that line into history.
+    Sixel {
+        decoder: Box<sixel::Decoder>,
+        line: u64,
+        column: usize,
+        scrolling: bool,
+        alternate: bool,
+    },
+}
+
 struct State {
     grid: Grid,
     config: Config,
@@ -1755,10 +1803,13 @@ struct State {
     /// `Send8BitMode`. Only ever true above level 1, and only when the setting
     /// or DECSCL says so.
     send_8bit: bool,
-    /// The intermediate and final byte of the DCS being collected, and its
-    /// payload. `None` when no DCS is open.
-    dcs: Option<(Option<u8>, char)>,
+    /// The DCS in progress. Short terminal queries retain their small payload;
+    /// sixel graphics decode into a bounded raster as the bytes arrive.
+    dcs: Option<Dcs>,
     dcs_buf: Vec<u8>,
+    /// Persistent sixel rasters, oldest first. Each carries an absolute line
+    /// anchor, so ordinary terminal scrolling moves it without rewriting it.
+    sixel_images: Vec<sixel::SixelImage>,
     mouse: mouse::MouseState,
     modes: Modes,
     /// Bells asked for and not yet collected. See [`Vt::take_bells`].
@@ -1897,6 +1948,7 @@ impl State {
             send_8bit: false,
             dcs: None,
             dcs_buf: Vec::new(),
+            sixel_images: Vec::new(),
             mouse: mouse::MouseState::default(),
             modes: Modes::from_config(&Config::default()),
             bells: 0,
@@ -1918,6 +1970,88 @@ impl State {
 
     fn send(&mut self, bytes: &[u8]) {
         self.reply.extend_from_slice(bytes);
+    }
+
+    fn install_sixel(
+        &mut self,
+        raster: sixel::Raster,
+        line: u64,
+        column: usize,
+        scrolling: bool,
+        alternate: bool,
+    ) {
+        let cell_width = usize::try_from(self.window.cell.0.max(1)).unwrap_or(1);
+        let cell_height = usize::try_from(self.window.cell.1.max(1)).unwrap_or(1);
+        let max_width = if scrolling {
+            self.grid
+                .cols()
+                .saturating_sub(column)
+                .saturating_mul(cell_width)
+        } else {
+            self.grid.cols().saturating_mul(cell_width)
+        };
+        let max_height = if scrolling {
+            sixel::MAX_HEIGHT
+        } else {
+            self.grid.rows().saturating_mul(cell_height)
+        };
+        let Some(raster) = raster.crop(max_width, max_height) else {
+            return;
+        };
+
+        if scrolling {
+            // xterm's default leaves the text cursor in the same column on the
+            // first complete row below the image. Advancing through the grid
+            // is what gives an image ordinary scrollback semantics when it
+            // reaches the bottom of the page.
+            let rows = raster.height.div_ceil(cell_height);
+            for _ in 0..rows {
+                self.grid.line_feed();
+            }
+            self.grid
+                .move_cursor(column.min(self.grid.cols() - 1), self.grid.cursor.y);
+        }
+
+        let image = sixel::SixelImage::new(
+            raster,
+            line,
+            column,
+            alternate,
+            cell_width,
+            cell_height,
+            &self.grid,
+        );
+        if image.is_empty() {
+            return;
+        }
+
+        // A large inline-image workload must not become an unbounded terminal
+        // history of its own. The text scrollback has its own cap; graphics
+        // get 128 MiB and evict oldest-first, as a screen cache should.
+        const MAX_STORAGE: usize = 128 * 1024 * 1024;
+        let wanted = image.pixels().len();
+        let mut used: usize = self
+            .sixel_images
+            .iter()
+            .map(|stored| stored.pixels().len())
+            .sum();
+        while !self.sixel_images.is_empty() && used.saturating_add(wanted) > MAX_STORAGE {
+            used = used.saturating_sub(self.sixel_images.remove(0).pixels().len());
+        }
+        if wanted <= MAX_STORAGE {
+            self.sixel_images.push(image);
+        }
+    }
+
+    fn reconcile_sixels(&mut self) {
+        let alternate = self.alt_screen;
+        for image in &mut self.sixel_images {
+            if image.alternate() == alternate {
+                image.reconcile(&self.grid);
+            }
+        }
+        self.sixel_images
+            .retain(|image| image.alternate() != alternate || !image.is_empty());
     }
 
     /// `vtterm.c:SendCSIstr` — the introducer is the 8-bit CSI once the host
@@ -2594,6 +2728,10 @@ impl State {
                             self.grid.reset_lr_margins();
                         }
                     }
+                    // xterm's current DECSDM spelling is the inverse of the
+                    // useful state: DECSET 80 fixes graphics to the page;
+                    // DECRST 80 restores cursor-relative scrolling.
+                    80 => self.modes.sixel_scrolling = !on,
                     47 | 1047 | 1048 | 1049 => self.alt_screen(p, on),
 
                     // Mouse tracking. Every *set* is gated on the setting;
@@ -2718,20 +2856,24 @@ impl State {
             (1048, false) => self.restore_cursor(),
 
             (47 | 1047, true) if !self.alt_screen => {
+                self.sixel_images.retain(|image| !image.alternate());
                 self.grid.save_screen();
                 self.alt_screen = true;
             }
             (47 | 1047, false) if self.alt_screen => {
+                self.sixel_images.retain(|image| !image.alternate());
                 self.grid.restore_screen();
                 self.alt_screen = false;
             }
             (1049, true) if !self.alt_screen => {
+                self.sixel_images.retain(|image| !image.alternate());
                 self.save_cursor();
                 self.grid.save_screen();
                 self.grid.clear_screen();
                 self.alt_screen = true;
             }
             (1049, false) if self.alt_screen => {
+                self.sixel_images.retain(|image| !image.alternate());
                 self.grid.clear_screen();
                 self.grid.restore_screen();
                 self.alt_screen = false;
@@ -2826,6 +2968,7 @@ impl State {
         self.charset.reset();
         self.saved_charset[usize::from(self.alt_screen)] = Some(self.charset.save());
         self.modes.soft_reset(&self.config);
+        self.sixel_images.clear();
     }
 
     /// `vtterm.c:SendDCSstr` — `ESC P … ESC \`, or the 8-bit `DCS … ST` when
@@ -3224,6 +3367,7 @@ impl State {
                 66 => onoff(m.appli_key),
                 67 => onoff(m.bs_key_is_bs),
                 69 => onoff(self.lr_margin_mode),
+                80 => onoff(!m.sixel_scrolling),
                 1000 => mouse(self.mouse.tracking == Tracking::Vt200),
                 // Highlight tracking is `#if 0`'d out upstream and always
                 // answers permanently reset, even though setting it works.
@@ -4615,6 +4759,7 @@ impl Perform for State {
             b'~' => self.shift(Shift::Ls1r),
             b'c' => {
                 self.grid.reset();
+                self.sixel_images.clear();
                 self.charset.reset();
                 self.saved_charset = [None, None];
                 self.title.clear();
@@ -4647,9 +4792,40 @@ impl Perform for State {
         }
     }
 
-    fn hook(&mut self, _params: &Params, intermediates: &[u8], _ignore: bool, action: char) {
-        self.dcs = Some((intermediates.first().copied(), action));
+    fn hook(&mut self, params: &Params, intermediates: &[u8], ignore: bool, action: char) {
         self.dcs_buf.clear();
+        if ignore {
+            self.dcs = None;
+            return;
+        }
+        let intermediate = intermediates.first().copied();
+        if intermediate.is_none() && action == 'q' {
+            let scrolling = self.modes.sixel_scrolling;
+            let (line, column) = if scrolling {
+                (
+                    self.grid.scrolled_off() + self.grid.cursor.y as u64,
+                    self.grid.cursor.x,
+                )
+            } else {
+                (self.grid.scrolled_off(), 0)
+            };
+            self.dcs = Some(Dcs::Sixel {
+                decoder: Box::new(sixel::Decoder::new(
+                    arg0(params, 0),
+                    arg0(params, 1),
+                    self.colors.normal[1],
+                )),
+                line,
+                column,
+                scrolling,
+                alternate: self.alt_screen,
+            });
+        } else {
+            self.dcs = Some(Dcs::Short {
+                intermediate,
+                action,
+            });
+        }
     }
 
     fn put(&mut self, byte: u8) {
@@ -4658,38 +4834,52 @@ impl Perform for State {
         // (`vtterm.c:4601`) filled under `StrLen < sizeof(StrBuff)-1`, so 255
         // bytes and no setting reaches it. Either way an unterminated DCS must
         // not be able to grow without limit.
-        if self.dcs.is_some() && self.dcs_buf.len() < 255 {
-            self.dcs_buf.push(byte);
+        match &mut self.dcs {
+            Some(Dcs::Sixel { decoder, .. }) => decoder.put(byte),
+            Some(Dcs::Short { .. }) if self.dcs_buf.len() < 255 => self.dcs_buf.push(byte),
+            Some(Dcs::Short { .. }) | None => {}
         }
     }
 
     fn unhook(&mut self) {
-        let Some((inter, action)) = self.dcs.take() else {
+        let Some(dcs) = self.dcs.take() else {
             return;
         };
-        if inter == Some(b'$') && action == 'q' {
-            let req = std::mem::take(&mut self.dcs_buf);
-            self.decrqss(&req);
-        }
-        // XTGETTCAP — `vtterm.c:RequestTermcapString`, marked "xterm
-        // experimental" there and answering exactly one capability.
-        if inter == Some(b'+') && action == 'q' {
-            let req = std::mem::take(&mut self.dcs_buf);
-            self.termcap_query(&req);
-        }
-        // DECSTUI — `vtterm.c:4565`. It sets the unit ID the tertiary DA
-        // reports, and `TF_LOCKTUID` defaults **on**, so as Tera Term ships
-        // the sequence is read and dropped. That is the point of it: the
-        // identity a terminal answers with is not the host's to change unless
-        // the file says otherwise.
-        //
-        // The same eight-hex-digit validation as the file's, in a second
-        // place — a nine-digit argument leaves the old value alone rather than
-        // truncating to eight.
-        if inter == Some(b'!') && action == '{' && !self.config.lock_uid {
-            let req = std::mem::take(&mut self.dcs_buf);
-            if let Some(uid) = std::str::from_utf8(&req).ok().and_then(valid_terminal_uid) {
-                self.config.terminal_uid = uid;
+        match dcs {
+            Dcs::Sixel {
+                decoder,
+                line,
+                column,
+                scrolling,
+                alternate,
+            } => {
+                if let Some(raster) = (*decoder).finish() {
+                    self.install_sixel(raster, line, column, scrolling, alternate);
+                }
+            }
+            Dcs::Short {
+                intermediate,
+                action,
+            } => {
+                let req = std::mem::take(&mut self.dcs_buf);
+                match (intermediate, action) {
+                    (Some(b'$'), 'q') => self.decrqss(&req),
+                    // XTGETTCAP — `vtterm.c:RequestTermcapString`, marked
+                    // "xterm experimental" there and answering exactly one
+                    // capability.
+                    (Some(b'+'), 'q') => self.termcap_query(&req),
+                    // DECSTUI — normally read and dropped because TF_LOCKTUID
+                    // ships on. The same eight-digit validation as the file's
+                    // keeps a long value from truncating into a new identity.
+                    (Some(b'!'), '{') if !self.config.lock_uid => {
+                        if let Some(uid) =
+                            std::str::from_utf8(&req).ok().and_then(valid_terminal_uid)
+                        {
+                            self.config.terminal_uid = uid;
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
     }
@@ -4840,6 +5030,82 @@ mod tests {
     fn primary_da_identifies_as_vt100() {
         let vt = run(b"\x1b[c", 20, 2);
         assert_eq!(vt.reply(), b"\x1b[?1;2c");
+    }
+
+    #[test]
+    fn sixel_is_decoded_at_the_cursor_and_moves_below_it() {
+        let mut vt = Vt::new(Config {
+            cols: 4,
+            rows: 3,
+            ..Config::default()
+        });
+        vt.set_window_metrics(WindowMetrics {
+            cell: (1, 6),
+            ..WindowMetrics::default()
+        });
+        vt.feed(b"\x1b[2;2H\x1bP7;1q\"1;1;2;6#2;2;100;0;0~~\x1b\\");
+
+        let image = vt.sixel_images().next().expect("sixel image");
+        assert_eq!((image.line(), image.column()), (1, 1));
+        assert_eq!((image.width(), image.height()), (2, 6));
+        assert_eq!(&image.pixels()[..4], &[255, 0, 0, 255]);
+        assert_eq!((vt.grid().cursor.x, vt.grid().cursor.y), (1, 2));
+    }
+
+    #[test]
+    fn sixel_scrolls_with_the_lines_and_survives_in_history() {
+        let mut vt = Vt::new(Config {
+            cols: 4,
+            rows: 2,
+            scrollback_max: 10,
+            ..Config::default()
+        });
+        vt.set_window_metrics(WindowMetrics {
+            cell: (1, 6),
+            ..WindowMetrics::default()
+        });
+        vt.feed(b"\x1b[2;2H\x1bP7;1q\"1;1;1;12@-@\x1b\\");
+
+        assert_eq!(vt.grid().scrolled_off(), 2);
+        assert_eq!((vt.grid().cursor.x, vt.grid().cursor.y), (1, 1));
+        assert_eq!(vt.sixel_images().next().unwrap().line(), 1);
+        assert!(vt.grid().absolute_line(1).is_some());
+    }
+
+    #[test]
+    fn decsdm_fixes_sixel_to_the_page_and_leaves_the_cursor() {
+        let mut vt = Vt::new(Config {
+            cols: 4,
+            rows: 3,
+            ..Config::default()
+        });
+        vt.set_window_metrics(WindowMetrics {
+            cell: (1, 6),
+            ..WindowMetrics::default()
+        });
+        vt.feed(b"\x1b[3;3H\x1b[?80h\x1bP7;1q@\x1b\\\x1b[?80$p");
+
+        let image = vt.sixel_images().next().unwrap();
+        assert_eq!((image.line(), image.column()), (0, 0));
+        assert_eq!((vt.grid().cursor.x, vt.grid().cursor.y), (2, 2));
+        assert_eq!(vt.reply(), b"\x1b[?80;1$y");
+    }
+
+    #[test]
+    fn later_text_erases_the_sixel_tile_it_overwrites() {
+        let mut vt = Vt::new(Config {
+            cols: 4,
+            rows: 3,
+            ..Config::default()
+        });
+        vt.set_window_metrics(WindowMetrics {
+            cell: (1, 6),
+            ..WindowMetrics::default()
+        });
+        vt.feed(b"\x1bP7;1q@\x1b\\");
+        assert_eq!(vt.sixel_images().count(), 1);
+        vt.feed(b"\x1b[1;1HX");
+        assert_eq!(vt.sixel_images().count(), 0);
     }
 
     #[test]

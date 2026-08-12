@@ -493,6 +493,23 @@ impl Grid {
         self.scrollback.get(i).map(|l| l.as_slice())
     }
 
+    /// One retained line by its monotonic screen number.
+    ///
+    /// The first live page was `0..rows`; each line which leaves the top gets
+    /// the next number. A sixel image and a selection both need this spelling:
+    /// a viewport row moves when output scrolls, while the content's number
+    /// does not. `None` means the line aged out or has not existed yet.
+    pub fn absolute_line(&self, line: u64) -> Option<&[Cell]> {
+        let back = self.scrollback.len();
+        let first = self.scrolled_off.checked_sub(back as u64)?;
+        let i = usize::try_from(line.checked_sub(first)?).ok()?;
+        if i < back {
+            self.scrollback.get(i).map(Vec::as_slice)
+        } else {
+            self.lines.get(i - back).map(Vec::as_slice)
+        }
+    }
+
     /// How many lines have ever left the page into the scrollback.
     ///
     /// Monotonic, and deliberately not the same thing as
