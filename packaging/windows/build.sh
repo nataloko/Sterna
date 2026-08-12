@@ -214,6 +214,7 @@ files=$build/files.nsh
 uninstall=$build/uninstall.nsh
 : > "$files"
 : > "$uninstall"
+: > "$uninstall.tmp"
 
 # Deepest first for the uninstaller, so a directory is emptied before RMDir
 # reaches it; shallowest first for the installer, which does not care.
