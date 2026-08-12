@@ -3,13 +3,14 @@
 A cross-platform **communications terminal** — serial, SSH, telnet and local
 shell — for Linux and Windows. Compatible with Tera Term; not Tera Term.
 
-> **Status: Stage 2 complete; Stage 3 in progress.** The Linux application has
+> **Status: Stage 3 complete.** The Linux application has
 > all four transports, the oracle-diffed VT engine, six file-transfer
 > protocols, TTL and Lua scripting, the generated settings UI, a control
 > socket, an AppImage, `KEYBOARD.CNF`, and all compatible surfaces wired to
 > Tera Term's 14 `.lng` catalogs. The Windows build passes its native CI,
-> ships as an NSIS installer, and printing is wired end to end. Tabs and
-> multiple sessions remain.
+> ships as an NSIS installer, and printing is wired end to end. Both platforms
+> have multiple sessions in movable tabs, including live SSH/telnet session
+> duplication.
 > See [PLAN.md](PLAN.md).
 
 The name is settled. See [PLAN.md](PLAN.md) for scope and status,

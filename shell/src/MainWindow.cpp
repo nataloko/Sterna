@@ -601,8 +601,8 @@ void MainWindow::startControl(const QString &name)
     // the window it is running in. That is the one thing DDE could not do.
     //
     // The process's environment rather than the child's, because
-    // `TtPtyParams` has no environment array: one window per process today,
-    // and tabs (Stage 3) are where this has to become per-session.
+    // `TtPtyParams` has no environment array. The endpoint is window-wide and
+    // follows the selected tab, just like the menu and status bar.
     qputenv("STERNA_CTL", m_control->path().toUtf8());
 }
 

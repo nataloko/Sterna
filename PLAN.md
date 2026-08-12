@@ -3,7 +3,7 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-12 · **Stage:** 2 complete, 3 in progress · **Commits:** 493
+**Last updated:** 2026-08-12 · **Stage:** 3 complete · **Commits:** 509
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -4349,7 +4349,7 @@ instead of being assigned a nearby key with a different meaning. Translating
 those would be a Sterna catalog extension, not more wiring of Tera Term's
 unchanged files.
 
-### 🔵 Stage 3 — Windows parity (3–4 months, ~15k LOC)
+### ✅ Stage 3 — Windows parity (3–4 months, ~15k LOC)
 
 Windows build, ConPTY, Win32 serial edge cases, NSIS installer. All 14 `.lng`
 languages wired through unchanged. VT320/VT525 depth and DEC private modes.
@@ -5487,6 +5487,43 @@ because the SSH server it starts only has to accept a forwarding request from
 the user who started it. Run 2026-08-12: all four passed first time, which is
 the first evidence in this file that the SOCKS reading is right rather than
 merely self-consistent.
+
+**Tabs close Stage 3, 2026-08-12.** A `TerminalPage` owns one `Session`,
+`TerminalView`, scrollbar, `Printer`, `Macro` and transfer dialog. That is the
+unit rather than the widget alone: output, scrollback, printing, an interpreter
+and a modeless protocol dialog all have state which must keep belonging to the
+line that created it after another tab is selected. `Macro` is declared before
+`Session` so it is destroyed first; a running interpreter must not retain a
+session whose page has already started coming apart.
+
+The `QTabWidget` hides its bar for one page and makes it movable and closable
+for two. Menus, status, title, key-map actions and the window-wide control
+socket follow the active page, while signals that only report background work
+update that page's tab label without stealing focus. Opening a connection from
+a live page creates another page rather than replacing the line. Closing asks
+about the page being closed, and network `AutoWinClose` removes only its page
+unless it was the last one. The tests pin the property underneath all of this:
+bytes fed to one session never appear in another's grid.
+
+**Duplicate session follows upstream's narrower rule: live SSH and telnet
+only.** Serial and local shells have no Duplicate action. The destination gets
+the source page's in-memory settings and live grid size, then reopens the same
+target; SSH authentication is asked again because Sterna does not retain a
+password after answering a prompt. The implementation also found a seam the
+proxy tests above could not see: the Qt SSH launcher called the connection ABI
+without the destination session, so it had no way to read `[TTProxy]` and
+dialled directly. `tt_ssh_connect_for_session` now applies the session's live
+proxy to ordinary and duplicated SSH opens, matching telnet's existing path.
+
+`tabs_test` opens two real loopback telnet connections, changes a setting only
+in memory, duplicates the first, and asserts independent grids, the copied live
+value and active-page action routing. The full Qt 6.11.1 suite is 10/10 on
+Fedora; the Windows shell cross-build is clean and that same test says `tabs
+ok` under Wine. The live-settings ABI is also compiled and driven from C.
+
+**Stage 3 is complete.** Every item in its scope line now has a shipped path
+and an executable test boundary: Windows, ConPTY and serial, the installer,
+languages, terminal depth, tabs and duplication, proxying, and printing.
 
 ### ⬜ Stage 4 — depth and polish (4–6 months)
 

@@ -822,6 +822,11 @@ And for SSH:
   59x23 under the 800x800 offscreen platform and at 100x30 on a real desktop.
   A test that asserts a configured terminal size has to `resize(sizeHint())`
   first, or it is measuring the screen rather than the code.
+- **`QTabWidget` caches its page's size hint.** Changing the terminal grid or
+  font beneath it and calling `adjustSize()` can keep the old 80x24 geometry
+  around a new 40x10 page, even though the grid itself changed correctly.
+  `TerminalView::applySettings` and `applyFont` call `updateGeometry()` so the
+  invalidation reaches `TerminalPage`, the tab and finally the window.
 - **Anything that constructs a `MainWindow` now reads the developer's own
   settings**, because the window loads `sterna.ini` — and the terminal's
   *size* is in it. `bench_shell` calls `QStandardPaths::setTestModeEnabled`

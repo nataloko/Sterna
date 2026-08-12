@@ -617,6 +617,36 @@ the place a Linux configuration file belongs, since the executable may be
 inside a read-only AppImage. Pointing it at a real `TERATERM.INI` is a
 supported thing to do and `--ini` is how it will be spelled.
 
+## A tab is a whole terminal, not another view
+
+`TerminalPage` is the ownership boundary: one `Session`, `TerminalView`,
+scrollbar, `Printer`, `Macro` and transfer dialog. Putting only the view in a
+tab would leave modeless transfers and interpreters attached to whichever
+session happened to be active when their next signal arrived. `Macro` is
+destroyed before `Session`, deliberately, so a running worker cannot outlive
+the terminal it drives.
+
+The tab bar hides when there is one page. With more, it is movable and
+closable; menus, status, window title and the window-wide control endpoint
+follow the selected page. A background page keeps pumping and can update its
+own label, but an ordinary notice does not steal focus. Starting a new
+connection while the current page is live opens another tab rather than
+replacing it.
+
+`File > Duplicate session` is Tera Term's rule rather than a general clone:
+it is available for a connected SSH or telnet page, never serial or a local
+shell. It copies the live settings and current grid size, then reconnects the
+same target. SSH may ask for authentication again; prompt answers are not
+credentials Sterna keeps. Proxy settings travel with the copied settings, and
+the SSH ABI takes the destination session explicitly so an ordinary or
+duplicated connection cannot silently bypass them.
+
+The control endpoint remains window-wide and follows the selected tab, like
+the menu bar. `$STERNA_CTL` inherited by a local shell therefore addresses the
+active tab, not permanently the tab that launched that shell; a fixed per-tab
+address would be a second endpoint and a child-specific environment entry,
+neither of which this window currently promises.
+
 ## A transfer is the second thing with a timer, and the only other one
 
 `File > Send file...` and `File > Receive file...`. The protocols are Tera
@@ -730,10 +760,10 @@ delete, because the window's own close handler is what stops the macro, writes
 the settings back and tears the socket down.
 
 The path goes into `$STERNA_CTL`, so a shell started *inside* the terminal can
-drive the window it is running in. That is the one thing DDE could not do at
-all. It is the process's environment rather than the child's, because
-`TtPtyParams` has no environment array and there is one window per process
-today; tabs are where that has to become per-session.
+drive its window. That is the one thing DDE could not do at all. It is the
+process's environment rather than the child's because `TtPtyParams` has no
+environment array; with tabs, the endpoint follows the active page as
+described above.
 
 ## Not here yet
 
