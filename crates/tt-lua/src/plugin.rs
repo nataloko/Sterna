@@ -60,6 +60,167 @@ pub enum StreamDirection {
     Output,
 }
 
+/// Values read from a plugin's sections of `sterna.ini` before its top level
+/// runs.
+///
+/// The INI layer owns its deliberately Win32-compatible parsing. This small
+/// map keeps `tt-lua` independent of that crate while still letting a plugin
+/// see persisted values during declaration rather than one callback later.
+#[derive(Clone, Debug, Default)]
+pub struct StoredSettings {
+    values: HashMap<(String, String), String>,
+}
+
+impl StoredSettings {
+    pub fn insert(&mut self, section: &str, key: &str, value: impl Into<String>) {
+        self.values
+            .entry(setting_address(section, key))
+            .or_insert_with(|| value.into());
+    }
+
+    fn get(&self, section: &str, key: &str) -> Option<&str> {
+        self.values
+            .get(&setting_address(section, key))
+            .map(String::as_str)
+    }
+}
+
+fn setting_address(section: &str, key: &str) -> (String, String) {
+    (
+        section.trim().to_ascii_lowercase(),
+        key.trim().to_ascii_lowercase(),
+    )
+}
+
+/// The four controls a portable plugin settings page can draw.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SettingKind {
+    Bool,
+    Integer { min: i32, max: i32 },
+    String,
+    Enum(Vec<String>),
+}
+
+/// One field declared on a plugin settings page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SettingField {
+    /// The property on the Lua control proxy.
+    pub name: String,
+    /// The key written in the page's INI section.
+    pub key: String,
+    pub label: String,
+    pub description: String,
+    pub kind: SettingKind,
+    default: SettingValue,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SettingValue {
+    Bool(bool),
+    Integer(i32),
+    String(String),
+}
+
+impl SettingValue {
+    fn spelling(&self) -> String {
+        match self {
+            Self::Bool(true) => "on".into(),
+            Self::Bool(false) => "off".into(),
+            Self::Integer(value) => value.to_string(),
+            Self::String(value) => value.clone(),
+        }
+    }
+
+    fn to_lua(&self, lua: &Lua) -> mlua::Result<Value> {
+        Ok(match self {
+            Self::Bool(value) => Value::Boolean(*value),
+            Self::Integer(value) => Value::Integer(i64::from(*value)),
+            Self::String(value) => Value::String(lua.create_string(value)?),
+        })
+    }
+}
+
+/// A settings page and its live values.
+///
+/// Clones share the value store. The callback VM, isolated stream VM, C ABI
+/// descriptor and Qt dialog can therefore all retain this cheap handle without
+/// moving a Lua object between threads or states.
+#[derive(Clone, Debug)]
+pub struct SettingPage {
+    pub title: String,
+    pub section: String,
+    pub fields: Vec<SettingField>,
+    values: Arc<Mutex<Vec<SettingValue>>>,
+}
+
+impl SettingPage {
+    pub fn value(&self, index: usize) -> Option<String> {
+        self.values
+            .lock()
+            .expect("plugin settings poisoned")
+            .get(index)
+            .map(SettingValue::spelling)
+    }
+
+    pub fn default_value(&self, index: usize) -> Option<String> {
+        self.fields.get(index).map(|field| field.default.spelling())
+    }
+
+    pub fn set(&self, index: usize, value: &str) -> Result<(), String> {
+        let field = self
+            .fields
+            .get(index)
+            .ok_or_else(|| "plugin setting index out of range".to_string())?;
+        let value = field.parse_text(value)?;
+        self.values.lock().expect("plugin settings poisoned")[index] = value;
+        Ok(())
+    }
+
+    fn same_declaration(&self, other: &Self) -> bool {
+        self.title == other.title && self.section == other.section && self.fields == other.fields
+    }
+}
+
+impl SettingField {
+    fn parse_stored(&self, value: &str) -> SettingValue {
+        self.parse_text(value)
+            .unwrap_or_else(|_| self.default.clone())
+    }
+
+    fn parse_text(&self, value: &str) -> Result<SettingValue, String> {
+        match &self.kind {
+            SettingKind::Bool => match value.to_ascii_lowercase().as_str() {
+                "on" => Ok(SettingValue::Bool(true)),
+                "off" => Ok(SettingValue::Bool(false)),
+                _ => Err("expected on or off".into()),
+            },
+            SettingKind::Integer { min, max } => {
+                let value = value
+                    .trim()
+                    .parse::<i32>()
+                    .map_err(|_| "expected an integer".to_string())?;
+                if value < *min || value > *max {
+                    return Err(format!("expected an integer from {min} to {max}"));
+                }
+                Ok(SettingValue::Integer(value))
+            }
+            SettingKind::String => {
+                if value.contains('\r') || value.contains('\n') {
+                    return Err("a plugin setting cannot contain a line break".into());
+                }
+                Ok(SettingValue::String(value.to_string()))
+            }
+            SettingKind::Enum(choices) => {
+                if choices.iter().any(|choice| choice == value) {
+                    Ok(SettingValue::String(value.to_string()))
+                } else {
+                    Err(format!("expected one of: {}", choices.join(", ")))
+                }
+            }
+        }
+    }
+}
+
 impl StreamDirection {
     fn parse(name: &str) -> mlua::Result<Self> {
         match name {
@@ -184,6 +345,7 @@ struct Declarations {
     keys: Vec<KeyBinding>,
     hooks: Vec<HookItem>,
     filters: Vec<FilterItem>,
+    settings: Vec<SettingPage>,
 }
 
 impl Declarations {
@@ -209,6 +371,7 @@ pub struct Plugin {
     keys: Vec<KeyBinding>,
     hooks: Vec<HookItem>,
     filters: Vec<FilterControl>,
+    settings: Vec<SettingPage>,
     recv: RefCell<Recv>,
 }
 
@@ -220,8 +383,21 @@ impl Plugin {
     /// selected a terminal yet. Registration closes when this returns, so a
     /// callback cannot mutate the menu tree behind the frontend's back.
     pub fn load(name: impl Into<String>, body: Vec<u8>) -> mlua::Result<Self> {
+        Self::load_with_settings(name, body, StoredSettings::default())
+    }
+
+    /// Load one plugin with values read from its declared INI sections.
+    ///
+    /// They are installed as each page is declared, so later top-level code
+    /// sees the persisted value rather than briefly seeing the default.
+    pub fn load_with_settings(
+        name: impl Into<String>,
+        body: Vec<u8>,
+        stored: StoredSettings,
+    ) -> mlua::Result<Self> {
         let name = name.into();
-        let (lua, mut declarations) = load_declarations(&name, &body, None)?;
+        let (lua, mut declarations) =
+            load_declarations(&name, &body, None, None, Arc::new(stored))?;
         let filters = declarations
             .filters
             .drain(..)
@@ -241,6 +417,7 @@ impl Plugin {
             keys: std::mem::take(&mut declarations.keys),
             hooks: std::mem::take(&mut declarations.hooks),
             filters,
+            settings: std::mem::take(&mut declarations.settings),
             recv: RefCell::new(Recv::default()),
         })
     }
@@ -255,8 +432,13 @@ impl Plugin {
         if self.filters.is_empty() {
             return Ok(None);
         }
-        let (lua, mut declarations) =
-            load_declarations(&self.name, body, Some(self.filters.clone()))?;
+        let (lua, mut declarations) = load_declarations(
+            &self.name,
+            body,
+            Some(self.filters.clone()),
+            Some(self.settings.clone()),
+            Arc::new(StoredSettings::default()),
+        )?;
         for callback in declarations.callbacks.drain(..) {
             lua.remove_registry_value(callback)?;
         }
@@ -277,6 +459,10 @@ impl Plugin {
 
     pub fn keys(&self) -> &[KeyBinding] {
         &self.keys
+    }
+
+    pub fn settings(&self) -> &[SettingPage] {
+        &self.settings
     }
 
     pub fn has_hook(&self, hook: Hook) -> bool {
@@ -478,6 +664,8 @@ fn load_declarations(
     name: &str,
     body: &[u8],
     controls: Option<Vec<FilterControl>>,
+    setting_pages: Option<Vec<SettingPage>>,
+    stored: Arc<StoredSettings>,
 ) -> mlua::Result<(Lua, Declarations)> {
     let lua = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())?;
     let declarations = Arc::new(Mutex::new(Declarations::default()));
@@ -487,6 +675,14 @@ fn load_declarations(
     install_menu(&lua, &sterna, declarations.clone())?;
     install_key(&lua, &sterna, declarations.clone())?;
     install_hook(&lua, &sterna, declarations.clone())?;
+    install_settings(
+        &lua,
+        &sterna,
+        declarations.clone(),
+        setting_pages.clone(),
+        stored,
+        control_writes.clone(),
+    )?;
     install_filter(
         &lua,
         &sterna,
@@ -509,6 +705,7 @@ fn load_declarations(
     sterna.raw_set("menu", Value::Nil)?;
     sterna.raw_set("key", Value::Nil)?;
     sterna.raw_set("on", Value::Nil)?;
+    sterna.raw_set("settings", Value::Nil)?;
     sterna.raw_set("filter", Value::Nil)?;
     result?;
 
@@ -519,8 +716,15 @@ fn load_declarations(
                 "plugin declared a different filter list on its stream load",
             ));
         }
-        control_writes.store(true, Ordering::Release);
     }
+    if let Some(setting_pages) = setting_pages {
+        if setting_pages.len() != declarations.settings.len() {
+            return Err(mlua::Error::runtime(
+                "plugin declared a different settings page list on its stream load",
+            ));
+        }
+    }
+    control_writes.store(true, Ordering::Release);
     let declarations = std::mem::take(&mut *declarations);
     Ok((lua, declarations))
 }
@@ -618,6 +822,348 @@ fn filter_control_table(
     )?;
     table.set_metatable(Some(meta))?;
     Ok(table)
+}
+
+fn install_settings(
+    lua: &Lua,
+    sterna: &Table,
+    declarations: Arc<Mutex<Declarations>>,
+    existing: Option<Vec<SettingPage>>,
+    stored: Arc<StoredSettings>,
+    writes: Arc<AtomicBool>,
+) -> mlua::Result<()> {
+    sterna.set(
+        "settings",
+        lua.create_function(move |lua, spec: Table| {
+            let title: String = spec
+                .get::<Option<String>>("title")?
+                .ok_or_else(|| mlua::Error::runtime("settings field 'title' is required"))?;
+            let section: String = spec
+                .get::<Option<String>>("section")?
+                .ok_or_else(|| mlua::Error::runtime("settings field 'section' is required"))?;
+            let field_specs: Table = spec
+                .get::<Option<Table>>("fields")?
+                .ok_or_else(|| mlua::Error::runtime("settings field 'fields' is required"))?;
+
+            if title.trim().is_empty() {
+                return Err(mlua::Error::runtime("settings title is empty"));
+            }
+            validate_ini_section(&section)?;
+
+            let mut fields = Vec::with_capacity(field_specs.raw_len());
+            for index in 1..=field_specs.raw_len() {
+                let field: Table = field_specs.get(index)?;
+                fields.push(parse_setting_field(&field)?);
+            }
+            if fields.is_empty() {
+                return Err(mlua::Error::runtime("settings page has no fields"));
+            }
+
+            let mut names = HashMap::<String, ()>::new();
+            let mut keys = HashMap::<String, ()>::new();
+            for field in &fields {
+                if names.insert(field.name.clone(), ()).is_some() {
+                    return Err(mlua::Error::runtime(format!(
+                        "settings property '{}' is declared twice",
+                        field.name
+                    )));
+                }
+                let key = field.key.to_ascii_lowercase();
+                if keys.insert(key, ()).is_some() {
+                    return Err(mlua::Error::runtime(format!(
+                        "settings key '{}' is declared twice",
+                        field.key
+                    )));
+                }
+            }
+
+            let defaults = fields
+                .iter()
+                .map(|field| {
+                    stored
+                        .get(&section, &field.key)
+                        .map_or_else(|| field.default.clone(), |value| field.parse_stored(value))
+                })
+                .collect();
+            let proposed = SettingPage {
+                title,
+                section,
+                fields,
+                values: Arc::new(Mutex::new(defaults)),
+            };
+
+            let mut declarations = declarations.lock().expect("plugin declarations poisoned");
+            let page_index = declarations.settings.len();
+            let page = match existing.as_ref().and_then(|pages| pages.get(page_index)) {
+                Some(page) if page.same_declaration(&proposed) => page.clone(),
+                Some(_) => {
+                    return Err(mlua::Error::runtime(
+                        "plugin changed a settings page on its stream load",
+                    ));
+                }
+                None if existing.is_some() => {
+                    return Err(mlua::Error::runtime(
+                        "plugin declared an extra settings page on its stream load",
+                    ));
+                }
+                None => proposed,
+            };
+
+            for declared in &declarations.settings {
+                for field in &declared.fields {
+                    for new_field in &page.fields {
+                        if setting_address(&declared.section, &field.key)
+                            == setting_address(&page.section, &new_field.key)
+                        {
+                            return Err(mlua::Error::runtime(format!(
+                                "settings address [{}] {} is declared twice",
+                                page.section, new_field.key
+                            )));
+                        }
+                    }
+                }
+            }
+            declarations.settings.push(page.clone());
+            drop(declarations);
+            setting_control_table(lua, page, writes.clone())
+        })?,
+    )
+}
+
+fn validate_ini_section(section: &str) -> mlua::Result<()> {
+    if section.trim().is_empty()
+        || section.contains(']')
+        || section.contains('\r')
+        || section.contains('\n')
+    {
+        return Err(mlua::Error::runtime("settings INI section is invalid"));
+    }
+    Ok(())
+}
+
+fn validate_ini_key(key: &str) -> mlua::Result<()> {
+    if key.trim().is_empty() || key.contains('=') || key.contains('\r') || key.contains('\n') {
+        return Err(mlua::Error::runtime("settings INI key is invalid"));
+    }
+    Ok(())
+}
+
+fn parse_setting_field(spec: &Table) -> mlua::Result<SettingField> {
+    let name: String = spec
+        .get::<Option<String>>("name")?
+        .ok_or_else(|| mlua::Error::runtime("settings field 'name' is required"))?;
+    let key: String = spec
+        .get::<Option<String>>("key")?
+        .unwrap_or_else(|| name.clone());
+    let label: String = spec
+        .get::<Option<String>>("label")?
+        .ok_or_else(|| mlua::Error::runtime("settings field 'label' is required"))?;
+    let description: String = spec
+        .get::<Option<String>>("description")?
+        .unwrap_or_default();
+    let kind: String = spec
+        .get::<Option<String>>("kind")?
+        .ok_or_else(|| mlua::Error::runtime("settings field 'kind' is required"))?;
+    let default: Value = spec.get("default")?;
+
+    if name.trim().is_empty() {
+        return Err(mlua::Error::runtime("settings property name is empty"));
+    }
+    validate_ini_key(&key)?;
+    if label.trim().is_empty() {
+        return Err(mlua::Error::runtime("settings label is empty"));
+    }
+
+    let (kind, default) = match kind.as_str() {
+        "bool" => {
+            let Value::Boolean(default) = default else {
+                return Err(mlua::Error::runtime(
+                    "a bool setting's default must be a boolean",
+                ));
+            };
+            (SettingKind::Bool, SettingValue::Bool(default))
+        }
+        "int" => {
+            let min: i32 = spec
+                .get::<Option<i32>>("min")?
+                .ok_or_else(|| mlua::Error::runtime("an int setting requires min"))?;
+            let max: i32 = spec
+                .get::<Option<i32>>("max")?
+                .ok_or_else(|| mlua::Error::runtime("an int setting requires max"))?;
+            if min > max {
+                return Err(mlua::Error::runtime(
+                    "an int setting's min is greater than its max",
+                ));
+            }
+            let Value::Integer(default) = default else {
+                return Err(mlua::Error::runtime(
+                    "an int setting's default must be an integer",
+                ));
+            };
+            let default = i32::try_from(default)
+                .map_err(|_| mlua::Error::runtime("an int setting's default is out of range"))?;
+            if default < min || default > max {
+                return Err(mlua::Error::runtime(
+                    "an int setting's default is outside its bounds",
+                ));
+            }
+            (
+                SettingKind::Integer { min, max },
+                SettingValue::Integer(default),
+            )
+        }
+        "string" => {
+            let Value::String(default) = default else {
+                return Err(mlua::Error::runtime(
+                    "a string setting's default must be a string",
+                ));
+            };
+            let default = default
+                .to_str()
+                .map_err(|_| mlua::Error::runtime("a string setting must be UTF-8"))?
+                .to_string();
+            if default.contains('\r') || default.contains('\n') {
+                return Err(mlua::Error::runtime(
+                    "a string setting's default cannot contain a line break",
+                ));
+            }
+            (SettingKind::String, SettingValue::String(default))
+        }
+        "enum" => {
+            let choices: Table = spec
+                .get::<Option<Table>>("choices")?
+                .ok_or_else(|| mlua::Error::runtime("an enum setting requires choices"))?;
+            let mut values = Vec::with_capacity(choices.raw_len());
+            for index in 1..=choices.raw_len() {
+                let choice: String = choices.get(index)?;
+                if choice.contains('\r') || choice.contains('\n') {
+                    return Err(mlua::Error::runtime(
+                        "an enum choice cannot contain a line break",
+                    ));
+                }
+                if values.contains(&choice) {
+                    return Err(mlua::Error::runtime(format!(
+                        "enum choice '{choice}' is declared twice"
+                    )));
+                }
+                values.push(choice);
+            }
+            if values.is_empty() {
+                return Err(mlua::Error::runtime("an enum setting has no choices"));
+            }
+            let Value::String(default) = default else {
+                return Err(mlua::Error::runtime(
+                    "an enum setting's default must be a string",
+                ));
+            };
+            let default = default
+                .to_str()
+                .map_err(|_| mlua::Error::runtime("an enum setting must be UTF-8"))?
+                .to_string();
+            if !values.contains(&default) {
+                return Err(mlua::Error::runtime(
+                    "an enum setting's default is not one of its choices",
+                ));
+            }
+            (SettingKind::Enum(values), SettingValue::String(default))
+        }
+        _ => {
+            return Err(mlua::Error::runtime(format!(
+                "settings kind '{kind}' is not one of: bool, int, string, enum"
+            )));
+        }
+    };
+
+    Ok(SettingField {
+        name,
+        key,
+        label,
+        description,
+        kind,
+        default,
+    })
+}
+
+fn setting_control_table(
+    lua: &Lua,
+    page: SettingPage,
+    writes: Arc<AtomicBool>,
+) -> mlua::Result<Table> {
+    let table = lua.create_table()?;
+    let meta = lua.create_table()?;
+    let read = page.clone();
+    meta.set(
+        "__index",
+        lua.create_function(move |lua, (_, key): (Table, String)| {
+            let index = read
+                .fields
+                .iter()
+                .position(|field| field.name == key)
+                .ok_or_else(|| {
+                    mlua::Error::runtime(format!("plugin setting '{key}' does not exist"))
+                })?;
+            read.values.lock().expect("plugin settings poisoned")[index].to_lua(lua)
+        })?,
+    )?;
+    meta.set(
+        "__newindex",
+        lua.create_function(move |_, (_, key, value): (Table, String, Value)| {
+            let index = page
+                .fields
+                .iter()
+                .position(|field| field.name == key)
+                .ok_or_else(|| {
+                    mlua::Error::runtime(format!("plugin setting '{key}' does not exist"))
+                })?;
+            let field = &page.fields[index];
+            let value = setting_value_from_lua(field, value)?;
+            if writes.load(Ordering::Acquire) {
+                page.values.lock().expect("plugin settings poisoned")[index] = value;
+            }
+            Ok(())
+        })?,
+    )?;
+    table.set_metatable(Some(meta))?;
+    Ok(table)
+}
+
+fn setting_value_from_lua(field: &SettingField, value: Value) -> mlua::Result<SettingValue> {
+    match (&field.kind, value) {
+        (SettingKind::Bool, Value::Boolean(value)) => Ok(SettingValue::Bool(value)),
+        (SettingKind::Integer { min, max }, Value::Integer(value)) => {
+            let value = i32::try_from(value)
+                .map_err(|_| mlua::Error::runtime("plugin setting integer is out of range"))?;
+            if value < *min || value > *max {
+                return Err(mlua::Error::runtime(format!(
+                    "plugin setting integer must be from {min} to {max}"
+                )));
+            }
+            Ok(SettingValue::Integer(value))
+        }
+        (SettingKind::String, Value::String(value)) => {
+            let value = value
+                .to_str()
+                .map_err(|_| mlua::Error::runtime("plugin setting string must be UTF-8"))?
+                .to_string();
+            field.parse_text(&value).map_err(mlua::Error::runtime)
+        }
+        (SettingKind::Enum(_), Value::String(value)) => {
+            let value = value
+                .to_str()
+                .map_err(|_| mlua::Error::runtime("plugin enum value must be UTF-8"))?
+                .to_string();
+            field.parse_text(&value).map_err(mlua::Error::runtime)
+        }
+        (kind, value) => Err(mlua::Error::runtime(format!(
+            "plugin setting expected {}, not {}",
+            match kind {
+                SettingKind::Bool => "a boolean",
+                SettingKind::Integer { .. } => "an integer",
+                SettingKind::String | SettingKind::Enum(_) => "a string",
+            },
+            value.type_name()
+        ))),
+    }
 }
 
 fn install_menu(
@@ -794,6 +1340,118 @@ mod tests {
         host.linked = true;
         plugin.emit(Hook::Connect, &mut host).unwrap();
         assert_eq!(host.sent, b"connect:oneconnect:two");
+    }
+
+    #[test]
+    fn settings_are_typed_and_persisted_before_the_top_level_continues() {
+        let source = br#"
+            local preferences = sterna.settings {
+              title = 'Router tools', section = 'Lua Router Tools', fields = {
+                { name = 'enabled', label = 'Enabled', kind = 'bool', default = true },
+                { name = 'retries', label = 'Retries', kind = 'int',
+                  min = 1, max = 10, default = 3 },
+                { name = 'prefix', key = 'PromptPrefix', label = 'Prefix',
+                  description = 'Text before each command', kind = 'string', default = '>' },
+                { name = 'mode', label = 'Mode', kind = 'enum',
+                  choices = {'fast', 'safe'}, default = 'fast' },
+              }
+            }
+            local loaded = preferences.prefix
+            sterna.menu { menu = 'Setup', label = 'Read settings', action = function()
+              tt.send(loaded, '/', preferences.prefix, '/', tostring(preferences.enabled),
+                      '/', tostring(preferences.retries), '/', preferences.mode)
+            end }
+        "#;
+        let mut stored = StoredSettings::default();
+        stored.insert("lua router tools", "promptprefix", "saved");
+        stored.insert("Lua Router Tools", "enabled", "off");
+        stored.insert("Lua Router Tools", "retries", "7");
+        stored.insert("Lua Router Tools", "mode", "safe");
+        let plugin = Plugin::load_with_settings("settings.lua", source.to_vec(), stored).unwrap();
+        let page = &plugin.settings()[0];
+        assert_eq!(page.title, "Router tools");
+        assert_eq!(page.section, "Lua Router Tools");
+        assert_eq!(page.value(0).as_deref(), Some("off"));
+        assert_eq!(page.value(1).as_deref(), Some("7"));
+        assert_eq!(page.value(2).as_deref(), Some("saved"));
+        assert_eq!(page.value(3).as_deref(), Some("safe"));
+        assert_eq!(page.default_value(2).as_deref(), Some(">"));
+        assert!(matches!(
+            page.fields[1].kind,
+            SettingKind::Integer { min: 1, max: 10 }
+        ));
+
+        page.set(2, "live").unwrap();
+        assert!(page.set(1, "11").unwrap_err().contains("1 to 10"));
+        let mut host = RecordingHost::new();
+        host.linked = true;
+        plugin
+            .invoke(plugin.menus()[0].callback, &mut host)
+            .unwrap();
+        assert_eq!(host.sent, b"saved/live/false/7/safe");
+    }
+
+    #[test]
+    fn settings_are_shared_with_the_isolated_filter_vm() {
+        let source = br#"
+            local preferences = sterna.settings {
+              title = 'Prefix', section = 'Lua Prefix', fields = {
+                { name = 'prefix', label = 'Prefix', kind = 'string', default = 'before:' },
+              }
+            }
+            sterna.filter('input', function(bytes) return preferences.prefix .. bytes end)
+            sterna.menu { menu = 'Setup', label = 'Change', action = function()
+              preferences.prefix = 'after:'
+            end }
+        "#;
+        let plugin = Plugin::load("settings-filter.lua", source.to_vec()).unwrap();
+        let stream = plugin.load_stream(source).unwrap().unwrap();
+        assert_eq!(
+            stream.filter(StreamDirection::Input, b"x").bytes,
+            b"before:x"
+        );
+
+        let mut host = RecordingHost::new();
+        host.linked = true;
+        plugin
+            .invoke(plugin.menus()[0].callback, &mut host)
+            .unwrap();
+        assert_eq!(
+            stream.filter(StreamDirection::Input, b"x").bytes,
+            b"after:x"
+        );
+    }
+
+    #[test]
+    fn invalid_settings_declarations_fail_at_load_time() {
+        let bad_default = Plugin::load(
+            "bad.lua",
+            br#"sterna.settings { title='Bad', section='Lua Bad', fields={
+              {name='mode', label='Mode', kind='enum', choices={'one'}, default='two'}
+            } }"#
+                .to_vec(),
+        )
+        .err()
+        .expect("enum default should fail")
+        .to_string();
+        assert!(bad_default.contains("default is not one"), "{bad_default}");
+
+        let duplicate = Plugin::load(
+            "bad.lua",
+            br#"
+            sterna.settings { title='One', section='Lua Bad', fields={
+              {name='one', key='Same', label='One', kind='bool', default=true}
+            } }
+            sterna.settings { title='Two', section='lua bad', fields={
+              {name='two', key='same', label='Two', kind='bool', default=true}
+            } }
+            "#
+            .to_vec(),
+        )
+        .err()
+        .expect("duplicate address should fail")
+        .to_string();
+        assert!(duplicate.contains("declared twice"), "{duplicate}");
     }
 
     #[test]
