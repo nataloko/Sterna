@@ -96,6 +96,17 @@ pub struct SshParams {
     pub known_hosts: KnownHosts,
     /// What to do about a host key that is not already trusted.
     pub host_key_policy: HostKeyPolicy,
+    /// `[TTProxy]`, when the file configures one.
+    ///
+    /// TTSSH has no proxy of its own and needs none: `TTProxy` hooks Winsock
+    /// underneath it, so an SSH session goes through a configured proxy
+    /// upstream without either plugin knowing about the other. Here the two
+    /// are in one process and the seam is explicit — the handshake happens on
+    /// a blocking socket and russh is handed the connected stream.
+    /// Boxed for the reason [`TelnetParams::proxy`] is.
+    ///
+    /// [`TelnetParams::proxy`]: crate::telnet::TelnetParams::proxy
+    pub proxy: Option<Box<crate::proxy::ProxyParams>>,
 }
 
 /// `StrictHostKeyChecking`, as a decision the transport can take on its own.
@@ -136,6 +147,7 @@ impl SshParams {
             keepalive: None,
             known_hosts: KnownHosts::user_default(),
             host_key_policy: HostKeyPolicy::Ask,
+            proxy: None,
         }
     }
 
@@ -792,15 +804,58 @@ async fn connect(
         decisions: host_key_rx,
     };
 
-    let connecting = client::connect(config, (params.host.as_str(), params.port), handler);
-    let mut handle = match tokio::time::timeout(params.connect_timeout, connecting).await {
-        Ok(Ok(h)) => h,
-        Ok(Err(e)) => return Err(Error::Ssh(format!("{e}"))),
-        Err(_) => {
-            return Err(Error::Ssh(format!(
-                "no answer from {}:{} after {:?}",
-                params.host, params.port, params.connect_timeout
-            )))
+    // A proxy is dialled and spoken to on a **blocking** socket and only then
+    // handed over, so the four relays have one implementation rather than a
+    // synchronous one for telnet and an async one here. That matters more than
+    // it looks: they are where the wire format is, and two copies of a wire
+    // format drift. `spawn_blocking` keeps the wait off the runtime's worker,
+    // and the whole thing is inside the same timeout the direct path has.
+    let mut handle = match &params.proxy {
+        Some(proxy) if proxy.is_active() => {
+            let (proxy, host, port) = ((**proxy).clone(), params.host.clone(), params.port);
+            let timeout = params.connect_timeout;
+            let dialling = tokio::task::spawn_blocking(move || {
+                crate::proxy::dial(Some(&proxy), &host, port, timeout)
+            });
+            let connecting = async {
+                let socket = match dialling.await {
+                    Ok(r) => r?,
+                    Err(e) => {
+                        return Err(Error::Proxy(format!("the proxy dial did not finish: {e}")))
+                    }
+                };
+                // russh wants a tokio stream, and `from_std` insists the
+                // descriptor is already non-blocking — without this it panics
+                // rather than misbehaving, but only once something reads.
+                socket.set_nonblocking(true).map_err(Error::from_io)?;
+                let socket = tokio::net::TcpStream::from_std(socket).map_err(Error::from_io)?;
+                client::connect_stream(config, socket, handler)
+                    .await
+                    .map_err(|e| Error::Ssh(format!("{e}")))
+            };
+            match tokio::time::timeout(params.connect_timeout, connecting).await {
+                Ok(Ok(h)) => h,
+                Ok(Err(e)) => return Err(e),
+                Err(_) => {
+                    return Err(Error::Ssh(format!(
+                        "no answer from {}:{} through the proxy after {:?}",
+                        params.host, params.port, params.connect_timeout
+                    )))
+                }
+            }
+        }
+        _ => {
+            let connecting = client::connect(config, (params.host.as_str(), params.port), handler);
+            match tokio::time::timeout(params.connect_timeout, connecting).await {
+                Ok(Ok(h)) => h,
+                Ok(Err(e)) => return Err(Error::Ssh(format!("{e}"))),
+                Err(_) => {
+                    return Err(Error::Ssh(format!(
+                        "no answer from {}:{} after {:?}",
+                        params.host, params.port, params.connect_timeout
+                    )))
+                }
+            }
         }
     };
 

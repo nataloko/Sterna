@@ -164,7 +164,7 @@ impl Default for TelnetPrompts {
 }
 
 /// Everything `[TTProxy]` holds, as the relays need it.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProxyParams {
     pub kind: ProxyKind,
     /// `ProxyHost`. Empty means no proxy however `kind` is set, which is

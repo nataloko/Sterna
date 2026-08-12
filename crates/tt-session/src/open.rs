@@ -33,7 +33,11 @@ use std::time::Duration;
 use tt_config::cmdline::ssh::{AuthMethod, SshOptions};
 use tt_config::cmdline::{cygterm, CommandLine, PortType};
 use tt_config::Settings;
-use tt_config::{ConnectionPortType, SerialDataBits, SerialFlow, SerialParity, SerialStopBits};
+use tt_config::{
+    ConnectionPortType, ProxySocksResolve, ProxyType, SerialDataBits, SerialFlow, SerialParity,
+    SerialStopBits,
+};
+use tt_conn::proxy::{ProxyKind, ProxyParams, Resolve as ProxyResolve, TelnetPrompts};
 use tt_conn::pty::PtyParams;
 use tt_conn::serial::{
     port_by_number, DataBits, FlowControl, Parity, PinControl, SerialParams, StopBits,
@@ -480,10 +484,53 @@ pub fn telnet_params(s: &Settings, port: u16, cols: u16, rows: u16) -> TelnetPar
         log: s
             .connection_telnet_log
             .then(|| crate::logname::term_log_dir(s).join("TELNET.LOG")),
+        proxy: proxy_params(s).map(Box::new),
         // Every field is named now, and there is no `..default()` to fall
         // through to — so a field added to `TelnetParams` is a compile error
         // here rather than a setting the file silently cannot reach.
     }
+}
+
+/// `[TTProxy]` → [`ProxyParams`], or `None` when the file names no proxy.
+///
+/// Upstream has no function like this because it has no seam like this: the
+/// plugin hooks `connect(2)` and the terminal never learns there is a proxy.
+/// Both transports call it, which is upstream's behaviour too and for the same
+/// reason one layer down — the hook is under both of them.
+///
+/// **A serial or local-shell session is not affected**, and neither is
+/// upstream's: there is no socket to hook.
+pub fn proxy_params(s: &Settings) -> Option<ProxyParams> {
+    let params = ProxyParams {
+        kind: match s.proxy_type {
+            ProxyType::None => ProxyKind::None,
+            ProxyType::Http => ProxyKind::Http,
+            ProxyType::Telnet => ProxyKind::Telnet,
+            ProxyType::Socks4 => ProxyKind::Socks4,
+            ProxyType::Socks5 => ProxyKind::Socks5,
+        },
+        host: s.proxy_host.clone(),
+        port: s.proxy_port.clamp(0, i32::from(u16::MAX)) as u16,
+        // An empty value and an absent key are the same thing here — see the
+        // schema, where the one place upstream keeps them apart is a SOCKS5
+        // method list no server would accept.
+        user: (!s.proxy_user.is_empty()).then(|| s.proxy_user.clone()),
+        pass: (!s.proxy_pass.is_empty()).then(|| s.proxy_pass.clone()),
+        resolve: match s.proxy_socks_resolve {
+            ProxySocksResolve::Auto => ProxyResolve::Auto,
+            ProxySocksResolve::Local => ProxyResolve::Local,
+            ProxySocksResolve::Remote => ProxyResolve::Remote,
+        },
+        timeout: Duration::from_secs(s.proxy_timeout.max(0) as u64),
+        prompts: TelnetPrompts {
+            hostname: s.proxy_telnet_hostname_prompt.clone(),
+            username: s.proxy_telnet_username_prompt.clone(),
+            password: s.proxy_telnet_password_prompt.clone(),
+            connected: s.proxy_telnet_connected_message.clone(),
+            error: s.proxy_telnet_error_message.clone(),
+        },
+    };
+    params.is_active().then_some(params)
 }
 
 /// `TerminalSpeed` — `ttset.c:1937`, which is one number or two.
@@ -536,6 +583,9 @@ pub fn ssh_params(ssh: &SshOptions, s: &Settings, host: &str, cols: u16, rows: u
             .as_ref()
             .map(|k| vec![PathBuf::from(text(k))])
             .unwrap_or_default(),
+        // TTSSH has none of its own; the Winsock hook is under it. Here it is
+        // named, and it is the same one telnet gets.
+        proxy: proxy_params(s).map(Box::new),
         ..SshParams::new(host, port, user)
     };
     // `/TIMEOUT=` is `ts.ConnectingTimeout`, and it is a *TCP connect* timeout
@@ -873,6 +923,57 @@ mod tests {
         // for the second, so this is not a terminal at 0 baud.
         let zero = telnet_params(&of(b"[Tera Term]\r\nTerminalSpeed=0,0\r\n"), 23, 80, 24);
         assert_eq!(zero.speed, (38400, 38400));
+    }
+
+    /// `[TTProxy]` reaches both TCP transports and neither of the others,
+    /// which is where upstream's Winsock hook puts it too.
+    #[test]
+    fn the_proxy_reaches_both_tcp_transports() {
+        let of = |bytes: &[u8]| Settings::load(&tt_config::Ini::parse(bytes));
+
+        assert!(proxy_params(&Settings::default()).is_none());
+        // A type with no host is not a proxy, which is `_load` demoting it.
+        assert!(proxy_params(&of(b"[TTProxy]\r\nProxyType=socks5\r\n")).is_none());
+        // ...and a host with no type is not one either.
+        assert!(proxy_params(&of(b"[TTProxy]\r\nProxyHost=\"p\"\r\n")).is_none());
+
+        let s = of(
+            b"[TTProxy]\r\nProxyType=socks5\r\nProxyHost=\"p.example\"\r\n\
+                     ProxyUser=\"bob\"\r\nSocksResolve=remote\r\n",
+        );
+        let p = proxy_params(&s).expect("configured");
+        assert_eq!(p.kind, ProxyKind::Socks5);
+        assert_eq!(p.host, "p.example");
+        // The port box was left blank, which upstream turns into no relay at
+        // all; here it is the type's default.
+        assert_eq!(p.port, 0);
+        assert_eq!(p.port(), 1080);
+        assert_eq!(p.user.as_deref(), Some("bob"));
+        assert_eq!(p.pass, None, "an empty value is no password");
+        assert_eq!(p.resolve, ProxyResolve::Remote);
+        assert_eq!(p.timeout, Duration::from_secs(10));
+
+        assert_eq!(
+            telnet_params(&s, 23, 80, 24).proxy.as_deref(),
+            Some(&p),
+            "telnet"
+        );
+        assert_eq!(
+            ssh_params(&SshOptions::default(), &s, "h", 80, 24)
+                .proxy
+                .as_deref(),
+            Some(&p),
+            "and SSH, which upstream reaches through the same hook"
+        );
+
+        // The five telnet-proxy prompts come from the file, trailing space
+        // and all.
+        let s = of(b"[TTProxy]\r\nProxyType=telnet\r\nProxyHost=\"p\"\r\n\
+                     TelnetHostnamePrompt=\"Host? \"\r\n");
+        let p = proxy_params(&s).expect("configured");
+        assert_eq!(p.prompts.hostname, "Host? ");
+        assert_eq!(p.prompts.connected, "-- Connected to ");
+        assert_eq!(p.port(), 23);
     }
 
     /// The two transports upstream has and this does not say so, rather than

@@ -245,6 +245,19 @@ pub struct TelnetParams {
     /// log is on and has nowhere to go. Nothing here opens it — the transcript
     /// accumulates and [`TelnetConn`](super::TelnetConn) writes it.
     pub log: Option<PathBuf>,
+    /// `[TTProxy]`, when the file configures one. It is a property of the
+    /// *connection* rather than of the protocol, so nothing in this module
+    /// reads it — [`TelnetConn::connect`](super::TelnetConn::connect) hands it
+    /// to [`crate::proxy::dial`] and everything below that point is the same
+    /// socket it would otherwise have opened.
+    ///
+    /// Upstream has no field for this at all: `TTProxy` hooks `connect(2)`, so
+    /// the terminal never knows. See `crate::proxy` for what that costs it.
+    ///
+    /// Boxed because it is large and almost always absent: the two params
+    /// structs are moved through `Target` and `Startup`, and a quarter of a
+    /// kilobyte of prompt strings nobody configured would ride along.
+    pub proxy: Option<Box<crate::proxy::ProxyParams>>,
 }
 
 impl Default for TelnetParams {
@@ -260,6 +273,7 @@ impl Default for TelnetParams {
             local_echo: false,
             keepalive: Some(Duration::from_secs(300)),
             log: None,
+            proxy: None,
         }
     }
 }

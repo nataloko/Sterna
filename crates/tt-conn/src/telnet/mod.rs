@@ -18,7 +18,7 @@ use std::fs::File;
 #[cfg(not(windows))]
 use std::io::Read;
 use std::io::{ErrorKind, Write};
-use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::net::TcpStream;
 #[cfg(windows)]
 use std::os::windows::io::RawHandle;
 use std::path::Path;
@@ -67,40 +67,13 @@ impl TelnetConn {
         params: &TelnetParams,
         timeout: Duration,
     ) -> Result<TelnetConn> {
-        let addrs: Vec<SocketAddr> = (host, port)
-            .to_socket_addrs()
-            .map_err(|e| Error::Ssh(format!("cannot resolve {host}: {e}")))?
-            .collect();
-        if addrs.is_empty() {
-            return Err(Error::Ssh(format!("{host} resolved to no addresses")));
-        }
-
-        // Every address in turn, which is what makes a dual-stack host work
-        // when only one family is routable — a single `connect` to the first
-        // AAAA is how "it works from the shell but not from the GUI" happens.
-        let mut last = None;
-        let mut socket = None;
-        for addr in &addrs {
-            match TcpStream::connect_timeout(addr, timeout) {
-                Ok(s) => {
-                    socket = Some(s);
-                    break;
-                }
-                Err(e) => last = Some(e),
-            }
-        }
-        let socket = match socket {
-            Some(s) => s,
-            None => {
-                let e = last.expect("at least one address was tried");
-                return Err(Error::Ssh(format!("cannot connect to {host}:{port}: {e}")));
-            }
-        };
-
-        // Nagle off: a terminal sends one keystroke at a time and 40 ms of
-        // coalescing on every one is exactly the lag people describe as "the
-        // GUI feels slow".
-        let _ = socket.set_nodelay(true);
+        // Through the proxy when the file names one, and straight to the host
+        // when it does not — including trying every address the name has,
+        // which is what makes a dual-stack host work when only one family is
+        // routable. `dial` also sets Nagle off: a terminal sends one keystroke
+        // at a time and 40 ms of coalescing on every one is exactly the lag
+        // people describe as "the GUI feels slow".
+        let socket = crate::proxy::dial(params.proxy.as_deref(), host, port, timeout)?;
         // A read timeout rather than non-blocking, so Unix `read` behaves like
         // the serial one: quiet is `Ok(0)` and cheap. Windows blocks a worker
         // on a cloned socket instead; a timeout there would turn an idle line
