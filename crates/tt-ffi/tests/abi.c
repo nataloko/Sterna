@@ -1952,9 +1952,16 @@ static void test_plugins(void)
     }
     const char source[] =
         "local count = 0\n"
+        "local inbound\n"
+        "inbound = sterna.filter('input', function(bytes)\n"
+        "  if bytes == 'probe' then return inbound.replacement end\n"
+        "  if bytes == 'boom' then error('broken filter') end\n"
+        "  return bytes\n"
+        "end)\n"
+        "inbound.replacement = 'before'\n"
         "sterna.menu { menu = 'Control/ABI', label = 'Count', "
         "shortcut = 'Ctrl+Alt+C', action = function()\n"
-        "  count = count + 1; print('menu ' .. count)\n"
+        "  count = count + 1; inbound.replacement = 'after'; print('menu ' .. count)\n"
         "end }\n"
         "sterna.key('Ctrl+Alt+K', function() print('key') end)\n"
         "sterna.on('connect', function(event) print(event) end)\n";
@@ -1981,6 +1988,14 @@ static void test_plugins(void)
     CHECK(tt_plugins_action_count(plugins) == 2);
     CHECK(tt_plugins_poll_fd(plugins) >= 0);
     CHECK(tt_plugins_wait_handle(plugins) == NULL);
+
+    /* The filter state is live before any asynchronous callback. Clear the
+     * screen afterwards so the existing callback row assertions stay exact. */
+    tt_session_feed(s, (const uint8_t *)"probe", 5);
+    expect_row(s, 0, "before");
+    tt_session_feed(s, (const uint8_t *)"\033[2J\033[H", 7);
+    const TtEvent *discard = NULL;
+    tt_session_drain_events(s, &discard);
 
     TtPluginAction menu = {0};
     TtPluginAction key = {0};
@@ -2026,6 +2041,27 @@ static void test_plugins(void)
     CHECK(tt_plugins_emit(plugins, TT_PLUGIN_HOOK_DISCONNECT) == TT_OK);
     CHECK(!tt_plugins_busy(plugins));
     CHECK(log.errors == 0);
+
+    /* The menu callback changed only the ordinary VM's control proxy. The
+     * isolated stream VM sees the shared scalar without sharing a Lua state. */
+    tt_session_feed(s, (const uint8_t *)"\033[2J\033[H", 7);
+    tt_session_feed(s, (const uint8_t *)"probe", 5);
+    expect_row(s, 0, "after");
+
+    /* A filter failure is visible but fail-open: `boom` reaches the grid and
+     * the callback is disabled for subsequent chunks. */
+    tt_session_feed(s, (const uint8_t *)"boom", 4);
+    const TtEvent *events = NULL;
+    const size_t event_count = tt_session_drain_events(s, &events);
+    bool saw_filter_error = false;
+    for (size_t i = 0; i < event_count; i++) {
+        if (events[i].kind == TT_EVENT_KIND_STREAM_FILTER_FAILED) {
+            saw_filter_error = events[i].text != NULL
+                               && strstr(events[i].text, "broken filter") != NULL;
+        }
+    }
+    CHECK(saw_filter_error);
+    expect_row(s, 0, "afterboom");
 
     tt_plugins_free(plugins);
     tt_session_unlink_plugins(s);

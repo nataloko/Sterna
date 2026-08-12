@@ -15,6 +15,7 @@
 #include <QFile>
 #include <QKeySequence>
 #include <QMenu>
+#include <QStatusBar>
 #include <QTemporaryDir>
 #include <QTimer>
 
@@ -79,12 +80,25 @@ void test_window_plugins()
     CHECK(source.open(QIODevice::WriteOnly));
     source.write(
         "local count = 0\n"
+        "local inbound\n"
+        "inbound = sterna.filter('input', function(bytes)\n"
+        "  if bytes == 'probe' then return inbound.replacement end\n"
+        "  if bytes == 'boom' then error('broken filter') end\n"
+        "  return bytes\n"
+        "end)\n"
+        "inbound.replacement = 'before'\n"
+        "sterna.filter('output', function(bytes)\n"
+        "  if bytes == 'FILTER\\r' then return \"printf 'out-filter\\\\n'\\r\" end\n"
+        "  return bytes\n"
+        "end)\n"
         "local function say(name)\n"
         "  count = count + 1\n"
         "  print(name .. ' ' .. count)\n"
         "end\n"
         "sterna.menu { menu = 'Control/Plugins/Test', label = 'Count',\n"
-        "  shortcut = 'Ctrl+Alt+C', action = function() say('menu') end }\n"
+        "  shortcut = 'Ctrl+Alt+C', action = function()\n"
+        "    inbound.replacement = 'after'; say('menu')\n"
+        "  end }\n"
         "sterna.key('Ctrl+Alt+K', function() say('key') end)\n"
         "sterna.on('connect', function() say('connected') end)\n"
         "sterna.on('disconnect', function() say('disconnected') end)\n");
@@ -123,10 +137,17 @@ void test_window_plugins()
     }
     CHECK(nested);
 
+    window.session()->feed(QByteArray("probe"));
+    CHECK(screenText(*window.session()).contains(QStringLiteral("before")));
+    window.session()->feed(QByteArray("\033[2J\033[H"));
+
     menuAction->trigger();
     CHECK(spin([&] {
-        return screenText(*window.session()).contains(QStringLiteral("menu 1"));
+            return screenText(*window.session()).contains(QStringLiteral("menu 1"));
     }));
+    window.session()->feed(QByteArray("\033[2J\033[H"));
+    window.session()->feed(QByteArray("probe"));
+    CHECK(screenText(*window.session()).contains(QStringLiteral("after")));
     keyAction->trigger();
     CHECK(spin([&] {
         return screenText(*window.session()).contains(QStringLiteral("key 2"));
@@ -139,11 +160,21 @@ void test_window_plugins()
             .contains(QStringLiteral("connected 3"));
     }, 15000));
 
+    window.session()->sendText(QStringLiteral("FILTER\r"));
+    CHECK(spin([&] {
+        return screenText(*window.session()).contains(QStringLiteral("out-filter"));
+    }, 15000));
+
     window.session()->disconnectPort();
     CHECK(spin([&] {
         return screenText(*window.session())
             .contains(QStringLiteral("disconnected 4"));
     }));
+
+    window.session()->feed(QByteArray("boom"));
+    CHECK(window.statusBar()->currentMessage().contains(
+        QStringLiteral("Lua stream filter disabled")));
+    CHECK(screenText(*window.session()).contains(QStringLiteral("boom")));
 }
 
 } // namespace

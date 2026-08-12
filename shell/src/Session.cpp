@@ -1068,6 +1068,10 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
                             .arg(QString::fromUtf8(events[i].text ? events[i].text : "")));
             emit logStateChanged();
             break;
+        case TT_EVENT_KIND_STREAM_FILTER_FAILED:
+            emit notice(tr("Lua stream filter disabled: %1")
+                            .arg(QString::fromUtf8(events[i].text ? events[i].text : "")));
+            break;
         case TT_EVENT_KIND_TRANSFER_PROGRESS:
             // Coalesced like damage: one pump can move a transfer several
             // times and a dialog only needs the latest.

@@ -574,6 +574,11 @@ enum TtEventKind
      * of these came out of this drain.
      */
     TT_EVENT_KIND_PRINTER = 18,
+    /**
+     * A Lua byte-stream filter failed and was disabled. `text` names the
+     * plugin and error; the bytes were passed through rather than lost.
+     */
+    TT_EVENT_KIND_STREAM_FILTER_FAILED = 19,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -1191,8 +1196,9 @@ typedef struct {
     uint16_t cols;
     uint16_t rows;
     /**
-     * Meaningful for [`TtEventKind::Title`], [`TtEventKind::LogFailed`], and
-     * authorised clipboard events; null otherwise.
+     * Meaningful for [`TtEventKind::Title`], [`TtEventKind::LogFailed`],
+     * [`TtEventKind::StreamFilterFailed`], and authorised clipboard events;
+     * null otherwise.
      */
     const char *text;
 } TtEvent;

@@ -1850,6 +1850,9 @@ pub enum TtEventKind {
     /// [`tt_session_printer_events`] for what — one call answers however many
     /// of these came out of this drain.
     Printer = 18,
+    /// A Lua byte-stream filter failed and was disabled. `text` names the
+    /// plugin and error; the bytes were passed through rather than lost.
+    StreamFilterFailed = 19,
 }
 
 #[repr(C)]
@@ -1862,8 +1865,9 @@ pub struct TtEvent {
     /// Meaningful for [`TtEventKind::Resize`] only.
     pub cols: u16,
     pub rows: u16,
-    /// Meaningful for [`TtEventKind::Title`], [`TtEventKind::LogFailed`], and
-    /// authorised clipboard events; null otherwise.
+    /// Meaningful for [`TtEventKind::Title`], [`TtEventKind::LogFailed`],
+    /// [`TtEventKind::StreamFilterFailed`], and authorised clipboard events;
+    /// null otherwise.
     pub text: *const c_char,
 }
 
@@ -1947,6 +1951,11 @@ pub extern "C" fn tt_session_drain_events(
                 s.event_texts.push(CString::new(msg).unwrap_or_default());
                 let p = s.event_texts.last().expect("just pushed").as_ptr();
                 (TtEventKind::LogFailed, 0, p)
+            }
+            Event::StreamFilterFailed(msg) => {
+                s.event_texts.push(CString::new(msg).unwrap_or_default());
+                let p = s.event_texts.last().expect("just pushed").as_ptr();
+                (TtEventKind::StreamFilterFailed, 0, p)
             }
             // The payload does not travel in the event: `TtEvent` is a fixed
             // struct and a transfer's is two strings and six numbers. It is
@@ -5623,6 +5632,26 @@ pub type TtPluginHook = u32;
 pub const TT_PLUGIN_HOOK_CONNECT: TtPluginHook = 0;
 pub const TT_PLUGIN_HOOK_DISCONNECT: TtPluginHook = 1;
 
+struct LuaStreamFilters(tt_lua::StreamFilters);
+
+impl tt_session::StreamFilter for LuaStreamFilters {
+    fn filter(
+        &mut self,
+        direction: tt_session::StreamDirection,
+        bytes: &[u8],
+    ) -> tt_session::StreamFilterResult {
+        let direction = match direction {
+            tt_session::StreamDirection::Input => tt_lua::StreamDirection::Input,
+            tt_session::StreamDirection::Output => tt_lua::StreamDirection::Output,
+        };
+        let result = self.0.filter(direction, bytes);
+        tt_session::StreamFilterResult {
+            bytes: result.bytes,
+            errors: result.errors,
+        }
+    }
+}
+
 /// One action declared while loading a Lua plugin.
 ///
 /// All strings are UTF-8, borrowed from the [`TtPlugins`] handle and valid
@@ -5769,6 +5798,7 @@ pub extern "C" fn tt_plugins_load(
     };
 
     let mut plugins = Vec::with_capacity(paths.len());
+    let mut sources = Vec::with_capacity(paths.len());
     for path in paths {
         let body = match std::fs::read(&path) {
             Ok(body) => body,
@@ -5777,14 +5807,30 @@ pub extern "C" fn tt_plugins_load(
                 return ptr::null_mut();
             }
         };
-        match tt_lua::Plugin::load(path.display().to_string(), body) {
-            Ok(plugin) => plugins.push(plugin),
+        match tt_lua::Plugin::load(path.display().to_string(), body.clone()) {
+            Ok(plugin) => {
+                plugins.push(plugin);
+                sources.push(body);
+            }
             Err(error) => {
                 fail(TT_ERR_INVALID, format!("{}: {error}", path.display()));
                 return ptr::null_mut();
             }
         }
     }
+
+    let mut stream_plugins = Vec::new();
+    for (plugin, body) in plugins.iter().zip(&sources) {
+        match plugin.load_stream(body) {
+            Ok(Some(stream)) => stream_plugins.push(stream),
+            Ok(None) => {}
+            Err(error) => {
+                fail(TT_ERR_INVALID, format!("{}: {error}", plugin.name()));
+                return ptr::null_mut();
+            }
+        }
+    }
+    let stream_filters = tt_lua::StreamFilters::new(stream_plugins);
 
     let mut actions = Vec::new();
     let mut hooks = [false; 2];
@@ -5855,6 +5901,10 @@ pub extern "C" fn tt_plugins_load(
                 handle.commands = Some(command_tx);
                 handle.rx = Some(rx);
                 handle.thread = Some(thread);
+                if !stream_filters.is_empty() {
+                    s.session
+                        .set_stream_filter(Box::new(LuaStreamFilters(stream_filters)));
+                }
             }
             Err(error) => {
                 s.session.unlink_plugin();
@@ -6040,6 +6090,7 @@ pub extern "C" fn tt_plugins_service(plugins: *mut TtPlugins, session: *mut TtSe
 pub extern "C" fn tt_session_unlink_plugins(session: *mut TtSession) {
     let s = session!(session);
     s.session.unlink_plugin();
+    s.session.clear_stream_filter();
 }
 
 /// Cancel any active callback, stop the worker and free the plugin set.
