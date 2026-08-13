@@ -2060,6 +2060,23 @@ void test_line_edit_delays_edits_queues_and_reanchors()
     CHECK(!h.view.hasLineEditDraft());
 }
 
+void test_line_edit_drains_its_forced_echo_damage()
+{
+    Harness h;
+    int repaints = 0;
+    QObject::connect(&h.session, &Session::damaged, [&repaints] { repaints++; });
+
+    h.session.sendEditedLine(QStringLiteral("x"));
+    CHECK(repaints == 1);
+    CHECK(rowText(h.session, 0).startsWith(QLatin1Char('x')));
+
+    // Local echo still ships off. If the edited-line event were left queued,
+    // this unrelated send would drain it and report a duplicate repaint.
+    repaints = 0;
+    h.session.sendText(QStringLiteral("y"));
+    CHECK(repaints == 0);
+}
+
 void test_line_edit_keeps_control_input_immediate_and_cleans_up()
 {
     Harness h;
@@ -2431,6 +2448,7 @@ int main(int argc, char **argv)
     test_about_shows_the_application_version();
     test_the_connect_bar_is_a_view_of_the_session();
     test_line_edit_delays_edits_queues_and_reanchors();
+    test_line_edit_drains_its_forced_echo_damage();
     test_line_edit_keeps_control_input_immediate_and_cleans_up();
     test_line_edit_toggle_confirms_an_unsent_draft();
     test_an_auto_close_request_respects_window_state();

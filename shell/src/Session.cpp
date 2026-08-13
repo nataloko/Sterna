@@ -727,11 +727,10 @@ void Session::sendEditedLine(const QString &text)
         != TT_OK) {
         emit notice(QString::fromUtf8(tt_last_error()));
     }
-    rearm();
-    // Unlike ordinary local echo this path always changed the grid. The event
-    // the core queued is drained on the next pump, but an idle line may not
-    // produce one; repaint and re-anchor the next draft immediately.
-    emit damaged();
+    // The forced echo queued ordinary damage. Drain it now: an idle line may
+    // never wake the transport, and leaving it queued makes the next unrelated
+    // input announce a stale second repaint.
+    dispatch();
 }
 
 void Session::sendBytes(const QByteArray &bytes)
