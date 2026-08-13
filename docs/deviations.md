@@ -15,14 +15,14 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 
 | # | Deviation | Upstream | Since |
 |---|---|---|---|
-| 1 | The default baud rate is 115200 | 9600 | unreleased |
-| 2 | The connect dialogs remember the last connection, across restarts | Only Setup > Save persists anything | unreleased |
-| 3 | A bar under the menu: port, connect/disconnect, local echo, line edit | No toolbar at all | unreleased |
-| 4 | One, two or four simultaneous connection panels | One connection per window | unreleased |
-| 5 | Starting Sterna looks for a signed update, once a day | Nothing contacts a server on its own | unreleased |
-| 6 | Highlight rules: user-written regular expressions recolour the screen | Only the host decides a colour; the URL attribute is the one exception | unreleased |
-| 7 | Quick buttons: a second bar of user-defined commands | A `KEYBOARD.CNF` user key, with no face on it | unreleased |
-| 8 | Editable lines for every connection type | Telnet LINEMODE negotiation only | unreleased |
+| 1 | The default baud rate is 115200 | 9600 | 0.2.0 |
+| 2 | The connect dialogs remember the last connection, across restarts | Only Setup > Save persists anything | 0.2.0 |
+| 3 | A bar under the menu: port, connect/disconnect, local echo, line edit | No toolbar at all | 0.2.0 |
+| 4 | One, two or four simultaneous connection panels | One connection per window | 0.2.0 |
+| 5 | Starting Sterna looks for a signed update, once a day | Nothing contacts a server on its own | 0.2.0 |
+| 6 | Highlight rules: user-written regular expressions recolour the screen | Only the host decides a colour; the URL attribute is the one exception | 0.2.0 |
+| 7 | Quick buttons: a second bar of user-defined commands | A `KEYBOARD.CNF` user key, with no face on it | 0.2.0 |
+| 8 | Editable lines for every connection type | Telnet LINEMODE negotiation only | 0.2.0 |
 
 ---
 
