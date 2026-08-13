@@ -33,7 +33,7 @@ updater reads:
 ```sh
 ./packaging/update/create.py \
   --linux packaging/appimage/build/sterna-x86_64.AppImage \
-  --windows packaging/windows/build/sterna-0.1.2-x86_64-setup.exe
+  --windows packaging/windows/build/sterna-0.1.3-x86_64-setup.exe
 ```
 
 Upload both programs, `sterna-x86_64.AppImage.zsync`,
