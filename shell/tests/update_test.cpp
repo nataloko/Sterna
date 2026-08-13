@@ -156,6 +156,7 @@ void manifest_is_bounded_and_platform_specific()
           == UpdateManifestResult::Error);
 }
 
+#ifdef Q_OS_LINUX
 void appimage_replacement_is_atomic_and_executable()
 {
     QTemporaryDir dir;
@@ -182,6 +183,7 @@ void appimage_replacement_is_atomic_and_executable()
     CHECK(installed.readAll() == QByteArray("new verified image"));
     CHECK(installed.permissions() & QFileDevice::ExeOwner);
 }
+#endif
 
 void a_detached_download_outlives_its_temporary_file()
 {
@@ -232,7 +234,9 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
     signature_fixture_matches_the_compiled_key();
     manifest_is_bounded_and_platform_specific();
+#ifdef Q_OS_LINUX
     appimage_replacement_is_atomic_and_executable();
+#endif
     a_detached_download_outlives_its_temporary_file();
     if (failures) {
         return 1;
