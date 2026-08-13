@@ -1,15 +1,18 @@
 // Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 
+#include "UpdateSchedule.h"
 #include "Updater.h"
 #include "sterna.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
+#include <QTimeZone>
 
 #include <cstdio>
 
@@ -227,6 +230,48 @@ void a_detached_download_outlives_its_temporary_file()
     CHECK(QFile::remove(path));
 }
 
+/// The startup check's whole decision, which is made before the updater is
+/// loaded and therefore before anything here can reach a socket.
+void a_startup_check_is_due_once_a_day()
+{
+    const QDateTime now =
+        QDateTime(QDate(2026, 8, 13), QTime(12, 0), QTimeZone::UTC);
+
+    // Never checked, in the four spellings a settings file can say it: absent,
+    // empty, whitespace, and something that is not a date at all. A file
+    // written by hand is one of the ways this key arrives.
+    CHECK(updateCheckDue(QString(), now));
+    CHECK(updateCheckDue(QStringLiteral(""), now));
+    CHECK(updateCheckDue(QStringLiteral("   "), now));
+    CHECK(updateCheckDue(QStringLiteral("yesterday"), now));
+
+    // The boundary, from both sides. A minute under a day is not due, which is
+    // what stops two launches in one evening from making two requests.
+    CHECK(!updateCheckDue(QStringLiteral("2026-08-12T12:01:00Z"), now));
+    CHECK(updateCheckDue(QStringLiteral("2026-08-12T12:00:00Z"), now));
+    CHECK(updateCheckDue(QStringLiteral("2026-08-12T11:59:00Z"), now));
+    CHECK(!updateCheckDue(QStringLiteral("2026-08-13T11:59:00Z"), now));
+
+    // A stamp in the future is a clock that was moved back or a file that was
+    // edited. Checking is the recoverable answer; waiting for the clock to
+    // catch up is a terminal that never looks again.
+    CHECK(updateCheckDue(QStringLiteral("2027-01-01T00:00:00Z"), now));
+
+    // The zone is part of the comparison, not decoration: 23:30 in +02:00 is
+    // 21:30 UTC the same day, so it is under a day old and not due.
+    CHECK(!updateCheckDue(QStringLiteral("2026-08-12T23:30:00+02:00"), now));
+
+    // And what this program itself writes reads back as exactly not-due, which
+    // is the round trip the two functions exist to make.
+    const QString stamp = updateCheckStamp(now);
+    CHECK(stamp == QStringLiteral("2026-08-13T12:00:00Z"));
+    CHECK(!updateCheckDue(stamp, now));
+    CHECK(updateCheckDue(stamp, now.addDays(1)));
+    // Recorded in UTC whatever the local zone is, so a launch either side of a
+    // DST change or a flight compares two instants rather than two wall clocks.
+    CHECK(updateCheckStamp(now.toLocalTime()) == stamp);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -238,6 +283,7 @@ int main(int argc, char **argv)
     appimage_replacement_is_atomic_and_executable();
 #endif
     a_detached_download_outlives_its_temporary_file();
+    a_startup_check_is_due_once_a_day();
     if (failures) {
         return 1;
     }

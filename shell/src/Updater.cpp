@@ -267,11 +267,29 @@ Updater::Updater(QWidget *window)
 
 void Updater::check()
 {
+    start(false);
+}
+
+void Updater::checkQuietly()
+{
+    start(true);
+}
+
+void Updater::start(bool quiet)
+{
     if (m_busy) {
+        // A manual request made while the silent startup check is still in
+        // flight adopts that check. Otherwise the About button closes and the
+        // user sees nothing at all until an update happens to be available.
+        if (!quiet && m_quiet) {
+            m_quiet = false;
+            beginProgress(tr("Checking for a signed Sterna update..."), false);
+        }
         return;
     }
     m_busy = true;
     m_cancelled = false;
+    m_quiet = quiet;
     beginProgress(tr("Checking for a signed Sterna update..."), false);
     fetchSmall(ManifestUrl, MaxManifest, &Updater::onManifest);
 }
@@ -354,12 +372,17 @@ void Updater::onManifestSignature(const QByteArray &bytes)
         fail(error);
         return;
     }
+    // Before `reset`, which is what clears it: from here on the answer is
+    // either an offer, which a startup check is allowed to make, or nothing.
+    const bool quiet = m_quiet;
     reset();
     if (result == UpdateManifestResult::Current) {
-        QMessageBox::information(
-            m_window, tr("Sterna update"),
-            tr("Sterna %1 is current.")
-                .arg(QCoreApplication::applicationVersion()));
+        if (!quiet) {
+            QMessageBox::information(
+                m_window, tr("Sterna update"),
+                tr("Sterna %1 is current.")
+                    .arg(QCoreApplication::applicationVersion()));
+        }
         return;
     }
     offer(artifact);
@@ -654,6 +677,12 @@ void Updater::installWindows(QFile &verified)
 
 void Updater::beginProgress(const QString &text, bool determinate)
 {
+    // A startup check is two small requests and no window. The download has one
+    // regardless of who started the check, because by then somebody has agreed
+    // to it and a cancel button is the only way back out.
+    if (m_quiet) {
+        return;
+    }
     if (m_progress) {
         m_progress->deleteLater();
     }
@@ -673,6 +702,7 @@ void Updater::reset()
 {
     m_busy = false;
     m_cancelled = false;
+    m_quiet = false;
     m_manifest.clear();
     m_small.clear();
     m_downloadError.clear();
@@ -699,7 +729,18 @@ void Updater::cancel()
 
 void Updater::fail(const QString &message)
 {
+    const bool quiet = m_quiet;
     reset();
+    // Nobody asked, so nobody is told. That covers the release server being
+    // unreachable, a captive portal answering with its own HTML, and a manifest
+    // whose signature does not verify — which from here are the same event, and
+    // none of them is worth a box in front of a terminal somebody has just
+    // opened to do something else. `updates.last_check` was written before the
+    // request went out, so this retries tomorrow rather than on every launch,
+    // and Help > Check for Updates says all of it on demand.
+    if (quiet) {
+        return;
+    }
     QMessageBox box(QMessageBox::Warning, tr("Sterna update"), message,
                     QMessageBox::Close, m_window);
     QAbstractButton *open =

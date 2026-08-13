@@ -72,6 +72,22 @@ public:
     /// Fork a local shell. An empty `argv` runs the user's login shell.
     void connectPty(const QStringList &argv = {});
 
+    /// Look for a signed release, if `updates.check_on_startup` is on and
+    /// `updates.last_check` is a day old — and say nothing unless there is one.
+    ///
+    /// **Called from `main`, never from the constructor.** Every test that
+    /// builds a `MainWindow` would otherwise open a socket to the release
+    /// server, which is neither what any of them is testing nor something a
+    /// test should need the network for.
+    ///
+    /// The request is deferred rather than made here: it keeps a socket off the
+    /// path between `show()` and the first frame, and it lets a session that
+    /// opens with a password or host-key prompt get its dialog up first. If one
+    /// is up when the timer fires, or `/V` has deliberately kept the window
+    /// hidden, this launch simply does not check — the stamp is written only
+    /// when a request actually goes out, so the next visible start picks it up.
+    void checkForUpdatesOnStartup();
+
     /// The line settings a new serial connection starts from: what the settings
     /// file says, which after a connection is also what was last used. `--port`
     /// with no `--baud` opens with these, the way upstream's `/C=1` takes the
@@ -197,10 +213,14 @@ private slots:
     void newTab();
     void closeCurrentTab();
     void duplicateSession();
-    /// Load the network updater only when asked, keeping its TLS stack out of
-    /// an ordinary terminal's startup and idle RSS.
+    /// Load the network updater only for an explicit or due scheduled check,
+    /// keeping its TLS stack out of sessions which are not due.
     void checkForUpdates();
 private:
+    /// The on-demand updater, loaded on first use. Null with `outError` set if
+    /// the library is not where the installed tree or the build tree puts it.
+    QObject *loadUpdater(QString *outError);
+
     /// Construct and wire one page. Loading or copying its settings is the
     /// caller's decision, because startup and a new tab have different
     /// sources.
@@ -288,14 +308,17 @@ private:
     /// not the same as an empty value — so those records are left at their
     /// constructed defaults rather than blanked. See `docs/deviations.md`.
     void restoreRememberedConnection();
-    /// Write what a connection was opened with back to the settings file.
+    /// Write a few settings back to the file without saving the rest of it.
     ///
-    /// Only these keys are written, and only when the file does not already say
-    /// them — the core's `tt_session_settings_remember` owns both rules. A
-    /// failure is reported on stderr rather than in a box: the connection the
-    /// user asked for has just succeeded, and a modal complaint about a
-    /// convenience feature would be the first thing they see.
-    void rememberConnection(const QVector<QPair<QString, QString>> &values);
+    /// What a connection was opened with, and when the updater last looked.
+    /// Only these keys are touched, and only if their values actually change —
+    /// the core's `tt_session_settings_remember` owns both rules, which is what
+    /// makes this safe to point at a `TERATERM.INI` somebody else maintains.
+    ///
+    /// A failure is reported on stderr rather than in a box: whatever the user
+    /// asked for has just succeeded, and a modal complaint about the
+    /// bookkeeping behind it would be the first thing they see.
+    void rememberSettings(const QVector<QPair<QString, QString>> &values);
     void rememberSerial(const QString &path, const TtSerialParams &params);
     void rememberSsh(const QString &host, const QString &user, int port,
                      const QString &identity, bool legacy);

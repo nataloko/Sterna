@@ -4,7 +4,7 @@ Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
 **Last updated:** 2026-08-13 · **Stage:** 4 complete, deliberate deviations
-landing (`docs/deviations.md`) · **Commits:** 577
+landing (`docs/deviations.md`) · **Commits:** 584
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -5590,15 +5590,28 @@ xterm's `;4` marker must be told to emit sixel; those which query the capability
 directly get a useful answer. The core, C ABI, Qt renderer and an external
 encoder each have an executable boundary. See `docs/sixel.md`.
 
-**Signed, user-initiated updates close Stage 4, 2026-08-12.** Nothing contacts
-the release server at startup. Help > Check for Updates loads a local updater
-library on demand, verifies a detached Ed25519 signature before trusting the
-manifest's version, URL or size, and then checks the selected artifact's exact
-size, SHA-256 and its own signature. The 256 KiB manifest, 1 KiB signature and
-128 MiB artifact ceilings are enforced while bytes arrive, not after an
-unbounded download. The signing tool derives the public half from the encrypted
-release key and refuses a key that does not match the one compiled into the C
-ABI; its public fixture crosses that ABI in both Rust and Qt tests.
+**Signed updates close Stage 4, 2026-08-12.** Help > Check for Updates loads a
+local updater library on demand, verifies a detached Ed25519 signature before
+trusting the manifest's version, URL or size, and then checks the selected
+artifact's exact size, SHA-256 and its own signature.
+
+**A startup check joined it on 2026-08-13**, on by default: a signed release
+nobody hears about is a security fix nobody installs. `[Sterna]
+CheckUpdatesOnStartup` is the switch and `LastUpdateCheck` the schedule — one
+check per 24 hours, three seconds after startup, skipped while a modal dialog is
+up so that an offer cannot land on an SSH password prompt, and omitted for a
+deliberately hidden `/V` run. It is silent unless there is an update: no progress
+dialog, no "you are current", and no complaint about an unreachable server,
+because a box on every launch is how a security feature gets turned off. The
+stamp is written when the request goes out rather than when it succeeds, so a
+machine that is offline costs one attempt a day. The decision is made in the
+terminal, before the library is loaded — a session with the switch off, or one
+already checked today, still maps neither Qt Network nor a TLS backend (verified
+from `/proc/<pid>/maps`). The 256 KiB manifest, 1 KiB signature and 128 MiB
+artifact ceilings are enforced while bytes arrive, not after an unbounded
+download. The signing tool derives the public half from the encrypted release
+key and refuses a key that does not match the one compiled into the C ABI; its
+public fixture crosses that ABI in both Rust and Qt tests.
 
 On Linux, `QSaveFile` writes beside the running AppImage, restores its execute
 permissions before the atomic rename and leaves the mounted old image running
@@ -5611,10 +5624,11 @@ handle holds open for writing, so until the download was detached the installer
 could not run at all — a failure only native Windows can see, and one the shell
 reports in its own words rather than ours (fixed 2026-08-13). Loose builds open
 the release page instead of guessing what to replace. Qt Network and its TLS
-stack are absent from an ordinary terminal's maps: linking them directly
-measured about 5 MB more idle PSS, so `sterna_updater` is loaded only for the
-explicit action. Both packages carry the TLS plugin their platform needs,
-including the Windows Schannel backend which import-table discovery cannot see.
+stack are absent from a terminal that is not due a check: linking them directly
+measured about 5 MB more idle PSS, so `sterna_updater` is loaded only for an
+explicit or scheduled check. Both packages carry the TLS plugin their platform
+needs, including the Windows Schannel backend which import-table discovery
+cannot see.
 
 **The macro reference is generated, 2026-08-12.** `docs/macro/` converts all
 214 pages of the pinned English Tera Term macro manual to Markdown and retains
@@ -5650,7 +5664,7 @@ The rule for going on that list: user-visible, not forced by the platform, and
 reproducing upstream instead would have been easy. A divergence Linux or Qt
 forces is a port, and belongs in a code comment and in `AGENTS.md`.
 
-Four so far, all 2026-08-13:
+Five so far, all 2026-08-13:
 
 1. **The default baud rate is 115200**, where `ttset.c:919` gives 9600. The
    key, its parse and its absence of bounds are unchanged, so `BaudRate=9600`
@@ -5671,6 +5685,9 @@ Four so far, all 2026-08-13:
 4. **One, two or four simultaneous panels** show several independent tab
    sessions in one window while keeping one highlighted active target. Hidden
    tabs continue running, and the layout remembers no connections of its own.
+5. **A signed update check at startup**, on by default and limited to once per
+   day, stays silent unless it has a release to offer. The manual check remains
+   available when the schedule is off.
 
 `[Sterna]` is the first invented section in the schema, and
 `tt-config/tests/upstream.rs` now asserts in both directions: an upstream

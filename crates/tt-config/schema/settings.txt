@@ -2071,3 +2071,26 @@ recent.telnet_port | uint16 | Sterna | TelnetPort | 23 | -
 # Which of the four framing/burst combinations was used (`TelnetMode::of`).
 # `auto` is the shipped one: data until the first `IAC`, telnet after it.
 recent.telnet_mode | enum(auto=Auto,negotiate=Negotiate,framed=Framed,raw=Raw) | Sterna | TelnetMode | auto | -
+
+# --- updates ----------------------------------------------------------------
+#
+# **`[Sterna]` again**: upstream ships no updater, so there is no key to be
+# compatible with. Sterna does ship one, and a signed release nobody hears
+# about is a security fix nobody installs — which is why the startup check is
+# on rather than off. It contacts the release server and nothing else, and the
+# manifest is verified before its version, URL or size is trusted, exactly as
+# the Help > Check for Updates path is. Turning this off leaves that button
+# working: it is a schedule, not a switch on the feature.
+
+# Whether starting Sterna may look for a new release. On, so an installed
+# terminal learns about a signed update without anyone remembering to ask.
+updates.check_on_startup | bool | Sterna | CheckUpdatesOnStartup | on | -
+
+# When the last look happened, as ISO-8601 UTC — the "once a day" half of it.
+# Written when a check *starts*, so a release server that cannot be reached
+# costs one request a day rather than one per launch. Empty means never, which
+# is also what clearing it by hand means: check at the next start. Anything
+# unparsable, and anything in the future — a clock moved back, an edited file —
+# reads the same way, because the alternative is a terminal that never looks
+# again.
+updates.last_check | string | Sterna | LastUpdateCheck |  | -

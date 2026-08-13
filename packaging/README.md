@@ -183,14 +183,16 @@ here and fail on the first machine that has none.
 
 ## Signed in-app updates
 
-Help > Check for Updates works only when Sterna is running from an AppImage in
-a writable directory. It checks only on that explicit action, verifies the
-detached manifest signature, then verifies both SHA-256 and a second Ed25519
-signature over the complete downloaded image. `QSaveFile` writes beside the
+Replacing the image works only when Sterna is running from an AppImage in a
+writable directory; anything else is offered the release page instead. A check
+happens on Help > Check for Updates, and once a day at startup while
+`[Sterna] CheckUpdatesOnStartup` is on — the startup one silently unless there
+is something to offer. Either verifies the detached manifest signature, then
+verifies both SHA-256 and a second Ed25519 signature over the complete
+downloaded image. `QSaveFile` writes beside the
 old image, restores its execute permissions on the temporary file and renames
 it atomically; the running session stays on its mounted old image and the new
-one is used at the next start. A loose build opens the release page instead of
-guessing what file should be replaced.
+one is used at the next start.
 
 The release metadata and key procedure are in
 [`update/`](update/README.md). The build also embeds GitHub zsync update

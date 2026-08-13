@@ -16,7 +16,7 @@ supporting Tera Term-compatible workflows and configuration.
 - XMODEM, YMODEM, ZMODEM, Kermit, B-Plus, and Quick-VAN file transfers
 - Inline [sixel graphics](docs/sixel.md), including images in scrollback
 - `KEYBOARD.CNF` key mappings and `TERATERM.INI`-compatible settings
-- Printing, a local control socket, and a user-initiated signed updater
+- Printing, a local control socket, and a signed updater that checks once a day
 - Localized interface using Tera Term's 14 language catalogs
 
 Compatibility notes and intentional differences from Tera Term are documented

@@ -63,10 +63,19 @@
 #include "TelnetDialog.h"
 #include "TerminalPage.h"
 #include "TerminalView.h"
+#include "UpdateSchedule.h"
 #include "WindowTitle.h"
 #include "XferDialog.h"
 
 namespace {
+
+/// How long after startup the update check waits before making its request.
+///
+/// Long enough that the window is up, the first frame is painted and a session
+/// that opens with a password or host-key prompt has its dialog on screen —
+/// that dialog is what [`MainWindow::checkForUpdatesOnStartup`] steps aside
+/// for. Short enough to still happen in a terminal somebody opens and reads.
+constexpr int UpdateCheckDelayMs = 3000;
 
 /// What the schema says a setting ships as.
 ///
@@ -1334,16 +1343,17 @@ void MainWindow::restoreRememberedConnection()
     }
 }
 
-void MainWindow::rememberConnection(const QVector<QPair<QString, QString>> &values)
+void MainWindow::rememberSettings(const QVector<QPair<QString, QString>> &values)
 {
     QDir().mkpath(QFileInfo(m_settingsPath).absolutePath());
     QString error;
     if (!m_session->rememberSettings(values, m_settingsPath, &error)) {
-        // Not a box. The connection the user asked for has just opened, and a
-        // modal complaint about the convenience of remembering it would be the
-        // first thing they saw. `fprintf` rather than `qWarning`, which Fedora
-        // routes to the journal when stderr is not a terminal.
-        fprintf(stderr, "Sterna: could not remember the connection: %s\n",
+        // Not a box. Whatever this is bookkeeping for — the connection the user
+        // asked for, or an update check nobody asked for at all — has more
+        // right to the screen than the bookkeeping does. `fprintf` rather than
+        // `qWarning`, which Fedora routes to the journal when stderr is not a
+        // terminal.
+        fprintf(stderr, "Sterna: could not write the settings: %s\n",
                 qPrintable(error));
     }
 }
@@ -1371,7 +1381,7 @@ void MainWindow::rememberSerial(const QString &path, const TtSerialParams &param
         default: return QStringLiteral("none");
         }
     }();
-    rememberConnection({
+    rememberSettings({
         {QStringLiteral("recent.serial_port"), path},
         {QStringLiteral("serial.baud"), QString::number(params.baud)},
         {QStringLiteral("serial.data_bits"), QString::number(params.data_bits)},
@@ -1384,7 +1394,7 @@ void MainWindow::rememberSerial(const QString &path, const TtSerialParams &param
 void MainWindow::rememberSsh(const QString &host, const QString &user, int port,
                              const QString &identity, bool legacy)
 {
-    rememberConnection({
+    rememberSettings({
         {QStringLiteral("recent.ssh_host"), host},
         {QStringLiteral("recent.ssh_user"), user},
         {QStringLiteral("recent.ssh_port"), QString::number(port)},
@@ -1404,7 +1414,7 @@ void MainWindow::rememberTelnet(const QString &host, quint16 port, TtTelnetMode 
         default: return QStringLiteral("auto");
         }
     }();
-    rememberConnection({
+    rememberSettings({
         {QStringLiteral("recent.telnet_host"), host},
         {QStringLiteral("recent.telnet_port"), QString::number(port)},
         {QStringLiteral("recent.telnet_mode"), spelling},
@@ -1602,9 +1612,11 @@ void MainWindow::buildMenus()
                 .arg(QCoreApplication::applicationVersion().toHtmlEscaped()),
             QMessageBox::Ok, this);
         box.setIconPixmap(sternaIcon().pixmap(QSize(128, 128)));
-        // Deliberately user-initiated. There is no startup request or timer:
-        // this button is permission to contact GitHub, and the signed manifest
-        // is still verified before any URL in it is trusted.
+        // The same check the once-a-day startup one makes, minus the silence:
+        // this button says what it found, including "current" and including a
+        // server it could not reach. It works whether or not
+        // `updates.check_on_startup` is on — that setting is a schedule, not a
+        // switch on the feature.
         QPushButton *update =
             box.addButton(tr("Check for Updates..."), QMessageBox::ActionRole);
         update->setObjectName(QStringLiteral("aboutUpdateButton"));
@@ -1619,45 +1631,97 @@ void MainWindow::buildMenus()
     translateMenus();
 }
 
+QObject *MainWindow::loadUpdater(QString *outError)
+{
+    if (m_updater) {
+        return m_updater;
+    }
+    // Installed/AppImage layout first, then the build tree. The updater is
+    // a local library rather than a process so its dialogs remain modal to
+    // this window; not linking it keeps Qt Network and its TLS backends out
+    // of startup and idle RSS until an update is actually being looked for.
+    const QDir bin(QCoreApplication::applicationDirPath());
+    QStringList candidates;
+#ifdef Q_OS_WIN
+    candidates << bin.filePath(QStringLiteral("sterna_updater.dll"));
+#else
+    candidates
+        << QDir(bin.filePath(QStringLiteral("../lib")))
+               .filePath(QStringLiteral("libsterna_updater.so"))
+        << bin.filePath(QStringLiteral("libsterna_updater.so"));
+#endif
+    QString error;
+    for (const QString &path : candidates) {
+        auto *library = new QLibrary(path, this);
+        using Factory = QObject *(*)(QWidget *);
+        const auto factory =
+            reinterpret_cast<Factory>(library->resolve("sterna_updater_new"));
+        if (factory) {
+            m_updater = factory(this);
+            m_updateLibrary = library;
+            return m_updater;
+        }
+        error = library->errorString();
+        delete library;
+    }
+    if (outError) {
+        *outError = error;
+    }
+    return nullptr;
+}
+
 void MainWindow::checkForUpdates()
 {
-    if (!m_updater) {
-        // Installed/AppImage layout first, then the build tree. The updater is
-        // a local library rather than a process so its dialogs remain modal to
-        // this window; not linking it keeps Qt Network and its TLS backends out
-        // of startup and idle RSS until this action is chosen.
-        const QDir bin(QCoreApplication::applicationDirPath());
-        QStringList candidates;
-#ifdef Q_OS_WIN
-        candidates << bin.filePath(QStringLiteral("sterna_updater.dll"));
-#else
-        candidates
-            << QDir(bin.filePath(QStringLiteral("../lib")))
-                   .filePath(QStringLiteral("libsterna_updater.so"))
-            << bin.filePath(QStringLiteral("libsterna_updater.so"));
-#endif
-        QString error;
-        for (const QString &path : candidates) {
-            auto *library = new QLibrary(path, this);
-            using Factory = QObject *(*)(QWidget *);
-            const auto factory = reinterpret_cast<Factory>(
-                library->resolve("sterna_updater_new"));
-            if (factory) {
-                m_updater = factory(this);
-                m_updateLibrary = library;
-                break;
-            }
-            error = library->errorString();
-            delete library;
-        }
-        if (!m_updater) {
-            QMessageBox::warning(
-                this, tr("Sterna update"),
-                tr("The updater could not be loaded: %1").arg(error));
-            return;
-        }
+    QString error;
+    if (!loadUpdater(&error)) {
+        QMessageBox::warning(this, tr("Sterna update"),
+                             tr("The updater could not be loaded: %1").arg(error));
+        return;
     }
     QMetaObject::invokeMethod(m_updater, "check", Qt::QueuedConnection);
+}
+
+void MainWindow::checkForUpdatesOnStartup()
+{
+    if (m_session->setting(QStringLiteral("updates.check_on_startup"))
+        != QLatin1String("on")) {
+        return;
+    }
+    if (!updateCheckDue(m_session->setting(QStringLiteral("updates.last_check")),
+                        QDateTime::currentDateTimeUtc())) {
+        return;
+    }
+
+    QTimer::singleShot(UpdateCheckDelayMs, this, [this] {
+        // `/V` deliberately runs with no window. It is used for unattended
+        // command lines and macros, where an update offer would be an invisible
+        // modal dialog that stalls the process rather than useful notice.
+        if (!isVisible()) {
+            return;
+        }
+        // A modal dialog here is an SSH password or an unknown host key: the
+        // session the user opened Sterna for, mid-question. An update offer
+        // landing on top of it would take the keystrokes meant for that answer.
+        // Skipping is free — this costs a day, and the check is due for as long
+        // as nothing writes the stamp.
+        if (QApplication::activeModalWidget()) {
+            return;
+        }
+        // Silently: a missing updater library is a loose build or a partial
+        // install, and nobody asked this question. Help > Check for Updates
+        // reports it in full. Do this before writing the stamp: no library
+        // means no request, so there was no check to remember.
+        if (!loadUpdater(nullptr)) {
+            return;
+        }
+        // Written *before* the request, so an unreachable release server costs
+        // one attempt a day rather than one per launch — the failure a quiet
+        // check deliberately does not report is also the one that would
+        // otherwise retry forever.
+        rememberSettings({{QStringLiteral("updates.last_check"),
+                           updateCheckStamp(QDateTime::currentDateTimeUtc())}});
+        QMetaObject::invokeMethod(m_updater, "checkQuietly", Qt::QueuedConnection);
+    });
 }
 
 void MainWindow::showConnectDialog()

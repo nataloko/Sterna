@@ -126,8 +126,9 @@ and uninstall untouched. Upstream leaves `.ttl` behind outright.
 
 ## Signed in-app updates
 
-Help > Check for Updates downloads a signed release manifest and a signed copy
-of this same NSIS installer. The application starts it with
+Help > Check for Updates — and the once-a-day startup check, while
+`[Sterna] CheckUpdatesOnStartup` is on — downloads a signed release manifest
+and, once the offer is accepted, a signed copy of this same NSIS installer. The application starts it with
 `/S /UPDATEPID=<pid> /RESTART` after both signatures and the SHA-256 have been
 verified. `.onInit` waits up to two minutes for that process to leave before
 the old uninstaller runs; a timeout aborts without touching the installation.

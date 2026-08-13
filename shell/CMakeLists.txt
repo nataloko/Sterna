@@ -158,6 +158,7 @@ add_library(sterna_shell STATIC
     src/SshPrompts.cpp
     src/TabRows.cpp
     src/TelnetDialog.cpp
+    src/UpdateSchedule.cpp
     src/XferDialog.cpp
     resources/branding.qrc)
 
@@ -168,10 +169,10 @@ target_compile_options(sterna_shell PRIVATE ${TT_WARNINGS})
 target_compile_definitions(sterna_shell PRIVATE
     TT_SOURCE_LANG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../vendor/lang")
 
-# The network stack is loaded only after Help > Check for Updates. Linking it
-# into `sterna_shell` raised an idle AppImage's PSS by about 5 MB even when no
-# request was made; a local library keeps the dialogs in-process and pays that
-# memory only on the explicit action.
+# The network stack is loaded only for an explicit or due startup update check.
+# Linking it into `sterna_shell` raised an idle AppImage's PSS by about 5 MB
+# even when no request was made; a local library keeps the dialogs in-process
+# and leaves that cost out of sessions which are not due a check.
 add_library(sterna_updater SHARED src/Updater.cpp)
 add_dependencies(sterna_updater tt_core)
 target_link_libraries(sterna_updater PUBLIC Qt6::Widgets Qt6::Network sterna_core)
@@ -329,8 +330,11 @@ add_test(NAME tabs COMMAND tabs_test)
 # ABI and proves the committed signer matches the public key compiled into the
 # core. No release server or private key is involved. Compile the updater source
 # into the test: the Windows DLL deliberately exports only its C factory symbol,
-# while these network-free C++ helpers are the test seam.
-add_executable(update_test tests/update_test.cpp src/Updater.cpp)
+# while these network-free C++ helpers are the test seam. `UpdateSchedule.cpp`
+# is compiled in for the same reason and belongs to the other side of that seam
+# — the terminal asks whether a check is due before it loads the updater at all.
+add_executable(update_test tests/update_test.cpp src/Updater.cpp
+                           src/UpdateSchedule.cpp)
 add_dependencies(update_test tt_core)
 target_link_libraries(update_test PRIVATE Qt6::Widgets Qt6::Network sterna_core)
 target_include_directories(update_test PRIVATE src)
