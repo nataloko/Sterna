@@ -41,8 +41,8 @@ use windows_sys::Win32::Foundation::{
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_OVERLAPPED, OPEN_EXISTING,
 };
-use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject, INFINITE};
+use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 
 use crate::error::{Error, Result};
 use crate::windows_event::ManualEvent;
@@ -476,11 +476,7 @@ impl WindowsSerialWake {
                         // `overlapped` and its event outlive the operation —
                         // `finish` does not return while either is in use.
                         let started = unsafe {
-                            WaitCommEvent(
-                                worker_handle as HANDLE,
-                                &mut events,
-                                &mut overlapped,
-                            )
+                            WaitCommEvent(worker_handle as HANDLE, &mut events, &mut overlapped)
                         } != 0;
                         // SAFETY: as above. No deadline: the wait ends when
                         // the line does something or when `cancel` clears the
@@ -683,7 +679,10 @@ mod tests {
         assert_eq!(wait_ms(Duration::ZERO), 1);
         assert_eq!(wait_ms(Duration::from_nanos(1)), 1);
         assert_eq!(wait_ms(Duration::from_millis(25)), 25);
-        assert_eq!(wait_ms(Duration::from_millis(u32::MAX as u64)), u32::MAX - 1);
+        assert_eq!(
+            wait_ms(Duration::from_millis(u32::MAX as u64)),
+            u32::MAX - 1
+        );
         assert_ne!(wait_ms(Duration::MAX), INFINITE);
     }
 
