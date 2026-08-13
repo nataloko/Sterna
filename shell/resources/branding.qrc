@@ -1,5 +1,12 @@
 <RCC>
   <qresource prefix="/branding">
-    <file alias="sterna.svg">../../assets/branding/sterna/svg/sterna-app.svg</file>
+    <file alias="sterna-16.png">../../assets/branding/sterna/icons/sterna-16.png</file>
+    <file alias="sterna-24.png">../../assets/branding/sterna/icons/sterna-24.png</file>
+    <file alias="sterna-32.png">../../assets/branding/sterna/icons/sterna-32.png</file>
+    <file alias="sterna-48.png">../../assets/branding/sterna/icons/sterna-48.png</file>
+    <file alias="sterna-64.png">../../assets/branding/sterna/icons/sterna-64.png</file>
+    <file alias="sterna-128.png">../../assets/branding/sterna/icons/sterna-128.png</file>
+    <file alias="sterna-256.png">../../assets/branding/sterna/icons/sterna-256.png</file>
+    <file alias="sterna-512.png">../../assets/branding/sterna/icons/sterna-512.png</file>
   </qresource>
 </RCC>
