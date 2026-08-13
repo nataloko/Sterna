@@ -82,6 +82,25 @@ int cellWidthClass(const TtCell &cell)
     return cell.width_class == TT_WIDTH_WIDE ? 2 : 1;
 }
 
+/// One highlight span as the painter wants it.
+///
+/// The sentinel becomes an invalid `QColor`, which is already how the rest of
+/// this says "leave that one alone".
+CellOverride highlightOverride(const TtHighlightSpan &span)
+{
+    CellOverride over;
+    if (span.fg != TT_HIGHLIGHT_NO_COLOR) {
+        over.fg = QColor(int((span.fg >> 16) & 0xff), int((span.fg >> 8) & 0xff),
+                         int(span.fg & 0xff));
+    }
+    if (span.bg != TT_HIGHLIGHT_NO_COLOR) {
+        over.bg = QColor(int((span.bg >> 16) & 0xff), int((span.bg >> 8) & 0xff),
+                         int(span.bg & 0xff));
+    }
+    over.attrs = span.attrs;
+    return over;
+}
+
 TtModifiers modifiersOf(Qt::KeyboardModifiers m)
 {
     TtModifiers mods;
@@ -656,7 +675,7 @@ void TerminalView::paintEvent(QPaintEvent *)
             continue;
         }
 
-        // Which columns of *this* row are highlighted, once for the row rather
+        // Which columns of *this* row are selected, once for the row rather
         // than a lookup per cell.
         int selFrom = 0;
         int selTo = 0;
@@ -667,6 +686,13 @@ void TerminalView::paintEvent(QPaintEvent *)
                 selTo = (line == selLast.line) ? selLast.x : m_session->cols();
             }
         }
+
+        // And which the highlight rules claimed, on the same terms: the core
+        // matched them just now, over this row's logical line. The list is in
+        // column order, so the loop below walks it rather than searching it.
+        const TtHighlightSpan *spans = nullptr;
+        const size_t spanCount = m_session->rowHighlights(y, &spans);
+        size_t spanAt = 0;
 
         // One `drawText` per run of cells that look alike. Real console output
         // is mostly long runs of one colour, so this is a large win over a
@@ -737,11 +763,25 @@ void TerminalView::paintEvent(QPaintEvent *)
                 continue;
             }
 
+            while (spanAt < spanCount && spans[spanAt].to <= x) {
+                spanAt++;
+            }
+            CellOverride over;
+            const bool highlighted = spanAt < spanCount && x >= spans[spanAt].from
+                                     && x < spans[spanAt].to;
+            if (highlighted) {
+                over = highlightOverride(spans[spanAt]);
+            }
+
             QColor fg;
             QColor bg;
-            m_theme.resolve(cell, x >= selFrom && x < selTo, screenReverse, &fg, &bg);
-            const bool bold = m_theme.paintsBold(cell.attrs);
-            const bool under = m_theme.paintsUnderline(cell.attrs);
+            m_theme.resolve(cell, x >= selFrom && x < selTo, screenReverse, &fg, &bg,
+                            highlighted ? &over : nullptr);
+            // A rule's own bold and underline join the cell's, which is why
+            // these two read the combined word rather than `cell.attrs`.
+            const uint32_t attrs = cell.attrs | over.attrs;
+            const bool bold = m_theme.paintsBold(attrs);
+            const bool under = m_theme.paintsUnderline(attrs);
             const int width = cellWidthClass(cell);
             const QString text = cellText(cell);
 
@@ -850,9 +890,24 @@ void TerminalView::paintEvent(QPaintEvent *)
             const QRect box(cx * cw, cursorRow * ch, width * cw, ch);
             if (hasFocus()) {
                 if (m_cursorBlinkOn) {
+                    // The same override the grid loop used, or a block cursor
+                    // sitting on highlighted text shows the colours underneath
+                    // it.
+                    const TtHighlightSpan *spans = nullptr;
+                    const size_t spanCount = m_session->rowHighlights(cursorRow, &spans);
+                    CellOverride over;
+                    bool highlighted = false;
+                    for (size_t i = 0; i < spanCount; i++) {
+                        if (cx >= spans[i].from && cx < spans[i].to) {
+                            over = highlightOverride(spans[i]);
+                            highlighted = true;
+                            break;
+                        }
+                    }
                     QColor fg;
                     QColor bg;
-                    m_theme.resolve(cell, false, screenReverse, &fg, &bg);
+                    m_theme.resolve(cell, false, screenReverse, &fg, &bg,
+                                    highlighted ? &over : nullptr);
                     switch (cur.shape) {
                     case TT_CURSOR_SHAPE_HORIZONTAL: {
                         // `CurWidth` is exactly two pixels upstream
@@ -874,7 +929,8 @@ void TerminalView::paintEvent(QPaintEvent *)
                     default:
                         p.fillRect(box, fg);
                         p.setPen(bg);
-                        p.setFont(m_theme.paintsBold(cell.attrs) ? m_theme.boldFont()
+                        p.setFont(m_theme.paintsBold(cell.attrs | over.attrs)
+                                      ? m_theme.boldFont()
                                                                  : m_theme.font());
                         p.drawText(QPoint(box.left() + m_theme.textOffsetX(),
                                            cursorRow * ch + m_theme.baseline()),

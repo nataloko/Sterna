@@ -336,6 +336,7 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
     restoreRememberedConnection();
     loadKeyMap(QDir(QFileInfo(m_settingsPath).absolutePath())
                    .filePath(QStringLiteral("KEYBOARD.CNF")));
+    reloadHighlights();
     applySavedPosition();
 
     updateStatus();
@@ -1026,6 +1027,12 @@ void MainWindow::onSettingsChanged()
             disabled ? QKeySequence() : QKeySequence(Qt::ALT | Qt::Key_D));
     }
 
+    // The rules live in the same file, so anything that reloads settings — the
+    // dialog, a `setsetting`, a plugin — can also have changed them; and this
+    // is what moves the Highlight matches tick when the switch is flipped from
+    // somewhere else.
+    reloadHighlights();
+
     // Before the first show, upstream explicitly applies the active value
     // (`vtwin.cpp:780`). Afterwards the desktop's activation state decides,
     // including while the settings dialog is still the active window.
@@ -1560,6 +1567,21 @@ void MainWindow::buildMenus()
     QAction *keyMap =
         setup->addAction(tr("Load key map..."), this, &MainWindow::chooseKeyMap);
     languageAction(keyMap, "MENU_SETUP_LOADKEYMAP", tr("Load key map..."));
+    // Upstream has no pattern highlighting and so no menu item for one.
+    setup->addSeparator();
+    m_highlightingAction = setup->addAction(tr("Highlight matches"));
+    m_highlightingAction->setObjectName(QStringLiteral("highlightMatchesAction"));
+    m_highlightingAction->setCheckable(true);
+    // The setting is written rather than the rules being switched off one by
+    // one, so this, the settings dialog and Save setup all mean the same thing.
+    connect(m_highlightingAction, &QAction::triggered, this, [this](bool on) {
+        QString error;
+        if (!m_session->setSetting(QStringLiteral("color.highlighting"),
+                                   on ? QStringLiteral("on") : QStringLiteral("off"),
+                                   &error)) {
+            onNotice(tr("Could not change highlighting: %1").arg(error));
+        }
+    });
     // Upstream has no toolbar and so no item for one. It writes the setting
     // rather than hiding the bar directly, so that this, the settings dialog and
     // Save setup are all talking about the same thing.
@@ -2391,6 +2413,50 @@ void MainWindow::loadKeyMap(const QString &path)
         }
         onNotice(tr("Key codes used more than once: %1").arg(codes.join(", ")));
     }
+}
+
+// --- highlight rules --------------------------------------------------------
+
+void MainWindow::reloadHighlights()
+{
+    m_highlights = loadHighlights(m_settingsPath);
+    for (int i = 0; i < m_panels->count(); i++) {
+        auto *page = static_cast<TerminalPage *>(m_panels->widget(i));
+        page->session()->setHighlights(m_highlights);
+    }
+    if (m_highlightingAction && m_session) {
+        QSignalBlocker block(m_highlightingAction);
+        m_highlightingAction->setChecked(
+            m_session->setting(QStringLiteral("color.highlighting"))
+            == QLatin1String("on"));
+    }
+    // Only a hand-edited file can produce one — the editor will not save a
+    // pattern the engine refuses — and a rule that is in the file and does
+    // nothing is worth one line rather than silence.
+    if (m_session) {
+        const QString problems = m_session->highlightProblems();
+        if (!problems.isEmpty()) {
+            onNotice(tr("Highlight rules that did not compile: %1")
+                         .arg(problems.split(QLatin1Char('\n')).join(QStringLiteral("; "))));
+        }
+    }
+    if (m_view) {
+        m_view->update();
+    }
+}
+
+void MainWindow::storeHighlights(const QVector<QuickHighlight> &rules)
+{
+    QDir().mkpath(QFileInfo(m_settingsPath).absolutePath());
+    QString error;
+    if (!saveHighlights(m_settingsPath, rules, &error)) {
+        QMessageBox::warning(this, tr("Highlighting"),
+                             tr("Could not save the highlight rules: %1").arg(error));
+        return;
+    }
+    // Through the file rather than straight into the sessions, so what is in
+    // force is always what a person reading the file would expect.
+    reloadHighlights();
 }
 
 void MainWindow::invokeMenuCommand(quint16 command)

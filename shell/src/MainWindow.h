@@ -8,6 +8,7 @@
 
 #include "sterna.h"
 
+#include "Highlights.h"
 #include "PanelContainer.h"
 #include "Session.h"
 
@@ -270,6 +271,16 @@ private:
     void startNamedMacro(const QString &name);
     /// Install one `KEYBOARD.CNF` and report unreadable or duplicate entries.
     void loadKeyMap(const QString &path);
+    /// Read the highlight rules out of the settings file and hand them to
+    /// every page.
+    ///
+    /// The list is the window's rather than a page's: one file, and a rule the
+    /// user wrote is about the text on their screen, not about which tab it
+    /// arrived in.
+    void reloadHighlights();
+    /// Write a rule list to the settings file and reload from it, so the file
+    /// stays the one source of truth.
+    void storeHighlights(const QVector<QuickHighlight> &rules);
     /// A type-3 user key's upstream menu id, for the actions this window has.
     void invokeMenuCommand(quint16 command);
     /// Connect what a command line resolved to. The SSH arm goes through the
@@ -330,6 +341,10 @@ private:
     QString m_pluginsPath;
     /// The active `KEYBOARD.CNF`, for reopening the file picker in its folder.
     QString m_keyMapPath;
+    /// The highlight rules as loaded, so the editor opens on what is in force
+    /// and a new page can be handed the same set.
+    QVector<QuickHighlight> m_highlights;
+    QAction *m_highlightingAction = nullptr;
     I18n *m_i18n = nullptr;
     QString m_languageSetting;
     PanelContainer *m_panels = nullptr;

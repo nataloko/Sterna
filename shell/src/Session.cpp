@@ -2,6 +2,8 @@
 
 #include "Session.h"
 
+#include "Highlights.h"
+
 #include <QClipboard>
 #include <QGuiApplication>
 #ifdef Q_OS_WIN
@@ -116,6 +118,58 @@ const TtCell *Session::line(quint64 n, size_t *outLen) const
 size_t Session::sixelImages(const TtSixelImage **out)
 {
     return tt_session_sixel_images(m_session, out);
+}
+
+size_t Session::rowHighlights(int y, const TtHighlightSpan **out)
+{
+    size_t len = 0;
+    const TtHighlightSpan *spans =
+        tt_session_row_highlights(m_session, static_cast<size_t>(qMax(0, y)), &len);
+    if (out) {
+        *out = spans;
+    }
+    return spans ? len : 0;
+}
+
+void Session::setHighlights(const QVector<QuickHighlight> &rules)
+{
+    TtHighlights *list = tt_highlights_new();
+    if (!list) {
+        return;
+    }
+    for (int i = 0; i < rules.size(); i++) {
+        const QuickHighlight &rule = rules.at(i);
+        const QByteArray label = rule.label.toUtf8();
+        const QByteArray pattern = rule.pattern.toUtf8();
+        TtHighlight entry = {};
+        entry.label = label.constData();
+        entry.pattern = pattern.constData();
+        entry.literal = rule.literal;
+        entry.ignore_case = rule.ignoreCase;
+        entry.fore = rule.fore.isValid() ? quint32((rule.fore.red() << 16)
+                                                   | (rule.fore.green() << 8)
+                                                   | rule.fore.blue())
+                                         : TT_HIGHLIGHT_NO_COLOR;
+        entry.back = rule.back.isValid() ? quint32((rule.back.red() << 16)
+                                                   | (rule.back.green() << 8)
+                                                   | rule.back.blue())
+                                         : TT_HIGHLIGHT_NO_COLOR;
+        entry.style = rule.style;
+        entry.scope = rule.wholeLine ? TT_HIGHLIGHT_LINE : TT_HIGHLIGHT_MATCH;
+        entry.group = rule.group;
+        entry.enabled = rule.enabled;
+        if (tt_highlights_set(list, size_t(i), &entry) != TT_OK) {
+            break;
+        }
+    }
+    tt_session_set_highlights(m_session, list);
+    tt_highlights_free(list);
+}
+
+QString Session::highlightProblems() const
+{
+    const char *problems = tt_session_highlight_problems(m_session);
+    return problems ? QString::fromUtf8(problems) : QString();
 }
 
 quint64 Session::lineAt(int y) const

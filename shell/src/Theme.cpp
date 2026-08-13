@@ -221,9 +221,12 @@ bool Theme::shouldResizeGlyph(const QString &text, bool bold, int cells) const
 }
 
 void Theme::resolve(const TtCell &cell, bool selected, bool screenReverse,
-                    QColor *fg, QColor *bg) const
+                    QColor *fg, QColor *bg, const CellOverride *over) const
 {
-    const uint32_t attrs = cell.attrs;
+    // A rule's bold or underline joins the cell's own before the pair chain
+    // below looks at either, so a highlighted cell picks the bold colour pair
+    // for the same reason an `SGR 1` one does.
+    const uint32_t attrs = cell.attrs | (over ? over->attrs : 0u);
 
     // Upstream composes the attribute with the setting that enables it before
     // looking at anything, so an attribute whose colour is switched off falls
@@ -315,5 +318,17 @@ void Theme::resolve(const TtCell &cell, bool selected, bool screenReverse,
         const QColor *safe = reverse ? m_reverse : m_normal;
         *fg = safe[0];
         *bg = safe[1];
+    }
+
+    // And a highlight rule wins over all of it, including the repair above —
+    // which tests the *cell's* two indices and would otherwise throw away a
+    // colour the user asked for on a cell the host had made invisible.
+    if (over) {
+        if (over->fg.isValid()) {
+            *(reverse ? bg : fg) = over->fg;
+        }
+        if (over->bg.isValid()) {
+            *(reverse ? fg : bg) = over->bg;
+        }
     }
 }
