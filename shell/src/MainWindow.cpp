@@ -241,6 +241,9 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
         // open a terminal.
         onNotice(tr("Could not read the settings: %1").arg(error));
     }
+    // After the load and before anything can connect: the connect dialogs and
+    // `--port` both open at what was last used, which needs the file read first.
+    restoreRememberedConnection();
     loadKeyMap(QDir(QFileInfo(m_settingsPath).absolutePath())
                    .filePath(QStringLiteral("KEYBOARD.CNF")));
     applySavedPosition();
@@ -339,6 +342,17 @@ void MainWindow::wirePage(TerminalPage *page)
     });
     connect(session, &Session::connectionChanged, this, [this, page] {
         updateTabTitle(page);
+        // The far edge of an SSH attempt, and the only one worth remembering:
+        // `startSsh` returning true means the handshake has begun, and a host
+        // whose key was refused or whose login failed should not become the
+        // next dialog's default. Either outcome disarms it.
+        if (page == m_pendingSshPage) {
+            m_pendingSshPage = nullptr;
+            if (page->session()->isConnected()) {
+                rememberSsh(m_lastSshHost, m_lastSshUser, m_lastSshPort,
+                            m_lastSshIdentity, m_lastSshLegacy);
+            }
+        }
         if (page == m_page) {
             onConnectionChanged();
         }
@@ -521,6 +535,12 @@ void MainWindow::closePage(TerminalPage *page, bool confirm)
         return;
     }
 
+    // Before the page goes: an SSH record waiting on this page has nothing left
+    // to wait for, and a pointer to a freed page could compare equal to a later
+    // one allocated in its place.
+    if (page == m_pendingSshPage) {
+        m_pendingSshPage = nullptr;
+    }
     m_tabs->removeTab(index);
     page->deleteLater();
     updateTabBar();
@@ -1069,6 +1089,127 @@ void MainWindow::saveSettings()
     onNotice(tr("Settings saved to %1").arg(path));
 }
 
+void MainWindow::restoreRememberedConnection()
+{
+    // The line settings first, and from the core: `FlowCtrlRTS`/`FlowCtrlDTR`
+    // ship as the sentinel -1, meaning "derive from the flow control", and a
+    // frontend that read the two keys itself would hold both lines low.
+    m_lastParams = m_session->serialParams();
+
+    const auto text = [this](const char *name) {
+        return m_session->setting(QLatin1String(name));
+    };
+    const QString port = text("recent.serial_port");
+    if (!port.isEmpty()) {
+        m_lastPort = port;
+    }
+
+    // An empty host is how "nothing was remembered" is spelled, and it is not
+    // the same as an empty value: blanking the members from it would replace a
+    // dialog's own default with a blank field.
+    const QString sshHost = text("recent.ssh_host");
+    if (!sshHost.isEmpty()) {
+        m_lastSshHost = sshHost;
+        m_lastSshUser = text("recent.ssh_user");
+        m_lastSshPort = text("recent.ssh_port").toInt();
+        m_lastSshIdentity = text("recent.ssh_identity");
+        m_lastSshLegacy = text("recent.ssh_legacy") == QLatin1String("on");
+    }
+
+    const QString telnetHost = text("recent.telnet_host");
+    if (!telnetHost.isEmpty()) {
+        m_lastTelnetHost = telnetHost;
+        m_lastTelnetPort = static_cast<quint16>(text("recent.telnet_port").toUInt());
+        const QString mode = text("recent.telnet_mode");
+        if (mode == QLatin1String("negotiate")) {
+            m_lastTelnetMode = TT_TELNET_NEGOTIATE;
+        } else if (mode == QLatin1String("framed")) {
+            m_lastTelnetMode = TT_TELNET_FRAMED;
+        } else if (mode == QLatin1String("raw")) {
+            m_lastTelnetMode = TT_TELNET_RAW;
+        } else {
+            m_lastTelnetMode = TT_TELNET_AUTO;
+        }
+    }
+}
+
+void MainWindow::rememberConnection(const QVector<QPair<QString, QString>> &values)
+{
+    QDir().mkpath(QFileInfo(m_settingsPath).absolutePath());
+    QString error;
+    if (!m_session->rememberSettings(values, m_settingsPath, &error)) {
+        // Not a box. The connection the user asked for has just opened, and a
+        // modal complaint about the convenience of remembering it would be the
+        // first thing they saw. `fprintf` rather than `qWarning`, which Fedora
+        // routes to the journal when stderr is not a terminal.
+        fprintf(stderr, "Sterna: could not remember the connection: %s\n",
+                qPrintable(error));
+    }
+}
+
+void MainWindow::rememberSerial(const QString &path, const TtSerialParams &params)
+{
+    // The line settings go into `[Tera Term]`'s own keys, which is where the
+    // serial dialog and a macro's `setbaud` already read and write them; only
+    // the device path has no upstream key. Their spellings are the schema's, not
+    // this dialog's — `enum(none=None,x=XonXoff,hard/rtscts=Hardware,…)`.
+    const auto parity = [&] {
+        switch (params.parity) {
+        case TT_PARITY_ODD: return QStringLiteral("odd");
+        case TT_PARITY_EVEN: return QStringLiteral("even");
+        case TT_PARITY_MARK: return QStringLiteral("mark");
+        case TT_PARITY_SPACE: return QStringLiteral("space");
+        default: return QStringLiteral("none");
+        }
+    }();
+    const auto flow = [&] {
+        switch (params.flow) {
+        case TT_FLOW_CONTROL_XON_XOFF: return QStringLiteral("x");
+        case TT_FLOW_CONTROL_RTS_CTS: return QStringLiteral("hard");
+        case TT_FLOW_CONTROL_DSR_DTR: return QStringLiteral("dsrdtr");
+        default: return QStringLiteral("none");
+        }
+    }();
+    rememberConnection({
+        {QStringLiteral("recent.serial_port"), path},
+        {QStringLiteral("serial.baud"), QString::number(params.baud)},
+        {QStringLiteral("serial.data_bits"), QString::number(params.data_bits)},
+        {QStringLiteral("serial.parity"), parity},
+        {QStringLiteral("serial.stop_bits"), QString::number(params.stop_bits)},
+        {QStringLiteral("serial.flow"), flow},
+    });
+}
+
+void MainWindow::rememberSsh(const QString &host, const QString &user, int port,
+                             const QString &identity, bool legacy)
+{
+    rememberConnection({
+        {QStringLiteral("recent.ssh_host"), host},
+        {QStringLiteral("recent.ssh_user"), user},
+        {QStringLiteral("recent.ssh_port"), QString::number(port)},
+        {QStringLiteral("recent.ssh_identity"), identity},
+        {QStringLiteral("recent.ssh_legacy"),
+         legacy ? QStringLiteral("on") : QStringLiteral("off")},
+    });
+}
+
+void MainWindow::rememberTelnet(const QString &host, quint16 port, TtTelnetMode mode)
+{
+    const auto spelling = [mode] {
+        switch (mode) {
+        case TT_TELNET_NEGOTIATE: return QStringLiteral("negotiate");
+        case TT_TELNET_FRAMED: return QStringLiteral("framed");
+        case TT_TELNET_RAW: return QStringLiteral("raw");
+        default: return QStringLiteral("auto");
+        }
+    }();
+    rememberConnection({
+        {QStringLiteral("recent.telnet_host"), host},
+        {QStringLiteral("recent.telnet_port"), QString::number(port)},
+        {QStringLiteral("recent.telnet_mode"), spelling},
+    });
+}
+
 void MainWindow::buildMenus()
 {
     // No `&` mnemonics anywhere in this menu bar, and that is deliberate: Qt
@@ -1489,6 +1630,7 @@ void MainWindow::connectSerial(const QString &path, const TtSerialParams &params
     }
     m_lastPort = path;
     m_lastParams = params;
+    rememberSerial(path, params);
     updateStatus();
 }
 
@@ -1522,9 +1664,9 @@ void MainWindow::connectSsh(const QString &host, const QString &user, int port)
     params.user = user.isEmpty() ? nullptr : userUtf8.constData();
     params.port = static_cast<uint16_t>(port);
 
+    // `startSsh` records the user and port out of the params, so there is
+    // nothing to assign here afterwards.
     startSsh(params, host);
-    m_lastSshUser = user;
-    m_lastSshPort = port;
 }
 
 void MainWindow::startSsh(const TtSshParams &params, const QString &host)
@@ -1536,7 +1678,24 @@ void MainWindow::startSsh(const TtSshParams &params, const QString &host)
                               tr("Could not start the connection.\n\n%1").arg(error));
         return;
     }
+    // Out of the params rather than out of the dialog, because this is the one
+    // place an attempt starts and the command line and the control socket come
+    // through it too. A null string is not an empty one: it means "whatever
+    // ~/.ssh/config says", and the record keeps that distinction.
     m_lastSshHost = host;
+    m_lastSshUser = params.user ? QString::fromUtf8(params.user) : QString();
+    m_lastSshPort = params.port;
+    m_lastSshIdentity = params.identities && params.identities[0]
+                            ? QString::fromUtf8(params.identities[0])
+                            : QString();
+    m_lastSshLegacy = params.legacy;
+
+    // Written when the handshake finishes, not now: unlike a serial open, this
+    // call returning true means an attempt has *started*, and a host key
+    // refusal or a failed login is not something to remember. `ensureIdlePage`
+    // has just made this the page the attempt belongs to.
+    m_pendingSshPage = m_page;
+
     statusBar()->showMessage(tr("Connecting to %1...").arg(host));
     updateStatus();
 }
@@ -1576,8 +1735,11 @@ void MainWindow::showTelnetDialog()
     }
     TtTelnetParams params;
     dialog.fill(&params);
-    connectTelnet(dialog.host(), dialog.port());
-    m_lastTelnetMode = params.mode;
+    // The dialog's own params, not the ones `connectTelnet` would derive from
+    // `m_lastTelnetMode`: the mode is the reason this is a dialog at all, and
+    // going through that member applied the chosen mode to the *next*
+    // connection rather than to this one.
+    connectTelnet(dialog.host(), dialog.port(), &params);
 }
 
 void MainWindow::connectTelnet(const QString &host, quint16 port,
@@ -1602,6 +1764,8 @@ void MainWindow::connectTelnet(const QString &host, quint16 port,
     }
     m_lastTelnetHost = host;
     m_lastTelnetPort = port;
+    m_lastTelnetMode = params.mode;
+    rememberTelnet(host, port, params.mode);
     updateStatus();
 }
 
@@ -1643,6 +1807,7 @@ void MainWindow::onRemoteResize(int cols, int rows)
 
 void MainWindow::onSshFailed(const QString &error)
 {
+    m_pendingSshPage = nullptr;
     QMessageBox::critical(this, tr("SSH"), error);
     updateStatus();
 }

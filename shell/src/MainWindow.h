@@ -71,6 +71,12 @@ public:
     /// Fork a local shell. An empty `argv` runs the user's login shell.
     void connectPty(const QStringList &argv = {});
 
+    /// The line settings a new serial connection starts from: what the settings
+    /// file says, which after a connection is also what was last used. `--port`
+    /// with no `--baud` opens with these, the way upstream's `/C=1` takes the
+    /// file's `BaudRate`.
+    TtSerialParams serialParams() const { return m_lastParams; }
+
     /// The window's session. Exposed so a test can drive it, and because a
     /// control socket will want it long before tabs make "which session"
     /// an interesting question.
@@ -263,6 +269,29 @@ private:
     /// active page's VM and terminal.
     void installPluginActions();
 
+    /// Seed the connect dialogs from the settings file, so this launch opens
+    /// where the last one left off. Call it after the settings are loaded.
+    ///
+    /// The serial line settings are the file's own `BaudRate` family, read
+    /// through the core so the `-1` control-line sentinel is resolved once and
+    /// in one place; the endpoints upstream has no key for come out of
+    /// `[Sterna]`. An empty host or port means nothing was remembered, which is
+    /// not the same as an empty value — so those records are left at their
+    /// constructed defaults rather than blanked. See `docs/deviations.md`.
+    void restoreRememberedConnection();
+    /// Write what a connection was opened with back to the settings file.
+    ///
+    /// Only these keys are written, and only when the file does not already say
+    /// them — the core's `tt_session_settings_remember` owns both rules. A
+    /// failure is reported on stderr rather than in a box: the connection the
+    /// user asked for has just succeeded, and a modal complaint about a
+    /// convenience feature would be the first thing they see.
+    void rememberConnection(const QVector<QPair<QString, QString>> &values);
+    void rememberSerial(const QString &path, const TtSerialParams &params);
+    void rememberSsh(const QString &host, const QString &user, int port,
+                     const QString &identity, bool legacy);
+    void rememberTelnet(const QString &host, quint16 port, TtTelnetMode mode);
+
     /// Where the settings came from, and where `Save setup` puts them back.
     /// Not always [`settingsPath()`] — `/F=` names another one.
     QString m_settingsPath;
@@ -310,8 +339,11 @@ private:
     /// the process's working directory every time.
     QString m_lastMacroDir;
     QLabel *m_logStatus = nullptr;
-    // Remembered so reopening the dialog does not start from the defaults
-    // again. A session profile on disk is Stage 2's, with the settings schema.
+    // What the last connection was opened with, so reopening a connect dialog
+    // does not start from the defaults again. Persisted, unlike upstream's:
+    // `restoreRememberedConnection` seeds these from the settings file at
+    // startup and `remember*` writes them back when a connection opens. See
+    // `docs/deviations.md`.
     QString m_lastPort;
     TtSerialParams m_lastParams;
     QString m_lastSshHost;
@@ -322,4 +354,8 @@ private:
     QString m_lastTelnetHost;
     quint16 m_lastTelnetPort = 23;
     TtTelnetMode m_lastTelnetMode = TT_TELNET_NEGOTIATE;
+    /// The page whose SSH handshake has not finished. An SSH record is written
+    /// when that page reports a connection, because until then there is nothing
+    /// worth remembering — see the `connectionChanged` wiring.
+    TerminalPage *m_pendingSshPage = nullptr;
 };

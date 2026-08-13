@@ -795,31 +795,32 @@ fn emit(settings: &[Setting]) -> String {
          \x20   pub fn store(&self, ini: &mut Ini) {\n",
     );
     for s in settings {
-        let field = field_name(&s.name);
-        let (section, key) = (escape(&s.section), escape(&s.write_key));
-        let expr = match &s.kind {
-            Kind::Bool => format!("if self.{field} {{ \"on\" }} else {{ \"off\" }}.to_string()"),
-            Kind::Int { field: None, .. } => format!("self.{field}.to_string()"),
-            Kind::Int { field: Some(n), .. } => format!(
-                "crate::schema::with_nth(ini.get(\"{section}\", \"{key}\"), {n}, self.{field})"
-            ),
-            Kind::Str { escaped: true } => format!("crate::esc::quote(&self.{field})"),
-            Kind::Str { .. } => format!("self.{field}.clone()"),
-            Kind::Enum { .. } => format!("self.{field}.as_ini().to_string()"),
-            Kind::Color2 => format!("crate::schema::color2_str(&self.{field})"),
-        };
-        let indent = if let Some(condition) = &s.write_if {
-            writeln!(out, "        if self.{} {{", field_name(condition)).expect("string");
-            "            "
-        } else {
-            "        "
-        };
-        writeln!(out, "{indent}ini.set(\"{section}\", \"{key}\", &{expr});").expect("string");
-        if s.write_if.is_some() {
-            out.push_str("        }\n");
-        }
+        write_one(&mut out, s, "        ");
     }
     out.push_str("    }\n\n");
+
+    // The same write, for one setting named at run time. Generated from the
+    // same emitter as `store` rather than reconstructed from the metadata
+    // table: `write-key=` and `write-if=` are part of what writing a setting
+    // *is*, and a second implementation of that would be a second set of
+    // answers for the five keys whose writer spells them differently.
+    out.push_str(
+        "    /// Write one setting back by its dotted name, leaving every other\n\
+         \x20   /// line alone. False for a name that is not in the schema.\n\
+         \x20   ///\n\
+         \x20   /// This is what persists a change nobody asked to save — the\n\
+         \x20   /// remembered connection, the window position on close — without\n\
+         \x20   /// pinning every other default into a file the user may share with\n\
+         \x20   /// a real Tera Term. [`Settings::store`] is Save setup.\n\
+         \x20   pub fn store_one(&self, ini: &mut Ini, name: &str) -> bool {\n\
+         \x20       match name {\n",
+    );
+    for s in settings {
+        writeln!(out, "            \"{}\" => {{", escape(&s.name)).expect("string");
+        write_one(&mut out, s, "                ");
+        out.push_str("            }\n");
+    }
+    out.push_str("            _ => return false,\n        }\n        true\n    }\n\n");
 
     // Name-addressed access, which is what a generic dialog and the scripting
     // commands walk instead of each holding their own copy of this list.
@@ -967,6 +968,39 @@ fn emit(settings: &[Setting]) -> String {
     }
     out.push_str("];\n");
     out
+}
+
+/// One setting's write, at `indent`.
+///
+/// Both [`Settings::store`](crate::Settings::store) and `store_one` are emitted
+/// from here, because a setting's write is three things and not one: the value's
+/// spelling, the key the *writer* uses where upstream's two disagree, and the
+/// `write-if` switch that leaves a line alone rather than pinning a default into
+/// a shared file.
+fn write_one(out: &mut String, s: &Setting, indent: &str) {
+    let field = field_name(&s.name);
+    let (section, key) = (escape(&s.section), escape(&s.write_key));
+    let expr = match &s.kind {
+        Kind::Bool => format!("if self.{field} {{ \"on\" }} else {{ \"off\" }}.to_string()"),
+        Kind::Int { field: None, .. } => format!("self.{field}.to_string()"),
+        Kind::Int { field: Some(n), .. } => {
+            format!("crate::schema::with_nth(ini.get(\"{section}\", \"{key}\"), {n}, self.{field})")
+        }
+        Kind::Str { escaped: true } => format!("crate::esc::quote(&self.{field})"),
+        Kind::Str { .. } => format!("self.{field}.clone()"),
+        Kind::Enum { .. } => format!("self.{field}.as_ini().to_string()"),
+        Kind::Color2 => format!("crate::schema::color2_str(&self.{field})"),
+    };
+    let inner = if let Some(condition) = &s.write_if {
+        writeln!(out, "{indent}if self.{} {{", field_name(condition)).expect("string");
+        format!("{indent}    ")
+    } else {
+        indent.to_string()
+    };
+    writeln!(out, "{inner}ini.set(\"{section}\", \"{key}\", &{expr});").expect("string");
+    if s.write_if.is_some() {
+        writeln!(out, "{indent}}}").expect("string");
+    }
 }
 
 /// The default's own spelling decides how `GetOnOff` reads the file, so it is

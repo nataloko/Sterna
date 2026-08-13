@@ -31,18 +31,21 @@ fn ttset_c() -> Option<PathBuf> {
     f.is_file().then_some(f)
 }
 
-/// Which upstream file reads a section's keys.
+/// Which upstream file reads a section's keys, or `None` for a section that is
+/// this project's own.
 ///
-/// `[Tera Term]` is `ttset.c` and everything else is a plugin: `TTProxy` hooks
-/// `ReadIniFile` and reads its own section (`TTProxy/TTProxy.h:63`), so its
-/// keys appear nowhere in `ttset.c` and checking them against it would report
-/// every one of them as invented. A section with no file here is a section
-/// nobody has said where to check, which is a schema mistake rather than a
-/// pass.
-fn source_for(section: &str) -> &'static str {
+/// `[Tera Term]` is `ttset.c` and the plugins read their own: `TTProxy` hooks
+/// `ReadIniFile` (`TTProxy/TTProxy.h:63`), so its keys appear nowhere in
+/// `ttset.c` and checking them against it would report every one of them as
+/// invented. `[Sterna]` is the other direction — a section nothing upstream
+/// reads at all, checked by [`every_sterna_key_is_this_projects_own`] instead.
+/// A section that is in neither list is a section nobody has said where to
+/// check, which is a schema mistake rather than a pass.
+fn source_for(section: &str) -> Option<&'static str> {
     match section {
-        "Tera Term" => "teraterm/ttpset/ttset.c",
-        "TTProxy" => "TTProxy/ProxyWSockHook.h",
+        "Tera Term" => Some("teraterm/ttpset/ttset.c"),
+        "TTProxy" => Some("TTProxy/ProxyWSockHook.h"),
+        "Sterna" => None,
         other => panic!("no upstream source is recorded for section [{other}]"),
     }
 }
@@ -73,7 +76,9 @@ fn every_key_is_one_upstream_reads() {
     let mut sources: std::collections::BTreeMap<&str, String> = Default::default();
     let mut invented = Vec::new();
     for f in FIELDS {
-        let relative = source_for(f.section);
+        let Some(relative) = source_for(f.section) else {
+            continue;
+        };
         let source = sources.entry(relative).or_insert_with(|| {
             std::fs::read_to_string(root.join(relative))
                 .unwrap_or_else(|e| panic!("cannot read {relative}: {e}"))
@@ -98,6 +103,7 @@ fn every_key_is_one_upstream_reads() {
     // setting added. `PLAN.md`'s "the rest of the settings" is the difference.
     let ours: std::collections::BTreeSet<&str> = FIELDS
         .iter()
+        .filter(|f| source_for(f.section).is_some())
         .map(|f| f.key.split('.').next().unwrap())
         .collect();
     let theirs = upstream_keys(&src);
@@ -107,6 +113,41 @@ fn every_key_is_one_upstream_reads() {
         ours.len(),
         theirs.len(),
         theirs.difference(&ours).count()
+    );
+}
+
+/// `[Sterna]` holds what upstream has no key for, and nothing else.
+///
+/// The test above asks whether an upstream section's key really exists
+/// upstream; this asks the same question backwards, because the two mistakes
+/// are different. A setting put in `[Sterna]` that `ttset.c` also reads is one
+/// this project owns a *second* copy of: the file then has two answers to the
+/// same question, only one of which a real Tera Term can see. That is what
+/// `docs/deviations.md` says the section is not for — the remembered serial
+/// speed is `[Tera Term] BaudRate` for exactly this reason.
+///
+/// A name that merely reads like an upstream one is fine and expected
+/// (`SshHost` is not `HostName`); it is the literal key spelling that must not
+/// collide.
+#[test]
+fn every_sterna_key_is_this_projects_own() {
+    let Some(path) = ttset_c() else {
+        eprintln!("skipped: no ../teraterm");
+        return;
+    };
+    let src = std::fs::read_to_string(&path).unwrap();
+
+    let borrowed: Vec<String> = FIELDS
+        .iter()
+        .filter(|f| f.section == "Sterna")
+        .filter(|f| mentions(&src, f.key.split('.').next().unwrap()))
+        .map(|f| format!("{} -> {}", f.name, f.key))
+        .collect();
+    assert!(
+        borrowed.is_empty(),
+        "ttset.c reads these keys itself, so a copy of them in [Sterna] is a \
+         second answer their own Tera Term cannot see:\n  {}",
+        borrowed.join("\n  ")
     );
 }
 

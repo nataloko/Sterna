@@ -47,6 +47,13 @@ that nothing else on Linux does, done well:
   discovery
 - the legacy file-transfer suite: XMODEM, YMODEM, ZMODEM, Kermit, B-Plus, Quick-VAN
 
+Compatibility is the default and it is not the goal: where a Tera Term default
+costs the user something, Sterna changes it and writes down why. Two so far —
+serial ports open at 115200 rather than 9600, and the connect dialogs remember
+the last connection across restarts. Every one of them is listed in
+[docs/deviations.md](docs/deviations.md), and none changes what a key in a
+`TERATERM.INI` means.
+
 CJK input methods and the charset tables are **deferred indefinitely** — see
 [PLAN.md](PLAN.md). Wide and combining character handling in the grid stays in
 scope regardless; box drawing, emoji and accents need it.

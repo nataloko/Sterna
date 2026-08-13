@@ -169,7 +169,9 @@ int main(int argc, char **argv)
         QStringLiteral("path"));
     QCommandLineOption baudOption(
         {QStringLiteral("b"), QStringLiteral("baud")},
-        QStringLiteral("Baud rate (default 115200, where Tera Term's is 9600)."),
+        QStringLiteral("Baud rate. Defaults to the last one connected at, or to "
+                       "the settings file's BaudRate, or to 115200 — where "
+                       "Tera Term's default is 9600."),
         QStringLiteral("rate"));
     // `user@host`, or a bare alias out of ~/.ssh/config — the same thing that
     // would be typed after `ssh`, because anyone reaching for this already
@@ -202,8 +204,10 @@ int main(int argc, char **argv)
     if (parser.isSet(shellOption)) {
         window.connectPty(parser.positionalArguments());
     } else if (parser.isSet(portOption)) {
-        TtSerialParams params;
-        tt_serial_params_default(&params);
+        // The settings file's line settings, which after a connection are also
+        // the last ones used — upstream's `/C=1` reads the same keys. `--baud`
+        // overrides just the speed, as `/BAUD=` does.
+        TtSerialParams params = window.serialParams();
         if (parser.isSet(baudOption)) {
             params.baud = parser.value(baudOption).toUInt();
         }

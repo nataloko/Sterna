@@ -2475,6 +2475,58 @@ impl Default for BroadcastSubmitKey {
     }
 }
 
+/// Which of the four framing/burst combinations was used (`TelnetMode::of`).
+/// `auto` is the shipped one: data until the first `IAC`, telnet after it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecentTelnetMode {
+    /// `auto`
+    Auto,
+    /// `negotiate`
+    Negotiate,
+    /// `framed`
+    Framed,
+    /// `raw`
+    Raw,
+}
+
+impl RecentTelnetMode {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Negotiate => "negotiate",
+            Self::Framed => "framed",
+            Self::Raw => "raw",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised takes the default**
+    /// rather than failing — which is how upstream spells most of its
+    /// defaults, as the `else` branch of a chain of comparisons.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("auto") {
+            return Self::Auto;
+        }
+        if s.eq_ignore_ascii_case("negotiate") {
+            return Self::Negotiate;
+        }
+        if s.eq_ignore_ascii_case("framed") {
+            return Self::Framed;
+        }
+        if s.eq_ignore_ascii_case("raw") {
+            return Self::Raw;
+        }
+        Self::default()
+    }
+}
+
+impl Default for RecentTelnetMode {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
 /// Every setting this project reads out of `TERATERM.INI`.
 ///
 /// Generated from the schema, so the field, its default, its INI key and
@@ -3961,6 +4013,39 @@ pub struct Settings {
     /// `ttset.c:1993`, default off. Requests square corners from Windows 11 DWM.
     /// Window decoration belongs to the compositor on Linux, so it is carried only.
     pub window_corner_dontround: bool,
+    /// The device path, not a number: `ComPort` is upstream's and cannot spell
+    /// `/dev/serial/by-id/usb-FTDI_…`. Written as the port was opened, so it is the
+    /// `open_path` a stable symlink resolves from rather than the `ttyUSB<n>` that
+    /// moves on replug.
+    pub recent_serial_port: String,
+    /// The SSH host the dialog was given — an alias out of `~/.ssh/config` as
+    /// readily as a name, since that is what the dialog's combo box is filled from.
+    /// Empty is the whole record's switch: nothing remembered, so the dialog opens
+    /// as it does on a fresh install.
+    pub recent_ssh_host: String,
+    /// The user, where one was typed. Empty means "whatever `~/.ssh/config` says",
+    /// which is not the same as an empty user name — so the absence round-trips
+    /// rather than being resolved on the way in.
+    pub recent_ssh_user: String,
+    /// The port, where one was asked for. Zero is the same kind of absence as an
+    /// empty user: it leaves the choice to `~/.ssh/config` and, failing that, to 22.
+    pub recent_ssh_port: i32,
+    /// The private key the dialog was given, if it was given one. `~/.ssh/config`
+    /// and the agent are consulted regardless, so this is an addition to them.
+    pub recent_ssh_identity: String,
+    /// The pre-2020 algorithm switch, which is a property of the equipment at the
+    /// far end rather than a preference — a console server that needed it once needs
+    /// it every time, and that is the whole reason this record exists.
+    pub recent_ssh_legacy: bool,
+    /// The telnet host. Empty is this record's switch, as `SshHost` is its own.
+    pub recent_telnet_host: String,
+    /// The telnet port, kept separate from `[Tera Term] TCPPort` deliberately: that
+    /// one is also what a bare host name on the command line opens, so remembering a
+    /// console server's per-line port there would move an SSH connection to it.
+    pub recent_telnet_port: i32,
+    /// Which of the four framing/burst combinations was used (`TelnetMode::of`).
+    /// `auto` is the shipped one: data until the first `IAC`, telnet after it.
+    pub recent_telnet_mode: RecentTelnetMode,
 }
 
 impl Default for Settings {
@@ -4275,6 +4360,15 @@ impl Default for Settings {
             macro_wait4all: false,
             window_jump_list: true,
             window_corner_dontround: false,
+            recent_serial_port: String::from(""),
+            recent_ssh_host: String::from(""),
+            recent_ssh_user: String::from(""),
+            recent_ssh_port: 0,
+            recent_ssh_identity: String::from(""),
+            recent_ssh_legacy: false,
+            recent_telnet_host: String::from(""),
+            recent_telnet_port: 23,
+            recent_telnet_mode: RecentTelnetMode::default(),
         }
     }
 }
@@ -5470,6 +5564,34 @@ impl Settings {
                 ini.get("Tera Term", "WindowCornerDontround"),
                 false,
             ),
+            recent_serial_port: ini
+                .get_or("Sterna", "SerialPort", &d.recent_serial_port)
+                .to_string(),
+            recent_ssh_host: ini
+                .get_or("Sterna", "SshHost", &d.recent_ssh_host)
+                .to_string(),
+            recent_ssh_user: ini
+                .get_or("Sterna", "SshUser", &d.recent_ssh_user)
+                .to_string(),
+            recent_ssh_port: crate::schema::word(
+                ini.get_int("Sterna", "SshPort", d.recent_ssh_port) as i32,
+            ),
+            recent_ssh_identity: ini
+                .get_or("Sterna", "SshIdentity", &d.recent_ssh_identity)
+                .to_string(),
+            recent_ssh_legacy: crate::schema::on_off(ini.get("Sterna", "SshLegacy"), false),
+            recent_telnet_host: ini
+                .get_or("Sterna", "TelnetHost", &d.recent_telnet_host)
+                .to_string(),
+            recent_telnet_port: crate::schema::word(ini.get_int(
+                "Sterna",
+                "TelnetPort",
+                d.recent_telnet_port,
+            ) as i32),
+            recent_telnet_mode: match ini.get("Sterna", "TelnetMode") {
+                Some(v) => RecentTelnetMode::from_ini(v),
+                None => d.recent_telnet_mode,
+            },
         };
         settings.window_opacity_active = crate::schema::byte(ini.get_int(
             "Tera Term",
@@ -7544,6 +7666,2776 @@ impl Settings {
             }
             .to_string(),
         );
+        ini.set("Sterna", "SerialPort", &self.recent_serial_port.clone());
+        ini.set("Sterna", "SshHost", &self.recent_ssh_host.clone());
+        ini.set("Sterna", "SshUser", &self.recent_ssh_user.clone());
+        ini.set("Sterna", "SshPort", &self.recent_ssh_port.to_string());
+        ini.set("Sterna", "SshIdentity", &self.recent_ssh_identity.clone());
+        ini.set(
+            "Sterna",
+            "SshLegacy",
+            &if self.recent_ssh_legacy { "on" } else { "off" }.to_string(),
+        );
+        ini.set("Sterna", "TelnetHost", &self.recent_telnet_host.clone());
+        ini.set("Sterna", "TelnetPort", &self.recent_telnet_port.to_string());
+        ini.set(
+            "Sterna",
+            "TelnetMode",
+            &self.recent_telnet_mode.as_ini().to_string(),
+        );
+    }
+
+    /// Write one setting back by its dotted name, leaving every other
+    /// line alone. False for a name that is not in the schema.
+    ///
+    /// This is what persists a change nobody asked to save — the
+    /// remembered connection, the window position on close — without
+    /// pinning every other default into a file the user may share with
+    /// a real Tera Term. [`Settings::store`] is Save setup.
+    pub fn store_one(&self, ini: &mut Ini, name: &str) -> bool {
+        match name {
+            "terminal.cols" => {
+                ini.set(
+                    "Tera Term",
+                    "TerminalSize",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "TerminalSize"),
+                        0,
+                        self.terminal_cols,
+                    ),
+                );
+            }
+            "terminal.rows" => {
+                ini.set(
+                    "Tera Term",
+                    "TerminalSize",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "TerminalSize"),
+                        1,
+                        self.terminal_rows,
+                    ),
+                );
+            }
+            "terminal.id" => {
+                ini.set(
+                    "Tera Term",
+                    "TerminalID",
+                    &self.terminal_id.as_ini().to_string(),
+                );
+            }
+            "terminal.cr_receive" => {
+                ini.set(
+                    "Tera Term",
+                    "CRReceive",
+                    &self.terminal_cr_receive.as_ini().to_string(),
+                );
+            }
+            "terminal.cr_send" => {
+                ini.set(
+                    "Tera Term",
+                    "CRSend",
+                    &self.terminal_cr_send.as_ini().to_string(),
+                );
+            }
+            "terminal.local_echo" => {
+                ini.set(
+                    "Tera Term",
+                    "LocalEcho",
+                    &if self.terminal_local_echo {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "terminal.size_follows_window" => {
+                ini.set(
+                    "Tera Term",
+                    "TermIsWin",
+                    &if self.terminal_size_follows_window {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "terminal.auto_win_resize" => {
+                ini.set(
+                    "Tera Term",
+                    "AutoWinResize",
+                    &if self.terminal_auto_win_resize {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "terminal.clear_on_resize" => {
+                ini.set(
+                    "Tera Term",
+                    "ClearOnResize",
+                    &if self.terminal_clear_on_resize {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "terminal.home_erase_clears_screen" => {
+                ini.set(
+                    "Tera Term",
+                    "ScrollWindowClearScreen",
+                    &if self.terminal_home_erase_clears_screen {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "terminal.scrollback_enabled" => {
+                ini.set(
+                    "Tera Term",
+                    "EnableScrollBuff",
+                    &if self.terminal_scrollback_enabled {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "terminal.scrollback_lines" => {
+                ini.set(
+                    "Tera Term",
+                    "ScrollBuffSize",
+                    &self.terminal_scrollback_lines.to_string(),
+                );
+            }
+            "terminal.buffer_max_lines" => {
+                ini.set(
+                    "Tera Term",
+                    "MaxBuffSize",
+                    &self.terminal_buffer_max_lines.to_string(),
+                );
+            }
+            "terminal.iso2022_shifts" => {
+                ini.set(
+                    "Tera Term",
+                    "ISO2022ShiftFunction",
+                    &self.terminal_iso2022_shifts.clone(),
+                );
+            }
+            "terminal.title" => {
+                ini.set("Tera Term", "Title", &self.terminal_title.clone());
+            }
+            "terminal.answerback" => {
+                ini.set("Tera Term", "Answerback", &self.terminal_answerback.clone());
+            }
+            "terminal.back_wrap" => {
+                ini.set(
+                    "Tera Term",
+                    "BackWrap",
+                    &if self.terminal_back_wrap { "on" } else { "off" }.to_string(),
+                );
+            }
+            "terminal.vt_compat_tab" => {
+                ini.set(
+                    "Tera Term",
+                    "VTCompatTab",
+                    &if self.terminal_vt_compat_tab {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "terminal.tab_stop_modify" => {
+                ini.set(
+                    "Tera Term",
+                    "TabStopModifySequence",
+                    &self.terminal_tab_stop_modify.clone(),
+                );
+            }
+            "terminal.invalid_decrqss" => {
+                ini.set(
+                    "Tera Term",
+                    "UseInvalidDECRQSSResponse",
+                    &if self.terminal_invalid_decrqss {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "terminal.uid" => {
+                ini.set("Tera Term", "TerminalUID", &self.terminal_uid.clone());
+            }
+            "terminal.lock_uid" => {
+                ini.set(
+                    "Tera Term",
+                    "LockTUID",
+                    &if self.terminal_lock_uid { "on" } else { "off" }.to_string(),
+                );
+            }
+            "terminal.auto_invoke" => {
+                ini.set(
+                    "Tera Term",
+                    "AutoInvoke",
+                    &if self.terminal_auto_invoke {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "terminal.max_osc_buffer" => {
+                ini.set(
+                    "Tera Term",
+                    "MaxOSCBufferSize",
+                    &self.terminal_max_osc_buffer.to_string(),
+                );
+            }
+            "terminal.allow_wrong_sequence" => {
+                ini.set(
+                    "Tera Term",
+                    "AllowWrongSequence",
+                    &if self.terminal_allow_wrong_sequence {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "terminal.status_line_enabled" => {
+                ini.set(
+                    "Tera Term",
+                    "EnableStatusLine",
+                    &if self.terminal_status_line_enabled {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "encoding.receive" => {
+                ini.set(
+                    "Tera Term",
+                    "KanjiReceive",
+                    &self.encoding_receive.as_ini().to_string(),
+                );
+            }
+            "encoding.send" => {
+                ini.set(
+                    "Tera Term",
+                    "KanjiSend",
+                    &self.encoding_send.as_ini().to_string(),
+                );
+            }
+            "encoding.katakana_receive" => {
+                ini.set(
+                    "Tera Term",
+                    "KatakanaReceive",
+                    &self.encoding_katakana_receive.as_ini().to_string(),
+                );
+            }
+            "encoding.katakana_send" => {
+                ini.set(
+                    "Tera Term",
+                    "KatakanaSend",
+                    &self.encoding_katakana_send.as_ini().to_string(),
+                );
+            }
+            "encoding.kanji_in" => {
+                ini.set(
+                    "Tera Term",
+                    "KanjiIn",
+                    &self.encoding_kanji_in.as_ini().to_string(),
+                );
+            }
+            "encoding.kanji_out" => {
+                ini.set(
+                    "Tera Term",
+                    "KanjiOut",
+                    &self.encoding_kanji_out.as_ini().to_string(),
+                );
+            }
+            "encoding.ctrl_in_kanji" => {
+                ini.set(
+                    "Tera Term",
+                    "CtrlInKanji",
+                    &if self.encoding_ctrl_in_kanji {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "encoding.fixed_jis" => {
+                ini.set(
+                    "Tera Term",
+                    "FixedJIS",
+                    &if self.encoding_fixed_jis { "on" } else { "off" }.to_string(),
+                );
+            }
+            "encoding.fallback_cp932" => {
+                ini.set(
+                    "Tera Term",
+                    "FallbackToCP932",
+                    &if self.encoding_fallback_cp932 {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "encoding.russian_keyboard" => {
+                ini.set(
+                    "Tera Term",
+                    "RussKeyb",
+                    &self.encoding_russian_keyboard.as_ini().to_string(),
+                );
+            }
+            "encoding.dec_special_direction" => {
+                ini.set(
+                    "Tera Term",
+                    "DecSpMappingDir",
+                    &self.encoding_dec_special_direction.as_ini().to_string(),
+                );
+            }
+            "encoding.unicode_to_dec_special" => {
+                ini.set(
+                    "Tera Term",
+                    "UnicodeToDecSpMapping",
+                    &self.encoding_unicode_to_dec_special.to_string(),
+                );
+            }
+            "encoding.ambiguous_width" => {
+                ini.set(
+                    "Tera Term",
+                    "UnicodeAmbiguousWidth",
+                    &self.encoding_ambiguous_width.to_string(),
+                );
+            }
+            "encoding.emoji_override" => {
+                ini.set(
+                    "Tera Term",
+                    "UnicodeEmojiOverride",
+                    &if self.encoding_emoji_override {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "encoding.emoji_width" => {
+                ini.set(
+                    "Tera Term",
+                    "UnicodeEmojiWidth",
+                    &self.encoding_emoji_width.to_string(),
+                );
+            }
+            "ime.enabled" => {
+                ini.set(
+                    "Tera Term",
+                    "IME",
+                    &if self.ime_enabled { "on" } else { "off" }.to_string(),
+                );
+            }
+            "ime.inline" => {
+                ini.set(
+                    "Tera Term",
+                    "IMEInline",
+                    &if self.ime_inline { "on" } else { "off" }.to_string(),
+                );
+            }
+            "ime.cursor_related" => {
+                ini.set(
+                    "Tera Term",
+                    "IMERelatedCursor",
+                    &if self.ime_cursor_related { "on" } else { "off" }.to_string(),
+                );
+            }
+            "keyboard.backspace" => {
+                ini.set(
+                    "Tera Term",
+                    "BSKey",
+                    &self.keyboard_backspace.as_ini().to_string(),
+                );
+            }
+            "keyboard.meta" => {
+                ini.set(
+                    "Tera Term",
+                    "MetaKey",
+                    &self.keyboard_meta.as_ini().to_string(),
+                );
+            }
+            "keyboard.delete_sends_del" => {
+                ini.set(
+                    "Tera Term",
+                    "DeleteKey",
+                    &if self.keyboard_delete_sends_del {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "keyboard.disable_app_keypad" => {
+                ini.set(
+                    "Tera Term",
+                    "DisableAppKeypad",
+                    &if self.keyboard_disable_app_keypad {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "keyboard.disable_app_cursor" => {
+                ini.set(
+                    "Tera Term",
+                    "DisableAppCursor",
+                    &if self.keyboard_disable_app_cursor {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "keyboard.word_delimiters" => {
+                ini.set(
+                    "Tera Term",
+                    "DelimList",
+                    &self.keyboard_word_delimiters.clone(),
+                );
+            }
+            "keyboard.width_delimits_word" => {
+                ini.set(
+                    "Tera Term",
+                    "DelimDBCS",
+                    &if self.keyboard_width_delimits_word {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "keyboard.strict_mapping" => {
+                ini.set(
+                    "Tera Term",
+                    "StrictKeyMapping",
+                    &if self.keyboard_strict_mapping {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "keyboard.meta_8bit" => {
+                ini.set(
+                    "Tera Term",
+                    "Meta8Bit",
+                    &self.keyboard_meta_8bit.as_ini().to_string(),
+                );
+            }
+            "color.normal" => {
+                ini.set(
+                    "Tera Term",
+                    "VTColor",
+                    &crate::schema::color2_str(&self.color_normal),
+                );
+            }
+            "color.bold" => {
+                ini.set(
+                    "Tera Term",
+                    "VTBoldColor",
+                    &crate::schema::color2_str(&self.color_bold),
+                );
+            }
+            "color.blink" => {
+                ini.set(
+                    "Tera Term",
+                    "VTBlinkColor",
+                    &crate::schema::color2_str(&self.color_blink),
+                );
+            }
+            "color.underline" => {
+                ini.set(
+                    "Tera Term",
+                    "VTUnderlineColor",
+                    &crate::schema::color2_str(&self.color_underline),
+                );
+            }
+            "color.reverse" => {
+                ini.set(
+                    "Tera Term",
+                    "VTReverseColor",
+                    &crate::schema::color2_str(&self.color_reverse),
+                );
+            }
+            "color.url" => {
+                ini.set(
+                    "Tera Term",
+                    "URLColor",
+                    &crate::schema::color2_str(&self.color_url),
+                );
+            }
+            "color.url_enabled" => {
+                ini.set(
+                    "Tera Term",
+                    "EnableURLColor",
+                    &if self.color_url_enabled { "on" } else { "off" }.to_string(),
+                );
+            }
+            "color.url_underline" => {
+                ini.set(
+                    "Tera Term",
+                    "URLUnderline",
+                    &if self.color_url_underline {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "color.bold_enabled" => {
+                ini.set(
+                    "Tera Term",
+                    "EnableBoldAttrColor",
+                    &if self.color_bold_enabled { "on" } else { "off" }.to_string(),
+                );
+            }
+            "color.blink_enabled" => {
+                ini.set(
+                    "Tera Term",
+                    "EnableBlinkAttrColor",
+                    &if self.color_blink_enabled {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "color.reverse_enabled" => {
+                ini.set(
+                    "Tera Term",
+                    "EnableReverseAttrColor",
+                    &if self.color_reverse_enabled {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "color.underline_enabled" => {
+                ini.set(
+                    "Tera Term",
+                    "UnderlineAttrColor",
+                    &if self.color_underline_enabled {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "color.ansi_palette" => {
+                ini.set("Tera Term", "ANSIColor", &self.color_ansi_palette.clone());
+            }
+            "color.xterm_256" => {
+                ini.set(
+                    "Tera Term",
+                    "Xterm256Color",
+                    &if self.color_xterm_256 { "on" } else { "off" }.to_string(),
+                );
+            }
+            "color.aixterm_16" => {
+                ini.set(
+                    "Tera Term",
+                    "Aixterm16Color",
+                    &if self.color_aixterm_16 { "on" } else { "off" }.to_string(),
+                );
+            }
+            "color.pc_bold_16" => {
+                ini.set(
+                    "Tera Term",
+                    "PcBoldColor",
+                    &if self.color_pc_bold_16 { "on" } else { "off" }.to_string(),
+                );
+            }
+            "color.ansi_enabled" => {
+                ini.set(
+                    "Tera Term",
+                    "EnableANSIColor",
+                    &if self.color_ansi_enabled { "on" } else { "off" }.to_string(),
+                );
+            }
+            "color.bold_font" => {
+                ini.set(
+                    "Tera Term",
+                    "EnableBold",
+                    &if self.color_bold_font { "on" } else { "off" }.to_string(),
+                );
+            }
+            "color.underline_font" => {
+                ini.set(
+                    "Tera Term",
+                    "UnderlineAttrFont",
+                    &if self.color_underline_font {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "color.use_text_color" => {
+                ini.set(
+                    "Tera Term",
+                    "UseTextColor",
+                    &if self.color_use_text_color {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "color.use_normal_background" => {
+                ini.set(
+                    "Tera Term",
+                    "UseNormalBGColor",
+                    &if self.color_use_normal_background {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "cursor.shape" => {
+                ini.set(
+                    "Tera Term",
+                    "CursorShape",
+                    &self.cursor_shape.as_ini().to_string(),
+                );
+            }
+            "cursor.nonblinking" => {
+                ini.set(
+                    "Tera Term",
+                    "NonblinkingCursor",
+                    &if self.cursor_nonblinking { "on" } else { "off" }.to_string(),
+                );
+            }
+            "cursor.show_unfocused" => {
+                ini.set(
+                    "Tera Term",
+                    "KillFocusCursor",
+                    &if self.cursor_show_unfocused {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "window.change_allowed" => {
+                ini.set(
+                    "Tera Term",
+                    "WindowCtrlSequence",
+                    &if self.window_change_allowed {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "window.report_allowed" => {
+                ini.set(
+                    "Tera Term",
+                    "WindowReportSequence",
+                    &if self.window_report_allowed {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "window.cursor_ctrl_allowed" => {
+                ini.set(
+                    "Tera Term",
+                    "CursorCtrlSequence",
+                    &if self.window_cursor_ctrl_allowed {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "window.accept_8bit_ctrl" => {
+                ini.set(
+                    "Tera Term",
+                    "Accept8BitCtrl",
+                    &if self.window_accept_8bit_ctrl {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "window.send_8bit_ctrl" => {
+                ini.set(
+                    "Tera Term",
+                    "Send8BitCtrl",
+                    &if self.window_send_8bit_ctrl {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "window.alt_screen" => {
+                ini.set(
+                    "Tera Term",
+                    "AlternateScreenBuffer",
+                    &if self.window_alt_screen { "on" } else { "off" }.to_string(),
+                );
+            }
+            "window.remote_clears_buffer" => {
+                ini.set(
+                    "Tera Term",
+                    "ClearScrollBufferFromRemote",
+                    &if self.window_remote_clears_buffer {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "window.auto_scroll_only_at_bottom" => {
+                ini.set(
+                    "Tera Term",
+                    "AutoScrollOnlyInBottomLine",
+                    &if self.window_auto_scroll_only_at_bottom {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "window.scroll_threshold" => {
+                ini.set(
+                    "Tera Term",
+                    "ScrollThreshold",
+                    &self.window_scroll_threshold.to_string(),
+                );
+            }
+            "window.opacity_inactive" => {
+                ini.set(
+                    "Tera Term",
+                    "AlphaBlend",
+                    &self.window_opacity_inactive.to_string(),
+                );
+            }
+            "window.opacity_active" => {
+                ini.set(
+                    "Tera Term",
+                    "AlphaBlendActive",
+                    &self.window_opacity_active.to_string(),
+                );
+            }
+            "window.title_format" => {
+                ini.set(
+                    "Tera Term",
+                    "TitleFormat",
+                    &self.window_title_format.to_string(),
+                );
+            }
+            "window.title_change" => {
+                ini.set(
+                    "Tera Term",
+                    "AcceptTitleChangeRequest",
+                    &self.window_title_change.as_ini().to_string(),
+                );
+            }
+            "window.title_report" => {
+                ini.set(
+                    "Tera Term",
+                    "TitleReportSequence",
+                    &self.window_title_report.as_ini().to_string(),
+                );
+            }
+            "font.quality" => {
+                ini.set(
+                    "Tera Term",
+                    "FontQuality",
+                    &self.font_quality.as_ini().to_string(),
+                );
+            }
+            "font.draw_resized" => {
+                ini.set(
+                    "Tera Term",
+                    "DrawingResizedFont",
+                    &if self.font_draw_resized { "on" } else { "off" }.to_string(),
+                );
+            }
+            "font.draw_api" => {
+                ini.set(
+                    "Tera Term",
+                    "VTDrawAPI",
+                    &self.font_draw_api.as_ini().to_string(),
+                );
+            }
+            "font.draw_ansi_code_page" => {
+                ini.set(
+                    "Tera Term",
+                    "VTDrawACP",
+                    &self.font_draw_ansi_code_page.to_string(),
+                );
+            }
+            "font.space_left" => {
+                ini.set(
+                    "Tera Term",
+                    "VTFontSpace",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "VTFontSpace"),
+                        0,
+                        self.font_space_left,
+                    ),
+                );
+            }
+            "font.space_right" => {
+                ini.set(
+                    "Tera Term",
+                    "VTFontSpace",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "VTFontSpace"),
+                        1,
+                        self.font_space_right,
+                    ),
+                );
+            }
+            "font.space_top" => {
+                ini.set(
+                    "Tera Term",
+                    "VTFontSpace",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "VTFontSpace"),
+                        2,
+                        self.font_space_top,
+                    ),
+                );
+            }
+            "font.space_bottom" => {
+                ini.set(
+                    "Tera Term",
+                    "VTFontSpace",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "VTFontSpace"),
+                        3,
+                        self.font_space_bottom,
+                    ),
+                );
+            }
+            "font.scaling" => {
+                ini.set(
+                    "Tera Term",
+                    "FontScaling",
+                    &if self.font_scaling { "on" } else { "off" }.to_string(),
+                );
+            }
+            "mouse.tracking" => {
+                ini.set(
+                    "Tera Term",
+                    "MouseEventTracking",
+                    &if self.mouse_tracking { "on" } else { "off" }.to_string(),
+                );
+            }
+            "mouse.ctrl_disables_tracking" => {
+                ini.set(
+                    "Tera Term",
+                    "DisableMouseTrackingByCtrl",
+                    &if self.mouse_ctrl_disables_tracking {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "mouse.wheel_to_cursor" => {
+                ini.set(
+                    "Tera Term",
+                    "TranslateWheelToCursor",
+                    &if self.mouse_wheel_to_cursor {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "mouse.ctrl_disables_wheel_to_cursor" => {
+                ini.set(
+                    "Tera Term",
+                    "DisableWheelToCursorByCtrl",
+                    &if self.mouse_ctrl_disables_wheel_to_cursor {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "mouse.wheel_scroll_line" => {
+                ini.set(
+                    "Tera Term",
+                    "MouseWheelScrollLine",
+                    &self.mouse_wheel_scroll_line.to_string(),
+                );
+            }
+            "mouse.clickable_url" => {
+                ini.set(
+                    "Tera Term",
+                    "EnableClickableUrl",
+                    &if self.mouse_clickable_url {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "mouse.cursor" => {
+                ini.set("Tera Term", "MouseCursor", &self.mouse_cursor.clone());
+            }
+            "url.browser" => {
+                ini.set(
+                    "Tera Term",
+                    "ClickableUrlBrowser",
+                    &self.url_browser.clone(),
+                );
+            }
+            "url.browser_args" => {
+                ini.set(
+                    "Tera Term",
+                    "ClickableUrlBrowserArg",
+                    &self.url_browser_args.clone(),
+                );
+            }
+            "url.join_split" => {
+                ini.set(
+                    "Tera Term",
+                    "JoinSplitURL",
+                    &if self.url_join_split { "on" } else { "off" }.to_string(),
+                );
+            }
+            "url.join_split_ignore_eol_char" => {
+                ini.set(
+                    "Tera Term",
+                    "JoinSplitURLIgnoreEOLChar",
+                    &self.url_join_split_ignore_eol_char.clone(),
+                );
+            }
+            "debug.enabled" => {
+                ini.set(
+                    "Tera Term",
+                    "Debug",
+                    &if self.debug_enabled { "on" } else { "off" }.to_string(),
+                );
+            }
+            "debug.modes" => {
+                ini.set("Tera Term", "DebugModes", &self.debug_modes.clone());
+            }
+            "bell.mode" => {
+                ini.set("Tera Term", "Beep", &self.bell_mode.as_ini().to_string());
+            }
+            "bell.on_connect" => {
+                ini.set(
+                    "Tera Term",
+                    "BeepOnConnect",
+                    &if self.bell_on_connect { "on" } else { "off" }.to_string(),
+                );
+            }
+            "bell.visual_wait_ms" => {
+                ini.set(
+                    "Tera Term",
+                    "BeepVBellWait",
+                    &self.bell_visual_wait_ms.to_string(),
+                );
+            }
+            "bell.over_used_count" => {
+                ini.set(
+                    "Tera Term",
+                    "BeepOverUsedCount",
+                    &self.bell_over_used_count.to_string(),
+                );
+            }
+            "bell.over_used_time" => {
+                ini.set(
+                    "Tera Term",
+                    "BeepOverUsedTime",
+                    &self.bell_over_used_time.to_string(),
+                );
+            }
+            "bell.suppress_time" => {
+                ini.set(
+                    "Tera Term",
+                    "BeepSuppressTime",
+                    &self.bell_suppress_time.to_string(),
+                );
+            }
+            "bell.notify_sound" => {
+                ini.set(
+                    "Tera Term",
+                    "NotifySound",
+                    &if self.bell_notify_sound { "on" } else { "off" }.to_string(),
+                );
+            }
+            "clipboard.continued_line_copy" => {
+                ini.set(
+                    "Tera Term",
+                    "EnableContinuedLineCopy",
+                    &if self.clipboard_continued_line_copy {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "clipboard.auto_copy" => {
+                ini.set(
+                    "Tera Term",
+                    "AutoTextCopy",
+                    &if self.clipboard_auto_copy {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "clipboard.select_on_activate" => {
+                ini.set(
+                    "Tera Term",
+                    "SelectOnActivate",
+                    &if self.clipboard_select_on_activate {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "clipboard.select_only_by_lbutton" => {
+                ini.set(
+                    "Tera Term",
+                    "SelectOnlyByLButton",
+                    &if self.clipboard_select_only_by_lbutton {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "clipboard.select_start_delay" => {
+                ini.set(
+                    "Tera Term",
+                    "MouseSelectStartDelay",
+                    &self.clipboard_select_start_delay.to_string(),
+                );
+            }
+            "clipboard.paste_rbutton_disabled" => {
+                ini.set(
+                    "Tera Term",
+                    "DisablePasteMouseRButton",
+                    &if self.clipboard_paste_rbutton_disabled {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "clipboard.paste_mbutton_disabled" => {
+                ini.set(
+                    "Tera Term",
+                    "DisablePasteMouseMButton",
+                    &if self.clipboard_paste_mbutton_disabled {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "clipboard.confirm_paste_rbutton" => {
+                ini.set(
+                    "Tera Term",
+                    "ConfirmPasteMouseRButton",
+                    &if self.clipboard_confirm_paste_rbutton {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "clipboard.confirm_paste" => {
+                ini.set(
+                    "Tera Term",
+                    "ConfirmChangePaste",
+                    &if self.clipboard_confirm_paste {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "clipboard.confirm_paste_cr" => {
+                ini.set(
+                    "Tera Term",
+                    "ConfirmChangePasteCR",
+                    &if self.clipboard_confirm_paste_cr {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "clipboard.confirm_paste_dictionary" => {
+                ini.set(
+                    "Tera Term",
+                    "ConfirmChangePasteStringFile",
+                    &self.clipboard_confirm_paste_dictionary.clone(),
+                );
+            }
+            "clipboard.trim_trailing_newline" => {
+                ini.set(
+                    "Tera Term",
+                    "TrimTrailingNLonPaste",
+                    &if self.clipboard_trim_trailing_newline {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "clipboard.paste_delay_per_line" => {
+                ini.set(
+                    "Tera Term",
+                    "PasteDelayPerLine",
+                    &self.clipboard_paste_delay_per_line.to_string(),
+                );
+            }
+            "clipboard.paste_dialog_width" => {
+                ini.set(
+                    "Tera Term",
+                    "PasteDialogSize",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "PasteDialogSize"),
+                        0,
+                        self.clipboard_paste_dialog_width,
+                    ),
+                );
+            }
+            "clipboard.paste_dialog_height" => {
+                ini.set(
+                    "Tera Term",
+                    "PasteDialogSize",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "PasteDialogSize"),
+                        1,
+                        self.clipboard_paste_dialog_height,
+                    ),
+                );
+            }
+            "clipboard.bracketed" => {
+                ini.set(
+                    "Tera Term",
+                    "BracketedSupport",
+                    &if self.clipboard_bracketed {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "clipboard.bracketed_control_only" => {
+                ini.set(
+                    "Tera Term",
+                    "BracketedControlOnly",
+                    &if self.clipboard_bracketed_control_only {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "clipboard.remote_access" => {
+                ini.set(
+                    "Tera Term",
+                    "ClipboardAccessFromRemote",
+                    &self.clipboard_remote_access.as_ini().to_string(),
+                );
+            }
+            "clipboard.remote_notify" => {
+                ini.set(
+                    "Tera Term",
+                    "NotifyClipboardAccess",
+                    &if self.clipboard_remote_notify {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "connection.port_type" => {
+                ini.set(
+                    "Tera Term",
+                    "Port",
+                    &self.connection_port_type.as_ini().to_string(),
+                );
+            }
+            "connection.tcp_port" => {
+                ini.set(
+                    "Tera Term",
+                    "TCPPort",
+                    &self.connection_tcp_port.to_string(),
+                );
+            }
+            "connection.telnet" => {
+                ini.set(
+                    "Tera Term",
+                    "Telnet",
+                    &if self.connection_telnet { "on" } else { "off" }.to_string(),
+                );
+            }
+            "connection.telnet_port" => {
+                ini.set(
+                    "Tera Term",
+                    "TelPort",
+                    &self.connection_telnet_port.to_string(),
+                );
+            }
+            "connection.telnet_binary" => {
+                ini.set(
+                    "Tera Term",
+                    "TelBin",
+                    &if self.connection_telnet_binary {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "connection.telnet_auto_detect" => {
+                ini.set(
+                    "Tera Term",
+                    "TelAutoDetect",
+                    &if self.connection_telnet_auto_detect {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "connection.telnet_echo" => {
+                ini.set(
+                    "Tera Term",
+                    "TelEcho",
+                    &if self.connection_telnet_echo {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "connection.telnet_log" => {
+                ini.set(
+                    "Tera Term",
+                    "TelLog",
+                    &if self.connection_telnet_log {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "connection.telnet_keepalive" => {
+                ini.set(
+                    "Tera Term",
+                    "TelKeepAliveInterval",
+                    &self.connection_telnet_keepalive.to_string(),
+                );
+            }
+            "connection.tcp_local_echo" => {
+                ini.set(
+                    "Tera Term",
+                    "TCPLocalEcho",
+                    &if self.connection_tcp_local_echo {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "connection.tcp_cr_send" => {
+                ini.set(
+                    "Tera Term",
+                    "TCPCRSend",
+                    &self.connection_tcp_cr_send.as_ini().to_string(),
+                );
+            }
+            "connection.confirm_disconnect" => {
+                ini.set(
+                    "Tera Term",
+                    "ConfirmDisconnect",
+                    &if self.connection_confirm_disconnect {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "connection.history_list" => {
+                ini.set(
+                    "Tera Term",
+                    "HistoryList",
+                    &if self.connection_history_list {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "connection.term_type" => {
+                ini.set("Tera Term", "TermType", &self.connection_term_type.clone());
+            }
+            "connection.terminal_speed" => {
+                ini.set(
+                    "Tera Term",
+                    "TerminalSpeed",
+                    &self.connection_terminal_speed.clone(),
+                );
+            }
+            "connection.auto_win_close" => {
+                ini.set(
+                    "Tera Term",
+                    "AutoWinClose",
+                    &if self.connection_auto_win_close {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "connection.clear_screen_on_close" => {
+                ini.set(
+                    "Tera Term",
+                    "ClearScreenOnCloseConnection",
+                    &if self.connection_clear_screen_on_close {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "connection.timeout" => {
+                ini.set(
+                    "Tera Term",
+                    "ConnectingTimeout",
+                    &self.connection_timeout.to_string(),
+                );
+            }
+            "connection.host_dialog_on_startup" => {
+                ini.set(
+                    "Tera Term",
+                    "HostDialogOnStartup",
+                    &if self.connection_host_dialog_on_startup {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "connection.line_mode" => {
+                ini.set(
+                    "Tera Term",
+                    "EnableLineMode",
+                    &if self.connection_line_mode {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "proxy.type" => {
+                ini.set(
+                    "TTProxy",
+                    "ProxyType",
+                    &self.proxy_type.as_ini().to_string(),
+                );
+            }
+            "proxy.host" => {
+                ini.set("TTProxy", "ProxyHost", &crate::esc::quote(&self.proxy_host));
+            }
+            "proxy.port" => {
+                ini.set("TTProxy", "ProxyPort", &self.proxy_port.to_string());
+            }
+            "proxy.user" => {
+                ini.set("TTProxy", "ProxyUser", &crate::esc::quote(&self.proxy_user));
+            }
+            "proxy.pass" => {
+                ini.set("TTProxy", "ProxyPass", &crate::esc::quote(&self.proxy_pass));
+            }
+            "proxy.timeout" => {
+                ini.set(
+                    "TTProxy",
+                    "ConnectionTimeout",
+                    &self.proxy_timeout.to_string(),
+                );
+            }
+            "proxy.socks_resolve" => {
+                ini.set(
+                    "TTProxy",
+                    "SocksResolve",
+                    &self.proxy_socks_resolve.as_ini().to_string(),
+                );
+            }
+            "proxy.telnet_hostname_prompt" => {
+                ini.set(
+                    "TTProxy",
+                    "TelnetHostnamePrompt",
+                    &crate::esc::quote(&self.proxy_telnet_hostname_prompt),
+                );
+            }
+            "proxy.telnet_username_prompt" => {
+                ini.set(
+                    "TTProxy",
+                    "TelnetUsernamePrompt",
+                    &crate::esc::quote(&self.proxy_telnet_username_prompt),
+                );
+            }
+            "proxy.telnet_password_prompt" => {
+                ini.set(
+                    "TTProxy",
+                    "TelnetPasswordPrompt",
+                    &crate::esc::quote(&self.proxy_telnet_password_prompt),
+                );
+            }
+            "proxy.telnet_connected_message" => {
+                ini.set(
+                    "TTProxy",
+                    "TelnetConnectedMessage",
+                    &crate::esc::quote(&self.proxy_telnet_connected_message),
+                );
+            }
+            "proxy.telnet_error_message" => {
+                ini.set(
+                    "TTProxy",
+                    "TelnetErrorMessage",
+                    &crate::esc::quote(&self.proxy_telnet_error_message),
+                );
+            }
+            "proxy.debug_log" => {
+                ini.set(
+                    "TTProxy",
+                    "DebugLog",
+                    &crate::esc::quote(&self.proxy_debug_log),
+                );
+            }
+            "macro.startup_file" => {
+                ini.set(
+                    "Tera Term",
+                    "StartupMacro",
+                    &self.macro_startup_file.clone(),
+                );
+            }
+            "settings.source_version" => {
+                ini.set(
+                    "Tera Term",
+                    "Version",
+                    &self.settings_source_version.clone(),
+                );
+            }
+            "settings.language_file" => {
+                ini.set(
+                    "Tera Term",
+                    "UILanguageFile",
+                    &self.settings_language_file.clone(),
+                );
+            }
+            "settings.auto_backup" => {
+                ini.set(
+                    "Tera Term",
+                    "IniAutoBackup",
+                    &if self.settings_auto_backup {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "serial.com_port" => {
+                ini.set("Tera Term", "ComPort", &self.serial_com_port.to_string());
+            }
+            "serial.baud" => {
+                ini.set("Tera Term", "BaudRate", &self.serial_baud.to_string());
+            }
+            "serial.data_bits" => {
+                ini.set(
+                    "Tera Term",
+                    "DataBit",
+                    &self.serial_data_bits.as_ini().to_string(),
+                );
+            }
+            "serial.parity" => {
+                ini.set(
+                    "Tera Term",
+                    "Parity",
+                    &self.serial_parity.as_ini().to_string(),
+                );
+            }
+            "serial.stop_bits" => {
+                ini.set(
+                    "Tera Term",
+                    "StopBit",
+                    &self.serial_stop_bits.as_ini().to_string(),
+                );
+            }
+            "serial.flow" => {
+                ini.set(
+                    "Tera Term",
+                    "FlowCtrl",
+                    &self.serial_flow.as_ini().to_string(),
+                );
+            }
+            "serial.delay_per_char" => {
+                ini.set(
+                    "Tera Term",
+                    "DelayPerChar",
+                    &self.serial_delay_per_char.to_string(),
+                );
+            }
+            "serial.delay_per_line" => {
+                ini.set(
+                    "Tera Term",
+                    "DelayPerLine",
+                    &self.serial_delay_per_line.to_string(),
+                );
+            }
+            "serial.wait_com" => {
+                ini.set(
+                    "Tera Term",
+                    "WaitCom",
+                    &if self.serial_wait_com { "on" } else { "off" }.to_string(),
+                );
+            }
+            "serial.max_com_port" => {
+                ini.set(
+                    "Tera Term",
+                    "MaxComPort",
+                    &self.serial_max_com_port.to_string(),
+                );
+            }
+            "serial.rts" => {
+                ini.set("Tera Term", "FlowCtrlRTS", &self.serial_rts.to_string());
+            }
+            "serial.dtr" => {
+                ini.set("Tera Term", "FlowCtrlDTR", &self.serial_dtr.to_string());
+            }
+            "serial.clear_buffer_on_open" => {
+                ini.set(
+                    "Tera Term",
+                    "ClearComBuffOnOpen",
+                    &if self.serial_clear_buffer_on_open {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "serial.break_time" => {
+                ini.set(
+                    "Tera Term",
+                    "SendBreakTime",
+                    &self.serial_break_time.to_string(),
+                );
+            }
+            "serial.auto_reconnect" => {
+                ini.set(
+                    "Tera Term",
+                    "AutoComPortReconnect",
+                    &if self.serial_auto_reconnect {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "serial.auto_reconnect_delay" => {
+                ini.set(
+                    "Tera Term",
+                    "AutoComPortReconnectDelayNormal",
+                    &self.serial_auto_reconnect_delay.to_string(),
+                );
+            }
+            "serial.auto_reconnect_delay_unknown_port" => {
+                ini.set(
+                    "Tera Term",
+                    "AutoComPortReconnectDelayIllegal",
+                    &self.serial_auto_reconnect_delay_unknown_port.to_string(),
+                );
+            }
+            "serial.auto_reconnect_retry_interval" => {
+                ini.set(
+                    "Tera Term",
+                    "AutoComPortReconnectRetryInterval",
+                    &self.serial_auto_reconnect_retry_interval.to_string(),
+                );
+            }
+            "serial.auto_reconnect_retries" => {
+                ini.set(
+                    "Tera Term",
+                    "AutoComPortReconnectRetryCount",
+                    &self.serial_auto_reconnect_retries.to_string(),
+                );
+            }
+            "log.auto_start" => {
+                ini.set(
+                    "Tera Term",
+                    "LogAutoStart",
+                    &if self.log_auto_start { "on" } else { "off" }.to_string(),
+                );
+            }
+            "log.binary" => {
+                ini.set(
+                    "Tera Term",
+                    "LogBinary",
+                    &if self.log_binary { "on" } else { "off" }.to_string(),
+                );
+            }
+            "log.append" => {
+                ini.set(
+                    "Tera Term",
+                    "LogAppend",
+                    &if self.log_append { "on" } else { "off" }.to_string(),
+                );
+            }
+            "log.plain_text" => {
+                ini.set(
+                    "Tera Term",
+                    "LogTypePlainText",
+                    &if self.log_plain_text { "on" } else { "off" }.to_string(),
+                );
+            }
+            "log.timestamp" => {
+                ini.set(
+                    "Tera Term",
+                    "LogTimestamp",
+                    &if self.log_timestamp { "on" } else { "off" }.to_string(),
+                );
+            }
+            "log.timestamp_type" => {
+                ini.set(
+                    "Tera Term",
+                    "LogTimestampType",
+                    &self.log_timestamp_type.as_ini().to_string(),
+                );
+            }
+            "log.timestamp_utc" => {
+                ini.set(
+                    "Tera Term",
+                    "LogTimestampUTC",
+                    &if self.log_timestamp_utc { "on" } else { "off" }.to_string(),
+                );
+            }
+            "log.timestamp_format" => {
+                ini.set(
+                    "Tera Term",
+                    "LogTimestampFormat",
+                    &self.log_timestamp_format.clone(),
+                );
+            }
+            "log.default_name" => {
+                ini.set(
+                    "Tera Term",
+                    "LogDefaultName",
+                    &self.log_default_name.clone(),
+                );
+            }
+            "log.default_path" => {
+                ini.set(
+                    "Tera Term",
+                    "LogDefaultPath",
+                    &self.log_default_path.clone(),
+                );
+            }
+            "log.rotate" => {
+                ini.set("Tera Term", "LogRotate", &self.log_rotate.to_string());
+            }
+            "log.rotate_size" => {
+                ini.set(
+                    "Tera Term",
+                    "LogRotateSize",
+                    &self.log_rotate_size.to_string(),
+                );
+            }
+            "log.rotate_size_type" => {
+                ini.set(
+                    "Tera Term",
+                    "LogRotateSizeType",
+                    &self.log_rotate_size_type.to_string(),
+                );
+            }
+            "log.rotate_step" => {
+                ini.set(
+                    "Tera Term",
+                    "LogRotateStep",
+                    &self.log_rotate_step.to_string(),
+                );
+            }
+            "log.hide_dialog" => {
+                ini.set(
+                    "Tera Term",
+                    "LogHideDialog",
+                    &if self.log_hide_dialog { "on" } else { "off" }.to_string(),
+                );
+            }
+            "log.include_screen_buffer" => {
+                ini.set(
+                    "Tera Term",
+                    "LogIncludeScreenBuffer",
+                    &if self.log_include_screen_buffer {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "log.lock_exclusive" => {
+                ini.set(
+                    "Tera Term",
+                    "LogLockExclusive",
+                    &if self.log_lock_exclusive { "on" } else { "off" }.to_string(),
+                );
+            }
+            "log.deferred_write" => {
+                ini.set(
+                    "Tera Term",
+                    "DeferredLogWriteMode",
+                    &if self.log_deferred_write { "on" } else { "off" }.to_string(),
+                );
+            }
+            "transfer.dir" => {
+                ini.set("Tera Term", "FileDir", &self.transfer_dir.clone());
+            }
+            "transfer.binary" => {
+                ini.set(
+                    "Tera Term",
+                    "TransBin",
+                    &if self.transfer_binary { "on" } else { "off" }.to_string(),
+                );
+            }
+            "transfer.auto_rename" => {
+                ini.set(
+                    "Tera Term",
+                    "AutoFileRename",
+                    &if self.transfer_auto_rename {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "transfer.hide_dialog" => {
+                ini.set(
+                    "Tera Term",
+                    "FTHideDialog",
+                    &if self.transfer_hide_dialog {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "transfer.xmodem_opt" => {
+                ini.set(
+                    "Tera Term",
+                    "XmodemOpt",
+                    &self.transfer_xmodem_opt.as_ini().to_string(),
+                );
+            }
+            "transfer.xmodem_binary" => {
+                ini.set(
+                    "Tera Term",
+                    "XmodemBin",
+                    &if self.transfer_xmodem_binary {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "transfer.xmodem_rcv_command" => {
+                ini.set(
+                    "Tera Term",
+                    "XModemRcvCommand",
+                    &self.transfer_xmodem_rcv_command.clone(),
+                );
+            }
+            "transfer.xmodem_log" => {
+                ini.set(
+                    "Tera Term",
+                    "XmodemLog",
+                    &if self.transfer_xmodem_log {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "transfer.xmodem_timeout_init" => {
+                ini.set(
+                    "Tera Term",
+                    "XmodemTimeouts",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "XmodemTimeouts"),
+                        0,
+                        self.transfer_xmodem_timeout_init,
+                    ),
+                );
+            }
+            "transfer.xmodem_timeout_init_crc" => {
+                ini.set(
+                    "Tera Term",
+                    "XmodemTimeouts",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "XmodemTimeouts"),
+                        1,
+                        self.transfer_xmodem_timeout_init_crc,
+                    ),
+                );
+            }
+            "transfer.xmodem_timeout_short" => {
+                ini.set(
+                    "Tera Term",
+                    "XmodemTimeouts",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "XmodemTimeouts"),
+                        2,
+                        self.transfer_xmodem_timeout_short,
+                    ),
+                );
+            }
+            "transfer.xmodem_timeout_long" => {
+                ini.set(
+                    "Tera Term",
+                    "XmodemTimeouts",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "XmodemTimeouts"),
+                        3,
+                        self.transfer_xmodem_timeout_long,
+                    ),
+                );
+            }
+            "transfer.xmodem_timeout_vlong" => {
+                ini.set(
+                    "Tera Term",
+                    "XmodemTimeouts",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "XmodemTimeouts"),
+                        4,
+                        self.transfer_xmodem_timeout_vlong,
+                    ),
+                );
+            }
+            "transfer.ymodem_rcv_command" => {
+                ini.set(
+                    "Tera Term",
+                    "YModemRcvCommand",
+                    &self.transfer_ymodem_rcv_command.clone(),
+                );
+            }
+            "transfer.ymodem_log" => {
+                ini.set(
+                    "Tera Term",
+                    "YmodemLog",
+                    &if self.transfer_ymodem_log {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "transfer.ymodem_timeout_init" => {
+                ini.set(
+                    "Tera Term",
+                    "YmodemTimeouts",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "YmodemTimeouts"),
+                        0,
+                        self.transfer_ymodem_timeout_init,
+                    ),
+                );
+            }
+            "transfer.ymodem_timeout_init_crc" => {
+                ini.set(
+                    "Tera Term",
+                    "YmodemTimeouts",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "YmodemTimeouts"),
+                        1,
+                        self.transfer_ymodem_timeout_init_crc,
+                    ),
+                );
+            }
+            "transfer.ymodem_timeout_short" => {
+                ini.set(
+                    "Tera Term",
+                    "YmodemTimeouts",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "YmodemTimeouts"),
+                        2,
+                        self.transfer_ymodem_timeout_short,
+                    ),
+                );
+            }
+            "transfer.ymodem_timeout_long" => {
+                ini.set(
+                    "Tera Term",
+                    "YmodemTimeouts",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "YmodemTimeouts"),
+                        3,
+                        self.transfer_ymodem_timeout_long,
+                    ),
+                );
+            }
+            "transfer.ymodem_timeout_vlong" => {
+                ini.set(
+                    "Tera Term",
+                    "YmodemTimeouts",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "YmodemTimeouts"),
+                        4,
+                        self.transfer_ymodem_timeout_vlong,
+                    ),
+                );
+            }
+            "transfer.zmodem_auto" => {
+                ini.set(
+                    "Tera Term",
+                    "ZmodemAuto",
+                    &if self.transfer_zmodem_auto {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "transfer.zmodem_data_len" => {
+                ini.set(
+                    "Tera Term",
+                    "ZmodemDataLen",
+                    &self.transfer_zmodem_data_len.to_string(),
+                );
+            }
+            "transfer.zmodem_win_size" => {
+                ini.set(
+                    "Tera Term",
+                    "ZmodemWinSize",
+                    &self.transfer_zmodem_win_size.to_string(),
+                );
+            }
+            "transfer.zmodem_escape_ctl" => {
+                ini.set(
+                    "Tera Term",
+                    "ZmodemEscCtl",
+                    &if self.transfer_zmodem_escape_ctl {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "transfer.zmodem_log" => {
+                ini.set(
+                    "Tera Term",
+                    "ZmodemLog",
+                    &if self.transfer_zmodem_log {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "transfer.zmodem_rcv_command" => {
+                ini.set(
+                    "Tera Term",
+                    "ZModemRcvCommand",
+                    &self.transfer_zmodem_rcv_command.clone(),
+                );
+            }
+            "transfer.zmodem_timeout_normal" => {
+                ini.set(
+                    "Tera Term",
+                    "ZmodemTimeouts",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "ZmodemTimeouts"),
+                        0,
+                        self.transfer_zmodem_timeout_normal,
+                    ),
+                );
+            }
+            "transfer.zmodem_timeout_tcpip" => {
+                ini.set(
+                    "Tera Term",
+                    "ZmodemTimeouts",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "ZmodemTimeouts"),
+                        1,
+                        self.transfer_zmodem_timeout_tcpip,
+                    ),
+                );
+            }
+            "transfer.zmodem_timeout_init" => {
+                ini.set(
+                    "Tera Term",
+                    "ZmodemTimeouts",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "ZmodemTimeouts"),
+                        2,
+                        self.transfer_zmodem_timeout_init,
+                    ),
+                );
+            }
+            "transfer.zmodem_timeout_fin" => {
+                ini.set(
+                    "Tera Term",
+                    "ZmodemTimeouts",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "ZmodemTimeouts"),
+                        3,
+                        self.transfer_zmodem_timeout_fin,
+                    ),
+                );
+            }
+            "transfer.kermit_long_packet" => {
+                ini.set(
+                    "Tera Term",
+                    "KmtLongPacket",
+                    &if self.transfer_kermit_long_packet {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "transfer.kermit_file_attr" => {
+                ini.set(
+                    "Tera Term",
+                    "KmtFileAttr",
+                    &if self.transfer_kermit_file_attr {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "transfer.kermit_log" => {
+                ini.set(
+                    "Tera Term",
+                    "KmtLog",
+                    &if self.transfer_kermit_log {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "transfer.bplus_auto" => {
+                ini.set(
+                    "Tera Term",
+                    "BPAuto",
+                    &if self.transfer_bplus_auto {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "transfer.bplus_escape_ctl" => {
+                ini.set(
+                    "Tera Term",
+                    "BPEscCtl",
+                    &if self.transfer_bplus_escape_ctl {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "transfer.bplus_log" => {
+                ini.set(
+                    "Tera Term",
+                    "BPLog",
+                    &if self.transfer_bplus_log { "on" } else { "off" }.to_string(),
+                );
+            }
+            "transfer.quickvan_win_size" => {
+                ini.set(
+                    "Tera Term",
+                    "QVWinSize",
+                    &self.transfer_quickvan_win_size.to_string(),
+                );
+            }
+            "transfer.quickvan_log" => {
+                ini.set(
+                    "Tera Term",
+                    "QVLog",
+                    &if self.transfer_quickvan_log {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "transfer.raw_autostop" => {
+                ini.set(
+                    "Tera Term",
+                    "ReceivefileAutoStopWaitTime",
+                    &self.transfer_raw_autostop.to_string(),
+                );
+            }
+            "transfer.send_filter" => {
+                ini.set(
+                    "Tera Term",
+                    "FileSendFilter",
+                    &self.transfer_send_filter.clone(),
+                );
+            }
+            "transfer.receive_filter" => {
+                ini.set(
+                    "Tera Term",
+                    "FileReceiveFilter",
+                    &self.transfer_receive_filter.clone(),
+                );
+            }
+            "transfer.scp_send_dir" => {
+                ini.set(
+                    "Tera Term",
+                    "ScpSendDir",
+                    &self.transfer_scp_send_dir.clone(),
+                );
+            }
+            "transfer.raw_high_speed" => {
+                ini.set(
+                    "Tera Term",
+                    "FileSendHighSpeedMode",
+                    &if self.transfer_raw_high_speed {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "transfer.confirm_file_drop" => {
+                ini.set(
+                    "Tera Term",
+                    "ConfirmFileDragAndDrop",
+                    &if self.transfer_confirm_file_drop {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "transfer.raw_send_delay_type" => {
+                ini.set(
+                    "Tera Term",
+                    "SendfileDelayType",
+                    &self.transfer_raw_send_delay_type.as_ini().to_string(),
+                );
+            }
+            "transfer.raw_send_delay_tick" => {
+                ini.set(
+                    "Tera Term",
+                    "SendfileDelayTick",
+                    &self.transfer_raw_send_delay_tick.to_string(),
+                );
+            }
+            "transfer.raw_send_size" => {
+                ini.set(
+                    "Tera Term",
+                    "SendfileSize",
+                    &self.transfer_raw_send_size.to_string(),
+                );
+            }
+            "transfer.raw_send_sequential" => {
+                ini.set(
+                    "Tera Term",
+                    "SendfileSequential",
+                    &if self.transfer_raw_send_sequential {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "transfer.raw_send_skip_dialog" => {
+                ini.set(
+                    "Tera Term",
+                    "SendfileSkipOptionDialog",
+                    &if self.transfer_raw_send_skip_dialog {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "transfer.raw_receive_skip_dialog" => {
+                ini.set(
+                    "Tera Term",
+                    "ReceivefileSkipOptionDialog",
+                    &if self.transfer_raw_receive_skip_dialog {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "printer.passthrough_delay" => {
+                ini.set(
+                    "Tera Term",
+                    "PassThruDelay",
+                    &self.printer_passthrough_delay.to_string(),
+                );
+            }
+            "printer.passthrough_port" => {
+                ini.set(
+                    "Tera Term",
+                    "PassThruPort",
+                    &self.printer_passthrough_port.clone(),
+                );
+            }
+            "printer.control_sequences" => {
+                ini.set(
+                    "Tera Term",
+                    "PrinterCtrlSequence",
+                    &if self.printer_control_sequences {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "printer.margin_left" => {
+                ini.set(
+                    "Tera Term",
+                    "PrnMargin",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "PrnMargin"),
+                        0,
+                        self.printer_margin_left,
+                    ),
+                );
+            }
+            "printer.margin_right" => {
+                ini.set(
+                    "Tera Term",
+                    "PrnMargin",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "PrnMargin"),
+                        1,
+                        self.printer_margin_right,
+                    ),
+                );
+            }
+            "printer.margin_top" => {
+                ini.set(
+                    "Tera Term",
+                    "PrnMargin",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "PrnMargin"),
+                        2,
+                        self.printer_margin_top,
+                    ),
+                );
+            }
+            "printer.margin_bottom" => {
+                ini.set(
+                    "Tera Term",
+                    "PrnMargin",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "PrnMargin"),
+                        3,
+                        self.printer_margin_bottom,
+                    ),
+                );
+            }
+            "printer.convert_form_feed" => {
+                ini.set(
+                    "Tera Term",
+                    "PrnConvFF",
+                    &if self.printer_convert_form_feed {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "printer.vt_ppi_x" => {
+                ini.set(
+                    "Tera Term",
+                    "VTPPI",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "VTPPI"),
+                        0,
+                        self.printer_vt_ppi_x,
+                    ),
+                );
+            }
+            "printer.vt_ppi_y" => {
+                ini.set(
+                    "Tera Term",
+                    "VTPPI",
+                    &crate::schema::with_nth(
+                        ini.get("Tera Term", "VTPPI"),
+                        1,
+                        self.printer_vt_ppi_y,
+                    ),
+                );
+            }
+            "tek.x" => {
+                ini.set(
+                    "Tera Term",
+                    "TEKPos",
+                    &crate::schema::with_nth(ini.get("Tera Term", "TEKPos"), 0, self.tek_x),
+                );
+            }
+            "tek.y" => {
+                ini.set(
+                    "Tera Term",
+                    "TEKPos",
+                    &crate::schema::with_nth(ini.get("Tera Term", "TEKPos"), 1, self.tek_y),
+                );
+            }
+            "tek.color" => {
+                ini.set(
+                    "Tera Term",
+                    "TEKColor",
+                    &crate::schema::color2_str(&self.tek_color),
+                );
+            }
+            "tek.color_emulation" => {
+                ini.set(
+                    "Tera Term",
+                    "TEKColorEmulation",
+                    &if self.tek_color_emulation {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "tek.gin_mouse_code" => {
+                ini.set(
+                    "Tera Term",
+                    "TEKGINMouseCode",
+                    &self.tek_gin_mouse_code.to_string(),
+                );
+            }
+            "tek.icon" => {
+                ini.set("Tera Term", "TEKIcon", &self.tek_icon.as_ini().to_string());
+            }
+            "tek.ppi_x" => {
+                ini.set(
+                    "Tera Term",
+                    "TEKPPI",
+                    &crate::schema::with_nth(ini.get("Tera Term", "TEKPPI"), 0, self.tek_ppi_x),
+                );
+            }
+            "tek.ppi_y" => {
+                ini.set(
+                    "Tera Term",
+                    "TEKPPI",
+                    &crate::schema::with_nth(ini.get("Tera Term", "TEKPPI"), 1, self.tek_ppi_y),
+                );
+            }
+            "window.maximized_bug_tweak" => {
+                ini.set(
+                    "Tera Term",
+                    "MaximizedBugTweak",
+                    &self.window_maximized_bug_tweak.to_string(),
+                );
+            }
+            "window.icon" => {
+                ini.set(
+                    "Tera Term",
+                    "VTIcon",
+                    &self.window_icon.as_ini().to_string(),
+                );
+            }
+            "window.hide_title" => {
+                ini.set(
+                    "Tera Term",
+                    "HideTitle",
+                    &if self.window_hide_title { "on" } else { "off" }.to_string(),
+                );
+            }
+            "window.popup_menu" => {
+                ini.set(
+                    "Tera Term",
+                    "PopupMenu",
+                    &if self.window_popup_menu { "on" } else { "off" }.to_string(),
+                );
+            }
+            "window.popup_menu_enabled" => {
+                ini.set(
+                    "Tera Term",
+                    "EnablePopupMenu",
+                    &if self.window_popup_menu_enabled {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "window.show_menu_enabled" => {
+                ini.set(
+                    "Tera Term",
+                    "EnableShowMenu",
+                    &if self.window_show_menu_enabled {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "window.window_menu" => {
+                ini.set(
+                    "Tera Term",
+                    "WindowMenu",
+                    &if self.window_window_menu { "on" } else { "off" }.to_string(),
+                );
+            }
+            "window.save_position" => {
+                ini.set(
+                    "Tera Term",
+                    "SaveVTWinPos",
+                    &if self.window_save_position {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "window.x" => {
+                if self.window_save_position {
+                    ini.set(
+                        "Tera Term",
+                        "VTPos",
+                        &crate::schema::with_nth(ini.get("Tera Term", "VTPos"), 0, self.window_x),
+                    );
+                }
+            }
+            "window.y" => {
+                if self.window_save_position {
+                    ini.set(
+                        "Tera Term",
+                        "VTPos",
+                        &crate::schema::with_nth(ini.get("Tera Term", "VTPos"), 1, self.window_y),
+                    );
+                }
+            }
+            "window.auto_vt_tek_switch" => {
+                ini.set(
+                    "Tera Term",
+                    "AutoWinSwitch",
+                    &if self.window_auto_vt_tek_switch {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "connection.cygwin_directory" => {
+                ini.set(
+                    "Tera Term",
+                    "CygwinDirectory",
+                    &self.connection_cygwin_directory.clone(),
+                );
+            }
+            "log.viewer" => {
+                ini.set("Tera Term", "ViewlogEditor", &self.log_viewer.clone());
+            }
+            "log.viewer_args" => {
+                ini.set(
+                    "Tera Term",
+                    "ViewlogEditorArg",
+                    &self.log_viewer_args.clone(),
+                );
+            }
+            "broadcast.command_history" => {
+                ini.set(
+                    "Tera Term",
+                    "BroadcastCommandHistory",
+                    &if self.broadcast_command_history {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "broadcast.accept" => {
+                ini.set(
+                    "Tera Term",
+                    "AcceptBroadcast",
+                    &if self.broadcast_accept { "on" } else { "off" }.to_string(),
+                );
+            }
+            "broadcast.submit_key" => {
+                ini.set(
+                    "Tera Term",
+                    "BroadcastSubmitKey",
+                    &self.broadcast_submit_key.as_ini().to_string(),
+                );
+            }
+            "broadcast.max_history" => {
+                ini.set(
+                    "Tera Term",
+                    "MaxBroadcatHistory",
+                    &self.broadcast_max_history.to_string(),
+                );
+            }
+            "menu.disable_accelerator_send_break" => {
+                ini.set(
+                    "Tera Term",
+                    "DisableAcceleratorSendBreak",
+                    &if self.menu_disable_accelerator_send_break {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "menu.disable_send_break" => {
+                ini.set(
+                    "Tera Term",
+                    "DisableMenuSendBreak",
+                    &if self.menu_disable_send_break {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "menu.disable_accelerator_duplicate" => {
+                ini.set(
+                    "Tera Term",
+                    "DisableAcceleratorDuplicateSession",
+                    &if self.menu_disable_accelerator_duplicate {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "menu.accelerator_new_connection" => {
+                ini.set(
+                    "Tera Term",
+                    "AcceleratorNewConnection",
+                    &if self.menu_accelerator_new_connection {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "menu.accelerator_local_shell" => {
+                ini.set(
+                    "Tera Term",
+                    "AcceleratorCygwinConnection",
+                    &if self.menu_accelerator_local_shell {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "menu.disable_duplicate" => {
+                ini.set(
+                    "Tera Term",
+                    "DisableMenuDuplicateSession",
+                    &if self.menu_disable_duplicate {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "menu.disable_new_connection" => {
+                ini.set(
+                    "Tera Term",
+                    "DisableMenuNewConnection",
+                    &if self.menu_disable_new_connection {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "macro.wait4all" => {
+                ini.set(
+                    "Tera Term",
+                    "Wait4allMacroCommand",
+                    &if self.macro_wait4all { "on" } else { "off" }.to_string(),
+                );
+            }
+            "window.jump_list" => {
+                ini.set(
+                    "Tera Term",
+                    "JumpList",
+                    &if self.window_jump_list { "on" } else { "off" }.to_string(),
+                );
+            }
+            "window.corner_dontround" => {
+                ini.set(
+                    "Tera Term",
+                    "WindowCornerDontround",
+                    &if self.window_corner_dontround {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "recent.serial_port" => {
+                ini.set("Sterna", "SerialPort", &self.recent_serial_port.clone());
+            }
+            "recent.ssh_host" => {
+                ini.set("Sterna", "SshHost", &self.recent_ssh_host.clone());
+            }
+            "recent.ssh_user" => {
+                ini.set("Sterna", "SshUser", &self.recent_ssh_user.clone());
+            }
+            "recent.ssh_port" => {
+                ini.set("Sterna", "SshPort", &self.recent_ssh_port.to_string());
+            }
+            "recent.ssh_identity" => {
+                ini.set("Sterna", "SshIdentity", &self.recent_ssh_identity.clone());
+            }
+            "recent.ssh_legacy" => {
+                ini.set(
+                    "Sterna",
+                    "SshLegacy",
+                    &if self.recent_ssh_legacy { "on" } else { "off" }.to_string(),
+                );
+            }
+            "recent.telnet_host" => {
+                ini.set("Sterna", "TelnetHost", &self.recent_telnet_host.clone());
+            }
+            "recent.telnet_port" => {
+                ini.set("Sterna", "TelnetPort", &self.recent_telnet_port.to_string());
+            }
+            "recent.telnet_mode" => {
+                ini.set(
+                    "Sterna",
+                    "TelnetMode",
+                    &self.recent_telnet_mode.as_ini().to_string(),
+                );
+            }
+            _ => return false,
+        }
+        true
     }
 
     /// One setting by its dotted name, in the INI's own spelling.
@@ -8371,6 +11263,15 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "recent.serial_port" => self.recent_serial_port.clone(),
+            "recent.ssh_host" => self.recent_ssh_host.clone(),
+            "recent.ssh_user" => self.recent_ssh_user.clone(),
+            "recent.ssh_port" => self.recent_ssh_port.to_string(),
+            "recent.ssh_identity" => self.recent_ssh_identity.clone(),
+            "recent.ssh_legacy" => if self.recent_ssh_legacy { "on" } else { "off" }.to_string(),
+            "recent.telnet_host" => self.recent_telnet_host.clone(),
+            "recent.telnet_port" => self.recent_telnet_port.to_string(),
+            "recent.telnet_mode" => self.recent_telnet_mode.as_ini().to_string(),
             _ => return None,
         })
     }
@@ -9237,6 +12138,23 @@ impl Settings {
             "window.corner_dontround" => {
                 self.window_corner_dontround = crate::schema::on_off(Some(value), false)
             }
+            "recent.serial_port" => self.recent_serial_port = value.to_string(),
+            "recent.ssh_host" => self.recent_ssh_host = value.to_string(),
+            "recent.ssh_user" => self.recent_ssh_user = value.to_string(),
+            "recent.ssh_port" => {
+                self.recent_ssh_port =
+                    crate::schema::word(crate::schema::int(value, self.recent_ssh_port))
+            }
+            "recent.ssh_identity" => self.recent_ssh_identity = value.to_string(),
+            "recent.ssh_legacy" => {
+                self.recent_ssh_legacy = crate::schema::on_off(Some(value), false)
+            }
+            "recent.telnet_host" => self.recent_telnet_host = value.to_string(),
+            "recent.telnet_port" => {
+                self.recent_telnet_port =
+                    crate::schema::word(crate::schema::int(value, self.recent_telnet_port))
+            }
+            "recent.telnet_mode" => self.recent_telnet_mode = RecentTelnetMode::from_ini(value),
             _ => return false,
         }
         self.normalize();
@@ -12338,5 +15256,95 @@ pub const FIELDS: &[Field] = &[
         default: "off",
         label: None,
         doc: "`ttset.c:1993`, default off. Requests square corners from Windows 11 DWM. Window decoration belongs to the compositor on Linux, so it is carried only.",
+    },
+    Field {
+        name: "recent.serial_port",
+        page: "recent",
+        section: "Sterna",
+        key: "SerialPort",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "The device path, not a number: `ComPort` is upstream's and cannot spell `/dev/serial/by-id/usb-FTDI_…`. Written as the port was opened, so it is the `open_path` a stable symlink resolves from rather than the `ttyUSB<n>` that moves on replug.",
+    },
+    Field {
+        name: "recent.ssh_host",
+        page: "recent",
+        section: "Sterna",
+        key: "SshHost",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "The SSH host the dialog was given — an alias out of `~/.ssh/config` as readily as a name, since that is what the dialog's combo box is filled from. Empty is the whole record's switch: nothing remembered, so the dialog opens as it does on a fresh install.",
+    },
+    Field {
+        name: "recent.ssh_user",
+        page: "recent",
+        section: "Sterna",
+        key: "SshUser",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "The user, where one was typed. Empty means \"whatever `~/.ssh/config` says\", which is not the same as an empty user name — so the absence round-trips rather than being resolved on the way in.",
+    },
+    Field {
+        name: "recent.ssh_port",
+        page: "recent",
+        section: "Sterna",
+        key: "SshPort",
+        kind: Kind::IntWord,
+        default: "0",
+        label: None,
+        doc: "The port, where one was asked for. Zero is the same kind of absence as an empty user: it leaves the choice to `~/.ssh/config` and, failing that, to 22.",
+    },
+    Field {
+        name: "recent.ssh_identity",
+        page: "recent",
+        section: "Sterna",
+        key: "SshIdentity",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "The private key the dialog was given, if it was given one. `~/.ssh/config` and the agent are consulted regardless, so this is an addition to them.",
+    },
+    Field {
+        name: "recent.ssh_legacy",
+        page: "recent",
+        section: "Sterna",
+        key: "SshLegacy",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "The pre-2020 algorithm switch, which is a property of the equipment at the far end rather than a preference — a console server that needed it once needs it every time, and that is the whole reason this record exists.",
+    },
+    Field {
+        name: "recent.telnet_host",
+        page: "recent",
+        section: "Sterna",
+        key: "TelnetHost",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "The telnet host. Empty is this record's switch, as `SshHost` is its own.",
+    },
+    Field {
+        name: "recent.telnet_port",
+        page: "recent",
+        section: "Sterna",
+        key: "TelnetPort",
+        kind: Kind::IntWord,
+        default: "23",
+        label: None,
+        doc: "The telnet port, kept separate from `[Tera Term] TCPPort` deliberately: that one is also what a bare host name on the command line opens, so remembering a console server's per-line port there would move an SSH connection to it.",
+    },
+    Field {
+        name: "recent.telnet_mode",
+        page: "recent",
+        section: "Sterna",
+        key: "TelnetMode",
+        kind: Kind::Enum(&["auto", "negotiate", "framed", "raw"]),
+        default: "auto",
+        label: None,
+        doc: "Which of the four framing/burst combinations was used (`TelnetMode::of`). `auto` is the shipped one: data until the first `IAC`, telnet after it.",
     },
 ];

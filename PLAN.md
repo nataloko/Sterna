@@ -3,7 +3,8 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-12 · **Stage:** 4 complete · **Commits:** 545
+**Last updated:** 2026-08-13 · **Stage:** 4 complete, first deliberate
+deviations landed (`docs/deviations.md`) · **Commits:** 547
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -5604,6 +5605,44 @@ the permanently dropped compatibility surfaces below.
 **Realistic total to a credible replacement: 15–20 months solo with AI
 assistance.** Full parity is 3+ years and should be explicitly renounced in the
 README.
+
+---
+
+## 🟢 Deliberate deviations — the work after the roadmap
+
+The four stages were about being *the same*: every default transcribed, every
+quirk reproduced, and `AGENTS.md`'s trap list is the receipt. With that done, the
+program can start being *better* where being the same costs the user something.
+Each divergence is written up in **`docs/deviations.md`** with its reason, what
+stays compatible, and where it lives — so that somebody diffing the two programs
+can tell a decision from a bug, which is exactly what four stages of
+transcription would otherwise make impossible.
+
+The rule for going on that list: user-visible, not forced by the platform, and
+reproducing upstream instead would have been easy. A divergence Linux or Qt
+forces is a port, and belongs in a code comment and in `AGENTS.md`.
+
+Two so far, both 2026-08-13:
+
+1. **The default baud rate is 115200**, where `ttset.c:919` gives 9600. The
+   key, its parse and its absence of bounds are unchanged, so `BaudRate=9600`
+   still opens at 9600 in both programs — only the value used when the key is
+   absent moved. Nothing this program gets pointed at ships a 9600 console any
+   more.
+2. **The connect dialogs remember the last connection, across restarts.**
+   Upstream's host dialog is seeded from `ts`, and `ts` reaches the file only
+   through Setup > Save, so Tera Term forgets on exit. Sterna writes the record
+   when a link actually opens: the serial line settings into `[Tera Term]`'s own
+   `BaudRate` family — which is already what a macro's `setbaud` does — and the
+   endpoints upstream has no key for into a `[Sterna]` section nothing upstream
+   reads. `tt_session_settings_remember` writes **only** those keys and leaves
+   the file alone when it already says them, so an INI shared with a real Tera
+   Term is not handed every other schema default by a connection.
+
+`[Sterna]` is the first invented section in the schema, and
+`tt-config/tests/upstream.rs` now asserts in both directions: an upstream
+section's keys must exist upstream, and `[Sterna]`'s must not — a key in both
+places would be a second answer only one of which a real Tera Term can see.
 
 ---
 

@@ -245,6 +245,51 @@ fn the_window_position_is_written_only_when_its_switch_is_on() {
     assert_eq!((partial.window_x, partial.window_y), (12, 0));
 }
 
+/// `store_one` is `store` for one named setting, which is how a change nobody
+/// asked to save is persisted — what the last connection was opened with, and
+/// nothing else in the same file. See `docs/deviations.md`.
+#[test]
+fn one_setting_can_be_written_without_writing_the_rest() {
+    let mut ini = Ini::parse(b"; a comment\r\n[Tera Term]\r\nSomethingElse=kept\r\n");
+    let mut s = Settings::load(&ini);
+    s.serial_baud = 57600;
+    s.recent_serial_port = String::from("/dev/ttyS3");
+    s.terminal_title = String::from("not written");
+
+    assert!(s.store_one(&mut ini, "serial.baud"));
+    assert!(s.store_one(&mut ini, "recent.serial_port"));
+    assert!(
+        !s.store_one(&mut ini, "no.such.setting"),
+        "an unnamed setting is the one refusal this has"
+    );
+
+    assert_eq!(ini.get("Tera Term", "BaudRate"), Some("57600"));
+    assert_eq!(ini.get("Sterna", "SerialPort"), Some("/dev/ttyS3"));
+    assert_eq!(ini.get("Tera Term", "SomethingElse"), Some("kept"));
+    assert_eq!(
+        ini.get("Tera Term", "Title"),
+        None,
+        "a full store would have pinned this one and every other default"
+    );
+    assert!(String::from_utf8(ini.to_bytes())
+        .expect("utf8")
+        .contains("; a comment"));
+
+    // The same `write-if` rule as `store`, because both come out of one
+    // emitter: with `SaveVTWinPos` off the old line is left exactly as it is.
+    let mut position = Ini::parse(b"[Tera Term]\r\nVTPos='12,34'\r\n");
+    let mut moved = Settings::load(&position);
+    moved.window_x = 56;
+    moved.window_y = 78;
+    assert!(moved.store_one(&mut position, "window.x"));
+    assert!(String::from_utf8(position.to_bytes())
+        .expect("utf8")
+        .contains("VTPos='12,34'"));
+    moved.window_save_position = true;
+    assert!(moved.store_one(&mut position, "window.x"));
+    assert_eq!(position.get("Tera Term", "VTPos"), Some("56,34"));
+}
+
 #[test]
 fn cygwin_directory_keeps_upstreams_reader_writer_mismatch() {
     // `ttset.c:1476` really has a trailing space in the reader literal, while

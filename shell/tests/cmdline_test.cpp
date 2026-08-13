@@ -421,6 +421,72 @@ void test_a_settings_file_named_on_the_line()
           == QStringLiteral("300"));
 }
 
+/// What the last connection was opened with seeds the next launch — Sterna's
+/// behaviour and not Tera Term's, whose host dialog forgets everything on exit
+/// unless Setup > Save was used. See `docs/deviations.md`.
+///
+/// The connect dialogs are modal, so what is checked here is the seam they and
+/// `--port` share: the line settings the file describes, the record read back
+/// beside them, and that writing a record touches nothing else in the file. The
+/// connect edges themselves are `ssh_test`'s and `telnet_test`'s, and the core's
+/// half is `crates/tt-ffi/tests/abi.c`.
+void test_the_remembered_connection_seeds_the_next_launch()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("remembered.ini"));
+    QFile file(path);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("; a comment\n[Tera Term]\nBaudRate=57600\nFlowCtrl=hard\n"
+               "[Sterna]\nSshHost=router\nSshUser=admin\nSshPort=2222\n"
+               "SshLegacy=on\n");
+    file.close();
+
+    MainWindow window(path);
+
+    // `--port` with no `--baud` opens at the file's speed rather than at the
+    // shipped one, which is the same rule upstream's `/C=1` follows.
+    TtSerialParams shipped;
+    tt_serial_params_default(&shipped);
+    CHECK(shipped.baud == 115200);
+    CHECK(window.serialParams().baud == 57600);
+    CHECK(window.serialParams().flow == TT_FLOW_CONTROL_RTS_CTS);
+
+    // The endpoints upstream has no key for come out of `[Sterna]`.
+    CHECK(window.session()->setting(QStringLiteral("recent.ssh_host"))
+          == QStringLiteral("router"));
+    CHECK(window.session()->setting(QStringLiteral("recent.ssh_user"))
+          == QStringLiteral("admin"));
+    CHECK(window.session()->setting(QStringLiteral("recent.ssh_port"))
+          == QStringLiteral("2222"));
+    CHECK(window.session()->setting(QStringLiteral("recent.ssh_legacy"))
+          == QStringLiteral("on"));
+
+    // A connection writes its own record and nothing else: the comment survives
+    // and no other schema value is pinned into a file the user may be sharing
+    // with a real Tera Term.
+    QString error;
+    CHECK(window.session()->rememberSettings(
+        {{QStringLiteral("recent.serial_port"), QStringLiteral("/dev/ttyS3")},
+         {QStringLiteral("serial.baud"), QStringLiteral("9600")}},
+        path, &error));
+    CHECK(file.open(QIODevice::ReadOnly));
+    const QByteArray written = file.readAll();
+    file.close();
+    CHECK(written.contains("; a comment"));
+    CHECK(written.contains("SerialPort=/dev/ttyS3"));
+    CHECK(written.contains("BaudRate=9600"));
+    CHECK(written.contains("SshHost=router"));
+    CHECK(!written.contains("TerminalSize"));
+
+    // And the next launch opens there.
+    MainWindow next(path);
+    CHECK(next.serialParams().baud == 9600);
+    CHECK(next.serialParams().flow == TT_FLOW_CONTROL_RTS_CTS);
+    CHECK(next.session()->setting(QStringLiteral("recent.serial_port"))
+          == QStringLiteral("/dev/ttyS3"));
+}
+
 /// `/K=` follows `/F=` into that setup file's directory and supplies the
 /// extension upstream supplies when the argument has none.
 void test_a_keyboard_file_named_on_the_line()
@@ -799,6 +865,7 @@ int main(int argc, char **argv)
     test_a_window_that_is_never_shown();
     test_a_window_position();
     test_a_settings_file_named_on_the_line();
+    test_the_remembered_connection_seeds_the_next_launch();
     test_a_keyboard_file_named_on_the_line();
     test_menu_and_accelerator_settings();
     test_the_language_file_translates_menus_without_stealing_alt();

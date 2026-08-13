@@ -1995,3 +1995,65 @@ window.jump_list | bool | Tera Term | JumpList | on | -
 # `ttset.c:1993`, default off. Requests square corners from Windows 11 DWM.
 # Window decoration belongs to the compositor on Linux, so it is carried only.
 window.corner_dontround | bool | Tera Term | WindowCornerDontround | off | -
+
+# --- recent -----------------------------------------------------------------
+#
+# **`[Sterna]` is this program's own section and nothing upstream reads it.**
+# It holds what the last connection was opened with, so the next New connection
+# dialog opens where the last one left off — across restarts, which Tera Term
+# does not do: upstream's host dialog is seeded from `ts` and `ts` only reaches
+# the file through Setup > Save. See `docs/deviations.md`.
+#
+# Only the fields upstream has no key for are here. The serial *line* settings
+# are `[Tera Term]`'s own `BaudRate`/`DataBit`/`Parity`/`StopBit`/`FlowCtrl`,
+# which a connection updates in place — that is already what `setbaud` does
+# (`Session::set_baud`, "a speed changed by a script must be the speed the
+# dialog shows"), and a second copy of a speed would be a second answer to
+# which one wins.
+#
+# Each record is meaningful only when its port or host is set: an empty
+# `SerialPort` means nothing has been opened yet, and the dialog then shows
+# what the settings say. A user who wants to forget a host clears the value
+# here, which is why these are ordinary settings rather than hidden state.
+
+# The device path, not a number: `ComPort` is upstream's and cannot spell
+# `/dev/serial/by-id/usb-FTDI_…`. Written as the port was opened, so it is the
+# `open_path` a stable symlink resolves from rather than the `ttyUSB<n>` that
+# moves on replug.
+recent.serial_port | string | Sterna | SerialPort |  | -
+
+# The SSH host the dialog was given — an alias out of `~/.ssh/config` as
+# readily as a name, since that is what the dialog's combo box is filled from.
+# Empty is the whole record's switch: nothing remembered, so the dialog opens
+# as it does on a fresh install.
+recent.ssh_host | string | Sterna | SshHost |  | -
+
+# The user, where one was typed. Empty means "whatever `~/.ssh/config` says",
+# which is not the same as an empty user name — so the absence round-trips
+# rather than being resolved on the way in.
+recent.ssh_user | string | Sterna | SshUser |  | -
+
+# The port, where one was asked for. Zero is the same kind of absence as an
+# empty user: it leaves the choice to `~/.ssh/config` and, failing that, to 22.
+recent.ssh_port | uint16 | Sterna | SshPort | 0 | -
+
+# The private key the dialog was given, if it was given one. `~/.ssh/config`
+# and the agent are consulted regardless, so this is an addition to them.
+recent.ssh_identity | string | Sterna | SshIdentity |  | -
+
+# The pre-2020 algorithm switch, which is a property of the equipment at the
+# far end rather than a preference — a console server that needed it once needs
+# it every time, and that is the whole reason this record exists.
+recent.ssh_legacy | bool | Sterna | SshLegacy | off | -
+
+# The telnet host. Empty is this record's switch, as `SshHost` is its own.
+recent.telnet_host | string | Sterna | TelnetHost |  | -
+
+# The telnet port, kept separate from `[Tera Term] TCPPort` deliberately: that
+# one is also what a bare host name on the command line opens, so remembering a
+# console server's per-line port there would move an SSH connection to it.
+recent.telnet_port | uint16 | Sterna | TelnetPort | 23 | -
+
+# Which of the four framing/burst combinations was used (`TelnetMode::of`).
+# `auto` is the shipped one: data until the first `IAC`, telnet after it.
+recent.telnet_mode | enum(auto=Auto,negotiate=Negotiate,framed=Framed,raw=Raw) | Sterna | TelnetMode | auto | -

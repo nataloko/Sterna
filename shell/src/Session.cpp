@@ -997,6 +997,52 @@ bool Session::saveWindowGeometry(const QString &path, int x, int y,
     return true;
 }
 
+bool Session::rememberSettings(const QVector<QPair<QString, QString>> &values,
+                               const QString &path, QString *outError)
+{
+    // The UTF-8 has to outlive the call, and `TtSettingValue` holds borrowed
+    // pointers — so the bytes live in vectors of their own rather than in
+    // temporaries that would be gone by the time the core read them.
+    QVector<QByteArray> names;
+    QVector<QByteArray> texts;
+    names.reserve(values.size());
+    texts.reserve(values.size());
+    for (const auto &pair : values) {
+        names.append(pair.first.toUtf8());
+        texts.append(pair.second.toUtf8());
+    }
+    QVector<TtSettingValue> items;
+    items.reserve(values.size());
+    for (int i = 0; i < values.size(); i++) {
+        TtSettingValue item;
+        item.name = names.at(i).constData();
+        item.value = texts.at(i).constData();
+        items.append(item);
+    }
+
+    const QByteArray utf8 = path.toUtf8();
+    if (tt_session_settings_remember(m_session, utf8.constData(), items.constData(),
+                                     static_cast<size_t>(items.size()))
+        != TT_OK) {
+        if (outError) {
+            *outError = QString::fromUtf8(tt_last_error());
+        }
+        return false;
+    }
+    // No `settingsChanged`, deliberately: nothing the window draws from is in
+    // one of these keys, and that signal re-applies the *file's* terminal size,
+    // the font, the title and the window flags — which would make remembering a
+    // connection's speed resize the window somebody had just dragged.
+    return true;
+}
+
+TtSerialParams Session::serialParams() const
+{
+    TtSerialParams params;
+    tt_session_serial_params(m_session, &params);
+    return params;
+}
+
 // --- the loop ----------------------------------------------------------------
 
 void Session::onReadable()

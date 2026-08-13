@@ -10,12 +10,13 @@ forced by the platform, and reproducing upstream instead would be strictly
 easy. A divergence forced by Linux or by Qt is not a deviation — it is a port,
 and it belongs in a comment at the code and in `AGENTS.md` if it bites.
 
-Compatibility is unaffected by everything below: no key changes meaning, and a
-`TERATERM.INI` written by either program still opens correctly in the other.
+Compatibility is unaffected in both entries below: no key changes meaning, and
+a `TERATERM.INI` written by either program still opens correctly in the other.
 
 | # | Deviation | Upstream | Since |
 |---|---|---|---|
 | 1 | The default baud rate is 115200 | 9600 | unreleased |
+| 2 | The connect dialogs remember the last connection, across restarts | Only Setup > Save persists anything | unreleased |
 
 ---
 
@@ -39,3 +40,44 @@ absent differs.
 `tt_serial_params_default` hands a frontend. The serial dialog reads the shipped
 speed from the ABI rather than carrying a literal of its own, so there is one
 place to change and it is the schema.
+
+## 2. The connect dialogs remember the last connection
+
+Opening File > Connect to serial port, SSH or telnet shows what was last
+connected to — after a restart as well as within one run.
+
+**Why.** Upstream's host dialog is seeded from `ts`, and `ts` reaches
+`TERATERM.INI` only through Setup > Save. So Tera Term does remember a
+connection for as long as the window lives and forgets it on exit, which for
+the daily use this project is built for — the same console, several times a day
+— means retyping a host or re-picking a port every morning. Sterna writes the
+record when a connection actually opens.
+
+**What is remembered.** The serial port's device path, its speed, data bits,
+parity, stop bits and flow control; the SSH host, user, port, private key and
+the pre-2020 algorithm switch; the telnet host, port and mode. Not the
+passwords, and nothing a connection failed to make: for SSH that means the
+record is written when the *handshake finishes*, not when it starts, so a host
+whose key was refused or whose login failed does not become the next default.
+An empty user or a zero port is remembered as such rather than resolved, because
+blank means "whatever `~/.ssh/config` says" and that is not the same as empty.
+
+**Where it lives, and the split that matters.** The serial *line* settings are
+`[Tera Term]`'s own `BaudRate`, `DataBit`, `Parity`, `StopBit` and `FlowCtrl` —
+updated in place, which is already what a `setbaud` in a macro does
+(`Session::set_baud`: "a speed changed by a script must be the speed the dialog
+shows"). Everything upstream has no key for is in a `[Sterna]` section that
+nothing upstream reads. A second copy of a speed would have been a second
+answer to which one wins, and `tt-config/tests/upstream.rs` asserts in both
+directions that the two sections stay disjoint.
+
+Only the keys that changed are written, the way `SaveVTPos` writes only the
+window position on close — so an INI shared with a real Tera Term does not have
+every other schema default pinned into it by a connection. A user who wants a
+host forgotten clears the value; these are ordinary settings, visible in the
+settings dialog's Recent page, not hidden state.
+
+**One consequence worth naming.** `sterna --port /dev/ttyUSB0` with no `--baud`
+opens at the remembered speed rather than at the shipped one. That is the point
+of the feature, and it is also upstream's own rule for `/C=1`, which takes the
+file's `BaudRate`.

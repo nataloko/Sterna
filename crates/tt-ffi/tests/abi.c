@@ -1057,6 +1057,130 @@ static void test_settings(void)
     tt_session_free(s);
 }
 
+/* What Sterna remembers about the last connection, which Tera Term does not —
+ * see docs/deviations.md. The frontend's whole part in it is these two calls,
+ * so this is the test that says what they promise. */
+static void test_remembered_connection(void)
+{
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+    CHECK(s != NULL);
+
+    const char *path = "/tmp/tt-ffi-abi-recent.ini";
+    remove(path);
+    FILE *f = fopen(path, "wb");
+    CHECK(f != NULL);
+    if (f) {
+        fputs("; a comment\r\n[Tera Term]\r\nBaudRate=9600\r\n"
+              "SomethingElse=kept\r\n",
+              f);
+        fclose(f);
+    }
+    CHECK_OK(tt_session_settings_load(s, path));
+
+    /* The line settings a connect dialog opens at are the file's, not the
+     * shipped ones — the deviation's other half. */
+    TtSerialParams shipped;
+    tt_serial_params_default(&shipped);
+    CHECK(shipped.baud == 115200);
+    TtSerialParams configured;
+    tt_session_serial_params(s, &configured);
+    CHECK(configured.baud == 9600);
+    CHECK(configured.data_bits == 8 && configured.stop_bits == 1);
+    CHECK(configured.parity == TT_PARITY_NONE);
+    CHECK(configured.flow == TT_FLOW_CONTROL_NONE);
+
+    /* A setting changed in memory only, to prove the remember does not sweep
+     * it up the way a full save would. */
+    CHECK_OK(tt_session_set_setting(s, "terminal.title", "not-remembered"));
+
+    const TtSettingValue values[] = {
+        {"recent.serial_port", "/dev/serial/by-id/usb-FTDI-if00-port0"},
+        {"serial.baud", "57600"},
+        {"serial.flow", "hard"},
+    };
+    CHECK_OK(tt_session_settings_remember(s, path, values, 3));
+
+    char buf[65536] = {0};
+    CHECK(read_file(path, buf, sizeof buf) > 0);
+    CHECK(strstr(buf, "[Sterna]") != NULL);
+    CHECK(strstr(buf, "SerialPort=/dev/serial/by-id/usb-FTDI-if00-port0") != NULL);
+    CHECK(strstr(buf, "BaudRate=57600") != NULL);
+    CHECK(strstr(buf, "FlowCtrl=hard") != NULL);
+    CHECK(strstr(buf, "; a comment") != NULL);
+    CHECK(strstr(buf, "SomethingElse=kept") != NULL);
+    CHECK(strstr(buf, "not-remembered") == NULL);
+
+    /* Applied as well as written, so the settings dialog and a macro's
+     * getsetting report the speed the port is running at. */
+    CHECK(strcmp(tt_session_setting(s, "serial.baud"), "57600") == 0);
+    tt_session_serial_params(s, &configured);
+    CHECK(configured.baud == 57600);
+    CHECK(configured.flow == TT_FLOW_CONTROL_RTS_CTS);
+
+    /* And it must not resize the terminal. Applying settings takes the grid
+     * from `TerminalSize`, whose schema copy is a snapshot from the last load —
+     * so a window the user has dragged, or a host's `CSI 8 t`, must survive a
+     * connection remembering its own speed. The file must not learn the new
+     * size either: this save owns the named keys and nothing else. */
+    CHECK_OK(tt_session_resize(s, 132, 50));
+    const TtSettingValue resized[] = {{"serial.baud", "38400"}};
+    CHECK_OK(tt_session_settings_remember(s, path, resized, 1));
+    CHECK(tt_session_cols(s) == 132);
+    CHECK(tt_session_rows(s) == 50);
+    CHECK(read_file(path, buf, sizeof buf) > 0);
+    CHECK(strstr(buf, "BaudRate=38400") != NULL);
+    CHECK(strstr(buf, "TerminalSize") == NULL);
+    CHECK_OK(tt_session_settings_remember(s, path, values, 3));
+
+    /* Reconnecting to the same port must not rewrite the file. The inode is
+     * the check rather than the bytes: a rewrite renames a temporary over the
+     * old file, so an unchanged *content* would still be a new inode. */
+    struct stat before;
+    CHECK(stat(path, &before) == 0);
+    CHECK_OK(tt_session_settings_remember(s, path, values, 3));
+    struct stat after;
+    CHECK(stat(path, &after) == 0);
+    CHECK(before.st_ino == after.st_ino);
+
+    /* And one name the schema does not have refuses the whole call: neither
+     * the file nor the session takes the half that was valid. */
+    const TtSettingValue bad[] = {
+        {"serial.baud", "19200"},
+        {"recent.no_such_setting", "x"},
+    };
+    CHECK(tt_session_settings_remember(s, path, bad, 2) == TT_ERR_INVALID);
+    CHECK(strcmp(tt_session_setting(s, "serial.baud"), "57600") == 0);
+    CHECK(stat(path, &after) == 0);
+    CHECK(before.st_ino == after.st_ino);
+
+    /* A second session reading the file back is the next launch: the dialog
+     * opens where the last connection left off. */
+    TtSession *next = tt_session_new(&cfg);
+    CHECK(next != NULL);
+    CHECK_OK(tt_session_settings_load(next, path));
+    CHECK(strcmp(tt_session_setting(next, "recent.serial_port"),
+                 "/dev/serial/by-id/usb-FTDI-if00-port0")
+          == 0);
+    tt_session_serial_params(next, &configured);
+    CHECK(configured.baud == 57600);
+    CHECK(configured.flow == TT_FLOW_CONTROL_RTS_CTS);
+    /* Nothing was remembered about SSH, and an empty host is how that is
+     * spelled — not a zero-length host name. */
+    CHECK(strcmp(tt_session_setting(next, "recent.ssh_host"), "") == 0);
+    tt_session_free(next);
+
+    /* Nothing at all is a no-op rather than an error: a frontend with an empty
+     * record should not have to special-case the call. */
+    CHECK_OK(tt_session_settings_remember(s, path, NULL, 0));
+    CHECK(tt_session_settings_remember(NULL, path, values, 3) == TT_ERR_INVALID);
+    CHECK(tt_session_settings_remember(s, path, NULL, 1) == TT_ERR_INVALID);
+
+    remove(path);
+    tt_session_free(s);
+}
+
 /* Parse, apply, resolve — the three calls a frontend makes at startup, in the
  * order it has to make them.
  *
@@ -2664,6 +2788,7 @@ int main(void)
     test_logging();
     test_log_name();
     test_settings();
+    test_remembered_connection();
     test_cmdline();
     test_input();
     test_palette();

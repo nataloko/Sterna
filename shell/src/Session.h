@@ -379,6 +379,19 @@ public:
     /// TerminalSize rather than pinning every schema value into the file.
     bool saveWindowGeometry(const QString &path, int x, int y,
                             bool positionValid, QString *outError) const;
+    /// Set these settings and write **only their keys** back to `path`, leaving
+    /// every other line — and every other setting — alone.
+    ///
+    /// This is how what the last connection was opened with survives a restart,
+    /// which Tera Term does not do (`docs/deviations.md`). The file is not
+    /// rewritten at all when it already says all of this, so reconnecting to the
+    /// same port touches nothing.
+    bool rememberSettings(const QVector<QPair<QString, QString>> &values,
+                          const QString &path, QString *outError);
+    /// The serial line settings the settings file describes, with the control
+    /// lines' `-1` sentinel already resolved. What a connect dialog should open
+    /// at, as opposed to `tt_serial_params_default`, which is what ships.
+    TtSerialParams serialParams() const;
 
     // --- the command line ---------------------------------------------------
 

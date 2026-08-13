@@ -1200,6 +1200,23 @@ typedef struct {
     size_t choices;
 } TtSettingField;
 
+/**
+ * One `name = value` pair for [`tt_session_settings_remember`].
+ */
+typedef struct {
+    /**
+     * The dotted name — [`TtSettingField::name`], not the INI key.
+     */
+    const char *name;
+    /**
+     * The value in the INI's own spelling, exactly as
+     * [`tt_session_set_setting`] takes it and [`tt_session_setting`] returns
+     * it. Never null; an empty string is a meaningful value and is not the
+     * same as the default.
+     */
+    const char *value;
+} TtSettingValue;
+
 typedef struct {
     TtEventKind kind;
     /**
@@ -3226,6 +3243,36 @@ TtStatus tt_session_window_geometry_save(const TtSession *session,
                                          bool position_valid);
 
 /**
+ * Set these settings and write **only their keys** back to `path`.
+ *
+ * This is how a change nobody asked to save gets persisted: what the last
+ * connection was opened with, so the next connect dialog opens where the last
+ * one left off. Tera Term does not do this — its host dialog is seeded from
+ * `ts`, which reaches the file only through Setup > Save — and
+ * `docs/deviations.md` has the reason.
+ *
+ * **Only the named keys are touched**, which is the whole point of a separate
+ * call: [`tt_session_settings_save`] would pin every other schema default into
+ * a file the user may share with a real Tera Term, and a connection is not a
+ * request to do that. `write-if=` and the five reader/writer key mismatches
+ * are honoured, because the write comes from the generated `store_one` rather
+ * than from a second implementation.
+ *
+ * **The file is left alone when it already says all of this** — a reconnect to
+ * the same port does not rewrite anything, so the mtime and the bytes both
+ * stay put.
+ *
+ * The values are also applied to the live settings, exactly as
+ * [`tt_session_set_setting`] would apply them: a speed remembered here is the
+ * speed the settings dialog and a macro's `getsetting` then report. One
+ * unnamed name refuses the whole call and nothing is written or applied.
+ */
+TtStatus tt_session_settings_remember(TtSession *session,
+                                      const char *path,
+                                      const TtSettingValue *values,
+                                      size_t count);
+
+/**
  * Take everything that has happened since the last drain.
  *
  * `*out` receives the array and the return is its length; `*out` is null when
@@ -3556,11 +3603,29 @@ bool tt_session_cycle_debug_mode(TtSession *session);
  *
  * Everything here is Tera Term's own default except the speed, which is
  * upstream's 9600 replaced deliberately — see `docs/deviations.md`. These are
- * what *ships*, not what the settings file says: a frontend opening a port
- * because the user asked for one in a dialog wants these, and one honouring a
- * configured `BaudRate` should read the setting.
+ * what *ships*, not what the settings file says: use
+ * [`tt_session_serial_params`] for the latter, which is what a connect dialog
+ * wants.
  */
 void tt_serial_params_default(TtSerialParams *out);
+
+/**
+ * Fill `out` with the line settings the settings file describes.
+ *
+ * `BaudRate`, `DataBit`, `Parity`, `StopBit`, `FlowCtrl` and the two control
+ * lines as loaded — including `FlowCtrlRTS`/`FlowCtrlDTR`'s `-1` sentinel,
+ * which means "derive from the flow control" and holds the lines low if it is
+ * taken for a value. Everything the file has no key for keeps
+ * [`tt_serial_params_default`]'s value.
+ *
+ * This is what a connect dialog should open at, and after a connection it is
+ * also what was last used: opening a port writes the five keys back the way a
+ * `setbaud` in a macro does. The delays (`DelayPerChar`, `DelayPerLine`) are
+ * deliberately absent — they belong to sending bytes rather than to opening a
+ * port, and returning them here would look like they were being honoured.
+ */
+void tt_session_serial_params(const TtSession *session,
+                              TtSerialParams *out);
 
 /**
  * Open a serial port and attach it. Replaces any current connection.

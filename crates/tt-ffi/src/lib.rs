@@ -1852,6 +1852,110 @@ pub extern "C" fn tt_session_window_geometry_save(
     }
 }
 
+/// One `name = value` pair for [`tt_session_settings_remember`].
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtSettingValue {
+    /// The dotted name — [`TtSettingField::name`], not the INI key.
+    pub name: *const c_char,
+    /// The value in the INI's own spelling, exactly as
+    /// [`tt_session_set_setting`] takes it and [`tt_session_setting`] returns
+    /// it. Never null; an empty string is a meaningful value and is not the
+    /// same as the default.
+    pub value: *const c_char,
+}
+
+/// Set these settings and write **only their keys** back to `path`.
+///
+/// This is how a change nobody asked to save gets persisted: what the last
+/// connection was opened with, so the next connect dialog opens where the last
+/// one left off. Tera Term does not do this — its host dialog is seeded from
+/// `ts`, which reaches the file only through Setup > Save — and
+/// `docs/deviations.md` has the reason.
+///
+/// **Only the named keys are touched**, which is the whole point of a separate
+/// call: [`tt_session_settings_save`] would pin every other schema default into
+/// a file the user may share with a real Tera Term, and a connection is not a
+/// request to do that. `write-if=` and the five reader/writer key mismatches
+/// are honoured, because the write comes from the generated `store_one` rather
+/// than from a second implementation.
+///
+/// **The file is left alone when it already says all of this** — a reconnect to
+/// the same port does not rewrite anything, so the mtime and the bytes both
+/// stay put.
+///
+/// The values are also applied to the live settings, exactly as
+/// [`tt_session_set_setting`] would apply them: a speed remembered here is the
+/// speed the settings dialog and a macro's `getsetting` then report. One
+/// unnamed name refuses the whole call and nothing is written or applied.
+#[no_mangle]
+pub extern "C" fn tt_session_settings_remember(
+    session: *mut TtSession,
+    path: *const c_char,
+    values: *const TtSettingValue,
+    count: usize,
+) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    let path = match unsafe { str_arg(path, usize::MAX) } {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if count == 0 {
+        return TT_OK;
+    }
+    if values.is_null() {
+        return fail(TT_ERR_INVALID, "null TtSettingValue array");
+    }
+
+    // Both strings of every pair are read before anything is changed, so a
+    // refusal leaves the session and the file as they were.
+    let items = unsafe { std::slice::from_raw_parts(values, count) };
+    let mut pairs = Vec::with_capacity(count);
+    for item in items {
+        let name = match unsafe { str_arg(item.name, usize::MAX) } {
+            Ok(n) => n,
+            Err(e) => return e,
+        };
+        let value = match unsafe { str_arg(item.value, usize::MAX) } {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        pairs.push((name, value));
+    }
+
+    // `settings_for_save` rather than a plain clone, and it is load-bearing:
+    // applying settings resizes the grid to `TerminalSize`, and the schema's
+    // copy of that is a snapshot from the last load. Taking the live grid
+    // instead means a terminal the user has resized — or the host has, through
+    // `CSI 8 t` — is not snapped back to the file's size by the connection that
+    // is only trying to remember its own speed. Upstream's `ts.TerminalWidth`
+    // is a live variable for the same reason.
+    let mut settings = settings_for_save(s);
+    for (name, value) in &pairs {
+        if !settings.set_str(name, value) {
+            return fail(TT_ERR_INVALID, format!("no setting named {name}"));
+        }
+    }
+
+    let path = Path::new(path);
+    let mut ini = match Ini::load(path) {
+        Ok(ini) => ini,
+        Err(e) => return fail(TT_ERR_IO, format!("{}: {e}", path.display())),
+    };
+    let before = ini.to_bytes();
+    for (name, _) in &pairs {
+        settings.store_one(&mut ini, name);
+    }
+    s.session.set_settings(settings);
+    if ini.to_bytes() == before {
+        return TT_OK;
+    }
+    match ini.save(path) {
+        Ok(()) => TT_OK,
+        Err(e) => fail(TT_ERR_IO, format!("{}: {e}", path.display())),
+    }
+}
+
 // --- events ---------------------------------------------------------------
 
 #[repr(u32)]
@@ -3019,31 +3123,67 @@ pub struct TtSerialParams {
 ///
 /// Everything here is Tera Term's own default except the speed, which is
 /// upstream's 9600 replaced deliberately — see `docs/deviations.md`. These are
-/// what *ships*, not what the settings file says: a frontend opening a port
-/// because the user asked for one in a dialog wants these, and one honouring a
-/// configured `BaudRate` should read the setting.
+/// what *ships*, not what the settings file says: use
+/// [`tt_session_serial_params`] for the latter, which is what a connect dialog
+/// wants.
 #[no_mangle]
 pub extern "C" fn tt_serial_params_default(out: *mut TtSerialParams) {
     let Some(out) = (unsafe { out.as_mut() }) else {
         return;
     };
-    let d = SerialParams::default();
-    *out = TtSerialParams {
-        baud: d.baud,
-        data_bits: 8,
-        parity: d.parity,
-        stop_bits: 1,
-        flow: d.flow,
-        xon: d.xon,
-        xoff: d.xoff,
-        dtr: d.dtr,
-        rts: d.rts,
-        detect_break: d.detect_break,
-        read_timeout_ms: d.read_timeout.as_millis() as u32,
+    *out = TtSerialParams::of(&SerialParams::default());
+}
+
+/// Fill `out` with the line settings the settings file describes.
+///
+/// `BaudRate`, `DataBit`, `Parity`, `StopBit`, `FlowCtrl` and the two control
+/// lines as loaded — including `FlowCtrlRTS`/`FlowCtrlDTR`'s `-1` sentinel,
+/// which means "derive from the flow control" and holds the lines low if it is
+/// taken for a value. Everything the file has no key for keeps
+/// [`tt_serial_params_default`]'s value.
+///
+/// This is what a connect dialog should open at, and after a connection it is
+/// also what was last used: opening a port writes the five keys back the way a
+/// `setbaud` in a macro does. The delays (`DelayPerChar`, `DelayPerLine`) are
+/// deliberately absent — they belong to sending bytes rather than to opening a
+/// port, and returning them here would look like they were being honoured.
+#[no_mangle]
+pub extern "C" fn tt_session_serial_params(session: *const TtSession, out: *mut TtSerialParams) {
+    let s = session_ref!(session);
+    let Some(out) = (unsafe { out.as_mut() }) else {
+        return;
     };
+    *out = TtSerialParams::of(&tt_session::open::serial_params(s.session.settings()));
 }
 
 impl TtSerialParams {
+    /// The C shape of a core [`SerialParams`]. The two enumerated widths are
+    /// numbers here rather than the core's variants, because a `7` in a header
+    /// needs no table to read.
+    fn of(p: &SerialParams) -> TtSerialParams {
+        TtSerialParams {
+            baud: p.baud,
+            data_bits: match p.data_bits {
+                DataBits::Five => 5,
+                DataBits::Six => 6,
+                DataBits::Seven => 7,
+                DataBits::Eight => 8,
+            },
+            parity: p.parity,
+            stop_bits: match p.stop_bits {
+                StopBits::One => 1,
+                StopBits::Two => 2,
+            },
+            flow: p.flow,
+            xon: p.xon,
+            xoff: p.xoff,
+            dtr: p.dtr,
+            rts: p.rts,
+            detect_break: p.detect_break,
+            read_timeout_ms: p.read_timeout.as_millis() as u32,
+        }
+    }
+
     fn to_rust(self) -> Result<SerialParams, TtStatus> {
         let data_bits = match self.data_bits {
             5 => DataBits::Five,
