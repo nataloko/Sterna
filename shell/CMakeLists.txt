@@ -251,6 +251,17 @@ if(UNIX)
     add_test(NAME pty COMMAND pty_test)
 endif()
 
+# The highlight rules: the file, the editor, and what reaches the pixels. The
+# painting half needs nothing at all — the terminal is fed directly — and the
+# one end-to-end case runs a local shell, so this is UNIX only for the same
+# reason `pty_test` is.
+if(UNIX)
+    add_executable(highlight_test tests/highlight_test.cpp)
+    target_link_libraries(highlight_test PRIVATE sterna_shell)
+    target_compile_options(highlight_test PRIVATE ${TT_WARNINGS})
+    add_test(NAME highlight COMMAND highlight_test)
+endif()
+
 # A file transfer, driven by the window's event loop rather than by a pump
 # loop. It needs `lrzsz` for the transfer itself and skips loudly without it;
 # the cancel case and the dialogs need nothing.

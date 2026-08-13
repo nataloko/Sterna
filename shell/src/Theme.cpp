@@ -223,10 +223,15 @@ bool Theme::shouldResizeGlyph(const QString &text, bool bold, int cells) const
 void Theme::resolve(const TtCell &cell, bool selected, bool screenReverse,
                     QColor *fg, QColor *bg, const CellOverride *over) const
 {
-    // A rule's bold or underline joins the cell's own before the pair chain
-    // below looks at either, so a highlighted cell picks the bold colour pair
-    // for the same reason an `SGR 1` one does.
-    const uint32_t attrs = cell.attrs | (over ? over->attrs : 0u);
+    // The cell's own attributes, and deliberately *not* a highlight rule's.
+    //
+    // Upstream's bold, blink and underline each carry a colour pair, so OR-ing
+    // a rule's underline in here would make "underline this" repaint the text
+    // magenta — the configured `color.underline`. A rule's bold and underline
+    // are a mark rather than an SGR attribute: they reach the font and the
+    // stroke, through the caller's `paintsBold` / `paintsUnderline`, and the
+    // only colours a rule decides are its own.
+    const uint32_t attrs = cell.attrs;
 
     // Upstream composes the attribute with the setting that enables it before
     // looking at anything, so an attribute whose colour is switched off falls
@@ -241,6 +246,13 @@ void Theme::resolve(const TtCell &cell, bool selected, bool screenReverse,
         reverse = !reverse;
     }
     if (screenReverse) {
+        reverse = !reverse;
+    }
+    // A rule's reverse is the one attribute of its that *is* about colour, so
+    // it joins the count rather than the pair chain — and it comes before the
+    // rule's own colours below, so `fg=red, reverse` is red behind the text,
+    // which is what `SGR 31` and `SGR 7` together do.
+    if (over && (over->attrs & TT_ATTR_REVERSE)) {
         reverse = !reverse;
     }
 
