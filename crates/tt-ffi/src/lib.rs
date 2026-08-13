@@ -3947,7 +3947,9 @@ pub extern "C" fn tt_highlights_set(
     let Some(h) = (unsafe { rule.as_ref() }) else {
         return fail(TT_ERR_INVALID, "null TtHighlight");
     };
-    if index > l.items.len() || l.items.len() >= tt_config::highlight::MAX {
+    if index > l.items.len()
+        || (index == l.items.len() && l.items.len() >= tt_config::highlight::MAX)
+    {
         return fail(TT_ERR_INVALID, "highlight index out of range");
     }
     let made = match highlight_rule(h) {

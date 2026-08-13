@@ -183,7 +183,9 @@ HighlightsDialog::HighlightsDialog(const QVector<QuickHighlight> &rules, QWidget
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, [this] {
         commit();
-        accept();
+        if (validatePatterns()) {
+            accept();
+        }
     });
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
@@ -387,6 +389,28 @@ void HighlightsDialog::commit()
         m_loading = loading;
     }
     refreshPreview();
+}
+
+bool HighlightsDialog::validatePatterns()
+{
+    for (int row = 0; row < m_rules.size(); row++) {
+        const QuickHighlight &rule = m_rules.at(row);
+        if (rule.pattern.isEmpty()) {
+            continue;
+        }
+        QString error;
+        if (checkHighlightPattern(rule.pattern, rule.literal, rule.ignoreCase, &error)) {
+            continue;
+        }
+        // Bring the rejected rule into view. The field already shows the same
+        // engine error while it is being typed; this covers an invalid rule on
+        // another row when OK is pressed.
+        m_list->setCurrentRow(row);
+        m_patternError->setText(error);
+        m_pattern->setFocus();
+        return false;
+    }
+    return true;
 }
 
 void HighlightsDialog::refreshPreview()

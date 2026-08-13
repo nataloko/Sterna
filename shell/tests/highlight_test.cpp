@@ -16,6 +16,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QColor>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -431,8 +432,9 @@ void test_the_editor()
     auto *error = dialog.findChild<QLabel *>(QStringLiteral("highlightPatternError"));
     auto *add = dialog.findChild<QPushButton *>(QStringLiteral("highlightAdd"));
     auto *literal = dialog.findChild<QCheckBox *>(QStringLiteral("highlightLiteral"));
-    CHECK(list && pattern && error && add && literal);
-    if (!list || !pattern || !error || !add || !literal) {
+    auto *buttons = dialog.findChild<QDialogButtonBox *>();
+    CHECK(list && pattern && error && add && literal && buttons);
+    if (!list || !pattern || !error || !add || !literal || !buttons) {
         return;
     }
 
@@ -446,6 +448,8 @@ void test_the_editor()
     // not refused — somebody is still typing.
     pattern->setText(QStringLiteral("(unclosed"));
     CHECK(!error->text().isEmpty());
+    buttons->button(QDialogButtonBox::Ok)->click();
+    CHECK(dialog.result() != QDialog::Accepted);
     // ...and marking it as plain text makes it legal again, because nothing in
     // it is a metacharacter any more.
     literal->setChecked(true);

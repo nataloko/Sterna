@@ -501,6 +501,17 @@ static void test_highlights(void)
     CHECK(tt_session_set_highlights(s, NULL) == TT_OK);
     CHECK(tt_session_row_highlights(s, 0, &len) == NULL);
 
+    /* Filling the list closes only the append arm. Existing entries remain
+     * editable at the documented maximum. */
+    TtHighlights *full = tt_highlights_new();
+    CHECK(full != NULL);
+    for (size_t i = 0; i < 99; i++) {
+        CHECK(tt_highlights_set(full, i, &rule) == TT_OK);
+    }
+    CHECK(tt_highlights_set(full, 98, &rule) == TT_OK);
+    CHECK(tt_highlights_set(full, 99, &rule) != TT_OK);
+    tt_highlights_free(full);
+
     tt_session_free(s);
     tt_highlights_free(list);
 }

@@ -45,6 +45,9 @@ private:
     /// signal, so the list's caption follows the label and nothing has to be
     /// applied before switching rows.
     void commit();
+    /// Refuse OK while any non-empty pattern is invalid, selecting the first
+    /// rule that needs attention.
+    bool validatePatterns();
     /// Re-check the pattern and repaint the sample, which is the same work
     /// whichever field moved.
     void refreshPreview();
