@@ -71,6 +71,25 @@ fn the_panel_layout_is_a_sterna_setting_with_a_safe_fallback() {
 }
 
 #[test]
+fn line_edit_is_an_off_by_default_sterna_setting() {
+    let mut settings = Settings::default();
+    assert!(!settings.terminal_line_edit);
+
+    let ini = Ini::parse(b"[Sterna]\r\nLineEdit=on\r\n");
+    settings = Settings::load(&ini);
+    assert!(settings.terminal_line_edit);
+    assert_eq!(settings.get_str("terminal.line_edit"), Some("on".into()));
+
+    assert!(settings.set_str("terminal.line_edit", "off"));
+    assert!(!settings.terminal_line_edit);
+    assert!(!settings.set_str("terminal.line_mode", "on"));
+
+    let mut stored = ini;
+    assert!(settings.store_one(&mut stored, "terminal.line_edit"));
+    assert_eq!(stored.to_bytes(), b"[Sterna]\r\nLineEdit=off\r\n");
+}
+
+#[test]
 fn the_deferred_encoding_settings_keep_upstreams_parsers() {
     let d = Settings::default();
     assert_eq!(d.encoding_receive, EncodingReceive::Utf8);
