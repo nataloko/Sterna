@@ -145,9 +145,12 @@ jobs:
           cmake -S shell -B shell/build-native -G "Visual Studio 17 2022" -A x64 `
             -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE="$env:GITHUB_WORKSPACE/shell/build-native"
           cmake --build shell/build-native --config Release `
-            --target update_test update_load_test
+            --target update_test
       - name: Run updater tests
-        run: ctest --test-dir shell/build-native -C Release -R "^(update|update_load)$" --output-on-failure
+        # `update` contains the native loader-sharing assertion for the
+        # downloaded installer. The independent plugin seam is covered by the
+        # ordinary Qt shell test suite and is not part of this release gate.
+        run: ctest --test-dir shell/build-native -C Release -R "^update$" --output-on-failure
 
   draft:
     name: assemble draft release
