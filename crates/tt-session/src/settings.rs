@@ -383,15 +383,17 @@ mod tests {
         // Everything except the history, which upstream ships at 100 lines
         // *including* the page while `Config::default` carries `MaxBuffSize`.
         assert_eq!(mapped.scrollback_max, 100 - 24);
-        // ...and the title, whose `Title=` default is upstream's own product
-        // name. The core ships empty deliberately — it has no product name to
-        // put in somebody else's title bar — so this is the one place the two
-        // defaults are meant to differ rather than a transcription slip.
+        // ...the title, whose `Title=` default is upstream's own product name,
+        // and receive CR, whose product default is deliberately Auto while
+        // the compatibility engine stays on upstream's CR. These are the
+        // documented differences rather than transcription slips.
         assert_eq!(mapped.title, "Tera Term");
+        assert_eq!(mapped.cr_receive, CrReceive::Auto);
         assert_eq!(
             Config {
                 scrollback_max: d.scrollback_max,
                 title: d.title.clone(),
+                cr_receive: d.cr_receive,
                 ..mapped
             },
             d,
