@@ -11,6 +11,8 @@
 #include <QFontMetricsF>
 #include <QImage>
 #include <QKeyEvent>
+#include <QLineEdit>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QProcess>
@@ -30,6 +32,30 @@ constexpr qint64 kMinFrameMs = 8;
 
 /// How often a drag held outside the window scrolls it, in milliseconds.
 constexpr int kAutoScrollMs = 40;
+
+/// A focusless editor whose caret is still visible.
+///
+/// The terminal view keeps keyboard focus so function, control and configured
+/// physical keys continue through its existing path. Mouse selection still
+/// works on a focusless QLineEdit; the only visual it loses is its caret, so
+/// draw that one pixel here rather than move focus away from the terminal.
+class LineEditOverlay : public QLineEdit {
+public:
+    using QLineEdit::QLineEdit;
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        QLineEdit::paintEvent(event);
+        if (!isEnabled()) {
+            return;
+        }
+        QPainter painter(this);
+        painter.setPen(palette().color(QPalette::Text));
+        const QRect caret = cursorRect();
+        painter.drawLine(caret.topLeft(), caret.bottomLeft());
+    }
+};
 
 /// Apply one of `MouseCursor`'s four names, or leave the current pointer alone.
 ///
@@ -450,6 +476,12 @@ TerminalView::TerminalView(Session *session, QWidget *parent, const I18n *i18n)
     // startup time and a preedit that cannot be committed.
     setAttribute(Qt::WA_InputMethodEnabled, false);
 
+    m_lineEditor = new LineEditOverlay(this);
+    m_lineEditor->setObjectName(QStringLiteral("terminalLineEditor"));
+    m_lineEditor->setFocusPolicy(Qt::NoFocus);
+    m_lineEditor->setFrame(false);
+    m_lineEditor->hide();
+
     // Only ever runs while output is arriving faster than the frame floor
     // below, and stops itself at the next frame. Same shape as the session's
     // pending-out retry: a timer that exists during a burst and not otherwise.
@@ -500,11 +532,21 @@ TerminalView::TerminalView(Session *session, QWidget *parent, const I18n *i18n)
         if (m_cursorBlink->isActive()) {
             m_cursorBlink->start();
         }
+        positionLineEditor();
         requestRepaint();
         // Output can move the offset — the core keeps a scrolled-back view on
         // the same lines — so the scrollbar has to hear about every pump, not
         // only about the scrolls this widget made.
         emit viewChanged();
+    });
+
+    // A connection edge means the draft belongs to a line that no longer
+    // exists. This covers a remote hangup, an explicit disconnect, a failed
+    // handshake and a replacement connection without teaching each path
+    // separately about frontend state.
+    connect(m_session, &Session::connectionChanged, this, [this] {
+        clearLineEditDraft();
+        positionLineEditor();
     });
 
     m_session->setCellPixels(m_theme.cellWidth(), m_theme.cellHeight());
@@ -521,6 +563,7 @@ QSize TerminalView::sizeHint() const
 void TerminalView::refreshColors()
 {
     m_theme.readColors(*m_session);
+    positionLineEditor();
     update();
 }
 
@@ -536,6 +579,7 @@ void TerminalView::applySettings()
         const QString value = m_session->setting(QString::fromLatin1(name));
         return value.isEmpty() ? fallback : value == QLatin1String("on");
     };
+    setLineEditEnabled(flag("terminal.line_edit", false));
     m_clipboard.autoCopy = flag("clipboard.auto_copy", m_clipboard.autoCopy);
     m_clipboard.selectOnlyByLButton =
         flag("clipboard.select_only_by_lbutton", m_clipboard.selectOnlyByLButton);
@@ -601,6 +645,8 @@ void TerminalView::applySettings()
     m_cursorBlink->stop();
     m_cursorBlinkOn = true;
 
+    positionLineEditor();
+
     // `TerminalSize` and `VTFontSpace` both change `sizeHint`. A direct
     // central widget happened to be queried again; a tab widget caches the
     // page's hint until its child announces a geometry change. Without this,
@@ -616,6 +662,7 @@ void TerminalView::applyFont(const QFont &font)
     m_session->setCellPixels(m_theme.cellWidth(), m_theme.cellHeight());
     updateGeometry();
     refit();
+    positionLineEditor();
     update();
 }
 
@@ -987,6 +1034,7 @@ QSize TerminalView::sizeForCells(int cols, int rows) const
 void TerminalView::resizeEvent(QResizeEvent *)
 {
     refit();
+    positionLineEditor();
 }
 
 void TerminalView::refit()
@@ -1059,6 +1107,201 @@ SelPoint TerminalView::boundaryAt(const QPointF &pos) const
 
 // --- keyboard ----------------------------------------------------------------
 
+void TerminalView::focusInput()
+{
+    setFocus();
+    positionLineEditor();
+}
+
+bool TerminalView::hasLineEditDraft() const
+{
+    return !m_lineEditor->text().isEmpty() || !m_queuedLines.isEmpty();
+}
+
+QString TerminalView::lineEditText() const { return m_lineEditor->text(); }
+
+bool TerminalView::confirmDiscardLineEdit()
+{
+    if (!hasLineEditDraft()) {
+        return true;
+    }
+    QMessageBox box(QMessageBox::Warning, tr("Unsent line"),
+                    tr("This text has not been sent. Discard it and turn Line "
+                       "edit off?"),
+                    QMessageBox::Discard | QMessageBox::Cancel, this);
+    box.setObjectName(QStringLiteral("lineEditDiscardDialog"));
+    box.setDefaultButton(QMessageBox::Cancel);
+    return box.exec() == QMessageBox::Discard;
+}
+
+void TerminalView::clearLineEditDraft()
+{
+    m_queuedLines.clear();
+    // `setText`, rather than `clear`, resets QLineEdit's undo history as well:
+    // discarded text must not be recoverable after a new connection opens.
+    m_lineEditor->setText(QString());
+    positionLineEditor();
+}
+
+void TerminalView::setLineEditEnabled(bool enabled)
+{
+    if (m_lineEditEnabled == enabled) {
+        positionLineEditor();
+        return;
+    }
+    m_lineEditEnabled = enabled;
+    if (!enabled) {
+        clearLineEditDraft();
+        m_lineEditor->hide();
+    } else {
+        positionLineEditor();
+    }
+}
+
+void TerminalView::positionLineEditor()
+{
+    if (!m_lineEditEnabled || !m_lineEditor) {
+        if (m_lineEditor) {
+            m_lineEditor->hide();
+        }
+        return;
+    }
+    const int row = m_session->cursorViewRow();
+    if (row < 0) {
+        // The draft still exists while the user inspects history; it simply
+        // has no honest screen position until the live cursor is visible.
+        m_lineEditor->hide();
+        return;
+    }
+    const TtCursor cursor = m_session->cursor();
+    const int cw = m_theme.cellWidth();
+    const int ch = m_theme.cellHeight();
+    const int column = qBound(0, static_cast<int>(cursor.x),
+                              qMax(0, m_session->cols() - 1));
+    const int left = column * cw;
+    m_lineEditor->setGeometry(left, row * ch, qMax(cw, width() - left), ch);
+    m_lineEditor->setFont(m_theme.font());
+    m_lineEditor->setTextMargins(m_theme.textOffsetX(), 0, 0, 0);
+    QPalette palette = m_lineEditor->palette();
+    palette.setColor(QPalette::Base, m_theme.defaultBackground());
+    palette.setColor(QPalette::Text, m_theme.defaultForeground());
+    m_lineEditor->setPalette(palette);
+    m_lineEditor->setEnabled(m_keyboardEnabled);
+    m_lineEditor->show();
+    m_lineEditor->raise();
+}
+
+void TerminalView::submitEditedLine()
+{
+    m_session->sendEditedLine(m_lineEditor->text());
+    if (m_queuedLines.isEmpty()) {
+        m_lineEditor->setText(QString());
+    } else {
+        m_lineEditor->setText(m_queuedLines.dequeue());
+        m_lineEditor->setCursorPosition(m_lineEditor->text().size());
+    }
+    positionLineEditor();
+}
+
+void TerminalView::queueEditedPaste(const QString &text)
+{
+    QString normal = text;
+    normal.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    normal.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+    const QStringList lines = normal.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+    if (lines.size() <= 1) {
+        m_lineEditor->insert(normal);
+        return;
+    }
+
+    const QString current = m_lineEditor->text();
+    const int selected = m_lineEditor->selectionStart();
+    const int from = selected >= 0 ? selected : m_lineEditor->cursorPosition();
+    const int selectedLength = selected >= 0 ? m_lineEditor->selectedText().size() : 0;
+    const QString prefix = current.left(from);
+    const QString suffix = current.mid(from + selectedLength);
+
+    m_lineEditor->setText(prefix + lines.first());
+    m_lineEditor->setCursorPosition(m_lineEditor->text().size());
+
+    QQueue<QString> queued;
+    for (qsizetype i = 1; i < lines.size(); i++) {
+        QString line = lines.at(i);
+        if (i + 1 == lines.size()) {
+            line += suffix;
+        }
+        queued.enqueue(line);
+    }
+    while (!m_queuedLines.isEmpty()) {
+        queued.enqueue(m_queuedLines.dequeue());
+    }
+    m_queuedLines.swap(queued);
+}
+
+bool TerminalView::editLineKey(QKeyEvent *event)
+{
+    if (!m_lineEditEnabled) {
+        return false;
+    }
+    const Qt::KeyboardModifiers mods = event->modifiers();
+    const bool ctrl = mods.testFlag(Qt::ControlModifier);
+    const bool alt = mods.testFlag(Qt::AltModifier);
+
+    if (!alt && !ctrl &&
+        (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)) {
+        submitEditedLine();
+        return true;
+    }
+
+    // The terminal's established clipboard chords operate on the draft while
+    // it is the visible input. Plain Ctrl+C and Ctrl+V remain control bytes.
+    if (!alt && ctrl && mods.testFlag(Qt::ShiftModifier)) {
+        if (event->key() == Qt::Key_C) {
+            m_lineEditor->copy();
+            return true;
+        }
+        if (event->key() == Qt::Key_V) {
+            pasteClipboard();
+            return true;
+        }
+    }
+
+    if (!alt && ctrl) {
+        switch (event->key()) {
+        case Qt::Key_A: m_lineEditor->selectAll(); return true;
+        case Qt::Key_X: m_lineEditor->cut(); return true;
+        case Qt::Key_Z: m_lineEditor->undo(); return true;
+        case Qt::Key_Y: m_lineEditor->redo(); return true;
+        default: break;
+        }
+    }
+
+    // QLineEdit already owns selection, word motion and deletion semantics.
+    // Deliver those events directly without giving it focus; its mouse path
+    // still selects normally and LineEditOverlay supplies the caret.
+    if (!alt && (event->key() == Qt::Key_Backspace ||
+                 event->key() == Qt::Key_Delete ||
+                 event->key() == Qt::Key_Left ||
+                 event->key() == Qt::Key_Right ||
+                 event->key() == Qt::Key_Home ||
+                 event->key() == Qt::Key_End)) {
+        QApplication::sendEvent(m_lineEditor, event);
+        return true;
+    }
+
+    if (!alt && !ctrl && !event->text().isEmpty()) {
+        bool printable = true;
+        for (char32_t cp : event->text().toUcs4()) {
+            printable = printable && QChar::isPrint(cp);
+        }
+        if (printable) {
+            QApplication::sendEvent(m_lineEditor, event);
+            return true;
+        }
+    }
+    return false;
+}
+
 bool TerminalView::dispatchKeyCode(const KeyCodeAction &action)
 {
     switch (action.kind) {
@@ -1089,7 +1332,11 @@ bool TerminalView::dispatchKeyCode(const KeyCodeAction &action)
 
     switch (action.value) {
     case TT_SHORTCUT_EDIT_COPY:
-        copySelection();
+        if (m_lineEditEnabled) {
+            m_lineEditor->copy();
+        } else {
+            copySelection();
+        }
         break;
     case TT_SHORTCUT_EDIT_PASTE:
         pasteClipboard();
@@ -1117,6 +1364,9 @@ bool TerminalView::dispatchKeyCode(const KeyCodeAction &action)
         setViewOffset(0);
         break;
     case TT_SHORTCUT_LOCAL_ECHO: {
+        if (m_lineEditEnabled) {
+            break;
+        }
         const bool on = m_session->setting(QStringLiteral("terminal.local_echo"))
                         == QLatin1String("on");
         m_session->setSetting(QStringLiteral("terminal.local_echo"),
@@ -1209,7 +1459,11 @@ void TerminalView::keyPressEvent(QKeyEvent *event)
     // sends: Ctrl+C on its own is an interrupt and must stay one.
     if ((mods & Qt::ControlModifier) && (mods & Qt::ShiftModifier)) {
         if (event->key() == Qt::Key_C) {
-            copySelection();
+            if (m_lineEditEnabled) {
+                m_lineEditor->copy();
+            } else {
+                copySelection();
+            }
             return;
         }
         if (event->key() == Qt::Key_V) {
@@ -1235,6 +1489,10 @@ void TerminalView::keyPressEvent(QKeyEvent *event)
         // and the desktop. In particular, Alt+Up must not leak an ordinary Up
         // sequence merely because `mapKey` does not carry modifier variants.
         QWidget::keyPressEvent(event);
+        return;
+    }
+
+    if (editLineKey(event)) {
         return;
     }
 
@@ -1643,6 +1901,7 @@ void TerminalView::setViewOffset(int offset)
     // numbers, so scrolling moves the text and the highlight together — which
     // is the whole reason the core can name a line at all.
     update();
+    positionLineEditor();
     emit viewChanged();
 }
 
@@ -1865,6 +2124,7 @@ void TerminalView::setKeyboardEnabled(bool on)
         return;
     }
     m_keyboardEnabled = on;
+    positionLineEditor();
     // The cursor is drawn from focus, not from this, so there is nothing to
     // repaint — a locked keyboard looks exactly like an unlocked one, which
     // is upstream's behaviour and is why the status bar says so instead.
@@ -1872,6 +2132,13 @@ void TerminalView::setKeyboardEnabled(bool on)
 
 void TerminalView::copySelection() const
 {
+    if (m_lineEditEnabled) {
+        const QString text = m_lineEditor->selectedText();
+        if (!text.isEmpty()) {
+            QApplication::clipboard()->setText(text, QClipboard::Clipboard);
+        }
+        return;
+    }
     const QString text = selectedText();
     if (!text.isEmpty()) {
         QApplication::clipboard()->setText(text, QClipboard::Clipboard);
@@ -1923,5 +2190,10 @@ void TerminalView::pasteText(const QString &text)
                               QString::number(m_clipboard.dialogHeight), nullptr);
         body = dialog.text();
     }
-    m_session->paste(body);
+    if (m_lineEditEnabled) {
+        queueEditedPaste(body);
+        positionLineEditor();
+    } else {
+        m_session->paste(body);
+    }
 }

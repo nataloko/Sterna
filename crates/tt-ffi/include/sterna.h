@@ -3758,6 +3758,19 @@ TtStatus tt_session_send_text(TtSession *session,
                               size_t len);
 
 /**
+ * Send one line accepted by a local line editor, followed by the terminal's
+ * configured Return sequence. The bytes are echoed to the terminal exactly
+ * once without changing `terminal.local_echo` or the live SRM mode.
+ *
+ * This is intentionally separate from [`tt_session_send_text`]: only text
+ * accepted by the editor is delayed. Control keys, terminal mappings, macros
+ * and protocol replies keep using their immediate paths.
+ */
+TtStatus tt_session_send_edited_line(TtSession *session,
+                                     const char *text,
+                                     size_t len);
+
+/**
  * Put bytes on the wire unchanged: no UTF-8 validation, key table, LNM or
  * other text processing. Used by a macro's binary `send` and by
  * `Meta8Bit=raw` in a frontend. An empty slice succeeds.

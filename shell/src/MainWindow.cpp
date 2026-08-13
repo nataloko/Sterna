@@ -339,6 +339,21 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
             onNotice(tr("Could not change the local echo: %1").arg(error));
         }
     });
+    connect(m_connectBar, &ConnectBar::lineEditRequested, this, [this](bool on) {
+        if (!on && !m_view->confirmDiscardLineEdit()) {
+            // The checkbox moved before its signal arrived. The session is
+            // still authoritative, so refresh it back to checked on Cancel.
+            updateStatus();
+            return;
+        }
+        QString error;
+        if (!m_session->setSetting(QStringLiteral("terminal.line_edit"),
+                                   on ? QStringLiteral("on")
+                                      : QStringLiteral("off"),
+                                   &error)) {
+            onNotice(tr("Could not change line editing: %1").arg(error));
+        }
+    });
 
     // The second bar, which is the user's own. Its area comes from the
     // settings below, once they have been read; it is created here so the
@@ -430,7 +445,7 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
     applySavedPosition();
 
     updateStatus();
-    m_view->setFocus();
+    m_view->focusInput();
 
     // Last, because it publishes the window: once this is bound, something
     // else on the machine can ask this session for things, and everything it
@@ -471,7 +486,7 @@ void MainWindow::activatePage(TerminalPage *page)
         showTitle(m_session->title());
         updateStatus();
         queueWindowMetrics();
-        m_view->setFocus();
+        m_view->focusInput();
     }
 }
 

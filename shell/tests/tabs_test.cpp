@@ -8,6 +8,7 @@
 #include <QDialog>
 #include <QFile>
 #include <QLabel>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QScrollBar>
@@ -175,6 +176,16 @@ void press(QWidget *widget)
                       widget->mapToGlobal(point.toPoint()), Qt::LeftButton,
                       Qt::LeftButton, Qt::NoModifier);
     QApplication::sendEvent(widget, &event);
+}
+
+void type(TerminalView *view, int code, const QString &text)
+{
+    CHECK(view != nullptr);
+    if (!view) {
+        return;
+    }
+    QKeyEvent event(QEvent::KeyPress, code, Qt::NoModifier, text);
+    QApplication::sendEvent(view, &event);
 }
 
 void test_panel_assignment_and_geometry()
@@ -370,6 +381,30 @@ void test_tabs_are_independent_and_actions_follow_the_active_one()
     CHECK(first->session()->setting(QStringLiteral("terminal.local_echo"))
           == QStringLiteral("on"));
 
+    // Line editing is per page too. The shared checkbox follows the active
+    // page, and a draft stays with the page while another panel is active.
+    auto *line =
+        window.findChild<QCheckBox *>(QStringLiteral("connectBarLineEdit"));
+    CHECK(line != nullptr);
+    CHECK(second->session()->setSetting(QStringLiteral("terminal.line_edit"),
+                                        QStringLiteral("on"), &error));
+    CHECK(line && line->isChecked());
+    panels->setCurrentIndex(0);
+    CHECK(line && !line->isChecked());
+    if (line) {
+        line->click();
+    }
+    CHECK(first->session()->setting(QStringLiteral("terminal.line_edit"))
+          == QStringLiteral("on"));
+    type(first->view(), Qt::Key_D, QStringLiteral("d"));
+    type(first->view(), Qt::Key_R, QStringLiteral("r"));
+    CHECK(first->view()->lineEditText() == QStringLiteral("dr"));
+    panels->setCurrentIndex(1);
+    CHECK(line && line->isChecked());
+    CHECK(first->view()->lineEditText() == QStringLiteral("dr"));
+    panels->setCurrentIndex(0);
+    CHECK(first->view()->lineEditText() == QStringLiteral("dr"));
+
     press(window.findChild<QWidget *>(QStringLiteral("panelHeader0")));
     CHECK(window.session() == first->session());
     CHECK(echo && echo->isChecked());
@@ -386,6 +421,30 @@ void test_tabs_are_independent_and_actions_follow_the_active_one()
     CHECK(panels->count() == 1);
     CHECK(window.session() == first->session());
     CHECK(!panels->tabsClosable());
+}
+
+void test_new_tabs_load_the_saved_line_edit_default()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("sterna.ini"));
+    QFile file(ini);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[Sterna]\r\nLineEdit=on\r\n");
+    file.close();
+
+    MainWindow window(ini);
+    auto *panels = window.findChild<PanelContainer *>();
+    CHECK(panels != nullptr);
+    auto *first = static_cast<TerminalPage *>(panels->widget(0));
+    CHECK(first->view()->lineEditEnabled());
+
+    window.findChild<QAction *>(QStringLiteral("newTabAction"))->trigger();
+    CHECK(panels->count() == 2);
+    auto *second = static_cast<TerminalPage *>(panels->widget(1));
+    CHECK(second->view()->lineEditEnabled());
+    CHECK(second->session()->setting(QStringLiteral("terminal.line_edit"))
+          == QStringLiteral("on"));
 }
 
 void test_layout_actions_persist_only_the_window_setting()
@@ -598,6 +657,8 @@ void test_duplicate_reopens_telnet_with_the_live_settings()
     QString error;
     CHECK(window.session()->setSetting(QStringLiteral("terminal.title"),
                                        QStringLiteral("copied live"), &error));
+    CHECK(window.session()->setSetting(QStringLiteral("terminal.line_edit"),
+                                       QStringLiteral("on"), &error));
     auto *source =
         static_cast<TerminalPage *>(panels->currentWidget());
     duplicate->trigger();
@@ -612,6 +673,9 @@ void test_duplicate_reopens_telnet_with_the_live_settings()
     CHECK(copy->session()->canDuplicate());
     CHECK(copy->session()->setting(QStringLiteral("terminal.title"))
           == QStringLiteral("copied live"));
+    CHECK(copy->session()->setting(QStringLiteral("terminal.line_edit"))
+          == QStringLiteral("on"));
+    CHECK(copy->view()->lineEditEnabled());
     CHECK(source->session()->isConnected());
 
     // Closing a background target consults that page's settings without
@@ -639,6 +703,7 @@ int main(int argc, char **argv)
     test_panel_assignment_and_geometry();
     test_empty_panels_request_connections_without_creating_pages();
     test_tabs_are_independent_and_actions_follow_the_active_one();
+    test_new_tabs_load_the_saved_line_edit_default();
     test_layout_actions_persist_only_the_window_setting();
     test_visible_panels_refit_and_receive_their_own_metrics();
     test_empty_panel_dialogs_cancel_or_connect_in_place();

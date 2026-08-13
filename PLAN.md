@@ -5664,7 +5664,7 @@ The rule for going on that list: user-visible, not forced by the platform, and
 reproducing upstream instead would have been easy. A divergence Linux or Qt
 forces is a port, and belongs in a code comment and in `AGENTS.md`.
 
-Seven so far, all 2026-08-13:
+Eight so far, all 2026-08-13:
 
 1. **The default baud rate is 115200**, where `ttset.c:919` gives 9600. The
    key, its parse and its absence of bounds are unchanged, so `BaudRate=9600`
@@ -5709,6 +5709,13 @@ Seven so far, all 2026-08-13:
    choices are argued in `docs/deviations.md` — the bar does not exist until a
    button does, and no button ships with a shortcut, because a Qt action
    outranks the terminal widget and takes the key from the host silently.
+8. **Editable lines for every connection type**, a small local editor at the
+   terminal cursor that holds printable input until Return. It is deliberately
+   separate from telnet LINEMODE: serial, SSH, raw TCP and local shells get the
+   same correction-before-send behaviour, while function keys, mapped keys,
+   protocol replies and all non-editor control keys keep their immediate paths.
+   The accepted line is echoed once without assigning LocalEcho or SRM, so the
+   tab's prior echo preference returns when the editor is turned off.
 
 `[Sterna]` is the first invented section in the schema, and
 `tt-config/tests/upstream.rs` now asserts in both directions: an upstream

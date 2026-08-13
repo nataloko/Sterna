@@ -1055,6 +1055,19 @@ static void test_settings(void)
     CHECK(tt_session_setting(s, "no.such.setting") == NULL);
     CHECK(tt_session_set_setting(s, "no.such.setting", "1") == TT_ERR_INVALID);
 
+    /* The line editor's accepted line is visible even with LocalEcho off, but
+     * forcing that one echo must not rewrite the preference or live SRM. */
+    CHECK(strcmp(tt_session_setting(s, "terminal.local_echo"), "off") == 0);
+    CHECK_OK(tt_session_send_edited_line(s, "edited", SIZE_MAX));
+    size_t edited_len = 0;
+    const TtCell *edited_row = tt_session_row(s, 0, &edited_len);
+    CHECK(edited_row != NULL && edited_len >= 6);
+    if (edited_row && edited_len >= 6) {
+        CHECK(base(&edited_row[0]) == 'e');
+        CHECK(base(&edited_row[5]) == 'd');
+    }
+    CHECK(strcmp(tt_session_setting(s, "terminal.local_echo"), "off") == 0);
+
     /* Applying reaches the running terminal: the size resizes the grid, and
      * the backspace key changes what the window has to send. */
     CHECK(tt_session_backspace_sends_bs(s));
@@ -1713,6 +1726,7 @@ static void test_null_safety(void)
      * that lost its session sends DEL rather than reading through a null. */
     CHECK(!tt_session_backspace_sends_bs(NULL));
     CHECK(tt_session_send_text(NULL, "x", 1) == TT_ERR_INVALID);
+    CHECK(tt_session_send_edited_line(NULL, "x", 1) == TT_ERR_INVALID);
     CHECK(tt_session_send_bytes(NULL, NULL, 0) == TT_ERR_INVALID);
     CHECK(tt_session_focus(NULL, true) == TT_ERR_INVALID);
     CHECK(tt_session_send_break(NULL) == TT_ERR_INVALID);
@@ -1809,6 +1823,7 @@ static void test_null_safety(void)
     CHECK(tt_session_row(s, cfg.rows, NULL) == NULL);
     CHECK_OK(tt_session_pump(s, 0, NULL));
     CHECK(tt_session_send_text(s, NULL, 1) == TT_ERR_INVALID);
+    CHECK(tt_session_send_edited_line(s, NULL, 1) == TT_ERR_INVALID);
     CHECK(tt_session_connect_serial(s, "/dev/null", NULL) == TT_ERR_INVALID);
     CHECK(tt_session_connect_telnet(s, "h", 23, NULL) == TT_ERR_INVALID);
     CHECK(tt_session_connect_telnet(s, NULL, 23, NULL) == TT_ERR_INVALID);

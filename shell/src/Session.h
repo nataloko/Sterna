@@ -280,6 +280,9 @@ public:
     /// a button takes it away.
     bool keyCodeBound(quint16 scan) const;
     void sendText(const QString &text);
+    /// Send one line accepted by the local editor and its configured Return,
+    /// forcing effective echo without changing the Local echo preference.
+    void sendEditedLine(const QString &text);
     /// Raw bytes: no UTF-8 encoding or LNM. `Meta8Bit=raw` is the frontend
     /// caller; macro binary sends use the same core path directly.
     void sendBytes(const QByteArray &bytes);

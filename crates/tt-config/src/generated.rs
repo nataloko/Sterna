@@ -2669,6 +2669,13 @@ pub struct Settings {
     pub terminal_cr_send: TerminalCrSend,
     /// `ttset.c:660`.
     pub terminal_local_echo: bool,
+    /// **`[Sterna]`**, because this is a local editor rather than telnet LINEMODE
+    /// (`connection.line_mode`). While enabled, printable keyboard input is held in
+    /// the terminal view until Return sends one edited line. Local echo is effective
+    /// for that send without overwriting `terminal.local_echo`, so leaving the mode
+    /// restores the user's preference. Off by default: an ordinary terminal remains
+    /// immediate unless the user explicitly opts in.
+    pub terminal_line_edit: bool,
     /// `ttset.c:625`. With it on, resizing the window resizes the terminal.
     pub terminal_size_follows_window: bool,
     /// `ttset.c:628`. With it on, a remote resize resizes the window.
@@ -4139,8 +4146,8 @@ pub struct Settings {
     /// Window decoration belongs to the compositor on Linux, so it is carried only.
     pub window_corner_dontround: bool,
     /// **`[Sterna]`**, because upstream has no toolbar and so no key to be
-    /// compatible with. Whether the bar under the menu — port, connect, local echo —
-    /// is shown. It exists as a setting rather than as chrome nobody can remove:
+    /// compatible with. Whether the bar under the menu — port, connect, local echo,
+    /// line edit — is shown. It exists as a setting rather than as chrome nobody can remove:
     /// `window.popup_menu` and `window.hide_title` are about the *menu*, so neither
     /// hides this, and Setup > Show toolbar writes it.
     pub window_toolbar: bool,
@@ -4223,6 +4230,7 @@ impl Default for Settings {
             terminal_cr_receive: TerminalCrReceive::default(),
             terminal_cr_send: TerminalCrSend::default(),
             terminal_local_echo: false,
+            terminal_line_edit: false,
             terminal_size_follows_window: false,
             terminal_auto_win_resize: false,
             terminal_clear_on_resize: false,
@@ -4584,6 +4592,7 @@ impl Settings {
                 None => d.terminal_cr_send,
             },
             terminal_local_echo: crate::schema::on_off(ini.get("Tera Term", "LocalEcho"), false),
+            terminal_line_edit: crate::schema::on_off(ini.get("Sterna", "LineEdit"), false),
             terminal_size_follows_window: crate::schema::on_off(
                 ini.get("Tera Term", "TermIsWin"),
                 false,
@@ -5829,6 +5838,11 @@ impl Settings {
                 "off"
             }
             .to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "LineEdit",
+            &if self.terminal_line_edit { "on" } else { "off" }.to_string(),
         );
         ini.set(
             "Tera Term",
@@ -7983,6 +7997,13 @@ impl Settings {
                         "off"
                     }
                     .to_string(),
+                );
+            }
+            "terminal.line_edit" => {
+                ini.set(
+                    "Sterna",
+                    "LineEdit",
+                    &if self.terminal_line_edit { "on" } else { "off" }.to_string(),
                 );
             }
             "terminal.size_follows_window" => {
@@ -10747,6 +10768,7 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "terminal.line_edit" => if self.terminal_line_edit { "on" } else { "off" }.to_string(),
             "terminal.size_follows_window" => if self.terminal_size_follows_window {
                 "on"
             } else {
@@ -11609,6 +11631,9 @@ impl Settings {
             "terminal.cr_send" => self.terminal_cr_send = TerminalCrSend::from_ini(value),
             "terminal.local_echo" => {
                 self.terminal_local_echo = crate::schema::on_off(Some(value), false)
+            }
+            "terminal.line_edit" => {
+                self.terminal_line_edit = crate::schema::on_off(Some(value), false)
             }
             "terminal.size_follows_window" => {
                 self.terminal_size_follows_window = crate::schema::on_off(Some(value), false)
@@ -12553,6 +12578,16 @@ pub const FIELDS: &[Field] = &[
         default: "off",
         label: Some("DLG_TERM_LOCALECHO"),
         doc: "`ttset.c:660`.",
+    },
+    Field {
+        name: "terminal.line_edit",
+        page: "terminal",
+        section: "Sterna",
+        key: "LineEdit",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "**`[Sterna]`**, because this is a local editor rather than telnet LINEMODE (`connection.line_mode`). While enabled, printable keyboard input is held in the terminal view until Return sends one edited line. Local echo is effective for that send without overwriting `terminal.local_echo`, so leaving the mode restores the user's preference. Off by default: an ordinary terminal remains immediate unless the user explicitly opts in.",
     },
     Field {
         name: "terminal.size_follows_window",
@@ -15602,7 +15637,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "on",
         label: None,
-        doc: "**`[Sterna]`**, because upstream has no toolbar and so no key to be compatible with. Whether the bar under the menu — port, connect, local echo — is shown. It exists as a setting rather than as chrome nobody can remove: `window.popup_menu` and `window.hide_title` are about the *menu*, so neither hides this, and Setup > Show toolbar writes it.",
+        doc: "**`[Sterna]`**, because upstream has no toolbar and so no key to be compatible with. Whether the bar under the menu — port, connect, local echo, line edit — is shown. It exists as a setting rather than as chrome nobody can remove: `window.popup_menu` and `window.hide_title` are about the *menu*, so neither hides this, and Setup > Show toolbar writes it.",
     },
     Field {
         name: "window.panel_layout",

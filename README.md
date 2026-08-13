@@ -19,6 +19,8 @@ supporting Tera Term-compatible workflows and configuration.
   the screen and the scrollback
 - [Quick buttons](docs/buttons.md): a bar of commands one click away, each one
   optionally on a keyboard shortcut
+- Per-tab line editing that holds an editable command locally until Return,
+  over serial, SSH, telnet, raw TCP, or a local shell
 - `KEYBOARD.CNF` key mappings and `TERATERM.INI`-compatible settings
 - Printing, a local control socket, and a signed updater that checks once a day
 - Localized interface using Tera Term's 14 language catalogs

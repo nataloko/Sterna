@@ -1,4 +1,4 @@
-// The bar under the menu: a port, a connect button, and local echo.
+// The bar under the menu: a port, connect, local echo, and line editing.
 //
 // Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 
@@ -15,13 +15,13 @@ class QCheckBox;
 class QComboBox;
 class Session;
 
-/// The three things a serial session needs within reach: which port, open or
-/// close it, and whether what is typed is echoed locally.
+/// The input and connection controls that need to stay within reach: which
+/// port, open or close it, local echo, and locally edited lines.
 ///
 /// Upstream has no toolbar — its equivalents are a dialog (New connection), a
-/// menu item (Disconnect) and a checkbox three tabs into Setup > Terminal. This
-/// is deliberately not a general toolbar: it is those three, because they are
-/// the ones a person working on a console port uses every few minutes.
+/// menu item (Disconnect) and a checkbox three tabs into Setup > Terminal.
+/// Line edit is Sterna's own input mode. This is deliberately not a general
+/// toolbar: it holds only connection and input state used during a session.
 ///
 /// It owns no state. Every widget on it is a view of the session, refreshed by
 /// [`refresh`] from the window's own status update, and every activation is a
@@ -51,6 +51,7 @@ signals:
     void connectRequested(const QString &portPath);
     void disconnectRequested();
     void localEchoRequested(bool on);
+    void lineEditRequested(bool on);
 
 private:
     QComboBox *m_port = nullptr;
@@ -60,6 +61,7 @@ private:
     /// where a pressed-in button does not. It is also the shape they know it
     /// in — upstream's Setup > Terminal has the same box.
     QCheckBox *m_echo = nullptr;
+    QCheckBox *m_lineEdit = nullptr;
     QString m_connectText;
     QString m_disconnectText;
 };

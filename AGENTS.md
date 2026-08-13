@@ -1097,6 +1097,10 @@ The keyboard:
   (`keyboard.c:960`); `DeleteKey=on` still sends 0x7f first. With no
   `KEYBOARD.CNF` reader yet, strict mode quiets the built-in special keys —
   faithfully incomplete.
+- **Line edit is not telnet LINEMODE.** It is a frontend editor shared by every
+  transport: printable input and Ctrl+A/X/Z/Y stay local, while other control,
+  function and `KEYBOARD.CNF` keys remain immediate. Sending the accepted line
+  forces one echo without assigning `LocalEcho` or SRM.
 - **With local echo, sending is also receiving** — the same bytes go through
   the receive parser, so a keystroke damages the screen and only draining the
   core's events says so. The frontend's input paths call `Session::dispatch`,

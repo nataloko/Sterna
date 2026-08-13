@@ -1506,6 +1506,28 @@ impl Session {
         self.flush_pending()
     }
 
+    /// Send one locally edited line and its configured Return sequence.
+    ///
+    /// The line editor is a frontend concern: macros, protocol replies and
+    /// mapped control keys must continue to use their ordinary immediate
+    /// paths. What the core owns is the terminal-dependent encoding of Return
+    /// and local echo. This path echoes exactly once even when SRM or
+    /// `LocalEcho` currently says not to, without assigning that live mode or
+    /// the saved setting. Turning the editor off therefore restores the
+    /// previous echo behaviour instead of silently pinning it on.
+    pub fn send_edited_line(&mut self, text: &str) -> Result<()> {
+        if self.xfer.is_some() {
+            return Ok(());
+        }
+        let mut bytes = self.vt.encode_text(text);
+        bytes.extend_from_slice(&self.vt.encode_text("\r"));
+        if !bytes.is_empty() {
+            self.feed(&bytes);
+            self.queue(&bytes);
+        }
+        self.flush_pending()
+    }
+
     /// Put bytes on the wire exactly as given — no key table, no LNM, no
     /// encoding.
     ///

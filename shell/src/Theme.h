@@ -80,6 +80,7 @@ public:
     const QColor &paletteColor(uint32_t index) const { return m_palette[index & 0xFF]; }
 
     const QColor &defaultBackground() const { return m_normal[1]; }
+    const QColor &defaultForeground() const { return m_normal[0]; }
     const QColor &cursorColor() const { return m_cursor; }
 
     const QFont &font() const { return m_font; }

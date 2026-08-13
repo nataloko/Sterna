@@ -393,8 +393,9 @@ private:
     Printer *m_printer = nullptr;
     TerminalView *m_view = nullptr;
     QLabel *m_status = nullptr;
-    /// The bar under the menu: port, connect, local echo. Shown when
-    /// `window.toolbar` is on, which is what Setup > Show toolbar writes.
+    /// The bar under the menu: port, connect, local echo and line editing.
+    /// Shown when `window.toolbar` is on, which is what Setup > Show toolbar
+    /// writes.
     ConnectBar *m_connectBar = nullptr;
     /// The user's own commands. Hidden while the list is empty; otherwise
     /// shown when `window.quick_buttons` is on, at the edge
