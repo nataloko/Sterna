@@ -12,13 +12,15 @@
 
 #include "sterna.h"
 
+class QFormLayout;
 class QLabel;
 class I18n;
 class Plugins;
 class QLineEdit;
-class QTabWidget;
+class QStackedWidget;
 class QWidget;
 class Session;
+class TabRows;
 
 /// Every setting, built from the core's metadata table.
 ///
@@ -70,11 +72,16 @@ private:
     /// box is the thing that makes 600 settings navigable, which is the number
     /// this dialog is eventually for.
     void applyFilter(const QString &text);
+    /// One scrolling page and its tab. Returns the form to add rows to.
+    QFormLayout *addPage(const QString &title);
 
     Session *m_session;
     Plugins *m_plugins;
     I18n *m_i18n;
-    QTabWidget *m_tabs = nullptr;
+    /// The tabs, on as many rows as the width needs — 25 schema pages do not
+    /// fit on one, and a `QTabWidget` answers that with scroll buttons.
+    TabRows *m_tabs = nullptr;
+    QStackedWidget *m_pages = nullptr;
     QLineEdit *m_search = nullptr;
     QVector<Row> m_rows;
 };

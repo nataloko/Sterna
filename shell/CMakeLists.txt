@@ -153,6 +153,7 @@ add_library(sterna_shell STATIC
     src/SettingsDialog.cpp
     src/SshDialog.cpp
     src/SshPrompts.cpp
+    src/TabRows.cpp
     src/TelnetDialog.cpp
     src/XferDialog.cpp)
 

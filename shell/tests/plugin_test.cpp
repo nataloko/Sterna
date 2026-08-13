@@ -17,7 +17,6 @@
 #include <QMenu>
 #include <QLineEdit>
 #include <QStatusBar>
-#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTimer>
 
@@ -26,6 +25,7 @@
 #include "MainWindow.h"
 #include "Plugins.h"
 #include "SettingsDialog.h"
+#include "TabRows.h"
 
 static int failures = 0;
 
@@ -151,7 +151,7 @@ void test_window_plugins()
         CHECK(loaded->setting(3) == QStringLiteral("safe"));
 
         SettingsDialog dialog(window.session(), loaded);
-        QTabWidget *tabs = dialog.findChild<QTabWidget *>();
+        TabRows *tabs = dialog.findChild<TabRows *>();
         CHECK(tabs != nullptr);
         bool foundPluginPage = false;
         if (tabs) {

@@ -12,14 +12,16 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QFrame>
 #include <QScrollArea>
 #include <QSpinBox>
-#include <QTabWidget>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 
 #include "Session.h"
 #include "I18n.h"
 #include "Plugins.h"
+#include "TabRows.h"
 
 namespace {
 
@@ -148,8 +150,16 @@ void SettingsDialog::build()
     connect(m_search, &QLineEdit::textChanged, this, &SettingsDialog::applyFilter);
     layout->addWidget(m_search);
 
-    m_tabs = new QTabWidget(this);
-    layout->addWidget(m_tabs, 1);
+    // The tabs and the pages are two widgets rather than a `QTabWidget`,
+    // because the bar has to wrap: the schema has 25 pages and a `QTabBar`
+    // puts them on one line behind scroll buttons. See `TabRows`.
+    m_tabs = new TabRows(this);
+    m_pages = new QStackedWidget(this);
+    m_pages->setFrameShape(QFrame::StyledPanel);
+    connect(m_tabs, &TabRows::currentChanged, m_pages,
+            &QStackedWidget::setCurrentIndex);
+    layout->addWidget(m_tabs);
+    layout->addWidget(m_pages, 1);
 
     // One tab per page, created in the order the schema lists them, so the
     // schema decides the layout as well as the content.
@@ -180,15 +190,7 @@ void SettingsDialog::build()
 
         QFormLayout *form = pages.value(page);
         if (!form) {
-            // A scroll area per tab, because the pages are already taller than
-            // a laptop screen at 39 settings and this is meant to hold 600.
-            auto *body = new QWidget(m_tabs);
-            form = new QFormLayout(body);
-            form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
-            auto *scroll = new QScrollArea(m_tabs);
-            scroll->setWidgetResizable(true);
-            scroll->setWidget(body);
-            m_tabs->addTab(scroll, pageTitle(page));
+            form = addPage(pageTitle(page));
             pages.insert(page, form);
         }
 
@@ -311,13 +313,7 @@ void SettingsDialog::build()
 
             QFormLayout *form = pages.value(page);
             if (!form) {
-                auto *body = new QWidget(m_tabs);
-                form = new QFormLayout(body);
-                form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
-                auto *scroll = new QScrollArea(m_tabs);
-                scroll->setWidgetResizable(true);
-                scroll->setWidget(body);
-                m_tabs->addTab(scroll, f.page);
+                form = addPage(f.page);
                 pages.insert(page, form);
             }
 
@@ -404,7 +400,30 @@ void SettingsDialog::build()
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     layout->addWidget(buttons);
 
-    resize(640, 520);
+    // Wide enough for the tabs to land on two rows rather than four, which is
+    // what `TabRows` asks for: the page titles decide that width, so it comes
+    // from the layout instead of a number here. Qt caps a window's initial size
+    // at two thirds of the screen, which is the ceiling on it either way.
+    resize(qMax(640, sizeHint().width()), 560);
+}
+
+QFormLayout *SettingsDialog::addPage(const QString &title)
+{
+    // A scroll area per tab, because the pages are already taller than a
+    // laptop screen at 39 settings and this is meant to hold 600. Its own frame
+    // is off: the stack draws the panel the tabs sit on.
+    auto *body = new QWidget(m_pages);
+    auto *form = new QFormLayout(body);
+    form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    auto *scroll = new QScrollArea(m_pages);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidget(body);
+    // The page before the tab, so the bar's first `currentChanged` — which it
+    // emits as the first tab is added — has something to select.
+    m_pages->addWidget(scroll);
+    m_tabs->addTab(title);
+    return form;
 }
 
 void SettingsDialog::applyChanges()

@@ -41,8 +41,8 @@
 #include <QMenuBar>
 #include <QPushButton>
 #include <QScreen>
+#include <QStackedWidget>
 #include <QStandardPaths>
-#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QThread>
@@ -56,6 +56,7 @@
 #include "SettingsDialog.h"
 #include "SshDialog.h"
 #include "SshPrompts.h"
+#include "TabRows.h"
 #include "TelnetDialog.h"
 #include "TerminalView.h"
 
@@ -1429,14 +1430,34 @@ void test_the_settings_dialog_is_built_from_the_schema()
 
     const size_t fields = tt_settings_field_count();
     CHECK(fields > 0);
-    CHECK(dialog.findChildren<QTabWidget *>().size() == 1);
+    CHECK(dialog.findChildren<TabRows *>().size() == 1);
 
     // A tab per page, in the schema's own order.
-    auto *tabs = dialog.findChild<QTabWidget *>();
+    auto *tabs = dialog.findChild<TabRows *>();
     CHECK(tabs != nullptr);
     if (tabs) {
         CHECK(tabs->count() > 1);
         CHECK(tabs->tabText(0) == QStringLiteral("Terminal"));
+        // Selecting a tab shows its page, which is the whole of what the two
+        // widgets have to agree about.
+        auto *pages = dialog.findChild<QStackedWidget *>();
+        CHECK(pages != nullptr);
+        if (pages) {
+            CHECK(pages->count() == tabs->count());
+            tabs->setCurrentIndex(3);
+            CHECK(pages->currentIndex() == 3);
+            // Back to the first page: the filter checks below ask whether a
+            // widget is visible, and a page the stack is not showing is not.
+            tabs->setCurrentIndex(0);
+        }
+        // And they wrap, which is the point of the widget: 25 schema pages do
+        // not fit on one row at any width a dialog can have. Asked of the
+        // layout rather than of a shown dialog, because Qt caps a window's
+        // initial size at two thirds of the screen and this would then be a
+        // test of the screen.
+        CHECK(tabs->rowsForWidth(tabs->widthForRows(2)) == 2);
+        CHECK(tabs->rowsForWidth(tabs->widthForRows(1)) == 1);
+        CHECK(tabs->rowsForWidth(tabs->widthForRows(3)) == 3);
     }
 
     // A combo box carries the INI's spellings, both ways — `TerminalID` is
@@ -2074,7 +2095,13 @@ int main(int argc, char **argv)
             // assertion can judge — what a generated dialog *looks* like is
             // exactly the question the schema approach has to answer.
             SettingsDialog dialog(&h.session);
+            // A never-shown dialog renders before its layout has run, and one
+            // `adjustSize` fixes the overlapping labels — but `adjustSize` also
+            // caps the result at two thirds of the screen, and the offscreen
+            // platform's screen is 800x800. So the size it asked for is put back
+            // afterwards, or this dumps a picture of the cap.
             dialog.adjustSize();
+            dialog.resize(dialog.sizeHint());
             const QString dialogPath = dir + "/settings.png";
             dialog.grab().save(dialogPath);
             printf("wrote %s\n", qPrintable(dialogPath));
