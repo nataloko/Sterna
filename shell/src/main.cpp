@@ -125,6 +125,7 @@ int runTeraTerm(QApplication &app, const QStringList &args)
 
     window.startFrom(cmd);
     tt_cmdline_free(cmd);
+    window.checkForUpdatesOnStartup();
     return app.exec();
 }
 
@@ -236,5 +237,11 @@ int main(int argc, char **argv)
         }
     }
 
+    // After the connection has been asked for, and from `main` on both command
+    // lines rather than from the window: a `MainWindow` is built by half the
+    // tests in `shell/tests`, and none of them should reach the network. What
+    // it does from here is on a timer and conditional — see
+    // `MainWindow::checkForUpdatesOnStartup`.
+    window.checkForUpdatesOnStartup();
     return app.exec();
 }
