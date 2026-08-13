@@ -5,8 +5,14 @@
 #include <QAction>
 #include <QApplication>
 #include <QFile>
+#include <QLabel>
+#include <QMouseEvent>
+#include <QPushButton>
+#include <QScrollBar>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
+#include <QVBoxLayout>
 #include <QVector>
 
 #include <cstdio>
@@ -27,6 +33,7 @@
 #endif
 
 #include "MainWindow.h"
+#include "PanelContainer.h"
 #include "Session.h"
 #include "TerminalPage.h"
 
@@ -140,6 +147,148 @@ QString screenText(const Session &session)
     return out;
 }
 
+QWidget *mockPage(const QString &name)
+{
+    auto *page = new QWidget;
+    page->setObjectName(name);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(new QLabel(name, page));
+    auto *scroll = new QScrollBar(Qt::Vertical, page);
+    scroll->setObjectName(name + QStringLiteral("Scroll"));
+    layout->addWidget(scroll);
+    return page;
+}
+
+void press(QWidget *widget)
+{
+    CHECK(widget != nullptr);
+    if (!widget) {
+        return;
+    }
+    const QPointF point(2, 2);
+    QMouseEvent event(QEvent::MouseButtonPress, point, point,
+                      widget->mapToGlobal(point.toPoint()), Qt::LeftButton,
+                      Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(widget, &event);
+}
+
+void test_panel_assignment_and_geometry()
+{
+    PanelContainer panels;
+    panels.resize(800, 600);
+
+    QWidget *a = mockPage(QStringLiteral("a"));
+    QWidget *b = mockPage(QStringLiteral("b"));
+    QWidget *c = mockPage(QStringLiteral("c"));
+    QWidget *d = mockPage(QStringLiteral("d"));
+    QWidget *e = mockPage(QStringLiteral("e"));
+    panels.addPage(a, QStringLiteral("A"));
+    panels.addPage(b, QStringLiteral("B"));
+    panels.addPage(c, QStringLiteral("C"));
+    panels.addPage(d, QStringLiteral("D"));
+    panels.addPage(e, QStringLiteral("E"));
+    CHECK(panels.count() == 5);
+    CHECK(panels.pageAtPanel(0) == e);
+    CHECK(panels.currentWidget() == e);
+
+    // A layout change starts with the active connection, then the connections
+    // which were visible, then the remaining tabs in tab order.
+    panels.setLayoutMode(PanelLayout::Four);
+    CHECK(panels.pageAtPanel(0) == e);
+    CHECK(panels.pageAtPanel(1) == a);
+    CHECK(panels.pageAtPanel(2) == b);
+    CHECK(panels.pageAtPanel(3) == c);
+    CHECK(panels.panelOf(d) == -1);
+
+    panels.show();
+    QApplication::processEvents();
+    auto *f0 = panels.findChild<QWidget *>(QStringLiteral("panelFrame0"));
+    auto *f1 = panels.findChild<QWidget *>(QStringLiteral("panelFrame1"));
+    auto *f2 = panels.findChild<QWidget *>(QStringLiteral("panelFrame2"));
+    auto *f3 = panels.findChild<QWidget *>(QStringLiteral("panelFrame3"));
+    CHECK(f0 && f1 && f2 && f3);
+    if (f0 && f1 && f2 && f3) {
+        CHECK(qAbs(f0->width() - f1->width()) <= 1);
+        CHECK(qAbs(f0->height() - f2->height()) <= 1);
+        CHECK(qAbs(f2->width() - f3->width()) <= 1);
+        CHECK(qAbs(f1->height() - f3->height()) <= 1);
+    }
+
+    // A header or a page child (the terminal's scrollbar in production)
+    // routes the shared window actions to that pane.
+    press(panels.findChild<QWidget *>(QStringLiteral("panelHeader1")));
+    CHECK(panels.currentWidget() == a);
+    press(b->findChild<QScrollBar *>(QStringLiteral("bScroll")));
+    CHECK(panels.currentWidget() == b);
+
+    // An off-screen tab replaces the active pane and leaves the displaced
+    // connection open and in tab order.
+    panels.setCurrentWidget(d);
+    CHECK(panels.currentWidget() == d);
+    CHECK(panels.pageAtPanel(2) == d);
+    CHECK(panels.indexOf(b) >= 0);
+    CHECK(panels.panelOf(b) == -1);
+
+    panels.setLayoutMode(PanelLayout::Two);
+    CHECK(panels.pageAtPanel(0) == d);
+    CHECK(panels.pageAtPanel(1) == e);
+
+    // Moving a tab changes which hidden page is the next refill without
+    // disturbing the connections already on screen.
+    panels.tabBar()->moveTab(panels.indexOf(c), 0);
+    CHECK(panels.widget(0) == c);
+    QWidget *removed = panels.removePage(panels.indexOf(e));
+    CHECK(removed == e);
+    CHECK(panels.pageAtPanel(1) == c);
+    CHECK(!e->isVisible());
+    delete e;
+
+    // New pages use an empty slot first; a requested empty-tile slot is exact.
+    panels.setLayoutMode(PanelLayout::Four);
+    removed = panels.removePage(panels.indexOf(a));
+    CHECK(removed == a);
+    const int empty = panels.firstEmptyPanel();
+    CHECK(empty >= 0);
+    QWidget *f = mockPage(QStringLiteral("f"));
+    panels.addPage(f, QStringLiteral("F"));
+    CHECK(panels.panelOf(f) == empty);
+    delete a;
+
+    removed = panels.removePage(panels.indexOf(b));
+    CHECK(removed == b);
+    const int exact = panels.firstEmptyPanel();
+    CHECK(exact >= 0);
+    QWidget *g = mockPage(QStringLiteral("g"));
+    panels.addPage(g, QStringLiteral("G"), exact);
+    CHECK(panels.pageAtPanel(exact) == g);
+    delete b;
+}
+
+void test_empty_panels_request_connections_without_creating_pages()
+{
+    PanelContainer panels;
+    panels.setLayoutMode(PanelLayout::Four);
+    int requestedPanel = -1;
+    PanelContainer::ConnectionKind requestedKind =
+        PanelContainer::ConnectionKind::Serial;
+    QObject::connect(
+        &panels, &PanelContainer::emptyConnectionRequested, &panels,
+        [&](int panel, PanelContainer::ConnectionKind kind) {
+            requestedPanel = panel;
+            requestedKind = kind;
+        });
+    auto *ssh = panels.findChild<QPushButton *>(QStringLiteral("panelSsh2"));
+    CHECK(ssh != nullptr);
+    if (ssh) {
+        ssh->click();
+    }
+    CHECK(requestedPanel == 2);
+    CHECK(requestedKind == PanelContainer::ConnectionKind::Ssh);
+    CHECK(panels.count() == 0);
+    CHECK(panels.pageAtPanel(2) == nullptr);
+}
+
 void test_tabs_are_independent_and_actions_follow_the_active_one()
 {
     QTemporaryDir dir;
@@ -234,6 +383,8 @@ int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("tabs_test"));
+    test_panel_assignment_and_geometry();
+    test_empty_panels_request_connections_without_creating_pages();
     test_tabs_are_independent_and_actions_follow_the_active_one();
     test_duplicate_reopens_telnet_with_the_live_settings();
     if (failures != 0) {

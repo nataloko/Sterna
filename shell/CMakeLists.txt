@@ -139,6 +139,7 @@ endif()
 add_library(sterna_shell STATIC
     src/Branding.cpp
     src/MainWindow.cpp
+    src/PanelContainer.cpp
     src/TerminalPage.cpp
     src/WindowTitle.cpp
     src/TerminalView.cpp
