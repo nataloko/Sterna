@@ -2475,6 +2475,57 @@ impl Default for BroadcastSubmitKey {
     }
 }
 
+/// **`[Sterna]`**, because simultaneous panes are a Sterna window feature rather
+/// than terminal state. The value says how many connections this window shows at
+/// once: one terminal, two equal side-by-side panels, or four equal panels in a
+/// 2x2 grid. A missing or unrecognised spelling returns to the single-panel
+/// layout, so an edited file cannot leave the window without a usable view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowPanelLayout {
+    /// `single`
+    Single,
+    /// `two`
+    Two,
+    /// `four`
+    Four,
+}
+
+impl WindowPanelLayout {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Single => "single",
+            Self::Two => "two",
+            Self::Four => "four",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised is `Single`** — which
+    /// is *not* this type's default. Upstream reads the key with a
+    /// default string and then runs a chain of comparisons whose last
+    /// arm catches everything, so an absent key and a misspelt value
+    /// are two different settings.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("single") {
+            return Self::Single;
+        }
+        if s.eq_ignore_ascii_case("two") {
+            return Self::Two;
+        }
+        if s.eq_ignore_ascii_case("four") {
+            return Self::Four;
+        }
+        Self::Single
+    }
+}
+
+impl Default for WindowPanelLayout {
+    fn default() -> Self {
+        Self::Single
+    }
+}
+
 /// Which of the four framing/burst combinations was used (`TelnetMode::of`).
 /// `auto` is the shipped one: data until the first `IAC`, telnet after it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4019,6 +4070,12 @@ pub struct Settings {
     /// `window.popup_menu` and `window.hide_title` are about the *menu*, so neither
     /// hides this, and Setup > Show toolbar writes it.
     pub window_toolbar: bool,
+    /// **`[Sterna]`**, because simultaneous panes are a Sterna window feature rather
+    /// than terminal state. The value says how many connections this window shows at
+    /// once: one terminal, two equal side-by-side panels, or four equal panels in a
+    /// 2x2 grid. A missing or unrecognised spelling returns to the single-panel
+    /// layout, so an edited file cannot leave the window without a usable view.
+    pub window_panel_layout: WindowPanelLayout,
     /// The device path, not a number: `ComPort` is upstream's and cannot spell
     /// `/dev/serial/by-id/usb-FTDI_…`. Written as the port was opened, so it is the
     /// `open_path` a stable symlink resolves from rather than the `ttyUSB<n>` that
@@ -4367,6 +4424,7 @@ impl Default for Settings {
             window_jump_list: true,
             window_corner_dontround: false,
             window_toolbar: true,
+            window_panel_layout: WindowPanelLayout::default(),
             recent_serial_port: String::from(""),
             recent_ssh_host: String::from(""),
             recent_ssh_user: String::from(""),
@@ -5572,6 +5630,10 @@ impl Settings {
                 false,
             ),
             window_toolbar: crate::schema::on_off(ini.get("Sterna", "Toolbar"), true),
+            window_panel_layout: match ini.get("Sterna", "PanelLayout") {
+                Some(v) => WindowPanelLayout::from_ini(v),
+                None => d.window_panel_layout,
+            },
             recent_serial_port: ini
                 .get_or("Sterna", "SerialPort", &d.recent_serial_port)
                 .to_string(),
@@ -7678,6 +7740,11 @@ impl Settings {
             "Sterna",
             "Toolbar",
             &if self.window_toolbar { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "PanelLayout",
+            &self.window_panel_layout.as_ini().to_string(),
         );
         ini.set("Sterna", "SerialPort", &self.recent_serial_port.clone());
         ini.set("Sterna", "SshHost", &self.recent_ssh_host.clone());
@@ -10418,6 +10485,13 @@ impl Settings {
                     &if self.window_toolbar { "on" } else { "off" }.to_string(),
                 );
             }
+            "window.panel_layout" => {
+                ini.set(
+                    "Sterna",
+                    "PanelLayout",
+                    &self.window_panel_layout.as_ini().to_string(),
+                );
+            }
             "recent.serial_port" => {
                 ini.set("Sterna", "SerialPort", &self.recent_serial_port.clone());
             }
@@ -11284,6 +11358,7 @@ impl Settings {
             }
             .to_string(),
             "window.toolbar" => if self.window_toolbar { "on" } else { "off" }.to_string(),
+            "window.panel_layout" => self.window_panel_layout.as_ini().to_string(),
             "recent.serial_port" => self.recent_serial_port.clone(),
             "recent.ssh_host" => self.recent_ssh_host.clone(),
             "recent.ssh_user" => self.recent_ssh_user.clone(),
@@ -12160,6 +12235,7 @@ impl Settings {
                 self.window_corner_dontround = crate::schema::on_off(Some(value), false)
             }
             "window.toolbar" => self.window_toolbar = crate::schema::on_off(Some(value), true),
+            "window.panel_layout" => self.window_panel_layout = WindowPanelLayout::from_ini(value),
             "recent.serial_port" => self.recent_serial_port = value.to_string(),
             "recent.ssh_host" => self.recent_ssh_host = value.to_string(),
             "recent.ssh_user" => self.recent_ssh_user = value.to_string(),
@@ -15288,6 +15364,16 @@ pub const FIELDS: &[Field] = &[
         default: "on",
         label: None,
         doc: "**`[Sterna]`**, because upstream has no toolbar and so no key to be compatible with. Whether the bar under the menu — port, connect, local echo — is shown. It exists as a setting rather than as chrome nobody can remove: `window.popup_menu` and `window.hide_title` are about the *menu*, so neither hides this, and Setup > Show toolbar writes it.",
+    },
+    Field {
+        name: "window.panel_layout",
+        page: "window",
+        section: "Sterna",
+        key: "PanelLayout",
+        kind: Kind::Enum(&["single", "two", "four"]),
+        default: "single",
+        label: None,
+        doc: "**`[Sterna]`**, because simultaneous panes are a Sterna window feature rather than terminal state. The value says how many connections this window shows at once: one terminal, two equal side-by-side panels, or four equal panels in a 2x2 grid. A missing or unrecognised spelling returns to the single-panel layout, so an edited file cannot leave the window without a usable view.",
     },
     Field {
         name: "recent.serial_port",

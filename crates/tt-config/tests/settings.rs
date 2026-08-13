@@ -5,7 +5,7 @@ use tt_config::{
     ConnectionPortType, EncodingDecSpecialDirection, EncodingReceive, EncodingSend, FontDrawApi,
     FontQuality, Ini, KeyboardBackspace, KeyboardMeta8bit, Kind, LogTimestampType,
     ProxySocksResolve, ProxyType, SerialDataBits, SerialFlow, SerialParity, SerialStopBits,
-    Settings, TerminalCrReceive, TerminalId, WindowIcon, FIELDS,
+    Settings, TerminalCrReceive, TerminalId, WindowIcon, WindowPanelLayout, FIELDS,
 };
 
 #[test]
@@ -41,6 +41,33 @@ fn the_shipped_baud_rate_is_not_upstreams() {
 
     let ini = Ini::parse(b"[Tera Term]\r\nBaudRate=9600\r\n");
     assert_eq!(Settings::load(&ini).serial_baud, 9600);
+}
+
+#[test]
+fn the_panel_layout_is_a_sterna_setting_with_a_safe_fallback() {
+    assert_eq!(
+        Settings::default().window_panel_layout,
+        WindowPanelLayout::Single
+    );
+
+    let load = |value: &str| {
+        Settings::load(&Ini::parse(
+            format!("[Sterna]\r\nPanelLayout={value}\r\n").as_bytes(),
+        ))
+        .window_panel_layout
+    };
+    assert_eq!(load("two"), WindowPanelLayout::Two);
+    assert_eq!(load("FOUR"), WindowPanelLayout::Four);
+    assert_eq!(load("broken"), WindowPanelLayout::Single);
+
+    let mut ini = Ini::parse(b"; formatting stays\n[Sterna]\nUnrelated = yes\nPanelLayout = two\n");
+    let mut settings = Settings::load(&ini);
+    settings.window_panel_layout = WindowPanelLayout::Four;
+    assert!(settings.store_one(&mut ini, "window.panel_layout"));
+    assert_eq!(
+        ini.to_bytes(),
+        b"; formatting stays\n[Sterna]\nUnrelated = yes\nPanelLayout=four\n"
+    );
 }
 
 #[test]
