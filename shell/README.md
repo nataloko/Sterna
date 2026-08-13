@@ -652,7 +652,7 @@ active value omitted from the file inherits the loaded inactive one.
 
 ## Quick buttons are user keys with a face on them
 
-The bar under the connect bar holds commands the user defined, and almost none
+The bar down the right holds commands the user defined, and almost none
 of it is new code. A quick button *is* a `KEYBOARD.CNF` user key: the four
 kinds are `UserKeyType`, the value carries the same `$HH` escape, and pressing
 one calls `Session::run_user_key` — the arm `send_key_code` calls after it has
@@ -673,6 +673,14 @@ core does the escaping when the window saves.
 Setup > Show quick buttons writes, but an empty list hides the bar whatever it
 says; the alternative is permanent chrome in a terminal, which the connect bar
 already argues against one section up (`docs/deviations.md`, entry 4).
+
+**And where it sits is the user's, not the file's, while the window is open.**
+`window.quick_buttons_area` is applied when it *changes* rather than whenever
+the bar is not where it says, because the setting is written on close and
+`reloadQuickButtons` runs on every edit of the list — comparing against the
+live area would drag the bar back to the file's edge the moment somebody added
+a button. `m_quickBarArea` is the last value applied, and it starts empty so
+that the first reload places the bar at all.
 
 Two traps live here:
 

@@ -2526,40 +2526,48 @@ impl Default for WindowPanelLayout {
     }
 }
 
-/// Which edge the bar was left on. Qt lets a toolbar be dragged to any of the
-/// four; on the left or the right it costs no terminal rows at all, which on a
-/// short window is the difference between the feature being worth having and
-/// not. An unrecognised spelling returns to the top rather than hiding the bar.
+/// Which edge the bar is on. Qt lets a toolbar be dragged to any of the four,
+/// and this is where it opens.
+///
+/// **The right**, not the top, which is where the other bar is. A terminal's
+/// rows are the scarce dimension — a window is usually far wider than the 80
+/// columns it needs and exactly as tall as it can be — so a vertical bar costs
+/// nothing that is being used, and the labels have room to be words rather than
+/// abbreviations. An unrecognised spelling lands on the right as well, rather
+/// than hiding the bar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowQuickButtonsArea {
+    /// `right`
+    Right,
     /// `top`
     Top,
     /// `bottom`
     Bottom,
     /// `left`
     Left,
-    /// `right`
-    Right,
 }
 
 impl WindowQuickButtonsArea {
     /// The INI's own spelling, which is what gets written back.
     pub fn as_ini(&self) -> &'static str {
         match self {
+            Self::Right => "right",
             Self::Top => "top",
             Self::Bottom => "bottom",
             Self::Left => "left",
-            Self::Right => "right",
         }
     }
 
-    /// Case-insensitive, and **anything unrecognised is `Top`** — which
+    /// Case-insensitive, and **anything unrecognised is `Right`** — which
     /// is *not* this type's default. Upstream reads the key with a
     /// default string and then runs a chain of comparisons whose last
     /// arm catches everything, so an absent key and a misspelt value
     /// are two different settings.
     pub fn from_ini(s: &str) -> Self {
         let s = s.trim();
+        if s.eq_ignore_ascii_case("right") {
+            return Self::Right;
+        }
         if s.eq_ignore_ascii_case("top") {
             return Self::Top;
         }
@@ -2569,16 +2577,13 @@ impl WindowQuickButtonsArea {
         if s.eq_ignore_ascii_case("left") {
             return Self::Left;
         }
-        if s.eq_ignore_ascii_case("right") {
-            return Self::Right;
-        }
-        Self::Top
+        Self::Right
     }
 }
 
 impl Default for WindowQuickButtonsArea {
     fn default() -> Self {
-        Self::Top
+        Self::Right
     }
 }
 
@@ -4140,10 +4145,15 @@ pub struct Settings {
     /// toolbar is chrome for nothing. So this is what Setup > Show quick buttons
     /// writes, not what decides whether the bar exists.
     pub window_quick_buttons: bool,
-    /// Which edge the bar was left on. Qt lets a toolbar be dragged to any of the
-    /// four; on the left or the right it costs no terminal rows at all, which on a
-    /// short window is the difference between the feature being worth having and
-    /// not. An unrecognised spelling returns to the top rather than hiding the bar.
+    /// Which edge the bar is on. Qt lets a toolbar be dragged to any of the four,
+    /// and this is where it opens.
+    ///
+    /// **The right**, not the top, which is where the other bar is. A terminal's
+    /// rows are the scarce dimension — a window is usually far wider than the 80
+    /// columns it needs and exactly as tall as it can be — so a vertical bar costs
+    /// nothing that is being used, and the labels have room to be words rather than
+    /// abbreviations. An unrecognised spelling lands on the right as well, rather
+    /// than hiding the bar.
     pub window_quick_buttons_area: WindowQuickButtonsArea,
     /// The device path, not a number: `ComPort` is upstream's and cannot spell
     /// `/dev/serial/by-id/usb-FTDI_…`. Written as the port was opened, so it is the
@@ -15578,10 +15588,10 @@ pub const FIELDS: &[Field] = &[
         page: "window",
         section: "Sterna",
         key: "QuickButtonsArea",
-        kind: Kind::Enum(&["top", "bottom", "left", "right"]),
-        default: "top",
+        kind: Kind::Enum(&["right", "top", "bottom", "left"]),
+        default: "right",
         label: None,
-        doc: "Which edge the bar was left on. Qt lets a toolbar be dragged to any of the four; on the left or the right it costs no terminal rows at all, which on a short window is the difference between the feature being worth having and not. An unrecognised spelling returns to the top rather than hiding the bar.",
+        doc: "Which edge the bar is on. Qt lets a toolbar be dragged to any of the four, and this is where it opens.  **The right**, not the top, which is where the other bar is. A terminal's rows are the scarce dimension — a window is usually far wider than the 80 columns it needs and exactly as tall as it can be — so a vertical bar costs nothing that is being used, and the labels have room to be words rather than abbreviations. An unrecognised spelling lands on the right as well, rather than hiding the bar.",
     },
     Field {
         name: "recent.serial_port",

@@ -343,17 +343,17 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
     // settings below, once they have been read; it is created here so the
     // menu can point at it.
     m_quickBar = new QuickButtonBar(this);
+    // Somewhere to live until the settings have been read, which happens after
+    // this. `m_quickBarArea` is deliberately left empty so that the first
+    // `reloadQuickButtons` counts as a change and puts it where the file says.
     addToolBar(Qt::TopToolBarArea, m_quickBar);
-    // Its own row. Without the break Qt puts a second toolbar *beside* the
-    // first, so the buttons share the connect bar's line and the ones that do
-    // not fit disappear behind an overflow chevron — which is exactly the
-    // failure this bar exists to avoid.
-    insertToolBarBreak(m_quickBar);
     m_quickBar->hide();
     connect(m_quickBar, &QuickButtonBar::activated, this,
             &MainWindow::runQuickButton);
-    connect(m_quickBar, &QuickButtonBar::addRequested, this,
-            [this] { editQuickButtons(-1); });
+    connect(m_quickBar, &QuickButtonBar::addRequested, this, [this] {
+        const QuickButton blank;
+        editQuickButtons(-1, &blank);
+    });
     connect(m_quickBar, &QuickButtonBar::editRequested, this,
             [this](int index) { editQuickButtons(index); });
     connect(m_quickBar, &QuickButtonBar::duplicateRequested, this,
@@ -2582,6 +2582,21 @@ void MainWindow::runKeyAction(const KeyCodeAction &action)
 
 // --- quick buttons ---------------------------------------------------------
 
+void MainWindow::applyQuickButtonBreak()
+{
+    // A row of its own in a horizontal area. Without the break Qt puts a
+    // second toolbar *beside* the first, so the buttons share the connect
+    // bar's line and the ones that do not fit disappear behind an overflow
+    // chevron — exactly the failure a bar of commands exists to avoid. Down
+    // the side there is nothing to share a line with, and a break there would
+    // start a second column.
+    removeToolBarBreak(m_quickBar);
+    const Qt::ToolBarArea area = toolBarArea(m_quickBar);
+    if (area == Qt::TopToolBarArea || area == Qt::BottomToolBarArea) {
+        insertToolBarBreak(m_quickBar);
+    }
+}
+
 void MainWindow::reloadQuickButtons()
 {
     if (!m_quickBar) {
@@ -2614,10 +2629,17 @@ void MainWindow::reloadQuickButtons()
         action->setShortcut(sequence);
     }
 
-    const Qt::ToolBarArea area = quickButtonArea(
-        m_session->setting(QStringLiteral("window.quick_buttons_area")));
-    if (toolBarArea(m_quickBar) != area) {
-        addToolBar(area, m_quickBar);
+    // **Only when the setting itself has moved**, not whenever the bar is not
+    // where the file says. A drag is the user placing it, and this runs on
+    // every edit of the list — comparing against the live area would put the
+    // bar back at the file's edge the moment somebody added a button, and the
+    // file is not written until the window closes.
+    const QString setting =
+        m_session->setting(QStringLiteral("window.quick_buttons_area"));
+    if (setting != m_quickBarArea) {
+        m_quickBarArea = setting;
+        addToolBar(quickButtonArea(setting), m_quickBar);
+        applyQuickButtonBreak();
     }
     // Empty means no bar at all, whatever the setting says. The setting is
     // what Setup > Show quick buttons writes; this is the difference between
@@ -2678,6 +2700,9 @@ void MainWindow::editQuickButtons(int index, const QuickButton *seed)
     }
     QuickButtonsDialog dialog(m_quickBar->buttons(), m_session, this, this);
     if (seed) {
+        // The `+`, Add from the context menu, and New from selection: all
+        // three asked for a *new* button, so the editor opens on a new row
+        // with the cursor in its label rather than on somebody else's.
         dialog.appendButton(*seed);
     } else if (index >= 0) {
         dialog.selectRow(index);

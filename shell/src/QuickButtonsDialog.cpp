@@ -250,7 +250,13 @@ QuickButtonsDialog::QuickButtonsDialog(const QVector<QuickButton> &buttons,
     });
 
     rebuildList();
-    load(m_buttons.isEmpty() ? -1 : 0);
+    if (m_buttons.isEmpty()) {
+        load(-1);
+    } else {
+        // Through the list rather than straight to `load`, so the row the
+        // fields are showing is also the row that looks selected.
+        m_list->setCurrentRow(0);
+    }
 }
 
 void QuickButtonsDialog::rebuildList()

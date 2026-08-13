@@ -17,10 +17,15 @@ exists, so that is also where the feature is found.
 The shortest way in is **Edit > New quick button from selection…**: select the
 command that just worked, and the editor opens with it filled in.
 
-Once the bar is there, the **+** at its end adds another, and a right-click on
-any button offers Edit, Duplicate and Remove. The bar can be dragged to any of
-the four window edges; on the left or the right it costs no terminal rows,
-which on a short window is worth knowing. Where it was left is remembered.
+Once the bar is there, the **+** at its end adds another — opening the editor
+on a new, empty button — and a right-click on any button offers Edit, Duplicate
+and Remove.
+
+The bar opens **down the right-hand side**, because a terminal's rows are the
+scarce dimension: a window is usually far wider than the 80 columns it needs
+and exactly as tall as it can be, so a vertical bar costs nothing that is being
+used and the labels have room to be words. It can be dragged to any of the four
+edges, and where it was left is remembered.
 
 ## What a button can do
 
@@ -108,8 +113,10 @@ stored in. `$0D` is a Return, `$0A` a line feed, `$24` a literal `$`. Anything
 the file cannot hold is written that way, and everything else is left legible.
 
 The two settings beside them are ordinary `[Sterna]` keys: `QuickButtons`
-(on) shows or hides the bar, and `QuickButtonsArea` (`top`, `bottom`, `left`,
-`right`) is the edge it opens on.
+(on) shows or hides the bar, and `QuickButtonsArea` (`right` by default, or
+`top`, `bottom`, `left`) is the edge it opens on. That one is written when the
+window closes, so a bar dragged somewhere else stays there for the rest of the
+session and comes back there next time.
 
 ## Menu command ids
 

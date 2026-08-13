@@ -432,19 +432,88 @@ void a_shortcut_is_installed_and_released_with_the_bar()
     CHECK(spin([&window] { return !barOf(window)->isVisible(); }, 2000));
 }
 
-/// Where the bar was left, which is a setting and so survives a restart.
-void the_bar_remembers_which_edge_it_was_on()
+/// Where the bar opens: down the right unless the file says otherwise, and
+/// wherever it was dragged to for as long as the window is open.
+void the_bar_opens_down_the_right_and_stays_where_it_is_put()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString shipped =
+        writeIni(dir, "[Sterna Buttons]\r\nButton1Label=Hi\r\nButton1Value=hi$0D\r\n");
+
+    {
+        // Nothing in the file about the bar, so this is the shipped answer: a
+        // terminal's rows are the scarce dimension and a vertical bar costs
+        // none of them.
+        MainWindow window(shipped);
+        window.show();
+        CHECK(window.toolBarArea(barOf(window)) == Qt::RightToolBarArea);
+    }
+
+    QTemporaryDir other;
+    CHECK(other.isValid());
+    const QString ini =
+        writeIni(other,
+                 "[Sterna]\r\nQuickButtonsArea=left\r\n"
+                 "[Sterna Buttons]\r\nButton1Label=Hi\r\nButton1Value=hi$0D\r\n");
+
+    MainWindow window(ini);
+    window.show();
+    CHECK(window.toolBarArea(barOf(window)) == Qt::LeftToolBarArea);
+
+    // A drag is the user placing it. Editing the list rebuilds the bar, and
+    // that must not put it back where the file — which is not written until
+    // the window closes — still says it was.
+    window.addToolBar(Qt::BottomToolBarArea, barOf(window));
+    CHECK(window.toolBarArea(barOf(window)) == Qt::BottomToolBarArea);
+
+    QVector<QuickButton> buttons = barOf(window)->buttons();
+    QuickButton added;
+    added.label = QStringLiteral("Second");
+    added.text = QStringLiteral("uptime\r");
+    buttons.append(added);
+    QString error;
+    CHECK(saveQuickButtons(ini, buttons, &error));
+    QMetaObject::invokeMethod(window.session(), "settingsChanged");
+    CHECK(spin([&window] { return barOf(window)->buttons().size() == 2; }, 2000));
+    CHECK(window.toolBarArea(barOf(window)) == Qt::BottomToolBarArea);
+
+    // ...and a setting that really changes still moves it.
+    CHECK(window.session()->setSetting(QStringLiteral("window.quick_buttons_area"),
+                                       QStringLiteral("top"), &error));
+    CHECK(spin(
+        [&window] {
+            return window.toolBarArea(barOf(window)) == Qt::TopToolBarArea;
+        },
+        2000));
+}
+
+/// Add — the `+` at the end of the bar, and Add in its context menu — opens
+/// the editor on a *new* row rather than on whichever button was first.
+void adding_starts_on_a_new_row()
 {
     QTemporaryDir dir;
     CHECK(dir.isValid());
     const QString ini =
         writeIni(dir,
-                 "[Sterna]\r\nQuickButtonsArea=right\r\n"
-                 "[Sterna Buttons]\r\nButton1Label=Hi\r\nButton1Value=hi$0D\r\n");
+                 "[Sterna Buttons]\r\nButton1Label=One\r\nButton1Value=a$0D\r\n"
+                 "Button2Label=Two\r\nButton2Value=b$0D\r\n");
 
     MainWindow window(ini);
-    window.show();
-    CHECK(window.toolBarArea(barOf(window)) == Qt::RightToolBarArea);
+    QuickButtonsDialog dialog(barOf(window)->buttons(), window.session(), &window);
+    auto *list = dialog.findChild<QListWidget *>(QStringLiteral("quickButtonsList"));
+    auto *label = dialog.findChild<QLineEdit *>(QStringLiteral("quickButtonLabel"));
+    CHECK(list != nullptr && label != nullptr);
+    CHECK(list->currentRow() == 0);
+
+    dialog.appendButton(QuickButton());
+    CHECK(list->count() == 3);
+    CHECK(list->currentRow() == 2);
+    CHECK(label->text().isEmpty());
+    // The existing two are untouched by the arrival of a third.
+    CHECK(dialog.buttons().size() == 3);
+    CHECK(dialog.buttons()[0].label == QLatin1String("One"));
+    CHECK(dialog.buttons()[1].label == QLatin1String("Two"));
 }
 
 /// `--write <dir>`: the bar and its editor as PNGs, for a human to look at.
@@ -502,7 +571,8 @@ int main(int argc, char **argv)
     the_editor_round_trips_a_button();
     the_editor_warns_about_a_key_the_host_wants();
     a_shortcut_is_installed_and_released_with_the_bar();
-    the_bar_remembers_which_edge_it_was_on();
+    the_bar_opens_down_the_right_and_stays_where_it_is_put();
+    adding_starts_on_a_new_row();
     render_widgets();
 
     if (failures != 0) {

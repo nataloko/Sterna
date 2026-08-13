@@ -206,7 +206,9 @@ and a `KEYBOARD.CNF` full of user keys still works exactly as it did.
 `[Sterna Buttons]` section — its own, because a list is exactly what the
 settings schema cannot describe — plus two ordinary `[Sterna]` settings for the
 bar itself: `QuickButtons` (`window.quick_buttons`, on) and `QuickButtonsArea`
-(`window.quick_buttons_area`, `top`).
+(`window.quick_buttons_area`, `right` — a terminal's rows are the scarce
+dimension, so the bar goes where there is width to spare rather than where the
+connect bar is).
 
 **Two decisions worth defending.** The bar does not exist until a button does,
 where YAT — the program this borrows the idea from — shows twelve

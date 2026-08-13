@@ -2019,11 +2019,16 @@ window.panel_layout | enum(single/*=Single,two=Two,four=Four) | Sterna | PanelLa
 # writes, not what decides whether the bar exists.
 window.quick_buttons | bool | Sterna | QuickButtons | on | -
 
-# Which edge the bar was left on. Qt lets a toolbar be dragged to any of the
-# four; on the left or the right it costs no terminal rows at all, which on a
-# short window is the difference between the feature being worth having and
-# not. An unrecognised spelling returns to the top rather than hiding the bar.
-window.quick_buttons_area | enum(top/*=Top,bottom=Bottom,left=Left,right=Right) | Sterna | QuickButtonsArea | top | -
+# Which edge the bar is on. Qt lets a toolbar be dragged to any of the four,
+# and this is where it opens.
+#
+# **The right**, not the top, which is where the other bar is. A terminal's
+# rows are the scarce dimension — a window is usually far wider than the 80
+# columns it needs and exactly as tall as it can be — so a vertical bar costs
+# nothing that is being used, and the labels have room to be words rather than
+# abbreviations. An unrecognised spelling lands on the right as well, rather
+# than hiding the bar.
+window.quick_buttons_area | enum(right/*=Right,top=Top,bottom=Bottom,left=Left) | Sterna | QuickButtonsArea | right | -
 
 # --- recent -----------------------------------------------------------------
 #

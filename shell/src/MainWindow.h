@@ -295,6 +295,9 @@ private:
     /// shown at all: an empty set has no bar, whatever `window.quick_buttons`
     /// says, because an empty toolbar is chrome for nothing.
     void reloadQuickButtons();
+    /// Give the bar a line of its own when it is in a horizontal area, and no
+    /// break when it is down a side where there is nothing to share with.
+    void applyQuickButtonBreak();
     /// Open the editor with `index` selected, or -1 for a new button, and
     /// `seed` prefilled into that new one.
     void editQuickButtons(int index, const QuickButton *seed = nullptr);
@@ -380,6 +383,14 @@ private:
     /// shown when `window.quick_buttons` is on, at the edge
     /// `window.quick_buttons_area` names.
     QuickButtonBar *m_quickBar = nullptr;
+    /// The value of `window.quick_buttons_area` last *applied* to the bar.
+    ///
+    /// Not where the bar is — where it was put. A drag moves the bar and does
+    /// not write the setting until the window closes, so comparing against the
+    /// live area would drag it back every time the list was edited. Empty
+    /// until the settings have been read, which is what makes the first apply
+    /// happen at all.
+    QString m_quickBarArea;
     QAction *m_toolbarAction = nullptr;
     QAction *m_singlePanelAction = nullptr;
     QAction *m_twoPanelAction = nullptr;
