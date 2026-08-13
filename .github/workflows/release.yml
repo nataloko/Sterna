@@ -57,6 +57,9 @@ jobs:
         run: ./packaging/appimage/build.sh --clean
       - name: Smoke-test packaged application
         env:
+          # GitHub job containers do not expose /dev/fuse. The AppImage
+          # runtime's extraction fallback executes the same packaged AppRun.
+          APPIMAGE_EXTRACT_AND_RUN: 1
           QT_QPA_PLATFORM: offscreen
         run: |
           ./packaging/appimage/build/sterna-x86_64.AppImage --version
