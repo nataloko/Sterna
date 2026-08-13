@@ -14,6 +14,21 @@
 #include <stdint.h>
 
 /**
+ * A colour a rule is not asking to change, in [`TtHighlight::fore`] and
+ * friends. Every real colour is `0x00RRGGBB`, so this cannot collide with one.
+ */
+#define TT_HIGHLIGHT_NO_COLOR 4294967295
+
+/**
+ * Bits for [`TtHighlight::style`].
+ */
+#define TT_HIGHLIGHT_BOLD 1
+
+#define TT_HIGHLIGHT_UNDERLINE 2
+
+#define TT_HIGHLIGHT_REVERSE 4
+
+/**
  * Codepoints stored per cell: one base plus up to three combining marks.
  *
  * Tera Term grows its per-cell string without a fixed bound. A fixed array
@@ -866,6 +881,11 @@ typedef struct TtCmdLine TtCmdLine;
 typedef struct TtCtl TtCtl;
 
 /**
+ * An owned list of rules. Free it with [`tt_highlights_free`].
+ */
+typedef struct TtHighlights TtHighlights;
+
+/**
  * One loaded Tera Term `.lng` file. Opaque.
  */
 typedef struct TtI18n TtI18n;
@@ -1544,6 +1564,69 @@ typedef struct {
     const char *product;
     const char *serial;
 } TtPortInfo;
+
+/**
+ * What a rule paints over — [`TtHighlight::scope`].
+ */
+typedef uint32_t TtHighlightScope;
+
+/**
+ * One rule, as an editor holds it. Both strings are borrowed from the owning
+ * [`TtHighlights`] and die with it.
+ */
+typedef struct {
+    /**
+     * What the editor's list calls it; may be empty.
+     */
+    const char *label;
+    /**
+     * The pattern as written, which is plain text rather than a pattern when
+     * `literal` is set.
+     */
+    const char *pattern;
+    bool literal;
+    bool ignore_case;
+    /**
+     * `0x00RRGGBB`, or [`TT_HIGHLIGHT_NO_COLOR`] to leave the cell's own
+     * foreground alone — which is how a rule changes only the background.
+     */
+    uint32_t fore;
+    uint32_t back;
+    /**
+     * [`TT_HIGHLIGHT_BOLD`] and friends, OR-ed.
+     */
+    uint32_t style;
+    TtHighlightScope scope;
+    /**
+     * Which capture group to colour; 0 is the whole match.
+     */
+    uint32_t group;
+    bool enabled;
+} TtHighlight;
+
+/**
+ * One run of columns to recolour, from [`tt_session_row_highlights`].
+ */
+typedef struct {
+    /**
+     * First column, and one past the last. A wide character's padding column
+     * is inside the run, so this is the same shape as a selection range.
+     */
+    uint16_t from;
+    uint16_t to;
+    /**
+     * `0x00RRGGBB`, or [`TT_HIGHLIGHT_NO_COLOR`] to leave the cell's own
+     * colour alone.
+     */
+    uint32_t fg;
+    uint32_t bg;
+    /**
+     * `TT_ATTR_*` bits to OR into the cell **for drawing only**. Highlighting
+     * never changes what the terminal is, so the grid still says what the host
+     * sent.
+     */
+    uint32_t attrs;
+} TtHighlightSpan;
 
 /**
  * What to do about a host key the `known_hosts` files do not already trust.
@@ -2445,6 +2528,16 @@ typedef uint32_t TtShortcut;
  * *telnet* session to a local process, so it has no equivalent.
  */
 #define TT_LINK_LOCAL_PTY 3
+
+/**
+ * The matched text, or the capture group when one is named.
+ */
+#define TT_HIGHLIGHT_MATCH 0
+
+/**
+ * The whole logical line the match sits on, continuation rows included.
+ */
+#define TT_HIGHLIGHT_LINE 1
 
 #define TT_HOST_KEY_POLICY_ASK 0
 
@@ -3758,6 +3851,109 @@ size_t tt_port_list_len(const TtPortList *list);
 const TtPortInfo *tt_port_list_at(const TtPortList *list, size_t index);
 
 void tt_port_list_free(TtPortList *list);
+
+/**
+ * Read the highlight rules out of a settings file.
+ *
+ * A file that is not there has no rules, which is a first run and not an
+ * error — so this returns an empty list rather than null. Null only for a
+ * null or non-UTF-8 path.
+ */
+TtHighlights *tt_highlights_load(const char *path);
+
+/**
+ * An empty list, to be filled with [`tt_highlights_set`] and written with
+ * [`tt_highlights_save`].
+ */
+TtHighlights *tt_highlights_new(void);
+
+size_t tt_highlights_len(const TtHighlights *list);
+
+/**
+ * Borrow one rule. Null when `index` is out of range. Valid until the list is
+ * changed or freed.
+ */
+const TtHighlight *tt_highlights_at(const TtHighlights *list, size_t index);
+
+/**
+ * Replace the rule at `index`, or append when `index` equals the length.
+ *
+ * The struct is taken as it stands, so the result of [`tt_highlights_at`] can
+ * be handed straight back. A pattern that will not compile is **not** refused
+ * here — [`tt_highlight_check`] is what an editor asks, and a rule can be
+ * half-typed while it is being edited.
+ */
+TtStatus tt_highlights_set(TtHighlights *list,
+                           size_t index,
+                           const TtHighlight *rule);
+
+TtStatus tt_highlights_remove(TtHighlights *list, size_t index);
+
+/**
+ * Move a rule, closing the gap behind it — a drag in a list, not a swap.
+ *
+ * Order is priority: the first rule to claim a cell's foreground keeps it.
+ */
+TtStatus tt_highlights_move(TtHighlights *list, size_t from, size_t to);
+
+/**
+ * Write the list into a settings file, leaving every other line alone.
+ *
+ * The whole `[Sterna Highlights]` section is replaced, so a removed rule takes
+ * its keys with it. Nothing else in the file is touched.
+ */
+TtStatus tt_highlights_save(const TtHighlights *list,
+                            const char *path);
+
+void tt_highlights_free(TtHighlights *list);
+
+/**
+ * Whether the engine will accept this pattern, for an editor to ask as it is
+ * typed. The reason it will not is in [`tt_last_error`].
+ *
+ * `literal` and `ignore_case` matter because they change what the engine is
+ * handed: a literal pattern cannot fail, and `(?i)` is a prefix.
+ */
+TtStatus tt_highlight_check(const char *pattern,
+                            bool literal,
+                            bool ignore_case);
+
+/**
+ * Compile a rule list and use it from the next repaint.
+ *
+ * The session keeps its own compiled copy, so the list may be freed
+ * afterwards. Passing an empty list, or one whose rules are all disabled,
+ * turns highlighting off without touching the `Highlighting` setting.
+ */
+TtStatus tt_session_set_highlights(TtSession *session,
+                                   const TtHighlights *list);
+
+/**
+ * The rules the last [`tt_session_set_highlights`] could not compile, one per
+ * line, or null when they all compiled.
+ *
+ * Borrowed, and valid until the next call to this function on this session. A
+ * pattern only gets here by being hand-edited into the file — the editor will
+ * not save one — and silence would leave somebody looking at a rule that is in
+ * the file and does nothing.
+ */
+const char *tt_session_highlight_problems(TtSession *session);
+
+/**
+ * What to recolour on viewport row `y`, in column order.
+ *
+ * Borrowed, and valid until the next call on this session — the same contract
+ * as [`tt_session_row`], which a painter is calling beside this one. Null with
+ * `*out_len` zero when the row has nothing on it, which is the answer whenever
+ * highlighting is off or no rule matched.
+ *
+ * **This is where the matching happens.** Nothing is stamped into a cell as it
+ * arrives, so a rule applies to text that was already on the screen and to the
+ * scrollback, and the receive path costs nothing at all.
+ */
+const TtHighlightSpan *tt_session_row_highlights(TtSession *session,
+                                                 size_t y,
+                                                 size_t *out_len);
 
 /**
  * Fill `out` with the sensible defaults: read `~/.ssh/config`, use the agent,
