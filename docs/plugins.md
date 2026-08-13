@@ -98,8 +98,8 @@ terminal API is available only inside callbacks.
 Adds a visible action. `spec` has these fields:
 
 - `menu` — required slash-separated path. The built-in roots are `File`,
-  `Edit`, `Terminal`, `Control`, and `Setup`; other names create a new top-level
-  menu. These API names stay English when the visible menus are translated.
+  `Edit`, `Setup`, and `Control`; other names create a new top-level menu.
+  These API names stay English when the visible menus are translated.
 - `label` — required action text.
 - `shortcut` — optional key sequence.
 - `action` — required callback function.

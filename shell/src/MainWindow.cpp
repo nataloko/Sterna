@@ -970,8 +970,6 @@ void MainWindow::installPluginActions()
     QHash<QString, QMenu *> menus = {
         {QStringLiteral("File"), findChild<QMenu *>(QStringLiteral("fileMenu"))},
         {QStringLiteral("Edit"), findChild<QMenu *>(QStringLiteral("editMenu"))},
-        {QStringLiteral("Terminal"),
-         findChild<QMenu *>(QStringLiteral("terminalMenu"))},
         {QStringLiteral("Control"),
          findChild<QMenu *>(QStringLiteral("controlMenu"))},
         {QStringLiteral("Setup"), findChild<QMenu *>(QStringLiteral("setupMenu"))},
@@ -1216,6 +1214,14 @@ void MainWindow::buildMenus()
     // opens a menu on Alt+letter when one matches, and Alt+letter is how a
     // Linux line editor receives Meta. A menu that stole Alt+B from readline
     // would be a menu people disable the whole menu bar to escape.
+    //
+    // The bar is in Tera Term's order — File, Edit, Setup, Control, Help — and
+    // so is each menu, for every item the two programs share: the log and the
+    // transfers under File, Send break under Control, Load key map after Save
+    // setup. There is deliberately no Terminal menu, because upstream has
+    // none and a hand reaching for Control > Send break should find it there.
+    // Upstream's Window menu is the one absence: it arranges several top-level
+    // windows, and there is one window here with tabs in it.
     QMenu *file = menuBar()->addMenu(tr("File"));
     file->setObjectName(QStringLiteral("fileMenu"));
     languageAction(file->menuAction(), "MENU_FILE", tr("File"));
@@ -1240,20 +1246,33 @@ void MainWindow::buildMenus()
                                              &MainWindow::showTelnetDialog);
     languageAction(m_telnetConnectAction, "DLG_TCPIP_TELNET",
                    tr("Connect over telnet..."));
-    // No dialog: there is nothing to ask. The shell, the size and the
-    // environment are all already known, and a dialog whose only button is OK
-    // is a dialog nobody wants twice.
-    m_localShellAction =
-        file->addAction(tr("Local shell"), this, [this] { connectPty(); });
-    languageAction(m_localShellAction, "MENU_FILE_GYGWIN", tr("Local shell"));
     m_duplicateAction = file->addAction(tr("Duplicate session"), this,
                                          &MainWindow::duplicateSession);
     m_duplicateAction->setObjectName(QStringLiteral("duplicateSessionAction"));
     languageAction(m_duplicateAction, "MENU_FILE_DUPLICATE",
                    tr("Duplicate session"));
-    m_disconnectAction = file->addAction(tr("Disconnect"), this,
-                                         &MainWindow::disconnectPort);
-    languageAction(m_disconnectAction, "MENU_FILE_DISCONNECT", tr("Disconnect"));
+    // No dialog: there is nothing to ask. The shell, the size and the
+    // environment are all already known, and a dialog whose only button is OK
+    // is a dialog nobody wants twice. Upstream's Cygwin connection is in this
+    // place in the menu and is the item this replaces.
+    m_localShellAction =
+        file->addAction(tr("Local shell"), this, [this] { connectPty(); });
+    languageAction(m_localShellAction, "MENU_FILE_GYGWIN", tr("Local shell"));
+    file->addSeparator();
+    // Upstream's File > Log. Its text is live — `updateStatus` swaps it for
+    // MENU_FILE_STOPLOG while a log is open — so it takes no language key of
+    // its own here.
+    m_logAction = file->addAction(tr("Start logging..."), this,
+                                 &MainWindow::toggleLogging);
+    file->addSeparator();
+    // Under File, next to the connection, because that is where upstream puts
+    // it and because a transfer is a thing you do *to* a connection.
+    m_sendAction = file->addAction(tr("Send file..."), this,
+                                   &MainWindow::sendFile);
+    languageAction(m_sendAction, "MENU_FILE_SENDFILE", tr("Send file..."));
+    m_receiveAction = file->addAction(tr("Receive file..."), this,
+                                      &MainWindow::receiveFile);
+    languageAction(m_receiveAction, "MENU_FILE_RECVFILE", tr("Receive file..."));
     file->addSeparator();
     // Upstream's File > Print, which is the same `BuffPrint` call `CSI 0 i`
     // makes — the menu asks for the screen and the sequence can ask for the
@@ -1261,6 +1280,9 @@ void MainWindow::buildMenus()
     QAction *print = file->addAction(tr("Print..."), QKeySequence::Print, this,
                                      [this] { m_printer->printScreen(false); });
     languageAction(print, "MENU_FILE_PRINT", tr("Print..."));
+    m_disconnectAction = file->addAction(tr("Disconnect"), this,
+                                         &MainWindow::disconnectPort);
+    languageAction(m_disconnectAction, "MENU_FILE_DISCONNECT", tr("Disconnect"));
     file->addSeparator();
     QAction *quit = file->addAction(tr("Quit"), QKeySequence::Quit, this,
                                     &QWidget::close);
@@ -1278,44 +1300,9 @@ void MainWindow::buildMenus()
         [this] { m_view->pasteClipboard(); });
     languageAction(paste, "MENU_EDIT_PASTE", tr("Paste"));
 
-    // Under File, next to the connection, because that is where upstream puts
-    // it and because a transfer is a thing you do *to* a connection.
-    file->insertSeparator(m_disconnectAction);
-    m_sendAction = new QAction(tr("Send file..."), this);
-    languageAction(m_sendAction, "MENU_FILE_SENDFILE", tr("Send file..."));
-    connect(m_sendAction, &QAction::triggered, this, &MainWindow::sendFile);
-    m_receiveAction = new QAction(tr("Receive file..."), this);
-    languageAction(m_receiveAction, "MENU_FILE_RECVFILE", tr("Receive file..."));
-    connect(m_receiveAction, &QAction::triggered, this, &MainWindow::receiveFile);
-    file->insertAction(m_disconnectAction, m_sendAction);
-    file->insertAction(m_disconnectAction, m_receiveAction);
-    file->insertSeparator(m_disconnectAction);
-
-    QMenu *terminal = menuBar()->addMenu(tr("Terminal"));
-    terminal->setObjectName(QStringLiteral("terminalMenu"));
-    languageAction(terminal->menuAction(), "DLG_TERM_TITLE", tr("Terminal"));
-    m_breakAction = terminal->addAction(tr("Send break"), this, &MainWindow::sendBreak);
-    languageAction(m_breakAction, "MENU_CONTROL_SENDBREAK", tr("Send break"));
-    terminal->addSeparator();
-    m_logAction = terminal->addAction(tr("Start logging..."), this,
-                                      &MainWindow::toggleLogging);
-
-    // Upstream's Control menu, which is where a macro is started and stopped.
-    // Stop is upstream's End button, which lives on `ttpmacro.exe`'s own
-    // control window — there is no second window here, so it belongs on the
-    // one there is.
-    QMenu *control = menuBar()->addMenu(tr("Control"));
-    control->setObjectName(QStringLiteral("controlMenu"));
-    languageAction(control->menuAction(), "MENU_CONTROL", tr("Control"));
-    QAction *runMacroAction =
-        control->addAction(tr("Run macro..."), this, &MainWindow::runMacro);
-    languageAction(runMacroAction, "MENU_CONTROL_MACRO", tr("Run macro..."));
-    m_stopMacroAction = control->addAction(tr("Stop macro"), this,
-                                           &MainWindow::stopMacro);
-    languageAction(m_stopMacroAction, "BTN_STOP", tr("Stop macro"));
-    m_stopMacroAction->setEnabled(false);
     // "Setup", which is Tera Term's own name for this menu, so that someone
-    // arriving from it looks in the right place.
+    // arriving from it looks in the right place — and before Control, which is
+    // where upstream's bar has it.
     QMenu *setup = menuBar()->addMenu(tr("Setup"));
     setup->setObjectName(QStringLiteral("setupMenu"));
     languageAction(setup->menuAction(), "MENU_SETUP", tr("Setup"));
@@ -1324,13 +1311,34 @@ void MainWindow::buildMenus()
     languageAction(terminalSetup, "MENU_SETUP_ADDITION", tr("Terminal..."));
     QAction *font = setup->addAction(tr("Font..."), this, &MainWindow::chooseFont);
     languageAction(font, "MENU_SETUP_FONT", tr("Font..."));
-    QAction *keyMap =
-        setup->addAction(tr("Load key map..."), this, &MainWindow::chooseKeyMap);
-    languageAction(keyMap, "MENU_SETUP_LOADKEYMAP", tr("Load key map..."));
     setup->addSeparator();
     QAction *save = setup->addAction(tr("Save setup"), this,
                                      &MainWindow::saveSettings);
     languageAction(save, "MENU_SETUP_SAVE", tr("Save setup"));
+    // After Save setup, which is upstream's order: the key map is the last
+    // item of its Setup menu.
+    QAction *keyMap =
+        setup->addAction(tr("Load key map..."), this, &MainWindow::chooseKeyMap);
+    languageAction(keyMap, "MENU_SETUP_LOADKEYMAP", tr("Load key map..."));
+
+    // Upstream's Control menu, which is where the break is sent and a macro is
+    // started and stopped. Stop is upstream's End button, which lives on
+    // `ttpmacro.exe`'s own control window — there is no second window here, so
+    // it belongs on the one there is.
+    QMenu *control = menuBar()->addMenu(tr("Control"));
+    control->setObjectName(QStringLiteral("controlMenu"));
+    languageAction(control->menuAction(), "MENU_CONTROL", tr("Control"));
+    m_breakAction = control->addAction(tr("Send break"), this,
+                                       &MainWindow::sendBreak);
+    languageAction(m_breakAction, "MENU_CONTROL_SENDBREAK", tr("Send break"));
+    control->addSeparator();
+    QAction *runMacroAction =
+        control->addAction(tr("Run macro..."), this, &MainWindow::runMacro);
+    languageAction(runMacroAction, "MENU_CONTROL_MACRO", tr("Run macro..."));
+    m_stopMacroAction = control->addAction(tr("Stop macro"), this,
+                                           &MainWindow::stopMacro);
+    languageAction(m_stopMacroAction, "BTN_STOP", tr("Stop macro"));
+    m_stopMacroAction->setEnabled(false);
 
     // Deliberately user-initiated. There is no startup request or timer: this
     // action is the user's permission to contact GitHub, and the signed
