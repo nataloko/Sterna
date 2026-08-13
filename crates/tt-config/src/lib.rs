@@ -16,6 +16,7 @@
 //! cargo run -p tt-config --bin gen-settings   # after editing the schema
 //! ```
 
+pub mod buttons;
 pub mod cmdline;
 pub mod esc;
 pub mod gen;
@@ -27,8 +28,9 @@ pub mod services;
 
 mod generated;
 
+pub use buttons::Button;
 pub use generated::*;
-pub use hex::{hex_decode, hex_decode_str};
+pub use hex::{hex_decode, hex_decode_str, hex_escape_str};
 pub use ini::{Encoding, Ini};
 pub use keyboard::{KeyboardAction, KeyboardMap, Shortcut, UserKey, UserKeyType};
 pub use schema::{DebugModes, Field, Kind};

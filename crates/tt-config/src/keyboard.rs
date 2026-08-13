@@ -64,11 +64,15 @@ pub struct UserKey {
 }
 
 /// How a user key's value is used.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum UserKeyType {
     /// Send bytes, with `$HH` escapes and no text conversion.
     Binary,
     /// Send text, with `$HH` escapes and newline conversion.
+    ///
+    /// The default, which matters only to [`crate::buttons`]: a new quick
+    /// button is a line somebody wants typed.
+    #[default]
     Text,
     /// Start the named macro.
     Macro,
