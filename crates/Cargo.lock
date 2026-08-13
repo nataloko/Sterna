@@ -2255,7 +2255,7 @@ checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
 
 [[package]]
 name = "tt-bench"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "tt-grid",
  "tt-vt",
@@ -2263,18 +2263,18 @@ dependencies = [
 
 [[package]]
 name = "tt-charset"
-version = "0.1.5"
+version = "0.1.6"
 
 [[package]]
 name = "tt-config"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "tt-vt",
 ]
 
 [[package]]
 name = "tt-conn"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "data-encoding",
  "getrandom 0.4.3",
@@ -2292,7 +2292,7 @@ dependencies = [
 
 [[package]]
 name = "tt-ctl"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "libc",
  "serde",
@@ -2307,7 +2307,7 @@ dependencies = [
 
 [[package]]
 name = "tt-dump"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "tt-grid",
  "tt-vt",
@@ -2315,7 +2315,7 @@ dependencies = [
 
 [[package]]
 name = "tt-ffi"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "cbindgen",
  "ed25519-dalek",
@@ -2334,7 +2334,7 @@ dependencies = [
 
 [[package]]
 name = "tt-fuzz"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "proptest",
  "tt-conn",
@@ -2344,14 +2344,14 @@ dependencies = [
 
 [[package]]
 name = "tt-grid"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "unicode-width",
 ]
 
 [[package]]
 name = "tt-host"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "libc",
  "tt-conn",
@@ -2363,14 +2363,14 @@ dependencies = [
 
 [[package]]
 name = "tt-i18n"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "tt-config",
 ]
 
 [[package]]
 name = "tt-lua"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "mlua",
  "tt-ttl",
@@ -2378,7 +2378,7 @@ dependencies = [
 
 [[package]]
 name = "tt-macro"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "libc",
  "tempfile",
@@ -2394,7 +2394,7 @@ dependencies = [
 
 [[package]]
 name = "tt-session"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "libc",
  "tempfile",
@@ -2408,7 +2408,7 @@ dependencies = [
 
 [[package]]
 name = "tt-ttl"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "aes",
  "ctr",
@@ -2424,7 +2424,7 @@ dependencies = [
 
 [[package]]
 name = "tt-vt"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "tt-charset",
  "tt-grid",
@@ -2433,7 +2433,7 @@ dependencies = [
 
 [[package]]
 name = "tt-xfer"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "cc",
  "libc",
