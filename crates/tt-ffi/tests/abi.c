@@ -445,6 +445,16 @@ static void test_highlights(void)
     /* A literal cannot fail, because nothing in it is a metacharacter. */
     CHECK(tt_highlight_check("(unclosed", true, false) == TT_OK);
 
+    /* The editor's preview, which answers in bytes over plain text. */
+    size_t previewLen = 0;
+    const TtHighlightTextSpan *preview =
+        tt_highlights_preview(list, "an ERROR here", &previewLen);
+    CHECK(preview != NULL && previewLen == 1);
+    CHECK(preview[0].from == 3 && preview[0].to == 8);
+    CHECK(preview[0].fg == 0x00ff5050);
+    CHECK(tt_highlights_preview(list, "nothing here", &previewLen) == NULL);
+    CHECK(previewLen == 0);
+
     /* And the painting half. */
     TtConfig cfg;
     tt_config_default(&cfg);
@@ -1563,6 +1573,7 @@ static void test_null_safety(void)
     CHECK(tt_highlights_move(NULL, 0, 0) != TT_OK);
     CHECK(tt_highlights_save(NULL, NULL) != TT_OK);
     CHECK(tt_highlight_check(NULL, false, false) != TT_OK);
+    CHECK(tt_highlights_preview(NULL, NULL, NULL) == NULL);
     CHECK(tt_session_set_highlights(NULL, NULL) != TT_OK);
     CHECK(tt_session_highlight_problems(NULL) == NULL);
     CHECK(tt_session_row_highlights(NULL, 0, NULL) == NULL);

@@ -102,18 +102,13 @@ QVector<QuickHighlight> loadHighlights(const QString &settingsPath)
     return out;
 }
 
-bool saveHighlights(const QString &settingsPath, const QVector<QuickHighlight> &rules,
-                    QString *error)
+TtHighlights *buildHighlightList(const QVector<QuickHighlight> &rules)
 {
     TtHighlights *list = tt_highlights_new();
     if (!list) {
-        if (error) {
-            *error = QString::fromUtf8(tt_last_error());
-        }
-        return false;
+        return nullptr;
     }
-    bool ok = true;
-    for (int i = 0; i < rules.size() && ok; i++) {
+    for (int i = 0; i < rules.size(); i++) {
         const QuickHighlight &rule = rules.at(i);
         // Named locals: the byte arrays outlive the call that reads them,
         // which a temporary from `toUtf8()` inside the struct would not.
@@ -130,17 +125,84 @@ bool saveHighlights(const QString &settingsPath, const QVector<QuickHighlight> &
         entry.scope = rule.wholeLine ? TT_HIGHLIGHT_LINE : TT_HIGHLIGHT_MATCH;
         entry.group = rule.group;
         entry.enabled = rule.enabled;
-        ok = tt_highlights_set(list, size_t(i), &entry) == TT_OK;
+        if (tt_highlights_set(list, size_t(i), &entry) != TT_OK) {
+            break;
+        }
     }
-    if (ok) {
-        const QByteArray path = settingsPath.toUtf8();
-        ok = tt_highlights_save(list, path.constData()) == TT_OK;
+    return list;
+}
+
+bool saveHighlights(const QString &settingsPath, const QVector<QuickHighlight> &rules,
+                    QString *error)
+{
+    TtHighlights *list = buildHighlightList(rules);
+    if (!list) {
+        if (error) {
+            *error = QString::fromUtf8(tt_last_error());
+        }
+        return false;
     }
+    const QByteArray path = settingsPath.toUtf8();
+    const bool ok = tt_highlights_save(list, path.constData()) == TT_OK;
     if (!ok && error) {
         *error = QString::fromUtf8(tt_last_error());
     }
     tt_highlights_free(list);
     return ok;
+}
+
+QString highlightPreviewHtml(const QVector<QuickHighlight> &rules, const QString &text,
+                             const QColor &fg, const QColor &bg)
+{
+    const QByteArray utf8 = text.toUtf8();
+    TtHighlights *list = buildHighlightList(rules);
+    if (!list) {
+        return text.toHtmlEscaped();
+    }
+    size_t count = 0;
+    const TtHighlightTextSpan *spans =
+        tt_highlights_preview(list, utf8.constData(), &count);
+
+    QString out;
+    int at = 0;
+    for (size_t i = 0; i < count; i++) {
+        const TtHighlightTextSpan &span = spans[i];
+        const int from = int(span.from);
+        const int to = int(span.to);
+        if (from > at) {
+            out += QString::fromUtf8(utf8.mid(at, from - at)).toHtmlEscaped();
+        }
+        QColor foreground = unpackColor(span.fg);
+        QColor background = unpackColor(span.bg);
+        if (span.attrs & TT_ATTR_REVERSE) {
+            // Reverse is a swap, which needs both halves — so where the rule
+            // gave only one, the terminal's own colour stands in for the other.
+            const QColor was = foreground.isValid() ? foreground : fg;
+            foreground = background.isValid() ? background : bg;
+            background = was;
+        }
+        QString style;
+        if (foreground.isValid()) {
+            style += QStringLiteral("color:%1;").arg(foreground.name());
+        }
+        if (background.isValid()) {
+            style += QStringLiteral("background-color:%1;").arg(background.name());
+        }
+        if (span.attrs & TT_ATTR_BOLD) {
+            style += QStringLiteral("font-weight:bold;");
+        }
+        if (span.attrs & TT_ATTR_UNDER) {
+            style += QStringLiteral("text-decoration:underline;");
+        }
+        out += QStringLiteral("<span style=\"%1\">%2</span>")
+                   .arg(style, QString::fromUtf8(utf8.mid(from, to - from)).toHtmlEscaped());
+        at = to;
+    }
+    if (at < utf8.size()) {
+        out += QString::fromUtf8(utf8.mid(at)).toHtmlEscaped();
+    }
+    tt_highlights_free(list);
+    return out;
 }
 
 bool checkHighlightPattern(const QString &pattern, bool literal, bool ignoreCase, QString *error)

@@ -52,6 +52,7 @@
 
 #include "ConnectBar.h"
 #include "Control.h"
+#include "HighlightsDialog.h"
 #include "I18n.h"
 #include "Macro.h"
 #include "Plugins.h"
@@ -1567,8 +1568,14 @@ void MainWindow::buildMenus()
     QAction *keyMap =
         setup->addAction(tr("Load key map..."), this, &MainWindow::chooseKeyMap);
     languageAction(keyMap, "MENU_SETUP_LOADKEYMAP", tr("Load key map..."));
-    // Upstream has no pattern highlighting and so no menu item for one.
+    // Upstream has no pattern highlighting and so no menu item for one. The
+    // editor is here rather than a page of the settings dialog because that one
+    // is generated from the schema, and a list is exactly what the schema
+    // cannot describe.
     setup->addSeparator();
+    QAction *highlighting =
+        setup->addAction(tr("Highlighting..."), this, &MainWindow::editHighlights);
+    highlighting->setObjectName(QStringLiteral("highlightingAction"));
     m_highlightingAction = setup->addAction(tr("Highlight matches"));
     m_highlightingAction->setObjectName(QStringLiteral("highlightMatchesAction"));
     m_highlightingAction->setCheckable(true);
@@ -2457,6 +2464,14 @@ void MainWindow::storeHighlights(const QVector<QuickHighlight> &rules)
     // Through the file rather than straight into the sessions, so what is in
     // force is always what a person reading the file would expect.
     reloadHighlights();
+}
+
+void MainWindow::editHighlights()
+{
+    HighlightsDialog dialog(m_highlights, this);
+    if (dialog.exec() == QDialog::Accepted) {
+        storeHighlights(dialog.rules());
+    }
 }
 
 void MainWindow::invokeMenuCommand(quint16 command)

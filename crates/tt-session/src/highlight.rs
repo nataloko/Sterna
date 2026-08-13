@@ -42,6 +42,19 @@ pub struct Span {
     pub attrs: u32,
 }
 
+/// One run of plain text a rule claimed — [`Matcher::preview`]'s answer.
+///
+/// `from`..`to` are byte offsets into the text that was matched, always on
+/// character boundaries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextSpan {
+    pub from: u32,
+    pub to: u32,
+    pub fg: Option<Rgb>,
+    pub bg: Option<Rgb>,
+    pub attrs: u32,
+}
+
 /// A rule that would not compile, and why.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rejected {
@@ -182,6 +195,48 @@ impl Matcher {
     /// The rules that would not compile, for a frontend to complain about once.
     pub fn rejected(&self) -> &[Rejected] {
         &self.rejected
+    }
+
+    /// Spans over one line of plain text, for the editor's preview.
+    ///
+    /// The editor shows the user's own sample line coloured by the rules they
+    /// are writing, and it has to be coloured by *this* engine or the preview
+    /// would be a second implementation quietly disagreeing with the first.
+    ///
+    /// Offsets are **bytes** into `text` rather than columns, because a preview
+    /// is drawn as text and not on a grid.
+    pub fn preview(&self, text: &str) -> Vec<TextSpan> {
+        let mut starts: Vec<u32> = text.char_indices().map(|(i, _)| i as u32).collect();
+        let cells = starts.len();
+        starts.push(text.len() as u32);
+        let mut styles = vec![Style::default(); cells];
+        self.paint(text, &starts, &mut styles);
+
+        let mut out: Vec<TextSpan> = Vec::new();
+        for (i, style) in styles.iter().enumerate() {
+            if style.is_empty() {
+                continue;
+            }
+            let (from, to) = (starts[i], starts[i + 1]);
+            match out.last_mut() {
+                Some(last)
+                    if last.to == from
+                        && last.fg == style.fg
+                        && last.bg == style.bg
+                        && last.attrs == style.attrs =>
+                {
+                    last.to = to;
+                }
+                _ => out.push(TextSpan {
+                    from,
+                    to,
+                    fg: style.fg,
+                    bg: style.bg,
+                    attrs: style.attrs,
+                }),
+            }
+        }
+        out
     }
 
     /// Claim cells of one logical line.
@@ -570,6 +625,20 @@ mod tests {
         assert_eq!((spans[0].1[0].from, spans[0].1[0].to), (2, 4));
         assert_eq!(spans[1].0, 8);
         assert_eq!((spans[1].1[0].from, spans[1].1[0].to), (0, 2));
+    }
+
+    #[test]
+    fn a_preview_answers_in_bytes_over_plain_text() {
+        let m = Matcher::new(&[rule("ERROR")]);
+        let spans = m.preview("an ERROR here");
+        assert_eq!(spans.len(), 1);
+        assert_eq!((spans[0].from, spans[0].to), (3, 8));
+        assert_eq!(spans[0].fg, Some([255, 0, 0]));
+        // Bytes, not characters: the offsets have to index the UTF-8 the
+        // editor is slicing.
+        let spans = m.preview("héllo ERROR");
+        assert_eq!((spans[0].from, spans[0].to), (7, 12));
+        assert!(m.preview("nothing here").is_empty());
     }
 
     #[test]

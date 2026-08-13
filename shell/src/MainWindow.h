@@ -278,6 +278,8 @@ private:
     /// user wrote is about the text on their screen, not about which tab it
     /// arrived in.
     void reloadHighlights();
+    /// Open the rule editor, and save what it returns.
+    void editHighlights();
     /// Write a rule list to the settings file and reload from it, so the file
     /// stays the one source of truth.
     void storeHighlights(const QVector<QuickHighlight> &rules);

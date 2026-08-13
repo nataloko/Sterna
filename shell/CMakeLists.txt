@@ -149,6 +149,7 @@ add_library(sterna_shell STATIC
     src/ConnectBar.cpp
     src/Control.cpp
     src/Highlights.cpp
+    src/HighlightsDialog.cpp
     src/I18n.cpp
     src/Theme.cpp
     src/PasteDialog.cpp

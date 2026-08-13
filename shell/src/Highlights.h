@@ -45,6 +45,14 @@ struct QuickHighlight {
 /// run and has no rules, not an error.
 QVector<QuickHighlight> loadHighlights(const QString &settingsPath);
 
+/// Build the core's list out of Qt's copy. The caller frees it with
+/// `tt_highlights_free`. Null only if the core would not allocate one.
+///
+/// Shared by the three callers that hand a rule set across the ABI — saving,
+/// arming a session, and the editor's preview — so there is one place that
+/// knows how a `QColor` becomes a packed colour.
+TtHighlights *buildHighlightList(const QVector<QuickHighlight> &rules);
+
 /// Write them back, leaving every other line of the file alone. False on
 /// failure, with the core's message in `error`.
 bool saveHighlights(const QString &settingsPath, const QVector<QuickHighlight> &rules,
@@ -56,3 +64,12 @@ bool saveHighlights(const QString &settingsPath, const QVector<QuickHighlight> &
 /// they change what the engine is handed.
 bool checkHighlightPattern(const QString &pattern, bool literal, bool ignoreCase,
                            QString *error);
+
+/// One line of text as rich text, coloured by `rules`.
+///
+/// Through the core's own engine, so the editor's sample box shows what the
+/// terminal will actually do rather than a second implementation's opinion of
+/// it. `fg` and `bg` stand in for the terminal's colours where a reversed rule
+/// needs one and the rule did not give it.
+QString highlightPreviewHtml(const QVector<QuickHighlight> &rules, const QString &text,
+                             const QColor &fg, const QColor &bg);

@@ -133,35 +133,11 @@ size_t Session::rowHighlights(int y, const TtHighlightSpan **out)
 
 void Session::setHighlights(const QVector<QuickHighlight> &rules)
 {
-    TtHighlights *list = tt_highlights_new();
+    TtHighlights *list = buildHighlightList(rules);
     if (!list) {
         return;
     }
-    for (int i = 0; i < rules.size(); i++) {
-        const QuickHighlight &rule = rules.at(i);
-        const QByteArray label = rule.label.toUtf8();
-        const QByteArray pattern = rule.pattern.toUtf8();
-        TtHighlight entry = {};
-        entry.label = label.constData();
-        entry.pattern = pattern.constData();
-        entry.literal = rule.literal;
-        entry.ignore_case = rule.ignoreCase;
-        entry.fore = rule.fore.isValid() ? quint32((rule.fore.red() << 16)
-                                                   | (rule.fore.green() << 8)
-                                                   | rule.fore.blue())
-                                         : TT_HIGHLIGHT_NO_COLOR;
-        entry.back = rule.back.isValid() ? quint32((rule.back.red() << 16)
-                                                   | (rule.back.green() << 8)
-                                                   | rule.back.blue())
-                                         : TT_HIGHLIGHT_NO_COLOR;
-        entry.style = rule.style;
-        entry.scope = rule.wholeLine ? TT_HIGHLIGHT_LINE : TT_HIGHLIGHT_MATCH;
-        entry.group = rule.group;
-        entry.enabled = rule.enabled;
-        if (tt_highlights_set(list, size_t(i), &entry) != TT_OK) {
-            break;
-        }
-    }
+    // The core keeps its own compiled copy, so the list dies here.
     tt_session_set_highlights(m_session, list);
     tt_highlights_free(list);
 }

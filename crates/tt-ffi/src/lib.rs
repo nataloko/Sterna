@@ -3799,6 +3799,8 @@ pub struct TtHighlights {
     /// The strings the view points into. Order does not matter; keeping them
     /// alive until the next rebuild does.
     strings: Vec<CString>,
+    /// The last [`tt_highlights_preview`] answer.
+    preview: Vec<TtHighlightTextSpan>,
 }
 
 impl TtHighlights {
@@ -3889,6 +3891,7 @@ pub extern "C" fn tt_highlights_load(path: *const c_char) -> *mut TtHighlights {
     let mut list = TtHighlights {
         items: tt_config::highlight::load(Path::new(path)),
         view: Vec::new(),
+        preview: Vec::new(),
         strings: Vec::new(),
     };
     list.rebuild();
@@ -3903,6 +3906,7 @@ pub extern "C" fn tt_highlights_new() -> *mut TtHighlights {
         items: Vec::new(),
         view: Vec::new(),
         strings: Vec::new(),
+        preview: Vec::new(),
     }))
 }
 
@@ -4016,6 +4020,66 @@ pub extern "C" fn tt_highlights_free(list: *mut TtHighlights) {
     if !list.is_null() {
         drop(unsafe { Box::from_raw(list) });
     }
+}
+
+/// One run of a preview's text that a rule claimed.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtHighlightTextSpan {
+    /// **Byte** offsets into the text that was previewed, not columns, and
+    /// always on a character boundary — a preview is drawn as text and not on a
+    /// grid.
+    pub from: u32,
+    pub to: u32,
+    /// `0x00RRGGBB`, or [`TT_HIGHLIGHT_NO_COLOR`].
+    pub fg: u32,
+    pub bg: u32,
+    /// `TT_ATTR_*` bits.
+    pub attrs: u32,
+}
+
+/// Colour one line of text by this rule set, for the editor's sample box.
+///
+/// Borrowed, and valid until the next call on this list or until it is freed.
+/// Null with `*out_len` zero when nothing matched.
+///
+/// This exists so that the preview is coloured by the engine that will do the
+/// real colouring. A second implementation in the frontend would be a preview
+/// that quietly disagrees with the terminal, which is worse than no preview.
+#[no_mangle]
+pub extern "C" fn tt_highlights_preview(
+    list: *mut TtHighlights,
+    text: *const c_char,
+    out_len: *mut usize,
+) -> *const TtHighlightTextSpan {
+    if !out_len.is_null() {
+        unsafe { *out_len = 0 };
+    }
+    let Some(l) = (unsafe { list.as_mut() }) else {
+        return ptr::null();
+    };
+    let Ok(text) = (unsafe { str_arg(text, usize::MAX) }) else {
+        return ptr::null();
+    };
+    let matcher = tt_session::highlight::Matcher::new(&l.items);
+    l.preview = matcher
+        .preview(text)
+        .into_iter()
+        .map(|span| TtHighlightTextSpan {
+            from: span.from,
+            to: span.to,
+            fg: pack_color(span.fg),
+            bg: pack_color(span.bg),
+            attrs: span.attrs,
+        })
+        .collect();
+    if !out_len.is_null() {
+        unsafe { *out_len = l.preview.len() };
+    }
+    if l.preview.is_empty() {
+        return ptr::null();
+    }
+    l.preview.as_ptr()
 }
 
 /// Whether the engine will accept this pattern, for an editor to ask as it is

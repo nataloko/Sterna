@@ -1605,6 +1605,28 @@ typedef struct {
 } TtHighlight;
 
 /**
+ * One run of a preview's text that a rule claimed.
+ */
+typedef struct {
+    /**
+     * **Byte** offsets into the text that was previewed, not columns, and
+     * always on a character boundary — a preview is drawn as text and not on a
+     * grid.
+     */
+    uint32_t from;
+    uint32_t to;
+    /**
+     * `0x00RRGGBB`, or [`TT_HIGHLIGHT_NO_COLOR`].
+     */
+    uint32_t fg;
+    uint32_t bg;
+    /**
+     * `TT_ATTR_*` bits.
+     */
+    uint32_t attrs;
+} TtHighlightTextSpan;
+
+/**
  * One run of columns to recolour, from [`tt_session_row_highlights`].
  */
 typedef struct {
@@ -3906,6 +3928,20 @@ TtStatus tt_highlights_save(const TtHighlights *list,
                             const char *path);
 
 void tt_highlights_free(TtHighlights *list);
+
+/**
+ * Colour one line of text by this rule set, for the editor's sample box.
+ *
+ * Borrowed, and valid until the next call on this list or until it is freed.
+ * Null with `*out_len` zero when nothing matched.
+ *
+ * This exists so that the preview is coloured by the engine that will do the
+ * real colouring. A second implementation in the frontend would be a preview
+ * that quietly disagrees with the terminal, which is worse than no preview.
+ */
+const TtHighlightTextSpan *tt_highlights_preview(TtHighlights *list,
+                                                 const char *text,
+                                                 size_t *out_len);
 
 /**
  * Whether the engine will accept this pattern, for an editor to ask as it is
