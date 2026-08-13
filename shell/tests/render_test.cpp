@@ -633,13 +633,15 @@ void test_local_echo_reaches_the_screen_without_waiting_for_the_host()
     int repaints = 0;
     QObject::connect(&h.session, &Session::damaged, [&repaints] { repaints++; });
 
-    // Through the widget, because that is the path a keystroke really takes.
+    // A blank tab has no transport. Its saved preference must not manufacture
+    // terminal output from ordinary typing.
     QKeyEvent press(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier, QStringLiteral("a"));
     QCoreApplication::sendEvent(&h.view, &press);
-    CHECK(repaints == 1);
+    CHECK(repaints == 0);
 
-    // The three other ways input reaches the core: Delete and `Meta8Bit=raw`
-    // send bytes, the key table sends a `TtKey`, and a paste is neither.
+    // The Session seam remains transportless for focused frontend tests and
+    // log replay. Every direct input path still drains its damage at once.
+    h.session.sendText(QStringLiteral("a"));
     h.session.sendBytes(QByteArray("b"));
     h.session.sendKey(TT_KEY_KP1);
     h.session.paste(QStringLiteral("p"));
@@ -1950,6 +1952,8 @@ void test_the_connect_bar_is_a_view_of_the_session()
     CHECK(status->text() == QStringLiteral("not connected"));
     CHECK(status->styleSheet().contains(
         QStringLiteral("background-color: #b71c1c")));
+    CHECK(!echoBox->isEnabled());
+    CHECK(!lineBox->isEnabled());
 
     // Shipped on, and the Setup item is the same switch as the setting.
     CHECK(!bar->isHidden());
@@ -1964,9 +1968,24 @@ void test_the_connect_bar_is_a_view_of_the_session()
           == QStringLiteral("on"));
     CHECK(!bar->isHidden());
 
-    // Local echo both ways: the host assigns it through SRM and a script can,
-    // so the checkbox is read back rather than remembered.
+    // Offline, both boxes display the preference but cannot change it.
     CHECK(!echoBox->isChecked());
+    echoBox->click();
+    CHECK(window.session()->setting(QStringLiteral("terminal.local_echo"))
+          == QStringLiteral("off"));
+    lineBox->click();
+    CHECK(window.session()->setting(QStringLiteral("terminal.line_edit"))
+          == QStringLiteral("off"));
+
+    // Once connected they become live controls. Local echo is also assigned
+    // by the host through SRM and by scripts, so it is read back rather than
+    // remembered by the checkbox.
+    const QString connectText = connectAction->text();
+    window.connectPty();
+    qApp->processEvents();
+    CHECK(window.session()->isConnected());
+    CHECK(echoBox->isEnabled());
+    CHECK(lineBox->isEnabled());
     CHECK(window.session()->setSetting(QStringLiteral("terminal.local_echo"),
                                        QStringLiteral("on"), &error));
     CHECK(echoBox->isChecked());
@@ -1992,16 +2011,14 @@ void test_the_connect_bar_is_a_view_of_the_session()
 
     // And the button is whichever of the two the session is, for any kind of
     // session — a local shell has no serial port in it and still disconnects.
-    const QString connectText = connectAction->text();
-    window.connectPty();
-    qApp->processEvents();
-    CHECK(window.session()->isConnected());
     CHECK(connectAction->text() != connectText);
     CHECK(connectAction->isEnabled());
     CHECK(status->styleSheet().isEmpty());
     window.session()->disconnectPort();
     qApp->processEvents();
     CHECK(connectAction->text() == connectText);
+    CHECK(!echoBox->isEnabled());
+    CHECK(!lineBox->isEnabled());
     CHECK(status->styleSheet().contains(
         QStringLiteral("background-color: #b71c1c")));
 }
@@ -2128,6 +2145,10 @@ void test_line_edit_toggle_confirms_an_unsent_draft()
     if (!line || !view) {
         return;
     }
+    window.connectPty();
+    qApp->processEvents();
+    CHECK(window.session()->isConnected());
+    CHECK(line->isEnabled());
     line->click();
     key(*view, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
 

@@ -187,9 +187,14 @@ void ConnectBar::refresh(const Session *session)
         QSignalBlocker block(m_echo);
         m_echo->setChecked(effectiveEcho);
     }
-    m_echo->setEnabled(!lineEdit);
+    // Neither control can act on a session that has no far end. Keep the
+    // check visible — it is still the saved/live preference and will take
+    // effect when a connection opens — but grey it until then. Connecting is
+    // not enough: a host-key or authentication prompt is not a terminal yet.
+    m_echo->setEnabled(connected && !lineEdit);
     if (m_lineEdit->isChecked() != lineEdit) {
         QSignalBlocker block(m_lineEdit);
         m_lineEdit->setChecked(lineEdit);
     }
+    m_lineEdit->setEnabled(connected);
 }

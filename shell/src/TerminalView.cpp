@@ -1415,6 +1415,30 @@ void TerminalView::keyPressEvent(QKeyEvent *event)
         return;
     }
 
+    // A blank tab has no wire to type onto. In particular, do not let its
+    // saved Local echo preference turn ordinary typing into fake terminal
+    // output. A line-editor draft is allowed to remain editable while a link
+    // is down; it is local by definition and can be sent after reconnecting.
+    // Copy and history navigation are local too and remain useful offline.
+    if (!m_session->isConnected() && !m_lineEditEnabled) {
+        if ((mods & Qt::ControlModifier) && (mods & Qt::ShiftModifier)
+            && event->key() == Qt::Key_C) {
+            copySelection();
+            return;
+        }
+        const int page = qMax(1, m_session->rows() - 1);
+        if (mods.testFlag(Qt::ShiftModifier) && event->key() == Qt::Key_PageUp) {
+            setViewOffset(m_session->viewOffset() + page);
+            return;
+        }
+        if (mods.testFlag(Qt::ShiftModifier) && event->key() == Qt::Key_PageDown) {
+            setViewOffset(m_session->viewOffset() - page);
+            return;
+        }
+        QWidget::keyPressEvent(event);
+        return;
+    }
+
     // A configured physical key outranks every built-in semantic mapping.
     // `DeleteKey=on` is upstream's explicit exception: Delete sends DEL and
     // its KEYBOARD.CNF assignment is skipped (the keypad decimal still maps).
@@ -2152,7 +2176,7 @@ void TerminalView::pasteClipboard()
 
 void TerminalView::pasteText(const QString &text)
 {
-    if (text.isEmpty()) {
+    if (text.isEmpty() || (!m_session->isConnected() && !m_lineEditEnabled)) {
         // `GetClipboardTextW` returning nothing is where upstream gives up
         // (`clipboar.c:236`), before any of the rest of this.
         return;

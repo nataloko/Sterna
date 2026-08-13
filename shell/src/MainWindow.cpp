@@ -331,6 +331,10 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
     connect(m_connectBar, &ConnectBar::disconnectRequested, this,
             &MainWindow::disconnectPort);
     connect(m_connectBar, &ConnectBar::localEchoRequested, this, [this](bool on) {
+        if (!m_session->isConnected()) {
+            updateStatus();
+            return;
+        }
         QString error;
         if (!m_session->setSetting(QStringLiteral("terminal.local_echo"),
                                    on ? QStringLiteral("on")
@@ -340,6 +344,10 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
         }
     });
     connect(m_connectBar, &ConnectBar::lineEditRequested, this, [this](bool on) {
+        if (!m_session->isConnected()) {
+            updateStatus();
+            return;
+        }
         if (!on && !m_view->confirmDiscardLineEdit()) {
             // The checkbox moved before its signal arrived. The session is
             // still authoritative, so refresh it back to checked on Cancel.

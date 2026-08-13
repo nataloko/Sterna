@@ -352,8 +352,9 @@ void test_tabs_are_independent_and_actions_follow_the_active_one()
     CHECK(screenText(*second->session()).contains(QStringLiteral("second")));
     CHECK(!screenText(*second->session()).contains(QStringLiteral("first")));
 
-    // The shared local-echo checkbox follows and changes only the active
-    // connection. Each terminal keeps its own live SRM/settings value.
+    // The shared local-echo checkbox follows the active page. These pages are
+    // deliberately offline, so the now-grey control cannot change them; a
+    // script or host assignment still refreshes the displayed state.
     auto *echo =
         window.findChild<QCheckBox *>(QStringLiteral("connectBarLocalEcho"));
     CHECK(echo != nullptr);
@@ -365,17 +366,17 @@ void test_tabs_are_independent_and_actions_follow_the_active_one()
     panels->setCurrentIndex(0);
     CHECK(window.session() == first->session());
     CHECK(echo && !echo->isChecked());
-    if (echo) {
-        echo->click();
-    }
+    CHECK(echo && !echo->isEnabled());
+    CHECK(first->session()->setSetting(QStringLiteral("terminal.local_echo"),
+                                       QStringLiteral("on"), &error));
     CHECK(first->session()->setting(QStringLiteral("terminal.local_echo"))
           == QStringLiteral("on"));
     panels->setCurrentIndex(1);
     CHECK(window.session() == second->session());
     CHECK(echo && echo->isChecked());
-    if (echo) {
-        echo->click();
-    }
+    CHECK(echo && !echo->isEnabled());
+    CHECK(second->session()->setSetting(QStringLiteral("terminal.local_echo"),
+                                        QStringLiteral("off"), &error));
     CHECK(second->session()->setting(QStringLiteral("terminal.local_echo"))
           == QStringLiteral("off"));
     CHECK(first->session()->setting(QStringLiteral("terminal.local_echo"))
@@ -391,9 +392,9 @@ void test_tabs_are_independent_and_actions_follow_the_active_one()
     CHECK(line && line->isChecked());
     panels->setCurrentIndex(0);
     CHECK(line && !line->isChecked());
-    if (line) {
-        line->click();
-    }
+    CHECK(line && !line->isEnabled());
+    CHECK(first->session()->setSetting(QStringLiteral("terminal.line_edit"),
+                                       QStringLiteral("on"), &error));
     CHECK(first->session()->setting(QStringLiteral("terminal.line_edit"))
           == QStringLiteral("on"));
     type(first->view(), Qt::Key_D, QStringLiteral("d"));
