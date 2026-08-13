@@ -83,9 +83,11 @@ tabs. Empty slots are widgets with Serial, SSH, Telnet and Local shell buttons,
 not preallocated sessions; accepting a dialog creates a page in that exact
 slot, while cancelling leaves it empty.
 
-`[Sterna] PanelLayout=single|two|four` is window-wide. A change through View,
-the generated settings surface, a macro or a plugin is copied into every open
-page and writes only that key immediately, preserving the rest of the INI.
+`[Sterna] PanelLayout=single|two|four` is window-wide. Its implementation and
+tests remain, but the View menu is intentionally hidden for 0.2.1 while the
+panel interaction is refined. A change through the generated settings surface,
+a macro or a plugin is copied into every open page and writes only that key
+immediately, preserving the rest of the INI.
 Every visible `TerminalView` refits its own grid to the panel it receives, and
 the window pushes a separate client-origin, client-size and cell-size snapshot
 to each visible session after the layout settles.

@@ -6,7 +6,6 @@
 #include "Printer.h"
 
 #include <QAction>
-#include <QActionGroup>
 #include <QApplication>
 #include <QClipboard>
 #include <QCloseEvent>
@@ -1075,7 +1074,6 @@ void MainWindow::setPanelLayout(PanelLayout layout, bool persist)
         }
     }
     m_panels->setLayoutMode(layout);
-    updatePanelActions();
     queueWindowMetrics();
     m_syncingPanelLayout = false;
 
@@ -1089,20 +1087,6 @@ void MainWindow::setPanelLayout(PanelLayout layout, bool persist)
             &error)) {
         fprintf(stderr, "Sterna: could not save the panel layout: %s\n",
                 qPrintable(error));
-    }
-}
-
-void MainWindow::updatePanelActions()
-{
-    const PanelLayout layout = m_panels->layoutMode();
-    if (m_singlePanelAction) {
-        m_singlePanelAction->setChecked(layout == PanelLayout::Single);
-    }
-    if (m_twoPanelAction) {
-        m_twoPanelAction->setChecked(layout == PanelLayout::Two);
-    }
-    if (m_fourPanelAction) {
-        m_fourPanelAction->setChecked(layout == PanelLayout::Four);
     }
 }
 
@@ -1229,7 +1213,6 @@ void MainWindow::onSettingsChanged()
     if (m_toolbarAction) {
         m_toolbarAction->setChecked(toolbar);
     }
-    updatePanelActions();
     // The buttons themselves are not settings, so this rereads the list as
     // well: the settings dialog is one of the places `[Sterna Buttons]` can
     // have changed under the window, the other being a hand edit.
@@ -1568,14 +1551,14 @@ void MainWindow::buildMenus()
     // Linux line editor receives Meta. A menu that stole Alt+B from readline
     // would be a menu people disable the whole menu bar to escape.
     //
-    // The compatible menus keep Tera Term's order. View is Sterna's one
-    // addition, between Edit and Setup where desktop applications put it, and
-    // so is each menu, for every item the two programs share: the log and the
+    // The compatible menus keep Tera Term's order for every item the two
+    // programs share: the log and the
     // transfers under File, Send break under Control, Load key map after Save
     // setup. There is deliberately no Terminal menu, because upstream has
     // none and a hand reaching for Control > Send break should find it there.
     // upstream's Window menu remains absent: it arranges several top-level
-    // windows, while View chooses how this one's tabs share its client area.
+    // windows. Sterna's experimental panel layouts are also deliberately not
+    // exposed here until their interaction is refined.
     QMenu *file = menuBar()->addMenu(tr("File"));
     file->setObjectName(QStringLiteral("fileMenu"));
     languageAction(file->menuAction(), "MENU_FILE", tr("File"));
@@ -1664,32 +1647,6 @@ void MainWindow::buildMenus()
     connect(edit, &QMenu::aboutToShow, this, [this] {
         m_quickButtonFromSelectionAction->setEnabled(m_view->hasSelection());
     });
-
-    QMenu *view = menuBar()->addMenu(tr("View"));
-    view->setObjectName(QStringLiteral("viewMenu"));
-    auto *panelGroup = new QActionGroup(view);
-    panelGroup->setExclusive(true);
-    m_singlePanelAction = view->addAction(tr("Single"));
-    m_singlePanelAction->setObjectName(QStringLiteral("singlePanelAction"));
-    m_twoPanelAction = view->addAction(tr("2 panels"));
-    m_twoPanelAction->setObjectName(QStringLiteral("twoPanelAction"));
-    m_fourPanelAction = view->addAction(tr("4 panels"));
-    m_fourPanelAction->setObjectName(QStringLiteral("fourPanelAction"));
-    for (QAction *action : {m_singlePanelAction, m_twoPanelAction,
-                            m_fourPanelAction}) {
-        action->setCheckable(true);
-        panelGroup->addAction(action);
-    }
-    // Deliberately no shortcuts. A terminal must not lose three key
-    // combinations to window furniture, especially when KEYBOARD.CNF can map
-    // every physical combination independently.
-    connect(m_singlePanelAction, &QAction::triggered, this,
-            [this] { setPanelLayout(PanelLayout::Single, true); });
-    connect(m_twoPanelAction, &QAction::triggered, this,
-            [this] { setPanelLayout(PanelLayout::Two, true); });
-    connect(m_fourPanelAction, &QAction::triggered, this,
-            [this] { setPanelLayout(PanelLayout::Four, true); });
-    updatePanelActions();
 
     // "Setup", which is Tera Term's own name for this menu, so that someone
     // arriving from it looks in the right place — and before Control, which is

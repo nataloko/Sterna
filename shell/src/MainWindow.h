@@ -271,7 +271,6 @@ private:
     /// Apply one window-wide panel layout to every page and, when requested,
     /// write only `PanelLayout` to the active INI immediately.
     void setPanelLayout(PanelLayout layout, bool persist);
-    void updatePanelActions();
     void onPageSettingsChanged(TerminalPage *page);
     /// Start `args`' macro and complain in a box if it will not start. The one
     /// place a macro is launched, whichever of the two asked: the menu, or a
@@ -410,9 +409,6 @@ private:
     /// happen at all.
     QString m_quickBarArea;
     QAction *m_toolbarAction = nullptr;
-    QAction *m_singlePanelAction = nullptr;
-    QAction *m_twoPanelAction = nullptr;
-    QAction *m_fourPanelAction = nullptr;
     QAction *m_quickButtonsAction = nullptr;
     QAction *m_quickButtonFromSelectionAction = nullptr;
     QAction *m_disconnectAction = nullptr;

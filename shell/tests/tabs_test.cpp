@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QMenu>
 #include <QPushButton>
 #include <QScrollBar>
 #include <QTabBar>
@@ -448,7 +449,7 @@ void test_new_tabs_load_the_saved_line_edit_default()
           == QStringLiteral("on"));
 }
 
-void test_layout_actions_persist_only_the_window_setting()
+void test_panel_layout_implementation_remains_without_a_view_menu()
 {
     QTemporaryDir dir;
     CHECK(dir.isValid());
@@ -461,15 +462,12 @@ void test_layout_actions_persist_only_the_window_setting()
 
     MainWindow window(ini);
     auto *panels = window.findChild<PanelContainer *>();
-    auto *single = window.findChild<QAction *>(QStringLiteral("singlePanelAction"));
-    auto *two = window.findChild<QAction *>(QStringLiteral("twoPanelAction"));
-    auto *four = window.findChild<QAction *>(QStringLiteral("fourPanelAction"));
-    CHECK(panels && single && two && four);
+    CHECK(panels != nullptr);
+    CHECK(window.findChild<QMenu *>(QStringLiteral("viewMenu")) == nullptr);
+    CHECK(window.findChild<QAction *>(QStringLiteral("singlePanelAction")) == nullptr);
+    CHECK(window.findChild<QAction *>(QStringLiteral("twoPanelAction")) == nullptr);
+    CHECK(window.findChild<QAction *>(QStringLiteral("fourPanelAction")) == nullptr);
     CHECK(panels->layoutMode() == PanelLayout::Four);
-    CHECK(four->isChecked() && !two->isChecked() && !single->isChecked());
-    CHECK(single->shortcut().isEmpty());
-    CHECK(two->shortcut().isEmpty());
-    CHECK(four->shortcut().isEmpty());
 
     CHECK(file.open(QIODevice::ReadOnly));
     CHECK(file.readAll()
@@ -483,16 +481,15 @@ void test_layout_actions_persist_only_the_window_setting()
     CHECK(window.session()->setSetting(QStringLiteral("window.panel_layout"),
                                        QStringLiteral("single"), &error));
     CHECK(panels->layoutMode() == PanelLayout::Single);
-    CHECK(single->isChecked());
     for (int i = 0; i < panels->count(); i++) {
         auto *page = static_cast<TerminalPage *>(panels->widget(i));
         CHECK(page->session()->setting(QStringLiteral("window.panel_layout"))
               == QStringLiteral("single"));
     }
 
-    two->trigger();
+    CHECK(window.session()->setSetting(QStringLiteral("window.panel_layout"),
+                                       QStringLiteral("two"), &error));
     CHECK(panels->layoutMode() == PanelLayout::Two);
-    CHECK(two->isChecked() && !four->isChecked() && !single->isChecked());
     CHECK(window.session()->setting(QStringLiteral("window.panel_layout"))
           == QStringLiteral("two"));
     for (int i = 0; i < panels->count(); i++) {
@@ -514,10 +511,7 @@ void test_layout_actions_persist_only_the_window_setting()
     file.close();
     MainWindow fallback(malformed);
     auto *fallbackPanels = fallback.findChild<PanelContainer *>();
-    auto *fallbackSingle =
-        fallback.findChild<QAction *>(QStringLiteral("singlePanelAction"));
     CHECK(fallbackPanels->layoutMode() == PanelLayout::Single);
-    CHECK(fallbackSingle->isChecked());
 }
 
 void test_visible_panels_refit_and_receive_their_own_metrics()
@@ -567,7 +561,8 @@ void test_visible_panels_refit_and_receive_their_own_metrics()
     CHECK(first->session()->windowMetrics().cell_width == firstCellWidth);
 
     const QSize topLevel = window.size();
-    window.findChild<QAction *>(QStringLiteral("fourPanelAction"))->trigger();
+    CHECK(window.session()->setSetting(QStringLiteral("window.panel_layout"),
+                                       QStringLiteral("four"), &error));
     QApplication::processEvents();
     CHECK(window.size() == topLevel);
 }
@@ -705,7 +700,7 @@ int main(int argc, char **argv)
     test_empty_panels_request_connections_without_creating_pages();
     test_tabs_are_independent_and_actions_follow_the_active_one();
     test_new_tabs_load_the_saved_line_edit_default();
-    test_layout_actions_persist_only_the_window_setting();
+    test_panel_layout_implementation_remains_without_a_view_menu();
     test_visible_panels_refit_and_receive_their_own_metrics();
     test_empty_panel_dialogs_cancel_or_connect_in_place();
     test_duplicate_reopens_telnet_with_the_live_settings();

@@ -144,6 +144,10 @@ active `TerminalPage`. `[Sterna] PanelLayout=single|two|four`
 window starts with its one ordinary terminal plus connection buttons in the
 empty slots; it does not invent or restore sessions.
 
+**Current exposure.** The implementation remains under test, but its View menu
+is hidden in 0.2.1 while the interaction is refined. This keeps the work
+available without presenting the unfinished layout controls in the ordinary UI.
+
 ---
 
 ## 5. Starting Sterna looks for a signed update
