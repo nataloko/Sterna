@@ -157,6 +157,7 @@ add_library(sterna_shell STATIC
     src/SshPrompts.cpp
     src/TabRows.cpp
     src/TelnetDialog.cpp
+    src/UpdateSchedule.cpp
     src/XferDialog.cpp
     resources/branding.qrc)
 
@@ -328,8 +329,11 @@ add_test(NAME tabs COMMAND tabs_test)
 # ABI and proves the committed signer matches the public key compiled into the
 # core. No release server or private key is involved. Compile the updater source
 # into the test: the Windows DLL deliberately exports only its C factory symbol,
-# while these network-free C++ helpers are the test seam.
-add_executable(update_test tests/update_test.cpp src/Updater.cpp)
+# while these network-free C++ helpers are the test seam. `UpdateSchedule.cpp`
+# is compiled in for the same reason and belongs to the other side of that seam
+# — the terminal asks whether a check is due before it loads the updater at all.
+add_executable(update_test tests/update_test.cpp src/Updater.cpp
+                           src/UpdateSchedule.cpp)
 add_dependencies(update_test tt_core)
 target_link_libraries(update_test PRIVATE Qt6::Widgets Qt6::Network sterna_core)
 target_include_directories(update_test PRIVATE src)
