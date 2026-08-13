@@ -1524,7 +1524,7 @@ void MainWindow::checkForUpdatesOnStartup()
         // check deliberately does not report is also the one that would
         // otherwise retry forever.
         rememberSettings({{QStringLiteral("updates.last_check"),
-                             updateCheckStamp(QDateTime::currentDateTimeUtc())}});
+                           updateCheckStamp(QDateTime::currentDateTimeUtc())}});
         // Silently: a missing updater library is a loose build or a partial
         // install, and nobody asked this question. Help > Check for Updates
         // reports it in full.
