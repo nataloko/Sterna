@@ -334,6 +334,58 @@ void test_keyboard_cnf_overrides_the_builtin_key_and_maps_modifiers()
     CHECK(screen.contains(QStringLiteral("1b 5b 41 5a")));
 }
 
+void test_line_edit_sends_the_edited_line_on_return()
+{
+    const QString screen = captureKeys(
+        4, {{"terminal.line_edit", "on"}}, [](TerminalView &view) {
+            key(view, QEvent::KeyPress, Qt::Key_A, Qt::NoModifier,
+                QStringLiteral("a"));
+            key(view, QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
+                QStringLiteral("c"));
+            key(view, QEvent::KeyPress, Qt::Key_Left, Qt::NoModifier);
+            key(view, QEvent::KeyPress, Qt::Key_B, Qt::NoModifier,
+                QStringLiteral("b"));
+            key(view, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+                QStringLiteral("\r"));
+        });
+    CHECK(screen.contains(QStringLiteral("61 62 63 0d")));
+}
+
+void test_line_edit_leaves_function_and_control_keys_immediate()
+{
+    const QString screen = captureKeys(
+        6, {{"terminal.line_edit", "on"}}, [](TerminalView &view) {
+            // This printable byte remains in the draft. F1 and Ctrl+C go
+            // straight to the child: ESC [ 1 1 ~ followed by ETX.
+            key(view, QEvent::KeyPress, Qt::Key_X, Qt::NoModifier,
+                QStringLiteral("x"));
+            key(view, QEvent::KeyPress, Qt::Key_F1, Qt::NoModifier);
+            key(view, QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier,
+                QString(QChar(0x03)));
+        });
+    CHECK(screen.contains(QStringLiteral("1b 5b 31 31 7e 03")));
+}
+
+void test_line_edit_queues_pasted_lines_until_each_return()
+{
+    const QString screen = captureKeys(
+        8,
+        {{"terminal.line_edit", "on"},
+         {"clipboard.confirm_paste", "off"}},
+        [](TerminalView &view) {
+            view.pasteText(QStringLiteral("one\r\ntwo"));
+            CHECK(view.lineEditText() == QStringLiteral("one"));
+            CHECK(view.queuedLineCount() == 1);
+            key(view, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+                QStringLiteral("\r"));
+            CHECK(view.lineEditText() == QStringLiteral("two"));
+            key(view, QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+                QStringLiteral("\r"));
+        });
+    CHECK(screen.contains(
+        QStringLiteral("6f 6e 65 0d 74 77 6f 0d")));
+}
+
 void test_shift_escape_cycles_the_configured_debug_modes()
 {
     Session session(40, 10);
@@ -429,6 +481,9 @@ int main(int argc, char **argv)
     test_meta_key_modes();
     test_strict_mapping_and_delete();
     test_keyboard_cnf_overrides_the_builtin_key_and_maps_modifiers();
+    test_line_edit_sends_the_edited_line_on_return();
+    test_line_edit_leaves_function_and_control_keys_immediate();
+    test_line_edit_queues_pasted_lines_until_each_return();
     test_shift_escape_cycles_the_configured_debug_modes();
     test_the_window_answers_what_a_program_asks_about_it();
     test_the_window_operations_reach_the_frontend();

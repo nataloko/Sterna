@@ -6,12 +6,14 @@
 
 #include <QElapsedTimer>
 #include <QPoint>
+#include <QQueue>
 #include <QWidget>
 
 #include "Theme.h"
 #include "sterna.h"
 
 class QTimer;
+class QLineEdit;
 class I18n;
 class Session;
 struct KeyCodeAction;
@@ -95,6 +97,17 @@ public:
     void pasteText(const QString &text);
     bool hasSelection() const { return m_hasSelection; }
 
+    /// Focus whichever widget accepts ordinary typing in the current mode.
+    void focusInput();
+    bool lineEditEnabled() const { return m_lineEditEnabled; }
+    bool hasLineEditDraft() const;
+    QString lineEditText() const;
+    int queuedLineCount() const { return m_queuedLines.size(); }
+    /// Ask before an explicit UI toggle discards an unfinished draft. Generic
+    /// setting changes call `applySettings` and discard without a modal box.
+    bool confirmDiscardLineEdit();
+    void clearLineEditDraft();
+
 public slots:
     /// Scroll the view back by `offset` lines; 0 is the live screen.
     void setViewOffset(int offset);
@@ -164,6 +177,13 @@ private:
     SelPoint unitEnd(SelPoint p) const;
     QString selectedText() const;
     void clearSelection();
+    /// Let the local editor consume text/navigation/editing keys. False keeps
+    /// the ordinary terminal path live for control and function keys.
+    bool editLineKey(QKeyEvent *event);
+    void submitEditedLine();
+    void queueEditedPaste(const QString &text);
+    void positionLineEditor();
+    void setLineEditEnabled(bool enabled);
     /// Extend the drag to a widget position, scrolling if it is off the edge.
     void dragTo(const QPointF &pos);
     /// Re-fit the terminal to the widget, in whole cells.
@@ -175,6 +195,13 @@ private:
 
     /// `KeybEnabled`. A macro's `enablekeyb 0` clears it.
     bool m_keyboardEnabled = true;
+
+    /// A one-line Qt editor laid over the live terminal cursor. It deliberately
+    /// owns only printable input and editing gestures; the terminal view keeps
+    /// focus so mapped, control and function keys retain their immediate path.
+    QLineEdit *m_lineEditor = nullptr;
+    QQueue<QString> m_queuedLines;
+    bool m_lineEditEnabled = false;
 
     /// The three keyboard settings which decide whether Qt's Alt key belongs
     /// to the desktop or to the terminal, and how a Meta character is put on

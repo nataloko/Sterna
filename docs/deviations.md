@@ -17,9 +17,10 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 |---|---|---|---|
 | 1 | The default baud rate is 115200 | 9600 | unreleased |
 | 2 | The connect dialogs remember the last connection, across restarts | Only Setup > Save persists anything | unreleased |
-| 3 | A bar under the menu: port, connect/disconnect, local echo | No toolbar at all | unreleased |
+| 3 | A bar under the menu: port, connect/disconnect, local echo, line edit | No toolbar at all | unreleased |
 | 4 | One, two or four simultaneous connection panels | One connection per window | unreleased |
 | 5 | Starting Sterna looks for a signed update, once a day | Nothing contacts a server on its own | unreleased |
+| 6 | Editable lines for every connection type | Telnet LINEMODE negotiation only | unreleased |
 
 ---
 
@@ -88,20 +89,22 @@ file's `BaudRate`.
 ## 3. A bar under the menu
 
 Under the menu bar: the serial port as a dropdown, one button that opens or
-closes the connection, and a Local echo check box. Tera Term has no toolbar —
-those three are a dialog, a menu item, and a check box on a settings tab.
+closes the connection, and Local echo and Line edit check boxes. Tera Term has
+no toolbar — its equivalents are a dialog, a menu item and settings pages.
 
-**Why.** They are the three things that get used every few minutes on a console
-port, and each of them costs a dialog upstream: picking a port is File > New
-connection, closing is File > Disconnect, and local echo is three tabs into
-Setup. Nothing else is on the bar for the same reason — it is not a general
-toolbar, and a fourth item would be one somebody has to explain.
+**Why.** These are the connection and input modes that need to be visible while
+working on a console port. Picking a port is File > New connection upstream,
+closing is File > Disconnect, and local echo is three tabs into Setup. Line
+edit is Sterna's own mode, described below. Nothing else is on the bar: it is
+not a general toolbar.
 
 **What is unchanged.** The bar decides nothing. Every widget on it is a view of
 the session refreshed from the same status update the menu uses, and every click
 calls the window method the menu item calls — so the port the bar shows is the
 port that is open, the button says what the session is, and the check box is the
 live `terminal.local_echo`, which a host's SRM and a macro can also change.
+Line edit is likewise the active tab's `terminal.line_edit`; it makes the echo
+box show the effective on state without changing the preference underneath.
 
 **Where it lives.** `shell/src/ConnectBar.{h,cpp}`, and one new setting:
 `[Sterna] Toolbar` (`window.toolbar`, on by default), which Setup > Show toolbar
@@ -178,3 +181,35 @@ two new settings hold it: `[Sterna] CheckUpdatesOnStartup`
 succeeds — so an offline machine costs one attempt a day rather than one per
 launch. Both are ordinary settings, editable in Setup and by hand: clearing the
 stamp means "check at the next start".
+
+## 6. Editable lines for every connection type
+
+Line edit keeps ordinary printable typing in a small editor at the live
+terminal cursor. Backspace, Delete, word movement, selection, clipboard edits
+and undo operate locally; Return sends the finished line with the terminal's
+configured Return sequence. A multi-line paste is a queue of those same lines,
+and each stays local until its own Return. Control keys, function keys,
+`KEYBOARD.CNF` mappings, macros, transfers and protocol replies remain
+immediate.
+
+**Why.** Serial consoles and command-oriented appliances often need a whole
+command corrected before any byte is sent, and telnet's negotiated LINEMODE is
+not available on serial, SSH, raw TCP or a local shell. Treating the feature as
+a frontend editor gives all connection types the same useful behaviour without
+turning the transport into a global transmission gate.
+
+**What is deliberately separate.** `[Tera Term] EnableLineMode`
+(`connection.line_mode`) still controls upstream's telnet LINEMODE negotiation
+and keeps its original meaning and default. This feature is `[Sterna]
+LineEdit=on|off` (`terminal.line_edit`), off by default. While it is active the
+accepted line is echoed exactly once without assigning `LocalEcho` or SRM, so
+turning it off restores the tab's previous Local echo preference. Drafts belong
+to a tab, survive panel and tab switches, and are discarded when that
+connection ends or is replaced.
+
+**Where it lives.** `TerminalView` owns the editor, queue and discard prompt;
+`ConnectBar` exposes the active tab's switch. `Session::send_edited_line` owns
+Return encoding and the one forced echo, through the flat ABI function
+`tt_session_send_edited_line`. The setting remains in the common schema, so
+Setup, Save setup, TTL/Lua, plugins and duplicated sessions all see the same
+value rather than a frontend-only copy.

@@ -664,6 +664,10 @@ void Session::sendEditedLine(const QString &text)
         emit notice(QString::fromUtf8(tt_last_error()));
     }
     rearm();
+    // Unlike ordinary local echo this path always changed the grid. The event
+    // the core queued is drained on the next pump, but an idle line may not
+    // produce one; repaint and re-anchor the next draft immediately.
+    emit damaged();
 }
 
 void Session::sendBytes(const QByteArray &bytes)

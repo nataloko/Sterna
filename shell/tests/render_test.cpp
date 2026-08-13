@@ -217,6 +217,30 @@ struct Harness {
     }
 };
 
+void key(TerminalView &view, int code,
+         Qt::KeyboardModifiers modifiers = Qt::NoModifier,
+         const QString &text = QString())
+{
+    QKeyEvent event(QEvent::KeyPress, code, modifiers, text);
+    QCoreApplication::sendEvent(&view, &event);
+}
+
+QString rowText(const Session &session, int y)
+{
+    size_t len = 0;
+    const TtCell *cells = session.row(y, &len);
+    QString out;
+    for (size_t x = 0; cells && x < len; x++) {
+        if (cells[x].width_class == TT_WIDTH_PAD) {
+            continue;
+        }
+        const uint32_t cp = cells[x].text[0];
+        out += cp ? QString::fromUcs4(reinterpret_cast<const char32_t *>(&cp), 1)
+                  : QStringLiteral(" ");
+    }
+    return out.trimmed();
+}
+
 /// Tera Term's shipping defaults, which is what the shell starts from.
 const QColor kWhite(255, 255, 255);
 const QColor kBlack(0, 0, 0);
@@ -1861,17 +1885,26 @@ void test_the_connect_bar_is_a_view_of_the_session()
         window.findChild<QAction *>(QStringLiteral("connectBarConnect"));
     auto *echoBox =
         window.findChild<QCheckBox *>(QStringLiteral("connectBarLocalEcho"));
+    auto *lineBox =
+        window.findChild<QCheckBox *>(QStringLiteral("connectBarLineEdit"));
     auto *showAction =
         window.findChild<QAction *>(QStringLiteral("showToolbarAction"));
     auto *status =
         window.findChild<QLabel *>(QStringLiteral("connectionStatus"));
     CHECK(connectAction != nullptr);
     CHECK(echoBox != nullptr);
+    CHECK(lineBox != nullptr);
     CHECK(showAction != nullptr);
     CHECK(status != nullptr);
-    if (!bar || !connectAction || !echoBox || !showAction || !status) {
+    if (!bar || !connectAction || !echoBox || !lineBox || !showAction || !status) {
         return;
     }
+
+    CHECK(echoBox->toolTip()
+          == QStringLiteral("Shows your keystrokes locally. Turn this on when "
+                            "the connected device does not echo what you type; "
+                            "leave it off if characters appear twice."));
+    CHECK(lineBox->toolTip().contains(QStringLiteral("until Enter sends the line")));
 
     CHECK(status->text() == QStringLiteral("not connected"));
     CHECK(status->styleSheet().contains(
@@ -1900,6 +1933,22 @@ void test_the_connect_bar_is_a_view_of_the_session()
     CHECK(window.session()->setting(QStringLiteral("terminal.local_echo"))
           == QStringLiteral("off"));
 
+    // Line edit forces the displayed echo state but does not rewrite the
+    // preference hidden under it. Leaving restores that off state.
+    CHECK(!lineBox->isChecked());
+    lineBox->click();
+    CHECK(window.session()->setting(QStringLiteral("terminal.line_edit"))
+          == QStringLiteral("on"));
+    CHECK(window.session()->setting(QStringLiteral("terminal.local_echo"))
+          == QStringLiteral("off"));
+    CHECK(echoBox->isChecked());
+    CHECK(!echoBox->isEnabled());
+    lineBox->click();
+    CHECK(window.session()->setting(QStringLiteral("terminal.line_edit"))
+          == QStringLiteral("off"));
+    CHECK(!echoBox->isChecked());
+    CHECK(echoBox->isEnabled());
+
     // And the button is whichever of the two the session is, for any kind of
     // session — a local shell has no serial port in it and still disconnects.
     const QString connectText = connectAction->text();
@@ -1914,6 +1963,144 @@ void test_the_connect_bar_is_a_view_of_the_session()
     CHECK(connectAction->text() == connectText);
     CHECK(status->styleSheet().contains(
         QStringLiteral("background-color: #b71c1c")));
+}
+
+void test_line_edit_delays_edits_queues_and_reanchors()
+{
+    Harness h;
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("terminal.line_edit"),
+                               QStringLiteral("on"), &error));
+    CHECK(h.session.setSetting(QStringLiteral("terminal.cr_send"),
+                               QStringLiteral("CRLF"), &error));
+    CHECK(h.session.setSetting(QStringLiteral("clipboard.confirm_paste"),
+                               QStringLiteral("off"), &error));
+    h.view.applySettings();
+    h.activate();
+
+    auto *editor = h.view.findChild<QLineEdit *>(
+        QStringLiteral("terminalLineEditor"));
+    CHECK(editor != nullptr);
+    CHECK(h.view.lineEditEnabled());
+    CHECK(editor && editor->isVisible());
+
+    key(h.view, Qt::Key_A, Qt::NoModifier, QStringLiteral("a"));
+    key(h.view, Qt::Key_C, Qt::NoModifier, QStringLiteral("c"));
+    key(h.view, Qt::Key_Left);
+    key(h.view, Qt::Key_B, Qt::NoModifier, QStringLiteral("b"));
+    CHECK(h.view.lineEditText() == QStringLiteral("abc"));
+    CHECK(rowText(h.session, 0).isEmpty());
+    CHECK(h.session.cursor().x == 0);
+
+    key(h.view, Qt::Key_Home);
+    key(h.view, Qt::Key_Delete);
+    CHECK(h.view.lineEditText() == QStringLiteral("bc"));
+    key(h.view, Qt::Key_Z, Qt::ControlModifier);
+    CHECK(h.view.lineEditText() == QStringLiteral("abc"));
+    key(h.view, Qt::Key_A, Qt::ControlModifier);
+    key(h.view, Qt::Key_Delete);
+
+    h.view.pasteText(QStringLiteral("one\r\ntwo"));
+    CHECK(h.view.lineEditText() == QStringLiteral("one"));
+    CHECK(h.view.queuedLineCount() == 1);
+    CHECK(rowText(h.session, 0).isEmpty());
+
+    const QRect before = editor ? editor->geometry() : QRect();
+    h.session.feed(QByteArrayLiteral("prompt\r\n"));
+    CHECK(h.view.lineEditText() == QStringLiteral("one"));
+    CHECK(editor && editor->geometry().top() > before.top());
+
+    key(h.view, Qt::Key_Return);
+    CHECK(rowText(h.session, 1).contains(QStringLiteral("one")));
+    CHECK(h.view.lineEditText() == QStringLiteral("two"));
+    CHECK(h.view.queuedLineCount() == 0);
+    key(h.view, Qt::Key_Return);
+    CHECK(rowText(h.session, 2).contains(QStringLiteral("two")));
+    CHECK(!h.view.hasLineEditDraft());
+}
+
+void test_line_edit_keeps_control_input_immediate_and_cleans_up()
+{
+    Harness h;
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("terminal.local_echo"),
+                               QStringLiteral("on"), &error));
+    CHECK(h.session.setSetting(QStringLiteral("terminal.line_edit"),
+                               QStringLiteral("on"), &error));
+    CHECK(h.session.setSetting(QStringLiteral("clipboard.confirm_paste"),
+                               QStringLiteral("off"), &error));
+    h.view.applySettings();
+
+    key(h.view, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    CHECK(h.view.lineEditText() == QStringLiteral("x"));
+    const size_t row = h.session.cursor().y;
+    key(h.view, Qt::Key_J, Qt::ControlModifier, QStringLiteral("\n"));
+    CHECK(h.session.cursor().y == row + 1);
+    CHECK(h.view.lineEditText() == QStringLiteral("x"));
+
+    // A connection edge discards both the visible line and queued lines.
+    h.view.pasteText(QStringLiteral("\nnext"));
+    CHECK(h.view.hasLineEditDraft());
+    h.session.connectionChanged();
+    CHECK(!h.view.hasLineEditDraft());
+
+    // Generic setting changes have no modal UI and discard immediately.
+    key(h.view, Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
+    CHECK(h.view.hasLineEditDraft());
+    CHECK(h.session.setSetting(QStringLiteral("terminal.line_edit"),
+                               QStringLiteral("off"), &error));
+    h.view.applySettings();
+    CHECK(!h.view.lineEditEnabled());
+    CHECK(!h.view.hasLineEditDraft());
+}
+
+void test_line_edit_toggle_confirms_an_unsent_draft()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    MainWindow window(dir.filePath(QStringLiteral("line-edit.ini")));
+    window.show();
+    qApp->processEvents();
+
+    auto *line = window.findChild<QCheckBox *>(
+        QStringLiteral("connectBarLineEdit"));
+    auto *view = window.findChild<TerminalView *>();
+    CHECK(line != nullptr);
+    CHECK(view != nullptr);
+    if (!line || !view) {
+        return;
+    }
+    line->click();
+    key(*view, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+
+    bool sawCancel = false;
+    QTimer::singleShot(0, [&] {
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        CHECK(box != nullptr);
+        if (box) {
+            CHECK(box->objectName() == QStringLiteral("lineEditDiscardDialog"));
+            sawCancel = true;
+            box->done(QMessageBox::Cancel);
+        }
+    });
+    line->click();
+    CHECK(sawCancel);
+    CHECK(line->isChecked());
+    CHECK(view->lineEditText() == QStringLiteral("x"));
+
+    bool sawDiscard = false;
+    QTimer::singleShot(0, [&] {
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        CHECK(box != nullptr);
+        if (box) {
+            sawDiscard = true;
+            box->done(QMessageBox::Discard);
+        }
+    });
+    line->click();
+    CHECK(sawDiscard);
+    CHECK(!line->isChecked());
+    CHECK(!view->hasLineEditDraft());
 }
 
 /// `AutoWinClose` is decided in the core, but only the frontend owns a
@@ -2201,6 +2388,9 @@ int main(int argc, char **argv)
     test_the_hidden_menu_is_the_ordinary_menu_as_a_popup();
     test_about_shows_the_application_version();
     test_the_connect_bar_is_a_view_of_the_session();
+    test_line_edit_delays_edits_queues_and_reanchors();
+    test_line_edit_keeps_control_input_immediate_and_cleans_up();
+    test_line_edit_toggle_confirms_an_unsent_draft();
     test_an_auto_close_request_respects_window_state();
     test_window_geometry_has_full_and_close_only_saves();
 

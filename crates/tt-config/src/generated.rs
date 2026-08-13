@@ -4072,8 +4072,8 @@ pub struct Settings {
     /// Window decoration belongs to the compositor on Linux, so it is carried only.
     pub window_corner_dontround: bool,
     /// **`[Sterna]`**, because upstream has no toolbar and so no key to be
-    /// compatible with. Whether the bar under the menu — port, connect, local echo —
-    /// is shown. It exists as a setting rather than as chrome nobody can remove:
+    /// compatible with. Whether the bar under the menu — port, connect, local echo,
+    /// line edit — is shown. It exists as a setting rather than as chrome nobody can remove:
     /// `window.popup_menu` and `window.hide_title` are about the *menu*, so neither
     /// hides this, and Setup > Show toolbar writes it.
     pub window_toolbar: bool,
@@ -15463,7 +15463,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "on",
         label: None,
-        doc: "**`[Sterna]`**, because upstream has no toolbar and so no key to be compatible with. Whether the bar under the menu — port, connect, local echo — is shown. It exists as a setting rather than as chrome nobody can remove: `window.popup_menu` and `window.hide_title` are about the *menu*, so neither hides this, and Setup > Show toolbar writes it.",
+        doc: "**`[Sterna]`**, because upstream has no toolbar and so no key to be compatible with. Whether the bar under the menu — port, connect, local echo, line edit — is shown. It exists as a setting rather than as chrome nobody can remove: `window.popup_menu` and `window.hide_title` are about the *menu*, so neither hides this, and Setup > Show toolbar writes it.",
     },
     Field {
         name: "window.panel_layout",

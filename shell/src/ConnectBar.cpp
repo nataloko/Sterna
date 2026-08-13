@@ -85,8 +85,21 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
     m_echo = new QCheckBox(plain("DLG_TERM_LOCALECHO", tr("Local echo")), this);
     m_echo->setObjectName(QStringLiteral("connectBarLocalEcho"));
     m_echo->setContentsMargins(4, 0, 4, 0);
+    m_echo->setToolTip(tr("Shows your keystrokes locally. Turn this on when the "
+                          "connected device does not echo what you type; leave "
+                          "it off if characters appear twice."));
     connect(m_echo, &QCheckBox::toggled, this, &ConnectBar::localEchoRequested);
     addWidget(m_echo);
+
+    m_lineEdit = new QCheckBox(tr("Line edit"), this);
+    m_lineEdit->setObjectName(QStringLiteral("connectBarLineEdit"));
+    m_lineEdit->setContentsMargins(4, 0, 4, 0);
+    m_lineEdit->setToolTip(
+        tr("Keeps ordinary text local and editable at the terminal cursor "
+           "until Enter sends the line."));
+    connect(m_lineEdit, &QCheckBox::toggled, this,
+            &ConnectBar::lineEditRequested);
+    addWidget(m_lineEdit);
 
     refreshPorts();
 }
@@ -164,11 +177,19 @@ void ConnectBar::refresh(const Session *session)
 
     // Local echo is not only ours to set: the host assigns it through SRM, and
     // a script can. So it is read back rather than remembered.
-    const bool echo = session->setting(QStringLiteral("terminal.local_echo"))
-        == QLatin1String("on");
-    if (m_echo->isChecked() != echo) {
+    const bool lineEdit =
+        session->setting(QStringLiteral("terminal.line_edit")) == QLatin1String("on");
+    const bool preferredEcho =
+        session->setting(QStringLiteral("terminal.local_echo")) == QLatin1String("on");
+    const bool effectiveEcho = lineEdit || preferredEcho;
+    if (m_echo->isChecked() != effectiveEcho) {
         // Blocked, or refreshing the view would write the setting back.
         QSignalBlocker block(m_echo);
-        m_echo->setChecked(echo);
+        m_echo->setChecked(effectiveEcho);
+    }
+    m_echo->setEnabled(!lineEdit);
+    if (m_lineEdit->isChecked() != lineEdit) {
+        QSignalBlocker block(m_lineEdit);
+        m_lineEdit->setChecked(lineEdit);
     }
 }
