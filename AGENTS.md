@@ -1428,7 +1428,18 @@ The desktop side:
   box. Symptom: cursor stops lining up.
 - **`QWidget::grab()` and focus work under offscreen** — but only after
   `show()` **and** `activateWindow()`, or a cursor test measures the
-  unfocused form.
+  unfocused form. And `adjustSize()` caps at two thirds of the *screen*,
+  which offscreen says is 800x800: put the wanted size back after it.
+- **A widget's metrics are wrong until it is polished** — the style's font
+  arrives as a `changeEvent` on first show, *after* a dialog has asked how
+  big it wants to be, so `TabRows` measured 1.5x wide and the dialog opened
+  too narrow for its own tabs. `ensurePolished()` in `sizeHint` is the fix
+  (`QComboBox` does it); remeasure *lazily* from there, because rewriting
+  geometry inside that event runs while the layout above is mid-computation.
+- **A wrapping widget must not quote its wrapped height as its minimum** —
+  a layout takes minimum width and minimum height independently, so
+  "narrowest width, and the height that needs" made the settings dialog 900
+  pixels tall at every width. The height belongs to `heightForWidth`.
 - **Sample a cell's corner, not its middle, to read a background** — the
   middle is ink, and a CJK glyph can overhang a pixel: assert fill *width*,
   not the neighbour.
