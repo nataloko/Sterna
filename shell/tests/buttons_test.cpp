@@ -214,6 +214,23 @@ void a_command_button_reaches_the_windows_own_actions()
     CHECK(buttonAction(window, 0)->isEnabled());
 }
 
+/// A macro is allowed to open its own connection, so it remains runnable when
+/// this tab has no link yet.
+void a_macro_button_is_available_offline()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini =
+        writeIni(dir,
+                 "[Sterna Buttons]\r\nButton1Label=Connect\r\n"
+                 "Button1Kind=macro\r\nButton1Value=connect.ttl\r\n");
+
+    MainWindow window(ini);
+    CHECK(!window.session()->isConnected());
+    CHECK(buttonAction(window, 0) != nullptr);
+    CHECK(buttonAction(window, 0)->isEnabled());
+}
+
 /// `Confirm=on` asks, and a dismissed question sends nothing. The box is a
 /// modal loop, so the assertion is what happens when it is closed rather than
 /// answered — which is what the close box does to it in real use.
@@ -341,6 +358,31 @@ void the_editor_round_trips_a_button()
     CHECK(back[0].value == QLatin1String("show version$0D"));
     CHECK(back[0].text == QLatin1String("show version\r"));
     CHECK(back[0].confirm);
+}
+
+/// A command supplied by a plugin or a newer build is not in this window's
+/// picker, but editing another field must not silently turn it into Break.
+void the_editor_preserves_an_unknown_command()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = writeIni(dir, "");
+
+    MainWindow window(ini);
+    QuickButton unknown;
+    unknown.kind = TT_QUICK_BUTTON_COMMAND;
+    unknown.text = QStringLiteral("60000");
+    QuickButtonsDialog dialog({unknown}, window.session(), &window);
+    auto *command =
+        dialog.findChild<QComboBox *>(QStringLiteral("quickButtonCommand"));
+    auto *confirm =
+        dialog.findChild<QCheckBox *>(QStringLiteral("quickButtonConfirm"));
+    CHECK(command != nullptr && confirm != nullptr);
+    CHECK(command->currentData().toString() == QLatin1String("60000"));
+
+    confirm->setChecked(true);
+    CHECK(dialog.buttons()[0].text == QLatin1String("60000"));
+    CHECK(dialog.buttons()[0].confirm);
 }
 
 /// The shortcut field, which is where the care is: every warning it can give,
@@ -566,9 +608,11 @@ int main(int argc, char **argv)
 
     a_button_in_the_file_types_into_the_session();
     a_command_button_reaches_the_windows_own_actions();
+    a_macro_button_is_available_offline();
     a_button_that_asks_sends_nothing_when_the_question_is_dismissed();
     an_empty_list_has_no_bar();
     the_editor_round_trips_a_button();
+    the_editor_preserves_an_unknown_command();
     the_editor_warns_about_a_key_the_host_wants();
     a_shortcut_is_installed_and_released_with_the_bar();
     the_bar_opens_down_the_right_and_stays_where_it_is_put();

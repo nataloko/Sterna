@@ -125,7 +125,7 @@ QuickButtonsDialog::QuickButtonsDialog(const QVector<QuickButton> &buttons,
     m_command = new QComboBox(this);
     m_command->setObjectName(QStringLiteral("quickButtonCommand"));
     for (const MenuCommand &c : kCommands) {
-        m_command->addItem(tr(c.label), c.id);
+        m_command->addItem(tr(c.label), QString::number(c.id));
     }
 
     m_value = new QStackedWidget(this);
@@ -303,7 +303,7 @@ void QuickButtonsDialog::commit()
         button.text = m_path->text();
         break;
     case TT_QUICK_BUTTON_COMMAND:
-        button.text = QString::number(m_command->currentData().toUInt());
+        button.text = m_command->currentData().toString();
         break;
     default:
         // The box holds line feeds because that is what a text edit produces;
@@ -347,7 +347,14 @@ void QuickButtonsDialog::load(int row)
         m_text->setPlainText(QString(text).replace(QLatin1Char('\r'),
                                                    QLatin1Char('\n')));
         m_path->setText(button.text);
-        const int commandRow = m_command->findData(button.text.toUInt());
+        int commandRow = m_command->findData(button.text);
+        if (button.kind == TT_QUICK_BUTTON_COMMAND && commandRow < 0) {
+            // The file may name a command this window does not offer in its
+            // picker. Keep it visible and, most importantly, unchanged when
+            // the dialog is accepted for some other edit.
+            m_command->addItem(tr("Command %1").arg(button.text), button.text);
+            commandRow = m_command->count() - 1;
+        }
         m_command->setCurrentIndex(commandRow < 0 ? 0 : commandRow);
         m_shortcut->setKeySequence(
             QKeySequence::fromString(button.shortcut, QKeySequence::PortableText));

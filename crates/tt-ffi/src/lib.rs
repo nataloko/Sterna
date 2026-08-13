@@ -3068,7 +3068,9 @@ pub extern "C" fn tt_quick_buttons_set(
         (Ok(l), Ok(s)) => (l, s),
         (Err(e), _) | (_, Err(e)) => return e,
     };
-    if index > l.items.len() || l.items.len() >= tt_session::buttons::MAX {
+    if index > l.items.len()
+        || (index == l.items.len() && l.items.len() >= tt_session::buttons::MAX)
+    {
         return fail(TT_ERR_INVALID, "button index out of range");
     }
     let made = tt_session::Button {

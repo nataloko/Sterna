@@ -1298,6 +1298,20 @@ static void test_quick_buttons(void)
     CHECK(read_file(path, buf, sizeof buf) > 0);
     CHECK(strstr(buf, "Button1") == NULL);
     CHECK(strstr(buf, "BaudRate=9600") != NULL);
+
+    /* Replacing the last item remains valid at the cap; only an append would
+     * make the list too long. */
+    TtQuickButton capped = {0};
+    capped.kind = TT_QUICK_BUTTON_TEXT;
+    capped.text = "x";
+    for (size_t i = 0; i < 99; i++) {
+        CHECK_OK(tt_quick_buttons_set(made_list, i, &capped));
+    }
+    CHECK(tt_quick_buttons_len(made_list) == 99);
+    capped.text = "replacement";
+    CHECK_OK(tt_quick_buttons_set(made_list, 98, &capped));
+    CHECK(strcmp(tt_quick_buttons_at(made_list, 98)->text, "replacement") == 0);
+    CHECK(tt_quick_buttons_set(made_list, 99, &capped) == TT_ERR_INVALID);
     tt_quick_buttons_free(made_list);
 
     tt_quick_buttons_free(list);

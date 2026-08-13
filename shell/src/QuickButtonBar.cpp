@@ -85,10 +85,10 @@ void QuickButtonBar::refresh(const Session *session)
 {
     const bool live = session && session->isConnected();
     for (int i = 0; i < m_actions.size(); i++) {
-        // A menu command is the window's, not the wire's — Save setup and the
-        // settings dialog work perfectly well with nothing connected, so
-        // greying those out would be wrong for the sake of a rule.
-        const bool needsLink = m_buttons[i].kind != TT_QUICK_BUTTON_COMMAND;
+        // Only the two sending kinds need a wire. A macro may establish its
+        // own connection, and a menu command such as Save setup works offline.
+        const bool needsLink = m_buttons[i].kind == TT_QUICK_BUTTON_TEXT
+            || m_buttons[i].kind == TT_QUICK_BUTTON_BYTES;
         m_actions[i]->setEnabled(live || !needsLink);
     }
 }
