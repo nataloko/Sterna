@@ -152,6 +152,28 @@ fn keys_are_encoded_by_the_core_and_follow_the_modes() {
 }
 
 #[test]
+fn the_live_local_echo_setting_covers_every_keyboard_send_path() {
+    let (mut s, h) = connected(20, 4);
+
+    s.send_text("wire").unwrap();
+    assert_eq!(row(&s, 0), "", "local echo ships off");
+    h.with(|st| st.outbound.clear());
+
+    assert!(s.set_setting("terminal.local_echo", "on"));
+    s.send_text("t").unwrap();
+    s.send_bytes(b"b").unwrap();
+    assert!(s.send_key(Key::Kp1).unwrap());
+    s.paste("p").unwrap();
+    assert_eq!(row(&s, 0), "tb1p");
+    assert_eq!(h.outbound(), b"tb1p");
+
+    assert!(s.set_setting("terminal.local_echo", "off"));
+    s.send_text("x").unwrap();
+    assert_eq!(row(&s, 0), "tb1p", "turning it off takes effect at once");
+    assert_eq!(h.outbound(), b"tb1px", "the byte still reaches the wire");
+}
+
+#[test]
 fn keyboard_cnf_terminal_and_user_keys_are_dispatched_by_the_session() {
     use tt_session::KeyCodeResult;
 

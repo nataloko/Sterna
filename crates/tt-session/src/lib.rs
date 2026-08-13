@@ -1208,6 +1208,7 @@ impl Session {
         }
         match self.vt.key(key) {
             Some(bytes) => {
+                self.feed_local_echo(&bytes);
                 self.queue(&bytes);
                 self.flush_pending()?;
                 Ok(true)
@@ -1299,6 +1300,7 @@ impl Session {
             return Ok(());
         }
         let bytes = self.vt.encode_text(text);
+        self.feed_local_echo(&bytes);
         self.queue(&bytes);
         self.flush_pending()
     }
@@ -1320,6 +1322,7 @@ impl Session {
         if self.xfer.is_some() {
             return Ok(());
         }
+        self.feed_local_echo(bytes);
         self.queue(bytes);
         self.flush_pending()
     }
@@ -1360,10 +1363,13 @@ impl Session {
                 || text.chars().any(|c| c.is_control()));
         if bracket {
             self.queue(b"\x1b[200~");
-            self.queue(text.as_bytes());
+        }
+        // The brackets describe the paste to the host; they are not keyboard
+        // input and upstream does not put them through `CommTextEchoW`.
+        self.feed_local_echo(text.as_bytes());
+        self.queue(text.as_bytes());
+        if bracket {
             self.queue(b"\x1b[201~");
-        } else {
-            self.queue(text.as_bytes());
         }
         self.flush_pending()
     }
@@ -1628,6 +1634,18 @@ impl Session {
         }
         let bytes = self.filter_stream(StreamDirection::Output, bytes);
         self.pending.extend_from_slice(&bytes);
+    }
+
+    /// Put keyboard input through the receive parser when SRM says to echo.
+    ///
+    /// Upstream writes the same text or binary bytes into `cv.InBuff` through
+    /// `CommTextEchoW` / `CommBinaryEcho`; [`Session::feed`] is this port's
+    /// corresponding path. Keeping it before the output filter also keeps a
+    /// plugin's receive and transmit directions independent.
+    fn feed_local_echo(&mut self, bytes: &[u8]) {
+        if self.vt.local_echo() && !bytes.is_empty() {
+            self.feed(bytes);
+        }
     }
 
     /// Apply the optional filter without paying for a copy in the ordinary

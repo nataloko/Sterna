@@ -4,6 +4,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QDialog>
 #include <QFile>
 #include <QLabel>
@@ -340,13 +341,38 @@ void test_tabs_are_independent_and_actions_follow_the_active_one()
     CHECK(screenText(*second->session()).contains(QStringLiteral("second")));
     CHECK(!screenText(*second->session()).contains(QStringLiteral("first")));
 
+    // The shared local-echo checkbox follows and changes only the active
+    // connection. Each terminal keeps its own live SRM/settings value.
+    auto *echo =
+        window.findChild<QCheckBox *>(QStringLiteral("connectBarLocalEcho"));
+    CHECK(echo != nullptr);
+    QString error;
+    CHECK(second->session()->setSetting(QStringLiteral("terminal.local_echo"),
+                                        QStringLiteral("on"), &error));
+    CHECK(echo && echo->isChecked());
+
     panels->setCurrentIndex(0);
     CHECK(window.session() == first->session());
+    CHECK(echo && !echo->isChecked());
+    if (echo) {
+        echo->click();
+    }
+    CHECK(first->session()->setting(QStringLiteral("terminal.local_echo"))
+          == QStringLiteral("on"));
     panels->setCurrentIndex(1);
     CHECK(window.session() == second->session());
+    CHECK(echo && echo->isChecked());
+    if (echo) {
+        echo->click();
+    }
+    CHECK(second->session()->setting(QStringLiteral("terminal.local_echo"))
+          == QStringLiteral("off"));
+    CHECK(first->session()->setting(QStringLiteral("terminal.local_echo"))
+          == QStringLiteral("on"));
 
     press(window.findChild<QWidget *>(QStringLiteral("panelHeader0")));
     CHECK(window.session() == first->session());
+    CHECK(echo && echo->isChecked());
     press(second->findChild<QScrollBar *>(QStringLiteral("terminalScrollBar")));
     CHECK(window.session() == second->session());
     auto *activeHeader =
