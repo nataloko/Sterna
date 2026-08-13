@@ -224,6 +224,7 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
     m_logStatus = new QLabel(this);
     statusBar()->addPermanentWidget(m_logStatus);
     m_status = new QLabel(this);
+    m_status->setObjectName(QStringLiteral("connectionStatus"));
     statusBar()->addPermanentWidget(m_status);
 
     // Under the menu, and connected to the same window methods the menu uses —
@@ -2428,6 +2429,11 @@ void MainWindow::updateStatus()
     m_status->setText(connected ? m_session->describe()
                       : connecting ? tr("connecting...")
                                    : tr("not connected"));
+    m_status->setStyleSheet(
+        !connected && !connecting
+            ? QStringLiteral("QLabel { background-color: #b71c1c; color: white; "
+                             "padding: 1px 6px; }")
+            : QString());
     if (m_connectBar) {
         m_connectBar->refresh(m_session);
     }

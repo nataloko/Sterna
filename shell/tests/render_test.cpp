@@ -1863,12 +1863,19 @@ void test_the_connect_bar_is_a_view_of_the_session()
         window.findChild<QCheckBox *>(QStringLiteral("connectBarLocalEcho"));
     auto *showAction =
         window.findChild<QAction *>(QStringLiteral("showToolbarAction"));
+    auto *status =
+        window.findChild<QLabel *>(QStringLiteral("connectionStatus"));
     CHECK(connectAction != nullptr);
     CHECK(echoBox != nullptr);
     CHECK(showAction != nullptr);
-    if (!bar || !connectAction || !echoBox || !showAction) {
+    CHECK(status != nullptr);
+    if (!bar || !connectAction || !echoBox || !showAction || !status) {
         return;
     }
+
+    CHECK(status->text() == QStringLiteral("not connected"));
+    CHECK(status->styleSheet().contains(
+        QStringLiteral("background-color: #b71c1c")));
 
     // Shipped on, and the Setup item is the same switch as the setting.
     CHECK(!bar->isHidden());
@@ -1901,9 +1908,12 @@ void test_the_connect_bar_is_a_view_of_the_session()
     CHECK(window.session()->isConnected());
     CHECK(connectAction->text() != connectText);
     CHECK(connectAction->isEnabled());
+    CHECK(status->styleSheet().isEmpty());
     window.session()->disconnectPort();
     qApp->processEvents();
     CHECK(connectAction->text() == connectText);
+    CHECK(status->styleSheet().contains(
+        QStringLiteral("background-color: #b71c1c")));
 }
 
 /// `AutoWinClose` is decided in the core, but only the frontend owns a
