@@ -221,8 +221,16 @@ bool Theme::shouldResizeGlyph(const QString &text, bool bold, int cells) const
 }
 
 void Theme::resolve(const TtCell &cell, bool selected, bool screenReverse,
-                    QColor *fg, QColor *bg) const
+                    QColor *fg, QColor *bg, const CellOverride *over) const
 {
+    // The cell's own attributes, and deliberately *not* a highlight rule's.
+    //
+    // Upstream's bold, blink and underline each carry a colour pair, so OR-ing
+    // a rule's underline in here would make "underline this" repaint the text
+    // magenta — the configured `color.underline`. A rule's bold and underline
+    // are a mark rather than an SGR attribute: they reach the font and the
+    // stroke, through the caller's `paintsBold` / `paintsUnderline`, and the
+    // only colours a rule decides are its own.
     const uint32_t attrs = cell.attrs;
 
     // Upstream composes the attribute with the setting that enables it before
@@ -238,6 +246,13 @@ void Theme::resolve(const TtCell &cell, bool selected, bool screenReverse,
         reverse = !reverse;
     }
     if (screenReverse) {
+        reverse = !reverse;
+    }
+    // A rule's reverse is the one attribute of its that *is* about colour, so
+    // it joins the count rather than the pair chain — and it comes before the
+    // rule's own colours below, so `fg=red, reverse` is red behind the text,
+    // which is what `SGR 31` and `SGR 7` together do.
+    if (over && (over->attrs & TT_ATTR_REVERSE)) {
         reverse = !reverse;
     }
 
@@ -315,5 +330,17 @@ void Theme::resolve(const TtCell &cell, bool selected, bool screenReverse,
         const QColor *safe = reverse ? m_reverse : m_normal;
         *fg = safe[0];
         *bg = safe[1];
+    }
+
+    // And a highlight rule wins over all of it, including the repair above —
+    // which tests the *cell's* two indices and would otherwise throw away a
+    // colour the user asked for on a cell the host had made invisible.
+    if (over) {
+        if (over->fg.isValid()) {
+            *(reverse ? bg : fg) = over->fg;
+        }
+        if (over->bg.isValid()) {
+            *(reverse ? fg : bg) = over->bg;
+        }
     }
 }

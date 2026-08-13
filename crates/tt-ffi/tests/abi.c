@@ -399,6 +399,123 @@ static void test_url_lookup(void)
     tt_session_free(s);
 }
 
+static void test_highlights(void)
+{
+    /* The list, as an editor drives it. */
+    TtHighlights *list = tt_highlights_new();
+    CHECK(list != NULL);
+    CHECK(tt_highlights_len(list) == 0);
+
+    TtHighlight rule;
+    memset(&rule, 0, sizeof rule);
+    rule.label = "Errors";
+    rule.pattern = "ERROR";
+    rule.fore = 0x00ff5050;
+    rule.back = TT_HIGHLIGHT_NO_COLOR;
+    rule.scope = TT_HIGHLIGHT_MATCH;
+    rule.enabled = true;
+    CHECK(tt_highlights_set(list, 0, &rule) == TT_OK);
+
+    rule.label = "Whole line";
+    rule.pattern = "FATAL";
+    rule.style = TT_HIGHLIGHT_BOLD;
+    rule.scope = TT_HIGHLIGHT_LINE;
+    CHECK(tt_highlights_set(list, 1, &rule) == TT_OK);
+    CHECK(tt_highlights_len(list) == 2);
+    /* Appending is index == len; anything past it is out of range. */
+    CHECK(tt_highlights_set(list, 5, &rule) != TT_OK);
+
+    const TtHighlight *got = tt_highlights_at(list, 0);
+    CHECK(got != NULL);
+    CHECK(strcmp(got->pattern, "ERROR") == 0);
+    CHECK(got->fore == 0x00ff5050);
+    CHECK(got->back == TT_HIGHLIGHT_NO_COLOR);
+    CHECK(tt_highlights_at(list, 2) == NULL);
+
+    /* A drag in the list, which is what decides priority. */
+    CHECK(tt_highlights_move(list, 1, 0) == TT_OK);
+    CHECK(strcmp(tt_highlights_at(list, 0)->pattern, "FATAL") == 0);
+    CHECK(tt_highlights_remove(list, 0) == TT_OK);
+    CHECK(tt_highlights_len(list) == 1);
+
+    /* What the editor asks while somebody is still typing. */
+    CHECK(tt_highlight_check("ERROR|FATAL", false, false) == TT_OK);
+    CHECK(tt_highlight_check("(unclosed", false, false) != TT_OK);
+    CHECK(tt_last_error() != NULL);
+    /* A literal cannot fail, because nothing in it is a metacharacter. */
+    CHECK(tt_highlight_check("(unclosed", true, false) == TT_OK);
+
+    /* The editor's preview, which answers in bytes over plain text. */
+    size_t previewLen = 0;
+    const TtHighlightTextSpan *preview =
+        tt_highlights_preview(list, "an ERROR here", &previewLen);
+    CHECK(preview != NULL && previewLen == 1);
+    CHECK(preview[0].from == 3 && preview[0].to == 8);
+    CHECK(preview[0].fg == 0x00ff5050);
+    CHECK(tt_highlights_preview(list, "nothing here", &previewLen) == NULL);
+    CHECK(previewLen == 0);
+
+    /* And the painting half. */
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    cfg.cols = 40;
+    cfg.rows = 3;
+    TtSession *s = tt_session_new(&cfg);
+    static const char feed[] = "an ERROR here";
+    tt_session_feed(s, (const uint8_t *)feed, sizeof feed - 1);
+
+    size_t len = 12345;
+    CHECK(tt_session_row_highlights(s, 0, &len) == NULL);
+    CHECK(len == 0);
+
+    CHECK(tt_session_set_highlights(s, list) == TT_OK);
+    CHECK(tt_session_highlight_problems(s) == NULL);
+    const TtHighlightSpan *spans = tt_session_row_highlights(s, 0, &len);
+    CHECK(spans != NULL && len == 1);
+    CHECK(spans[0].from == 3 && spans[0].to == 8);
+    CHECK(spans[0].fg == 0x00ff5050);
+    CHECK(spans[0].bg == TT_HIGHLIGHT_NO_COLOR);
+    CHECK(spans[0].attrs == 0);
+    /* The grid still says what the host sent — highlighting is drawing only. */
+    const TtCell *row = tt_session_row(s, 0, &len);
+    CHECK(row != NULL && (row[3].attrs & TT_ATTR2_FORE) == 0);
+    /* Rows with nothing on them, and rows that do not exist. */
+    CHECK(tt_session_row_highlights(s, 1, &len) == NULL && len == 0);
+    CHECK(tt_session_row_highlights(s, 99, &len) == NULL && len == 0);
+
+    /* A pattern only a hand edit can produce is reported rather than lost. */
+    TtHighlights *broken = tt_highlights_new();
+    memset(&rule, 0, sizeof rule);
+    rule.label = "typo";
+    rule.pattern = "(unclosed";
+    rule.fore = 0x00112233;
+    rule.back = TT_HIGHLIGHT_NO_COLOR;
+    rule.enabled = true;
+    CHECK(tt_highlights_set(broken, 0, &rule) == TT_OK);
+    CHECK(tt_session_set_highlights(s, broken) == TT_OK);
+    const char *problems = tt_session_highlight_problems(s);
+    CHECK(problems != NULL && strstr(problems, "typo") != NULL);
+    tt_highlights_free(broken);
+
+    /* An empty list is how a frontend turns them all off. */
+    CHECK(tt_session_set_highlights(s, NULL) == TT_OK);
+    CHECK(tt_session_row_highlights(s, 0, &len) == NULL);
+
+    /* Filling the list closes only the append arm. Existing entries remain
+     * editable at the documented maximum. */
+    TtHighlights *full = tt_highlights_new();
+    CHECK(full != NULL);
+    for (size_t i = 0; i < 99; i++) {
+        CHECK(tt_highlights_set(full, i, &rule) == TT_OK);
+    }
+    CHECK(tt_highlights_set(full, 98, &rule) == TT_OK);
+    CHECK(tt_highlights_set(full, 99, &rule) != TT_OK);
+    tt_highlights_free(full);
+
+    tt_session_free(s);
+    tt_highlights_free(list);
+}
+
 static void test_logging(void)
 {
     TtConfig cfg;
@@ -1458,6 +1575,20 @@ static void test_null_safety(void)
     CHECK(tt_port_list_len(NULL) == 0);
     CHECK(tt_port_list_at(NULL, 0) == NULL);
     tt_port_list_free(NULL);
+
+    CHECK(tt_highlights_load(NULL) == NULL);
+    CHECK(tt_highlights_len(NULL) == 0);
+    CHECK(tt_highlights_at(NULL, 0) == NULL);
+    CHECK(tt_highlights_set(NULL, 0, NULL) != TT_OK);
+    CHECK(tt_highlights_remove(NULL, 0) != TT_OK);
+    CHECK(tt_highlights_move(NULL, 0, 0) != TT_OK);
+    CHECK(tt_highlights_save(NULL, NULL) != TT_OK);
+    CHECK(tt_highlight_check(NULL, false, false) != TT_OK);
+    CHECK(tt_highlights_preview(NULL, NULL, NULL) == NULL);
+    CHECK(tt_session_set_highlights(NULL, NULL) != TT_OK);
+    CHECK(tt_session_highlight_problems(NULL) == NULL);
+    CHECK(tt_session_row_highlights(NULL, 0, NULL) == NULL);
+    tt_highlights_free(NULL);
     tt_ssh_params_default(NULL);
     CHECK(tt_ssh_connect(NULL) == NULL);
     CHECK(tt_ssh_connect_for_session(NULL, NULL) == NULL);
@@ -2785,6 +2916,7 @@ int main(void)
     test_scrollback_viewport();
     test_absolute_lines();
     test_url_lookup();
+    test_highlights();
     test_logging();
     test_log_name();
     test_settings();

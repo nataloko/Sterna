@@ -46,6 +46,26 @@ tt-macro = { path = "tt-macro" }
 tt-ctl = { path = "tt-ctl" }
 tt-ffi = { path = "tt-ffi" }
 
+# The highlight rules' engine, and the reason it is this one rather than the
+# Oniguruma `tt-ttl` already carries: matching runs inside `paintEvent`, over
+# every visible row, on the UI thread — and the far end chooses the haystack.
+# A backtracking engine there is a window that a pattern like `(\w+\s*)+:` can
+# freeze; this one is linear in the length of the input by construction, so
+# there is no retry limit to pick and no way for a rule to stop the drawing.
+# `RegexSet` also tests every rule in one pass instead of one pass each.
+#
+# `default-features = false` drops the Unicode tables nothing here asks for —
+# age, script and segmentation, which are the large ones. What is left covers
+# `\d \w \s \b`, `(?i)` and `\p{L}`; `\p{Greek}` fails to compile, and says so.
+regex = { version = "1.12", default-features = false, features = [
+    "std",
+    "perf",
+    "unicode-bool",
+    "unicode-case",
+    "unicode-gencat",
+    "unicode-perl",
+] }
+
 # `setpassword2` derives its key with 210001 iterations of PBKDF2-HMAC-SHA512,
 # which is the point of it — but an unoptimised RustCrypto is roughly thirty
 # times slower than an optimised one, and that turns `cargo test -p tt-ttl`

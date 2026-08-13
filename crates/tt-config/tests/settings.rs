@@ -71,6 +71,28 @@ fn the_panel_layout_is_a_sterna_setting_with_a_safe_fallback() {
 }
 
 #[test]
+fn the_highlighting_switch_is_a_sterna_setting_that_ships_on() {
+    assert!(Settings::default().color_highlighting);
+
+    let load = |value: &str| {
+        Settings::load(&Ini::parse(
+            format!("[Sterna]\r\nHighlighting={value}\r\n").as_bytes(),
+        ))
+        .color_highlighting
+    };
+    // `GetOnOff` with a default of on: only a literal `off` turns it off, so a
+    // hand-edited `0` leaves every rule working.
+    assert!(!load("off"));
+    assert!(load("on"));
+    assert!(load("0"));
+
+    // The rules themselves are not here. `[Sterna Highlights]` is a list, which
+    // the schema cannot describe, and `tt-config/src/highlight.rs` owns it.
+    let ini = Ini::parse(b"[Sterna Highlights]\nHighlight1Pattern=x\n");
+    assert!(Settings::load(&ini).color_highlighting);
+}
+
+#[test]
 fn the_deferred_encoding_settings_keep_upstreams_parsers() {
     let d = Settings::default();
     assert_eq!(d.encoding_receive, EncodingReceive::Utf8);

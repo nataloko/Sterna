@@ -5664,7 +5664,7 @@ The rule for going on that list: user-visible, not forced by the platform, and
 reproducing upstream instead would have been easy. A divergence Linux or Qt
 forces is a port, and belongs in a code comment and in `AGENTS.md`.
 
-Five so far, all 2026-08-13:
+Six so far, all 2026-08-13:
 
 1. **The default baud rate is 115200**, where `ttset.c:919` gives 9600. The
    key, its parse and its absence of bounds are unchanged, so `BaudRate=9600`
@@ -5688,6 +5688,19 @@ Five so far, all 2026-08-13:
 5. **A signed update check at startup**, on by default and limited to once per
    day, stays silent unless it has a release to offer. The manual check remains
    available when the schedule is off.
+
+6. **Highlight rules**: an ordered list of regular expressions, each with a
+   foreground colour, a background colour and attributes, applied to what is on
+   the screen. Upstream has no pattern or keyword highlighting anywhere — every
+   colour a cell can take is the host's decision, and its regex library lives in
+   `ttpmacro`, a separate process that never sees the screen. Nothing is written
+   into a cell: matching happens over the visible rows *while they are painted*,
+   so the grid still holds what the host sent, the log and the clipboard and the
+   oracle see an unhighlighted terminal, the receive path costs nothing, and a
+   rule written now colours what arrived an hour ago. The engine is the Rust
+   `regex` crate rather than `tt-ttl`'s Oniguruma, which costs backreferences
+   and lookaround and buys a linear-time guarantee — this runs on the UI thread
+   and the far end chooses the haystack.
 
 `[Sterna]` is the first invented section in the schema, and
 `tt-config/tests/upstream.rs` now asserts in both directions: an upstream

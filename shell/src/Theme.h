@@ -25,6 +25,20 @@
 /// in as a starting point and then **replaced from the settings** — see
 /// [`applySettings`], which is the only thing here that reads a file, and does
 /// it by asking the core rather than by parsing anything.
+/// What a highlight rule asked for on one cell, from `Session::rowHighlights`.
+///
+/// Deliberately not part of the cell: a rule changes what is drawn and nothing
+/// about what the terminal *is*, so the grid still says what the host sent and
+/// the log, the clipboard and the printer never see any of this.
+struct CellOverride {
+    /// Invalid means "leave that one alone", which is how a rule changes only
+    /// the background.
+    QColor fg;
+    QColor bg;
+    /// `TT_ATTR_*` bits to OR in for drawing.
+    quint32 attrs = 0;
+};
+
 class Theme {
 public:
     Theme();
@@ -51,8 +65,13 @@ public:
     /// DECSCNM. Both fold into the same reverse flag the cell's own
     /// `TT_ATTR_REVERSE` does, and three reverses is still a reverse — which
     /// is why they are counted rather than checked in turn.
+    ///
+    /// `over` is a highlight rule's claim on this cell, or null. It is applied
+    /// **after** everything upstream does, so nothing below can take it back —
+    /// and it goes through the same reverse flag as an SGR colour, so dragging
+    /// a selection across highlighted text still inverts it.
     void resolve(const TtCell &cell, bool selected, bool screenReverse,
-                 QColor *fg, QColor *bg) const;
+                 QColor *fg, QColor *bg, const CellOverride *over = nullptr) const;
 
     /// The palette entry, straight from the core. Painting through this rather
     /// than through a table of our own is deliberate: the grid stores an

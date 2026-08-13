@@ -453,6 +453,12 @@ pub struct TtSession {
     delimiters: CString,
     /// The last AttrURL run returned to the frontend.
     url: CString,
+    /// The last row of highlight spans handed out. Flat structs a C caller can
+    /// walk, converted from the core's `Option` colours and reused across rows
+    /// so painting a screen does not allocate once per row.
+    highlight_spans: Vec<TtHighlightSpan>,
+    /// What the last rule set failed to compile, if anything.
+    highlight_problems: CString,
     /// Active-screen sixel descriptors rebuilt by
     /// [`tt_session_sixel_images`]. Pixel storage remains in the terminal;
     /// this owns only the flat structs a C caller can walk.
@@ -512,6 +518,8 @@ pub extern "C" fn tt_session_new(config: *const TtConfig) -> *mut TtSession {
         key_duplicates: Vec::new(),
         delimiters: CString::default(),
         url: CString::default(),
+        highlight_spans: Vec::new(),
+        highlight_problems: CString::default(),
         sixel_images: Vec::new(),
         xfer_protocol: CString::default(),
         xfer_file: CString::default(),
@@ -3734,6 +3742,483 @@ pub extern "C" fn tt_port_list_free(list: *mut TtPortList) {
     if !list.is_null() {
         drop(unsafe { Box::from_raw(list) });
     }
+}
+
+// --- highlight rules ------------------------------------------------------
+//
+// Two halves that meet only in the frontend: a list to edit and save, and the
+// spans a painter asks for. The list is here rather than in the frontend
+// because the file format is the core's — the same reason
+// `tt_session_set_setting` takes a name and not an INI key.
+
+/// A colour a rule is not asking to change, in [`TtHighlight::fore`] and
+/// friends. Every real colour is `0x00RRGGBB`, so this cannot collide with one.
+pub const TT_HIGHLIGHT_NO_COLOR: u32 = 0xffff_ffff;
+
+/// What a rule paints over — [`TtHighlight::scope`].
+pub type TtHighlightScope = u32;
+/// The matched text, or the capture group when one is named.
+pub const TT_HIGHLIGHT_MATCH: TtHighlightScope = 0;
+/// The whole logical line the match sits on, continuation rows included.
+pub const TT_HIGHLIGHT_LINE: TtHighlightScope = 1;
+
+/// Bits for [`TtHighlight::style`].
+pub const TT_HIGHLIGHT_BOLD: u32 = 1;
+pub const TT_HIGHLIGHT_UNDERLINE: u32 = 2;
+pub const TT_HIGHLIGHT_REVERSE: u32 = 4;
+
+/// One rule, as an editor holds it. Both strings are borrowed from the owning
+/// [`TtHighlights`] and die with it.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtHighlight {
+    /// What the editor's list calls it; may be empty.
+    pub label: *const c_char,
+    /// The pattern as written, which is plain text rather than a pattern when
+    /// `literal` is set.
+    pub pattern: *const c_char,
+    pub literal: bool,
+    pub ignore_case: bool,
+    /// `0x00RRGGBB`, or [`TT_HIGHLIGHT_NO_COLOR`] to leave the cell's own
+    /// foreground alone — which is how a rule changes only the background.
+    pub fore: u32,
+    pub back: u32,
+    /// [`TT_HIGHLIGHT_BOLD`] and friends, OR-ed.
+    pub style: u32,
+    pub scope: TtHighlightScope,
+    /// Which capture group to colour; 0 is the whole match.
+    pub group: u32,
+    pub enabled: bool,
+}
+
+/// An owned list of rules. Free it with [`tt_highlights_free`].
+pub struct TtHighlights {
+    items: Vec<tt_config::highlight::Rule>,
+    /// The C view, rebuilt whenever `items` changes.
+    view: Vec<TtHighlight>,
+    /// The strings the view points into. Order does not matter; keeping them
+    /// alive until the next rebuild does.
+    strings: Vec<CString>,
+    /// The last [`tt_highlights_preview`] answer.
+    preview: Vec<TtHighlightTextSpan>,
+}
+
+impl TtHighlights {
+    fn rebuild(&mut self) {
+        self.strings.clear();
+        for r in &self.items {
+            self.strings.push(cstring(&r.label));
+            self.strings.push(cstring(&r.pattern));
+        }
+        // Two passes, like `tt_serial_enumerate`: `strings` must stop
+        // reallocating before any pointer into it is taken.
+        self.view = self
+            .items
+            .iter()
+            .enumerate()
+            .map(|(i, r)| TtHighlight {
+                label: self.strings[i * 2].as_ptr(),
+                pattern: self.strings[i * 2 + 1].as_ptr(),
+                literal: r.literal,
+                ignore_case: r.ignore_case,
+                fore: pack_color(r.fore),
+                back: pack_color(r.back),
+                style: r.style,
+                scope: match r.scope {
+                    tt_config::highlight::Scope::Line => TT_HIGHLIGHT_LINE,
+                    tt_config::highlight::Scope::Match => TT_HIGHLIGHT_MATCH,
+                },
+                group: r.group,
+                enabled: r.enabled,
+            })
+            .collect();
+    }
+}
+
+fn pack_color(color: Option<[u8; 3]>) -> u32 {
+    match color {
+        Some([r, g, b]) => (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b),
+        None => TT_HIGHLIGHT_NO_COLOR,
+    }
+}
+
+fn unpack_color(value: u32) -> Option<[u8; 3]> {
+    if value == TT_HIGHLIGHT_NO_COLOR {
+        return None;
+    }
+    Some([(value >> 16) as u8, (value >> 8) as u8, value as u8])
+}
+
+/// Read one rule out of the C struct.
+fn highlight_rule(h: &TtHighlight) -> Result<tt_config::highlight::Rule, TtStatus> {
+    // A label is optional, and a C caller zeroing the struct means "none"
+    // rather than an error.
+    let borrow = |p: *const c_char| -> Result<&str, TtStatus> {
+        if p.is_null() {
+            Ok("")
+        } else {
+            unsafe { str_arg(p, usize::MAX) }
+        }
+    };
+    Ok(tt_config::highlight::Rule {
+        label: borrow(h.label)?.to_string(),
+        pattern: borrow(h.pattern)?.to_string(),
+        literal: h.literal,
+        ignore_case: h.ignore_case,
+        fore: unpack_color(h.fore),
+        back: unpack_color(h.back),
+        style: h.style,
+        scope: if h.scope == TT_HIGHLIGHT_LINE {
+            tt_config::highlight::Scope::Line
+        } else {
+            tt_config::highlight::Scope::Match
+        },
+        group: h.group,
+        enabled: h.enabled,
+    })
+}
+
+/// Read the highlight rules out of a settings file.
+///
+/// A file that is not there has no rules, which is a first run and not an
+/// error — so this returns an empty list rather than null. Null only for a
+/// null or non-UTF-8 path.
+#[no_mangle]
+pub extern "C" fn tt_highlights_load(path: *const c_char) -> *mut TtHighlights {
+    let Ok(path) = (unsafe { str_arg(path, usize::MAX) }) else {
+        return ptr::null_mut();
+    };
+    let mut list = TtHighlights {
+        items: tt_config::highlight::load(Path::new(path)),
+        view: Vec::new(),
+        preview: Vec::new(),
+        strings: Vec::new(),
+    };
+    list.rebuild();
+    Box::into_raw(Box::new(list))
+}
+
+/// An empty list, to be filled with [`tt_highlights_set`] and written with
+/// [`tt_highlights_save`].
+#[no_mangle]
+pub extern "C" fn tt_highlights_new() -> *mut TtHighlights {
+    Box::into_raw(Box::new(TtHighlights {
+        items: Vec::new(),
+        view: Vec::new(),
+        strings: Vec::new(),
+        preview: Vec::new(),
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn tt_highlights_len(list: *const TtHighlights) -> usize {
+    match unsafe { list.as_ref() } {
+        Some(l) => l.items.len(),
+        None => 0,
+    }
+}
+
+/// Borrow one rule. Null when `index` is out of range. Valid until the list is
+/// changed or freed.
+#[no_mangle]
+pub extern "C" fn tt_highlights_at(list: *const TtHighlights, index: usize) -> *const TtHighlight {
+    match unsafe { list.as_ref() } {
+        Some(l) => l.view.get(index).map_or(ptr::null(), |r| r as *const _),
+        None => ptr::null(),
+    }
+}
+
+/// Replace the rule at `index`, or append when `index` equals the length.
+///
+/// The struct is taken as it stands, so the result of [`tt_highlights_at`] can
+/// be handed straight back. A pattern that will not compile is **not** refused
+/// here — [`tt_highlight_check`] is what an editor asks, and a rule can be
+/// half-typed while it is being edited.
+#[no_mangle]
+pub extern "C" fn tt_highlights_set(
+    list: *mut TtHighlights,
+    index: usize,
+    rule: *const TtHighlight,
+) -> TtStatus {
+    let l = match unsafe { list.as_mut() } {
+        Some(l) => l,
+        None => return fail(TT_ERR_INVALID, "null TtHighlights"),
+    };
+    let Some(h) = (unsafe { rule.as_ref() }) else {
+        return fail(TT_ERR_INVALID, "null TtHighlight");
+    };
+    if index > l.items.len()
+        || (index == l.items.len() && l.items.len() >= tt_config::highlight::MAX)
+    {
+        return fail(TT_ERR_INVALID, "highlight index out of range");
+    }
+    let made = match highlight_rule(h) {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
+    if index == l.items.len() {
+        l.items.push(made);
+    } else {
+        l.items[index] = made;
+    }
+    l.rebuild();
+    TT_OK
+}
+
+#[no_mangle]
+pub extern "C" fn tt_highlights_remove(list: *mut TtHighlights, index: usize) -> TtStatus {
+    let l = match unsafe { list.as_mut() } {
+        Some(l) => l,
+        None => return fail(TT_ERR_INVALID, "null TtHighlights"),
+    };
+    if index >= l.items.len() {
+        return fail(TT_ERR_INVALID, "highlight index out of range");
+    }
+    l.items.remove(index);
+    l.rebuild();
+    TT_OK
+}
+
+/// Move a rule, closing the gap behind it — a drag in a list, not a swap.
+///
+/// Order is priority: the first rule to claim a cell's foreground keeps it.
+#[no_mangle]
+pub extern "C" fn tt_highlights_move(list: *mut TtHighlights, from: usize, to: usize) -> TtStatus {
+    let l = match unsafe { list.as_mut() } {
+        Some(l) => l,
+        None => return fail(TT_ERR_INVALID, "null TtHighlights"),
+    };
+    if from >= l.items.len() || to >= l.items.len() {
+        return fail(TT_ERR_INVALID, "highlight index out of range");
+    }
+    let rule = l.items.remove(from);
+    l.items.insert(to, rule);
+    l.rebuild();
+    TT_OK
+}
+
+/// Write the list into a settings file, leaving every other line alone.
+///
+/// The whole `[Sterna Highlights]` section is replaced, so a removed rule takes
+/// its keys with it. Nothing else in the file is touched.
+#[no_mangle]
+pub extern "C" fn tt_highlights_save(list: *const TtHighlights, path: *const c_char) -> TtStatus {
+    let l = match unsafe { list.as_ref() } {
+        Some(l) => l,
+        None => return fail(TT_ERR_INVALID, "null TtHighlights"),
+    };
+    let path = match unsafe { str_arg(path, usize::MAX) } {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    match tt_config::highlight::save(Path::new(path), &l.items) {
+        Ok(()) => TT_OK,
+        Err(e) => fail(TT_ERR_IO, e.to_string()),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tt_highlights_free(list: *mut TtHighlights) {
+    if !list.is_null() {
+        drop(unsafe { Box::from_raw(list) });
+    }
+}
+
+/// One run of a preview's text that a rule claimed.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtHighlightTextSpan {
+    /// **Byte** offsets into the text that was previewed, not columns, and
+    /// always on a character boundary — a preview is drawn as text and not on a
+    /// grid.
+    pub from: u32,
+    pub to: u32,
+    /// `0x00RRGGBB`, or [`TT_HIGHLIGHT_NO_COLOR`].
+    pub fg: u32,
+    pub bg: u32,
+    /// `TT_ATTR_*` bits.
+    pub attrs: u32,
+}
+
+/// Colour one line of text by this rule set, for the editor's sample box.
+///
+/// Borrowed, and valid until the next call on this list or until it is freed.
+/// Null with `*out_len` zero when nothing matched.
+///
+/// This exists so that the preview is coloured by the engine that will do the
+/// real colouring. A second implementation in the frontend would be a preview
+/// that quietly disagrees with the terminal, which is worse than no preview.
+#[no_mangle]
+pub extern "C" fn tt_highlights_preview(
+    list: *mut TtHighlights,
+    text: *const c_char,
+    out_len: *mut usize,
+) -> *const TtHighlightTextSpan {
+    if !out_len.is_null() {
+        unsafe { *out_len = 0 };
+    }
+    let Some(l) = (unsafe { list.as_mut() }) else {
+        return ptr::null();
+    };
+    let Ok(text) = (unsafe { str_arg(text, usize::MAX) }) else {
+        return ptr::null();
+    };
+    let matcher = tt_session::highlight::Matcher::new(&l.items);
+    l.preview = matcher
+        .preview(text)
+        .into_iter()
+        .map(|span| TtHighlightTextSpan {
+            from: span.from,
+            to: span.to,
+            fg: pack_color(span.fg),
+            bg: pack_color(span.bg),
+            attrs: span.attrs,
+        })
+        .collect();
+    if !out_len.is_null() {
+        unsafe { *out_len = l.preview.len() };
+    }
+    if l.preview.is_empty() {
+        return ptr::null();
+    }
+    l.preview.as_ptr()
+}
+
+/// Whether the engine will accept this pattern, for an editor to ask as it is
+/// typed. The reason it will not is in [`tt_last_error`].
+///
+/// `literal` and `ignore_case` matter because they change what the engine is
+/// handed: a literal pattern cannot fail, and `(?i)` is a prefix.
+#[no_mangle]
+pub extern "C" fn tt_highlight_check(
+    pattern: *const c_char,
+    literal: bool,
+    ignore_case: bool,
+) -> TtStatus {
+    let pattern = match unsafe { str_arg(pattern, usize::MAX) } {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let rule = tt_config::highlight::Rule {
+        pattern: pattern.to_string(),
+        literal,
+        ignore_case,
+        ..tt_config::highlight::Rule::default()
+    };
+    match tt_session::highlight::check(&rule) {
+        Ok(()) => TT_OK,
+        Err(e) => fail(TT_ERR_INVALID, e),
+    }
+}
+
+/// Compile a rule list and use it from the next repaint.
+///
+/// The session keeps its own compiled copy, so the list may be freed
+/// afterwards. Passing an empty list, or one whose rules are all disabled,
+/// turns highlighting off without touching the `Highlighting` setting.
+#[no_mangle]
+pub extern "C" fn tt_session_set_highlights(
+    session: *mut TtSession,
+    list: *const TtHighlights,
+) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    let items: &[tt_config::highlight::Rule] = match unsafe { list.as_ref() } {
+        Some(l) => &l.items,
+        None => &[],
+    };
+    s.session.set_highlights(items);
+    TT_OK
+}
+
+/// The rules the last [`tt_session_set_highlights`] could not compile, one per
+/// line, or null when they all compiled.
+///
+/// Borrowed, and valid until the next call to this function on this session. A
+/// pattern only gets here by being hand-edited into the file — the editor will
+/// not save one — and silence would leave somebody looking at a rule that is in
+/// the file and does nothing.
+#[no_mangle]
+pub extern "C" fn tt_session_highlight_problems(session: *mut TtSession) -> *const c_char {
+    let s = session!(session, ptr::null());
+    let rejected = s.session.highlight_rejected();
+    if rejected.is_empty() {
+        return ptr::null();
+    }
+    let text = rejected
+        .iter()
+        .map(|r| {
+            if r.label.is_empty() {
+                format!("Highlight{}: {}", r.index, r.reason)
+            } else {
+                format!("Highlight{} ({}): {}", r.index, r.label, r.reason)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    s.highlight_problems = cstring(&text);
+    s.highlight_problems.as_ptr()
+}
+
+/// One run of columns to recolour, from [`tt_session_row_highlights`].
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtHighlightSpan {
+    /// First column, and one past the last. A wide character's padding column
+    /// is inside the run, so this is the same shape as a selection range.
+    pub from: u16,
+    pub to: u16,
+    /// `0x00RRGGBB`, or [`TT_HIGHLIGHT_NO_COLOR`] to leave the cell's own
+    /// colour alone.
+    pub fg: u32,
+    pub bg: u32,
+    /// `TT_ATTR_*` bits to OR into the cell **for drawing only**. Highlighting
+    /// never changes what the terminal is, so the grid still says what the host
+    /// sent.
+    pub attrs: u32,
+}
+
+/// What to recolour on viewport row `y`, in column order.
+///
+/// Borrowed, and valid until the next call on this session — the same contract
+/// as [`tt_session_row`], which a painter is calling beside this one. Null with
+/// `*out_len` zero when the row has nothing on it, which is the answer whenever
+/// highlighting is off or no rule matched.
+///
+/// **This reads the grid and does not touch it**, so a `tt_session_row` pointer
+/// taken before this call stays valid across it — which is what lets a painter
+/// hold a row of cells and ask about that same row. Anything added here that
+/// could move a line breaks the caller silently.
+///
+/// **This is where the matching happens.** Nothing is stamped into a cell as it
+/// arrives, so a rule applies to text that was already on the screen and to the
+/// scrollback, and the receive path costs nothing at all.
+#[no_mangle]
+pub extern "C" fn tt_session_row_highlights(
+    session: *mut TtSession,
+    y: usize,
+    out_len: *mut usize,
+) -> *const TtHighlightSpan {
+    let s = session!(session, ptr::null());
+    s.highlight_spans.clear();
+    s.highlight_spans.extend(
+        s.session
+            .row_highlights(y)
+            .iter()
+            .map(|span| TtHighlightSpan {
+                from: span.from,
+                to: span.to,
+                fg: pack_color(span.fg),
+                bg: pack_color(span.bg),
+                attrs: span.attrs,
+            }),
+    );
+    if !out_len.is_null() {
+        unsafe { *out_len = s.highlight_spans.len() };
+    }
+    if s.highlight_spans.is_empty() {
+        return ptr::null();
+    }
+    s.highlight_spans.as_ptr()
 }
 
 // --- ssh ------------------------------------------------------------------

@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+regex.workspace = true
 tt-conn.workspace = true
 tt-config.workspace = true
 tt-grid.workspace = true

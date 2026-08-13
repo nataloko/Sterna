@@ -98,6 +98,7 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/xfer_test                # a ZMODEM send, driven by the event loop
 ./build/macro_test               # a TTL macro, driven by the event loop
 ./build/print_test               # the printer, which is a file, so it needs none
+./build/highlight_test           # the highlight rules, to the pixels — needs nothing
 QT_QPA_PLATFORM=offscreen \
   ./build/cmdline_test           # a Tera Term command line, argv to connected
                                  # — NOT under Wayland; see the traps
@@ -862,6 +863,20 @@ The painter (the differential dump cannot see any of this):
   when `EnableReverseAttrColor=off`. Don't build a broad "ensure contrast".
 - **`UseNormalBGColor` substitutes only an attribute pair's background**
   (reverse puts it in the foreground); a later explicit SGR background wins.
+- **A highlight rule's bold and underline must not join `cell.attrs` before
+  `Theme::resolve`'s pair chain** — upstream's bold/blink/underline each carry
+  a *colour pair*, so OR-ing them in makes "underline this" repaint the text
+  the configured magenta. A rule's mark reaches the font and the stroke
+  (`paintsBold`/`paintsUnderline` take the combined word) and its colours are
+  the only colours it decides; its `reverse` is the one attribute that joins
+  the reverse count instead.
+- **A highlight span applies after the `UseTextColor` repair**, not before —
+  the repair tests the *cell's* two indices and would otherwise discard a
+  colour the user asked for on a cell the host had made invisible.
+- **Highlight matching runs while painting, and its per-line memo is keyed on
+  a damage counter** — `Session::mark_damage` moves it, so a new path that
+  edits the grid must go through that rather than pushing `Event::Damage`
+  itself, or the screen keeps last frame's colours.
 
 The colour OSCs (the whole family lives in `vtdisp.c`, which the oracle does
 not compile — `stubs_manual.c` is the transcription; diff it, don't invent):
@@ -1463,7 +1478,10 @@ The desktop side:
   pixels tall at every width. The height belongs to `heightForWidth`.
 - **Sample a cell's corner, not its middle, to read a background** — the
   middle is ink, and a CJK glyph can overhang a pixel: assert fill *width*,
-  not the neighbour.
+  not the neighbour. **And the corner is not safe either at nine pixels
+  wide**: a `j`'s descender reaches the bottom-left one and antialiases to
+  neither colour. `highlight_test`'s `filledWith` counts the cell's pixels
+  and asks for a majority, which no monospace glyph can reach.
 - **`git add -A` from the root sweeps in-progress work from other
   subtrees** — stage the paths the commit is about.
 - **CJK is deferred indefinitely** (2026-08-07, `PLAN.md`) — no IME work;

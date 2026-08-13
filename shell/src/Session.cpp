@@ -2,6 +2,8 @@
 
 #include "Session.h"
 
+#include "Highlights.h"
+
 #include <QClipboard>
 #include <QGuiApplication>
 #ifdef Q_OS_WIN
@@ -116,6 +118,34 @@ const TtCell *Session::line(quint64 n, size_t *outLen) const
 size_t Session::sixelImages(const TtSixelImage **out)
 {
     return tt_session_sixel_images(m_session, out);
+}
+
+size_t Session::rowHighlights(int y, const TtHighlightSpan **out)
+{
+    size_t len = 0;
+    const TtHighlightSpan *spans =
+        tt_session_row_highlights(m_session, static_cast<size_t>(qMax(0, y)), &len);
+    if (out) {
+        *out = spans;
+    }
+    return spans ? len : 0;
+}
+
+void Session::setHighlights(const QVector<QuickHighlight> &rules)
+{
+    TtHighlights *list = buildHighlightList(rules);
+    if (!list) {
+        return;
+    }
+    // The core keeps its own compiled copy, so the list dies here.
+    tt_session_set_highlights(m_session, list);
+    tt_highlights_free(list);
+}
+
+QString Session::highlightProblems() const
+{
+    const char *problems = tt_session_highlight_problems(m_session);
+    return problems ? QString::fromUtf8(problems) : QString();
 }
 
 quint64 Session::lineAt(int y) const

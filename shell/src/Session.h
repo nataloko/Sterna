@@ -146,6 +146,18 @@ public:
     /// Active-screen sixel rasters, oldest first. Borrowed until the next
     /// terminal mutation; the painter consumes them within one frame.
     size_t sixelImages(const TtSixelImage **out);
+    /// What the highlight rules claim on viewport row `y`, in column order.
+    ///
+    /// **This is where the matching happens** — the core runs the patterns over
+    /// the row as it is asked for, so nothing is added to the receive path and
+    /// a new rule colours text that is already on the screen. Borrowed until
+    /// the next call; the row pointer from `row()` is not disturbed by it.
+    size_t rowHighlights(int y, const TtHighlightSpan **out);
+    /// Compile a rule set and use it from the next repaint.
+    void setHighlights(const QVector<struct QuickHighlight> &rules);
+    /// What the last `setHighlights` could not compile, or an empty string.
+    /// Only a hand-edited file can produce one; the editor will not save one.
+    QString highlightProblems() const;
     /// The absolute number of the line at viewport row `y`.
     quint64 lineAt(int y) const;
     /// The URL-marked run containing one cell, or an empty string when the
