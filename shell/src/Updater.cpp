@@ -108,25 +108,6 @@ QNetworkRequest requestFor(const QUrl &url)
     return request;
 }
 
-QByteArray fileSha256(const QString &path, QString *error)
-{
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) {
-        *error = file.errorString();
-        return {};
-    }
-    QCryptographicHash hash(QCryptographicHash::Sha256);
-    while (!file.atEnd()) {
-        const QByteArray bytes = file.read(1024 * 1024);
-        if (bytes.isEmpty() && file.error() != QFileDevice::NoError) {
-            *error = file.errorString();
-            return {};
-        }
-        hash.addData(bytes);
-    }
-    return hash.result();
-}
-
 } // namespace
 
 bool decodeUpdateSignature(const QByteArray &encoded, QByteArray *out)
@@ -228,6 +209,17 @@ UpdateManifestResult parseUpdateManifest(const QByteArray &json,
         error->clear();
     }
     return UpdateManifestResult::Available;
+}
+
+QString detachUpdateDownload(QTemporaryFile *download)
+{
+    if (!download) {
+        return {};
+    }
+    const QString path = download->fileName();
+    download->setAutoRemove(false);
+    delete download;
+    return path;
 }
 
 bool replaceVerifiedAppImage(const QString &sourcePath, const QString &targetPath,
@@ -521,6 +513,9 @@ void Updater::finishDownload()
         fail(tr("Could not download the update: %1").arg(networkText));
         return;
     }
+    // `flush` is what makes the bytes visible to the second handle
+    // `installDownloaded` opens; `close` is not a close at all, because
+    // QTemporaryFile keeps the file open for as long as the object lives.
     if (m_received != m_artifact.size || !m_download->flush()) {
         fail(tr("The update download ended before its signed size."));
         return;
@@ -531,52 +526,55 @@ void Updater::finishDownload()
 
 void Updater::installDownloaded()
 {
-    QString error;
-    const QByteArray sha = fileSha256(m_download->fileName(), &error);
-    if (!error.isEmpty()) {
-        fail(tr("Could not verify the update: %1").arg(error));
+    // One read-only handle, used for both checks and then held open while the
+    // file is handed to the platform. It pins the path: Qt opens without
+    // FILE_SHARE_DELETE, so on Windows nothing can rename or replace the bytes
+    // between verifying them and executing them, and a reader is not a writer,
+    // so the loader still gets its image section. See `installWindows` for the
+    // handle that has to go.
+    QFile verified(m_download->fileName());
+    if (!verified.open(QIODevice::ReadOnly)) {
+        fail(tr("Could not verify the update: %1").arg(verified.errorString()));
         return;
     }
+    uchar *bytes = verified.map(0, m_artifact.size);
+    if (!bytes) {
+        fail(tr("Could not verify the update: %1").arg(verified.errorString()));
+        return;
+    }
+    const QByteArray sha = QCryptographicHash::hash(
+        QByteArrayView(bytes, static_cast<qsizetype>(m_artifact.size)),
+        QCryptographicHash::Sha256);
+    const bool signature = tt_update_verify(
+        bytes, static_cast<size_t>(m_artifact.size),
+        reinterpret_cast<const uint8_t *>(m_artifact.signature.constData()),
+        static_cast<size_t>(m_artifact.signature.size()));
+    verified.unmap(bytes);
+
     if (sha != m_artifact.sha256) {
         fail(tr("The update's SHA-256 does not match the signed manifest. "
                 "Nothing was installed."));
         return;
     }
-
-    QFile file(m_download->fileName());
-    if (!file.open(QIODevice::ReadOnly)) {
-        fail(tr("Could not verify the update: %1").arg(file.errorString()));
-        return;
-    }
-    uchar *bytes = file.map(0, m_artifact.size);
-    const bool verified = bytes
-        && tt_update_verify(bytes, static_cast<size_t>(m_artifact.size),
-                            reinterpret_cast<const uint8_t *>(
-                                m_artifact.signature.constData()),
-                            static_cast<size_t>(m_artifact.signature.size()));
-    if (bytes) {
-        file.unmap(bytes);
-    }
-    if (!verified) {
+    if (!signature) {
         fail(tr("The update is not signed by Sterna. Nothing was installed."));
         return;
     }
-    file.close();
 
 #ifdef Q_OS_WIN
-    installWindows();
+    installWindows(verified);
 #else
-    installAppImage();
+    installAppImage(verified.fileName());
 #endif
 }
 
-void Updater::installAppImage()
+void Updater::installAppImage(const QString &path)
 {
 #ifdef Q_OS_LINUX
     const QString targetPath =
         QFileInfo(qEnvironmentVariable("APPIMAGE")).canonicalFilePath();
     QString error;
-    if (!replaceVerifiedAppImage(m_download->fileName(), targetPath, &error)) {
+    if (!replaceVerifiedAppImage(path, targetPath, &error)) {
         fail(tr("Could not replace the AppImage: %1").arg(error));
         return;
     }
@@ -587,17 +585,36 @@ void Updater::installAppImage()
         tr("Sterna %1 was installed atomically. It will be used the next time "
            "Sterna starts; this session can stay open.")
             .arg(installed));
+#else
+    Q_UNUSED(path);
 #endif
 }
 
-void Updater::installWindows()
+void Updater::installWindows(QFile &verified)
 {
 #ifdef Q_OS_WIN
+    // **Windows will not execute a file another handle holds open for writing,
+    // and `QTemporaryFile::close()` is not that close.** The class keeps its
+    // own handle for as long as the object lives, so the unique name stays
+    // reserved and reopening is safe — which means the download is still held
+    // for writing by the very object that produced it, and `NtCreateSection`
+    // refuses an image section for it. Destroying the object is the only close
+    // there is, and it also drops the auto-remove that would otherwise unlink
+    // the installer while it is starting. Left in place, `ShellExecuteExW`
+    // fails with a sharing violation and the shell puts up its own box about
+    // another program using the file — no message of ours, and nothing naming
+    // the terminal itself as the other program.
+    //
+    // The read-only handle passed in stays open across the call. It keeps the
+    // bytes that were just verified at that path, and permits the read and
+    // execute access the loader asks for.
+    const QString path = detachUpdateDownload(m_download);
+    m_download = nullptr;
+
     const QString parameters =
         QStringLiteral("/S /UPDATEPID=%1 /RESTART")
             .arg(QCoreApplication::applicationPid());
-    const std::wstring file = QDir::toNativeSeparators(m_download->fileName())
-                                  .toStdWString();
+    const std::wstring file = QDir::toNativeSeparators(path).toStdWString();
     const std::wstring args = parameters.toStdWString();
     SHELLEXECUTEINFOW execute = {};
     execute.cbSize = sizeof execute;
@@ -608,19 +625,30 @@ void Updater::installWindows()
     execute.lpParameters = args.c_str();
     execute.nShow = SW_SHOWNORMAL;
     if (!ShellExecuteExW(&execute)) {
-        fail(tr("Windows did not start the signed installer. Nothing was "
-                "changed."));
+        // The code is in the message because the shell's own box does not say
+        // which file it means and this one has no other way to be diagnosed:
+        // 1223 is the user declining the elevation prompt, 32 a sharing
+        // violation, which is the failure the detach above exists to prevent.
+        const DWORD code = GetLastError();
+        // Dropping the pin is what lets the download be removed at all — Qt
+        // opened it without FILE_SHARE_DELETE.
+        verified.close();
+        QFile::remove(path);
+        fail(tr("Windows did not start the signed installer (error %1). "
+                "Nothing was changed.")
+                 .arg(code));
         return;
     }
     if (execute.hProcess) {
         CloseHandle(execute.hProcess);
     }
-    // The installer is executing this file, so QTemporaryFile must not try to
-    // unlink it while the process is still starting. It lives in the ordinary
-    // temp directory and is harmless after the upgrade.
-    m_download->setAutoRemove(false);
+    // The installer lives in the ordinary temp directory and is harmless after
+    // the upgrade; it queues its own deletion for the next reboot, since it
+    // cannot delete the file it is running from.
     reset();
     QCoreApplication::quit();
+#else
+    Q_UNUSED(verified);
 #endif
 }
 

@@ -5581,7 +5581,12 @@ On Linux, `QSaveFile` writes beside the running AppImage, restores its execute
 permissions before the atomic rename and leaves the mounted old image running
 until the next start. On Windows, the verified NSIS installer waits for the old
 process before uninstalling anything, upgrades silently and restarts through
-Explorer rather than leaving an elevated terminal. Loose builds open the
+Explorer rather than leaving an elevated terminal. It also has to be let go of
+before it can be started: a `QTemporaryFile` keeps its file open whatever
+`close()` suggests, and Windows refuses an image section for a file another
+handle holds open for writing, so until the download was detached the installer
+could not run at all — a failure only native Windows can see, and one the shell
+reports in its own words rather than ours (fixed 2026-08-13). Loose builds open the
 release page instead of guessing what to replace. Qt Network and its TLS stack
 are absent from an ordinary terminal's maps: linking them directly measured
 about 5 MB more idle PSS, so `sterna_updater` is loaded only for the explicit

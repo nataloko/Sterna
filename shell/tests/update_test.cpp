@@ -4,12 +4,21 @@
 #include "sterna.h"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
+#include <QTemporaryFile>
 
 #include <cstdio>
+
+#ifdef Q_OS_WIN
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -23,6 +32,26 @@ int failures = 0;
             failures++;                                                       \
         }                                                                      \
     } while (0)
+
+#ifdef Q_OS_WIN
+/// Open a path exactly as the Windows loader does when it starts a program:
+/// read and execute access, sharing only readers and deleters. It fails with a
+/// sharing violation while any other handle holds the file open for writing,
+/// which is the whole question `detachUpdateDownload` exists to answer.
+bool loaderCanOpen(const QString &path)
+{
+    const std::wstring native = QDir::toNativeSeparators(path).toStdWString();
+    const HANDLE handle =
+        CreateFileW(native.c_str(), GENERIC_READ | FILE_EXECUTE,
+                    FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    CloseHandle(handle);
+    return true;
+}
+#endif
 
 QByteArray file(const QString &name)
 {
@@ -154,6 +183,48 @@ void appimage_replacement_is_atomic_and_executable()
     CHECK(installed.permissions() & QFileDevice::ExeOwner);
 }
 
+void a_detached_download_outlives_its_temporary_file()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    QString path;
+    {
+        auto *download = new QTemporaryFile(
+            dir.filePath(QStringLiteral("sterna-update-XXXXXX.exe")));
+        CHECK(download->open());
+        CHECK(download->write("MZ verified installer") == 21);
+        CHECK(download->flush());
+        path = download->fileName();
+        download->close();
+
+#ifdef Q_OS_WIN
+        // `close()` closed nothing: the object still holds the file open for
+        // writing, so Windows refuses to make an image section of it and the
+        // installer cannot be started. Asserted rather than assumed, so a
+        // change in Qt shows up here instead of in a failed upgrade.
+        CHECK(!loaderCanOpen(path));
+#endif
+        CHECK(detachUpdateDownload(download) == path);
+    }
+
+    CHECK(QFile::exists(path));
+    QFile installer(path);
+    CHECK(installer.open(QIODevice::ReadOnly));
+    CHECK(installer.readAll() == QByteArray("MZ verified installer"));
+#ifdef Q_OS_WIN
+    // The updater keeps this read-only handle open across ShellExecuteEx. A
+    // reader is not a writer, so the loader still gets what it asks for — and
+    // Qt opens without FILE_SHARE_DELETE, so the bytes that were just verified
+    // cannot be replaced at that path while the handle is held. Both halves are
+    // asserted because the second is the reason the handle is kept rather than
+    // closed with the rest of the verification.
+    CHECK(loaderCanOpen(path));
+    CHECK(!QFile::remove(path));
+#endif
+    installer.close();
+    CHECK(QFile::remove(path));
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -162,6 +233,7 @@ int main(int argc, char **argv)
     signature_fixture_matches_the_compiled_key();
     manifest_is_bounded_and_platform_specific();
     appimage_replacement_is_atomic_and_executable();
+    a_detached_download_outlives_its_temporary_file();
     if (failures) {
         return 1;
     }

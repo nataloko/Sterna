@@ -134,13 +134,27 @@ of idle PSS before it had made a request.
 The updater verifies the detached manifest signature before it reads a version,
 URL or size from that file. A confirmed download is bounded by the signed size
 as it arrives, then checked for exact size, SHA-256 and an artifact Ed25519
-signature. Linux atomically replaces the current AppImage for the next start;
-Windows launches the verified NSIS installer elevated and lets that installer
-wait for this process before it touches the installed tree. A loose build opens
-the release page rather than replacing an arbitrary file.
+signature — both from one read-only handle over one mapping, so there is no
+window between hashing the bytes and verifying them. Linux atomically replaces
+the current AppImage for the next start; Windows launches the verified NSIS
+installer elevated and lets that installer wait for this process before it
+touches the installed tree. A loose build opens the release page rather than
+replacing an arbitrary file.
 
-`update_test` covers the committed signer fixture, strict manifest parsing and
-atomic executable replacement. `update_load_test` links no Qt Network and
+That read-only handle stays open until the platform has been handed the file,
+and on Windows the download's own `QTemporaryFile` has to be destroyed first.
+`close()` on one closes nothing — the object keeps the file open so its unique
+name stays reserved — and Windows will not create an image section for a file
+another handle holds open for writing, so the installer cannot start at all
+while the object lives. The reader is not a writer and Qt opens it without
+`FILE_SHARE_DELETE`, so keeping it is what pins the verified bytes to the path
+being executed. See `AGENTS.md` for what the failure looks like, which is a
+message from the shell rather than from Sterna.
+
+`update_test` covers the committed signer fixture, strict manifest parsing,
+atomic executable replacement, and that a detached download outlives its
+temporary file — on Windows, that the loader's own open fails before the detach
+and succeeds after it with the reader still held. `update_load_test` links no Qt Network and
 proves the exact dynamic-library seam the terminal uses, including destruction
 before unload. Package-specific signing, TLS and installer details live under
 `packaging/`.

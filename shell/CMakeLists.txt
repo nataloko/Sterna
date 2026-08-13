@@ -326,9 +326,13 @@ add_test(NAME tabs COMMAND tabs_test)
 
 # Signed metadata is parsed without a socket; the fixture also crosses the C
 # ABI and proves the committed signer matches the public key compiled into the
-# core. No release server or private key is involved.
-add_executable(update_test tests/update_test.cpp)
-target_link_libraries(update_test PRIVATE sterna_updater)
+# core. No release server or private key is involved. Compile the updater source
+# into the test: the Windows DLL deliberately exports only its C factory symbol,
+# while these network-free C++ helpers are the test seam.
+add_executable(update_test tests/update_test.cpp src/Updater.cpp)
+add_dependencies(update_test tt_core)
+target_link_libraries(update_test PRIVATE Qt6::Widgets Qt6::Network sterna_core)
+target_include_directories(update_test PRIVATE src)
 target_compile_options(update_test PRIVATE ${TT_WARNINGS})
 target_compile_definitions(update_test PRIVATE
     TT_UPDATE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../packaging/update")

@@ -137,6 +137,17 @@ missing-entry-point failure an ordinary upgrade's stale DLL cleanup prevents.
 The updater therefore also refuses a loose executable: `uninstall.exe` beside
 the running program is its proof that there is an installed tree to upgrade.
 
+The same rule applies one step earlier and to this installer itself: the
+terminal must let go of the file it downloaded before Windows can run it. A
+`QTemporaryFile` holds its file open for the object's lifetime whatever
+`close()` suggests, and an image section cannot be created for a file another
+handle has open for writing — so the download is detached before
+`ShellExecuteExW`, and until it was, this installer never started. The failure
+is worth recognising because the message is the shell's rather than Sterna's: a
+box about another program using the file. If it appears again, the error code is
+now in Sterna's own message behind it — 32 is that sharing violation, 1223 is
+the elevation prompt being declined.
+
 See [`../update/`](../update/README.md) for the signing key and manifest.
 
 `Qt6Network.dll` is not enough to speak HTTPS. TLS is a dynamically loaded Qt

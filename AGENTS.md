@@ -290,6 +290,11 @@ The AppImage, where two of the three failures are silent:
   signed size, SHA-256 and Ed25519 signature. Linux: set executable perms on
   `QSaveFile` *before* `commit()`. Windows: the NSIS updater must wait for
   the running pid before invoking the old uninstaller.
+- **`QTemporaryFile::close()` does not release a downloaded installer** — the
+  object keeps its read/write handle open, and Windows refuses to execute it.
+  `detachUpdateDownload` must destroy that object before `ShellExecuteExW`.
+  Keep the verification `QFile` open across the call: Qt shares reads and
+  writes but not deletes, pinning the verified bytes without blocking execute.
 - **Qt Network can load while HTTPS is entirely absent** — TLS backends are
   plugins, invisible to the deployment closure. Linuxdeploy's Qt plugin
   carries the OpenSSL backend; the Windows stage copies

@@ -7,6 +7,7 @@
 #include <QString>
 #include <QUrl>
 
+class QFile;
 class QNetworkAccessManager;
 class QNetworkReply;
 class QProgressDialog;
@@ -44,6 +45,16 @@ bool decodeUpdateSignature(const QByteArray &encoded, QByteArray *out);
 bool replaceVerifiedAppImage(const QString &source, const QString &target,
                              QString *error);
 
+/// Give up ownership of a finished download, leaving the file on disk.
+///
+/// Takes ownership and destroys `download`, answering with its path. Destroying
+/// it is the only way to close it: `QTemporaryFile::close()` keeps the handle so
+/// that the unique name stays reserved and reopening is safe. Windows cannot
+/// execute a file some other handle holds open for writing, so a downloaded
+/// installer cannot be started until this has run. Auto-remove is cleared
+/// first, so the file survives its object.
+QString detachUpdateDownload(QTemporaryFile *download);
+
 /// User-initiated, signed AppImage/NSIS updates.
 ///
 /// No timer and no startup request: choosing Help > Check for Updates is the
@@ -71,8 +82,10 @@ private:
     void drainDownload();
     void finishDownload();
     void installDownloaded();
-    void installAppImage();
-    void installWindows();
+    void installAppImage(const QString &path);
+    /// `verified` is the read-only handle pinning the verified bytes at their
+    /// path, and it must stay open across this call — the caller owns it.
+    void installWindows(QFile &verified);
     void beginProgress(const QString &text, bool determinate);
     void reset();
     void cancel();
