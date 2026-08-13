@@ -55,6 +55,7 @@ pub use xfer::{
 // Re-exported rather than reached for directly, so that a frontend — the C ABI
 // above all — takes the settings and the metadata that describes them from the
 // same place it takes the session they belong to.
+pub use tt_config::buttons;
 use tt_config::ConnectionTcpCrSend;
 pub use tt_config::{
     Button, Field, Ini, KeyboardMap, Kind, Settings, Shortcut, UserKey, UserKeyType, FIELDS,

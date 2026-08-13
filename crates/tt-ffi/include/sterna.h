@@ -893,6 +893,11 @@ typedef struct TtPlugins TtPlugins;
 typedef struct TtPortList TtPortList;
 
 /**
+ * An owned list of quick buttons. Free it with [`tt_quick_buttons_free`].
+ */
+typedef struct TtQuickButtons TtQuickButtons;
+
+/**
  * A terminal, and optionally something for it to talk to. Opaque.
  */
 typedef struct TtSession TtSession;
@@ -1361,6 +1366,47 @@ typedef struct {
      */
     const char *text;
 } TtKeyCodeResult;
+
+/**
+ * What a quick button does. The four `[User keys]` types, by their
+ * `[Sterna Buttons]` spellings.
+ */
+typedef uint32_t TtQuickButtonKind;
+
+/**
+ * One button, borrowed from its list.
+ *
+ * `value` and `text` are the same string in two forms: stored, still
+ * `$HH`-escaped for the two sending kinds, and decoded for showing and
+ * editing. [`tt_quick_buttons_set`] reads `text` and does the escaping itself, so a
+ * frontend never carries a copy of that rule.
+ */
+typedef struct {
+    /**
+     * What is written on it. May be empty, in which case a frontend should
+     * fall back to `text` — a button with no label is still a button.
+     */
+    const char *label;
+    TtQuickButtonKind kind;
+    /**
+     * The value as the file holds it. This is what [`tt_session_run_quick_button`]
+     * takes.
+     */
+    const char *value;
+    /**
+     * The same value, unescaped.
+     */
+    const char *text;
+    /**
+     * A Qt key sequence in portable spelling, or empty for no shortcut —
+     * which is what every button ships as.
+     */
+    const char *shortcut;
+    /**
+     * Whether to ask before running it.
+     */
+    bool confirm;
+} TtQuickButton;
 
 /**
  * The serial line settings, one field per `commlib.c` DCB field that Tera
@@ -2400,6 +2446,26 @@ typedef uint32_t TtShortcut;
 #define TT_SHORTCUT_LOCAL_ECHO 88
 
 #define TT_SHORTCUT_SCROLL_LOCK 89
+
+/**
+ * `send_text`: LNM and `CRSend` apply, as they do to a typed line.
+ */
+#define TT_QUICK_BUTTON_TEXT 0
+
+/**
+ * `send_bytes`: exactly these bytes, no encoding and no newline conversion.
+ */
+#define TT_QUICK_BUTTON_BYTES 1
+
+/**
+ * Run the `.ttl` or `.lua` file named by the value.
+ */
+#define TT_QUICK_BUTTON_MACRO 2
+
+/**
+ * Invoke the menu command whose decimal id is the value.
+ */
+#define TT_QUICK_BUTTON_COMMAND 3
 
 /**
  * Every byte is data, `0xFF` included. What a console server's per-line port
@@ -3474,6 +3540,86 @@ uint16_t tt_session_key_map_duplicate(const TtSession *session, size_t index);
 TtStatus tt_session_send_key_code(TtSession *session,
                                   uint16_t scan,
                                   TtKeyCodeResult *out);
+
+/**
+ * Whether the active `KEYBOARD.CNF` binds `scan`, without pressing it.
+ *
+ * For the quick-button editor, which has to say that a key sequence already
+ * belongs to the host. Every shortcut a frontend installs is a key the
+ * terminal stops receiving, and this is the only way to know before the fact.
+ */
+bool tt_session_key_code_bound(const TtSession *session, uint16_t scan);
+
+/**
+ * Read the quick buttons out of a settings file.
+ *
+ * A file that is not there has no buttons, which is a first run and not an
+ * error — so this returns an empty list rather than null. Null only for a
+ * null or non-UTF-8 path.
+ */
+TtQuickButtons *tt_quick_buttons_load(const char *path);
+
+/**
+ * An empty list, to be filled with [`tt_quick_buttons_set`] and written with
+ * [`tt_quick_buttons_save`].
+ *
+ * What an editor holding its own copy of the set saves through, so that
+ * writing the file is "here is the list" rather than a diff against what is
+ * in it.
+ */
+TtQuickButtons *tt_quick_buttons_new(void);
+
+size_t tt_quick_buttons_len(const TtQuickButtons *list);
+
+/**
+ * Borrow one button. Null when `index` is out of range. Valid until the list
+ * is changed or freed.
+ */
+const TtQuickButton *tt_quick_buttons_at(const TtQuickButtons *list,
+                                         size_t index);
+
+/**
+ * Replace the button at `index`, or append when `index` equals the length.
+ *
+ * `button.text` is the value in its unescaped form and `button.value` is
+ * ignored, so the result of [`tt_quick_buttons_at`] can be handed straight back.
+ */
+TtStatus tt_quick_buttons_set(TtQuickButtons *list,
+                              size_t index,
+                              const TtQuickButton *button);
+
+TtStatus tt_quick_buttons_remove(TtQuickButtons *list, size_t index);
+
+/**
+ * Move a button, closing the gap behind it — a drag in a list, not a swap.
+ */
+TtStatus tt_quick_buttons_move(TtQuickButtons *list, size_t from, size_t to);
+
+/**
+ * Write the list into a settings file, leaving every other line alone.
+ *
+ * The whole `[Sterna Buttons]` section is replaced, so a removed button takes
+ * its keys with it. Nothing else in the file is touched — which is what makes
+ * this safe to point at a `TERATERM.INI` somebody else maintains.
+ */
+TtStatus tt_quick_buttons_save(const TtQuickButtons *list,
+                               const char *path);
+
+void tt_quick_buttons_free(TtQuickButtons *list);
+
+/**
+ * Do what a quick button says, with no scan code involved.
+ *
+ * `value` is the stored form — [`TtQuickButton::value`], not `text` — because this
+ * is the same action a `[User keys]` entry performs and it decodes the escape
+ * itself. `out` receives the same result [`tt_session_send_key_code`] gives,
+ * so a frontend keeps one dispatcher for a pressed key and a clicked button:
+ * `TT_KEY_CODE_MACRO` and `TT_KEY_CODE_COMMAND` are the window's to carry out.
+ */
+TtStatus tt_session_run_quick_button(TtSession *session,
+                                     TtQuickButtonKind kind,
+                                     const char *value,
+                                     TtKeyCodeResult *out);
 
 /**
  * Send a key, encoded by the core because which form it takes is terminal
