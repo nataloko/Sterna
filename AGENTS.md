@@ -1072,6 +1072,18 @@ The keyboard:
   (`keyboard.c:960`); `DeleteKey=on` still sends 0x7f first. With no
   `KEYBOARD.CNF` reader yet, strict mode quiets the built-in special keys —
   faithfully incomplete.
+- **With local echo, sending is also receiving** — the same bytes go through
+  the receive parser, so a keystroke damages the screen and only draining the
+  core's events says so. The frontend's input paths call `Session::dispatch`,
+  never bare `rearm`; and a path that emits `damaged` by hand instead leaves
+  its own events in the queue for whoever drains next — `setSetting`, `resize`
+  and the three settings loaders all did, so a keystroke's repaint arrived
+  carrying the last settings change's. Pumping is the obvious call
+  and the wrong one — a pump reads once whatever the budget, so a quiet serial
+  or telnet line stalls the UI thread for its 50 ms read timeout on every key.
+  Undrained, a typed character waited for the next thing the host said or for
+  the cursor's own blink: half a second a keystroke on an idle line, and
+  nothing at all with a steady cursor.
 
 File-shaped settings:
 

@@ -513,6 +513,19 @@ private:
     void rememberSsh(const TtSshParams &params);
     /// Pump, then turn what came out into signals.
     void pumpAndDispatch(uint32_t budgetMs);
+    /// Turn what the core has already queued into signals, without reading the
+    /// transport. Every call that changes the session from this side owes the
+    /// window one — the queue is the core's only way of saying what moved, and
+    /// a caller that leaves events in it both misses its own repaint and hands
+    /// them to whoever drains next.
+    ///
+    /// Sending is not only sending: with local echo the core runs the bytes
+    /// through the receive parser too, so a keystroke damages the screen and
+    /// nothing else is going to say so. Pumping instead would be the obvious
+    /// call and the wrong one — a pump reads once whatever the budget, and a
+    /// serial or telnet read blocks for its 50 ms timeout, so a quiet line
+    /// would stall the UI thread on every key.
+    void dispatch();
     /// Point the notifier at whatever descriptor the session has *now*, and
     /// run the retry timer only if output is stuck.
     void rearm();

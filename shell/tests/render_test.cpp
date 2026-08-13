@@ -21,6 +21,7 @@
 #include <QClipboard>
 #include <QColor>
 #include <QImage>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QPixmap>
@@ -591,6 +592,46 @@ void test_cursor_blinks_unless_the_live_style_is_steady()
         CHECK(h.at(0, 0) == kBlack);
     }
     QApplication::setCursorFlashTime(oldFlashTime);
+}
+
+/// Local echo is the one thing on the screen the far end did not put there,
+/// and it is on the screen the moment the key is pressed — but the frontend
+/// only learns that a repaint is due by draining the core's events, and the
+/// input paths used to drain nothing. A typed character then waited for the
+/// next thing the host said, or, on a quiet line, for the cursor's own blink:
+/// half a second of lag on every keystroke.
+void test_local_echo_reaches_the_screen_without_waiting_for_the_host()
+{
+    Harness h;
+    CHECK(h.session.setSetting(QStringLiteral("terminal.local_echo"),
+                               QStringLiteral("on"), nullptr));
+
+    int repaints = 0;
+    QObject::connect(&h.session, &Session::damaged, [&repaints] { repaints++; });
+
+    // Through the widget, because that is the path a keystroke really takes.
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier, QStringLiteral("a"));
+    QCoreApplication::sendEvent(&h.view, &press);
+    CHECK(repaints == 1);
+
+    // The three other ways input reaches the core: Delete and `Meta8Bit=raw`
+    // send bytes, the key table sends a `TtKey`, and a paste is neither.
+    h.session.sendBytes(QByteArray("b"));
+    h.session.sendKey(TT_KEY_KP1);
+    h.session.paste(QStringLiteral("p"));
+    CHECK(repaints == 4);
+
+    h.render();
+    for (int col = 0; col < 4; col++) {
+        CHECK(h.ink(col, 0) > 0);
+    }
+
+    // And nothing is echoed with it off, so no repaint is owed either.
+    CHECK(h.session.setSetting(QStringLiteral("terminal.local_echo"),
+                               QStringLiteral("off"), nullptr));
+    repaints = 0;
+    h.session.sendText(QStringLiteral("x"));
+    CHECK(repaints == 0);
 }
 
 /// Feed `n` lines, each a single space on its own background colour, so a
@@ -2166,6 +2207,7 @@ int main(int argc, char **argv)
     test_an_unfocused_cursor_is_hollow();
     test_cursor_shape_is_live_terminal_state();
     test_cursor_blinks_unless_the_live_style_is_steady();
+    test_local_echo_reaches_the_screen_without_waiting_for_the_host();
     test_scrolling_back_paints_the_history();
     test_the_cursor_is_not_painted_onto_the_history();
     test_output_does_not_move_a_scrolled_back_view();
