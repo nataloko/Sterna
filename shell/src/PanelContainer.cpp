@@ -265,12 +265,11 @@ QSize PanelContainer::sizeHint() const
     if (m_pages.size() > 1) {
         out.rheight() += m_tabs->sizeHint().height();
     }
-    // QMainWindow's menu/status chrome consumes two more vertical pixels when
-    // its native layout is first shown than its pre-show hint reports. Keep a
-    // two-pixel remainder in the terminal client so an exact N-row size hint
-    // does not refit to N-1 on that first layout. It is smaller than one cell
-    // on every supported font and therefore never creates an extra row.
-    out.rheight() += 2;
+    // QMainWindow's menu/status chrome grows when its native layout is first
+    // shown. Keep a sub-cell remainder so an exact N-row size hint does not
+    // refit to N-1 on that first layout. A pane header leaves the old two-pixel
+    // remainder; without one, the frame needs one more pixel on Qt 6.11.
+    out.rheight() += m_layout == PanelLayout::Single ? 3 : 2;
     return out;
 }
 
