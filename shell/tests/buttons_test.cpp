@@ -231,6 +231,31 @@ void a_macro_button_is_available_offline()
     CHECK(buttonAction(window, 0)->isEnabled());
 }
 
+/// A text button uses the keyboard's local echo path. Its damage event must be
+/// drained by the press itself rather than waiting for the host's next byte.
+void a_text_button_repaints_local_echo_immediately()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini =
+        writeIni(dir,
+                 "[Sterna Buttons]\r\nButton1Label=Type\r\n"
+                 "Button1Value=x\r\n");
+
+    MainWindow window(ini);
+    Session *session = window.session();
+    CHECK(session->setSetting(QStringLiteral("terminal.local_echo"),
+                              QStringLiteral("on"), nullptr));
+    int repaints = 0;
+    QObject::connect(session, &Session::damaged, [&repaints] { repaints++; });
+
+    const QuickButton button = barOf(window)->buttons()[0];
+    const KeyCodeAction action = session->runQuickButton(button.kind, button.value);
+    CHECK(action.kind == TT_KEY_CODE_SENT);
+    CHECK(repaints == 1);
+    CHECK(screenText(*session).startsWith(QLatin1Char('x')));
+}
+
 /// `Confirm=on` asks, and a dismissed question sends nothing. The box is a
 /// modal loop, so the assertion is what happens when it is closed rather than
 /// answered — which is what the close box does to it in real use.
@@ -609,6 +634,7 @@ int main(int argc, char **argv)
     a_button_in_the_file_types_into_the_session();
     a_command_button_reaches_the_windows_own_actions();
     a_macro_button_is_available_offline();
+    a_text_button_repaints_local_echo_immediately();
     a_button_that_asks_sends_nothing_when_the_question_is_dismissed();
     an_empty_list_has_no_bar();
     the_editor_round_trips_a_button();

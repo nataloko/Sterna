@@ -688,7 +688,7 @@ KeyCodeAction Session::runQuickButton(TtQuickButtonKind kind, const QString &val
     if (tt_session_run_quick_button(m_session, kind, utf8.constData(), &result)
         != TT_OK) {
         emit notice(QString::fromUtf8(tt_last_error()));
-        rearm();
+        dispatch();
         return {};
     }
     KeyCodeAction out;
@@ -697,7 +697,7 @@ KeyCodeAction Session::runQuickButton(TtQuickButtonKind kind, const QString &val
     if (result.text) {
         out.text = QString::fromUtf8(result.text);
     }
-    rearm();
+    dispatch();
     return out;
 }
 
