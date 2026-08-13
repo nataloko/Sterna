@@ -20,6 +20,7 @@ pub mod cmdline;
 pub mod esc;
 pub mod gen;
 pub mod hex;
+pub mod highlight;
 pub mod ini;
 pub mod keyboard;
 pub mod schema;
@@ -29,6 +30,7 @@ mod generated;
 
 pub use generated::*;
 pub use hex::{hex_decode, hex_decode_str};
+pub use highlight::Rule as HighlightRule;
 pub use ini::{Encoding, Ini};
 pub use keyboard::{KeyboardAction, KeyboardMap, Shortcut, UserKey, UserKeyType};
 pub use schema::{DebugModes, Field, Kind};
