@@ -23,6 +23,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 6 | Highlight rules: user-written regular expressions recolour the screen | Only the host decides a colour; the URL attribute is the one exception | 0.2.0 |
 | 7 | Quick buttons: a second bar of user-defined commands | A `KEYBOARD.CNF` user key, with no face on it | 0.2.0 |
 | 8 | Editable lines for every connection type | Telnet LINEMODE negotiation only | 0.2.0 |
+| 9 | Receive CR defaults to Auto | A bare CR is the only default line ending | 0.2.1 |
 
 ---
 
@@ -304,3 +305,27 @@ Return encoding and the one forced echo, through the flat ABI function
 `tt_session_send_edited_line`. The setting remains in the common schema, so
 Setup, Save setup, TTL/Lua, plugins and duplicated sessions all see the same
 value rather than a frontend-only copy.
+
+## 9. Receive CR defaults to Auto
+
+With no `CRReceive` key, Sterna treats CR, LF and CRLF as line endings. Tera
+Term defaults to `CR`, where a received LF moves down without returning to the
+left margin and a bare CR returns without moving down.
+
+**Why.** Serial devices are split across all three spellings, and the wrong
+answer makes the first screen look diagonally shifted or overwrite itself.
+Auto recognises the pair without double-spacing it and gives a useful first
+connection to each device; an unusual host can still select any exact mode.
+
+**What is unchanged.** The existing `[Tera Term] CRReceive` key and every
+explicit value keep their upstream meaning. `CRReceive=CR` therefore restores
+Tera Term's default exactly, and a shared INI behaves the same in both programs.
+Only the answer when the key is absent — or unrecognised, as upstream's enum
+rules require — differs.
+
+**Where it lives.** `tt-config/schema/settings.txt` owns the shipped setting and
+`tt-session` maps it into the engine. The bare `tt-vt::Config` retains the
+upstream `CR` default for focused compatibility callers; the application and
+its flat ABI construct sessions from `tt-config`, so they receive Auto. Oracle
+and differential runners remain on `CR`, keeping the compatibility baseline
+independent of the product default.

@@ -128,9 +128,12 @@ impl Default for TerminalId {
     }
 }
 
-/// **`ttset.c:631`, and the default is the `else` branch.** A bare CR is a
-/// carriage *return*, not a newline, so `"Hello\rWorld"` overwrites the line.
-/// Reading this as CRLF shifts every row of every dump.
+/// **`ttset.c:631`, and upstream's default is the `else` branch.** A bare CR is
+/// a carriage *return*, not a newline, so `"Hello\rWorld"` overwrites the line.
+/// Sterna deliberately ships AUTO: it treats CR, LF and CRLF as line endings,
+/// which is the useful answer across serial devices without requiring the first
+/// session on each one to discover its spelling. An explicit `CRReceive=CR`
+/// remains byte-for-byte compatible; see deviation 9.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TerminalCrReceive {
     /// `CR`
@@ -177,7 +180,7 @@ impl TerminalCrReceive {
 
 impl Default for TerminalCrReceive {
     fn default() -> Self {
-        Self::Cr
+        Self::Auto
     }
 }
 
@@ -2661,9 +2664,12 @@ pub struct Settings {
     /// setting here that is not `_stricmp`, hence `enum_exact`. Note `dumb` is
     /// lower-case in upstream's own table while every other spelling is upper.
     pub terminal_id: TerminalId,
-    /// **`ttset.c:631`, and the default is the `else` branch.** A bare CR is a
-    /// carriage *return*, not a newline, so `"Hello\rWorld"` overwrites the line.
-    /// Reading this as CRLF shifts every row of every dump.
+    /// **`ttset.c:631`, and upstream's default is the `else` branch.** A bare CR is
+    /// a carriage *return*, not a newline, so `"Hello\rWorld"` overwrites the line.
+    /// Sterna deliberately ships AUTO: it treats CR, LF and CRLF as line endings,
+    /// which is the useful answer across serial devices without requiring the first
+    /// session on each one to discover its spelling. An explicit `CRReceive=CR`
+    /// remains byte-for-byte compatible; see deviation 9.
     pub terminal_cr_receive: TerminalCrReceive,
     /// `ttset.c:646`, the same shape, one variant short — there is no AUTO on send.
     pub terminal_cr_send: TerminalCrSend,
@@ -12555,9 +12561,9 @@ pub const FIELDS: &[Field] = &[
         section: "Tera Term",
         key: "CRReceive",
         kind: Kind::Enum(&["CR", "CRLF", "LF", "AUTO"]),
-        default: "CR",
+        default: "AUTO",
         label: Some("DLG_TERM_CRRECEIVE"),
-        doc: "**`ttset.c:631`, and the default is the `else` branch.** A bare CR is a carriage *return*, not a newline, so `\"Hello\\rWorld\"` overwrites the line. Reading this as CRLF shifts every row of every dump.",
+        doc: "**`ttset.c:631`, and upstream's default is the `else` branch.** A bare CR is a carriage *return*, not a newline, so `\"Hello\\rWorld\"` overwrites the line. Sterna deliberately ships AUTO: it treats CR, LF and CRLF as line endings, which is the useful answer across serial devices without requiring the first session on each one to discover its spelling. An explicit `CRReceive=CR` remains byte-for-byte compatible; see deviation 9.",
     },
     Field {
         name: "terminal.cr_send",

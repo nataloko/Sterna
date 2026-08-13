@@ -38,9 +38,11 @@ pub use window::{WindowMetrics, WindowRequest};
 
 /// What an incoming CR and LF mean. Tera Term's `ts.CRReceive`.
 ///
-/// The default is [`CrReceive::Cr`] — the `else` branch at `ttset.c:643`, not
-/// the CRLF the surrounding code suggests. It shifts every row of output, so it
-/// is the first thing to suspect when a dump looks uniformly wrong.
+/// The engine default is [`CrReceive::Cr`] — the `else` branch at
+/// `ttset.c:643`, not the CRLF the surrounding code suggests. Sterna's shipped
+/// settings deliberately map an absent key to [`CrReceive::Auto`]; keeping the
+/// bare engine at the reference value makes focused compatibility callers
+/// explicit about taking the product-level deviation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum CrReceive {
     #[default]

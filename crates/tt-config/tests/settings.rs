@@ -15,7 +15,6 @@ fn the_defaults_are_upstreams() {
     // The four `AGENTS.md` calls out by name, because each one is a default
     // that is not where it looks like it is — an `else` branch or a key read
     // a thousand lines after the initialiser that zeroes it.
-    assert_eq!(d.terminal_cr_receive, TerminalCrReceive::Cr, "ttset.c:643");
     assert_eq!(d.keyboard_backspace, KeyboardBackspace::Bs, "ttset.c:877");
     assert!(d.color_xterm_256, "ttset.c:741 — not the zeroed ColorFlag");
     assert!(
@@ -42,6 +41,23 @@ fn the_shipped_baud_rate_is_not_upstreams() {
 
     let ini = Ini::parse(b"[Tera Term]\r\nBaudRate=9600\r\n");
     assert_eq!(Settings::load(&ini).serial_baud, 9600);
+}
+
+/// AUTO accepts the line ending a device actually uses. The explicit upstream
+/// value remains compatible for an INI shared between the two programs.
+#[test]
+fn the_shipped_receive_cr_is_auto() {
+    assert_eq!(
+        Settings::default().terminal_cr_receive,
+        TerminalCrReceive::Auto,
+        "Tera Term's ttset.c:643 default is CR"
+    );
+
+    let ini = Ini::parse(b"[Tera Term]\r\nCRReceive=CR\r\n");
+    assert_eq!(
+        Settings::load(&ini).terminal_cr_receive,
+        TerminalCrReceive::Cr
+    );
 }
 
 #[test]
@@ -434,7 +450,7 @@ fn an_unrecognised_value_takes_the_default_rather_than_failing() {
     // comparisons, so a typo is not an error — it is the default, silently.
     let ini = Ini::parse(b"[Tera Term]\r\nCRReceive=nonsense\r\nTerminalID=vt220\r\n");
     let s = Settings::load(&ini);
-    assert_eq!(s.terminal_cr_receive, TerminalCrReceive::Cr);
+    assert_eq!(s.terminal_cr_receive, TerminalCrReceive::Auto);
     assert_eq!(
         s.terminal_id,
         TerminalId::Vt100,

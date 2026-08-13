@@ -2,7 +2,7 @@
 //! tests cannot reach, because it is about cells rather than about text.
 
 use tt_config::highlight::{Rule, Scope, STYLE_BOLD};
-use tt_config::Settings;
+use tt_config::{Settings, TerminalCrReceive};
 use tt_session::highlight::Span;
 use tt_session::Session;
 
@@ -122,7 +122,14 @@ fn the_switch_and_the_rules_own_switch_both_stop_it() {
 fn a_rule_follows_the_text_as_it_changes_under_it() {
     // The memo is keyed on a damage counter rather than on line content, so
     // this is the case that proves it is being retired.
-    let mut s = session(20, 3);
+    // This case needs a bare CR to overwrite the current row. Name that mode
+    // rather than borrowing the shipped default, which is Auto in Sterna.
+    let mut s = Session::from_settings(Settings {
+        terminal_cols: 20,
+        terminal_rows: 3,
+        terminal_cr_receive: TerminalCrReceive::Cr,
+        ..Settings::default()
+    });
     s.set_highlights(&[red("ERROR")]);
     s.feed(b"an ERROR here");
     assert_eq!(columns(s.row_highlights(0)), [(3, 8)]);
