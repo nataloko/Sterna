@@ -27,6 +27,22 @@ fn the_defaults_are_upstreams() {
     assert_eq!(d.color_normal, [0, 0, 0, 255, 255, 255], "black on white");
 }
 
+/// The one default that is deliberately not upstream's — asserted so that
+/// "9600 is what `ttset.c:919` says" cannot quietly restore it. See
+/// `docs/deviations.md`; the key and its parse are unchanged, which the second
+/// half of this checks.
+#[test]
+fn the_shipped_baud_rate_is_not_upstreams() {
+    assert_eq!(
+        Settings::default().serial_baud,
+        115200,
+        "ttset.c:919 is 9600"
+    );
+
+    let ini = Ini::parse(b"[Tera Term]\r\nBaudRate=9600\r\n");
+    assert_eq!(Settings::load(&ini).serial_baud, 9600);
+}
+
 #[test]
 fn the_deferred_encoding_settings_keep_upstreams_parsers() {
     let d = Settings::default();

@@ -3551,8 +3551,14 @@ void tt_session_feed(TtSession *session, const uint8_t *bytes, size_t len);
 bool tt_session_cycle_debug_mode(TtSession *session);
 
 /**
- * Fill `out` with Tera Term's own defaults: 9600 8N1, no flow control, DTR
- * and RTS asserted, break detection on.
+ * Fill `out` with the shipped defaults: 115200 8N1, no flow control, DTR and
+ * RTS asserted, break detection on.
+ *
+ * Everything here is Tera Term's own default except the speed, which is
+ * upstream's 9600 replaced deliberately — see `docs/deviations.md`. These are
+ * what *ships*, not what the settings file says: a frontend opening a port
+ * because the user asked for one in a dialog wants these, and one honouring a
+ * configured `BaudRate` should read the setting.
  */
 void tt_serial_params_default(TtSerialParams *out);
 

@@ -3452,6 +3452,13 @@ pub struct Settings {
     pub serial_com_port: i32,
     /// `ttset.c:919`. Unbounded, and the hardware decides what it can do with it —
     /// `tt-conn` reads the setting back after `tcsetattr` for exactly that reason.
+    ///
+    /// **The default is 115200 and upstream's is 9600** — the first deliberate
+    /// deviation, and `docs/deviations.md` has the reason: nothing this program is
+    /// pointed at ships a 9600 console any more, so upstream's default is one more
+    /// thing to change before the first useful connection. The key, its bounds and
+    /// what a value in the file means are unchanged, so a `TERATERM.INI` that says
+    /// `BaudRate=9600` still opens at 9600 in both programs.
     pub serial_baud: i32,
     /// `ttset.c:929`, default `IdDataBit8` from the `if (!…)` arm. Upstream's dialog
     /// offers only these two; `tt-conn` can do 5 and 6 as well, which is a widening
@@ -4136,7 +4143,7 @@ impl Default for Settings {
             settings_language_file: String::from("lang\\Default.lng"),
             settings_auto_backup: true,
             serial_com_port: 1,
-            serial_baud: 9600,
+            serial_baud: 115200,
             serial_data_bits: SerialDataBits::default(),
             serial_parity: SerialParity::default(),
             serial_stop_bits: SerialStopBits::default(),
@@ -11018,9 +11025,9 @@ pub const FIELDS: &[Field] = &[
         section: "Tera Term",
         key: "BaudRate",
         kind: Kind::Int,
-        default: "9600",
+        default: "115200",
         label: Some("DLG_SERIAL_BAUD"),
-        doc: "`ttset.c:919`. Unbounded, and the hardware decides what it can do with it — `tt-conn` reads the setting back after `tcsetattr` for exactly that reason.",
+        doc: "`ttset.c:919`. Unbounded, and the hardware decides what it can do with it — `tt-conn` reads the setting back after `tcsetattr` for exactly that reason.  **The default is 115200 and upstream's is 9600** — the first deliberate deviation, and `docs/deviations.md` has the reason: nothing this program is pointed at ships a 9600 console any more, so upstream's default is one more thing to change before the first useful connection. The key, its bounds and what a value in the file means are unchanged, so a `TERATERM.INI` that says `BaudRate=9600` still opens at 9600 in both programs.",
     },
     Field {
         name: "serial.data_bits",

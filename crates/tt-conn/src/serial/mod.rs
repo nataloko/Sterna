@@ -142,11 +142,15 @@ pub struct SerialParams {
 }
 
 impl Default for SerialParams {
-    /// Tera Term's own defaults where it has them: 9600 8N1, no flow control,
-    /// DTR and RTS asserted, and the standard XON/XOFF pair.
+    /// Tera Term's own defaults where it has them: 8N1, no flow control, DTR
+    /// and RTS asserted, and the standard XON/XOFF pair.
+    ///
+    /// **The speed is 115200 where upstream's is 9600** — deliberate, and the
+    /// same value the settings schema defaults `BaudRate` to; see
+    /// `docs/deviations.md`. Nothing else here deviates.
     fn default() -> Self {
         SerialParams {
-            baud: 9600,
+            baud: 115_200,
             data_bits: DataBits::Eight,
             parity: Parity::None,
             stop_bits: StopBits::One,

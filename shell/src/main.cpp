@@ -169,7 +169,8 @@ int main(int argc, char **argv)
         QStringLiteral("path"));
     QCommandLineOption baudOption(
         {QStringLiteral("b"), QStringLiteral("baud")},
-        QStringLiteral("Baud rate (default 9600)."), QStringLiteral("rate"));
+        QStringLiteral("Baud rate (default 115200, where Tera Term's is 9600)."),
+        QStringLiteral("rate"));
     // `user@host`, or a bare alias out of ~/.ssh/config — the same thing that
     // would be typed after `ssh`, because anyone reaching for this already
     // knows that spelling.

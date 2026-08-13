@@ -45,7 +45,13 @@ SerialDialog::SerialDialog(QWidget *parent, const I18n *i18n)
     for (int rate : kBaudRates) {
         m_baud->addItem(QString::number(rate), rate);
     }
-    m_baud->setCurrentText(QStringLiteral("9600"));
+    // From the core rather than a literal, so the shipped speed is written down
+    // in one place — the settings schema, which is also where the deviation
+    // from upstream's 9600 is recorded. `setInitial` overrides this with what
+    // the settings file says and with what was last used.
+    TtSerialParams shipped;
+    tt_serial_params_default(&shipped);
+    m_baud->setCurrentText(QString::number(shipped.baud));
 
     // Five and six data bits are deliberately absent. An FTDI refuses CS6 and
     // *accepts* CS5 while still putting eight bits on the wire, so the core

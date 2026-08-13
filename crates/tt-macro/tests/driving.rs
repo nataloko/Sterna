@@ -308,7 +308,7 @@ fn the_serial_commands_are_quiet_over_a_connection_that_has_no_lines() {
     // And the settings are untouched, because the guard is ahead of the
     // assignment: a `setbaud` over a memory transport must not leave 19200
     // behind for the next serial connection.
-    assert_eq!(r.session.settings().serial_baud, 9600);
+    assert_eq!(r.session.settings().serial_baud, 115200);
 }
 
 /// `setecho` changes a setting *and* a mode, because upstream's are one

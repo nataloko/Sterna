@@ -791,7 +791,8 @@ static void test_serial(void)
 {
     TtSerialParams p;
     tt_serial_params_default(&p);
-    CHECK(p.baud == 9600);
+    /* 115200, not upstream's 9600 — docs/deviations.md. */
+    CHECK(p.baud == 115200);
     CHECK(p.data_bits == 8);
     CHECK(p.stop_bits == 1);
     CHECK(p.parity == TT_PARITY_NONE);

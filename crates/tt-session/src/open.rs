@@ -1184,13 +1184,15 @@ mod tests {
     #[test]
     fn what_the_line_set_outlives_the_connection_it_was_given_for() {
         let mut s = Settings::default();
-        assert_eq!(s.serial_baud, 9600);
-        // `/C=` with no port to open still applied the speed on its way past.
-        connect("/C=1 /BAUD=115200", &mut s);
+        // The shipped default, which is 115200 here and 9600 upstream — so the
+        // line below asks for the *old* speed to have something to assert.
         assert_eq!(s.serial_baud, 115200);
+        // `/C=` with no port to open still applied the speed on its way past.
+        connect("/C=1 /BAUD=9600", &mut s);
+        assert_eq!(s.serial_baud, 9600);
         // And a second `connect` that says nothing about it keeps it.
         connect("myhost", &mut s);
-        assert_eq!(s.serial_baud, 115200);
+        assert_eq!(s.serial_baud, 9600);
     }
 
     /// `connect ''` names nothing, so it is the dialog or an idle terminal —
