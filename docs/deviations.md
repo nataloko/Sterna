@@ -24,6 +24,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 7 | Quick buttons: a second bar of user-defined commands | A `KEYBOARD.CNF` user key, with no face on it | 0.2.0 |
 | 8 | Editable lines for every connection type | Telnet LINEMODE negotiation only | 0.2.0 |
 | 9 | Receive CR defaults to Auto | A bare CR is the only default line ending | 0.2.1 |
+| 10 | A terminal-only dark mode | Colours come only from `TERATERM.INI` and the host | 0.2.1 |
 
 ---
 
@@ -329,3 +330,25 @@ upstream `CR` default for focused compatibility callers; the application and
 its flat ABI construct sessions from `tt-config`, so they receive Auto. Oracle
 and differential runners remain on `CR`, keeping the compatibility baseline
 independent of the product default.
+
+## 10. A terminal-only dark mode
+
+The connection bar can switch every terminal grid in the window between the
+configured Tera Term colours and a dark palette. The setting is remembered
+immediately, so new tabs and the next launch follow it.
+
+**Why.** The upstream black-on-white default is useful in a light desktop but
+hard on the eyes in a dark workspace. A whole-application theme would replace
+the user's Qt/desktop theme and make dialogs less native; only the terminal's
+large reading surface needs a separate choice.
+
+**What is unchanged.** Cell contents, ANSI colour indices, logging, copying and
+printing are untouched. Explicit SGR foregrounds and backgrounds still win;
+the dark palette supplies only defaults and the bold, blink, underline, URL,
+reverse and cursor pairs. Turning it off reads the live configured colours back
+from the session, including host OSC changes.
+
+**Where it lives.** `[Sterna] DarkMode` (`terminal.dark_mode`, off) is applied
+by `Theme` after it reads the session's live colours. `ConnectBar` owns the
+toggle; `MainWindow` applies it to every tab and remembers the one window-wide
+preference. No `QApplication` or widget palette is changed.

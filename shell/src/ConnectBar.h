@@ -1,4 +1,4 @@
-// The bar under the menu: a port, connect, local echo, and line editing.
+// The bar under the menu: connection, input modes, and terminal dark mode.
 //
 // Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 
@@ -52,6 +52,7 @@ signals:
     void disconnectRequested();
     void localEchoRequested(bool on);
     void lineEditRequested(bool on);
+    void darkModeRequested(bool on);
 
 private:
     QComboBox *m_port = nullptr;
@@ -62,6 +63,7 @@ private:
     /// in — upstream's Setup > Terminal has the same box.
     QCheckBox *m_echo = nullptr;
     QCheckBox *m_lineEdit = nullptr;
+    QCheckBox *m_darkMode = nullptr;
     QString m_connectText;
     QString m_disconnectText;
 };

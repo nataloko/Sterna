@@ -21,6 +21,7 @@ supporting Tera Term-compatible workflows and configuration.
   optionally on a keyboard shortcut
 - Per-tab line editing that holds an editable command locally until Return,
   over serial, SSH, telnet, raw TCP, or a local shell
+- A terminal-only dark mode that leaves menus and dialogs in the desktop theme
 - `KEYBOARD.CNF` key mappings and `TERATERM.INI`-compatible settings
 - Printing, a local control socket, and a signed updater that checks once a day
 - Localized interface using Tera Term's 14 language catalogs

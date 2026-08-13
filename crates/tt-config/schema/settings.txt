@@ -133,6 +133,12 @@ terminal.local_echo | bool | Tera Term | LocalEcho | off | DLG_TERM_LOCALECHO
 # immediate unless the user explicitly opts in.
 terminal.line_edit | bool | Sterna | LineEdit | off | -
 
+# **`[Sterna]`**. A painter-only dark palette for the terminal grid and its
+# local line editor. It deliberately does not change QApplication's palette:
+# menus, dialogs, toolbars and status bars remain the desktop theme. The
+# connect bar persists the switch immediately and applies it to every tab.
+terminal.dark_mode | bool | Sterna | DarkMode | off | -
+
 # `ttset.c:625`. With it on, resizing the window resizes the terminal.
 terminal.size_follows_window | bool | Tera Term | TermIsWin | off | DLG_TERM_TERMISWIN
 
@@ -2023,7 +2029,7 @@ window.corner_dontround | bool | Tera Term | WindowCornerDontround | off | -
 
 # **`[Sterna]`**, because upstream has no toolbar and so no key to be
 # compatible with. Whether the bar under the menu — port, connect, local echo,
-# line edit — is shown. It exists as a setting rather than as chrome nobody can remove:
+# line edit, dark mode — is shown. It exists as a setting rather than as chrome nobody can remove:
 # `window.popup_menu` and `window.hide_title` are about the *menu*, so neither
 # hides this, and Setup > Show toolbar writes it.
 window.toolbar | bool | Sterna | Toolbar | on | -

@@ -2682,6 +2682,11 @@ pub struct Settings {
     /// restores the user's preference. Off by default: an ordinary terminal remains
     /// immediate unless the user explicitly opts in.
     pub terminal_line_edit: bool,
+    /// **`[Sterna]`**. A painter-only dark palette for the terminal grid and its
+    /// local line editor. It deliberately does not change QApplication's palette:
+    /// menus, dialogs, toolbars and status bars remain the desktop theme. The
+    /// connect bar persists the switch immediately and applies it to every tab.
+    pub terminal_dark_mode: bool,
     /// `ttset.c:625`. With it on, resizing the window resizes the terminal.
     pub terminal_size_follows_window: bool,
     /// `ttset.c:628`. With it on, a remote resize resizes the window.
@@ -4153,7 +4158,7 @@ pub struct Settings {
     pub window_corner_dontround: bool,
     /// **`[Sterna]`**, because upstream has no toolbar and so no key to be
     /// compatible with. Whether the bar under the menu — port, connect, local echo,
-    /// line edit — is shown. It exists as a setting rather than as chrome nobody can remove:
+    /// line edit, dark mode — is shown. It exists as a setting rather than as chrome nobody can remove:
     /// `window.popup_menu` and `window.hide_title` are about the *menu*, so neither
     /// hides this, and Setup > Show toolbar writes it.
     pub window_toolbar: bool,
@@ -4237,6 +4242,7 @@ impl Default for Settings {
             terminal_cr_send: TerminalCrSend::default(),
             terminal_local_echo: false,
             terminal_line_edit: false,
+            terminal_dark_mode: false,
             terminal_size_follows_window: false,
             terminal_auto_win_resize: false,
             terminal_clear_on_resize: false,
@@ -4599,6 +4605,7 @@ impl Settings {
             },
             terminal_local_echo: crate::schema::on_off(ini.get("Tera Term", "LocalEcho"), false),
             terminal_line_edit: crate::schema::on_off(ini.get("Sterna", "LineEdit"), false),
+            terminal_dark_mode: crate::schema::on_off(ini.get("Sterna", "DarkMode"), false),
             terminal_size_follows_window: crate::schema::on_off(
                 ini.get("Tera Term", "TermIsWin"),
                 false,
@@ -5849,6 +5856,11 @@ impl Settings {
             "Sterna",
             "LineEdit",
             &if self.terminal_line_edit { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "DarkMode",
+            &if self.terminal_dark_mode { "on" } else { "off" }.to_string(),
         );
         ini.set(
             "Tera Term",
@@ -8010,6 +8022,13 @@ impl Settings {
                     "Sterna",
                     "LineEdit",
                     &if self.terminal_line_edit { "on" } else { "off" }.to_string(),
+                );
+            }
+            "terminal.dark_mode" => {
+                ini.set(
+                    "Sterna",
+                    "DarkMode",
+                    &if self.terminal_dark_mode { "on" } else { "off" }.to_string(),
                 );
             }
             "terminal.size_follows_window" => {
@@ -10775,6 +10794,7 @@ impl Settings {
             }
             .to_string(),
             "terminal.line_edit" => if self.terminal_line_edit { "on" } else { "off" }.to_string(),
+            "terminal.dark_mode" => if self.terminal_dark_mode { "on" } else { "off" }.to_string(),
             "terminal.size_follows_window" => if self.terminal_size_follows_window {
                 "on"
             } else {
@@ -11640,6 +11660,9 @@ impl Settings {
             }
             "terminal.line_edit" => {
                 self.terminal_line_edit = crate::schema::on_off(Some(value), false)
+            }
+            "terminal.dark_mode" => {
+                self.terminal_dark_mode = crate::schema::on_off(Some(value), false)
             }
             "terminal.size_follows_window" => {
                 self.terminal_size_follows_window = crate::schema::on_off(Some(value), false)
@@ -12594,6 +12617,16 @@ pub const FIELDS: &[Field] = &[
         default: "off",
         label: None,
         doc: "**`[Sterna]`**, because this is a local editor rather than telnet LINEMODE (`connection.line_mode`). While enabled, printable keyboard input is held in the terminal view until Return sends one edited line. Local echo is effective for that send without overwriting `terminal.local_echo`, so leaving the mode restores the user's preference. Off by default: an ordinary terminal remains immediate unless the user explicitly opts in.",
+    },
+    Field {
+        name: "terminal.dark_mode",
+        page: "terminal",
+        section: "Sterna",
+        key: "DarkMode",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "**`[Sterna]`**. A painter-only dark palette for the terminal grid and its local line editor. It deliberately does not change QApplication's palette: menus, dialogs, toolbars and status bars remain the desktop theme. The connect bar persists the switch immediately and applies it to every tab.",
     },
     Field {
         name: "terminal.size_follows_window",
@@ -15643,7 +15676,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "on",
         label: None,
-        doc: "**`[Sterna]`**, because upstream has no toolbar and so no key to be compatible with. Whether the bar under the menu — port, connect, local echo, line edit — is shown. It exists as a setting rather than as chrome nobody can remove: `window.popup_menu` and `window.hide_title` are about the *menu*, so neither hides this, and Setup > Show toolbar writes it.",
+        doc: "**`[Sterna]`**, because upstream has no toolbar and so no key to be compatible with. Whether the bar under the menu — port, connect, local echo, line edit, dark mode — is shown. It exists as a setting rather than as chrome nobody can remove: `window.popup_menu` and `window.hide_title` are about the *menu*, so neither hides this, and Setup > Show toolbar writes it.",
     },
     Field {
         name: "window.panel_layout",

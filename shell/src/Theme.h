@@ -114,6 +114,7 @@ public:
     int baseline() const { return m_baseline; }
 
 private:
+    void applyDarkPalette();
     void recomputeMetrics();
 
     QColor m_palette[256];

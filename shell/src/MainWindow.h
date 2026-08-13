@@ -393,7 +393,7 @@ private:
     Printer *m_printer = nullptr;
     TerminalView *m_view = nullptr;
     QLabel *m_status = nullptr;
-    /// The bar under the menu: port, connect, local echo and line editing.
+    /// The bar under the menu: port, connect, input modes and terminal theme.
     /// Shown when `window.toolbar` is on, which is what Setup > Show toolbar
     /// writes.
     ConnectBar *m_connectBar = nullptr;

@@ -99,6 +99,32 @@ void Theme::readColors(const Session &session)
     // invisible cursor on a reconfigured background. It follows an `OSC 10`
     // for the same reason.
     m_cursor = m_normal[0];
+
+    if (readFlag(session, "terminal.dark_mode", false)) {
+        applyDarkPalette();
+    }
+}
+
+void Theme::applyDarkPalette()
+{
+    // Painter-only: none of these colours enters the core or QApplication's
+    // palette. Explicit SGR foregrounds/backgrounds still win in `resolve`;
+    // these are the defaults and attribute pairs a host left unspecified.
+    const QColor foreground(0xd4, 0xd4, 0xd4);
+    const QColor background(0x1e, 0x1e, 0x1e);
+    m_normal[0] = foreground;
+    m_normal[1] = background;
+    m_bold[0] = QColor(0x56, 0x9c, 0xd6);
+    m_bold[1] = background;
+    m_blink[0] = QColor(0xf4, 0x47, 0x47);
+    m_blink[1] = background;
+    m_underline[0] = QColor(0xc5, 0x86, 0xc0);
+    m_underline[1] = background;
+    m_url[0] = QColor(0x4e, 0xc9, 0xb0);
+    m_url[1] = background;
+    m_reverse[0] = background;
+    m_reverse[1] = foreground;
+    m_cursor = foreground;
 }
 
 void Theme::applySettings(const Session &session)

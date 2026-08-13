@@ -362,6 +362,22 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
             onNotice(tr("Could not change line editing: %1").arg(error));
         }
     });
+    connect(m_connectBar, &ConnectBar::darkModeRequested, this, [this](bool on) {
+        const QString name = QStringLiteral("terminal.dark_mode");
+        const QString value = on ? QStringLiteral("on") : QStringLiteral("off");
+        for (int i = 0; i < m_panels->count(); i++) {
+            auto *page = static_cast<TerminalPage *>(m_panels->widget(i));
+            QString error;
+            if (!page->session()->setSetting(name, value, &error)) {
+                onNotice(tr("Could not change terminal dark mode: %1").arg(error));
+                return;
+            }
+        }
+        // Unlike Local echo and Line edit, this is a window-wide appearance
+        // preference rather than live terminal state. New tabs and the next
+        // launch should not jump back to a white grid.
+        rememberSettings({{name, value}});
+    });
 
     // The second bar, which is the user's own. Its area comes from the
     // settings below, once they have been read; it is created here so the

@@ -61,6 +61,13 @@ fn the_shipped_receive_cr_is_auto() {
 }
 
 #[test]
+fn terminal_dark_mode_is_a_sterna_setting_that_ships_off() {
+    assert!(!Settings::default().terminal_dark_mode);
+    let ini = Ini::parse(b"[Sterna]\r\nDarkMode=on\r\n");
+    assert!(Settings::load(&ini).terminal_dark_mode);
+}
+
+#[test]
 fn the_panel_layout_is_a_sterna_setting_with_a_safe_fallback() {
     assert_eq!(
         Settings::default().window_panel_layout,

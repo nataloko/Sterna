@@ -101,6 +101,17 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
             &ConnectBar::lineEditRequested);
     addWidget(m_lineEdit);
 
+    addSeparator();
+    m_darkMode = new QCheckBox(tr("Dark mode"), this);
+    m_darkMode->setObjectName(QStringLiteral("connectBarDarkMode"));
+    m_darkMode->setContentsMargins(4, 0, 4, 0);
+    m_darkMode->setToolTip(
+        tr("Uses a dark palette for terminal views only. Menus and dialogs "
+           "continue to use the desktop theme."));
+    connect(m_darkMode, &QCheckBox::toggled, this,
+            &ConnectBar::darkModeRequested);
+    addWidget(m_darkMode);
+
     refreshPorts();
 }
 
@@ -197,4 +208,11 @@ void ConnectBar::refresh(const Session *session)
         m_lineEdit->setChecked(lineEdit);
     }
     m_lineEdit->setEnabled(connected);
+
+    const bool darkMode =
+        session->setting(QStringLiteral("terminal.dark_mode")) == QLatin1String("on");
+    if (m_darkMode->isChecked() != darkMode) {
+        QSignalBlocker block(m_darkMode);
+        m_darkMode->setChecked(darkMode);
+    }
 }

@@ -354,6 +354,30 @@ void test_ansi_palette_changes_the_search_and_the_painter_together()
     CHECK(h.bgAt(1, 0) == QColor(1, 2, 3));
 }
 
+void test_dark_mode_changes_only_the_terminal_palette()
+{
+    Harness h;
+    const QPalette applicationPalette = qApp->palette();
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("terminal.dark_mode"),
+                               QStringLiteral("on"), &error));
+    h.view.applySettings();
+    h.render();
+
+    CHECK(h.view.theme().defaultForeground() == QColor(0xd4, 0xd4, 0xd4));
+    CHECK(h.view.theme().defaultBackground() == QColor(0x1e, 0x1e, 0x1e));
+    // Away from the cursor cell, whose block is intentionally foreground.
+    CHECK(h.bgAt(10, 0) == QColor(0x1e, 0x1e, 0x1e));
+    CHECK(qApp->palette() == applicationPalette);
+
+    CHECK(h.session.setSetting(QStringLiteral("terminal.dark_mode"),
+                               QStringLiteral("off"), &error));
+    h.view.applySettings();
+    h.render();
+    CHECK(h.view.theme().defaultForeground() == kBlack);
+    CHECK(h.view.theme().defaultBackground() == kWhite);
+}
+
 void test_osc_colours_reach_the_painter()
 {
     Harness h;
@@ -1485,7 +1509,9 @@ void test_use_text_colour_repairs_only_the_three_same_colour_pairs()
     CHECK(h.session.setSetting(QStringLiteral("color.reverse_enabled"),
                                QStringLiteral("off"), &error));
     h.view.applySettings();
-    h.feed("\r\033[30;40;7m \033[0m");
+    // Position explicitly: the shipped receive-CR mode is Auto, where a bare
+    // CR is a line ending rather than an overwrite of row zero.
+    h.feed("\033[1;1H\033[30;40;7m \033[0m");
     h.render();
     CHECK(h.bgAt(0, 0) == QColor(40, 50, 60));
 }
@@ -1918,7 +1944,8 @@ void test_the_connect_bar_is_a_view_of_the_session()
 {
     QTemporaryDir dir;
     CHECK(dir.isValid());
-    MainWindow window(dir.filePath(QStringLiteral("bar.ini")));
+    const QString settingsPath = dir.filePath(QStringLiteral("bar.ini"));
+    MainWindow window(settingsPath);
     window.show();
     qApp->processEvents();
 
@@ -1930,6 +1957,8 @@ void test_the_connect_bar_is_a_view_of_the_session()
         window.findChild<QCheckBox *>(QStringLiteral("connectBarLocalEcho"));
     auto *lineBox =
         window.findChild<QCheckBox *>(QStringLiteral("connectBarLineEdit"));
+    auto *darkBox =
+        window.findChild<QCheckBox *>(QStringLiteral("connectBarDarkMode"));
     auto *showAction =
         window.findChild<QAction *>(QStringLiteral("showToolbarAction"));
     auto *status =
@@ -1937,9 +1966,11 @@ void test_the_connect_bar_is_a_view_of_the_session()
     CHECK(connectAction != nullptr);
     CHECK(echoBox != nullptr);
     CHECK(lineBox != nullptr);
+    CHECK(darkBox != nullptr);
     CHECK(showAction != nullptr);
     CHECK(status != nullptr);
-    if (!bar || !connectAction || !echoBox || !lineBox || !showAction || !status) {
+    if (!bar || !connectAction || !echoBox || !lineBox || !darkBox || !showAction
+        || !status) {
         return;
     }
 
@@ -1948,12 +1979,32 @@ void test_the_connect_bar_is_a_view_of_the_session()
                             "the connected device does not echo what you type; "
                             "leave it off if characters appear twice."));
     CHECK(lineBox->toolTip().contains(QStringLiteral("until Enter sends the line")));
+    CHECK(darkBox->toolTip().contains(QStringLiteral("terminal views only")));
 
     CHECK(status->text() == QStringLiteral("not connected"));
     CHECK(status->styleSheet().contains(
         QStringLiteral("background-color: #b71c1c")));
     CHECK(!echoBox->isEnabled());
     CHECK(!lineBox->isEnabled());
+    CHECK(darkBox->isEnabled());
+
+    // Dark mode is an appearance preference rather than connection state. It
+    // applies to the terminal alone, persists immediately, and remains usable
+    // on a blank tab.
+    const QPalette windowPalette = window.palette();
+    auto *view = window.findChild<TerminalView *>();
+    CHECK(view != nullptr);
+    darkBox->click();
+    CHECK(window.session()->setting(QStringLiteral("terminal.dark_mode"))
+          == QStringLiteral("on"));
+    CHECK(view && view->theme().defaultBackground() == QColor(0x1e, 0x1e, 0x1e));
+    CHECK(window.palette() == windowPalette);
+    QFile saved(settingsPath);
+    CHECK(saved.open(QIODevice::ReadOnly));
+    CHECK(saved.readAll().contains("DarkMode=on"));
+    saved.close();
+    darkBox->click();
+    CHECK(view && view->theme().defaultBackground() == kWhite);
 
     // Shipped on, and the Setup item is the same switch as the setting.
     CHECK(!bar->isHidden());
@@ -2422,6 +2473,7 @@ int main(int argc, char **argv)
     test_sgr_background_colours();
     test_truecolor_resolves_through_upstreams_search();
     test_ansi_palette_changes_the_search_and_the_painter_together();
+    test_dark_mode_changes_only_the_terminal_palette();
     test_osc_colours_reach_the_painter();
     test_reverse_and_screen_reverse();
     test_a_visual_bell_inverts_the_screen_and_puts_it_back();
