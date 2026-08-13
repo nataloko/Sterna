@@ -35,7 +35,7 @@ zsync metadata and NSIS installer. It never receives the updater private key.
 Finish the draft locally:
 
 ```sh
-./packaging/release.sh v0.1.6
+./packaging/release.sh v0.1.7
 ```
 
 That command refuses a non-draft or mismatched tag, downloads the exact three
