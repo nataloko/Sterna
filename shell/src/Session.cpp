@@ -595,12 +595,17 @@ void Session::pollSsh()
 
 // --- input -------------------------------------------------------------------
 
+// Every one of these ends in `dispatch` rather than `rearm`, because sending
+// is not only sending: local echo puts the same bytes through the receive
+// parser, so the screen has changed by the time the call returns and the
+// events saying so are sitting in the core. See `Session::dispatch`.
+
 void Session::sendKey(TtKey key)
 {
     if (tt_session_send_key(m_session, key, nullptr) != TT_OK) {
         emit notice(QString::fromUtf8(tt_last_error()));
     }
-    rearm();
+    dispatch();
 }
 
 bool Session::loadKeyMap(const QString &path, QVector<quint16> *duplicates,
@@ -629,7 +634,7 @@ KeyCodeAction Session::sendKeyCode(quint16 scan)
     TtKeyCodeResult result {};
     if (tt_session_send_key_code(m_session, scan, &result) != TT_OK) {
         emit notice(QString::fromUtf8(tt_last_error()));
-        rearm();
+        dispatch();
         return {};
     }
     KeyCodeAction out;
@@ -638,7 +643,7 @@ KeyCodeAction Session::sendKeyCode(quint16 scan)
     if (result.text) {
         out.text = QString::fromUtf8(result.text);
     }
-    rearm();
+    dispatch();
     return out;
 }
 
@@ -652,7 +657,7 @@ void Session::sendText(const QString &text)
                              static_cast<size_t>(utf8.size())) != TT_OK) {
         emit notice(QString::fromUtf8(tt_last_error()));
     }
-    rearm();
+    dispatch();
 }
 
 void Session::sendBytes(const QByteArray &bytes)
@@ -666,7 +671,7 @@ void Session::sendBytes(const QByteArray &bytes)
         != TT_OK) {
         emit notice(QString::fromUtf8(tt_last_error()));
     }
-    rearm();
+    dispatch();
 }
 
 void Session::paste(const QString &text)
@@ -679,7 +684,7 @@ void Session::paste(const QString &text)
                          static_cast<size_t>(utf8.size())) != TT_OK) {
         emit notice(QString::fromUtf8(tt_last_error()));
     }
-    rearm();
+    dispatch();
 }
 
 bool Session::mouse(TtMouseEvent event, uint8_t button, int px, int py,
@@ -703,7 +708,7 @@ void Session::resize(int cols, int rows)
         return;
     }
     tt_session_resize(m_session, static_cast<size_t>(cols), static_cast<size_t>(rows));
-    emit damaged();
+    dispatch();
 }
 
 void Session::setCellPixels(int w, int h)
@@ -907,7 +912,7 @@ bool Session::setSetting(const QString &name, const QString &value, QString *out
         return false;
     }
     emit settingsChanged();
-    emit damaged();
+    dispatch();
     return true;
 }
 
@@ -921,7 +926,7 @@ bool Session::loadSettings(const QString &path, QString *outError)
         return false;
     }
     emit settingsChanged();
-    emit damaged();
+    dispatch();
     return true;
 }
 
@@ -934,7 +939,7 @@ bool Session::copySettingsFrom(const Session &source, QString *outError)
         return false;
     }
     emit settingsChanged();
-    emit damaged();
+    dispatch();
     return true;
 }
 
@@ -947,7 +952,7 @@ bool Session::applyCommandLine(TtCmdLine *cmd, QString *outError)
         return false;
     }
     emit settingsChanged();
-    emit damaged();
+    dispatch();
     return true;
 }
 
@@ -1071,7 +1076,11 @@ void Session::pumpAndDispatch(uint32_t budgetMs)
     if (tt_session_pump(m_session, budgetMs, nullptr) != TT_OK) {
         emit notice(QString::fromUtf8(tt_last_error()));
     }
+    dispatch();
+}
 
+void Session::dispatch()
+{
     const TtEvent *events = nullptr;
     const size_t n = tt_session_drain_events(m_session, &events);
 
