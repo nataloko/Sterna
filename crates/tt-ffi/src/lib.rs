@@ -3652,11 +3652,19 @@ pub struct TtPortList {
 /// does not reshuffle between refreshes. Null on failure.
 #[no_mangle]
 pub extern "C" fn tt_serial_enumerate() -> *mut TtPortList {
-    let ports = match tt_conn::serial::enumerate() {
-        Ok(p) => p,
-        Err(e) => {
-            report(e);
-            return ptr::null_mut();
+    // Wine's SetupAPI can fault while serialport-rs enumerates the Linux
+    // host's devices. Cross-built shell tests set this to exercise their UI
+    // against the equally valid no-ports result without entering Wine's
+    // hardware bridge; production never sets it.
+    let ports = if std::env::var_os("STERNA_TEST_NO_SERIAL_PORTS").is_some() {
+        Vec::new()
+    } else {
+        match tt_conn::serial::enumerate() {
+            Ok(p) => p,
+            Err(e) => {
+                report(e);
+                return ptr::null_mut();
+            }
         }
     };
     let mut strings: Vec<CString> = Vec::new();

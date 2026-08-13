@@ -136,6 +136,7 @@ export WINEPREFIX=$HOME/.wine-sterna WINEDLLOVERRIDES="mscoree,mshtml="
 export WINEPATH='Z:\usr\x86_64-w64-mingw32\sys-root\mingw\bin;C:\windows\system32;C:\windows'
 export QT_QPA_PLATFORM=offscreen
 export QT_PLUGIN_PATH='Z:\usr\x86_64-w64-mingw32\sys-root\mingw\lib\qt6\plugins'
+export STERNA_TEST_NO_SERIAL_PORTS=1   # avoid Wine's faulty SetupAPI enumeration
 wine build-win/cmdline_test.exe
 ```
 
