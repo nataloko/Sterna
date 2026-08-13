@@ -1,27 +1,48 @@
-//! A native wait for synchronous Win32 serial ports.
+//! A native wait for Win32 serial ports, over an **overlapped** COM handle.
 //!
-//! `serialport-rs` opens a COM handle for synchronous I/O. The handle itself
-//! is not waitable for received bytes, but `WaitCommEvent` is: one worker owns
-//! a duplicate handle, publishes exactly one notice, and waits for the reader
-//! to acknowledge it before arming the next wait. This is the same handshake
-//! as Tera Term's `CommThread` and `ReadEnd` event (`commlib.c:638`).
+//! The handle is not waitable for received bytes, but `WaitCommEvent` is: one
+//! worker owns a duplicate handle, publishes exactly one notice, and waits for
+//! the reader to acknowledge it before arming the next wait. This is the same
+//! handshake as Tera Term's `CommThread` and `ReadEnd` event
+//! (`commlib.c:638`).
+//!
+//! **Every operation here is overlapped, and that is not a style choice.** A
+//! COM handle opened without `FILE_FLAG_OVERLAPPED` gets `FO_SYNCHRONOUS_IO`,
+//! which makes the I/O manager serialise `ReadFile` and `WriteFile` on the
+//! file object — and a duplicated handle shares the file object, so the
+//! worker's pending wait is in the same queue. A blocking `WaitCommEvent`
+//! then holds every write behind it until a byte happens to arrive. See the
+//! trap in `AGENTS.md`: what that looks like is a window which connects
+//! cleanly and freezes on the first keystroke.
+//!
+//! The comm API wrappers — `SetCommState`, `PurgeComm`, `EscapeCommFunction`,
+//! `GetCommModemStatus`, `ClearCommError` — are synchronous whatever the
+//! handle is, so `serialport-rs`'s `COMPort` still owns the DCB, the pins and
+//! the purge. Only its `Read`/`Write` impls are unusable here: they pass a
+//! null `OVERLAPPED`, which is a bug against an overlapped handle rather than
+//! a slow path.
 
-use std::io::Write;
-use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError};
 use std::sync::Arc;
+use std::time::Duration;
 
 use serialport::COMPort;
 use windows_sys::Win32::Devices::Communication::{
-    ClearCommError, GetCommState, GetCommTimeouts, SetCommMask, SetCommState, SetCommTimeouts,
-    SetupComm, WaitCommEvent, CE_BREAK, COMMTIMEOUTS, COMSTAT, DCB, EVENPARITY, EV_BREAK, EV_ERR,
-    EV_RXCHAR, MARKPARITY, NOPARITY, ODDPARITY, ONESTOPBIT, SPACEPARITY, TWOSTOPBITS,
+    ClearCommError, GetCommState, SetCommMask, SetCommState, SetupComm, WaitCommEvent, CE_BREAK,
+    COMSTAT, DCB, EVENPARITY, EV_BREAK, EV_ERR, EV_RXCHAR, MARKPARITY, NOPARITY, ODDPARITY,
+    ONESTOPBIT, SPACEPARITY, TWOSTOPBITS,
 };
 use windows_sys::Win32::Foundation::{
-    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_INVALID_NAME, ERROR_PATH_NOT_FOUND,
-    ERROR_SHARING_VIOLATION, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
+    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_INVALID_NAME, ERROR_IO_PENDING,
+    ERROR_OPERATION_ABORTED, ERROR_PATH_NOT_FOUND, ERROR_SHARING_VIOLATION, GENERIC_READ,
+    GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
 };
-use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_ATTRIBUTE_NORMAL, OPEN_EXISTING};
+use windows_sys::Win32::Storage::FileSystem::{
+    CreateFileW, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_OVERLAPPED, OPEN_EXISTING,
+};
+use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
+use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject, INFINITE};
 
 use crate::error::{Error, Result};
 use crate::windows_event::ManualEvent;
@@ -39,12 +60,14 @@ pub(super) struct QueueStatus {
     pub(super) broken: bool,
 }
 
-/// Open a COM port without losing Win32's reason for failure.
+/// Open a COM port overlapped, without losing Win32's reason for failure.
 ///
 /// `serialport-rs` maps missing, busy and access-denied handles to one
 /// `NoDevice` variant and retains only a localized message. There is no sound
 /// way to recover the distinction afterwards, so preserve `GetLastError` at
-/// the same `CreateFileW` boundary the crate uses.
+/// the same `CreateFileW` boundary the crate uses — and add
+/// `FILE_FLAG_OVERLAPPED`, which the crate does not, because the wait worker
+/// and the writes have to reach the driver independently.
 pub(super) fn open(path: &str) -> Result<COMPort> {
     let mut name = Vec::with_capacity(path.len() + 5);
     if !path.starts_with('\\') {
@@ -62,7 +85,7 @@ pub(super) fn open(path: &str) -> Result<COMPort> {
             0,
             std::ptr::null_mut(),
             OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
             std::ptr::null_mut(),
         )
     };
@@ -117,45 +140,163 @@ pub(super) fn apply(port: &COMPort, params: &SerialParams) -> Result<()> {
     verify_dcb(&expected, &actual)
 }
 
-/// One synchronous write with the caller's deadline, without changing the
-/// read timeout cached by `serialport-rs`.
-pub(super) fn write(
-    port: &mut COMPort,
-    data: &[u8],
-    timeout: std::time::Duration,
-) -> Result<usize> {
-    let handle = port.as_raw_handle() as HANDLE;
-    let mut original = COMMTIMEOUTS::default();
-    // SAFETY: the handle and output structure are live.
-    if unsafe { GetCommTimeouts(handle, &mut original) } == 0 {
-        return Err(Error::from_io(std::io::Error::last_os_error()));
-    }
-    let mut temporary = original;
-    temporary.WriteTotalTimeoutMultiplier = 0;
-    temporary.WriteTotalTimeoutConstant = timeout_constant(timeout);
-    // SAFETY: the handle and input structure are live.
-    if unsafe { SetCommTimeouts(handle, &temporary) } == 0 {
-        return Err(Error::from_io(std::io::Error::last_os_error()));
-    }
+/// The two events the data path's overlapped operations complete on.
+///
+/// One per direction, reused across operations rather than created per call:
+/// each operation is driven to completion or cancelled before its function
+/// returns, so an event is never shared by two live requests. A write is a
+/// keystroke, and a `CreateEventW` per keystroke buys nothing.
+pub(super) struct SerialIo {
+    read: OwnedHandle,
+    write: OwnedHandle,
+}
 
-    let written = port.write(data).map_err(Error::from_io);
-    // Always put the read and ordinary write policy back, including after a
-    // failed WriteFile. A temporary timeout leaking into the next read is a
-    // connection-wide state bug, not just a slow write.
-    // SAFETY: as above.
-    let restored = if unsafe { SetCommTimeouts(handle, &original) } == 0 {
-        Err(Error::from_io(std::io::Error::last_os_error()))
-    } else {
-        Ok(())
-    };
-    match (written, restored) {
-        (Err(e), _) => Err(e),
-        (Ok(_), Err(e)) => Err(e),
-        (Ok(n), Ok(())) => Ok(n),
+impl SerialIo {
+    pub(super) fn new() -> Result<SerialIo> {
+        Ok(SerialIo {
+            read: event()?,
+            write: event()?,
+        })
     }
 }
 
-fn timeout_constant(timeout: std::time::Duration) -> u32 {
+fn event() -> Result<OwnedHandle> {
+    // SAFETY: unnamed event, default security, manual reset, initially quiet.
+    // The kernel resets it when an overlapped operation is queued on it.
+    let handle = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+    if handle.is_null() {
+        return Err(Error::from_io(std::io::Error::last_os_error()));
+    }
+    // SAFETY: `handle` is fresh and transferred exactly once.
+    Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
+}
+
+/// One overlapped write, bounded by the caller's deadline.
+///
+/// The deadline is ours rather than `COMMTIMEOUTS`', which is what lets the
+/// port's read policy stay untouched: a write no longer has to borrow and
+/// restore connection-wide state, so a failed write cannot leak a timeout into
+/// the next read.
+pub(super) fn write(
+    port: &COMPort,
+    io: &SerialIo,
+    data: &[u8],
+    timeout: Duration,
+) -> Result<usize> {
+    let handle = port.as_raw_handle() as HANDLE;
+    let event = io.write.as_raw_handle() as HANDLE;
+    let mut overlapped = OVERLAPPED {
+        hEvent: event,
+        ..OVERLAPPED::default()
+    };
+    // SAFETY: `data`, `overlapped` and both handles outlive the call, which
+    // does not return while the kernel may still be writing to `overlapped`.
+    let started = unsafe {
+        WriteFile(
+            handle,
+            data.as_ptr(),
+            data.len() as u32,
+            std::ptr::null_mut(),
+            &mut overlapped,
+        )
+    } != 0;
+    // SAFETY: as above.
+    unsafe { finish(handle, &mut overlapped, event, started, Some(timeout)) }
+}
+
+/// One overlapped read.
+///
+/// **Zero is a timeout, not an end of file.** A COM handle has no EOF: an
+/// expired `ReadTotalTimeoutConstant` completes the request successfully with
+/// nothing transferred, so a caller which reads zero as a disconnect drops the
+/// session on any quiet line. `serialport-rs` hid this by translating it to
+/// `ErrorKind::TimedOut`; reading the handle directly does not.
+pub(super) fn read(
+    port: &COMPort,
+    io: &SerialIo,
+    buf: &mut [u8],
+    timeout: Duration,
+) -> Result<usize> {
+    let handle = port.as_raw_handle() as HANDLE;
+    let event = io.read.as_raw_handle() as HANDLE;
+    let mut overlapped = OVERLAPPED {
+        hEvent: event,
+        ..OVERLAPPED::default()
+    };
+    // SAFETY: `buf`, `overlapped` and both handles outlive the call, which
+    // does not return while the kernel may still be writing to either.
+    let started = unsafe {
+        ReadFile(
+            handle,
+            buf.as_mut_ptr(),
+            buf.len() as u32,
+            std::ptr::null_mut(),
+            &mut overlapped,
+        )
+    } != 0;
+    // The driver's own read timeout should end this first. The wait is given a
+    // margin over it anyway, because the point of the overlapped handle is
+    // that no single misbehaving request can hold the frontend's thread.
+    let bound = timeout.saturating_mul(2) + Duration::from_secs(1);
+    // SAFETY: as above.
+    unsafe { finish(handle, &mut overlapped, event, started, Some(bound)) }
+}
+
+/// Wait for one overlapped operation, and never leave it pending.
+///
+/// A cancelled request still owns `overlapped` until the kernel completes it,
+/// so a timeout cancels and then *reaps* rather than returning — the stack
+/// frame holding the `OVERLAPPED` is about to go away. `ERROR_OPERATION_ABORTED`
+/// is the expected answer there and reports whatever got out beforehand, which
+/// for a write is a short count the caller retries from.
+///
+/// # Safety
+///
+/// `overlapped` must be live for the whole call and must not be reachable by
+/// any other pending request, and `handle` must be the handle the operation
+/// was issued on.
+unsafe fn finish(
+    handle: HANDLE,
+    overlapped: *mut OVERLAPPED,
+    event: HANDLE,
+    started: bool,
+    timeout: Option<Duration>,
+) -> Result<usize> {
+    if !started {
+        let pending = std::io::Error::last_os_error();
+        if pending.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
+            return Err(Error::from_io(pending));
+        }
+        let ms = timeout.map_or(INFINITE, wait_ms);
+        if WaitForSingleObject(event, ms) != WAIT_OBJECT_0 {
+            CancelIoEx(handle, overlapped);
+            return Ok(reap(handle, overlapped));
+        }
+    }
+
+    let mut moved = 0u32;
+    if GetOverlappedResult(handle, overlapped, &mut moved, 1) == 0 {
+        let e = std::io::Error::last_os_error();
+        if e.raw_os_error() != Some(ERROR_OPERATION_ABORTED as i32) {
+            return Err(Error::from_io(e));
+        }
+    }
+    Ok(moved as usize)
+}
+
+/// Collect a cancelled operation's completion, discarding its outcome.
+///
+/// # Safety
+///
+/// As [`finish`], and the operation must already have been cancelled.
+unsafe fn reap(handle: HANDLE, overlapped: *mut OVERLAPPED) -> usize {
+    let mut moved = 0u32;
+    let _ = GetOverlappedResult(handle, overlapped, &mut moved, 1);
+    moved as usize
+}
+
+/// `WaitForSingleObject`'s milliseconds, never accidentally `INFINITE`.
+fn wait_ms(timeout: Duration) -> u32 {
     timeout.as_millis().clamp(1, u32::MAX as u128 - 1) as u32
 }
 
@@ -309,6 +450,7 @@ impl WindowsSerialWake {
         let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
         let wake = Arc::new(ManualEvent::new()?);
         let worker_wake = Arc::clone(&wake);
+        let wait_event = event()?;
         std::thread::Builder::new()
             .name("sterna-serial-wait".into())
             .spawn(move || {
@@ -322,22 +464,44 @@ impl WindowsSerialWake {
                         }
                     } else {
                         let mut events = 0;
-                        // SAFETY: `clone` keeps the synchronous COM handle
-                        // live, and a null OVERLAPPED requests a blocking wait.
-                        if unsafe {
+                        let mut overlapped = OVERLAPPED {
+                            hEvent: wait_event.as_raw_handle() as HANDLE,
+                            ..OVERLAPPED::default()
+                        };
+                        // The wait is overlapped so that it sits in the
+                        // kernel without holding the file object: a
+                        // synchronous one would queue every write on this
+                        // port behind it until a byte arrived.
+                        // SAFETY: `clone` keeps the COM handle live, and
+                        // `overlapped` and its event outlive the operation —
+                        // `finish` does not return while either is in use.
+                        let started = unsafe {
                             WaitCommEvent(
                                 worker_handle as HANDLE,
                                 &mut events,
-                                std::ptr::null_mut(),
+                                &mut overlapped,
                             )
-                        } == 0
+                        } != 0;
+                        // SAFETY: as above. No deadline: the wait ends when
+                        // the line does something or when `cancel` clears the
+                        // mask, and the thread exists in order to block.
+                        if unsafe {
+                            finish(
+                                worker_handle as HANDLE,
+                                &mut overlapped,
+                                wait_event.as_raw_handle() as HANDLE,
+                                started,
+                                None,
+                            )
+                        }
+                        .is_err()
                         {
                             publish_end(&notice_tx, &worker_wake);
                             break;
                         }
                         // `SetCommMask(handle, 0)` is the documented way to
-                        // cancel a synchronous WaitCommEvent; it returns with
-                        // an empty mask rather than reporting a disconnect.
+                        // cancel a WaitCommEvent; it completes with an empty
+                        // mask rather than reporting a disconnect.
                         if events == 0 {
                             break;
                         }
@@ -436,7 +600,7 @@ impl WindowsSerialWake {
 
     pub(super) fn cancel(&self) {
         // SAFETY: SerialConn calls this before dropping the original port.
-        // SetCommMask with zero wakes a blocking synchronous WaitCommEvent.
+        // SetCommMask with zero completes the worker's pending WaitCommEvent.
         let _ = unsafe { SetCommMask(self.cancel_handle as HANDLE, 0) };
     }
 }
@@ -512,15 +676,15 @@ mod tests {
         assert!(matches!(build_dcb(&params), Err(Error::Unsupported(_))));
     }
 
+    /// A deadline must never round to `INFINITE`, which is what an unbounded
+    /// wait on the frontend's own thread is spelt as.
     #[test]
-    fn write_timeout_is_bounded_and_monotonic() {
-        assert_eq!(timeout_constant(std::time::Duration::ZERO), 1);
-        assert_eq!(timeout_constant(std::time::Duration::from_nanos(1)), 1);
-        assert_eq!(timeout_constant(std::time::Duration::from_millis(25)), 25);
-        assert_eq!(
-            timeout_constant(std::time::Duration::from_millis(u32::MAX as u64)),
-            u32::MAX - 1
-        );
+    fn a_wait_is_bounded_and_monotonic() {
+        assert_eq!(wait_ms(Duration::ZERO), 1);
+        assert_eq!(wait_ms(Duration::from_nanos(1)), 1);
+        assert_eq!(wait_ms(Duration::from_millis(25)), 25);
+        assert_eq!(wait_ms(Duration::from_millis(u32::MAX as u64)), u32::MAX - 1);
+        assert_ne!(wait_ms(Duration::MAX), INFINITE);
     }
 
     #[test]

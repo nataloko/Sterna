@@ -25,6 +25,49 @@ fn a_missing_com_port_is_a_disconnect() {
     ));
 }
 
+/// A send on an idle line must not wait for the line to say something.
+///
+/// This is the one case the whole overlapped seam exists for. With the handle
+/// opened synchronously, the wait worker's `WaitCommEvent` sits in the file
+/// object's queue and the I/O manager holds `WriteFile` behind it until a byte
+/// happens to arrive — so a window connects cleanly and freezes on the first
+/// keystroke, for as long as the far end stays quiet. Nothing is opened at the
+/// other end here, which is what keeps it quiet.
+///
+/// The write runs on its own thread because the failure is a hang rather than
+/// a wrong answer, and a hung test reports nothing at all.
+#[test]
+fn a_send_does_not_wait_for_the_worker_to_see_traffic() {
+    let Some((a, _)) = ports() else {
+        return;
+    };
+    let _rig = RIG.lock().unwrap();
+    let params = SerialParams {
+        read_timeout: Duration::from_millis(50),
+        ..SerialParams::default()
+    };
+    let mut conn = SerialConn::open(&a, &params).expect("open port");
+    // Let the worker reach its wait before the write is attempted; racing it
+    // would let the write through for the wrong reason.
+    std::thread::sleep(Duration::from_millis(150));
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let started = Instant::now();
+        let result = conn.write(b"hello", Duration::from_secs(1));
+        let _ = tx.send((result.map_err(|e| e.to_string()), started.elapsed()));
+    });
+
+    let (result, elapsed) = rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("a send on an idle port must not block on WaitCommEvent");
+    assert_eq!(result.expect("write"), 5);
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "an unobstructed 5-byte write took {elapsed:?}"
+    );
+}
+
 fn ports() -> Option<(String, String)> {
     let a = std::env::var("TT_SERIAL_A").ok();
     let b = std::env::var("TT_SERIAL_B").ok();

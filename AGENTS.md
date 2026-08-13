@@ -951,14 +951,41 @@ And for the serial side:
   `COMSTAT.cbOutQue` on Windows. The latter comes from `ClearCommError`, so a
   `CE_BREAK` found during the snapshot has to be retained for the receive path
   or checking whether output drained can silently eat an input event.
-- **A Win32 COM handle does not become readable by waiting on the handle.**
-  `serialport-rs` opens it synchronously, so the Windows wakeup duplicates the
-  handle into a worker blocked in `WaitCommEvent`, publishes one notice, and
-  waits for the read to acknowledge it — the same handshake as upstream's
-  `CommThread`/`ReadEnd`. Cancel it with `SetCommMask(handle, 0)` before the
-  original handle dies; a timer brings the idle polling back. Wine's
-  PTY-backed COM mapping rejects ordinary port setup with
-  `ERROR_NOT_SUPPORTED`, so `tests/serial_windows.rs` needs native Windows.
+- **A Win32 COM handle does not become readable by waiting on the handle.** So
+  the Windows wakeup duplicates the handle into a worker waiting in
+  `WaitCommEvent`, publishes one notice, and waits for the read to acknowledge
+  it — the same handshake as upstream's `CommThread`/`ReadEnd`. Cancel it with
+  `SetCommMask(handle, 0)` before the original handle dies; a timer brings the
+  idle polling back. Wine's PTY-backed COM mapping rejects ordinary port setup
+  with `ERROR_NOT_SUPPORTED`, so `tests/serial_windows.rs` needs native
+  Windows.
+- **And that worker is why the COM handle must be opened
+  `FILE_FLAG_OVERLAPPED`, which `serialport-rs` does not do.** Without it the
+  file object carries `FO_SYNCHRONOUS_IO` and the I/O manager serialises every
+  `ReadFile` and `WriteFile` on it — a duplicated handle shares the file
+  object, so the worker's pending wait is in the same queue as the writes.
+  **A synchronous `WaitCommEvent` therefore holds every send behind it until a
+  byte happens to arrive**, which on an idle line is for ever. What that looks
+  like is not a write bug: the port opens, the DCB reads back, the window says
+  connected, and it freezes on the first keystroke — and it *un*freezes if the
+  device ever speaks, so a chatty device hides it completely and a quiet one
+  looks like a dead terminal. The write deadline cannot save it either, because
+  `COMMTIMEOUTS` is measured by the driver and the request never reaches the
+  driver. The comm API wrappers are the reason it gets as far as it does:
+  `SetCommState`, `PurgeComm`, `EscapeCommFunction`, `GetCommModemStatus` and
+  `ClearCommError` are synchronous whatever the handle is, so open, apply,
+  `ClearComBuffOnOpen` and the modem lines all work and only the data path
+  hangs. `COMPort` still owns all of those; only its `Read`/`Write` impls are
+  unusable, because they pass a null `OVERLAPPED`. Every operation in
+  `serial/windows.rs` is overlapped now, and each one is driven to completion
+  or cancelled *and reaped* before its `OVERLAPPED` leaves the stack.
+- **On Windows a zero-byte read is a timeout, and on Unix it is the far end
+  leaving.** A COM handle has no EOF: an expired `ReadTotalTimeoutConstant`
+  completes the request successfully having transferred nothing.
+  `serialport-rs` hid that by translating it to `ErrorKind::TimedOut`, so the
+  one shared `n == 0` arm was right on both platforms until the reads became
+  overlapped. Reading the handle directly and keeping that arm drops the
+  session on any quiet line, and the two cases are now deliberately not shared.
 - **`ClearCommError` clears the error it reports.** `bytes_to_read()` calls it,
   so using that apparently harmless queue-length check between a
   `WaitCommEvent` notice and the read can eat a break which arrived meanwhile.

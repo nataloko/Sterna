@@ -18,6 +18,10 @@ mod windows;
 mod enumerate;
 pub use enumerate::{enumerate, number_of_port, port_by_number, PortInfo, UsbInfo};
 
+// The port's own `Read`/`Write` are the Unix data path. Windows drives
+// overlapped `ReadFile`/`WriteFile` on the handle instead, because the crate's
+// impls pass a null `OVERLAPPED`.
+#[cfg(unix)]
 use std::io::{Read, Write};
 #[cfg(windows)]
 use std::os::windows::io::RawHandle;
@@ -183,6 +187,11 @@ pub struct SerialConn {
     port: NativePort,
     #[cfg(windows)]
     wake: Option<windows::WindowsSerialWake>,
+    /// The completion events for the data path. Windows only, because only
+    /// there is the port opened overlapped — see [`windows`] for why it has
+    /// to be.
+    #[cfg(windows)]
+    io: windows::SerialIo,
     params: SerialParams,
     #[cfg(unix)]
     decoder: parmrk::Parmrk,
@@ -211,6 +220,8 @@ impl SerialConn {
             port,
             #[cfg(windows)]
             wake: None,
+            #[cfg(windows)]
+            io: windows::SerialIo::new()?,
             params: *params,
             #[cfg(unix)]
             decoder: parmrk::Parmrk::new(),
@@ -349,29 +360,39 @@ impl SerialConn {
         // this read to finish.
         #[cfg(windows)]
         let mut buf = [0u8; 64 * 1024];
+        #[cfg(unix)]
         let n = match self.port.read(&mut buf) {
             Ok(n) => n,
-            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                #[cfg(windows)]
-                self.acknowledge_windows_read(false)?;
-                return Ok(0);
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => return Ok(0),
             Err(e) => {
-                #[cfg(windows)]
-                let _ = self.acknowledge_windows_read(false);
                 let e = Error::from_io(e);
                 self.dead = e.is_disconnected();
                 return Err(e);
             }
         };
         // A zero-length read on a character device is EOF, which for a serial
-        // port means the far end is gone.
+        // port means the far end is gone. **Windows is the opposite** — there
+        // a completed empty read is the driver's read timeout and a COM handle
+        // has no EOF at all, so the two cases cannot share this branch.
+        #[cfg(unix)]
         if n == 0 {
-            #[cfg(windows)]
-            let _ = self.acknowledge_windows_read(false);
             self.dead = true;
             return Err(Error::Disconnected);
         }
+
+        #[cfg(windows)]
+        let n = match windows::read(&self.port, &self.io, &mut buf, self.params.read_timeout) {
+            Ok(0) => {
+                self.acknowledge_windows_read(false)?;
+                return Ok(0);
+            }
+            Ok(n) => n,
+            Err(e) => {
+                let _ = self.acknowledge_windows_read(false);
+                self.dead = e.is_disconnected();
+                return Err(e);
+            }
+        };
 
         let before = data.len();
         #[cfg(unix)]
@@ -423,7 +444,7 @@ impl SerialConn {
         }
         #[cfg(windows)]
         {
-            match windows::write(&mut self.port, data, timeout) {
+            match windows::write(&self.port, &self.io, data, timeout) {
                 Ok(n) => Ok(n),
                 Err(e) => {
                     self.dead = e.is_disconnected();
@@ -459,6 +480,12 @@ impl SerialConn {
         }
     }
 
+    /// The ungated write, for a caller which has already decided it may send.
+    ///
+    /// Unix only: Windows has no ungated form, because there every write needs
+    /// the deadline that bounds its overlapped wait. What reaches this on Unix
+    /// is the DSR gate's own chunking, which must not recurse through it.
+    #[cfg(unix)]
     fn write_raw(&mut self, data: &[u8]) -> Result<usize> {
         match self.port.write(data) {
             Ok(n) => Ok(n),
@@ -578,7 +605,11 @@ impl SerialConn {
                 } else {
                     self.params.xon
                 };
-                self.write_raw(&[b])?;
+                // Through `write`, not the raw form: this arm runs only for
+                // the two modes with no DSR gate, so there is nothing for the
+                // ordinary path to hold the byte back for — and on Windows
+                // the ordinary path is the only one that has a deadline.
+                self.write(&[b], Duration::from_millis(500))?;
                 self.flush(Duration::from_millis(500)).map(|_| ())
             }
         }
