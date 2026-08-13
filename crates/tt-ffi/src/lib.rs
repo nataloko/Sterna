@@ -4182,6 +4182,11 @@ pub struct TtHighlightSpan {
 /// `*out_len` zero when the row has nothing on it, which is the answer whenever
 /// highlighting is off or no rule matched.
 ///
+/// **This reads the grid and does not touch it**, so a `tt_session_row` pointer
+/// taken before this call stays valid across it — which is what lets a painter
+/// hold a row of cells and ask about that same row. Anything added here that
+/// could move a line breaks the caller silently.
+///
 /// **This is where the matching happens.** Nothing is stamped into a cell as it
 /// arrives, so a rule applies to text that was already on the screen and to the
 /// scrollback, and the receive path costs nothing at all.
