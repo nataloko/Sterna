@@ -35,6 +35,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub mod bell;
+pub mod highlight;
 pub mod log;
 pub mod logname;
 pub mod macros;
@@ -277,6 +278,20 @@ pub struct Session {
     conn_port: Option<u16>,
     /// `RingBell`'s three statics — see [`bell`].
     bell: BellGovernor,
+    /// The compiled highlight rules — see [`highlight`]. Empty until a
+    /// frontend hands some over, and asked only while painting.
+    highlights: highlight::Matcher,
+    /// Moved by [`Session::mark_damage`], which is what makes the memo below
+    /// safe to keep between calls: everything that changes the grid also tells
+    /// the frontend to repaint.
+    damage_epoch: u64,
+    /// The last logical line matched, so a wrapped line is scanned once per
+    /// frame rather than once per row it occupies.
+    highlight_memo: highlight::Memo,
+    /// Scratch for [`Session::row_highlights`], kept across calls so painting
+    /// a screen does not allocate once per row.
+    highlight_flat: highlight::Flattened,
+    highlight_styles: Vec<highlight::Style>,
 }
 
 impl Session {
@@ -309,6 +324,11 @@ impl Session {
             conn_host: None,
             conn_port: None,
             bell: BellGovernor::default(),
+            highlights: highlight::Matcher::default(),
+            damage_epoch: 0,
+            highlight_memo: highlight::Memo::default(),
+            highlight_flat: highlight::Flattened::default(),
+            highlight_styles: Vec::new(),
         }
     }
 
@@ -367,7 +387,7 @@ impl Session {
         // that moves the viewport's anchor: the offset would otherwise point
         // at a line that has moved between the page and the history.
         self.reanchor_after_resize();
-        self.events.push(Event::Damage);
+        self.mark_damage();
         // Here rather than only in the pump: applying settings rebuilds the
         // live colours, and a session with nothing arriving on it would
         // otherwise not pump again until it did.
@@ -802,6 +822,165 @@ impl Session {
         Some((line, 0))
     }
 
+    // --- highlight rules ----------------------------------------------------
+
+    /// Tell the frontend the cells changed, and retire anything derived from
+    /// them.
+    ///
+    /// Every path that edits the grid comes through here, because every one of
+    /// them has to ask for a repaint — which is what makes
+    /// [`Session::row_highlights`]' memo safe to keep between calls without a
+    /// per-line dirty flag the grid does not have.
+    fn mark_damage(&mut self) {
+        self.damage_epoch = self.damage_epoch.wrapping_add(1);
+        self.events.push(Event::Damage);
+    }
+
+    /// Compile a rule list and use it from the next repaint.
+    ///
+    /// Compiling here rather than per frame is the whole cost of the feature:
+    /// what a paint does is run an already-built automaton over the rows it is
+    /// drawing.
+    pub fn set_highlights(&mut self, rules: &[tt_config::highlight::Rule]) {
+        self.highlights = highlight::Matcher::new(rules);
+        self.mark_damage();
+    }
+
+    /// The rules that would not compile, for a frontend to say so once.
+    ///
+    /// A pattern only reaches this by being hand-edited into the file — the
+    /// editor will not save one — and silence would leave somebody looking at
+    /// a rule that is in the file and does nothing.
+    pub fn highlight_rejected(&self) -> &[highlight::Rejected] {
+        self.highlights.rejected()
+    }
+
+    /// What to recolour on viewport row `y`, in column order.
+    ///
+    /// Borrowed, and valid until the next call — the same contract as
+    /// [`Session::row`], which a painter is calling beside this one.
+    ///
+    /// Empty is the answer whenever it can be: the switch is off, no rule
+    /// compiled, or nothing on this row matched. A frontend with no rules
+    /// configured pays one comparison per row for the whole feature.
+    pub fn row_highlights(&mut self, y: usize) -> &[highlight::Span] {
+        if !self.settings.color_highlighting || self.highlights.is_empty() {
+            return &[];
+        }
+        let line = self.line_at(y);
+        if self.line(line).is_none() {
+            return &[];
+        }
+        if !self.highlight_memo.covers(self.damage_epoch, line) {
+            let (first, last) = self.logical_line_bounds(line);
+            self.flatten_logical_line(first, last);
+            // Taken out and put back so the buffer survives the call without
+            // borrowing `self` twice.
+            let mut styles = std::mem::take(&mut self.highlight_styles);
+            styles.clear();
+            styles.resize(self.highlight_flat.cells.len(), highlight::Style::default());
+            self.highlights.paint(
+                &self.highlight_flat.text,
+                &self.highlight_flat.starts,
+                &mut styles,
+            );
+            let mut rows = std::mem::take(&mut self.highlight_memo.rows);
+            self.highlight_flat.spans_into(&styles, &mut rows);
+            self.highlight_styles = styles;
+            self.highlight_memo = highlight::Memo {
+                epoch: self.damage_epoch,
+                first,
+                last,
+                rows,
+            };
+        }
+        self.highlight_memo.row(line)
+    }
+
+    /// How far a logical line is followed in either direction.
+    ///
+    /// A cap, because `ATTR_LINE_CONTINUED` can in principle run the length of
+    /// the scrollback — `yes | tr -d '\n'` is one logical line — and this is
+    /// walked while painting. Past it the line is treated as ending, so `^` and
+    /// `$` anchor to the cap rather than to the real ends; a rule that notices
+    /// is a rule about a line hundreds of rows long.
+    const MAX_LOGICAL_ROWS: u64 = 128;
+
+    /// The first and last absolute line of the logical line containing `line`.
+    ///
+    /// The wrap marker sits on both ends of the join — the last cell of the
+    /// upper row and the first cell of the lower one — which is what lets this
+    /// be answered from either side. Same walk as [`Session::url_at`]'s.
+    fn logical_line_bounds(&self, line: u64) -> (u64, u64) {
+        let mut first = line;
+        while first > 0 && line - first < Self::MAX_LOGICAL_ROWS {
+            let continued = self
+                .line(first)
+                .and_then(|cells| cells.first())
+                .is_some_and(|cell| cell.attrs & ATTR_LINE_CONTINUED != 0);
+            if !continued || self.line(first - 1).is_none() {
+                break;
+            }
+            first -= 1;
+        }
+        let mut last = line;
+        while last - line < Self::MAX_LOGICAL_ROWS {
+            let continued = self
+                .line(last)
+                .and_then(|cells| cells.last())
+                .is_some_and(|cell| cell.attrs & ATTR_LINE_CONTINUED != 0);
+            if !continued || self.line(last + 1).is_none() {
+                break;
+            }
+            last += 1;
+        }
+        (first, last)
+    }
+
+    /// Flatten rows `first..=last` into text a pattern can be run over.
+    ///
+    /// Padding cells are not entries: a wide character is one cell that is two
+    /// columns wide, so a match on it colours both of them. Trailing blanks go
+    /// — every line in the grid is `cols` wide, and a `$` that had to be typed
+    /// as ` *$` would be a puzzle nobody should have to solve.
+    fn flatten_logical_line(&mut self, first: u64, last: u64) {
+        let mut flat = std::mem::take(&mut self.highlight_flat);
+        flat.clear();
+        for line in first..=last {
+            let Some(cells) = self.line(line) else {
+                continue;
+            };
+            let mut x = 0;
+            while x < cells.len() {
+                let cell = &cells[x];
+                if cell.width_class == WIDTH_PAD {
+                    x += 1;
+                    continue;
+                }
+                let width = if cell.width_class == WIDTH_WIDE { 2 } else { 1 };
+                flat.starts.push(flat.text.len() as u32);
+                for cp in cell.codepoints() {
+                    flat.text.push(char::from_u32(cp).unwrap_or('\u{fffd}'));
+                }
+                flat.cells.push((line, x as u16, width));
+                x += width as usize;
+            }
+        }
+        while flat
+            .cells
+            .len()
+            .checked_sub(1)
+            .and_then(|i| flat.starts.get(i).map(|&s| &flat.text[s as usize..] == " "))
+            .unwrap_or(false)
+        {
+            flat.cells.pop();
+            let start = flat.starts.pop().unwrap_or(0);
+            flat.text.truncate(start as usize);
+        }
+        flat.starts.push(flat.text.len() as u32);
+        self.highlight_flat = flat;
+    }
+
     // --- session logging ----------------------------------------------------
 
     /// Say what this session is connected *to*, for the `&h` and `&p` in a log
@@ -1168,7 +1347,7 @@ impl Session {
                 self.collect_clipboard();
                 self.rx = bytes;
                 self.follow_scroll();
-                self.events.push(Event::Damage);
+                self.mark_damage();
                 // Anything the parser answered — DA, DSR, DECRQSS — goes back
                 // now rather than waiting for the next pump, because a host
                 // that asked is usually blocked waiting.
@@ -1449,7 +1628,7 @@ impl Session {
         self.view_offset = 0;
         self.seen_scrolled_off = self.vt.grid().scrolled_off();
         self.seen_size = (cols, rows);
-        self.events.push(Event::Damage);
+        self.mark_damage();
         if let Some(c) = self.conn.as_mut() {
             c.resize(cols as u16, rows as u16)?;
         }
@@ -1517,7 +1696,7 @@ impl Session {
         self.macro_bytes_in();
         self.collect_clipboard();
         self.follow_scroll();
-        self.events.push(Event::Damage);
+        self.mark_damage();
         self.collect_title();
         self.collect_bells();
         self.collect_colors();
@@ -1785,7 +1964,7 @@ impl Session {
             self.vt.grid_mut().move_cursor(0, 0);
             self.vt.reconcile_sixels();
             self.follow_scroll();
-            self.events.push(Event::Damage);
+            self.mark_damage();
         }
 
         if matches!(kind, tt_conn::LinkKind::Network) && self.settings.connection_auto_win_close {
