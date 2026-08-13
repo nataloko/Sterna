@@ -2010,6 +2010,21 @@ window.toolbar | bool | Sterna | Toolbar | on | -
 # layout, so an edited file cannot leave the window without a usable view.
 window.panel_layout | enum(single/*=Single,two=Two,four=Four) | Sterna | PanelLayout | single | -
 
+# **`[Sterna]`** again, and these two are only the *bar*: the buttons on it are
+# a list, which no schema row can be, and they live in a `[Sterna Buttons]`
+# section of their own (`tt-config/src/buttons.rs`).
+#
+# On, but the bar is hidden while nobody has defined a button — an empty
+# toolbar is chrome for nothing. So this is what Setup > Show quick buttons
+# writes, not what decides whether the bar exists.
+window.quick_buttons | bool | Sterna | QuickButtons | on | -
+
+# Which edge the bar was left on. Qt lets a toolbar be dragged to any of the
+# four; on the left or the right it costs no terminal rows at all, which on a
+# short window is the difference between the feature being worth having and
+# not. An unrecognised spelling returns to the top rather than hiding the bar.
+window.quick_buttons_area | enum(top/*=Top,bottom=Bottom,left=Left,right=Right) | Sterna | QuickButtonsArea | top | -
+
 # --- recent -----------------------------------------------------------------
 #
 # **`[Sterna]` is this program's own section and nothing upstream reads it.**
