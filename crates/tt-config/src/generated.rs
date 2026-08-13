@@ -4052,6 +4052,17 @@ pub struct Settings {
     /// Which of the four framing/burst combinations was used (`TelnetMode::of`).
     /// `auto` is the shipped one: data until the first `IAC`, telnet after it.
     pub recent_telnet_mode: RecentTelnetMode,
+    /// Whether starting Sterna may look for a new release. On, so an installed
+    /// terminal learns about a signed update without anyone remembering to ask.
+    pub updates_check_on_startup: bool,
+    /// When the last look happened, as ISO-8601 UTC — the "once a day" half of it.
+    /// Written when a check *starts*, so a release server that cannot be reached
+    /// costs one request a day rather than one per launch. Empty means never, which
+    /// is also what clearing it by hand means: check at the next start. Anything
+    /// unparsable, and anything in the future — a clock moved back, an edited file —
+    /// reads the same way, because the alternative is a terminal that never looks
+    /// again.
+    pub updates_last_check: String,
 }
 
 impl Default for Settings {
@@ -4376,6 +4387,8 @@ impl Default for Settings {
             recent_telnet_host: String::from(""),
             recent_telnet_port: 23,
             recent_telnet_mode: RecentTelnetMode::default(),
+            updates_check_on_startup: true,
+            updates_last_check: String::from(""),
         }
     }
 }
@@ -5600,6 +5613,13 @@ impl Settings {
                 Some(v) => RecentTelnetMode::from_ini(v),
                 None => d.recent_telnet_mode,
             },
+            updates_check_on_startup: crate::schema::on_off(
+                ini.get("Sterna", "CheckUpdatesOnStartup"),
+                true,
+            ),
+            updates_last_check: ini
+                .get_or("Sterna", "LastUpdateCheck", &d.updates_last_check)
+                .to_string(),
         };
         settings.window_opacity_active = crate::schema::byte(ini.get_int(
             "Tera Term",
@@ -7695,6 +7715,21 @@ impl Settings {
             "Sterna",
             "TelnetMode",
             &self.recent_telnet_mode.as_ini().to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "CheckUpdatesOnStartup",
+            &if self.updates_check_on_startup {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "LastUpdateCheck",
+            &self.updates_last_check.clone(),
         );
     }
 
@@ -10453,6 +10488,25 @@ impl Settings {
                     &self.recent_telnet_mode.as_ini().to_string(),
                 );
             }
+            "updates.check_on_startup" => {
+                ini.set(
+                    "Sterna",
+                    "CheckUpdatesOnStartup",
+                    &if self.updates_check_on_startup {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "updates.last_check" => {
+                ini.set(
+                    "Sterna",
+                    "LastUpdateCheck",
+                    &self.updates_last_check.clone(),
+                );
+            }
             _ => return false,
         }
         true
@@ -11293,6 +11347,13 @@ impl Settings {
             "recent.telnet_host" => self.recent_telnet_host.clone(),
             "recent.telnet_port" => self.recent_telnet_port.to_string(),
             "recent.telnet_mode" => self.recent_telnet_mode.as_ini().to_string(),
+            "updates.check_on_startup" => if self.updates_check_on_startup {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "updates.last_check" => self.updates_last_check.clone(),
             _ => return None,
         })
     }
@@ -12177,6 +12238,10 @@ impl Settings {
                     crate::schema::word(crate::schema::int(value, self.recent_telnet_port))
             }
             "recent.telnet_mode" => self.recent_telnet_mode = RecentTelnetMode::from_ini(value),
+            "updates.check_on_startup" => {
+                self.updates_check_on_startup = crate::schema::on_off(Some(value), true)
+            }
+            "updates.last_check" => self.updates_last_check = value.to_string(),
             _ => return false,
         }
         self.normalize();
@@ -15378,5 +15443,25 @@ pub const FIELDS: &[Field] = &[
         default: "auto",
         label: None,
         doc: "Which of the four framing/burst combinations was used (`TelnetMode::of`). `auto` is the shipped one: data until the first `IAC`, telnet after it.",
+    },
+    Field {
+        name: "updates.check_on_startup",
+        page: "updates",
+        section: "Sterna",
+        key: "CheckUpdatesOnStartup",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "Whether starting Sterna may look for a new release. On, so an installed terminal learns about a signed update without anyone remembering to ask.",
+    },
+    Field {
+        name: "updates.last_check",
+        page: "updates",
+        section: "Sterna",
+        key: "LastUpdateCheck",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "When the last look happened, as ISO-8601 UTC — the \"once a day\" half of it. Written when a check *starts*, so a release server that cannot be reached costs one request a day rather than one per launch. Empty means never, which is also what clearing it by hand means: check at the next start. Anything unparsable, and anything in the future — a clock moved back, an edited file — reads the same way, because the alternative is a terminal that never looks again.",
     },
 ];
