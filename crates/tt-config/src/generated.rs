@@ -2936,6 +2936,19 @@ pub struct Settings {
     /// background is used instead. Reverse swaps that normal background into the
     /// foreground (`vtdisp.c:2453`).
     pub color_use_normal_background: bool,
+    /// **`[Sterna]`**, because upstream has no pattern highlighting and so no key to
+    /// be compatible with — its regex library lives in `ttpmacro`, a separate process
+    /// that never sees the screen.
+    ///
+    /// This is only the *switch*: the rules themselves are a list, which no schema
+    /// row can be, and they live in a `[Sterna Highlights]` section of their own
+    /// (`tt-config/src/highlight.rs`).
+    ///
+    /// On, and it costs nothing until a rule exists — matching runs over the visible
+    /// rows as they are painted, so an empty rule set is an empty loop. The switch is
+    /// what Setup > Highlight matches writes, for turning every rule off at once
+    /// without deleting any of them.
+    pub color_highlighting: bool,
     /// `ttset.c:718`, and the default is again the `else` branch.
     pub cursor_shape: CursorShape,
     /// `ttset.c:1227`.
@@ -4199,6 +4212,7 @@ impl Default for Settings {
             color_underline_font: true,
             color_use_text_color: false,
             color_use_normal_background: false,
+            color_highlighting: true,
             cursor_shape: CursorShape::default(),
             cursor_nonblinking: false,
             cursor_show_unfocused: true,
@@ -4731,6 +4745,7 @@ impl Settings {
                 ini.get("Tera Term", "UseNormalBGColor"),
                 false,
             ),
+            color_highlighting: crate::schema::on_off(ini.get("Sterna", "Highlighting"), true),
             cursor_shape: match ini.get("Tera Term", "CursorShape") {
                 Some(v) => CursorShape::from_ini(v),
                 None => d.cursor_shape,
@@ -6177,6 +6192,11 @@ impl Settings {
                 "off"
             }
             .to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "Highlighting",
+            &if self.color_highlighting { "on" } else { "off" }.to_string(),
         );
         ini.set(
             "Tera Term",
@@ -8447,6 +8467,13 @@ impl Settings {
                         "off"
                     }
                     .to_string(),
+                );
+            }
+            "color.highlighting" => {
+                ini.set(
+                    "Sterna",
+                    "Highlighting",
+                    &if self.color_highlighting { "on" } else { "off" }.to_string(),
                 );
             }
             "cursor.shape" => {
@@ -10795,6 +10822,7 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "color.highlighting" => if self.color_highlighting { "on" } else { "off" }.to_string(),
             "cursor.shape" => self.cursor_shape.as_ini().to_string(),
             "cursor.nonblinking" => if self.cursor_nonblinking { "on" } else { "off" }.to_string(),
             "cursor.show_unfocused" => if self.cursor_show_unfocused {
@@ -11634,6 +11662,9 @@ impl Settings {
             }
             "color.use_normal_background" => {
                 self.color_use_normal_background = crate::schema::on_off(Some(value), false)
+            }
+            "color.highlighting" => {
+                self.color_highlighting = crate::schema::on_off(Some(value), true)
             }
             "cursor.shape" => self.cursor_shape = CursorShape::from_ini(value),
             "cursor.nonblinking" => {
@@ -13069,6 +13100,16 @@ pub const FIELDS: &[Field] = &[
         default: "off",
         label: Some("DLG_WIN_ALWAYSBG"),
         doc: "`ttset.c:1561`. Bold, blink, underline and URL colours are pairs of their own; on, their configured background half is ignored and the normal text background is used instead. Reverse swaps that normal background into the foreground (`vtdisp.c:2453`).",
+    },
+    Field {
+        name: "color.highlighting",
+        page: "color",
+        section: "Sterna",
+        key: "Highlighting",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "**`[Sterna]`**, because upstream has no pattern highlighting and so no key to be compatible with — its regex library lives in `ttpmacro`, a separate process that never sees the screen.  This is only the *switch*: the rules themselves are a list, which no schema row can be, and they live in a `[Sterna Highlights]` section of their own (`tt-config/src/highlight.rs`).  On, and it costs nothing until a rule exists — matching runs over the visible rows as they are painted, so an empty rule set is an empty loop. The switch is what Setup > Highlight matches writes, for turning every rule off at once without deleting any of them.",
     },
     Field {
         name: "cursor.shape",

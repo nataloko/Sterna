@@ -536,6 +536,20 @@ color.use_text_color | bool | Tera Term | UseTextColor | off | -
 # foreground (`vtdisp.c:2453`).
 color.use_normal_background | bool | Tera Term | UseNormalBGColor | off | DLG_WIN_ALWAYSBG
 
+# **`[Sterna]`**, because upstream has no pattern highlighting and so no key to
+# be compatible with — its regex library lives in `ttpmacro`, a separate process
+# that never sees the screen.
+#
+# This is only the *switch*: the rules themselves are a list, which no schema
+# row can be, and they live in a `[Sterna Highlights]` section of their own
+# (`tt-config/src/highlight.rs`).
+#
+# On, and it costs nothing until a rule exists — matching runs over the visible
+# rows as they are painted, so an empty rule set is an empty loop. The switch is
+# what Setup > Highlight matches writes, for turning every rule off at once
+# without deleting any of them.
+color.highlighting | bool | Sterna | Highlighting | on | -
+
 # --- cursor ------------------------------------------------------------------
 
 # `ttset.c:718`, and the default is again the `else` branch.
