@@ -20,6 +20,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 3 | A bar under the menu: port, connect/disconnect, local echo | No toolbar at all | unreleased |
 | 4 | One, two or four simultaneous connection panels | One connection per window | unreleased |
 | 5 | Starting Sterna looks for a signed update, once a day | Nothing contacts a server on its own | unreleased |
+| 6 | Highlight rules: user-written regular expressions recolour the screen | Only the host decides a colour; the URL attribute is the one exception | unreleased |
 
 ---
 
@@ -178,3 +179,51 @@ two new settings hold it: `[Sterna] CheckUpdatesOnStartup`
 succeeds — so an offline machine costs one attempt a day rather than one per
 launch. Both are ordinary settings, editable in Setup and by hand: clearing the
 stamp means "check at the next start".
+
+## 6. Highlight rules
+
+An ordered list of regular expressions, each with a foreground colour, a
+background colour and attributes, applied to what is on the screen. Tera Term
+has no pattern or keyword highlighting anywhere: every colour a cell can take is
+the host's decision, and the one exception — the URL attribute — is a hard-coded
+scan for seven scheme prefixes rather than anything a user can write.
+
+**Why.** On a console port the line that matters arrives in the same colour as
+the thousand around it. Upstream's own regex library exists but lives in
+`ttpmacro`, a separate process that never sees the screen, so there is nothing
+to reproduce here and nothing to be compatible with. See
+[`highlighting.md`](highlighting.md) for the user-facing half.
+
+**What is unchanged, and it is the important half.** A rule changes what is
+*drawn* and nothing about what the terminal is. Nothing is written into a cell:
+the grid still holds exactly what the host sent, so the session log, the
+clipboard, the printer, a macro's `wait` and the differential oracle all see an
+unhighlighted terminal. Matching happens over the visible rows while they are
+painted, which is what makes a new rule colour text that arrived before it —
+scrollback included — and what keeps the receive path exactly as fast as it was.
+
+The one place the drawing model is touched is `Theme::resolve`, and there the
+rule applies **last**, after upstream's whole priority chain and after the
+`UseTextColor` repair, so nothing can take back a colour the user asked for. It
+goes through the same reverse flag an SGR colour does, so a selection dragged
+across highlighted text still inverts. A rule's bold and underline reach the
+font and the stroke but deliberately **not** upstream's bold and underline
+*colour pairs* — "underline this" must not also mean "and repaint it magenta".
+
+**Where it lives.** `crates/tt-config/src/highlight.rs` owns the format;
+`crates/tt-session/src/highlight.rs` owns the engine and the per-row spans;
+`shell/src/HighlightsDialog.{h,cpp}` is the editor. The rules are a
+`[Sterna Highlights]` section — its own, because a list is exactly what the
+settings schema cannot describe — plus one ordinary `[Sterna]` setting for the
+master switch: `Highlighting` (`color.highlighting`, on).
+
+**Two decisions worth defending.** The engine is the Rust `regex` crate rather
+than the Oniguruma `tt-ttl` already carries, which costs one syntax difference
+(no backreferences, no lookaround) that `highlighting.md` states plainly. It
+buys a guarantee: matching runs on the UI thread inside `paintEvent` and the
+*far end* chooses the haystack, so a backtracking engine would make a pattern
+like `(\w+\s*)+:` a window somebody else can freeze. There is no retry limit to
+choose and no rule that can stall the drawing. And rules compose **per channel**
+in list order rather than first-rule-takes-the-cell: a rule that only underlines
+and a rule that only colours are not in competition, and making them compete
+would mean the more specific of the two silently did nothing.

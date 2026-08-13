@@ -304,6 +304,31 @@ pair, after reversal has been decided. In the reversed arm it uses the
 configured reverse pair even when that pair is otherwise disabled. The grabbed
 pixel tests pin these combinations because no core or differential dump can.
 
+## Highlight rules are the one colour the host did not choose
+
+Everything in the section above is upstream's, and every colour in it is
+decided by the far end. A highlight rule is the exception: the user's own
+regular expressions, recolouring what is on the screen.
+
+**Nothing is written into a cell.** The core matches the visible rows as the
+painter asks for them — `Session::rowHighlights(y)`, beside the selection range
+`paintEvent` already computes — and hands back column spans. So the grid still
+holds exactly what the host sent, the log and the clipboard and the printer see
+an unhighlighted terminal, the receive path is untouched, and a rule written now
+colours text that arrived an hour ago, scrollback included. Matching is over the
+*logical* line, so a wrapped command is one line to a pattern.
+
+The span reaches `Theme::resolve` as a `CellOverride` and applies **last**,
+after the priority chain and after the `UseTextColor` repair, so nothing can
+take back a colour the user asked for. It goes through the same reverse flag an
+SGR colour does, which is why a selection dragged across highlighted text still
+inverts. A rule's bold and underline reach the font and the stroke and
+deliberately not the configured bold and underline *colour pairs*: "underline
+this" must not also mean "and repaint it magenta".
+
+The run-batching below needed no change for any of it. Its key is already
+`(fg, bg, bold, underline)`, so a highlighted span becomes its own run.
+
 ## Text is drawn in runs, and that needs the font's help
 
 One `drawText` per run of cells that look alike, because real console output is

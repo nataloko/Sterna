@@ -15,6 +15,8 @@ supporting Tera Term-compatible workflows and configuration.
   byte-stream filters, and settings pages
 - XMODEM, YMODEM, ZMODEM, Kermit, B-Plus, and Quick-VAN file transfers
 - Inline [sixel graphics](docs/sixel.md), including images in scrollback
+- [Highlight rules](docs/highlighting.md): regular expressions that recolour
+  the screen and the scrollback
 - `KEYBOARD.CNF` key mappings and `TERATERM.INI`-compatible settings
 - Printing, a local control socket, and a signed updater that checks once a day
 - Localized interface using Tera Term's 14 language catalogs
