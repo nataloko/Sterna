@@ -30,6 +30,15 @@ in [docs/deviations.md](docs/deviations.md). Attribution and licensing details
 for incorporated Tera Term components are in
 [ATTRIBUTION.md](ATTRIBUTION.md).
 
+## Installation
+
+Download the latest release from the
+[GitHub releases page](https://github.com/nataloko/Sterna/releases/latest).
+
+- **Windows:** download and run the `x86_64-setup.exe` installer.
+- **Linux:** download the `x86_64.AppImage`, make it executable with
+  `chmod +x sterna-*.AppImage`, then run it.
+
 ## Architecture
 
 Sterna has a Rust core exposed through a flat C ABI and a Qt 6 Widgets desktop
