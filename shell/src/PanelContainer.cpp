@@ -78,15 +78,18 @@ public:
 
     QWidget *page() const { return m_page; }
 
+    void setHeaderVisible(bool visible) { m_header->setVisible(visible); }
+
     QSize sizeHintFor(QWidget *page) const
     {
         m_header->ensurePolished();
         QSize out = page ? page->sizeHint() : QSize(640, 400);
-        out = out.expandedTo(QSize(m_header->sizeHint().width(), out.height()));
+        const QSize header = m_header->isHidden() ? QSize() : m_header->sizeHint();
+        out = out.expandedTo(QSize(header.width(), out.height()));
         const QMargins margins = layout()->contentsMargins();
         out.rwidth() += margins.left() + margins.right() + frameWidth() * 2;
-        out.rheight() += m_header->sizeHint().height() + margins.top()
-                         + margins.bottom() + frameWidth() * 2;
+        out.rheight() += header.height() + margins.top() + margins.bottom()
+                         + frameWidth() * 2;
         return out;
     }
 
@@ -514,6 +517,7 @@ void PanelContainer::arrangeFrames()
     for (int i = 0; i < m_frames.size(); i++) {
         PaneFrame *frame = frameAt(m_frames, i);
         grid->removeWidget(frame);
+        frame->setHeaderVisible(m_layout != PanelLayout::Single);
         frame->setVisible(i < panelCount());
     }
 

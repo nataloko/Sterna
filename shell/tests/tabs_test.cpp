@@ -194,6 +194,10 @@ void test_panel_assignment_and_geometry()
     CHECK(panels.count() == 5);
     CHECK(panels.pageAtPanel(0) == e);
     CHECK(panels.currentWidget() == e);
+    auto *header0 =
+        panels.findChild<QLabel *>(QStringLiteral("panelHeader0"));
+    CHECK(header0 != nullptr);
+    CHECK(header0 && header0->isHidden());
 
     // A layout change starts with the active connection, then the connections
     // which were visible, then the remaining tabs in tab order.
@@ -206,6 +210,7 @@ void test_panel_assignment_and_geometry()
 
     panels.show();
     QApplication::processEvents();
+    CHECK(header0 && !header0->isHidden());
     auto *f0 = panels.findChild<QWidget *>(QStringLiteral("panelFrame0"));
     auto *f1 = panels.findChild<QWidget *>(QStringLiteral("panelFrame1"));
     auto *f2 = panels.findChild<QWidget *>(QStringLiteral("panelFrame2"));
@@ -266,6 +271,9 @@ void test_panel_assignment_and_geometry()
     panels.addPage(g, QStringLiteral("G"), exact);
     CHECK(panels.pageAtPanel(exact) == g);
     delete b;
+
+    panels.setLayoutMode(PanelLayout::Single);
+    CHECK(header0 && header0->isHidden());
 }
 
 void test_empty_panels_request_connections_without_creating_pages()
