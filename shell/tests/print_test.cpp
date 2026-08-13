@@ -69,6 +69,10 @@ struct Rig {
     explicit Rig(const QString &path)
     {
         QObject::connect(&session, &Session::printerEvent, &printer, &Printer::handle);
+        // These fixtures exercise a bare CR as an overwrite. Keep that
+        // byte-level premise explicit now that the application ships Auto.
+        CHECK(session.setSetting(QStringLiteral("terminal.cr_receive"),
+                                 QStringLiteral("CR"), nullptr));
         CHECK(session.setSetting(QStringLiteral("printer.control_sequences"),
                                  QStringLiteral("on"), nullptr));
         CHECK(session.setSetting(QStringLiteral("printer.passthrough_port"), path,
