@@ -1,9 +1,12 @@
 # packaging/windows
 
-One artifact on Windows: an **NSIS installer**, cross-built on Linux.
+One artifact on Windows: an **NSIS installer**, cross-built on Linux. Release
+builds run on GitHub in the Fedora 44 container defined by
+[`release.yml`](../../.github/workflows/release.yml); a native Windows job also
+builds and runs the updater tests before the installer can reach a draft.
 
 ```sh
-# The Windows cross build lives in sterna-fedora. See AGENTS.md for why.
+# Local packaging work still lives in sterna-fedora. See AGENTS.md for why.
 distrobox-host-exec distrobox enter sterna-fedora --no-tty -- bash -lc '
   cd ~/Projects/Sterna/packaging/windows
   ./build.sh              # → build/sterna-0.1.4-x86_64-setup.exe
@@ -229,6 +232,3 @@ not one this recipe pretends to ask.
   running window and falling back to launching one, which changes a shipped
   program's contract — a `.bat` wrapper that today reports "no window" would
   start opening terminals — so it wants deciding rather than assuming.
-- **Not in CI.** The same position as the AppImage: the artifact is a release
-  step, and what CI covers is everything it is made of — the Windows cross
-  build and the whole workspace's tests on a native Windows runner.

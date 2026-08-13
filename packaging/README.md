@@ -11,12 +11,18 @@ while this is one person's project. It also suits the machine it is written for:
 the host is Bluefin, an image-based Fedora where layering an rpm is the awkward
 path and a self-contained binary is the ordinary one.
 
+Release binaries are built by [`.github/workflows/release.yml`](../.github/workflows/release.yml).
+A manual run produces downloadable workflow artifacts without making a release;
+pushing a matching `vX.Y.Z` tag builds both platforms and creates a draft
+release. The workflow uses a Fedora 44 job container, the same base and package
+set as the `sterna-fedora` development container.
+
+The local build remains useful while changing the package:
+
 ```sh
-# Qt work happens in the sterna-fedora container. See AGENTS.md for why.
 distrobox-host-exec distrobox enter sterna-fedora --no-tty -- bash -lc '
   cd ~/Projects/Sterna/packaging/appimage
-  ./build.sh              # → build/sterna-x86_64.AppImage + .zsync
-  ./build.sh --clean      # ...from scratch
+  ./build.sh --clean      # → build/sterna-x86_64.AppImage + .zsync
   ./build.sh --run        # ...and start it
 '
 ```
@@ -73,17 +79,18 @@ would reach much further, but its Qt 6.4.2 loads Mesa's gallium driver under
 Wayland and costs 62 MB of extra private memory (`AGENTS.md`). Bundling that
 would ship a regression to every user of a terminal whose claim is being light.
 
-## Not in CI, and that is deliberate
+## GitHub builds the release image
 
-CI runs on `ubuntu-24.04`, which is precisely the base this build rejects — a
-job there would produce, on every push, the artifact the section above explains
-why not to ship. So the AppImage is a release step against a base CI does not
-have, and it stays a manual build until the portable base exists. What CI *does*
-cover is everything the image is made of: the shell compiles and its render,
-telnet, SSH and pty tests run there already.
+The ordinary test workflow still runs on Ubuntu 24.04. The release workflow
+uses a Fedora 44 job container instead, so moving the build to GitHub did not
+quietly change the glibc floor or substitute Ubuntu's older Qt. It builds from
+an empty runner and smoke-tests the completed AppImage before making it
+available to the draft-release job.
 
-The install rules the image needs (`shell/CMakeLists.txt`) are exercised by
-every build, so the half of this that can rot silently does not.
+The update-signing key is deliberately absent from GitHub. The workflow stops
+at a draft containing the AppImage, zsync data and Windows installer; the local
+[`release.sh`](release.sh) procedure signs those exact downloaded bytes and
+publishes only after the six expected assets are present.
 
 ## Qt is bundled, and that has consequences
 

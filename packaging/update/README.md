@@ -27,23 +27,29 @@ to produce a release if it does not match this committed root of trust. It
 also fixes both artifact names from the workspace version, so the signed URLs
 cannot quietly point at a differently named build.
 
-After building both release artifacts, sign them and create the two assets the
-updater reads:
+Push the release commit and its matching `vX.Y.Z` tag. The `release-build`
+workflow builds both packages on clean GitHub runners, runs the updater lock
+regression on native Windows, and creates a draft containing the AppImage,
+zsync metadata and NSIS installer. It never receives the updater private key.
+
+Finish the draft locally:
 
 ```sh
-./packaging/update/create.py \
-  --linux packaging/appimage/build/sterna-x86_64.AppImage \
-  --windows packaging/windows/build/sterna-0.1.4-x86_64-setup.exe
+./packaging/release.sh v0.1.4
 ```
 
-Upload both programs, `sterna-x86_64.AppImage.zsync`,
-`release-update/latest.json` and `release-update/latest.json.sig` to the
-matching `vX.Y.Z` GitHub release. The manifest uses immutable tag URLs, not the
-moving `latest` URL. Publish the release only when all five assets are present;
-until then an installed copy's explicit check reports that no signed update is
-available. The zsync file is for external AppImage tools; it does not replace
-the signed manifest used by Sterna itself.
+That command refuses a non-draft or mismatched tag, downloads the exact three
+GitHub-built files, creates `latest.json`, `latest.json.sig` and `SHA256SUMS`,
+uploads them, byte-checks the uploaded metadata, requires the exact six-asset
+set, then publishes the release as latest. The manifest uses immutable tag
+URLs, not the moving `latest` URL. Until publication, an installed copy's
+explicit check reports that no signed update is available. The zsync file is
+for external AppImage tools; it does not replace the signed manifest used by
+Sterna itself.
 
-For an automated release, provide `STERNA_UPDATE_PRIVATE_KEY` as a path to the
-encrypted PEM and `STERNA_UPDATE_KEY_PASSWORD` as its password. Those are
-secrets; `public-key.txt` is not.
+`create.py` remains available as the lower-level signing command and requires
+`--linux`, `--zsync` and `--windows` paths.
+
+To override the default local key files, provide `STERNA_UPDATE_PRIVATE_KEY` as
+a path to the encrypted PEM and `STERNA_UPDATE_KEY_PASSWORD` as its password.
+Those are secrets; `public-key.txt` is not. Never add either secret to GitHub.

@@ -45,3 +45,4 @@ compile_commands.json
 # Generated release assets. They are uploaded beside the two platform
 # artifacts, not kept in the source tree.
 /release-update/
+/release-build/

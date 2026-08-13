@@ -4,7 +4,7 @@ Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
 **Last updated:** 2026-08-13 · **Stage:** 4 complete, first deliberate
-deviations landed (`docs/deviations.md`) · **Commits:** 560
+deviations landed (`docs/deviations.md`) · **Commits:** 562
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -426,6 +426,14 @@ sending BS because that is what Tera Term does).
   substitute, and ship the LGPL text plus an offer of Qt's source **inside the
   image**. That is a build step, not a note in a README, and
   `packaging/appimage/build.sh` does it.
+
+  **Release builds moved to GitHub Actions, 2026-08-13.** A Fedora 44 job
+  container preserves the chosen glibc and Qt base instead of inheriting the
+  Ubuntu runner. Linux and Windows packages build independently, native
+  Windows runs the updater file-lock regression, and one final job creates a
+  draft only after all three pass. The Ed25519 root stays local:
+  `packaging/release.sh` downloads the exact GitHub-built bytes, signs their
+  manifest, checks the six-asset set and publishes the draft.
 
   **Measured from the image on the desktop:** 48 MB on disk after the signed
   updater brought Qt Network, 46 MB RSS / 39 MB PSS with a shell attached under

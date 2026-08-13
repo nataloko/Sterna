@@ -1,0 +1,193 @@
+# GitHub builds the release binaries; the updater signing key stays offline.
+# A version tag produces a draft containing the three unsigned build outputs.
+# `packaging/release.sh` downloads those exact bytes, signs their metadata
+# locally, verifies the complete asset set, and publishes the release.
+name: release-build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: version and tag agree
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' crates/Cargo.toml | head -1)
+          cmake_version=$(sed -n 's/^project(sterna-shell VERSION \([^ ]*\).*/\1/p' shell/CMakeLists.txt)
+          test -n "$version"
+          test "$cmake_version" = "$version"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            test "$GITHUB_REF_NAME" = "v$version"
+          fi
+
+  linux:
+    name: Linux x86-64 AppImage
+    needs: preflight
+    runs-on: ubuntu-24.04
+    container: registry.fedoraproject.org/fedora:44
+    defaults:
+      run:
+        shell: bash
+    timeout-minutes: 45
+    steps:
+      - name: Install Fedora build dependencies
+        run: |
+          dnf install -y \
+            binutils cmake curl file gcc-c++ git gzip ninja-build tar zsync \
+            qt6-qtbase-devel qt6-qttools-devel qt6-qtwayland \
+            systemd-devel xcb-util-cursor
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build AppImage
+        run: ./packaging/appimage/build.sh --clean
+      - name: Smoke-test packaged application
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          ./packaging/appimage/build/sterna-x86_64.AppImage --version
+          readelf --string-dump=.upd_info \
+            ./packaging/appimage/build/sterna-x86_64.AppImage |
+            grep -F 'gh-releases-zsync|nataloko|Sterna|latest|sterna-x86_64.AppImage.zsync'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-x86-64
+          path: |
+            packaging/appimage/build/sterna-x86_64.AppImage
+            packaging/appimage/build/sterna-x86_64.AppImage.zsync
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  windows:
+    name: Windows x86-64 installer
+    needs: preflight
+    runs-on: ubuntu-24.04
+    container: registry.fedoraproject.org/fedora:44
+    defaults:
+      run:
+        shell: bash
+    timeout-minutes: 45
+    steps:
+      - name: Install Fedora cross-build dependencies
+        run: |
+          dnf install -y \
+            cmake gcc-c++ git gzip nasm ninja-build perl tar \
+            mingw32-nsis mingw64-binutils mingw64-gcc-c++ mingw64-nsis \
+            mingw64-qt6-qtbase
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - name: Build NSIS installer
+        run: ./packaging/windows/build.sh --clean
+      - name: Check installer identity
+        run: |
+          version=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' crates/Cargo.toml | head -1)
+          test -s "packaging/windows/build/sterna-$version-x86_64-setup.exe"
+          file "packaging/windows/build/sterna-$version-x86_64-setup.exe" |
+            grep -F 'PE32+ executable'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-x86-64
+          path: packaging/windows/build/sterna-*-x86_64-setup.exe
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  windows-update-test:
+    name: updater lock regression on native Windows
+    needs: preflight
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.11.1"
+          arch: win64_msvc2022_64
+          cache: true
+      - name: Ensure assembler is available
+        shell: pwsh
+        run: |
+          if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
+            choco install nasm --no-progress -y
+          }
+      - name: Build updater tests
+        shell: pwsh
+        run: |
+          cmake -S shell -B shell/build-native -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE="$env:GITHUB_WORKSPACE/shell/build-native"
+          cmake --build shell/build-native --config Release `
+            --target update_test update_load_test
+      - name: Run updater tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --test-dir shell/build-native -C Release -R "^(update|update_load)$" --output-on-failure
+
+  draft:
+    name: assemble draft release
+    needs: [linux, windows, windows-update-test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-linux-x86-64
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-windows-x86-64
+          path: release
+      - name: Verify exact build output set
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^sterna-\([0-9][0-9.]*\)-x86_64-setup\.exe$/\1/p' < <(find release -maxdepth 1 -type f -printf '%f\n'))
+          test -n "$version"
+          expected=$(printf '%s\n' \
+            sterna-x86_64.AppImage \
+            sterna-x86_64.AppImage.zsync \
+            "sterna-$version-x86_64-setup.exe" | sort)
+          actual=$(find release -maxdepth 1 -type f -printf '%f\n' | sort)
+          test "$actual" = "$expected"
+          sha256sum release/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-binaries
+          path: release/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Create draft GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::release $GITHUB_REF_NAME already exists; refusing to replace its binaries"
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --draft --generate-notes \
+            --title "Sterna ${GITHUB_REF_NAME#v}"

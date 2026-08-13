@@ -123,6 +123,10 @@ cd packaging/windows             # the only Windows artifact — sterna-fedora
 ./build.sh                       # → build/sterna-0.1.0-x86_64-setup.exe
 ./build.sh --stage               # ...the file tree, without makensis
 
+# Releases are built by .github/workflows/release.yml after a vX.Y.Z tag.
+# It creates a draft; the updater key stays local and this signs + publishes it:
+./packaging/release.sh v0.1.0
+
 cd esctest                       # conformance, from inside our own terminal
 ./run_tests.sh                   # 568 cases; gates on drift from `expected`
 ./run_tests.sh CUPTests          # just the ones matching (a regex)

@@ -100,17 +100,23 @@ def sign(path: Path, key: Path, passin: str) -> str:
     return base64.b64encode(signature).decode("ascii")
 
 
-def artifact(path: Path, url: str, key: Path, passin: str) -> dict[str, object]:
+def sha256(path: Path) -> str:
     digest = hashlib.sha256()
-    size = 0
     with path.open("rb") as source:
         while chunk := source.read(1024 * 1024):
             digest.update(chunk)
+    return digest.hexdigest()
+
+
+def artifact(path: Path, url: str, key: Path, passin: str) -> dict[str, object]:
+    size = 0
+    with path.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
             size += len(chunk)
     return {
         "url": url,
         "size": size,
-        "sha256": digest.hexdigest(),
+        "sha256": sha256(path),
         "signature": sign(path, key, passin),
     }
 
@@ -118,6 +124,7 @@ def artifact(path: Path, url: str, key: Path, passin: str) -> dict[str, object]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--linux", type=Path, required=True, help="x86-64 AppImage")
+    parser.add_argument("--zsync", type=Path, required=True, help="AppImage zsync metadata")
     parser.add_argument("--windows", type=Path, required=True, help="x86-64 NSIS setup")
     parser.add_argument("--output", type=Path, default=Path("release-update"))
     parser.add_argument("--repository", default="nataloko/Sterna")
@@ -125,7 +132,7 @@ def main() -> int:
     parser.add_argument("--password-file", type=Path, default=DEFAULT_PASSWORD)
     args = parser.parse_args()
 
-    for path in (args.linux, args.windows, PUBLIC_KEY):
+    for path in (args.linux, args.zsync, args.windows, PUBLIC_KEY):
         if not path.is_file():
             parser.error(f"not a file: {path}")
     key, passin = signing_key(args)
@@ -134,9 +141,12 @@ def main() -> int:
 
     version = workspace_version()
     expected_linux = "sterna-x86_64.AppImage"
+    expected_zsync = f"{expected_linux}.zsync"
     expected_windows = f"sterna-{version}-x86_64-setup.exe"
     if args.linux.name != expected_linux:
         parser.error(f"Linux artifact must be named {expected_linux}")
+    if args.zsync.name != expected_zsync:
+        parser.error(f"zsync metadata must be named {expected_zsync}")
     if args.windows.name != expected_windows:
         parser.error(f"Windows artifact must be named {expected_windows}")
     try:
@@ -171,8 +181,16 @@ def main() -> int:
     (args.output / "latest.json.sig").write_text(
         sign(manifest_path, key, passin) + "\n"
     )
+    checksums = args.output / "SHA256SUMS"
+    checksums.write_text(
+        "".join(
+            f"{sha256(path)}  {path.name}\n"
+            for path in (args.linux, args.zsync, args.windows)
+        )
+    )
     print(f"Updater manifest: {manifest_path}")
     print(f"Manifest signature: {manifest_path}.sig")
+    print(f"Checksums: {checksums}")
     return 0
 
 
