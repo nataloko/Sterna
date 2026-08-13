@@ -286,7 +286,15 @@ void test_the_switches_stop_it()
     back.pattern = QStringLiteral("ERROR");
     back.back = kGreen;
 
+    int repaints = 0;
+    QObject::connect(&h.session, &Session::damaged, [&repaints] { repaints++; });
     h.apply({back});
+    CHECK(repaints == 1);
+    // The rule change drained its own damage. An unrelated send with local
+    // echo off must not inherit and announce that old repaint.
+    repaints = 0;
+    h.session.sendText(QStringLiteral("x"));
+    CHECK(repaints == 0);
     h.render();
     CHECK(h.filledWith(4, 0, kGreen));
 

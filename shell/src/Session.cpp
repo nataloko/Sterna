@@ -140,6 +140,10 @@ void Session::setHighlights(const QVector<QuickHighlight> &rules)
     // The core keeps its own compiled copy, so the list dies here.
     tt_session_set_highlights(m_session, list);
     tt_highlights_free(list);
+    // Installing the matcher queues damage so existing text is repainted.
+    // Drain it here: leaving it behind hands this call's repaint to the next
+    // input event, the same latency bug `setSetting` and the send paths avoid.
+    dispatch();
 }
 
 QString Session::highlightProblems() const
