@@ -235,7 +235,7 @@ void a_detached_download_outlives_its_temporary_file()
 void a_startup_check_is_due_once_a_day()
 {
     const QDateTime now =
-        QDateTime(QDate(2026, 8, 13), QTime(12, 0), QTimeZone::UTC);
+        QDateTime(QDate(2026, 8, 13), QTime(12, 0), QTimeZone::utc());
 
     // Never checked, in the four spellings a settings file can say it: absent,
     // empty, whitespace, and something that is not a date at all. A file
