@@ -131,9 +131,11 @@ jobs:
       - name: Ensure assembler is available
         shell: pwsh
         run: |
-          if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
-            choco install nasm --no-progress -y
-          }
+          # The runner currently exposes a broken Chocolatey shim even when
+          # NASM itself is absent. Install unconditionally and put the real
+          # directory ahead of that shim for aws-lc-sys's build script.
+          choco install nasm --no-progress -y --force
+          "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Build updater tests
         shell: pwsh
         run: |
