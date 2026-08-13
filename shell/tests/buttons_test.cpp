@@ -47,6 +47,8 @@ static int failures = 0;
 
 namespace {
 
+QString g_writeTo;
+
 template <typename F>
 bool spin(F done, int ms)
 {
@@ -445,12 +447,53 @@ void the_bar_remembers_which_edge_it_was_on()
     CHECK(window.toolBarArea(barOf(window)) == Qt::RightToolBarArea);
 }
 
+/// `--write <dir>`: the bar and its editor as PNGs, for a human to look at.
+///
+/// `QWidget::grab()` re-renders offscreen, which is the only screenshot that
+/// works in this container anyway — and it is what makes a review of a toolbar
+/// possible without somebody sitting in front of it.
+void render_widgets()
+{
+    if (g_writeTo.isEmpty()) {
+        return;
+    }
+    QTemporaryDir dir;
+    const QString ini = writeIni(
+        dir,
+        "[Sterna Buttons]\r\n"
+        "Button1Label=Show version\r\nButton1Value=show version$0D\r\n"
+        "Button1Shortcut=Ctrl+Alt+1\r\n"
+        "Button2Label=Interfaces\r\nButton2Value=show ip interface brief$0D\r\n"
+        "Button2Shortcut=Ctrl+Alt+2\r\n"
+        "Button3Label=Save config\r\nButton3Value=write memory$0D\r\n"
+        "Button4Label=Reload\r\nButton4Value=reload$0D\r\nButton4Confirm=on\r\n"
+        "Button5Label=Break\r\nButton5Kind=command\r\nButton5Value=50430\r\n");
+
+    MainWindow window(ini);
+    window.resize(760, 400);
+    window.show();
+    spin([] { return false; }, 300);
+    window.grab().save(g_writeTo + QStringLiteral("/quick-buttons-window.png"));
+
+    QuickButtonsDialog dialog(loadQuickButtons(ini), window.session(), &window);
+    dialog.selectRow(3);
+    // Without this the dialog is grabbed before layout and the wrapped warning
+    // overlaps the fields in the image and nowhere else.
+    dialog.adjustSize();
+    dialog.grab().save(g_writeTo + QStringLiteral("/quick-buttons-editor.png"));
+}
+
 } // namespace
 
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("buttons_test"));
+    for (int i = 1; i < argc; i++) {
+        if (QLatin1String(argv[i]) == QLatin1String("--write") && i + 1 < argc) {
+            g_writeTo = QString::fromLocal8Bit(argv[++i]);
+        }
+    }
 
     a_button_in_the_file_types_into_the_session();
     a_command_button_reaches_the_windows_own_actions();
@@ -460,6 +503,7 @@ int main(int argc, char **argv)
     the_editor_warns_about_a_key_the_host_wants();
     a_shortcut_is_installed_and_released_with_the_bar();
     the_bar_remembers_which_edge_it_was_on();
+    render_widgets();
 
     if (failures != 0) {
         fprintf(stderr, "%d check(s) failed\n", failures);

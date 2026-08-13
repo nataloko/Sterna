@@ -344,6 +344,11 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
     // menu can point at it.
     m_quickBar = new QuickButtonBar(this);
     addToolBar(Qt::TopToolBarArea, m_quickBar);
+    // Its own row. Without the break Qt puts a second toolbar *beside* the
+    // first, so the buttons share the connect bar's line and the ones that do
+    // not fit disappear behind an overflow chevron — which is exactly the
+    // failure this bar exists to avoid.
+    insertToolBarBreak(m_quickBar);
     m_quickBar->hide();
     connect(m_quickBar, &QuickButtonBar::activated, this,
             &MainWindow::runQuickButton);
