@@ -122,14 +122,33 @@ metrics, which is Wine's font stack rather than an answer about Windows.
 Nothing left failing there is ours; native Windows is still the authority for
 the other three.
 
-## The updater is loaded only when asked for
+## The updater is loaded only when there is a check to make
 
-Help > Check for Updates is the only trigger. Sterna makes no startup request
-and has no update timer. The action loads `sterna_updater` from the installed
-tree, creates its `QObject` through one C symbol and invokes `check` by name.
-The main executable therefore does not link Qt Network or map a TLS backend
-during an ordinary terminal session; the direct-link prototype cost about 5 MB
-of idle PSS before it had made a request.
+Two triggers, and nothing else: Help > Check for Updates, and — while
+`[Sterna] CheckUpdatesOnStartup` is on, which is how it ships — a check three
+seconds after startup, at most once every 24 hours. Either one loads
+`sterna_updater` from the installed tree, creates its `QObject` through one C
+symbol and invokes `check` or `checkQuietly` by name. The main executable
+therefore does not link Qt Network or map a TLS backend during an ordinary
+terminal session; the direct-link prototype cost about 5 MB of idle PSS before
+it had made a request, and a session that is not due a check still maps neither.
+
+The startup one is silent until it has something to say. No progress dialog, no
+"Sterna is current", and no complaint about a release server that cannot be
+reached or a manifest that does not verify — a box on every launch is how people
+learn to turn a security feature off. An available update is offered, and from
+there it is the same path the button takes. It also steps aside for a modal
+dialog: a check that would land on top of an SSH password prompt is skipped
+until the next start.
+
+`[Sterna] LastUpdateCheck` is the schedule, ISO-8601 UTC, written when a request
+goes out rather than when one succeeds — so an unreachable server costs one
+attempt a day, not one per launch. Clearing it means "check at the next start";
+a stamp that does not parse, or that is in the future because a clock moved
+back, means the same thing. `MainWindow::checkForUpdatesOnStartup` makes that
+decision before the updater is loaded, which is why `updateCheckDue` is a free
+function in the terminal rather than a method on the updater; `main` calls it,
+never the constructor, so the tests that build a `MainWindow` reach no network.
 
 The updater verifies the detached manifest signature before it reads a version,
 URL or size from that file. A confirmed download is bounded by the signed size

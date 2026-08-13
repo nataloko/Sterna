@@ -5575,11 +5575,23 @@ xterm's `;4` marker must be told to emit sixel; those which query the capability
 directly get a useful answer. The core, C ABI, Qt renderer and an external
 encoder each have an executable boundary. See `docs/sixel.md`.
 
-**Signed, user-initiated updates close Stage 4, 2026-08-12.** Nothing contacts
-the release server at startup. Help > Check for Updates loads a local updater
-library on demand, verifies a detached Ed25519 signature before trusting the
-manifest's version, URL or size, and then checks the selected artifact's exact
-size, SHA-256 and its own signature. The 256 KiB manifest, 1 KiB signature and
+**Signed updates close Stage 4, 2026-08-12.** Help > Check for Updates loads a
+local updater library on demand, verifies a detached Ed25519 signature before
+trusting the manifest's version, URL or size, and then checks the selected
+artifact's exact size, SHA-256 and its own signature.
+
+**A startup check joined it on 2026-08-13**, on by default: a signed release
+nobody hears about is a security fix nobody installs. `[Sterna]
+CheckUpdatesOnStartup` is the switch and `LastUpdateCheck` the schedule — one
+check per 24 hours, three seconds after startup, skipped while a modal dialog is
+up so that an offer cannot land on an SSH password prompt. It is silent unless
+there is an update: no progress dialog, no "you are current", and no complaint
+about an unreachable server, because a box on every launch is how a security
+feature gets turned off. The stamp is written when the request goes out rather
+than when it succeeds, so a machine that is offline costs one attempt a day. The
+decision is made in the terminal, before the library is loaded — a session with
+the switch off, or one already checked today, still maps neither Qt Network nor
+a TLS backend (verified from `/proc/<pid>/maps`). The 256 KiB manifest, 1 KiB signature and
 128 MiB artifact ceilings are enforced while bytes arrive, not after an
 unbounded download. The signing tool derives the public half from the encrypted
 release key and refuses a key that does not match the one compiled into the C

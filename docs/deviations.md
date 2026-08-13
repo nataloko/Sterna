@@ -18,6 +18,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 1 | The default baud rate is 115200 | 9600 | unreleased |
 | 2 | The connect dialogs remember the last connection, across restarts | Only Setup > Save persists anything | unreleased |
 | 3 | A bar under the menu: port, connect/disconnect, local echo | No toolbar at all | unreleased |
+| 4 | Starting Sterna looks for a signed update, once a day | Nothing contacts a server on its own | unreleased |
 
 ---
 
@@ -106,3 +107,44 @@ live `terminal.local_echo`, which a host's SRM and a macro can also change.
 writes. The switch exists because chrome nobody can remove does not belong in a
 terminal; it is deliberately *not* tied to `PopupMenu` or `HideTitle`, which are
 about the menu.
+
+---
+
+## 4. Starting Sterna looks for a signed update
+
+Three seconds after startup, and at most once every 24 hours, Sterna fetches a
+signed release manifest — about 20 KB from the GitHub release page — and offers
+the update if there is one. Tera Term contacts nothing on its own; its updates
+are a download somebody goes and gets.
+
+**Why.** Sterna ships its own signed updater, and a release nobody hears about
+is a security fix nobody installs. Upstream can rely on the package manager or
+the habit that put `ttermpro.exe` on the machine; an AppImage in `~/Downloads`
+has neither, and Help > Check for Updates is a menu item nobody opens twice.
+
+It is on by default for the same reason, and the cost of that is bounded on
+purpose. It is the only thing this program sends anywhere without being asked;
+the request goes to the release server and carries nothing but a `Sterna/x.y.z
+updater` user agent. It is silent unless there is an update — no progress
+dialog, no "you are current", and no complaint about a server it could not
+reach, because a box on every launch is how people learn to turn a security
+feature off. And it steps aside for a modal dialog, so an offer cannot land on
+top of an SSH password prompt.
+
+**What is unchanged.** Everything about how an update is verified: the detached
+Ed25519 signature over the manifest before its version, URL or size is trusted,
+then the artifact's exact size, SHA-256 and its own signature before anything is
+replaced or executed. The startup check is a schedule, not a second path — from
+the offer onwards it is the code the button runs. Nothing is downloaded without
+being agreed to, and turning the schedule off leaves the button working.
+
+**Where it lives.** `MainWindow::checkForUpdatesOnStartup` decides, before
+`sterna_updater` is loaded, so a session that is not due a check maps neither Qt
+Network nor a TLS backend. `Updater::checkQuietly` is the silent half.
+`updateCheckDue` in `shell/src/UpdateSchedule.cpp` is the once-a-day rule, and
+two new settings hold it: `[Sterna] CheckUpdatesOnStartup`
+(`updates.check_on_startup`, on) and `[Sterna] LastUpdateCheck`
+(`updates.last_check`), written when a request goes out rather than when one
+succeeds — so an offline machine costs one attempt a day rather than one per
+launch. Both are ordinary settings, editable in Setup and by hand: clearing the
+stamp means "check at the next start".

@@ -1430,9 +1430,11 @@ void MainWindow::buildMenus()
                 .arg(QCoreApplication::applicationVersion().toHtmlEscaped()),
             QMessageBox::Ok, this);
         box.setIconPixmap(sternaIcon().pixmap(QSize(128, 128)));
-        // Deliberately user-initiated. There is no startup request or timer:
-        // this button is permission to contact GitHub, and the signed manifest
-        // is still verified before any URL in it is trusted.
+        // The same check the once-a-day startup one makes, minus the silence:
+        // this button says what it found, including "current" and including a
+        // server it could not reach. It works whether or not
+        // `updates.check_on_startup` is on — that setting is a schedule, not a
+        // switch on the feature.
         QPushButton *update =
             box.addButton(tr("Check for Updates..."), QMessageBox::ActionRole);
         update->setObjectName(QStringLiteral("aboutUpdateButton"));
