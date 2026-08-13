@@ -1413,6 +1413,16 @@ void MainWindow::buildMenus()
         QDesktopServices::openUrl(
             QUrl(QStringLiteral("https://github.com/nataloko/Sterna/releases")));
     });
+    help->addSeparator();
+    QAction *about = help->addAction(tr("About Sterna"), this, [this] {
+        QMessageBox::about(
+            this, tr("About Sterna"),
+            tr("<h3>Sterna %1</h3>"
+               "<p>A serial, SSH and telnet terminal for Linux and Windows.</p>"
+               "<p>Copyright &copy; the Sterna authors.</p>")
+                .arg(QCoreApplication::applicationVersion().toHtmlEscaped()));
+    });
+    about->setObjectName(QStringLiteral("aboutAction"));
 
     installPluginActions();
     translateMenus();

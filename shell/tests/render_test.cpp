@@ -40,6 +40,7 @@
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QScreen>
 #include <QStackedWidget>
@@ -1793,6 +1794,39 @@ void test_the_hidden_menu_is_the_ordinary_menu_as_a_popup()
     }
 }
 
+/// The About item is the visible version check for an installed build. The
+/// real application takes this value from the Rust core, so the dialog must
+/// read Qt's application version live rather than duplicate it in the shell.
+void test_about_shows_the_application_version()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    MainWindow window(dir.filePath(QStringLiteral("sterna.ini")));
+    auto *about =
+        window.findChild<QAction *>(QStringLiteral("aboutAction"));
+    CHECK(about != nullptr);
+    if (!about) {
+        return;
+    }
+
+    const QString previous = QCoreApplication::applicationVersion();
+    QCoreApplication::setApplicationVersion(QStringLiteral("9.8.7-test"));
+    bool inspected = false;
+    QTimer::singleShot(0, [&] {
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        CHECK(box != nullptr);
+        if (box) {
+            CHECK(box->windowTitle() == QStringLiteral("About Sterna"));
+            CHECK(box->text().contains(QStringLiteral("Sterna 9.8.7-test")));
+            inspected = true;
+            box->accept();
+        }
+    });
+    about->trigger();
+    CHECK(inspected);
+    QCoreApplication::setApplicationVersion(previous);
+}
+
 /// The bar under the menu holds no state of its own: its button says what the
 /// session says, its checkbox is the live `terminal.local_echo`, and it is on
 /// screen while `window.toolbar` is on. Nothing here is upstream's — Tera Term
@@ -2140,6 +2174,7 @@ int main(int argc, char **argv)
     test_window_opacity_follows_activation();
     test_the_window_opens_at_the_configured_size();
     test_the_hidden_menu_is_the_ordinary_menu_as_a_popup();
+    test_about_shows_the_application_version();
     test_the_connect_bar_is_a_view_of_the_session();
     test_an_auto_close_request_respects_window_state();
     test_window_geometry_has_full_and_close_only_saves();
