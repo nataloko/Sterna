@@ -95,6 +95,7 @@ use tt_macro::{MacroError, MacroReceiver, MacroUi, NullUi, SessionHost};
 use tt_session::open::{proxy_params, Startup, Target};
 use tt_session::{
     Event, Ini, KeyCodeResult, LogMode, LogOptions, Session, Settings, Shortcut, Timestamp,
+    UserKeyType,
 };
 use tt_ttl::host::{
     BeepSound, DialogAnchor, DialogEnd, DialogOrigin, DialogPos, ListBoxOpts, MacroWindow,
@@ -2827,11 +2828,28 @@ pub extern "C" fn tt_session_send_key_code(
     out: *mut TtKeyCodeResult,
 ) -> TtStatus {
     let s = session!(session, TT_ERR_INVALID);
-    s.key_action = CString::default();
     let result = match s.session.send_key_code(scan) {
         Ok(result) => result,
         Err(e) => return report(e),
     };
+    fill_key_code(s, result, out);
+    TT_OK
+}
+
+/// Whether the active `KEYBOARD.CNF` binds `scan`, without pressing it.
+///
+/// For the quick-button editor, which has to say that a key sequence already
+/// belongs to the host. Every shortcut a frontend installs is a key the
+/// terminal stops receiving, and this is the only way to know before the fact.
+#[no_mangle]
+pub extern "C" fn tt_session_key_code_bound(session: *const TtSession, scan: u16) -> bool {
+    session_ref!(session, false).session.key_code_bound(scan)
+}
+
+/// Copy a dispatch result into `out`, keeping any borrowed string alive on the
+/// session until the next call that produces one.
+fn fill_key_code(s: &mut TtSession, result: KeyCodeResult, out: *mut TtKeyCodeResult) {
+    s.key_action = CString::default();
     let (kind, value) = match result {
         KeyCodeResult::Unmapped => (TT_KEY_CODE_UNMAPPED, 0),
         KeyCodeResult::Sent => (TT_KEY_CODE_SENT, 0),
@@ -2856,6 +2874,325 @@ pub extern "C" fn tt_session_send_key_code(
             },
         };
     }
+}
+
+// --- quick buttons --------------------------------------------------------
+//
+// A window's own list of commands, out of `[Sterna Buttons]` in the settings
+// file. The list is here rather than in the frontend because the file format
+// is the core's — the same reason `tt_session_set_setting` takes a name and
+// not an INI key — and because what a button *does* is a `[User keys]` action,
+// which the core already dispatches.
+
+/// What a quick button does. The four `[User keys]` types, by their
+/// `[Sterna Buttons]` spellings.
+pub type TtQuickButtonKind = u32;
+/// `send_text`: LNM and `CRSend` apply, as they do to a typed line.
+pub const TT_QUICK_BUTTON_TEXT: TtQuickButtonKind = 0;
+/// `send_bytes`: exactly these bytes, no encoding and no newline conversion.
+pub const TT_QUICK_BUTTON_BYTES: TtQuickButtonKind = 1;
+/// Run the `.ttl` or `.lua` file named by the value.
+pub const TT_QUICK_BUTTON_MACRO: TtQuickButtonKind = 2;
+/// Invoke the menu command whose decimal id is the value.
+pub const TT_QUICK_BUTTON_COMMAND: TtQuickButtonKind = 3;
+
+/// One button, borrowed from its list.
+///
+/// `value` and `text` are the same string in two forms: stored, still
+/// `$HH`-escaped for the two sending kinds, and decoded for showing and
+/// editing. [`tt_quick_buttons_set`] reads `text` and does the escaping itself, so a
+/// frontend never carries a copy of that rule.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtQuickButton {
+    /// What is written on it. May be empty, in which case a frontend should
+    /// fall back to `text` — a button with no label is still a button.
+    pub label: *const c_char,
+    pub kind: TtQuickButtonKind,
+    /// The value as the file holds it. This is what [`tt_session_run_quick_button`]
+    /// takes.
+    pub value: *const c_char,
+    /// The same value, unescaped.
+    pub text: *const c_char,
+    /// A Qt key sequence in portable spelling, or empty for no shortcut —
+    /// which is what every button ships as.
+    pub shortcut: *const c_char,
+    /// Whether to ask before running it.
+    pub confirm: bool,
+}
+
+/// An owned list of quick buttons. Free it with [`tt_quick_buttons_free`].
+pub struct TtQuickButtons {
+    items: Vec<tt_session::Button>,
+    /// The C view, rebuilt whenever `items` changes.
+    view: Vec<TtQuickButton>,
+    /// The strings the view points into. Order does not matter; keeping them
+    /// alive until the next rebuild does.
+    strings: Vec<CString>,
+}
+
+impl TtQuickButtons {
+    fn rebuild(&mut self) {
+        self.strings.clear();
+        for b in &self.items {
+            self.strings.push(cstring(&b.label));
+            self.strings.push(cstring(&b.value));
+            self.strings.push(cstring(&b.text()));
+            self.strings.push(cstring(&b.shortcut));
+        }
+        // Two passes, like `tt_serial_enumerate`: `strings` must stop
+        // reallocating before any pointer into it is taken.
+        self.view = self
+            .items
+            .iter()
+            .enumerate()
+            .map(|(i, b)| {
+                let at = |n: usize| self.strings[i * 4 + n].as_ptr();
+                TtQuickButton {
+                    label: at(0),
+                    kind: quick_button_kind_id(b.kind),
+                    value: at(1),
+                    text: at(2),
+                    shortcut: at(3),
+                    confirm: b.confirm,
+                }
+            })
+            .collect();
+    }
+}
+
+fn quick_button_kind_id(kind: UserKeyType) -> TtQuickButtonKind {
+    match kind {
+        UserKeyType::Text => TT_QUICK_BUTTON_TEXT,
+        UserKeyType::Binary => TT_QUICK_BUTTON_BYTES,
+        UserKeyType::Macro => TT_QUICK_BUTTON_MACRO,
+        UserKeyType::Command => TT_QUICK_BUTTON_COMMAND,
+        // Not reachable through this API: an unreadable kind is dropped by the
+        // parser rather than carried, so a button that exists always does
+        // something known.
+        UserKeyType::Unknown(_) => TT_QUICK_BUTTON_TEXT,
+    }
+}
+
+fn quick_button_kind(id: TtQuickButtonKind) -> Option<UserKeyType> {
+    match id {
+        TT_QUICK_BUTTON_TEXT => Some(UserKeyType::Text),
+        TT_QUICK_BUTTON_BYTES => Some(UserKeyType::Binary),
+        TT_QUICK_BUTTON_MACRO => Some(UserKeyType::Macro),
+        TT_QUICK_BUTTON_COMMAND => Some(UserKeyType::Command),
+        _ => None,
+    }
+}
+
+/// Read the quick buttons out of a settings file.
+///
+/// A file that is not there has no buttons, which is a first run and not an
+/// error — so this returns an empty list rather than null. Null only for a
+/// null or non-UTF-8 path.
+#[no_mangle]
+pub extern "C" fn tt_quick_buttons_load(path: *const c_char) -> *mut TtQuickButtons {
+    let Ok(path) = (unsafe { str_arg(path, usize::MAX) }) else {
+        return ptr::null_mut();
+    };
+    let mut list = TtQuickButtons {
+        items: tt_session::buttons::load(Path::new(path)),
+        view: Vec::new(),
+        strings: Vec::new(),
+    };
+    list.rebuild();
+    Box::into_raw(Box::new(list))
+}
+
+/// An empty list, to be filled with [`tt_quick_buttons_set`] and written with
+/// [`tt_quick_buttons_save`].
+///
+/// What an editor holding its own copy of the set saves through, so that
+/// writing the file is "here is the list" rather than a diff against what is
+/// in it.
+#[no_mangle]
+pub extern "C" fn tt_quick_buttons_new() -> *mut TtQuickButtons {
+    Box::into_raw(Box::new(TtQuickButtons {
+        items: Vec::new(),
+        view: Vec::new(),
+        strings: Vec::new(),
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn tt_quick_buttons_len(list: *const TtQuickButtons) -> usize {
+    match unsafe { list.as_ref() } {
+        Some(l) => l.items.len(),
+        None => 0,
+    }
+}
+
+/// Borrow one button. Null when `index` is out of range. Valid until the list
+/// is changed or freed.
+#[no_mangle]
+pub extern "C" fn tt_quick_buttons_at(
+    list: *const TtQuickButtons,
+    index: usize,
+) -> *const TtQuickButton {
+    match unsafe { list.as_ref() } {
+        Some(l) => l.view.get(index).map_or(ptr::null(), |b| b as *const _),
+        None => ptr::null(),
+    }
+}
+
+/// Replace the button at `index`, or append when `index` equals the length.
+///
+/// `button.text` is the value in its unescaped form and `button.value` is
+/// ignored, so the result of [`tt_quick_buttons_at`] can be handed straight back.
+#[no_mangle]
+pub extern "C" fn tt_quick_buttons_set(
+    list: *mut TtQuickButtons,
+    index: usize,
+    button: *const TtQuickButton,
+) -> TtStatus {
+    let l = match unsafe { list.as_mut() } {
+        Some(l) => l,
+        None => return fail(TT_ERR_INVALID, "null TtQuickButtons"),
+    };
+    let Some(b) = (unsafe { button.as_ref() }) else {
+        return fail(TT_ERR_INVALID, "null TtQuickButton");
+    };
+    let Some(kind) = quick_button_kind(b.kind) else {
+        return fail(TT_ERR_INVALID, "unknown button kind");
+    };
+    let text = match unsafe { str_arg(b.text, usize::MAX) } {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    // A label and a shortcut are optional; a null for either is empty rather
+    // than an error, because a C caller zeroing the struct means "none".
+    let borrow = |p: *const c_char| {
+        if p.is_null() {
+            Ok("")
+        } else {
+            unsafe { str_arg(p, usize::MAX) }
+        }
+    };
+    let (label, shortcut) = match (borrow(b.label), borrow(b.shortcut)) {
+        (Ok(l), Ok(s)) => (l, s),
+        (Err(e), _) | (_, Err(e)) => return e,
+    };
+    if index > l.items.len()
+        || (index == l.items.len() && l.items.len() >= tt_session::buttons::MAX)
+    {
+        return fail(TT_ERR_INVALID, "button index out of range");
+    }
+    let made = tt_session::Button {
+        label: label.to_string(),
+        kind,
+        value: tt_session::buttons::encode(kind, text),
+        shortcut: shortcut.trim().to_string(),
+        confirm: b.confirm,
+    };
+    if index == l.items.len() {
+        l.items.push(made);
+    } else {
+        l.items[index] = made;
+    }
+    l.rebuild();
+    TT_OK
+}
+
+#[no_mangle]
+pub extern "C" fn tt_quick_buttons_remove(list: *mut TtQuickButtons, index: usize) -> TtStatus {
+    let l = match unsafe { list.as_mut() } {
+        Some(l) => l,
+        None => return fail(TT_ERR_INVALID, "null TtQuickButtons"),
+    };
+    if index >= l.items.len() {
+        return fail(TT_ERR_INVALID, "button index out of range");
+    }
+    l.items.remove(index);
+    l.rebuild();
+    TT_OK
+}
+
+/// Move a button, closing the gap behind it — a drag in a list, not a swap.
+#[no_mangle]
+pub extern "C" fn tt_quick_buttons_move(
+    list: *mut TtQuickButtons,
+    from: usize,
+    to: usize,
+) -> TtStatus {
+    let l = match unsafe { list.as_mut() } {
+        Some(l) => l,
+        None => return fail(TT_ERR_INVALID, "null TtQuickButtons"),
+    };
+    if from >= l.items.len() || to >= l.items.len() {
+        return fail(TT_ERR_INVALID, "button index out of range");
+    }
+    let button = l.items.remove(from);
+    l.items.insert(to, button);
+    l.rebuild();
+    TT_OK
+}
+
+/// Write the list into a settings file, leaving every other line alone.
+///
+/// The whole `[Sterna Buttons]` section is replaced, so a removed button takes
+/// its keys with it. Nothing else in the file is touched — which is what makes
+/// this safe to point at a `TERATERM.INI` somebody else maintains.
+#[no_mangle]
+pub extern "C" fn tt_quick_buttons_save(
+    list: *const TtQuickButtons,
+    path: *const c_char,
+) -> TtStatus {
+    let l = match unsafe { list.as_ref() } {
+        Some(l) => l,
+        None => return fail(TT_ERR_INVALID, "null TtQuickButtons"),
+    };
+    let path = match unsafe { str_arg(path, usize::MAX) } {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    match tt_session::buttons::save(Path::new(path), &l.items) {
+        Ok(()) => TT_OK,
+        Err(e) => fail(TT_ERR_IO, e.to_string()),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tt_quick_buttons_free(list: *mut TtQuickButtons) {
+    if !list.is_null() {
+        drop(unsafe { Box::from_raw(list) });
+    }
+}
+
+/// Do what a quick button says, with no scan code involved.
+///
+/// `value` is the stored form — [`TtQuickButton::value`], not `text` — because this
+/// is the same action a `[User keys]` entry performs and it decodes the escape
+/// itself. `out` receives the same result [`tt_session_send_key_code`] gives,
+/// so a frontend keeps one dispatcher for a pressed key and a clicked button:
+/// `TT_KEY_CODE_MACRO` and `TT_KEY_CODE_COMMAND` are the window's to carry out.
+#[no_mangle]
+pub extern "C" fn tt_session_run_quick_button(
+    session: *mut TtSession,
+    kind: TtQuickButtonKind,
+    value: *const c_char,
+    out: *mut TtKeyCodeResult,
+) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    let Some(kind) = quick_button_kind(kind) else {
+        return fail(TT_ERR_INVALID, "unknown button kind");
+    };
+    let value = match unsafe { str_arg(value, usize::MAX) } {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let user = tt_session::UserKey {
+        kind,
+        value: value.to_string(),
+    };
+    let result = match s.session.run_user_key(&user) {
+        Ok(result) => result,
+        Err(e) => return report(e),
+    };
+    fill_key_code(s, result, out);
     TT_OK
 }
 

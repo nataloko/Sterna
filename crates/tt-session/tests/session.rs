@@ -224,6 +224,53 @@ fn keyboard_cnf_returns_actions_owned_by_the_frontend() {
     assert_eq!(s.send_key_code(1085).unwrap(), KeyCodeResult::Ignored);
 }
 
+/// A quick button is a user key with no scan code, and it has to be the same
+/// action — including LNM on the text kind and the raw byte on the binary one,
+/// which is the pair that would drift if this were written twice.
+#[test]
+fn a_user_key_can_be_run_without_a_scan_code() {
+    use tt_session::{Button, KeyCodeResult, UserKeyType};
+
+    let (mut s, h) = connected(20, 4);
+    let text = Button::with_text(UserKeyType::Text, "show version\r");
+    let bytes = Button::with_text(UserKeyType::Binary, "\u{ff}\0");
+
+    s.feed(b"\x1b[20h");
+    assert_eq!(s.run_user_key(&text.action()).unwrap(), KeyCodeResult::Sent);
+    assert_eq!(
+        s.run_user_key(&bytes.action()).unwrap(),
+        KeyCodeResult::Sent
+    );
+    assert_eq!(h.outbound(), b"show version\r\n\xff\0");
+
+    // ...and the two indirect kinds hand the frontend the same thing a key
+    // press does, rather than doing anything themselves.
+    let macro_button = Button::with_text(UserKeyType::Macro, "test.ttl");
+    let command = Button::with_text(UserKeyType::Command, "50430");
+    assert_eq!(
+        s.run_user_key(&macro_button.action()).unwrap(),
+        KeyCodeResult::RunMacro("test.ttl".into())
+    );
+    assert_eq!(
+        s.run_user_key(&command.action()).unwrap(),
+        KeyCodeResult::Command(50430)
+    );
+}
+
+#[test]
+fn a_bound_scan_code_can_be_asked_about_without_pressing_it() {
+    let (mut s, h) = connected(20, 4);
+    // Shift+F1 — scan 59 with the shift bit, which is a perfectly ordinary
+    // entry and the reason a quick button must not claim that sequence.
+    let ini = tt_config::Ini::parse(b"[User keys]\nUser1=571,1,hello\n");
+    s.set_key_map(tt_config::KeyboardMap::from_ini(&ini));
+
+    assert!(s.key_code_bound(571));
+    assert!(!s.key_code_bound(59));
+    // Asking is not pressing.
+    assert!(h.outbound().is_empty());
+}
+
 #[test]
 fn a_reply_the_parser_owes_goes_out_on_the_same_pump() {
     // A host that sent DSR is usually blocked waiting for the answer, so

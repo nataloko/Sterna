@@ -5,6 +5,7 @@
 #pragma once
 
 #include <QElapsedTimer>
+#include <QKeySequence>
 #include <QPoint>
 #include <QWidget>
 
@@ -94,6 +95,19 @@ public:
     /// a paste is happens in the core; see `tt_session::paste`.
     void pasteText(const QString &text);
     bool hasSelection() const { return m_hasSelection; }
+    /// What is selected, with the same wrapped-line rules the clipboard gets.
+    /// Public because Edit > New quick button from selection turns it into a
+    /// command, which is the cheapest way there is to make a button.
+    QString selectedText() const;
+
+    /// The legacy `KEYBOARD.CNF` scan code a Qt key sequence would arrive as,
+    /// or 0 for one this table has no physical key for.
+    ///
+    /// The inverse of what `keyPressEvent` does on the way in, and it lives
+    /// here because that table is here. One caller: the quick-button editor,
+    /// which has to say when a shortcut would take a key the host is using —
+    /// a `QAction` beats this widget's `keyPressEvent`, silently.
+    static quint16 scanForSequence(const QKeySequence &sequence);
 
 public slots:
     /// Scroll the view back by `offset` lines; 0 is the live screen.
@@ -162,7 +176,6 @@ private:
     /// refers to depends on which side of the selection it is.
     SelPoint unitStart(SelPoint p) const;
     SelPoint unitEnd(SelPoint p) const;
-    QString selectedText() const;
     void clearSelection();
     /// Extend the drag to a widget position, scrolling if it is off the edge.
     void dragTo(const QPointF &pos);

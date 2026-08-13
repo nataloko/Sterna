@@ -696,6 +696,10 @@ static void test_input(void)
     CHECK_OK(tt_session_send_key_code(s, 999, &action));
     CHECK(action.kind == TT_KEY_CODE_UNMAPPED);
     CHECK_OK(tt_session_send_key_code(s, 999, NULL));
+    /* A bound scan code can be asked about without pressing it, which is what
+     * the quick-button editor does before it takes a key from the host. */
+    CHECK(tt_session_key_code_bound(s, 1083));
+    CHECK(!tt_session_key_code_bound(s, 999));
     remove(keymap);
 
     CHECK_OK(tt_session_send_text(s, "ls -l\r", SIZE_MAX));
@@ -1298,6 +1302,140 @@ static void test_remembered_connection(void)
     tt_session_free(s);
 }
 
+/* The quick buttons: a list in the settings file, edited through this API and
+ * run through the same dispatch a KEYBOARD.CNF user key uses. */
+static void test_quick_buttons(void)
+{
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+    CHECK(s != NULL);
+
+    const char *path = "/tmp/tt-ffi-abi-buttons.ini";
+    remove(path);
+    FILE *f = fopen(path, "wb");
+    CHECK(f != NULL);
+    if (f) {
+        fputs("; a comment\r\n[Tera Term]\r\nBaudRate=9600\r\n"
+              "[Sterna Buttons]\r\nButton1Label=Show version\r\n"
+              "Button1Kind=text\r\nButton1Value=show version$0D\r\n"
+              "Button1Shortcut=Ctrl+Alt+1\r\n"
+              "Button2Label=Reload\r\nButton2Value=reload$0D\r\n"
+              "Button2Confirm=on\r\n",
+              f);
+        fclose(f);
+    }
+
+    TtQuickButtons *list = tt_quick_buttons_load(path);
+    CHECK(list != NULL);
+    CHECK(tt_quick_buttons_len(list) == 2);
+
+    const TtQuickButton *b = tt_quick_buttons_at(list, 0);
+    CHECK(b != NULL);
+    CHECK(strcmp(b->label, "Show version") == 0);
+    CHECK(b->kind == TT_QUICK_BUTTON_TEXT);
+    /* The stored form and the decoded one, which is what spares the frontend
+     * a copy of the escape. */
+    CHECK(strcmp(b->value, "show version$0D") == 0);
+    CHECK(strcmp(b->text, "show version\r") == 0);
+    CHECK(strcmp(b->shortcut, "Ctrl+Alt+1") == 0);
+    CHECK(!b->confirm);
+
+    b = tt_quick_buttons_at(list, 1);
+    CHECK(b != NULL && b->confirm);
+    CHECK(strcmp(b->shortcut, "") == 0);
+    CHECK(tt_quick_buttons_at(list, 2) == NULL);
+
+    /* Running one puts what it says on the wire. Nothing is connected, so
+     * this is about the call succeeding and reporting the right kind. */
+    TtKeyCodeResult action = {0};
+    b = tt_quick_buttons_at(list, 0);
+    CHECK_OK(tt_session_run_quick_button(s, b->kind, b->value, &action));
+    CHECK(action.kind == TT_KEY_CODE_SENT);
+
+    /* Append: index == length, and `text` is the unescaped form. */
+    TtQuickButton made = {0};
+    made.label = "Break";
+    made.kind = TT_QUICK_BUTTON_COMMAND;
+    made.text = "50430";
+    CHECK_OK(tt_quick_buttons_set(list, 2, &made));
+    CHECK(tt_quick_buttons_len(list) == 3);
+    CHECK(tt_quick_buttons_set(list, 9, &made) == TT_ERR_INVALID);
+    made.kind = 99;
+    CHECK(tt_quick_buttons_set(list, 2, &made) == TT_ERR_INVALID);
+
+    b = tt_quick_buttons_at(list, 2);
+    CHECK_OK(tt_session_run_quick_button(s, b->kind, b->value, &action));
+    CHECK(action.kind == TT_KEY_CODE_COMMAND && action.value == 50430);
+
+    /* A text button is escaped on the way in, so a value with a CR in it
+     * survives a file format that cannot hold one. */
+    TtQuickButton multi = {0};
+    multi.label = "Configure";
+    multi.kind = TT_QUICK_BUTTON_TEXT;
+    multi.text = "conf t\rinterface eth0\r";
+    CHECK_OK(tt_quick_buttons_set(list, 3, &multi));
+    CHECK(strcmp(tt_quick_buttons_at(list, 3)->value,
+                 "conf t$0Dinterface eth0$0D")
+          == 0);
+
+    CHECK_OK(tt_quick_buttons_move(list, 3, 0));
+    CHECK(strcmp(tt_quick_buttons_at(list, 0)->label, "Configure") == 0);
+    CHECK(strcmp(tt_quick_buttons_at(list, 1)->label, "Show version") == 0);
+    CHECK_OK(tt_quick_buttons_remove(list, 0));
+    CHECK(tt_quick_buttons_len(list) == 3);
+    CHECK(tt_quick_buttons_remove(list, 3) == TT_ERR_INVALID);
+
+    CHECK_OK(tt_quick_buttons_save(list, path));
+    char buf[65536] = {0};
+    CHECK(read_file(path, buf, sizeof buf) > 0);
+    CHECK(strstr(buf, "Button3Kind=command") != NULL);
+    CHECK(strstr(buf, "Button3Value=50430") != NULL);
+    /* Everything that is not ours is where it was. */
+    CHECK(strstr(buf, "; a comment") != NULL);
+    CHECK(strstr(buf, "BaudRate=9600") != NULL);
+
+    TtQuickButtons *again = tt_quick_buttons_load(path);
+    CHECK(again != NULL && tt_quick_buttons_len(again) == 3);
+    CHECK(strcmp(tt_quick_buttons_at(again, 2)->label, "Break") == 0);
+    tt_quick_buttons_free(again);
+
+    /* A file that is not there has no buttons, which is a first run. */
+    TtQuickButtons *empty = tt_quick_buttons_load("/tmp/tt-ffi-abi-no-such.ini");
+    CHECK(empty != NULL && tt_quick_buttons_len(empty) == 0);
+    CHECK(tt_quick_buttons_at(empty, 0) == NULL);
+    tt_quick_buttons_free(empty);
+
+    /* An editor saves through a fresh list: the file gets what the editor
+     * holds, not a diff against what was in it. Saving nothing empties the
+     * section and leaves the rest of the file alone. */
+    TtQuickButtons *made_list = tt_quick_buttons_new();
+    CHECK(made_list != NULL && tt_quick_buttons_len(made_list) == 0);
+    CHECK_OK(tt_quick_buttons_save(made_list, path));
+    CHECK(read_file(path, buf, sizeof buf) > 0);
+    CHECK(strstr(buf, "Button1") == NULL);
+    CHECK(strstr(buf, "BaudRate=9600") != NULL);
+
+    /* Replacing the last item remains valid at the cap; only an append would
+     * make the list too long. */
+    TtQuickButton capped = {0};
+    capped.kind = TT_QUICK_BUTTON_TEXT;
+    capped.text = "x";
+    for (size_t i = 0; i < 99; i++) {
+        CHECK_OK(tt_quick_buttons_set(made_list, i, &capped));
+    }
+    CHECK(tt_quick_buttons_len(made_list) == 99);
+    capped.text = "replacement";
+    CHECK_OK(tt_quick_buttons_set(made_list, 98, &capped));
+    CHECK(strcmp(tt_quick_buttons_at(made_list, 98)->text, "replacement") == 0);
+    CHECK(tt_quick_buttons_set(made_list, 99, &capped) == TT_ERR_INVALID);
+    tt_quick_buttons_free(made_list);
+
+    tt_quick_buttons_free(list);
+    remove(path);
+    tt_session_free(s);
+}
+
 /* Parse, apply, resolve — the three calls a frontend makes at startup, in the
  * order it has to make them.
  *
@@ -1545,6 +1683,18 @@ static void test_null_safety(void)
     CHECK(tt_session_key_map_duplicate_count(NULL) == 0);
     CHECK(tt_session_key_map_duplicate(NULL, 0) == 0);
     CHECK(tt_session_send_key_code(NULL, 1, NULL) == TT_ERR_INVALID);
+    CHECK(!tt_session_key_code_bound(NULL, 1));
+    CHECK(tt_quick_buttons_load(NULL) == NULL);
+    CHECK(tt_quick_buttons_save(NULL, NULL) == TT_ERR_INVALID);
+    CHECK(tt_quick_buttons_len(NULL) == 0);
+    CHECK(tt_quick_buttons_at(NULL, 0) == NULL);
+    CHECK(tt_quick_buttons_set(NULL, 0, NULL) == TT_ERR_INVALID);
+    CHECK(tt_quick_buttons_remove(NULL, 0) == TT_ERR_INVALID);
+    CHECK(tt_quick_buttons_move(NULL, 0, 0) == TT_ERR_INVALID);
+    CHECK(tt_quick_buttons_save(NULL, "/tmp/x.ini") == TT_ERR_INVALID);
+    tt_quick_buttons_free(NULL);
+    CHECK(tt_session_run_quick_button(NULL, TT_QUICK_BUTTON_TEXT, "x", NULL)
+          == TT_ERR_INVALID);
     CHECK(tt_session_scrollback_len(NULL) == 0);
     tt_log_options_default(NULL);
     CHECK(tt_session_log_start(NULL, "/tmp/x", NULL) == TT_ERR_INVALID);
@@ -2921,6 +3071,7 @@ int main(void)
     test_log_name();
     test_settings();
     test_remembered_connection();
+    test_quick_buttons();
     test_cmdline();
     test_input();
     test_palette();

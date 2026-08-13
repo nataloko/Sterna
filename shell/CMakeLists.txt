@@ -154,6 +154,9 @@ add_library(sterna_shell STATIC
     src/Theme.cpp
     src/PasteDialog.cpp
     src/Printer.cpp
+    src/QuickButtonBar.cpp
+    src/QuickButtons.cpp
+    src/QuickButtonsDialog.cpp
     src/SerialDialog.cpp
     src/SettingsDialog.cpp
     src/SshDialog.cpp
@@ -338,6 +341,18 @@ if(WIN32)
 endif()
 target_compile_options(tabs_test PRIVATE ${TT_WARNINGS})
 add_test(NAME tabs COMMAND tabs_test)
+
+# The quick buttons, which are the one feature whose whole path is above the
+# ABI: a list in a file the window owns, a press through a QAction on a
+# toolbar, and a shortcut check that has to reach both Qt's action table and
+# the core's key map. UNIX only for the same reason as `pty_test` — the
+# connected cases fork `/bin/sh`.
+if(UNIX)
+    add_executable(buttons_test tests/buttons_test.cpp)
+    target_link_libraries(buttons_test PRIVATE sterna_shell)
+    target_compile_options(buttons_test PRIVATE ${TT_WARNINGS})
+    add_test(NAME buttons COMMAND buttons_test)
+endif()
 
 # Signed metadata is parsed without a socket; the fixture also crosses the C
 # ABI and proves the committed signer matches the public key compiled into the

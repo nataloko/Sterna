@@ -93,6 +93,33 @@ pub fn hex_decode_str(s: &str) -> String {
     out
 }
 
+/// The escape [`hex_decode_str`] undoes, applied to text that has to survive a
+/// round trip through an INI value.
+///
+/// Upstream has no encoder for this — its two settings are written by a dialog
+/// that escapes as it goes (`Str2HexW`, for `DelimList`) — so the rule here is
+/// this port's, and it is the smallest one that round-trips: escape `$`,
+/// because it is the lead character, and escape anything the file format
+/// cannot carry. That is the C0 controls and DEL, which `Ini::set` refuses a
+/// line ending among, plus a space at either end, which
+/// `GetPrivateProfileString` trims off before the caller ever sees it.
+///
+/// Everything else is left alone, so a value stays readable in the file — the
+/// point of storing `show version$0D` rather than a wall of hexadecimal.
+pub fn hex_escape_str(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    for (i, &c) in chars.iter().enumerate() {
+        let edge = i == 0 || i + 1 == chars.len();
+        if c == '$' || c < ' ' || c == '\x7f' || (c == ' ' && edge) {
+            out.push_str(&format!("${:02X}", c as u32));
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,5 +183,35 @@ mod tests {
         assert_eq!(hex_decode("abcdef", 3), b"abc");
         // The escape is counted as the one byte it produces, not as three.
         assert_eq!(hex_decode("$41$42$43", 2), b"AB");
+    }
+
+    #[test]
+    fn the_encoder_escapes_only_what_has_to_be() {
+        // The ordinary case is meant to stay legible in the file.
+        assert_eq!(hex_escape_str("show version\r"), "show version$0D");
+        assert_eq!(hex_escape_str("a\tb\nc"), "a$09b$0Ac");
+        assert_eq!(hex_escape_str("$41"), "$2441");
+        // A space in the middle is a space; one at either end would be
+        // trimmed back off by the reader, so it is not left as one.
+        assert_eq!(hex_escape_str(" a b "), "$20a b$20");
+        assert_eq!(hex_escape_str(" "), "$20");
+        // Text above ASCII is left alone — the file's encoding carries it,
+        // and a two-digit escape could not spell it anyway.
+        assert_eq!(hex_escape_str("日本"), "日本");
+    }
+
+    #[test]
+    fn the_encoder_round_trips_through_the_decoder() {
+        for s in [
+            "show version\r",
+            "$",
+            "$$$",
+            " leading and trailing ",
+            "\x00\x1b\x7f",
+            "日本$41\r\n",
+            "",
+        ] {
+            assert_eq!(hex_decode_str(&hex_escape_str(s)), s, "round trip of {s:?}");
+        }
     }
 }

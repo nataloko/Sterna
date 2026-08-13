@@ -5,7 +5,8 @@ use tt_config::{
     ConnectionPortType, EncodingDecSpecialDirection, EncodingReceive, EncodingSend, FontDrawApi,
     FontQuality, Ini, KeyboardBackspace, KeyboardMeta8bit, Kind, LogTimestampType,
     ProxySocksResolve, ProxyType, SerialDataBits, SerialFlow, SerialParity, SerialStopBits,
-    Settings, TerminalCrReceive, TerminalId, WindowIcon, WindowPanelLayout, FIELDS,
+    Settings, TerminalCrReceive, TerminalId, WindowIcon, WindowPanelLayout, WindowQuickButtonsArea,
+    FIELDS,
 };
 
 #[test]
@@ -68,6 +69,38 @@ fn the_panel_layout_is_a_sterna_setting_with_a_safe_fallback() {
         ini.to_bytes(),
         b"; formatting stays\n[Sterna]\nUnrelated = yes\nPanelLayout=four\n"
     );
+}
+
+/// The bar's two settings. The buttons themselves are a list and are not in
+/// here at all — see `tt-config/src/buttons.rs`, which owns `[Sterna Buttons]`.
+#[test]
+fn the_quick_button_bar_ships_on_and_down_the_right() {
+    let d = Settings::default();
+    assert!(d.window_quick_buttons);
+    // The right rather than the top: a terminal's rows are the scarce
+    // dimension, and a vertical bar costs none of them.
+    assert_eq!(d.window_quick_buttons_area, WindowQuickButtonsArea::Right);
+
+    let load = |value: &str| {
+        Settings::load(&Ini::parse(
+            format!("[Sterna]\r\nQuickButtonsArea={value}\r\n").as_bytes(),
+        ))
+        .window_quick_buttons_area
+    };
+    assert_eq!(load("top"), WindowQuickButtonsArea::Top);
+    assert_eq!(load("BOTTOM"), WindowQuickButtonsArea::Bottom);
+    assert_eq!(load("sideways"), WindowQuickButtonsArea::Right);
+
+    // Default on, so `GetOnOff` reads anything but a literal `off` as on —
+    // the asymmetry `AGENTS.md` warns about, asserted rather than assumed.
+    let on = |value: &str| {
+        Settings::load(&Ini::parse(
+            format!("[Sterna]\r\nQuickButtons={value}\r\n").as_bytes(),
+        ))
+        .window_quick_buttons
+    };
+    assert!(!on("off"));
+    assert!(on("0"));
 }
 
 #[test]

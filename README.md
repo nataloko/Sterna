@@ -17,6 +17,8 @@ supporting Tera Term-compatible workflows and configuration.
 - Inline [sixel graphics](docs/sixel.md), including images in scrollback
 - [Highlight rules](docs/highlighting.md): regular expressions that recolour
   the screen and the scrollback
+- [Quick buttons](docs/buttons.md): a bar of commands one click away, each one
+  optionally on a keyboard shortcut
 - `KEYBOARD.CNF` key mappings and `TERATERM.INI`-compatible settings
 - Printing, a local control socket, and a signed updater that checks once a day
 - Localized interface using Tera Term's 14 language catalogs

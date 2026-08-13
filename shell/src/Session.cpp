@@ -681,6 +681,31 @@ KeyCodeAction Session::sendKeyCode(quint16 scan)
     return out;
 }
 
+KeyCodeAction Session::runQuickButton(TtQuickButtonKind kind, const QString &value)
+{
+    TtKeyCodeResult result {};
+    const QByteArray utf8 = value.toUtf8();
+    if (tt_session_run_quick_button(m_session, kind, utf8.constData(), &result)
+        != TT_OK) {
+        emit notice(QString::fromUtf8(tt_last_error()));
+        rearm();
+        return {};
+    }
+    KeyCodeAction out;
+    out.kind = result.kind;
+    out.value = result.value;
+    if (result.text) {
+        out.text = QString::fromUtf8(result.text);
+    }
+    rearm();
+    return out;
+}
+
+bool Session::keyCodeBound(quint16 scan) const
+{
+    return tt_session_key_code_bound(m_session, scan);
+}
+
 void Session::sendText(const QString &text)
 {
     if (text.isEmpty()) {

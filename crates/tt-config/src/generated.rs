@@ -2526,6 +2526,67 @@ impl Default for WindowPanelLayout {
     }
 }
 
+/// Which edge the bar is on. Qt lets a toolbar be dragged to any of the four,
+/// and this is where it opens.
+///
+/// **The right**, not the top, which is where the other bar is. A terminal's
+/// rows are the scarce dimension — a window is usually far wider than the 80
+/// columns it needs and exactly as tall as it can be — so a vertical bar costs
+/// nothing that is being used, and the labels have room to be words rather than
+/// abbreviations. An unrecognised spelling lands on the right as well, rather
+/// than hiding the bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowQuickButtonsArea {
+    /// `right`
+    Right,
+    /// `top`
+    Top,
+    /// `bottom`
+    Bottom,
+    /// `left`
+    Left,
+}
+
+impl WindowQuickButtonsArea {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::Right => "right",
+            Self::Top => "top",
+            Self::Bottom => "bottom",
+            Self::Left => "left",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised is `Right`** — which
+    /// is *not* this type's default. Upstream reads the key with a
+    /// default string and then runs a chain of comparisons whose last
+    /// arm catches everything, so an absent key and a misspelt value
+    /// are two different settings.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("right") {
+            return Self::Right;
+        }
+        if s.eq_ignore_ascii_case("top") {
+            return Self::Top;
+        }
+        if s.eq_ignore_ascii_case("bottom") {
+            return Self::Bottom;
+        }
+        if s.eq_ignore_ascii_case("left") {
+            return Self::Left;
+        }
+        Self::Right
+    }
+}
+
+impl Default for WindowQuickButtonsArea {
+    fn default() -> Self {
+        Self::Right
+    }
+}
+
 /// Which of the four framing/burst combinations was used (`TelnetMode::of`).
 /// `auto` is the shipped one: data until the first `IAC`, telnet after it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4089,6 +4150,24 @@ pub struct Settings {
     /// 2x2 grid. A missing or unrecognised spelling returns to the single-panel
     /// layout, so an edited file cannot leave the window without a usable view.
     pub window_panel_layout: WindowPanelLayout,
+    /// **`[Sterna]`** again, and these two are only the *bar*: the buttons on it are
+    /// a list, which no schema row can be, and they live in a `[Sterna Buttons]`
+    /// section of their own (`tt-config/src/buttons.rs`).
+    ///
+    /// On, but the bar is hidden while nobody has defined a button — an empty
+    /// toolbar is chrome for nothing. So this is what Setup > Show quick buttons
+    /// writes, not what decides whether the bar exists.
+    pub window_quick_buttons: bool,
+    /// Which edge the bar is on. Qt lets a toolbar be dragged to any of the four,
+    /// and this is where it opens.
+    ///
+    /// **The right**, not the top, which is where the other bar is. A terminal's
+    /// rows are the scarce dimension — a window is usually far wider than the 80
+    /// columns it needs and exactly as tall as it can be — so a vertical bar costs
+    /// nothing that is being used, and the labels have room to be words rather than
+    /// abbreviations. An unrecognised spelling lands on the right as well, rather
+    /// than hiding the bar.
+    pub window_quick_buttons_area: WindowQuickButtonsArea,
     /// The device path, not a number: `ComPort` is upstream's and cannot spell
     /// `/dev/serial/by-id/usb-FTDI_…`. Written as the port was opened, so it is the
     /// `open_path` a stable symlink resolves from rather than the `ttyUSB<n>` that
@@ -4450,6 +4529,8 @@ impl Default for Settings {
             window_corner_dontround: false,
             window_toolbar: true,
             window_panel_layout: WindowPanelLayout::default(),
+            window_quick_buttons: true,
+            window_quick_buttons_area: WindowQuickButtonsArea::default(),
             recent_serial_port: String::from(""),
             recent_ssh_host: String::from(""),
             recent_ssh_user: String::from(""),
@@ -5661,6 +5742,11 @@ impl Settings {
             window_panel_layout: match ini.get("Sterna", "PanelLayout") {
                 Some(v) => WindowPanelLayout::from_ini(v),
                 None => d.window_panel_layout,
+            },
+            window_quick_buttons: crate::schema::on_off(ini.get("Sterna", "QuickButtons"), true),
+            window_quick_buttons_area: match ini.get("Sterna", "QuickButtonsArea") {
+                Some(v) => WindowQuickButtonsArea::from_ini(v),
+                None => d.window_quick_buttons_area,
             },
             recent_serial_port: ini
                 .get_or("Sterna", "SerialPort", &d.recent_serial_port)
@@ -7785,6 +7871,21 @@ impl Settings {
             "Sterna",
             "PanelLayout",
             &self.window_panel_layout.as_ini().to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "QuickButtons",
+            &if self.window_quick_buttons {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "QuickButtonsArea",
+            &self.window_quick_buttons_area.as_ini().to_string(),
         );
         ini.set("Sterna", "SerialPort", &self.recent_serial_port.clone());
         ini.set("Sterna", "SshHost", &self.recent_ssh_host.clone());
@@ -10554,6 +10655,25 @@ impl Settings {
                     &self.window_panel_layout.as_ini().to_string(),
                 );
             }
+            "window.quick_buttons" => {
+                ini.set(
+                    "Sterna",
+                    "QuickButtons",
+                    &if self.window_quick_buttons {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "window.quick_buttons_area" => {
+                ini.set(
+                    "Sterna",
+                    "QuickButtonsArea",
+                    &self.window_quick_buttons_area.as_ini().to_string(),
+                );
+            }
             "recent.serial_port" => {
                 ini.set("Sterna", "SerialPort", &self.recent_serial_port.clone());
             }
@@ -11441,6 +11561,13 @@ impl Settings {
             .to_string(),
             "window.toolbar" => if self.window_toolbar { "on" } else { "off" }.to_string(),
             "window.panel_layout" => self.window_panel_layout.as_ini().to_string(),
+            "window.quick_buttons" => if self.window_quick_buttons {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "window.quick_buttons_area" => self.window_quick_buttons_area.as_ini().to_string(),
             "recent.serial_port" => self.recent_serial_port.clone(),
             "recent.ssh_host" => self.recent_ssh_host.clone(),
             "recent.ssh_user" => self.recent_ssh_user.clone(),
@@ -12328,6 +12455,12 @@ impl Settings {
             }
             "window.toolbar" => self.window_toolbar = crate::schema::on_off(Some(value), true),
             "window.panel_layout" => self.window_panel_layout = WindowPanelLayout::from_ini(value),
+            "window.quick_buttons" => {
+                self.window_quick_buttons = crate::schema::on_off(Some(value), true)
+            }
+            "window.quick_buttons_area" => {
+                self.window_quick_buttons_area = WindowQuickButtonsArea::from_ini(value)
+            }
             "recent.serial_port" => self.recent_serial_port = value.to_string(),
             "recent.ssh_host" => self.recent_ssh_host = value.to_string(),
             "recent.ssh_user" => self.recent_ssh_user = value.to_string(),
@@ -15480,6 +15613,26 @@ pub const FIELDS: &[Field] = &[
         default: "single",
         label: None,
         doc: "**`[Sterna]`**, because simultaneous panes are a Sterna window feature rather than terminal state. The value says how many connections this window shows at once: one terminal, two equal side-by-side panels, or four equal panels in a 2x2 grid. A missing or unrecognised spelling returns to the single-panel layout, so an edited file cannot leave the window without a usable view.",
+    },
+    Field {
+        name: "window.quick_buttons",
+        page: "window",
+        section: "Sterna",
+        key: "QuickButtons",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "**`[Sterna]`** again, and these two are only the *bar*: the buttons on it are a list, which no schema row can be, and they live in a `[Sterna Buttons]` section of their own (`tt-config/src/buttons.rs`).  On, but the bar is hidden while nobody has defined a button — an empty toolbar is chrome for nothing. So this is what Setup > Show quick buttons writes, not what decides whether the bar exists.",
+    },
+    Field {
+        name: "window.quick_buttons_area",
+        page: "window",
+        section: "Sterna",
+        key: "QuickButtonsArea",
+        kind: Kind::Enum(&["right", "top", "bottom", "left"]),
+        default: "right",
+        label: None,
+        doc: "Which edge the bar is on. Qt lets a toolbar be dragged to any of the four, and this is where it opens.  **The right**, not the top, which is where the other bar is. A terminal's rows are the scarce dimension — a window is usually far wider than the 80 columns it needs and exactly as tall as it can be — so a vertical bar costs nothing that is being used, and the labels have room to be words rather than abbreviations. An unrecognised spelling lands on the right as well, rather than hiding the bar.",
     },
     Field {
         name: "recent.serial_port",

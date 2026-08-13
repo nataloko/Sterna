@@ -99,6 +99,7 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/macro_test               # a TTL macro, driven by the event loop
 ./build/print_test               # the printer, which is a file, so it needs none
 ./build/highlight_test           # the highlight rules, to the pixels — needs nothing
+./build/buttons_test             # the quick buttons, over a pty — needs nothing
 QT_QPA_PLATFORM=offscreen \
   ./build/cmdline_test           # a Tera Term command line, argv to connected
                                  # — NOT under Wayland; see the traps
@@ -564,6 +565,15 @@ SSH:
   precisely in the windowless-launch case it was written for.
   `QT_FORCE_STDERR_LOGGING=1` proves it in one run; anything the user must
   see uses `fprintf(stderr)`.
+- **`QToolBar::clear()` removes its actions and does not delete them**, and
+  `addAction(text)` parents them to the bar — so a rebuilt toolbar keeps every
+  previous action alive as a child, holding its shortcut and answering
+  `findChild` first. The symptom is a widget that stops following the session.
+- **A `QAction` shortcut outranks `TerminalView::keyPressEvent`**, silently, so
+  every shortcut installed on the window is a key the host stops receiving —
+  and `Shift+F1`..`F12` are ordinary `KEYBOARD.CNF` bindings *and* F13-F24 to
+  the far end. `TerminalView::scanForSequence` is what asks the core whether a
+  sequence is already spoken for; quick buttons warn and do not refuse.
 
 Measuring anything:
 

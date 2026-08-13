@@ -21,6 +21,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 4 | One, two or four simultaneous connection panels | One connection per window | unreleased |
 | 5 | Starting Sterna looks for a signed update, once a day | Nothing contacts a server on its own | unreleased |
 | 6 | Highlight rules: user-written regular expressions recolour the screen | Only the host decides a colour; the URL attribute is the one exception | unreleased |
+| 7 | Quick buttons: a second bar of user-defined commands | A `KEYBOARD.CNF` user key, with no face on it | unreleased |
 
 ---
 
@@ -227,3 +228,44 @@ choose and no rule that can stall the drawing. And rules compose **per channel**
 in list order rather than first-rule-takes-the-cell: a rule that only underlines
 and a rule that only colours are not in competition, and making them compete
 would mean the more specific of the two silently did nothing.
+
+## 7. Quick buttons
+
+A second bar, holding commands the user defined: a label, and text to send, or
+bytes, or a macro to run, or a menu command. Each may carry a keyboard shortcut
+and may ask before it runs. Tera Term's nearest equivalent is a `KEYBOARD.CNF`
+user key — the same four actions, on a key, with nothing on screen.
+
+**Why.** On a console port the same handful of lines get typed all day, and
+upstream's answer to that is a file somebody has to hand-edit in a format with
+hexadecimal escapes in it. The gap is not the capability, which upstream has:
+it is that nothing shows it, so almost nobody has one. See
+[`buttons.md`](buttons.md) for the user-facing half.
+
+**What is unchanged, and it is most of it.** A button *is* a user key: the four
+kinds are `UserKeyType`, the escape is `Hex2StrW`'s, and pressing one calls the
+same `Session::run_user_key` a mapped scan code calls — text through `send_text`
+so `CRSend` and LNM apply, bytes raw, a macro started by the window, a menu
+command dispatched by id. Nothing about how a command reaches the wire is new,
+and a `KEYBOARD.CNF` full of user keys still works exactly as it did.
+
+**Where it lives.** `crates/tt-config/src/buttons.rs` owns the format;
+`shell/src/QuickButtonBar.{h,cpp}` is the bar and
+`shell/src/QuickButtonsDialog.{h,cpp}` the editor. The list is a
+`[Sterna Buttons]` section — its own, because a list is exactly what the
+settings schema cannot describe — plus two ordinary `[Sterna]` settings for the
+bar itself: `QuickButtons` (`window.quick_buttons`, on) and `QuickButtonsArea`
+(`window.quick_buttons_area`, `right` — a terminal's rows are the scarce
+dimension, so the bar goes where there is width to spare rather than where the
+connect bar is).
+
+**Two decisions worth defending.** The bar does not exist until a button does,
+where YAT — the program this borrows the idea from — shows twelve
+`<Define...>` placeholders; discoverability is worth a menu item, not permanent
+chrome in a terminal whose claim is being light. And no button ships with a
+shortcut, where YAT binds `Shift+F1`..`F12`: a Qt action outranks the terminal
+widget, so a shortcut is a key the host silently stops receiving, and here
+`Shift+F1` is both a legitimate `KEYBOARD.CNF` binding and F13 to the far end.
+The editor warns about a sequence the menu, a plugin, the key map or the host
+is already using — and warns rather than refuses, because the user knows what
+is on the other end and this program does not.
