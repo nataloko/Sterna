@@ -154,6 +154,7 @@ add_library(sterna_shell STATIC
     src/Printer.cpp
     src/QuickButtonBar.cpp
     src/QuickButtons.cpp
+    src/QuickButtonsDialog.cpp
     src/SerialDialog.cpp
     src/SettingsDialog.cpp
     src/SshDialog.cpp

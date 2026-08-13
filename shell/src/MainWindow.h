@@ -9,9 +9,11 @@
 #include "sterna.h"
 
 #include "PanelContainer.h"
+#include "QuickButtons.h"
 #include "Session.h"
 
 class ConnectBar;
+class QuickButtonBar;
 class Control;
 class I18n;
 class Macro;
@@ -193,6 +195,8 @@ private slots:
     void chooseFont();
     void chooseKeyMap();
     void showSettingsDialog();
+    /// Setup > Quick buttons — the editor for the bar's list.
+    void showQuickButtonsDialog();
     /// Write the settings out — upstream's `Setup > Save setup`, and the same
     /// bargain: a change applies to this session immediately and outlives it
     /// only if it is saved.
@@ -272,6 +276,26 @@ private:
     void loadKeyMap(const QString &path);
     /// A type-3 user key's upstream menu id, for the actions this window has.
     void invokeMenuCommand(quint16 command);
+    /// Carry out whatever the core said a key or a quick button meant. Sending
+    /// has already happened inside it; what is left are the two the window
+    /// owns — start a macro, invoke a menu command.
+    void runKeyAction(const KeyCodeAction &action);
+
+    // --- quick buttons ------------------------------------------------------
+
+    /// Read the list and rebuild the bar. Also decides whether the bar is
+    /// shown at all: an empty set has no bar, whatever `window.quick_buttons`
+    /// says, because an empty toolbar is chrome for nothing.
+    void reloadQuickButtons();
+    /// Press one. `withoutEnter` is a Shift+click.
+    void runQuickButton(int index, bool withoutEnter);
+    /// Open the editor with `index` selected, or -1 for a new button, and
+    /// `seed` prefilled into that new one.
+    void editQuickButtons(int index, const QuickButton *seed = nullptr);
+    /// Write the list back to the settings file and rebuild the bar.
+    bool storeQuickButtons(const QVector<QuickButton> &buttons);
+    /// Setup > New quick button from selection.
+    void quickButtonFromSelection();
     /// Connect what a command line resolved to. The SSH arm goes through the
     /// same state machine the SSH dialog uses, because it has the same
     /// prompts to answer.
@@ -310,10 +334,11 @@ private:
     void restoreRememberedConnection();
     /// Write a few settings back to the file without saving the rest of it.
     ///
-    /// What a connection was opened with, and when the updater last looked.
-    /// Only these keys are touched, and only if their values actually change —
-    /// the core's `tt_session_settings_remember` owns both rules, which is what
-    /// makes this safe to point at a `TERATERM.INI` somebody else maintains.
+    /// What a connection was opened with, when the updater last looked, and
+    /// which edge the quick button bar was left on. Only these keys are
+    /// touched, and only if their values actually change — the core's
+    /// `tt_session_settings_remember` owns both rules, which is what makes
+    /// this safe to point at a `TERATERM.INI` somebody else maintains.
     ///
     /// A failure is reported on stderr rather than in a box: whatever the user
     /// asked for has just succeeded, and a modal complaint about the
@@ -345,10 +370,16 @@ private:
     /// The bar under the menu: port, connect, local echo. Shown when
     /// `window.toolbar` is on, which is what Setup > Show toolbar writes.
     ConnectBar *m_connectBar = nullptr;
+    /// The user's own commands. Hidden while the list is empty; otherwise
+    /// shown when `window.quick_buttons` is on, at the edge
+    /// `window.quick_buttons_area` names.
+    QuickButtonBar *m_quickBar = nullptr;
     QAction *m_toolbarAction = nullptr;
     QAction *m_singlePanelAction = nullptr;
     QAction *m_twoPanelAction = nullptr;
     QAction *m_fourPanelAction = nullptr;
+    QAction *m_quickButtonsAction = nullptr;
+    QAction *m_quickButtonFromSelectionAction = nullptr;
     QAction *m_disconnectAction = nullptr;
     QAction *m_newTabAction = nullptr;
     QAction *m_closeTabAction = nullptr;

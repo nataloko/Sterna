@@ -255,6 +255,18 @@ public:
                     QString *outError);
     /// Dispatch one PC/AT set-1 scan code, modifier bits included.
     KeyCodeAction sendKeyCode(quint16 scan);
+    /// Do what a quick button says. `value` is the button's **stored** form:
+    /// the core decodes the `$HH` escape itself, because this is the same
+    /// action a `KEYBOARD.CNF` user key performs and there is one decoder.
+    ///
+    /// The result is the same shape a key press gives, so the window keeps one
+    /// dispatcher for both — a macro and a menu command are the window's to
+    /// carry out either way.
+    KeyCodeAction runQuickButton(TtQuickButtonKind kind, const QString &value);
+    /// Whether the loaded `KEYBOARD.CNF` binds a scan code. For the editor,
+    /// which has to say that a key sequence already belongs to the host before
+    /// a button takes it away.
+    bool keyCodeBound(quint16 scan) const;
     void sendText(const QString &text);
     /// Raw bytes: no UTF-8 encoding or LNM. `Meta8Bit=raw` is the frontend
     /// caller; macro binary sends use the same core path directly.

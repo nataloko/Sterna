@@ -201,11 +201,10 @@ quint16 evdevToPcScan(quint32 code)
 /// Windows' extended keys, whose native representation varies across Qt
 /// versions. Ordinary real Linux keys take the physical-code path above, so a
 /// non-US layout keeps the physical mapping a copied file describes.
-quint16 qtToPcScan(const QKeyEvent *e)
+quint16 qtKeyToPcScan(int key, bool keypad)
 {
-    const bool keypad = e->modifiers().testFlag(Qt::KeypadModifier);
     if (keypad) {
-        switch (e->key()) {
+        switch (key) {
         case Qt::Key_0: return 82;
         case Qt::Key_1: return 79;
         case Qt::Key_2: return 80;
@@ -226,7 +225,7 @@ quint16 qtToPcScan(const QKeyEvent *e)
         }
     }
 
-    switch (e->key()) {
+    switch (key) {
     case Qt::Key_Escape: return 1;
     case Qt::Key_1: return 2;
     case Qt::Key_2: return 3;
@@ -309,6 +308,11 @@ quint16 qtToPcScan(const QKeyEvent *e)
     }
 }
 
+quint16 qtToPcScan(const QKeyEvent *e)
+{
+    return qtKeyToPcScan(e->key(), e->modifiers().testFlag(Qt::KeypadModifier));
+}
+
 /// The whole legacy key code, including the modifier bits upstream ORs onto
 /// the physical scan in `keyboard.c:KeyDown`.
 quint16 legacyKeyCode(const QKeyEvent *e)
@@ -380,6 +384,31 @@ AltSide altSide(const QKeyEvent *e)
 }
 
 } // namespace
+
+quint16 TerminalView::scanForSequence(const QKeySequence &sequence)
+{
+    if (sequence.isEmpty()) {
+        return 0;
+    }
+    // The first chord only. A multi-chord sequence cannot collide with a
+    // physical key by construction, since the key table has no notion of one.
+    const QKeyCombination combination = sequence[0];
+    quint16 scan = qtKeyToPcScan(combination.key(), false);
+    if (scan == 0) {
+        return 0;
+    }
+    const Qt::KeyboardModifiers mods = combination.keyboardModifiers();
+    if (mods.testFlag(Qt::ShiftModifier)) {
+        scan |= 0x200;
+    }
+    if (mods.testFlag(Qt::ControlModifier)) {
+        scan |= 0x400;
+    }
+    if (mods.testFlag(Qt::AltModifier)) {
+        scan |= 0x800;
+    }
+    return scan;
+}
 
 TerminalView::TerminalView(Session *session, QWidget *parent, const I18n *i18n)
     : QWidget(parent)

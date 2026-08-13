@@ -55,6 +55,8 @@
 #include "I18n.h"
 #include "Macro.h"
 #include "Plugins.h"
+#include "QuickButtonBar.h"
+#include "QuickButtonsDialog.h"
 #include "SerialDialog.h"
 #include "Session.h"
 #include "SettingsDialog.h"
@@ -112,6 +114,39 @@ QString panelLayoutSetting(PanelLayout layout)
     case PanelLayout::Single: return QStringLiteral("single");
     }
     return QStringLiteral("single");
+}
+
+/// `window.quick_buttons_area`, as a Qt dock area.
+///
+/// The schema already refuses an unrecognised spelling — its enum arm is
+/// `top/*` — so this only has to name the four.
+Qt::ToolBarArea quickButtonArea(const QString &setting)
+{
+    if (setting == QLatin1String("bottom")) {
+        return Qt::BottomToolBarArea;
+    }
+    if (setting == QLatin1String("left")) {
+        return Qt::LeftToolBarArea;
+    }
+    if (setting == QLatin1String("right")) {
+        return Qt::RightToolBarArea;
+    }
+    return Qt::TopToolBarArea;
+}
+
+/// ...and back, for remembering where the bar was dragged to.
+QString quickButtonAreaName(Qt::ToolBarArea area)
+{
+    switch (area) {
+    case Qt::BottomToolBarArea:
+        return QStringLiteral("bottom");
+    case Qt::LeftToolBarArea:
+        return QStringLiteral("left");
+    case Qt::RightToolBarArea:
+        return QStringLiteral("right");
+    default:
+        return QStringLiteral("top");
+    }
 }
 
 /// Whether this window system gives a client coordinates it may restore.
@@ -304,6 +339,52 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
         }
     });
 
+    // The second bar, which is the user's own. Its area comes from the
+    // settings below, once they have been read; it is created here so the
+    // menu can point at it.
+    m_quickBar = new QuickButtonBar(this);
+    addToolBar(Qt::TopToolBarArea, m_quickBar);
+    m_quickBar->hide();
+    connect(m_quickBar, &QuickButtonBar::activated, this,
+            &MainWindow::runQuickButton);
+    connect(m_quickBar, &QuickButtonBar::addRequested, this,
+            [this] { editQuickButtons(-1); });
+    connect(m_quickBar, &QuickButtonBar::editRequested, this,
+            [this](int index) { editQuickButtons(index); });
+    connect(m_quickBar, &QuickButtonBar::duplicateRequested, this,
+            [this](int index) {
+                QVector<QuickButton> buttons = m_quickBar->buttons();
+                if (index < 0 || index >= buttons.size()) {
+                    return;
+                }
+                QuickButton copy = buttons[index];
+                // Not the shortcut: two buttons cannot have the same key, and
+                // silently giving it to the copy would take it from the
+                // original.
+                copy.shortcut.clear();
+                buttons.insert(index + 1, copy);
+                if (storeQuickButtons(buttons)) {
+                    editQuickButtons(index + 1);
+                }
+            });
+    connect(m_quickBar, &QuickButtonBar::removeRequested, this,
+            [this](int index) {
+                QVector<QuickButton> buttons = m_quickBar->buttons();
+                if (index < 0 || index >= buttons.size()) {
+                    return;
+                }
+                // Asked about, and it names the button: this is the one
+                // destructive thing on the bar, and undo is retyping it.
+                if (QMessageBox::question(
+                        this, tr("Remove quick button"),
+                        tr("Remove \"%1\"?").arg(buttons[index].caption()))
+                    != QMessageBox::Yes) {
+                    return;
+                }
+                buttons.remove(index);
+                storeQuickButtons(buttons);
+            });
+
     buildMenus();
 
     // `sizeHint()` is consumed before the first show so a configured grid opens
@@ -336,6 +417,9 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
     restoreRememberedConnection();
     loadKeyMap(QDir(QFileInfo(m_settingsPath).absolutePath())
                    .filePath(QStringLiteral("KEYBOARD.CNF")));
+    // After the key map, so a button's shortcut can be checked against it, and
+    // after the settings, which say where the bar goes.
+    reloadQuickButtons();
     applySavedPosition();
 
     updateStatus();
@@ -1094,6 +1178,10 @@ void MainWindow::onSettingsChanged()
         m_toolbarAction->setChecked(toolbar);
     }
     updatePanelActions();
+    // The buttons themselves are not settings, so this rereads the list as
+    // well: the settings dialog is one of the places `[Sterna Buttons]` can
+    // have changed under the window, the other being a hand edit.
+    reloadQuickButtons();
     m_view->setPopupMenuEnabled(
         menuHidden && m_session->setting(QStringLiteral("window.popup_menu_enabled"))
                           == QLatin1String("on"));
@@ -1513,6 +1601,17 @@ void MainWindow::buildMenus()
         tr("Paste"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V), this,
         [this] { m_view->pasteClipboard(); });
     languageAction(paste, "MENU_EDIT_PASTE", tr("Paste"));
+    // Beside Copy, because it is the same gesture with a different
+    // destination: select the command that worked, keep it. No upstream key.
+    edit->addSeparator();
+    m_quickButtonFromSelectionAction =
+        edit->addAction(tr("New quick button from selection..."), this,
+                        &MainWindow::quickButtonFromSelection);
+    m_quickButtonFromSelectionAction->setObjectName(
+        QStringLiteral("quickButtonFromSelectionAction"));
+    connect(edit, &QMenu::aboutToShow, this, [this] {
+        m_quickButtonFromSelectionAction->setEnabled(m_view->hasSelection());
+    });
 
     QMenu *view = menuBar()->addMenu(tr("View"));
     view->setObjectName(QStringLiteral("viewMenu"));
@@ -1574,6 +1673,27 @@ void MainWindow::buildMenus()
                                       : QStringLiteral("off"),
                                    &error)) {
             onNotice(tr("Could not change the toolbar: %1").arg(error));
+        }
+    });
+
+    // The quick buttons, which upstream has no equivalent of either — the
+    // nearest thing is a KEYBOARD.CNF user key, which is the same four actions
+    // with no face on them. This item is how somebody finds the feature: the
+    // bar is not there until a button exists.
+    QAction *quickButtons =
+        setup->addAction(tr("Quick buttons..."), this,
+                         &MainWindow::showQuickButtonsDialog);
+    quickButtons->setObjectName(QStringLiteral("quickButtonsAction"));
+    m_quickButtonsAction = setup->addAction(tr("Show quick buttons"));
+    m_quickButtonsAction->setObjectName(QStringLiteral("showQuickButtonsAction"));
+    m_quickButtonsAction->setCheckable(true);
+    connect(m_quickButtonsAction, &QAction::triggered, this, [this](bool on) {
+        QString error;
+        if (!m_session->setSetting(QStringLiteral("window.quick_buttons"),
+                                   on ? QStringLiteral("on")
+                                      : QStringLiteral("off"),
+                                   &error)) {
+            onNotice(tr("Could not change the quick buttons: %1").arg(error));
         }
     });
 
@@ -2197,9 +2317,25 @@ void MainWindow::closeEvent(QCloseEvent *event)
         }
     }
     QMainWindow::closeEvent(event);
-    if (!event->isAccepted()
-        || m_session->setting(QStringLiteral("window.save_position"))
-               != QLatin1String("on")) {
+    if (!event->isAccepted()) {
+        return;
+    }
+
+    // Where the quick button bar was left. On close rather than on the drag,
+    // because Qt has no "moved to an area" signal — only orientation changes,
+    // which cannot tell top from bottom — and because this is exactly what
+    // `SaveVTPos` does with the window's own position one line further down.
+    // Unlike that one it has no switch: the bar is this program's own and
+    // somebody who moved it meant it.
+    if (m_quickBar && !m_quickBar->buttons().isEmpty()) {
+        const QString area = quickButtonAreaName(toolBarArea(m_quickBar));
+        if (area != m_session->setting(QStringLiteral("window.quick_buttons_area"))) {
+            rememberSettings({{QStringLiteral("window.quick_buttons_area"), area}});
+        }
+    }
+
+    if (m_session->setting(QStringLiteral("window.save_position"))
+        != QLatin1String("on")) {
         return;
     }
 
@@ -2421,6 +2557,151 @@ void MainWindow::invokeMenuCommand(quint16 command)
     case 50470: runMacro(); break;
     default: break;
     }
+}
+
+void MainWindow::runKeyAction(const KeyCodeAction &action)
+{
+    switch (action.kind) {
+    case TT_KEY_CODE_MACRO:
+        startNamedMacro(action.text);
+        break;
+    case TT_KEY_CODE_COMMAND:
+        invokeMenuCommand(static_cast<quint16>(action.value));
+        break;
+    default:
+        // Sent, or a kind with nothing for the window to do. The core has
+        // already put whatever there was on the wire.
+        break;
+    }
+}
+
+// --- quick buttons ---------------------------------------------------------
+
+void MainWindow::reloadQuickButtons()
+{
+    if (!m_quickBar) {
+        return;
+    }
+    const QVector<QuickButton> buttons = loadQuickButtons(m_settingsPath);
+    m_quickBar->setButtons(buttons);
+
+    // Shortcuts live on the bar's own actions, so hiding the bar hands the
+    // keys back to the terminal. That is the honest behaviour: a shortcut is a
+    // key the host stops receiving, and somebody who has put the bar away has
+    // not asked to keep paying for it.
+    for (int i = 0; i < buttons.size(); i++) {
+        if (buttons[i].shortcut.isEmpty()) {
+            continue;
+        }
+        const QKeySequence sequence = QKeySequence::fromString(
+            buttons[i].shortcut, QKeySequence::PortableText);
+        QAction *action = m_quickBar->findChild<QAction *>(
+            QStringLiteral("quickButton%1").arg(i));
+        if (!action) {
+            continue;
+        }
+        if (sequence.isEmpty()) {
+            onNotice(tr("Quick button \"%1\" has an invalid shortcut: %2")
+                         .arg(buttons[i].caption(), buttons[i].shortcut));
+            continue;
+        }
+        action->setShortcutContext(Qt::WindowShortcut);
+        action->setShortcut(sequence);
+    }
+
+    const Qt::ToolBarArea area = quickButtonArea(
+        m_session->setting(QStringLiteral("window.quick_buttons_area")));
+    if (toolBarArea(m_quickBar) != area) {
+        addToolBar(area, m_quickBar);
+    }
+    // Empty means no bar at all, whatever the setting says. The setting is
+    // what Setup > Show quick buttons writes; this is the difference between
+    // "put it away" and "there is nothing to show".
+    const bool wanted =
+        m_session->setting(QStringLiteral("window.quick_buttons")) == QLatin1String("on");
+    m_quickBar->setVisible(wanted && !buttons.isEmpty());
+    if (m_quickButtonsAction) {
+        m_quickButtonsAction->setChecked(wanted);
+    }
+    m_quickBar->refresh(m_session);
+}
+
+void MainWindow::runQuickButton(int index, bool withoutEnter)
+{
+    if (!m_quickBar || index < 0 || index >= m_quickBar->buttons().size()) {
+        return;
+    }
+    const QuickButton button = withoutEnter
+        ? m_quickBar->buttons()[index].withoutEnter()
+        : m_quickBar->buttons()[index];
+
+    if (button.confirm
+        && QMessageBox::question(this, tr("Quick button"),
+                                 tr("%1\n\n%2")
+                                     .arg(button.caption(), button.describe()))
+            != QMessageBox::Yes) {
+        return;
+    }
+
+    // The core does the sending and hands back what is left for the window,
+    // which is the same answer a pressed key gives.
+    runKeyAction(m_session->runQuickButton(button.kind, button.value));
+    // Typing goes to the live screen, and so does pressing a button that types.
+    m_view->setViewOffset(0);
+    m_view->setFocus();
+}
+
+bool MainWindow::storeQuickButtons(const QVector<QuickButton> &buttons)
+{
+    QDir().mkpath(QFileInfo(m_settingsPath).absolutePath());
+    QString error;
+    if (!saveQuickButtons(m_settingsPath, buttons, &error)) {
+        QMessageBox::warning(this, tr("Quick buttons"),
+                             tr("Could not save the quick buttons: %1").arg(error));
+        return false;
+    }
+    reloadQuickButtons();
+    return true;
+}
+
+void MainWindow::showQuickButtonsDialog() { editQuickButtons(-1); }
+
+void MainWindow::editQuickButtons(int index, const QuickButton *seed)
+{
+    if (!m_quickBar) {
+        return;
+    }
+    QuickButtonsDialog dialog(m_quickBar->buttons(), m_session, this, this);
+    if (seed) {
+        dialog.appendButton(*seed);
+    } else if (index >= 0) {
+        dialog.selectRow(index);
+    } else if (m_quickBar->buttons().isEmpty()) {
+        // Opened from the menu with nothing defined: the first thing anybody
+        // wants here is a button, not an empty list looking at them.
+        dialog.appendButton(QuickButton());
+    }
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    storeQuickButtons(dialog.buttons());
+}
+
+void MainWindow::quickButtonFromSelection()
+{
+    const QString selected = m_view->selectedText();
+    if (selected.trimmed().isEmpty()) {
+        return;
+    }
+    QuickButton seed;
+    seed.kind = TT_QUICK_BUTTON_TEXT;
+    // Everything after the first line break is dropped rather than kept: a
+    // selection spanning lines is usually output that happens to include the
+    // command, and a button that sends four lines by accident is worse than
+    // one somebody has to finish typing.
+    seed.text = selected.section(QLatin1Char('\n'), 0, 0).trimmed()
+        + QLatin1Char('\r');
+    editQuickButtons(-1, &seed);
 }
 
 bool MainWindow::runMacroFile(const QStringList &args, QString *outError,
@@ -2679,6 +2960,9 @@ void MainWindow::updateStatus()
             : QString());
     if (m_connectBar) {
         m_connectBar->refresh(m_session);
+    }
+    if (m_quickBar) {
+        m_quickBar->refresh(m_session);
     }
     if (m_disconnectAction) {
         // Enabled while connecting too: stopping an attempt that is waiting on
