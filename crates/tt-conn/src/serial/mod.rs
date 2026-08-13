@@ -435,9 +435,13 @@ impl SerialConn {
     /// that is a kernel limitation rather than a missing crate feature. So
     /// when the mode is on, the write is gated in userspace: poll DSR, send
     /// only while it is asserted, and give up after `timeout` rather than
-    /// blocking a UI thread forever. Win32 expresses the same deadline with a
-    /// temporary write-only `COMMTIMEOUTS`; the port's read timeout is restored
-    /// unchanged after every attempt.
+    /// blocking a UI thread forever. Win32 needs no gate — `fOutxDsrFlow` is
+    /// the driver's there — and spends `timeout` on the overlapped wait in
+    /// [`windows::write`] instead. That wait is the *outer* bound: the driver
+    /// has a write deadline of its own, because `serialport`'s `set_timeout`
+    /// writes the port's read timeout into `WriteTotalTimeoutConstant` as well,
+    /// so a stalled write usually ends there first and comes back as a short
+    /// count for the caller to retry.
     pub fn write(&mut self, data: &[u8], timeout: Duration) -> Result<usize> {
         if self.dead {
             return Err(Error::Disconnected);

@@ -173,10 +173,17 @@ fn event() -> Result<OwnedHandle> {
 
 /// One overlapped write, bounded by the caller's deadline.
 ///
-/// The deadline is ours rather than `COMMTIMEOUTS`', which is what lets the
-/// port's read policy stay untouched: a write no longer has to borrow and
-/// restore connection-wide state, so a failed write cannot leak a timeout into
-/// the next read.
+/// The deadline is ours rather than a borrowed `COMMTIMEOUTS`, which is what
+/// lets the port's read policy stay untouched: a write no longer has to spend
+/// and restore connection-wide state, so a failed write cannot leak a timeout
+/// into the next read.
+///
+/// **The driver still has a write timeout, and it is the port's read timeout.**
+/// `serialport`'s `set_timeout` puts one number in both halves of
+/// `COMMTIMEOUTS`, so a write held off by flow control is usually ended by the
+/// driver — a short count — well before this wait expires. The wait is not
+/// there to be the tighter of the two; it is there so that no answer from the
+/// driver, including none at all, can keep the frontend's thread.
 pub(super) fn write(
     port: &COMPort,
     io: &SerialIo,
