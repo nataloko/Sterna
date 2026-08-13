@@ -56,7 +56,9 @@ pub use xfer::{
 // above all — takes the settings and the metadata that describes them from the
 // same place it takes the session they belong to.
 use tt_config::ConnectionTcpCrSend;
-pub use tt_config::{Field, Ini, KeyboardMap, Kind, Settings, Shortcut, UserKeyType, FIELDS};
+pub use tt_config::{
+    Button, Field, Ini, KeyboardMap, Kind, Settings, Shortcut, UserKey, UserKeyType, FIELDS,
+};
 pub use tt_vt::DebugMode;
 pub use tt_vt::{PrinterEvent, WindowMetrics, WindowRequest};
 
@@ -1261,31 +1263,50 @@ impl Session {
             }
             KeyboardAction::Udk(n) => Ok(KeyCodeResult::Udk(n)),
             KeyboardAction::Shortcut(action) => Ok(KeyCodeResult::Shortcut(action)),
-            KeyboardAction::User(user) => match user.kind {
-                UserKeyType::Binary => {
-                    // `Hex2StrW` first, then `SendBinary`: each UTF-16 code
-                    // unit below 256 narrows to its byte and every other one
-                    // becomes FF. A supplementary character is two units and
-                    // therefore two FF bytes, which a Rust `char` loop would
-                    // quietly collapse into one.
-                    let decoded = tt_config::hex_decode_str(&user.value);
-                    let bytes: Vec<u8> = decoded
-                        .encode_utf16()
-                        .map(|u| u8::try_from(u).unwrap_or(0xff))
-                        .collect();
-                    self.send_bytes(&bytes)?;
-                    Ok(KeyCodeResult::Sent)
-                }
-                UserKeyType::Text => {
-                    self.send_text(&tt_config::hex_decode_str(&user.value))?;
-                    Ok(KeyCodeResult::Sent)
-                }
-                UserKeyType::Macro => Ok(KeyCodeResult::RunMacro(user.value)),
-                UserKeyType::Command => Ok(command_id(&user.value)
-                    .map(KeyCodeResult::Command)
-                    .unwrap_or(KeyCodeResult::Ignored)),
-                UserKeyType::Unknown(_) => Ok(KeyCodeResult::Ignored),
-            },
+            KeyboardAction::User(user) => self.run_user_key(&user),
+        }
+    }
+
+    /// Whether `KEYBOARD.CNF` binds this scan code, without pressing it.
+    ///
+    /// For the one caller that has to ask rather than dispatch: a dialog
+    /// offering to give a quick button a key sequence, which has to say so when
+    /// that key already belongs to the host.
+    pub fn key_code_bound(&self, scan: u16) -> bool {
+        self.key_map.get(scan).is_some()
+    }
+
+    /// Do what a `[User keys]` entry says, with no scan code involved.
+    ///
+    /// Split out of [`send_key_code`](Session::send_key_code) so that a quick
+    /// button and a pressed key are the same action and not two
+    /// implementations of it — the four kinds and their quirks are enough to
+    /// get wrong once.
+    pub fn run_user_key(&mut self, user: &UserKey) -> Result<KeyCodeResult> {
+        match user.kind {
+            UserKeyType::Binary => {
+                // `Hex2StrW` first, then `SendBinary`: each UTF-16 code
+                // unit below 256 narrows to its byte and every other one
+                // becomes FF. A supplementary character is two units and
+                // therefore two FF bytes, which a Rust `char` loop would
+                // quietly collapse into one.
+                let decoded = tt_config::hex_decode_str(&user.value);
+                let bytes: Vec<u8> = decoded
+                    .encode_utf16()
+                    .map(|u| u8::try_from(u).unwrap_or(0xff))
+                    .collect();
+                self.send_bytes(&bytes)?;
+                Ok(KeyCodeResult::Sent)
+            }
+            UserKeyType::Text => {
+                self.send_text(&tt_config::hex_decode_str(&user.value))?;
+                Ok(KeyCodeResult::Sent)
+            }
+            UserKeyType::Macro => Ok(KeyCodeResult::RunMacro(user.value.clone())),
+            UserKeyType::Command => Ok(command_id(&user.value)
+                .map(KeyCodeResult::Command)
+                .unwrap_or(KeyCodeResult::Ignored)),
+            UserKeyType::Unknown(_) => Ok(KeyCodeResult::Ignored),
         }
     }
 
