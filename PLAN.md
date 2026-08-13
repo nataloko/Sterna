@@ -4,7 +4,7 @@ Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
 **Last updated:** 2026-08-13 · **Stage:** 4 complete, first deliberate
-deviations landed (`docs/deviations.md`) · **Commits:** 557
+deviations landed (`docs/deviations.md`) · **Commits:** 560
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -5586,12 +5586,12 @@ before it can be started: a `QTemporaryFile` keeps its file open whatever
 `close()` suggests, and Windows refuses an image section for a file another
 handle holds open for writing, so until the download was detached the installer
 could not run at all — a failure only native Windows can see, and one the shell
-reports in its own words rather than ours (fixed 2026-08-13). Loose builds open the
-release page instead of guessing what to replace. Qt Network and its TLS stack
-are absent from an ordinary terminal's maps: linking them directly measured
-about 5 MB more idle PSS, so `sterna_updater` is loaded only for the explicit
-action. Both packages carry the TLS plugin their platform needs, including the
-Windows Schannel backend which import-table discovery cannot see.
+reports in its own words rather than ours (fixed 2026-08-13). Loose builds open
+the release page instead of guessing what to replace. Qt Network and its TLS
+stack are absent from an ordinary terminal's maps: linking them directly
+measured about 5 MB more idle PSS, so `sterna_updater` is loaded only for the
+explicit action. Both packages carry the TLS plugin their platform needs,
+including the Windows Schannel backend which import-table discovery cannot see.
 
 **The macro reference is generated, 2026-08-12.** `docs/macro/` converts all
 214 pages of the pinned English Tera Term macro manual to Markdown and retains
