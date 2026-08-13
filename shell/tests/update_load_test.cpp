@@ -1,6 +1,5 @@
 // Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 
-#include <QApplication>
 #include <QCoreApplication>
 #include <QDir>
 #include <QLibrary>
@@ -11,7 +10,7 @@
 
 int main(int argc, char **argv)
 {
-    QApplication app(argc, argv);
+    QCoreApplication app(argc, argv);
 #ifdef Q_OS_WIN
     const QString path = QDir(QCoreApplication::applicationDirPath())
                              .filePath(QStringLiteral("sterna_updater.dll"));
