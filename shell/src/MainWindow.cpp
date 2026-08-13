@@ -1519,18 +1519,19 @@ void MainWindow::checkForUpdatesOnStartup()
         if (QApplication::activeModalWidget()) {
             return;
         }
+        // Silently: a missing updater library is a loose build or a partial
+        // install, and nobody asked this question. Help > Check for Updates
+        // reports it in full. Do this before writing the stamp: no library
+        // means no request, so there was no check to remember.
+        if (!loadUpdater(nullptr)) {
+            return;
+        }
         // Written *before* the request, so an unreachable release server costs
         // one attempt a day rather than one per launch — the failure a quiet
         // check deliberately does not report is also the one that would
         // otherwise retry forever.
         rememberSettings({{QStringLiteral("updates.last_check"),
                            updateCheckStamp(QDateTime::currentDateTimeUtc())}});
-        // Silently: a missing updater library is a loose build or a partial
-        // install, and nobody asked this question. Help > Check for Updates
-        // reports it in full.
-        if (!loadUpdater(nullptr)) {
-            return;
-        }
         QMetaObject::invokeMethod(m_updater, "checkQuietly", Qt::QueuedConnection);
     });
 }

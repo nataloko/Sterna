@@ -278,6 +278,13 @@ void Updater::checkQuietly()
 void Updater::start(bool quiet)
 {
     if (m_busy) {
+        // A manual request made while the silent startup check is still in
+        // flight adopts that check. Otherwise the About button closes and the
+        // user sees nothing at all until an update happens to be available.
+        if (!quiet && m_quiet) {
+            m_quiet = false;
+            beginProgress(tr("Checking for a signed Sterna update..."), false);
+        }
         return;
     }
     m_busy = true;
