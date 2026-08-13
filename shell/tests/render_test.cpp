@@ -1818,12 +1818,25 @@ void test_about_shows_the_application_version()
         if (box) {
             CHECK(box->windowTitle() == QStringLiteral("About Sterna"));
             CHECK(box->text().contains(QStringLiteral("Sterna 9.8.7-test")));
+            auto *update = box->findChild<QPushButton *>(
+                QStringLiteral("aboutUpdateButton"));
+            CHECK(update != nullptr);
+            if (update) {
+                CHECK(update->text() == QStringLiteral("Check for Updates..."));
+            }
             inspected = true;
             box->accept();
         }
     });
     about->trigger();
     CHECK(inspected);
+    auto *help = window.findChild<QMenu *>(QStringLiteral("helpMenu"));
+    CHECK(help != nullptr);
+    if (help) {
+        for (QAction *action : help->actions()) {
+            CHECK(action->text() != QStringLiteral("Check for Updates..."));
+        }
+    }
     QCoreApplication::setApplicationVersion(previous);
 }
 

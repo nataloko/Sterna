@@ -1402,25 +1402,31 @@ void MainWindow::buildMenus()
     languageAction(m_stopMacroAction, "BTN_STOP", tr("Stop macro"));
     m_stopMacroAction->setEnabled(false);
 
-    // Deliberately user-initiated. There is no startup request or timer: this
-    // action is the user's permission to contact GitHub, and the signed
-    // manifest is still verified before any URL in it is trusted.
     QMenu *help = menuBar()->addMenu(tr("Help"));
     help->setObjectName(QStringLiteral("helpMenu"));
-    help->addAction(tr("Check for Updates..."), this,
-                    &MainWindow::checkForUpdates);
     help->addAction(tr("Release page"), this, [] {
         QDesktopServices::openUrl(
             QUrl(QStringLiteral("https://github.com/nataloko/Sterna/releases")));
     });
     help->addSeparator();
     QAction *about = help->addAction(tr("About Sterna"), this, [this] {
-        QMessageBox::about(
-            this, tr("About Sterna"),
+        QMessageBox box(
+            QMessageBox::Information, tr("About Sterna"),
             tr("<h3>Sterna %1</h3>"
                "<p>A serial, SSH and telnet terminal for Linux and Windows.</p>"
                "<p>Copyright &copy; the Sterna authors.</p>")
-                .arg(QCoreApplication::applicationVersion().toHtmlEscaped()));
+                .arg(QCoreApplication::applicationVersion().toHtmlEscaped()),
+            QMessageBox::Ok, this);
+        // Deliberately user-initiated. There is no startup request or timer:
+        // this button is permission to contact GitHub, and the signed manifest
+        // is still verified before any URL in it is trusted.
+        QPushButton *update =
+            box.addButton(tr("Check for Updates..."), QMessageBox::ActionRole);
+        update->setObjectName(QStringLiteral("aboutUpdateButton"));
+        box.exec();
+        if (box.clickedButton() == update) {
+            checkForUpdates();
+        }
     });
     about->setObjectName(QStringLiteral("aboutAction"));
 
