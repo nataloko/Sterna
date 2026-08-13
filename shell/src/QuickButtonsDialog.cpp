@@ -53,6 +53,7 @@ const MenuCommand kCommands[] = {
     {50380, QT_TRANSLATE_NOOP("QuickButtonsDialog", "Save setup")},
     {50395, QT_TRANSLATE_NOOP("QuickButtonsDialog", "Load key map...")},
     {50470, QT_TRANSLATE_NOOP("QuickButtonsDialog", "Run macro...")},
+    {50199, QT_TRANSLATE_NOOP("QuickButtonsDialog", "Close the window")},
 };
 
 /// The convenience set. `Ctrl+Alt+digit` because Alt alone is Meta when

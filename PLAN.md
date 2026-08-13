@@ -5664,7 +5664,7 @@ The rule for going on that list: user-visible, not forced by the platform, and
 reproducing upstream instead would have been easy. A divergence Linux or Qt
 forces is a port, and belongs in a code comment and in `AGENTS.md`.
 
-Five so far, all 2026-08-13:
+Six so far, all 2026-08-13:
 
 1. **The default baud rate is 115200**, where `ttset.c:919` gives 9600. The
    key, its parse and its absence of bounds are unchanged, so `BaudRate=9600`
@@ -5688,6 +5688,15 @@ Five so far, all 2026-08-13:
 5. **A signed update check at startup**, on by default and limited to once per
    day, stays silent unless it has a release to offer. The manual check remains
    available when the schedule is off.
+6. **Quick buttons**, a second bar of commands the user defined — text, bytes,
+   a macro or a menu command, each optionally on a shortcut and optionally
+   asking first. Upstream's equivalent is a `KEYBOARD.CNF` user key, and a
+   button *is* one: same four kinds, same escape, same `run_user_key`. What is
+   new is that it has a face, an editor and a list of its own
+   (`[Sterna Buttons]`, which is a list and so cannot be schema rows). Two
+   choices are argued in `docs/deviations.md` — the bar does not exist until a
+   button does, and no button ships with a shortcut, because a Qt action
+   outranks the terminal widget and takes the key from the host silently.
 
 `[Sterna]` is the first invented section in the schema, and
 `tt-config/tests/upstream.rs` now asserts in both directions: an upstream

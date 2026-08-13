@@ -650,6 +650,46 @@ the view fits the terminal to it, the same path a remote NAWS resize takes.
 0..255 values become Qt opacity and switch as focus enters and leaves. An
 active value omitted from the file inherits the loaded inactive one.
 
+## Quick buttons are user keys with a face on them
+
+The bar under the connect bar holds commands the user defined, and almost none
+of it is new code. A quick button *is* a `KEYBOARD.CNF` user key: the four
+kinds are `UserKeyType`, the value carries the same `$HH` escape, and pressing
+one calls `Session::run_user_key` — the arm `send_key_code` calls after it has
+looked a scan code up. So text goes out through `send_text` with `CRSend` and
+LNM applied, bytes go out raw, and the two that are not sends come back to the
+window as `TT_KEY_CODE_MACRO` and `TT_KEY_CODE_COMMAND`, which is exactly what
+a mapped key already returned. `MainWindow::runKeyAction` is the one dispatcher
+for both.
+
+The list is not settings. `[Sterna Buttons]` is parsed by
+`tt-config/src/buttons.rs`, because a list of records is what the schema cannot
+describe, and it reaches C++ through `tt_quick_buttons_*` — which hands out
+each value twice, stored and decoded, so the escape has one implementation and
+it is not this one. `QuickButtonsDialog` therefore edits plain text and the
+core does the escaping when the window saves.
+
+**The bar does not exist until a button does.** `window.quick_buttons` is what
+Setup > Show quick buttons writes, but an empty list hides the bar whatever it
+says; the alternative is permanent chrome in a terminal, which the connect bar
+already argues against one section up (`docs/deviations.md`, entry 4).
+
+Two traps live here:
+
+- **`QToolBar::clear()` does not delete the actions it removes**, and
+  `addAction(text)` parents them to the bar. Rebuilding without deleting them
+  leaves every previous action alive as a child, holding its shortcut and
+  answering `findChild` before the live one — the symptom is a button that
+  stops following the session. `buttons_test` found it.
+- **A shortcut is a key the terminal stops receiving.** A `QAction` outranks
+  `TerminalView::keyPressEvent`, silently, which is why no button ships with a
+  shortcut and why the editor checks a sequence against the window's actions,
+  Lua plugins, the loaded `KEYBOARD.CNF` and the keys a host plainly wants.
+  `TerminalView::scanForSequence` is the inverse of what `keyPressEvent` does
+  on the way in, and it lives beside that table rather than copying it. The
+  shortcuts sit on the bar's own actions, so hiding the bar hands the keys
+  back.
+
 ## Language catalogs stay Tera Term language catalogs
 
 All 14 UTF-8 `.lng` files are vendored byte-for-byte under `vendor/lang/` and
