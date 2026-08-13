@@ -63,6 +63,33 @@ on the other.
 build without. It is the Fedora spelling of the `libudev-dev` that the Ubuntu
 container already needed.
 
+## Tabs and simultaneous panels
+
+`TerminalPage` is the lifetime boundary for one connection: its `Session`,
+`TerminalView`, scrollbar, printer, macro runner, plugin state and modeless
+transfer dialog stay together even while the tab is off screen. The lightweight
+`PanelContainer` above those pages keeps an unlimited tab order and assigns at
+most four pages to visible slots. Single shows one page, Two puts two equal
+panels side by side, and Four is an equal 2x2 grid. Hidden pages remain alive and
+their descriptor-driven sessions keep pumping; ordinary Qt visibility keeps
+them out of the paint path.
+
+The highlighted pane is the active page. Clicking its header, terminal or
+scrollbar changes the aliases `MainWindow` uses for menus, status, title,
+macros, transfers, plugins and the control socket. Selecting a hidden tab puts
+it into the active slot; it does not stop the displaced connection. Layout
+changes order the active page first, then pages already visible, then remaining
+tabs. Empty slots are widgets with Serial, SSH, Telnet and Local shell buttons,
+not preallocated sessions; accepting a dialog creates a page in that exact
+slot, while cancelling leaves it empty.
+
+`[Sterna] PanelLayout=single|two|four` is window-wide. A change through View,
+the generated settings surface, a macro or a plugin is copied into every open
+page and writes only that key immediately, preserving the rest of the INI.
+Every visible `TerminalView` refits its own grid to the panel it receives, and
+the window pushes a separate client-origin, client-size and cell-size snapshot
+to each visible session after the layout settles.
+
 ## The Windows build
 
 The same container cross-compiles it, with `mingw64-qt6-qtbase` — Fedora ships

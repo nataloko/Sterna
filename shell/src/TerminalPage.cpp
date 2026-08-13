@@ -26,6 +26,7 @@ TerminalPage::TerminalPage(const I18n *i18n, QWidget *macroWindow,
     , m_plugins(
           new Plugins(m_session, m_macro, pluginsDirectory, settingsPath, this))
 {
+    m_scroll->setObjectName(QStringLiteral("terminalScrollBar"));
     // A plain QWidget plus a scrollbar rather than a QAbstractScrollArea: the
     // painter draws straight onto the widget in cell coordinates, and a
     // scroll area would add a viewport child and a coordinate translation to

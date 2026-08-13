@@ -26,6 +26,11 @@ public:
 
     explicit PanelContainer(QWidget *parent = nullptr);
 
+    /// One terminal's preferred size, whatever the visible panel count. A
+    /// layout change divides the existing client area; it never asks the
+    /// top-level window to grow two or four times over.
+    QSize sizeHint() const override;
+
     int count() const { return m_pages.size(); }
     QWidget *widget(int index) const;
     int indexOf(QWidget *page) const { return m_pages.indexOf(page); }
@@ -81,4 +86,3 @@ private:
     PanelLayout m_layout = PanelLayout::Single;
     bool m_changingTabs = false;
 };
-

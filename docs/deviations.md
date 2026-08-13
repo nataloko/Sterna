@@ -18,6 +18,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 1 | The default baud rate is 115200 | 9600 | unreleased |
 | 2 | The connect dialogs remember the last connection, across restarts | Only Setup > Save persists anything | unreleased |
 | 3 | A bar under the menu: port, connect/disconnect, local echo | No toolbar at all | unreleased |
+| 4 | One, two or four simultaneous connection panels | One connection per window | unreleased |
 
 ---
 
@@ -106,3 +107,31 @@ live `terminal.local_echo`, which a host's SRM and a macro can also change.
 writes. The switch exists because chrome nobody can remove does not belong in a
 terminal; it is deliberately *not* tied to `PopupMenu` or `HideTitle`, which are
 about the menu.
+
+## 4. Simultaneous connection panels
+
+View can show the active connection alone, two equal panels side by side, or
+four equal panels in a 2x2 grid. The tabs are still the connections and remain
+unlimited; the panel layout decides only which one, two or four are visible.
+Hidden sessions keep running.
+
+**Why.** Serial and network work is often comparative: two consoles during a
+failover, or a switch, router and two attached hosts during a change. Separate
+top-level windows hide the relationship and make the shared menu, macro and
+transfer target ambiguous. Panels keep those sessions visible together while
+one plainly highlighted pane remains the target of keyboard input and every
+window-level action. Broadcast input is deliberately not part of the feature.
+
+**What is unchanged.** A tab still owns exactly one independent `TerminalPage`
+and therefore one session, viewport, printer, macro runner, plugin VM and
+transfer. A connection that is not in a panel is hidden rather than suspended;
+selecting its tab replaces the active panel without closing either session.
+Closing, duplication, tab movement and `AutoWinClose` still operate on the tab,
+not on a view of it.
+
+**Where it lives.** `shell/src/PanelContainer.{h,cpp}` owns tab order and the
+four visible slots; `MainWindow` continues to route its aliases through the
+active `TerminalPage`. `[Sterna] PanelLayout=single|two|four`
+(`window.panel_layout`) remembers only the layout. A restored multi-panel
+window starts with its one ordinary terminal plus connection buttons in the
+empty slots; it does not invent or restore sessions.

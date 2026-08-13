@@ -272,6 +272,9 @@ public:
     /// change; a snapshot is needed because the reply is composed while the
     /// sequence is parsed and there is nowhere in there to ask a toolkit.
     void setWindowMetrics(const TtWindowMetrics &metrics);
+    /// The last frontend snapshot. Exposed for the shell's geometry tests; the
+    /// terminal itself still receives it only through `setWindowMetrics`.
+    TtWindowMetrics windowMetrics() const { return m_windowMetrics; }
     /// How long the line is held is `SendBreakTime`'s, so there is nothing to
     /// pass — see `tt_session_send_break`.
     void sendBreak();
@@ -546,6 +549,7 @@ private:
     QString m_title;
     QString m_connectionHost;
     quint16 m_connectionPort = 0;
+    TtWindowMetrics m_windowMetrics {};
 
     /// Read the window title back from the core and emit an edge.
     ///

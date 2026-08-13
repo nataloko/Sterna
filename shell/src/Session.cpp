@@ -713,6 +713,7 @@ void Session::setCellPixels(int w, int h)
 
 void Session::setWindowMetrics(const TtWindowMetrics &metrics)
 {
+    m_windowMetrics = metrics;
     tt_session_set_window_metrics(m_session, &metrics);
 }
 

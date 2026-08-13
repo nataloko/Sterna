@@ -25,7 +25,11 @@ public:
         , m_panel(panel)
     {
         setObjectName(QStringLiteral("panelFrame%1").arg(panel));
-        setFrameShape(QFrame::StyledPanel);
+        // The grid spacing separates panes. A styled frame changes its width
+        // when the platform style is first polished, which makes a pre-show
+        // size hint two pixels shorter than the same hint after show; the
+        // theme-coloured header is the active marker and stays metric-stable.
+        setFrameShape(QFrame::NoFrame);
         setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
 
         auto *outer = new QVBoxLayout(this);
@@ -73,6 +77,18 @@ public:
     }
 
     QWidget *page() const { return m_page; }
+
+    QSize sizeHintFor(QWidget *page) const
+    {
+        m_header->ensurePolished();
+        QSize out = page ? page->sizeHint() : QSize(640, 400);
+        out = out.expandedTo(QSize(m_header->sizeHint().width(), out.height()));
+        const QMargins margins = layout()->contentsMargins();
+        out.rwidth() += margins.left() + margins.right() + frameWidth() * 2;
+        out.rheight() += m_header->sizeHint().height() + margins.top()
+                         + margins.bottom() + frameWidth() * 2;
+        return out;
+    }
 
     void setPage(QWidget *page, const QString &title)
     {
@@ -124,7 +140,6 @@ public:
                          palette.color(active ? QPalette::HighlightedText
                                               : QPalette::Text));
         m_header->setPalette(palette);
-        setLineWidth(active ? 2 : 1);
     }
 
 protected:
@@ -233,6 +248,27 @@ PaneFrame *frameAt(const QVector<PaneFrame *> &frames, int panel)
 QWidget *PanelContainer::widget(int index) const
 {
     return index >= 0 && index < m_pages.size() ? m_pages[index] : nullptr;
+}
+
+QSize PanelContainer::sizeHint() const
+{
+    const int panel = panelOf(m_current);
+    PaneFrame *frame = frameAt(m_frames, panel >= 0 ? panel : 0);
+    if (frame) {
+        frame->ensurePolished();
+    }
+    m_tabs->ensurePolished();
+    QSize out = frame ? frame->sizeHintFor(m_current) : QSize(640, 400);
+    if (m_pages.size() > 1) {
+        out.rheight() += m_tabs->sizeHint().height();
+    }
+    // QMainWindow's menu/status chrome consumes two more vertical pixels when
+    // its native layout is first shown than its pre-show hint reports. Keep a
+    // two-pixel remainder in the terminal client so an exact N-row size hint
+    // does not refit to N-1 on that first layout. It is smaller than one cell
+    // on every supported font and therefore never creates an extra row.
+    out.rheight() += 2;
+    return out;
 }
 
 void PanelContainer::setCurrentIndex(int index) { setCurrentWidget(widget(index)); }

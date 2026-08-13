@@ -71,6 +71,10 @@ public:
     QSize sizeHint() const override;
     /// The pixel size this many cells needs, at the current font.
     QSize sizeForCells(int cols, int rows) const;
+    /// Re-fit the grid to the current viewport without resizing its window.
+    /// Panel settings use this after a cell-size change, including on a
+    /// visible background page which never drives the top-level window.
+    void refitToViewport() { refit(); }
 
     /// `enablekeyb` — swallow keystrokes instead of sending them, so a macro's
     /// own prompts are not typed over.

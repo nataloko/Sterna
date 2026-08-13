@@ -6,6 +6,7 @@
 #include "Printer.h"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QClipboard>
 #include <QCloseEvent>
@@ -22,12 +23,12 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QScreen>
-#include <QTabWidget>
 #include <QPushButton>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QLocale>
 #include <QLibrary>
+#include <QLayout>
 #include <QStatusBar>
 #include <QTimer>
 #include <QUrl>
@@ -81,6 +82,27 @@ QString settingDefault(const char *name)
         }
     }
     return {};
+}
+
+PanelLayout panelLayout(const QString &value)
+{
+    if (value == QLatin1String("two")) {
+        return PanelLayout::Two;
+    }
+    if (value == QLatin1String("four")) {
+        return PanelLayout::Four;
+    }
+    return PanelLayout::Single;
+}
+
+QString panelLayoutSetting(PanelLayout layout)
+{
+    switch (layout) {
+    case PanelLayout::Two: return QStringLiteral("two");
+    case PanelLayout::Four: return QStringLiteral("four");
+    case PanelLayout::Single: return QStringLiteral("single");
+    }
+    return QStringLiteral("single");
 }
 
 /// Whether this window system gives a client coordinates it may restore.
@@ -198,26 +220,43 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
                                           : pluginsPath)
 {
     m_i18n = new I18n(this);
-    m_tabs = new QTabWidget(this);
-    // With one session the tab bar disappears completely. The page then has
-    // exactly the same cell area the pre-tab window did; the bar appears only
-    // when it has a choice to present.
-    m_tabs->setTabBarAutoHide(true);
-    m_tabs->setDocumentMode(true);
-    m_tabs->setMovable(true);
-    setCentralWidget(m_tabs);
+    m_panels = new PanelContainer(this);
+    setCentralWidget(m_panels);
 
     m_page = createPage();
-    m_tabs->addTab(m_page, tr("Terminal"));
+    m_panels->addPage(m_page, tr("Terminal"));
     activatePage(m_page);
-    connect(m_tabs, &QTabWidget::currentChanged, this, [this](int index) {
-        if (index >= 0) {
-            activatePage(static_cast<TerminalPage *>(m_tabs->widget(index)));
-        }
-    });
-    connect(m_tabs, &QTabWidget::tabCloseRequested, this, [this](int index) {
-        closePage(static_cast<TerminalPage *>(m_tabs->widget(index)));
-    });
+    connect(m_panels, &PanelContainer::currentChanged, this,
+            [this](QWidget *widget) {
+                activatePage(static_cast<TerminalPage *>(widget));
+            });
+    connect(m_panels, &PanelContainer::closeRequested, this,
+            [this](QWidget *widget) {
+                closePage(static_cast<TerminalPage *>(widget));
+            });
+    connect(m_panels, &PanelContainer::visiblePagesChanged, this,
+            &MainWindow::queueWindowMetrics);
+    connect(m_panels, &PanelContainer::emptyConnectionRequested, this,
+            [this](int panel, PanelContainer::ConnectionKind kind) {
+                m_requestedPanel = panel;
+                switch (kind) {
+                case PanelContainer::ConnectionKind::Serial:
+                    showConnectDialog();
+                    break;
+                case PanelContainer::ConnectionKind::Ssh:
+                    showSshDialog();
+                    break;
+                case PanelContainer::ConnectionKind::Telnet:
+                    showTelnetDialog();
+                    break;
+                case PanelContainer::ConnectionKind::Shell:
+                    connectPty();
+                    break;
+                }
+                // Accepted connection paths consume the slot while creating
+                // their page. A cancelled dialog reaches this with it intact.
+                m_requestedPanel = -1;
+            });
 
     tt_serial_params_default(&m_lastParams);
 
@@ -258,6 +297,14 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
 
     buildMenus();
 
+    // `sizeHint()` is consumed before the first show so a configured grid opens
+    // at that size. Polishing after show can add two pixels to Qt's menu/status
+    // chrome; do it now so the pre-show hint and the laid-out client agree.
+    ensurePolished();
+    menuBar()->ensurePolished();
+    statusBar()->ensurePolished();
+    m_connectBar->ensurePolished();
+
     if (!m_plugins->error().isEmpty()) {
         onNotice(tr("Could not load Lua plugins: %1").arg(m_plugins->error()));
     }
@@ -267,12 +314,14 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
     // not there is a first run: every setting takes its default and nothing is
     // written until `Save setup`.
     QString error;
+    m_loadingPage = true;
     if (!m_session->loadSettings(m_settingsPath, &error)) {
         // Not fatal and not a dialog. An unreadable settings file is a reason
         // to run with the defaults and say so once, not a reason to refuse to
         // open a terminal.
         onNotice(tr("Could not read the settings: %1").arg(error));
     }
+    m_loadingPage = false;
     // After the load and before anything can connect: the connect dialogs and
     // `--port` both open at what was last used, which needs the file read first.
     restoreRememberedConnection();
@@ -292,7 +341,7 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
 TerminalPage *MainWindow::createPage()
 {
     auto *page =
-        new TerminalPage(m_i18n, this, m_pluginsPath, m_settingsPath, m_tabs);
+        new TerminalPage(m_i18n, this, m_pluginsPath, m_settingsPath, m_panels);
     wirePage(page);
     return page;
 }
@@ -302,8 +351,8 @@ void MainWindow::activatePage(TerminalPage *page)
     if (!page) {
         return;
     }
-    if (m_tabs && m_tabs->currentWidget() != page) {
-        m_tabs->setCurrentWidget(page);
+    if (m_panels && m_panels->currentWidget() != page) {
+        m_panels->setCurrentWidget(page);
     }
     m_page = page;
     m_session = page->session();
@@ -321,7 +370,7 @@ void MainWindow::activatePage(TerminalPage *page)
         reloadLanguage();
         showTitle(m_session->title());
         updateStatus();
-        pushWindowMetrics();
+        queueWindowMetrics();
         m_view->setFocus();
     }
 }
@@ -394,7 +443,7 @@ void MainWindow::wirePage(TerminalPage *page)
         // disappear inside a modal dialog's nested event loop; closing its
         // disabled parent out from under it would strand the dialog.
         if (isEnabled()) {
-            if (m_tabs->count() == 1) {
+            if (m_panels->count() == 1) {
                 // `close()` hides this stack-owned window; it does not delete
                 // the page from inside the session's signal stack.
                 close();
@@ -437,13 +486,8 @@ void MainWindow::wirePage(TerminalPage *page)
             onNotice(text);
         }
     });
-    connect(session, &Session::settingsChanged, this, [this, page] {
-        if (page == m_page) {
-            onSettingsChanged();
-        } else {
-            page->view()->applySettings();
-        }
-    });
+    connect(session, &Session::settingsChanged, this,
+            [this, page] { onPageSettingsChanged(page); });
     connect(session, &Session::transferProgressed, this,
             [this, page](const TransferProgress &progress) {
                 if (auto *dialog = page->transferDialog()) {
@@ -494,16 +538,18 @@ void MainWindow::wirePage(TerminalPage *page)
             });
 }
 
-TerminalPage *MainWindow::addBlankPage()
+TerminalPage *MainWindow::addBlankPage(int preferredPanel)
 {
     auto *page = createPage();
-    m_tabs->addTab(page, tr("Terminal"));
+    m_panels->addPage(page, tr("Terminal"), preferredPanel);
     activatePage(page);
 
     QString error;
+    m_loadingPage = true;
     if (!m_session->loadSettings(m_settingsPath, &error)) {
         onNotice(tr("Could not read the settings: %1").arg(error));
     }
+    m_loadingPage = false;
     const QString keyMap = m_keyMapPath.isEmpty()
                                ? QDir(QFileInfo(m_settingsPath).absolutePath())
                                      .filePath(QStringLiteral("KEYBOARD.CNF"))
@@ -521,6 +567,12 @@ void MainWindow::newTab() { addBlankPage(); }
 
 void MainWindow::ensureIdlePage()
 {
+    if (m_requestedPanel >= 0) {
+        const int requested = m_requestedPanel;
+        m_requestedPanel = -1;
+        addBlankPage(requested);
+        return;
+    }
     if (m_session->isConnected() || m_session->isConnecting()) {
         addBlankPage();
     }
@@ -551,19 +603,17 @@ void MainWindow::duplicateSession()
 
 void MainWindow::closePage(TerminalPage *page, bool confirm)
 {
-    const int index = m_tabs->indexOf(page);
+    const int index = m_panels->indexOf(page);
     if (index < 0) {
         return;
     }
-    if (m_tabs->count() == 1) {
+    if (m_panels->count() == 1) {
         close();
         return;
     }
 
-    TerminalPage *was = m_page;
-    activatePage(page);
-    if (confirm && m_session->isConnected() && !confirmDisconnect()) {
-        activatePage(was);
+    if (confirm && page->session()->isConnected()
+        && !confirmDisconnect(page)) {
         return;
     }
 
@@ -573,14 +623,14 @@ void MainWindow::closePage(TerminalPage *page, bool confirm)
     if (page == m_pendingSshPage) {
         m_pendingSshPage = nullptr;
     }
-    m_tabs->removeTab(index);
+    m_panels->removePage(index);
     page->deleteLater();
     updateTabBar();
 }
 
 void MainWindow::updateTabTitle(TerminalPage *page)
 {
-    const int index = m_tabs->indexOf(page);
+    const int index = m_panels->indexOf(page);
     if (index < 0) {
         return;
     }
@@ -592,14 +642,14 @@ void MainWindow::updateTabTitle(TerminalPage *page)
     if (label.isEmpty()) {
         label = session->isConnecting() ? tr("connecting...") : tr("Terminal");
     }
-    m_tabs->setTabText(index, label);
-    m_tabs->setTabToolTip(index, session->describe());
+    m_panels->setTabText(index, label);
+    m_panels->setTabToolTip(index, session->describe());
 }
 
 void MainWindow::updateTabBar()
 {
-    const bool several = m_tabs->count() > 1;
-    m_tabs->setTabsClosable(several);
+    const bool several = m_panels->count() > 1;
+    m_panels->setTabsClosable(several);
     if (m_closeTabAction) {
         m_closeTabAction->setEnabled(true);
     }
@@ -720,7 +770,7 @@ bool MainWindow::event(QEvent *event)
         && (type == QEvent::Move || type == QEvent::Resize
             || type == QEvent::WindowStateChange || type == QEvent::Show
             || type == QEvent::ScreenChangeInternal)) {
-        pushWindowMetrics();
+        queueWindowMetrics();
     }
     return handled;
 }
@@ -728,29 +778,46 @@ bool MainWindow::event(QEvent *event)
 void MainWindow::pushWindowMetrics()
 {
     const QRect frame = frameGeometry();
-    const QPoint client = m_view->mapToGlobal(QPoint(0, 0));
-    const QSize cell = m_view->sizeForCells(1, 1);
     // The *work* area, not the whole monitor: `GetDesktopRect`
     // (`ttlib_static.c:135`) is `MONITORINFO::rcWork`, so a panel or a dock
     // comes off before `CSI 15 t` and `CSI 19 t` are answered.
     const QScreen *screen = this->screen();
     const QSize work = screen ? screen->availableGeometry().size() : QSize(0, 0);
 
-    TtWindowMetrics m{};
-    m.x = frame.x();
-    m.y = frame.y();
-    m.client_x = client.x();
-    m.client_y = client.y();
-    m.width = frame.width();
-    m.height = frame.height();
-    m.client_width = m_view->width();
-    m.client_height = m_view->height();
-    m.cell_width = cell.width();
-    m.cell_height = cell.height();
-    m.screen_width = work.width();
-    m.screen_height = work.height();
-    m.iconified = isMinimized();
-    m_session->setWindowMetrics(m);
+    for (QWidget *widget : m_panels->visiblePages()) {
+        auto *page = static_cast<TerminalPage *>(widget);
+        TerminalView *view = page->view();
+        const QPoint client = view->mapToGlobal(QPoint(0, 0));
+        const QSize cell = view->sizeForCells(1, 1);
+
+        TtWindowMetrics m{};
+        m.x = frame.x();
+        m.y = frame.y();
+        m.client_x = client.x();
+        m.client_y = client.y();
+        m.width = frame.width();
+        m.height = frame.height();
+        m.client_width = view->width();
+        m.client_height = view->height();
+        m.cell_width = cell.width();
+        m.cell_height = cell.height();
+        m.screen_width = work.width();
+        m.screen_height = work.height();
+        m.iconified = isMinimized();
+        page->session()->setWindowMetrics(m);
+    }
+}
+
+void MainWindow::queueWindowMetrics()
+{
+    if (m_metricsQueued) {
+        return;
+    }
+    m_metricsQueued = true;
+    QTimer::singleShot(0, this, [this] {
+        m_metricsQueued = false;
+        pushWindowMetrics();
+    });
 }
 
 void MainWindow::onWindowOperation(const TtWindowRequest &request)
@@ -825,11 +892,95 @@ void MainWindow::applyWindowOpacity(bool active)
     setWindowOpacity(static_cast<qreal>(opacity) / 255.0);
 }
 
+void MainWindow::onPageSettingsChanged(TerminalPage *page)
+{
+    const PanelLayout requested = panelLayout(
+        page->session()->setting(QStringLiteral("window.panel_layout")));
+    if (!m_syncingPanelLayout && requested != m_panels->layoutMode()) {
+        // This catches every generic surface, not just the View actions: the
+        // settings dialog, TTL/Lua setsetting, and plugin settings all arrive
+        // as the same page signal and move the one window-wide value.
+        // Loading a page applies the file without rewriting it. A live change
+        // through View or any generic settings surface is persisted at once.
+        setPanelLayout(requested, !m_loadingPage);
+    }
+
+    if (page == m_page) {
+        onSettingsChanged();
+    } else {
+        page->view()->applySettings();
+    }
+    if (isVisible() && m_panels->panelOf(page) >= 0) {
+        page->view()->refitToViewport();
+    }
+    queueWindowMetrics();
+}
+
+void MainWindow::setPanelLayout(PanelLayout layout, bool persist)
+{
+    if (m_syncingPanelLayout) {
+        return;
+    }
+    m_syncingPanelLayout = true;
+    const QString value = panelLayoutSetting(layout);
+    for (int i = 0; i < m_panels->count(); i++) {
+        auto *page = static_cast<TerminalPage *>(m_panels->widget(i));
+        if (page->session()->setting(QStringLiteral("window.panel_layout"))
+            == value) {
+            continue;
+        }
+        QString error;
+        if (!page->session()->setSetting(
+                QStringLiteral("window.panel_layout"), value, &error)) {
+            onNotice(tr("Could not change the panel layout: %1").arg(error));
+        }
+    }
+    m_panels->setLayoutMode(layout);
+    updatePanelActions();
+    queueWindowMetrics();
+    m_syncingPanelLayout = false;
+
+    if (!persist) {
+        return;
+    }
+    QDir().mkpath(QFileInfo(m_settingsPath).absolutePath());
+    QString error;
+    if (!m_session->rememberSettings(
+            {{QStringLiteral("window.panel_layout"), value}}, m_settingsPath,
+            &error)) {
+        fprintf(stderr, "Sterna: could not save the panel layout: %s\n",
+                qPrintable(error));
+    }
+}
+
+void MainWindow::updatePanelActions()
+{
+    const PanelLayout layout = m_panels->layoutMode();
+    if (m_singlePanelAction) {
+        m_singlePanelAction->setChecked(layout == PanelLayout::Single);
+    }
+    if (m_twoPanelAction) {
+        m_twoPanelAction->setChecked(layout == PanelLayout::Two);
+    }
+    if (m_fourPanelAction) {
+        m_fourPanelAction->setChecked(layout == PanelLayout::Four);
+    }
+}
+
 void MainWindow::onSettingsChanged()
 {
     reloadLanguage();
     const QSize oldCell = m_view->sizeForCells(1, 1);
     m_view->applySettings();
+    // PanelContainer deliberately supplies one terminal's hint regardless of
+    // how many slots are visible. The page is below a stacked pane layout, so
+    // carry the child's invalidation to QMainWindow explicitly; otherwise the
+    // first `sizeHint()` after loading a 100x30 setup can still be the hint the
+    // disconnected 80x24 page had at construction.
+    m_panels->updateGeometry();
+    if (layout()) {
+        layout()->invalidate();
+    }
     const bool cellSizeChanged = oldCell != m_view->sizeForCells(1, 1);
 
     // Tera Term's four accelerators are resources whose handlers consult
@@ -883,7 +1034,9 @@ void MainWindow::onSettingsChanged()
     // user.
     const int cols = m_session->setting(QStringLiteral("terminal.cols")).toInt();
     const int rows = m_session->setting(QStringLiteral("terminal.rows")).toInt();
-    if (isVisible() && cols > 0 && rows > 0
+    if (!m_loadingPage && m_panels->count() == 1
+        && m_panels->layoutMode() == PanelLayout::Single && isVisible()
+        && cols > 0 && rows > 0
         && (cellSizeChanged || cols != m_session->cols()
             || rows != m_session->rows())) {
         const QSize want = m_view->sizeForCells(cols, rows);
@@ -931,6 +1084,7 @@ void MainWindow::onSettingsChanged()
     if (m_toolbarAction) {
         m_toolbarAction->setChecked(toolbar);
     }
+    updatePanelActions();
     m_view->setPopupMenuEnabled(
         menuHidden && m_session->setting(QStringLiteral("window.popup_menu_enabled"))
                           == QLatin1String("on"));
@@ -1014,6 +1168,7 @@ void MainWindow::installPluginActions()
     QHash<QString, QMenu *> menus = {
         {QStringLiteral("File"), findChild<QMenu *>(QStringLiteral("fileMenu"))},
         {QStringLiteral("Edit"), findChild<QMenu *>(QStringLiteral("editMenu"))},
+        {QStringLiteral("View"), findChild<QMenu *>(QStringLiteral("viewMenu"))},
         {QStringLiteral("Control"),
          findChild<QMenu *>(QStringLiteral("controlMenu"))},
         {QStringLiteral("Setup"), findChild<QMenu *>(QStringLiteral("setupMenu"))},
@@ -1263,13 +1418,14 @@ void MainWindow::buildMenus()
     // Linux line editor receives Meta. A menu that stole Alt+B from readline
     // would be a menu people disable the whole menu bar to escape.
     //
-    // The bar is in Tera Term's order — File, Edit, Setup, Control, Help — and
+    // The compatible menus keep Tera Term's order. View is Sterna's one
+    // addition, between Edit and Setup where desktop applications put it, and
     // so is each menu, for every item the two programs share: the log and the
     // transfers under File, Send break under Control, Load key map after Save
     // setup. There is deliberately no Terminal menu, because upstream has
     // none and a hand reaching for Control > Send break should find it there.
-    // Upstream's Window menu is the one absence: it arranges several top-level
-    // windows, and there is one window here with tabs in it.
+    // upstream's Window menu remains absent: it arranges several top-level
+    // windows, while View chooses how this one's tabs share its client area.
     QMenu *file = menuBar()->addMenu(tr("File"));
     file->setObjectName(QStringLiteral("fileMenu"));
     languageAction(file->menuAction(), "MENU_FILE", tr("File"));
@@ -1347,6 +1503,32 @@ void MainWindow::buildMenus()
         tr("Paste"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V), this,
         [this] { m_view->pasteClipboard(); });
     languageAction(paste, "MENU_EDIT_PASTE", tr("Paste"));
+
+    QMenu *view = menuBar()->addMenu(tr("View"));
+    view->setObjectName(QStringLiteral("viewMenu"));
+    auto *panelGroup = new QActionGroup(view);
+    panelGroup->setExclusive(true);
+    m_singlePanelAction = view->addAction(tr("Single"));
+    m_singlePanelAction->setObjectName(QStringLiteral("singlePanelAction"));
+    m_twoPanelAction = view->addAction(tr("2 panels"));
+    m_twoPanelAction->setObjectName(QStringLiteral("twoPanelAction"));
+    m_fourPanelAction = view->addAction(tr("4 panels"));
+    m_fourPanelAction->setObjectName(QStringLiteral("fourPanelAction"));
+    for (QAction *action : {m_singlePanelAction, m_twoPanelAction,
+                            m_fourPanelAction}) {
+        action->setCheckable(true);
+        panelGroup->addAction(action);
+    }
+    // Deliberately no shortcuts. A terminal must not lose three key
+    // combinations to window furniture, especially when KEYBOARD.CNF can map
+    // every physical combination independently.
+    connect(m_singlePanelAction, &QAction::triggered, this,
+            [this] { setPanelLayout(PanelLayout::Single, true); });
+    connect(m_twoPanelAction, &QAction::triggered, this,
+            [this] { setPanelLayout(PanelLayout::Two, true); });
+    connect(m_fourPanelAction, &QAction::triggered, this,
+            [this] { setPanelLayout(PanelLayout::Four, true); });
+    updatePanelActions();
 
     // "Setup", which is Tera Term's own name for this menu, so that someone
     // arriving from it looks in the right place — and before Control, which is
@@ -1907,12 +2089,13 @@ void MainWindow::onSshFailed(const QString &error)
     updateStatus();
 }
 
-bool MainWindow::confirmDisconnect()
+bool MainWindow::confirmDisconnect(TerminalPage *page)
 {
-    if (m_session->linkKind() != TT_LINK_NETWORK) {
+    Session *session = page ? page->session() : nullptr;
+    if (!session || session->linkKind() != TT_LINK_NETWORK) {
         return true;
     }
-    if (m_session->setting(QStringLiteral("connection.confirm_disconnect"))
+    if (session->setting(QStringLiteral("connection.confirm_disconnect"))
         != QLatin1String("on")) {
         return true;
     }
@@ -1939,20 +2122,16 @@ void MainWindow::closeEvent(QCloseEvent *event)
     // `CloseTT` is upstream's third condition here (`vtwin.cpp:1670`) — a
     // window closing because the *application* is quitting does not ask. There
     // is nothing equivalent yet: this process is one window.
-    TerminalPage *original = m_page;
-    for (int i = 0; i < m_tabs->count(); i++) {
-        auto *page = static_cast<TerminalPage *>(m_tabs->widget(i));
+    for (int i = 0; i < m_panels->count(); i++) {
+        auto *page = static_cast<TerminalPage *>(m_panels->widget(i));
         if (!page->session()->isConnected()) {
             continue;
         }
-        activatePage(page);
-        if (!confirmDisconnect()) {
-            activatePage(original);
+        if (!confirmDisconnect(page)) {
             event->ignore();
             return;
         }
     }
-    activatePage(original);
     QMainWindow::closeEvent(event);
     if (!event->isAccepted()
         || m_session->setting(QStringLiteral("window.save_position"))
@@ -1980,7 +2159,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
 void MainWindow::disconnectPort()
 {
-    if (!confirmDisconnect()) {
+    if (!confirmDisconnect(m_page)) {
         return;
     }
     m_session->disconnectPort();

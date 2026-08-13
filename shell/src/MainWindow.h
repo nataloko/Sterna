@@ -8,6 +8,7 @@
 
 #include "sterna.h"
 
+#include "PanelContainer.h"
 #include "Session.h"
 
 class ConnectBar;
@@ -16,7 +17,6 @@ class I18n;
 class Macro;
 class Plugins;
 class QLabel;
-class QTabWidget;
 class QLibrary;
 class TerminalPage;
 class TerminalView;
@@ -147,6 +147,9 @@ private:
     /// for on demand: the reply to `CSI 14 t` is composed while the sequence
     /// is being parsed, and there is nowhere in there to call into Qt.
     void pushWindowMetrics();
+    /// Defer until Qt has assigned the panel grid's child geometries, and
+    /// coalesce the resize events one top-level change produces.
+    void queueWindowMetrics();
 
 private slots:
     void showConnectDialog();
@@ -208,7 +211,7 @@ private:
     /// mutate the active page's status or dialogs.
     void wirePage(TerminalPage *page);
     /// Load the active setup and key map into a fresh, disconnected page.
-    TerminalPage *addBlankPage();
+    TerminalPage *addBlankPage(int preferredPanel = -1);
     /// New Connection opens another upstream window when this one is busy;
     /// the in-process equivalent is another tab.
     void ensureIdlePage();
@@ -231,7 +234,12 @@ private:
     /// serial session closes without a word however this is set. The reasoning
     /// is visible once stated: reopening a serial port costs nothing, and
     /// reopening a session on a router four hops away costs a login.
-    bool confirmDisconnect();
+    bool confirmDisconnect(TerminalPage *page);
+    /// Apply one window-wide panel layout to every page and, when requested,
+    /// write only `PanelLayout` to the active INI immediately.
+    void setPanelLayout(PanelLayout layout, bool persist);
+    void updatePanelActions();
+    void onPageSettingsChanged(TerminalPage *page);
     /// Start `args`' macro and complain in a box if it will not start. The one
     /// place a macro is launched, whichever of the two asked: the menu, or a
     /// `/M=` on the command line.
@@ -301,7 +309,7 @@ private:
     QString m_keyMapPath;
     I18n *m_i18n = nullptr;
     QString m_languageSetting;
-    QTabWidget *m_tabs = nullptr;
+    PanelContainer *m_panels = nullptr;
     /// The lifetime boundary for everything that points at this session.
     TerminalPage *m_page = nullptr;
     /// Aliases into `m_page`, kept while the window has one active page so the
@@ -315,6 +323,9 @@ private:
     /// `window.toolbar` is on, which is what Setup > Show toolbar writes.
     ConnectBar *m_connectBar = nullptr;
     QAction *m_toolbarAction = nullptr;
+    QAction *m_singlePanelAction = nullptr;
+    QAction *m_twoPanelAction = nullptr;
+    QAction *m_fourPanelAction = nullptr;
     QAction *m_disconnectAction = nullptr;
     QAction *m_newTabAction = nullptr;
     QAction *m_closeTabAction = nullptr;
@@ -363,4 +374,11 @@ private:
     /// when that page reports a connection, because until then there is nothing
     /// worth remembering — see the `connectionChanged` wiring.
     TerminalPage *m_pendingSshPage = nullptr;
+    /// A connect button in an empty panel sets this for the synchronous dialog
+    /// call. Acceptance consumes it in `ensureIdlePage`; cancellation clears it
+    /// without ever allocating a page or a session.
+    int m_requestedPanel = -1;
+    bool m_syncingPanelLayout = false;
+    bool m_loadingPage = false;
+    bool m_metricsQueued = false;
 };

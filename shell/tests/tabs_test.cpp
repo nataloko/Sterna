@@ -4,14 +4,15 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QDialog>
 #include <QFile>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QScrollBar>
 #include <QTabBar>
-#include <QTabWidget>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QVector>
 
@@ -35,7 +36,9 @@
 #include "MainWindow.h"
 #include "PanelContainer.h"
 #include "Session.h"
+#include "TelnetDialog.h"
 #include "TerminalPage.h"
+#include "TerminalView.h"
 
 static int failures = 0;
 
@@ -296,26 +299,28 @@ void test_tabs_are_independent_and_actions_follow_the_active_one()
     const QString ini = dir.filePath(QStringLiteral("sterna.ini"));
     QFile file(ini);
     CHECK(file.open(QIODevice::WriteOnly));
-    file.write("[Tera Term]\r\nTerminalSize=40,10\r\n");
+    file.write("[Tera Term]\r\nTerminalSize=40,10\r\n"
+               "[Sterna]\r\nPanelLayout=two\r\n");
     file.close();
 
     MainWindow window(ini);
-    auto *tabs = window.findChild<QTabWidget *>();
+    auto *panels = window.findChild<PanelContainer *>();
     auto *add = window.findChild<QAction *>(QStringLiteral("newTabAction"));
     auto *close = window.findChild<QAction *>(QStringLiteral("closeTabAction"));
-    CHECK(tabs != nullptr);
+    CHECK(panels != nullptr);
     CHECK(add != nullptr);
     CHECK(close != nullptr);
-    CHECK(tabs->count() == 1);
-    CHECK(tabs->tabBarAutoHide());
+    CHECK(panels->count() == 1);
+    CHECK(panels->layoutMode() == PanelLayout::Two);
+    CHECK(panels->tabBar()->autoHide());
 
-    auto *first = static_cast<TerminalPage *>(tabs->widget(0));
+    auto *first = static_cast<TerminalPage *>(panels->widget(0));
     first->session()->feed(QByteArrayLiteral("first"));
 
     add->trigger();
-    CHECK(tabs->count() == 2);
-    CHECK(tabs->tabsClosable());
-    auto *second = static_cast<TerminalPage *>(tabs->widget(1));
+    CHECK(panels->count() == 2);
+    CHECK(panels->tabsClosable());
+    auto *second = static_cast<TerminalPage *>(panels->widget(1));
     CHECK(first != second);
     CHECK(window.session() == second->session());
     CHECK(second->session()->cols() == 40);
@@ -327,15 +332,206 @@ void test_tabs_are_independent_and_actions_follow_the_active_one()
     CHECK(screenText(*second->session()).contains(QStringLiteral("second")));
     CHECK(!screenText(*second->session()).contains(QStringLiteral("first")));
 
-    tabs->setCurrentIndex(0);
+    panels->setCurrentIndex(0);
     CHECK(window.session() == first->session());
-    tabs->setCurrentIndex(1);
+    panels->setCurrentIndex(1);
     CHECK(window.session() == second->session());
 
-    close->trigger();
-    CHECK(tabs->count() == 1);
+    press(window.findChild<QWidget *>(QStringLiteral("panelHeader0")));
     CHECK(window.session() == first->session());
-    CHECK(!tabs->tabsClosable());
+    press(second->findChild<QScrollBar *>(QStringLiteral("terminalScrollBar")));
+    CHECK(window.session() == second->session());
+    auto *activeHeader =
+        window.findChild<QLabel *>(QStringLiteral("panelHeader1"));
+    CHECK(activeHeader != nullptr);
+    CHECK(activeHeader
+          && activeHeader->palette().color(QPalette::Window)
+                 == activeHeader->palette().color(QPalette::Highlight));
+
+    close->trigger();
+    CHECK(panels->count() == 1);
+    CHECK(window.session() == first->session());
+    CHECK(!panels->tabsClosable());
+}
+
+void test_layout_actions_persist_only_the_window_setting()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("sterna.ini"));
+    QFile file(ini);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("; keep this byte-for-byte\n[Sterna]\nOther = untouched\n"
+               "PanelLayout = four\n");
+    file.close();
+
+    MainWindow window(ini);
+    auto *panels = window.findChild<PanelContainer *>();
+    auto *single = window.findChild<QAction *>(QStringLiteral("singlePanelAction"));
+    auto *two = window.findChild<QAction *>(QStringLiteral("twoPanelAction"));
+    auto *four = window.findChild<QAction *>(QStringLiteral("fourPanelAction"));
+    CHECK(panels && single && two && four);
+    CHECK(panels->layoutMode() == PanelLayout::Four);
+    CHECK(four->isChecked() && !two->isChecked() && !single->isChecked());
+    CHECK(single->shortcut().isEmpty());
+    CHECK(two->shortcut().isEmpty());
+    CHECK(four->shortcut().isEmpty());
+
+    CHECK(file.open(QIODevice::ReadOnly));
+    CHECK(file.readAll()
+          == QByteArray("; keep this byte-for-byte\n[Sterna]\n"
+                        "Other = untouched\nPanelLayout = four\n"));
+    file.close();
+
+    window.findChild<QAction *>(QStringLiteral("newTabAction"))->trigger();
+    CHECK(panels->count() == 2);
+    QString error;
+    CHECK(window.session()->setSetting(QStringLiteral("window.panel_layout"),
+                                       QStringLiteral("single"), &error));
+    CHECK(panels->layoutMode() == PanelLayout::Single);
+    CHECK(single->isChecked());
+    for (int i = 0; i < panels->count(); i++) {
+        auto *page = static_cast<TerminalPage *>(panels->widget(i));
+        CHECK(page->session()->setting(QStringLiteral("window.panel_layout"))
+              == QStringLiteral("single"));
+    }
+
+    two->trigger();
+    CHECK(panels->layoutMode() == PanelLayout::Two);
+    CHECK(two->isChecked() && !four->isChecked() && !single->isChecked());
+    CHECK(window.session()->setting(QStringLiteral("window.panel_layout"))
+          == QStringLiteral("two"));
+    for (int i = 0; i < panels->count(); i++) {
+        auto *page = static_cast<TerminalPage *>(panels->widget(i));
+        CHECK(page->session()->setting(QStringLiteral("window.panel_layout"))
+              == QStringLiteral("two"));
+    }
+
+    CHECK(file.open(QIODevice::ReadOnly));
+    CHECK(file.readAll()
+          == QByteArray("; keep this byte-for-byte\n[Sterna]\n"
+                        "Other = untouched\nPanelLayout=two\n"));
+    file.close();
+
+    const QString malformed = dir.filePath(QStringLiteral("malformed.ini"));
+    file.setFileName(malformed);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[Sterna]\r\nPanelLayout=diagonal\r\n");
+    file.close();
+    MainWindow fallback(malformed);
+    auto *fallbackPanels = fallback.findChild<PanelContainer *>();
+    auto *fallbackSingle =
+        fallback.findChild<QAction *>(QStringLiteral("singlePanelAction"));
+    CHECK(fallbackPanels->layoutMode() == PanelLayout::Single);
+    CHECK(fallbackSingle->isChecked());
+}
+
+void test_visible_panels_refit_and_receive_their_own_metrics()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("sterna.ini"));
+    QFile file(ini);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[Sterna]\r\nPanelLayout=two\r\n");
+    file.close();
+
+    MainWindow window(ini);
+    auto *panels = window.findChild<PanelContainer *>();
+    auto *add = window.findChild<QAction *>(QStringLiteral("newTabAction"));
+    add->trigger();
+    auto *first = static_cast<TerminalPage *>(panels->widget(0));
+    auto *second = static_cast<TerminalPage *>(panels->widget(1));
+    window.resize(900, 620);
+    window.show();
+    QApplication::processEvents();
+    QApplication::processEvents();
+
+    CHECK(qAbs(first->view()->width() - second->view()->width()) <= 1);
+    CHECK(first->session()->cols() > 1 && second->session()->cols() > 1);
+    CHECK(qAbs(first->session()->cols() - second->session()->cols()) <= 1);
+    const TtWindowMetrics firstMetrics = first->session()->windowMetrics();
+    const TtWindowMetrics secondMetrics = second->session()->windowMetrics();
+    CHECK(firstMetrics.client_width == first->view()->width());
+    CHECK(secondMetrics.client_width == second->view()->width());
+    CHECK(firstMetrics.client_height == first->view()->height());
+    CHECK(secondMetrics.client_height == second->view()->height());
+    CHECK(firstMetrics.client_x != secondMetrics.client_x);
+    CHECK(firstMetrics.width == secondMetrics.width);
+    CHECK(firstMetrics.height == secondMetrics.height);
+
+    // A visible background page does not resize the window when its cell size
+    // changes; it refits its own grid and refreshes its metrics in place.
+    const int secondCols = second->session()->cols();
+    QString error;
+    CHECK(first->session()->setSetting(QStringLiteral("font.space_right"),
+                                       QStringLiteral("8"), &error));
+    QApplication::processEvents();
+    const int firstCellWidth = first->view()->sizeForCells(1, 1).width();
+    CHECK(first->session()->cols() == first->view()->width() / firstCellWidth);
+    CHECK(second->session()->cols() == secondCols);
+    CHECK(first->session()->windowMetrics().cell_width == firstCellWidth);
+
+    const QSize topLevel = window.size();
+    window.findChild<QAction *>(QStringLiteral("fourPanelAction"))->trigger();
+    QApplication::processEvents();
+    CHECK(window.size() == topLevel);
+}
+
+void test_empty_panel_dialogs_cancel_or_connect_in_place()
+{
+    Listener listener;
+    CHECK(listener.port() != 0);
+    if (listener.port() == 0) {
+        return;
+    }
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("sterna.ini"));
+    QFile file(ini);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[Sterna]\r\nPanelLayout=four\r\n");
+    file.close();
+
+    MainWindow window(ini);
+    auto *panels = window.findChild<PanelContainer *>();
+    auto *serial =
+        window.findChild<QPushButton *>(QStringLiteral("panelSerial1"));
+    CHECK(serial != nullptr);
+    if (!serial) {
+        return;
+    }
+    QTimer::singleShot(0, [] {
+        if (auto *dialog = qobject_cast<QDialog *>(
+                QApplication::activeModalWidget())) {
+            dialog->reject();
+        }
+    });
+    serial->click();
+    CHECK(panels->count() == 1);
+    CHECK(panels->pageAtPanel(1) == nullptr);
+
+    auto *telnet =
+        window.findChild<QPushButton *>(QStringLiteral("panelTelnet2"));
+    CHECK(telnet != nullptr);
+    if (!telnet) {
+        return;
+    }
+    QTimer::singleShot(0, [&] {
+        if (auto *dialog = qobject_cast<TelnetDialog *>(
+                QApplication::activeModalWidget())) {
+            dialog->setInitial(QStringLiteral("127.0.0.1"), listener.port(),
+                               TT_TELNET_NEGOTIATE);
+            dialog->accept();
+        }
+    });
+    telnet->click();
+    listener.acceptOne();
+    CHECK(panels->count() == 2);
+    auto *connected =
+        static_cast<TerminalPage *>(panels->pageAtPanel(2));
+    CHECK(connected != nullptr);
+    CHECK(connected && connected->session()->isConnected());
 }
 
 void test_duplicate_reopens_telnet_with_the_live_settings()
@@ -347,11 +543,16 @@ void test_duplicate_reopens_telnet_with_the_live_settings()
     }
     QTemporaryDir dir;
     CHECK(dir.isValid());
-    MainWindow window(dir.filePath(QStringLiteral("sterna.ini")));
-    auto *tabs = window.findChild<QTabWidget *>();
+    const QString ini = dir.filePath(QStringLiteral("sterna.ini"));
+    QFile file(ini);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[Sterna]\r\nPanelLayout=two\r\n");
+    file.close();
+    MainWindow window(ini);
+    auto *panels = window.findChild<PanelContainer *>();
     auto *duplicate =
         window.findChild<QAction *>(QStringLiteral("duplicateSessionAction"));
-    CHECK(tabs != nullptr);
+    CHECK(panels != nullptr);
     CHECK(duplicate != nullptr);
     CHECK(!duplicate->isEnabled());
 
@@ -363,18 +564,36 @@ void test_duplicate_reopens_telnet_with_the_live_settings()
     QString error;
     CHECK(window.session()->setSetting(QStringLiteral("terminal.title"),
                                        QStringLiteral("copied live"), &error));
-    auto *source = static_cast<TerminalPage *>(tabs->currentWidget());
+    auto *source =
+        static_cast<TerminalPage *>(panels->currentWidget());
     duplicate->trigger();
     listener.acceptOne();
 
-    CHECK(tabs->count() == 2);
-    auto *copy = static_cast<TerminalPage *>(tabs->currentWidget());
+    CHECK(panels->count() == 2);
+    auto *copy = static_cast<TerminalPage *>(panels->currentWidget());
     CHECK(copy != source);
+    CHECK(panels->panelOf(source) == 0);
+    CHECK(panels->panelOf(copy) == 1);
     CHECK(copy->session()->isConnected());
     CHECK(copy->session()->canDuplicate());
     CHECK(copy->session()->setting(QStringLiteral("terminal.title"))
           == QStringLiteral("copied live"));
     CHECK(source->session()->isConnected());
+
+    // Closing a background target consults that page's settings without
+    // displaying or activating it along the way.
+    QString closeError;
+    CHECK(copy->session()->setSetting(
+        QStringLiteral("connection.confirm_disconnect"), QStringLiteral("off"),
+        &closeError));
+    panels->setCurrentWidget(source);
+    int activations = 0;
+    QObject::connect(panels, &PanelContainer::currentChanged, panels,
+                     [&](QWidget *) { activations++; });
+    panels->closeRequested(copy);
+    CHECK(panels->count() == 1);
+    CHECK(panels->currentWidget() == source);
+    CHECK(activations == 0);
 }
 
 } // namespace
@@ -386,6 +605,9 @@ int main(int argc, char **argv)
     test_panel_assignment_and_geometry();
     test_empty_panels_request_connections_without_creating_pages();
     test_tabs_are_independent_and_actions_follow_the_active_one();
+    test_layout_actions_persist_only_the_window_setting();
+    test_visible_panels_refit_and_receive_their_own_metrics();
+    test_empty_panel_dialogs_cancel_or_connect_in_place();
     test_duplicate_reopens_telnet_with_the_live_settings();
     if (failures != 0) {
         fprintf(stderr, "%d check(s) failed\n", failures);

@@ -3,8 +3,8 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-13 · **Stage:** 4 complete, first deliberate
-deviations landed (`docs/deviations.md`) · **Commits:** 574
+**Last updated:** 2026-08-13 · **Stage:** 4 complete, deliberate deviations
+landing (`docs/deviations.md`) · **Commits:** 577
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -5507,14 +5507,29 @@ line that created it after another tab is selected. `Macro` is declared before
 `Session` so it is destroyed first; a running interpreter must not retain a
 session whose page has already started coming apart.
 
-The `QTabWidget` hides its bar for one page and makes it movable and closable
-for two. Menus, status, title, key-map actions and the window-wide control
-socket follow the active page, while signals that only report background work
-update that page's tab label without stealing focus. Opening a connection from
-a live page creates another page rather than replacing the line. Closing asks
-about the page being closed, and network `AutoWinClose` removes only its page
-unless it was the last one. The tests pin the property underneath all of this:
-bytes fed to one session never appear in another's grid.
+The lightweight tab bar hides itself for one page and remains movable and
+closable for two. Its pages can now be assigned to one, two side-by-side, or
+four 2x2 equal panels; the tabs remain unlimited and hidden sessions keep
+pumping. Menus, status, title, key-map actions and the window-wide control
+socket follow the highlighted pane, while signals that only report background
+work update that page's tab and pane title without stealing focus. Opening a
+connection from a live page creates another page rather than replacing the
+line. Closing asks about the target page without displaying a hidden one, and
+network `AutoWinClose` removes only its page unless it was the last one. The
+tests pin the property underneath all of this: bytes fed to one session never
+appear in another's grid.
+
+**Simultaneous panels landed after the roadmap, 2026-08-13.** View chooses
+Single, 2 panels or 4 panels without reserving a terminal shortcut. Expansion
+and reduction keep the active connection first, then visible connections and
+then tab order; selecting a hidden tab replaces the active slot, and closing a
+visible tab refills from the hidden tabs before showing a connection tile.
+Empty tiles allocate no session until Serial, SSH, Telnet or Local shell is
+accepted. `[Sterna] PanelLayout` is synchronized over every page and persisted
+as a targeted one-key INI update. Each visible page refits to its panel and gets
+its own client geometry and window-metric snapshot; changing panels never
+resizes the top-level window. `tabs_test` covers the assignment model and the
+integrated routing on both targets.
 
 **Duplicate session follows upstream's narrower rule: live SSH and telnet
 only.** Serial and local shells have no Duplicate action. The destination gets
@@ -5635,7 +5650,7 @@ The rule for going on that list: user-visible, not forced by the platform, and
 reproducing upstream instead would have been easy. A divergence Linux or Qt
 forces is a port, and belongs in a code comment and in `AGENTS.md`.
 
-Two so far, both 2026-08-13:
+Four so far, all 2026-08-13:
 
 1. **The default baud rate is 115200**, where `ttset.c:919` gives 9600. The
    key, its parse and its absence of bounds are unchanged, so `BaudRate=9600`
@@ -5651,6 +5666,11 @@ Two so far, both 2026-08-13:
    reads. `tt_session_settings_remember` writes **only** those keys and leaves
    the file alone when it already says them, so an INI shared with a real Tera
    Term is not handed every other schema default by a connection.
+3. **A small serial toolbar** keeps the selected port, connect/disconnect and
+   local echo in reach without changing what the existing actions do.
+4. **One, two or four simultaneous panels** show several independent tab
+   sessions in one window while keeping one highlighted active target. Hidden
+   tabs continue running, and the layout remembers no connections of its own.
 
 `[Sterna]` is the first invented section in the schema, and
 `tt-config/tests/upstream.rs` now asserts in both directions: an upstream
