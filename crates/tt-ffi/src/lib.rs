@@ -2897,6 +2897,30 @@ pub extern "C" fn tt_session_send_text(
     }
 }
 
+/// Send one line accepted by a local line editor, followed by the terminal's
+/// configured Return sequence. The bytes are echoed to the terminal exactly
+/// once without changing `terminal.local_echo` or the live SRM mode.
+///
+/// This is intentionally separate from [`tt_session_send_text`]: only text
+/// accepted by the editor is delayed. Control keys, terminal mappings, macros
+/// and protocol replies keep using their immediate paths.
+#[no_mangle]
+pub extern "C" fn tt_session_send_edited_line(
+    session: *mut TtSession,
+    text: *const c_char,
+    len: usize,
+) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    let text = match unsafe { str_arg(text, len) } {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    match s.session.send_edited_line(text) {
+        Ok(()) => TT_OK,
+        Err(e) => report(e),
+    }
+}
+
 /// Put bytes on the wire unchanged: no UTF-8 validation, key table, LNM or
 /// other text processing. Used by a macro's binary `send` and by
 /// `Meta8Bit=raw` in a frontend. An empty slice succeeds.

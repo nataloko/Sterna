@@ -655,6 +655,17 @@ void Session::sendText(const QString &text)
     rearm();
 }
 
+void Session::sendEditedLine(const QString &text)
+{
+    const QByteArray utf8 = text.toUtf8();
+    if (tt_session_send_edited_line(m_session, utf8.constData(),
+                                    static_cast<size_t>(utf8.size()))
+        != TT_OK) {
+        emit notice(QString::fromUtf8(tt_last_error()));
+    }
+    rearm();
+}
+
 void Session::sendBytes(const QByteArray &bytes)
 {
     if (bytes.isEmpty()) {

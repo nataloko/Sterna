@@ -174,6 +174,21 @@ fn the_live_local_echo_setting_covers_every_keyboard_send_path() {
 }
 
 #[test]
+fn an_edited_line_forces_echo_without_changing_the_preference() {
+    let (mut s, h) = connected(20, 4);
+    assert_eq!(s.setting("terminal.local_echo"), Some("off".into()));
+    assert!(!s.vt().local_echo());
+
+    assert!(s.set_setting("terminal.cr_send", "CRLF"));
+    s.send_edited_line("show version").unwrap();
+
+    assert_eq!(h.outbound(), b"show version\r\n");
+    assert_eq!(row(&s, 0), "show version");
+    assert_eq!(s.setting("terminal.local_echo"), Some("off".into()));
+    assert!(!s.vt().local_echo(), "forced echo must not assign SRM");
+}
+
+#[test]
 fn keyboard_cnf_terminal_and_user_keys_are_dispatched_by_the_session() {
     use tt_session::KeyCodeResult;
 
