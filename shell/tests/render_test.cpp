@@ -29,6 +29,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -49,6 +50,7 @@
 #include <QTimer>
 
 #include "MainWindow.h"
+#include "ConnectBar.h"
 #include "I18n.h"
 #include "PasteDialog.h"
 #include "SerialDialog.h"
@@ -1791,6 +1793,70 @@ void test_the_hidden_menu_is_the_ordinary_menu_as_a_popup()
     }
 }
 
+/// The bar under the menu holds no state of its own: its button says what the
+/// session says, its checkbox is the live `terminal.local_echo`, and it is on
+/// screen while `window.toolbar` is on. Nothing here is upstream's — Tera Term
+/// has no toolbar — so the whole contract is that the bar and the menu cannot
+/// disagree.
+void test_the_connect_bar_is_a_view_of_the_session()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    MainWindow window(dir.filePath(QStringLiteral("bar.ini")));
+    window.show();
+    qApp->processEvents();
+
+    auto *bar = window.findChild<ConnectBar *>();
+    CHECK(bar != nullptr);
+    auto *connectAction =
+        window.findChild<QAction *>(QStringLiteral("connectBarConnect"));
+    auto *echoBox =
+        window.findChild<QCheckBox *>(QStringLiteral("connectBarLocalEcho"));
+    auto *showAction =
+        window.findChild<QAction *>(QStringLiteral("showToolbarAction"));
+    CHECK(connectAction != nullptr);
+    CHECK(echoBox != nullptr);
+    CHECK(showAction != nullptr);
+    if (!bar || !connectAction || !echoBox || !showAction) {
+        return;
+    }
+
+    // Shipped on, and the Setup item is the same switch as the setting.
+    CHECK(!bar->isHidden());
+    CHECK(showAction->isChecked());
+    QString error;
+    CHECK(window.session()->setSetting(QStringLiteral("window.toolbar"),
+                                       QStringLiteral("off"), &error));
+    CHECK(bar->isHidden());
+    CHECK(!showAction->isChecked());
+    showAction->trigger();
+    CHECK(window.session()->setting(QStringLiteral("window.toolbar"))
+          == QStringLiteral("on"));
+    CHECK(!bar->isHidden());
+
+    // Local echo both ways: the host assigns it through SRM and a script can,
+    // so the checkbox is read back rather than remembered.
+    CHECK(!echoBox->isChecked());
+    CHECK(window.session()->setSetting(QStringLiteral("terminal.local_echo"),
+                                       QStringLiteral("on"), &error));
+    CHECK(echoBox->isChecked());
+    echoBox->click();
+    CHECK(window.session()->setting(QStringLiteral("terminal.local_echo"))
+          == QStringLiteral("off"));
+
+    // And the button is whichever of the two the session is, for any kind of
+    // session — a local shell has no serial port in it and still disconnects.
+    const QString connectText = connectAction->text();
+    window.connectPty();
+    qApp->processEvents();
+    CHECK(window.session()->isConnected());
+    CHECK(connectAction->text() != connectText);
+    CHECK(connectAction->isEnabled());
+    window.session()->disconnectPort();
+    qApp->processEvents();
+    CHECK(connectAction->text() == connectText);
+}
+
 /// `AutoWinClose` is decided in the core, but only the frontend owns a
 /// window. The request closes an ordinary window and honours upstream's
 /// IsWindowEnabled guard when a modal child has disabled its parent.
@@ -2074,6 +2140,7 @@ int main(int argc, char **argv)
     test_window_opacity_follows_activation();
     test_the_window_opens_at_the_configured_size();
     test_the_hidden_menu_is_the_ordinary_menu_as_a_popup();
+    test_the_connect_bar_is_a_view_of_the_session();
     test_an_auto_close_request_respects_window_state();
     test_window_geometry_has_full_and_close_only_saves();
 
@@ -2105,6 +2172,20 @@ int main(int argc, char **argv)
             const QString dialogPath = dir + "/settings.png";
             dialog.grab().save(dialogPath);
             printf("wrote %s\n", qPrintable(dialogPath));
+
+            // And the window, for the menu bar and the connect bar under it —
+            // the same argument. Its own settings file, so this is a picture of
+            // the defaults rather than of whoever ran it.
+            QTemporaryDir home;
+            MainWindow window(home.filePath(QStringLiteral("shot.ini")));
+            window.resize(820, 420);
+            window.show();
+            qApp->processEvents();
+            window.session()->feed(QByteArray("sterna\r\n"));
+            qApp->processEvents();
+            const QString windowPath = dir + "/window.png";
+            window.grab().save(windowPath);
+            printf("wrote %s\n", qPrintable(windowPath));
         }
     }
 

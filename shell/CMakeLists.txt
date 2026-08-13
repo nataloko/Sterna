@@ -144,6 +144,7 @@ add_library(sterna_shell STATIC
     src/Session.cpp
     src/Macro.cpp
     src/Plugins.cpp
+    src/ConnectBar.cpp
     src/Control.cpp
     src/I18n.cpp
     src/Theme.cpp

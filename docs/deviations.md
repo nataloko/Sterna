@@ -10,13 +10,14 @@ forced by the platform, and reproducing upstream instead would be strictly
 easy. A divergence forced by Linux or by Qt is not a deviation — it is a port,
 and it belongs in a comment at the code and in `AGENTS.md` if it bites.
 
-Compatibility is unaffected in both entries below: no key changes meaning, and
+Compatibility is unaffected in every entry below: no key changes meaning, and
 a `TERATERM.INI` written by either program still opens correctly in the other.
 
 | # | Deviation | Upstream | Since |
 |---|---|---|---|
 | 1 | The default baud rate is 115200 | 9600 | unreleased |
 | 2 | The connect dialogs remember the last connection, across restarts | Only Setup > Save persists anything | unreleased |
+| 3 | A bar under the menu: port, connect/disconnect, local echo | No toolbar at all | unreleased |
 
 ---
 
@@ -81,3 +82,27 @@ settings dialog's Recent page, not hidden state.
 opens at the remembered speed rather than at the shipped one. That is the point
 of the feature, and it is also upstream's own rule for `/C=1`, which takes the
 file's `BaudRate`.
+
+## 3. A bar under the menu
+
+Under the menu bar: the serial port as a dropdown, one button that opens or
+closes the connection, and a Local echo check box. Tera Term has no toolbar —
+those three are a dialog, a menu item, and a check box on a settings tab.
+
+**Why.** They are the three things that get used every few minutes on a console
+port, and each of them costs a dialog upstream: picking a port is File > New
+connection, closing is File > Disconnect, and local echo is three tabs into
+Setup. Nothing else is on the bar for the same reason — it is not a general
+toolbar, and a fourth item would be one somebody has to explain.
+
+**What is unchanged.** The bar decides nothing. Every widget on it is a view of
+the session refreshed from the same status update the menu uses, and every click
+calls the window method the menu item calls — so the port the bar shows is the
+port that is open, the button says what the session is, and the check box is the
+live `terminal.local_echo`, which a host's SRM and a macro can also change.
+
+**Where it lives.** `shell/src/ConnectBar.{h,cpp}`, and one new setting:
+`[Sterna] Toolbar` (`window.toolbar`, on by default), which Setup > Show toolbar
+writes. The switch exists because chrome nobody can remove does not belong in a
+terminal; it is deliberately *not* tied to `PopupMenu` or `HideTitle`, which are
+about the menu.

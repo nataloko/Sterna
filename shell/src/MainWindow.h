@@ -10,6 +10,7 @@
 
 #include "Session.h"
 
+class ConnectBar;
 class Control;
 class I18n;
 class Macro;
@@ -310,6 +311,10 @@ private:
     Printer *m_printer = nullptr;
     TerminalView *m_view = nullptr;
     QLabel *m_status = nullptr;
+    /// The bar under the menu: port, connect, local echo. Shown when
+    /// `window.toolbar` is on, which is what Setup > Show toolbar writes.
+    ConnectBar *m_connectBar = nullptr;
+    QAction *m_toolbarAction = nullptr;
     QAction *m_disconnectAction = nullptr;
     QAction *m_newTabAction = nullptr;
     QAction *m_closeTabAction = nullptr;

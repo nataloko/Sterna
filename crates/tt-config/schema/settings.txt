@@ -1996,6 +1996,13 @@ window.jump_list | bool | Tera Term | JumpList | on | -
 # Window decoration belongs to the compositor on Linux, so it is carried only.
 window.corner_dontround | bool | Tera Term | WindowCornerDontround | off | -
 
+# **`[Sterna]`**, because upstream has no toolbar and so no key to be
+# compatible with. Whether the bar under the menu — port, connect, local echo —
+# is shown. It exists as a setting rather than as chrome nobody can remove:
+# `window.popup_menu` and `window.hide_title` are about the *menu*, so neither
+# hides this, and Setup > Show toolbar writes it.
+window.toolbar | bool | Sterna | Toolbar | on | -
+
 # --- recent -----------------------------------------------------------------
 #
 # **`[Sterna]` is this program's own section and nothing upstream reads it.**

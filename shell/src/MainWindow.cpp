@@ -48,6 +48,7 @@
 #include <windows.h>
 #endif
 
+#include "ConnectBar.h"
 #include "Control.h"
 #include "I18n.h"
 #include "Macro.h"
@@ -223,6 +224,35 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
     statusBar()->addPermanentWidget(m_logStatus);
     m_status = new QLabel(this);
     statusBar()->addPermanentWidget(m_status);
+
+    // Under the menu, and connected to the same window methods the menu uses —
+    // the bar decides nothing itself. `updateStatus` is what keeps its labels
+    // and its enabled states honest.
+    m_connectBar = new ConnectBar(m_i18n, this);
+    addToolBar(Qt::TopToolBarArea, m_connectBar);
+    connect(m_connectBar, &ConnectBar::connectRequested, this,
+            [this](const QString &path) {
+                if (path.isEmpty()) {
+                    // The dialog has the same complaint. Here it can only
+                    // happen with nothing plugged in, since the action is
+                    // greyed otherwise.
+                    QMessageBox::warning(this, tr("Connect"),
+                                         tr("No serial ports were found."));
+                    return;
+                }
+                connectSerial(path, m_lastParams);
+            });
+    connect(m_connectBar, &ConnectBar::disconnectRequested, this,
+            &MainWindow::disconnectPort);
+    connect(m_connectBar, &ConnectBar::localEchoRequested, this, [this](bool on) {
+        QString error;
+        if (!m_session->setSetting(QStringLiteral("terminal.local_echo"),
+                                   on ? QStringLiteral("on")
+                                      : QStringLiteral("off"),
+                                   &error)) {
+            onNotice(tr("Could not change the local echo: %1").arg(error));
+        }
+    });
 
     buildMenus();
 
@@ -887,6 +917,18 @@ void MainWindow::onSettingsChanged()
         m_session->setting(QStringLiteral("window.popup_menu")) == QLatin1String("on");
     const bool menuHidden = hideTitle || popupMenu;
     menuBar()->setVisible(!menuHidden);
+
+    // Its own switch, and deliberately not tied to the two above: those hide
+    // the *menu*, and a person who wants the port and the connect button within
+    // reach is not asking for a menu bar.
+    const bool toolbar =
+        m_session->setting(QStringLiteral("window.toolbar")) == QLatin1String("on");
+    if (m_connectBar) {
+        m_connectBar->setVisible(toolbar);
+    }
+    if (m_toolbarAction) {
+        m_toolbarAction->setChecked(toolbar);
+    }
     m_view->setPopupMenuEnabled(
         menuHidden && m_session->setting(QStringLiteral("window.popup_menu_enabled"))
                           == QLatin1String("on"));
@@ -1100,6 +1142,10 @@ void MainWindow::restoreRememberedConnection()
     const QString port = text("recent.serial_port");
     if (!port.isEmpty()) {
         m_lastPort = port;
+    }
+    // The bar opens on the same port as the dialog would.
+    if (m_connectBar) {
+        m_connectBar->setPortPath(m_lastPort);
     }
 
     // An empty host is how "nothing was remembered" is spelled, and it is not
@@ -1320,6 +1366,22 @@ void MainWindow::buildMenus()
     QAction *keyMap =
         setup->addAction(tr("Load key map..."), this, &MainWindow::chooseKeyMap);
     languageAction(keyMap, "MENU_SETUP_LOADKEYMAP", tr("Load key map..."));
+    // Upstream has no toolbar and so no item for one. It writes the setting
+    // rather than hiding the bar directly, so that this, the settings dialog and
+    // Save setup are all talking about the same thing.
+    setup->addSeparator();
+    m_toolbarAction = setup->addAction(tr("Show toolbar"));
+    m_toolbarAction->setObjectName(QStringLiteral("showToolbarAction"));
+    m_toolbarAction->setCheckable(true);
+    connect(m_toolbarAction, &QAction::triggered, this, [this](bool on) {
+        QString error;
+        if (!m_session->setSetting(QStringLiteral("window.toolbar"),
+                                   on ? QStringLiteral("on")
+                                      : QStringLiteral("off"),
+                                   &error)) {
+            onNotice(tr("Could not change the toolbar: %1").arg(error));
+        }
+    });
 
     // Upstream's Control menu, which is where the break is sent and a macro is
     // started and stopped. Stop is upstream's End button, which lives on
@@ -1639,6 +1701,12 @@ void MainWindow::connectSerial(const QString &path, const TtSerialParams &params
     m_lastPort = path;
     m_lastParams = params;
     rememberSerial(path, params);
+    // Whatever opened the port — the dialog, `--port`, a macro — the bar shows
+    // the one that is open.
+    if (m_connectBar) {
+        m_connectBar->refreshPorts();
+        m_connectBar->setPortPath(path);
+    }
     updateStatus();
 }
 
@@ -2342,6 +2410,9 @@ void MainWindow::updateStatus()
     m_status->setText(connected ? m_session->describe()
                       : connecting ? tr("connecting...")
                                    : tr("not connected"));
+    if (m_connectBar) {
+        m_connectBar->refresh(m_session);
+    }
     if (m_disconnectAction) {
         // Enabled while connecting too: stopping an attempt that is waiting on
         // a slow key exchange is a thing people need to be able to do.

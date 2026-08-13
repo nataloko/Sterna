@@ -4013,6 +4013,12 @@ pub struct Settings {
     /// `ttset.c:1993`, default off. Requests square corners from Windows 11 DWM.
     /// Window decoration belongs to the compositor on Linux, so it is carried only.
     pub window_corner_dontround: bool,
+    /// **`[Sterna]`**, because upstream has no toolbar and so no key to be
+    /// compatible with. Whether the bar under the menu — port, connect, local echo —
+    /// is shown. It exists as a setting rather than as chrome nobody can remove:
+    /// `window.popup_menu` and `window.hide_title` are about the *menu*, so neither
+    /// hides this, and Setup > Show toolbar writes it.
+    pub window_toolbar: bool,
     /// The device path, not a number: `ComPort` is upstream's and cannot spell
     /// `/dev/serial/by-id/usb-FTDI_…`. Written as the port was opened, so it is the
     /// `open_path` a stable symlink resolves from rather than the `ttyUSB<n>` that
@@ -4360,6 +4366,7 @@ impl Default for Settings {
             macro_wait4all: false,
             window_jump_list: true,
             window_corner_dontround: false,
+            window_toolbar: true,
             recent_serial_port: String::from(""),
             recent_ssh_host: String::from(""),
             recent_ssh_user: String::from(""),
@@ -5564,6 +5571,7 @@ impl Settings {
                 ini.get("Tera Term", "WindowCornerDontround"),
                 false,
             ),
+            window_toolbar: crate::schema::on_off(ini.get("Sterna", "Toolbar"), true),
             recent_serial_port: ini
                 .get_or("Sterna", "SerialPort", &d.recent_serial_port)
                 .to_string(),
@@ -7665,6 +7673,11 @@ impl Settings {
                 "off"
             }
             .to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "Toolbar",
+            &if self.window_toolbar { "on" } else { "off" }.to_string(),
         );
         ini.set("Sterna", "SerialPort", &self.recent_serial_port.clone());
         ini.set("Sterna", "SshHost", &self.recent_ssh_host.clone());
@@ -10398,6 +10411,13 @@ impl Settings {
                     .to_string(),
                 );
             }
+            "window.toolbar" => {
+                ini.set(
+                    "Sterna",
+                    "Toolbar",
+                    &if self.window_toolbar { "on" } else { "off" }.to_string(),
+                );
+            }
             "recent.serial_port" => {
                 ini.set("Sterna", "SerialPort", &self.recent_serial_port.clone());
             }
@@ -11263,6 +11283,7 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "window.toolbar" => if self.window_toolbar { "on" } else { "off" }.to_string(),
             "recent.serial_port" => self.recent_serial_port.clone(),
             "recent.ssh_host" => self.recent_ssh_host.clone(),
             "recent.ssh_user" => self.recent_ssh_user.clone(),
@@ -12138,6 +12159,7 @@ impl Settings {
             "window.corner_dontround" => {
                 self.window_corner_dontround = crate::schema::on_off(Some(value), false)
             }
+            "window.toolbar" => self.window_toolbar = crate::schema::on_off(Some(value), true),
             "recent.serial_port" => self.recent_serial_port = value.to_string(),
             "recent.ssh_host" => self.recent_ssh_host = value.to_string(),
             "recent.ssh_user" => self.recent_ssh_user = value.to_string(),
@@ -15256,6 +15278,16 @@ pub const FIELDS: &[Field] = &[
         default: "off",
         label: None,
         doc: "`ttset.c:1993`, default off. Requests square corners from Windows 11 DWM. Window decoration belongs to the compositor on Linux, so it is carried only.",
+    },
+    Field {
+        name: "window.toolbar",
+        page: "window",
+        section: "Sterna",
+        key: "Toolbar",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "**`[Sterna]`**, because upstream has no toolbar and so no key to be compatible with. Whether the bar under the menu — port, connect, local echo — is shown. It exists as a setting rather than as chrome nobody can remove: `window.popup_menu` and `window.hide_title` are about the *menu*, so neither hides this, and Setup > Show toolbar writes it.",
     },
     Field {
         name: "recent.serial_port",
