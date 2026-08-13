@@ -31,8 +31,16 @@ void QuickButtonBar::setButtons(const QVector<QuickButton> &buttons)
 {
     m_buttons = buttons;
     m_actions.clear();
-    clear();
     m_add = nullptr;
+
+    // **`QToolBar::clear()` removes its actions and does not delete them**, and
+    // `addAction(text)` parents them here — so a rebuild without this leaves
+    // every previous action alive as a child of the bar, holding its shortcut
+    // and answering `findChild` before the live one does. The symptom is a
+    // button that stops following the session.
+    const QList<QAction *> previous = actions();
+    clear();
+    qDeleteAll(previous);
 
     for (int i = 0; i < m_buttons.size(); i++) {
         const QuickButton &button = m_buttons[i];

@@ -197,6 +197,14 @@ private slots:
     void showSettingsDialog();
     /// Setup > Quick buttons — the editor for the bar's list.
     void showQuickButtonsDialog();
+    /// Press one. `withoutEnter` is a Shift+click, which sends the command
+    /// with its trailing Return left off.
+    ///
+    /// A slot because that is what it is — the bar's `activated` is connected
+    /// to it — which also lets a test invoke it by name and so exercise the
+    /// Shift half without synthesising a modifier the toolkit reads from the
+    /// live keyboard.
+    void runQuickButton(int index, bool withoutEnter);
     /// Write the settings out — upstream's `Setup > Save setup`, and the same
     /// bargain: a change applies to this session immediately and outlives it
     /// only if it is saved.
@@ -287,8 +295,6 @@ private:
     /// shown at all: an empty set has no bar, whatever `window.quick_buttons`
     /// says, because an empty toolbar is chrome for nothing.
     void reloadQuickButtons();
-    /// Press one. `withoutEnter` is a Shift+click.
-    void runQuickButton(int index, bool withoutEnter);
     /// Open the editor with `index` selected, or -1 for a new button, and
     /// `seed` prefilled into that new one.
     void editQuickButtons(int index, const QuickButton *seed = nullptr);
