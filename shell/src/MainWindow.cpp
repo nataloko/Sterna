@@ -2,6 +2,7 @@
 
 #include "MainWindow.h"
 
+#include "Branding.h"
 #include "Printer.h"
 
 #include <QAction>
@@ -1417,6 +1418,7 @@ void MainWindow::buildMenus()
                "<p>Copyright &copy; the Sterna authors.</p>")
                 .arg(QCoreApplication::applicationVersion().toHtmlEscaped()),
             QMessageBox::Ok, this);
+        box.setIconPixmap(sternaIcon().pixmap(QSize(128, 128)));
         // Deliberately user-initiated. There is no startup request or timer:
         // this button is permission to contact GitHub, and the signed manifest
         // is still verified before any URL in it is trusted.

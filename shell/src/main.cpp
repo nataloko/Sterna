@@ -4,8 +4,8 @@
 #include <QCommandLineParser>
 #include <QDir>
 #include <QFileInfo>
-#include <QIcon>
 
+#include "Branding.h"
 #include "MainWindow.h"
 #include "sterna.h"
 
@@ -136,7 +136,7 @@ int main(int argc, char **argv)
     QCoreApplication::setApplicationName(QStringLiteral("sterna"));
     QGuiApplication::setApplicationDisplayName(QStringLiteral("Sterna"));
     QCoreApplication::setApplicationVersion(QString::fromUtf8(tt_version()));
-    app.setWindowIcon(QIcon(QStringLiteral(":/branding/sterna.svg")));
+    app.setWindowIcon(sternaIcon());
 
     // Qt's own arguments are gone by here — `QApplication` takes `-platform`
     // and friends out of `argc`/`argv` — so this is what was meant for us.

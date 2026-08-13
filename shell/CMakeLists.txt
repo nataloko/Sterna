@@ -137,6 +137,7 @@ endif()
 # --- the shell ---------------------------------------------------------------
 
 add_library(sterna_shell STATIC
+    src/Branding.cpp
     src/MainWindow.cpp
     src/TerminalPage.cpp
     src/WindowTitle.cpp
@@ -156,7 +157,8 @@ add_library(sterna_shell STATIC
     src/SshPrompts.cpp
     src/TabRows.cpp
     src/TelnetDialog.cpp
-    src/XferDialog.cpp)
+    src/XferDialog.cpp
+    resources/branding.qrc)
 
 add_dependencies(sterna_shell tt_core)
 target_link_libraries(sterna_shell PUBLIC Qt6::Widgets Qt6::PrintSupport sterna_core)
@@ -179,9 +181,7 @@ if(WIN32)
     target_link_libraries(sterna_updater PRIVATE shell32)
 endif()
 
-add_executable(sterna
-    src/main.cpp
-    resources/branding.qrc)
+add_executable(sterna src/main.cpp)
 add_dependencies(sterna sterna_updater)
 if(WIN32)
     enable_language(RC)

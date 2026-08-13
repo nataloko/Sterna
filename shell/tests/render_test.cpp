@@ -1818,6 +1818,8 @@ void test_about_shows_the_application_version()
         if (box) {
             CHECK(box->windowTitle() == QStringLiteral("About Sterna"));
             CHECK(box->text().contains(QStringLiteral("Sterna 9.8.7-test")));
+            CHECK(!box->iconPixmap().isNull());
+            CHECK(box->iconPixmap().size() == QSize(128, 128));
             auto *update = box->findChild<QPushButton *>(
                 QStringLiteral("aboutUpdateButton"));
             CHECK(update != nullptr);
