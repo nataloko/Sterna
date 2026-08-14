@@ -161,8 +161,21 @@ HighlightsDialog::HighlightsDialog(const QVector<QuickHighlight> &rules, QWidget
     m_group = new QSpinBox(m_fields);
     m_group->setObjectName(QStringLiteral("highlightGroup"));
     m_group->setRange(0, 99);
-    m_group->setSpecialValueText(tr("the whole match"));
-    form->addRow(tr("Colour group"), m_group);
+    m_group->setSpecialValueText(tr("Entire match"));
+    m_group->setPrefix(tr("Capture group "));
+    m_group->setToolTip(
+        tr("Use Entire match normally. Choose a capture group to apply the "
+           "colour and style only to text matched inside that numbered pair "
+           "of parentheses."));
+    form->addRow(tr("Apply to"), m_group);
+
+    auto *groupHelp = new QLabel(
+        tr("Parentheses divide a pattern into numbered parts. Choose one to "
+           "style only that part."),
+        m_fields);
+    groupHelp->setObjectName(QStringLiteral("highlightGroupHelp"));
+    groupHelp->setWordWrap(true);
+    form->addRow(QString(), groupHelp);
 
     // The sample box, which is the thing that makes writing a pattern
     // bearable: the line is coloured by the same engine the terminal uses, so

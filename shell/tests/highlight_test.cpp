@@ -28,6 +28,7 @@
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -440,9 +441,14 @@ void test_the_editor()
     auto *error = dialog.findChild<QLabel *>(QStringLiteral("highlightPatternError"));
     auto *add = dialog.findChild<QPushButton *>(QStringLiteral("highlightAdd"));
     auto *literal = dialog.findChild<QCheckBox *>(QStringLiteral("highlightLiteral"));
+    auto *group = dialog.findChild<QSpinBox *>(QStringLiteral("highlightGroup"));
+    auto *groupHelp =
+        dialog.findChild<QLabel *>(QStringLiteral("highlightGroupHelp"));
     auto *buttons = dialog.findChild<QDialogButtonBox *>();
-    CHECK(list && pattern && error && add && literal && buttons);
-    if (!list || !pattern || !error || !add || !literal || !buttons) {
+    CHECK(list && pattern && error && add && literal && group && groupHelp
+          && buttons);
+    if (!list || !pattern || !error || !add || !literal || !group
+        || !groupHelp || !buttons) {
         return;
     }
 
@@ -451,6 +457,16 @@ void test_the_editor()
     CHECK(list->currentRow() == 0);
     CHECK(pattern->text() == QStringLiteral("ERROR"));
     CHECK(error->text().isEmpty());
+
+    // The control says what the number changes without making somebody know
+    // the term first. The short explanation remains in the dialog rather than
+    // being hidden behind a tooltip.
+    CHECK(group->text() == QStringLiteral("Entire match"));
+    CHECK(groupHelp->text().contains(QStringLiteral("style only that part")));
+    group->setValue(1);
+    CHECK(group->text() == QStringLiteral("Capture group 1"));
+    CHECK(dialog.rules().at(0).group == 1);
+    group->setValue(0);
 
     // A pattern the engine refuses says so, in the engine's own words, and is
     // not refused — somebody is still typing.

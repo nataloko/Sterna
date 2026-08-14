@@ -21,7 +21,7 @@ deleting any of them.
 | **Background** | The same |
 | **Style** | Bold, underline, reverse — a rule can mark without spending a colour |
 | **Colour the whole line** | The line the match sits on, not just the match |
-| **Colour group** | Which capture group to colour; the whole match by default |
+| **Apply to** | The entire match by default, or just one capture group — a parenthesized part of the pattern, numbered from left to right |
 
 The sample box at the bottom is coloured by the same engine the terminal uses,
 so what you see there is what will happen.
