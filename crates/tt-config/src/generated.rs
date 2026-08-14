@@ -2479,18 +2479,20 @@ impl Default for BroadcastSubmitKey {
 }
 
 /// **`[Sterna]`**, because simultaneous panes are a Sterna window feature rather
-/// than terminal state. The value says how many connections this window shows at
-/// once: one terminal, two equal side-by-side panels, or four equal panels in a
-/// 2x2 grid. A missing or unrecognised spelling returns to the single-panel
-/// layout, so an edited file cannot leave the window without a usable view.
+/// than terminal state. Two states, and they are exclusive: `single` shows one
+/// connection with a tab bar over the rest, `tiled` hides the tab bar and gives
+/// **every** connection a tile in a grid that follows their number. `two` and
+/// `four` are the 0.2.x spellings, when the layout was a panel *count* and tabs
+/// ran alongside it; they are read as `tiled` and rewritten as such. A missing or
+/// unrecognised spelling returns to the single layout, so an edited file cannot
+/// leave the window without a usable view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowPanelLayout {
     /// `single`
     Single,
-    /// `two`
-    Two,
-    /// `four`
-    Four,
+    /// `tiled`, `two`, `four` — the first is written back, the rest are aliases the
+    /// file may hold because upstream's own table has them.
+    Tiled,
 }
 
 impl WindowPanelLayout {
@@ -2498,8 +2500,7 @@ impl WindowPanelLayout {
     pub fn as_ini(&self) -> &'static str {
         match self {
             Self::Single => "single",
-            Self::Two => "two",
-            Self::Four => "four",
+            Self::Tiled => "tiled",
         }
     }
 
@@ -2513,11 +2514,11 @@ impl WindowPanelLayout {
         if s.eq_ignore_ascii_case("single") {
             return Self::Single;
         }
-        if s.eq_ignore_ascii_case("two") {
-            return Self::Two;
-        }
-        if s.eq_ignore_ascii_case("four") {
-            return Self::Four;
+        if s.eq_ignore_ascii_case("tiled")
+            || s.eq_ignore_ascii_case("two")
+            || s.eq_ignore_ascii_case("four")
+        {
+            return Self::Tiled;
         }
         Self::Single
     }
@@ -4171,10 +4172,13 @@ pub struct Settings {
     /// hides this, and Setup > Show toolbar writes it.
     pub window_toolbar: bool,
     /// **`[Sterna]`**, because simultaneous panes are a Sterna window feature rather
-    /// than terminal state. The value says how many connections this window shows at
-    /// once: one terminal, two equal side-by-side panels, or four equal panels in a
-    /// 2x2 grid. A missing or unrecognised spelling returns to the single-panel
-    /// layout, so an edited file cannot leave the window without a usable view.
+    /// than terminal state. Two states, and they are exclusive: `single` shows one
+    /// connection with a tab bar over the rest, `tiled` hides the tab bar and gives
+    /// **every** connection a tile in a grid that follows their number. `two` and
+    /// `four` are the 0.2.x spellings, when the layout was a panel *count* and tabs
+    /// ran alongside it; they are read as `tiled` and rewritten as such. A missing or
+    /// unrecognised spelling returns to the single layout, so an edited file cannot
+    /// leave the window without a usable view.
     pub window_panel_layout: WindowPanelLayout,
     /// **`[Sterna]`** again, and these two are only the *bar*: the buttons on it are
     /// a list, which no schema row can be, and they live in a `[Sterna Buttons]`
@@ -15761,10 +15765,10 @@ pub const FIELDS: &[Field] = &[
         page: "window",
         section: "Sterna",
         key: "PanelLayout",
-        kind: Kind::Enum(&["single", "two", "four"]),
+        kind: Kind::Enum(&["single", "tiled"]),
         default: "single",
         label: None,
-        doc: "**`[Sterna]`**, because simultaneous panes are a Sterna window feature rather than terminal state. The value says how many connections this window shows at once: one terminal, two equal side-by-side panels, or four equal panels in a 2x2 grid. A missing or unrecognised spelling returns to the single-panel layout, so an edited file cannot leave the window without a usable view.",
+        doc: "**`[Sterna]`**, because simultaneous panes are a Sterna window feature rather than terminal state. Two states, and they are exclusive: `single` shows one connection with a tab bar over the rest, `tiled` hides the tab bar and gives **every** connection a tile in a grid that follows their number. `two` and `four` are the 0.2.x spellings, when the layout was a panel *count* and tabs ran alongside it; they are read as `tiled` and rewritten as such. A missing or unrecognised spelling returns to the single layout, so an edited file cannot leave the window without a usable view.",
     },
     Field {
         name: "window.quick_buttons",

@@ -14,6 +14,8 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QStatusBar>
+#include <QStatusTipEvent>
 #include <QTabBar>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -38,6 +40,7 @@
 #endif
 
 #include "MainWindow.h"
+#include "PageStatusBar.h"
 #include "PanelContainer.h"
 #include "Session.h"
 #include "ConnectDialog.h"
@@ -190,110 +193,131 @@ void type(TerminalView *view, int code, const QString &text)
     QApplication::sendEvent(view, &event);
 }
 
-void test_panel_assignment_and_geometry()
+/// The grid is a function of how many connections there are.
+///
+/// `cols = ceil(sqrt(n))`, rows to suit: 1, 1x2, 2x2, 2x2, 2x3, 2x3, 3x3...
+/// Tiles are tab order, exactly, and every connection has one — there is no
+/// hidden page in tiled mode, which is the half of the old design that made
+/// "where are my connections" have two answers.
+void test_tiled_panels_fit_the_session_count()
 {
     PanelContainer panels;
-    panels.resize(800, 600);
+    panels.resize(900, 700);
+    panels.setLayoutMode(PanelLayout::Tiled);
+    CHECK(panels.tileCount() == 1);
+    // With nothing open the sole tile offers a connection rather than being a
+    // grey rectangle.
+    CHECK(panels.firstEmptyPanel() == 0);
 
-    QWidget *a = mockPage(QStringLiteral("a"));
-    QWidget *b = mockPage(QStringLiteral("b"));
-    QWidget *c = mockPage(QStringLiteral("c"));
-    QWidget *d = mockPage(QStringLiteral("d"));
-    QWidget *e = mockPage(QStringLiteral("e"));
-    panels.addPage(a, QStringLiteral("A"));
-    panels.addPage(b, QStringLiteral("B"));
-    panels.addPage(c, QStringLiteral("C"));
-    panels.addPage(d, QStringLiteral("D"));
-    panels.addPage(e, QStringLiteral("E"));
-    CHECK(panels.count() == 5);
-    CHECK(panels.pageAtPanel(0) == e);
-    CHECK(panels.currentWidget() == e);
-    auto *header0 =
-        panels.findChild<QLabel *>(QStringLiteral("panelHeader0"));
-    CHECK(header0 != nullptr);
-    CHECK(header0 && header0->isHidden());
+    QVector<QWidget *> pages;
+    const auto add = [&](const char *name) {
+        QWidget *page = mockPage(QString::fromLatin1(name));
+        pages.append(page);
+        panels.addPage(page, QString::fromLatin1(name).toUpper());
+    };
 
-    // A layout change starts with the active connection, then the connections
-    // which were visible, then the remaining tabs in tab order.
-    panels.setLayoutMode(PanelLayout::Four);
-    CHECK(panels.pageAtPanel(0) == e);
-    CHECK(panels.pageAtPanel(1) == a);
-    CHECK(panels.pageAtPanel(2) == b);
-    CHECK(panels.pageAtPanel(3) == c);
-    CHECK(panels.panelOf(d) == -1);
+    add("a");
+    CHECK(panels.tileCount() == 1);   // 1x1, exactly full
+    CHECK(panels.tileColumns() == 1);
+    CHECK(panels.firstEmptyPanel() == -1);
+    add("b");
+    CHECK(panels.tileCount() == 2);   // 1x2, exactly full
+    CHECK(panels.tileColumns() == 2);
+    CHECK(panels.firstEmptyPanel() == -1);
+    add("c");
+    CHECK(panels.tileCount() == 4);   // 2x2 with one spare
+    CHECK(panels.tileColumns() == 2);
+    CHECK(panels.firstEmptyPanel() == 3);
+    add("d");
+    CHECK(panels.tileCount() == 4);   // 2x2, exactly full again
+    CHECK(panels.firstEmptyPanel() == -1);
+    add("e");
+    CHECK(panels.tileCount() == 6);   // 2x3 with one spare
+    CHECK(panels.tileColumns() == 3);
+    CHECK(panels.firstEmptyPanel() == 5);
+
+    // Tiles are tab order and every page has one.
+    for (int i = 0; i < pages.size(); i++) {
+        CHECK(panels.pageAtPanel(i) == pages[i]);
+        CHECK(panels.panelOf(pages[i]) == i);
+    }
+    CHECK(panels.visiblePages().size() == pages.size());
+    CHECK(panels.tabBar()->isHidden());
 
     panels.show();
     QApplication::processEvents();
-    CHECK(header0 && !header0->isHidden());
     auto *f0 = panels.findChild<QWidget *>(QStringLiteral("panelFrame0"));
     auto *f1 = panels.findChild<QWidget *>(QStringLiteral("panelFrame1"));
-    auto *f2 = panels.findChild<QWidget *>(QStringLiteral("panelFrame2"));
     auto *f3 = panels.findChild<QWidget *>(QStringLiteral("panelFrame3"));
-    CHECK(f0 && f1 && f2 && f3);
-    if (f0 && f1 && f2 && f3) {
+    CHECK(f0 && f1 && f3);
+    if (f0 && f1 && f3) {
+        // Same row: equal height, different x. Next row down: same x as the
+        // first of its row, greater y.
+        CHECK(qAbs(f0->height() - f1->height()) <= 1);
         CHECK(qAbs(f0->width() - f1->width()) <= 1);
-        CHECK(qAbs(f0->height() - f2->height()) <= 1);
-        CHECK(qAbs(f2->width() - f3->width()) <= 1);
-        CHECK(qAbs(f1->height() - f3->height()) <= 1);
+        CHECK(f1->x() > f0->x());
+        CHECK(f3->y() > f0->y());
+        CHECK(qAbs(f3->x() - f0->x()) <= 1);
     }
 
-    // A header or a page child (the terminal's scrollbar in production)
-    // routes the shared window actions to that pane.
-    press(panels.findChild<QWidget *>(QStringLiteral("panelHeader1")));
-    CHECK(panels.currentWidget() == a);
-    press(b->findChild<QScrollBar *>(QStringLiteral("bScroll")));
-    CHECK(panels.currentWidget() == b);
+    // Clicking a page's child — the terminal's scrollbar in production —
+    // routes the shared window actions to that tile. There is no pane header
+    // to click any more; the page's own status strip is the marker.
+    press(pages[1]->findChild<QScrollBar *>(QStringLiteral("bScroll")));
+    CHECK(panels.currentWidget() == pages[1]);
 
-    // An off-screen tab replaces the active pane and leaves the displaced
-    // connection open and in tab order.
-    panels.setCurrentWidget(d);
-    CHECK(panels.currentWidget() == d);
-    CHECK(panels.pageAtPanel(2) == d);
-    CHECK(panels.indexOf(b) >= 0);
-    CHECK(panels.panelOf(b) == -1);
+    // At seven the rectangle is 3x3 with *two* cells over, so the spare takes
+    // both rather than leaving a hole beside itself.
+    add("f");
+    add("g");
+    CHECK(panels.count() == 7);
+    CHECK(panels.tileColumns() == 3);
+    CHECK(panels.tileCount() == 8);
+    CHECK(panels.firstEmptyPanel() == 7);
+    QApplication::processEvents();
+    auto *spare = panels.findChild<QWidget *>(QStringLiteral("panelFrame7"));
+    CHECK(spare != nullptr);
+    if (spare && f0) {
+        CHECK(spare->width() > f0->width() * 3 / 2);
+    }
 
-    panels.setLayoutMode(PanelLayout::Two);
-    CHECK(panels.pageAtPanel(0) == d);
-    CHECK(panels.pageAtPanel(1) == e);
+    // Closing one re-tiles rather than leaving a gap, and nothing else moves
+    // out of tab order.
+    QWidget *removed = panels.removePage(panels.indexOf(pages[0]));
+    CHECK(removed == pages[0]);
+    CHECK(panels.count() == 6);
+    CHECK(panels.pageAtPanel(0) == pages[1]);
+    CHECK(panels.firstEmptyPanel() == -1);
+    delete pages[0];
 
-    // Moving a tab changes which hidden page is the next refill without
-    // disturbing the connections already on screen.
-    panels.tabBar()->moveTab(panels.indexOf(c), 0);
-    CHECK(panels.widget(0) == c);
-    QWidget *removed = panels.removePage(panels.indexOf(e));
-    CHECK(removed == e);
-    CHECK(panels.pageAtPanel(1) == c);
-    CHECK(!e->isVisible());
-    delete e;
-
-    // New pages use an empty slot first; a requested empty-tile slot is exact.
-    panels.setLayoutMode(PanelLayout::Four);
-    removed = panels.removePage(panels.indexOf(a));
-    CHECK(removed == a);
-    const int empty = panels.firstEmptyPanel();
-    CHECK(empty >= 0);
-    QWidget *f = mockPage(QStringLiteral("f"));
-    panels.addPage(f, QStringLiteral("F"));
-    CHECK(panels.panelOf(f) == empty);
-    delete a;
-
-    removed = panels.removePage(panels.indexOf(b));
-    CHECK(removed == b);
-    const int exact = panels.firstEmptyPanel();
-    CHECK(exact >= 0);
-    QWidget *g = mockPage(QStringLiteral("g"));
-    panels.addPage(g, QStringLiteral("G"), exact);
-    CHECK(panels.pageAtPanel(exact) == g);
-    delete b;
-
+    // Back to tabs: the same six connections, one visible, and the bar returns.
     panels.setLayoutMode(PanelLayout::Single);
-    CHECK(header0 && header0->isHidden());
+    CHECK(panels.count() == 6);
+    CHECK(panels.tileCount() == 1);
+    CHECK(panels.visiblePages().size() == 1);
+    CHECK(panels.visiblePages().first() == panels.currentWidget());
+    QApplication::processEvents();
+    CHECK(!panels.tabBar()->isHidden());
+    // A page that is not the current one is hidden, not closed. `pages[6]` is
+    // the last one added and so is the current one; `pages[1]` is not.
+    CHECK(panels.currentWidget() == pages[6]);
+    CHECK(panels.indexOf(pages[1]) >= 0);
+    CHECK(panels.panelOf(pages[1]) == -1);
 }
 
 void test_empty_panels_request_connections_without_creating_pages()
 {
     PanelContainer panels;
-    panels.setLayoutMode(PanelLayout::Four);
+    panels.setLayoutMode(PanelLayout::Tiled);
+    // Three connections make a 2x2 whose fourth cell is the spare one.
+    QWidget *a = mockPage(QStringLiteral("a"));
+    QWidget *b = mockPage(QStringLiteral("b"));
+    QWidget *c = mockPage(QStringLiteral("c"));
+    panels.addPage(a, QStringLiteral("A"));
+    panels.addPage(b, QStringLiteral("B"));
+    panels.addPage(c, QStringLiteral("C"));
+    CHECK(panels.firstEmptyPanel() == 3);
+
     int requestedPanel = -1;
     PanelContainer::ConnectionKind requestedKind =
         PanelContainer::ConnectionKind::Serial;
@@ -303,15 +327,15 @@ void test_empty_panels_request_connections_without_creating_pages()
             requestedPanel = panel;
             requestedKind = kind;
         });
-    auto *ssh = panels.findChild<QPushButton *>(QStringLiteral("panelSsh2"));
+    auto *ssh = panels.findChild<QPushButton *>(QStringLiteral("panelSsh3"));
     CHECK(ssh != nullptr);
     if (ssh) {
         ssh->click();
     }
-    CHECK(requestedPanel == 2);
+    CHECK(requestedPanel == 3);
     CHECK(requestedKind == PanelContainer::ConnectionKind::Ssh);
-    CHECK(panels.count() == 0);
-    CHECK(panels.pageAtPanel(2) == nullptr);
+    CHECK(panels.count() == 3);
+    CHECK(panels.pageAtPanel(3) == nullptr);
 }
 
 void test_tabs_are_independent_and_actions_follow_the_active_one()
@@ -322,7 +346,7 @@ void test_tabs_are_independent_and_actions_follow_the_active_one()
     QFile file(ini);
     CHECK(file.open(QIODevice::WriteOnly));
     file.write("[Tera Term]\r\nTerminalSize=40,10\r\n"
-               "[Sterna]\r\nPanelLayout=two\r\n");
+               "[Sterna]\r\nPanelLayout=tiled\r\n");
     file.close();
 
     MainWindow window(ini);
@@ -333,8 +357,10 @@ void test_tabs_are_independent_and_actions_follow_the_active_one()
     CHECK(add != nullptr);
     CHECK(close != nullptr);
     CHECK(panels->count() == 1);
-    CHECK(panels->layoutMode() == PanelLayout::Two);
-    CHECK(panels->tabBar()->autoHide());
+    CHECK(panels->layoutMode() == PanelLayout::Tiled);
+    // Tiles and tabs are exclusive: the bar is not merely auto-hidden for one
+    // connection, it is gone for as long as tiles are on.
+    CHECK(panels->tabBar()->isHidden());
 
     auto *first = static_cast<TerminalPage *>(panels->widget(0));
     first->session()->feed(QByteArrayLiteral("first"));
@@ -427,17 +453,19 @@ void test_tabs_are_independent_and_actions_follow_the_active_one()
     panels->setCurrentIndex(0);
     CHECK(first->view()->lineEditText() == QStringLiteral("dr"));
 
-    press(window.findChild<QWidget *>(QStringLiteral("panelHeader0")));
+    // Clicking inside a tile routes the shared window actions to it. The pane
+    // header this used to click is gone; the page's own status strip is both
+    // the name and the marker now.
+    press(first->status());
     CHECK(window.session() == first->session());
     CHECK(echo && echo->isChecked());
     press(second->findChild<QScrollBar *>(QStringLiteral("terminalScrollBar")));
     CHECK(window.session() == second->session());
-    auto *activeHeader =
-        window.findChild<QLabel *>(QStringLiteral("panelHeader1"));
-    CHECK(activeHeader != nullptr);
-    CHECK(activeHeader
-          && activeHeader->palette().color(QPalette::Window)
-                 == activeHeader->palette().color(QPalette::Highlight));
+    CHECK(second->status()->palette().color(QPalette::Window)
+          == second->status()->palette().color(QPalette::Highlight));
+    // ...and the one that is no longer active gives the highlight back.
+    CHECK(first->status()->palette().color(QPalette::Window)
+          != first->status()->palette().color(QPalette::Highlight));
 
     close->trigger();
     CHECK(panels->count() == 1);
@@ -469,13 +497,16 @@ void test_new_tabs_load_the_saved_line_edit_default()
           == QStringLiteral("on"));
 }
 
-void test_panel_layout_implementation_remains_without_a_view_menu()
+/// View > Tiled switches the layout, and writes only the one key back.
+void test_the_view_menu_switches_tiling_and_persists_only_that_key()
 {
     QTemporaryDir dir;
     CHECK(dir.isValid());
     const QString ini = dir.filePath(QStringLiteral("sterna.ini"));
     QFile file(ini);
     CHECK(file.open(QIODevice::WriteOnly));
+    // `four` is the 0.2.x spelling of "several panels" and has to keep opening
+    // a tiled window — the file may have been written by that version.
     file.write("; keep this byte-for-byte\n[Sterna]\nOther = untouched\n"
                "PanelLayout = four\n");
     file.close();
@@ -483,12 +514,20 @@ void test_panel_layout_implementation_remains_without_a_view_menu()
     MainWindow window(ini);
     auto *panels = window.findChild<PanelContainer *>();
     CHECK(panels != nullptr);
-    CHECK(window.findChild<QMenu *>(QStringLiteral("viewMenu")) == nullptr);
-    CHECK(window.findChild<QAction *>(QStringLiteral("singlePanelAction")) == nullptr);
-    CHECK(window.findChild<QAction *>(QStringLiteral("twoPanelAction")) == nullptr);
-    CHECK(window.findChild<QAction *>(QStringLiteral("fourPanelAction")) == nullptr);
-    CHECK(panels->layoutMode() == PanelLayout::Four);
+    CHECK(window.findChild<QMenu *>(QStringLiteral("viewMenu")) != nullptr);
+    auto *tiled = window.findChild<QAction *>(QStringLiteral("tiledAction"));
+    CHECK(tiled != nullptr);
+    if (!tiled) {
+        return;
+    }
+    CHECK(tiled->isCheckable());
+    // No shortcut: a QAction shortcut silently outranks the terminal's own key
+    // handling, so every one installed here is a key the host stops receiving.
+    CHECK(tiled->shortcut().isEmpty());
+    CHECK(panels->layoutMode() == PanelLayout::Tiled);
+    CHECK(tiled->isChecked());
 
+    // Reading the file changes nothing in it.
     CHECK(file.open(QIODevice::ReadOnly));
     CHECK(file.readAll()
           == QByteArray("; keep this byte-for-byte\n[Sterna]\n"
@@ -497,9 +536,10 @@ void test_panel_layout_implementation_remains_without_a_view_menu()
 
     window.findChild<QAction *>(QStringLiteral("newTabAction"))->trigger();
     CHECK(panels->count() == 2);
-    QString error;
-    CHECK(window.session()->setSetting(QStringLiteral("window.panel_layout"),
-                                       QStringLiteral("single"), &error));
+
+    // The menu item, not `setSetting` — this is the route a person takes.
+    // `trigger()` toggles a checkable action itself, so do not pre-set it.
+    tiled->trigger();
     CHECK(panels->layoutMode() == PanelLayout::Single);
     for (int i = 0; i < panels->count(); i++) {
         auto *page = static_cast<TerminalPage *>(panels->widget(i));
@@ -507,22 +547,29 @@ void test_panel_layout_implementation_remains_without_a_view_menu()
               == QStringLiteral("single"));
     }
 
-    CHECK(window.session()->setSetting(QStringLiteral("window.panel_layout"),
-                                       QStringLiteral("two"), &error));
-    CHECK(panels->layoutMode() == PanelLayout::Two);
-    CHECK(window.session()->setting(QStringLiteral("window.panel_layout"))
-          == QStringLiteral("two"));
+    tiled->trigger();
+    CHECK(panels->layoutMode() == PanelLayout::Tiled);
     for (int i = 0; i < panels->count(); i++) {
         auto *page = static_cast<TerminalPage *>(panels->widget(i));
         CHECK(page->session()->setting(QStringLiteral("window.panel_layout"))
-              == QStringLiteral("two"));
+              == QStringLiteral("tiled"));
     }
 
+    // One key rewritten, in this version's spelling, and the rest of the file
+    // byte-for-byte — comment, spacing and unrelated key included.
     CHECK(file.open(QIODevice::ReadOnly));
     CHECK(file.readAll()
           == QByteArray("; keep this byte-for-byte\n[Sterna]\n"
-                        "Other = untouched\nPanelLayout=two\n"));
+                        "Other = untouched\nPanelLayout=tiled\n"));
     file.close();
+
+    // ...and a generic settings surface — the dialog, a macro's `setsetting`,
+    // a plugin — moves the tick as well as the layout.
+    QString error;
+    CHECK(window.session()->setSetting(QStringLiteral("window.panel_layout"),
+                                       QStringLiteral("single"), &error));
+    CHECK(panels->layoutMode() == PanelLayout::Single);
+    CHECK(!tiled->isChecked());
 
     const QString malformed = dir.filePath(QStringLiteral("malformed.ini"));
     file.setFileName(malformed);
@@ -604,6 +651,100 @@ void test_a_resized_window_survives_a_settings_change()
     CHECK(window.size() != resized);
 }
 
+/// Each terminal states its own business on its own line.
+///
+/// The whole reason the window's single `QStatusBar` was retired: with four
+/// tiles it said "connected to router1, REC 4.2 MB" and there was nothing on
+/// screen to say which of the four that was about. So a message raised by a
+/// background session must land on *that* session's strip and must not touch
+/// the one in front.
+void test_the_status_strip_belongs_to_its_own_page()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("sterna.ini"));
+    QFile file(ini);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[Sterna]\r\n");
+    file.close();
+
+    MainWindow window(ini);
+    // Never `window.statusBar()` — that call *creates* one, so asking whether
+    // the window has a status bar with it is a question that changes its own
+    // answer. Ask Qt for the child instead.
+    CHECK(window.findChild<QStatusBar *>() == nullptr);
+
+    auto *panels = window.findChild<PanelContainer *>();
+    window.findChild<QAction *>(QStringLiteral("newTabAction"))->trigger();
+    CHECK(panels->count() == 2);
+    auto *first = static_cast<TerminalPage *>(panels->widget(0));
+    auto *second = static_cast<TerminalPage *>(panels->widget(1));
+    CHECK(first->status() != nullptr);
+    CHECK(second->status() != nullptr);
+    CHECK(first->status() != second->status());
+
+    // Neither is connected, so both wear the chip — and there are two of them,
+    // which is the point.
+    const auto chips = window.findChildren<QLabel *>(
+        QStringLiteral("connectionStatus"));
+    CHECK(chips.size() == 2);
+    for (QLabel *chip : chips) {
+        CHECK(chip->text() == QStringLiteral("not connected"));
+        CHECK(chip->styleSheet().contains(QStringLiteral("#b71c1c")));
+    }
+
+    // `second` is the active page after New tab. A notice from the *other*
+    // session goes to the other strip.
+    first->session()->feed(QByteArray());
+    emit first->session()->notice(QStringLiteral("first says so"));
+    CHECK(first->status()->currentMessage() == QStringLiteral("first says so"));
+    CHECK(second->status()->currentMessage().isEmpty());
+
+    // ...and a window-level remark goes to whichever terminal is in front.
+    QStatusTipEvent tip(QStringLiteral("a menu explains itself"));
+    QApplication::sendEvent(&window, &tip);
+    CHECK(second->status()->currentMessage()
+          == QStringLiteral("a menu explains itself"));
+    CHECK(first->status()->currentMessage() == QStringLiteral("first says so"));
+}
+
+/// A status line must not decide how wide a terminal is.
+///
+/// `describe()` can be a whole serial device path and a title is host-supplied,
+/// so a strip whose labels quoted their own text would grow the page's size
+/// hint — and the window would resize at the moment a session connected, which
+/// looks like the `terminal.cols` guard misfiring and gets hunted nowhere near
+/// the status line.
+void test_the_status_strip_never_widens_its_page()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("sterna.ini"));
+    QFile file(ini);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[Sterna]\r\n");
+    file.close();
+
+    MainWindow window(ini);
+    window.show();
+    QApplication::processEvents();
+    auto *panels = window.findChild<PanelContainer *>();
+    auto *page = static_cast<TerminalPage *>(panels->widget(0));
+
+    const QSize before = page->sizeHint();
+    const QSize windowBefore = window.size();
+    page->status()->setName(QStringLiteral(
+        "/dev/serial/by-path/pci-0000:c8:00.3-usb-0:1.3.2:1.0-port0"));
+    page->status()->setConnection(
+        true, false,
+        QStringLiteral("/dev/serial/by-path/"
+                       "pci-0000:c8:00.3-usb-0:1.3.2:1.0-port0 115200"));
+    QApplication::processEvents();
+    CHECK(page->sizeHint().width() == before.width());
+    CHECK(page->minimumSizeHint().width() <= before.width());
+    CHECK(window.size() == windowBefore);
+}
+
 void test_visible_panels_refit_and_receive_their_own_metrics()
 {
     QTemporaryDir dir;
@@ -611,7 +752,7 @@ void test_visible_panels_refit_and_receive_their_own_metrics()
     const QString ini = dir.filePath(QStringLiteral("sterna.ini"));
     QFile file(ini);
     CHECK(file.open(QIODevice::WriteOnly));
-    file.write("[Sterna]\r\nPanelLayout=two\r\n");
+    file.write("[Sterna]\r\nPanelLayout=tiled\r\n");
     file.close();
 
     MainWindow window(ini);
@@ -651,8 +792,15 @@ void test_visible_panels_refit_and_receive_their_own_metrics()
     CHECK(first->session()->windowMetrics().cell_width == firstCellWidth);
 
     const QSize topLevel = window.size();
+    // Re-tiling never resizes the top-level window — not on a layout change and
+    // not on the open that turns a 1x2 into a 2x2. The client area is divided,
+    // never multiplied.
+    window.findChild<QAction *>(QStringLiteral("newTabAction"))->trigger();
+    QApplication::processEvents();
+    CHECK(panels->count() == 3);
+    CHECK(window.size() == topLevel);
     CHECK(window.session()->setSetting(QStringLiteral("window.panel_layout"),
-                                       QStringLiteral("four"), &error));
+                                       QStringLiteral("single"), &error));
     QApplication::processEvents();
     CHECK(window.size() == topLevel);
 }
@@ -669,13 +817,22 @@ void test_empty_panel_dialogs_cancel_or_connect_in_place()
     const QString ini = dir.filePath(QStringLiteral("sterna.ini"));
     QFile file(ini);
     CHECK(file.open(QIODevice::WriteOnly));
-    file.write("[Sterna]\r\nPanelLayout=four\r\n");
+    file.write("[Sterna]\r\nPanelLayout=tiled\r\n");
     file.close();
 
     MainWindow window(ini);
     auto *panels = window.findChild<PanelContainer *>();
+    // One connection is an exactly-full 1x1 grid, so there is no spare tile to
+    // click. Two make a 1x2 which is also full; three make a 2x2 whose fourth
+    // cell is the spare one. That is where the connect buttons live.
+    auto *add = window.findChild<QAction *>(QStringLiteral("newTabAction"));
+    add->trigger();
+    add->trigger();
+    CHECK(panels->count() == 3);
+    CHECK(panels->firstEmptyPanel() == 3);
+
     auto *serial =
-        window.findChild<QPushButton *>(QStringLiteral("panelSerial1"));
+        window.findChild<QPushButton *>(QStringLiteral("panelSerial3"));
     CHECK(serial != nullptr);
     if (!serial) {
         return;
@@ -687,11 +844,13 @@ void test_empty_panel_dialogs_cancel_or_connect_in_place()
         }
     });
     serial->click();
-    CHECK(panels->count() == 1);
-    CHECK(panels->pageAtPanel(1) == nullptr);
+    // Cancelling allocates nothing: no page, no session, and the tile is still
+    // the spare one.
+    CHECK(panels->count() == 3);
+    CHECK(panels->pageAtPanel(3) == nullptr);
 
     auto *telnet =
-        window.findChild<QPushButton *>(QStringLiteral("panelTelnet2"));
+        window.findChild<QPushButton *>(QStringLiteral("panelTelnet3"));
     CHECK(telnet != nullptr);
     if (!telnet) {
         return;
@@ -707,9 +866,12 @@ void test_empty_panel_dialogs_cancel_or_connect_in_place()
     });
     telnet->click();
     listener.acceptOne();
-    CHECK(panels->count() == 2);
+    // Accepting fills the tile it was started from and re-tiles to 2x3, so the
+    // spare moves along rather than disappearing.
+    CHECK(panels->count() == 4);
+    CHECK(panels->firstEmptyPanel() == -1);
     auto *connected =
-        static_cast<TerminalPage *>(panels->pageAtPanel(2));
+        static_cast<TerminalPage *>(panels->pageAtPanel(3));
     CHECK(connected != nullptr);
     CHECK(connected && connected->session()->isConnected());
 }
@@ -726,7 +888,7 @@ void test_duplicate_reopens_telnet_with_the_live_settings()
     const QString ini = dir.filePath(QStringLiteral("sterna.ini"));
     QFile file(ini);
     CHECK(file.open(QIODevice::WriteOnly));
-    file.write("[Sterna]\r\nPanelLayout=two\r\n");
+    file.write("[Sterna]\r\nPanelLayout=tiled\r\n");
     file.close();
     MainWindow window(ini);
     auto *panels = window.findChild<PanelContainer *>();
@@ -787,12 +949,14 @@ int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("tabs_test"));
-    test_panel_assignment_and_geometry();
+    test_tiled_panels_fit_the_session_count();
     test_empty_panels_request_connections_without_creating_pages();
     test_tabs_are_independent_and_actions_follow_the_active_one();
     test_new_tabs_load_the_saved_line_edit_default();
-    test_panel_layout_implementation_remains_without_a_view_menu();
+    test_the_view_menu_switches_tiling_and_persists_only_that_key();
     test_a_resized_window_survives_a_settings_change();
+    test_the_status_strip_belongs_to_its_own_page();
+    test_the_status_strip_never_widens_its_page();
     test_visible_panels_refit_and_receive_their_own_metrics();
     test_empty_panel_dialogs_cancel_or_connect_in_place();
     test_duplicate_reopens_telnet_with_the_live_settings();

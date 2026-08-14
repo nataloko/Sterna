@@ -63,34 +63,68 @@ on the other.
 build without. It is the Fedora spelling of the `libudev-dev` that the Ubuntu
 container already needed.
 
-## Tabs and simultaneous panels
+## Connections: tabs, or tiles
 
 `TerminalPage` is the lifetime boundary for one connection: its `Session`,
-`TerminalView`, scrollbar, printer, macro runner, plugin state and modeless
-transfer dialog stay together even while the tab is off screen. The lightweight
-`PanelContainer` above those pages keeps an unlimited tab order and assigns at
-most four pages to visible slots. Single shows one page, Two puts two equal
-panels side by side, and Four is an equal 2x2 grid. Hidden pages remain alive and
-their descriptor-driven sessions keep pumping; ordinary Qt visibility keeps
-them out of the paint path.
+`TerminalView`, scrollbar, printer, macro runner, plugin state, modeless
+transfer dialog and status strip stay together even while it is off screen.
+`PanelContainer` above those pages owns their order and their placement, and
+offers two arrangements which are **exclusive**.
 
-The highlighted pane is the active page. Clicking its header, terminal or
-scrollbar changes the aliases `MainWindow` uses for menus, status, title,
-macros, transfers, plugins and the control socket. Selecting a hidden tab puts
-it into the active slot; it does not stop the displaced connection. Layout
-changes order the active page first, then pages already visible, then remaining
-tabs. Empty slots are widgets with Serial, SSH, Telnet and Local shell buttons,
-not preallocated sessions; accepting a dialog creates a page in that exact
-slot, while cancelling leaves it empty.
+**Single** is the ordinary one: the current connection fills the client area,
+with a tab bar over it when there is more than one. **Tiled** hides the tab bar
+and gives every connection a cell. The grid is `ceil(sqrt(n))` columns and as
+many rows as that needs — 1, 1x2, 2x2, 2x2, 2x3, 2x3, 3x3 — and it keeps
+growing rather than capping; the way back is one View-menu click. When the
+rectangle does not come out even, the cell after the last connection carries
+Serial, SSH, Telnet and Local shell buttons and is widened to fill the rest of
+its row, so there is never a blank hole. At 1, 2, 4, 6 and 9 connections the
+rectangle is exactly full and there is no such cell.
 
-`[Sterna] PanelLayout=single|two|four` is window-wide. Its implementation and
-tests remain, but the View menu is intentionally hidden for 0.2.1 while the
-panel interaction is refined. A change through the generated settings surface,
-a macro or a plugin is copied into every open page and writes only that key
-immediately, preserving the rest of the INI.
-Every visible `TerminalView` refits its own grid to the panel it receives, and
-the window pushes a separate client-origin, client-size and cell-size snapshot
-to each visible session after the layout settles.
+Tiles are tab order, exactly, so dragging a tab in Single decides which tile a
+connection gets in Tiled. **There is no hidden page in Tiled** — that was the
+0.2.x arrangement, where tabs and panels ran alongside each other and a
+connection past the fourth could only be reached by evicting a visible one.
+Switching either way closes nothing.
+
+The marked terminal is the active one. Clicking anywhere in a tile — its
+terminal, its scrollbar, its status strip — changes the aliases `MainWindow`
+uses for menus, title, macros, transfers, plugins and the control socket.
+Empty cells are widgets with connect buttons, not preallocated sessions;
+accepting a dialog creates a page which lands in that cell because a new
+connection appends to tab order, while cancelling leaves it empty.
+
+`[Sterna] PanelLayout=single|tiled` is window-wide, and View > Tiled is what
+writes it. `two` and `four` are the 0.2.x spellings and are read as `tiled`.
+A change through the generated settings surface, a macro or a plugin is copied
+into every open page and writes only that key immediately, preserving the rest
+of the INI. Every visible `TerminalView` refits its own grid to the cell it
+receives, and the window pushes a separate client-origin, client-size and
+cell-size snapshot to each visible session after the layout settles. Re-tiling
+never resizes the top-level window: the client area is divided, never
+multiplied.
+
+## One status line per terminal
+
+`PageStatusBar` is a strip along the bottom of each `TerminalPage`: the
+connection's name, its link state (with the red chip when it is down), its
+`REC` counter while it is logging, and its own transient messages — a
+transfer's result, a notice from its session, printer, macro or plugin. The
+window has **no** `QStatusBar`; every one of those facts belongs to a session,
+and a window can be showing nine.
+
+It doubles as the active-tile marker, so a tile has one row of chrome rather
+than a header above and a status below. The marker appears only when more than
+one tile is on screen. With a single terminal the strip sits where a status bar
+would, so nothing looks different.
+
+Two rules are load-bearing. Its labels are `Ignored` horizontally and elide
+their own text: a status label that quoted its text as its width would push
+`TerminalPage::sizeHint()` out, and the window would grow the moment a long
+host name connected. And the `REC` counter is driven by `Session::damaged`,
+which fires on every read on **every** open session — so a page that is not
+recording costs one predicate, and a page that is costs a relayout only when
+the formatted size actually moves.
 
 ## The Windows build
 

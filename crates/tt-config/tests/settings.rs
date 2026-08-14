@@ -80,17 +80,21 @@ fn the_panel_layout_is_a_sterna_setting_with_a_safe_fallback() {
         ))
         .window_panel_layout
     };
-    assert_eq!(load("two"), WindowPanelLayout::Two);
-    assert_eq!(load("FOUR"), WindowPanelLayout::Four);
+    assert_eq!(load("tiled"), WindowPanelLayout::Tiled);
     assert_eq!(load("broken"), WindowPanelLayout::Single);
+    // The 0.2.x spellings, from when this was a panel *count* shown alongside
+    // the tab bar. A file written by that version still opens tiled.
+    assert_eq!(load("two"), WindowPanelLayout::Tiled);
+    assert_eq!(load("FOUR"), WindowPanelLayout::Tiled);
 
+    // ...and it is rewritten in the spelling this version uses, so the aliases
+    // shrink out of the file rather than being carried forward.
     let mut ini = Ini::parse(b"; formatting stays\n[Sterna]\nUnrelated = yes\nPanelLayout = two\n");
-    let mut settings = Settings::load(&ini);
-    settings.window_panel_layout = WindowPanelLayout::Four;
+    let settings = Settings::load(&ini);
     assert!(settings.store_one(&mut ini, "window.panel_layout"));
     assert_eq!(
         ini.to_bytes(),
-        b"; formatting stays\n[Sterna]\nUnrelated = yes\nPanelLayout=four\n"
+        b"; formatting stays\n[Sterna]\nUnrelated = yes\nPanelLayout=tiled\n"
     );
 }
 

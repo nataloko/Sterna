@@ -5,6 +5,31 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+### Added
+
+- Added View > Tiled, which shows every open connection at once in a grid that
+  fits their number. Tiles replace the tab bar rather than sitting under it, so
+  no connection is hidden; when the grid is not exactly full, the spare cell
+  offers a new connection.
+- Each terminal now has its own status line — its name, its connection state,
+  and its recording counter — instead of one shared line for the window. A
+  transfer result or a message from a background session now appears on the
+  terminal it belongs to.
+
+### Fixed
+
+- A file-transfer result is now visible; it had been overwritten in the same
+  instant it was written.
+- A window resized by hand keeps its size when a setting is applied. Clicking
+  Local echo or Line edit, or changing anything in Setup, had restored it to
+  the size in the settings file.
+- Changing the terminal size in Setup now resizes the window.
+
+### Changed
+
+- `PanelLayout` in `[Sterna]` is now `single` or `tiled`. Files written by
+  earlier versions saying `two` or `four` open tiled.
+
 ## [0.2.5] - 2026-08-14
 
 ### Added
