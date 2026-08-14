@@ -63,7 +63,7 @@ jobs:
         id: qt-cache
         with:
           path: packaging/appimage/toolchain/qt-6.11.1
-          key: appimage-qt-6.11.1-manylinux-2-28-x86-64-v1
+          key: appimage-qt-6.11.1-manylinux-2-28-x86-64-v2
       - name: Start portable build container
         run: |
           docker run --detach --name sterna-manylinux \
