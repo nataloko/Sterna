@@ -397,6 +397,12 @@ bool Session::connectPty(const QStringList &argv, QString *outError)
     return true;
 }
 
+QString Session::serialPath() const
+{
+    const char *path = tt_session_serial_path(m_session);
+    return path ? QString::fromUtf8(path) : QString();
+}
+
 QString Session::closeNote() const
 {
     const char *note = tt_session_close_note(const_cast<TtSession *>(m_session));

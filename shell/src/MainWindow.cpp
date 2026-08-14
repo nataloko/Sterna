@@ -607,6 +607,10 @@ void MainWindow::wirePage(TerminalPage *page)
                 rememberRecent(recent);
             }
         }
+        // Outside the active-page test on purpose: what this window has open
+        // is a fact about the *window*, and a background tab opening a port
+        // takes it just as surely as the visible one.
+        publishOpenPorts();
         if (page == m_page) {
             onConnectionChanged();
         }
@@ -791,6 +795,38 @@ void MainWindow::closePage(TerminalPage *page, bool confirm)
     m_panels->removePage(index);
     page->deleteLater();
     updateTabBar();
+    // The page still exists until the event loop deletes it, so the port it
+    // held is published by the pages that remain rather than by asking this
+    // one to give it up.
+    publishOpenPorts();
+}
+
+/// Tell the other windows which serial ports this one has open.
+///
+/// Asked of the transports rather than of `m_lastPort`: that member is loaded
+/// from the settings at startup and names a port nothing has opened, and a
+/// window that claimed it would grey out a free adapter in every other
+/// window's dropdown.
+void MainWindow::publishOpenPorts()
+{
+    if (!m_control) {
+        return;
+    }
+    QStringList devices;
+    for (int i = 0; i < m_panels->count(); i++) {
+        // The container holds nothing else, and `TerminalPage` has no
+        // `Q_OBJECT` — the same static cast every other walk of these pages
+        // uses.
+        auto *page = static_cast<TerminalPage *>(m_panels->widget(i));
+        if (!page) {
+            continue;
+        }
+        const QString device = page->session()->serialPath();
+        if (!device.isEmpty() && !devices.contains(device)) {
+            devices.append(device);
+        }
+    }
+    m_control->claimPorts(devices);
 }
 
 void MainWindow::updateTabTitle(TerminalPage *page)

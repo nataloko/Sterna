@@ -6,6 +6,7 @@
 #include <QWinEventNotifier>
 #else
 #include <QSocketNotifier>
+#include <QVector>
 #endif
 
 #include "MainWindow.h"
@@ -71,6 +72,25 @@ Control::~Control()
         tt_ctl_free(m_ctl);
         m_ctl = nullptr;
     }
+}
+
+void Control::claimPorts(const QStringList &devices)
+{
+    if (!m_ctl) {
+        return;
+    }
+    QVector<QByteArray> utf8;
+    utf8.reserve(devices.size());
+    for (const QString &device : devices) {
+        utf8.append(device.toUtf8());
+    }
+    QVector<const char *> argv;
+    argv.reserve(utf8.size());
+    for (const QByteArray &device : utf8) {
+        argv.append(device.constData());
+    }
+    tt_ctl_claim_ports(m_ctl, argv.constData(),
+                       static_cast<size_t>(argv.size()));
 }
 
 bool Control::start(const QString &name, QString *outError)

@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <QHash>
 #include <QString>
 #include <QToolBar>
 #include <QVector>
@@ -94,23 +95,58 @@ private:
     /// item was given, and the box visibly moves under the popup that is
     /// opening over it. The bar this replaced had the same guard for its
     /// ports, in one line, and the rewrite lost it.
+    /// What has a serial port open, when something does.
+    ///
+    /// `pid == 0` means free. Deliberately **not** folded into `Entry::text`:
+    /// keeping it a field of its own is what makes `operator==` below
+    /// responsible for it, and a row that goes busy then repaints because the
+    /// list compared unequal rather than because the words happened to differ.
+    struct Busy {
+        quint32 pid = 0;
+        /// The holder's own name, when it could be read. Empty is a holder
+        /// nobody could name, which is what a root-owned process looks like.
+        QString program;
+        /// A window of this program said so, rather than the system.
+        bool window = false;
+
+        bool operator==(const Busy &other) const
+        {
+            return pid == other.pid && program == other.program
+                && window == other.window;
+        }
+    };
+
     struct Entry {
         Row kind = Row::Header;
         QString text;
         QString payload;
+        Busy busy;
 
         bool operator==(const Entry &other) const
         {
             return kind == other.kind && text == other.text
-                && payload == other.payload;
+                && payload == other.payload && busy == other.busy;
         }
     };
 
     /// Act on what the field says: the record that was picked out of the
     /// list, or the words somebody typed over it.
     void commit();
-    QVector<Entry> composeList() const;
-    void rebuildList();
+    QVector<Entry> composeList();
+    /// Rebuild the dropdown's model, and re-ask who holds the ports when
+    /// `rescan`.
+    ///
+    /// **Only the popup rescans.** `setRecents` reaches this after every
+    /// successful open — `MainWindow::rememberRecent` calls it — so anything
+    /// expensive here lands between a connect and the first prompt, which is
+    /// the race `render_test` already carries scar tissue for. The list is
+    /// only interesting the moment somebody opens it; every other caller
+    /// reuses the answer from the last time one did.
+    void rebuildList(bool rescan = false);
+    /// Who holds each of `paths`, cached in `m_busy` until the next rescan.
+    void rescanBusy(const QStringList &paths);
+    /// A row's text, with what holds its port said after it.
+    QString busyLabel(const QString &text, const Busy &busy) const;
     void chose(int index);
     void updateDarkModeAction(bool darkMode);
 
@@ -125,6 +161,10 @@ private:
     QAction *m_darkMode = nullptr;
     QVector<RecentConnection> m_recents;
     QVector<Entry> m_rows;
+    /// The last answer to "who holds this port", by the path it was asked
+    /// about. Never consulted for whether Connect may run: it says who has the
+    /// port open, which is not the same as whether opening would fail.
+    QHash<QString, Busy> m_busy;
     /// Which remembered connection the field is currently showing.
     ///
     /// A record is not its own label: picking `ssh alice@buildbox:2222` and
