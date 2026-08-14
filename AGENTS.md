@@ -1113,6 +1113,12 @@ The clipboard:
 - **A paste happens on button-up**, and so does `AutoTextCopy`'s copy —
   which `SelectOnlyByLButton` *suppresses* for middle/right release
   (`vtwin.cpp:819`); that half is not in the name.
+- **Select screen and Select all end at the last column, not at column 0 of
+  the line after** — upstream's `SelectEnd` is the other form and its own
+  alternative is commented out beside it (`buffer.c:709`, `:726`). The line
+  after the live page is not one `Session::line` can answer for, so upstream's
+  spelling puts a trailing break in a scrolled-back Select screen and in
+  nothing else. `render_test` pins the choice; the live case cannot see it.
 - **`PasteDelayPerLine` is the only setting clamped at both ends**
   (`ttset.c:1633`) — why `int_clamp` exists beside `int` and `int_min`.
 

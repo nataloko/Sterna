@@ -5,6 +5,12 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+### Added
+
+- Added Edit > Select screen and Edit > Select all. Select screen takes the
+  lines the window is showing, so scrolled back it selects the history in front
+  of you; Select all takes the scrollback and the page together.
+
 ## [0.3.0] - 2026-08-14
 
 ### Added

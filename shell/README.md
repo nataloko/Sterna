@@ -575,6 +575,19 @@ original:
   started at, which is what lets a double-clicked word be dragged *leftwards*
   and keep its right-hand edge. Upstream keeps the same pair
   (`DblClkStart`/`DblClkEnd`).
+- **Edit > Select screen and Edit > Select all** are `BuffScreenSelect` and
+  `BuffAllSelect` (`buffer.c:716`, `:704`) — the only selections nobody
+  dragged. Screen means the lines the window is *showing*, so scrolled back it
+  is the history in front of you rather than the live page; all means the
+  scrollback and the page together. Both end at the last column of the last
+  line rather than at column 0 of the line after it. Upstream ships the second
+  form and left the first commented out one line below; the two mark the same
+  cells, and the difference is only whether the copy ends with a line break —
+  but here they would disagree with each other, because a line past the end of
+  the buffer is not one the core can answer for, so upstream's spelling gives
+  Select screen a trailing break while scrolled back and nowhere else. Neither
+  command takes a keyboard shortcut: upstream gives them none, and a `QAction`
+  shortcut is a key the host stops receiving.
 
 A drag held outside the window scrolls it, on a timer that runs only while that
 is true — same shape as the repaint floor and the pending-out retry. Without it
