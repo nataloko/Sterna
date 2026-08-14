@@ -41,38 +41,64 @@ jobs:
     runs-on: ubuntu-24.04
     # AlmaLinux 8, maintained by the manylinux project. Every shipped ELF is
     # checked against its glibc 2.28 contract by the package build.
-    container:
-      image: quay.io/pypa/manylinux_2_28_x86_64@sha256:f854c50adf7b7a325bc4794316f3758d387a41d61f9e2ebca0f26c7dc8f761d4
-    defaults:
-      run:
-        shell: bash
     timeout-minutes: 120
+    env:
+      MANYLINUX_IMAGE: quay.io/pypa/manylinux_2_28_x86_64@sha256:f854c50adf7b7a325bc4794316f3758d387a41d61f9e2ebca0f26c7dc8f761d4
     steps:
       - uses: actions/checkout@v6
-      - name: Install build dependencies
-        run: ./packaging/appimage/install-build-deps.sh
+      - name: Make room for the Qt bootstrap
+        # Standard runners expose only 14 GiB. Keep the manylinux build in
+        # Docker, but reclaim host toolchains this job never uses first.
+        run: |
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL
+          docker image prune --all --force
+          df -h /
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/cache@v5
+      - uses: actions/cache/restore@v5
+        id: qt-cache
         with:
           path: packaging/appimage/toolchain/qt-6.11.1
           key: appimage-qt-6.11.1-manylinux-2-28-x86-64-v1
       - name: Build portable Qt
-        # A clean Qt link can exhaust a hosted runner at four workers. This
-        # bootstrap is cached; keep the one expensive run within its memory.
-        env:
-          CMAKE_BUILD_PARALLEL_LEVEL: 2
         run: |
-          ./packaging/appimage/build-qt.sh
-          echo "$GITHUB_WORKSPACE/packaging/appimage/toolchain/qt-6.11.1/bin" >> "$GITHUB_PATH"
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/repo:rw" \
+            --workdir /repo \
+            "$MANYLINUX_IMAGE" \
+            bash -lc '
+              export CMAKE_BUILD_PARALLEL_LEVEL=2
+              ./packaging/appimage/install-build-deps.sh
+              ./packaging/appimage/build-qt.sh
+              rm -rf packaging/appimage/toolchain/source-6.11.1
+            '
+      - name: Cache portable Qt
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: packaging/appimage/toolchain/qt-6.11.1
+          key: ${{ steps.qt-cache.outputs.cache-primary-key }}
       - name: Build AppImage
-        env:
-          CARGO_BUILD_JOBS: 4
-          CMAKE_BUILD_PARALLEL_LEVEL: 4
-        run: ./packaging/appimage/build.sh --clean
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/repo:rw" \
+            --volume "$HOME/.cargo:/root/.cargo:rw" \
+            --volume "$HOME/.rustup:/root/.rustup:ro" \
+            --workdir /repo \
+            "$MANYLINUX_IMAGE" \
+            bash -lc '
+              ./packaging/appimage/install-build-deps.sh
+              export PATH=$PWD/packaging/appimage/toolchain/qt-6.11.1/bin:$PATH
+              export CARGO_BUILD_JOBS=4 CMAKE_BUILD_PARALLEL_LEVEL=4
+              ./packaging/appimage/build.sh --clean
+            '
       - name: Smoke-test packaged application
         env:
-          # GitHub job containers do not expose /dev/fuse. The AppImage
-          # runtime's extraction fallback executes the same packaged AppRun.
+          # The extraction fallback avoids depending on FUSE on the runner.
           APPIMAGE_EXTRACT_AND_RUN: 1
           QT_QPA_PLATFORM: offscreen
         run: |
