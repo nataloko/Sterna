@@ -7,6 +7,16 @@ are available from the [GitHub releases page].
 
 ### Added
 
+- The bar under the menu now connects to anything, not just a serial port. Its
+  dropdown offers the connections you have actually opened — each with the
+  parameters it was opened with — the ports plugged in now, the hosts in
+  `~/.ssh/config`, and a local shell; and the field takes anything the command
+  line takes, including a whole Tera Term command line when it has a space in
+  it. Picking one while a session is live opens it in a new tab or tile rather
+  than closing what is there.
+- The list of recent connections is remembered in `[Sterna] Recent`.
+  `RememberConnections=off` stops adding to it, and the dropdown's Forget item
+  empties it.
 - Added View > Tiled, which shows every open connection at once in a grid that
   fits their number. Tiles replace the tab bar rather than sitting under it, so
   no connection is hidden; when the grid is not exactly full, the spare cell
@@ -33,6 +43,11 @@ are available from the [GitHub releases page].
 
 ### Changed
 
+- The serial port dropdown in the toolbar is gone, replaced by the destination
+  field above. The port list it offered is still there, under a heading, with
+  real adapters first and a bounded tail — an ordinary desktop enumerates
+  thirty-two motherboard `ttyS` ports that have nothing attached, and they used
+  to bury the one adapter you own.
 - `PanelLayout` in `[Sterna]` is now `single` or `tiled`. Files written by
   earlier versions saying `two` or `four` open tiled.
 - Setup lists one Preferences item instead of one item per settings page; the

@@ -632,6 +632,18 @@ Measuring anything:
 - **A Wayland compositor stops frame callbacks to a surface it thinks
   hidden** — short-lived probe windows paint a fraction of their frames; any
   paint-waiting measurement has to tolerate it.
+- **A pty's prompt arrives when it arrives** — asserting the exact contents of
+  row 0 right after `connectPty` is a race with the shell, and *anything*
+  added to the connect path (a settings write, a `/dev` enumeration) changes
+  who wins. `render_test`'s line-edit case read `still here` for a year and
+  then read `nata@natux:~$ still here`. Assert `contains`, and let the
+  scrollback length carry the "nothing scrolled" half.
+- **`run_diff.sh` cannot run from a git worktree** — the oracle compiles
+  `../teraterm` relative to the *checkout*, and under `.claude/worktrees/x`
+  that is nothing; the failure is `No rule to make target
+  build/patched/buffer.c`, which reads as a broken Makefile. Symlink the
+  reference beside the worktree for the run, or run the gate from the main
+  checkout.
 - **The calibration loop corrects for a slower machine, not a busier one** —
   the first baseline was recorded during a build and nothing flagged it.
   Re-record on a quiet machine and read the file before committing.
@@ -692,6 +704,12 @@ Serial:
   is `NoDevice`; `Path::exists("COM3")` is false regardless). Windows opens
   with `CreateFileW` directly: access-denied/sharing-violation is busy,
   missing/invalid-name is disconnected.
+- **Enumeration is not a shortlist** — an ordinary desktop answers
+  `tt_serial_enumerate` with thirty-three ports, thirty-two of them
+  motherboard `ttyS` UARTs with nothing on the far end. Any list a user picks
+  from has to sort the real adapters first and bound the tail, or the one
+  adapter they own is buried mid-alphabet. It is not free either: don't call
+  it on the connect path to render a label.
 - **A test byte with bit 7 set cannot tell 7 data bits from 8** — at seven
   bits the stop bit lands in bit 7. Use `0x25`.
 - **Ports left in flight leak into the next test** — bytes already at the

@@ -17,7 +17,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 |---|---|---|---|
 | 1 | The default baud rate is 115200 | 9600 | 0.2.0 |
 | 2 | The connect dialog remembers the last connection, across restarts | Only Setup > Save persists anything | 0.2.0 |
-| 3 | A bar under the menu: port, connect/disconnect, local echo, line edit | No toolbar at all | 0.2.0 |
+| 3 | A bar under the menu: destination, connect/disconnect, local echo, line edit | No toolbar at all | 0.2.0 |
 | 4 | Tiled connections, and one status line per terminal | One connection per window, one status bar | 0.2.0 |
 | 5 | Starting Sterna looks for a signed update, once a day | Nothing contacts a server on its own | 0.2.0 |
 | 6 | Highlight rules: user-written regular expressions recolour the screen | Only the host decides a colour; the URL attribute is the one exception | 0.2.0 |
@@ -28,6 +28,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 11 | The right button raises Tera Term's own paste menu | The same menu, behind a key that ships off, so the right button pastes at once | 0.2.4 |
 | 12 | Settings-dialog changes can be saved automatically | Only Setup > Save setup persists them | 0.2.5 |
 | 13 | The terminal background is a different shade while nothing is connected | The background is what the file and the host say, always | 0.2.6 |
+| 14 | A bare host name means SSH | It means telnet | 0.2.0 |
 
 ---
 
@@ -64,9 +65,18 @@ the daily use this project is built for — the same console, several times a da
 — means retyping a host or re-picking a port every morning. Sterna writes the
 record when a connection actually opens.
 
-**What is remembered.** The serial port's device path, its speed, data bits,
-parity, stop bits and flow control; the SSH host, user, port, private key and
-the pre-2020 algorithm switch; the telnet host, port and mode. Not the
+**What is remembered.** Two things, and they are not the same thing. One
+record per transport seeds the connect dialog: the serial port's device path,
+its speed, data bits, parity, stop bits and flow control; the SSH host, user,
+port, private key and the pre-2020 algorithm switch; the telnet host, port and
+mode. Beside them, since 0.2.6, a *list* of the last ten connections opened —
+`[Sterna] Recent` — which is what the toolbar's dropdown offers. A list has to
+say which kind each entry is and carry that entry's own parameters, because a
+serial console at 9600 and a router at 115200 are two lines in it; each record
+holds exactly the fields the dialog asks for and no more, so everything else
+still comes from the settings and a setting that changes changes for a
+remembered connection too. `RememberConnections=off` stops adding to it and
+leaves what is there. Not the
 passwords, and nothing a connection failed to make: for SSH that means the
 record is written when the *handshake finishes*, not when it starts, so a host
 whose key was refused or whose login failed does not become the next default.
@@ -95,9 +105,10 @@ file's `BaudRate`.
 
 ## 3. A bar under the menu
 
-Under the menu bar: the serial port as a dropdown, one button that opens or
-closes the connection, and Local echo and Line edit check boxes. Tera Term has
-no toolbar — its equivalents are a dialog, a menu item and settings pages.
+Under the menu bar: where to connect as one editable dropdown, one button that
+opens or closes the connection, and Local echo and Line edit check boxes. Tera
+Term has no toolbar — its equivalents are a dialog, a menu item and settings
+pages.
 
 **Why.** These are the connection and input modes that need to be visible while
 working on a console port. Picking a port is File > New connection upstream,
@@ -113,7 +124,30 @@ live `terminal.local_echo`, which a host's SRM and a macro can also change.
 Line edit is likewise the active tab's `terminal.line_edit`; it makes the echo
 box show the effective on state without changing the preference underneath.
 
-**Where it lives.** `shell/src/ConnectBar.{h,cpp}`, and one new setting:
+**What the field takes.** The dropdown is four groups: the connections
+actually opened (newest first, with their own parameters), the serial ports
+plugged in at the moment the list opens, the hosts in `~/.ssh/config`, and a
+local shell — then New connection and Forget. Choosing a row connects; there is
+no second click, because going back somewhere is the whole reason the list is
+on the bar rather than in a menu. Typing is the escape hatch and inherits that
+kind's last parameters rather than carrying its own: `myrouter`,
+`ssh://user@host:22`, `telnet://host:2323`, `/dev/ttyUSB0`, `COM3`, `shell`.
+
+**One word or a command line, and never half of each.** A destination with a
+space in it is handed to Tera Term's parser whole, which is how
+`/ssh /auth=publickey myrouter` works in the field, and it is the same switch
+`sterna`'s own command line makes when it sees a `/OPTION`. The reason the two
+cannot be merged is deviation 14: a bare host name is SSH in this program's
+vocabulary and telnet in Tera Term's, so a line is read one way or the other.
+
+**A live session is not closed by going somewhere else.** Picking or typing a
+destination while a connection is open puts the new one in a new tab or tile;
+Disconnect is the only thing that closes what is there. The port list this
+replaced could not raise the question, because it greyed itself out whenever a
+session was live.
+
+**Where it lives.** `shell/src/ConnectBar.{h,cpp}`, `shell/src/Recent.{h,cpp}`
+for the records, and one new setting:
 `[Sterna] Toolbar` (`window.toolbar`, on by default), which View > Show toolbar
 writes. The switch exists because chrome nobody can remove does not belong in a
 terminal; it is deliberately *not* tied to `PopupMenu` or `HideTitle`, which are
@@ -494,3 +528,20 @@ neither reads nor writes, and nothing else here has a `TERATERM.INI` meaning.
 The shade lives in the painter alone: the grid, the session log, a macro's
 `wait` and every report a host can ask for are untouched, so nothing on the
 wire can tell whether it is applied.
+
+## 14. A bare host name means SSH
+
+`sterna myrouter` opens an SSH session, and so does typing `myrouter` into the
+connect bar. `ttermpro myrouter` opens telnet.
+
+**Why.** The token is what somebody would type after `ssh`, including
+`user@host:port` and an alias out of `~/.ssh/config`, and a terminal shipped in
+2026 whose bare default is an unencrypted protocol is a terminal that will one
+day send a password in the clear because a habit carried. Upstream's default
+predates that being unacceptable; `/T=1`, `telnet://` and Tera Term's own
+command line all still reach telnet deliberately.
+
+**What is unchanged.** Tera Term's command line is read by Tera Term's rules,
+whole — `sterna /ssh myhost` and `sterna myhost` are different vocabularies and
+a `/OPTION` anywhere switches between them, in the connect bar's field as much
+as in `argv`. So a converted shortcut behaves as it did.

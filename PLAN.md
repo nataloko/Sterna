@@ -4,7 +4,7 @@ Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
 **Last updated:** 2026-08-14 · **Stage:** 4 complete, deliberate deviations
-landing (`docs/deviations.md`) · **Commits:** 686
+landing (`docs/deviations.md`) · **Commits:** 691
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -5581,6 +5581,35 @@ labels must not quote their text as their width, and `TerminalPage::sizeHint`
 is composed by hand because a `QWidgetItem` caches the hint of the widget it
 holds and the view is now one level down. `tabs_test` covers the grid shape,
 the exclusivity, the per-page strip and the View menu on both targets.
+
+**The connect bar stopped being serial-only, 2026-08-14.** Its dropdown could
+offer serial ports and nothing else, which made the bar inert on any machine
+with no adapter plugged in and left SSH, telnet and a local shell reachable
+only through the dialog. The obstacle was never the widget: a one-line control
+can carry a *destination* and not a parameter set, and the four kinds have
+wildly different ones. So the dropdown offers records that carry their own —
+`[Sterna] Recent`, ten of them, newest first, each holding exactly the fields
+the connect dialog asks for so that everything else stays a setting and a
+settings change still reaches a remembered connection. The field beside it
+takes anything the command line takes and inherits that kind's last
+parameters. The rule between them is that **whitespace switches to Tera Term's
+parser entire**: a destination is one word, and a line with a space in it goes
+to `tt_cmdline_parse_line` and out through `openTarget`. They cannot be merged,
+because a bare host name is SSH in this program's vocabulary and telnet in Tera
+Term's — now written down as `docs/deviations.md` 14, having previously lived
+only in `main.cpp`'s help text.
+
+`MainWindow::parseDestination` is a pure function for a testing reason worth
+stating: three of the four transports need hardware, a server or a name that
+resolves, so a switch that only *acts* can be asserted on one arm out of four.
+`connect_test` covers the vocabulary, the record encoding, the list's ordering
+and bounding, the dropdown's four groups, and one end-to-end local shell.
+Two things the old port list never had to answer also landed: enumeration is
+not a shortlist (this desktop returns thirty-two `ttyS` ports with nothing
+attached, so the group sorts real adapters first and bounds the tail), and the
+field stays live under a live session because `ensureIdlePage` gives a second
+destination its own page — going somewhere else opens a tab rather than
+closing what is there.
 
 **Duplicate session follows upstream's narrower rule: live SSH and telnet
 only.** Serial and local shells have no Duplicate action. The destination gets

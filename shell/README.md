@@ -104,6 +104,42 @@ cell-size snapshot to each visible session after the layout settles. Re-tiling
 never resizes the top-level window: the client area is divided, never
 multiplied.
 
+## The connect bar takes a destination, not a port
+
+`ConnectBar` is one editable `QComboBox` and a Connect/Disconnect action. The
+dropdown is rebuilt as it opens — that is when `/dev` and `~/.ssh/config` are
+worth re-reading, and a terminal that enumerates either on a timer is a
+terminal that never lets the machine idle — and it holds four groups:
+`RecentConnection`s newest first, the ports plugged in now, the SSH aliases,
+and a local shell, then New connection and Forget.
+
+**The bar has no parser and no session.** Choosing a row emits either
+`recentChosen`, which carries a whole record, or `destinationEntered`, which
+carries a string; `MainWindow::parseDestination` is the only place that decides
+what a string means, and it is a pure function so the vocabulary can be
+asserted without opening anything. Its rule: **whitespace switches to Tera
+Term's parser entire**. A destination is one word — an alias, `ssh://user@host`,
+`telnet://host:port`, a device path, `COM3`, `shell` — and anything with a space
+in it goes to `tt_cmdline_parse_line` and then through `openTarget`, the same
+seam the command line uses. The two cannot be merged because a bare host name
+means SSH in one vocabulary and telnet in the other (`docs/deviations.md` 14).
+
+**A record is not a parameter set.** `RecentConnection` holds the destination
+and exactly the fields the connect dialog asks for — five for a serial line,
+four for SSH, two for telnet, none for a shell — and `appliedTo` lays them over
+the settings' `TtSerialParams`. Everything it does not hold stays a setting, so
+`DtrControl` keeps following Setup instead of being frozen the day a connection
+was first opened. The list is `[Sterna] Recent`, ten records separated by `;`,
+each written the way its destination is spoken; a record that does not parse is
+dropped rather than repaired, because that file is hand-edited.
+
+Two things the port list this replaced did not have to answer. Enumeration is
+not a shortlist — an ordinary desktop returns thirty-two motherboard `ttyS`
+ports with nothing attached — so the group sorts real adapters first, shows six
+and says how many it did not. And the field stays live under a live session:
+`ensureIdlePage` gives the second destination its own page, so going somewhere
+else opens a tab and never closes what is there.
+
 ## One status line per terminal
 
 `PageStatusBar` is a strip along the bottom of each `TerminalPage`: the
