@@ -591,9 +591,13 @@ void test_the_language_file_translates_menus_without_stealing_alt()
     QAction *fileMenu = findAction(window, QStringLiteral("ファイル"));
     QAction *send = findAction(window, QStringLiteral("ファイル送信..."));
     QAction *setup = findAction(window, QStringLiteral("設定"));
+    QAction *clearScreen = findAction(window, QStringLiteral("画面クリア"));
+    QAction *clearBuffer = findAction(window, QStringLiteral("バッファのクリア"));
     CHECK(fileMenu != nullptr);
     CHECK(send != nullptr);
     CHECK(setup != nullptr);
+    CHECK(clearScreen != nullptr);
+    CHECK(clearBuffer != nullptr);
     CHECK(window.windowTitle().contains(QStringLiteral("[未接続]")));
 
     // The catalog advertises Win32 mnemonics and accelerator captions. Sterna

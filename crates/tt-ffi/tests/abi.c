@@ -310,6 +310,52 @@ static void test_scrollback_viewport(void)
     tt_session_free(s);
 }
 
+static void expect_line(const TtSession *s, uint64_t n, char want);
+
+static void test_clear_commands(void)
+{
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    cfg.cols = 20;
+    cfg.rows = 4;
+    TtSession *s = tt_session_new(&cfg);
+
+    static const char page[] = "A\r\nB";
+    tt_session_feed(s, (const uint8_t *)page, sizeof page - 1);
+    uint64_t top = tt_session_top_line(s);
+    const TtEvent *events = NULL;
+    tt_session_drain_events(s, &events);
+
+    tt_session_clear_screen(s);
+    CHECK(tt_session_scrollback_len(s) == 4);
+    expect_line(s, top, 'A');
+    expect_row(s, 0, "");
+    TtCursor cur;
+    tt_session_cursor(s, &cur);
+    CHECK(cur.x == 0 && cur.y == 0);
+    size_t n = tt_session_drain_events(s, &events);
+    CHECK(n == 1 && events[0].kind == TT_EVENT_KIND_DAMAGE);
+
+    /* A local clear is not the remote ED 3 that this setting gates. */
+    CHECK_OK(tt_session_set_setting(s, "window.remote_clears_buffer", "off"));
+    tt_session_feed(s, (const uint8_t *)"buffer", 6);
+    tt_session_clear_screen(s);
+    CHECK(tt_session_scrollback_len(s) > 0);
+    tt_session_set_view_offset(s, 2);
+    tt_session_drain_events(s, &events);
+
+    tt_session_clear_buffer(s);
+    CHECK(tt_session_scrollback_len(s) == 0);
+    CHECK(tt_session_view_offset(s) == 0);
+    expect_row(s, 0, "");
+    tt_session_cursor(s, &cur);
+    CHECK(cur.x == 0 && cur.y == 0);
+    n = tt_session_drain_events(s, &events);
+    CHECK(n == 1 && events[0].kind == TT_EVENT_KIND_DAMAGE);
+
+    tt_session_free(s);
+}
+
 static void expect_line(const TtSession *s, uint64_t n, char want)
 {
     size_t len = 0;
@@ -1742,6 +1788,8 @@ static void test_null_safety(void)
     CHECK(tt_session_log_bytes(NULL) == 0);
     CHECK(tt_session_view_offset(NULL) == 0);
     tt_session_set_view_offset(NULL, 5);
+    tt_session_clear_screen(NULL);
+    tt_session_clear_buffer(NULL);
     CHECK(!tt_session_cursor_view_row(NULL, NULL));
     CHECK(tt_session_line_at(NULL, 0) == 0);
     CHECK(tt_session_top_line(NULL) == 0);
@@ -3105,6 +3153,7 @@ int main(void)
     test_remote_clipboard();
     test_attributes();
     test_scrollback_viewport();
+    test_clear_commands();
     test_absolute_lines();
     test_url_lookup();
     test_highlights();

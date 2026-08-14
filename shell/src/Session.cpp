@@ -945,6 +945,18 @@ void Session::feed(const QByteArray &bytes)
     pumpAndDispatch(0);
 }
 
+void Session::clearScreen()
+{
+    tt_session_clear_screen(m_session);
+    dispatch();
+}
+
+void Session::clearBuffer()
+{
+    tt_session_clear_buffer(m_session);
+    dispatch();
+}
+
 bool Session::cycleDebugMode()
 {
     return tt_session_cycle_debug_mode(m_session);

@@ -1115,6 +1115,114 @@ void test_a_selection_survives_scrolling_back()
     CHECK(h.bgAt(0, 2) == kBlack);
 }
 
+void test_clear_commands_keep_or_drop_selection()
+{
+    Harness h;
+    h.feed("keep me\r\nsecond");
+    h.drag(h.px(0), h.py(0), h.px(6, 0.7), h.py(0));
+    CHECK(h.copied() == QStringLiteral("keep me"));
+
+    h.view.clearScreen();
+    CHECK(h.session.scrollbackLen() == h.session.rows());
+    CHECK(rowText(h.session, 0).isEmpty());
+    CHECK(h.copied() == QStringLiteral("keep me"));
+    const TtCursor cleared = h.session.cursor();
+    CHECK(cleared.x == 0 && cleared.y == 0);
+
+    h.feed("new page");
+    h.view.clearBuffer();
+    CHECK(h.session.scrollbackLen() == 0);
+    CHECK(h.session.viewOffset() == 0);
+    CHECK(rowText(h.session, 0).isEmpty());
+    CHECK(!h.view.hasSelection());
+    const TtCursor emptied = h.session.cursor();
+    CHECK(emptied.x == 0 && emptied.y == 0);
+
+    Harness noHistory;
+    QString error;
+    CHECK(noHistory.session.setSetting(QStringLiteral("terminal.scrollback_enabled"),
+                                       QStringLiteral("off"), &error));
+    noHistory.view.applySettings();
+    noHistory.feed("gone");
+    noHistory.drag(noHistory.px(0), noHistory.py(0), noHistory.px(3, 0.7),
+                   noHistory.py(0));
+    CHECK(noHistory.view.hasSelection());
+    noHistory.view.clearScreen();
+    CHECK(noHistory.session.scrollbackLen() == 0);
+    CHECK(!noHistory.view.hasSelection());
+}
+
+void test_the_edit_menu_and_key_map_share_clear_commands()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    MainWindow window(dir.filePath(QStringLiteral("sterna.ini")));
+    auto *view = window.findChild<TerminalView *>();
+    auto *edit = window.findChild<QMenu *>(QStringLiteral("editMenu"));
+    auto *clearScreen =
+        window.findChild<QAction *>(QStringLiteral("clearScreenAction"));
+    auto *clearBuffer =
+        window.findChild<QAction *>(QStringLiteral("clearBufferAction"));
+    auto *quick = window.findChild<QAction *>(
+        QStringLiteral("quickButtonFromSelectionAction"));
+    CHECK(view != nullptr);
+    CHECK(edit != nullptr);
+    CHECK(clearScreen != nullptr);
+    CHECK(clearBuffer != nullptr);
+    CHECK(quick != nullptr);
+    if (!view || !edit || !clearScreen || !clearBuffer || !quick) {
+        return;
+    }
+
+    CHECK(clearScreen->text() == QStringLiteral("Clear screen"));
+    CHECK(clearBuffer->text() == QStringLiteral("Clear buffer"));
+    CHECK(clearScreen->statusTip().contains(QStringLiteral("keeps it in scrollback")));
+    CHECK(clearBuffer->statusTip().contains(
+        QStringLiteral("permanently removes all scrollback")));
+    CHECK(clearScreen->shortcut().isEmpty());
+    CHECK(clearBuffer->shortcut().isEmpty());
+    const int screenAt = edit->actions().indexOf(clearScreen);
+    const int bufferAt = edit->actions().indexOf(clearBuffer);
+    const int quickAt = edit->actions().indexOf(quick);
+    CHECK(screenAt >= 0);
+    CHECK(bufferAt == screenAt + 1);
+    CHECK(quickAt > bufferAt);
+
+    window.session()->feed(QByteArrayLiteral("menu page"));
+    clearScreen->trigger();
+    CHECK(window.session()->scrollbackLen() == window.session()->rows());
+    CHECK(rowText(*window.session(), 0).isEmpty());
+    window.session()->feed(QByteArrayLiteral("menu history"));
+    clearBuffer->trigger();
+    CHECK(window.session()->scrollbackLen() == 0);
+    CHECK(rowText(*window.session(), 0).isEmpty());
+
+    const QString keyMap = dir.filePath(QStringLiteral("KEYBOARD.CNF"));
+    QFile file(keyMap);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[Shortcut keys]\nEditCLS=63\nEditCLB=64\n");
+    file.close();
+    QVector<quint16> duplicates;
+    QString error;
+    CHECK(window.session()->loadKeyMap(keyMap, &duplicates, &error));
+    CHECK(duplicates.isEmpty());
+    // A disconnected blank tab intentionally ignores physical key mappings;
+    // local line-edit mode keeps its keyboard live without needing a test
+    // transport, and the configured shortcut still outranks the editor.
+    CHECK(window.session()->setSetting(QStringLiteral("terminal.line_edit"),
+                                       QStringLiteral("on"), &error));
+    CHECK(view->lineEditEnabled());
+
+    window.session()->feed(QByteArrayLiteral("key page"));
+    key(*view, Qt::Key_F5);
+    CHECK(window.session()->scrollbackLen() == window.session()->rows());
+    CHECK(rowText(*window.session(), 0).isEmpty());
+    window.session()->feed(QByteArrayLiteral("key history"));
+    key(*view, Qt::Key_F6);
+    CHECK(window.session()->scrollbackLen() == 0);
+    CHECK(rowText(*window.session(), 0).isEmpty());
+}
+
 void test_dragging_off_the_edge_scrolls_the_view()
 {
     Harness h;
@@ -2519,6 +2627,8 @@ int main(int argc, char **argv)
     test_a_triple_click_selects_the_line();
     test_a_selection_holds_on_to_its_text_not_its_place();
     test_a_selection_survives_scrolling_back();
+    test_clear_commands_keep_or_drop_selection();
+    test_the_edit_menu_and_key_map_share_clear_commands();
     test_continued_line_copy_joins_a_wrapped_line();
     test_the_other_buttons_do_not_start_or_copy_a_selection();
     test_a_paste_with_a_line_break_is_confirmed();

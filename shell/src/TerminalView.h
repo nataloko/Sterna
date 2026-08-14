@@ -101,6 +101,11 @@ public:
     /// Public because Edit > New quick button from selection turns it into a
     /// command, which is the cheapest way there is to make a button.
     QString selectedText() const;
+    /// Blank the live page but keep it and any retained selection in
+    /// scrollback.
+    void clearScreen();
+    /// Blank the page and permanently discard all scrollback and selection.
+    void clearBuffer();
 
     /// The legacy `KEYBOARD.CNF` scan code a Qt key sequence would arrive as,
     /// or 0 for one this table has no physical key for.

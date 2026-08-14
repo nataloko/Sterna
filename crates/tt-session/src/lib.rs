@@ -1253,6 +1253,35 @@ impl Session {
         self.view_offset = offset.min(self.vt.grid().scrollback_len());
     }
 
+    /// Edit > Clear screen — scroll the visible page into history and home the
+    /// cursor. This is deliberately not `ED 2`: the menu command is local and
+    /// unconditional, and upstream's `BuffClearScreen` preserves the page in
+    /// the scrollback rather than erasing its cells in place.
+    pub fn clear_screen(&mut self) {
+        self.vt.grid_mut().clear_screen();
+        self.vt.grid_mut().move_cursor(0, 0);
+        self.vt.reconcile_sixels();
+        self.follow_scroll();
+        self.mark_damage();
+    }
+
+    /// Edit > Clear buffer — discard the history and blank the live page.
+    ///
+    /// Unlike remote `ED 3`, the local command is not gated by
+    /// `ClearScrollBufferFromRemote`. `Grid::clear_buffer` also homes the
+    /// cursor and restores the full scrolling margins, matching upstream's
+    /// `ClearBuffer`.
+    pub fn clear_buffer(&mut self) {
+        self.vt.grid_mut().clear_buffer();
+        self.vt.reconcile_sixels();
+        // The old offset may become legal again as new history accumulates,
+        // so clamping it only on read is not enough here. Clearing the buffer
+        // is an explicit request to return to the blank live page.
+        self.view_offset = 0;
+        self.seen_scrolled_off = self.vt.grid().scrolled_off();
+        self.mark_damage();
+    }
+
     /// Whether the cursor's row is in view, and where — the frontend needs
     /// both, since a scrolled-back window must not paint a cursor that belongs
     /// to a screen it is not showing.
@@ -2004,11 +2033,7 @@ impl Session {
         self.connect_beep(kind);
 
         if self.settings.connection_clear_screen_on_close {
-            self.vt.grid_mut().clear_screen();
-            self.vt.grid_mut().move_cursor(0, 0);
-            self.vt.reconcile_sixels();
-            self.follow_scroll();
-            self.mark_damage();
+            self.clear_screen();
         }
 
         if matches!(kind, tt_conn::LinkKind::Network) && self.settings.connection_auto_win_close {

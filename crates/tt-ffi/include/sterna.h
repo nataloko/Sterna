@@ -3100,6 +3100,20 @@ size_t tt_session_view_offset(const TtSession *session);
 void tt_session_set_view_offset(TtSession *session, size_t offset);
 
 /**
+ * Edit > Clear screen: move the visible page into history, blank the live
+ * page and home the cursor. Local and unconditional; sends nothing to the
+ * connected peer.
+ */
+void tt_session_clear_screen(TtSession *session);
+
+/**
+ * Edit > Clear buffer: discard all history, blank the live page, home the
+ * cursor and restore full scrolling margins. Local and unconditional; the
+ * remote-clear setting does not gate an explicit frontend command.
+ */
+void tt_session_clear_buffer(TtSession *session);
+
+/**
  * Which viewport row the cursor is on, or false when it is not in view.
  *
  * The cursor belongs to the live screen, so scrolling back moves it *down*

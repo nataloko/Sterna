@@ -6,7 +6,7 @@
 //! bottom" watches what it is reading walk up the screen as the host talks.
 
 use tt_config::Settings;
-use tt_session::{MemoryHandle, MemoryTransport, Session};
+use tt_session::{Event, MemoryHandle, MemoryTransport, Session};
 use tt_vt::Config;
 
 fn session(cols: usize, rows: usize, scrollback: usize) -> (Session, MemoryHandle) {
@@ -102,6 +102,46 @@ fn scrolling_back_shows_the_history() {
 
     s.set_view_offset(0);
     assert_eq!(row(&s, 0), "line7");
+}
+
+#[test]
+fn local_clear_screen_keeps_the_page_in_history() {
+    let (mut s, _h) = holding(20, 4, 100);
+    s.feed(b"first\r\nsecond\x1b[2;3r\x1b[3;5H");
+    let top = s.top_line();
+    s.drain_events();
+
+    s.clear_screen();
+
+    assert_eq!(s.scrollback_len(), 4);
+    assert_eq!(line(&s, top).as_deref(), Some("first"));
+    assert_eq!(line(&s, top + 1).as_deref(), Some("second"));
+    assert!((0..4).all(|y| row(&s, y).is_empty()));
+    assert_eq!(s.grid().cursor.x, 0);
+    assert_eq!(s.grid().cursor.y, 0);
+    assert_eq!(s.grid().scroll_region(), (1, 2), "margins survive");
+    assert_eq!(s.drain_events(), vec![Event::Damage]);
+}
+
+#[test]
+fn local_clear_buffer_drops_history_and_returns_to_live() {
+    let (mut s, _h) = holding(20, 4, 100);
+    s.feed(&lines(0, 10));
+    assert!(s.set_setting("window.remote_clears_buffer", "off"));
+    s.feed(b"\x1b[2;3r");
+    s.set_view_offset(3);
+    s.drain_events();
+
+    // The setting refuses a host's ED 3, not this explicit local command.
+    s.clear_buffer();
+
+    assert_eq!(s.scrollback_len(), 0);
+    assert_eq!(s.view_offset(), 0);
+    assert!((0..4).all(|y| row(&s, y).is_empty()));
+    assert_eq!(s.grid().cursor.x, 0);
+    assert_eq!(s.grid().cursor.y, 0);
+    assert_eq!(s.grid().scroll_region(), (0, 3));
+    assert_eq!(s.drain_events(), vec![Event::Damage]);
 }
 
 #[test]

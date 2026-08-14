@@ -818,6 +818,24 @@ pub extern "C" fn tt_session_set_view_offset(session: *mut TtSession, offset: us
     s.session.set_view_offset(offset);
 }
 
+/// Edit > Clear screen: move the visible page into history, blank the live
+/// page and home the cursor. Local and unconditional; sends nothing to the
+/// connected peer.
+#[no_mangle]
+pub extern "C" fn tt_session_clear_screen(session: *mut TtSession) {
+    let s = session!(session);
+    s.session.clear_screen();
+}
+
+/// Edit > Clear buffer: discard all history, blank the live page, home the
+/// cursor and restore full scrolling margins. Local and unconditional; the
+/// remote-clear setting does not gate an explicit frontend command.
+#[no_mangle]
+pub extern "C" fn tt_session_clear_buffer(session: *mut TtSession) {
+    let s = session!(session);
+    s.session.clear_buffer();
+}
+
 /// Which viewport row the cursor is on, or false when it is not in view.
 ///
 /// The cursor belongs to the live screen, so scrolling back moves it *down*

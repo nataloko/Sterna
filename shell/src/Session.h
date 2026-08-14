@@ -287,6 +287,9 @@ public:
     /// caller; macro binary sends use the same core path directly.
     void sendBytes(const QByteArray &bytes);
     void paste(const QString &text);
+    /// Local Edit commands. Neither writes an escape sequence to the peer.
+    void clearScreen();
+    void clearBuffer();
     /// Returns whether the terminal consumed it; if not, the click belongs to
     /// the frontend and means selection.
     bool mouse(TtMouseEvent event, uint8_t button, int px, int py,

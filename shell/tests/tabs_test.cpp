@@ -353,6 +353,25 @@ void test_tabs_are_independent_and_actions_follow_the_active_one()
     CHECK(screenText(*second->session()).contains(QStringLiteral("second")));
     CHECK(!screenText(*second->session()).contains(QStringLiteral("first")));
 
+    // Window actions resolve the active page when they are triggered. Holding
+    // the first view from `buildMenus` would silently clear the wrong tab.
+    auto *clearScreen =
+        window.findChild<QAction *>(QStringLiteral("clearScreenAction"));
+    auto *clearBuffer =
+        window.findChild<QAction *>(QStringLiteral("clearBufferAction"));
+    CHECK(clearScreen != nullptr);
+    CHECK(clearBuffer != nullptr);
+    clearScreen->trigger();
+    CHECK(screenText(*first->session()).contains(QStringLiteral("first")));
+    CHECK(screenText(*second->session()).trimmed().isEmpty());
+    CHECK(second->session()->scrollbackLen() == second->session()->rows());
+    panels->setCurrentIndex(0);
+    clearBuffer->trigger();
+    CHECK(screenText(*first->session()).trimmed().isEmpty());
+    CHECK(first->session()->scrollbackLen() == 0);
+    CHECK(second->session()->scrollbackLen() == second->session()->rows());
+    panels->setCurrentIndex(1);
+
     // The shared local-echo checkbox follows the active page. These pages are
     // deliberately offline, so the now-grey control cannot change them; a
     // script or host assignment still refreshes the displayed state.

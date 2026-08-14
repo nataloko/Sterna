@@ -1345,6 +1345,12 @@ bool TerminalView::dispatchKeyCode(const KeyCodeAction &action)
         pasteText(QApplication::clipboard()->text(QClipboard::Clipboard)
                       + QLatin1Char('\r'));
         break;
+    case TT_SHORTCUT_EDIT_CLEAR_SCREEN:
+        clearScreen();
+        break;
+    case TT_SHORTCUT_EDIT_CLEAR_BUFFER:
+        clearBuffer();
+        break;
     case TT_SHORTCUT_LINE_UP:
         setViewOffset(m_session->viewOffset() + 1);
         break;
@@ -1375,9 +1381,9 @@ bool TerminalView::dispatchKeyCode(const KeyCodeAction &action)
         break;
     }
     default:
-        // TEK, clearing, multi-window and ScrollLock actions need the
-        // corresponding subsystem. The binding still consumes the key rather
-        // than falling through to a different built-in sequence.
+        // TEK, multi-window and ScrollLock actions need the corresponding
+        // subsystem. The binding still consumes the key rather than falling
+        // through to a different built-in sequence.
         break;
     }
     return true;
@@ -1938,6 +1944,31 @@ void TerminalView::setViewOffset(int offset)
     update();
     positionLineEditor();
     emit viewChanged();
+}
+
+void TerminalView::clearScreen()
+{
+    // The old page becomes history, so absolute selection endpoints still
+    // name the same text and remain useful. A terminal with scrollback off
+    // cannot retain them, in which case keeping a selection flag would offer
+    // an empty Copy for text that no longer exists.
+    SelPoint first;
+    SelPoint last;
+    const bool selected = selectionRange(&first, &last);
+    m_session->clearScreen();
+    size_t len = 0;
+    if (selected && (!m_session->line(first.line, &len)
+                     || !m_session->line(last.line, &len))) {
+        clearSelection();
+    }
+}
+
+void TerminalView::clearBuffer()
+{
+    // The selected lines are about to become unreachable. Upstream's
+    // ClearBuffer resets its selection at the same boundary.
+    clearSelection();
+    m_session->clearBuffer();
 }
 
 void TerminalView::focusInEvent(QFocusEvent *event)

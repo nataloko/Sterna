@@ -1658,7 +1658,20 @@ void MainWindow::buildMenus()
         tr("Paste"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V), this,
         [this] { m_view->pasteClipboard(); });
     languageAction(paste, "MENU_EDIT_PASTE", tr("Paste"));
-    // Beside Copy, because it is the same gesture with a different
+    edit->addSeparator();
+    QAction *clearScreen = edit->addAction(
+        tr("Clear screen"), this, [this] { m_view->clearScreen(); });
+    clearScreen->setObjectName(QStringLiteral("clearScreenAction"));
+    clearScreen->setStatusTip(
+        tr("Clears the visible page and keeps it in scrollback."));
+    languageAction(clearScreen, "MENU_EDIT_CLSCREEN", tr("Clear screen"));
+    QAction *clearBuffer = edit->addAction(
+        tr("Clear buffer"), this, [this] { m_view->clearBuffer(); });
+    clearBuffer->setObjectName(QStringLiteral("clearBufferAction"));
+    clearBuffer->setStatusTip(
+        tr("Clears the visible page and permanently removes all scrollback."));
+    languageAction(clearBuffer, "MENU_EDIT_CLBUFFER", tr("Clear buffer"));
+    // In Edit because it is the same gesture as Copy with a different
     // destination: select the command that worked, keep it. No upstream key.
     edit->addSeparator();
     m_quickButtonFromSelectionAction =
