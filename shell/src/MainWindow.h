@@ -217,6 +217,9 @@ private slots:
     /// Ctrl+left-click replacement for a menu bar hidden by `PopupMenu` or
     /// `HideTitle`.
     void showPopupMenu(const QPoint &globalPos);
+    /// Upstream's `IDR_PASTEMENU` — Paste and Paste<CR>, raised by the right
+    /// button when `ConfirmPasteMouseRButton` is on instead of pasting.
+    void showPasteMenu(const QPoint &globalPos);
     /// Re-read everything derived from a setting: the painter's colours, and
     /// the terminal's size.
     void onSettingsChanged();
@@ -433,6 +436,10 @@ private:
     QAction *m_toolbarAction = nullptr;
     QAction *m_quickButtonsAction = nullptr;
     QAction *m_quickButtonFromSelectionAction = nullptr;
+    /// The Edit menu's two paste commands, which the right button's menu
+    /// borrows rather than duplicating.
+    QAction *m_pasteAction = nullptr;
+    QAction *m_pasteCrAction = nullptr;
     QAction *m_disconnectAction = nullptr;
     QAction *m_newTabAction = nullptr;
     QAction *m_closeTabAction = nullptr;

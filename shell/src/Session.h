@@ -286,7 +286,10 @@ public:
     /// Raw bytes: no UTF-8 encoding or LNM. `Meta8Bit=raw` is the frontend
     /// caller; macro binary sends use the same core path directly.
     void sendBytes(const QByteArray &bytes);
-    void paste(const QString &text);
+    /// `addCr` is upstream's `Paste<CR>`: the core appends the Return, because
+    /// where it joins the text decides whether the brackets go on and whether
+    /// a clipboard that already ends in a newline sends one CR or two.
+    void paste(const QString &text, bool addCr = false);
     /// Returns whether the terminal consumed it; if not, the click belongs to
     /// the frontend and means selection.
     bool mouse(TtMouseEvent event, uint8_t button, int px, int py,

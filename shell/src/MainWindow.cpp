@@ -541,6 +541,11 @@ void MainWindow::wirePage(TerminalPage *page)
                 activatePage(page);
                 showPopupMenu(pos);
             });
+    connect(view, &TerminalView::pasteMenuRequested, this,
+            [this, page](const QPoint &pos) {
+                activatePage(page);
+                showPasteMenu(pos);
+            });
     connect(view, &TerminalView::keyMacroRequested, this,
             [this, page](const QString &path) {
                 activatePage(page);
@@ -1278,6 +1283,23 @@ void MainWindow::showPopupMenu(const QPoint &globalPos)
     popup->popup(globalPos);
 }
 
+void MainWindow::showPasteMenu(const QPoint &globalPos)
+{
+    // `IDR_PASTEMENU` is two items and nothing else: Paste and Paste<CR>
+    // (`vtwin.cpp:1317`). Upstream copies them out of a loaded resource; here
+    // they are the Edit menu's own actions, for the reason `showPopupMenu`
+    // gives — a second copy drifts, and these already carry their `.lng` text
+    // and their `KEYBOARD.CNF` shortcuts.
+    auto *menu = new QMenu(this);
+    menu->setObjectName(QStringLiteral("pasteMenu"));
+    menu->addAction(m_pasteAction);
+    menu->addAction(m_pasteCrAction);
+
+    connect(menu, &QMenu::aboutToHide, m_view, &TerminalView::pasteMenuClosed);
+    connect(menu, &QMenu::aboutToHide, menu, &QObject::deleteLater);
+    menu->popup(globalPos);
+}
+
 void MainWindow::showSettingsDialog()
 {
     SettingsDialog dialog(m_session, m_plugins, m_i18n, this);
@@ -1654,10 +1676,21 @@ void MainWindow::buildMenus()
         tr("Copy"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C), this,
         [this] { m_view->copySelection(); });
     languageAction(copy, "MENU_EDIT_COPY", tr("Copy"));
-    QAction *paste = edit->addAction(
+    m_pasteAction = edit->addAction(
         tr("Paste"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V), this,
         [this] { m_view->pasteClipboard(); });
-    languageAction(paste, "MENU_EDIT_PASTE", tr("Paste"));
+    m_pasteAction->setObjectName(QStringLiteral("pasteAction"));
+    languageAction(m_pasteAction, "MENU_EDIT_PASTE", tr("Paste"));
+    // `ID_EDIT_PASTECR`, the other half of upstream's Edit menu and of the
+    // right button's. Upstream gives it Alt+R; that is a Meta key here, so it
+    // is left to `KEYBOARD.CNF`'s `EditPasteCR` rather than taking a keystroke
+    // away from the host — see the shortcut trap in AGENTS.md.
+    m_pasteCrAction = edit->addAction(tr("Paste<CR>"), this,
+                                      [this] { m_view->pasteClipboard(true); });
+    m_pasteCrAction->setObjectName(QStringLiteral("pasteCrAction"));
+    m_pasteCrAction->setStatusTip(
+        tr("Pastes the clipboard and adds the Return that runs it."));
+    languageAction(m_pasteCrAction, "MENU_EDIT_PASTECR", tr("Paste<CR>"));
     // Beside Copy, because it is the same gesture with a different
     // destination: select the command that worked, keep it. No upstream key.
     edit->addSeparator();

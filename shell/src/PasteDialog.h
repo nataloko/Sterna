@@ -29,14 +29,24 @@ public:
     /// The text as it stands, which may not be the text it was given.
     QString text() const;
 
-    /// Does this paste need confirming?
+    /// Does this paste need confirming? `CheckClipboardContentW`
+    /// (`clipboar.c:126`), minus its `ConfirmChangePaste` gate, which the
+    /// caller has already applied.
     ///
-    /// A line break is the test (`clipboar.c:157` — `wcscspn` against `\r\n`),
-    /// plus any string in `dictionary`, which is a file of one string per line
-    /// and is how a site adds `rm -rf` to the list. An unreadable or empty
+    /// The two paths ask different questions. A plain paste is confirmed when
+    /// the text *contains* a line break (`clipboar.c:157` — `wcscspn` against
+    /// `\r\n`). `Paste<CR>` is confirmed when one is being **added**, so
+    /// `confirmCr` (`ConfirmChangePasteCR`) decides it alone and the text's
+    /// own content has no say — upstream's own comment at `:136` weighs
+    /// whether that is right and keeps it.
+    ///
+    /// Either way `dictionary` is consulted afterwards and can only turn
+    /// confirmation on: a file of one string per line, matched as substrings,
+    /// which is how a site adds `rm -rf` to the list. An unreadable or empty
     /// path is no dictionary and not an error, which is upstream's
     /// `LoadFileWW` returning NULL.
-    static bool shouldConfirm(const QString &text, const QString &dictionary);
+    static bool shouldConfirm(const QString &text, const QString &dictionary,
+                              bool addCr = false, bool confirmCr = true);
 
 private:
     QPlainTextEdit *m_edit;

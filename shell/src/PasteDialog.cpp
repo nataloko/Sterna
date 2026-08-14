@@ -56,9 +56,16 @@ QString PasteDialog::text() const
     return m_edit->toPlainText();
 }
 
-bool PasteDialog::shouldConfirm(const QString &text, const QString &dictionary)
+bool PasteDialog::shouldConfirm(const QString &text, const QString &dictionary,
+                                bool addCr, bool confirmCr)
 {
-    if (text.contains(QLatin1Char('\r')) || text.contains(QLatin1Char('\n'))) {
+    // `clipboar.c:150`: the added CR is the change on that path, so the text
+    // is not searched for one — a single-line `Paste<CR>` is confirmed and a
+    // multi-line one is not, when `ConfirmChangePasteCR` is off.
+    const bool changes = addCr
+        ? confirmCr
+        : text.contains(QLatin1Char('\r')) || text.contains(QLatin1Char('\n'));
+    if (changes) {
         return true;
     }
     if (dictionary.isEmpty()) {
