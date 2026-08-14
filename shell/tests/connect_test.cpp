@@ -11,7 +11,9 @@
 // a function that can be asked rather than only a switch that acts.
 
 #include <QApplication>
+#include <QAbstractItemView>
 #include <QComboBox>
+#include <QMainWindow>
 #include <QStandardPaths>
 
 #include <cstdio>
@@ -349,6 +351,16 @@ void test_a_typed_shell_connects_and_is_remembered()
     if (bar) {
         CHECK(bar->destination() == QStringLiteral("Local shell"));
     }
+
+    // And the next launch opens on it. The list is read where the rest of the
+    // remembered connection is, which is after the bar exists — a guard that
+    // silently does nothing would look exactly like an empty list.
+    MainWindow next;
+    auto *nextBar = next.findChild<ConnectBar *>(QStringLiteral("connectBar"));
+    CHECK(nextBar != nullptr);
+    if (nextBar) {
+        CHECK(nextBar->destination() == QStringLiteral("Local shell"));
+    }
 }
 
 /// Off stops recording and leaves what is there: the entries are still on
@@ -371,6 +383,45 @@ void test_recording_can_be_turned_off_without_losing_the_list()
 }
 #endif
 
+/// `--write <dir>`: the bar and its open dropdown, as PNGs. Every other
+/// `*_test` takes the same flag.
+void write_images(const QString &dir)
+{
+    QVector<RecentConnection> recents;
+    TtSerialParams line;
+    tt_serial_params_default(&line);
+    line.baud = 115200;
+    recents.append(RecentConnection::serial(
+        QStringLiteral("/dev/serial/by-path/pci-0000:c6:00.3-usb-0:4.2:1.0"),
+        line));
+    recents.append(RecentConnection::ssh(QStringLiteral("myrouter"), QString(),
+                                         0, QString(), false));
+    recents.append(RecentConnection::ssh(QStringLiteral("buildbox"),
+                                         QStringLiteral("alice"), 2222,
+                                         QString(), false));
+    recents.append(RecentConnection::telnet(QStringLiteral("10.0.0.5"), 2323,
+                                            TT_TELNET_AUTO));
+    recents.append(RecentConnection::shell());
+
+    QMainWindow window;
+    auto *bar = new ConnectBar(nullptr, &window);
+    window.addToolBar(Qt::TopToolBarArea, bar);
+    bar->setRecents(recents);
+    window.resize(1000, 60);
+    window.show();
+    qApp->processEvents();
+    bar->grab().save(dir + QStringLiteral("/connect-bar.png"));
+
+    auto *combo = bar->findChild<QComboBox *>(QStringLiteral("connectBarDestination"));
+    if (combo) {
+        combo->showPopup();
+        qApp->processEvents();
+        combo->view()->window()->grab().save(dir
+                                             + QStringLiteral("/connect-list.png"));
+        combo->hidePopup();
+    }
+}
+
 int main(int argc, char **argv)
 {
     // Or every `MainWindow` here reads the developer's own `sterna.ini` — and
@@ -385,6 +436,11 @@ int main(int argc, char **argv)
     test_a_record_lays_five_fields_over_the_settings();
     test_what_a_typed_destination_means();
     test_the_dropdown_offers_every_group();
+    for (int i = 1; i + 1 < argc; i++) {
+        if (QLatin1String(argv[i]) == QLatin1String("--write")) {
+            write_images(QString::fromLocal8Bit(argv[i + 1]));
+        }
+    }
 #ifndef Q_OS_WIN
     test_a_typed_shell_connects_and_is_remembered();
     test_recording_can_be_turned_off_without_losing_the_list();
