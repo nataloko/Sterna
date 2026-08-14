@@ -8178,18 +8178,24 @@ pub extern "C" fn tt_ctl_path(ctl: *const TtCtl) -> *const c_char {
     }
 }
 
-/// Publish the serial port this window has open, so the other windows can say
-/// so in their pickers. `device` null withdraws the claim.
+/// Publish the serial ports this window has open, so the other windows can say
+/// so in their pickers. A count of zero withdraws the claim.
 ///
-/// Idempotent, and cheap enough to call on every connection change rather than
-/// working out which changes matter. The claim is read back through the
-/// endpoint list, so a window that dies holding a port stops claiming it the
-/// moment it stops listening — see `tt_ctl::claim`.
+/// **The whole set, every time**: a window is not a session, and a tab or a
+/// tile holding a second console holds a second port. Idempotent, and cheap
+/// enough to call on every connection change rather than working out which
+/// changes matter. The claim is read back through the endpoint list, so a
+/// window that dies holding a port stops claiming it the moment it stops
+/// listening — see `tt_ctl::claim`.
 ///
 /// This is the whole of what Windows can know about a busy port, and on Linux
 /// it is a second opinion beside the kernel's.
 #[no_mangle]
-pub extern "C" fn tt_ctl_claim_port(ctl: *mut TtCtl, device: *const c_char) -> TtStatus {
+pub extern "C" fn tt_ctl_claim_ports(
+    ctl: *mut TtCtl,
+    devices: *const *const c_char,
+    count: usize,
+) -> TtStatus {
     let Some(c) = (unsafe { ctl.as_ref() }) else {
         return fail(TT_ERR_INVALID, "null TtCtl");
     };
@@ -8201,15 +8207,18 @@ pub extern "C" fn tt_ctl_claim_port(ctl: *mut TtCtl, device: *const c_char) -> T
     else {
         return fail(TT_ERR_INVALID, "the control socket has no name");
     };
-    let device = if device.is_null() {
-        None
-    } else {
-        match unsafe { str_arg(device, usize::MAX) } {
-            Ok(d) => Some(d),
-            Err(e) => return e,
+    let mut paths: Vec<&str> = Vec::with_capacity(count);
+    if !devices.is_null() {
+        for i in 0..count {
+            // SAFETY: the caller promises `count` readable pointers.
+            let p = unsafe { *devices.add(i) };
+            match unsafe { str_arg(p, usize::MAX) } {
+                Ok(d) => paths.push(d),
+                Err(e) => return e,
+            }
         }
-    };
-    match tt_ctl::claim::claim(&name, device) {
+    }
+    match tt_ctl::claim::claim(&name, &paths) {
         Ok(()) => TT_OK,
         Err(e) => fail(TT_ERR_IO, format!("cannot publish the port: {e}")),
     }

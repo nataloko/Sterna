@@ -4820,18 +4820,22 @@ TtCtl *tt_ctl_start(const char *name, const TtCtlHost *host);
 const char *tt_ctl_path(const TtCtl *ctl);
 
 /**
- * Publish the serial port this window has open, so the other windows can say
- * so in their pickers. `device` null withdraws the claim.
+ * Publish the serial ports this window has open, so the other windows can say
+ * so in their pickers. A count of zero withdraws the claim.
  *
- * Idempotent, and cheap enough to call on every connection change rather than
- * working out which changes matter. The claim is read back through the
- * endpoint list, so a window that dies holding a port stops claiming it the
- * moment it stops listening — see `tt_ctl::claim`.
+ * **The whole set, every time**: a window is not a session, and a tab or a
+ * tile holding a second console holds a second port. Idempotent, and cheap
+ * enough to call on every connection change rather than working out which
+ * changes matter. The claim is read back through the endpoint list, so a
+ * window that dies holding a port stops claiming it the moment it stops
+ * listening — see `tt_ctl::claim`.
  *
  * This is the whole of what Windows can know about a busy port, and on Linux
  * it is a second opinion beside the kernel's.
  */
-TtStatus tt_ctl_claim_port(TtCtl *ctl, const char *device);
+TtStatus tt_ctl_claim_ports(TtCtl *ctl,
+                            const char *const *devices,
+                            size_t count);
 
 /**
  * A descriptor that becomes readable when a client wants something.

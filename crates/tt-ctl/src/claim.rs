@@ -70,16 +70,18 @@ pub fn dir() -> io::Result<PathBuf> {
     }
 }
 
-/// Publish what this window has open, or withdraw it with `None`.
+/// Publish what this window has open. An empty list withdraws the claim.
 ///
-/// Idempotent on purpose: the frontend calls it on every connection change
-/// rather than trying to work out which changes matter.
-pub fn claim(name: &str, device: Option<&str>) -> io::Result<()> {
-    claim_in(&dir()?, name, device)
+/// A list because a window is not a session: tabs and tiles each have their
+/// own connection, and a window with two serial consoles open holds both.
+/// Idempotent on purpose — the frontend publishes the whole set on every
+/// connection change rather than working out which changes matter.
+pub fn claim(name: &str, devices: &[&str]) -> io::Result<()> {
+    claim_in(&dir()?, name, devices)
 }
 
 /// [`claim`] into a given directory — the seam the tests use.
-pub fn claim_in(dir: &Path, name: &str, device: Option<&str>) -> io::Result<()> {
+pub fn claim_in(dir: &Path, name: &str, devices: &[&str]) -> io::Result<()> {
     if !addr::valid_name(name) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -87,23 +89,28 @@ pub fn claim_in(dir: &Path, name: &str, device: Option<&str>) -> io::Result<()> 
         ));
     }
     let path = dir.join(format!("{name}.port"));
-    match device {
-        Some(device) => {
-            std::fs::write(&path, device.as_bytes())?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                // The device somebody is talking to is not the world's
-                // business, and the Unix directory is already 0700.
-                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-            }
-            Ok(())
-        }
-        None => match std::fs::remove_file(&path) {
+    if devices.is_empty() {
+        return match std::fs::remove_file(&path) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
             other => other,
-        },
+        };
     }
+    // One device per line, and a device with a newline in its name is not a
+    // device: `serialport-rs` opens a path, and `/dev` has no such entry.
+    let body: String = devices
+        .iter()
+        .filter(|d| !d.is_empty() && !d.contains('\n'))
+        .map(|d| format!("{d}\n"))
+        .collect();
+    std::fs::write(&path, body.as_bytes())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // The device somebody is talking to is not the world's business, and
+        // the Unix directory is already 0700.
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
 }
 
 /// Every claim whose window is still listening.
@@ -142,20 +149,18 @@ pub fn claims_in(dir: &Path, live: &[String]) -> io::Result<Vec<Claim>> {
             let _ = std::fs::remove_file(&path);
             continue;
         }
-        let Ok(device) = std::fs::read_to_string(&path) else {
+        let Ok(body) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let device = device.trim();
-        // A half-written file is not a claim. The next write will replace it.
-        if device.is_empty() {
-            continue;
+        // A half-written file is not a claim. The next write replaces it.
+        for device in body.lines().map(str::trim).filter(|d| !d.is_empty()) {
+            out.push(Claim {
+                name: name.clone(),
+                device: device.to_string(),
+            });
         }
-        out.push(Claim {
-            name,
-            device: device.to_string(),
-        });
     }
-    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out.sort_by(|a, b| (&a.name, &a.device).cmp(&(&b.name, &b.device)));
     Ok(out)
 }
 
@@ -187,7 +192,7 @@ mod tests {
 
         assert_eq!(claims_in(&scratch.0, &live).unwrap(), Vec::new());
 
-        claim_in(&scratch.0, "1234", Some("/dev/ttyUSB0")).unwrap();
+        claim_in(&scratch.0, "1234", &["/dev/ttyUSB0"]).unwrap();
         let held = claims_in(&scratch.0, &live).unwrap();
         assert_eq!(
             held,
@@ -198,19 +203,20 @@ mod tests {
         );
         assert_eq!(held[0].pid(), Some(1234));
 
-        // Connecting somewhere else replaces it rather than adding to it: a
-        // window holds at most one port.
-        claim_in(&scratch.0, "1234", Some("/dev/ttyUSB1")).unwrap();
-        assert_eq!(
-            claims_in(&scratch.0, &live).unwrap()[0].device,
-            "/dev/ttyUSB1"
-        );
+        // The whole set is published each time, so closing one tab and
+        // opening another replaces rather than accumulates — and a window with
+        // two consoles open holds both.
+        claim_in(&scratch.0, "1234", &["/dev/ttyUSB1", "/dev/ttyUSB2"]).unwrap();
+        let held = claims_in(&scratch.0, &live).unwrap();
+        assert_eq!(held.len(), 2, "{held:?}");
+        assert_eq!(held[0].device, "/dev/ttyUSB1");
+        assert_eq!(held[1].device, "/dev/ttyUSB2");
 
-        claim_in(&scratch.0, "1234", None).unwrap();
+        claim_in(&scratch.0, "1234", &[]).unwrap();
         assert_eq!(claims_in(&scratch.0, &live).unwrap(), Vec::new());
         // Withdrawing twice is not an error — the frontend does not track
         // which changes matter.
-        claim_in(&scratch.0, "1234", None).unwrap();
+        claim_in(&scratch.0, "1234", &[]).unwrap();
     }
 
     /// The whole reason a claim is read through the endpoint list: a window
@@ -218,8 +224,8 @@ mod tests {
     #[test]
     fn a_claim_whose_window_is_gone_is_ignored_and_removed() {
         let scratch = Scratch::new("stale");
-        claim_in(&scratch.0, "999", Some("/dev/ttyUSB0")).unwrap();
-        claim_in(&scratch.0, "1000", Some("/dev/ttyUSB1")).unwrap();
+        claim_in(&scratch.0, "999", &["/dev/ttyUSB0"]).unwrap();
+        claim_in(&scratch.0, "1000", &["/dev/ttyUSB1"]).unwrap();
 
         let held = claims_in(&scratch.0, &["1000".to_string()]).unwrap();
         assert_eq!(held.len(), 1, "only the live window's claim: {held:?}");
@@ -235,8 +241,8 @@ mod tests {
         let scratch = Scratch::new("name");
         // The same rule as the socket's, and for the same reason: a `/D=`
         // topic comes off a command line.
-        assert!(claim_in(&scratch.0, "../../escape", Some("/dev/null")).is_err());
-        assert!(claim_in(&scratch.0, "", Some("/dev/null")).is_err());
+        assert!(claim_in(&scratch.0, "../../escape", &["/dev/null"]).is_err());
+        assert!(claim_in(&scratch.0, "", &["/dev/null"]).is_err());
     }
 
     #[test]
