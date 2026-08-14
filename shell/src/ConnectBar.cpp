@@ -168,15 +168,15 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
     addWidget(m_destination);
 
     connect(m_destination, &QComboBox::activated, this, &ConnectBar::chose);
-    connect(m_destination->lineEdit(), &QLineEdit::returnPressed, this, [this] {
-        if (!m_connect->data().toBool() && !destination().isEmpty()) {
-            emit destinationEntered(destination());
-        }
-    });
+    connect(m_destination->lineEdit(), &QLineEdit::returnPressed, this,
+            [this] { commit(); });
     // Typed, not polled: `refresh` runs on the window's status update, which a
     // keystroke in this field is not — so without this the Connect button
     // stays greyed over a destination somebody has just finished typing, on a
     // machine with nothing remembered and nothing plugged in.
+    connect(m_destination->lineEdit(), &QLineEdit::textEdited, this, [this] {
+        m_chosen = -1;
+    });
     connect(m_destination->lineEdit(), &QLineEdit::textChanged, this, [this] {
         if (!m_connect->data().toBool()) {
             m_connect->setEnabled(!destination().isEmpty());
@@ -193,8 +193,8 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
         // somebody asked to close.
         if (m_connect->data().toBool()) {
             emit disconnectRequested();
-        } else if (!destination().isEmpty()) {
-            emit destinationEntered(destination());
+        } else {
+            commit();
         }
     });
 
@@ -225,6 +225,23 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
         updateDarkModeAction(on);
         emit darkModeRequested(on);
     });
+    // Reserve the wider of Connect and Disconnect, once. Otherwise the button
+    // changes width the moment a session opens, the toolbar reflows, and the
+    // expanding field beside it absorbs the difference — so connecting makes
+    // the destination box visibly resize, which is the sort of thing that
+    // reads as a bug in the box rather than in the button.
+    if (auto *connectButton =
+            qobject_cast<QToolButton *>(widgetForAction(m_connect))) {
+        connectButton->setObjectName(QStringLiteral("connectBarConnectButton"));
+        m_connect->setText(m_disconnectText.size() > m_connectText.size()
+                               ? m_disconnectText
+                               : m_connectText);
+        const int wide = connectButton->sizeHint().width();
+        m_connect->setText(m_connectText);
+        connectButton->setMinimumWidth(
+            qMax(wide, connectButton->sizeHint().width()));
+    }
+
     auto *darkButton = qobject_cast<QToolButton *>(widgetForAction(m_darkMode));
     if (darkButton) {
         darkButton->setObjectName(QStringLiteral("connectBarDarkModeButton"));
@@ -394,6 +411,17 @@ void ConnectBar::rebuildList()
     m_filling = false;
 }
 
+void ConnectBar::commit()
+{
+    if (m_chosen >= 0 && m_chosen < m_recents.size()) {
+        emit recentChosen(m_recents.at(m_chosen));
+        return;
+    }
+    if (!destination().isEmpty()) {
+        emit destinationEntered(destination());
+    }
+}
+
 void ConnectBar::chose(int index)
 {
     if (m_filling || index < 0) {
@@ -404,11 +432,18 @@ void ConnectBar::chose(int index)
     const QString payload =
         m_destination->itemData(index, RolePayload).toString();
 
+    // **Choosing a row fills the field; Connect is what connects.** A popup
+    // opens under the pointer, so the release that opened it lands on a row
+    // and `activated` arrives without anybody having chosen anything — and a
+    // connection is not something to start by accident. It also means the
+    // destination can be read before it is committed.
     switch (kind) {
     case Row::Recent: {
         const int at = payload.toInt();
         if (at >= 0 && at < m_recents.size()) {
-            emit recentChosen(m_recents.at(at));
+            setDestination(m_destination->itemText(index));
+            m_chosen = at;
+            m_connect->setEnabled(!m_connect->data().toBool());
         }
         return;
     }
@@ -416,13 +451,13 @@ void ConnectBar::chose(int index)
         // The device path, not the row's label: the label carries the USB
         // product name so somebody can tell two adapters apart, and it is not
         // a name anything can be opened by.
-        emit destinationEntered(payload);
+        setDestination(payload);
         return;
     case Row::Alias:
-        emit destinationEntered(payload);
+        setDestination(payload);
         return;
     case Row::Shell:
-        emit destinationEntered(QStringLiteral("shell"));
+        setDestination(QStringLiteral("shell"));
         return;
     case Row::New:
         setDestination(QString());

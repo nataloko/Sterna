@@ -11,9 +11,12 @@
 // a function that can be asked rather than only a switch that acts.
 
 #include <QApplication>
+#include <QGuiApplication>
 #include <QAbstractItemView>
 #include <QAction>
 #include <QComboBox>
+#include <QLineEdit>
+#include <QToolButton>
 #include <QMainWindow>
 #include <QStandardPaths>
 
@@ -315,12 +318,47 @@ void test_the_dropdown_offers_every_group()
                                   Q_ARG(int, row));
     };
 
+    // **Choosing a row fills the field and connects to nothing.** A popup
+    // opens under the pointer, so the release that opened it lands on a row
+    // and `activated` arrives without anybody having chosen anything.
     choose(rowWithText(combo, QStringLiteral("telnet 10.0.0.5:2323")));
-    CHECK(chosen == 2323);
+    CHECK(chosen == -1);
+    CHECK(typed.isEmpty());
+    CHECK(bar.destination() == QStringLiteral("telnet 10.0.0.5:2323"));
 
+    // ...and committing it opens the *record*, not the words: the label has
+    // spaces in it and would otherwise be read as a command line.
+    auto *connectAction =
+        bar.findChild<QAction *>(QStringLiteral("connectBarConnect"));
+    CHECK(connectAction != nullptr);
+    if (connectAction) {
+        connectAction->trigger();
+    }
+    CHECK(chosen == 2323);
+    CHECK(typed.isEmpty());
+
+    // Typing over it is somebody saying something else, so the record goes.
+    chosen = -1;
+    combo->lineEdit()->setText(QStringLiteral("myrouter"));
+    emit combo->lineEdit()->textEdited(QStringLiteral("myrouter"));
+    if (connectAction) {
+        connectAction->trigger();
+    }
+    CHECK(chosen == -1);
+    CHECK(typed == QStringLiteral("myrouter"));
+
+    typed.clear();
     choose(rowWithText(combo, QStringLiteral("Local shell")));
+    CHECK(typed.isEmpty());
+    CHECK(bar.destination() == QStringLiteral("shell"));
+    if (connectAction) {
+        connectAction->trigger();
+    }
     CHECK(typed == QStringLiteral("shell"));
 
+    // The two rows that are not destinations still act at once: neither opens
+    // a connection, and both are at the far end of the list from where a
+    // popup lands.
     choose(rowWithText(combo, QStringLiteral("New connection...")));
     CHECK(newConnections == 1);
     choose(rowWithText(combo, QStringLiteral("Forget these connections")));
@@ -329,9 +367,6 @@ void test_the_dropdown_offers_every_group()
     // The Connect action follows the field as it is typed. Nothing else runs
     // between the keystroke and the click, so a bar with nothing remembered
     // and nothing plugged in would otherwise offer a dead button.
-    auto *connectAction =
-        bar.findChild<QAction *>(QStringLiteral("connectBarConnect"));
-    CHECK(connectAction != nullptr);
     bar.setDestination(QString());
     if (connectAction) {
         CHECK(!connectAction->isEnabled());
@@ -379,10 +414,22 @@ void test_the_dropdown_does_not_move_the_field()
     bar->setRecents(recents);
     qApp->processEvents();
 
+    // A Wayland client does not decide its own size — the compositor acks the
+    // resize later — so a width the test asked for can land *during* the
+    // popup and read as the popup having moved the field. The widths are
+    // swept under offscreen for the same reason `cmdline_test` is; the case
+    // below still runs everywhere at whatever size the window really has.
+    QVector<int> widths = {0};
+    if (!QGuiApplication::platformName().startsWith(QLatin1String("wayland"))) {
+        widths = {900, 800, 720, 700, 650, 600, 560, 520, 480};
+    }
+
     const QSize hint = combo->sizeHint();
-    for (int width : {900, 800, 720, 700, 650, 600, 560, 520, 480}) {
-        window.resize(width, window.height());
-        qApp->processEvents();
+    for (int width : widths) {
+        if (width > 0) {
+            window.resize(width, window.height());
+            qApp->processEvents();
+        }
         const int before = combo->width();
         const int barHeight = bar->height();
         combo->showPopup();
@@ -426,6 +473,41 @@ void test_a_typed_shell_connects_and_is_remembered()
     if (nextBar) {
         CHECK(nextBar->destination() == QStringLiteral("Local shell"));
     }
+}
+
+/// Connecting must not move the field either. The action's two words are
+/// different widths, and the field beside it is the expanding item in the
+/// toolbar — so without a reserved width, opening a session resizes the box.
+void test_connecting_does_not_move_the_field()
+{
+    MainWindow window;
+    window.show();
+    qApp->processEvents();
+    auto *bar = window.findChild<ConnectBar *>(QStringLiteral("connectBar"));
+    CHECK(bar != nullptr);
+    if (!bar) {
+        return;
+    }
+    auto *combo =
+        bar->findChild<QComboBox *>(QStringLiteral("connectBarDestination"));
+    auto *button =
+        bar->findChild<QToolButton *>(QStringLiteral("connectBarConnectButton"));
+    CHECK(combo != nullptr);
+    CHECK(button != nullptr);
+    if (!combo || !button) {
+        return;
+    }
+
+    const int field = combo->width();
+    const int action = button->width();
+    window.connectDestination(QStringLiteral("shell"));
+    qApp->processEvents();
+    CHECK(window.session()->isConnected());
+    // The word really did change, so the reservation is what is being tested
+    // and not the absence of a change.
+    CHECK(button->text() != QStringLiteral("Connect"));
+    CHECK(button->width() == action);
+    CHECK(combo->width() == field);
 }
 
 /// Off stops recording and leaves what is there: the entries are still on
@@ -509,6 +591,7 @@ int main(int argc, char **argv)
     }
 #ifndef Q_OS_WIN
     test_a_typed_shell_connects_and_is_remembered();
+    test_connecting_does_not_move_the_field();
     test_recording_can_be_turned_off_without_losing_the_list();
 #endif
 

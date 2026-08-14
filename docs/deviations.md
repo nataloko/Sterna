@@ -127,11 +127,18 @@ box show the effective on state without changing the preference underneath.
 **What the field takes.** The dropdown is four groups: the connections
 actually opened (newest first, with their own parameters), the serial ports
 plugged in at the moment the list opens, the hosts in `~/.ssh/config`, and a
-local shell — then New connection and Forget. Choosing a row connects; there is
-no second click, because going back somewhere is the whole reason the list is
-on the bar rather than in a menu. Typing is the escape hatch and inherits that
-kind's last parameters rather than carrying its own: `myrouter`,
+local shell — then New connection and Forget. Typing is the escape hatch and
+inherits that kind's last parameters rather than carrying its own: `myrouter`,
 `ssh://user@host:22`, `telnet://host:2323`, `/dev/ttyUSB0`, `COM3`, `shell`.
+
+**Choosing a row fills the field; Connect is what connects.** A combo's popup
+opens *under the pointer*, so the release that opened it lands on a row and
+Qt reports a choice nobody made — one click on the arrow would otherwise dial
+a host. The second click is the price of that, and it buys something as well:
+the destination can be read before it is committed. A row picked out of the
+list stays a *record* until then, so pressing Connect opens it with the
+identity and the flags it carries rather than re-reading its own label, which
+has spaces in it and would parse as a command line.
 
 **One word or a command line, and never half of each.** A destination with a
 space in it is handed to Tera Term's parser whole, which is how

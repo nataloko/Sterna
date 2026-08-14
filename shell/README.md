@@ -113,7 +113,15 @@ terminal that never lets the machine idle — and it holds four groups:
 `RecentConnection`s newest first, the ports plugged in now, the SSH aliases,
 and a local shell, then New connection and Forget.
 
-**The bar has no parser and no session.** Choosing a row emits either
+**Choosing a row fills the field, and `commit()` is what connects.** A combo
+popup opens under the pointer, so the release that opened it lands on a row and
+`activated` arrives without anybody having chosen anything; a bar where that
+dials a host is a bar nobody can safely open. `m_chosen` holds the picked
+record's index until the text is *edited*, so Connect opens the record and not
+its label — the label has spaces in it and would otherwise be read as a
+command line.
+
+**The bar has no parser and no session.** Committing emits either
 `recentChosen`, which carries a whole record, or `destinationEntered`, which
 carries a string; `MainWindow::parseDestination` is the only place that decides
 what a string means, and it is a pure function so the vocabulary can be
@@ -132,6 +140,16 @@ the settings' `TtSerialParams`. Everything it does not hold stays a setting, so
 was first opened. The list is `[Sterna] Recent`, ten records separated by `;`,
 each written the way its destination is spoken; a record that does not parse is
 dropped rather than repaired, because that file is hand-edited.
+
+Two rules keep the bar still, and both are pinned by `connect_test` because
+both failures read as a bug in the wrong widget. The model is rebuilt only when
+the composed list differs from the one already in it — the port dropdown this
+replaced had that guard in one line, and losing it means invalidating a
+combo's geometry at the moment somebody is reaching for its arrow. And the
+Connect action reserves the width of the longer of its two words at
+construction: without that, the button narrows when a session opens, the
+toolbar reflows, and the expanding field beside it absorbs the difference, so
+*connecting* resizes the destination box.
 
 Two things the port list this replaced did not have to answer. Enumeration is
 not a shortlist — an ordinary desktop returns thirty-two motherboard `ttyS`

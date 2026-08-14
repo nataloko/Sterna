@@ -12,8 +12,9 @@ are available from the [GitHub releases page].
   parameters it was opened with — the ports plugged in now, the hosts in
   `~/.ssh/config`, and a local shell; and the field takes anything the command
   line takes, including a whole Tera Term command line when it has a space in
-  it. Picking one while a session is live opens it in a new tab or tile rather
-  than closing what is there.
+  it. Picking a row fills the field and Connect opens it, so a click on the
+  arrow cannot start a connection by itself; committing one while a session is
+  live opens it in a new tab or tile rather than closing what is there.
 - The list of recent connections is remembered in `[Sterna] Recent`.
   `RememberConnections=off` stops adding to it, and the dropdown's Forget item
   empties it.

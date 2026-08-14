@@ -609,6 +609,13 @@ SSH:
   `addAction(text)` parents them to the bar — so a rebuilt toolbar keeps every
   previous action alive as a child, holding its shortcut and answering
   `findChild` first. The symptom is a widget that stops following the session.
+- **A combo popup opens under the pointer, so the release that opened it is a
+  choice** — `activated` arrives without anybody having chosen anything, and a
+  row that connects makes one click on the arrow dial a host. Choosing fills
+  the field; a separate commit acts. Its sibling: **a toolbar action whose text
+  changes width reflows the whole bar**, and an expanding widget beside it
+  absorbs the difference — Connect/Disconnect resized the destination box until
+  the button reserved the longer word.
 - **A `QAction` shortcut outranks `TerminalView::keyPressEvent`**, silently, so
   every shortcut installed on the window is a key the host stops receiving —
   and `Shift+F1`..`F12` are ordinary `KEYBOARD.CNF` bindings *and* F13-F24 to
@@ -626,8 +633,11 @@ Measuring anything:
   `bench/baseline.json` records platform *and* Qt version.
 - **Do not "fix" that with a `tt_session_pump` budget** — serial and telnet
   read with 50 ms timeouts, so a budgeted pump blocks the UI thread.
-- **A Wayland client cannot place its own window** — `QWidget::move()` is
-  silently ignored, so `/X=120` "fails" under Wayland. Run `cmdline_test`
+- **A Wayland client cannot place *or size* its own window on demand** —
+  `QWidget::move()` is silently ignored and `resize()` is acked by the
+  compositor later, so a test that resizes and then measures can have the
+  resize land inside the next thing it does and blame that instead.
+  `QWidget::move()` "fails" for `/X=120` the same way. Run `cmdline_test`
   under offscreen or xcb (CI does). Applies to anything asserting position.
 - **A Wayland compositor stops frame callbacks to a surface it thinks
   hidden** — short-lived probe windows paint a fraction of their frames; any
