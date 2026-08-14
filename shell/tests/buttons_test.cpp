@@ -16,6 +16,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
@@ -23,7 +24,9 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QKeyEvent>
 #include <QPlainTextEdit>
+#include <QSpinBox>
 #include <QTemporaryDir>
 #include <QTimer>
 
@@ -34,6 +37,7 @@
 #include "QuickButtons.h"
 #include "QuickButtonsDialog.h"
 #include "Session.h"
+#include "TerminalView.h"
 
 static int failures = 0;
 
@@ -95,6 +99,16 @@ QString writeIni(const QTemporaryDir &dir, const QByteArray &buttons)
     file.write(buttons);
     file.close();
     return path;
+}
+
+/// How many times `marker` is on the screen.
+///
+/// The repeating cases run `cat > /dev/null`, so the only copy of a send that
+/// comes back is the line discipline's echo — one per send, which makes this
+/// a count of what actually left.
+int markerCount(const Session &session, const char *marker)
+{
+    return static_cast<int>(screenText(session).count(QLatin1String(marker)));
 }
 
 QuickButtonBar *barOf(const MainWindow &window)
@@ -588,6 +602,224 @@ void adding_starts_on_a_new_row()
 /// `QWidget::grab()` re-renders offscreen, which is the only screenshot that
 /// works in this container anyway — and it is what makes a review of a toolbar
 /// possible without somebody sitting in front of it.
+/// A repeating button sends the number of times it was asked for, at the
+/// interval it was asked for, and then stops by itself.
+void a_repeat_sends_its_count_and_stops()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini =
+        writeIni(dir,
+                 "[Sterna Buttons]\r\nButton1Label=Poll\r\nButton1Kind=text\r\n"
+                 "Button1Value=poll-marker$0D\r\n"
+                 "Button1Repeat=3\r\nButton1IntervalMs=100\r\n");
+
+    MainWindow window(ini);
+    QuickButtonBar *bar = barOf(window);
+    CHECK(bar != nullptr && bar->buttons().size() == 1);
+    CHECK(bar->buttons()[0].repeat == 3);
+    CHECK(bar->buttons()[0].intervalMs == 100);
+    CHECK(bar->buttons()[0].repeats() && !bar->buttons()[0].repeatsForever());
+
+    window.show();
+    // Into nothing, so the only copy that comes back is the tty's own echo.
+    window.connectPty({QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+                       QStringLiteral("cat > /dev/null")});
+    Session *session = window.session();
+    CHECK(spin([session] { return session->isConnected(); }, 3000));
+    CHECK(spin([&window] { return buttonAction(window, 0)->isEnabled(); }, 2000));
+
+    press(window, 0);
+    CHECK(spin([session] { return markerCount(*session, "poll-marker") == 3; },
+               4000));
+    // Three is the whole of what was asked for: nothing arrives afterwards.
+    spin([] { return false; }, 500);
+    CHECK(markerCount(*session, "poll-marker") == 3);
+
+    // ...and the button's face goes back to what it was.
+    CHECK(!buttonAction(window, 0)->isChecked());
+    CHECK(buttonAction(window, 0)->text() == QLatin1String("Poll"));
+    TerminalView *view = window.findChild<TerminalView *>();
+    CHECK(view != nullptr && !view->stopKeyArmed());
+}
+
+/// A run with no end keeps going, and the second press is what stops it.
+void a_second_press_stops_a_run_with_no_end()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini =
+        writeIni(dir,
+                 "[Sterna Buttons]\r\nButton1Label=Keepalive\r\n"
+                 "Button1Value=keepalive$0D\r\n"
+                 "Button1Repeat=forever\r\nButton1IntervalMs=100\r\n");
+
+    MainWindow window(ini);
+    QuickButtonBar *bar = barOf(window);
+    CHECK(bar != nullptr && bar->buttons().size() == 1);
+    CHECK(bar->buttons()[0].repeatsForever());
+
+    window.show();
+    window.connectPty({QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+                       QStringLiteral("cat > /dev/null")});
+    Session *session = window.session();
+    CHECK(spin([session] { return session->isConnected(); }, 3000));
+    CHECK(spin([&window] { return buttonAction(window, 0)->isEnabled(); }, 2000));
+
+    press(window, 0);
+    // Past the count any finite button could have had, which is the point of
+    // this one.
+    CHECK(spin([session] { return markerCount(*session, "keepalive") >= 4; },
+               4000));
+    CHECK(buttonAction(window, 0)->isChecked());
+    CHECK(buttonAction(window, 0)->text() != QLatin1String("Keepalive"));
+    TerminalView *view = window.findChild<TerminalView *>();
+    CHECK(view != nullptr && view->stopKeyArmed());
+
+    press(window, 0);
+    CHECK(!buttonAction(window, 0)->isChecked());
+    CHECK(view != nullptr && !view->stopKeyArmed());
+    // Settle first: the screen lags the wire, so what is counted here is what
+    // had already been sent. What matters is that it stops growing.
+    spin([] { return false; }, 500);
+    const int settled = markerCount(*session, "keepalive");
+    spin([] { return false; }, 600);
+    CHECK(markerCount(*session, "keepalive") == settled);
+}
+
+/// Escape in the terminal stops everything — and the key belongs to the host
+/// again the moment nothing is running.
+void escape_stops_every_run_and_only_then()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini =
+        writeIni(dir,
+                 "[Sterna Buttons]\r\nButton1Label=One\r\n"
+                 "Button1Value=first-marker$0D\r\n"
+                 "Button1Repeat=forever\r\nButton1IntervalMs=100\r\n"
+                 "Button2Label=Two\r\nButton2Value=second-marker$0D\r\n"
+                 "Button2Repeat=forever\r\nButton2IntervalMs=100\r\n");
+
+    MainWindow window(ini);
+    window.show();
+    window.connectPty({QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+                       QStringLiteral("cat > /dev/null")});
+    Session *session = window.session();
+    CHECK(spin([session] { return session->isConnected(); }, 3000));
+    CHECK(spin([&window] { return buttonAction(window, 0)->isEnabled(); }, 2000));
+
+    TerminalView *view = window.findChild<TerminalView *>();
+    CHECK(view != nullptr);
+    // Nothing running: the terminal has its Escape, as it must, or every
+    // full-screen program on the far end loses a key it needs.
+    CHECK(!view->stopKeyArmed());
+
+    press(window, 0);
+    press(window, 1);
+    CHECK(spin([session] { return markerCount(*session, "first-marker") >= 2; },
+               4000));
+    CHECK(spin([session] { return markerCount(*session, "second-marker") >= 2; },
+               4000));
+    CHECK(view->stopKeyArmed());
+
+    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(view, &escape);
+    CHECK(escape.isAccepted());
+    CHECK(!buttonAction(window, 0)->isChecked());
+    CHECK(!buttonAction(window, 1)->isChecked());
+    CHECK(!view->stopKeyArmed());
+
+    spin([] { return false; }, 500);
+    const int first = markerCount(*session, "first-marker");
+    const int second = markerCount(*session, "second-marker");
+    spin([] { return false; }, 600);
+    CHECK(markerCount(*session, "first-marker") == first);
+    CHECK(markerCount(*session, "second-marker") == second);
+}
+
+/// A run ends with the line it was sending down. Losing the connection is not
+/// a reason to keep a timer alive.
+void a_repeat_ends_with_the_connection()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini =
+        writeIni(dir,
+                 "[Sterna Buttons]\r\nButton1Label=Poll\r\n"
+                 "Button1Value=connected-marker$0D\r\n"
+                 "Button1Repeat=forever\r\nButton1IntervalMs=100\r\n");
+
+    MainWindow window(ini);
+    window.show();
+    window.connectPty({QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+                       QStringLiteral("cat > /dev/null")});
+    Session *session = window.session();
+    CHECK(spin([session] { return session->isConnected(); }, 3000));
+    CHECK(spin([&window] { return buttonAction(window, 0)->isEnabled(); }, 2000));
+
+    press(window, 0);
+    CHECK(spin([session] { return markerCount(*session, "connected-marker") >= 2; },
+               4000));
+    CHECK(buttonAction(window, 0)->isChecked());
+
+    // `disconnectPort`, not `disconnect` — the second is `QObject`'s and
+    // silently unhooks every signal this window is listening to.
+    session->disconnectPort();
+    CHECK(spin([session] { return !session->isConnected(); }, 3000));
+    CHECK(spin([&window] { return !buttonAction(window, 0)->isChecked(); }, 2000));
+    TerminalView *view = window.findChild<TerminalView *>();
+    CHECK(view != nullptr && !view->stopKeyArmed());
+}
+
+/// The editor's two fields, including the count below one that means a run
+/// with no end.
+void the_editor_round_trips_a_repeat()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = writeIni(dir, "");
+
+    MainWindow window(ini);
+    QuickButtonsDialog dialog(QVector<QuickButton>(), window.session(), &window);
+    QuickButton seed;
+    seed.kind = TT_QUICK_BUTTON_TEXT;
+    seed.text = QStringLiteral("show clock\r");
+    dialog.appendButton(seed);
+
+    auto *repeat = dialog.findChild<QSpinBox *>(QStringLiteral("quickButtonRepeat"));
+    auto *interval =
+        dialog.findChild<QDoubleSpinBox *>(QStringLiteral("quickButtonInterval"));
+    CHECK(repeat != nullptr && interval != nullptr);
+    // A new button sends once, and the interval is not offered until it is
+    // asked to send more than that.
+    CHECK(repeat->value() == 1);
+    CHECK(!dialog.buttons()[0].repeats());
+
+    repeat->setValue(5);
+    interval->setValue(2.5);
+    CHECK(dialog.buttons()[0].repeat == 5);
+    CHECK(dialog.buttons()[0].intervalMs == 2500);
+
+    // The minimum is shown as words and stored as the sentinel, not as zero.
+    repeat->setValue(0);
+    CHECK(repeat->text() == QLatin1String("Until stopped"));
+    CHECK(dialog.buttons()[0].repeatsForever());
+
+    QString error;
+    CHECK(saveQuickButtons(ini, dialog.buttons(), &error));
+    const QVector<QuickButton> back = loadQuickButtons(ini);
+    CHECK(back.size() == 1);
+    CHECK(back[0].repeatsForever());
+    CHECK(back[0].intervalMs == 2500);
+    // ...and the file says it in a word somebody can read.
+    QFile file(ini);
+    CHECK(file.open(QIODevice::ReadOnly));
+    const QByteArray text = file.readAll();
+    CHECK(text.contains("Button1Repeat=forever"));
+    CHECK(text.contains("Button1IntervalMs=2500"));
+}
+
 void render_widgets()
 {
     if (g_writeTo.isEmpty()) {
@@ -643,6 +875,11 @@ int main(int argc, char **argv)
     a_shortcut_is_installed_and_released_with_the_bar();
     the_bar_opens_down_the_right_and_stays_where_it_is_put();
     adding_starts_on_a_new_row();
+    a_repeat_sends_its_count_and_stops();
+    a_second_press_stops_a_run_with_no_end();
+    escape_stops_every_run_and_only_then();
+    a_repeat_ends_with_the_connection();
+    the_editor_round_trips_a_repeat();
     render_widgets();
 
     if (failures != 0) {
