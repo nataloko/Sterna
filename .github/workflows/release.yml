@@ -64,18 +64,30 @@ jobs:
         with:
           path: packaging/appimage/toolchain/qt-6.11.1
           key: appimage-qt-6.11.1-manylinux-2-28-x86-64-v1
-      - name: Build portable Qt
+      - name: Build portable Qt — first slice
+        if: steps.qt-cache.outputs.cache-hit != 'true'
         run: |
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/repo:rw" \
             --workdir /repo \
             "$MANYLINUX_IMAGE" \
-            bash -lc '
-              export CMAKE_BUILD_PARALLEL_LEVEL=2
-              ./packaging/appimage/install-build-deps.sh
-              ./packaging/appimage/build-qt.sh
-              rm -rf packaging/appimage/toolchain/source-6.11.1
-            '
+            bash -lc 'export CMAKE_BUILD_PARALLEL_LEVEL=2; ./packaging/appimage/ci-qt-slice.sh start'
+      - name: Build portable Qt — second slice
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/repo:rw" \
+            --workdir /repo \
+            "$MANYLINUX_IMAGE" \
+            bash -lc 'export CMAKE_BUILD_PARALLEL_LEVEL=2; ./packaging/appimage/ci-qt-slice.sh resume'
+      - name: Finish portable Qt
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/repo:rw" \
+            --workdir /repo \
+            "$MANYLINUX_IMAGE" \
+            bash -lc 'export CMAKE_BUILD_PARALLEL_LEVEL=2; ./packaging/appimage/ci-qt-slice.sh finish'
       - name: Cache portable Qt
         if: steps.qt-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
@@ -91,6 +103,7 @@ jobs:
             --workdir /repo \
             "$MANYLINUX_IMAGE" \
             bash -lc '
+              set -euo pipefail
               ./packaging/appimage/install-build-deps.sh
               export PATH=$PWD/packaging/appimage/toolchain/qt-6.11.1/bin:$PATH
               export CARGO_BUILD_JOBS=4 CMAKE_BUILD_PARALLEL_LEVEL=4

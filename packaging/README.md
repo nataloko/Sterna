@@ -89,7 +89,10 @@ reach a release gate rather than an assumption based only on the container's
 The ordinary test workflow still runs on Ubuntu 24.04. The release workflow
 uses the manylinux container, builds or restores its pinned Qt prefix, then
 smoke-tests the completed AppImage before making it available to the
-draft-release job.
+draft-release job. A clean Qt bootstrap is split into resumable 35-minute
+steps: the hosted runner abandons a single long container step at about fifty
+minutes without preserving its log. The installed prefix is cached only after
+the final slice verifies all required plugins.
 
 The update-signing key is deliberately absent from GitHub. The workflow stops
 at a draft containing the AppImage, zsync data and Windows installer; the local
