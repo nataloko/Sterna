@@ -192,6 +192,70 @@ fn a_settings_change_that_moves_no_size_does_not_clear_on_resize() {
     assert!(s.scrollback_len() > 0, "the old page is in the history");
 }
 
+/// `buffer.c:5022` — `BuffChangeTerminalSize` assigns `ts.TerminalWidth` and
+/// `ts.TerminalHeight` itself, so a window dragged to a new size moves the
+/// setting with it. That is what keeps `SetupTerm`'s guard (`vtwin.cpp:1396`)
+/// true afterwards.
+///
+/// Without it the settings go on saying what the file said, every later
+/// `set_settings` sees a size that differs from the live one, and applying an
+/// unrelated setting snaps the terminal back — scrolling the page into history
+/// with `ClearOnResize` on. What a user sees is the *window* jumping back to
+/// its default size on clicking Local echo, which points nowhere near a resize.
+#[test]
+fn a_resize_moves_the_size_setting_with_it() {
+    let (mut s, handle) = session();
+    let size = |s: &Session| {
+        (
+            s.setting("terminal.cols").unwrap(),
+            s.setting("terminal.rows").unwrap(),
+        )
+    };
+    assert_eq!(size(&s), ("80".into(), "24".into()));
+
+    s.resize(120, 40).unwrap();
+    assert_eq!(size(&s), ("120".into(), "40".into()));
+
+    // ...so applying something else leaves the grid — and the far end — where
+    // the user put them.
+    s.feed(b"hello");
+    handle.with(|m| m.last_resize = None);
+    let mut settings = s.settings().clone();
+    settings.terminal_line_edit = !settings.terminal_line_edit;
+    s.set_settings(settings);
+    assert_eq!((s.grid().cols(), s.grid().rows()), (120, 40));
+    assert_eq!(row(&s, 0), "hello");
+    assert_eq!(
+        handle.with(|m| m.last_resize),
+        Some((120, 40)),
+        "and the far end was told the live size, not the file's"
+    );
+
+    // The grid's answer rather than the caller's: `Grid::resize` clamps, and
+    // a setting recording the unclamped ask would differ from the live size
+    // for ever after.
+    s.resize(9999, 40).unwrap();
+    assert!(s.grid().cols() < 9999);
+    assert_eq!(size(&s), (s.grid().cols().to_string(), "40".into()));
+}
+
+/// `CSI 8 t` reaches `BuffChangeTerminalSize` the same way a dragged window
+/// does, so it moves the setting too — otherwise a host that sized the terminal
+/// is undone by the next settings change.
+#[test]
+fn a_resize_from_the_far_end_moves_the_setting_as_well() {
+    let (mut s, _) = session();
+    s.feed(b"\x1b[8;40;120t");
+    assert_eq!((s.grid().cols(), s.grid().rows()), (120, 40));
+    assert_eq!(s.setting("terminal.cols").as_deref(), Some("120"));
+    assert_eq!(s.setting("terminal.rows").as_deref(), Some("40"));
+
+    let mut settings = s.settings().clone();
+    settings.terminal_line_edit = !settings.terminal_line_edit;
+    s.set_settings(settings);
+    assert_eq!((s.grid().cols(), s.grid().rows()), (120, 40));
+}
+
 /// A resize moves lines between the page and the history in both directions,
 /// so whatever a scrolled-back view was anchored to has moved.
 #[test]

@@ -1705,9 +1705,28 @@ impl Session {
     /// that resized without a `TIOCSWINSZ` leaves `vi` drawing to the old
     /// size, and the symptom looks like a redraw bug rather than a missing
     /// ioctl.
+    ///
+    /// **And a third half, which is not optional either**:
+    /// `ts.TerminalWidth`/`Height` are live variables upstream, assigned by
+    /// `BuffChangeTerminalSize` itself (`buffer.c:5022`) — so dragging a window
+    /// moves the *setting* as well as the grid. That is what makes `SetupTerm`'s
+    /// guard (`vtwin.cpp:1396`, transcribed in [`tt_vt::Vt::set_config`]) hold
+    /// afterwards. Without it the settings keep saying whatever the file said,
+    /// every later [`Session::set_settings`] sees a size that differs from the
+    /// live one, and applying an unrelated setting snaps the terminal back to
+    /// 80x24 — with `ClearOnResize` on, scrolling the page into history on the
+    /// way. The symptom is a frontend toggle that resizes the window, which
+    /// points nowhere near here.
+    ///
+    /// The grid's own answer rather than the caller's, because
+    /// [`tt_grid::Grid::resize`] clamps (`BUFF_X_MAX`, and `MaxBuffSize`'s
+    /// ceiling on the rows) exactly as upstream clamps `Ny` before assigning it.
     pub fn resize(&mut self, cols: usize, rows: usize) -> Result<()> {
         self.vt.grid_mut().resize(cols, rows);
         self.vt.reconcile_sixels();
+        let (cols, rows) = (self.vt.grid().cols(), self.vt.grid().rows());
+        self.settings.terminal_cols = cols as i32;
+        self.settings.terminal_rows = rows as i32;
         // A resize moves lines between the page and the scrollback in both
         // directions, so whatever the view was anchored to has moved and the
         // honest answer is to stop guessing and go live.
@@ -2014,6 +2033,13 @@ impl Session {
         if self.vt.take_terminal_resized() {
             self.reanchor_after_resize();
             let (cols, rows) = (self.vt.grid().cols(), self.vt.grid().rows());
+            // The same write-back [`Session::resize`] does, and for the same
+            // reason: upstream reaches this through `BuffChangeTerminalSize`
+            // too, which assigns `ts.TerminalWidth`/`Height` on its way out
+            // (`buffer.c:5022`). A host that resized with `CSI 8 t` would
+            // otherwise be undone by the next settings change.
+            self.settings.terminal_cols = cols as i32;
+            self.settings.terminal_rows = rows as i32;
             if let Some(c) = self.conn.as_mut() {
                 let _ = c.resize(cols as u16, rows as u16);
             }
