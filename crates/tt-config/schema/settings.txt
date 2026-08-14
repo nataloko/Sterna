@@ -2165,6 +2165,34 @@ recent.telnet_port | uint16 | Sterna | TelnetPort | 23 | -
 # `auto` is the shipped one: data until the first `IAC`, telnet after it.
 recent.telnet_mode | enum(auto=Auto,negotiate=Negotiate,framed=Framed,raw=Raw) | Sterna | TelnetMode | auto | -
 
+# The connections that were actually opened, newest first, at most ten,
+# separated by `;`. The nine keys above remember *one* of each kind, which is
+# what seeds the connect dialog; this is the list the toolbar offers, and it is
+# a different thing — a list has to say which kind each entry is and carry the
+# parameters that entry was opened with, or picking one is a guess.
+#
+# Each record is written the way its destination is spoken:
+#
+#     serial:<path>?baud=115200&bits=8&parity=none&stop=1&flow=none
+#     ssh://[user@]host[:port][?identity=<path>][&legacy=1]
+#     telnet://host[:port][?mode=auto]
+#     shell:
+#
+# and holds exactly the fields the connect dialog asks for. Everything else a
+# connection needs is a setting, and a setting that changes should change for a
+# remembered connection too — pinning a whole `TtSerialParams` here would
+# freeze answers the settings file is supposed to own. `%` and the six
+# delimiters are percent-encoded; a record that does not parse is dropped
+# rather than repaired, because this file is hand-edited.
+recent.connections | string | Sterna | Recent |  | -
+
+# Whether opening a connection adds it to that list. On, unlike upstream's
+# `HistoryList` — a bar whose list is empty until a preference is found and
+# ticked is a bar that demonstrates nothing on the day it is installed. Off
+# stops recording and hides the group; it does not erase what is already
+# there, which is what the bar's own Forget item is for.
+recent.remember | bool | Sterna | RememberConnections | on | -
+
 # --- updates ----------------------------------------------------------------
 #
 # **`[Sterna]` again**: upstream ships no updater, so there is no key to be

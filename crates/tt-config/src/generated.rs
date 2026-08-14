@@ -4259,6 +4259,32 @@ pub struct Settings {
     /// Which of the four framing/burst combinations was used (`TelnetMode::of`).
     /// `auto` is the shipped one: data until the first `IAC`, telnet after it.
     pub recent_telnet_mode: RecentTelnetMode,
+    /// The connections that were actually opened, newest first, at most ten,
+    /// separated by `;`. The nine keys above remember *one* of each kind, which is
+    /// what seeds the connect dialog; this is the list the toolbar offers, and it is
+    /// a different thing — a list has to say which kind each entry is and carry the
+    /// parameters that entry was opened with, or picking one is a guess.
+    ///
+    /// Each record is written the way its destination is spoken:
+    ///
+    /// serial:<path>?baud=115200&bits=8&parity=none&stop=1&flow=none
+    /// ssh://[user@]host[:port][?identity=<path>][&legacy=1]
+    /// telnet://host[:port][?mode=auto]
+    /// shell:
+    ///
+    /// and holds exactly the fields the connect dialog asks for. Everything else a
+    /// connection needs is a setting, and a setting that changes should change for a
+    /// remembered connection too — pinning a whole `TtSerialParams` here would
+    /// freeze answers the settings file is supposed to own. `%` and the six
+    /// delimiters are percent-encoded; a record that does not parse is dropped
+    /// rather than repaired, because this file is hand-edited.
+    pub recent_connections: String,
+    /// Whether opening a connection adds it to that list. On, unlike upstream's
+    /// `HistoryList` — a bar whose list is empty until a preference is found and
+    /// ticked is a bar that demonstrates nothing on the day it is installed. Off
+    /// stops recording and hides the group; it does not erase what is already
+    /// there, which is what the bar's own Forget item is for.
+    pub recent_remember: bool,
     /// Whether starting Sterna may look for a new release. On, so an installed
     /// terminal learns about a signed update without anyone remembering to ask.
     pub updates_check_on_startup: bool,
@@ -4603,6 +4629,8 @@ impl Default for Settings {
             recent_telnet_host: String::from(""),
             recent_telnet_port: 23,
             recent_telnet_mode: RecentTelnetMode::default(),
+            recent_connections: String::from(""),
+            recent_remember: true,
             updates_check_on_startup: true,
             updates_last_check: String::from(""),
         }
@@ -5853,6 +5881,10 @@ impl Settings {
                 Some(v) => RecentTelnetMode::from_ini(v),
                 None => d.recent_telnet_mode,
             },
+            recent_connections: ini
+                .get_or("Sterna", "Recent", &d.recent_connections)
+                .to_string(),
+            recent_remember: crate::schema::on_off(ini.get("Sterna", "RememberConnections"), true),
             updates_check_on_startup: crate::schema::on_off(
                 ini.get("Sterna", "CheckUpdatesOnStartup"),
                 true,
@@ -8006,6 +8038,12 @@ impl Settings {
             "Sterna",
             "TelnetMode",
             &self.recent_telnet_mode.as_ini().to_string(),
+        );
+        ini.set("Sterna", "Recent", &self.recent_connections.clone());
+        ini.set(
+            "Sterna",
+            "RememberConnections",
+            &if self.recent_remember { "on" } else { "off" }.to_string(),
         );
         ini.set(
             "Sterna",
@@ -10848,6 +10886,16 @@ impl Settings {
                     &self.recent_telnet_mode.as_ini().to_string(),
                 );
             }
+            "recent.connections" => {
+                ini.set("Sterna", "Recent", &self.recent_connections.clone());
+            }
+            "recent.remember" => {
+                ini.set(
+                    "Sterna",
+                    "RememberConnections",
+                    &if self.recent_remember { "on" } else { "off" }.to_string(),
+                );
+            }
             "updates.check_on_startup" => {
                 ini.set(
                     "Sterna",
@@ -11726,6 +11774,8 @@ impl Settings {
             "recent.telnet_host" => self.recent_telnet_host.clone(),
             "recent.telnet_port" => self.recent_telnet_port.to_string(),
             "recent.telnet_mode" => self.recent_telnet_mode.as_ini().to_string(),
+            "recent.connections" => self.recent_connections.clone(),
+            "recent.remember" => if self.recent_remember { "on" } else { "off" }.to_string(),
             "updates.check_on_startup" => if self.updates_check_on_startup {
                 "on"
             } else {
@@ -12644,6 +12694,8 @@ impl Settings {
                     crate::schema::word(crate::schema::int(value, self.recent_telnet_port))
             }
             "recent.telnet_mode" => self.recent_telnet_mode = RecentTelnetMode::from_ini(value),
+            "recent.connections" => self.recent_connections = value.to_string(),
+            "recent.remember" => self.recent_remember = crate::schema::on_off(Some(value), true),
             "updates.check_on_startup" => {
                 self.updates_check_on_startup = crate::schema::on_off(Some(value), true)
             }
@@ -15939,6 +15991,26 @@ pub const FIELDS: &[Field] = &[
         default: "auto",
         label: None,
         doc: "Which of the four framing/burst combinations was used (`TelnetMode::of`). `auto` is the shipped one: data until the first `IAC`, telnet after it.",
+    },
+    Field {
+        name: "recent.connections",
+        page: "recent",
+        section: "Sterna",
+        key: "Recent",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "The connections that were actually opened, newest first, at most ten, separated by `;`. The nine keys above remember *one* of each kind, which is what seeds the connect dialog; this is the list the toolbar offers, and it is a different thing — a list has to say which kind each entry is and carry the parameters that entry was opened with, or picking one is a guess.  Each record is written the way its destination is spoken:  serial:<path>?baud=115200&bits=8&parity=none&stop=1&flow=none ssh://[user@]host[:port][?identity=<path>][&legacy=1] telnet://host[:port][?mode=auto] shell:  and holds exactly the fields the connect dialog asks for. Everything else a connection needs is a setting, and a setting that changes should change for a remembered connection too — pinning a whole `TtSerialParams` here would freeze answers the settings file is supposed to own. `%` and the six delimiters are percent-encoded; a record that does not parse is dropped rather than repaired, because this file is hand-edited.",
+    },
+    Field {
+        name: "recent.remember",
+        page: "recent",
+        section: "Sterna",
+        key: "RememberConnections",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "Whether opening a connection adds it to that list. On, unlike upstream's `HistoryList` — a bar whose list is empty until a preference is found and ticked is a bar that demonstrates nothing on the day it is installed. Off stops recording and hides the group; it does not erase what is already there, which is what the bar's own Forget item is for.",
     },
     Field {
         name: "updates.check_on_startup",
