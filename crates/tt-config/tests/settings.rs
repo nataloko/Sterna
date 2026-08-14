@@ -43,14 +43,23 @@ fn the_shipped_baud_rate_is_not_upstreams() {
     assert_eq!(Settings::load(&ini).serial_baud, 9600);
 }
 
-/// AUTO accepts the line ending a device actually uses. The explicit upstream
-/// value remains compatible for an INI shared between the two programs.
+/// DETECT accepts the line ending a device actually uses, and works it out
+/// from the first one rather than reading a bare CR as a line ending for ever
+/// the way upstream's own AUTO does. Every explicit upstream value remains
+/// compatible for an INI shared between the two programs.
 #[test]
-fn the_shipped_receive_cr_is_auto() {
+fn the_shipped_receive_cr_is_detect() {
     assert_eq!(
         Settings::default().terminal_cr_receive,
-        TerminalCrReceive::Auto,
+        TerminalCrReceive::Detect,
         "Tera Term's ttset.c:643 default is CR"
+    );
+
+    let ini = Ini::parse(b"[Tera Term]\r\nCRReceive=AUTO\r\n");
+    assert_eq!(
+        Settings::load(&ini).terminal_cr_receive,
+        TerminalCrReceive::Auto,
+        "upstream's own fourth value keeps its own meaning"
     );
 
     let ini = Ini::parse(b"[Tera Term]\r\nCRReceive=CR\r\n");
@@ -461,7 +470,7 @@ fn an_unrecognised_value_takes_the_default_rather_than_failing() {
     // comparisons, so a typo is not an error — it is the default, silently.
     let ini = Ini::parse(b"[Tera Term]\r\nCRReceive=nonsense\r\nTerminalID=vt220\r\n");
     let s = Settings::load(&ini);
-    assert_eq!(s.terminal_cr_receive, TerminalCrReceive::Auto);
+    assert_eq!(s.terminal_cr_receive, TerminalCrReceive::Detect);
     assert_eq!(
         s.terminal_id,
         TerminalId::Vt100,

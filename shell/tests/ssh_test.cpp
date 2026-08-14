@@ -163,7 +163,7 @@ int main(int argc, char **argv)
     // does in the application (deviation 9).
     QString settingError;
     CHECK(session.setSetting(QStringLiteral("terminal.cr_receive"),
-                             QStringLiteral("AUTO"), &settingError));
+                             QStringLiteral("DETECT"), &settingError));
 
     // The host key is answered from here rather than by a dialog: the point of
     // this test is the event loop, and a modal dialog under `offscreen` would
@@ -260,8 +260,8 @@ int main(int argc, char **argv)
     }
 
     // A bare CR is a carriage return, not a line ending — `CRReceive` ships as
-    // Auto and this connection's line endings are CR LF, so it has resolved to
-    // the reference mode by now (deviation 9). Without that, every prompt
+    // Detect and this connection's line endings are CR LF, so it has resolved
+    // to the reference mode by now (deviation 9). Without that, every prompt
     // redraw an interactive shell makes takes a line of its own, which is what
     // one keystroke in `fish` looks like. The markers are written as octal so
     // the echo of the command itself cannot satisfy the assertions.

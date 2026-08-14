@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! tt-dump [--cols N] [--rows N] [--term ID] [--attrs] [--scrollback]
-//!         [--crreceive cr|lf|crlf|auto] [--clearonresize]
+//!         [--crreceive cr|lf|crlf|auto|detect] [--clearonresize]
 //!         [--noscrollwindowclear] [--backwrap] [--vtcompattab]
 //!         [--tabstop SPEC] [--invaliddecrqss] [--autoinvoke] [--nolocktuid]
 //!         [--printerctrl] [--passthruport]
@@ -28,7 +28,7 @@ use tt_grid::{
 use tt_vt::{Config, CrReceive, Key, Modifiers, MouseEvent, TabStopFlags, TermId, Vt};
 
 const USAGE: &str = "usage: tt-dump [--cols N] [--rows N] [--term ID] [--attrs]\n\
-                     \x20              [--scrollback] [--crreceive cr|lf|crlf|auto]\n\
+                     \x20              [--scrollback] [--crreceive cr|lf|crlf|auto|detect]\n\
                      \x20              [--clearonresize] [--noscrollwindowclear]\n\
                      \x20              [--backwrap] [--vtcompattab] [--tabstop SPEC]\n\
                      \x20              [--invaliddecrqss] [--autoinvoke] [--nolocktuid]\n\
@@ -326,6 +326,10 @@ fn parse_args() -> Result<Option<Args>, String> {
                     "lf" => CrReceive::Lf,
                     "crlf" => CrReceive::CrLf,
                     "auto" => CrReceive::Auto,
+                    // Sterna's own, so the oracle has no arm for it and a
+                    // differential case cannot use it. Here for reading a
+                    // recording by hand.
+                    "detect" => CrReceive::Detect,
                     _ => return Err(format!("tt-dump: bad --crreceive '{v}'")),
                 };
             }

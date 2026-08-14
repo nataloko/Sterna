@@ -70,7 +70,8 @@ struct Rig {
     {
         QObject::connect(&session, &Session::printerEvent, &printer, &Printer::handle);
         // These fixtures exercise a bare CR as an overwrite. Keep that
-        // byte-level premise explicit now that the application ships Auto.
+        // byte-level premise explicit now that the application ships Detect,
+        // which only reaches the same answer once it has seen a line ending.
         CHECK(session.setSetting(QStringLiteral("terminal.cr_receive"),
                                  QStringLiteral("CR"), nullptr));
         CHECK(session.setSetting(QStringLiteral("printer.control_sequences"),

@@ -67,6 +67,7 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
             TerminalCrReceive::CrLf => CrReceive::CrLf,
             TerminalCrReceive::Lf => CrReceive::Lf,
             TerminalCrReceive::Auto => CrReceive::Auto,
+            TerminalCrReceive::Detect => CrReceive::Detect,
         },
         debug_enabled: s.debug_enabled && !file_debug_modes.is_empty(),
         debug_modes: DebugModes::from_bits(file_debug_modes.bits()),
@@ -384,11 +385,11 @@ mod tests {
         // *including* the page while `Config::default` carries `MaxBuffSize`.
         assert_eq!(mapped.scrollback_max, 100 - 24);
         // ...the title, whose `Title=` default is upstream's own product name,
-        // and receive CR, whose product default is deliberately Auto while
+        // and receive CR, whose product default is deliberately Detect while
         // the compatibility engine stays on upstream's CR. These are the
         // documented differences rather than transcription slips.
         assert_eq!(mapped.title, "Tera Term");
-        assert_eq!(mapped.cr_receive, CrReceive::Auto);
+        assert_eq!(mapped.cr_receive, CrReceive::Detect);
         assert_eq!(
             Config {
                 scrollback_max: d.scrollback_max,

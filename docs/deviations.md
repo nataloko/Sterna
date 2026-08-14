@@ -393,43 +393,50 @@ Return encoding and the one forced echo, through the flat ABI function
 Setup, Save setup, TTL/Lua, plugins and duplicated sessions all see the same
 value rather than a frontend-only copy.
 
-## 9. Receive CR defaults to Auto
+## 9. Receive CR defaults to Detect, a mode of Sterna's own
 
 With no `CRReceive` key, Sterna works out which of CR, LF and CRLF the far end
 means from the first line ending it sends, and behaves as that exact mode from
-then on. Tera Term defaults to `CR`, where a received LF moves down without
-returning to the left margin and a bare CR returns without moving down.
+then on. The spelling is `CRReceive=DETECT`, and it is a fifth value beside
+upstream's four. Tera Term defaults to `CR`, where a received LF moves down
+without returning to the left margin and a bare CR returns without moving down.
 
 **Why.** Serial devices are split across all three spellings, and the wrong
 answer makes the first screen look diagonally shifted or overwrite itself.
-Auto recognises the pair without double-spacing it and gives a useful first
+Detect recognises the pair without double-spacing it and gives a useful first
 connection to each device; an unusual host can still select any exact mode.
 
-**Why it resolves rather than accepting all three for ever.** A bare CR is a
-cursor motion far more often than it is a line ending — an interactive shell
-redrawing its prompt sends one per keystroke, and so does every progress bar —
-so a terminal that reads all three spellings at once puts each keystroke on a
-new line. The evidence is the first LF: with a CR immediately before it the far
-end spells its endings `CR LF` and the mode becomes `CR`, the reference default;
-with anything else before it the far end spells them `LF` and the mode becomes
-`LF`. A device that sends CR and never LF — the case this mode exists for —
-never resolves, so its CR goes on breaking the line. The decision belongs to the
-connection: opening a new one puts it back to undecided.
+**Why it is not upstream's own AUTO.** Tera Term has a fourth value that sounds
+like this one (`vtterm.c:727`, "AUTO CR/LF mode", 2012): a CR or an LF generates
+CR+LF, and the opposite immediately after it is ignored. It never stops guessing,
+so a bare CR is a line ending for the whole session — and a bare CR is a cursor
+motion far more often than it is a line ending. An interactive shell redrawing
+its prompt sends one per keystroke, so under AUTO every keystroke lands on a new
+line; a progress bar walks down the screen. It is upstream defect 38.
+
+**How the decision is made.** The evidence is the first LF: with a CR
+immediately before it the far end spells its endings `CR LF` and the mode
+becomes `CR`, the reference default; with anything else before it the far end
+spells them `LF` and the mode becomes `LF`. A device that sends CR and never LF
+— the case the mode exists for — never resolves, so its CR goes on breaking the
+line. The decision belongs to the connection: opening a new one puts it back to
+undecided, because the next far end need not agree with the last.
 
 **What is unchanged.** The existing `[Tera Term] CRReceive` key and every
-explicit value keep their upstream meaning. `CRReceive=CR` therefore restores
-Tera Term's default exactly, and a shared INI behaves the same in both programs.
-Only the answer when the key is absent — or unrecognised, as upstream's enum
-rules require — differs.
+upstream value keep their upstream meaning, `AUTO` included — a file saying
+`CRReceive=AUTO` renders identically in the two programs, defect and all, and
+differential case 33 is that comparison. `CRReceive=CR` restores Tera Term's
+default exactly. Only the answer when the key is absent — or unrecognised, as
+upstream's enum rules require — differs. Tera Term reading a file that says
+`DETECT` takes its own `else`, which is `CR`.
 
 **Where it lives.** `tt-config/schema/settings.txt` owns the shipped setting,
 `tt-session` maps it into the engine and clears the decision when a connection
 opens, and `tt-vt::State::cr_mode` is the resolution itself. The bare
 `tt-vt::Config` retains the upstream `CR` default for focused compatibility
-callers; the application and
-its flat ABI construct sessions from `tt-config`, so they receive Auto. Oracle
-and differential runners remain on `CR`, keeping the compatibility baseline
-independent of the product default.
+callers; the application and its flat ABI construct sessions from `tt-config`,
+so they receive Detect. Oracle and differential runners remain on `CR`, keeping
+the compatibility baseline independent of the product default.
 
 ## 10. A terminal-only dark mode
 

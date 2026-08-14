@@ -934,13 +934,16 @@ URLs — one plausible master switch is really three:
 
 The parser's own switches:
 
-- **A bare CR is a cursor motion far more often than a line ending**, so
-  `CRReceive=AUTO` (the shipped default, deviation 9) has to *resolve* rather
-  than read all three spellings for ever: an interactive shell redrawing its
-  prompt sends one CR per keystroke, and every one of them was a new line. The
-  first LF is the evidence — a CR immediately before it means `CR LF` and the
-  mode becomes `CR`, anything else means `LF` alone — and `Session::connect`
-  clears the decision, because a new far end need not agree with the last one.
+- **`CRReceive` has five values here and upstream's AUTO is not the one that
+  ships.** A bare CR is a cursor motion far more often than a line ending — an
+  interactive shell redrawing its prompt sends one per keystroke — and upstream's
+  AUTO takes every one of them as a line ending for the whole session (defect 38
+  below), so it puts each keystroke on a new line. It is reproduced exactly, and
+  `DETECT` is Sterna's own and the default (deviation 9): the first LF resolves
+  it — a CR immediately before means `CR LF` and the mode becomes `CR`, anything
+  else means `LF` alone — and `Session::connect` clears the decision, because a
+  new far end need not agree with the last one. Differential case 33 is AUTO, so
+  it stays comparable; nothing in `oracle/` can run DETECT.
 - **Debug display restores the wrong attribute** — `PutDebugChar` saves
   `svCharAttr` and restores `char_attr` (`charset.cpp:757`). Reproduced;
   the obvious fix changes what the next character looks like.
@@ -1686,6 +1689,12 @@ in Stage 3 before filing.
   as granted); the seven `+ssl` types parse and fall to `default: result =
   0` (`:1822`, reported connected, no handshake). Plus an unnumbered
   `atoi(strchr(buf,' '))` NULL deref (`:1314`).
+- **38: `CRReceive=AUTO` is unusable on an interactive host** — a CR or an LF
+  generates CR+LF and the opposite immediately after is ignored
+  (`vtterm.c:727`), so a bare CR is a line ending for ever: a shell redrawing
+  its prompt puts every keystroke on a new line and a progress bar walks down
+  the screen. Reproduced (it is what the value means in a shared INI);
+  deviation 9 ships `DETECT` instead, which resolves at the first line ending.
 - **37: `-proxy=socks5://p:1080/` is no proxy at all** — `parseURL`'s
   empty-host arm ignores the caller flag and assigns `TYPE_NONE`
   (`:2143`). The one parser divergence this port does not reproduce (harm

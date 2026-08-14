@@ -40,32 +40,43 @@ pub use window::{WindowMetrics, WindowRequest};
 ///
 /// The engine default is [`CrReceive::Cr`] — the `else` branch at
 /// `ttset.c:643`, not the CRLF the surrounding code suggests. Sterna's shipped
-/// settings deliberately map an absent key to [`CrReceive::Auto`]; keeping the
-/// bare engine at the reference value makes focused compatibility callers
-/// explicit about taking the product-level deviation.
+/// settings deliberately map an absent key to [`CrReceive::Detect`], which is
+/// this port's own fifth value; keeping the bare engine at the reference value
+/// makes focused compatibility callers explicit about taking the product-level
+/// deviation. [`CrReceive::Auto`] is upstream's fourth and means what it means
+/// there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum CrReceive {
     #[default]
     Cr,
     Lf,
     CrLf,
-    /// Work out which of the three the far end means, from the first line
-    /// ending it sends, and be that mode from then on.
+    /// Upstream's own AUTO (`vtterm.c:727`, "AUTO CR/LF mode", 2012): a CR or
+    /// an LF generates CR+LF, and the opposite immediately after it is
+    /// ignored.
     ///
-    /// **A bare CR is a cursor motion far more often than it is a line
-    /// ending**, and every interactive program on a Unix host says so: a shell
-    /// that redraws its prompt, a progress bar, anything that overwrites the
-    /// line it is on. So the guess only lasts until the evidence arrives. An
-    /// LF with a CR immediately before it means the far end spells its ending
-    /// `CR LF` and this becomes [`CrReceive::Cr`], the reference default; an LF
-    /// with anything else before it means `LF` alone and this becomes
-    /// [`CrReceive::Lf`]. A far end that sends CR and never LF — the serial
-    /// device this mode exists for — never resolves, and its CR goes on
-    /// breaking the line.
+    /// **A bare CR is a line break here**, which is what makes it unusable on
+    /// an interactive host: a shell redrawing its prompt sends one CR per
+    /// keystroke and every keystroke lands on a new line. Reproduced anyway,
+    /// because a file saying `CRReceive=AUTO` has to mean in this program what
+    /// it means in Tera Term. [`CrReceive::Detect`] is what ships.
+    Auto,
+    /// **Sterna's own, and the shipped default** (deviation 9): work out which
+    /// of the three spellings the far end means, from the first line ending it
+    /// sends, and be that mode from then on.
+    ///
+    /// The guess lasts only until the evidence arrives, which is the whole
+    /// difference from [`CrReceive::Auto`]. An LF with a CR immediately before
+    /// it means the far end spells its ending `CR LF`, so this becomes
+    /// [`CrReceive::Cr`] — the reference default, where a bare CR is the cursor
+    /// motion every interactive program uses it as. An LF with anything else
+    /// before it means `LF` alone, so this becomes [`CrReceive::Lf`]. A far end
+    /// that sends CR and never LF — the serial device the mode exists for —
+    /// never resolves, and its CR goes on breaking the line.
     ///
     /// [`Vt::forget_cr_receive`] puts it back to undecided; a new connection is
     /// a new far end.
-    Auto,
+    Detect,
 }
 
 /// What a BEL does. Tera Term's `ts.Beep`.
@@ -1624,7 +1635,7 @@ impl Vt {
         self.state.modes.cr_send = cr_send;
     }
 
-    /// Put [`CrReceive::Auto`] back to undecided, so the next line ending
+    /// Put [`CrReceive::Detect`] back to undecided, so the next line ending
     /// decides again.
     ///
     /// A new connection is a new far end: a session that has just been reading
@@ -1632,7 +1643,7 @@ impl Vt {
     /// dialled after it, which is the case the mode exists for. A no-op under
     /// every explicit mode.
     pub fn forget_cr_receive(&mut self) {
-        self.state.auto_cr_receive = None;
+        self.state.detected_cr_receive = None;
     }
 
     /// LNM. A CR from the keyboard sends CR LF while it is on.
@@ -1822,11 +1833,15 @@ struct State {
     /// `TitleStack` (`vtterm.c:2757`) — what `CSI 22 t` puts away and
     /// `CSI 23 t` brings back.
     title_stack: Vec<String>,
-    /// `ts.CRReceive == Auto` keeps one byte of history to collapse CR+LF.
+    /// `ts.CRReceive == Auto` keeps one byte of history to collapse CR+LF, and
+    /// so does the resolving [`CrReceive::Detect`].
     prev_was_cr: bool,
-    /// What [`CrReceive::Auto`] decided the far end's line ending is, and
+    prev_was_lf: bool,
+    /// Upstream's `PrevCRorLFGeneratedCRLF` (`vtterm.c:733`).
+    auto_generated_crlf: bool,
+    /// What [`CrReceive::Detect`] decided the far end's line ending is, and
     /// `None` while it is still waiting for one. Read through `cr_mode`.
-    auto_cr_receive: Option<CrReceive>,
+    detected_cr_receive: Option<CrReceive>,
     /// The last printable codepoint, for REP.
     last_printed: Option<u32>,
     /// The plain-text log tap — `Some` only while a text log is open, so the
@@ -1983,7 +1998,9 @@ impl State {
             title: String::new(),
             title_stack: Vec::new(),
             prev_was_cr: false,
-            auto_cr_receive: None,
+            prev_was_lf: false,
+            auto_generated_crlf: false,
+            detected_cr_receive: None,
             last_printed: None,
             log_text: None,
             macro_tap: None,
@@ -2552,12 +2569,12 @@ impl State {
         self.grid.carriage_return();
     }
 
-    /// The mode in force. [`CrReceive::Auto`] answers as itself only while it
+    /// The mode in force. [`CrReceive::Detect`] answers as itself only while it
     /// is undecided; once it has seen a line ending it answers as the mode it
     /// resolved to, and the arms below are the exact modes from there on.
     fn cr_mode(&self) -> CrReceive {
         match self.config.cr_receive {
-            CrReceive::Auto => self.auto_cr_receive.unwrap_or(CrReceive::Auto),
+            CrReceive::Detect => self.detected_cr_receive.unwrap_or(CrReceive::Detect),
             mode => mode,
         }
     }
@@ -2565,14 +2582,24 @@ impl State {
     /// `vtterm.c:725`.
     fn process_cr(&mut self) {
         match self.cr_mode() {
+            CrReceive::Auto => {
+                if !self.prev_was_lf || !self.auto_generated_crlf {
+                    self.carriage_return(true);
+                    // Upstream's `LineFeed(CR, TRUE)`, minus the LNM tail —
+                    // see the note on `line_feed`, which this deliberately does
+                    // not call.
+                    self.tap(0x0a);
+                    self.grid.line_feed();
+                    self.auto_generated_crlf = true;
+                } else {
+                    self.auto_generated_crlf = false;
+                }
+            }
             // Undecided, so this CR may be the whole of a line ending: break
             // the line, and let an LF arriving straight after it resolve the
             // question rather than break a second one.
-            CrReceive::Auto => {
+            CrReceive::Detect => {
                 self.carriage_return(true);
-                // Upstream's `LineFeed(CR, TRUE)`, minus the LNM tail — see
-                // the note on `line_feed`, which this deliberately does not
-                // call.
                 self.tap(0x0a);
                 self.grid.line_feed();
             }
@@ -2643,15 +2670,24 @@ impl State {
                 self.carriage_return(true);
                 self.line_feed(byte);
             }
-            // The first line ending, which is the evidence Auto was waiting
+            CrReceive::Auto => {
+                if !self.prev_was_cr || !self.auto_generated_crlf {
+                    self.carriage_return(true);
+                    self.line_feed(byte);
+                    self.auto_generated_crlf = true;
+                } else {
+                    self.auto_generated_crlf = false;
+                }
+            }
+            // The first line ending, which is the evidence Detect was waiting
             // for. A CR immediately before it means the far end spells one
             // `CR LF`: the break has been made already and this is its second
             // half. Anything else before it means `LF` alone.
-            CrReceive::Auto => {
+            CrReceive::Detect => {
                 if self.prev_was_cr {
-                    self.auto_cr_receive = Some(CrReceive::Cr);
+                    self.detected_cr_receive = Some(CrReceive::Cr);
                 } else {
-                    self.auto_cr_receive = Some(CrReceive::Lf);
+                    self.detected_cr_receive = Some(CrReceive::Lf);
                     self.carriage_return(true);
                     self.line_feed(byte);
                 }
@@ -4552,6 +4588,7 @@ impl Perform for State {
         }
         self.last_printed = Some(cp);
         self.prev_was_cr = false;
+        self.prev_was_lf = false;
     }
 
     fn execute(&mut self, byte: u8) {
@@ -4646,17 +4683,20 @@ impl Perform for State {
                     log.push('\n');
                 }
                 self.process_lf(byte);
+                self.prev_was_lf = true;
                 self.prev_was_cr = false;
                 return;
             }
             0x0d => {
                 self.process_cr();
                 self.prev_was_cr = true;
+                self.prev_was_lf = false;
                 return;
             }
             _ => {}
         }
         self.prev_was_cr = false;
+        self.prev_was_lf = false;
     }
 
     fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], ignore: bool, action: char) {
@@ -6414,16 +6454,16 @@ mod tests {
         assert_eq!(row(&vt, 0).trim_end(), "def");
     }
 
-    /// The shipped default (deviation 9). What it must not do is the reason it
-    /// was rewritten: a bare CR is a cursor motion on every interactive host,
-    /// and a shell that redraws its prompt sends one per keystroke.
+    /// The shipped default (deviation 9), and why it is not upstream's AUTO:
+    /// a bare CR is a cursor motion on every interactive host, and a shell that
+    /// redraws its prompt sends one per keystroke.
     #[test]
-    fn auto_stops_guessing_at_the_first_line_ending() {
+    fn detect_stops_guessing_at_the_first_line_ending() {
         fn auto(input: &[u8]) -> Vt {
             let mut vt = Vt::new(Config {
                 cols: 20,
                 rows: 5,
-                cr_receive: CrReceive::Auto,
+                cr_receive: CrReceive::Detect,
                 ..Config::default()
             });
             vt.feed(input);
@@ -6466,6 +6506,25 @@ mod tests {
         vt.feed(b"");
         assert_eq!(row(&vt, 1).trim_end(), "one");
         assert_eq!(row(&vt, 2).trim_end(), "two");
+    }
+
+    /// Upstream's AUTO is reproduced beside it, defect and all: every bare CR
+    /// breaks the line, which is what an INI saying `CRReceive=AUTO` asks for
+    /// in either program. Differential case 33 is the same input.
+    #[test]
+    fn upstream_auto_breaks_the_line_on_every_bare_cr() {
+        let mut vt = Vt::new(Config {
+            cols: 20,
+            rows: 5,
+            cr_receive: CrReceive::Auto,
+            ..Config::default()
+        });
+        vt.feed(b"one\r\ntwo\nthree\rfour");
+        vt.feed(b"");
+        assert_eq!(row(&vt, 0).trim_end(), "one");
+        assert_eq!(row(&vt, 1).trim_end(), "two");
+        assert_eq!(row(&vt, 2).trim_end(), "three");
+        assert_eq!(row(&vt, 3).trim_end(), "four");
     }
 
     /// `CarriageReturn` and `LineFeed` are what tap, so `ts.CRReceive` changes

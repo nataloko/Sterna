@@ -130,12 +130,15 @@ impl Default for TerminalId {
 
 /// **`ttset.c:631`, and upstream's default is the `else` branch.** A bare CR is
 /// a carriage *return*, not a newline, so `"Hello\rWorld"` overwrites the line.
-/// Sterna deliberately ships AUTO: the first line ending decides which of the
-/// three the far end means and the terminal is that mode from then on, which is
-/// the useful answer across serial devices without requiring the first session on
-/// each one to discover its spelling. It resolves rather than reading all three
-/// for ever because a bare CR is usually a cursor motion — see deviation 9. An
-/// explicit `CRReceive=CR` remains byte-for-byte compatible.
+/// `AUTO` is upstream's fourth value (`vtterm.c:727`, 2012) and is reproduced
+/// exactly: it takes a bare CR *and* a bare LF as whole line endings for ever,
+/// which puts every prompt redraw an interactive shell makes on a line of its
+/// own. `DETECT` is Sterna's own and is what ships (deviation 9): the first line
+/// ending decides which of the three the far end means and the terminal is that
+/// exact mode from then on, so a serial device needs no first session to discover
+/// its spelling and a host still gets its cursor motions. Every upstream
+/// spelling, `CRReceive=CR` included, remains byte-for-byte compatible; Tera Term
+/// reads `DETECT` as the unrecognised value it is, which is its own `CR` default.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TerminalCrReceive {
     /// `CR`
@@ -146,6 +149,8 @@ pub enum TerminalCrReceive {
     Lf,
     /// `AUTO`
     Auto,
+    /// `DETECT`
+    Detect,
 }
 
 impl TerminalCrReceive {
@@ -156,6 +161,7 @@ impl TerminalCrReceive {
             Self::CrLf => "CRLF",
             Self::Lf => "LF",
             Self::Auto => "AUTO",
+            Self::Detect => "DETECT",
         }
     }
 
@@ -176,13 +182,16 @@ impl TerminalCrReceive {
         if s.eq_ignore_ascii_case("AUTO") {
             return Self::Auto;
         }
+        if s.eq_ignore_ascii_case("DETECT") {
+            return Self::Detect;
+        }
         Self::default()
     }
 }
 
 impl Default for TerminalCrReceive {
     fn default() -> Self {
-        Self::Auto
+        Self::Detect
     }
 }
 
@@ -2669,12 +2678,15 @@ pub struct Settings {
     pub terminal_id: TerminalId,
     /// **`ttset.c:631`, and upstream's default is the `else` branch.** A bare CR is
     /// a carriage *return*, not a newline, so `"Hello\rWorld"` overwrites the line.
-    /// Sterna deliberately ships AUTO: the first line ending decides which of the
-    /// three the far end means and the terminal is that mode from then on, which is
-    /// the useful answer across serial devices without requiring the first session on
-    /// each one to discover its spelling. It resolves rather than reading all three
-    /// for ever because a bare CR is usually a cursor motion — see deviation 9. An
-    /// explicit `CRReceive=CR` remains byte-for-byte compatible.
+    /// `AUTO` is upstream's fourth value (`vtterm.c:727`, 2012) and is reproduced
+    /// exactly: it takes a bare CR *and* a bare LF as whole line endings for ever,
+    /// which puts every prompt redraw an interactive shell makes on a line of its
+    /// own. `DETECT` is Sterna's own and is what ships (deviation 9): the first line
+    /// ending decides which of the three the far end means and the terminal is that
+    /// exact mode from then on, so a serial device needs no first session to discover
+    /// its spelling and a host still gets its cursor motions. Every upstream
+    /// spelling, `CRReceive=CR` included, remains byte-for-byte compatible; Tera Term
+    /// reads `DETECT` as the unrecognised value it is, which is its own `CR` default.
     pub terminal_cr_receive: TerminalCrReceive,
     /// `ttset.c:646`, the same shape, one variant short — there is no AUTO on send.
     pub terminal_cr_send: TerminalCrSend,
@@ -12752,10 +12764,10 @@ pub const FIELDS: &[Field] = &[
         page: "terminal",
         section: "Tera Term",
         key: "CRReceive",
-        kind: Kind::Enum(&["CR", "CRLF", "LF", "AUTO"]),
-        default: "AUTO",
+        kind: Kind::Enum(&["CR", "CRLF", "LF", "AUTO", "DETECT"]),
+        default: "DETECT",
         label: Some("DLG_TERM_CRRECEIVE"),
-        doc: "**`ttset.c:631`, and upstream's default is the `else` branch.** A bare CR is a carriage *return*, not a newline, so `\"Hello\\rWorld\"` overwrites the line. Sterna deliberately ships AUTO: the first line ending decides which of the three the far end means and the terminal is that mode from then on, which is the useful answer across serial devices without requiring the first session on each one to discover its spelling. It resolves rather than reading all three for ever because a bare CR is usually a cursor motion — see deviation 9. An explicit `CRReceive=CR` remains byte-for-byte compatible.",
+        doc: "**`ttset.c:631`, and upstream's default is the `else` branch.** A bare CR is a carriage *return*, not a newline, so `\"Hello\\rWorld\"` overwrites the line. `AUTO` is upstream's fourth value (`vtterm.c:727`, 2012) and is reproduced exactly: it takes a bare CR *and* a bare LF as whole line endings for ever, which puts every prompt redraw an interactive shell makes on a line of its own. `DETECT` is Sterna's own and is what ships (deviation 9): the first line ending decides which of the three the far end means and the terminal is that exact mode from then on, so a serial device needs no first session to discover its spelling and a host still gets its cursor motions. Every upstream spelling, `CRReceive=CR` included, remains byte-for-byte compatible; Tera Term reads `DETECT` as the unrecognised value it is, which is its own `CR` default.",
     },
     Field {
         name: "terminal.cr_send",
