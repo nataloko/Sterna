@@ -732,7 +732,7 @@ it is not this one. `QuickButtonsDialog` therefore edits plain text and the
 core does the escaping when the window saves.
 
 **The bar does not exist until a button does.** `window.quick_buttons` is what
-Setup > Show quick buttons writes, but an empty list hides the bar whatever it
+View > Show quick buttons writes, but an empty list hides the bar whatever it
 says; the alternative is permanent chrome in a terminal, which the connect bar
 already argues against one section up (`docs/deviations.md`, entry 4).
 

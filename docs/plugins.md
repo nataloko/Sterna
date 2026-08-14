@@ -152,7 +152,7 @@ read-only property. Tables and functions cannot cross between Lua states.
 
 ### `sterna.settings(spec)`
 
-Adds a searchable tab to Setup > Terminal and returns a typed control proxy.
+Adds a searchable tab to Setup > Preferences and returns a typed control proxy.
 The declaration has a title, an INI section, and one or more fields:
 
 ```lua

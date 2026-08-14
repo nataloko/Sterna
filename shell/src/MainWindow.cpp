@@ -204,31 +204,6 @@ void languageAction(QAction *action, const char *key, const QString &fallback,
     action->setProperty("sternaLanguageFallback", fallback);
 }
 
-/// The `.lng` key for a settings page, or null where the catalogs have none.
-///
-/// Upstream's Setup menu named eight dialogs and the schema has 26 pages, so
-/// most entries have no key and keep the schema's own title. The five that do
-/// map are not optional decoration: without them a catalog that carries
-/// `MENU_SETUP_TERMINAL` shows a block of English inside an otherwise
-/// translated menu, which is what replacing the single `MENU_SETUP_ADDITION`
-/// entry with a page list would otherwise cost.
-///
-/// `font` is deliberately absent — `MENU_SETUP_FONT` belongs to the font
-/// picker below, and giving both the same key puts two identically named
-/// entries in one menu. `general` is absent for the opposite reason: no schema
-/// page means what upstream's General dialog meant.
-const char *settingsPageLanguageKey(const QString &page)
-{
-    static const QHash<QString, const char *> keys {
-        {QStringLiteral("terminal"), "MENU_SETUP_TERMINAL"},
-        {QStringLiteral("window"), "MENU_SETUP_WINDOW"},
-        {QStringLiteral("keyboard"), "MENU_SETUP_KEYBOARD"},
-        {QStringLiteral("serial"), "MENU_SETUP_SERIALPORT"},
-        {QStringLiteral("connection"), "MENU_SETUP_TCPIP"},
-    };
-    return keys.value(page, nullptr);
-}
-
 /// A `/K=` path in the active setup directory, with upstream's default `.CNF`
 /// extension when the file name contains no dot.
 QString keyboardFile(const QString &given, const QString &settingsPath)
@@ -1880,22 +1855,69 @@ void MainWindow::buildMenus()
     });
     updatePanelActions();
 
+    // The three switches that decide what the window *shows*. Their editors
+    // stay in Setup, which is the line between the two menus: this one answers
+    // "is it on screen", that one answers "what is on it". Upstream has none of
+    // the three — no toolbar, no quick buttons, no pattern highlighting — so
+    // there is no `.lng` key to hang on any of them and no upstream order to
+    // keep. Each writes its setting rather than hiding its widget directly, so
+    // that this menu, the settings dialog and Save setup all mean the same
+    // thing.
+    view->addSeparator();
+    m_toolbarAction = view->addAction(tr("Show toolbar"));
+    m_toolbarAction->setObjectName(QStringLiteral("showToolbarAction"));
+    m_toolbarAction->setCheckable(true);
+    connect(m_toolbarAction, &QAction::triggered, this, [this](bool on) {
+        QString error;
+        if (!m_session->setSetting(QStringLiteral("window.toolbar"),
+                                   on ? QStringLiteral("on")
+                                      : QStringLiteral("off"),
+                                   &error)) {
+            onNotice(tr("Could not change the toolbar: %1").arg(error));
+        }
+    });
+    m_quickButtonsAction = view->addAction(tr("Show quick buttons"));
+    m_quickButtonsAction->setObjectName(QStringLiteral("showQuickButtonsAction"));
+    m_quickButtonsAction->setCheckable(true);
+    connect(m_quickButtonsAction, &QAction::triggered, this, [this](bool on) {
+        QString error;
+        if (!m_session->setSetting(QStringLiteral("window.quick_buttons"),
+                                   on ? QStringLiteral("on")
+                                      : QStringLiteral("off"),
+                                   &error)) {
+            onNotice(tr("Could not change the quick buttons: %1").arg(error));
+        }
+    });
+    m_highlightingAction = view->addAction(tr("Highlight matches"));
+    m_highlightingAction->setObjectName(QStringLiteral("highlightMatchesAction"));
+    m_highlightingAction->setCheckable(true);
+    connect(m_highlightingAction, &QAction::triggered, this, [this](bool on) {
+        QString error;
+        if (!m_session->setSetting(QStringLiteral("color.highlighting"),
+                                   on ? QStringLiteral("on") : QStringLiteral("off"),
+                                   &error)) {
+            onNotice(tr("Could not change highlighting: %1").arg(error));
+        }
+    });
+
     // "Setup", which is Tera Term's own name for this menu, so that someone
     // arriving from it looks in the right place — and before Control, which is
     // where upstream's bar has it.
     QMenu *setup = menuBar()->addMenu(tr("Setup"));
     setup->setObjectName(QStringLiteral("setupMenu"));
     languageAction(setup->menuAction(), "MENU_SETUP", tr("Setup"));
-    const QVector<SettingsDialog::Page> settingsPages = SettingsDialog::corePages();
-    for (int i = 0; i < settingsPages.size(); i++) {
-        QAction *page = setup->addAction(settingsPages.at(i).title, this,
-                                         [this, i] { showSettingsDialog(i); });
-        page->setObjectName(QStringLiteral("settingsPageAction%1").arg(i));
-        page->setProperty("settingsPageIndex", i);
-        if (const char *key = settingsPageLanguageKey(settingsPages.at(i).id)) {
-            languageAction(page, key, settingsPages.at(i).title);
-        }
-    }
+    // One item, not one per page. The schema has 26 pages; a menu that long is
+    // a wall to read and a scrolling list to click through, and every one of
+    // them opens the same dialog on a different tab — which the dialog's own
+    // tab rows and its search box already do better. `MENU_SETUP_ADDITION` is
+    // upstream's key for the item that opens *its* tabbed everything-else
+    // dialog, which is what this dialog is; the five per-page keys upstream had
+    // (`MENU_SETUP_TERMINAL` and friends) name dialogs that no longer have a
+    // menu entry of their own.
+    QAction *preferences = setup->addAction(tr("Preferences..."), this,
+                                            [this] { showSettingsDialog(); });
+    preferences->setObjectName(QStringLiteral("preferencesAction"));
+    languageAction(preferences, "MENU_SETUP_ADDITION", tr("Preferences..."));
     QAction *font =
         setup->addAction(tr("Choose font…"), this, &MainWindow::chooseFont);
     font->setObjectName(QStringLiteral("chooseFontAction"));
@@ -1909,64 +1931,23 @@ void MainWindow::buildMenus()
     QAction *keyMap =
         setup->addAction(tr("Load key map..."), this, &MainWindow::chooseKeyMap);
     languageAction(keyMap, "MENU_SETUP_LOADKEYMAP", tr("Load key map..."));
-    // Upstream has no pattern highlighting and so no menu item for one. The
-    // editor is here rather than a page of the settings dialog because that one
-    // is generated from the schema, and a list is exactly what the schema
-    // cannot describe.
+    // The two editors, which are settings the schema cannot describe: a list of
+    // highlight rules and a list of buttons. Both live here rather than on a
+    // page of the settings dialog because that dialog is generated from the
+    // schema, and a list is exactly what a schema row cannot be. Their two
+    // switches are in View — this menu is what the things *are*, that one is
+    // whether they are on screen.
     setup->addSeparator();
     QAction *highlighting =
         setup->addAction(tr("Highlighting..."), this, &MainWindow::editHighlights);
     highlighting->setObjectName(QStringLiteral("highlightingAction"));
-    m_highlightingAction = setup->addAction(tr("Highlight matches"));
-    m_highlightingAction->setObjectName(QStringLiteral("highlightMatchesAction"));
-    m_highlightingAction->setCheckable(true);
-    // The setting is written rather than the rules being switched off one by
-    // one, so this, the settings dialog and Save setup all mean the same thing.
-    connect(m_highlightingAction, &QAction::triggered, this, [this](bool on) {
-        QString error;
-        if (!m_session->setSetting(QStringLiteral("color.highlighting"),
-                                   on ? QStringLiteral("on") : QStringLiteral("off"),
-                                   &error)) {
-            onNotice(tr("Could not change highlighting: %1").arg(error));
-        }
-    });
-    // Upstream has no toolbar and so no item for one. It writes the setting
-    // rather than hiding the bar directly, so that this, the settings dialog and
-    // Save setup are all talking about the same thing.
-    setup->addSeparator();
-    m_toolbarAction = setup->addAction(tr("Show toolbar"));
-    m_toolbarAction->setObjectName(QStringLiteral("showToolbarAction"));
-    m_toolbarAction->setCheckable(true);
-    connect(m_toolbarAction, &QAction::triggered, this, [this](bool on) {
-        QString error;
-        if (!m_session->setSetting(QStringLiteral("window.toolbar"),
-                                   on ? QStringLiteral("on")
-                                      : QStringLiteral("off"),
-                                   &error)) {
-            onNotice(tr("Could not change the toolbar: %1").arg(error));
-        }
-    });
-
-    // The quick buttons, which upstream has no equivalent of either — the
-    // nearest thing is a KEYBOARD.CNF user key, which is the same four actions
-    // with no face on them. This item is how somebody finds the feature: the
-    // bar is not there until a button exists.
+    // Upstream's nearest thing to a quick button is a KEYBOARD.CNF user key,
+    // which is the same four actions with no face on them. This item is how
+    // somebody finds the feature: the bar is not there until a button exists.
     QAction *quickButtons =
         setup->addAction(tr("Quick buttons..."), this,
                          &MainWindow::showQuickButtonsDialog);
     quickButtons->setObjectName(QStringLiteral("quickButtonsAction"));
-    m_quickButtonsAction = setup->addAction(tr("Show quick buttons"));
-    m_quickButtonsAction->setObjectName(QStringLiteral("showQuickButtonsAction"));
-    m_quickButtonsAction->setCheckable(true);
-    connect(m_quickButtonsAction, &QAction::triggered, this, [this](bool on) {
-        QString error;
-        if (!m_session->setSetting(QStringLiteral("window.quick_buttons"),
-                                   on ? QStringLiteral("on")
-                                      : QStringLiteral("off"),
-                                   &error)) {
-            onNotice(tr("Could not change the quick buttons: %1").arg(error));
-        }
-    });
 
     // Upstream's Control menu, which is where the break is sent and a macro is
     // started and stopped. Stop is upstream's End button, which lives on
@@ -1989,11 +1970,6 @@ void MainWindow::buildMenus()
 
     QMenu *help = menuBar()->addMenu(tr("Help"));
     help->setObjectName(QStringLiteral("helpMenu"));
-    help->addAction(tr("Release page"), this, [] {
-        QDesktopServices::openUrl(
-            QUrl(QStringLiteral("https://github.com/nataloko/Sterna/releases")));
-    });
-    help->addSeparator();
     QAction *about = help->addAction(tr("About Sterna"), this, [this] {
         QMessageBox box(
             QMessageBox::Information, tr("About Sterna"),
@@ -2011,9 +1987,19 @@ void MainWindow::buildMenus()
         QPushButton *update =
             box.addButton(tr("Check for Updates..."), QMessageBox::ActionRole);
         update->setObjectName(QStringLiteral("aboutUpdateButton"));
+        // Beside the version it is about, rather than an item of its own in
+        // Help: the two questions a release page answers — what is the newest
+        // version, and what changed — are both questions about the number in
+        // the line above it.
+        QPushButton *releases =
+            box.addButton(tr("Release Page"), QMessageBox::ActionRole);
+        releases->setObjectName(QStringLiteral("aboutReleasesButton"));
         box.exec();
         if (box.clickedButton() == update) {
             checkForUpdates();
+        } else if (box.clickedButton() == releases) {
+            QDesktopServices::openUrl(
+                QUrl(QStringLiteral("https://github.com/nataloko/Sterna/releases")));
         }
     });
     about->setObjectName(QStringLiteral("aboutAction"));

@@ -113,7 +113,7 @@ Line edit is likewise the active tab's `terminal.line_edit`; it makes the echo
 box show the effective on state without changing the preference underneath.
 
 **Where it lives.** `shell/src/ConnectBar.{h,cpp}`, and one new setting:
-`[Sterna] Toolbar` (`window.toolbar`, on by default), which Setup > Show toolbar
+`[Sterna] Toolbar` (`window.toolbar`, on by default), which View > Show toolbar
 writes. The switch exists because chrome nobody can remove does not belong in a
 terminal; it is deliberately *not* tied to `PopupMenu` or `HideTitle`, which are
 about the menu.

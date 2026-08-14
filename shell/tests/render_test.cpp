@@ -1867,7 +1867,7 @@ void test_the_settings_dialog_is_built_from_the_schema()
     }
 }
 
-void test_setup_menu_links_every_schema_page()
+void test_the_setup_menu_opens_one_settings_dialog()
 {
     const QVector<SettingsDialog::Page> pages = SettingsDialog::corePages();
     CHECK(pages.size() == 26);
@@ -1916,45 +1916,44 @@ void test_setup_menu_links_every_schema_page()
     }
     CHECK(font->text() == QStringLiteral("Choose font…"));
 
-    for (int i = 0; i < pages.size(); i++) {
-        auto *action = window.findChild<QAction *>(
-            QStringLiteral("settingsPageAction%1").arg(i));
-        CHECK(action != nullptr);
-        if (!action) {
-            continue;
+    // One item for all 26 pages, not one item each. The tabs and the search
+    // box inside the dialog are the way to a page; a menu that reproduced them
+    // was 26 lines long and opened the same dialog every time.
+    auto *preferences =
+        window.findChild<QAction *>(QStringLiteral("preferencesAction"));
+    CHECK(preferences != nullptr);
+    if (!preferences) {
+        return;
+    }
+    CHECK(preferences->text() == QStringLiteral("Preferences..."));
+    CHECK(setup->actions().indexOf(font) == setup->actions().indexOf(preferences) + 1);
+    for (QAction *action : window.findChildren<QAction *>()) {
+        CHECK(!action->objectName().startsWith(
+            QStringLiteral("settingsPageAction")));
+    }
+
+    int opened = -1;
+    QTimer::singleShot(0, [&opened] {
+        auto *dialog =
+            qobject_cast<SettingsDialog *>(QApplication::activeModalWidget());
+        CHECK(dialog != nullptr);
+        if (!dialog) {
+            return;
         }
-        CHECK(action->text() == pages.at(i).title);
-        CHECK(action->property("settingsPageIndex").toInt() == i);
-
-        int opened = -1;
-        QTimer::singleShot(0, [&opened] {
-            auto *dialog = qobject_cast<SettingsDialog *>(
-                QApplication::activeModalWidget());
-            CHECK(dialog != nullptr);
-            if (!dialog) {
-                return;
-            }
-            auto *tabs = dialog->findChild<TabRows *>();
-            CHECK(tabs != nullptr);
-            if (tabs) {
-                opened = tabs->currentIndex();
-            }
-            dialog->reject();
-        });
-        action->trigger();
-        CHECK(opened == i);
-    }
-
-    auto *last = window.findChild<QAction *>(QStringLiteral("settingsPageAction25"));
-    CHECK(last != nullptr);
-    if (last) {
-        CHECK(setup->actions().indexOf(font) == setup->actions().indexOf(last) + 1);
-    }
+        auto *tabs = dialog->findChild<TabRows *>();
+        CHECK(tabs != nullptr);
+        if (tabs) {
+            opened = tabs->currentIndex();
+        }
+        dialog->reject();
+    });
+    preferences->trigger();
+    CHECK(opened == 0);
 
     // Loading a catalog translates the stable menu chrome, the font picker and
-    // the five generated page links upstream's own Setup menu had a key for.
-    // The other pages keep their schema title: upstream named eight dialogs and
-    // the schema has 26 pages, so most have no key to find.
+    // Preferences — which takes `MENU_SETUP_ADDITION`, upstream's key for the
+    // item that opens *its* tabbed everything-else dialog. The page names
+    // themselves are the schema's and are not in any catalog.
     const QString translatedPath = dir.filePath(QStringLiteral("translated.ini"));
     QFile translatedFile(translatedPath);
     CHECK(translatedFile.open(QIODevice::WriteOnly));
@@ -1966,21 +1965,115 @@ void test_setup_menu_links_every_schema_page()
         translated.findChild<QMenu *>(QStringLiteral("setupMenu"));
     auto *translatedFont =
         translated.findChild<QAction *>(QStringLiteral("chooseFontAction"));
-    auto *translatedTerminal =
-        translated.findChild<QAction *>(QStringLiteral("settingsPageAction0"));
-    auto *translatedEncoding =
-        translated.findChild<QAction *>(QStringLiteral("settingsPageAction1"));
+    auto *translatedPreferences =
+        translated.findChild<QAction *>(QStringLiteral("preferencesAction"));
     CHECK(translatedSetup != nullptr);
     CHECK(translatedFont != nullptr);
-    CHECK(translatedTerminal != nullptr);
-    CHECK(translatedEncoding != nullptr);
-    if (translatedSetup && translatedFont && translatedTerminal
-        && translatedEncoding) {
+    CHECK(translatedPreferences != nullptr);
+    if (translatedSetup && translatedFont && translatedPreferences) {
         CHECK(translatedSetup->title() == QStringLiteral("設定"));
         CHECK(translatedFont->text() == QStringLiteral("フォント..."));
-        CHECK(translatedTerminal->text() == QStringLiteral("端末..."));
-        CHECK(translatedEncoding->text() == QStringLiteral("Encoding"));
+        CHECK(translatedPreferences->text() == QStringLiteral("その他の設定..."));
     }
+}
+
+/// What the two menus each own: View decides whether a thing is on screen,
+/// Setup decides what the thing is. The three switches were in Setup, under
+/// the 26 page links, where the menu was long enough that nobody found them.
+void test_the_view_menu_owns_the_three_switches()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("view.ini"));
+    QFile file(path);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[Sterna]\nAutoSaveSettings=off\n");
+    file.close();
+
+    MainWindow window(path);
+    auto *view = window.findChild<QMenu *>(QStringLiteral("viewMenu"));
+    auto *setup = window.findChild<QMenu *>(QStringLiteral("setupMenu"));
+    CHECK(view != nullptr);
+    CHECK(setup != nullptr);
+    if (!view || !setup) {
+        return;
+    }
+
+    const auto menuOf = [](MainWindow &w, const char *name) -> QMenu * {
+        auto *action = w.findChild<QAction *>(QString::fromLatin1(name));
+        CHECK(action != nullptr);
+        if (!action || action->associatedObjects().isEmpty()) {
+            return nullptr;
+        }
+        return qobject_cast<QMenu *>(action->associatedObjects().first());
+    };
+
+    CHECK(menuOf(window, "tiledAction") == view);
+    CHECK(menuOf(window, "showToolbarAction") == view);
+    CHECK(menuOf(window, "showQuickButtonsAction") == view);
+    CHECK(menuOf(window, "highlightMatchesAction") == view);
+    // The editors are settings, and settings are Setup's.
+    CHECK(menuOf(window, "highlightingAction") == setup);
+    CHECK(menuOf(window, "quickButtonsAction") == setup);
+    CHECK(menuOf(window, "preferencesAction") == setup);
+
+    // Still switches, wherever they hang: each writes its own setting.
+    auto *toolbar = window.findChild<QAction *>(QStringLiteral("showToolbarAction"));
+    CHECK(toolbar != nullptr);
+    if (toolbar) {
+        CHECK(toolbar->isCheckable());
+        const bool before = toolbar->isChecked();
+        toolbar->trigger();
+        CHECK(window.session()->setting(QStringLiteral("window.toolbar"))
+              == (before ? QStringLiteral("off") : QStringLiteral("on")));
+        toolbar->trigger();
+        CHECK(toolbar->isChecked() == before);
+    }
+}
+
+/// The release page moved out of Help and into the dialog that names the
+/// version it is a page about.
+void test_the_about_dialog_carries_the_release_page()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("about.ini"));
+    QFile file(path);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[Sterna]\nAutoSaveSettings=off\n");
+    file.close();
+
+    MainWindow window(path);
+    auto *help = window.findChild<QMenu *>(QStringLiteral("helpMenu"));
+    auto *about = window.findChild<QAction *>(QStringLiteral("aboutAction"));
+    CHECK(help != nullptr);
+    CHECK(about != nullptr);
+    if (!help || !about) {
+        return;
+    }
+    // Help is one item now: everything it used to link is inside that item.
+    CHECK(help->actions().size() == 1);
+    CHECK(help->actions().first() == about);
+
+    bool sawReleases = false;
+    bool sawUpdate = false;
+    QTimer::singleShot(0, [&] {
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        CHECK(box != nullptr);
+        if (!box) {
+            return;
+        }
+        sawReleases = box->findChild<QPushButton *>(
+                          QStringLiteral("aboutReleasesButton"))
+                      != nullptr;
+        sawUpdate =
+            box->findChild<QPushButton *>(QStringLiteral("aboutUpdateButton"))
+            != nullptr;
+        box->reject();
+    });
+    about->trigger();
+    CHECK(sawReleases);
+    CHECK(sawUpdate);
 }
 
 void test_the_settings_dialog_uses_a_language_catalog()
@@ -2180,8 +2273,8 @@ void test_settings_dialog_persistence_is_opt_in_and_selective()
                               bool expectWarning = false,
                               int *warningCount = nullptr,
                               bool expectPromptWarning = false) {
-        auto *action = window.findChild<QAction *>(
-            QStringLiteral("settingsPageAction0"));
+        auto *action =
+            window.findChild<QAction *>(QStringLiteral("preferencesAction"));
         CHECK(action != nullptr);
         if (!action) {
             return;
@@ -3697,7 +3790,9 @@ int main(int argc, char **argv)
     test_attribute_colours_can_keep_the_normal_background();
     test_use_text_colour_repairs_only_the_three_same_colour_pairs();
     test_the_settings_dialog_is_built_from_the_schema();
-    test_setup_menu_links_every_schema_page();
+    test_the_setup_menu_opens_one_settings_dialog();
+    test_the_view_menu_owns_the_three_switches();
+    test_the_about_dialog_carries_the_release_page();
     test_the_settings_dialog_uses_a_language_catalog();
     test_the_connection_dialogs_use_the_language_catalog();
     test_the_ssh_prompts_use_the_language_catalog();

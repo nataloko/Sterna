@@ -204,22 +204,17 @@ void test_window_plugins()
             }
         }
 
-        // Dynamic plugin page names stay out of the main menu; only the 26
-        // stable schema pages are linked there.
-        int pageActions = 0;
+        // A plugin's page is a tab inside the dialog and nothing in the menu
+        // bar — which is now true of the schema's own pages too, so the check
+        // is that no page of either kind put its name in a menu.
         for (QAction *action : window.findChildren<QAction *>()) {
-            pageActions += action->objectName().startsWith(
-                               QStringLiteral("settingsPageAction"))
-                               ? 1
-                               : 0;
             CHECK(action->text() != QStringLiteral("Window plugin"));
         }
-        CHECK(pageActions == 26);
 
         // Accepting the window's real settings dialog automatically saves only
         // the changed plugin row. Untouched plugin defaults remain absent.
-        QAction *settingsAction = window.findChild<QAction *>(
-            QStringLiteral("settingsPageAction0"));
+        QAction *settingsAction =
+            window.findChild<QAction *>(QStringLiteral("preferencesAction"));
         CHECK(settingsAction != nullptr);
         bool acceptedSettings = false;
         if (settingsAction) {

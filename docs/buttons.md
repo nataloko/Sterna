@@ -103,7 +103,7 @@ The editor says so as a sequence is typed. It warns when the key is already:
 It is a warning and never a refusal. If you know the host does not use `F5`,
 take `F5`.
 
-Hiding the bar (**Setup > Show quick buttons**) hands the keys back: the
+Hiding the bar (**View > Show quick buttons**) hands the keys back: the
 shortcuts belong to the bar's own actions, so putting it away releases them.
 
 ## In the settings file

@@ -9,7 +9,7 @@ Rules are yours rather than the host's: they colour what is on the screen,
 including text that arrived before the rule existed, and including the
 scrollback.
 
-Setup > Highlighting. Setup > Highlight matches turns the lot off without
+Setup > Highlighting. View > Highlight matches turns the lot off without
 deleting any of them.
 
 ## What a rule can do
