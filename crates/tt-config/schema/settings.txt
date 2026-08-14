@@ -2044,11 +2044,14 @@ window.corner_dontround | bool | Tera Term | WindowCornerDontround | off | -
 window.toolbar | bool | Sterna | Toolbar | on | -
 
 # **`[Sterna]`**, because simultaneous panes are a Sterna window feature rather
-# than terminal state. The value says how many connections this window shows at
-# once: one terminal, two equal side-by-side panels, or four equal panels in a
-# 2x2 grid. A missing or unrecognised spelling returns to the single-panel
-# layout, so an edited file cannot leave the window without a usable view.
-window.panel_layout | enum(single/*=Single,two=Two,four=Four) | Sterna | PanelLayout | single | -
+# than terminal state. Two states, and they are exclusive: `single` shows one
+# connection with a tab bar over the rest, `tiled` hides the tab bar and gives
+# **every** connection a tile in a grid that follows their number. `two` and
+# `four` are the 0.2.x spellings, when the layout was a panel *count* and tabs
+# ran alongside it; they are read as `tiled` and rewritten as such. A missing or
+# unrecognised spelling returns to the single layout, so an edited file cannot
+# leave the window without a usable view.
+window.panel_layout | enum(single/*=Single,tiled/two/four=Tiled) | Sterna | PanelLayout | single | -
 
 # **`[Sterna]`** again, and these two are only the *bar*: the buttons on it are
 # a list, which no schema row can be, and they live in a `[Sterna Buttons]`
