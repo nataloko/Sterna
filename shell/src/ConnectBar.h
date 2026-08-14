@@ -8,6 +8,8 @@
 #include <QToolBar>
 #include <QVector>
 
+#include <optional>
+
 #include "Recent.h"
 #include "sterna.h"
 
@@ -123,15 +125,17 @@ private:
     QAction *m_darkMode = nullptr;
     QVector<RecentConnection> m_recents;
     QVector<Entry> m_rows;
-    /// Which remembered connection the field is currently showing, or -1.
+    /// Which remembered connection the field is currently showing.
     ///
     /// A record is not its own label: picking `ssh alice@buildbox:2222` and
     /// then pressing Connect must open *that record*, with the identity and
     /// the legacy flag it carries, and not re-read the words back out of the
     /// field — which would parse as a command line, because it has spaces in
-    /// it. Editing the text clears this, since after that the words are the
-    /// only thing anybody has said.
-    int m_chosen = -1;
+    /// it. Hold the record rather than its index: successfully opening it
+    /// moves it to the front of the recent list, and an index would then name
+    /// a different connection. Editing the text clears this, since after that
+    /// the words are the only thing anybody has said.
+    std::optional<RecentConnection> m_chosen;
     QString m_connectText;
     QString m_disconnectText;
     /// True while [`rebuildList`] is repopulating: a combo assigns a current

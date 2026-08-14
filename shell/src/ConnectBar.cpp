@@ -175,7 +175,7 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
     // stays greyed over a destination somebody has just finished typing, on a
     // machine with nothing remembered and nothing plugged in.
     connect(m_destination->lineEdit(), &QLineEdit::textEdited, this, [this] {
-        m_chosen = -1;
+        m_chosen.reset();
     });
     connect(m_destination->lineEdit(), &QLineEdit::textChanged, this, [this] {
         if (!m_connect->data().toBool()) {
@@ -261,6 +261,7 @@ QString ConnectBar::destination() const
 
 void ConnectBar::setDestination(const QString &text)
 {
+    m_chosen.reset();
     QSignalBlocker block(m_destination);
     m_destination->setCurrentText(text);
 }
@@ -273,6 +274,7 @@ void ConnectBar::showConnection(const RecentConnection &recent)
     // work in the way of the thing somebody actually asked for.
     if (recent.kind != RecentConnection::Kind::Serial) {
         setDestination(recent.label());
+        m_chosen = recent;
         return;
     }
     if (TtPortList *list = tt_serial_enumerate()) {
@@ -285,6 +287,7 @@ void ConnectBar::showConnection(const RecentConnection &recent)
         tt_port_list_free(list);
     }
     setDestination(recent.label(deviceFor));
+    m_chosen = recent;
 }
 
 void ConnectBar::setRecents(const QVector<RecentConnection> &recents)
@@ -413,8 +416,8 @@ void ConnectBar::rebuildList()
 
 void ConnectBar::commit()
 {
-    if (m_chosen >= 0 && m_chosen < m_recents.size()) {
-        emit recentChosen(m_recents.at(m_chosen));
+    if (m_chosen) {
+        emit recentChosen(*m_chosen);
         return;
     }
     if (!destination().isEmpty()) {
@@ -441,7 +444,7 @@ void ConnectBar::chose(int index)
     // choose a recent shell by opening the dropdown, choose `myrouter` on
     // purpose, press Connect, and a local shell opens. So every other row
     // clears it, and only [`textEdited`] is left to clear the rest.
-    m_chosen = -1;
+    m_chosen.reset();
 
     // **Choosing a row fills the field; Connect is what connects.** A
     // connection is not something to start by accident, and it means the
@@ -451,7 +454,7 @@ void ConnectBar::chose(int index)
         const int at = payload.toInt();
         if (at >= 0 && at < m_recents.size()) {
             setDestination(m_destination->itemText(index));
-            m_chosen = at;
+            m_chosen = m_recents.at(at);
         }
         return;
     }

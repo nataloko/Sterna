@@ -348,6 +348,21 @@ void test_the_dropdown_offers_every_group()
     CHECK(chosen == 2323);
     CHECK(typed.isEmpty());
 
+    // The record is the choice, not its position in a list that can change.
+    // A successful connection moves this telnet entry to the front, and the
+    // next launch also fills the field from a record without choosing a row.
+    // Either path used to leave an index naming something else (or no record
+    // at all) behind the same friendly label.
+    bar.showConnection(recents.at(1));
+    QVector<RecentConnection> reordered = {recents.at(1), recents.at(0)};
+    bar.setRecents(reordered);
+    chosen = -1;
+    if (connectAction) {
+        connectAction->trigger();
+    }
+    CHECK(chosen == 2323);
+    CHECK(typed.isEmpty());
+
     // Typing over it is somebody saying something else, so the record goes.
     chosen = -1;
     combo->lineEdit()->setText(QStringLiteral("myrouter"));
