@@ -50,6 +50,7 @@
 #include <QTemporaryFile>
 #include <QThread>
 #include <QTimer>
+#include <QToolButton>
 
 #include "MainWindow.h"
 #include "ConnectBar.h"
@@ -1957,8 +1958,10 @@ void test_the_connect_bar_is_a_view_of_the_session()
         window.findChild<QCheckBox *>(QStringLiteral("connectBarLocalEcho"));
     auto *lineBox =
         window.findChild<QCheckBox *>(QStringLiteral("connectBarLineEdit"));
-    auto *darkBox =
-        window.findChild<QCheckBox *>(QStringLiteral("connectBarDarkMode"));
+    auto *darkAction =
+        window.findChild<QAction *>(QStringLiteral("connectBarDarkMode"));
+    auto *darkButton = window.findChild<QToolButton *>(
+        QStringLiteral("connectBarDarkModeButton"));
     auto *showAction =
         window.findChild<QAction *>(QStringLiteral("showToolbarAction"));
     auto *status =
@@ -1966,11 +1969,12 @@ void test_the_connect_bar_is_a_view_of_the_session()
     CHECK(connectAction != nullptr);
     CHECK(echoBox != nullptr);
     CHECK(lineBox != nullptr);
-    CHECK(darkBox != nullptr);
+    CHECK(darkAction != nullptr);
+    CHECK(darkButton != nullptr);
     CHECK(showAction != nullptr);
     CHECK(status != nullptr);
-    if (!bar || !connectAction || !echoBox || !lineBox || !darkBox || !showAction
-        || !status) {
+    if (!bar || !connectAction || !echoBox || !lineBox || !darkAction
+        || !darkButton || !showAction || !status) {
         return;
     }
 
@@ -1979,14 +1983,20 @@ void test_the_connect_bar_is_a_view_of_the_session()
                             "the connected device does not echo what you type; "
                             "leave it off if characters appear twice."));
     CHECK(lineBox->toolTip().contains(QStringLiteral("until Enter sends the line")));
-    CHECK(darkBox->toolTip().contains(QStringLiteral("terminal views only")));
+    CHECK(darkAction->toolTip().contains(QStringLiteral("terminal views")));
+    CHECK(!darkAction->icon().isNull());
+    CHECK(darkButton->toolButtonStyle() == Qt::ToolButtonIconOnly);
+    CHECK(darkButton->iconSize() == QSize(16, 16));
+    window.resize(window.sizeHint());
+    qApp->processEvents();
+    CHECK(darkButton->geometry().right() > bar->width() - 48);
 
     CHECK(status->text() == QStringLiteral("not connected"));
     CHECK(status->styleSheet().contains(
         QStringLiteral("background-color: #b71c1c")));
     CHECK(!echoBox->isEnabled());
     CHECK(!lineBox->isEnabled());
-    CHECK(darkBox->isEnabled());
+    CHECK(darkAction->isEnabled());
 
     // Dark mode is an appearance preference rather than connection state. It
     // applies to the terminal alone, persists immediately, and remains usable
@@ -1994,16 +2004,18 @@ void test_the_connect_bar_is_a_view_of_the_session()
     const QPalette windowPalette = window.palette();
     auto *view = window.findChild<TerminalView *>();
     CHECK(view != nullptr);
-    darkBox->click();
+    darkAction->trigger();
     CHECK(window.session()->setting(QStringLiteral("terminal.dark_mode"))
           == QStringLiteral("on"));
     CHECK(view && view->theme().defaultBackground() == QColor(0x1e, 0x1e, 0x1e));
+    CHECK(darkAction->isChecked());
+    CHECK(darkAction->toolTip().contains(QStringLiteral("light palette")));
     CHECK(window.palette() == windowPalette);
     QFile saved(settingsPath);
     CHECK(saved.open(QIODevice::ReadOnly));
     CHECK(saved.readAll().contains("DarkMode=on"));
     saved.close();
-    darkBox->click();
+    darkAction->trigger();
     CHECK(view && view->theme().defaultBackground() == kWhite);
 
     // Shipped on, and the Setup item is the same switch as the setting.

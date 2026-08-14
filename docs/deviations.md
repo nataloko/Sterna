@@ -354,5 +354,6 @@ from the session, including host OSC changes.
 
 **Where it lives.** `[Sterna] DarkMode` (`terminal.dark_mode`, off) is applied
 by `Theme` after it reads the session's live colours. `ConnectBar` owns the
-toggle; `MainWindow` applies it to every tab and remembers the one window-wide
-preference. No `QApplication` or widget palette is changed.
+right-aligned moon/sun action; `MainWindow` applies it to every tab and
+remembers the one window-wide preference. No `QApplication` or widget palette
+is changed.

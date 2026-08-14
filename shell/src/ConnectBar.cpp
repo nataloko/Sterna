@@ -5,8 +5,17 @@
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QEvent>
+#include <QIcon>
 #include <QLabel>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPalette>
+#include <QPixmap>
 #include <QSignalBlocker>
+#include <QSizePolicy>
+#include <QToolButton>
+#include <QWidget>
 
 #include <functional>
 
@@ -38,6 +47,46 @@ public:
         QComboBox::showPopup();
     }
 };
+
+QIcon appearanceIcon(bool darkMode, const QColor &colour)
+{
+    QIcon icon;
+    for (int scale : {1, 2}) {
+        QPixmap pixmap(16 * scale, 16 * scale);
+        pixmap.fill(Qt::transparent);
+
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.scale(scale, scale);
+
+        if (!darkMode) {
+            // The action enters dark mode, so show a moon.
+            QPainterPath moon;
+            moon.setFillRule(Qt::OddEvenFill);
+            moon.addEllipse(QRectF(2.0, 1.5, 11.5, 13.0));
+            moon.addEllipse(QRectF(6.0, 0.5, 9.0, 11.0));
+            painter.fillPath(moon, colour);
+        } else {
+            // In dark mode the same action returns to the light theme.
+            QPen pen(colour, 1.4, Qt::SolidLine, Qt::RoundCap,
+                     Qt::RoundJoin);
+            painter.setPen(pen);
+            painter.setBrush(Qt::NoBrush);
+            painter.drawEllipse(QRectF(5.0, 5.0, 6.0, 6.0));
+            const QLineF rays[] = {
+                {8.0, 1.0, 8.0, 3.0},   {8.0, 13.0, 8.0, 15.0},
+                {1.0, 8.0, 3.0, 8.0},   {13.0, 8.0, 15.0, 8.0},
+                {3.0, 3.0, 4.4, 4.4},   {11.6, 11.6, 13.0, 13.0},
+                {3.0, 13.0, 4.4, 11.6}, {11.6, 4.4, 13.0, 3.0},
+            };
+            painter.drawLines(rays, 8);
+        }
+        painter.end();
+        pixmap.setDevicePixelRatio(scale);
+        icon.addPixmap(pixmap);
+    }
+    return icon;
+}
 
 } // namespace
 
@@ -101,16 +150,26 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
             &ConnectBar::lineEditRequested);
     addWidget(m_lineEdit);
 
-    addSeparator();
-    m_darkMode = new QCheckBox(tr("Dark mode"), this);
+    auto *spacer = new QWidget(this);
+    spacer->setObjectName(QStringLiteral("connectBarDarkModeSpacer"));
+    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    addWidget(spacer);
+
+    m_darkMode = addAction(tr("Dark mode"));
     m_darkMode->setObjectName(QStringLiteral("connectBarDarkMode"));
-    m_darkMode->setContentsMargins(4, 0, 4, 0);
-    m_darkMode->setToolTip(
-        tr("Uses a dark palette for terminal views only. Menus and dialogs "
-           "continue to use the desktop theme."));
-    connect(m_darkMode, &QCheckBox::toggled, this,
-            &ConnectBar::darkModeRequested);
-    addWidget(m_darkMode);
+    m_darkMode->setCheckable(true);
+    connect(m_darkMode, &QAction::toggled, this, [this](bool on) {
+        updateDarkModeAction(on);
+        emit darkModeRequested(on);
+    });
+    auto *darkButton = qobject_cast<QToolButton *>(widgetForAction(m_darkMode));
+    if (darkButton) {
+        darkButton->setObjectName(QStringLiteral("connectBarDarkModeButton"));
+        darkButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        darkButton->setIconSize(QSize(16, 16));
+        darkButton->setAutoRaise(true);
+    }
+    updateDarkModeAction(false);
 
     refreshPorts();
 }
@@ -215,4 +274,25 @@ void ConnectBar::refresh(const Session *session)
         QSignalBlocker block(m_darkMode);
         m_darkMode->setChecked(darkMode);
     }
+    updateDarkModeAction(darkMode);
+}
+
+void ConnectBar::changeEvent(QEvent *event)
+{
+    QToolBar::changeEvent(event);
+    if (event->type() == QEvent::PaletteChange && m_darkMode) {
+        updateDarkModeAction(m_darkMode->isChecked());
+    }
+}
+
+void ConnectBar::updateDarkModeAction(bool darkMode)
+{
+    m_darkMode->setIcon(
+        appearanceIcon(darkMode, palette().color(QPalette::ButtonText)));
+    m_darkMode->setToolTip(
+        darkMode
+            ? tr("Use the light palette for terminal views. Menus and dialogs "
+                 "continue to use the desktop theme.")
+            : tr("Use the dark palette for terminal views. Menus and dialogs "
+                 "continue to use the desktop theme."));
 }

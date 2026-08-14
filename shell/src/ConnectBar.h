@@ -13,6 +13,7 @@ class I18n;
 class QAction;
 class QCheckBox;
 class QComboBox;
+class QEvent;
 class Session;
 
 /// The input and connection controls that need to stay within reach: which
@@ -54,7 +55,12 @@ signals:
     void lineEditRequested(bool on);
     void darkModeRequested(bool on);
 
+protected:
+    void changeEvent(QEvent *event) override;
+
 private:
+    void updateDarkModeAction(bool darkMode);
+
     QComboBox *m_port = nullptr;
     QAction *m_connect = nullptr;
     /// A check box rather than a checkable button: whether local echo is on is
@@ -63,7 +69,7 @@ private:
     /// in — upstream's Setup > Terminal has the same box.
     QCheckBox *m_echo = nullptr;
     QCheckBox *m_lineEdit = nullptr;
-    QCheckBox *m_darkMode = nullptr;
+    QAction *m_darkMode = nullptr;
     QString m_connectText;
     QString m_disconnectText;
 };
