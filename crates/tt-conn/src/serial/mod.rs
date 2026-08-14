@@ -711,6 +711,10 @@ impl crate::transport::Transport for SerialConn {
     fn describe(&self) -> String {
         format!("{} {}", self.path, self.params.baud)
     }
+
+    fn serial_path(&self) -> Option<&str> {
+        Some(&self.path)
+    }
 }
 
 impl Drop for SerialConn {

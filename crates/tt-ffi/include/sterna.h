@@ -934,6 +934,11 @@ typedef struct TtMacro TtMacro;
 typedef struct TtPlugins TtPlugins;
 
 /**
+ * An owned list of holders. Free it with [`tt_port_holders_free`].
+ */
+typedef struct TtPortHolders TtPortHolders;
+
+/**
  * An owned list of ports. Free it with [`tt_port_list_free`].
  */
 typedef struct TtPortList TtPortList;
@@ -1651,6 +1656,30 @@ typedef struct {
     const char *product;
     const char *serial;
 } TtPortInfo;
+
+/**
+ * What has a serial port open, in [`tt_serial_holders`].
+ */
+typedef struct {
+    /**
+     * The process holding it, or **0 when nothing does**. This, and not
+     * `program`, is what says the port is held: `/proc/<pid>` can go away
+     * between finding the descriptor and naming its owner, and a window this
+     * program published a claim for is named without a pid at all.
+     */
+    uint32_t pid;
+    /**
+     * The program's own name — `minicom`, `sterna` — or null when it could
+     * not be read. Borrowed from the list.
+     */
+    const char *program;
+    /**
+     * Whether a window of *this program* said so, rather than the operating
+     * system. It decides the wording, which belongs to the frontend and its
+     * translations; both kinds are equally held.
+     */
+    bool window;
+} TtPortHolder;
 
 /**
  * What a rule paints over — [`TtHighlight::scope`].
@@ -4084,6 +4113,17 @@ TtLinkKind tt_session_link_kind(const TtSession *session);
 uint32_t tt_session_serial_baud(const TtSession *session);
 
 /**
+ * The serial device this session is open on, exactly as it was named. Null
+ * on every other link and when nothing is connected.
+ *
+ * Borrowed, and valid until the next call to this function on this session.
+ * Not [`tt_session_describe`] minus the speed: this is the string a window
+ * publishes to say which port it has taken, and a caller splitting a status
+ * line on its last space would publish something no picker can match.
+ */
+const char *tt_session_serial_path(TtSession *session);
+
+/**
  * A short name for the status line — `/dev/ttyUSB0`, `user@host`. Null when
  * nothing is connected.
  *
@@ -4119,6 +4159,37 @@ size_t tt_port_list_len(const TtPortList *list);
 const TtPortInfo *tt_port_list_at(const TtPortList *list, size_t index);
 
 void tt_port_list_free(TtPortList *list);
+
+/**
+ * Who has each of `paths` open, in the order given. **Never null**, and
+ * always `count` entries: a path nothing holds answers with `pid == 0`.
+ *
+ * One walk however many paths are asked about, so ask about all of them at
+ * once — and not on the connect path. A picker calls this as its popup opens.
+ *
+ * **This answers "who has it open", not "will opening fail".** A holder that
+ * took neither `TIOCEXCL` nor an `flock` does not stop a second open, and
+ * nothing this can read distinguishes the two; a root-owned holder is
+ * invisible to the descriptor sweep entirely. The answer is worth showing and
+ * is not worth refusing a connection over.
+ *
+ * Two sources, unioned: what the operating system knows (Linux only — see
+ * `tt_conn::serial::holders`), and the claims this program's other windows
+ * publish, which is all Windows has.
+ */
+TtPortHolders *tt_serial_holders(const char *const *paths,
+                                 size_t count);
+
+size_t tt_port_holders_len(const TtPortHolders *list);
+
+/**
+ * Borrow one answer. Null when `index` is out of range; an entry with
+ * `pid == 0` means nothing holds that path. Valid until the list is freed.
+ */
+const TtPortHolder *tt_port_holders_at(const TtPortHolders *list,
+                                       size_t index);
+
+void tt_port_holders_free(TtPortHolders *list);
 
 /**
  * Read the highlight rules out of a settings file.
@@ -4747,6 +4818,20 @@ TtCtl *tt_ctl_start(const char *name, const TtCtlHost *host);
  * script running *inside* the terminal can drive the window it is running in.
  */
 const char *tt_ctl_path(const TtCtl *ctl);
+
+/**
+ * Publish the serial port this window has open, so the other windows can say
+ * so in their pickers. `device` null withdraws the claim.
+ *
+ * Idempotent, and cheap enough to call on every connection change rather than
+ * working out which changes matter. The claim is read back through the
+ * endpoint list, so a window that dies holding a port stops claiming it the
+ * moment it stops listening — see `tt_ctl::claim`.
+ *
+ * This is the whole of what Windows can know about a busy port, and on Linux
+ * it is a second opinion beside the kernel's.
+ */
+TtStatus tt_ctl_claim_port(TtCtl *ctl, const char *device);
 
 /**
  * A descriptor that becomes readable when a client wants something.

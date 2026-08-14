@@ -119,6 +119,16 @@ pub trait Transport: Send {
         Ok(())
     }
 
+    /// The device this is open on, exactly as it was named — a device node or
+    /// a `by-path` name. `None` on every link that is not a serial port.
+    ///
+    /// [`describe`](Transport::describe) is not a substitute: it glues the
+    /// path to the speed for a status line, and a caller that has to publish
+    /// *which port is taken* would be splitting a string on the last space.
+    fn serial_path(&self) -> Option<&str> {
+        None
+    }
+
     /// A chance to do something the clock asks for rather than the wire.
     ///
     /// Called from a timer, not from the read loop, and that is the point: a
