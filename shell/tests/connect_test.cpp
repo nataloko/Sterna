@@ -347,6 +347,57 @@ void test_the_dropdown_offers_every_group()
     CHECK(typed == QStringLiteral("shell"));
 }
 
+/// Opening the dropdown must not move the field, at any window width.
+///
+/// The toolbar decides which of its items fit from their size hints, and it
+/// wraps or hides one when they do not — so anything that invalidates the
+/// combo's geometry while the user is reaching for its arrow can change the
+/// width of the thing being reached for. Two rules keep it still: the model is
+/// rebuilt only when the list has actually changed, and the combo's hint is a
+/// constant rather than a function of its contents.
+void test_the_dropdown_does_not_move_the_field()
+{
+    MainWindow window;
+    window.show();
+    qApp->processEvents();
+    auto *bar = window.findChild<ConnectBar *>(QStringLiteral("connectBar"));
+    CHECK(bar != nullptr);
+    if (!bar) {
+        return;
+    }
+    auto *combo =
+        bar->findChild<QComboBox *>(QStringLiteral("connectBarDestination"));
+    CHECK(combo != nullptr);
+    if (!combo) {
+        return;
+    }
+
+    QVector<RecentConnection> recents;
+    recents.append(RecentConnection::ssh(
+        QStringLiteral("a-fairly-long-hostname.example.net"),
+        QStringLiteral("someone"), 2222, QString(), false));
+    bar->setRecents(recents);
+    qApp->processEvents();
+
+    const QSize hint = combo->sizeHint();
+    for (int width : {900, 800, 720, 700, 650, 600, 560, 520, 480}) {
+        window.resize(width, window.height());
+        qApp->processEvents();
+        const int before = combo->width();
+        const int barHeight = bar->height();
+        combo->showPopup();
+        qApp->processEvents();
+        CHECK(combo->width() == before);
+        CHECK(bar->height() == barHeight);
+        combo->hidePopup();
+        qApp->processEvents();
+        CHECK(combo->width() == before);
+    }
+    // ...and the hint did not move either, though a `by-path` name and a long
+    // host name both passed through the list on the way.
+    CHECK(combo->sizeHint() == hint);
+}
+
 #ifndef Q_OS_WIN
 /// End to end, on the one destination that needs nothing: typing it opens a
 /// session, and the connection joins the list in the settings file.
@@ -450,6 +501,7 @@ int main(int argc, char **argv)
     test_a_record_lays_five_fields_over_the_settings();
     test_what_a_typed_destination_means();
     test_the_dropdown_offers_every_group();
+    test_the_dropdown_does_not_move_the_field();
     for (int i = 1; i + 1 < argc; i++) {
         if (QLatin1String(argv[i]) == QLatin1String("--write")) {
             write_images(QString::fromLocal8Bit(argv[i + 1]));

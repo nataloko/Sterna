@@ -57,11 +57,10 @@ public:
 };
 
 /// A bold, unselectable row: the group captions inside the dropdown.
-void addHeader(QComboBox *combo, const QString &text)
+void markHeader(QComboBox *combo, int at)
 {
-    combo->addItem(text);
     auto *model = qobject_cast<QStandardItemModel *>(combo->model());
-    QStandardItem *item = model ? model->item(combo->count() - 1) : nullptr;
+    QStandardItem *item = model ? model->item(at) : nullptr;
     if (!item) {
         return;
     }
@@ -154,6 +153,12 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
     // sizes to its contents would set the window's minimum width from whatever
     // happens to be plugged in.
     combo->setMinimumWidth(300);
+    // An explicit length, so the hint is a constant rather than a function of
+    // the widest row *or* of nothing at all. Left at zero this policy answers
+    // 29 pixels, and a toolbar deciding which items fit works from hints: a
+    // widget whose hint bears no relation to its enforced minimum is one the
+    // layout can change its mind about.
+    combo->setMinimumContentsLength(24);
     combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     combo->lineEdit()->setPlaceholderText(
@@ -271,21 +276,12 @@ void ConnectBar::setRecents(const QVector<RecentConnection> &recents)
     rebuildList();
 }
 
-void ConnectBar::rebuildList()
+QVector<ConnectBar::Entry> ConnectBar::composeList() const
 {
-    // The field is the user's, not the list's: rebuilding must not retype it,
-    // and a combo assigns a current index as it fills.
-    const QString typed = m_destination->currentText();
-    m_filling = true;
-    QSignalBlocker block(m_destination);
-    m_destination->clear();
-
-    const auto row = [this](Row kind, const QString &text,
-                            const QString &payload = QString()) {
-        m_destination->addItem(text);
-        const int at = m_destination->count() - 1;
-        m_destination->setItemData(at, static_cast<int>(kind), RoleKind);
-        m_destination->setItemData(at, payload, RolePayload);
+    QVector<Entry> rows;
+    const auto row = [&rows](Row kind, const QString &text,
+                             const QString &payload = QString()) {
+        rows.append({kind, text, payload});
     };
 
     QHash<QString, QString> deviceFor;
@@ -305,16 +301,16 @@ void ConnectBar::rebuildList()
     }
 
     if (!m_recents.isEmpty()) {
-        addHeader(m_destination, tr("Recent"));
+        row(Row::Header, tr("Recent"));
         for (int i = 0; i < m_recents.size(); i++) {
             row(Row::Recent, m_recents.at(i).label(deviceFor),
                 QString::number(i));
         }
-        m_destination->insertSeparator(m_destination->count());
+        row(Row::Separator, QString());
     }
 
     if (!ports.isEmpty()) {
-        addHeader(m_destination, tr("Ports plugged in now"));
+        row(Row::Header, tr("Ports plugged in now"));
         // Enumeration is not a shortlist. A desktop answers with its
         // thirty-two motherboard `ttyS` UARTs, none of which has anything on
         // the far end, and burying the one adapter somebody owns in the middle
@@ -330,11 +326,10 @@ void ConnectBar::rebuildList()
             row(Row::Port, ports.at(i).first, ports.at(i).second);
         }
         if (ports.size() > kShown) {
-            addHeader(m_destination,
-                      tr("...and %1 more, in New connection")
-                          .arg(ports.size() - kShown));
+            row(Row::Header, tr("...and %1 more, in New connection")
+                                 .arg(ports.size() - kShown));
         }
-        m_destination->insertSeparator(m_destination->count());
+        row(Row::Separator, QString());
     }
 
     QStringList aliases;
@@ -345,18 +340,53 @@ void ConnectBar::rebuildList()
         tt_string_list_free(list);
     }
     if (!aliases.isEmpty()) {
-        addHeader(m_destination, tr("SSH hosts (~/.ssh/config)"));
+        row(Row::Header, tr("SSH hosts (~/.ssh/config)"));
         for (const QString &alias : aliases) {
             row(Row::Alias, alias, alias);
         }
-        m_destination->insertSeparator(m_destination->count());
+        row(Row::Separator, QString());
     }
 
     row(Row::Shell, tr("Local shell"));
-    m_destination->insertSeparator(m_destination->count());
+    row(Row::Separator, QString());
     row(Row::New, tr("New connection..."));
     if (!m_recents.isEmpty()) {
         row(Row::Forget, tr("Forget these connections"));
+    }
+    return rows;
+}
+
+void ConnectBar::rebuildList()
+{
+    const QVector<Entry> rows = composeList();
+    // Nothing has been plugged in, unplugged or connected to since the last
+    // time: leave the model alone. Touching it costs a geometry invalidation
+    // on a widget the toolbar is about to open a popup over, and the field
+    // moves under the pointer.
+    if (rows == m_rows) {
+        return;
+    }
+    m_rows = rows;
+
+    // The field is the user's, not the list's: rebuilding must not retype it,
+    // and a combo assigns a current index as it fills.
+    const QString typed = m_destination->currentText();
+    m_filling = true;
+    QSignalBlocker block(m_destination);
+    m_destination->clear();
+
+    for (const Entry &entry : rows) {
+        if (entry.kind == Row::Separator) {
+            m_destination->insertSeparator(m_destination->count());
+            continue;
+        }
+        m_destination->addItem(entry.text);
+        const int at = m_destination->count() - 1;
+        m_destination->setItemData(at, static_cast<int>(entry.kind), RoleKind);
+        m_destination->setItemData(at, entry.payload, RolePayload);
+        if (entry.kind == Row::Header) {
+            markHeader(m_destination, at);
+        }
     }
 
     m_destination->setCurrentIndex(-1);
@@ -403,6 +433,7 @@ void ConnectBar::chose(int index)
         emit forgetRecentsRequested();
         return;
     case Row::Header:
+    case Row::Separator:
         break;
     }
 }

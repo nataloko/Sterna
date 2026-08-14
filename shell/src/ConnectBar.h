@@ -83,8 +83,28 @@ private:
     /// What one dropdown row is. `Qt::UserRole` on the item; the payload is
     /// the row after it.
     enum Role { RoleKind = Qt::UserRole, RolePayload };
-    enum class Row { Header, Recent, Port, Alias, Shell, New, Forget };
+    enum class Row { Header, Separator, Recent, Port, Alias, Shell, New, Forget };
 
+    /// One row, before it is a widget. The list is composed as values and
+    /// compared against what the combo already holds, because **rebuilding the
+    /// model is what makes the field change size**: `clear()` invalidates the
+    /// combo's geometry, the toolbar redistributes the space its expanding
+    /// item was given, and the box visibly moves under the popup that is
+    /// opening over it. The bar this replaced had the same guard for its
+    /// ports, in one line, and the rewrite lost it.
+    struct Entry {
+        Row kind = Row::Header;
+        QString text;
+        QString payload;
+
+        bool operator==(const Entry &other) const
+        {
+            return kind == other.kind && text == other.text
+                && payload == other.payload;
+        }
+    };
+
+    QVector<Entry> composeList() const;
     void rebuildList();
     void chose(int index);
     void updateDarkModeAction(bool darkMode);
@@ -99,6 +119,7 @@ private:
     QCheckBox *m_lineEdit = nullptr;
     QAction *m_darkMode = nullptr;
     QVector<RecentConnection> m_recents;
+    QVector<Entry> m_rows;
     QString m_connectText;
     QString m_disconnectText;
     /// True while [`rebuildList`] is repopulating: a combo assigns a current
