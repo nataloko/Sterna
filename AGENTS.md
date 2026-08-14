@@ -813,6 +813,21 @@ Scrollback and the wheel:
   *off*. `Vt::set_config` missed the guard and every settings change blanked
   the screen; the symptom was a *frontend* toggle (line edit) clearing the
   terminal, which points nowhere near the parser.
+- **...and that guard only holds because a resize moves `TerminalSize` with
+  it** — `BuffChangeTerminalSize` assigns `ts.TerminalWidth`/`Height` on its
+  way out (`buffer.c:5022`), so the setting is a live variable upstream and
+  not the file's snapshot. `Session::resize` and the `CSI 8 t` arm of
+  `collect_window_requests` both write it back; without that, the settings go
+  on saying 80x24 after a dragged window and *every* later settings change
+  disagrees with the live size. The symptom is the same frontend toggle
+  (line edit again) restoring the window to its default size.
+- **The frontend cannot ask the grid whether a settings change moved the
+  size** — the core applies the setting before `settingsChanged` reaches Qt,
+  so the grid already matches and the answer is always no.
+  `MainWindow::onSettingsChanged` compares the configured size against how
+  many cells the *view* has room for; and when it does resize the window it
+  must suppress the refit that follows, or the view's old geometry writes the
+  old size straight back through `Session::resize`.
 - **`AutoScrollOnlyInBottomLine` ships off** — output drags a scrolled-back
   view down by the *minimum* scroll (`buffer.c:3794`, `:3805`, `:3866`).
   And the cursor-following belongs to the feed, not to a settings change —
