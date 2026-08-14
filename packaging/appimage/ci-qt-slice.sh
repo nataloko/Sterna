@@ -30,11 +30,14 @@ fi
 build=(./build-qt.sh)
 [ "$mode" = resume ] && build+=(--resume)
 set +e
-timeout --signal=TERM 35m "${build[@]}"
+# Make and the compiler clean up interrupted targets on SIGINT. The KILL bound
+# prevents a descendant which failed to stop from carrying the step across the
+# hosted runner's communication window.
+timeout --kill-after=30s --signal=INT 30m "${build[@]}"
 status=$?
 set -e
 case "$status" in
 	0) echo "qt: build completed within the $mode slice" ;;
-	124) echo "qt: $mode slice ended after 35 minutes; the next slice will resume" ;;
+	124) echo "qt: $mode slice ended after 30 minutes; the next slice will resume" ;;
 	*) exit "$status" ;;
 esac
