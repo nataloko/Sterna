@@ -1207,6 +1207,91 @@ void test_clear_commands_keep_or_drop_selection()
     CHECK(!noHistory.view.hasSelection());
 }
 
+/// The two selection commands, whose difference only shows with history behind
+/// the page — and whose ends are whole lines, which is what a drag cannot make.
+void test_select_screen_takes_the_view_and_select_all_the_buffer()
+{
+    Harness h;
+    feedTextLines(h, 40);
+    const int history = h.session.scrollbackLen();
+    CHECK(history > 0);
+
+    // Live, Select screen is the page: the last twenty-three lines and the
+    // blank one the cursor sits on.
+    h.view.selectScreen();
+    CHECK(h.view.hasSelection());
+    QStringList lines = h.copied().split(QLatin1Char('\n'));
+    CHECK(lines.size() == 24);
+    CHECK(lines.first() == QStringLiteral("line17"));
+    CHECK(lines.last().isEmpty());
+    h.render();
+    for (int y = 0; y < 24; y++) {
+        // The cursor's row excepted: unfocused it is an outline, and the
+        // corner `bgAt` reads is on it.
+        if (y != h.session.cursorViewRow()) {
+            CHECK(h.bgAt(0, y) == kBlack);
+        }
+    }
+
+    // Scrolled back it follows the window rather than the page — upstream
+    // starts from the window origin for exactly this (`buffer.c:718`).
+    h.view.setViewOffset(10);
+    h.view.selectScreen();
+    lines = h.copied().split(QLatin1Char('\n'));
+    CHECK(lines.size() == 24);
+    CHECK(lines.first() == QStringLiteral("line7"));
+    CHECK(lines.last() == QStringLiteral("line30"));
+    // The end of the selection is the last column of the last line and not the
+    // start of the one after it, so a copy that ends on text ends on text. The
+    // other spelling would put a line break here and nowhere else, since the
+    // line after the live page is not one the buffer can answer for.
+    CHECK(!h.copied().endsWith(QLatin1Char('\n')));
+    h.render();
+    CHECK(h.session.cursorViewRow() < 0);
+    for (int y = 0; y < 24; y++) {
+        CHECK(h.bgAt(0, y) == kBlack);
+    }
+
+    // Select all reaches the oldest line the scrollback still holds and the
+    // live page, from wherever the view happens to be.
+    h.view.selectAll();
+    lines = h.copied().split(QLatin1Char('\n'));
+    CHECK(lines.size() == history + 24);
+    CHECK(lines.first() == QStringLiteral("line0"));
+    CHECK(lines.at(39) == QStringLiteral("line39"));
+    CHECK(lines.last().isEmpty());
+    CHECK(h.session.viewOffset() == 10);
+}
+
+/// A grid selection and the line editor's are one selection between them, and
+/// a command that selects has to take it the way a drag does.
+void test_selecting_everything_takes_the_selection_off_the_draft()
+{
+    Harness h;
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("terminal.line_edit"),
+                               QStringLiteral("on"), &error));
+    h.view.applySettings();
+    h.activate();
+    h.feed("prompt$ ");
+
+    auto *editor = h.view.findChild<QLineEdit *>(
+        QStringLiteral("terminalLineEditor"));
+    CHECK(editor != nullptr);
+    if (!editor) {
+        return;
+    }
+    editor->setText(QStringLiteral("draft text"));
+    editor->setSelection(0, 5);
+    CHECK(!editor->selectedText().isEmpty());
+
+    h.view.selectAll();
+    CHECK(h.view.hasSelection());
+    CHECK(editor->selectedText().isEmpty());
+    // ...so Copy has one answer, and it is the screen.
+    CHECK(h.copied().startsWith(QStringLiteral("prompt$")));
+}
+
 void test_the_edit_menu_and_key_map_share_clear_commands()
 {
     QTemporaryDir dir;
@@ -1276,6 +1361,67 @@ void test_the_edit_menu_and_key_map_share_clear_commands()
     key(*view, Qt::Key_F6);
     CHECK(window.session()->scrollbackLen() == 0);
     CHECK(rowText(*window.session(), 0).isEmpty());
+}
+
+void test_the_edit_menu_offers_both_ways_to_select()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    MainWindow window(dir.filePath(QStringLiteral("sterna.ini")));
+    auto *view = window.findChild<TerminalView *>();
+    auto *edit = window.findChild<QMenu *>(QStringLiteral("editMenu"));
+    auto *clearBuffer =
+        window.findChild<QAction *>(QStringLiteral("clearBufferAction"));
+    auto *quick = window.findChild<QAction *>(
+        QStringLiteral("quickButtonFromSelectionAction"));
+    auto *selectScreen =
+        window.findChild<QAction *>(QStringLiteral("selectScreenAction"));
+    auto *selectAll =
+        window.findChild<QAction *>(QStringLiteral("selectAllAction"));
+    CHECK(view != nullptr);
+    CHECK(edit != nullptr);
+    CHECK(clearBuffer != nullptr);
+    CHECK(quick != nullptr);
+    CHECK(selectScreen != nullptr);
+    CHECK(selectAll != nullptr);
+    if (!view || !edit || !clearBuffer || !quick || !selectScreen || !selectAll) {
+        return;
+    }
+
+    CHECK(selectScreen->text() == QStringLiteral("Select screen"));
+    CHECK(selectAll->text() == QStringLiteral("Select all"));
+    CHECK(selectScreen->statusTip().contains(QStringLiteral("wherever the view")));
+    CHECK(selectAll->statusTip().contains(QStringLiteral("whole buffer")));
+    // Neither takes a shortcut. Upstream gives them none, and a `QAction`
+    // shortcut is a key the host stops receiving — see `AGENTS.md`.
+    CHECK(selectScreen->shortcut().isEmpty());
+    CHECK(selectAll->shortcut().isEmpty());
+
+    // Upstream's order: after the two Clear commands, screen before all.
+    const int bufferAt = edit->actions().indexOf(clearBuffer);
+    const int screenAt = edit->actions().indexOf(selectScreen);
+    const int allAt = edit->actions().indexOf(selectAll);
+    CHECK(bufferAt >= 0);
+    CHECK(screenAt > bufferAt);
+    CHECK(allAt == screenAt + 1);
+    CHECK(edit->actions().indexOf(quick) > allAt);
+
+    window.session()->feed(QByteArrayLiteral("one\r\ntwo"));
+    CHECK(!view->hasSelection());
+    selectScreen->trigger();
+    CHECK(view->hasSelection());
+    CHECK(view->selectedText().startsWith(QStringLiteral("one\ntwo\n")));
+
+    // And the item that acts on a selection sees it, which is why the two live
+    // in this menu rather than beside the scrollbar.
+    emit edit->aboutToShow();
+    CHECK(quick->isEnabled());
+
+    // Nothing has scrolled off yet, so Select all is the same text — the
+    // assertion that matters is that it selects at all with no history.
+    selectAll->trigger();
+    CHECK(view->hasSelection());
+    CHECK(view->selectedText().startsWith(QStringLiteral("one\ntwo\n")));
 }
 
 void test_dragging_off_the_edge_scrolls_the_view()
@@ -3891,7 +4037,10 @@ int main(int argc, char **argv)
     test_a_selection_holds_on_to_its_text_not_its_place();
     test_a_selection_survives_scrolling_back();
     test_clear_commands_keep_or_drop_selection();
+    test_select_screen_takes_the_view_and_select_all_the_buffer();
+    test_selecting_everything_takes_the_selection_off_the_draft();
     test_the_edit_menu_and_key_map_share_clear_commands();
+    test_the_edit_menu_offers_both_ways_to_select();
     test_continued_line_copy_joins_a_wrapped_line();
     test_line_edit_copy_uses_the_active_selection();
     test_the_other_buttons_do_not_start_or_copy_a_selection();

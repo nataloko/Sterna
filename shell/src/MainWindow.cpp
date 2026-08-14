@@ -2145,6 +2145,24 @@ void MainWindow::buildMenus()
     clearBuffer->setStatusTip(
         tr("Clears the visible page and permanently removes all scrollback."));
     languageAction(clearBuffer, "MENU_EDIT_CLBUFFER", tr("Clear buffer"));
+    // Upstream's own pair, in upstream's order (`ID_EDIT_SELECTSCREEN`,
+    // `ID_EDIT_SELECTALL`). Neither takes a shortcut: it has none there, there
+    // is no `KEYBOARD.CNF` command to bind one to either, and a `QAction`
+    // shortcut silently outranks `TerminalView::keyPressEvent` — Ctrl+Shift+A
+    // would be a key the host stops receiving, for a command reached from a
+    // menu once in a while. See the shortcut trap in `AGENTS.md`.
+    edit->addSeparator();
+    QAction *selectScreen = edit->addAction(
+        tr("Select screen"), this, [this] { m_view->selectScreen(); });
+    selectScreen->setObjectName(QStringLiteral("selectScreenAction"));
+    selectScreen->setStatusTip(
+        tr("Selects the lines on screen, wherever the view is scrolled to."));
+    languageAction(selectScreen, "MENU_EDIT_SELECTSCREEN", tr("Select screen"));
+    QAction *selectAll = edit->addAction(
+        tr("Select all"), this, [this] { m_view->selectAll(); });
+    selectAll->setObjectName(QStringLiteral("selectAllAction"));
+    selectAll->setStatusTip(tr("Selects the whole buffer, scrollback and all."));
+    languageAction(selectAll, "MENU_EDIT_SELECTALL", tr("Select all"));
     // In Edit because it is the same gesture as Copy with a different
     // destination: select the command that worked, keep it. No upstream key.
     edit->addSeparator();
