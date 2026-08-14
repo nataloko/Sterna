@@ -45,6 +45,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScreen>
+#include <QSpinBox>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -2119,6 +2120,48 @@ void test_the_dialog_writes_only_what_changed()
     CHECK(dialog.appliedPluginChanges().isEmpty());
 }
 
+/// Six settings ship a negative sentinel, and a spin box that cannot hold one
+/// is two bugs: it shows the wrong number, and — because `original` is read
+/// back off the editor — it silently swallows a real 0 the user asks for,
+/// since the box already reads 0 and OK sees no change. `serial.rts`'s -1 is
+/// "derive from `ts.Flow`"; taking it as a value holds the line low.
+void test_sentinel_defaults_survive_the_settings_dialog()
+{
+    Harness h;
+    SettingsDialog dialog(&h.session);
+
+    const QStringList sentinels {QStringLiteral("serial.rts"),
+                                 QStringLiteral("serial.dtr"),
+                                 QStringLiteral("window.x"),
+                                 QStringLiteral("window.y"),
+                                 QStringLiteral("tek.x"),
+                                 QStringLiteral("tek.y")};
+    for (const QString &name : sentinels) {
+        auto *spin = dialog.findChild<QSpinBox *>(
+            QStringLiteral("settingEditor:%1").arg(name));
+        CHECK(spin != nullptr);
+        if (!spin) {
+            continue;
+        }
+        // The live value, not a value clamped into the editor's range.
+        CHECK(QString::number(spin->value()) == h.session.setting(name));
+        CHECK(spin->minimum() < 0);
+    }
+
+    // And an explicit 0 is now expressible: it differs from the sentinel the
+    // box opened with, so it applies.
+    auto *rts = dialog.findChild<QSpinBox *>(
+        QStringLiteral("settingEditor:serial.rts"));
+    CHECK(rts != nullptr);
+    if (rts) {
+        CHECK(rts->value() == -1);
+        rts->setValue(0);
+        dialog.applyChanges();
+        CHECK(h.session.setting(QStringLiteral("serial.rts"))
+              == QStringLiteral("0"));
+    }
+}
+
 void test_settings_dialog_persistence_is_opt_in_and_selective()
 {
     QTemporaryDir dir;
@@ -3484,6 +3527,7 @@ int main(int argc, char **argv)
     test_the_connection_dialogs_use_the_language_catalog();
     test_the_ssh_prompts_use_the_language_catalog();
     test_the_dialog_writes_only_what_changed();
+    test_sentinel_defaults_survive_the_settings_dialog();
     test_settings_dialog_persistence_is_opt_in_and_selective();
     test_window_opacity_follows_activation();
     test_the_window_opens_at_the_configured_size();

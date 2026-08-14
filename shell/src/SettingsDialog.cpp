@@ -265,11 +265,15 @@ void SettingsDialog::build()
         case TT_SETTING_KIND_INT:
         case TT_SETTING_KIND_INT_RANGE: {
             auto *spin = new QSpinBox(this);
-            if (f.kind == TT_SETTING_KIND_INT_RANGE) {
-                spin->setRange(f.min, f.max);
-            } else {
-                spin->setRange(0, 1000000);
-            }
+            // Both kinds carry a usable pair — an unbounded `Int` reports
+            // `i32::MIN`/`i32::MAX` — and taking it is load-bearing rather
+            // than tidy. Six settings ship a negative sentinel:
+            // `serial.rts`/`serial.dtr` are -1 for "derive from `ts.Flow`",
+            // and `window.x/y`, `tek.x/y` are `CW_USEDEFAULT`. A range
+            // starting at 0 shows every one of them as 0, and since `original`
+            // is captured from the editor, the user can then never commit a
+            // real 0 — the box already reads 0, so OK sees no change.
+            spin->setRange(f.min, f.max);
             spin->setValue(current.toInt());
             row.editor = spin;
             row.value = [spin] { return QString::number(spin->value()); };
