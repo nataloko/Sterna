@@ -46,7 +46,7 @@ jobs:
     defaults:
       run:
         shell: bash
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v6
       - name: Install build dependencies
@@ -57,6 +57,10 @@ jobs:
           path: packaging/appimage/toolchain/qt-6.11.1
           key: appimage-qt-6.11.1-manylinux-2-28-x86-64-v1
       - name: Build portable Qt
+        # A clean Qt link can exhaust a hosted runner at four workers. This
+        # bootstrap is cached; keep the one expensive run within its memory.
+        env:
+          CMAKE_BUILD_PARALLEL_LEVEL: 2
         run: |
           ./packaging/appimage/build-qt.sh
           echo "$GITHUB_WORKSPACE/packaging/appimage/toolchain/qt-6.11.1/bin" >> "$GITHUB_PATH"
