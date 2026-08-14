@@ -7455,27 +7455,45 @@ pub extern "C" fn tt_plugins_settings_save(
         Ok(ini) => ini,
         Err(error) => return fail(TT_ERR_IO, format!("{}: {error}", path.display())),
     };
-    for setting in &plugins.settings {
-        let value = setting.page.value(setting.field_index).unwrap_or_default();
-        if !ini.set(
-            setting.section.to_string_lossy().as_ref(),
-            setting.key.to_string_lossy().as_ref(),
-            &value,
-        ) {
-            return fail(
-                TT_ERR_INVALID,
-                format!(
-                    "plugin setting [{}] {} cannot be written",
-                    setting.section.to_string_lossy(),
-                    setting.key.to_string_lossy()
-                ),
-            );
-        }
+    if let Err(status) = write_plugin_settings(plugins, &mut ini, 0..plugins.settings.len()) {
+        return status;
     }
     match ini.save(path) {
         Ok(()) => TT_OK,
         Err(error) => fail(TT_ERR_IO, format!("{}: {error}", path.display())),
     }
+}
+
+/// Write the named live plugin settings into `ini`, or say which one refused.
+///
+/// Shared by the two save entry points so that a rule about writing a plugin
+/// key cannot land on one of them alone. A value the page cannot produce is an
+/// error rather than an empty string: `Key=` is not an absent key in a Tera
+/// Term INI — an empty string is a value, and one that would silently replace
+/// whatever the user had there.
+fn write_plugin_settings(
+    plugins: &TtPlugins,
+    ini: &mut Ini,
+    indices: impl Iterator<Item = usize>,
+) -> Result<(), TtStatus> {
+    for index in indices {
+        let setting = &plugins.settings[index];
+        let section = setting.section.to_string_lossy();
+        let key = setting.key.to_string_lossy();
+        let Some(value) = setting.page.value(setting.field_index) else {
+            return Err(fail(
+                TT_ERR_INVALID,
+                format!("plugin setting [{section}] {key} has no readable value"),
+            ));
+        };
+        if !ini.set(section.as_ref(), key.as_ref(), &value) {
+            return Err(fail(
+                TT_ERR_INVALID,
+                format!("plugin setting [{section}] {key} cannot be written"),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Write only the selected live plugin settings into their INI sections.
@@ -7521,23 +7539,8 @@ pub extern "C" fn tt_plugins_settings_save_selected(
         Err(error) => return fail(TT_ERR_IO, format!("{}: {error}", path.display())),
     };
     let before = ini.to_bytes();
-    for index in indices {
-        let setting = &plugins.settings[*index];
-        let value = setting.page.value(setting.field_index).unwrap_or_default();
-        if !ini.set(
-            setting.section.to_string_lossy().as_ref(),
-            setting.key.to_string_lossy().as_ref(),
-            &value,
-        ) {
-            return fail(
-                TT_ERR_INVALID,
-                format!(
-                    "plugin setting [{}] {} cannot be written",
-                    setting.section.to_string_lossy(),
-                    setting.key.to_string_lossy()
-                ),
-            );
-        }
+    if let Err(status) = write_plugin_settings(plugins, &mut ini, indices.iter().copied()) {
+        return status;
     }
     if ini.to_bytes() == before {
         return TT_OK;
