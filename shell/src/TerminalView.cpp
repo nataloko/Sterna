@@ -2223,6 +2223,54 @@ QString TerminalView::selectedText() const
     return out;
 }
 
+/// Upstream's `BuffScreenSelect` (`buffer.c:716`), which starts from the
+/// window's own origin rather than the page's: scrolled back, Select screen
+/// means the lines you are looking at, not the live ones underneath them.
+void TerminalView::selectScreen()
+{
+    selectLines(m_session->lineAt(0),
+                m_session->lineAt(qMax(0, m_session->rows() - 1)));
+}
+
+/// Upstream's `BuffAllSelect` (`buffer.c:704`): the scrollback and the page.
+///
+/// `topLine` is how many lines have ever scrolled off, so subtracting the
+/// scrollback names the oldest line still in the buffer — and the core keeps
+/// the scrollback no longer than that, so this cannot go negative.
+void TerminalView::selectAll()
+{
+    const quint64 top = m_session->topLine();
+    selectLines(top - static_cast<quint64>(m_session->scrollbackLen()),
+                top + static_cast<quint64>(qMax(0, m_session->rows() - 1)));
+}
+
+/// Whole lines, as a selection the rest of the widget cannot tell from a drag.
+///
+/// The far end is the last *column* of `last` rather than column 0 of the line
+/// after it. Upstream ships the second form and left the first commented out
+/// one line below it (`buffer.c:709`); both mark the same cells, and the
+/// difference is only whether the copy ends with a line break. Here the two
+/// would disagree with each other — a line past the end of the buffer is not
+/// one `Session::line` can answer for, so "the line after the last" exists for
+/// Select screen scrolled back and not for Select all, and the trailing break
+/// would come and go with the scroll position. Ending inside a real line is
+/// one rule for both.
+void TerminalView::selectLines(quint64 first, quint64 last)
+{
+    // Same reason as `startSelection`: one selection at a time, or Copy has to
+    // guess which of the two painted ones was meant.
+    m_lineEditor->deselect();
+    m_selUnit = SelUnit::Char;
+    m_selAnchor = SelPoint {first, 0};
+    m_selAnchorEnd = SelPoint {last, m_session->cols()};
+    m_selHead = m_selAnchorEnd;
+    m_selSize = QSize(m_session->cols(), m_session->rows());
+    m_hasSelection = true;
+    m_selecting = false;
+    m_autoScroll->stop();
+    update();
+}
+
 void TerminalView::clearSelection()
 {
     if (m_hasSelection || m_selecting) {

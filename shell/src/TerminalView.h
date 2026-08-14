@@ -108,6 +108,12 @@ public:
     /// Public because Edit > New quick button from selection turns it into a
     /// command, which is the cheapest way there is to make a button.
     QString selectedText() const;
+    /// Select the lines the window is showing — upstream's
+    /// `ID_EDIT_SELECTSCREEN`. Scrolled back, that is the history in front of
+    /// you rather than the live page.
+    void selectScreen();
+    /// Select the whole buffer, scrollback and page — `ID_EDIT_SELECTALL`.
+    void selectAll();
     /// Blank the live page but keep it and any retained selection in
     /// scrollback.
     void clearScreen();
@@ -221,6 +227,9 @@ private:
     /// refers to depends on which side of the selection it is.
     SelPoint unitStart(SelPoint p) const;
     SelPoint unitEnd(SelPoint p) const;
+    /// Select whole lines `first`..`last`, absolute — what the two menu
+    /// commands share, and the only selection nobody dragged.
+    void selectLines(quint64 first, quint64 last);
     void clearSelection();
     /// Let the local editor consume text/navigation/editing keys. False keeps
     /// the ordinary terminal path live for control and function keys.
