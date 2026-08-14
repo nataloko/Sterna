@@ -519,23 +519,21 @@ void test_menu_and_accelerator_settings()
     }
 
     MainWindow window;
-    QAction *serial = findAction(window, QStringLiteral("Connect to serial port..."));
-    QAction *ssh = findAction(window, QStringLiteral("Connect over SSH..."));
-    QAction *telnet = findAction(window, QStringLiteral("Connect over telnet..."));
+    // One item, as upstream has: the screen behind it covers every transport,
+    // so the accelerator and both menu gates land on it rather than on three.
+    QAction *newConnection = findAction(window, QStringLiteral("New connection..."));
     QAction *local = findAction(window, QStringLiteral("Local shell"));
     QAction *sendBreak = findAction(window, QStringLiteral("Send break"));
-    CHECK(serial != nullptr);
-    CHECK(ssh != nullptr);
-    CHECK(telnet != nullptr);
+    CHECK(newConnection != nullptr);
     CHECK(local != nullptr);
     CHECK(sendBreak != nullptr);
-    if (!serial || !ssh || !telnet || !local || !sendBreak) {
+    if (!newConnection || !local || !sendBreak) {
         return;
     }
 
     // All three upstream accelerators ship enabled. The duplicate-session
     // fourth has no action until Stage 3.
-    CHECK(serial->shortcut() == QKeySequence(Qt::ALT | Qt::Key_N));
+    CHECK(newConnection->shortcut() == QKeySequence(Qt::ALT | Qt::Key_N));
     CHECK(local->shortcut() == QKeySequence(Qt::ALT | Qt::Key_G));
     CHECK(sendBreak->shortcut() == QKeySequence(Qt::ALT | Qt::Key_B));
 
@@ -549,27 +547,23 @@ void test_menu_and_accelerator_settings()
     CHECK(window.session()->setSetting(
         QStringLiteral("menu.disable_accelerator_send_break"),
         QStringLiteral("on"), &error));
-    CHECK(serial->shortcut().isEmpty());
+    CHECK(newConnection->shortcut().isEmpty());
     CHECK(local->shortcut().isEmpty());
     CHECK(sendBreak->shortcut().isEmpty());
 
     // The menu gates are separate from the shortcuts. New connection stays
-    // available on an open line by default; its switch greys the three pieces
-    // of Sterna's split dialog, while Local shell remains Cygwin's separate
-    // command. Telnet supports break, making that independent gate observable.
+    // available on an open line by default, while Local shell remains Cygwin's
+    // separate command. Telnet supports break, making that independent gate
+    // observable.
     window.connectTelnet(QStringLiteral("127.0.0.1"), listener.port());
     CHECK(window.session()->isConnected());
-    CHECK(serial->isEnabled());
-    CHECK(ssh->isEnabled());
-    CHECK(telnet->isEnabled());
+    CHECK(newConnection->isEnabled());
     CHECK(local->isEnabled());
     CHECK(sendBreak->isEnabled());
 
     CHECK(window.session()->setSetting(QStringLiteral("menu.disable_new_connection"),
                                        QStringLiteral("on"), &error));
-    CHECK(!serial->isEnabled());
-    CHECK(!ssh->isEnabled());
-    CHECK(!telnet->isEnabled());
+    CHECK(!newConnection->isEnabled());
     CHECK(local->isEnabled());
 
     CHECK(window.session()->setSetting(QStringLiteral("menu.disable_send_break"),

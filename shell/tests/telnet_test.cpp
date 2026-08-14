@@ -23,7 +23,7 @@
 #include <cstdlib>
 
 #include "Session.h"
-#include "TelnetDialog.h"
+#include "ConnectDialog.h"
 
 static int failures = 0;
 
@@ -76,15 +76,16 @@ QString screenText(const Session &session)
 /// know, and the failure — protocol bytes in a serial console — is silent.
 void test_the_dialog_follows_the_port()
 {
-    TelnetDialog dialog;
+    ConnectDialog dialog;
+    dialog.selectKind(ConnectDialog::Kind::Telnet);
     TtTelnetParams params;
 
-    dialog.setInitial(QStringLiteral("host"), 23, TT_TELNET_NEGOTIATE);
-    dialog.fill(&params);
+    dialog.setInitialTelnet(QStringLiteral("host"), 23, TT_TELNET_NEGOTIATE);
+    dialog.fillTelnet(&params);
     CHECK(params.mode == TT_TELNET_NEGOTIATE);
 
-    dialog.setInitial(QStringLiteral("host"), 2001, TT_TELNET_AUTO);
-    dialog.fill(&params);
+    dialog.setInitialTelnet(QStringLiteral("host"), 2001, TT_TELNET_AUTO);
+    dialog.fillTelnet(&params);
     CHECK(params.mode == TT_TELNET_AUTO);
     CHECK(dialog.port() == 2001);
     CHECK(dialog.host() == QStringLiteral("host"));

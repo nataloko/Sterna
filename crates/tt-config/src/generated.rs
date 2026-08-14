@@ -4199,6 +4199,20 @@ pub struct Settings {
     /// `open_path` a stable symlink resolves from rather than the `ttyUSB<n>` that
     /// moves on replug.
     pub recent_serial_port: String,
+    /// The hosts the New connection dialog offers, newest first, separated by `;`.
+    ///
+    /// Upstream keeps its list in a **section of its own** — `[Hosts]`, keys `Host1`
+    /// to `Host500` (`ttset.c:3416`, `MAXHOSTLIST`) — which this schema cannot
+    /// spell: it is a flat table of named settings, and an indexed family would be a
+    /// second mechanism for one list. So this is one key, and **`Hosts` is not
+    /// available as its name**: `ttset.c` reads that section itself, and a
+    /// `[Sterna] Hosts` would be a second answer to a question their own Tera Term
+    /// already asks. `tt-config/tests/upstream.rs` refuses the collision.
+    ///
+    /// Gated by `connection.history_list`, which is upstream's `HistoryList` and
+    /// ships **off** — so nothing is remembered until the dialog's History box is
+    /// ticked, and clearing this value forgets everything.
+    pub recent_host_history: String,
     /// The SSH host the dialog was given — an alias out of `~/.ssh/config` as
     /// readily as a name, since that is what the dialog's combo box is filled from.
     /// Empty is the whole record's switch: nothing remembered, so the dialog opens
@@ -4561,6 +4575,7 @@ impl Default for Settings {
             window_quick_buttons: true,
             window_quick_buttons_area: WindowQuickButtonsArea::default(),
             recent_serial_port: String::from(""),
+            recent_host_history: String::from(""),
             recent_ssh_host: String::from(""),
             recent_ssh_user: String::from(""),
             recent_ssh_port: 0,
@@ -5785,6 +5800,9 @@ impl Settings {
             },
             recent_serial_port: ini
                 .get_or("Sterna", "SerialPort", &d.recent_serial_port)
+                .to_string(),
+            recent_host_history: ini
+                .get_or("Sterna", "HostHistory", &d.recent_host_history)
                 .to_string(),
             recent_ssh_host: ini
                 .get_or("Sterna", "SshHost", &d.recent_ssh_host)
@@ -7943,6 +7961,7 @@ impl Settings {
             &self.window_quick_buttons_area.as_ini().to_string(),
         );
         ini.set("Sterna", "SerialPort", &self.recent_serial_port.clone());
+        ini.set("Sterna", "HostHistory", &self.recent_host_history.clone());
         ini.set("Sterna", "SshHost", &self.recent_ssh_host.clone());
         ini.set("Sterna", "SshUser", &self.recent_ssh_user.clone());
         ini.set("Sterna", "SshPort", &self.recent_ssh_port.to_string());
@@ -10758,6 +10777,9 @@ impl Settings {
             "recent.serial_port" => {
                 ini.set("Sterna", "SerialPort", &self.recent_serial_port.clone());
             }
+            "recent.host_history" => {
+                ini.set("Sterna", "HostHistory", &self.recent_host_history.clone());
+            }
             "recent.ssh_host" => {
                 ini.set("Sterna", "SshHost", &self.recent_ssh_host.clone());
             }
@@ -11658,6 +11680,7 @@ impl Settings {
             .to_string(),
             "window.quick_buttons_area" => self.window_quick_buttons_area.as_ini().to_string(),
             "recent.serial_port" => self.recent_serial_port.clone(),
+            "recent.host_history" => self.recent_host_history.clone(),
             "recent.ssh_host" => self.recent_ssh_host.clone(),
             "recent.ssh_user" => self.recent_ssh_user.clone(),
             "recent.ssh_port" => self.recent_ssh_port.to_string(),
@@ -12560,6 +12583,7 @@ impl Settings {
                 self.window_quick_buttons_area = WindowQuickButtonsArea::from_ini(value)
             }
             "recent.serial_port" => self.recent_serial_port = value.to_string(),
+            "recent.host_history" => self.recent_host_history = value.to_string(),
             "recent.ssh_host" => self.recent_ssh_host = value.to_string(),
             "recent.ssh_user" => self.recent_ssh_user = value.to_string(),
             "recent.ssh_port" => {
@@ -15771,6 +15795,16 @@ pub const FIELDS: &[Field] = &[
         default: "",
         label: None,
         doc: "The device path, not a number: `ComPort` is upstream's and cannot spell `/dev/serial/by-id/usb-FTDI_…`. Written as the port was opened, so it is the `open_path` a stable symlink resolves from rather than the `ttyUSB<n>` that moves on replug.",
+    },
+    Field {
+        name: "recent.host_history",
+        page: "recent",
+        section: "Sterna",
+        key: "HostHistory",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "The hosts the New connection dialog offers, newest first, separated by `;`.  Upstream keeps its list in a **section of its own** — `[Hosts]`, keys `Host1` to `Host500` (`ttset.c:3416`, `MAXHOSTLIST`) — which this schema cannot spell: it is a flat table of named settings, and an indexed family would be a second mechanism for one list. So this is one key, and **`Hosts` is not available as its name**: `ttset.c` reads that section itself, and a `[Sterna] Hosts` would be a second answer to a question their own Tera Term already asks. `tt-config/tests/upstream.rs` refuses the collision.  Gated by `connection.history_list`, which is upstream's `HistoryList` and ships **off** — so nothing is remembered until the dialog's History box is ticked, and clearing this value forgets everything.",
     },
     Field {
         name: "recent.ssh_host",

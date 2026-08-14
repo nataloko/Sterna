@@ -39,7 +39,7 @@
 #include "MainWindow.h"
 #include "PanelContainer.h"
 #include "Session.h"
-#include "TelnetDialog.h"
+#include "ConnectDialog.h"
 #include "TerminalPage.h"
 #include "TerminalView.h"
 
@@ -626,10 +626,11 @@ void test_empty_panel_dialogs_cancel_or_connect_in_place()
         return;
     }
     QTimer::singleShot(0, [&] {
-        if (auto *dialog = qobject_cast<TelnetDialog *>(
+        if (auto *dialog = qobject_cast<ConnectDialog *>(
                 QApplication::activeModalWidget())) {
-            dialog->setInitial(QStringLiteral("127.0.0.1"), listener.port(),
-                               TT_TELNET_NEGOTIATE);
+            dialog->selectKind(ConnectDialog::Kind::Telnet);
+            dialog->setInitialTelnet(QStringLiteral("127.0.0.1"), listener.port(),
+                                     TT_TELNET_NEGOTIATE);
             dialog->accept();
         }
     });

@@ -1,45 +1,24 @@
 // Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 
-#include "SshDialog.h"
+#include "SshPanel.h"
 
 #include <QCheckBox>
-#include <QComboBox>
-#include <QDialogButtonBox>
 #include <QDir>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLineEdit>
 #include <QPushButton>
-#include <QSpinBox>
-#include <QVBoxLayout>
 
 #include "I18n.h"
 
-SshDialog::SshDialog(QWidget *parent, const I18n *i18n)
-    : QDialog(parent), m_i18n(i18n)
+SshPanel::SshPanel(QWidget *parent, const I18n *i18n)
+    : QWidget(parent), m_i18n(i18n)
 {
     const auto text = [i18n](const char *key, const QString &fallback,
                              const char *section = "TTSSH") {
         return i18n ? i18n->text(key, fallback, section) : fallback;
     };
-
-    setWindowTitle(tr("SSH connection"));
-
-    m_host = new QComboBox(this);
-    m_host->setEditable(true);
-    m_host->setMinimumWidth(320);
-    m_host->setInsertPolicy(QComboBox::NoInsert);
-    // Seeded from `~/.ssh/config`, because the machines someone connects to
-    // are already in that file. An alias picked here brings its user, port,
-    // key and algorithm settings with it.
-    if (TtStringList *aliases = tt_ssh_config_aliases()) {
-        for (size_t i = 0; i < tt_string_list_len(aliases); i++) {
-            m_host->addItem(QString::fromUtf8(tt_string_list_at(aliases, i)));
-        }
-        tt_string_list_free(aliases);
-    }
-    m_host->setCurrentText(QString());
 
     m_user = new QLineEdit(this);
     // Blank is meaningful and is the *default*: it means the config's `User`,
@@ -47,15 +26,10 @@ SshDialog::SshDialog(QWidget *parent, const I18n *i18n)
     // config that says otherwise.
     m_user->setPlaceholderText(tr("from ~/.ssh/config, or the local user"));
 
-    m_port = new QSpinBox(this);
-    m_port->setRange(0, 65535);
-    m_port->setValue(0);
-    m_port->setSpecialValueText(tr("from ~/.ssh/config, or 22"));
-
     m_identity = new QLineEdit(this);
     m_identity->setPlaceholderText(tr("from ~/.ssh/config, or ~/.ssh/id_*"));
     auto *browse = new QPushButton(tr("Browse..."), this);
-    connect(browse, &QPushButton::clicked, this, &SshDialog::browseForKey);
+    connect(browse, &QPushButton::clicked, this, &SshPanel::browseForKey);
     auto *identityRow = new QHBoxLayout;
     identityRow->setContentsMargins(0, 0, 0, 0);
     identityRow->addWidget(m_identity, 1);
@@ -77,32 +51,16 @@ SshDialog::SshDialog(QWidget *parent, const I18n *i18n)
     m_useConfig = new QCheckBox(tr("Read ~/.ssh/config"), this);
     m_useConfig->setChecked(true);
 
-    auto *form = new QFormLayout;
-    form->addRow(text("DLG_HOST_TCPIPHOST", tr("Host:")), m_host);
+    auto *form = new QFormLayout(this);
+    form->setContentsMargins(0, 0, 0, 0);
     form->addRow(text("DLG_AUTH_USERNAME", tr("User:")), m_user);
-    form->addRow(text("DLG_HOST_TCPIPPORT", tr("Port:")), m_port);
     form->addRow(text("DLG_AUTH_PRIVATEKEY", tr("Private key:")), identityRow);
     form->addRow(QString(), m_agent);
     form->addRow(QString(), m_useConfig);
     form->addRow(QString(), m_legacy);
-
-    auto *buttons =
-        new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-    buttons->button(QDialogButtonBox::Ok)
-        ->setText(text("BTN_OK", tr("OK")));
-    buttons->button(QDialogButtonBox::Cancel)
-        ->setText(text("BTN_CANCEL", tr("Cancel")));
-    connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-
-    auto *layout = new QVBoxLayout(this);
-    layout->addLayout(form);
-    layout->addWidget(buttons);
-
-    m_host->setFocus();
 }
 
-void SshDialog::browseForKey()
+void SshPanel::browseForKey()
 {
     const QString title =
         m_i18n ? m_i18n->plainText("FILEDLG_OPEN_PRIVATEKEY_TITLE",
@@ -116,41 +74,48 @@ void SshDialog::browseForKey()
     }
 }
 
-QString SshDialog::host() const
+QString SshPanel::user() const
 {
-    return m_host->currentText().trimmed();
+    return m_user->text().trimmed();
 }
 
-void SshDialog::setInitial(const QString &host, const QString &user, int port,
-                           const QString &identity, bool legacy)
+QString SshPanel::identity() const
 {
-    m_host->setCurrentText(host);
+    return m_identity->text().trimmed();
+}
+
+bool SshPanel::legacy() const
+{
+    return m_legacy->isChecked();
+}
+
+void SshPanel::setInitial(const QString &user, const QString &identity, bool legacy)
+{
     m_user->setText(user);
-    m_port->setValue(port);
     m_identity->setText(identity);
     m_legacy->setChecked(legacy);
 }
 
-void SshDialog::fill(TtSshParams *out)
+void SshPanel::fill(TtSshParams *out, const QString &host, quint16 port)
 {
     tt_ssh_params_default(out);
 
-    m_hostUtf8 = host().toUtf8();
+    m_hostUtf8 = host.toUtf8();
     out->host = m_hostUtf8.constData();
-    out->port = static_cast<uint16_t>(m_port->value());
+    out->port = port;
 
     // Empty means "take it from the config", so an empty field sends null
     // rather than an empty string — the ABI treats those differently and this
     // is the one place the difference is visible to a user.
-    const QString user = m_user->text().trimmed();
-    if (!user.isEmpty()) {
-        m_userUtf8 = user.toUtf8();
+    const QString name = user();
+    if (!name.isEmpty()) {
+        m_userUtf8 = name.toUtf8();
         out->user = m_userUtf8.constData();
     }
 
-    const QString identity = m_identity->text().trimmed();
-    if (!identity.isEmpty()) {
-        m_identityUtf8 = identity.toUtf8();
+    const QString key = identity();
+    if (!key.isEmpty()) {
+        m_identityUtf8 = key.toUtf8();
         m_identities[0] = m_identityUtf8.constData();
         m_identities[1] = nullptr;
         out->identities = m_identities;

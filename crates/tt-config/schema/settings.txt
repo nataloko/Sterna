@@ -2096,6 +2096,21 @@ window.quick_buttons_area | enum(right/*=Right,top=Top,bottom=Bottom,left=Left) 
 # moves on replug.
 recent.serial_port | string | Sterna | SerialPort |  | -
 
+# The hosts the New connection dialog offers, newest first, separated by `;`.
+#
+# Upstream keeps its list in a **section of its own** — `[Hosts]`, keys `Host1`
+# to `Host500` (`ttset.c:3416`, `MAXHOSTLIST`) — which this schema cannot
+# spell: it is a flat table of named settings, and an indexed family would be a
+# second mechanism for one list. So this is one key, and **`Hosts` is not
+# available as its name**: `ttset.c` reads that section itself, and a
+# `[Sterna] Hosts` would be a second answer to a question their own Tera Term
+# already asks. `tt-config/tests/upstream.rs` refuses the collision.
+#
+# Gated by `connection.history_list`, which is upstream's `HistoryList` and
+# ships **off** — so nothing is remembered until the dialog's History box is
+# ticked, and clearing this value forgets everything.
+recent.host_history | string | Sterna | HostHistory |  | -
+
 # The SSH host the dialog was given — an alias out of `~/.ssh/config` as
 # readily as a name, since that is what the dialog's combo box is filled from.
 # Empty is the whole record's switch: nothing remembered, so the dialog opens
