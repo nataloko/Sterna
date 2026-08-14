@@ -154,9 +154,13 @@ void test_window_plugins()
         TabRows *tabs = dialog.findChild<TabRows *>();
         CHECK(tabs != nullptr);
         bool foundPluginPage = false;
+        int pluginPage = -1;
         if (tabs) {
             for (int i = 0; i < tabs->count(); i++) {
-                foundPluginPage |= tabs->tabText(i) == QStringLiteral("Window plugin");
+                if (tabs->tabText(i) == QStringLiteral("Window plugin")) {
+                    foundPluginPage = true;
+                    pluginPage = i;
+                }
             }
         }
         CHECK(foundPluginPage);
@@ -169,6 +173,41 @@ void test_window_plugins()
             dialog.applyChanges();
             CHECK(loaded->setting(2) == QStringLiteral("live:"));
         }
+
+        // Plugin rows participate in the same cross-page search. The page is
+        // searchable by its description, becomes the only navigable tab, and
+        // clearing restores the core page selected before the search.
+        auto *search = dialog.findChild<QLineEdit *>(
+            QStringLiteral("settingsSearch"));
+        CHECK(search != nullptr);
+        if (tabs && search && prefix) {
+            tabs->setCurrentIndex(0);
+            search->setText(QStringLiteral("Text before setting probes"));
+            int visible = 0;
+            for (int i = 0; i < tabs->count(); i++) {
+                visible += tabs->isTabVisible(i) ? 1 : 0;
+            }
+            CHECK(visible == 1);
+            CHECK(tabs->currentIndex() == pluginPage);
+            CHECK(!prefix->isHidden());
+            search->clear();
+            CHECK(tabs->currentIndex() == 0);
+            for (int i = 0; i < tabs->count(); i++) {
+                CHECK(tabs->isTabVisible(i));
+            }
+        }
+
+        // Dynamic plugin page names stay out of the main menu; only the 26
+        // stable schema pages are linked there.
+        int pageActions = 0;
+        for (QAction *action : window.findChildren<QAction *>()) {
+            pageActions += action->objectName().startsWith(
+                               QStringLiteral("settingsPageAction"))
+                               ? 1
+                               : 0;
+            CHECK(action->text() != QStringLiteral("Window plugin"));
+        }
+        CHECK(pageActions == 26);
 
         window.session()->feed(QByteArray("setting"));
         CHECK(screenText(*window.session()).contains(QStringLiteral("live:")));

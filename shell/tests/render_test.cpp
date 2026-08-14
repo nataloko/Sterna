@@ -1758,7 +1758,7 @@ void test_the_settings_dialog_is_built_from_the_schema()
     auto *tabs = dialog.findChild<TabRows *>();
     CHECK(tabs != nullptr);
     if (tabs) {
-        CHECK(tabs->count() > 1);
+        CHECK(tabs->count() == 26);
         CHECK(tabs->tabText(0) == QStringLiteral("Terminal"));
         // Selecting a tab shows its page, which is the whole of what the two
         // widgets have to agree about.
@@ -1802,13 +1802,155 @@ void test_the_settings_dialog_is_built_from_the_schema()
 
     // The search box is what makes 600 settings navigable, and it filters
     // across every tab rather than the visible one.
-    auto *search = dialog.findChild<QLineEdit *>();
+    auto *search = dialog.findChild<QLineEdit *>(QStringLiteral("settingsSearch"));
+    auto *noResults = dialog.findChild<QLabel *>(
+        QStringLiteral("settingsNoResultsLabel"));
     CHECK(search != nullptr);
-    if (search && termId) {
-        search->setText(QStringLiteral("backspace"));
+    CHECK(noResults != nullptr);
+    if (search && termId && tabs && noResults) {
+        const int beforeSearch = tabs->currentIndex();
+        search->setText(QStringLiteral("keyboard.backspace"));
+        int visibleTabs = 0;
+        for (int i = 0; i < tabs->count(); i++) {
+            visibleTabs += tabs->isTabVisible(i) ? 1 : 0;
+        }
+        CHECK(visibleTabs == 1);
+        CHECK(tabs->tabText(tabs->currentIndex()) == QStringLiteral("Keyboard"));
         CHECK(!termId->isVisibleTo(&dialog));
+        CHECK(noResults->isHidden());
+
+        search->setText(QStringLiteral("nothing-can-match-this-setting"));
+        CHECK(tabs->isHidden());
+        CHECK(!noResults->isHidden());
+        CHECK(noResults->text() == QStringLiteral("No settings match your search."));
+
         search->setText(QString());
+        CHECK(!tabs->isHidden());
+        CHECK(tabs->currentIndex() == beforeSearch);
+        for (int i = 0; i < tabs->count(); i++) {
+            CHECK(tabs->isTabVisible(i));
+        }
         CHECK(termId->isVisibleTo(&dialog));
+
+        // A matching current page stays put, rather than jumping to the first
+        // matching page on every keystroke.
+        const int color = 4;
+        tabs->setCurrentIndex(color);
+        search->setText(QStringLiteral("color"));
+        CHECK(tabs->currentIndex() == color);
+        search->clear();
+
+        // Horizontal keyboard navigation crosses the stable index of a
+        // hidden tab instead of getting stuck on it.
+        tabs->setCurrentIndex(0);
+        tabs->setTabVisible(1, false);
+        QKeyEvent right(QEvent::KeyPress, Qt::Key_Right, Qt::NoModifier);
+        QCoreApplication::sendEvent(tabs, &right);
+        CHECK(tabs->currentIndex() == 2);
+        tabs->setTabVisible(1, true);
+    }
+}
+
+void test_setup_menu_links_every_schema_page()
+{
+    const QVector<SettingsDialog::Page> pages = SettingsDialog::corePages();
+    CHECK(pages.size() == 26);
+    const QStringList expected = {
+        QStringLiteral("Terminal"),   QStringLiteral("Encoding"),
+        QStringLiteral("Ime"),        QStringLiteral("Keyboard"),
+        QStringLiteral("Color"),      QStringLiteral("Cursor"),
+        QStringLiteral("Window"),     QStringLiteral("Font"),
+        QStringLiteral("Mouse"),      QStringLiteral("Url"),
+        QStringLiteral("Debug"),      QStringLiteral("Bell"),
+        QStringLiteral("Clipboard"),  QStringLiteral("Connection"),
+        QStringLiteral("Proxy"),      QStringLiteral("Macro"),
+        QStringLiteral("Settings"),   QStringLiteral("Serial"),
+        QStringLiteral("Log"),        QStringLiteral("Transfer"),
+        QStringLiteral("Printer"),    QStringLiteral("Tek"),
+        QStringLiteral("Broadcast"),  QStringLiteral("Menu"),
+        QStringLiteral("Recent"),     QStringLiteral("Updates"),
+    };
+    for (int i = 0; i < pages.size(); i++) {
+        CHECK(pages.at(i).title == expected.at(i));
+    }
+
+    Harness h;
+    SettingsDialog initial(&h.session, nullptr, nullptr, nullptr, 19);
+    auto *initialTabs = initial.findChild<TabRows *>();
+    CHECK(initialTabs != nullptr);
+    if (initialTabs) {
+        CHECK(initialTabs->currentIndex() == 19);
+        CHECK(initialTabs->tabText(19) == QStringLiteral("Transfer"));
+    }
+
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    MainWindow window(dir.filePath(QStringLiteral("menu.ini")));
+    auto *setup = window.findChild<QMenu *>(QStringLiteral("setupMenu"));
+    auto *font = window.findChild<QAction *>(QStringLiteral("chooseFontAction"));
+    CHECK(setup != nullptr);
+    CHECK(font != nullptr);
+    if (!setup || !font) {
+        return;
+    }
+    CHECK(font->text() == QStringLiteral("Choose font…"));
+
+    for (int i = 0; i < pages.size(); i++) {
+        auto *action = window.findChild<QAction *>(
+            QStringLiteral("settingsPageAction%1").arg(i));
+        CHECK(action != nullptr);
+        if (!action) {
+            continue;
+        }
+        CHECK(action->text() == pages.at(i).title);
+        CHECK(action->property("settingsPageIndex").toInt() == i);
+
+        int opened = -1;
+        QTimer::singleShot(0, [&opened] {
+            auto *dialog = qobject_cast<SettingsDialog *>(
+                QApplication::activeModalWidget());
+            CHECK(dialog != nullptr);
+            if (!dialog) {
+                return;
+            }
+            auto *tabs = dialog->findChild<TabRows *>();
+            CHECK(tabs != nullptr);
+            if (tabs) {
+                opened = tabs->currentIndex();
+            }
+            dialog->reject();
+        });
+        action->trigger();
+        CHECK(opened == i);
+    }
+
+    auto *last = window.findChild<QAction *>(QStringLiteral("settingsPageAction25"));
+    CHECK(last != nullptr);
+    if (last) {
+        CHECK(setup->actions().indexOf(font) == setup->actions().indexOf(last) + 1);
+    }
+
+    // Loading a catalog translates the stable menu chrome and font picker,
+    // while the generated page links retain the exact text of their tabs.
+    const QString translatedPath = dir.filePath(QStringLiteral("translated.ini"));
+    QFile translatedFile(translatedPath);
+    CHECK(translatedFile.open(QIODevice::WriteOnly));
+    translatedFile.write("[Tera Term]\nUILanguageFile=lang\\ja_JP.lng\n");
+    translatedFile.close();
+    MainWindow translated(translatedPath);
+    auto *translatedSetup =
+        translated.findChild<QMenu *>(QStringLiteral("setupMenu"));
+    auto *translatedFont =
+        translated.findChild<QAction *>(QStringLiteral("chooseFontAction"));
+    auto *translatedTerminal =
+        translated.findChild<QAction *>(QStringLiteral("settingsPageAction0"));
+    CHECK(translatedSetup != nullptr);
+    CHECK(translatedFont != nullptr);
+    CHECK(translatedTerminal != nullptr);
+    if (translatedSetup && translatedFont && translatedTerminal) {
+        CHECK(translatedSetup->title() == QStringLiteral("設定"));
+        CHECK(translatedFont->text() == QStringLiteral("フォント..."));
+        CHECK(translatedTerminal->text() == QStringLiteral("Terminal"));
     }
 }
 
@@ -2760,6 +2902,7 @@ int main(int argc, char **argv)
     test_attribute_colours_can_keep_the_normal_background();
     test_use_text_colour_repairs_only_the_three_same_colour_pairs();
     test_the_settings_dialog_is_built_from_the_schema();
+    test_setup_menu_links_every_schema_page();
     test_the_settings_dialog_uses_a_language_catalog();
     test_the_connection_dialogs_use_the_language_catalog();
     test_the_ssh_prompts_use_the_language_catalog();

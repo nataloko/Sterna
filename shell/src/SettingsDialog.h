@@ -42,9 +42,18 @@ class SettingsDialog : public QDialog {
     Q_OBJECT
 
 public:
+    struct Page {
+        QString id;
+        QString title;
+    };
+
     explicit SettingsDialog(Session *session, Plugins *plugins = nullptr,
                             I18n *i18n = nullptr,
-                            QWidget *parent = nullptr);
+                            QWidget *parent = nullptr, int initialPage = 0);
+
+    /// The built-in pages, in schema order. The Setup menu consumes this same
+    /// list, so an action can never drift from the dialog tab it opens.
+    static QVector<Page> corePages();
 
     /// Apply every changed row. Called on OK; public so a test can drive it
     /// without a button press.
@@ -63,6 +72,7 @@ private:
         /// rewritten, since writing one is what pins a default that might
         /// otherwise follow upstream.
         QString original;
+        int tab = -1;
         std::function<QString()> value;
         std::function<bool(const QString &, QString *)> apply;
     };
@@ -78,10 +88,13 @@ private:
     Session *m_session;
     Plugins *m_plugins;
     I18n *m_i18n;
-    /// The tabs, on as many rows as the width needs — 25 schema pages do not
+    /// The tabs, on as many rows as the width needs — 26 schema pages do not
     /// fit on one, and a `QTabWidget` answers that with scroll buttons.
     TabRows *m_tabs = nullptr;
     QStackedWidget *m_pages = nullptr;
     QLineEdit *m_search = nullptr;
+    QLabel *m_noResults = nullptr;
     QVector<Row> m_rows;
+    int m_initialPage = 0;
+    int m_searchRestorePage = -1;
 };

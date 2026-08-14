@@ -1278,9 +1278,9 @@ void MainWindow::showPopupMenu(const QPoint &globalPos)
     popup->popup(globalPos);
 }
 
-void MainWindow::showSettingsDialog()
+void MainWindow::showSettingsDialog(int initialPage)
 {
-    SettingsDialog dialog(m_session, m_plugins, m_i18n, this);
+    SettingsDialog dialog(m_session, m_plugins, m_i18n, this, initialPage);
     dialog.exec();
 }
 
@@ -1690,11 +1690,17 @@ void MainWindow::buildMenus()
     QMenu *setup = menuBar()->addMenu(tr("Setup"));
     setup->setObjectName(QStringLiteral("setupMenu"));
     languageAction(setup->menuAction(), "MENU_SETUP", tr("Setup"));
-    QAction *terminalSetup =
-        setup->addAction(tr("Terminal..."), this, &MainWindow::showSettingsDialog);
-    languageAction(terminalSetup, "MENU_SETUP_ADDITION", tr("Terminal..."));
-    QAction *font = setup->addAction(tr("Font..."), this, &MainWindow::chooseFont);
-    languageAction(font, "MENU_SETUP_FONT", tr("Font..."));
+    const QVector<SettingsDialog::Page> settingsPages = SettingsDialog::corePages();
+    for (int i = 0; i < settingsPages.size(); i++) {
+        QAction *page = setup->addAction(settingsPages.at(i).title, this,
+                                         [this, i] { showSettingsDialog(i); });
+        page->setObjectName(QStringLiteral("settingsPageAction%1").arg(i));
+        page->setProperty("settingsPageIndex", i);
+    }
+    QAction *font =
+        setup->addAction(tr("Choose font…"), this, &MainWindow::chooseFont);
+    font->setObjectName(QStringLiteral("chooseFontAction"));
+    languageAction(font, "MENU_SETUP_FONT", tr("Choose font…"));
     setup->addSeparator();
     QAction *save = setup->addAction(tr("Save setup"), this,
                                      &MainWindow::saveSettings);

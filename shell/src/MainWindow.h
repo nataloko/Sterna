@@ -198,7 +198,7 @@ private slots:
     void onMacroFinished(int exitCode);
     void chooseFont();
     void chooseKeyMap();
-    void showSettingsDialog();
+    void showSettingsDialog(int initialPage = 0);
     /// Setup > Quick buttons — the editor for the bar's list.
     void showQuickButtonsDialog();
     /// Press one. `withoutEnter` is a Shift+click, which sends the command

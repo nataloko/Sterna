@@ -14,6 +14,7 @@
 #include <QPushButton>
 #include <QFrame>
 #include <QScrollArea>
+#include <QSet>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QVBoxLayout>
@@ -40,7 +41,7 @@ QString humanise(const QString &name)
     return text;
 }
 
-QString pageTitle(const QString &page)
+QString displayPageTitle(const QString &page)
 {
     QString text = page;
     if (!text.isEmpty()) {
@@ -132,12 +133,34 @@ QColor colorAt(const QStringList &parts, int i)
 } // namespace
 
 SettingsDialog::SettingsDialog(Session *session, Plugins *plugins, I18n *i18n,
-                               QWidget *parent)
-    : QDialog(parent), m_session(session), m_plugins(plugins), m_i18n(i18n)
+                               QWidget *parent, int initialPage)
+    : QDialog(parent)
+    , m_session(session)
+    , m_plugins(plugins)
+    , m_i18n(i18n)
+    , m_initialPage(initialPage)
 {
     setWindowTitle(m_i18n ? m_i18n->plainText("MENU_SETUP", tr("Setup"))
                           : tr("Setup"));
     build();
+}
+
+QVector<SettingsDialog::Page> SettingsDialog::corePages()
+{
+    QVector<Page> pages;
+    QSet<QString> seen;
+    for (size_t i = 0, count = tt_settings_field_count(); i < count; i++) {
+        TtSettingField field;
+        if (!tt_settings_field(i, &field) || !field.page) {
+            continue;
+        }
+        const QString id = QString::fromUtf8(field.page);
+        if (!seen.contains(id)) {
+            seen.insert(id);
+            pages.append({id, displayPageTitle(id)});
+        }
+    }
+    return pages;
 }
 
 void SettingsDialog::build()
@@ -145,13 +168,14 @@ void SettingsDialog::build()
     auto *layout = new QVBoxLayout(this);
 
     m_search = new QLineEdit(this);
+    m_search->setObjectName(QStringLiteral("settingsSearch"));
     m_search->setPlaceholderText(tr("Search settings"));
     m_search->setClearButtonEnabled(true);
     connect(m_search, &QLineEdit::textChanged, this, &SettingsDialog::applyFilter);
     layout->addWidget(m_search);
 
     // The tabs and the pages are two widgets rather than a `QTabWidget`,
-    // because the bar has to wrap: the schema has 25 pages and a `QTabBar`
+    // because the bar has to wrap: the schema has 26 pages and a `QTabBar`
     // puts them on one line behind scroll buttons. See `TabRows`.
     m_tabs = new TabRows(this);
     m_pages = new QStackedWidget(this);
@@ -160,10 +184,16 @@ void SettingsDialog::build()
             &QStackedWidget::setCurrentIndex);
     layout->addWidget(m_tabs);
     layout->addWidget(m_pages, 1);
+    m_noResults = new QLabel(tr("No settings match your search."), this);
+    m_noResults->setObjectName(QStringLiteral("settingsNoResultsLabel"));
+    m_noResults->setAlignment(Qt::AlignCenter);
+    m_noResults->hide();
+    layout->addWidget(m_noResults, 1);
 
     // One tab per page, created in the order the schema lists them, so the
     // schema decides the layout as well as the content.
     QHash<QString, QFormLayout *> pages;
+    QHash<QString, int> pageIndices;
 
     // Some schema rows share an upstream label because it names a group rather
     // than either value inside it — foreground/background colour pairs and
@@ -190,14 +220,16 @@ void SettingsDialog::build()
 
         QFormLayout *form = pages.value(page);
         if (!form) {
-            form = addPage(pageTitle(page));
+            form = addPage(displayPageTitle(page));
             pages.insert(page, form);
+            pageIndices.insert(page, m_tabs->count() - 1);
         }
 
         Row row;
         row.name = name;
         row.page = page;
         row.original = current;
+        row.tab = pageIndices.value(page);
         row.apply = [this, name](const QString &value, QString *error) {
             return m_session->setSetting(name, value, error);
         };
@@ -211,7 +243,8 @@ void SettingsDialog::build()
         }
         row.label = new QLabel(label, this);
         row.label->setToolTip(tooltip(f));
-        row.haystack = (name + QLatin1Char(' ') + row.label->text() + QLatin1Char(' ')
+        row.haystack = (name + QLatin1Char(' ') + displayPageTitle(page)
+                        + QLatin1Char(' ') + row.label->text() + QLatin1Char(' ')
                         + QString::fromUtf8(f.key) + QLatin1Char(' ')
                         + QString::fromUtf8(f.doc))
                            .toLower();
@@ -315,12 +348,14 @@ void SettingsDialog::build()
             if (!form) {
                 form = addPage(f.page);
                 pages.insert(page, form);
+                pageIndices.insert(page, m_tabs->count() - 1);
             }
 
             Row row;
             row.name = QStringLiteral("[%1] %2").arg(f.section, f.key);
             row.page = page;
             row.original = current;
+            row.tab = pageIndices.value(page);
             row.label = new QLabel(f.label, this);
             QString tip = QStringLiteral("<b>%1</b><br>%2<br>[%3] %4 = %5")
                               .arg(f.plugin.toHtmlEscaped(), f.name.toHtmlEscaped(),
@@ -400,6 +435,10 @@ void SettingsDialog::build()
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     layout->addWidget(buttons);
 
+    if (m_initialPage >= 0 && m_initialPage < m_tabs->count()) {
+        m_tabs->setCurrentIndex(m_initialPage);
+    }
+
     // Wide enough for the tabs to land on two rows rather than four, which is
     // what `TabRows` asks for: the page titles decide that width, so it comes
     // from the layout instead of a number here. Qt caps a window's initial size
@@ -450,9 +489,49 @@ void SettingsDialog::applyChanges()
 void SettingsDialog::applyFilter(const QString &text)
 {
     const QString needle = text.trimmed().toLower();
+    if (needle.isEmpty()) {
+        for (const Row &row : m_rows) {
+            row.label->show();
+            row.editor->show();
+        }
+        for (int i = 0; i < m_tabs->count(); i++) {
+            m_tabs->setTabVisible(i, true);
+        }
+        m_tabs->show();
+        m_pages->show();
+        m_noResults->hide();
+        if (m_searchRestorePage >= 0) {
+            m_tabs->setCurrentIndex(m_searchRestorePage);
+            m_searchRestorePage = -1;
+        }
+        return;
+    }
+
+    if (m_searchRestorePage < 0) {
+        m_searchRestorePage = m_tabs->currentIndex();
+    }
+    QVector<bool> matches(m_tabs->count(), false);
     for (const Row &row : m_rows) {
-        const bool show = needle.isEmpty() || row.haystack.contains(needle);
+        const bool show = row.haystack.contains(needle);
         row.label->setVisible(show);
         row.editor->setVisible(show);
+        if (show && row.tab >= 0 && row.tab < matches.size()) {
+            matches[row.tab] = true;
+        }
+    }
+
+    int first = -1;
+    for (int i = 0; i < matches.size(); i++) {
+        m_tabs->setTabVisible(i, matches.at(i));
+        if (first < 0 && matches.at(i)) {
+            first = i;
+        }
+    }
+    const bool any = first >= 0;
+    m_tabs->setVisible(any);
+    m_pages->setVisible(any);
+    m_noResults->setVisible(!any);
+    if (any && !matches.at(m_tabs->currentIndex())) {
+        m_tabs->setCurrentIndex(first);
     }
 }
