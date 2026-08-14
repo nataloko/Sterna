@@ -1274,6 +1274,123 @@ void test_continued_line_copy_joins_a_wrapped_line()
     CHECK(g.copied() == QStringLiteral("one\ntwo"));
 }
 
+/// Line edit overlays a second selectable text surface on the grid. Copy must
+/// follow the selection the user made last, through every route that can ask
+/// for the command, and an unselected draft must not mask terminal output.
+void test_line_edit_copy_uses_the_active_selection()
+{
+    Harness h;
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("terminal.line_edit"),
+                               QStringLiteral("on"), &error));
+    h.view.applySettings();
+    h.activate();
+    h.feed("terminal text");
+
+    auto *editor = h.view.findChild<QLineEdit *>(
+        QStringLiteral("terminalLineEditor"));
+    CHECK(editor != nullptr);
+    if (!editor) {
+        return;
+    }
+    editor->setText(QStringLiteral("draft text"));
+
+    // The built-in Ctrl+Shift+C: a grid drag takes the selection away from
+    // the draft and the empty draft selection falls through to the grid.
+    editor->setSelection(0, 5);
+    h.drag(h.px(0), h.py(0), h.px(7, 0.7), h.py(0));
+    CHECK(editor->selectedText().isEmpty());
+    QApplication::clipboard()->clear(QClipboard::Clipboard);
+    key(h.view, Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
+    CHECK(QApplication::clipboard()->text(QClipboard::Clipboard)
+          == QStringLiteral("terminal"));
+
+    // Selecting the draft does the reverse, so the same shortcut copies it
+    // without leaving two highlighted answers on screen.
+    editor->setSelection(0, 5);
+    CHECK(!h.view.hasSelection());
+    QApplication::clipboard()->clear(QClipboard::Clipboard);
+    key(h.view, Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
+    CHECK(QApplication::clipboard()->text(QClipboard::Clipboard)
+          == QStringLiteral("draft"));
+
+    // A KEYBOARD.CNF shortcut reaches the same decision point.
+    QTemporaryDir keys;
+    CHECK(keys.isValid());
+    const QString keyMap = keys.filePath(QStringLiteral("KEYBOARD.CNF"));
+    QFile file(keyMap);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[Shortcut keys]\nEditCopy=63\n");
+    file.close();
+    QVector<quint16> duplicates;
+    CHECK(h.session.loadKeyMap(keyMap, &duplicates, &error));
+    CHECK(duplicates.isEmpty());
+
+    h.drag(h.px(0), h.py(0), h.px(7, 0.7), h.py(0));
+    QApplication::clipboard()->clear(QClipboard::Clipboard);
+    key(h.view, Qt::Key_F5);
+    CHECK(QApplication::clipboard()->text(QClipboard::Clipboard)
+          == QStringLiteral("terminal"));
+    editor->setSelection(6, 4);
+    QApplication::clipboard()->clear(QClipboard::Clipboard);
+    key(h.view, Qt::Key_F5);
+    CHECK(QApplication::clipboard()->text(QClipboard::Clipboard)
+          == QStringLiteral("text"));
+
+    // The menu action belongs to MainWindow, but still delegates the whole
+    // choice to TerminalView.
+    QTemporaryDir config;
+    CHECK(config.isValid());
+    MainWindow window(config.filePath(QStringLiteral("copy.ini")));
+    auto *view = window.findChild<TerminalView *>();
+    auto *menuCopy = window.findChild<QAction *>(QStringLiteral("copyAction"));
+    CHECK(view != nullptr);
+    CHECK(menuCopy != nullptr);
+    if (!view || !menuCopy) {
+        return;
+    }
+    CHECK(window.session()->setSetting(QStringLiteral("terminal.line_edit"),
+                                       QStringLiteral("on"), &error));
+    view->applySettings();
+    view->resize(80 * view->theme().cellWidth(),
+                 24 * view->theme().cellHeight());
+    window.session()->feed(QByteArrayLiteral("menu output"));
+    auto *menuEditor = view->findChild<QLineEdit *>(
+        QStringLiteral("terminalLineEditor"));
+    CHECK(menuEditor != nullptr);
+    if (!menuEditor) {
+        return;
+    }
+    menuEditor->setText(QStringLiteral("menu draft"));
+
+    const auto drag = [view](int from, int to) {
+        const int cw = view->theme().cellWidth();
+        const int ch = view->theme().cellHeight();
+        for (const auto type : {QEvent::MouseButtonPress, QEvent::MouseMove,
+                                QEvent::MouseButtonRelease}) {
+            const int col = type == QEvent::MouseButtonPress ? from : to;
+            const double fraction = type == QEvent::MouseButtonPress ? 0.0 : 0.7;
+            const Qt::MouseButtons held = type == QEvent::MouseButtonRelease
+                                              ? Qt::NoButton
+                                              : Qt::LeftButton;
+            QMouseEvent event(type, QPointF((col + fraction) * cw, 0.5 * ch),
+                              QPointF((col + fraction) * cw, 0.5 * ch),
+                              Qt::LeftButton, held, Qt::NoModifier);
+            QCoreApplication::sendEvent(view, &event);
+        }
+    };
+    drag(0, 3);
+    QApplication::clipboard()->clear(QClipboard::Clipboard);
+    menuCopy->trigger();
+    CHECK(QApplication::clipboard()->text(QClipboard::Clipboard)
+          == QStringLiteral("menu"));
+    menuEditor->setSelection(5, 5);
+    QApplication::clipboard()->clear(QClipboard::Clipboard);
+    menuCopy->trigger();
+    CHECK(QApplication::clipboard()->text(QClipboard::Clipboard)
+          == QStringLiteral("draft"));
+}
+
 /// `SelectOnlyByLButton` and `AutoTextCopy`, which are one condition upstream:
 /// with the first on, a middle or right button coming up over a standing
 /// selection must not copy it (`vtwin.cpp:819`).
@@ -2630,6 +2747,7 @@ int main(int argc, char **argv)
     test_clear_commands_keep_or_drop_selection();
     test_the_edit_menu_and_key_map_share_clear_commands();
     test_continued_line_copy_joins_a_wrapped_line();
+    test_line_edit_copy_uses_the_active_selection();
     test_the_other_buttons_do_not_start_or_copy_a_selection();
     test_a_paste_with_a_line_break_is_confirmed();
     test_remote_clipboard_access_is_permissioned_and_notified();

@@ -481,6 +481,14 @@ TerminalView::TerminalView(Session *session, QWidget *parent, const I18n *i18n)
     m_lineEditor->setFocusPolicy(Qt::NoFocus);
     m_lineEditor->setFrame(false);
     m_lineEditor->hide();
+    // There is one active selection. The editor has no focus of its own, so
+    // its selection would otherwise coexist with the grid's and Copy would
+    // have to guess which gesture was newer.
+    connect(m_lineEditor, &QLineEdit::selectionChanged, this, [this] {
+        if (!m_lineEditor->selectedText().isEmpty()) {
+            clearSelection();
+        }
+    });
 
     // Only ever runs while output is arriving faster than the frame floor
     // below, and stops itself at the next frame. Same shape as the session's
@@ -1257,7 +1265,7 @@ bool TerminalView::editLineKey(QKeyEvent *event)
     // it is the visible input. Plain Ctrl+C and Ctrl+V remain control bytes.
     if (!alt && ctrl && mods.testFlag(Qt::ShiftModifier)) {
         if (event->key() == Qt::Key_C) {
-            m_lineEditor->copy();
+            copySelection();
             return true;
         }
         if (event->key() == Qt::Key_V) {
@@ -1332,11 +1340,7 @@ bool TerminalView::dispatchKeyCode(const KeyCodeAction &action)
 
     switch (action.value) {
     case TT_SHORTCUT_EDIT_COPY:
-        if (m_lineEditEnabled) {
-            m_lineEditor->copy();
-        } else {
-            copySelection();
-        }
+        copySelection();
         break;
     case TT_SHORTCUT_EDIT_PASTE:
         pasteClipboard();
@@ -1500,11 +1504,7 @@ void TerminalView::keyPressEvent(QKeyEvent *event)
     // sends: Ctrl+C on its own is an interrupt and must stay one.
     if ((mods & Qt::ControlModifier) && (mods & Qt::ShiftModifier)) {
         if (event->key() == Qt::Key_C) {
-            if (m_lineEditEnabled) {
-                m_lineEditor->copy();
-            } else {
-                copySelection();
-            }
+            copySelection();
             return;
         }
         if (event->key() == Qt::Key_V) {
@@ -1690,6 +1690,9 @@ void TerminalView::mousePressEvent(QMouseEvent *event)
 /// Begin a drag at `at`, with the anchor covering the whole unit around it.
 void TerminalView::startSelection(SelPoint at, const QPointF &pos)
 {
+    // A grid gesture takes ownership from the overlaid draft editor. Without
+    // this both selections stay painted and there is no unambiguous Copy.
+    m_lineEditor->deselect();
     m_selecting = true;
     m_selSize = QSize(m_session->cols(), m_session->rows());
     m_selAnchor = unitStart(at);
@@ -2202,8 +2205,8 @@ void TerminalView::copySelection() const
         const QString text = m_lineEditor->selectedText();
         if (!text.isEmpty()) {
             QApplication::clipboard()->setText(text, QClipboard::Clipboard);
+            return;
         }
-        return;
     }
     const QString text = selectedText();
     if (!text.isEmpty()) {

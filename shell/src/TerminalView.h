@@ -88,7 +88,7 @@ public:
     void setKeyboardEnabled(bool on);
     bool keyboardEnabled() const { return m_keyboardEnabled; }
 
-    /// Copy the selection, if there is one.
+    /// Copy the active draft or terminal selection, if there is one.
     void copySelection() const;
     /// Paste the system clipboard.
     void pasteClipboard();

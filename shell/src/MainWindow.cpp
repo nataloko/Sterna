@@ -1653,6 +1653,7 @@ void MainWindow::buildMenus()
     QAction *copy = edit->addAction(
         tr("Copy"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C), this,
         [this] { m_view->copySelection(); });
+    copy->setObjectName(QStringLiteral("copyAction"));
     languageAction(copy, "MENU_EDIT_COPY", tr("Copy"));
     QAction *paste = edit->addAction(
         tr("Paste"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V), this,
