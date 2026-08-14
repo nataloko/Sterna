@@ -156,6 +156,15 @@ int main(int argc, char **argv)
 
     Session session(80, 24);
 
+    // A bare `Session` starts from `tt-vt`'s reference defaults, so the shipped
+    // `CRReceive` has to be asked for: the window gets it by loading the
+    // settings, and this test has no window. Set before connecting, so the
+    // detector resolves on the server's own first line ending exactly as it
+    // does in the application (deviation 9).
+    QString settingError;
+    CHECK(session.setSetting(QStringLiteral("terminal.cr_receive"),
+                             QStringLiteral("AUTO"), &settingError));
+
     // The host key is answered from here rather than by a dialog: the point of
     // this test is the event loop, and a modal dialog under `offscreen` would
     // just hang. Answering it *from the signal* is still the real path.
