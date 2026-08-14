@@ -317,10 +317,12 @@ The AppImage, where two of the three failures are silent:
 - **An AppImage can quietly use the desktop's Qt 6.11.1 and pass every
   test.** Check `/proc/<pid>/maps`: `libQt6Core.so.6` must come from
   `/tmp/.mount_sterna*` (the prefix follows the image's current filename).
-- **GitHub abandons one long Qt container step at about fifty minutes** with
+- **GitHub abandons one long Qt container command at about fifty minutes** with
   only “hosted runner lost communication” and no retained log. It reproduces
-  across worker counts and after freeing the runner disk. The release workflow
-  uses `build-qt.sh --resume` in bounded slices and caches only the verified
+  across worker counts and after freeing the runner disk. Keep one prepared
+  container alive across the release job: a fresh `docker run` per slice
+  reinstalls the whole dependency set *before* the slice timer. Qt uses
+  `build-qt.sh --resume` in bounded commands and caches only the verified
   installed prefix.
 - **`IdTitleReportEmpty` is 24 — `WF_TITLEREPORT` entire.** The "Empty"
   default sets *both* bits and lands on the `default:` arm (empty OSC

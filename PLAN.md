@@ -433,7 +433,10 @@ sending BS because that is what Tera Term does).
   maximum `GLIBC_2.28`, `GLIBCXX_3.4.25` and `CXXABI_1.3.11` imports, giving
   the AppImage a real Debian 10 / Ubuntu 20.04 / RHEL 8 / Fedora 29 floor
   rather than inheriting the developer's Fedora. Linux and Windows packages
-  build independently, native
+  build independently. The Linux runner keeps one prepared manylinux
+  container across short resumable Qt compile commands, so dependency setup
+  is paid once and no command reaches the hosted runner's lost-communication
+  window. Native
   Windows runs the updater file-lock regression, and one final job creates a
   draft only after all three pass. The Ed25519 root stays local:
   `packaging/release.sh` downloads the exact GitHub-built bytes, signs their
