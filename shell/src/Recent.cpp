@@ -136,18 +136,20 @@ bool modeFrom(const QString &name, TtTelnetMode *out)
 /// survives. The same rule `main.cpp` applies to a positional argument, and
 /// the same one `ssh` applies: a bare IPv6 address without brackets is
 /// ambiguous here exactly as it is there.
-void splitHost(const QString &text, QString *host, quint16 *port)
+bool splitHost(const QString &text, QString *host, quint16 *port)
 {
     *host = text;
     const int colon = text.lastIndexOf(QLatin1Char(':'));
     if (colon > text.lastIndexOf(QLatin1Char(']'))) {
         bool ok = false;
         const uint value = QStringView(text).mid(colon + 1).toUInt(&ok);
-        if (ok && value <= 65535) {
-            *port = static_cast<quint16>(value);
-            *host = text.left(colon);
+        if (!ok || value == 0 || value > 65535) {
+            return false;
         }
+        *port = static_cast<quint16>(value);
+        *host = text.left(colon);
     }
+    return true;
 }
 
 /// `a=1&b=2` into a table. Unknown keys are kept: a record written by a later
@@ -325,7 +327,9 @@ bool RecentConnection::decode(const QString &text, RecentConnection *out)
             head = head.mid(at + 1);
         }
         QString host;
-        splitHost(head, &host, &made.port);
+        if (!splitHost(head, &host, &made.port)) {
+            return false;
+        }
         made.host = unesc(host);
         if (made.host.isEmpty()) {
             return false;
@@ -336,7 +340,9 @@ bool RecentConnection::decode(const QString &text, RecentConnection *out)
         made.kind = Kind::Telnet;
         QString host;
         made.port = 23;
-        splitHost(head, &host, &made.port);
+        if (!splitHost(head, &host, &made.port)) {
+            return false;
+        }
         made.host = unesc(host);
         if (made.host.isEmpty()) {
             return false;

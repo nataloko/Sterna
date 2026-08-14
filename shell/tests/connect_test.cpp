@@ -197,6 +197,12 @@ void test_a_broken_record_is_dropped_and_not_repaired()
         &out));
     CHECK(!RecentConnection::decode(QStringLiteral("ssh://"), &out));
     CHECK(!RecentConnection::decode(QStringLiteral("ssh:myrouter"), &out));
+    CHECK(!RecentConnection::decode(QStringLiteral("ssh://host:nope"), &out));
+    CHECK(!RecentConnection::decode(QStringLiteral("ssh://host:0"), &out));
+    CHECK(!RecentConnection::decode(QStringLiteral("ssh://host:65536"), &out));
+    CHECK(!RecentConnection::decode(QStringLiteral("telnet://host:nope"), &out));
+    CHECK(!RecentConnection::decode(QStringLiteral("telnet://host:0"), &out));
+    CHECK(!RecentConnection::decode(QStringLiteral("telnet://host:65536"), &out));
     CHECK(!RecentConnection::decode(QStringLiteral("gopher://x"), &out));
     CHECK(!RecentConnection::decode(QStringLiteral("shell:x"), &out));
 
