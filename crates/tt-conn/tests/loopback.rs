@@ -387,6 +387,49 @@ fn a_port_can_be_opened_by_its_stable_path() {
         .expect("opening by the stable path must work");
 }
 
+/// The picker's question, against the rig rather than a scratch `/proc`: a
+/// port this process holds is reported held, by this process, under whichever
+/// of its names the caller asks about. The unit tests cover the parsing; only
+/// hardware covers the assumption that `serialport-rs` leaves something in
+/// `/proc` for either source to find.
+#[test]
+fn a_held_port_is_reported_in_use_under_every_name_it_has() {
+    let Some((a, _)) = rig() else { return };
+    assert_eq!(
+        tt_conn::serial::holders(&[a.as_str()])[0],
+        None,
+        "the rig must start free"
+    );
+
+    let _held = SerialConn::open(&a, &SerialParams::default()).expect("first open");
+    let me = std::process::id();
+
+    let held = tt_conn::serial::holders(&[a.as_str()]);
+    let Some(holder) = held[0].clone() else {
+        panic!("an open port must have a holder");
+    };
+    assert_eq!(holder.pid, me, "the holder is this process");
+
+    // The device node and the `by-path` name are two names for one port, and
+    // the picker stores the second: both have to answer the same way.
+    let info = tt_conn::serial::enumerate()
+        .expect("enumerate")
+        .into_iter()
+        .find(|p| p.device == a || p.open_path() == a);
+    if let Some(info) = info {
+        let both = tt_conn::serial::holders(&[&info.device, info.open_path()]);
+        assert_eq!(both[0], held[0], "by device node");
+        assert_eq!(both[1], held[0], "by stable path");
+    }
+
+    drop(_held);
+    assert_eq!(
+        tt_conn::serial::holders(&[a.as_str()])[0],
+        None,
+        "closing the port frees it"
+    );
+}
+
 #[test]
 fn a_port_held_by_something_else_reads_as_busy_not_gone() {
     // serialport-rs reports a busy port as ErrorKind::NoDevice with no errno,
