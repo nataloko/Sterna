@@ -568,6 +568,22 @@ SSH:
 - **`QTabWidget` caches its page's size hint** — `TerminalView`'s
   `applySettings`/`applyFont` call `updateGeometry()` so the invalidation
   reaches the window.
+- **...and so does every `QWidgetItem` between the terminal and the window,
+  which is why `TerminalPage::sizeHint` is composed by hand.** `updateGeometry`
+  invalidates the item holding *that* widget; put the view inside a row widget
+  and the page's layout is holding the row's item, which nothing invalidates.
+  The page then quotes the 80x24 it was constructed with — settings are loaded
+  after the pages exist — so a configured 100x30 window opens at 80x24 and
+  `TerminalSize` follows it down at the next save. The view's own hint read
+  900x630 while the layout above it read 720x525; ask the *item*
+  (`layout()->itemAt(i)->sizeHint()`), not the widget, or the numbers agree and
+  the window still comes out wrong.
+- **Removing `QMainWindow::statusBar()` silently kills every `setStatusTip`** —
+  the `QEvent::StatusTip` arm of `QMainWindow::event` needs a bar to show it in,
+  and with none the event falls through and is dropped with no warning.
+  `MainWindow::event` answers it itself. And `statusBar()` *creates* one on
+  first call, so a single stray call — a test's included — reinstates the
+  chrome and moves every size hint; ask `findChild<QStatusBar *>()` instead.
 - **Anything constructing a `MainWindow` reads the developer's own
   `sterna.ini`** — terminal size and title included. `bench_shell` and
   `cmdline_test` call `QStandardPaths::setTestModeEnabled` before

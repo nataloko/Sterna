@@ -4,7 +4,7 @@ Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
 **Last updated:** 2026-08-14 · **Stage:** 4 complete, deliberate deviations
-landing (`docs/deviations.md`) · **Commits:** 678
+landing (`docs/deviations.md`) · **Commits:** 682
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -5511,10 +5511,9 @@ line that created it after another tab is selected. `Macro` is declared before
 session whose page has already started coming apart.
 
 The lightweight tab bar hides itself for one page and remains movable and
-closable for two. Its pages can now be assigned to one, two side-by-side, or
-four 2x2 equal panels; the tabs remain unlimited and hidden sessions keep
-pumping. Menus, status, title, key-map actions and the window-wide control
-socket follow the highlighted pane, while signals that only report background
+closable for two — and, from 2026-08-14, for as long as the window is not
+tiled; see below. Menus, status, title, key-map actions and the window-wide
+control socket follow the marked pane, while signals that only report background
 work update that page's tab and pane title without stealing focus. Opening a
 connection from a live page creates another page rather than replacing the
 line. Closing asks about the target page without displaying a hidden one, and
@@ -5522,17 +5521,33 @@ network `AutoWinClose` removes only its page unless it was the last one. The
 tests pin the property underneath all of this: bytes fed to one session never
 appear in another's grid.
 
-**Simultaneous panels landed after the roadmap, 2026-08-13.** View chooses
-Single, 2 panels or 4 panels without reserving a terminal shortcut. Expansion
-and reduction keep the active connection first, then visible connections and
-then tab order; selecting a hidden tab replaces the active slot, and closing a
-visible tab refills from the hidden tabs before showing a connection tile.
-Empty tiles allocate no session until Serial, SSH, Telnet or Local shell is
-accepted. `[Sterna] PanelLayout` is synchronized over every page and persisted
-as a targeted one-key INI update. Each visible page refits to its panel and gets
-its own client geometry and window-metric snapshot; changing panels never
-resizes the top-level window. `tabs_test` covers the assignment model and the
-integrated routing on both targets.
+**Tiles replaced panels, 2026-08-14.** The 0.2.x arrangement had tabs and
+panels running alongside each other: the layout chose how many of an unlimited
+tab set were on screen, so a connection past the fourth stayed alive where
+nobody could see it and could only be reached by evicting a visible one. Two
+answers to "where are my connections". View > Tiled is now a mode exclusive
+with the tab bar — every connection gets a cell, `ceil(sqrt(n))` columns wide,
+and a rectangle that does not come out even ends in one connect cell widened to
+fill its row. Tiles are tab order, so there is no separate ordering heuristic.
+`[Sterna] PanelLayout=single|tiled` is synchronised over every page and
+persisted as a targeted one-key INI update; `two` and `four` are read as
+`tiled`. Each visible page refits to its cell and gets its own client geometry
+and window-metric snapshot; re-tiling never resizes the top-level window.
+
+**And the window's status bar became one strip per terminal, the same day.**
+One line saying "connected to router1, REC 4.2 MB" is a fact about one tile out
+of nine with nothing on screen to say which. `PageStatusBar` lives on the
+`TerminalPage`, so it follows its session between cells and modes, and it is
+also the active-tile marker — the pane header it replaced is gone rather than
+joined by a second row. Notices, transfer results and status tips are routed to
+the page they belong to; four of those were previously discarded for any page
+that was not in front, and a transfer's result had never been visible at all
+(written into the label, then overwritten by `updateStatus` on the next line).
+Two sizing rules are load-bearing and are stated in `AGENTS.md`: the strip's
+labels must not quote their text as their width, and `TerminalPage::sizeHint`
+is composed by hand because a `QWidgetItem` caches the hint of the widget it
+holds and the view is now one level down. `tabs_test` covers the grid shape,
+the exclusivity, the per-page strip and the View menu on both targets.
 
 **Duplicate session follows upstream's narrower rule: live SSH and telnet
 only.** Serial and local shells have no Duplicate action. The destination gets
@@ -5695,9 +5710,11 @@ Eight so far, all 2026-08-13:
    Term is not handed every other schema default by a connection.
 3. **A small serial toolbar** keeps the selected port, connect/disconnect and
    local echo in reach without changing what the existing actions do.
-4. **One, two or four simultaneous panels** show several independent tab
-   sessions in one window while keeping one highlighted active target. Hidden
-   tabs continue running, and the layout remembers no connections of its own.
+4. **Tiled connections** show every open session at once in a grid that fits
+   their number, with the tab bar hidden — the two are exclusive — and one
+   plainly marked active target. The layout remembers no connections of its
+   own. Each terminal carries its own status line, because a window-wide one
+   cannot say which of nine tiles it is describing.
 5. **A signed update check at startup**, on by default and limited to once per
    day, stays silent unless it has a release to offer. The manual check remains
    available when the schedule is off.

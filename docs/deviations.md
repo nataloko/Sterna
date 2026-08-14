@@ -18,7 +18,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 1 | The default baud rate is 115200 | 9600 | 0.2.0 |
 | 2 | The connect dialog remembers the last connection, across restarts | Only Setup > Save persists anything | 0.2.0 |
 | 3 | A bar under the menu: port, connect/disconnect, local echo, line edit | No toolbar at all | 0.2.0 |
-| 4 | One, two or four simultaneous connection panels | One connection per window | 0.2.0 |
+| 4 | Tiled connections, and one status line per terminal | One connection per window, one status bar | 0.2.0 |
 | 5 | Starting Sterna looks for a signed update, once a day | Nothing contacts a server on its own | 0.2.0 |
 | 6 | Highlight rules: user-written regular expressions recolour the screen | Only the host decides a colour; the URL attribute is the one exception | 0.2.0 |
 | 7 | Quick buttons: a second bar of user-defined commands | A `KEYBOARD.CNF` user key, with no face on it | 0.2.0 |
@@ -118,37 +118,55 @@ writes. The switch exists because chrome nobody can remove does not belong in a
 terminal; it is deliberately *not* tied to `PopupMenu` or `HideTitle`, which are
 about the menu.
 
-## 4. Simultaneous connection panels
+## 4. Tiled connections, and one status line per terminal
 
-View can show the active connection alone, two equal panels side by side, or
-four equal panels in a 2x2 grid. The tabs are still the connections and remain
-unlimited; the panel layout decides only which one, two or four are visible.
-Hidden sessions keep running.
+View offers **Tiled**. With it off, this window shows one connection and a tab
+bar over the rest, which is the ordinary case. With it on, **the tab bar is
+gone and every connection has a tile**: the grid is the smallest square-ish
+rectangle that holds them — one, two side by side, 2x2, 2x3, 3x3, and onwards
+— and when the rectangle does not come out even the last cell carries Serial,
+SSH, Telnet and Local shell buttons, widened to fill the rest of its row. At
+one, two, four, six and nine connections it comes out even and there is no
+such cell; File > New connection is the route then, and it re-tiles.
 
 **Why.** Serial and network work is often comparative: two consoles during a
 failover, or a switch, router and two attached hosts during a change. Separate
 top-level windows hide the relationship and make the shared menu, macro and
-transfer target ambiguous. Panels keep those sessions visible together while
-one plainly highlighted pane remains the target of keyboard input and every
+transfer target ambiguous. Tiles keep those sessions visible together while
+one plainly marked terminal remains the target of keyboard input and every
 window-level action. Broadcast input is deliberately not part of the feature.
 
-**What is unchanged.** A tab still owns exactly one independent `TerminalPage`
-and therefore one session, viewport, printer, macro runner, plugin VM and
-transfer. A connection that is not in a panel is hidden rather than suspended;
-selecting its tab replaces the active panel without closing either session.
-Closing, duplication, tab movement and `AutoWinClose` still operate on the tab,
-not on a view of it.
+**The two are exclusive, and that is the change from 0.2.x.** Panels were
+previously a view *onto* the tabs: a tiled window had a tab bar as well, and a
+connection past the fourth went on running where nobody could see it and could
+only be reached by evicting a visible one. There were two answers to "where
+are my connections". Now tiles *are* the connections — no hidden session, and
+the tile order is the tab order, so dragging a tab decides which tile a
+connection gets.
 
-**Where it lives.** `shell/src/PanelContainer.{h,cpp}` owns tab order and the
-four visible slots; `MainWindow` continues to route its aliases through the
-active `TerminalPage`. `[Sterna] PanelLayout=single|two|four`
-(`window.panel_layout`) remembers only the layout. A restored multi-panel
-window starts with its one ordinary terminal plus connection buttons in the
-empty slots; it does not invent or restore sessions.
+**Each terminal carries its own status line**, along its own bottom edge: what
+the connection is called, whether it is up, and its `REC` counter while it is
+logging, plus anything that terminal has to say — a transfer's result, a
+macro's or a plugin's complaint. The window has no status bar of its own.
+With one terminal it sits where a status bar would, so nothing looks different;
+with several it is the only arrangement that can say which session a fact is
+about. It is also the active-tile marker, so a tile has one row of chrome
+rather than a title above and a status below.
 
-**Current exposure.** The implementation remains under test, but its View menu
-is hidden in 0.2.1 while the interaction is refined. This keeps the work
-available without presenting the unfinished layout controls in the ordinary UI.
+**What is unchanged.** A tile still owns exactly one independent
+`TerminalPage` and therefore one session, viewport, printer, macro runner,
+plugin VM and transfer. Closing, duplication, tab movement and `AutoWinClose`
+still operate on the connection, not on a view of it.
+
+**Where it lives.** `shell/src/PanelContainer.{h,cpp}` owns the order and the
+grid; `shell/src/PageStatusBar.{h,cpp}` is the strip, owned by its
+`TerminalPage`; `MainWindow` continues to route its aliases through the active
+page. `[Sterna] PanelLayout=single|tiled` (`window.panel_layout`) remembers
+only the mode. **A 0.2.x file saying `two` or `four` opens tiled** and is
+rewritten as `tiled` the first time the layout changes; `[Sterna]` is a section
+nothing upstream reads, so no compatibility promise is affected. A restored
+tiled window starts with its one ordinary terminal; it does not invent or
+restore sessions.
 
 ---
 
