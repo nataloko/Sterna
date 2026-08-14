@@ -708,6 +708,43 @@ void test_the_status_strip_belongs_to_its_own_page()
     CHECK(first->status()->currentMessage() == QStringLiteral("first says so"));
 }
 
+/// Logging must be hard to overlook without making the rest of the strip move:
+/// the REC label alternates red and transparent at a fixed width, and stopping
+/// the log stops its timer and restores the ordinary palette.
+void test_the_logging_indicator_blinks_red()
+{
+    PageStatusBar status;
+    auto *log = status.findChild<QLabel *>(QStringLiteral("statusLog"));
+    auto *blink =
+        status.findChild<QTimer *>(QStringLiteral("statusLogBlinkTimer"));
+    CHECK(log != nullptr);
+    CHECK(blink != nullptr);
+    if (!log || !blink) {
+        return;
+    }
+
+    status.setLogging(false, 0);
+    CHECK(log->text().isEmpty());
+    CHECK(log->styleSheet().isEmpty());
+    CHECK(!blink->isActive());
+
+    status.setLogging(true, 44);
+    CHECK(log->text().startsWith(QStringLiteral("REC ")));
+    CHECK(log->styleSheet().contains(QStringLiteral("#d32f2f")));
+    CHECK(blink->isActive());
+
+    QMetaObject::invokeMethod(blink, "timeout", Qt::DirectConnection);
+    CHECK(log->styleSheet().contains(QStringLiteral("transparent")));
+    // Updating the byte count must not restart the blink on every receive.
+    status.setLogging(true, 45);
+    CHECK(log->styleSheet().contains(QStringLiteral("transparent")));
+
+    status.setLogging(false, 45);
+    CHECK(log->text().isEmpty());
+    CHECK(log->styleSheet().isEmpty());
+    CHECK(!blink->isActive());
+}
+
 /// The left side says which host an SSH handshake is waiting for. It has no
 /// timeout because a prompt may take as long as the person answering it; the
 /// terminal edge therefore has to dismiss it explicitly.
@@ -992,6 +1029,7 @@ int main(int argc, char **argv)
     test_the_view_menu_switches_tiling_and_persists_only_that_key();
     test_a_resized_window_survives_a_settings_change();
     test_the_status_strip_belongs_to_its_own_page();
+    test_the_logging_indicator_blinks_red();
     test_an_ssh_attempt_dismisses_its_connecting_message();
     test_the_status_strip_never_widens_its_page();
     test_visible_panels_refit_and_receive_their_own_metrics();

@@ -16,6 +16,9 @@ namespace {
 /// real one — and a label that asks for its own text is a label that widens
 /// the terminal above it.
 constexpr int kConnectionChars = 34;
+/// A full red/blank cycle is long enough to catch the eye without turning the
+/// status strip into a strobe.
+constexpr int kLogBlinkMs = 600;
 } // namespace
 
 PageStatusBar::PageStatusBar(QWidget *parent)
@@ -58,6 +61,14 @@ PageStatusBar::PageStatusBar(QWidget *parent)
     connect(m_messageTimer, &QTimer::timeout, this, [this] {
         m_message.clear();
         showName();
+    });
+
+    m_logBlinkTimer = new QTimer(this);
+    m_logBlinkTimer->setObjectName(QStringLiteral("statusLogBlinkTimer"));
+    m_logBlinkTimer->setInterval(kLogBlinkMs);
+    connect(m_logBlinkTimer, &QTimer::timeout, this, [this] {
+        m_logBlinkOn = !m_logBlinkOn;
+        applyLogAppearance();
     });
 
     setConnection(false, false, QString());
@@ -127,6 +138,17 @@ void PageStatusBar::setLogging(bool logging, quint64 bytes)
     if (text != m_log->text()) {
         m_log->setText(text);
     }
+    if (logging == m_logging) {
+        return;
+    }
+    m_logging = logging;
+    m_logBlinkOn = logging;
+    if (logging) {
+        m_logBlinkTimer->start();
+    } else {
+        m_logBlinkTimer->stop();
+    }
+    applyLogAppearance();
 }
 
 void PageStatusBar::showMessage(const QString &text, int ms)
@@ -208,4 +230,19 @@ void PageStatusBar::applyPalette()
         m_linkDown ? QStringLiteral("QLabel { background-color: #b71c1c; "
                                     "color: white; padding: 1px 6px; }")
                    : QString());
+}
+
+void PageStatusBar::applyLogAppearance()
+{
+    if (!m_logging) {
+        m_log->setStyleSheet(QString());
+        return;
+    }
+    // Bold in both phases so the label never changes width while it blinks.
+    // Transparent rather than hidden for the same reason: the connection chip
+    // and the terminal above it must not shift twice a second.
+    m_log->setStyleSheet(
+        m_logBlinkOn
+            ? QStringLiteral("QLabel { color: #d32f2f; font-weight: bold; }")
+            : QStringLiteral("QLabel { color: transparent; font-weight: bold; }"));
 }

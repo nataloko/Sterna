@@ -195,8 +195,10 @@ logging, plus anything that terminal has to say — a transfer's result, a
 macro's or a plugin's complaint. The window has no status bar of its own.
 With one terminal it sits where a status bar would, so nothing looks different;
 with several it is the only arrangement that can say which session a fact is
-about. It is also the active-tile marker, so a tile has one row of chrome
-rather than a title above and a status below.
+about. The `REC` counter blinks red while its log is open, keeping a recording
+that was left running visible even when no new bytes move its count. It is also
+the active-tile marker, so a tile has one row of chrome rather than a title
+above and a status below.
 
 **What is unchanged.** A tile still owns exactly one independent
 `TerminalPage` and therefore one session, viewport, printer, macro runner,

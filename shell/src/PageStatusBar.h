@@ -39,9 +39,9 @@ public:
     /// The link, in the three states the window used to paint: connected shows
     /// `describe()`, connecting says so, and disconnected is a red chip.
     void setConnection(bool connected, bool connecting, const QString &text);
-    /// `REC <size>`, or nothing when this session is not logging. Driven by
-    /// `Session::damaged` rather than a timer — the count changes exactly when
-    /// bytes arrive, and that is what `damaged` means.
+    /// `REC <size>`, blinking red, or nothing when this session is not
+    /// logging. `Session::damaged` drives the count; a small local timer drives
+    /// only the warning blink.
     void setLogging(bool logging, quint64 bytes);
 
     /// Say something for `ms` milliseconds, over the name. Upstream's
@@ -65,6 +65,7 @@ protected:
 
 private:
     void applyPalette();
+    void applyLogAppearance();
     void showName();
     void elideInto(QLabel *label, const QString &text);
 
@@ -72,9 +73,12 @@ private:
     QLabel *m_log = nullptr;
     QLabel *m_connection = nullptr;
     QTimer *m_messageTimer = nullptr;
+    QTimer *m_logBlinkTimer = nullptr;
     QString m_nameText;
     QString m_connectionText;
     QString m_message;
     bool m_active = false;
     bool m_linkDown = true;
+    bool m_logging = false;
+    bool m_logBlinkOn = false;
 };
