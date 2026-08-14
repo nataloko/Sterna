@@ -44,6 +44,7 @@
 
 pub mod addr;
 pub mod channel;
+pub mod claim;
 pub mod client;
 pub mod dispatch;
 pub mod host;
