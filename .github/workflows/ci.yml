@@ -449,6 +449,98 @@ jobs:
           cargo run --locked
           ./servers.sh stop
 
+  # Build the AppImage's Qt once, here, so that `release.yml` can restore it.
+  #
+  # **A cache belongs to the ref that wrote it, and a run may only restore
+  # from its own ref or from the default branch.** `release.yml` triggers on
+  # `tags: ["v*"]` alone, so each release ran on a fresh `refs/tags/vX.Y.Z`
+  # scope: it missed, spent ~40 minutes building Qt, saved to its own tag
+  # scope, and nothing could ever read that entry again. Three identical
+  # 24 MiB entries under three different tag refs, none of them ever restored
+  # — the cache was write-only and every release paid full price.
+  #
+  # Warming it on main is the fix, because default-branch caches are readable
+  # from every ref including tags. `release.yml` needs no change: its existing
+  # restore step simply starts hitting. This job is a few seconds once the
+  # entry exists, and pays the full build only when the key changes.
+  qt-cache:
+    name: portable Qt — warm the AppImage cache
+    # Main only. A cache saved from a pull request lands in that PR's own
+    # scope and is discarded with it, which is the same dead end by another
+    # route.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    # The build is a one-worker bootstrap and slow by design; see the OOM note
+    # on the parallelism below.
+    timeout-minutes: 120
+    env:
+      # MUST match `release.yml`'s `linux` job — the key does not name the
+      # image, so a drift here would hand the release a Qt built against a
+      # different base. The step below fails the job rather than let that be
+      # silent.
+      MANYLINUX_IMAGE: quay.io/pypa/manylinux_2_28_x86_64@sha256:f854c50adf7b7a325bc4794316f3758d387a41d61f9e2ebca0f26c7dc8f761d4
+      QT_CACHE_KEY: appimage-qt-6.11.1-manylinux-2-28-x86-64-v1
+      QT_CACHE_PATH: packaging/appimage/toolchain/qt-6.11.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Both workflows must pin the same image and key
+        run: |
+          set -euo pipefail
+          for name in "$MANYLINUX_IMAGE" "$QT_CACHE_KEY" "$QT_CACHE_PATH"; do
+            grep -qF "$name" .github/workflows/release.yml || {
+              echo "ci.yml and release.yml disagree about: $name" >&2
+              echo "The cache key does not name the image or the path, so a" >&2
+              echo "drift would silently ship a Qt built somewhere else." >&2
+              exit 1
+            }
+          done
+      - uses: actions/cache/restore@v5
+        id: qt-cache
+        with:
+          path: ${{ env.QT_CACHE_PATH }}
+          key: ${{ env.QT_CACHE_KEY }}
+          # Only the answer is wanted, not 24 MiB of Qt this job never uses.
+          lookup-only: true
+      - name: Make room for the Qt bootstrap
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        # Standard runners expose only 14 GiB. Same reclaim as the release
+        # job, for the same reason.
+        run: |
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL
+          docker image prune --all --force
+          df -h /
+      - name: Start portable build container
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        run: |
+          docker run --detach --name sterna-manylinux \
+            --volume "$GITHUB_WORKSPACE:/repo:rw" \
+            --workdir /repo \
+            --entrypoint /bin/sleep \
+            "$MANYLINUX_IMAGE" infinity
+      - name: Install portable build dependencies
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        run: |
+          docker exec sterna-manylinux bash -lc \
+            './packaging/appimage/install-build-deps.sh'
+      - name: Build portable Qt
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        # One worker. Two consumed 14 of the runner's 15 GiB and the job
+        # vanished with no retained log, which reads as a time limit and is
+        # not one — see AGENTS.md.
+        run: |
+          docker exec sterna-manylinux bash -lc \
+            'export CMAKE_BUILD_PARALLEL_LEVEL=1; ./packaging/appimage/build-qt.sh'
+      - uses: actions/cache/save@v5
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        with:
+          path: ${{ env.QT_CACHE_PATH }}
+          key: ${{ env.QT_CACHE_KEY }}
+
 # The Windows job covers `crates/` only, and the oracle and xfer both need a
 # POSIX toolchain, so neither will ever join it.
 #
