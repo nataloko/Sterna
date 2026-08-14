@@ -154,6 +154,44 @@ fn turning_the_history_off_leaves_the_page_alone() {
     assert_eq!(s.line(before), None, "evicted, not renumbered");
 }
 
+/// `ClearOnResize` must not turn every settings change into a cleared screen.
+///
+/// `Grid::resize` deliberately does *not* return early when nothing moved and
+/// the flag is on — `buffer.c:5028` puts the clear outside the size-changed
+/// `if`, and that is faithful. What stops it firing is the guard upstream has
+/// one level up, in `SetupTerm` (`vtwin.cpp:1396`): the resize is only called
+/// when the configured size actually differs from the live one. Without it,
+/// toggling any unrelated setting scrolled the page into history.
+#[test]
+fn a_settings_change_that_moves_no_size_does_not_clear_on_resize() {
+    let (mut s, _) = session();
+    let mut settings = s.settings().clone();
+    settings.terminal_clear_on_resize = true;
+    s.set_settings(settings);
+
+    s.feed(b"hello\r\n");
+    assert_eq!(row(&s, 0), "hello");
+    assert_eq!(s.scrollback_len(), 0);
+
+    // Something with nothing to do with the terminal's size — the line editor
+    // is what found this, and it is a frontend setting the core only stores.
+    let mut settings = s.settings().clone();
+    settings.terminal_line_edit = !settings.terminal_line_edit;
+    s.set_settings(settings);
+
+    assert_eq!(row(&s, 0), "hello", "the page was scrolled into history");
+    assert_eq!(s.scrollback_len(), 0, "and a blank page put in its place");
+
+    // ...while a change that *does* move the size still clears, which is the
+    // whole point of the setting.
+    let mut settings = s.settings().clone();
+    settings.terminal_rows = 12;
+    s.set_settings(settings);
+    assert_eq!(s.grid().rows(), 12);
+    assert_eq!(row(&s, 0), "");
+    assert!(s.scrollback_len() > 0, "the old page is in the history");
+}
+
 /// A resize moves lines between the page and the history in both directions,
 /// so whatever a scrolled-back view was anchored to has moved.
 #[test]

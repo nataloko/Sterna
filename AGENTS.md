@@ -806,6 +806,13 @@ Scrollback and the wheel:
   (`buffer.c:5028`, outside the size-changed `if`) — including upstream's
   own startup resize, which puts a blank page in history before a byte
   arrives; also why DECCOLM skips its own clear when the flag is on.
+  **So every caller of `Grid::resize` needs upstream's own guard**, which
+  lives one level up in `SetupTerm` (`vtwin.cpp:1396`): resize only when the
+  configured size differs from the live one. `Grid::resize`'s early return
+  cannot stand in for it — that return is conditional on the flag being
+  *off*. `Vt::set_config` missed the guard and every settings change blanked
+  the screen; the symptom was a *frontend* toggle (line edit) clearing the
+  terminal, which points nowhere near the parser.
 - **`AutoScrollOnlyInBottomLine` ships off** — output drags a scrolled-back
   view down by the *minimum* scroll (`buffer.c:3794`, `:3805`, `:3866`).
   And the cursor-following belongs to the feed, not to a settings change —
