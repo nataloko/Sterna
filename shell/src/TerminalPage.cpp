@@ -24,10 +24,13 @@ TerminalPage::TerminalPage(const I18n *i18n, QWidget *macroWindow,
     , m_printer(new Printer(m_session, this))
     , m_view(new TerminalView(m_session, this, i18n))
     , m_scroll(new QScrollBar(Qt::Vertical, this))
+    // Declaration order is what actually decides construction order, so this
+    // sits where the header puts it. The strip points at nothing and nothing
+    // points at it, so its position among the six is free.
+    , m_status(new PageStatusBar(this))
     , m_macro(new Macro(m_session, macroWindow, this, i18n))
     , m_plugins(
           new Plugins(m_session, m_macro, pluginsDirectory, settingsPath, this))
-    , m_status(new PageStatusBar(this))
 {
     m_scroll->setObjectName(QStringLiteral("terminalScrollBar"));
     // A plain QWidget plus a scrollbar rather than a QAbstractScrollArea: the

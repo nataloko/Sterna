@@ -303,7 +303,11 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
     connect(m_panels, &PanelContainer::visiblePagesChanged, this,
             &MainWindow::queueWindowMetrics);
     connect(m_panels, &PanelContainer::emptyConnectionRequested, this,
-            [this](int panel, PanelContainer::ConnectionKind kind) {
+            // The tile's index is not consumed: a new connection appends to tab
+            // order, and in tiled mode that index *is* the spare tile it was
+            // started from. The signal still carries it so a test can say which
+            // tile answered.
+            [this](int, PanelContainer::ConnectionKind kind) {
                 m_requestedNewPage = true;
                 switch (kind) {
                 case PanelContainer::ConnectionKind::Serial:
