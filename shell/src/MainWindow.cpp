@@ -1092,12 +1092,18 @@ void MainWindow::onPageSettingsChanged(TerminalPage *page)
         setPanelLayout(requested, !m_loadingPage);
     }
 
+    bool resizing = false;
     if (page == m_page) {
-        onSettingsChanged();
+        resizing = onSettingsChanged();
     } else {
         page->view()->applySettings();
     }
-    if (isVisible() && m_panels->panelOf(page) >= 0) {
+    // Not when the window has just been asked to change size: the view still
+    // has its old geometry here, so refitting now would put the grid straight
+    // back to the size the settings just moved it off — and take the setting
+    // with it, since `Session::resize` writes `TerminalSize`. The resize event
+    // that answers the request refits at the new size.
+    if (!resizing && isVisible() && m_panels->panelOf(page) >= 0) {
         page->view()->refitToViewport();
     }
     queueWindowMetrics();
@@ -1139,7 +1145,7 @@ void MainWindow::setPanelLayout(PanelLayout layout, bool persist)
     }
 }
 
-void MainWindow::onSettingsChanged()
+bool MainWindow::onSettingsChanged()
 {
     reloadLanguage();
     const QSize oldCell = m_view->sizeForCells(1, 1);
@@ -1210,15 +1216,27 @@ void MainWindow::onSettingsChanged()
     // `TerminalView::sizeHint` instead — which is what makes a configured
     // 132x50 window *open* at 132x50 rather than resize itself in front of the
     // user.
+    //
+    // **The comparison is against the view, not against the grid.** The core
+    // applies a setting before this signal is emitted, so by now the grid is
+    // already the configured size and asking it whether anything moved always
+    // answers no — which left `TerminalSize` in Setup resizing the grid, the
+    // refit above putting it back, and the window never moving at all. What is
+    // still true here is how many cells the view has room for, which is what
+    // `TerminalView::refit` would give the grid.
+    bool resizing = false;
     const int cols = m_session->setting(QStringLiteral("terminal.cols")).toInt();
     const int rows = m_session->setting(QStringLiteral("terminal.rows")).toInt();
+    const QSize cell = m_view->sizeForCells(1, 1);
+    const int haveCols = cell.width() > 0 ? m_view->width() / cell.width() : cols;
+    const int haveRows = cell.height() > 0 ? m_view->height() / cell.height() : rows;
     if (!m_loadingPage && m_panels->count() == 1
         && m_panels->layoutMode() == PanelLayout::Single && isVisible()
         && cols > 0 && rows > 0
-        && (cellSizeChanged || cols != m_session->cols()
-            || rows != m_session->rows())) {
+        && (cellSizeChanged || cols != haveCols || rows != haveRows)) {
         const QSize want = m_view->sizeForCells(cols, rows);
         resize(size() + (want - m_view->size()));
+        resizing = true;
     }
 
     // The title and the title *bar*, which are both `TERATERM.INI` keys and
@@ -1270,6 +1288,7 @@ void MainWindow::onSettingsChanged()
         menuHidden && m_session->setting(QStringLiteral("window.popup_menu_enabled"))
                           == QLatin1String("on"));
     updateStatus();
+    return resizing;
 }
 
 void MainWindow::showPopupMenu(const QPoint &globalPos)

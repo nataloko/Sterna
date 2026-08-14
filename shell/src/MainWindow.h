@@ -227,8 +227,10 @@ private slots:
     /// button when `ConfirmPasteMouseRButton` is on instead of pasting.
     void showPasteMenu(const QPoint &globalPos);
     /// Re-read everything derived from a setting: the painter's colours, and
-    /// the terminal's size.
-    void onSettingsChanged();
+    /// the terminal's size. True when it asked the window to change size, in
+    /// which case the caller must leave the refit to the resize event that
+    /// answers it.
+    bool onSettingsChanged();
     void onTitleChanged(const QString &title);
     /// Put a title in the title bar, applying `TitleFormat` and substituting
     /// this program's name for upstream's `Title=` default.

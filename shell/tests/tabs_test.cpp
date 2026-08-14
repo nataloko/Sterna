@@ -6,6 +6,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QDialog>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QLabel>
 #include <QKeyEvent>
@@ -533,6 +534,76 @@ void test_panel_layout_implementation_remains_without_a_view_menu()
     CHECK(fallbackPanels->layoutMode() == PanelLayout::Single);
 }
 
+/// A window the user has resized keeps that size when a setting is applied.
+///
+/// `onSettingsChanged` resizes the window to `TerminalSize` when it differs
+/// from the live grid, which is what makes a configured 132x50 arrive from the
+/// file. The guard only holds because a resize moves `TerminalSize` with it
+/// upstream (`buffer.c:5022`, transcribed in `Session::resize`) — without that
+/// the setting stays at whatever the file said, and clicking Local echo, Line
+/// edit, or anything in the settings dialog snapped the window back to 80x24.
+void test_a_resized_window_survives_a_settings_change()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("sterna.ini"));
+    QFile file(ini);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[Tera Term]\r\nTerminalSize=80,24\r\n");
+    file.close();
+
+    MainWindow window(ini);
+    window.show();
+    QApplication::processEvents();
+    auto *session = window.session();
+    // Not 80 by assertion: offscreen calls the screen 800x800 and Qt caps a
+    // window's initial size at two thirds of it, so what the window opened at
+    // is the platform's business. What matters is that growing it moves the
+    // terminal, and that the setting goes with it.
+    const int startCols = session->cols();
+
+    auto *view = window.findChild<TerminalView *>();
+    const QSize cell = view->sizeForCells(1, 1);
+    window.resize(window.size() + QSize(cell.width() * 10, cell.height() * 4));
+    QApplication::processEvents();
+    QApplication::processEvents();
+    const QSize resized = window.size();
+    const int cols = session->cols();
+    const int rows = session->rows();
+    CHECK(cols > startCols);
+    // The setting followed the window, so nothing below has a stale size to
+    // snap back to.
+    CHECK(session->setting(QStringLiteral("terminal.cols")).toInt() == cols);
+    CHECK(session->setting(QStringLiteral("terminal.rows")).toInt() == rows);
+
+    for (const QString &name : {QStringLiteral("terminal.local_echo"),
+                                QStringLiteral("terminal.line_edit"),
+                                QStringLiteral("keyboard.disable_app_keypad")}) {
+        QString error;
+        CHECK(session->setSetting(name, QStringLiteral("on"), &error));
+        QApplication::processEvents();
+        QApplication::processEvents();
+        CHECK(window.size() == resized);
+        CHECK(session->cols() == cols);
+        CHECK(session->rows() == rows);
+    }
+
+    // ...while a size that really did change still moves the window, which is
+    // the behaviour the guard exists for. The window resize is a request to the
+    // compositor, so the grid does not reach the new width until the resize
+    // event has come back and the view refitted to it.
+    QString error;
+    CHECK(session->setSetting(QStringLiteral("terminal.cols"),
+                              QString::number(cols + 10), &error));
+    QElapsedTimer clock;
+    clock.start();
+    while (session->cols() != cols + 10 && clock.elapsed() < 2000) {
+        QApplication::processEvents(QEventLoop::AllEvents, 20);
+    }
+    CHECK(session->cols() == cols + 10);
+    CHECK(window.size() != resized);
+}
+
 void test_visible_panels_refit_and_receive_their_own_metrics()
 {
     QTemporaryDir dir;
@@ -721,6 +792,7 @@ int main(int argc, char **argv)
     test_tabs_are_independent_and_actions_follow_the_active_one();
     test_new_tabs_load_the_saved_line_edit_default();
     test_panel_layout_implementation_remains_without_a_view_menu();
+    test_a_resized_window_survives_a_settings_change();
     test_visible_panels_refit_and_receive_their_own_metrics();
     test_empty_panel_dialogs_cancel_or_connect_in_place();
     test_duplicate_reopens_telnet_with_the_live_settings();
