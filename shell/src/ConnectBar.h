@@ -97,11 +97,13 @@ private:
     /// ports, in one line, and the rewrite lost it.
     /// What has a serial port open, when something does.
     ///
-    /// `pid == 0` means free. Deliberately **not** folded into `Entry::text`:
+    /// `held == false` means free. Deliberately **not** folded into
+    /// `Entry::text`:
     /// keeping it a field of its own is what makes `operator==` below
     /// responsible for it, and a row that goes busy then repaints because the
     /// list compared unequal rather than because the words happened to differ.
     struct Busy {
+        bool held = false;
         quint32 pid = 0;
         /// The holder's own name, when it could be read. Empty is a holder
         /// nobody could name, which is what a root-owned process looks like.
@@ -111,7 +113,8 @@ private:
 
         bool operator==(const Busy &other) const
         {
-            return pid == other.pid && program == other.program
+            return held == other.held && pid == other.pid
+                && program == other.program
                 && window == other.window;
         }
     };

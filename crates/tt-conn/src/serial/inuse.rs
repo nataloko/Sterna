@@ -111,6 +111,17 @@ impl DeviceId {
         // `metadata` follows symlinks, which is the point: the picker's
         // `by-path` name has to answer as the node it points at.
         let md = fs::metadata(path).ok()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileTypeExt;
+            // A stale remembered path can now name an ordinary file. Its
+            // `st_rdev` is zero, as it is for almost every descriptor in
+            // `/proc`, so admitting it would report whichever regular file
+            // the sweep encountered first as the holder of this "port".
+            if !md.file_type().is_char_device() {
+                return None;
+            }
+        }
         Some(DeviceId::of_metadata(&md))
     }
 
@@ -445,5 +456,19 @@ mod tests {
         let answer = holders(&["/dev/tt-inuse-nonexistent"]);
         assert_eq!(answer, vec![None]);
         assert_eq!(holders(&[]).len(), 0);
+    }
+
+    /// A stale remembered path may have been replaced by a regular file. Its
+    /// `st_rdev` is zero, which is also what every ordinary descriptor in the
+    /// process walk reports; it is not a serial device and must not match one
+    /// of those descriptors by accident.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_regular_file_is_not_a_port() {
+        let scratch = Scratch::new("regular");
+        scratch.write("not-a-port", "ordinary bytes");
+        let path = scratch.0.join("not-a-port");
+        let _held = fs::File::open(&path).unwrap();
+        assert_eq!(holders(&[path.to_str().unwrap()]), vec![None]);
     }
 }

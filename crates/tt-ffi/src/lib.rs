@@ -4247,10 +4247,14 @@ pub extern "C" fn tt_port_list_free(list: *mut TtPortList) {
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct TtPortHolder {
-    /// The process holding it, or **0 when nothing does**. This, and not
-    /// `program`, is what says the port is held: `/proc/<pid>` can go away
-    /// between finding the descriptor and naming its owner, and a window this
-    /// program published a claim for is named without a pid at all.
+    /// Whether something has the port open.
+    ///
+    /// Kept apart from `pid`: an OFD lock has no owning process, and a window
+    /// this program published a claim for can have a custom, non-numeric name.
+    /// Both are held ports whose pid is unavailable.
+    pub held: bool,
+    /// The process holding it, or 0 when it could not be determined. Consult
+    /// `held`, not this field, to distinguish a free port.
     pub pid: u32,
     /// The program's own name — `minicom`, `sterna` — or null when it could
     /// not be read. Borrowed from the list.
@@ -4268,7 +4272,7 @@ pub struct TtPortHolders {
 }
 
 /// Who has each of `paths` open, in the order given. **Never null**, and
-/// always `count` entries: a path nothing holds answers with `pid == 0`.
+/// always `count` entries: a path nothing holds answers with `held == false`.
 ///
 /// One walk however many paths are asked about, so ask about all of them at
 /// once — and not on the connect path. A picker calls this as its popup opens.
@@ -4345,6 +4349,7 @@ pub extern "C" fn tt_serial_holders(
         .iter()
         .enumerate()
         .map(|(i, holder)| TtPortHolder {
+            held: holder.is_some(),
             pid: holder.as_ref().map_or(0, |h| h.pid),
             program: match holder.as_ref().and_then(|h| h.program.as_deref()) {
                 Some(_) => strings[i].as_ptr(),
@@ -4362,9 +4367,9 @@ pub extern "C" fn tt_serial_holders(
 
 /// Whether two names reach the same device.
 ///
-/// String equality first, because on Windows that is all there is; then the
-/// node itself, since `/dev/ttyUSB0` and `/dev/serial/by-path/…` are two names
-/// for one port and a claim and a picker need not have chosen the same one.
+/// String equality first; then the node itself on Unix, since `/dev/ttyUSB0`
+/// and `/dev/serial/by-path/…` are two names for one port, or Windows' two
+/// accepted spellings of a case-insensitive COM name.
 fn same_device(a: &str, b: &str) -> bool {
     if a == b {
         return true;
@@ -4379,7 +4384,16 @@ fn same_device(a: &str, b: &str) -> bool {
     }
     #[cfg(not(unix))]
     {
-        false
+        // `CreateFileW` accepts both the short `COM3` spelling and its device
+        // namespace form `\\.\COM3`, and Windows device names are
+        // case-insensitive. A typed recent may therefore differ from the
+        // enumerator while naming the same port.
+        fn short_port_name(path: &str) -> &str {
+            path.strip_prefix(r"\\.\")
+                .or_else(|| path.strip_prefix(r"\\?\"))
+                .unwrap_or(path)
+        }
+        short_port_name(a).eq_ignore_ascii_case(short_port_name(b))
     }
 }
 
@@ -4409,7 +4423,8 @@ pub extern "C" fn tt_port_holders_len(list: *const TtPortHolders) -> usize {
 }
 
 /// Borrow one answer. Null when `index` is out of range; an entry with
-/// `pid == 0` means nothing holds that path. Valid until the list is freed.
+/// `held == false` means nothing holds that path. Valid until the list is
+/// freed.
 #[no_mangle]
 pub extern "C" fn tt_port_holders_at(
     list: *const TtPortHolders,

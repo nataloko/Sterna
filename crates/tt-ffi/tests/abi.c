@@ -987,7 +987,7 @@ static void test_serial(void)
     }
 
     /* Who holds them. Never null, one answer per path in the order asked,
-     * and a path nothing holds answers with pid 0. */
+     * and a path nothing holds answers with held false. */
     const char *ask[2] = {"/dev/tt-ffi-does-not-exist", "/dev/null"};
     TtPortHolders *held = tt_serial_holders(ask, 2);
     CHECK(held != NULL);
@@ -995,6 +995,7 @@ static void test_serial(void)
         CHECK(tt_port_holders_len(held) == 2);
         const TtPortHolder *first = tt_port_holders_at(held, 0);
         CHECK(first != NULL);
+        CHECK(!first->held);
         CHECK(first->pid == 0);
         CHECK(first->program == NULL);
         CHECK(!first->window);
@@ -1017,11 +1018,11 @@ static void test_serial(void)
     CHECK(held != NULL);
     if (held) {
         const TtPortHolder *busy = tt_port_holders_at(held, 0);
-        CHECK(busy != NULL && busy->pid != 0);
+        CHECK(busy != NULL && busy->held && busy->pid != 0);
         CHECK(busy->program != NULL && strcmp(busy->program, "minicom") == 0);
         /* A holder with no name is the arm a root-owned process reaches. */
         const TtPortHolder *unnamed = tt_port_holders_at(held, 1);
-        CHECK(unnamed != NULL && unnamed->pid != 0);
+        CHECK(unnamed != NULL && unnamed->held && unnamed->pid != 0);
         CHECK(unnamed->program == NULL);
         tt_port_holders_free(held);
     }
@@ -3159,6 +3160,22 @@ static void test_ctl(void)
     CHECK(path != NULL && strstr(path, "abitest.sock") != NULL);
     CHECK(tt_ctl_poll_fd(c) >= 0);
     CHECK(tt_ctl_wait_handle(c) == NULL);
+
+    /* A custom /D= name has no pid to publish. It is still a held port: the
+     * explicit bit, rather than pid != 0, is what preserves that answer. */
+    const char *claimed[] = {"/dev/tt-ffi-claimed-port"};
+    CHECK(tt_ctl_claim_ports(c, claimed, 1) == TT_OK);
+    TtPortHolders *holders = tt_serial_holders(claimed, 1);
+    CHECK(holders != NULL);
+    if (holders) {
+        const TtPortHolder *holder = tt_port_holders_at(holders, 0);
+        CHECK(holder != NULL);
+        CHECK(holder != NULL && holder->held);
+        CHECK(holder != NULL && holder->pid == 0);
+        CHECK(holder != NULL && holder->window);
+        tt_port_holders_free(holders);
+    }
+    CHECK(tt_ctl_claim_ports(c, NULL, 0) == TT_OK);
 
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     CHECK(fd >= 0);

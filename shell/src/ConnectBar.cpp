@@ -5,6 +5,7 @@
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QEvent>
 #include <QFileInfo>
 #include <QFont>
@@ -19,7 +20,6 @@
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QStandardItemModel>
-#include <QCoreApplication>
 #include <QStringList>
 #include <QToolButton>
 #include <QWidget>
@@ -439,10 +439,11 @@ void ConnectBar::rescanBusy(const QStringList &paths)
     for (int i = 0; i < paths.size(); i++) {
         const TtPortHolder *holder =
             tt_port_holders_at(held, static_cast<size_t>(i));
-        if (!holder || holder->pid == 0) {
+        if (!holder || !holder->held) {
             continue;
         }
         Busy busy;
+        busy.held = true;
         busy.pid = holder->pid;
         busy.program = holder->program ? QString::fromUtf8(holder->program)
                                        : QString();
@@ -460,7 +461,7 @@ void ConnectBar::rescanBusy(const QStringList &paths)
 /// where the truth lives.
 QString ConnectBar::busyLabel(const QString &text, const Busy &busy) const
 {
-    if (busy.pid == 0) {
+    if (!busy.held) {
         return text;
     }
     if (busy.pid == static_cast<quint32>(QCoreApplication::applicationPid())) {
@@ -527,16 +528,19 @@ void ConnectBar::rebuildList(bool rescan)
         m_destination->setItemData(at, entry.payload, RolePayload);
         if (entry.kind == Row::Header) {
             markHeader(m_destination, at);
-        } else if (entry.busy.pid != 0) {
+        } else if (entry.busy.held) {
             markBusy(m_destination, at);
-            m_destination->setItemData(
-                at,
-                entry.busy.program.isEmpty()
-                    ? tr("Something else has this port open")
-                    : tr("%1 (pid %2) has this port open")
+            QString tip;
+            if (entry.busy.program.isEmpty()) {
+                tip = tr("Something else has this port open");
+            } else if (entry.busy.pid == 0) {
+                tip = tr("%1 has this port open").arg(entry.busy.program);
+            } else {
+                tip = tr("%1 (pid %2) has this port open")
                           .arg(entry.busy.program)
-                          .arg(entry.busy.pid),
-                Qt::ToolTipRole);
+                          .arg(entry.busy.pid);
+            }
+            m_destination->setItemData(at, tip, Qt::ToolTipRole);
         }
     }
 

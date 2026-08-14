@@ -1662,10 +1662,16 @@ typedef struct {
  */
 typedef struct {
     /**
-     * The process holding it, or **0 when nothing does**. This, and not
-     * `program`, is what says the port is held: `/proc/<pid>` can go away
-     * between finding the descriptor and naming its owner, and a window this
-     * program published a claim for is named without a pid at all.
+     * Whether something has the port open.
+     *
+     * Kept apart from `pid`: an OFD lock has no owning process, and a window
+     * this program published a claim for can have a custom, non-numeric name.
+     * Both are held ports whose pid is unavailable.
+     */
+    bool held;
+    /**
+     * The process holding it, or 0 when it could not be determined. Consult
+     * `held`, not this field, to distinguish a free port.
      */
     uint32_t pid;
     /**
@@ -4162,7 +4168,7 @@ void tt_port_list_free(TtPortList *list);
 
 /**
  * Who has each of `paths` open, in the order given. **Never null**, and
- * always `count` entries: a path nothing holds answers with `pid == 0`.
+ * always `count` entries: a path nothing holds answers with `held == false`.
  *
  * One walk however many paths are asked about, so ask about all of them at
  * once — and not on the connect path. A picker calls this as its popup opens.
@@ -4184,7 +4190,8 @@ size_t tt_port_holders_len(const TtPortHolders *list);
 
 /**
  * Borrow one answer. Null when `index` is out of range; an entry with
- * `pid == 0` means nothing holds that path. Valid until the list is freed.
+ * `held == false` means nothing holds that path. Valid until the list is
+ * freed.
  */
 const TtPortHolder *tt_port_holders_at(const TtPortHolders *list,
                                        size_t index);

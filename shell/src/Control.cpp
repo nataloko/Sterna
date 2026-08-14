@@ -2,11 +2,12 @@
 
 #include "Control.h"
 
+#include <QVector>
+
 #ifdef Q_OS_WIN
 #include <QWinEventNotifier>
 #else
 #include <QSocketNotifier>
-#include <QVector>
 #endif
 
 #include "MainWindow.h"
