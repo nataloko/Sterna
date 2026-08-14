@@ -1640,15 +1640,14 @@ void TerminalView::keyReleaseEvent(QKeyEvent *event)
 
 // --- mouse -------------------------------------------------------------------
 
-/// Should the right button raise the paste menu rather than paste?
+/// Can the right button's context menu currently offer either paste command?
 ///
 /// `vtwin.cpp:912`, condition for condition. The two clipboard keys are read
-/// together — the menu is a *replacement* for the right button's paste, so a
-/// right button that was not going to paste anyway does not grow a menu — and
-/// the rest is upstream refusing to offer a command that could not run: not
-/// connected, a file transfer holding the line, or nothing on the clipboard
-/// to paste. Upstream's `IsClipboardFormatAvailable` is the same question as
-/// an empty string here, since only text ever reaches this.
+/// together, and the rest is upstream refusing to offer a command that could
+/// not run: not connected, a file transfer holding the line, or nothing on the
+/// clipboard to paste. Copy may still raise the menu when this returns false.
+/// Upstream's `IsClipboardFormatAvailable` is the same question as an empty
+/// string here, since only text ever reaches this.
 bool TerminalView::pasteMenuWanted() const
 {
     return !m_clipboard.pasteRButtonDisabled && m_clipboard.confirmPasteRButton &&
@@ -1688,13 +1687,15 @@ void TerminalView::mousePressEvent(QMouseEvent *event)
     }
 
     // The right button's menu, on the way **down** and after mouse reporting
-    // has declined the click (`vtwin.cpp:912`). A menu is not a paste, so
-    // unlike the paste below it does not wait for the button to come up —
-    // which is also what makes it feel like a context menu rather than a
-    // delayed one.
-    if (event->button() == Qt::RightButton && pasteMenuWanted()) {
+    // has declined the click (`vtwin.cpp:912`). Paste availability is
+    // upstream's condition; a selection is the added Copy route. A menu is
+    // not a paste, so unlike the paste below it does not wait for the button
+    // to come up — which is also what makes it feel like a context menu rather
+    // than a delayed one.
+    const bool pasteEnabled = pasteMenuWanted();
+    if (event->button() == Qt::RightButton && (m_hasSelection || pasteEnabled)) {
         m_pasteMenuPressed = true;
-        emit pasteMenuRequested(event->globalPosition().toPoint());
+        emit pasteMenuRequested(event->globalPosition().toPoint(), pasteEnabled);
         event->accept();
         return;
     }

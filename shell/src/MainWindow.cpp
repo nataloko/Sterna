@@ -541,9 +541,9 @@ void MainWindow::wirePage(TerminalPage *page)
                 showPopupMenu(pos);
             });
     connect(view, &TerminalView::pasteMenuRequested, this,
-            [this, page](const QPoint &pos) {
+            [this, page](const QPoint &pos, bool pasteEnabled) {
                 activatePage(page);
-                showPasteMenu(pos);
+                showPasteMenu(pos, pasteEnabled);
             });
     connect(view, &TerminalView::keyMacroRequested, this,
             [this, page](const QString &path) {
@@ -1335,19 +1335,31 @@ void MainWindow::showPopupMenu(const QPoint &globalPos)
     popup->popup(globalPos);
 }
 
-void MainWindow::showPasteMenu(const QPoint &globalPos)
+void MainWindow::showPasteMenu(const QPoint &globalPos, bool pasteEnabled)
 {
-    // `IDR_PASTEMENU` is two items and nothing else: Paste and Paste<CR>
-    // (`vtwin.cpp:1317`). Upstream copies them out of a loaded resource; here
-    // they are the Edit menu's own actions, for the reason `showPopupMenu`
-    // gives — a second copy drifts, and these already carry their `.lng` text
-    // and their `KEYBOARD.CNF` shortcuts.
+    // Upstream's `IDR_PASTEMENU` supplies Paste and Paste<CR>
+    // (`vtwin.cpp:1317`); Copy is this port's ordinary context-menu addition.
+    // Borrow the Edit menu's actions rather than making copies, so their
+    // translated text and `KEYBOARD.CNF` shortcuts cannot drift apart.
     auto *menu = new QMenu(this);
     menu->setObjectName(QStringLiteral("pasteMenu"));
+    m_copyAction->setEnabled(m_view->hasSelection());
+    m_pasteAction->setEnabled(pasteEnabled);
+    m_pasteCrAction->setEnabled(pasteEnabled);
+    menu->addAction(m_copyAction);
+    menu->addSeparator();
     menu->addAction(m_pasteAction);
     menu->addAction(m_pasteCrAction);
 
     connect(menu, &QMenu::aboutToHide, m_view, &TerminalView::pasteMenuClosed);
+    // These actions also own the keyboard shortcuts and appear in Edit. The
+    // temporary menu's enabled state must not outlive it: a selection or a
+    // connection can become available before either menu is opened again.
+    connect(menu, &QMenu::aboutToHide, this, [this] {
+        m_copyAction->setEnabled(true);
+        m_pasteAction->setEnabled(true);
+        m_pasteCrAction->setEnabled(true);
+    });
     connect(menu, &QMenu::aboutToHide, menu, &QObject::deleteLater);
     menu->popup(globalPos);
 }
@@ -2080,11 +2092,11 @@ void MainWindow::buildMenus()
     QMenu *edit = menuBar()->addMenu(tr("Edit"));
     edit->setObjectName(QStringLiteral("editMenu"));
     languageAction(edit->menuAction(), "MENU_EDIT", tr("Edit"));
-    QAction *copy = edit->addAction(
+    m_copyAction = edit->addAction(
         tr("Copy"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C), this,
         [this] { m_view->copySelection(); });
-    copy->setObjectName(QStringLiteral("copyAction"));
-    languageAction(copy, "MENU_EDIT_COPY", tr("Copy"));
+    m_copyAction->setObjectName(QStringLiteral("copyAction"));
+    languageAction(m_copyAction, "MENU_EDIT_COPY", tr("Copy"));
     m_pasteAction = edit->addAction(
         tr("Paste"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V), this,
         [this] { m_view->pasteClipboard(); });

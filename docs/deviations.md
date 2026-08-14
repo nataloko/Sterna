@@ -25,7 +25,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 8 | Editable lines for every connection type | Telnet LINEMODE negotiation only | 0.2.0 |
 | 9 | Receive CR defaults to Auto | A bare CR is the only default line ending | 0.2.1 |
 | 10 | A terminal-only dark mode | Colours come only from `TERATERM.INI` and the host | 0.2.1 |
-| 11 | The right button raises Tera Term's own paste menu | The same menu, behind a key that ships off, so the right button pastes at once | 0.2.4 |
+| 11 | The right button raises a Copy/Paste context menu | Tera Term's two-item paste menu, behind a key that ships off, so the right button pastes at once | 0.2.4 |
 | 12 | Settings-dialog changes can be saved automatically | Only Setup > Save setup persists them | 0.2.5 |
 | 13 | The terminal background is a different shade while nothing is connected | The background is what the file and the host say, always | 0.2.6 |
 | 14 | A bare host name means SSH | It means telnet | 0.2.0 |
@@ -461,10 +461,12 @@ right-aligned moon/sun action; `MainWindow` applies it to every tab and
 remembers the one window-wide preference. No `QApplication` or widget palette
 is changed.
 
-## 11. The right button raises the paste menu
+## 11. The right button raises a Copy/Paste menu
 
-A right-click over the terminal opens upstream's own two-item menu — Paste and
-Paste&lt;CR&gt; — instead of putting the clipboard on the wire immediately.
+A right-click over the terminal opens Copy followed by upstream's Paste and
+Paste&lt;CR&gt; commands instead of putting the clipboard on the wire immediately.
+Copy is greyed out when there is no selection; both paste commands are greyed
+out when there is nothing they can send.
 
 **Why.** The menu is Tera Term's, and so is the mechanism: `IDR_PASTEMENU`
 (`vtwin.cpp:912`, `:1317`), behind `ConfirmPasteMouseRButton`. Only the shipped
@@ -478,13 +480,19 @@ This is the **only** setting in `schema/settings.txt` whose default this port
 moves for a reason other than hardware — the baud rate above is the other, and
 that one is about equipment rather than about a gesture.
 
-**What is unchanged.** Everything the key means. `ConfirmPasteMouseRButton=off`
-gives upstream's straight-to-the-wire right button back, `=on` is what both
-programs do with the menu, and `DisablePasteMouseRButton=on` still takes the
-button out of the clipboard's business altogether — the menu is a replacement
-for that paste, so a right button that was not going to paste does not grow
-one. The menu's conditions are upstream's, condition for condition: connected,
-no file transfer holding the line, and something on the clipboard.
+**What is unchanged.** With no selection, `ConfirmPasteMouseRButton=off` gives
+upstream's straight-to-the-wire right button back, and
+`DisablePasteMouseRButton=on` takes the button out of the clipboard's business.
+The paste commands use upstream's availability conditions, condition for
+condition: confirmation-menu mode is on, the session is connected, no file
+transfer holds the line, and the clipboard contains text.
+
+**What Copy adds.** A standing selection can raise the menu independently of
+those paste conditions, including on a disconnected session or with an empty
+clipboard; the paste pair is disabled there. Conversely, when paste makes the
+menu available without a selection, Copy remains present but disabled. The
+menu borrows Edit's real actions rather than duplicating their translated text
+or shortcuts, and restores their ordinary enabled state as soon as it closes.
 
 Paste&lt;CR&gt; itself is upstream's `ID_EDIT_PASTECR` and is not a deviation —
 it is also in the Edit menu, and `KEYBOARD.CNF`'s `EditPasteCR` already named

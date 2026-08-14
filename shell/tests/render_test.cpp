@@ -2820,10 +2820,10 @@ void test_the_hidden_menu_is_the_ordinary_menu_as_a_popup()
     }
 }
 
-/// The right button raises upstream's `IDR_PASTEMENU` rather than pasting —
-/// two items, Paste and Paste<CR> (`vtwin.cpp:912`, `:1317`). This port ships
-/// `ConfirmPasteMouseRButton` on where upstream ships it off, which is
-/// deviation 11; everything else here is upstream's condition.
+/// The right button adds Copy to upstream's Paste/Paste<CR> menu. Copy follows
+/// the selection, while the paste pair follows upstream's availability rules.
+/// This port ships `ConfirmPasteMouseRButton` on where upstream ships it off,
+/// which is deviation 11; everything else here is upstream's condition.
 void test_the_right_button_offers_a_paste_menu()
 {
     QTemporaryDir dir;
@@ -2893,16 +2893,21 @@ void test_the_right_button_offers_a_paste_menu()
     QMenu *menu = rightPress();
     CHECK(menu != nullptr);
     if (menu) {
-        // The Edit menu's own two actions, not copies of them — the same
+        // The Edit menu's own actions, not copies of them — the same
         // argument `showPopupMenu` makes, and what keeps the `.lng` text and
         // the `KEYBOARD.CNF` shortcuts attached.
-        CHECK(menu->actions().size() == 2);
+        CHECK(menu->actions().size() == 4);
+        auto *copy = window.findChild<QAction *>(QStringLiteral("copyAction"));
         auto *paste = window.findChild<QAction *>(QStringLiteral("pasteAction"));
         auto *pasteCr =
             window.findChild<QAction *>(QStringLiteral("pasteCrAction"));
-        CHECK(paste != nullptr && pasteCr != nullptr);
+        CHECK(copy != nullptr && paste != nullptr && pasteCr != nullptr);
+        CHECK(menu->actions().contains(copy));
         CHECK(menu->actions().contains(paste));
         CHECK(menu->actions().contains(pasteCr));
+        CHECK(copy && !copy->isEnabled());
+        CHECK(paste && paste->isEnabled());
+        CHECK(pasteCr && pasteCr->isEnabled());
         closeMenu(menu);
 
         // Paste puts the clipboard on the wire and nothing else. The word has
@@ -2931,9 +2936,53 @@ void test_the_right_button_offers_a_paste_menu()
         }
     }
 
-    // `DisablePasteMouseRButton` takes the button out of the clipboard's
-    // business altogether: the menu is a replacement for that paste, so a
-    // right button which was not going to paste does not grow one.
+    // A selection raises the menu even with nothing to paste. Copy is live,
+    // while Paste and Paste<CR> are greyed out rather than silently doing
+    // nothing. The temporary state does not disable their Edit shortcuts once
+    // the menu closes.
+    window.session()->feed(QByteArray("\r\ncopy me"));
+    qApp->processEvents();
+    const int row = window.session()->cursor().y;
+    const int cw = view->theme().cellWidth();
+    const int ch = view->theme().cellHeight();
+    const auto left = [&](QEvent::Type type, qreal x) {
+        const QPointF point(x, (row + 0.5) * ch);
+        const Qt::MouseButtons held =
+            type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton;
+        QMouseEvent event(type, point, view->mapToGlobal(point), Qt::LeftButton,
+                          held, Qt::NoModifier);
+        QCoreApplication::sendEvent(view, &event);
+    };
+    left(QEvent::MouseButtonPress, 0);
+    left(QEvent::MouseMove, 6.7 * cw);
+    left(QEvent::MouseButtonRelease, 6.7 * cw);
+    QApplication::clipboard()->clear(QClipboard::Clipboard);
+    menu = rightPress();
+    CHECK(menu != nullptr);
+    if (menu) {
+        auto *copy = window.findChild<QAction *>(QStringLiteral("copyAction"));
+        auto *paste = window.findChild<QAction *>(QStringLiteral("pasteAction"));
+        auto *pasteCr =
+            window.findChild<QAction *>(QStringLiteral("pasteCrAction"));
+        CHECK(copy && copy->isEnabled());
+        CHECK(paste && !paste->isEnabled());
+        CHECK(pasteCr && !pasteCr->isEnabled());
+        if (copy) {
+            copy->trigger();
+            CHECK(QApplication::clipboard()->text(QClipboard::Clipboard)
+                  == QStringLiteral("copy me"));
+        }
+        closeMenu(menu);
+        CHECK(copy && copy->isEnabled());
+        CHECK(paste && paste->isEnabled());
+        CHECK(pasteCr && pasteCr->isEnabled());
+    }
+    left(QEvent::MouseButtonPress, 0);
+    left(QEvent::MouseButtonRelease, 0);
+
+    // With no selection, `DisablePasteMouseRButton` takes the button out of
+    // the clipboard's business altogether. A selection would still provide
+    // the independent Copy route tested above.
     CHECK(window.session()->setSetting(
         QStringLiteral("clipboard.paste_rbutton_disabled"),
         QStringLiteral("on"), &error));
@@ -2944,15 +2993,16 @@ void test_the_right_button_offers_a_paste_menu()
         QStringLiteral("off"), &error));
     view->applySettings();
 
-    // An empty clipboard is upstream's `IsClipboardFormatAvailable` failing:
-    // no menu, and no paste on the way up either.
+    // With no selection, an empty clipboard is upstream's
+    // `IsClipboardFormatAvailable` failing: no menu, and no paste on the way
+    // up either.
     QApplication::clipboard()->clear(QClipboard::Clipboard);
     CHECK(rightPress() == nullptr);
     QApplication::clipboard()->setText(QStringLiteral("show version"),
                                        QClipboard::Clipboard);
 
-    // Off is upstream's shipped value and the way back to a right button that
-    // pastes the instant it is pressed.
+    // With no selection, off is upstream's shipped value and the way back to
+    // a right button that pastes the instant it is pressed.
     CHECK(window.session()->setSetting(
         QStringLiteral("clipboard.confirm_paste_rbutton"), QStringLiteral("off"),
         &error));

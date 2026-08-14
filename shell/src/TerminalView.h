@@ -156,9 +156,10 @@ signals:
     /// Ctrl+left-click while the ordinary menu bar is hidden. The menu itself
     /// belongs to `MainWindow`; the view only owns the mouse gesture.
     void popupMenuRequested(const QPoint &globalPos);
-    /// The right button, with `ConfirmPasteMouseRButton` on — upstream's
-    /// `IDR_PASTEMENU`. Same division as above: the window owns the menu.
-    void pasteMenuRequested(const QPoint &globalPos);
+    /// The right button's Copy/Paste menu. `pasteEnabled` distinguishes a
+    /// menu raised for an existing selection from upstream's paste-menu case.
+    /// Same division as above: the window owns the menu.
+    void pasteMenuRequested(const QPoint &globalPos, bool pasteEnabled);
     /// A type-2 user key. The window owns the macro runner.
     void keyMacroRequested(const QString &path);
     /// A type-3 user key. Values are upstream's menu command ids.
