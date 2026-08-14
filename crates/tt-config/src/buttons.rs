@@ -14,12 +14,14 @@
 //! Button1Value=show version$0D
 //! Button1Shortcut=Ctrl+Alt+1
 //! Button1Confirm=off
+//! Button1Repeat=1
+//! Button1IntervalMs=1000
 //! ```
 //!
-//! Five keys per button rather than one comma-separated line, because a label
-//! and a command both contain commas and the alternative is an escape scheme
-//! nobody can hand-edit. These are meant to be edited by hand: the dialog is
-//! the convenience, not the format.
+//! A key per field rather than one comma-separated line, because a label and a
+//! command both contain commas and the alternative is an escape scheme nobody
+//! can hand-edit. These are meant to be edited by hand: the dialog is the
+//! convenience, not the format.
 //!
 //! `Button1..Button99` are scanned the way `[User keys]` scans `User1..User99`
 //! — a gap is skipped, and the order buttons appear in is index order.
@@ -38,8 +40,37 @@ pub const SECTION: &str = "Sterna Buttons";
 /// How many are looked for, matching `[User keys]`' own ceiling.
 pub const MAX: usize = 99;
 
+/// [`Button::repeat`] for a run with no end — until it is stopped, or until
+/// the link it is sending down goes away.
+///
+/// A sentinel rather than `0`, because a zeroed C `TtQuickButton` is how a
+/// frontend says "none" for every other optional field, and a struct that
+/// means *send this forever* when it is left blank is the wrong direction for
+/// a mistake to point. The file spells it `Repeat=forever`.
+pub const REPEAT_FOREVER: u32 = u32::MAX;
+
+/// The most sends one press may be asked for. Four digits is a long afternoon
+/// at any sane interval, and past it [`REPEAT_FOREVER`] is what was meant.
+pub const MAX_REPEAT: u32 = 9999;
+
+/// The floor on [`Button::interval_ms`]. Ten a second is already faster than
+/// anything on the other end can answer, and the point of the floor is that a
+/// mistyped interval cannot turn a button into a flood.
+pub const MIN_INTERVAL_MS: u32 = 100;
+
+/// ...and the ceiling: an hour between sends.
+pub const MAX_INTERVAL_MS: u32 = 60 * 60 * 1000;
+
+/// What a repeating button waits when the file does not say.
+pub const DEFAULT_INTERVAL_MS: u32 = 1000;
+
 /// One button.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+///
+/// [`Button::default`] is written out rather than derived, because a derived
+/// one would have `repeat: 0` — a button that sends nothing, or under a
+/// different reading one that never stops. One is the count that means "press
+/// it, it happens once", and that is the button everybody has.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Button {
     /// What is written on it. Plain text: no `$HH` decoding, because a label
     /// needs no control characters and a `$` in one should be a `$`.
@@ -59,6 +90,31 @@ pub struct Button {
     /// Whether to ask before running it. For the `reload` button sitting next
     /// to the `show version` one.
     pub confirm: bool,
+    /// How many times one press sends it: `1` is once, which is every button
+    /// that has never heard of this field, and [`REPEAT_FOREVER`] is a run
+    /// with no end. Bounded by [`MAX_REPEAT`].
+    ///
+    /// The *clock* is not here. This crate reads a file; a repeat needs a
+    /// timer and a live link, so the frontend owns the run and this is only
+    /// what it was asked for — the same split as the bell governor.
+    pub repeat: u32,
+    /// Milliseconds between the starts of two sends, when `repeat` is not 1.
+    /// Bounded by [`MIN_INTERVAL_MS`] and [`MAX_INTERVAL_MS`].
+    pub interval_ms: u32,
+}
+
+impl Default for Button {
+    fn default() -> Button {
+        Button {
+            label: String::new(),
+            kind: UserKeyType::default(),
+            value: String::new(),
+            shortcut: String::new(),
+            confirm: false,
+            repeat: 1,
+            interval_ms: DEFAULT_INTERVAL_MS,
+        }
+    }
 }
 
 impl Button {
@@ -96,6 +152,33 @@ impl Button {
     /// dialog's "Send Enter after" box is a view of.
     pub fn sends_enter(&self) -> bool {
         matches!(self.kind, UserKeyType::Text | UserKeyType::Binary) && self.text().ends_with('\r')
+    }
+
+    /// Whether one press sends more than once.
+    pub fn repeats(&self) -> bool {
+        self.repeat != 1
+    }
+
+    /// Whether pressing it starts something only a person can stop.
+    pub fn repeats_forever(&self) -> bool {
+        self.repeat == REPEAT_FOREVER
+    }
+
+    /// Put `repeat` and `interval_ms` inside their bounds.
+    ///
+    /// Called wherever a button arrives from outside this crate — the file
+    /// reader and the C ABI both — so that one place decides what an out-of-
+    /// range number means and nothing downstream has to defend itself against
+    /// a zero interval.
+    pub fn normalize(&mut self) {
+        if self.repeat != REPEAT_FOREVER {
+            // Zero is the one value with two readings, and neither is what a
+            // button is for: it is either "send nothing" or, to somebody who
+            // has met a different program, "send forever". Take it as the
+            // file having said nothing.
+            self.repeat = self.repeat.clamp(1, MAX_REPEAT);
+        }
+        self.interval_ms = self.interval_ms.clamp(MIN_INTERVAL_MS, MAX_INTERVAL_MS);
     }
 }
 
@@ -147,6 +230,30 @@ pub fn parse_kind(value: &str) -> Option<UserKeyType> {
     None
 }
 
+/// Parse a `Repeat` value.
+///
+/// `forever` is the spelling, `0` is accepted for it because that is what
+/// somebody will try first, and anything unreadable is one send — the safe
+/// direction, since the alternative is a typo that starts a run.
+pub fn parse_repeat(value: Option<&str>) -> u32 {
+    let Some(value) = value.map(str::trim) else {
+        return 1;
+    };
+    if value.eq_ignore_ascii_case("forever") || value == "0" {
+        return REPEAT_FOREVER;
+    }
+    value.parse::<u32>().unwrap_or(1).clamp(1, MAX_REPEAT)
+}
+
+/// The file's spelling of a repeat count.
+fn repeat_name(repeat: u32) -> String {
+    if repeat == REPEAT_FOREVER {
+        "forever".to_string()
+    } else {
+        repeat.to_string()
+    }
+}
+
 fn key(index: usize, field: &str) -> String {
     format!("Button{index}{field}")
 }
@@ -178,6 +285,12 @@ pub fn from_ini(ini: &Ini) -> Vec<Button> {
             // literal `on` arms the confirmation. The safe direction: a
             // typo leaves a button that runs, not one that cannot.
             confirm: on_off(ini.get(SECTION, &key(i, "Confirm")), false),
+            repeat: parse_repeat(ini.get(SECTION, &key(i, "Repeat"))),
+            interval_ms: ini
+                .get(SECTION, &key(i, "IntervalMs"))
+                .and_then(|v| v.trim().parse::<u32>().ok())
+                .unwrap_or(DEFAULT_INTERVAL_MS)
+                .clamp(MIN_INTERVAL_MS, MAX_INTERVAL_MS),
         });
     }
     out
@@ -189,7 +302,15 @@ pub fn from_ini(ini: &Ini) -> Vec<Button> {
 /// its keys rather than leaving a shorter list in front of an orphan.
 pub fn write_into(ini: &mut Ini, buttons: &[Button]) {
     for i in 1..=MAX {
-        for field in ["Label", "Kind", "Value", "Shortcut", "Confirm"] {
+        for field in [
+            "Label",
+            "Kind",
+            "Value",
+            "Shortcut",
+            "Confirm",
+            "Repeat",
+            "IntervalMs",
+        ] {
             ini.remove(SECTION, &key(i, field));
         }
     }
@@ -203,6 +324,17 @@ pub fn write_into(ini: &mut Ini, buttons: &[Button]) {
         }
         if button.confirm {
             ini.set(SECTION, &key(i, "Confirm"), "on");
+        }
+        // The pair travels together: an interval with no repeat behind it is
+        // a line that reads as though the button waits a second before doing
+        // anything, and a repeat with no interval hides the cadence.
+        if button.repeats() {
+            ini.set(SECTION, &key(i, "Repeat"), &repeat_name(button.repeat));
+            ini.set(
+                SECTION,
+                &key(i, "IntervalMs"),
+                &button.interval_ms.to_string(),
+            );
         }
     }
 }
@@ -272,6 +404,77 @@ mod tests {
     }
 
     #[test]
+    fn a_button_sends_once_unless_the_file_says_otherwise() {
+        let b = parse("[Sterna Buttons]\nButton1Value=uptime$0D\n");
+        assert_eq!(b[0].repeat, 1);
+        assert!(!b[0].repeats());
+        assert_eq!(b[0].interval_ms, DEFAULT_INTERVAL_MS);
+    }
+
+    #[test]
+    fn repeat_reads_a_count_a_word_and_nothing_else() {
+        let cases = [
+            ("10", 10),
+            (" 3 ", 3),
+            ("forever", REPEAT_FOREVER),
+            ("FOREVER", REPEAT_FOREVER),
+            // The count somebody tries before finding the word.
+            ("0", REPEAT_FOREVER),
+            // Past the ceiling is the ceiling, and anything unreadable is one
+            // send rather than a run nobody asked for.
+            ("100000", MAX_REPEAT),
+            ("-1", 1),
+            ("lots", 1),
+            ("", 1),
+        ];
+        for (value, want) in cases {
+            let b = parse(&format!(
+                "[Sterna Buttons]\nButton1Value=x\nButton1Repeat={value}\n"
+            ));
+            assert_eq!(b[0].repeat, want, "Repeat={value}");
+        }
+    }
+
+    #[test]
+    fn the_interval_has_a_floor_so_a_typo_cannot_flood() {
+        for (value, want) in [
+            ("2500", 2500),
+            ("0", MIN_INTERVAL_MS),
+            ("1", MIN_INTERVAL_MS),
+            ("999999999", MAX_INTERVAL_MS),
+            ("soon", DEFAULT_INTERVAL_MS),
+        ] {
+            let b = parse(&format!(
+                "[Sterna Buttons]\nButton1Value=x\nButton1Repeat=5\nButton1IntervalMs={value}\n"
+            ));
+            assert_eq!(b[0].interval_ms, want, "IntervalMs={value}");
+        }
+    }
+
+    #[test]
+    fn normalize_agrees_with_the_reader() {
+        // The C ABI hands buttons in without going through the file, so the
+        // two ways in have to land on the same numbers.
+        let mut b = Button {
+            repeat: 0,
+            interval_ms: 0,
+            ..Button::default()
+        };
+        b.normalize();
+        assert_eq!(b.repeat, 1);
+        assert_eq!(b.interval_ms, MIN_INTERVAL_MS);
+
+        let mut forever = Button {
+            repeat: REPEAT_FOREVER,
+            interval_ms: MAX_INTERVAL_MS * 2,
+            ..Button::default()
+        };
+        forever.normalize();
+        assert!(forever.repeats_forever());
+        assert_eq!(forever.interval_ms, MAX_INTERVAL_MS);
+    }
+
+    #[test]
     fn a_gap_is_skipped_and_the_order_is_the_index() {
         let b = parse(
             "[Sterna Buttons]\nButton3Label=third\nButton3Value=c\n\
@@ -335,21 +538,28 @@ mod tests {
                 kind: UserKeyType::Text,
                 value: encode(UserKeyType::Text, "show version\r"),
                 shortcut: "Ctrl+Alt+1".into(),
-                confirm: false,
+                ..Button::default()
             },
             Button {
                 label: "Reload".into(),
                 kind: UserKeyType::Text,
                 value: encode(UserKeyType::Text, "reload\r"),
-                shortcut: String::new(),
                 confirm: true,
+                ..Button::default()
             },
             Button {
                 label: "Break".into(),
                 kind: UserKeyType::Command,
                 value: "50430".into(),
-                shortcut: String::new(),
-                confirm: false,
+                ..Button::default()
+            },
+            Button {
+                label: "Poll".into(),
+                kind: UserKeyType::Text,
+                value: encode(UserKeyType::Text, "show clock\r"),
+                repeat: REPEAT_FOREVER,
+                interval_ms: 5000,
+                ..Button::default()
             },
         ];
         let mut ini = Ini::new();
@@ -359,6 +569,11 @@ mod tests {
         let text = String::from_utf8(ini.to_bytes()).unwrap();
         assert!(text.contains("Button1Value=show version$0D"), "{text}");
         assert!(text.contains("Button3Kind=command"), "{text}");
+        assert!(text.contains("Button4Repeat=forever"), "{text}");
+        assert!(text.contains("Button4IntervalMs=5000"), "{text}");
+        // A button that sends once says nothing about repeating at all.
+        assert!(!text.contains("Button1Repeat"), "{text}");
+        assert!(!text.contains("Button1IntervalMs"), "{text}");
     }
 
     #[test]

@@ -1333,6 +1333,7 @@ static void test_quick_buttons(void)
               "[Sterna Buttons]\r\nButton1Label=Show version\r\n"
               "Button1Kind=text\r\nButton1Value=show version$0D\r\n"
               "Button1Shortcut=Ctrl+Alt+1\r\n"
+              "Button1Repeat=forever\r\nButton1IntervalMs=5000\r\n"
               "Button2Label=Reload\r\nButton2Value=reload$0D\r\n"
               "Button2Confirm=on\r\n",
               f);
@@ -1353,10 +1354,17 @@ static void test_quick_buttons(void)
     CHECK(strcmp(b->text, "show version\r") == 0);
     CHECK(strcmp(b->shortcut, "Ctrl+Alt+1") == 0);
     CHECK(!b->confirm);
+    /* The repeat is what was asked for, not a schedule: the clock is the
+     * frontend's and nothing below this line runs one. */
+    CHECK(b->repeat == TT_QUICK_BUTTON_REPEAT_FOREVER);
+    CHECK(b->interval_ms == 5000);
 
     b = tt_quick_buttons_at(list, 1);
     CHECK(b != NULL && b->confirm);
     CHECK(strcmp(b->shortcut, "") == 0);
+    /* A button that says nothing about repeating sends once. */
+    CHECK(b->repeat == 1);
+    CHECK(b->interval_ms == 1000);
     CHECK(tt_quick_buttons_at(list, 2) == NULL);
 
     /* Running one puts what it says on the wire. Nothing is connected, so
@@ -1373,6 +1381,10 @@ static void test_quick_buttons(void)
     made.text = "50430";
     CHECK_OK(tt_quick_buttons_set(list, 2, &made));
     CHECK(tt_quick_buttons_len(list) == 3);
+    /* The zeroed struct: a caller that has never heard of the repeat gets a
+     * button that sends once, not one that never stops. */
+    CHECK(tt_quick_buttons_at(list, 2)->repeat == 1);
+    CHECK(tt_quick_buttons_at(list, 2)->interval_ms == 1000);
     CHECK(tt_quick_buttons_set(list, 9, &made) == TT_ERR_INVALID);
     made.kind = 99;
     CHECK(tt_quick_buttons_set(list, 2, &made) == TT_ERR_INVALID);
@@ -1387,10 +1399,16 @@ static void test_quick_buttons(void)
     multi.label = "Configure";
     multi.kind = TT_QUICK_BUTTON_TEXT;
     multi.text = "conf t\rinterface eth0\r";
+    /* ...and an interval below the floor comes back at the floor, the same
+     * clamp the file reader applies. */
+    multi.repeat = 4;
+    multi.interval_ms = 1;
     CHECK_OK(tt_quick_buttons_set(list, 3, &multi));
     CHECK(strcmp(tt_quick_buttons_at(list, 3)->value,
                  "conf t$0Dinterface eth0$0D")
           == 0);
+    CHECK(tt_quick_buttons_at(list, 3)->repeat == 4);
+    CHECK(tt_quick_buttons_at(list, 3)->interval_ms == 100);
 
     CHECK_OK(tt_quick_buttons_move(list, 3, 0));
     CHECK(strcmp(tt_quick_buttons_at(list, 0)->label, "Configure") == 0);
@@ -1404,6 +1422,11 @@ static void test_quick_buttons(void)
     CHECK(read_file(path, buf, sizeof buf) > 0);
     CHECK(strstr(buf, "Button3Kind=command") != NULL);
     CHECK(strstr(buf, "Button3Value=50430") != NULL);
+    /* A run with no end is a word in the file, and a button that sends once
+     * says nothing at all. */
+    CHECK(strstr(buf, "Button1Repeat=forever") != NULL);
+    CHECK(strstr(buf, "Button1IntervalMs=5000") != NULL);
+    CHECK(strstr(buf, "Button3Repeat") == NULL);
     /* Everything that is not ours is where it was. */
     CHECK(strstr(buf, "; a comment") != NULL);
     CHECK(strstr(buf, "BaudRate=9600") != NULL);
@@ -1411,6 +1434,9 @@ static void test_quick_buttons(void)
     TtQuickButtons *again = tt_quick_buttons_load(path);
     CHECK(again != NULL && tt_quick_buttons_len(again) == 3);
     CHECK(strcmp(tt_quick_buttons_at(again, 2)->label, "Break") == 0);
+    CHECK(tt_quick_buttons_at(again, 0)->repeat
+          == TT_QUICK_BUTTON_REPEAT_FOREVER);
+    CHECK(tt_quick_buttons_at(again, 0)->interval_ms == 5000);
     tt_quick_buttons_free(again);
 
     /* A file that is not there has no buttons, which is a first run. */

@@ -2896,6 +2896,17 @@ pub const TT_QUICK_BUTTON_MACRO: TtQuickButtonKind = 2;
 /// Invoke the menu command whose decimal id is the value.
 pub const TT_QUICK_BUTTON_COMMAND: TtQuickButtonKind = 3;
 
+/// [`TtQuickButton::repeat`] for a run with no end.
+///
+/// Not zero, so that a frontend zeroing the struct — which is how it says
+/// "none" for the label and the shortcut — gets a button that sends once
+/// rather than one that never stops.
+pub const TT_QUICK_BUTTON_REPEAT_FOREVER: u32 = 0xffff_ffff;
+// Spelled out because cbindgen reads this file and cannot follow a path into
+// another crate; asserted because two spellings of one number is how they
+// drift.
+const _: () = assert!(TT_QUICK_BUTTON_REPEAT_FOREVER == tt_session::buttons::REPEAT_FOREVER);
+
 /// One button, borrowed from its list.
 ///
 /// `value` and `text` are the same string in two forms: stored, still
@@ -2919,6 +2930,17 @@ pub struct TtQuickButton {
     pub shortcut: *const c_char,
     /// Whether to ask before running it.
     pub confirm: bool,
+    /// How many times one press sends it. `1` is once,
+    /// [`TT_QUICK_BUTTON_REPEAT_FOREVER`] is a run with no end, and `0` is
+    /// read as one — a zeroed struct is a plain button.
+    ///
+    /// The clock is the frontend's. This says what was asked for; nothing
+    /// under the ABI schedules anything, because a repeat needs a timer and
+    /// the core is a function of its bytes.
+    pub repeat: u32,
+    /// Milliseconds between the starts of two sends when `repeat` is not 1.
+    /// Zero is read as the default rather than as no wait at all.
+    pub interval_ms: u32,
 }
 
 /// An owned list of quick buttons. Free it with [`tt_quick_buttons_free`].
@@ -2955,6 +2977,8 @@ impl TtQuickButtons {
                     text: at(2),
                     shortcut: at(3),
                     confirm: b.confirm,
+                    repeat: b.repeat,
+                    interval_ms: b.interval_ms,
                 }
             })
             .collect();
@@ -3081,13 +3105,22 @@ pub extern "C" fn tt_quick_buttons_set(
     {
         return fail(TT_ERR_INVALID, "button index out of range");
     }
-    let made = tt_session::Button {
+    let mut made = tt_session::Button {
         label: label.to_string(),
         kind,
         value: tt_session::buttons::encode(kind, text),
         shortcut: shortcut.trim().to_string(),
         confirm: b.confirm,
+        repeat: b.repeat,
+        interval_ms: if b.interval_ms == 0 {
+            tt_session::buttons::DEFAULT_INTERVAL_MS
+        } else {
+            b.interval_ms
+        },
     };
+    // The same bounds the file reader applies, so a button that arrived
+    // through the ABI and one that came out of the INI are the same button.
+    made.normalize();
     if index == l.items.len() {
         l.items.push(made);
     } else {

@@ -14,6 +14,15 @@
 #include <stdint.h>
 
 /**
+ * [`TtQuickButton::repeat`] for a run with no end.
+ *
+ * Not zero, so that a frontend zeroing the struct — which is how it says
+ * "none" for the label and the shortcut — gets a button that sends once
+ * rather than one that never stops.
+ */
+#define TT_QUICK_BUTTON_REPEAT_FOREVER 4294967295
+
+/**
  * A colour a rule is not asking to change, in [`TtHighlight::fore`] and
  * friends. Every real colour is `0x00RRGGBB`, so this cannot collide with one.
  */
@@ -1426,6 +1435,21 @@ typedef struct {
      * Whether to ask before running it.
      */
     bool confirm;
+    /**
+     * How many times one press sends it. `1` is once,
+     * [`TT_QUICK_BUTTON_REPEAT_FOREVER`] is a run with no end, and `0` is
+     * read as one — a zeroed struct is a plain button.
+     *
+     * The clock is the frontend's. This says what was asked for; nothing
+     * under the ABI schedules anything, because a repeat needs a timer and
+     * the core is a function of its bytes.
+     */
+    uint32_t repeat;
+    /**
+     * Milliseconds between the starts of two sends when `repeat` is not 1.
+     * Zero is read as the default rather than as no wait at all.
+     */
+    uint32_t interval_ms;
 } TtQuickButton;
 
 /**
