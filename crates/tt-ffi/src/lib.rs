@@ -3362,18 +3362,23 @@ pub extern "C" fn tt_session_send_bytes(
 /// point: without them a shell runs every newline in the pasted text as a
 /// command, which is a well-known way to lose data to a copied trailing
 /// newline.
+///
+/// `add_cr` is upstream's `Paste<CR>`. It is a flag here rather than a CR the
+/// caller appends because where the CR joins the text decides two observable
+/// things — see [`tt_session::Session::paste`].
 #[no_mangle]
 pub extern "C" fn tt_session_paste(
     session: *mut TtSession,
     text: *const c_char,
     len: usize,
+    add_cr: bool,
 ) -> TtStatus {
     let s = session!(session, TT_ERR_INVALID);
     let text = match unsafe { str_arg(text, len) } {
         Ok(t) => t,
         Err(e) => return e,
     };
-    match s.session.paste(text) {
+    match s.session.paste(text, add_cr) {
         Ok(()) => TT_OK,
         Err(e) => report(e),
     }

@@ -193,6 +193,17 @@ fn upstream_key_extractor_includes_wide_reads() {
     );
 }
 
+/// INI keys whose shipped default this port moves on purpose. Every entry
+/// costs a `docs/deviations.md` row saying what moved and why, and leaves the
+/// key itself working both ways — a deviation here changes what a *fresh*
+/// install does, never what a file that names the key means.
+const DEFAULTS_MOVED_ON_PURPOSE: &[&str] = &[
+    // The right button raises upstream's own two-item paste menu instead of
+    // putting the clipboard straight on the wire. Upstream ships the menu
+    // behind this key and ships the key off; this port ships it on.
+    "ConfirmPasteMouseRButton",
+];
+
 #[test]
 fn every_bool_default_is_the_one_get_on_off_was_given() {
     let Some(path) = ttset_c() else {
@@ -209,6 +220,13 @@ fn every_bool_default_is_the_one_get_on_off_was_given() {
     let mut wrong = Vec::new();
     for f in FIELDS {
         if f.kind != Kind::Bool {
+            continue;
+        }
+        // Deliberate, listed in `docs/deviations.md`, and named here one key
+        // at a time — a deviation that is not worth spelling out in this
+        // array is not worth making, and a blanket escape would hide the
+        // seventeen accidents this test was written to find.
+        if DEFAULTS_MOVED_ON_PURPOSE.contains(&f.key) {
             continue;
         }
         let Some(upstream) = get_on_off_default(&src, f.key) else {

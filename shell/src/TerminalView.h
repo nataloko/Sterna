@@ -70,6 +70,8 @@ public:
     /// Release the gesture guard after the popup gives up its mouse grab. The
     /// button release normally belongs to QMenu rather than to this widget.
     void popupMenuClosed() { m_popupMenuPressed = false; }
+    /// The same, for the right button's paste menu.
+    void pasteMenuClosed() { m_pasteMenuPressed = false; }
 
     QSize sizeHint() const override;
     /// The pixel size this many cells needs, at the current font.
@@ -90,12 +92,17 @@ public:
 
     /// Copy the selection, if there is one.
     void copySelection() const;
-    /// Paste the system clipboard.
-    void pasteClipboard();
+    /// Paste the system clipboard. `addCr` is upstream's `Paste<CR>`
+    /// (`ID_EDIT_PASTECR`): the Return that makes a pasted command run.
+    void pasteClipboard(bool addCr = false);
     /// Paste a string — the one path everything that pastes goes through, so
     /// that the trim and the confirmation dialog happen once. The rest of what
     /// a paste is happens in the core; see `tt_session::paste`.
-    void pasteText(const QString &text);
+    ///
+    /// `addCr` is a flag rather than a CR on the end of `text` because the
+    /// trim would eat it and the confirmation asks a different question about
+    /// it — and because the core needs it after the bracket decision.
+    void pasteText(const QString &text, bool addCr = false);
     bool hasSelection() const { return m_hasSelection; }
     /// What is selected, with the same wrapped-line rules the clipboard gets.
     /// Public because Edit > New quick button from selection turns it into a
@@ -149,6 +156,9 @@ signals:
     /// Ctrl+left-click while the ordinary menu bar is hidden. The menu itself
     /// belongs to `MainWindow`; the view only owns the mouse gesture.
     void popupMenuRequested(const QPoint &globalPos);
+    /// The right button, with `ConfirmPasteMouseRButton` on — upstream's
+    /// `IDR_PASTEMENU`. Same division as above: the window owns the menu.
+    void pasteMenuRequested(const QPoint &globalPos);
     /// A type-2 user key. The window owns the macro runner.
     void keyMacroRequested(const QString &path);
     /// A type-3 user key. Values are upstream's menu command ids.
@@ -197,6 +207,9 @@ private:
     /// edge would sometimes pick the next word along.
     SelPoint cellAt(const QPointF &pos) const;
     bool urlAt(const QPointF &pos, SelPoint *at = nullptr) const;
+    /// Whether a right-button press should raise the paste menu instead of
+    /// pasting — the whole of `vtwin.cpp:912`'s condition.
+    bool pasteMenuWanted() const;
     /// Start a drag whose anchor covers the whole unit around `at`.
     void startSelection(SelPoint at, const QPointF &pos);
     /// The selection as an ordered pair, expanded to whole words or lines when
@@ -254,6 +267,9 @@ private:
     /// the host.
     bool m_popupMenuEnabled = false;
     bool m_popupMenuPressed = false;
+    /// The same guard for the right button's paste menu, which has no
+    /// "enabled" of its own — `pasteMenuWanted()` is the whole condition.
+    bool m_pasteMenuPressed = false;
 
     /// The `clipboard.*` settings this widget acts on, refreshed by
     /// `applySettings` rather than read per event.
@@ -267,9 +283,10 @@ private:
         bool selectOnlyByLButton = true;
         bool pasteRButtonDisabled = false;
         bool pasteMButtonDisabled = true;
-        bool confirmPasteRButton = false;
+        bool confirmPasteRButton = true;
         bool continuedLineCopy = false;
         bool confirmPaste = true;
+        bool confirmPasteCr = true;
         bool trimTrailingNewline = false;
         QString dictionary;
         int dialogWidth = 330;

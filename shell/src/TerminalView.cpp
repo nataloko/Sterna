@@ -592,6 +592,8 @@ void TerminalView::applySettings()
     m_clipboard.continuedLineCopy =
         flag("clipboard.continued_line_copy", m_clipboard.continuedLineCopy);
     m_clipboard.confirmPaste = flag("clipboard.confirm_paste", m_clipboard.confirmPaste);
+    m_clipboard.confirmPasteCr =
+        flag("clipboard.confirm_paste_cr", m_clipboard.confirmPasteCr);
     m_clipboard.trimTrailingNewline =
         flag("clipboard.trim_trailing_newline", m_clipboard.trimTrailingNewline);
     m_clipboard.dictionary = m_session->setting(QStringLiteral("clipboard.confirm_paste_dictionary"));
@@ -1342,8 +1344,7 @@ bool TerminalView::dispatchKeyCode(const KeyCodeAction &action)
         pasteClipboard();
         break;
     case TT_SHORTCUT_EDIT_PASTE_CR:
-        pasteText(QApplication::clipboard()->text(QClipboard::Clipboard)
-                      + QLatin1Char('\r'));
+        pasteClipboard(true);
         break;
     case TT_SHORTCUT_EDIT_CLEAR_SCREEN:
         clearScreen();
@@ -1632,6 +1633,22 @@ void TerminalView::keyReleaseEvent(QKeyEvent *event)
 
 // --- mouse -------------------------------------------------------------------
 
+/// Should the right button raise the paste menu rather than paste?
+///
+/// `vtwin.cpp:912`, condition for condition. The two clipboard keys are read
+/// together — the menu is a *replacement* for the right button's paste, so a
+/// right button that was not going to paste anyway does not grow a menu — and
+/// the rest is upstream refusing to offer a command that could not run: not
+/// connected, a file transfer holding the line, or nothing on the clipboard
+/// to paste. Upstream's `IsClipboardFormatAvailable` is the same question as
+/// an empty string here, since only text ever reaches this.
+bool TerminalView::pasteMenuWanted() const
+{
+    return !m_clipboard.pasteRButtonDisabled && m_clipboard.confirmPasteRButton &&
+        m_session->isConnected() && !m_session->isTransferring() &&
+        !QApplication::clipboard()->text(QClipboard::Clipboard).isEmpty();
+}
+
 void TerminalView::mousePressEvent(QMouseEvent *event)
 {
     // Upstream's replacement for a hidden menu bar is Ctrl+left-click, and it
@@ -1660,6 +1677,18 @@ void TerminalView::mousePressEvent(QMouseEvent *event)
     const QPointF p = event->position();
     if (m_session->mouse(TT_MOUSE_EVENT_PRESS, button, static_cast<int>(p.x()),
                          static_cast<int>(p.y()), modifiersOf(event->modifiers()))) {
+        return;
+    }
+
+    // The right button's menu, on the way **down** and after mouse reporting
+    // has declined the click (`vtwin.cpp:912`). A menu is not a paste, so
+    // unlike the paste below it does not wait for the button to come up —
+    // which is also what makes it feel like a context menu rather than a
+    // delayed one.
+    if (event->button() == Qt::RightButton && pasteMenuWanted()) {
+        m_pasteMenuPressed = true;
+        emit pasteMenuRequested(event->globalPosition().toPoint());
+        event->accept();
         return;
     }
 
@@ -1747,6 +1776,14 @@ void TerminalView::mouseReleaseEvent(QMouseEvent *event)
         return;
     }
 
+    // The press raised the menu and was consumed there; the release that ends
+    // the same click must not also reach the terminal or the paste below.
+    if (m_pasteMenuPressed && event->button() == Qt::RightButton) {
+        m_pasteMenuPressed = false;
+        event->accept();
+        return;
+    }
+
     if (m_selecting) {
         m_selecting = false;
         m_autoScroll->stop();
@@ -1780,10 +1817,11 @@ void TerminalView::mouseReleaseEvent(QMouseEvent *event)
                      static_cast<int>(p.y()), modifiersOf(event->modifiers()));
 
     // And then the paste, which upstream does on the way up for both buttons.
-    // `ConfirmPasteMouseRButton` suppresses the right one because it raises a
-    // menu with Paste on it instead; there is no such menu here yet, so it
-    // suppresses the paste and offers nothing — which is the same terminal a
-    // user who set that key already has, minus the menu.
+    // `ConfirmPasteMouseRButton` suppresses the right one because the press
+    // has already raised a menu with Paste on it instead — and it suppresses
+    // it whether or not the menu actually appeared, which is why the test here
+    // is the flag and not `pasteMenuWanted()`: with nothing on the clipboard
+    // there is neither a menu nor a paste, and that is upstream.
     if (event->button() == Qt::MiddleButton && !m_clipboard.pasteMButtonDisabled) {
         // The X11 convention: the middle button pastes the *primary*
         // selection, which is a different buffer from the clipboard the right
@@ -2211,12 +2249,12 @@ void TerminalView::copySelection() const
     }
 }
 
-void TerminalView::pasteClipboard()
+void TerminalView::pasteClipboard(bool addCr)
 {
-    pasteText(QApplication::clipboard()->text(QClipboard::Clipboard));
+    pasteText(QApplication::clipboard()->text(QClipboard::Clipboard), addCr);
 }
 
-void TerminalView::pasteText(const QString &text)
+void TerminalView::pasteText(const QString &text, bool addCr)
 {
     if (text.isEmpty() || (!m_session->isConnected() && !m_lineEditEnabled)) {
         // `GetClipboardTextW` returning nothing is where upstream gives up
@@ -2237,7 +2275,9 @@ void TerminalView::pasteText(const QString &text)
             return;
         }
     }
-    if (m_clipboard.confirmPaste && PasteDialog::shouldConfirm(body, m_clipboard.dictionary)) {
+    if (m_clipboard.confirmPaste &&
+        PasteDialog::shouldConfirm(body, m_clipboard.dictionary, addCr,
+                                   m_clipboard.confirmPasteCr)) {
         PasteDialog dialog(body,
                            QSize(m_clipboard.dialogWidth,
                                  m_clipboard.dialogHeight),
@@ -2257,9 +2297,12 @@ void TerminalView::pasteText(const QString &text)
         body = dialog.text();
     }
     if (m_lineEditEnabled) {
-        queueEditedPaste(body);
+        // The editor already treats a line break as "submit this line", so
+        // the added CR needs no special case here: it makes the last line the
+        // one that goes out, which is what `Paste<CR>` is for.
+        queueEditedPaste(addCr ? body + QLatin1Char('\r') : body);
         positionLineEditor();
     } else {
-        m_session->paste(body);
+        m_session->paste(body, addCr);
     }
 }

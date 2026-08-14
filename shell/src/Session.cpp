@@ -747,14 +747,17 @@ void Session::sendBytes(const QByteArray &bytes)
     dispatch();
 }
 
-void Session::paste(const QString &text)
+void Session::paste(const QString &text, bool addCr)
 {
+    // An empty clipboard is where upstream gives up (`clipboar.c:236`), before
+    // it would have appended the CR — so `Paste<CR>` over nothing sends
+    // nothing rather than a bare Return.
     if (text.isEmpty()) {
         return;
     }
     const QByteArray utf8 = text.toUtf8();
     if (tt_session_paste(m_session, utf8.constData(),
-                         static_cast<size_t>(utf8.size())) != TT_OK) {
+                         static_cast<size_t>(utf8.size()), addCr) != TT_OK) {
         emit notice(QString::fromUtf8(tt_last_error()));
     }
     dispatch();

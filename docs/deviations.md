@@ -25,6 +25,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 8 | Editable lines for every connection type | Telnet LINEMODE negotiation only | 0.2.0 |
 | 9 | Receive CR defaults to Auto | A bare CR is the only default line ending | 0.2.1 |
 | 10 | A terminal-only dark mode | Colours come only from `TERATERM.INI` and the host | 0.2.1 |
+| 11 | The right button raises Tera Term's own paste menu | The same menu, behind a key that ships off, so the right button pastes at once | 0.2.4 |
 
 ---
 
@@ -374,3 +375,41 @@ by `Theme` after it reads the session's live colours. `ConnectBar` owns the
 right-aligned moon/sun action; `MainWindow` applies it to every tab and
 remembers the one window-wide preference. No `QApplication` or widget palette
 is changed.
+
+## 11. The right button raises the paste menu
+
+A right-click over the terminal opens upstream's own two-item menu — Paste and
+Paste&lt;CR&gt; — instead of putting the clipboard on the wire immediately.
+
+**Why.** The menu is Tera Term's, and so is the mechanism: `IDR_PASTEMENU`
+(`vtwin.cpp:912`, `:1317`), behind `ConfirmPasteMouseRButton`. Only the shipped
+value of that key moves. A right button that pastes the instant it is pressed
+has no undo and no preview, and the button is one an X11 user reaches for
+expecting a context menu; the cost of getting it wrong is a command running on
+a router. Upstream's own default predates that expectation, and the key exists
+precisely because upstream thought the immediate paste was worth a way out.
+
+This is the **only** setting in `schema/settings.txt` whose default this port
+moves for a reason other than hardware — the baud rate above is the other, and
+that one is about equipment rather than about a gesture.
+
+**What is unchanged.** Everything the key means. `ConfirmPasteMouseRButton=off`
+gives upstream's straight-to-the-wire right button back, `=on` is what both
+programs do with the menu, and `DisablePasteMouseRButton=on` still takes the
+button out of the clipboard's business altogether — the menu is a replacement
+for that paste, so a right button that was not going to paste does not grow
+one. The menu's conditions are upstream's, condition for condition: connected,
+no file transfer holding the line, and something on the clipboard.
+
+Paste&lt;CR&gt; itself is upstream's `ID_EDIT_PASTECR` and is not a deviation —
+it is also in the Edit menu, and `KEYBOARD.CNF`'s `EditPasteCR` already named
+it. The added Return joins the text where `clipboar.c:280` puts it, after the
+bracket decision and before the CR normalisation, so `BracketedControlOnly` and
+a clipboard that already ends in a newline behave as they do upstream.
+
+**Where it lives.** `schema/settings.txt`'s `clipboard.confirm_paste_rbutton`
+row, named in `tt-config/tests/upstream.rs`'s `DEFAULTS_MOVED_ON_PURPOSE` so
+the fidelity test reports it as a decision rather than an accident.
+`TerminalView::pasteMenuWanted` is the condition and `MainWindow::showPasteMenu`
+is the menu, which borrows the Edit menu's two actions rather than building
+copies that would drift.

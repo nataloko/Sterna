@@ -753,7 +753,8 @@ static void test_input(void)
     CHECK_OK(tt_session_send_bytes(s, raw, sizeof raw));
     CHECK_OK(tt_session_send_bytes(s, NULL, 0));
     CHECK(tt_session_send_bytes(s, NULL, 1) == TT_ERR_INVALID);
-    CHECK_OK(tt_session_paste(s, "one\ntwo", 7));
+    CHECK_OK(tt_session_paste(s, "one\ntwo", 7, false));
+    CHECK_OK(tt_session_paste(s, "run me", SIZE_MAX, true));
     CHECK_OK(tt_session_focus(s, true));
 
     tt_session_set_cell_pixels(s, 8, 16);

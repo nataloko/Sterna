@@ -3298,11 +3298,12 @@ pub struct Settings {
     /// file away from the other behaviour. Note the two buttons ship opposite ways
     /// round from what a Linux user expects of either.
     pub clipboard_paste_mbutton_disabled: bool,
-    /// `ttset.c:1428`, `CPF_CONFIRM_RBUTTON`. The right button raises a menu with
-    /// Paste on it instead of pasting, and the button-up paste is then suppressed
-    /// as well (`vtwin.cpp:2645` tests both bits). Half honoured: the suppression
-    /// is there and the menu is not, so setting this gives a right button that does
-    /// nothing rather than one that offers a choice.
+    /// `ttset.c:1428`, `CPF_CONFIRM_RBUTTON`. The right button raises `IDR_PASTEMENU`
+    /// — Paste and Paste<CR> (`vtwin.cpp:912`, `:1317`) — instead of pasting, and the
+    /// button-up paste is then suppressed as well (`vtwin.cpp:2645` tests both bits).
+    /// **Deliberately on where upstream ships it off**, which is the only setting in
+    /// this file whose default this port moves; see `docs/deviations.md`. Off gives
+    /// upstream's straight-to-the-wire right button back.
     pub clipboard_confirm_paste_rbutton: bool,
     /// `ttset.c:1431`, `CPF_CONFIRM_CHANGEPASTE`. **On.** A paste holding a line
     /// break is shown in a dialog first and can be edited there
@@ -3311,10 +3312,10 @@ pub struct Settings {
     pub clipboard_confirm_paste: bool,
     /// `ttset.c:1434`, `CPF_CONFIRM_CHANGEPASTE_CR`. The same confirmation for
     /// "paste and send a CR", where the newline is the one being *added* rather
-    /// than one already in the text. Only consulted on that path, so a plain paste
-    /// of text with no break is never confirmed by it — and that path is upstream's
-    /// `Paste<CR>` menu item, which this shell has no command for, so the key is
-    /// read and written and acts on nothing yet.
+    /// than one already in the text. It decides that path **alone**: with this off,
+    /// `Paste<CR>` is never confirmed even over text full of line breaks, because
+    /// `clipboar.c:150` does not search the text on that arm at all. Upstream's own
+    /// comment above it weighs whether that is right and keeps it.
     pub clipboard_confirm_paste_cr: bool,
     /// `ttset.c:1437`. A file of strings, one per line: a paste containing any of
     /// them is confirmed even with no line break in it. Resolved against the home
@@ -4365,7 +4366,7 @@ impl Default for Settings {
             clipboard_select_start_delay: 0,
             clipboard_paste_rbutton_disabled: false,
             clipboard_paste_mbutton_disabled: true,
-            clipboard_confirm_paste_rbutton: false,
+            clipboard_confirm_paste_rbutton: true,
             clipboard_confirm_paste: true,
             clipboard_confirm_paste_cr: true,
             clipboard_confirm_paste_dictionary: String::from(""),
@@ -5049,7 +5050,7 @@ impl Settings {
             ),
             clipboard_confirm_paste_rbutton: crate::schema::on_off(
                 ini.get("Tera Term", "ConfirmPasteMouseRButton"),
-                false,
+                true,
             ),
             clipboard_confirm_paste: crate::schema::on_off(
                 ini.get("Tera Term", "ConfirmChangePaste"),
@@ -11985,7 +11986,7 @@ impl Settings {
                 self.clipboard_paste_mbutton_disabled = crate::schema::on_off(Some(value), true)
             }
             "clipboard.confirm_paste_rbutton" => {
-                self.clipboard_confirm_paste_rbutton = crate::schema::on_off(Some(value), false)
+                self.clipboard_confirm_paste_rbutton = crate::schema::on_off(Some(value), true)
             }
             "clipboard.confirm_paste" => {
                 self.clipboard_confirm_paste = crate::schema::on_off(Some(value), true)
@@ -13854,9 +13855,9 @@ pub const FIELDS: &[Field] = &[
         section: "Tera Term",
         key: "ConfirmPasteMouseRButton",
         kind: Kind::Bool,
-        default: "off",
+        default: "on",
         label: None,
-        doc: "`ttset.c:1428`, `CPF_CONFIRM_RBUTTON`. The right button raises a menu with Paste on it instead of pasting, and the button-up paste is then suppressed as well (`vtwin.cpp:2645` tests both bits). Half honoured: the suppression is there and the menu is not, so setting this gives a right button that does nothing rather than one that offers a choice.",
+        doc: "`ttset.c:1428`, `CPF_CONFIRM_RBUTTON`. The right button raises `IDR_PASTEMENU` — Paste and Paste<CR> (`vtwin.cpp:912`, `:1317`) — instead of pasting, and the button-up paste is then suppressed as well (`vtwin.cpp:2645` tests both bits). **Deliberately on where upstream ships it off**, which is the only setting in this file whose default this port moves; see `docs/deviations.md`. Off gives upstream's straight-to-the-wire right button back.",
     },
     Field {
         name: "clipboard.confirm_paste",
@@ -13876,7 +13877,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "on",
         label: None,
-        doc: "`ttset.c:1434`, `CPF_CONFIRM_CHANGEPASTE_CR`. The same confirmation for \"paste and send a CR\", where the newline is the one being *added* rather than one already in the text. Only consulted on that path, so a plain paste of text with no break is never confirmed by it — and that path is upstream's `Paste<CR>` menu item, which this shell has no command for, so the key is read and written and acts on nothing yet.",
+        doc: "`ttset.c:1434`, `CPF_CONFIRM_CHANGEPASTE_CR`. The same confirmation for \"paste and send a CR\", where the newline is the one being *added* rather than one already in the text. It decides that path **alone**: with this off, `Paste<CR>` is never confirmed even over text full of line breaks, because `clipboar.c:150` does not search the text on that arm at all. Upstream's own comment above it weighs whether that is right and keeps it.",
     },
     Field {
         name: "clipboard.confirm_paste_dictionary",
