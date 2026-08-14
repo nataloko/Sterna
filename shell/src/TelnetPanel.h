@@ -39,9 +39,9 @@ public:
     /// makes the default correct without anyone having to know the rule.
     void setPort(quint16 port);
 
-    /// Force the raw mode, which is what upstream's "Other" service means: a
-    /// TCP connection with telnet switched off.
-    void setRaw();
+    /// Temporarily force the raw mode for upstream's "Other" service. Turning
+    /// it off restores the mode the Telnet service had before.
+    void setRawService(bool on);
 
 private:
     QComboBox *m_mode;
@@ -49,4 +49,7 @@ private:
     /// True once the mode has been chosen by hand, after which the port stops
     /// moving it.
     bool m_modePinned = false;
+    bool m_rawService = false;
+    int m_savedMode = -1;
+    bool m_savedModePinned = false;
 };

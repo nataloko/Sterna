@@ -39,7 +39,7 @@ TelnetPanel::TelnetPanel(QWidget *parent, const I18n *i18n)
 
 void TelnetPanel::setPort(quint16 port)
 {
-    if (m_modePinned) {
+    if (m_rawService || m_modePinned) {
         return;
     }
     TtTelnetParams defaults;
@@ -52,20 +52,38 @@ void TelnetPanel::setPort(quint16 port)
     }
 }
 
-void TelnetPanel::setRaw()
+void TelnetPanel::setRawService(bool on)
 {
+    if (on == m_rawService) {
+        return;
+    }
+    m_rawService = on;
+    if (!on) {
+        if (m_savedMode >= 0) {
+            m_mode->setCurrentIndex(m_savedMode);
+        }
+        m_modePinned = m_savedModePinned;
+        m_mode->setEnabled(true);
+        m_binary->setEnabled(true);
+        return;
+    }
+
+    m_savedMode = m_mode->currentIndex();
+    m_savedModePinned = m_modePinned;
     const int index = m_mode->findData(TT_TELNET_RAW);
     if (index >= 0) {
         m_mode->setCurrentIndex(index);
     }
-    // Chosen deliberately by picking the service, so the port must not move it
-    // back the way it moves an untouched default.
-    m_modePinned = true;
+    // Neither control has meaning for a connection with telnet entirely off.
+    m_mode->setEnabled(false);
+    m_binary->setEnabled(false);
 }
 
 TtTelnetMode TelnetPanel::mode() const
 {
-    return static_cast<TtTelnetMode>(m_mode->currentData().toUInt());
+    return m_rawService
+               ? TT_TELNET_RAW
+               : static_cast<TtTelnetMode>(m_mode->currentData().toUInt());
 }
 
 void TelnetPanel::setInitial(TtTelnetMode mode)

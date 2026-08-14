@@ -16,7 +16,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | # | Deviation | Upstream | Since |
 |---|---|---|---|
 | 1 | The default baud rate is 115200 | 9600 | 0.2.0 |
-| 2 | The connect dialogs remember the last connection, across restarts | Only Setup > Save persists anything | 0.2.0 |
+| 2 | The connect dialog remembers the last connection, across restarts | Only Setup > Save persists anything | 0.2.0 |
 | 3 | A bar under the menu: port, connect/disconnect, local echo, line edit | No toolbar at all | 0.2.0 |
 | 4 | One, two or four simultaneous connection panels | One connection per window | 0.2.0 |
 | 5 | Starting Sterna looks for a signed update, once a day | Nothing contacts a server on its own | 0.2.0 |
@@ -50,10 +50,10 @@ absent differs.
 speed from the ABI rather than carrying a literal of its own, so there is one
 place to change and it is the schema.
 
-## 2. The connect dialogs remember the last connection
+## 2. The connect dialog remembers the last connection
 
-Opening File > Connect to serial port, SSH or telnet shows what was last
-connected to — after a restart as well as within one run.
+Opening File > New connection on any transport shows what was last connected
+to — after a restart as well as within one run.
 
 **Why.** Upstream's host dialog is seeded from `ts`, and `ts` reaches
 `TERATERM.INI` only through Setup > Save. So Tera Term does remember a

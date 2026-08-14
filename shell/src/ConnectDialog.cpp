@@ -12,6 +12,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QTimer>
@@ -25,10 +26,12 @@
 
 namespace {
 
-/// The two well-known ports the service radios move between. Upstream's
-/// `TTXHostDlg` does the same on `IDC_HOSTSSH`/`IDC_HOSTTELNET`.
+/// The service defaults the radios move between. Upstream's `TTXHostDlg` uses
+/// literal 22/23; SSH keeps zero here so an OpenSSH alias can supply its port.
 constexpr int kTelnetPort = 23;
-constexpr int kSshPort = 22;
+// Zero is the SSH ABI's "take Port from ~/.ssh/config, or use 22" sentinel.
+// Showing a literal 22 here would override an alias that names another port.
+constexpr int kSshPortFromConfig = 0;
 
 } // namespace
 
@@ -44,7 +47,17 @@ ConnectDialog::ConnectDialog(QWidget *parent, const I18n *i18n)
         return i18n ? i18n->plainText(key, fallback, section) : fallback;
     };
 
-    setWindowTitle(plainText("DLG_HOST_TITLE", tr("New connection"), "TTSSH"));
+    // DLG_HOST_TITLE carries the literal upstream product name in every
+    // catalog. The menu caption has the same translated words without that
+    // branding; only its command ellipsis is unsuitable for a window title.
+    QString title = plainText("MENU_FILE_NEW", tr("New connection..."));
+    while (title.endsWith(QLatin1Char('.'))) {
+        title.chop(1);
+    }
+    if (title.endsWith(QChar(0x2026))) {
+        title.chop(1);
+    }
+    setWindowTitle(title);
 
     // --- TCP/IP -------------------------------------------------------------
 
@@ -96,8 +109,9 @@ ConnectDialog::ConnectDialog(QWidget *parent, const I18n *i18n)
 
     m_port = new QSpinBox(m_tcpBox);
     m_port->setObjectName(QStringLiteral("connectPort"));
-    m_port->setRange(1, 65535);
-    m_port->setValue(kSshPort);
+    m_port->setRange(0, 65535);
+    m_port->setSpecialValueText(tr("from ~/.ssh/config, or 22"));
+    m_port->setValue(kSshPortFromConfig);
 
     auto *tcpForm = new QFormLayout(m_tcpBox);
     tcpForm->addRow(text("DLG_HOST_TCPIPHOST", tr("Host:")), m_host);
@@ -214,16 +228,16 @@ void ConnectDialog::syncEnabled()
     // The port follows the service until it is typed into, which is what makes
     // the common case correct without anyone knowing the numbers.
     if (tcp && !m_portPinned) {
-        const int want = m_sshService->isChecked() ? kSshPort : kTelnetPort;
+        const int want =
+            m_sshService->isChecked() ? kSshPortFromConfig : kTelnetPort;
         QSignalBlocker block(m_port);
         m_port->setValue(want);
         m_telnet->setPort(static_cast<quint16>(want));
     }
-    // "Other" is upstream's name for a TCP connection with telnet off, which
-    // is exactly this port's raw mode.
-    if (tcp && m_otherService->isChecked()) {
-        m_telnet->setRaw();
-    }
+    // "Other" is upstream's name for a TCP connection with telnet off. Keep
+    // it as a temporary service choice: returning to Telnet must restore the
+    // mode that was there before rather than leave the panel pinned to raw.
+    m_telnet->setRawService(tcp && m_otherService->isChecked());
     syncDetails();
 }
 
@@ -255,14 +269,17 @@ void ConnectDialog::selectKind(Kind kind)
     switch (kind) {
     case Kind::Serial:
         m_serialRadio->setChecked(true);
+        m_serialPort->setFocus();
         break;
     case Kind::Ssh:
         m_tcpip->setChecked(true);
         m_sshService->setChecked(true);
+        m_host->setFocus();
         break;
     case Kind::Telnet:
         m_tcpip->setChecked(true);
         m_telnetService->setChecked(true);
+        m_host->setFocus();
         break;
     }
     syncEnabled();
@@ -385,13 +402,18 @@ void ConnectDialog::setInitialSerial(const QString &portPath,
 void ConnectDialog::setInitialSsh(const QString &host, const QString &user,
                                   int port, const QString &identity, bool legacy)
 {
-    if (!host.isEmpty()) {
-        m_host->setCurrentText(host);
-    }
-    if (port > 0) {
-        QSignalBlocker block(m_port);
-        m_port->setValue(port);
-        m_portPinned = true;
+    // The panels are all seeded, but the shared destination belongs to the
+    // service selected before these calls. Otherwise opening from a Telnet
+    // panel would show the last SSH host and port.
+    if (m_sshService->isChecked()) {
+        if (!host.isEmpty()) {
+            m_host->setCurrentText(host);
+        }
+        if (port > 0) {
+            QSignalBlocker block(m_port);
+            m_port->setValue(port);
+            m_portPinned = true;
+        }
     }
     m_ssh->setInitial(user, identity, legacy);
 }
@@ -399,13 +421,11 @@ void ConnectDialog::setInitialSsh(const QString &host, const QString &user,
 void ConnectDialog::setInitialTelnet(const QString &host, quint16 port,
                                      TtTelnetMode mode)
 {
-    // Only when SSH did not already seed it: the two share one host field, and
-    // the last SSH host is the more likely of the two to be wanted.
-    if (!host.isEmpty() && m_host->currentText().isEmpty()) {
-        m_host->setCurrentText(host);
-    }
     m_telnet->setInitial(mode);
     if (m_telnetService->isChecked() && port > 0) {
+        if (!host.isEmpty()) {
+            m_host->setCurrentText(host);
+        }
         QSignalBlocker block(m_port);
         m_port->setValue(port);
     }

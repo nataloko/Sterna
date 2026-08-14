@@ -1935,6 +1935,10 @@ void MainWindow::checkForUpdatesOnStartup()
 void MainWindow::showConnectDialog(ConnectDialog::Kind kind)
 {
     ConnectDialog dialog(this, m_i18n);
+    // Select first because SSH and Telnet share the destination fields. Their
+    // detail panels are both seeded below, but only the selected service may
+    // put its remembered host and port into the shared controls.
+    dialog.selectKind(kind);
     // Every half is seeded, not just the one being opened on: the point of one
     // screen is that switching halves inside it costs nothing.
     dialog.setInitialSerial(m_lastPort, m_lastParams);
@@ -1950,8 +1954,6 @@ void MainWindow::showConnectDialog(ConnectDialog::Kind kind)
             m_session->setting(QStringLiteral("recent.host_history"))
                 .split(QLatin1Char(';'), Qt::SkipEmptyParts));
     }
-    dialog.selectKind(kind);
-
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
@@ -1959,10 +1961,11 @@ void MainWindow::showConnectDialog(ConnectDialog::Kind kind)
     // The box is a setting of its own, so unticking it is remembered even
     // though nothing was connected to.
     if (dialog.remembersHistory() != history) {
-        m_session->setSetting(
-            QStringLiteral("connection.history_list"),
-            dialog.remembersHistory() ? QStringLiteral("on") : QStringLiteral("off"),
-            nullptr);
+        rememberSettings({
+            {QStringLiteral("connection.history_list"),
+             dialog.remembersHistory() ? QStringLiteral("on")
+                                       : QStringLiteral("off")},
+        });
     }
 
     switch (dialog.kind()) {
@@ -2005,7 +2008,7 @@ void MainWindow::showConnectDialog(ConnectDialog::Kind kind)
 
 void MainWindow::rememberHost(const QString &host, bool remember)
 {
-    if (!remember || host.isEmpty()) {
+    if (!remember || host.isEmpty() || host.contains(QLatin1Char(';'))) {
         return;
     }
     // Newest first, deduplicated, and bounded — an unbounded list would grow
@@ -2017,12 +2020,8 @@ void MainWindow::rememberHost(const QString &host, bool remember)
     while (hosts.size() > 16) {
         hosts.removeLast();
     }
-    // A `;` in a host name would split one entry into two on the way back, and
-    // no name can contain one — but a typo can, so it is dropped rather than
-    // corrupting the list.
-    hosts.removeIf([](const QString &h) { return h.contains(QLatin1Char(';')); });
-    m_session->setSetting(QStringLiteral("recent.host_history"),
-                          hosts.join(QLatin1Char(';')), nullptr);
+    rememberSettings({{QStringLiteral("recent.host_history"),
+                       hosts.join(QLatin1Char(';'))}});
 }
 
 void MainWindow::startFrom(TtCmdLine *cmd)

@@ -179,7 +179,7 @@ private slots:
     /// asked for. Every transport goes through here: File > New connection,
     /// and the empty-panel buttons, which name a kind.
     void showConnectDialog(ConnectDialog::Kind kind = ConnectDialog::Kind::Ssh);
-    /// Add a host to `recent.hosts`, newest first, when the History box is
+    /// Add a host to `recent.host_history`, newest first, when the History box is
     /// ticked. `HistoryList` ships off, so this normally does nothing.
     void rememberHost(const QString &host, bool remember);
     void disconnectPort();
