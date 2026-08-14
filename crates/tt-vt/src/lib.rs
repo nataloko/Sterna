@@ -1282,7 +1282,14 @@ impl Vt {
     /// comparison is upstream's and is not an optimisation; see the guard.
     pub fn set_config(&mut self, config: Config) {
         let s = &mut self.state;
+        let cr_receive_changed = s.config.cr_receive != config.cr_receive;
         s.config = config;
+        // Keep a decision across unrelated settings changes, but changing the
+        // mode away and back is somebody explicitly asking Detect to decide
+        // again for the current connection.
+        if cr_receive_changed {
+            s.detected_cr_receive = None;
+        }
 
         // `ChangeTerminalID` (`vtterm.c:5850`): a terminal ID changed in the
         // dialog re-derives the VT level, and level 1 never sends 8-bit
@@ -4672,13 +4679,12 @@ impl Perform for State {
             // stay apart. The gate was applied on the way in, where the byte
             // was still eight-bit; there is nothing left to test here.
             0x88 => self.grid.set_tab(),
-            // LF, VT and FF all line-feed (vtterm.c treats them alike).
-            //
-            // Not quite: upstream sends VT and FF straight to `LineFeed` and
-            // only LF through `ProcessLF`, so `ts.CRReceive` does not apply to
-            // them. The grid cannot tell the difference; the macro tap can, and
-            // this is where it would show up if it is ever worth fixing.
-            0x0a..=0x0c => {
+            // LF alone goes through `ProcessLF`, where `ts.CRReceive` applies.
+            // VT and FF call `LineFeed` directly (`vtterm.c:1106`): under LF
+            // mode they still leave the cursor in its current column, and in
+            // Detect they are not evidence about how the far end spells a
+            // line ending.
+            0x0a => {
                 if let Some(log) = &mut self.log_text {
                     log.push('\n');
                 }
@@ -4686,6 +4692,12 @@ impl Perform for State {
                 self.prev_was_lf = true;
                 self.prev_was_cr = false;
                 return;
+            }
+            0x0b..=0x0c => {
+                if let Some(log) = &mut self.log_text {
+                    log.push('\n');
+                }
+                self.line_feed(byte);
             }
             0x0d => {
                 self.process_cr();
@@ -5574,6 +5586,37 @@ mod tests {
         assert_eq!(row(&vt, 0), "one");
         assert_eq!(row(&vt, 1), "two");
         assert_eq!(row(&vt, 2), "three");
+    }
+
+    #[test]
+    fn crreceive_does_not_apply_to_vertical_tab_or_form_feed() {
+        for byte in [0x0b, 0x0c] {
+            let mut vt = Vt::new(Config {
+                cols: 20,
+                rows: 4,
+                cr_receive: CrReceive::Lf,
+                ..Config::default()
+            });
+            vt.feed(b"one");
+            vt.feed(&[byte]);
+            vt.feed(b"x");
+            // VT and FF are LineFeed, not ProcessLF: the row changes and the
+            // column does not, even when an LF would carry a CR with it.
+            assert_eq!(row(&vt, 1), "   x");
+        }
+
+        let mut vt = Vt::new(Config {
+            cols: 20,
+            rows: 4,
+            cr_receive: CrReceive::Detect,
+            ..Config::default()
+        });
+        vt.feed(b"a\x0bb\rc");
+        // The VT neither returned the carriage nor decided the mode. The CR
+        // remains the first possible line ending and therefore breaks.
+        assert_eq!(row(&vt, 0), "a");
+        assert_eq!(row(&vt, 1), " b");
+        assert_eq!(row(&vt, 2), "c");
     }
 
     #[test]
@@ -6504,6 +6547,28 @@ mod tests {
         vt.forget_cr_receive();
         vt.feed(b"one\rtwo");
         vt.feed(b"");
+        assert_eq!(row(&vt, 1).trim_end(), "one");
+        assert_eq!(row(&vt, 2).trim_end(), "two");
+    }
+
+    #[test]
+    fn choosing_detect_again_forgets_its_previous_answer() {
+        let mut vt = Vt::new(Config {
+            cols: 20,
+            rows: 5,
+            cr_receive: CrReceive::Detect,
+            ..Config::default()
+        });
+        vt.feed(b"first\n"); // resolves to LF
+
+        let mut config = vt.config().clone();
+        config.cr_receive = CrReceive::Cr;
+        vt.set_config(config);
+        let mut config = vt.config().clone();
+        config.cr_receive = CrReceive::Detect;
+        vt.set_config(config);
+
+        vt.feed(b"one\rtwo");
         assert_eq!(row(&vt, 1).trim_end(), "one");
         assert_eq!(row(&vt, 2).trim_end(), "two");
     }
