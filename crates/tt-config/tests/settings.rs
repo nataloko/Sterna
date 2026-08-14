@@ -90,7 +90,7 @@ fn the_panel_layout_is_a_sterna_setting_with_a_safe_fallback() {
     // ...and it is rewritten in the spelling this version uses, so the aliases
     // shrink out of the file rather than being carried forward.
     let mut ini = Ini::parse(b"; formatting stays\n[Sterna]\nUnrelated = yes\nPanelLayout = two\n");
-    let mut settings = Settings::load(&ini);
+    let settings = Settings::load(&ini);
     assert!(settings.store_one(&mut ini, "window.panel_layout"));
     assert_eq!(
         ini.to_bytes(),
