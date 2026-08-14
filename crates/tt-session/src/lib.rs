@@ -453,6 +453,9 @@ impl Session {
         // log holds an instant rather than asking for one.
         self.sync_log_epoch();
         let kind = conn.link_kind();
+        // A new far end spells its line endings its own way, whatever the last
+        // one did.
+        self.vt.forget_cr_receive();
         self.conn = Some(conn);
         let (cols, rows) = (self.vt.grid().cols(), self.vt.grid().rows());
         if let Some(c) = self.conn.as_mut() {

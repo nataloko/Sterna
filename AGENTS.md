@@ -930,6 +930,13 @@ URLs — one plausible master switch is really three:
 
 The parser's own switches:
 
+- **A bare CR is a cursor motion far more often than a line ending**, so
+  `CRReceive=AUTO` (the shipped default, deviation 9) has to *resolve* rather
+  than read all three spellings for ever: an interactive shell redrawing its
+  prompt sends one CR per keystroke, and every one of them was a new line. The
+  first LF is the evidence — a CR immediately before it means `CR LF` and the
+  mode becomes `CR`, anything else means `LF` alone — and `Session::connect`
+  clears the decision, because a new far end need not agree with the last one.
 - **Debug display restores the wrong attribute** — `PutDebugChar` saves
   `svCharAttr` and restores `char_attr` (`charset.cpp:757`). Reproduced;
   the obvious fix changes what the next character looks like.
