@@ -12,6 +12,7 @@
 
 #include <QApplication>
 #include <QAbstractItemView>
+#include <QAction>
 #include <QComboBox>
 #include <QMainWindow>
 #include <QStandardPaths>
@@ -324,6 +325,19 @@ void test_the_dropdown_offers_every_group()
     CHECK(newConnections == 1);
     choose(rowWithText(combo, QStringLiteral("Forget these connections")));
     CHECK(forgets == 1);
+
+    // The Connect action follows the field as it is typed. Nothing else runs
+    // between the keystroke and the click, so a bar with nothing remembered
+    // and nothing plugged in would otherwise offer a dead button.
+    auto *connectAction =
+        bar.findChild<QAction *>(QStringLiteral("connectBarConnect"));
+    CHECK(connectAction != nullptr);
+    bar.setDestination(QString());
+    if (connectAction) {
+        CHECK(!connectAction->isEnabled());
+        bar.setDestination(QStringLiteral("myrouter"));
+        CHECK(connectAction->isEnabled());
+    }
 
     // Rebuilding must not retype the field: it is the user's, and the popup
     // rebuilds every time it opens.

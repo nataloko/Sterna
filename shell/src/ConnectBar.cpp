@@ -168,6 +168,15 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
             emit destinationEntered(destination());
         }
     });
+    // Typed, not polled: `refresh` runs on the window's status update, which a
+    // keystroke in this field is not — so without this the Connect button
+    // stays greyed over a destination somebody has just finished typing, on a
+    // machine with nothing remembered and nothing plugged in.
+    connect(m_destination->lineEdit(), &QLineEdit::textChanged, this, [this] {
+        if (!m_connect->data().toBool()) {
+            m_connect->setEnabled(!destination().isEmpty());
+        }
+    });
 
     m_connectText = tr("Connect");
     m_disconnectText = plain("MENU_FILE_DISCONNECT", tr("Disconnect"));
