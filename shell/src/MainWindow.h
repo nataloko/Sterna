@@ -93,6 +93,28 @@ public:
     static void splitTarget(const QString &text, QString *host, QString *user,
                             int *port);
 
+    /// What a line typed into the connect bar's field names.
+    ///
+    /// A pure function so the vocabulary can be stated once and asserted
+    /// without opening anything: every arm of [`connectDestination`] below is
+    /// a connection somebody has to be able to make for a test to reach it,
+    /// and three of the four need hardware, a server or a name that resolves.
+    struct Destination {
+        enum class Kind { Empty, CommandLine, Shell, Serial, Ssh, Telnet };
+
+        Kind kind = Kind::Empty;
+        /// The whole line, for [`Kind::CommandLine`].
+        QString text;
+        /// [`Kind::Serial`].
+        QString path;
+        /// [`Kind::Ssh`] and [`Kind::Telnet`]. `user` is SSH's, and empty
+        /// means `~/.ssh/config` decides; a zero `port` means the same.
+        QString host;
+        QString user;
+        int port = 0;
+    };
+    static Destination parseDestination(const QString &text);
+
     /// Look for a signed release, if `updates.check_on_startup` is on and
     /// `updates.last_check` is a day old — and say nothing unless there is one.
     ///

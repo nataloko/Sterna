@@ -1857,11 +1857,12 @@ bool looksLikeSerialPort(const QString &text)
 
 } // namespace
 
-void MainWindow::connectDestination(const QString &text)
+MainWindow::Destination MainWindow::parseDestination(const QString &text)
 {
+    Destination out;
     const QString target = text.trimmed();
     if (target.isEmpty()) {
-        return;
+        return out;
     }
 
     // Whitespace is what switches vocabularies, and it switches to the other
@@ -1872,10 +1873,55 @@ void MainWindow::connectDestination(const QString &text)
     // with a space in it is a Tera Term command line, which is how
     // `/ssh /auth=publickey myrouter` reaches this field.
     if (target.contains(QLatin1Char(' ')) || target.contains(QLatin1Char('\t'))) {
+        out.kind = Destination::Kind::CommandLine;
+        out.text = target;
+        return out;
+    }
+
+    if (target.compare(QLatin1String("shell"), Qt::CaseInsensitive) == 0) {
+        out.kind = Destination::Kind::Shell;
+        return out;
+    }
+    if (target.startsWith(QLatin1String("ssh://"), Qt::CaseInsensitive)) {
+        out.kind = Destination::Kind::Ssh;
+        splitTarget(target.mid(6), &out.host, &out.user, &out.port);
+        return out;
+    }
+    if (target.startsWith(QLatin1String("telnet://"), Qt::CaseInsensitive)) {
+        out.kind = Destination::Kind::Telnet;
+        splitTarget(target.mid(9), &out.host, &out.user, &out.port);
+        if (out.port == 0) {
+            out.port = 23;
+        }
+        return out;
+    }
+    if (looksLikeSerialPort(target)) {
+        out.kind = Destination::Kind::Serial;
+        out.path = target;
+        return out;
+    }
+
+    // A bare word is an SSH destination, which is what the shell's own
+    // positional argument means and what somebody who types a host name into
+    // a terminal expects. Tera Term reads the same token as telnet; that
+    // divergence is `docs/deviations.md`'s, and it is why a line with a space
+    // in it goes to the other parser above rather than being merged with this.
+    out.kind = Destination::Kind::Ssh;
+    splitTarget(target, &out.host, &out.user, &out.port);
+    return out;
+}
+
+void MainWindow::connectDestination(const QString &text)
+{
+    const Destination where = parseDestination(text);
+    switch (where.kind) {
+    case Destination::Kind::Empty:
+        return;
+    case Destination::Kind::CommandLine: {
         TtCmdLine *cmd =
-            tt_cmdline_parse_line(target.toUtf8().constData(), 0);
+            tt_cmdline_parse_line(where.text.toUtf8().constData(), 0);
         if (!cmd) {
-            note(tr("Connect"), tr("Could not read %1.").arg(target));
+            note(tr("Connect"), tr("Could not read %1.").arg(where.text));
             return;
         }
         QString error;
@@ -1889,58 +1935,34 @@ void MainWindow::connectDestination(const QString &text)
         if (m_session->startup(cmd, &startup) == TT_STARTUP_OPEN) {
             openTarget(startup);
         } else {
-            note(tr("Connect"),
-                 tr("Nothing to open in %1.").arg(target));
+            note(tr("Connect"), tr("Nothing to open in %1.").arg(where.text));
         }
         // After `openTarget`: every pointer in the startup is borrowed from
         // the command line.
         tt_cmdline_free(cmd);
         return;
     }
-
-    if (target.compare(QLatin1String("shell"), Qt::CaseInsensitive) == 0) {
+    case Destination::Kind::Shell:
         connectPty();
         return;
-    }
-    if (target.startsWith(QLatin1String("ssh://"), Qt::CaseInsensitive)) {
-        QString host;
-        QString user;
-        int port = 0;
-        splitTarget(target.mid(6), &host, &user, &port);
-        if (host.isEmpty()) {
+    case Destination::Kind::Serial:
+        connectSerial(where.path, m_lastParams);
+        return;
+    case Destination::Kind::Ssh:
+        if (where.host.isEmpty()) {
             note(tr("SSH"), tr("Enter a host to connect to."));
             return;
         }
-        connectSsh(host, user, port);
+        connectSsh(where.host, where.user, where.port);
         return;
-    }
-    if (target.startsWith(QLatin1String("telnet://"), Qt::CaseInsensitive)) {
-        QString host;
-        QString user;
-        int port = 0;
-        splitTarget(target.mid(9), &host, &user, &port);
-        if (host.isEmpty()) {
+    case Destination::Kind::Telnet:
+        if (where.host.isEmpty()) {
             note(tr("Telnet"), tr("Enter a host to connect to."));
             return;
         }
-        connectTelnet(host, static_cast<quint16>(port ? port : 23));
+        connectTelnet(where.host, static_cast<quint16>(where.port));
         return;
     }
-    if (looksLikeSerialPort(target)) {
-        connectSerial(target, m_lastParams);
-        return;
-    }
-
-    // A bare word is an SSH destination, which is what the shell's own
-    // positional argument means and what somebody who types a host name into
-    // a terminal expects. Tera Term reads the same token as telnet; that
-    // divergence is `docs/deviations.md`'s, and it is why a line with a space
-    // in it goes to the other parser above rather than being merged with this.
-    QString host;
-    QString user;
-    int port = 0;
-    splitTarget(target, &host, &user, &port);
-    connectSsh(host, user, port);
 }
 
 void MainWindow::buildMenus()

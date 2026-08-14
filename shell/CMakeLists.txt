@@ -338,6 +338,17 @@ add_test(NAME control COMMAND control_test)
 # Multiple sessions share one menu and status bar. This pins the active-page
 # routing and the stronger property underneath it: output in one tab never
 # changes another tab's grid.
+# What a destination means and what the list remembers. Needs nothing: the
+# encoding, the ordering and the vocabulary are pure functions, and the one
+# case that connects opens a local shell.
+add_executable(connect_test tests/connect_test.cpp)
+target_link_libraries(connect_test PRIVATE sterna_shell)
+if(WIN32)
+    target_link_libraries(connect_test PRIVATE ws2_32)
+endif()
+target_compile_options(connect_test PRIVATE ${TT_WARNINGS})
+add_test(NAME connect COMMAND connect_test)
+
 add_executable(tabs_test tests/tabs_test.cpp)
 target_link_libraries(tabs_test PRIVATE sterna_shell)
 if(WIN32)

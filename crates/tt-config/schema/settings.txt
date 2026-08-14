@@ -2188,9 +2188,10 @@ recent.connections | string | Sterna | Recent |  | -
 
 # Whether opening a connection adds it to that list. On, unlike upstream's
 # `HistoryList` — a bar whose list is empty until a preference is found and
-# ticked is a bar that demonstrates nothing on the day it is installed. Off
-# stops recording and hides the group; it does not erase what is already
-# there, which is what the bar's own Forget item is for.
+# ticked is a bar that does nothing on the day it is installed. Off stops
+# recording only: what is already there stays on offer, because hiding a list
+# somebody can no longer add to is taking away the entries *and* the way to
+# reach them. The bar's own Forget item is what removes them.
 recent.remember | bool | Sterna | RememberConnections | on | -
 
 # --- updates ----------------------------------------------------------------

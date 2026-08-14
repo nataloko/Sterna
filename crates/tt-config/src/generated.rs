@@ -4281,9 +4281,10 @@ pub struct Settings {
     pub recent_connections: String,
     /// Whether opening a connection adds it to that list. On, unlike upstream's
     /// `HistoryList` — a bar whose list is empty until a preference is found and
-    /// ticked is a bar that demonstrates nothing on the day it is installed. Off
-    /// stops recording and hides the group; it does not erase what is already
-    /// there, which is what the bar's own Forget item is for.
+    /// ticked is a bar that does nothing on the day it is installed. Off stops
+    /// recording only: what is already there stays on offer, because hiding a list
+    /// somebody can no longer add to is taking away the entries *and* the way to
+    /// reach them. The bar's own Forget item is what removes them.
     pub recent_remember: bool,
     /// Whether starting Sterna may look for a new release. On, so an installed
     /// terminal learns about a signed update without anyone remembering to ask.
@@ -16010,7 +16011,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "on",
         label: None,
-        doc: "Whether opening a connection adds it to that list. On, unlike upstream's `HistoryList` — a bar whose list is empty until a preference is found and ticked is a bar that demonstrates nothing on the day it is installed. Off stops recording and hides the group; it does not erase what is already there, which is what the bar's own Forget item is for.",
+        doc: "Whether opening a connection adds it to that list. On, unlike upstream's `HistoryList` — a bar whose list is empty until a preference is found and ticked is a bar that does nothing on the day it is installed. Off stops recording only: what is already there stays on offer, because hiding a list somebody can no longer add to is taking away the entries *and* the way to reach them. The bar's own Forget item is what removes them.",
     },
     Field {
         name: "updates.check_on_startup",

@@ -214,22 +214,14 @@ int main(int argc, char **argv)
         }
         window.connectSerial(parser.value(portOption), params);
     } else if (!parser.positionalArguments().isEmpty()) {
-        QString target = parser.positionalArguments().constFirst();
+        QString target;
         QString user;
         int port = 0;
-        const int at = target.indexOf(QLatin1Char('@'));
-        if (at >= 0) {
-            user = target.left(at);
-            target = target.mid(at + 1);
-        }
-        // Split on the *last* colon so a bracketed IPv6 literal survives; a
-        // bare IPv6 address without brackets is ambiguous here exactly as it
-        // is for `ssh`, and is spelled with -p there and in ~/.ssh/config.
-        const int colon = target.lastIndexOf(QLatin1Char(':'));
-        if (colon > target.lastIndexOf(QLatin1Char(']'))) {
-            port = target.mid(colon + 1).toInt();
-            target = target.left(colon);
-        }
+        // The same splitter the connect bar's field uses, and it lives on the
+        // window for that reason: two implementations of `[user@]host[:port]`
+        // is two places for the IPv6 rule to be got wrong.
+        MainWindow::splitTarget(parser.positionalArguments().constFirst(),
+                                &target, &user, &port);
         if (parser.isSet(telnetOption)) {
             window.connectTelnet(target, static_cast<quint16>(port ? port : 23));
         } else {
