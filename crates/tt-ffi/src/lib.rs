@@ -1612,6 +1612,13 @@ pub extern "C" fn tt_settings_choice(index: usize, n: usize) -> *const c_char {
 /// absent boolean takes its default, while an explicit `off` records that the
 /// user has already answered. A missing file is a successful `false` result.
 /// Unknown setting names and null arguments are invalid.
+///
+/// It asks for the *reader's* spelling of the key, and the one setting whose
+/// writer spells it differently is unaffected: `connection.cygwin_directory`
+/// is read as `CygwinDirectory ` and written without the trailing space
+/// (`ttset.c:1476` vs `:2250`), but a query key is trimmed before it is
+/// matched — by [`Ini::get`] and by Win32 both, which `ini-audit`'s
+/// `key-query-spaced` case pins. So the two spellings find each other.
 #[no_mangle]
 pub extern "C" fn tt_settings_file_has(
     path: *const c_char,
