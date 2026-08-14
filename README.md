@@ -29,7 +29,8 @@ supporting Tera Term-compatible workflows and configuration.
 Compatibility notes and intentional differences from Tera Term are documented
 in [docs/deviations.md](docs/deviations.md). Attribution and licensing details
 for incorporated Tera Term components are in
-[ATTRIBUTION.md](ATTRIBUTION.md).
+[ATTRIBUTION.md](ATTRIBUTION.md). See [CHANGELOG.md](CHANGELOG.md) for the
+release history.
 
 ## Installation
 

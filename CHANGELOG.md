@@ -1,0 +1,199 @@
+# Changelog
+
+This document records notable user-visible changes to Sterna. Release packages
+are available from the [GitHub releases page].
+
+## [Unreleased]
+
+## [0.2.5] - 2026-08-14
+
+### Added
+
+- Replaced the separate transport dialogs with one New Connection screen for
+  serial, SSH, telnet, raw TCP, and local shells.
+- Added settings search and direct navigation across all built-in pages and
+  plugin settings pages.
+- Added an opt-in choice to save settings when applying them. Only settings
+  changed successfully are written; manual saving remains the default.
+
+### Fixed
+
+- Copying text while per-tab line editing is enabled no longer clears or
+  duplicates the locally edited line.
+- Applying any setting no longer clears the terminal when `ClearOnResize` is
+  enabled and the terminal size did not change.
+- Fixed connection-dialog defaults and validation, including settings whose
+  valid value is a negative sentinel.
+- Fixed several settings persistence edge cases for core and plugin settings.
+
+## [0.2.4] - 2026-08-14
+
+### Added
+
+- Added Edit > Clear screen and Edit > Clear buffer commands.
+- Added Tera Term-compatible right-button paste confirmation, enabled by
+  default.
+
+### Fixed
+
+- Normalized pasted line endings to the single carriage return a keyboard
+  Return key sends.
+
+## [0.2.3] - 2026-08-14
+
+### Added
+
+- Quick buttons can repeat a configured number of times at a configured
+  interval, or continue until stopped.
+- A repeating quick button can be stopped by pressing it again, pressing
+  Escape, editing the button list, or disconnecting its session.
+
+### Changed
+
+- Clarified how regular-expression capture groups work in highlight rules.
+- Redrew the terminal dark-mode icon for better visibility.
+
+## [0.2.2] - 2026-08-14
+
+### Changed
+
+- Rebuilt the Linux AppImage against the `manylinux_2_28` baseline with bundled
+  Qt 6.11.1, making the stated glibc 2.28 compatibility floor enforceable.
+- Bundled the GLVND OpenGL, EGL, and GLX frontends required to start on minimal
+  Linux installations.
+
+## [0.2.1] - 2026-08-13
+
+### Added
+
+- Added a terminal-only dark mode that leaves menus and dialogs in the desktop
+  theme.
+- Added installation instructions and embedded application icons.
+
+### Changed
+
+- Changed automatic receive newline handling to detect CR, LF, and CRLF.
+- Hid panel controls when they are not useful and disabled offline input
+  controls when no session can receive them.
+
+## [0.2.0] - 2026-08-13
+
+### Added
+
+- Added configurable quick buttons for text, bytes, macros, and menu commands.
+- Added ordered regular-expression highlight rules for the screen and
+  scrollback.
+- Added per-tab line editing for serial, SSH, telnet, raw TCP, and local shell
+  sessions.
+
+## [0.1.7] - 2026-08-13
+
+### Changed
+
+- Hid the pane header in single-pane mode and preserved the window geometry
+  when switching back to it.
+
+### Fixed
+
+- Restored the configured local-echo state after a connection closes.
+
+## [0.1.6] - 2026-08-13
+
+### Added
+
+- Added one-, two-, and four-pane layouts for viewing simultaneous sessions.
+- Added a quiet automatic update check, limited to once per day and shown only
+  when an update is available.
+- Added the Sterna logo to the About dialog and made disconnected status more
+  visible.
+
+## [0.1.5] - 2026-08-13
+
+### Added
+
+- Added an About dialog and moved the manual update check into it.
+- Added automated Linux AppImage and Windows installer builds for tagged
+  releases.
+
+### Fixed
+
+- Added native Windows coverage for launching a downloaded installer while
+  keeping the verified bytes pinned against replacement.
+
+## [0.1.4] - 2026-08-13
+
+### Fixed
+
+- Released the downloaded Windows installer file before launching it, avoiding
+  a sharing violation during an update.
+
+## [0.1.3] - 2026-08-13
+
+### Added
+
+- Added a compact connection bar for selecting a serial port, connecting or
+  disconnecting, and toggling local echo.
+
+### Changed
+
+- Reordered the menu bar to follow Tera Term and wrapped the settings dialog's
+  page tabs onto two rows.
+
+## [0.1.2] - 2026-08-13
+
+### Changed
+
+- Changed the default serial baud rate from 9600 to 115200.
+- Remembered the last successful connection across restarts without rewriting
+  unrelated settings.
+
+### Fixed
+
+- Opened Windows serial ports for overlapped I/O so an idle receive wait cannot
+  freeze the first write.
+
+## [0.1.1] - 2026-08-13
+
+### Added
+
+- Added Lua plugins with menu items, shortcuts, connection hooks, byte-stream
+  filters, and custom settings pages.
+- Added inline sixel graphics with bounded storage and scrollback support.
+- Added signed in-application updates on Linux and Windows, plus AppImage zsync
+  metadata.
+- Added a generated reference for the supported TTL macro language.
+
+## [0.1.0] - 2026-08-12
+
+Initial public release.
+
+### Added
+
+- Native Qt 6 desktop applications for Linux and Windows, with multiple tabs,
+  printing, scrollback, selection, clipboard integration, and 14 interface
+  languages.
+- Serial, SSH2, telnet, raw TCP, local shell, and Windows named-pipe
+  connections, including HTTP, SOCKS, and telnet proxies.
+- Tera Term-compatible terminal behavior, `TERATERM.INI` settings,
+  `KEYBOARD.CNF` mappings, and Tera Term command-line parsing.
+- TTL and Lua scripting, a local control socket, and the `ttctl` and
+  `ttpmacro` clients.
+- XMODEM, YMODEM, ZMODEM, Kermit, B-Plus, and Quick-VAN file transfers.
+- Linux AppImage and Windows installer packages.
+
+[GitHub releases page]: https://github.com/nataloko/Sterna/releases
+[Unreleased]: https://github.com/nataloko/Sterna/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/nataloko/Sterna/compare/v0.2.4...v0.2.5
+[0.2.4]: https://github.com/nataloko/Sterna/compare/v0.2.3...v0.2.4
+[0.2.3]: https://github.com/nataloko/Sterna/compare/v0.2.2...v0.2.3
+[0.2.2]: https://github.com/nataloko/Sterna/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/nataloko/Sterna/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/nataloko/Sterna/compare/v0.1.7...v0.2.0
+[0.1.7]: https://github.com/nataloko/Sterna/compare/v0.1.6...v0.1.7
+[0.1.6]: https://github.com/nataloko/Sterna/compare/v0.1.5...v0.1.6
+[0.1.5]: https://github.com/nataloko/Sterna/compare/v0.1.4...v0.1.5
+[0.1.4]: https://github.com/nataloko/Sterna/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/nataloko/Sterna/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/nataloko/Sterna/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/nataloko/Sterna/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/nataloko/Sterna/releases/tag/v0.1.0
