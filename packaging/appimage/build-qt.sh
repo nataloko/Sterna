@@ -10,21 +10,12 @@ cd "$(dirname "$0")"
 
 version=6.11.1
 resume=0
-configure_only=0
-while [ "$#" -gt 0 ]; do
-	case "$1" in
-		--resume) resume=1; shift ;;
-		--configure-only) configure_only=1; shift ;;
-		--*) echo "usage: $0 [--resume] [--configure-only] [PREFIX]" >&2; exit 2 ;;
-		*) break ;;
-	esac
-done
+if [ "${1:-}" = --resume ]; then
+	resume=1
+	shift
+fi
 [ "$#" -le 1 ] || {
-	echo "usage: $0 [--resume] [--configure-only] [PREFIX]" >&2
-	exit 2
-}
-[ "$resume" = 0 ] || [ "$configure_only" = 0 ] || {
-	echo "qt: --resume and --configure-only cannot be combined" >&2
+	echo "usage: $0 [--resume] [PREFIX]" >&2
 	exit 2
 }
 prefix=${1:-${STERNA_QT_PREFIX:-$PWD/toolchain/qt-$version}}
@@ -100,13 +91,8 @@ else
 	)
 fi
 
-if [ "$configure_only" = 1 ]; then
-	echo "qt: configured Qt Base $version in $build/qtbase"
-	exit 0
-fi
-
 echo "qt: building Qt Base" >&2
-cmake --build "$build/qtbase" --parallel
+cmake --build "$build/qtbase" --parallel "$CMAKE_BUILD_PARALLEL_LEVEL"
 cmake --install "$build/qtbase"
 
 [ -e "$prefix/plugins/platforms/libqxcb.so" ] || {

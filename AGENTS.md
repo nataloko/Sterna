@@ -317,14 +317,13 @@ The AppImage, where two of the three failures are silent:
 - **An AppImage can quietly use the desktop's Qt 6.11.1 and pass every
   test.** Check `/proc/<pid>/maps`: `libQt6Core.so.6` must come from
   `/tmp/.mount_sterna*` (the prefix follows the image's current filename).
-- **GitHub abandons one long Qt container command at about fifty minutes** with
-  only “hosted runner lost communication” and no retained log. It reproduces
-  across worker counts and after freeing the runner disk. Keep one prepared
-  container alive across the release job: a fresh `docker run` per slice
-  reinstalls the whole dependency set *before* the slice timer. Qt uses
-  one worker (two consumed 14 of the runner's 15 GiB), puts CMake itself under
-  the slice timer, resumes with `build-qt.sh --resume`, and caches only the
-  verified installed prefix.
+- **The hosted Qt build's fifty-minute disconnect is OOM, not a time limit.**
+  Two workers consumed 14 of the runner's 15 GiB before it vanished with no
+  retained log; one measured 6.3 GiB used / 8.9 GiB available. Keep one
+  prepared container alive across the release job, pass the numeric job count
+  to `cmake --build --parallel`, and let that one-worker build finish. A GNU
+  `timeout` inside `docker exec` cancels the Docker context with 143 instead of
+  making a resumable slice.
 - **`IdTitleReportEmpty` is 24 — `WF_TITLEREPORT` entire.** The "Empty"
   default sets *both* bits and lands on the `default:` arm (empty OSC
   answer); it is not "no bits". The flag-word trap disguised as a name.

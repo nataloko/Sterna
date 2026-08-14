@@ -76,22 +76,12 @@ jobs:
       - name: Install portable build dependencies
         run: |
           docker exec sterna-manylinux bash -lc \
-            './packaging/appimage/ci-qt-slice.sh prepare'
-      - name: Build portable Qt — first slice
+            './packaging/appimage/install-build-deps.sh'
+      - name: Build portable Qt
         if: steps.qt-cache.outputs.cache-hit != 'true'
         run: |
           docker exec sterna-manylinux bash -lc \
-            'export CMAKE_BUILD_PARALLEL_LEVEL=1; ./packaging/appimage/ci-qt-slice.sh start'
-      - name: Build portable Qt — second slice
-        if: steps.qt-cache.outputs.cache-hit != 'true'
-        run: |
-          docker exec sterna-manylinux bash -lc \
-            'export CMAKE_BUILD_PARALLEL_LEVEL=1; ./packaging/appimage/ci-qt-slice.sh resume'
-      - name: Finish portable Qt
-        if: steps.qt-cache.outputs.cache-hit != 'true'
-        run: |
-          docker exec sterna-manylinux bash -lc \
-            'export CMAKE_BUILD_PARALLEL_LEVEL=1; ./packaging/appimage/ci-qt-slice.sh finish'
+            'export CMAKE_BUILD_PARALLEL_LEVEL=1; ./packaging/appimage/build-qt.sh'
       - name: Cache portable Qt
         if: steps.qt-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5

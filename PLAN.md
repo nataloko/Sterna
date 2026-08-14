@@ -434,10 +434,9 @@ sending BS because that is what Tera Term does).
   the AppImage a real Debian 10 / Ubuntu 20.04 / RHEL 8 / Fedora 29 floor
   rather than inheriting the developer's Fedora. Linux and Windows packages
   build independently. The Linux runner keeps one prepared manylinux
-  container across short resumable Qt compile commands, so dependency setup
-  is paid once and no command reaches the hosted runner's lost-communication
-  window. Qt itself uses one compiler worker after two measured 14 GiB on the
-  15 GiB runner; the application packaging still uses four. Native
+  container across dependency setup, Qt and packaging, so setup is paid once.
+  Qt itself uses one compiler worker after two measured 14 GiB on the 15 GiB
+  runner and lost it to OOM; the application packaging still uses four. Native
   Windows runs the updater file-lock regression, and one final job creates a
   draft only after all three pass. The Ed25519 root stays local:
   `packaging/release.sh` downloads the exact GitHub-built bytes, signs their
