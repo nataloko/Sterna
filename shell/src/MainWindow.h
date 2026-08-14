@@ -89,7 +89,8 @@ public:
     void openRecent(const RecentConnection &recent);
 
     /// `[user@]host[:port]`, split the way `ssh` splits it. Shared with
-    /// `main.cpp`, which has the same string to take apart.
+    /// `main.cpp`, which has the same string to take apart. Port 0 means none
+    /// was written; -1 means an explicit port was invalid.
     static void splitTarget(const QString &text, QString *host, QString *user,
                             int *port);
 
@@ -100,7 +101,7 @@ public:
     /// a connection somebody has to be able to make for a test to reach it,
     /// and three of the four need hardware, a server or a name that resolves.
     struct Destination {
-        enum class Kind { Empty, CommandLine, Shell, Serial, Ssh, Telnet };
+        enum class Kind { Empty, Invalid, CommandLine, Shell, Serial, Ssh, Telnet };
 
         Kind kind = Kind::Empty;
         /// The whole line, for [`Kind::CommandLine`].

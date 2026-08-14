@@ -1816,7 +1816,14 @@ void MainWindow::splitTarget(const QString &text, QString *host, QString *user,
     // `ssh`, and is spelled with -p there and in ~/.ssh/config.
     const int colon = rest.lastIndexOf(QLatin1Char(':'));
     if (colon > rest.lastIndexOf(QLatin1Char(']'))) {
-        *port = QStringView(rest).mid(colon + 1).toInt();
+        bool ok = false;
+        const uint value = QStringView(rest).mid(colon + 1).toUInt(&ok);
+        if (!ok || value == 0 || value > 65535) {
+            *port = -1;
+            *host = rest.left(colon);
+            return;
+        }
+        *port = static_cast<int>(value);
         rest = rest.left(colon);
     }
     *host = rest;
@@ -1884,11 +1891,20 @@ MainWindow::Destination MainWindow::parseDestination(const QString &text)
     if (target.startsWith(QLatin1String("ssh://"), Qt::CaseInsensitive)) {
         out.kind = Destination::Kind::Ssh;
         splitTarget(target.mid(6), &out.host, &out.user, &out.port);
+        if (out.port < 0) {
+            out.kind = Destination::Kind::Invalid;
+            out.text = target;
+        }
         return out;
     }
     if (target.startsWith(QLatin1String("telnet://"), Qt::CaseInsensitive)) {
         out.kind = Destination::Kind::Telnet;
         splitTarget(target.mid(9), &out.host, &out.user, &out.port);
+        if (out.port < 0) {
+            out.kind = Destination::Kind::Invalid;
+            out.text = target;
+            return out;
+        }
         if (out.port == 0) {
             out.port = 23;
         }
@@ -1907,6 +1923,10 @@ MainWindow::Destination MainWindow::parseDestination(const QString &text)
     // in it goes to the other parser above rather than being merged with this.
     out.kind = Destination::Kind::Ssh;
     splitTarget(target, &out.host, &out.user, &out.port);
+    if (out.port < 0) {
+        out.kind = Destination::Kind::Invalid;
+        out.text = target;
+    }
     return out;
 }
 
@@ -1915,6 +1935,11 @@ void MainWindow::connectDestination(const QString &text)
     const Destination where = parseDestination(text);
     switch (where.kind) {
     case Destination::Kind::Empty:
+        return;
+    case Destination::Kind::Invalid:
+        note(tr("Connect"),
+             tr("The port in %1 must be a number from 1 to 65535.")
+                 .arg(where.text));
         return;
     case Destination::Kind::CommandLine: {
         TtCmdLine *cmd =

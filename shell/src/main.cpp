@@ -4,6 +4,7 @@
 #include <QCommandLineParser>
 #include <QDir>
 #include <QFileInfo>
+#include <QMessageBox>
 
 #include "Branding.h"
 #include "Environment.h"
@@ -228,7 +229,11 @@ int main(int argc, char **argv)
         // is two places for the IPv6 rule to be got wrong.
         MainWindow::splitTarget(parser.positionalArguments().constFirst(),
                                 &target, &user, &port);
-        if (parser.isSet(telnetOption)) {
+        if (port < 0) {
+            QMessageBox::critical(
+                &window, QStringLiteral("Connect"),
+                QStringLiteral("The port must be a number from 1 to 65535."));
+        } else if (parser.isSet(telnetOption)) {
             window.connectTelnet(target, static_cast<quint16>(port ? port : 23));
         } else {
             window.connectSsh(target, user, port);

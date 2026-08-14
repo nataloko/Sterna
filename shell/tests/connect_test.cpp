@@ -289,6 +289,9 @@ void test_what_a_typed_destination_means()
     CHECK(kind("com12") == Kind::Serial);
     CHECK(kind("ssh://myrouter") == Kind::Ssh);
     CHECK(kind("telnet://10.0.0.5:2323") == Kind::Telnet);
+    CHECK(kind("ssh://myrouter:nope") == Kind::Invalid);
+    CHECK(kind("ssh://myrouter:0") == Kind::Invalid);
+    CHECK(kind("telnet://10.0.0.5:65536") == Kind::Invalid);
     // A bare word is SSH here and telnet on Tera Term's own line, which is
     // why a line with a space in it is handed to that parser whole.
     CHECK(kind("myrouter") == Kind::Ssh);
