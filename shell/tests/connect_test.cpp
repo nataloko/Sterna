@@ -815,6 +815,11 @@ void write_images(const QString &dir)
                                             TT_TELNET_AUTO));
     recents.append(RecentConnection::shell());
 
+    // One of them is taken, so the dumped list shows what a greyed row looks
+    // like beside the live ones.
+    qputenv("STERNA_TEST_BUSY_PORTS",
+            "/dev/serial/by-path/pci-0000:c6:00.3-usb-0:4.2:1.0=minicom");
+
     QMainWindow window;
     auto *bar = new ConnectBar(nullptr, &window);
     window.addToolBar(Qt::TopToolBarArea, bar);
@@ -832,6 +837,7 @@ void write_images(const QString &dir)
                                              + QStringLiteral("/connect-list.png"));
         combo->hidePopup();
     }
+    qunsetenv("STERNA_TEST_BUSY_PORTS");
 }
 
 int main(int argc, char **argv)
