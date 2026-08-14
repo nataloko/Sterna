@@ -1987,6 +1987,15 @@ void test_the_connect_bar_is_a_view_of_the_session()
     CHECK(!darkAction->icon().isNull());
     CHECK(darkButton->toolButtonStyle() == Qt::ToolButtonIconOnly);
     CHECK(darkButton->iconSize() == QSize(16, 16));
+    // The moon's small star is what keeps a 16 px crescent from reading as a
+    // narrow ring. Pin one pixel in its solid centre; the rest of the icon is
+    // still reviewed in the window capture below.
+    const QImage moon = darkAction->icon()
+                            .pixmap(QSize(16, 16))
+                            .toImage()
+                            .scaled(16, 16, Qt::IgnoreAspectRatio,
+                                    Qt::SmoothTransformation);
+    CHECK(qAlpha(moon.pixel(13, 3)) != 0);
     window.resize(window.sizeHint());
     qApp->processEvents();
     CHECK(darkButton->geometry().right() > bar->width() - 48);

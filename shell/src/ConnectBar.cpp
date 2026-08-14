@@ -60,12 +60,27 @@ QIcon appearanceIcon(bool darkMode, const QColor &colour)
         painter.scale(scale, scale);
 
         if (!darkMode) {
-            // The action enters dark mode, so show a moon.
+            // The action enters dark mode, so show a moon. The star is not
+            // decoration: at 16 px a bare crescent can collapse into a narrow
+            // ring, which looks like almost anything except a moon. The two
+            // shapes keep the meaning legible at the toolbar's real size.
             QPainterPath moon;
-            moon.setFillRule(Qt::OddEvenFill);
-            moon.addEllipse(QRectF(2.0, 1.5, 11.5, 13.0));
-            moon.addEllipse(QRectF(6.0, 0.5, 9.0, 11.0));
-            painter.fillPath(moon, colour);
+            moon.addEllipse(QRectF(1.5, 1.0, 11.0, 13.5));
+            QPainterPath sky;
+            sky.addEllipse(QRectF(5.0, -0.5, 10.0, 11.0));
+            painter.fillPath(moon.subtracted(sky), colour);
+
+            QPainterPath star;
+            star.moveTo(12.5, 0.5);
+            star.lineTo(13.1, 2.4);
+            star.lineTo(15.0, 3.0);
+            star.lineTo(13.1, 3.6);
+            star.lineTo(12.5, 5.5);
+            star.lineTo(11.9, 3.6);
+            star.lineTo(10.0, 3.0);
+            star.lineTo(11.9, 2.4);
+            star.closeSubpath();
+            painter.fillPath(star, colour);
         } else {
             // In dark mode the same action returns to the light theme.
             QPen pen(colour, 1.4, Qt::SolidLine, Qt::RoundCap,
