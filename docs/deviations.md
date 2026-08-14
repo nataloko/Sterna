@@ -324,14 +324,16 @@ command dispatched by id. Nothing about how a command reaches the wire is new,
 and a `KEYBOARD.CNF` full of user keys still works exactly as it did.
 
 **Where it lives.** `crates/tt-config/src/buttons.rs` owns the format;
-`shell/src/QuickButtonBar.{h,cpp}` is the bar and
+`shell/src/QuickButtonBar.{h,cpp}` is the bar inside a resizable dock and
 `shell/src/QuickButtonsDialog.{h,cpp}` the editor. The list is a
 `[Sterna Buttons]` section — its own, because a list is exactly what the
 settings schema cannot describe — plus two ordinary `[Sterna]` settings for the
 bar itself: `QuickButtons` (`window.quick_buttons`, on) and `QuickButtonsArea`
 (`window.quick_buttons_area`, `right` — a terminal's rows are the scarce
 dimension, so the bar goes where there is width to spare rather than where the
-connect bar is).
+connect bar is). The visibility setting applies even to an empty list: the
+panel then consists of the Add button, so the feature can be discovered and
+its first command defined without going through Setup.
 
 **A button can repeat**: *n* sends every *x.x* seconds, or until stopped
 (`Repeat` and `IntervalMs`). Upstream has nothing of the kind — the nearest

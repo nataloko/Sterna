@@ -22,9 +22,9 @@ class Session;
 ///
 /// It owns no state either. The list belongs to the window, which read it out
 /// of the settings file; the bar builds actions from it and reports a press.
-/// It can be dragged to any of the four edges — on the left or the right it
-/// costs no terminal rows, which on a short window is what makes the feature
-/// worth having.
+/// Its enclosing dock can be dragged to any of the four edges and resized —
+/// on the left or the right it costs no terminal rows, which on a short window
+/// is what makes the feature worth having.
 class QuickButtonBar : public QToolBar {
     Q_OBJECT
 

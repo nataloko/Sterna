@@ -25,6 +25,7 @@ class I18n;
 class Macro;
 class Plugins;
 class QLabel;
+class QDockWidget;
 class QLibrary;
 class SettingsDialog;
 class TerminalPage;
@@ -369,13 +370,9 @@ private:
 
     // --- quick buttons ------------------------------------------------------
 
-    /// Read the list and rebuild the bar. Also decides whether the bar is
-    /// shown at all: an empty set has no bar, whatever `window.quick_buttons`
-    /// says, because an empty toolbar is chrome for nothing.
+    /// Read the list and rebuild the bar. The visibility setting owns whether
+    /// its dock is shown; an empty list still leaves the Add button available.
     void reloadQuickButtons();
-    /// Give the bar a line of its own when it is in a horizontal area, and no
-    /// break when it is down a side where there is nothing to share with.
-    void applyQuickButtonBreak();
     /// Open the editor with `index` selected, or -1 for a new button, and
     /// `seed` prefilled into that new one.
     void editQuickButtons(int index, const QuickButton *seed = nullptr);
@@ -485,18 +482,17 @@ private:
     /// Shown when `window.toolbar` is on, which is what Setup > Show toolbar
     /// writes.
     ConnectBar *m_connectBar = nullptr;
-    /// The user's own commands. Hidden while the list is empty; otherwise
-    /// shown when `window.quick_buttons` is on, at the edge
-    /// `window.quick_buttons_area` names.
+    /// The user's own commands, inside a dock so the panel can be resized.
     QuickButtonBar *m_quickBar = nullptr;
-    /// The value of `window.quick_buttons_area` last *applied* to the bar.
+    QDockWidget *m_quickDock = nullptr;
+    /// The value of `window.quick_buttons_area` last *applied* to the dock.
     ///
     /// Not where the bar is — where it was put. A drag moves the bar and does
     /// not write the setting until the window closes, so comparing against the
     /// live area would drag it back every time the list was edited. Empty
     /// until the settings have been read, which is what makes the first apply
     /// happen at all.
-    QString m_quickBarArea;
+    QString m_quickDockArea;
     /// The clock for the buttons that send more than once. Owns no buttons —
     /// only indices into the bar's list, which is why editing that list stops
     /// every run.

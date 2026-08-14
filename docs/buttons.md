@@ -11,8 +11,9 @@ pressing a button and pressing a mapped key go through the same code.
 
 ## Making one
 
-**Setup > Quick buttons…** is the editor. There is no bar until a button
-exists, so that is also where the feature is found.
+**Setup > Quick buttons…** is the full editor. The panel is shown by default
+even before a button exists, with a **+** that opens the editor on the first
+empty row.
 
 The shortest way in is **Edit > New quick button from selection…**: select the
 command that just worked, and the editor opens with it filled in.
@@ -21,11 +22,12 @@ Once the bar is there, the **+** at its end adds another — opening the editor
 on a new, empty button — and a right-click on any button offers Edit, Duplicate
 and Remove.
 
-The bar opens **down the right-hand side**, because a terminal's rows are the
+The panel opens **down the right-hand side**, because a terminal's rows are the
 scarce dimension: a window is usually far wider than the 80 columns it needs
 and exactly as tall as it can be, so a vertical bar costs nothing that is being
-used and the labels have room to be words. It can be dragged to any of the four
-edges, and where it was left is remembered.
+used and the labels have room to be words. Drag its inner edge to resize it. It
+can also be dragged to any of the four edges, and where it was left is
+remembered.
 
 ## What a button can do
 

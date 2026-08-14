@@ -2541,7 +2541,7 @@ impl Default for WindowPanelLayout {
     }
 }
 
-/// Which edge the bar is on. Qt lets a toolbar be dragged to any of the four,
+/// Which edge the resizable dock is on. Qt lets it be dragged to any of the four,
 /// and this is where it opens.
 ///
 /// **The right**, not the top, which is where the other bar is. A terminal's
@@ -4214,11 +4214,10 @@ pub struct Settings {
     /// a list, which no schema row can be, and they live in a `[Sterna Buttons]`
     /// section of their own (`tt-config/src/buttons.rs`).
     ///
-    /// On, but the bar is hidden while nobody has defined a button — an empty
-    /// toolbar is chrome for nothing. So this is what View > Show quick buttons
-    /// writes, not what decides whether the bar exists.
+    /// The whole visibility decision. An empty panel still shows its Add button, so
+    /// checking this before any commands exist gives a direct route to the first.
     pub window_quick_buttons: bool,
-    /// Which edge the bar is on. Qt lets a toolbar be dragged to any of the four,
+    /// Which edge the resizable dock is on. Qt lets it be dragged to any of the four,
     /// and this is where it opens.
     ///
     /// **The right**, not the top, which is where the other bar is. A terminal's
@@ -15897,7 +15896,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "on",
         label: None,
-        doc: "**`[Sterna]`** again, and these two are only the *bar*: the buttons on it are a list, which no schema row can be, and they live in a `[Sterna Buttons]` section of their own (`tt-config/src/buttons.rs`).  On, but the bar is hidden while nobody has defined a button — an empty toolbar is chrome for nothing. So this is what View > Show quick buttons writes, not what decides whether the bar exists.",
+        doc: "**`[Sterna]`** again, and these two are only the *bar*: the buttons on it are a list, which no schema row can be, and they live in a `[Sterna Buttons]` section of their own (`tt-config/src/buttons.rs`).  The whole visibility decision. An empty panel still shows its Add button, so checking this before any commands exist gives a direct route to the first.",
     },
     Field {
         name: "window.quick_buttons_area",
@@ -15907,7 +15906,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Enum(&["right", "top", "bottom", "left"]),
         default: "right",
         label: None,
-        doc: "Which edge the bar is on. Qt lets a toolbar be dragged to any of the four, and this is where it opens.  **The right**, not the top, which is where the other bar is. A terminal's rows are the scarce dimension — a window is usually far wider than the 80 columns it needs and exactly as tall as it can be — so a vertical bar costs nothing that is being used, and the labels have room to be words rather than abbreviations. An unrecognised spelling lands on the right as well, rather than hiding the bar.",
+        doc: "Which edge the resizable dock is on. Qt lets it be dragged to any of the four, and this is where it opens.  **The right**, not the top, which is where the other bar is. A terminal's rows are the scarce dimension — a window is usually far wider than the 80 columns it needs and exactly as tall as it can be — so a vertical bar costs nothing that is being used, and the labels have room to be words rather than abbreviations. An unrecognised spelling lands on the right as well, rather than hiding the bar.",
     },
     Field {
         name: "recent.serial_port",

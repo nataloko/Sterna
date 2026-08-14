@@ -17,6 +17,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QDockWidget>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
@@ -114,6 +115,11 @@ int markerCount(const Session &session, const char *marker)
 QuickButtonBar *barOf(const MainWindow &window)
 {
     return window.findChild<QuickButtonBar *>(QStringLiteral("quickButtonBar"));
+}
+
+QDockWidget *dockOf(const MainWindow &window)
+{
+    return window.findChild<QDockWidget *>(QStringLiteral("quickButtonDock"));
 }
 
 QAction *buttonAction(const MainWindow &window, int index)
@@ -301,9 +307,9 @@ void a_button_that_asks_sends_nothing_when_the_question_is_dismissed()
     CHECK(!screenText(*session).contains(QLatin1String("dangerous-thing")));
 }
 
-/// An empty list has no bar at all, whatever the setting says — and defining
-/// one brings it back without a restart.
-void an_empty_list_has_no_bar()
+/// An empty list keeps the checked panel and its Add button visible, and
+/// defining the first command fills that same panel without a restart.
+void an_empty_list_keeps_the_add_button()
 {
     QTemporaryDir dir;
     CHECK(dir.isValid());
@@ -313,9 +319,12 @@ void an_empty_list_has_no_bar()
     window.show();
     QuickButtonBar *bar = barOf(window);
     CHECK(bar != nullptr);
+    CHECK(dockOf(window) != nullptr);
     CHECK(bar->buttons().isEmpty());
-    spin([] { return false; }, 200);
-    CHECK(!bar->isVisible());
+    CHECK(spin([bar] { return bar->isVisible(); }, 2000));
+    QAction *add = window.findChild<QAction *>(QStringLiteral("quickButtonAdd"));
+    CHECK(add != nullptr);
+    CHECK(add && add->isVisible());
 
     QVector<QuickButton> buttons;
     QuickButton made;
@@ -513,8 +522,8 @@ void a_shortcut_is_installed_and_released_with_the_bar()
     CHECK(spin([&window] { return !barOf(window)->isVisible(); }, 2000));
 }
 
-/// Where the bar opens: down the right unless the file says otherwise, and
-/// wherever it was dragged to for as long as the window is open.
+/// The resizable dock opens down the right unless the file says otherwise, and
+/// stays wherever it was dragged for as long as the window is open.
 void the_bar_opens_down_the_right_and_stays_where_it_is_put()
 {
     QTemporaryDir dir;
@@ -527,8 +536,19 @@ void the_bar_opens_down_the_right_and_stays_where_it_is_put()
         // terminal's rows are the scarce dimension and a vertical bar costs
         // none of them.
         MainWindow window(shipped);
+        window.resize(900, 500);
         window.show();
-        CHECK(window.toolBarArea(barOf(window)) == Qt::RightToolBarArea);
+        QDockWidget *dock = dockOf(window);
+        CHECK(dock != nullptr);
+        CHECK(window.dockWidgetArea(dock) == Qt::RightDockWidgetArea);
+
+        // A dock has a splitter edge. Moving it changes the panel width rather
+        // than merely changing how much empty space surrounds fixed buttons.
+        const int before = dock ? dock->width() : 0;
+        if (dock) {
+            window.resizeDocks({dock}, {before + 100}, Qt::Horizontal);
+            CHECK(spin([dock, before] { return dock->width() > before; }, 2000));
+        }
     }
 
     QTemporaryDir other;
@@ -540,13 +560,13 @@ void the_bar_opens_down_the_right_and_stays_where_it_is_put()
 
     MainWindow window(ini);
     window.show();
-    CHECK(window.toolBarArea(barOf(window)) == Qt::LeftToolBarArea);
+    CHECK(window.dockWidgetArea(dockOf(window)) == Qt::LeftDockWidgetArea);
 
     // A drag is the user placing it. Editing the list rebuilds the bar, and
     // that must not put it back where the file — which is not written until
     // the window closes — still says it was.
-    window.addToolBar(Qt::BottomToolBarArea, barOf(window));
-    CHECK(window.toolBarArea(barOf(window)) == Qt::BottomToolBarArea);
+    window.addDockWidget(Qt::BottomDockWidgetArea, dockOf(window));
+    CHECK(window.dockWidgetArea(dockOf(window)) == Qt::BottomDockWidgetArea);
 
     QVector<QuickButton> buttons = barOf(window)->buttons();
     QuickButton added;
@@ -557,14 +577,15 @@ void the_bar_opens_down_the_right_and_stays_where_it_is_put()
     CHECK(saveQuickButtons(ini, buttons, &error));
     QMetaObject::invokeMethod(window.session(), "settingsChanged");
     CHECK(spin([&window] { return barOf(window)->buttons().size() == 2; }, 2000));
-    CHECK(window.toolBarArea(barOf(window)) == Qt::BottomToolBarArea);
+    CHECK(window.dockWidgetArea(dockOf(window)) == Qt::BottomDockWidgetArea);
 
     // ...and a setting that really changes still moves it.
     CHECK(window.session()->setSetting(QStringLiteral("window.quick_buttons_area"),
                                        QStringLiteral("top"), &error));
     CHECK(spin(
         [&window] {
-            return window.toolBarArea(barOf(window)) == Qt::TopToolBarArea;
+            return window.dockWidgetArea(dockOf(window))
+                == Qt::TopDockWidgetArea;
         },
         2000));
 }
@@ -885,7 +906,7 @@ int main(int argc, char **argv)
     a_macro_button_is_available_offline();
     a_text_button_repaints_local_echo_immediately();
     a_button_that_asks_sends_nothing_when_the_question_is_dismissed();
-    an_empty_list_has_no_bar();
+    an_empty_list_keeps_the_add_button();
     the_editor_round_trips_a_button();
     the_editor_preserves_an_unknown_command();
     the_editor_warns_about_a_key_the_host_wants();

@@ -12,6 +12,7 @@
 #include <QCloseEvent>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QDockWidget>
 #include <QEvent>
 #include <QFile>
 #include <QFontDialog>
@@ -33,6 +34,7 @@
 #include <QStatusTipEvent>
 #include <QTimer>
 #include <QUrl>
+#include <QVBoxLayout>
 
 #include <QDir>
 #include <QStandardPaths>
@@ -118,29 +120,29 @@ QString panelLayoutSetting(PanelLayout layout)
 ///
 /// The schema already refuses an unrecognised spelling — its enum arm is
 /// `top/*` — so this only has to name the four.
-Qt::ToolBarArea quickButtonArea(const QString &setting)
+Qt::DockWidgetArea quickButtonArea(const QString &setting)
 {
     if (setting == QLatin1String("bottom")) {
-        return Qt::BottomToolBarArea;
+        return Qt::BottomDockWidgetArea;
     }
     if (setting == QLatin1String("left")) {
-        return Qt::LeftToolBarArea;
+        return Qt::LeftDockWidgetArea;
     }
     if (setting == QLatin1String("right")) {
-        return Qt::RightToolBarArea;
+        return Qt::RightDockWidgetArea;
     }
-    return Qt::TopToolBarArea;
+    return Qt::TopDockWidgetArea;
 }
 
-/// ...and back, for remembering where the bar was dragged to.
-QString quickButtonAreaName(Qt::ToolBarArea area)
+/// ...and back, for remembering where the dock was dragged to.
+QString quickButtonAreaName(Qt::DockWidgetArea area)
 {
     switch (area) {
-    case Qt::BottomToolBarArea:
+    case Qt::BottomDockWidgetArea:
         return QStringLiteral("bottom");
-    case Qt::LeftToolBarArea:
+    case Qt::LeftDockWidgetArea:
         return QStringLiteral("left");
-    case Qt::RightToolBarArea:
+    case Qt::RightDockWidgetArea:
         return QStringLiteral("right");
     default:
         return QStringLiteral("top");
@@ -375,15 +377,33 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
         rememberSettings({{name, value}});
     });
 
-    // The second bar, which is the user's own. Its area comes from the
-    // settings below, once they have been read; it is created here so the
-    // menu can point at it.
-    m_quickBar = new QuickButtonBar(this);
-    // Somewhere to live until the settings have been read, which happens after
-    // this. `m_quickBarArea` is deliberately left empty so that the first
-    // `reloadQuickButtons` counts as a change and puts it where the file says.
-    addToolBar(Qt::TopToolBarArea, m_quickBar);
-    m_quickBar->hide();
+    // The user's own commands live in a dock rather than directly in a
+    // QMainWindow toolbar area: dock splitters are user-resizable, toolbar
+    // bands are not. Its area comes from the settings below once they have
+    // been read.
+    m_quickDock = new QDockWidget(tr("Quick buttons"), this);
+    m_quickDock->setObjectName(QStringLiteral("quickButtonDock"));
+    m_quickDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_quickDock->setFeatures(QDockWidget::DockWidgetMovable);
+    auto *quickPanel = new QWidget(m_quickDock);
+    quickPanel->setObjectName(QStringLiteral("quickButtonPanel"));
+    auto *quickLayout = new QVBoxLayout(quickPanel);
+    quickLayout->setContentsMargins(0, 0, 0, 0);
+    quickLayout->setSpacing(0);
+    m_quickBar = new QuickButtonBar(quickPanel);
+    quickLayout->addWidget(m_quickBar, 0, Qt::AlignTop);
+    quickLayout->addStretch();
+    m_quickDock->setWidget(quickPanel);
+    addDockWidget(Qt::RightDockWidgetArea, m_quickDock);
+    m_quickDock->hide();
+    const auto orientQuickBar = [this](Qt::DockWidgetArea area) {
+        const bool horizontal = area == Qt::TopDockWidgetArea
+            || area == Qt::BottomDockWidgetArea;
+        m_quickBar->setOrientation(horizontal ? Qt::Horizontal : Qt::Vertical);
+    };
+    connect(m_quickDock, &QDockWidget::dockLocationChanged, this,
+            orientQuickBar);
+    orientQuickBar(Qt::RightDockWidgetArea);
     connect(m_quickBar, &QuickButtonBar::activated, this,
             &MainWindow::runQuickButton);
     connect(m_quickBar, &QuickButtonBar::addRequested, this, [this] {
@@ -2931,14 +2951,13 @@ void MainWindow::closeEvent(QCloseEvent *event)
         return;
     }
 
-    // Where the quick button bar was left. On close rather than on the drag,
-    // because Qt has no "moved to an area" signal — only orientation changes,
-    // which cannot tell top from bottom — and because this is exactly what
-    // `SaveVTPos` does with the window's own position one line further down.
+    // Where the quick button dock was left. On close rather than on the drag,
+    // because this is exactly what `SaveVTPos` does with the window's own
+    // position one line further down.
     // Unlike that one it has no switch: the bar is this program's own and
     // somebody who moved it meant it.
-    if (m_quickBar && !m_quickBar->buttons().isEmpty()) {
-        const QString area = quickButtonAreaName(toolBarArea(m_quickBar));
+    if (m_quickDock) {
+        const QString area = quickButtonAreaName(dockWidgetArea(m_quickDock));
         if (area != m_session->setting(QStringLiteral("window.quick_buttons_area"))) {
             rememberSettings({{QStringLiteral("window.quick_buttons_area"), area}});
         }
@@ -3239,21 +3258,6 @@ void MainWindow::runKeyAction(const KeyCodeAction &action)
 
 // --- quick buttons ---------------------------------------------------------
 
-void MainWindow::applyQuickButtonBreak()
-{
-    // A row of its own in a horizontal area. Without the break Qt puts a
-    // second toolbar *beside* the first, so the buttons share the connect
-    // bar's line and the ones that do not fit disappear behind an overflow
-    // chevron — exactly the failure a bar of commands exists to avoid. Down
-    // the side there is nothing to share a line with, and a break there would
-    // start a second column.
-    removeToolBarBreak(m_quickBar);
-    const Qt::ToolBarArea area = toolBarArea(m_quickBar);
-    if (area == Qt::TopToolBarArea || area == Qt::BottomToolBarArea) {
-        insertToolBarBreak(m_quickBar);
-    }
-}
-
 void MainWindow::reloadQuickButtons()
 {
     if (!m_quickBar) {
@@ -3294,24 +3298,22 @@ void MainWindow::reloadQuickButtons()
         action->setShortcut(sequence);
     }
 
-    // **Only when the setting itself has moved**, not whenever the bar is not
+    // **Only when the setting itself has moved**, not whenever the dock is not
     // where the file says. A drag is the user placing it, and this runs on
     // every edit of the list — comparing against the live area would put the
     // bar back at the file's edge the moment somebody added a button, and the
     // file is not written until the window closes.
     const QString setting =
         m_session->setting(QStringLiteral("window.quick_buttons_area"));
-    if (setting != m_quickBarArea) {
-        m_quickBarArea = setting;
-        addToolBar(quickButtonArea(setting), m_quickBar);
-        applyQuickButtonBreak();
+    if (setting != m_quickDockArea) {
+        m_quickDockArea = setting;
+        addDockWidget(quickButtonArea(setting), m_quickDock);
     }
-    // Empty means no bar at all, whatever the setting says. The setting is
-    // what Setup > Show quick buttons writes; this is the difference between
-    // "put it away" and "there is nothing to show".
+    // The setting alone owns visibility. An empty list still has a useful +
+    // button, which is the shortest route to defining the first command.
     const bool wanted =
         m_session->setting(QStringLiteral("window.quick_buttons")) == QLatin1String("on");
-    m_quickBar->setVisible(wanted && !buttons.isEmpty());
+    m_quickDock->setVisible(wanted);
     if (m_quickButtonsAction) {
         m_quickButtonsAction->setChecked(wanted);
     }

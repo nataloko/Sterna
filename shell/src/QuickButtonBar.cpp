@@ -5,6 +5,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QMenu>
+#include <QSizePolicy>
 
 #include "Session.h"
 
@@ -12,12 +13,12 @@ QuickButtonBar::QuickButtonBar(QWidget *parent) : QToolBar(parent)
 {
     setObjectName(QStringLiteral("quickButtonBar"));
     setWindowTitle(tr("Quick buttons"));
-    // Movable, unlike `ConnectBar`. That bar has a fixed job in a fixed place;
-    // this one is the user's own and how much of the window it may cost is
-    // theirs to decide — an edge with no rows to spare is what the left and
-    // right areas are for.
-    setMovable(true);
+    // The enclosing dock owns movement and resizing. Letting the inner toolbar
+    // move as well produces a second drag handle which can float independently
+    // of the panel that gives it a resizable edge.
+    setMovable(false);
     setFloatable(false);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     // Text: there is no icon theme this program ships, and there is certainly
     // no themed icon for "show version".
     setToolButtonStyle(Qt::ToolButtonTextOnly);
@@ -73,12 +74,14 @@ void QuickButtonBar::setButtons(const QVector<QuickButton> &buttons)
 
     if (!m_buttons.isEmpty()) {
         addSeparator();
-        m_add = addAction(QStringLiteral("+"));
-        m_add->setObjectName(QStringLiteral("quickButtonAdd"));
-        m_add->setToolTip(tr("Add a quick button..."));
-        connect(m_add, &QAction::triggered, this,
-                &QuickButtonBar::addRequested);
     }
+    // The empty panel is still useful: this is its shortest route to the first
+    // button, and it keeps View > Show quick buttons truthful before one has
+    // been defined.
+    m_add = addAction(QStringLiteral("+"));
+    m_add->setObjectName(QStringLiteral("quickButtonAdd"));
+    m_add->setToolTip(tr("Add a quick button..."));
+    connect(m_add, &QAction::triggered, this, &QuickButtonBar::addRequested);
 }
 
 void QuickButtonBar::describeAction(int index)

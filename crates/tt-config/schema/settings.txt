@@ -2077,12 +2077,11 @@ window.panel_layout | enum(single/*=Single,tiled/two/four=Tiled) | Sterna | Pane
 # a list, which no schema row can be, and they live in a `[Sterna Buttons]`
 # section of their own (`tt-config/src/buttons.rs`).
 #
-# On, but the bar is hidden while nobody has defined a button — an empty
-# toolbar is chrome for nothing. So this is what View > Show quick buttons
-# writes, not what decides whether the bar exists.
+# The whole visibility decision. An empty panel still shows its Add button, so
+# checking this before any commands exist gives a direct route to the first.
 window.quick_buttons | bool | Sterna | QuickButtons | on | -
 
-# Which edge the bar is on. Qt lets a toolbar be dragged to any of the four,
+# Which edge the resizable dock is on. Qt lets it be dragged to any of the four,
 # and this is where it opens.
 #
 # **The right**, not the top, which is where the other bar is. A terminal's
