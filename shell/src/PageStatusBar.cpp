@@ -102,6 +102,7 @@ void PageStatusBar::setConnection(bool connected, bool connecting,
     m_connection->setText(fontMetrics().elidedText(
         m_connectionText, Qt::ElideMiddle,
         fontMetrics().averageCharWidth() * kConnectionChars));
+    showName();
 
     const bool down = !connected && !connecting;
     if (down != m_linkDown) {
@@ -158,7 +159,16 @@ void PageStatusBar::resizeEvent(QResizeEvent *event)
 
 void PageStatusBar::showName()
 {
-    elideInto(m_name, m_message.isEmpty() ? m_nameText : m_message);
+    if (!m_message.isEmpty()) {
+        elideInto(m_name, m_message);
+        return;
+    }
+    // A local shell's name and its link description are the same string —
+    // `connectionHost()` is empty for a pty, so the label falls back to
+    // `describe()`, which is what the right-hand field already says. Print it
+    // once. SSH and serial name themselves differently from their description
+    // and keep both halves.
+    elideInto(m_name, m_nameText == m_connectionText ? QString() : m_nameText);
 }
 
 void PageStatusBar::elideInto(QLabel *label, const QString &text)
