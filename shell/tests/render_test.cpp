@@ -3566,7 +3566,12 @@ void test_a_frontend_toggle_does_not_clear_on_resize()
         const uint32_t cp = row[x].text[0];
         first += cp ? QChar(static_cast<char16_t>(cp)) : QLatin1Char(' ');
     }
-    CHECK(first.trimmed() == QStringLiteral("still here"));
+    // `contains`, not equality: the far end is a real login shell and its
+    // prompt arrives when it arrives, so whether it shares this line is a race
+    // and not the property. What is being asserted is that the text is still
+    // on the page at all — the two scrollback checks above say it did not
+    // scroll, and this says it was not erased in place.
+    CHECK(first.contains(QStringLiteral("still here")));
 }
 
 /// `AutoWinClose` is decided in the core, but only the frontend owns a

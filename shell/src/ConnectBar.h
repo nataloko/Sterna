@@ -6,7 +6,9 @@
 
 #include <QString>
 #include <QToolBar>
+#include <QVector>
 
+#include "Recent.h"
 #include "sterna.h"
 
 class I18n;
@@ -16,8 +18,8 @@ class QComboBox;
 class QEvent;
 class Session;
 
-/// The input and connection controls that need to stay within reach: which
-/// port, open or close it, local echo, and locally edited lines.
+/// The input and connection controls that need to stay within reach: where to
+/// go, open or close it, local echo, and locally edited lines.
 ///
 /// Upstream has no toolbar — its equivalents are a dialog (New connection), a
 /// menu item (Disconnect) and a checkbox three tabs into Setup > Terminal.
@@ -28,28 +30,47 @@ class Session;
 /// [`refresh`] from the window's own status update, and every activation is a
 /// signal for the window to act on — so the bar and the menu cannot disagree
 /// about whether the port is open.
+///
+/// **One destination field, not a serial port list.** The list this replaced
+/// could only offer serial ports, which made the bar inert on any machine with
+/// no adapter plugged into it and left SSH, telnet and a local shell reachable
+/// only through the dialog. The problem with widening it is that a one-line
+/// control can carry a *destination* and not a parameter set — baud against
+/// user and key against a telnet mode against nothing at all — so the dropdown
+/// offers [`RecentConnection`]s, which carry their own, and the field accepts
+/// anything the command line accepts, which inherits that kind's last ones.
+/// The list is the common case and is exact; the field is the escape hatch and
+/// is not.
 class ConnectBar : public QToolBar {
     Q_OBJECT
 
 public:
     ConnectBar(const I18n *i18n, QWidget *parent = nullptr);
 
-    /// The device path of the chosen port, empty when nothing is plugged in.
-    QString portPath() const;
-    /// Select a port by device path, if it is still there.
-    void setPortPath(const QString &path);
-    /// Re-read the port list. Done on the dropdown's own popup rather than on a
-    /// timer: a terminal that wakes up every second to enumerate `/dev` is a
-    /// terminal that never lets the CPU idle, and the answer is only wanted at
-    /// the moment somebody looks.
-    void refreshPorts();
+    /// What is typed in the destination field.
+    QString destination() const;
+    void setDestination(const QString &text);
+    /// Show a connection that was just opened, in the same words the list
+    /// would have offered it in.
+    void showConnection(const RecentConnection &recent);
+
+    /// The list the dropdown offers. Held rather than read on demand because
+    /// the bar has no session to read it from; the window pushes it whenever
+    /// it changes.
+    void setRecents(const QVector<RecentConnection> &recents);
+
     /// Point every widget at what the session currently says.
     void refresh(const Session *session);
 
 signals:
-    /// Open the named port. The window supplies the line settings, which are
-    /// the ones the connect dialog and `--baud` also use.
-    void connectRequested(const QString &portPath);
+    /// A remembered connection, with the parameters it was opened with.
+    void recentChosen(const RecentConnection &recent);
+    /// Whatever is in the field: an alias, `ssh://user@host`, a device path,
+    /// `shell`, or a whole Tera Term command line. The window decides what it
+    /// means — the bar has no parser and no session.
+    void destinationEntered(const QString &text);
+    void newConnectionRequested();
+    void forgetRecentsRequested();
     void disconnectRequested();
     void localEchoRequested(bool on);
     void lineEditRequested(bool on);
@@ -59,9 +80,16 @@ protected:
     void changeEvent(QEvent *event) override;
 
 private:
+    /// What one dropdown row is. `Qt::UserRole` on the item; the payload is
+    /// the row after it.
+    enum Role { RoleKind = Qt::UserRole, RolePayload };
+    enum class Row { Header, Recent, Port, Alias, Shell, New, Forget };
+
+    void rebuildList();
+    void chose(int index);
     void updateDarkModeAction(bool darkMode);
 
-    QComboBox *m_port = nullptr;
+    QComboBox *m_destination = nullptr;
     QAction *m_connect = nullptr;
     /// A check box rather than a checkable button: whether local echo is on is
     /// something people glance at, and a tick says it from across the room
@@ -70,6 +98,11 @@ private:
     QCheckBox *m_echo = nullptr;
     QCheckBox *m_lineEdit = nullptr;
     QAction *m_darkMode = nullptr;
+    QVector<RecentConnection> m_recents;
     QString m_connectText;
     QString m_disconnectText;
+    /// True while [`rebuildList`] is repopulating: a combo assigns a current
+    /// index as it fills, and acting on that would connect somewhere nobody
+    /// asked to go.
+    bool m_filling = false;
 };

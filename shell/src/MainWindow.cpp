@@ -22,6 +22,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QRegularExpression>
 #include <QScreen>
 #include <QPushButton>
 #include <QFileDialog>
@@ -315,18 +316,14 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
     // and its enabled states honest.
     m_connectBar = new ConnectBar(m_i18n, this);
     addToolBar(Qt::TopToolBarArea, m_connectBar);
-    connect(m_connectBar, &ConnectBar::connectRequested, this,
-            [this](const QString &path) {
-                if (path.isEmpty()) {
-                    // The dialog has the same complaint. Here it can only
-                    // happen with nothing plugged in, since the action is
-                    // greyed otherwise.
-                    QMessageBox::warning(this, tr("Connect"),
-                                         tr("No serial ports were found."));
-                    return;
-                }
-                connectSerial(path, m_lastParams);
-            });
+    connect(m_connectBar, &ConnectBar::recentChosen, this,
+            &MainWindow::openRecent);
+    connect(m_connectBar, &ConnectBar::destinationEntered, this,
+            &MainWindow::connectDestination);
+    connect(m_connectBar, &ConnectBar::newConnectionRequested, this,
+            [this] { showConnectDialog(); });
+    connect(m_connectBar, &ConnectBar::forgetRecentsRequested, this,
+            &MainWindow::forgetRecents);
     connect(m_connectBar, &ConnectBar::disconnectRequested, this,
             &MainWindow::disconnectPort);
     connect(m_connectBar, &ConnectBar::localEchoRequested, this, [this](bool on) {
@@ -600,6 +597,14 @@ void MainWindow::wirePage(TerminalPage *page)
             if (page->session()->isConnected()) {
                 rememberSsh(m_lastSshHost, m_lastSshUser, m_lastSshPort,
                             m_lastSshIdentity, m_lastSshLegacy);
+                // Here rather than in `startSsh`, for the reason stated
+                // there: that call returning true means an attempt has
+                // *started*, and a refused host key is not a place to offer
+                // going back to.
+                rememberRecent(RecentConnection::ssh(
+                    m_lastSshHost, m_lastSshUser,
+                    static_cast<quint16>(m_lastSshPort), m_lastSshIdentity,
+                    m_lastSshLegacy));
             }
         }
         if (page == m_page) {
@@ -1606,10 +1611,8 @@ void MainWindow::restoreRememberedConnection()
     if (!port.isEmpty()) {
         m_lastPort = port;
     }
-    // The bar opens on the same port as the dialog would.
-    if (m_connectBar) {
-        m_connectBar->setPortPath(m_lastPort);
-    }
+    // The bar opens on the last connection, whatever kind it was.
+    loadRecents();
 
     // An empty host is how "nothing was remembered" is spelled, and it is not
     // the same as an empty value: blanking the members from it would replace a
@@ -1716,6 +1719,228 @@ void MainWindow::rememberTelnet(const QString &host, quint16 port, TtTelnetMode 
         {QStringLiteral("recent.telnet_port"), QString::number(port)},
         {QStringLiteral("recent.telnet_mode"), spelling},
     });
+}
+
+void MainWindow::rememberRecent(const RecentConnection &recent)
+{
+    // The list is offered whatever this says; the switch is about *adding* to
+    // it. Somebody who turns recording off still owns what is already there
+    // until the bar's Forget item removes it.
+    if (m_session->setting(QStringLiteral("recent.remember"))
+        != QLatin1String("on")) {
+        return;
+    }
+    recent::remember(m_recents, recent);
+    rememberSettings({{QStringLiteral("recent.connections"),
+                       recent::encode(m_recents)}});
+    if (m_connectBar) {
+        m_connectBar->setRecents(m_recents);
+        m_connectBar->showConnection(recent);
+    }
+}
+
+void MainWindow::loadRecents()
+{
+    m_recents =
+        recent::decode(m_session->setting(QStringLiteral("recent.connections")));
+    if (m_connectBar) {
+        m_connectBar->setRecents(m_recents);
+        // The field opens on the last connection rather than empty: the
+        // commonest thing anyone does with this bar is go back where they
+        // were, and that should be one click and not two.
+        if (!m_recents.isEmpty()) {
+            m_connectBar->showConnection(m_recents.constFirst());
+        }
+    }
+}
+
+void MainWindow::forgetRecents()
+{
+    m_recents.clear();
+    rememberSettings({{QStringLiteral("recent.connections"), QString()}});
+    if (m_connectBar) {
+        m_connectBar->setRecents(m_recents);
+        m_connectBar->setDestination(QString());
+    }
+}
+
+void MainWindow::openRecent(const RecentConnection &recent)
+{
+    switch (recent.kind) {
+    case RecentConnection::Kind::Serial:
+        // The record's five fields over the settings' parameters, which is
+        // where everything it does not hold comes from.
+        connectSerial(recent.path, recent.appliedTo(m_lastParams));
+        return;
+    case RecentConnection::Kind::Ssh: {
+        TtSshParams params;
+        tt_ssh_params_default(&params);
+        const QByteArray host = recent.host.toUtf8();
+        const QByteArray user = recent.user.toUtf8();
+        const QByteArray identity = recent.identity.toUtf8();
+        const char *identities[] = {identity.constData(), nullptr};
+        params.host = host.constData();
+        // Null, not "": empty means whatever `~/.ssh/config` says.
+        params.user = recent.user.isEmpty() ? nullptr : user.constData();
+        params.port = recent.port;
+        params.identities = recent.identity.isEmpty() ? nullptr : identities;
+        params.legacy = recent.legacy;
+        startSsh(params, recent.host);
+        return;
+    }
+    case RecentConnection::Kind::Telnet: {
+        TtTelnetParams params;
+        tt_telnet_params_default(&params, recent.port);
+        params.mode = recent.mode;
+        connectTelnet(recent.host, recent.port, &params);
+        return;
+    }
+    case RecentConnection::Kind::Shell:
+        connectPty();
+        return;
+    }
+}
+
+void MainWindow::splitTarget(const QString &text, QString *host, QString *user,
+                             int *port)
+{
+    QString rest = text;
+    *user = QString();
+    *port = 0;
+    const int at = rest.indexOf(QLatin1Char('@'));
+    if (at >= 0) {
+        *user = rest.left(at);
+        rest = rest.mid(at + 1);
+    }
+    // Split on the *last* colon so a bracketed IPv6 literal survives; a bare
+    // IPv6 address without brackets is ambiguous here exactly as it is for
+    // `ssh`, and is spelled with -p there and in ~/.ssh/config.
+    const int colon = rest.lastIndexOf(QLatin1Char(':'));
+    if (colon > rest.lastIndexOf(QLatin1Char(']'))) {
+        *port = QStringView(rest).mid(colon + 1).toInt();
+        rest = rest.left(colon);
+    }
+    *host = rest;
+}
+
+namespace {
+
+/// Does this name a serial port rather than a host?
+///
+/// A path, a Windows device name, or something the enumerator answered with.
+/// The last of those is what makes a pasted `/dev/serial/by-path/...` work
+/// without the first rule having to know every spelling a platform uses for a
+/// device node.
+bool looksLikeSerialPort(const QString &text)
+{
+    if (text.startsWith(QLatin1Char('/'))
+        || text.startsWith(QLatin1String("\\\\.\\"))) {
+        return true;
+    }
+    static const QRegularExpression com(QStringLiteral("^COM[0-9]+$"),
+                                        QRegularExpression::CaseInsensitiveOption);
+    if (com.match(text).hasMatch()) {
+        return true;
+    }
+    bool found = false;
+    if (TtPortList *list = tt_serial_enumerate()) {
+        for (size_t i = 0; !found && i < tt_port_list_len(list); i++) {
+            const TtPortInfo *info = tt_port_list_at(list, i);
+            found = info
+                && (text == QString::fromUtf8(info->open_path)
+                    || text == QString::fromUtf8(info->device));
+        }
+        tt_port_list_free(list);
+    }
+    return found;
+}
+
+} // namespace
+
+void MainWindow::connectDestination(const QString &text)
+{
+    const QString target = text.trimmed();
+    if (target.isEmpty()) {
+        return;
+    }
+
+    // Whitespace is what switches vocabularies, and it switches to the other
+    // parser entire — the same choice `main.cpp` makes when it sees a
+    // `/OPTION`, for the same reason: a bare host name means SSH on this
+    // command line and telnet on Tera Term's, so the two are read one way or
+    // the other and never half of each. A destination is one word; anything
+    // with a space in it is a Tera Term command line, which is how
+    // `/ssh /auth=publickey myrouter` reaches this field.
+    if (target.contains(QLatin1Char(' ')) || target.contains(QLatin1Char('\t'))) {
+        TtCmdLine *cmd =
+            tt_cmdline_parse_line(target.toUtf8().constData(), 0);
+        if (!cmd) {
+            note(tr("Connect"), tr("Could not read %1.").arg(target));
+            return;
+        }
+        QString error;
+        // Applied first, so `/BAUD=` and its family are in the settings the
+        // startup target is then built from. Upstream's order, and
+        // `startFrom`'s.
+        if (!m_session->applyCommandLine(cmd, &error)) {
+            onNotice(tr("Could not apply the command line: %1").arg(error));
+        }
+        TtStartup startup;
+        if (m_session->startup(cmd, &startup) == TT_STARTUP_OPEN) {
+            openTarget(startup);
+        } else {
+            note(tr("Connect"),
+                 tr("Nothing to open in %1.").arg(target));
+        }
+        // After `openTarget`: every pointer in the startup is borrowed from
+        // the command line.
+        tt_cmdline_free(cmd);
+        return;
+    }
+
+    if (target.compare(QLatin1String("shell"), Qt::CaseInsensitive) == 0) {
+        connectPty();
+        return;
+    }
+    if (target.startsWith(QLatin1String("ssh://"), Qt::CaseInsensitive)) {
+        QString host;
+        QString user;
+        int port = 0;
+        splitTarget(target.mid(6), &host, &user, &port);
+        if (host.isEmpty()) {
+            note(tr("SSH"), tr("Enter a host to connect to."));
+            return;
+        }
+        connectSsh(host, user, port);
+        return;
+    }
+    if (target.startsWith(QLatin1String("telnet://"), Qt::CaseInsensitive)) {
+        QString host;
+        QString user;
+        int port = 0;
+        splitTarget(target.mid(9), &host, &user, &port);
+        if (host.isEmpty()) {
+            note(tr("Telnet"), tr("Enter a host to connect to."));
+            return;
+        }
+        connectTelnet(host, static_cast<quint16>(port ? port : 23));
+        return;
+    }
+    if (looksLikeSerialPort(target)) {
+        connectSerial(target, m_lastParams);
+        return;
+    }
+
+    // A bare word is an SSH destination, which is what the shell's own
+    // positional argument means and what somebody who types a host name into
+    // a terminal expects. Tera Term reads the same token as telnet; that
+    // divergence is `docs/deviations.md`'s, and it is why a line with a space
+    // in it goes to the other parser above rather than being merged with this.
+    QString host;
+    QString user;
+    int port = 0;
+    splitTarget(target, &host, &user, &port);
+    connectSsh(host, user, port);
 }
 
 void MainWindow::buildMenus()
@@ -2421,11 +2646,8 @@ void MainWindow::connectSerial(const QString &path, const TtSerialParams &params
     m_lastParams = params;
     rememberSerial(path, params);
     // Whatever opened the port — the dialog, `--port`, a macro — the bar shows
-    // the one that is open.
-    if (m_connectBar) {
-        m_connectBar->refreshPorts();
-        m_connectBar->setPortPath(path);
-    }
+    // the one that is open and the list has it at the top.
+    rememberRecent(RecentConnection::serial(path, params));
     updateStatus();
 }
 
@@ -2527,6 +2749,7 @@ void MainWindow::connectTelnet(const QString &host, quint16 port,
     m_lastTelnetPort = port;
     m_lastTelnetMode = params.mode;
     rememberTelnet(host, port, params.mode);
+    rememberRecent(RecentConnection::telnet(host, port, params.mode));
     updateStatus();
 }
 
@@ -2538,6 +2761,12 @@ void MainWindow::connectPty(const QStringList &argv)
         QMessageBox::critical(this, tr("Local shell"),
                               tr("Could not start a local shell.\n\n%1").arg(error));
         return;
+    }
+    // Only the login shell is remembered: `--shell -- journalctl -f` is a
+    // command, and a list that offered to re-run one would be offering
+    // something this record cannot describe.
+    if (argv.isEmpty()) {
+        rememberRecent(RecentConnection::shell());
     }
     updateStatus();
 }

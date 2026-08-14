@@ -6,17 +6,24 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QEvent>
+#include <QFileInfo>
+#include <QFont>
+#include <QHash>
 #include <QIcon>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPalette>
 #include <QPixmap>
 #include <QSignalBlocker>
 #include <QSizePolicy>
+#include <QStandardItemModel>
+#include <QStringList>
 #include <QToolButton>
 #include <QWidget>
 
+#include <algorithm>
 #include <functional>
 
 #include "I18n.h"
@@ -24,14 +31,15 @@
 
 namespace {
 
-/// A port dropdown that re-enumerates as it opens.
+/// A dropdown that rebuilds itself as it opens.
 ///
 /// The alternative is a timer, which is what the connect *dialog* uses — a
 /// dialog is open for seconds and is the only thing on screen. This bar is open
 /// for the life of the window, and a terminal that enumerates `/dev` every
 /// second is a terminal that never lets the machine idle. The list is only
-/// interesting at the moment somebody opens it.
-class PortCombo : public QComboBox {
+/// interesting at the moment somebody opens it, and that is also the moment
+/// `~/.ssh/config` is worth re-reading.
+class DestinationCombo : public QComboBox {
 public:
     using QComboBox::QComboBox;
 
@@ -47,6 +55,21 @@ public:
         QComboBox::showPopup();
     }
 };
+
+/// A bold, unselectable row: the group captions inside the dropdown.
+void addHeader(QComboBox *combo, const QString &text)
+{
+    combo->addItem(text);
+    auto *model = qobject_cast<QStandardItemModel *>(combo->model());
+    QStandardItem *item = model ? model->item(combo->count() - 1) : nullptr;
+    if (!item) {
+        return;
+    }
+    item->setFlags(item->flags() & ~(Qt::ItemIsEnabled | Qt::ItemIsSelectable));
+    QFont font = item->font();
+    font.setBold(true);
+    item->setFont(font);
+}
 
 QIcon appearanceIcon(bool darkMode, const QColor &colour)
 {
@@ -118,17 +141,33 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
     // for "local echo" does not exist anywhere.
     setToolButtonStyle(Qt::ToolButtonTextOnly);
 
-    auto *label = new QLabel(plain("DLG_SERIAL_PORT", tr("Port:")), this);
+    auto *label = new QLabel(tr("Connect to:"), this);
     label->setContentsMargins(4, 0, 4, 0);
     addWidget(label);
 
-    auto *combo = new PortCombo(this);
-    combo->setObjectName(QStringLiteral("connectBarPort"));
-    combo->setMinimumWidth(240);
-    combo->setSizeAdjustPolicy(QComboBox::AdjustToContentsOnFirstShow);
-    combo->onOpen = [this] { refreshPorts(); };
-    m_port = combo;
-    addWidget(m_port);
+    auto *combo = new DestinationCombo(this);
+    combo->setObjectName(QStringLiteral("connectBarDestination"));
+    combo->setEditable(true);
+    combo->setInsertPolicy(QComboBox::NoInsert);
+    // A fixed minimum and an expanding policy, never `AdjustToContents`: the
+    // widest row in this dropdown is a `by-path` device name, and a combo that
+    // sizes to its contents would set the window's minimum width from whatever
+    // happens to be plugged in.
+    combo->setMinimumWidth(300);
+    combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    combo->lineEdit()->setPlaceholderText(
+        tr("host, ssh://user@host, telnet://host:23, /dev/ttyUSB0, shell"));
+    combo->onOpen = [this] { rebuildList(); };
+    m_destination = combo;
+    addWidget(m_destination);
+
+    connect(m_destination, &QComboBox::activated, this, &ConnectBar::chose);
+    connect(m_destination->lineEdit(), &QLineEdit::returnPressed, this, [this] {
+        if (!m_connect->data().toBool() && !destination().isEmpty()) {
+            emit destinationEntered(destination());
+        }
+    });
 
     m_connectText = tr("Connect");
     m_disconnectText = plain("MENU_FILE_DISCONNECT", tr("Disconnect"));
@@ -140,8 +179,8 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
         // somebody asked to close.
         if (m_connect->data().toBool()) {
             emit disconnectRequested();
-        } else {
-            emit connectRequested(portPath());
+        } else if (!destination().isEmpty()) {
+            emit destinationEntered(destination());
         }
     });
 
@@ -165,11 +204,6 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
             &ConnectBar::lineEditRequested);
     addWidget(m_lineEdit);
 
-    auto *spacer = new QWidget(this);
-    spacer->setObjectName(QStringLiteral("connectBarDarkModeSpacer"));
-    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    addWidget(spacer);
-
     m_darkMode = addAction(tr("Dark mode"));
     m_darkMode->setObjectName(QStringLiteral("connectBarDarkMode"));
     m_darkMode->setCheckable(true);
@@ -186,59 +220,181 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
     }
     updateDarkModeAction(false);
 
-    refreshPorts();
+    rebuildList();
 }
 
-void ConnectBar::refreshPorts()
+QString ConnectBar::destination() const
 {
-    TtPortList *list = tt_serial_enumerate();
-    if (!list) {
+    return m_destination->currentText().trimmed();
+}
+
+void ConnectBar::setDestination(const QString &text)
+{
+    QSignalBlocker block(m_destination);
+    m_destination->setCurrentText(text);
+}
+
+void ConnectBar::showConnection(const RecentConnection &recent)
+{
+    QHash<QString, QString> deviceFor;
+    // Only a serial record has anything to look up, and this runs on the
+    // connect path: enumerating `/dev` to render the words "Local shell" is
+    // work in the way of the thing somebody actually asked for.
+    if (recent.kind != RecentConnection::Kind::Serial) {
+        setDestination(recent.label());
         return;
     }
-
-    // Rebuilt only when the set really changed, so a dropdown opened over a
-    // list nothing has unplugged keeps its selection.
-    const size_t n = tt_port_list_len(list);
-    bool same = static_cast<size_t>(m_port->count()) == n;
-    for (size_t i = 0; same && i < n; i++) {
-        const TtPortInfo *info = tt_port_list_at(list, i);
-        same = info
-            && m_port->itemData(static_cast<int>(i)).toString()
-                == QString::fromUtf8(info->open_path);
-    }
-    if (same) {
-        tt_port_list_free(list);
-        return;
-    }
-
-    const QString keep = portPath();
-    m_port->clear();
-    for (size_t i = 0; i < n; i++) {
-        const TtPortInfo *info = tt_port_list_at(list, i);
-        if (!info) {
-            continue;
+    if (TtPortList *list = tt_serial_enumerate()) {
+        for (size_t i = 0; i < tt_port_list_len(list); i++) {
+            if (const TtPortInfo *info = tt_port_list_at(list, i)) {
+                deviceFor.insert(QString::fromUtf8(info->open_path),
+                                 QString::fromUtf8(info->device));
+            }
         }
-        m_port->addItem(QString::fromUtf8(info->label),
-                        QString::fromUtf8(info->open_path));
+        tt_port_list_free(list);
     }
-    tt_port_list_free(list);
-
-    const int back = m_port->findData(keep);
-    if (back >= 0) {
-        m_port->setCurrentIndex(back);
-    }
+    setDestination(recent.label(deviceFor));
 }
 
-QString ConnectBar::portPath() const
+void ConnectBar::setRecents(const QVector<RecentConnection> &recents)
 {
-    return m_port->currentData().toString();
+    m_recents = recents;
+    rebuildList();
 }
 
-void ConnectBar::setPortPath(const QString &path)
+void ConnectBar::rebuildList()
 {
-    const int at = m_port->findData(path);
-    if (at >= 0) {
-        m_port->setCurrentIndex(at);
+    // The field is the user's, not the list's: rebuilding must not retype it,
+    // and a combo assigns a current index as it fills.
+    const QString typed = m_destination->currentText();
+    m_filling = true;
+    QSignalBlocker block(m_destination);
+    m_destination->clear();
+
+    const auto row = [this](Row kind, const QString &text,
+                            const QString &payload = QString()) {
+        m_destination->addItem(text);
+        const int at = m_destination->count() - 1;
+        m_destination->setItemData(at, static_cast<int>(kind), RoleKind);
+        m_destination->setItemData(at, payload, RolePayload);
+    };
+
+    QHash<QString, QString> deviceFor;
+    QVector<QPair<QString, QString>> ports; // label, open_path
+    if (TtPortList *list = tt_serial_enumerate()) {
+        for (size_t i = 0; i < tt_port_list_len(list); i++) {
+            const TtPortInfo *info = tt_port_list_at(list, i);
+            if (!info) {
+                continue;
+            }
+            deviceFor.insert(QString::fromUtf8(info->open_path),
+                             QString::fromUtf8(info->device));
+            ports.append({QString::fromUtf8(info->label),
+                          QString::fromUtf8(info->open_path)});
+        }
+        tt_port_list_free(list);
+    }
+
+    if (!m_recents.isEmpty()) {
+        addHeader(m_destination, tr("Recent"));
+        for (int i = 0; i < m_recents.size(); i++) {
+            row(Row::Recent, m_recents.at(i).label(deviceFor),
+                QString::number(i));
+        }
+        m_destination->insertSeparator(m_destination->count());
+    }
+
+    if (!ports.isEmpty()) {
+        addHeader(m_destination, tr("Ports plugged in now"));
+        // Enumeration is not a shortlist. A desktop answers with its
+        // thirty-two motherboard `ttyS` UARTs, none of which has anything on
+        // the far end, and burying the one adapter somebody owns in the middle
+        // of them is what the dropdown this replaced did. Real adapters first,
+        // then a bounded tail, and the dialog for the rest.
+        std::stable_partition(ports.begin(), ports.end(),
+                              [](const QPair<QString, QString> &port) {
+                                  return !port.second.contains(
+                                      QLatin1String("/ttyS"));
+                              });
+        constexpr int kShown = 6;
+        for (int i = 0; i < ports.size() && i < kShown; i++) {
+            row(Row::Port, ports.at(i).first, ports.at(i).second);
+        }
+        if (ports.size() > kShown) {
+            addHeader(m_destination,
+                      tr("...and %1 more, in New connection")
+                          .arg(ports.size() - kShown));
+        }
+        m_destination->insertSeparator(m_destination->count());
+    }
+
+    QStringList aliases;
+    if (TtStringList *list = tt_ssh_config_aliases()) {
+        for (size_t i = 0; i < tt_string_list_len(list); i++) {
+            aliases.append(QString::fromUtf8(tt_string_list_at(list, i)));
+        }
+        tt_string_list_free(list);
+    }
+    if (!aliases.isEmpty()) {
+        addHeader(m_destination, tr("SSH hosts (~/.ssh/config)"));
+        for (const QString &alias : aliases) {
+            row(Row::Alias, alias, alias);
+        }
+        m_destination->insertSeparator(m_destination->count());
+    }
+
+    row(Row::Shell, tr("Local shell"));
+    m_destination->insertSeparator(m_destination->count());
+    row(Row::New, tr("New connection..."));
+    if (!m_recents.isEmpty()) {
+        row(Row::Forget, tr("Forget these connections"));
+    }
+
+    m_destination->setCurrentIndex(-1);
+    m_destination->setCurrentText(typed);
+    m_filling = false;
+}
+
+void ConnectBar::chose(int index)
+{
+    if (m_filling || index < 0) {
+        return;
+    }
+    const auto kind = static_cast<Row>(
+        m_destination->itemData(index, RoleKind).toInt());
+    const QString payload =
+        m_destination->itemData(index, RolePayload).toString();
+
+    switch (kind) {
+    case Row::Recent: {
+        const int at = payload.toInt();
+        if (at >= 0 && at < m_recents.size()) {
+            emit recentChosen(m_recents.at(at));
+        }
+        return;
+    }
+    case Row::Port:
+        // The device path, not the row's label: the label carries the USB
+        // product name so somebody can tell two adapters apart, and it is not
+        // a name anything can be opened by.
+        emit destinationEntered(payload);
+        return;
+    case Row::Alias:
+        emit destinationEntered(payload);
+        return;
+    case Row::Shell:
+        emit destinationEntered(QStringLiteral("shell"));
+        return;
+    case Row::New:
+        setDestination(QString());
+        emit newConnectionRequested();
+        return;
+    case Row::Forget:
+        setDestination(QString());
+        emit forgetRecentsRequested();
+        return;
+    case Row::Header:
+        break;
     }
 }
 
@@ -255,10 +411,10 @@ void ConnectBar::refresh(const Session *session)
     // that is waiting on a slow key exchange is a thing people need.
     m_connect->setData(live);
     m_connect->setText(live ? m_disconnectText : m_connectText);
-    m_connect->setEnabled(live || !portPath().isEmpty());
-    // The port cannot move under a live session, and the one shown is the one
-    // that is open.
-    m_port->setEnabled(!live);
+    m_connect->setEnabled(live || !destination().isEmpty());
+    // The field stays live under a live session, unlike the port list it
+    // replaced: `ensureIdlePage` gives a second destination its own page, so
+    // going somewhere else is opening a tab and never closing this one.
 
     // Local echo is not only ours to set: the host assigns it through SRM, and
     // a script can. So it is read back rather than remembered.

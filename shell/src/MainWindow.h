@@ -8,6 +8,7 @@
 #include <QString>
 #include <QVector>
 
+#include "Recent.h"
 #include "sterna.h"
 
 #include "ConnectDialog.h"
@@ -79,6 +80,18 @@ public:
                        const TtTelnetParams *params = nullptr);
     /// Fork a local shell. An empty `argv` runs the user's login shell.
     void connectPty(const QStringList &argv = {});
+    /// Open whatever a line of text names: an alias, `ssh://user@host`, a
+    /// device path, `shell`, or — when it has a space in it — a whole Tera
+    /// Term command line. This is the connect bar's field and the one place
+    /// that vocabulary is defined.
+    void connectDestination(const QString &text);
+    /// Open a remembered connection, with the parameters it was opened with.
+    void openRecent(const RecentConnection &recent);
+
+    /// `[user@]host[:port]`, split the way `ssh` splits it. Shared with
+    /// `main.cpp`, which has the same string to take apart.
+    static void splitTarget(const QString &text, QString *host, QString *user,
+                            int *port);
 
     /// Look for a signed release, if `updates.check_on_startup` is on and
     /// `updates.last_check` is a day old — and say nothing unless there is one.
@@ -417,6 +430,11 @@ private:
     void rememberSsh(const QString &host, const QString &user, int port,
                      const QString &identity, bool legacy);
     void rememberTelnet(const QString &host, quint16 port, TtTelnetMode mode);
+    /// Put a connection at the top of the bar's list and write it back, unless
+    /// `recent.remember` is off.
+    void rememberRecent(const RecentConnection &recent);
+    void loadRecents();
+    void forgetRecents();
 
     /// Where the settings came from, and where `Save setup` puts them back.
     /// Not always [`settingsPath()`] — `/F=` names another one.
@@ -508,6 +526,7 @@ private:
     // `restoreRememberedConnection` seeds these from the settings file at
     // startup and `remember*` writes them back when a connection opens. See
     // `docs/deviations.md`.
+    QVector<RecentConnection> m_recents;
     QString m_lastPort;
     TtSerialParams m_lastParams;
     QString m_lastSshHost;
