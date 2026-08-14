@@ -1569,21 +1569,34 @@ impl Session {
     /// The confirmation dialog between 1 and 2 is the frontend's: it is modal,
     /// it can edit the text, and a core that blocked on it would be a core
     /// that owned a window.
-    pub fn paste(&mut self, text: &str) -> Result<()> {
+    ///
+    /// `add_cr` is upstream's `Paste<CR>` (`ID_EDIT_PASTECR`, the second item
+    /// on the right button's menu): one CR appended to the text, which is what
+    /// makes a pasted command run. Its position in the sequence is load
+    /// bearing and is not the end — `clipboar.c:280` appends it *after* the
+    /// bracket decision and *before* the normalisation, so with
+    /// `BracketedControlOnly` on a single line pasted this way is sent
+    /// unbracketed even though a control character is going out, and a
+    /// clipboard already ending in a CR sends two.
+    pub fn paste(&mut self, text: &str, add_cr: bool) -> Result<()> {
         // Everything the user could type is refused while a transfer is up —
         // a stray byte in the middle of a packet is a corrupted file, and a
         // paste is the largest stray byte there is.
         if self.xfer.is_some() {
             return Ok(());
         }
-        let text = paste_text(text, &self.settings);
+        let mut text = paste_text(text, &self.settings);
         // Upstream decides this before normalising to CR and after normalising
         // to CRLF, so `iswcntrl` sees the line breaks either way; doing it on
-        // the normalised text is the same answer for one fewer copy.
+        // the normalised text is the same answer for one fewer copy. What it
+        // must not see is the appended CR, which is added below it.
         let bracket = self.vt.bracketed_paste()
             && self.settings.clipboard_bracketed
             && (!self.settings.clipboard_bracketed_control_only
                 || text.chars().any(|c| c.is_control()));
+        if add_cr {
+            text.push('\r');
+        }
         if bracket {
             self.queue(b"\x1b[200~");
         }

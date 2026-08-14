@@ -163,7 +163,7 @@ fn the_live_local_echo_setting_covers_every_keyboard_send_path() {
     s.send_text("t").unwrap();
     s.send_bytes(b"b").unwrap();
     assert!(s.send_key(Key::Kp1).unwrap());
-    s.paste("p").unwrap();
+    s.paste("p", false).unwrap();
     assert_eq!(row(&s, 0), "tb1p");
     assert_eq!(h.outbound(), b"tb1p");
 
@@ -373,11 +373,11 @@ fn paste_is_bracketed_only_when_the_host_asked() {
 
     // ...and the LF has become a CR on the way, which is `NormalizeLineBreakCR`
     // and is what the Return key would have sent.
-    s.paste("plain\n").unwrap();
+    s.paste("plain\n", false).unwrap();
     assert_eq!(h.outbound(), b"plain\r");
 
     s.feed(b"\x1b[?2004h");
-    s.paste("x").unwrap();
+    s.paste("x", false).unwrap();
     assert_eq!(h.outbound(), b"plain\r\x1b[200~x\x1b[201~");
 }
 
@@ -386,7 +386,7 @@ fn paste_is_bracketed_only_when_the_host_asked() {
 #[test]
 fn a_paste_puts_one_cr_on_the_wire_for_every_line_break() {
     let (mut s, h) = connected(20, 4);
-    s.paste("a\r\nb\nc\rd").unwrap();
+    s.paste("a\r\nb\nc\rd", false).unwrap();
     assert_eq!(h.outbound(), b"a\rb\rc\rd");
 }
 
@@ -400,7 +400,7 @@ fn the_clipboard_settings_decide_what_a_paste_looks_like() {
         edit(&mut settings);
         s.set_settings(settings);
         s.feed(b"\x1b[?2004h");
-        s.paste(text).unwrap();
+        s.paste(text, false).unwrap();
         h.outbound()
     };
 
@@ -426,6 +426,61 @@ fn the_clipboard_settings_decide_what_a_paste_looks_like() {
     // ...and off, which is how it ships, the newline goes and the shell runs
     // the line.
     assert_eq!(with(|_| {}, "cmd\r\n"), b"\x1b[200~cmd\r\x1b[201~".to_vec());
+}
+
+/// `Paste<CR>` — the second item on the right button's menu. The CR joins the
+/// text at `clipboar.c:280`, which is after the bracket decision and before
+/// the normalisation, and both halves of that are visible on the wire.
+#[test]
+fn paste_cr_appends_one_carriage_return() {
+    let with = |edit: fn(&mut tt_session::Settings), text: &str, add_cr: bool| {
+        let (mut s, h) = connected(20, 4);
+        let mut settings = s.settings().clone();
+        edit(&mut settings);
+        s.set_settings(settings);
+        s.feed(b"\x1b[?2004h");
+        s.paste(text, add_cr).unwrap();
+        h.outbound()
+    };
+
+    assert_eq!(
+        with(|_| {}, "cmd", true),
+        b"\x1b[200~cmd\r\x1b[201~".to_vec()
+    );
+
+    // The CR is upstream's, so it goes *inside* the brackets: a host that
+    // strips the wrapper still receives the newline that runs the command.
+    assert_eq!(
+        with(|_| {}, "one\ntwo", true),
+        b"\x1b[200~one\rtwo\r\x1b[201~".to_vec()
+    );
+
+    // ...but the bracket decision was taken before it. With
+    // `BracketedControlOnly` on, a single line goes out unbracketed even
+    // though a control character is on the wire — which is the one place this
+    // is not the same as the caller appending the CR itself.
+    assert_eq!(
+        with(|s| s.clipboard_bracketed_control_only = true, "cmd", true),
+        b"cmd\r".to_vec()
+    );
+
+    // The trim runs first and does not see it either, so `Paste<CR>` always
+    // sends exactly one CR whatever `TrimTrailingNLonPaste` says...
+    assert_eq!(
+        with(
+            |s| s.clipboard_trim_trailing_newline = true,
+            "cmd\r\n",
+            true
+        ),
+        b"\x1b[200~cmd\r\x1b[201~".to_vec()
+    );
+    // ...and with the trim off, a clipboard that already ends in a newline
+    // sends two. Upstream's, and the reason for the menu's second item being
+    // a separate command rather than a tidier `Paste`.
+    assert_eq!(
+        with(|_| {}, "cmd\r\n", true),
+        b"\x1b[200~cmd\r\r\x1b[201~".to_vec()
+    );
 }
 
 #[test]
@@ -689,7 +744,7 @@ fn a_typed_cr_is_expanded_by_newline_mode() {
 
     // And a paste is left alone, because bracketed paste means verbatim.
     h.with(|st| st.outbound.clear());
-    s.paste("x\ry").unwrap();
+    s.paste("x\ry", false).unwrap();
     assert_eq!(h.outbound(), b"x\ry");
 }
 

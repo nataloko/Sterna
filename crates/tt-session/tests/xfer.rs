@@ -210,7 +210,7 @@ fn typing_during_a_transfer_goes_nowhere() {
         // is up rather than after it has ended.
         session.send_text("rm -rf /\r").unwrap();
         assert!(!session.send_key(tt_vt::Key::KpEnter).unwrap());
-        session.paste("and a paste as well").unwrap();
+        session.paste("and a paste as well", false).unwrap();
 
         session.pump(Duration::from_millis(20)).unwrap();
         let mut done = None;

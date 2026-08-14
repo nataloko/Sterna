@@ -3826,8 +3826,15 @@ TtStatus tt_session_send_bytes(TtSession *session,
  * point: without them a shell runs every newline in the pasted text as a
  * command, which is a well-known way to lose data to a copied trailing
  * newline.
+ *
+ * `add_cr` is upstream's `Paste<CR>`. It is a flag here rather than a CR the
+ * caller appends because where the CR joins the text decides two observable
+ * things — see [`tt_session::Session::paste`].
  */
-TtStatus tt_session_paste(TtSession *session, const char *text, size_t len);
+TtStatus tt_session_paste(TtSession *session,
+                          const char *text,
+                          size_t len,
+                          bool add_cr);
 
 /**
  * Answer an authorised [`TtEventKind::ClipboardRead`] with UTF-8 clipboard
