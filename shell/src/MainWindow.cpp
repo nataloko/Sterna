@@ -2831,8 +2831,20 @@ void MainWindow::sendQuickButton(int index, bool withoutEnter)
     const QuickButton button = withoutEnter
         ? m_quickBar->buttons()[index].withoutEnter()
         : m_quickBar->buttons()[index];
+    // A run whose line has gone ends here, and not only in
+    // `stopRepeatsWithNoLink`: that one runs off `updateStatus`, which a
+    // background page's disconnect does not reach. This is the tick itself, so
+    // it is the one check no run can be going without.
+    const bool needsLink = button.kind == TT_QUICK_BUTTON_TEXT
+        || button.kind == TT_QUICK_BUTTON_BYTES;
+    if (needsLink && !session->isConnected() && m_quickRepeat->isRunning(index)) {
+        m_quickRepeat->stop(index);
+        return;
+    }
     // The core does the sending and hands back what is left for the window,
-    // which is the same answer a pressed key gives.
+    // which is the same answer a pressed key gives. Only the sending half is
+    // bound to a page: what `runKeyAction` is left holding is a macro or a
+    // menu command, and both of those are the window's, not a session's.
     runKeyAction(session->runQuickButton(button.kind, button.value));
 }
 
