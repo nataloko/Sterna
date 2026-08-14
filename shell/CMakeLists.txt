@@ -139,6 +139,7 @@ endif()
 add_library(sterna_shell STATIC
     src/Branding.cpp
     src/MainWindow.cpp
+    src/PageStatusBar.cpp
     src/PanelContainer.cpp
     src/TerminalPage.cpp
     src/WindowTitle.cpp
@@ -465,3 +466,4 @@ endif()
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../vendor/lang/"
         DESTINATION share/sterna/lang
         FILES_MATCHING PATTERN "*.lng")
+

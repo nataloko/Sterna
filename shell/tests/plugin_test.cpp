@@ -18,13 +18,13 @@
 #include <QMenu>
 #include <QLineEdit>
 #include <QPushButton>
-#include <QStatusBar>
 #include <QTemporaryDir>
 #include <QTimer>
 
 #include <cstdio>
 
 #include "MainWindow.h"
+#include "PageStatusBar.h"
 #include "Plugins.h"
 #include "SettingsDialog.h"
 #include "TabRows.h"
@@ -309,8 +309,13 @@ void test_window_plugins()
     }));
 
     window.session()->feed(QByteArray("boom"));
-    CHECK(window.statusBar()->currentMessage().contains(
-        QStringLiteral("Lua stream filter disabled")));
+    // The window has no status bar: a plugin's complaint lands on the strip of
+    // the terminal whose VM raised it.
+    auto *status = window.findChild<PageStatusBar *>();
+    CHECK(status != nullptr);
+    CHECK(status
+          && status->currentMessage().contains(
+              QStringLiteral("Lua stream filter disabled")));
     CHECK(screenText(*window.session()).contains(QStringLiteral("boom")));
 }
 

@@ -14,9 +14,10 @@
 #include <QTabBar>
 #include <QVBoxLayout>
 
-/// One visible slot: a connection title over either a page or four connect
-/// buttons. The frame is deliberately only presentation; tab order and slot
-/// assignment stay in PanelContainer.
+/// One cell: either a page or the four connect buttons. The frame is
+/// deliberately only presentation; tab order and cell assignment stay in
+/// PanelContainer, and the connection's name and state are on the page's own
+/// status strip rather than on a header here.
 class PaneFrame final : public QFrame {
 public:
     PaneFrame(PanelContainer *owner, int panel)
@@ -27,22 +28,13 @@ public:
         setObjectName(QStringLiteral("panelFrame%1").arg(panel));
         // The grid spacing separates panes. A styled frame changes its width
         // when the platform style is first polished, which makes a pre-show
-        // size hint two pixels shorter than the same hint after show; the
-        // theme-coloured header is the active marker and stays metric-stable.
+        // size hint two pixels shorter than the same hint after show.
         setFrameShape(QFrame::NoFrame);
         setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
 
         auto *outer = new QVBoxLayout(this);
         outer->setContentsMargins(1, 1, 1, 1);
         outer->setSpacing(0);
-
-        m_header = new QLabel(tr("New connection"), this);
-        m_header->setObjectName(QStringLiteral("panelHeader%1").arg(panel));
-        m_header->setAutoFillBackground(true);
-        m_header->setContentsMargins(6, 2, 6, 2);
-        m_header->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        m_header->installEventFilter(this);
-        outer->addWidget(m_header);
 
         m_content = new QWidget(this);
         m_stack = new QStackedLayout(m_content);
@@ -52,6 +44,9 @@ public:
         m_empty->setObjectName(QStringLiteral("emptyPanel%1").arg(panel));
         auto *emptyLayout = new QVBoxLayout(m_empty);
         emptyLayout->addStretch();
+        auto *caption = new QLabel(tr("New connection"), m_empty);
+        caption->setAlignment(Qt::AlignCenter);
+        emptyLayout->addWidget(caption);
         const auto button = [this, emptyLayout](const QString &text,
                                                 const QString &name,
                                                 PanelContainer::ConnectionKind kind) {
@@ -78,25 +73,18 @@ public:
 
     QWidget *page() const { return m_page; }
 
-    void setHeaderVisible(bool visible) { m_header->setVisible(visible); }
-
     QSize sizeHintFor(QWidget *page) const
     {
-        m_header->ensurePolished();
         QSize out = page ? page->sizeHint() : QSize(640, 400);
-        const QSize header = m_header->isHidden() ? QSize() : m_header->sizeHint();
-        out = out.expandedTo(QSize(header.width(), out.height()));
         const QMargins margins = layout()->contentsMargins();
         out.rwidth() += margins.left() + margins.right() + frameWidth() * 2;
-        out.rheight() += header.height() + margins.top() + margins.bottom()
-                         + frameWidth() * 2;
+        out.rheight() += margins.top() + margins.bottom() + frameWidth() * 2;
         return out;
     }
 
-    void setPage(QWidget *page, const QString &title)
+    void setPage(QWidget *page)
     {
         if (m_page == page) {
-            setTitle(title);
             return;
         }
         takePage();
@@ -110,7 +98,6 @@ public:
         watchPage(true);
         m_stack->setCurrentWidget(m_page);
         m_page->show();
-        setTitle(title);
     }
 
     QWidget *takePage()
@@ -128,29 +115,12 @@ public:
         return out;
     }
 
-    void setTitle(const QString &title)
-    {
-        m_header->setText(title.isEmpty() ? tr("Terminal") : title);
-    }
-
-    void setActive(bool active)
-    {
-        QPalette palette = m_header->palette();
-        palette.setColor(QPalette::Window,
-                         palette.color(active ? QPalette::Highlight
-                                              : QPalette::AlternateBase));
-        palette.setColor(QPalette::WindowText,
-                         palette.color(active ? QPalette::HighlightedText
-                                              : QPalette::Text));
-        m_header->setPalette(palette);
-    }
-
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override
     {
         if ((event->type() == QEvent::MouseButtonPress
              || event->type() == QEvent::FocusIn)
-            && (watched == m_header || m_watched.contains(watched))) {
+            && m_watched.contains(watched)) {
             m_owner->activateFromPanel(m_panel);
         }
         return QFrame::eventFilter(watched, event);
@@ -161,7 +131,6 @@ private:
     {
         m_stack->setCurrentWidget(m_empty);
         m_empty->show();
-        m_header->setText(tr("New connection"));
     }
 
     void watchPage(bool watch)
@@ -185,13 +154,36 @@ private:
 
     PanelContainer *m_owner = nullptr;
     int m_panel = 0;
-    QLabel *m_header = nullptr;
     QWidget *m_content = nullptr;
     QStackedLayout *m_stack = nullptr;
     QWidget *m_empty = nullptr;
     QWidget *m_page = nullptr;
     QVector<QObject *> m_watched;
 };
+
+namespace {
+/// The grid for `n` connections: the smallest square-ish rectangle that holds
+/// them. 1, 2, 3-4, 5-6, 7-9 give 1x1, 1x2, 2x2, 2x3, 3x3, and it keeps going
+/// rather than capping — a window full of postage stamps is the user's
+/// business, and one View-menu click undoes it.
+int columnsFor(int n)
+{
+    int cols = 1;
+    while (cols * cols < n) {
+        cols++;
+    }
+    return cols;
+}
+
+/// How many cells the last row has spare. 0 means the rectangle came out even
+/// and there is no connect cell at all — which is the case at 1, 2, 4, 6 and 9.
+int leftoverFor(int n)
+{
+    const int cols = columnsFor(n);
+    const int last = n % cols;
+    return last == 0 ? 0 : cols - last;
+}
+} // namespace
 
 PanelContainer::PanelContainer(QWidget *parent)
     : QWidget(parent)
@@ -202,23 +194,23 @@ PanelContainer::PanelContainer(QWidget *parent)
 
     m_tabs = new QTabBar(this);
     m_tabs->setObjectName(QStringLiteral("connectionTabBar"));
-    m_tabs->setAutoHide(true);
+    // Not `setAutoHide`: auto-hide knows about the tab count and cannot know
+    // about the layout mode, and tiles must hide the bar however many there
+    // are. `rebuild()` owns the answer.
     m_tabs->setDocumentMode(true);
     m_tabs->setMovable(true);
     m_tabs->setExpanding(false);
+    m_tabs->hide();
     outer->addWidget(m_tabs);
 
     m_gridWidget = new QWidget(this);
     m_gridWidget->setObjectName(QStringLiteral("panelGrid"));
-    auto *grid = new QGridLayout(m_gridWidget);
-    grid->setContentsMargins(0, 0, 0, 0);
-    grid->setSpacing(2);
+    m_grid = new QGridLayout(m_gridWidget);
+    m_grid->setContentsMargins(0, 0, 0, 0);
+    m_grid->setSpacing(2);
     outer->addWidget(m_gridWidget, 1);
 
-    for (int i = 0; i < 4; i++) {
-        m_frames.append(new PaneFrame(this, i));
-    }
-    arrangeFrames();
+    rebuild();
 
     connect(m_tabs, &QTabBar::currentChanged, this, [this](int index) {
         if (!m_changingTabs) {
@@ -234,42 +226,53 @@ PanelContainer::PanelContainer(QWidget *parent)
         if (!m_changingTabs && from >= 0 && from < m_pages.size() && to >= 0
             && to < m_pages.size()) {
             m_pages.move(from, to);
+            // Tiles are tab order, so dragging a tab in Single mode decides
+            // which tile a connection gets when tiles come back.
+            rebuild();
+            emit visiblePagesChanged();
         }
     });
 }
-
-namespace {
-PaneFrame *frameAt(const QVector<PaneFrame *> &frames, int panel)
-{
-    if (panel < 0 || panel >= frames.size()) {
-        return nullptr;
-    }
-    return frames[panel];
-}
-} // namespace
 
 QWidget *PanelContainer::widget(int index) const
 {
     return index >= 0 && index < m_pages.size() ? m_pages[index] : nullptr;
 }
 
+int PanelContainer::tileCount() const
+{
+    if (m_layout == PanelLayout::Single) {
+        return 1;
+    }
+    const int n = m_pages.size();
+    return qMax(1, n + (leftoverFor(n) > 0 ? 1 : 0));
+}
+
+int PanelContainer::tileColumns() const
+{
+    return m_layout == PanelLayout::Single ? 1 : columnsFor(m_pages.size());
+}
+
 QSize PanelContainer::sizeHint() const
 {
-    const int panel = panelOf(m_current);
-    PaneFrame *frame = frameAt(m_frames, panel >= 0 ? panel : 0);
-    if (frame) {
-        frame->ensurePolished();
-    }
+    // Frame 0 always exists — the constructor's `rebuild()` makes it — so this
+    // never creates a widget from inside a const measurement.
+    const int panel = qBound(0, panelOf(m_current), m_frames.size() - 1);
+    PaneFrame *frame = m_frames[panel];
+    frame->ensurePolished();
     m_tabs->ensurePolished();
-    QSize out = frame ? frame->sizeHintFor(m_current) : QSize(640, 400);
-    if (m_pages.size() > 1) {
+    QSize out = frame->sizeHintFor(m_current);
+    // Only when the bar is actually on screen. Reserving its height in tiled
+    // mode would cost every tile a row for chrome that is not there.
+    if (!m_tabs->isHidden()) {
         out.rheight() += m_tabs->sizeHint().height();
     }
-    // QMainWindow's menu/status chrome grows when its native layout is first
-    // shown. Keep a sub-cell remainder so an exact N-row size hint does not
-    // refit to N-1 on that first layout. A pane header leaves the old two-pixel
-    // remainder; without one, the frame needs one more pixel on Qt 6.11.
-    out.rheight() += m_layout == PanelLayout::Single ? 3 : 2;
+    // QMainWindow's menu chrome grows when its native layout is first shown.
+    // Keep a sub-cell remainder so an exact N-row size hint does not refit to
+    // N-1 on that first layout. Measured against Qt 6.11.1 and 6.4.2 with
+    // `render_test`'s configured-size case, which is what moves if this is
+    // wrong — see the note on that test.
+    out.rheight() += 3;
     return out;
 }
 
@@ -281,24 +284,17 @@ void PanelContainer::setCurrentWidget(QWidget *page)
         return;
     }
 
-    bool assignmentChanged = false;
-    if (panelOf(page) < 0) {
-        int panel = panelOf(m_current);
-        if (panel < 0) {
-            panel = 0;
-        }
-        assign(panel, page);
-        assignmentChanged = true;
-    }
-
     const bool currentDidChange = m_current != page;
     m_current = page;
     {
         const QSignalBlocker block(m_tabs);
         m_tabs->setCurrentIndex(indexOf(page));
     }
-    updateActiveFrames();
-    if (assignmentChanged) {
+    // In Single the one pane has to change what it holds. In Tiled every page
+    // is already on screen, so only the marker moves — there is no eviction
+    // and nothing to reassign.
+    if (m_layout == PanelLayout::Single && currentDidChange) {
+        rebuild();
         emit visiblePagesChanged();
     }
     if (currentDidChange) {
@@ -306,8 +302,7 @@ void PanelContainer::setCurrentWidget(QWidget *page)
     }
 }
 
-int PanelContainer::addPage(QWidget *page, const QString &title,
-                            int preferredPanel)
+int PanelContainer::addPage(QWidget *page, const QString &title)
 {
     if (!page || m_pages.contains(page)) {
         return indexOf(page);
@@ -319,20 +314,11 @@ int PanelContainer::addPage(QWidget *page, const QString &title,
     const int index = m_tabs->addTab(title);
     m_changingTabs = false;
 
-    int panel = -1;
-    if (preferredPanel >= 0 && preferredPanel < panelCount()) {
-        panel = preferredPanel;
-    } else {
-        panel = firstEmptyPanel();
-        if (panel < 0) {
-            panel = panelOf(m_current);
-        }
-        if (panel < 0) {
-            panel = 0;
-        }
-    }
-    assign(panel, page);
+    // No `preferredPanel`: a new connection appends to tab order, and in Tiled
+    // that index *is* the spare cell it was started from. There is nothing left
+    // for a caller to choose.
     setCurrentWidget(page);
+    rebuild();
     emit visiblePagesChanged();
     return index;
 }
@@ -343,10 +329,11 @@ QWidget *PanelContainer::removePage(int index)
     if (!page) {
         return nullptr;
     }
-    const int panel = panelOf(page);
     const bool wasCurrent = page == m_current;
-    if (panel >= 0) {
-        frameAt(m_frames, panel)->takePage();
+    for (PaneFrame *frame : m_frames) {
+        if (frame->page() == page) {
+            frame->takePage();
+        }
     }
 
     m_changingTabs = true;
@@ -356,43 +343,27 @@ QWidget *PanelContainer::removePage(int index)
     page->hide();
     page->setParent(this);
 
-    QWidget *replacement = nullptr;
-    if (panel >= 0) {
-        replacement = firstHiddenPage();
-        if (replacement) {
-            assign(panel, replacement);
-        }
-    }
     if (wasCurrent) {
+        // Whoever inherited the removed index, or the last page if it was the
+        // last index. No hidden-page refill: in Tiled nothing is hidden, and in
+        // Single the one pane simply shows whatever becomes current.
         m_current = nullptr;
-        if (!replacement) {
-            for (int i = 0; i < panelCount(); i++) {
-                if ((replacement = pageAtPanel(i))) {
-                    break;
-                }
-            }
-        }
-        if (replacement) {
-            setCurrentWidget(replacement);
+        if (QWidget *next = widget(qMin(index, m_pages.size() - 1))) {
+            setCurrentWidget(next);
         }
     } else {
-        updateActiveFrames();
         const QSignalBlocker block(m_tabs);
         m_tabs->setCurrentIndex(currentIndex());
     }
+    rebuild();
     emit visiblePagesChanged();
     return page;
 }
 
 void PanelContainer::setTabText(int index, const QString &title)
 {
-    if (!widget(index)) {
-        return;
-    }
-    m_tabs->setTabText(index, title);
-    const int panel = panelOf(widget(index));
-    if (panel >= 0) {
-        frameAt(m_frames, panel)->setTitle(title);
+    if (widget(index)) {
+        m_tabs->setTabText(index, title);
     }
 }
 
@@ -415,68 +386,49 @@ void PanelContainer::setLayoutMode(PanelLayout layout)
     if (layout == m_layout) {
         return;
     }
-
-    QVector<QWidget *> order;
-    const auto append = [&order](QWidget *page) {
-        if (page && !order.contains(page)) {
-            order.append(page);
-        }
-    };
-    append(m_current);
-    for (int i = 0; i < panelCount(); i++) {
-        append(pageAtPanel(i));
-    }
-    for (QWidget *page : m_pages) {
-        append(page);
-    }
-
-    for (int i = 0; i < m_frames.size(); i++) {
-        frameAt(m_frames, i)->takePage();
-    }
     m_layout = layout;
-    arrangeFrames();
-    for (int i = 0; i < panelCount() && i < order.size(); i++) {
-        assign(i, order[i]);
-    }
-    updateActiveFrames();
+    rebuild();
     emit visiblePagesChanged();
 }
 
 QWidget *PanelContainer::pageAtPanel(int panel) const
 {
-    PaneFrame *frame = frameAt(m_frames, panel);
-    return panel < panelCount() && frame ? frame->page() : nullptr;
+    if (panel < 0 || panel >= tileCount()) {
+        return nullptr;
+    }
+    if (m_layout == PanelLayout::Single) {
+        return m_current;
+    }
+    return widget(panel);
 }
 
 int PanelContainer::panelOf(QWidget *page) const
 {
-    for (int i = 0; i < panelCount(); i++) {
-        if (pageAtPanel(i) == page) {
-            return i;
-        }
+    if (!page) {
+        return -1;
     }
-    return -1;
+    if (m_layout == PanelLayout::Single) {
+        return page == m_current ? 0 : -1;
+    }
+    return indexOf(page);
 }
 
 int PanelContainer::firstEmptyPanel() const
 {
-    for (int i = 0; i < panelCount(); i++) {
-        if (!pageAtPanel(i)) {
-            return i;
-        }
+    if (m_layout == PanelLayout::Single) {
+        return m_current ? -1 : 0;
     }
-    return -1;
+    return leftoverFor(m_pages.size()) > 0 || m_pages.isEmpty()
+               ? m_pages.size()
+               : -1;
 }
 
 QVector<QWidget *> PanelContainer::visiblePages() const
 {
-    QVector<QWidget *> out;
-    for (int i = 0; i < panelCount(); i++) {
-        if (QWidget *page = pageAtPanel(i)) {
-            out.append(page);
-        }
+    if (m_layout == PanelLayout::Single) {
+        return m_current ? QVector<QWidget *>{m_current} : QVector<QWidget *>{};
     }
-    return out;
+    return m_pages;
 }
 
 void PanelContainer::resizeEvent(QResizeEvent *event)
@@ -497,62 +449,59 @@ void PanelContainer::requestConnection(int panel, ConnectionKind kind)
     emit emptyConnectionRequested(panel, kind);
 }
 
-void PanelContainer::assign(int panel, QWidget *page)
+PaneFrame *PanelContainer::frameAt(int index)
 {
-    PaneFrame *destination = frameAt(m_frames, panel);
-    if (!destination || panel >= panelCount()) {
-        return;
+    while (m_frames.size() <= index) {
+        auto *frame = new PaneFrame(this, m_frames.size());
+        frame->hide();
+        m_frames.append(frame);
     }
-    const int oldPanel = panelOf(page);
-    if (oldPanel >= 0 && oldPanel != panel) {
-        frameAt(m_frames, oldPanel)->takePage();
-    }
-    destination->setPage(page, m_tabs->tabText(indexOf(page)));
+    return m_frames[index];
 }
 
-void PanelContainer::arrangeFrames()
+void PanelContainer::rebuild()
 {
-    auto *grid = static_cast<QGridLayout *>(m_gridWidget->layout());
+    const int tiles = tileCount();
+    const int cols = tileColumns();
+    const int spare = firstEmptyPanel();
+
+    // Two passes, and the order is load-bearing. Every frame that is not
+    // already holding the page it should hold gives that page up *first*, so
+    // that by the time anything is assigned no page is still parented into a
+    // stack it is about to leave. Assigning straight away would leave the old
+    // frame's `QStackedLayout` pointing at a widget somebody else had taken.
     for (int i = 0; i < m_frames.size(); i++) {
-        PaneFrame *frame = frameAt(m_frames, i);
-        grid->removeWidget(frame);
-        frame->setHeaderVisible(m_layout != PanelLayout::Single);
-        frame->setVisible(i < panelCount());
-    }
-
-    if (m_layout == PanelLayout::Single) {
-        grid->addWidget(frameAt(m_frames, 0), 0, 0);
-    } else if (m_layout == PanelLayout::Two) {
-        grid->addWidget(frameAt(m_frames, 0), 0, 0);
-        grid->addWidget(frameAt(m_frames, 1), 0, 1);
-    } else {
-        for (int i = 0; i < 4; i++) {
-            grid->addWidget(frameAt(m_frames, i), i / 2, i % 2);
+        if (m_frames[i]->page() != (i < tiles ? pageAtPanel(i) : nullptr)) {
+            m_frames[i]->takePage();
         }
+        m_grid->removeWidget(m_frames[i]);
     }
-    for (int row = 0; row < 2; row++) {
-        grid->setRowStretch(row, row < (m_layout == PanelLayout::Four ? 2 : 1));
-    }
-    for (int col = 0; col < 2; col++) {
-        const bool used = col == 0 || m_layout != PanelLayout::Single;
-        grid->setColumnStretch(col, used ? 1 : 0);
-    }
-}
 
-void PanelContainer::updateActiveFrames()
-{
-    for (int i = 0; i < m_frames.size(); i++) {
-        frameAt(m_frames, i)->setActive(i < panelCount()
-                                              && pageAtPanel(i) == m_current);
+    for (int i = 0; i < tiles; i++) {
+        PaneFrame *frame = frameAt(i);
+        frame->setPage(pageAtPanel(i));
+        const int row = i / cols;
+        const int column = i % cols;
+        // The spare cell swallows the rest of its row, so a grid that does not
+        // come out even has a wider connect cell rather than a blank hole. Only
+        // ever one such cell: it is always the last.
+        const int span = i == spare ? qMax(1, cols - column) : 1;
+        m_grid->addWidget(frame, row, column, 1, span);
+        frame->show();
     }
-}
+    // Grown but not needed this time: out of the grid and out of sight. Never
+    // destroyed — a frame that is still dying answers `findChild` first.
+    for (int i = tiles; i < m_frames.size(); i++) {
+        m_frames[i]->hide();
+    }
 
-QWidget *PanelContainer::firstHiddenPage() const
-{
-    for (QWidget *page : m_pages) {
-        if (panelOf(page) < 0) {
-            return page;
-        }
+    const int rows = (tiles + cols - 1) / cols;
+    for (int row = 0; row < m_grid->rowCount(); row++) {
+        m_grid->setRowStretch(row, row < rows ? 1 : 0);
     }
-    return nullptr;
+    for (int column = 0; column < m_grid->columnCount(); column++) {
+        m_grid->setColumnStretch(column, column < cols ? 1 : 0);
+    }
+
+    m_tabs->setVisible(m_layout == PanelLayout::Single && m_pages.size() > 1);
 }

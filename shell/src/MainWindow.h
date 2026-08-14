@@ -258,7 +258,7 @@ private:
     /// mutate the active page's status or dialogs.
     void wirePage(TerminalPage *page);
     /// Load the active setup and key map into a fresh, disconnected page.
-    TerminalPage *addBlankPage(int preferredPanel = -1);
+    TerminalPage *addBlankPage();
     /// New Connection opens another upstream window when this one is busy;
     /// the in-process equivalent is another tab.
     void ensureIdlePage();
@@ -268,6 +268,22 @@ private:
     void updateTabBar();
     void buildMenus();
     void updateStatus();
+    /// Move View > Tiled's tick to whatever the layout actually is. Its own
+    /// trigger is not the only thing that moves it: the settings dialog, a
+    /// macro's `setsetting` and a plugin all reach the same value.
+    void updatePanelActions();
+    /// Paint the highlight that says which tile the menus, the keyboard and the
+    /// control socket are pointing at. The marker is the page's status strip;
+    /// `PanelContainer` deals in bare `QWidget *` pages and cannot reach one.
+    void markActiveTile();
+    /// Refresh one page's own status line — its name, its link and its log
+    /// counter. Called for *any* page, not only the active one: the window has
+    /// no status bar, so a background tile's state has nowhere else to appear.
+    void updatePageStatus(TerminalPage *page);
+    /// Say something briefly, in the terminal it happened in — what
+    /// `QStatusBar::showMessage` used to do for the whole window. `page` null
+    /// means the active one, which is what a window-level action gets.
+    void showPageMessage(TerminalPage *page, const QString &text, int ms = 5000);
     /// Apply one of the two 0..255 opacity settings as Qt's 0.0..1.0 value.
     void applyWindowOpacity(bool active);
     /// Apply `VTPos` once, after the settings file is loaded and before a
@@ -351,11 +367,11 @@ private:
     /// Say something the user has to see, even under `/V` where there is no
     /// window to say it in.
     void note(const QString &title, const QString &text);
-    /// Just the log indicator. Driven by `damaged` rather than by a timer:
-    /// the count changes exactly when bytes arrive, and bytes arriving is
-    /// what `damaged` means — so the idle path stays free of wakeups, which
+    /// Just one page's log indicator. Driven by `damaged` rather than by a
+    /// timer: the count changes exactly when bytes arrive, and bytes arriving
+    /// is what `damaged` means — so the idle path stays free of wakeups, which
     /// is the same reason `Session` has no poll timer.
-    void updateLogStatus();
+    void updateLogStatus(TerminalPage *page);
     /// Select the catalog named by `settings.language_file`. Missing catalogs
     /// leave the source-language UI in place, as upstream's defaults do.
     void reloadLanguage();
@@ -424,7 +440,6 @@ private:
     /// The other end of the media-copy sequences, and of File > Print.
     Printer *m_printer = nullptr;
     TerminalView *m_view = nullptr;
-    QLabel *m_status = nullptr;
     /// The bar under the menu: port, connect, input modes and terminal theme.
     /// Shown when `window.toolbar` is on, which is what Setup > Show toolbar
     /// writes.
@@ -451,6 +466,9 @@ private:
     /// while its run is going is exactly the case this exists for.
     QHash<int, QPointer<TerminalPage>> m_quickRepeatPage;
     QAction *m_toolbarAction = nullptr;
+    /// View > Tiled. One checkable item, not the three the 0.2.1 View menu had:
+    /// the layout is a mode now, not a count.
+    QAction *m_tiledAction = nullptr;
     QAction *m_quickButtonsAction = nullptr;
     QAction *m_quickButtonFromSelectionAction = nullptr;
     /// The Edit menu's two paste commands, which the right button's menu
@@ -485,7 +503,6 @@ private:
     /// Where the last macro was chosen from, so the dialog does not start at
     /// the process's working directory every time.
     QString m_lastMacroDir;
-    QLabel *m_logStatus = nullptr;
     // What the last connection was opened with, so reopening a connect dialog
     // does not start from the defaults again. Persisted, unlike upstream's:
     // `restoreRememberedConnection` seeds these from the settings file at
@@ -505,10 +522,16 @@ private:
     /// when that page reports a connection, because until then there is nothing
     /// worth remembering — see the `connectionChanged` wiring.
     TerminalPage *m_pendingSshPage = nullptr;
-    /// A connect button in an empty panel sets this for the synchronous dialog
+    /// A connect button in the spare tile sets this for the synchronous dialog
     /// call. Acceptance consumes it in `ensureIdlePage`; cancellation clears it
     /// without ever allocating a page or a session.
-    int m_requestedPanel = -1;
+    ///
+    /// A flag rather than the tile's index: a new connection appends to tab
+    /// order, and in tiled mode that index *is* the spare tile, so there is
+    /// nothing to route. What is still needed is the other half of its old
+    /// meaning — "make a page even though the active session is idle", which is
+    /// what somebody clicking SSH in an empty tile is asking for.
+    bool m_requestedNewPage = false;
     bool m_syncingPanelLayout = false;
     bool m_loadingPage = false;
     bool m_metricsQueued = false;

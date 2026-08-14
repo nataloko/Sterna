@@ -3,6 +3,7 @@
 #include "MainWindow.h"
 
 #include "Branding.h"
+#include "PageStatusBar.h"
 #include "Printer.h"
 
 #include <QAction>
@@ -28,7 +29,7 @@
 #include <QLocale>
 #include <QLibrary>
 #include <QLayout>
-#include <QStatusBar>
+#include <QStatusTipEvent>
 #include <QTimer>
 #include <QUrl>
 
@@ -95,23 +96,21 @@ QString settingDefault(const char *name)
 
 PanelLayout panelLayout(const QString &value)
 {
-    if (value == QLatin1String("two")) {
-        return PanelLayout::Two;
-    }
-    if (value == QLatin1String("four")) {
-        return PanelLayout::Four;
+    // `two` and `four` are the 0.2.x spellings, from when this was a panel
+    // count shown *alongside* the tab bar. The core already folds them into
+    // `tiled` before the shell sees them; the arms are here so that the two
+    // readings of the same table cannot drift apart.
+    if (value == QLatin1String("tiled") || value == QLatin1String("two")
+        || value == QLatin1String("four")) {
+        return PanelLayout::Tiled;
     }
     return PanelLayout::Single;
 }
 
 QString panelLayoutSetting(PanelLayout layout)
 {
-    switch (layout) {
-    case PanelLayout::Two: return QStringLiteral("two");
-    case PanelLayout::Four: return QStringLiteral("four");
-    case PanelLayout::Single: return QStringLiteral("single");
-    }
-    return QStringLiteral("single");
+    return layout == PanelLayout::Tiled ? QStringLiteral("tiled")
+                                        : QStringLiteral("single");
 }
 
 /// `window.quick_buttons_area`, as a Qt dock area.
@@ -305,7 +304,7 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
             &MainWindow::queueWindowMetrics);
     connect(m_panels, &PanelContainer::emptyConnectionRequested, this,
             [this](int panel, PanelContainer::ConnectionKind kind) {
-                m_requestedPanel = panel;
+                m_requestedNewPage = true;
                 switch (kind) {
                 case PanelContainer::ConnectionKind::Serial:
                     showConnectDialog(ConnectDialog::Kind::Serial);
@@ -322,16 +321,15 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
                 }
                 // Accepted connection paths consume the slot while creating
                 // their page. A cancelled dialog reaches this with it intact.
-                m_requestedPanel = -1;
+                m_requestedNewPage = false;
             });
 
     tt_serial_params_default(&m_lastParams);
 
-    m_logStatus = new QLabel(this);
-    statusBar()->addPermanentWidget(m_logStatus);
-    m_status = new QLabel(this);
-    m_status->setObjectName(QStringLiteral("connectionStatus"));
-    statusBar()->addPermanentWidget(m_status);
+    // No `statusBar()` here, and nowhere else either: it is created lazily by
+    // the first call, and this window has none. Every terminal carries its own
+    // `PageStatusBar` instead, because a window can be showing nine of them and
+    // one shared line cannot say which session it is describing.
 
     // Under the menu, and connected to the same window methods the menu uses —
     // the bar decides nothing itself. `updateStatus` is what keeps its labels
@@ -467,7 +465,9 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
     // chrome; do it now so the pre-show hint and the laid-out client agree.
     ensurePolished();
     menuBar()->ensurePolished();
-    statusBar()->ensurePolished();
+    // The status line is the page's now, so it is the page that has to be
+    // polished before anyone asks how tall a terminal wants to be.
+    m_page->ensurePolished();
     m_connectBar->ensurePolished();
 
     if (!m_plugins->error().isEmpty()) {
@@ -532,10 +532,11 @@ void MainWindow::activatePage(TerminalPage *page)
     if (m_control) {
         m_control->setSession(m_session);
     }
+    markActiveTile();
 
-    // The constructor reaches here before the actions and status labels
-    // exist. Every later activation has a complete window to refresh.
-    if (m_status) {
+    // The constructor reaches here before the actions and the toolbar exist.
+    // Every later activation has a complete window to refresh.
+    if (m_connectBar) {
         reloadLanguage();
         showTitle(m_session->title());
         updateStatus();
@@ -581,20 +582,19 @@ void MainWindow::wirePage(TerminalPage *page)
     // Escape, and only while the view has been told something is running. Not
     // per page: the bar is the window's, so its runs are too, and stopping
     // them from whichever terminal is in front is the point of a stop key.
-    connect(view, &TerminalView::stopRequested, this, [this] {
+    connect(view, &TerminalView::stopRequested, this, [this, page] {
         m_quickRepeat->stopAll();
-        statusBar()->showMessage(tr("Stopped repeating"), 3000);
+        showPageMessage(page, tr("Stopped repeating"), 3000);
     });
 
     connect(session, &Session::logStateChanged, this, [this, page] {
+        updatePageStatus(page);
         if (page == m_page) {
             updateStatus();
         }
     });
     connect(session, &Session::damaged, this, [this, page] {
-        if (page == m_page) {
-            updateLogStatus();
-        }
+        updateLogStatus(page);
     });
     connect(session, &Session::titleChanged, this,
             [this, page](const QString &title) {
@@ -603,13 +603,15 @@ void MainWindow::wirePage(TerminalPage *page)
                     showTitle(title);
                 }
             });
+    // Not filtered to the active page any more. A notice from a tile nobody is
+    // looking at used to be dropped on the floor; it now lands on that tile's
+    // own line, which is where somebody can read it.
     connect(session, &Session::notice, this, [this, page](const QString &text) {
-        if (page == m_page) {
-            onNotice(text);
-        }
+        showPageMessage(page, text);
     });
     connect(session, &Session::connectionChanged, this, [this, page] {
         updateTabTitle(page);
+        updatePageStatus(page);
         // The far edge of an SSH attempt, and the only one worth remembering:
         // `startSsh` returning true means the handshake has begun, and a host
         // whose key was refused or whose login failed should not become the
@@ -669,9 +671,7 @@ void MainWindow::wirePage(TerminalPage *page)
             });
     connect(session, &Session::printerEvent, printer, &Printer::handle);
     connect(printer, &Printer::notice, this, [this, page](const QString &text) {
-        if (page == m_page) {
-            onNotice(text);
-        }
+        showPageMessage(page, text);
     });
     connect(session, &Session::settingsChanged, this,
             [this, page] { onPageSettingsChanged(page); });
@@ -689,20 +689,20 @@ void MainWindow::wirePage(TerminalPage *page)
                     // a dialog that vanished would say it to nobody.
                     dialog->finish(result);
                 }
-                if (page != m_page) {
-                    return;
+                // A message on that page's own line, not a rewrite of the link
+                // state. Writing the outcome into the connection label and then
+                // calling `updateStatus()` — which is what this did — put it on
+                // screen for no frames at all.
+                showPageMessage(
+                    page,
+                    result.success     ? tr("Transfer complete")
+                    : result.cancelled ? tr("Transfer cancelled")
+                    : result.message.isEmpty()
+                        ? tr("Transfer failed")
+                        : tr("Transfer failed: %1").arg(result.message));
+                if (page == m_page) {
+                    updateStatus();
                 }
-                if (result.success) {
-                    m_status->setText(tr("Transfer complete"));
-                } else if (result.cancelled) {
-                    m_status->setText(tr("Transfer cancelled"));
-                } else {
-                    m_status->setText(
-                        result.message.isEmpty()
-                            ? tr("Transfer failed")
-                            : tr("Transfer failed: %1").arg(result.message));
-                }
-                updateStatus();
             });
 
     connect(macro, &Macro::finished, this, [this, page](int exitCode) {
@@ -713,22 +713,18 @@ void MainWindow::wirePage(TerminalPage *page)
     connect(macro, &Macro::keyboardEnabled, view,
             &TerminalView::setKeyboardEnabled);
     connect(macro, &Macro::notice, this, [this, page](const QString &text) {
-        if (page == m_page) {
-            onNotice(text);
-        }
+        showPageMessage(page, text);
     });
     connect(plugins, &Plugins::notice, this,
             [this, page](const QString &text) {
-                if (page == m_page) {
-                    onNotice(tr("Lua plugin: %1").arg(text));
-                }
+                showPageMessage(page, tr("Lua plugin: %1").arg(text));
             });
 }
 
-TerminalPage *MainWindow::addBlankPage(int preferredPanel)
+TerminalPage *MainWindow::addBlankPage()
 {
     auto *page = createPage();
-    m_panels->addPage(page, tr("Terminal"), preferredPanel);
+    m_panels->addPage(page, tr("Terminal"));
     activatePage(page);
 
     QString error;
@@ -754,10 +750,9 @@ void MainWindow::newTab() { addBlankPage(); }
 
 void MainWindow::ensureIdlePage()
 {
-    if (m_requestedPanel >= 0) {
-        const int requested = m_requestedPanel;
-        m_requestedPanel = -1;
-        addBlankPage(requested);
+    if (m_requestedNewPage) {
+        m_requestedNewPage = false;
+        addBlankPage();
         return;
     }
     if (m_session->isConnected() || m_session->isConnecting()) {
@@ -831,6 +826,10 @@ void MainWindow::updateTabTitle(TerminalPage *page)
     }
     m_panels->setTabText(index, label);
     m_panels->setTabToolTip(index, session->describe());
+    // The same string on the page's own line. In tiled mode the tab bar is not
+    // there to carry it, and in tabbed mode a single connection has no tab
+    // either — so this is the only place a terminal is named.
+    page->status()->setName(label);
 }
 
 void MainWindow::updateTabBar()
@@ -944,6 +943,16 @@ QString MainWindow::pluginsPath()
 bool MainWindow::event(QEvent *event)
 {
     const QEvent::Type type = event->type();
+    // `QMainWindow::event` delivers this one to `statusBar()->showMessage`,
+    // *if there is a status bar*. There is not, and with none the event falls
+    // through `QWidget::event` and is dropped with no warning — every
+    // `setStatusTip` in the window would stop working and nothing would say
+    // so. Handled here, before the base class, and shown where the rest of
+    // this window's remarks go.
+    if (type == QEvent::StatusTip) {
+        showPageMessage(nullptr, static_cast<QStatusTipEvent *>(event)->tip());
+        return true;
+    }
     const bool handled = QMainWindow::event(event);
     if (m_session && (type == QEvent::WindowActivate
                       || type == QEvent::WindowDeactivate)) {
@@ -1129,6 +1138,12 @@ void MainWindow::setPanelLayout(PanelLayout layout, bool persist)
         }
     }
     m_panels->setLayoutMode(layout);
+    updatePanelActions();
+    // Switching to Single has to *un*-mark: one strip wearing a permanent
+    // highlight looks like a stuck state rather than an answer to a question
+    // nobody is asking.
+    markActiveTile();
+    updateTabBar();
     queueWindowMetrics();
     m_syncingPanelLayout = false;
 
@@ -1280,6 +1295,7 @@ bool MainWindow::onSettingsChanged()
     if (m_toolbarAction) {
         m_toolbarAction->setChecked(toolbar);
     }
+    updatePanelActions();
     // The buttons themselves are not settings, so this rereads the list as
     // well: the settings dialog is one of the places `[Sterna Buttons]` can
     // have changed under the window, the other being a hand edit.
@@ -1725,14 +1741,15 @@ void MainWindow::buildMenus()
     // Linux line editor receives Meta. A menu that stole Alt+B from readline
     // would be a menu people disable the whole menu bar to escape.
     //
-    // The compatible menus keep Tera Term's order for every item the two
-    // programs share: the log and the
+    // The compatible menus keep Tera Term's order. View is Sterna's one
+    // addition, between Edit and Setup where desktop applications put it, and
+    // so is each menu, for every item the two programs share: the log and the
     // transfers under File, Send break under Control, Load key map after Save
     // setup. There is deliberately no Terminal menu, because upstream has
     // none and a hand reaching for Control > Send break should find it there.
     // upstream's Window menu remains absent: it arranges several top-level
-    // windows. Sterna's experimental panel layouts are also deliberately not
-    // exposed here until their interaction is refined.
+    // windows, while View chooses whether this one shows its connections one
+    // at a time or all at once.
     QMenu *file = menuBar()->addMenu(tr("File"));
     file->setObjectName(QStringLiteral("fileMenu"));
     languageAction(file->menuAction(), "MENU_FILE", tr("File"));
@@ -1839,6 +1856,20 @@ void MainWindow::buildMenus()
     connect(edit, &QMenu::aboutToShow, this, [this] {
         m_quickButtonFromSelectionAction->setEnabled(m_view->hasSelection());
     });
+
+    QMenu *view = menuBar()->addMenu(tr("View"));
+    view->setObjectName(QStringLiteral("viewMenu"));
+    m_tiledAction = view->addAction(tr("Tiled"));
+    m_tiledAction->setObjectName(QStringLiteral("tiledAction"));
+    m_tiledAction->setCheckable(true);
+    // Deliberately no shortcut. A terminal must not lose a key combination to
+    // window furniture, especially when KEYBOARD.CNF can map every physical
+    // combination independently — and a QAction shortcut silently outranks
+    // `TerminalView::keyPressEvent`, so it is a key the host stops receiving.
+    connect(m_tiledAction, &QAction::triggered, this, [this](bool on) {
+        setPanelLayout(on ? PanelLayout::Tiled : PanelLayout::Single, true);
+    });
+    updatePanelActions();
 
     // "Setup", which is Tera Term's own name for this menu, so that someone
     // arriving from it looks in the right place — and before Control, which is
@@ -2447,7 +2478,9 @@ void MainWindow::startSsh(const TtSshParams &params, const QString &host)
     // has just made this the page the attempt belongs to.
     m_pendingSshPage = m_page;
 
-    statusBar()->showMessage(tr("Connecting to %1...").arg(host));
+    // No timeout: it stands until the handshake replaces it, which is what an
+    // unbounded `QStatusBar::showMessage` did.
+    showPageMessage(m_pendingSshPage, tr("Connecting to %1...").arg(host), 0);
     updateStatus();
 }
 
@@ -2466,7 +2499,9 @@ void MainWindow::onSshAuthWanted(const AuthRequest &request)
         // a device that counts failures should not be walked toward a lockout
         // by someone who changed their mind.
         m_session->cancelSsh();
-        statusBar()->showMessage(tr("Connection cancelled"), 5000);
+        // `wirePage` activates the page before raising this dialog, so the
+        // attempt's page is the active one.
+        showPageMessage(m_page, tr("Connection cancelled"));
         updateStatus();
         return;
     }
@@ -2987,8 +3022,12 @@ void MainWindow::runQuickButton(int index, bool withoutEnter)
     // before the confirmation, because "are you sure?" is not a question to
     // ask somebody who is trying to make something stop.
     if (m_quickRepeat->isRunning(index)) {
+        // On the page the run was sending to, which need not be the active
+        // one — that page is where its effect was visible, so that is where
+        // "it has stopped" belongs.
+        TerminalPage *ran = m_quickRepeatPage.value(index).data();
         m_quickRepeat->stop(index);
-        statusBar()->showMessage(tr("Stopped repeating"), 3000);
+        showPageMessage(ran, tr("Stopped repeating"), 3000);
         return;
     }
 
@@ -3014,7 +3053,7 @@ void MainWindow::runQuickButton(int index, bool withoutEnter)
         m_quickRepeat->start(index, withoutEnter, button.repeat,
                              static_cast<int>(button.intervalMs));
         if (m_quickRepeat->isRunning(index)) {
-            statusBar()->showMessage(button.repeatSummary(), 5000);
+            showPageMessage(m_page, button.repeatSummary());
         } else {
             m_quickRepeatPage.remove(index);
         }
@@ -3293,7 +3332,7 @@ void MainWindow::toggleLogging()
 {
     if (m_session->isLogging()) {
         m_session->stopLog();
-        statusBar()->showMessage(tr("Logging stopped"), 3000);
+        showPageMessage(m_page, tr("Logging stopped"), 3000);
         updateStatus();
         return;
     }
@@ -3374,7 +3413,11 @@ void MainWindow::showTitle(const QString &title)
 
 void MainWindow::onNotice(const QString &text)
 {
-    statusBar()->showMessage(text, 5000);
+    // The window's own remarks — an unreadable settings file, a plugin that
+    // would not load, a macro that finished — land on whichever terminal is in
+    // front. A *session's* remarks go to that session's own strip instead; see
+    // the `notice` wiring in `wirePage`.
+    showPageMessage(nullptr, text);
 }
 
 void MainWindow::onConnectionChanged()
@@ -3383,18 +3426,53 @@ void MainWindow::onConnectionChanged()
     updateStatus();
 }
 
-void MainWindow::updateLogStatus()
+void MainWindow::updateLogStatus(TerminalPage *page)
 {
-    if (!m_logStatus) {
-        return;
+    Session *session = page->session();
+    const bool logging = session->isLogging();
+    // Reached from `Session::damaged`, which fires on every read on **every**
+    // open session — not just the visible one and not just the active one, as
+    // it was when this fed a single window-wide label. So the byte count is
+    // not even asked for unless this page is recording, and `setLogging`
+    // compares before it assigns: a quiet page costs a pointer test, and a
+    // busy one costs a relayout only when the formatted size actually moves.
+    page->status()->setLogging(logging, logging ? session->logBytes() : 0);
+}
+
+void MainWindow::updatePanelActions()
+{
+    if (m_tiledAction) {
+        m_tiledAction->setChecked(m_panels->layoutMode() == PanelLayout::Tiled);
     }
-    // `formattedDataSize` rather than a KiB division, so a log that has only
-    // just started reads "REC 44 bytes" instead of "REC 0 KiB" — the number
-    // anyone actually checks is whether it is *moving*.
-    m_logStatus->setText(m_session->isLogging()
-                             ? tr("REC %1  ").arg(QLocale().formattedDataSize(
-                                   static_cast<qint64>(m_session->logBytes())))
-                             : QString());
+}
+
+void MainWindow::markActiveTile()
+{
+    // Only tiles get a marker. With one terminal on screen there is nothing to
+    // disambiguate, and a permanently highlighted strip reads as a stuck state.
+    const bool tiled = m_panels->layoutMode() == PanelLayout::Tiled;
+    for (int i = 0; i < m_panels->count(); i++) {
+        auto *page = static_cast<TerminalPage *>(m_panels->widget(i));
+        page->status()->setActive(tiled && page == m_page);
+    }
+}
+
+void MainWindow::updatePageStatus(TerminalPage *page)
+{
+    Session *session = page->session();
+    page->status()->setConnection(session->isConnected(),
+                                  session->isConnecting(),
+                                  session->describe());
+    updateLogStatus(page);
+}
+
+void MainWindow::showPageMessage(TerminalPage *page, const QString &text,
+                                 int ms)
+{
+    TerminalPage *target = page ? page : m_page;
+    if (target) {
+        target->status()->showMessage(text, ms);
+    }
 }
 
 void MainWindow::updateStatus()
@@ -3405,21 +3483,13 @@ void MainWindow::updateStatus()
                 ? m_i18n->plainText("MENU_FILE_STOPLOG", tr("Stop logging"))
                 : m_i18n->plainText("MENU_FILE_LOG", tr("Start logging...")));
     }
-    updateLogStatus();
+    updatePageStatus(m_page);
     if (m_stopMacroAction) {
         m_stopMacroAction->setEnabled(m_macro->running());
     }
 
     const bool connected = m_session->isConnected();
     const bool connecting = m_session->isConnecting();
-    m_status->setText(connected ? m_session->describe()
-                      : connecting ? tr("connecting...")
-                                   : tr("not connected"));
-    m_status->setStyleSheet(
-        !connected && !connecting
-            ? QStringLiteral("QLabel { background-color: #b71c1c; color: white; "
-                             "padding: 1px 6px; }")
-            : QString());
     if (m_connectBar) {
         m_connectBar->refresh(m_session);
     }

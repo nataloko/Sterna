@@ -5,8 +5,10 @@
 #include <QHBoxLayout>
 #include <QScrollBar>
 #include <QSignalBlocker>
+#include <QVBoxLayout>
 
 #include "Macro.h"
+#include "PageStatusBar.h"
 #include "Plugins.h"
 #include "Printer.h"
 #include "Session.h"
@@ -25,17 +27,34 @@ TerminalPage::TerminalPage(const I18n *i18n, QWidget *macroWindow,
     , m_macro(new Macro(m_session, macroWindow, this, i18n))
     , m_plugins(
           new Plugins(m_session, m_macro, pluginsDirectory, settingsPath, this))
+    , m_status(new PageStatusBar(this))
 {
     m_scroll->setObjectName(QStringLiteral("terminalScrollBar"));
     // A plain QWidget plus a scrollbar rather than a QAbstractScrollArea: the
     // painter draws straight onto the widget in cell coordinates, and a
     // scroll area would add a viewport child and a coordinate translation to
     // hold a scrollbar we can place in a layout for nothing.
-    auto *layout = new QHBoxLayout(this);
+    // A container widget for the row rather than a nested `QHBoxLayout`: a
+    // layout added with `addLayout` does not carry its items' size hints out to
+    // the parent widget, and the symptom is a window that opens at 80x24
+    // whatever `TerminalSize` says — the terminal's own hint was 900x630 and
+    // the page quoted 720x525.
+    auto *terminal = new QWidget(this);
+    auto *row = new QHBoxLayout(terminal);
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(0);
+    row->addWidget(m_view, 1);
+    row->addWidget(m_scroll);
+
+    // The status line belongs to the page rather than to the window or to the
+    // pane holding it: it then follows this session between tiles and between
+    // layouts without anything having to move it, and with one terminal it
+    // lands exactly where a `QMainWindow` status bar would have been.
+    auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
-    layout->addWidget(m_view, 1);
-    layout->addWidget(m_scroll);
+    layout->addWidget(terminal, 1);
+    layout->addWidget(m_status);
 
     connect(m_view, &TerminalView::viewChanged, this,
             &TerminalPage::syncScrollBar);
@@ -61,6 +80,19 @@ TerminalPage::~TerminalPage()
     // dependency explicit at the lifetime boundary which owns both.
     delete m_macro;
     m_macro = nullptr;
+}
+
+QSize TerminalPage::sizeHint() const
+{
+    m_status->ensurePolished();
+    QSize out = m_view->sizeHint();
+    // The scrollbar is hidden while there is nothing to scroll, so an 80x24
+    // window is not permanently a few pixels narrower than the terminal in it.
+    if (!m_scroll->isHidden()) {
+        out.rwidth() += m_scroll->sizeHint().width();
+    }
+    out.rheight() += m_status->sizeHint().height();
+    return out;
 }
 
 void TerminalPage::setTransferDialog(XferProgressDialog *dialog)
