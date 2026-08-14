@@ -94,6 +94,9 @@ pub struct Resolved {
     pub connect_timeout: Option<Duration>,
     pub server_alive_interval: Option<Duration>,
     pub strict_host_key_checking: Option<StrictHostKeyChecking>,
+    /// The effective first `ProxyCommand` or `ProxyJump` asks for a relay this
+    /// client cannot run. False for their explicit `none` spelling.
+    pub requires_proxy: bool,
     /// True when the config names a pre-2020 algorithm anywhere — a `+`-form
     /// `KexAlgorithms`, `Ciphers`, `MACs`, `HostKeyAlgorithms` or
     /// `PubkeyAcceptedAlgorithms` mentioning SHA-1, CBC or `ssh-dss`.
@@ -138,6 +141,7 @@ impl Default for Resolved {
             connect_timeout: None,
             server_alive_interval: None,
             strict_host_key_checking: None,
+            requires_proxy: false,
             legacy: false,
             unsupported: Vec::new(),
         }
@@ -306,6 +310,10 @@ impl SshConfig {
         let mut identity_files: Vec<String> = Vec::new();
         let mut known_hosts_files: Vec<String> = Vec::new();
         let mut unsupported: Vec<String> = Vec::new();
+        // The two proxy directives compete: whichever is obtained first makes
+        // later instances of either irrelevant. `none` is a real value and
+        // means a direct connection, not an unsupported relay.
+        let mut requires_proxy: Option<bool> = None;
         let mut legacy = false;
 
         // The effective host name changes as blocks are read — a `HostName`
@@ -344,6 +352,15 @@ impl SshConfig {
                     // The two that accumulate rather than take the first.
                     "identityfile" => identity_files.extend(split_args(value)),
                     "userknownhostsfile" => known_hosts_files.extend(split_args(value)),
+                    "proxycommand" | "proxyjump" => {
+                        if requires_proxy.is_none() {
+                            let required = !value.eq_ignore_ascii_case("none");
+                            requires_proxy = Some(required);
+                            if required {
+                                push_once(&mut unsupported, keyword);
+                            }
+                        }
+                    }
                     "ciphers"
                     | "kexalgorithms"
                     | "macs"
@@ -436,6 +453,7 @@ impl SshConfig {
                     _ => None,
                 }
             }),
+            requires_proxy: requires_proxy.unwrap_or(false),
             legacy,
             unsupported,
         }
@@ -478,10 +496,7 @@ impl SshConfig {
     /// run. Asked of the *resolved* config rather than of the block that names
     /// it, so a `Host *` carrying the `ProxyCommand` counts too.
     fn needs_a_proxy(&self, alias: &str) -> bool {
-        self.resolve(alias, None)
-            .unsupported
-            .iter()
-            .any(|u| u == "proxycommand" || u == "proxyjump")
+        self.resolve(alias, None).requires_proxy
     }
 }
 
@@ -852,7 +867,22 @@ mod tests {
         let c = parse("Host web\n  ProxyJump bastion\n  ProxyCommand nc %h %p\n");
         let r = c.resolve("web", None);
         assert!(r.unsupported.iter().any(|u| u == "proxyjump"));
-        assert!(r.unsupported.iter().any(|u| u == "proxycommand"));
+        assert!(r.requires_proxy);
+        // ProxyJump came first, so OpenSSH ignores the competing command too.
+        assert!(!r.unsupported.iter().any(|u| u == "proxycommand"));
+    }
+
+    #[test]
+    fn proxy_none_is_a_direct_connection() {
+        for keyword in ["ProxyCommand", "ProxyJump"] {
+            let c = parse(&format!(
+                "Host direct\n  {keyword} none\n  ProxyCommand nc %h %p\n"
+            ));
+            let r = c.resolve("direct", None);
+            assert!(!r.requires_proxy, "{keyword}");
+            assert!(r.unsupported.is_empty(), "{keyword}: {:?}", r.unsupported);
+            assert_eq!(c.aliases(), vec!["direct".to_string()]);
+        }
     }
 
     #[test]
