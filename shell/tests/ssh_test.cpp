@@ -250,10 +250,30 @@ int main(int argc, char **argv)
         fprintf(stderr, "screen was:\n%s\n", qPrintable(screenText(session)));
     }
 
-    // And disconnecting from the window's side leaves nothing armed.
+    // A bare CR is a carriage return, not a line ending — `CRReceive` ships as
+    // Auto and this connection's line endings are CR LF, so it has resolved to
+    // the reference mode by now (deviation 9). Without that, every prompt
+    // redraw an interactive shell makes takes a line of its own, which is what
+    // one keystroke in `fish` looks like. The markers are written as octal so
+    // the echo of the command itself cannot satisfy the assertions.
+    session.sendText(QStringLiteral("printf '\\101\\102\\103\\r\\104\\105\\106\\n'\n"));
+    const bool overwritten = spin(
+        [&] { return screenText(session).contains(QStringLiteral("DEF")); }, 10000);
+    CHECK(overwritten);
+    CHECK(!screenText(session).contains(QStringLiteral("ABC")));
+    if (!overwritten || screenText(session).contains(QStringLiteral("ABC"))) {
+        fprintf(stderr, "screen was:\n%s\n", qPrintable(screenText(session)));
+    }
+
+    // And disconnecting from the window's side leaves nothing armed — and does
+    // not ask the window to close, which `AutoWinClose` would have done to a
+    // network session before deviation 15.
+    int closeRequests = 0;
+    QObject::connect(&session, &Session::closeRequested, [&] { closeRequests++; });
     session.disconnectPort();
     CHECK(!session.isConnected());
     CHECK(!session.isConnecting());
+    CHECK(closeRequests == 0);
 
     // "Accept once" means once: nothing was written down.
     CHECK(!QFile::exists(QString::fromUtf8(knownHosts)));
