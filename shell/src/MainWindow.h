@@ -302,6 +302,9 @@ private:
     /// Close one page, asking before a live network session is lost.
     void closePage(TerminalPage *page, bool confirm = true);
     void updateTabTitle(TerminalPage *page);
+    /// Publish the serial ports this window holds, for the other windows'
+    /// pickers. Called whenever any page's connection changes.
+    void publishOpenPorts();
     void updateTabBar();
     void buildMenus();
     void updateStatus();

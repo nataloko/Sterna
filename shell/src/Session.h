@@ -215,6 +215,10 @@ public:
     /// session, and so does `BeepOnConnect`.
     TtLinkKind linkKind() const;
     QString describe() const;
+    /// The serial device this session is open on, as it was named. Empty on
+    /// every other link and when nothing is connected — and *not* the last
+    /// port the window opened, which is a setting rather than a fact.
+    QString serialPath() const;
     /// The address-side pieces Tera Term's `TitleFormat` presents. They are
     /// retained across a disconnect, although the formatter hides them then.
     QString connectionHost() const { return m_connectionHost; }

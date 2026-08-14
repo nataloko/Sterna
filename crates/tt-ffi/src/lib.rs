@@ -436,6 +436,9 @@ pub struct TtSession {
     events: Vec<TtEvent>,
     event_texts: Vec<CString>,
     describe: CString,
+    /// The open serial device, for `tt_session_serial_path` — kept apart from
+    /// `describe` because one is a status line and the other is an identity.
+    serial_path: CString,
     title: CString,
     log_path: CString,
     /// The last answer from `tt_session_log_name`, which is a *different*
@@ -511,6 +514,7 @@ pub extern "C" fn tt_session_new(config: *const TtConfig) -> *mut TtSession {
         events: Vec::new(),
         event_texts: Vec::new(),
         describe: CString::default(),
+        serial_path: CString::default(),
         log_path: CString::default(),
         log_name: CString::default(),
         close_note: CString::default(),
@@ -4056,6 +4060,26 @@ pub extern "C" fn tt_session_serial_baud(session: *const TtSession) -> u32 {
     session_ref!(session, 0).session.serial_baud().unwrap_or(0)
 }
 
+/// The serial device this session is open on, exactly as it was named. Null
+/// on every other link and when nothing is connected.
+///
+/// Borrowed, and valid until the next call to this function on this session.
+/// Not [`tt_session_describe`] minus the speed: this is the string a window
+/// publishes to say which port it has taken, and a caller splitting a status
+/// line on its last space would publish something no picker can match.
+#[no_mangle]
+pub extern "C" fn tt_session_serial_path(session: *mut TtSession) -> *const c_char {
+    let s = session!(session, ptr::null());
+    match s.session.serial_path() {
+        Some(path) => {
+            let path = cstring(path);
+            s.serial_path = path;
+            s.serial_path.as_ptr()
+        }
+        None => ptr::null(),
+    }
+}
+
 /// A short name for the status line — `/dev/ttyUSB0`, `user@host`. Null when
 /// nothing is connected.
 ///
@@ -4214,6 +4238,206 @@ pub extern "C" fn tt_port_list_at(list: *const TtPortList, index: usize) -> *con
 
 #[no_mangle]
 pub extern "C" fn tt_port_list_free(list: *mut TtPortList) {
+    if !list.is_null() {
+        drop(unsafe { Box::from_raw(list) });
+    }
+}
+
+/// What has a serial port open, in [`tt_serial_holders`].
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtPortHolder {
+    /// Whether something has the port open.
+    ///
+    /// Kept apart from `pid`: an OFD lock has no owning process, and a window
+    /// this program published a claim for can have a custom, non-numeric name.
+    /// Both are held ports whose pid is unavailable.
+    pub held: bool,
+    /// The process holding it, or 0 when it could not be determined. Consult
+    /// `held`, not this field, to distinguish a free port.
+    pub pid: u32,
+    /// The program's own name — `minicom`, `sterna` — or null when it could
+    /// not be read. Borrowed from the list.
+    pub program: *const c_char,
+    /// Whether a window of *this program* said so, rather than the operating
+    /// system. It decides the wording, which belongs to the frontend and its
+    /// translations; both kinds are equally held.
+    pub window: bool,
+}
+
+/// An owned list of holders. Free it with [`tt_port_holders_free`].
+pub struct TtPortHolders {
+    holders: Vec<TtPortHolder>,
+    _strings: Vec<CString>,
+}
+
+/// Who has each of `paths` open, in the order given. **Never null**, and
+/// always `count` entries: a path nothing holds answers with `held == false`.
+///
+/// One walk however many paths are asked about, so ask about all of them at
+/// once — and not on the connect path. A picker calls this as its popup opens.
+///
+/// **This answers "who has it open", not "will opening fail".** A holder that
+/// took neither `TIOCEXCL` nor an `flock` does not stop a second open, and
+/// nothing this can read distinguishes the two; a root-owned holder is
+/// invisible to the descriptor sweep entirely. The answer is worth showing and
+/// is not worth refusing a connection over.
+///
+/// Two sources, unioned: what the operating system knows (Linux only — see
+/// `tt_conn::serial::holders`), and the claims this program's other windows
+/// publish, which is all Windows has.
+#[no_mangle]
+pub extern "C" fn tt_serial_holders(
+    paths: *const *const c_char,
+    count: usize,
+) -> *mut TtPortHolders {
+    let mut wanted: Vec<String> = Vec::with_capacity(count);
+    if !paths.is_null() {
+        for i in 0..count {
+            // SAFETY: the caller promises `count` readable pointers.
+            let p = unsafe { *paths.add(i) };
+            wanted.push(unsafe { str_arg(p, usize::MAX) }.unwrap_or("").to_string());
+        }
+    }
+    let borrowed: Vec<&str> = wanted.iter().map(String::as_str).collect();
+
+    // The test hook is read *before* the platform's answer and replaces it, so
+    // one spelling exercises the frontend on every target — including Wine,
+    // where there is no `/proc` to fake. Production never sets it.
+    // `STERNA_TEST_BUSY_PORTS=/dev/ttyUSB0=minicom,/dev/ttyUSB1=`
+    let mut found: Vec<Option<tt_conn::serial::Holder>> =
+        match std::env::var("STERNA_TEST_BUSY_PORTS") {
+            Ok(spec) => borrowed
+                .iter()
+                .map(|path| test_holder(&spec, path))
+                .collect(),
+            Err(_) => tt_conn::serial::holders(&borrowed),
+        };
+    let mut by_window = vec![false; borrowed.len()];
+
+    // A window's own claim, for the ports the operating system did not answer
+    // for — which on Windows is all of them.
+    if let Ok(claims) = tt_ctl::claim::claims() {
+        for claim in claims {
+            for (i, path) in borrowed.iter().enumerate() {
+                if !same_device(&claim.device, path) {
+                    continue;
+                }
+                by_window[i] = true;
+                if found[i].is_none() {
+                    found[i] = Some(tt_conn::serial::Holder {
+                        pid: claim.pid().unwrap_or(0),
+                        program: None,
+                    });
+                }
+            }
+        }
+    }
+
+    let mut strings: Vec<CString> = Vec::with_capacity(found.len());
+    // Two passes, for the reason `tt_serial_enumerate` gives: a pointer taken
+    // before `strings` has stopped growing is a pointer into a freed buffer.
+    for holder in &found {
+        strings.push(cstring(
+            holder
+                .as_ref()
+                .and_then(|h| h.program.as_deref())
+                .unwrap_or(""),
+        ));
+    }
+    let holders = found
+        .iter()
+        .enumerate()
+        .map(|(i, holder)| TtPortHolder {
+            held: holder.is_some(),
+            pid: holder.as_ref().map_or(0, |h| h.pid),
+            program: match holder.as_ref().and_then(|h| h.program.as_deref()) {
+                Some(_) => strings[i].as_ptr(),
+                None => ptr::null(),
+            },
+            window: by_window[i],
+        })
+        .collect();
+
+    Box::into_raw(Box::new(TtPortHolders {
+        holders,
+        _strings: strings,
+    }))
+}
+
+/// Whether two names reach the same device.
+///
+/// String equality first; then the node itself on Unix, since `/dev/ttyUSB0`
+/// and `/dev/serial/by-path/…` are two names for one port, or Windows' two
+/// accepted spellings of a case-insensitive COM name.
+fn same_device(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{FileTypeExt, MetadataExt};
+        match (std::fs::metadata(a), std::fs::metadata(b)) {
+            (Ok(a), Ok(b)) => a.rdev() == b.rdev() && a.file_type().is_char_device(),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        // `CreateFileW` accepts both the short `COM3` spelling and its device
+        // namespace form `\\.\COM3`, and Windows device names are
+        // case-insensitive. A typed recent may therefore differ from the
+        // enumerator while naming the same port.
+        fn short_port_name(path: &str) -> &str {
+            path.strip_prefix(r"\\.\")
+                .or_else(|| path.strip_prefix(r"\\?\"))
+                .unwrap_or(path)
+        }
+        short_port_name(a).eq_ignore_ascii_case(short_port_name(b))
+    }
+}
+
+/// `STERNA_TEST_BUSY_PORTS`, whose grammar is `path=program`, comma-separated.
+/// A missing program is a holder with no name, which is the arm a root-owned
+/// process reaches in production.
+fn test_holder(spec: &str, path: &str) -> Option<tt_conn::serial::Holder> {
+    for entry in spec.split(',') {
+        let (want, program) = entry.split_once('=').unwrap_or((entry, ""));
+        if want != path {
+            continue;
+        }
+        return Some(tt_conn::serial::Holder {
+            pid: 1,
+            program: (!program.is_empty()).then(|| program.to_string()),
+        });
+    }
+    None
+}
+
+#[no_mangle]
+pub extern "C" fn tt_port_holders_len(list: *const TtPortHolders) -> usize {
+    match unsafe { list.as_ref() } {
+        Some(l) => l.holders.len(),
+        None => 0,
+    }
+}
+
+/// Borrow one answer. Null when `index` is out of range; an entry with
+/// `held == false` means nothing holds that path. Valid until the list is
+/// freed.
+#[no_mangle]
+pub extern "C" fn tt_port_holders_at(
+    list: *const TtPortHolders,
+    index: usize,
+) -> *const TtPortHolder {
+    match unsafe { list.as_ref() } {
+        Some(l) => l.holders.get(index).map_or(ptr::null(), |h| h as *const _),
+        None => ptr::null(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tt_port_holders_free(list: *mut TtPortHolders) {
     if !list.is_null() {
         drop(unsafe { Box::from_raw(list) });
     }
@@ -7966,6 +8190,52 @@ pub extern "C" fn tt_ctl_path(ctl: *const TtCtl) -> *const c_char {
     match unsafe { ctl.as_ref() } {
         Some(c) => c.path.as_ptr(),
         None => ptr::null(),
+    }
+}
+
+/// Publish the serial ports this window has open, so the other windows can say
+/// so in their pickers. A count of zero withdraws the claim.
+///
+/// **The whole set, every time**: a window is not a session, and a tab or a
+/// tile holding a second console holds a second port. Idempotent, and cheap
+/// enough to call on every connection change rather than working out which
+/// changes matter. The claim is read back through the endpoint list, so a
+/// window that dies holding a port stops claiming it the moment it stops
+/// listening — see `tt_ctl::claim`.
+///
+/// This is the whole of what Windows can know about a busy port, and on Linux
+/// it is a second opinion beside the kernel's.
+#[no_mangle]
+pub extern "C" fn tt_ctl_claim_ports(
+    ctl: *mut TtCtl,
+    devices: *const *const c_char,
+    count: usize,
+) -> TtStatus {
+    let Some(c) = (unsafe { ctl.as_ref() }) else {
+        return fail(TT_ERR_INVALID, "null TtCtl");
+    };
+    let Some(name) = c
+        .path
+        .to_str()
+        .ok()
+        .and_then(|p| tt_ctl::addr::name_of(std::path::Path::new(p)))
+    else {
+        return fail(TT_ERR_INVALID, "the control socket has no name");
+    };
+    let mut paths: Vec<&str> = Vec::with_capacity(count);
+    if !devices.is_null() {
+        for i in 0..count {
+            // SAFETY: the caller promises `count` readable pointers.
+            let p = unsafe { *devices.add(i) };
+            match unsafe { str_arg(p, usize::MAX) } {
+                Ok(d) => paths.push(d),
+                Err(e) => return e,
+            }
+        }
+    }
+    match tt_ctl::claim::claim(&name, &paths) {
+        Ok(()) => TT_OK,
+        Err(e) => fail(TT_ERR_IO, format!("cannot publish the port: {e}")),
     }
 }
 

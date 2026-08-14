@@ -69,6 +69,16 @@ public:
     // Public because the callbacks are free functions with C linkage; nothing
     // else should call them.
 
+    /// Publish the serial ports this window has open, so that the other
+    /// windows can say so in their pickers rather than offering a port that
+    /// is taken.
+    ///
+    /// The whole set every time — a window is not a session, and two tabs can
+    /// hold two consoles. Best effort: a claim that cannot be written costs
+    /// somebody else's dropdown a grey row and nothing else, so a failure is
+    /// not worth a dialog.
+    void claimPorts(const QStringList &devices);
+
     /// Non-zero leaves its message in [`lastError`], which is what the
     /// callback hands back.
     TtStatus runMacro(const QStringList &argv);

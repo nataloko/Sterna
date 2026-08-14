@@ -496,6 +496,94 @@ void test_the_dropdown_offers_every_group()
 /// width of the thing being reached for. Two rules keep it still: the model is
 /// rebuilt only when the list has actually changed, and the combo's hint is a
 /// constant rather than a function of its contents.
+/// A port something else has open is greyed out, and the row still says whose
+/// it is.
+///
+/// Serial *recents* rather than plugged-in ports, so this runs on a machine
+/// with no adapter: a remembered port is offered whether or not it is there.
+void test_a_port_another_program_holds_is_greyed()
+{
+    ConnectBar bar(nullptr);
+    auto *combo = bar.findChild<QComboBox *>(QStringLiteral("connectBarDestination"));
+    CHECK(combo != nullptr);
+    if (!combo) {
+        return;
+    }
+
+    TtSerialParams params;
+    tt_serial_params_default(&params);
+    QVector<RecentConnection> recents;
+    recents.append(RecentConnection::serial(QStringLiteral("/dev/ttyUSB0"), params));
+    recents.append(RecentConnection::serial(QStringLiteral("/dev/ttyUSB1"), params));
+    bar.setRecents(recents);
+
+    const auto rowContaining = [combo](const QString &needle) {
+        for (int i = 0; i < combo->count(); i++) {
+            if (combo->itemText(i).contains(needle)) {
+                return i;
+            }
+        }
+        return -1;
+    };
+    const auto enabled = [combo](int row) {
+        return bool(combo->model()->flags(combo->model()->index(row, 0))
+                    & Qt::ItemIsEnabled);
+    };
+
+    // The list is only re-asked as the popup opens: `setRecents` reaches
+    // `rebuildList` after every successful connect, and a `/proc` walk there
+    // would land between a connect and its first prompt.
+    qunsetenv("STERNA_TEST_BUSY_PORTS");
+    combo->showPopup();
+    combo->hidePopup();
+    const int free0 = rowContaining(QStringLiteral("ttyUSB0"));
+    CHECK(free0 >= 0);
+    CHECK(free0 >= 0 && enabled(free0));
+
+    qputenv("STERNA_TEST_BUSY_PORTS", "/dev/ttyUSB0=minicom");
+    combo->showPopup();
+    combo->hidePopup();
+
+    // **The assertion that fails without `Entry::busy` joining
+    // `operator==`.** The row's own text is unchanged — the suffix is
+    // composed at insert time — so a list that compares only kind, text and
+    // payload is equal to the last one and `rebuildList` returns early,
+    // leaving the row live.
+    const int busy = rowContaining(QStringLiteral("ttyUSB0"));
+    CHECK(busy >= 0);
+    if (busy >= 0) {
+        CHECK(!enabled(busy));
+        CHECK(combo->itemText(busy).contains(QStringLiteral("in use by minicom")));
+    }
+    const int other = rowContaining(QStringLiteral("ttyUSB1"));
+    CHECK(other >= 0);
+    CHECK(other >= 0 && enabled(other));
+
+    // Greying removes no row, so the record a live row carries is still its
+    // own — the payload is an index into the remembered list.
+    QString chosen;
+    QObject::connect(&bar, &ConnectBar::recentChosen,
+                     [&](const RecentConnection &one) { chosen = one.path; });
+    QMetaObject::invokeMethod(combo, "activated", Qt::DirectConnection,
+                              Q_ARG(int, other));
+    auto *connectAction =
+        bar.findChild<QAction *>(QStringLiteral("connectBarConnect"));
+    CHECK(connectAction != nullptr);
+    if (connectAction) {
+        connectAction->trigger();
+    }
+    CHECK(chosen == QStringLiteral("/dev/ttyUSB1"));
+
+    // **Advisory, not a prediction.** A holder that took no exclusive lock
+    // does not stop the open, and a root-owned one is invisible to the scan,
+    // so typing the busy port still offers Connect — the error on the connect
+    // path is where the truth lives.
+    bar.setDestination(QStringLiteral("/dev/ttyUSB0"));
+    CHECK(connectAction && connectAction->isEnabled());
+
+    qunsetenv("STERNA_TEST_BUSY_PORTS");
+}
+
 void test_the_dropdown_does_not_move_the_field()
 {
     MainWindow window;
@@ -727,6 +815,11 @@ void write_images(const QString &dir)
                                             TT_TELNET_AUTO));
     recents.append(RecentConnection::shell());
 
+    // One of them is taken, so the dumped list shows what a greyed row looks
+    // like beside the live ones.
+    qputenv("STERNA_TEST_BUSY_PORTS",
+            "/dev/serial/by-path/pci-0000:c6:00.3-usb-0:4.2:1.0=minicom");
+
     QMainWindow window;
     auto *bar = new ConnectBar(nullptr, &window);
     window.addToolBar(Qt::TopToolBarArea, bar);
@@ -744,6 +837,7 @@ void write_images(const QString &dir)
                                              + QStringLiteral("/connect-list.png"));
         combo->hidePopup();
     }
+    qunsetenv("STERNA_TEST_BUSY_PORTS");
 }
 
 int main(int argc, char **argv)
@@ -764,6 +858,7 @@ int main(int argc, char **argv)
     test_a_record_lays_five_fields_over_the_settings();
     test_what_a_typed_destination_means();
     test_the_dropdown_offers_every_group();
+    test_a_port_another_program_holds_is_greyed();
     test_the_dropdown_does_not_move_the_field();
     for (int i = 1; i + 1 < argc; i++) {
         if (QLatin1String(argv[i]) == QLatin1String("--write")) {

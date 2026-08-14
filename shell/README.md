@@ -113,6 +113,16 @@ terminal that never lets the machine idle — and it holds four groups:
 `RecentConnection`s newest first, the ports plugged in now, the SSH aliases,
 and a local shell, then New connection and Forget.
 
+**A port something else has open is greyed out** and says whose it is. The
+answer is re-asked only as the popup opens — `setRecents` reaches
+`rebuildList` after every successful connect, so anything expensive in
+`composeList` lands between a connect and its first prompt — and it is
+advisory: `Entry::busy` decides how a row is drawn and never whether Connect
+may run, because a holder that took no exclusive lock does not actually stop
+the open. The busy state is deliberately kept out of `Entry::text` so that
+`operator==` has to carry it; fold it into the words and a row that goes busy
+repaints by luck rather than by comparison. See `docs/deviations.md` 16.
+
 **Choosing a row fills the field, and `commit()` is what connects.** A combo
 popup opens under the pointer, so the release that opened it lands on a row and
 `activated` arrives without anybody having chosen anything; a bar where that
@@ -239,6 +249,15 @@ delivers no output. `render_test` runs its whole suite and fails six font
 metrics, which is Wine's font stack rather than an answer about Windows.
 Nothing left failing there is ours; native Windows is still the authority for
 the other three.
+
+`STERNA_TEST_BUSY_PORTS` is the other hook of that family, and the one that
+makes the greyed-out rows testable anywhere: `path=program`, comma-separated,
+`STERNA_TEST_BUSY_PORTS=/dev/ttyUSB0=minicom,/dev/ttyUSB1=`. It **replaces**
+the answer the platform would give rather than adding to it, which is what
+keeps `connect_test` deterministic on a machine with a rig plugged in as well
+as on a CI runner with no serial hardware at all; an empty program after the
+`=` is a holder nobody could name, which is what a root-owned process looks
+like in production. Never set outside a test.
 
 ## The updater is loaded only when there is a check to make
 

@@ -287,6 +287,23 @@ static void test_control(void)
     HANDLE event = (HANDLE)tt_ctl_wait_handle(ctl);
     CHECK(event != NULL);
 
+    /* A custom /D= name has no pid, and a typed COM name can use the device
+     * namespace spelling and any case. Both still have to match the claim. */
+    const char *claimed[] = {"COM3"};
+    const char *asked[] = {"\\\\.\\com3"};
+    CHECK_OK(tt_ctl_claim_ports(ctl, claimed, 1));
+    TtPortHolders *holders = tt_serial_holders(asked, 1);
+    CHECK(holders != NULL);
+    if (holders) {
+        const TtPortHolder *holder = tt_port_holders_at(holders, 0);
+        CHECK(holder != NULL);
+        CHECK(holder != NULL && holder->held);
+        CHECK(holder != NULL && holder->pid == 0);
+        CHECK(holder != NULL && holder->window);
+        tt_port_holders_free(holders);
+    }
+    CHECK_OK(tt_ctl_claim_ports(ctl, NULL, 0));
+
     HANDLE pipe = INVALID_HANDLE_VALUE;
     ULONGLONG deadline = GetTickCount64() + 10000;
     while (pipe == INVALID_HANDLE_VALUE && GetTickCount64() < deadline) {

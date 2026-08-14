@@ -5,6 +5,7 @@
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QEvent>
 #include <QFileInfo>
 #include <QFont>
@@ -56,11 +57,18 @@ public:
     }
 };
 
+/// The item behind a row, which only a `QStandardItemModel` has. Shared so
+/// that the two markers below cannot drift apart.
+QStandardItem *rowItem(QComboBox *combo, int at)
+{
+    auto *model = qobject_cast<QStandardItemModel *>(combo->model());
+    return model ? model->item(at) : nullptr;
+}
+
 /// A bold, unselectable row: the group captions inside the dropdown.
 void markHeader(QComboBox *combo, int at)
 {
-    auto *model = qobject_cast<QStandardItemModel *>(combo->model());
-    QStandardItem *item = model ? model->item(at) : nullptr;
+    QStandardItem *item = rowItem(combo, at);
     if (!item) {
         return;
     }
@@ -68,6 +76,19 @@ void markHeader(QComboBox *combo, int at)
     QFont font = item->font();
     font.setBold(true);
     item->setFont(font);
+}
+
+/// A greyed, unchoosable row: a port something else has open.
+///
+/// The same two flags a header clears and **not** the bold, which is the
+/// caption's only signal — a bold grey row reads as a group heading. The
+/// disabled flag is also what keeps `chose()` out of it: a combo does not
+/// emit `activated` for a row it will not let anybody pick.
+void markBusy(QComboBox *combo, int at)
+{
+    if (QStandardItem *item = rowItem(combo, at)) {
+        item->setFlags(item->flags() & ~(Qt::ItemIsEnabled | Qt::ItemIsSelectable));
+    }
 }
 
 QIcon appearanceIcon(bool darkMode, const QColor &colour)
@@ -163,7 +184,7 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
     combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     combo->lineEdit()->setPlaceholderText(
         tr("host, ssh://user@host, telnet://host:23, /dev/ttyUSB0, shell"));
-    combo->onOpen = [this] { rebuildList(); };
+    combo->onOpen = [this] { rebuildList(true); };
     m_destination = combo;
     addWidget(m_destination);
 
@@ -296,12 +317,12 @@ void ConnectBar::setRecents(const QVector<RecentConnection> &recents)
     rebuildList();
 }
 
-QVector<ConnectBar::Entry> ConnectBar::composeList() const
+QVector<ConnectBar::Entry> ConnectBar::composeList()
 {
     QVector<Entry> rows;
     const auto row = [&rows](Row kind, const QString &text,
                              const QString &payload = QString()) {
-        rows.append({kind, text, payload});
+        rows.append({kind, text, payload, Busy{}});
     };
 
     QHash<QString, QString> deviceFor;
@@ -325,6 +346,13 @@ QVector<ConnectBar::Entry> ConnectBar::composeList() const
         for (int i = 0; i < m_recents.size(); i++) {
             row(Row::Recent, m_recents.at(i).label(deviceFor),
                 QString::number(i));
+            // A remembered serial line is the same port as the row below it in
+            // the ports group, so it has to grey out with it: leaving one live
+            // and the other not is incoherent, and the recents are what
+            // somebody reaches for first.
+            if (m_recents.at(i).kind == RecentConnection::Kind::Serial) {
+                rows.last().busy = m_busy.value(m_recents.at(i).path);
+            }
         }
         row(Row::Separator, QString());
     }
@@ -344,6 +372,7 @@ QVector<ConnectBar::Entry> ConnectBar::composeList() const
         constexpr int kShown = 6;
         for (int i = 0; i < ports.size() && i < kShown; i++) {
             row(Row::Port, ports.at(i).first, ports.at(i).second);
+            rows.last().busy = m_busy.value(ports.at(i).second);
         }
         if (ports.size() > kShown) {
             row(Row::Header, tr("...and %1 more, in New connection")
@@ -376,8 +405,101 @@ QVector<ConnectBar::Entry> ConnectBar::composeList() const
     return rows;
 }
 
-void ConnectBar::rebuildList()
+/// Who holds each of `paths`, kept until the next rescan.
+///
+/// One call for every path, because the core walks `/proc` once whatever it is
+/// asked about, and the answer is a courtesy rather than a gate: a holder that
+/// took no exclusive lock does not actually stop the open, and a root-owned
+/// one is invisible. So this greys rows and never touches Connect.
+void ConnectBar::rescanBusy(const QStringList &paths)
 {
+    m_busy.clear();
+    if (paths.isEmpty()) {
+        return;
+    }
+    // The bytes have to outlive the array of pointers into them, so both are
+    // built before either is handed over — the same rule the core follows on
+    // its side of this call.
+    QVector<QByteArray> utf8;
+    utf8.reserve(paths.size());
+    for (const QString &path : paths) {
+        utf8.append(path.toUtf8());
+    }
+    QVector<const char *> argv;
+    argv.reserve(utf8.size());
+    for (const QByteArray &path : utf8) {
+        argv.append(path.constData());
+    }
+
+    TtPortHolders *held = tt_serial_holders(argv.constData(),
+                                            static_cast<size_t>(argv.size()));
+    if (!held) {
+        return;
+    }
+    for (int i = 0; i < paths.size(); i++) {
+        const TtPortHolder *holder =
+            tt_port_holders_at(held, static_cast<size_t>(i));
+        if (!holder || !holder->held) {
+            continue;
+        }
+        Busy busy;
+        busy.held = true;
+        busy.pid = holder->pid;
+        busy.program = holder->program ? QString::fromUtf8(holder->program)
+                                       : QString();
+        busy.window = holder->window;
+        m_busy.insert(paths.at(i), busy);
+    }
+    tt_port_holders_free(held);
+}
+
+/// What a row says about itself when something else has its port.
+///
+/// The words state a fact — who has it open — rather than a prediction. This
+/// program cannot tell whether *opening* would fail: the holder may have taken
+/// no exclusive lock at all, and the modal error on the connect path is still
+/// where the truth lives.
+QString ConnectBar::busyLabel(const QString &text, const Busy &busy) const
+{
+    if (!busy.held) {
+        return text;
+    }
+    if (busy.pid == static_cast<quint32>(QCoreApplication::applicationPid())) {
+        return tr("%1 (in use here)").arg(text);
+    }
+    if (busy.window) {
+        return tr("%1 (in use by another window)").arg(text);
+    }
+    if (!busy.program.isEmpty()) {
+        return tr("%1 (in use by %2)").arg(text, busy.program);
+    }
+    return tr("%1 (in use)").arg(text);
+}
+
+void ConnectBar::rebuildList(bool rescan)
+{
+    if (rescan) {
+        QStringList paths;
+        if (TtPortList *list = tt_serial_enumerate()) {
+            for (size_t i = 0; i < tt_port_list_len(list); i++) {
+                if (const TtPortInfo *info = tt_port_list_at(list, i)) {
+                    paths.append(QString::fromUtf8(info->open_path));
+                }
+            }
+            tt_port_list_free(list);
+        }
+        // A remembered port is asked about under the name it was saved with,
+        // which need not be the name the enumerator uses for it — the core
+        // compares the device behind both.
+        for (const RecentConnection &recent : m_recents) {
+            if (recent.kind == RecentConnection::Kind::Serial
+                && !paths.contains(recent.path)) {
+                paths.append(recent.path);
+            }
+        }
+        rescanBusy(paths);
+    }
+
     const QVector<Entry> rows = composeList();
     // Nothing has been plugged in, unplugged or connected to since the last
     // time: leave the model alone. Touching it costs a geometry invalidation
@@ -400,12 +522,25 @@ void ConnectBar::rebuildList()
             m_destination->insertSeparator(m_destination->count());
             continue;
         }
-        m_destination->addItem(entry.text);
+        m_destination->addItem(busyLabel(entry.text, entry.busy));
         const int at = m_destination->count() - 1;
         m_destination->setItemData(at, static_cast<int>(entry.kind), RoleKind);
         m_destination->setItemData(at, entry.payload, RolePayload);
         if (entry.kind == Row::Header) {
             markHeader(m_destination, at);
+        } else if (entry.busy.held) {
+            markBusy(m_destination, at);
+            QString tip;
+            if (entry.busy.program.isEmpty()) {
+                tip = tr("Something else has this port open");
+            } else if (entry.busy.pid == 0) {
+                tip = tr("%1 has this port open").arg(entry.busy.program);
+            } else {
+                tip = tr("%1 (pid %2) has this port open")
+                          .arg(entry.busy.program)
+                          .arg(entry.busy.pid);
+            }
+            m_destination->setItemData(at, tip, Qt::ToolTipRole);
         }
     }
 

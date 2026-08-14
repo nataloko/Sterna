@@ -1806,6 +1806,16 @@ impl Session {
         }
     }
 
+    /// The device the open port was named by — a node or a `by-path` name,
+    /// whichever the caller passed. `None` on every other link.
+    ///
+    /// From the transport, for the same reason the speed is: the frontend's
+    /// idea of "the last port" is loaded from the settings at startup and is
+    /// not evidence that anything is open.
+    pub fn serial_path(&self) -> Option<&str> {
+        self.conn.as_ref()?.serial_path()
+    }
+
     /// Feed bytes as though they had arrived from the far end. For local echo
     /// and for tests; it is also how a replayed session log would work.
     pub fn feed(&mut self, bytes: &[u8]) {

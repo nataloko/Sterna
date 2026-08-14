@@ -18,6 +18,9 @@ mod windows;
 mod enumerate;
 pub use enumerate::{enumerate, number_of_port, port_by_number, PortInfo, UsbInfo};
 
+mod inuse;
+pub use inuse::{holders, holders_under, Holder};
+
 // The port's own `Read`/`Write` are the Unix data path. Windows drives
 // overlapped `ReadFile`/`WriteFile` on the handle instead, because the crate's
 // impls pass a null `OVERLAPPED`.
@@ -707,6 +710,10 @@ impl crate::transport::Transport for SerialConn {
 
     fn describe(&self) -> String {
         format!("{} {}", self.path, self.params.baud)
+    }
+
+    fn serial_path(&self) -> Option<&str> {
+        Some(&self.path)
     }
 }
 

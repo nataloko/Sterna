@@ -613,3 +613,38 @@ and `ConfirmDisconnect` still asks first.
 
 **Where it lives.** `tt-session::Session::connection_closed` takes the one
 `asked` flag; `Session::disconnect` is the only caller that passes it.
+
+## 16. A port another program holds is greyed, not hidden
+
+The connect bar's dropdown shows a serial port something else has open as a
+disabled row that names the holder — `/dev/ttyUSB0 — FT4232H (in use by
+minicom)`. Tera Term answers the same question and *hides* the row instead
+(`hostdlg.c:180`, "使用中のポートは表示しない").
+
+**Why.** A port that vanishes from the list looks like an adapter that came
+unplugged, and the user goes to check the cable; a greyed row naming `minicom`
+tells them what to close. Hiding also moves the rows underneath, and the
+remembered connections carry their index as their payload — greying removes
+nothing, so the row above a hidden one would have become the wrong record.
+
+**What it can see, and what it cannot.** Linux is asked twice: `/proc/locks`
+names every holder that took an `flock`, whatever user it belongs to — which
+includes every Sterna window, since `serialport-rs` locks as well as setting
+`TIOCEXCL` — and a sweep of `/proc/<pid>/fd` names this user's own processes
+whether they locked or not. Windows has no non-destructive question to ask the
+system at all, so it sees only what this program's other windows publish, which
+is exactly Tera Term's own reach: a claim file beside each window's control
+socket, read back through the endpoint list so a crashed window stops claiming
+its port. Nothing opens a device to find out — opening raises DTR for the life
+of the probe, which reboots an Arduino-style board.
+
+A root-owned holder that took no lock is invisible to both Linux sources, and a
+holder that took no exclusive lock at all does not in fact stop the open. So
+this is **advice, not a gate**: the field still accepts a typed path, Connect
+stays live, the New Connection dialog lists every port, and the error on the
+connect path — `is in use by another program` — is still where the truth lives.
+
+**Where it lives.** `tt_conn::serial::holders` asks the kernel,
+`tt_ctl::claim` is the published half, `tt_serial_holders` unions them, and
+`ConnectBar::rescanBusy` asks as the dropdown opens — never on the connect
+path, which `setRecents` also reaches.

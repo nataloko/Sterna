@@ -986,6 +986,52 @@ static void test_serial(void)
         tt_port_list_free(ports);
     }
 
+    /* Who holds them. Never null, one answer per path in the order asked,
+     * and a path nothing holds answers with held false. */
+    const char *ask[2] = {"/dev/tt-ffi-does-not-exist", "/dev/null"};
+    TtPortHolders *held = tt_serial_holders(ask, 2);
+    CHECK(held != NULL);
+    if (held) {
+        CHECK(tt_port_holders_len(held) == 2);
+        const TtPortHolder *first = tt_port_holders_at(held, 0);
+        CHECK(first != NULL);
+        CHECK(!first->held);
+        CHECK(first->pid == 0);
+        CHECK(first->program == NULL);
+        CHECK(!first->window);
+        CHECK(tt_port_holders_at(held, 2) == NULL);
+        tt_port_holders_free(held);
+    }
+    /* An empty question is an empty answer rather than a null one, so a
+     * caller with nothing to ask about needs no special case. */
+    held = tt_serial_holders(NULL, 0);
+    CHECK(held != NULL);
+    CHECK(tt_port_holders_len(held) == 0);
+    tt_port_holders_free(held);
+
+    /* The test hook replaces the platform's answer rather than adding to it,
+     * which is what makes a frontend test deterministic on a machine with no
+     * ports *and* on one with a rig plugged in. It is also the only way this
+     * assertion can run on a CI runner with no serial hardware. */
+    setenv("STERNA_TEST_BUSY_PORTS", "/dev/tt-ffi-does-not-exist=minicom,/dev/null=", 1);
+    held = tt_serial_holders(ask, 2);
+    CHECK(held != NULL);
+    if (held) {
+        const TtPortHolder *busy = tt_port_holders_at(held, 0);
+        CHECK(busy != NULL && busy->held && busy->pid != 0);
+        CHECK(busy->program != NULL && strcmp(busy->program, "minicom") == 0);
+        /* A holder with no name is the arm a root-owned process reaches. */
+        const TtPortHolder *unnamed = tt_port_holders_at(held, 1);
+        CHECK(unnamed != NULL && unnamed->held && unnamed->pid != 0);
+        CHECK(unnamed->program == NULL);
+        tt_port_holders_free(held);
+    }
+    unsetenv("STERNA_TEST_BUSY_PORTS");
+
+    CHECK(tt_port_holders_len(NULL) == 0);
+    CHECK(tt_port_holders_at(NULL, 0) == NULL);
+    tt_port_holders_free(NULL);
+
     TtConfig cfg;
     tt_config_default(&cfg);
     TtSession *s = tt_session_new(&cfg);
@@ -3114,6 +3160,22 @@ static void test_ctl(void)
     CHECK(path != NULL && strstr(path, "abitest.sock") != NULL);
     CHECK(tt_ctl_poll_fd(c) >= 0);
     CHECK(tt_ctl_wait_handle(c) == NULL);
+
+    /* A custom /D= name has no pid to publish. It is still a held port: the
+     * explicit bit, rather than pid != 0, is what preserves that answer. */
+    const char *claimed[] = {"/dev/tt-ffi-claimed-port"};
+    CHECK(tt_ctl_claim_ports(c, claimed, 1) == TT_OK);
+    TtPortHolders *holders = tt_serial_holders(claimed, 1);
+    CHECK(holders != NULL);
+    if (holders) {
+        const TtPortHolder *holder = tt_port_holders_at(holders, 0);
+        CHECK(holder != NULL);
+        CHECK(holder != NULL && holder->held);
+        CHECK(holder != NULL && holder->pid == 0);
+        CHECK(holder != NULL && holder->window);
+        tt_port_holders_free(holders);
+    }
+    CHECK(tt_ctl_claim_ports(c, NULL, 0) == TT_OK);
 
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     CHECK(fd >= 0);
