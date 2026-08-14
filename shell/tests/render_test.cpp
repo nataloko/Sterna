@@ -44,6 +44,8 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScreen>
+#include <QRadioButton>
+#include <QSpinBox>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -56,13 +58,11 @@
 #include "ConnectBar.h"
 #include "I18n.h"
 #include "PasteDialog.h"
-#include "SerialDialog.h"
+#include "ConnectDialog.h"
 #include "Session.h"
 #include "SettingsDialog.h"
-#include "SshDialog.h"
 #include "SshPrompts.h"
 #include "TabRows.h"
-#include "TelnetDialog.h"
 #include "TerminalView.h"
 
 static int failures = 0;
@@ -1768,20 +1768,14 @@ void test_the_connection_dialogs_use_the_language_catalog()
                    : QString();
     };
 
-    SerialDialog serial(nullptr, &i18n);
-    CHECK(serial.windowTitle() == QStringLiteral("シリアルポート"));
-    CHECK(hasLabel(serial, QStringLiteral("フロー制御(&F):")));
-    CHECK(cancelText(serial) == QStringLiteral("キャンセル"));
-
-    SshDialog ssh(nullptr, &i18n);
-    CHECK(hasLabel(ssh, QStringLiteral("ユーザ名(&N):")));
-    CHECK(hasLabel(ssh, QStringLiteral("秘密鍵(&K):")));
-    CHECK(cancelText(ssh) == QStringLiteral("キャンセル"));
-
-    TelnetDialog telnet(nullptr, &i18n);
-    CHECK(hasLabel(telnet, QStringLiteral("ホスト(&O):")));
-    CHECK(hasLabel(telnet, QStringLiteral("ポート#(&P):")));
-    CHECK(cancelText(telnet) == QStringLiteral("キャンセル"));
+    // One screen now, so one dialog carries every label the three used to —
+    // the panels behind Details are where the per-transport ones live.
+    ConnectDialog connect(nullptr, &i18n);
+    CHECK(hasLabel(connect, QStringLiteral("ホスト(&O):")));
+    CHECK(hasLabel(connect, QStringLiteral("フロー制御(&F):")));
+    CHECK(hasLabel(connect, QStringLiteral("ユーザ名(&N):")));
+    CHECK(hasLabel(connect, QStringLiteral("秘密鍵(&K):")));
+    CHECK(cancelText(connect) == QStringLiteral("キャンセル"));
 }
 
 void test_the_ssh_prompts_use_the_language_catalog()
@@ -2149,6 +2143,111 @@ void test_the_right_button_offers_a_paste_menu()
         &error));
     view->applySettings();
     CHECK(rightPress() == nullptr);
+}
+
+/// One New connection screen for every transport — upstream's `IDD_HOSTDLG`
+/// as TTSSH extends it. The radios decide which half is live, the service
+/// moves the port, and Details holds everything this port has that upstream's
+/// screen does not.
+void test_the_connect_dialog_covers_every_transport()
+{
+    ConnectDialog dialog;
+
+    // SSH is preselected, which is what upstream does with TTSSH enabled, and
+    // the port follows the service without anyone knowing the numbers.
+    CHECK(dialog.kind() == ConnectDialog::Kind::Ssh);
+    CHECK(dialog.port() == 22);
+
+    auto *telnetService =
+        dialog.findChild<QRadioButton *>(QStringLiteral("connectServiceTelnet"));
+    auto *otherService =
+        dialog.findChild<QRadioButton *>(QStringLiteral("connectServiceOther"));
+    auto *serialRadio =
+        dialog.findChild<QRadioButton *>(QStringLiteral("connectSerial"));
+    CHECK(telnetService && otherService && serialRadio);
+    if (!telnetService || !otherService || !serialRadio) {
+        return;
+    }
+
+    telnetService->setChecked(true);
+    CHECK(dialog.kind() == ConnectDialog::Kind::Telnet);
+    CHECK(dialog.port() == 23);
+
+    // "Other" is upstream's name for a TCP connection with telnet switched
+    // off, which is this port's raw mode — and picking it pins the mode, so
+    // the port must not move it back.
+    otherService->setChecked(true);
+    TtTelnetParams params;
+    dialog.fillTelnet(&params);
+    CHECK(params.mode == TT_TELNET_RAW);
+    CHECK(dialog.kind() == ConnectDialog::Kind::Telnet);
+
+    // The serial half greys the TCP one rather than hiding it, so the shape of
+    // the dialog never changes under the pointer.
+    auto *tcpHost = dialog.findChild<QComboBox *>(QStringLiteral("connectHost"));
+    CHECK(tcpHost != nullptr);
+    serialRadio->setChecked(true);
+    CHECK(dialog.kind() == ConnectDialog::Kind::Serial);
+    CHECK(tcpHost && !tcpHost->isEnabled());
+
+    // Details is collapsed on open — the dialog opens as upstream's — and the
+    // page behind it follows whatever is selected.
+    auto *details =
+        dialog.findChild<QToolButton *>(QStringLiteral("connectDetails"));
+    auto *pages =
+        dialog.findChild<QStackedWidget *>(QStringLiteral("connectDetailsPages"));
+    CHECK(details && pages);
+    if (!details || !pages) {
+        return;
+    }
+    // `isHidden`, not `isVisible`: a child of a dialog that has never been
+    // shown is invisible whatever its own flag says, so only the explicit hide
+    // is observable here.
+    CHECK(!details->isChecked());
+    CHECK(pages->isHidden());
+    details->setChecked(true);
+    CHECK(!pages->isHidden());
+
+    // A port typed by hand stops following the service, which is the same rule
+    // the telnet mode follows about the port.
+    auto *port = dialog.findChild<QSpinBox *>(QStringLiteral("connectPort"));
+    CHECK(port != nullptr);
+    if (port) {
+        dialog.setInitialSsh(QStringLiteral("myrouter"), QString(), 2222,
+                             QString(), false);
+        CHECK(dialog.host() == QStringLiteral("myrouter"));
+        CHECK(dialog.port() == 2222);
+        telnetService->setChecked(true);
+        CHECK(dialog.port() == 2222);
+    }
+}
+
+/// The host drop-down is `HistoryList`, which ships off. What it offers is the
+/// remembered hosts ahead of the `~/.ssh/config` aliases the combo is seeded
+/// with, deduplicated against them.
+void test_the_connect_dialog_offers_the_host_history()
+{
+    ConnectDialog dialog;
+    auto *host = dialog.findChild<QComboBox *>(QStringLiteral("connectHost"));
+    CHECK(host != nullptr);
+    if (!host) {
+        return;
+    }
+    const int seeded = host->count();
+
+    dialog.setHistory({QStringLiteral("router.example"),
+                       QStringLiteral("switch.example"),
+                       QStringLiteral("router.example")});
+    // The duplicate is one entry, not two, and the newest is first.
+    CHECK(host->count() == seeded + 2);
+    CHECK(host->itemText(0) == QStringLiteral("router.example"));
+    CHECK(host->itemText(1) == QStringLiteral("switch.example"));
+    // Nothing is preselected: the field is for typing into.
+    CHECK(dialog.host().isEmpty());
+
+    CHECK(!dialog.remembersHistory());
+    dialog.setRemembersHistory(true);
+    CHECK(dialog.remembersHistory());
 }
 
 /// The About item is the visible version check for an installed build. The
@@ -2870,6 +2969,8 @@ int main(int argc, char **argv)
     test_a_frontend_toggle_does_not_clear_on_resize();
     test_an_auto_close_request_respects_window_state();
     test_window_geometry_has_full_and_close_only_saves();
+    test_the_connect_dialog_covers_every_transport();
+    test_the_connect_dialog_offers_the_host_history();
 
     // `--write <dir>` dumps what was rendered, for looking at a failure rather
     // than guessing at it.

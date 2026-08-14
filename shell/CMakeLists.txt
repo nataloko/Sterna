@@ -158,12 +158,13 @@ add_library(sterna_shell STATIC
     src/QuickButtonRepeat.cpp
     src/QuickButtons.cpp
     src/QuickButtonsDialog.cpp
-    src/SerialDialog.cpp
+    src/ConnectDialog.cpp
+    src/SerialPanel.cpp
     src/SettingsDialog.cpp
-    src/SshDialog.cpp
+    src/SshPanel.cpp
     src/SshPrompts.cpp
     src/TabRows.cpp
-    src/TelnetDialog.cpp
+    src/TelnetPanel.cpp
     src/UpdateSchedule.cpp
     src/XferDialog.cpp
     resources/branding.qrc)

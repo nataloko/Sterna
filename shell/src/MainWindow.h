@@ -10,6 +10,7 @@
 
 #include "sterna.h"
 
+#include "ConnectDialog.h"
 #include "Highlights.h"
 #include "PanelContainer.h"
 #include "QuickButtons.h"
@@ -174,9 +175,13 @@ private:
     void queueWindowMetrics();
 
 private slots:
-    void showConnectDialog();
-    void showSshDialog();
-    void showTelnetDialog();
+    /// Upstream's one New connection screen, opened on whichever half was
+    /// asked for. Every transport goes through here: File > New connection,
+    /// and the empty-panel buttons, which name a kind.
+    void showConnectDialog(ConnectDialog::Kind kind = ConnectDialog::Kind::Ssh);
+    /// Add a host to `recent.hosts`, newest first, when the History box is
+    /// ticked. `HistoryList` ships off, so this normally does nothing.
+    void rememberHost(const QString &host, bool remember);
     void disconnectPort();
     /// Ask about a host key. Raised from the session's poll, which means a
     /// nested event loop — see `Session::pollSsh` for why that is safe.
@@ -444,9 +449,9 @@ private:
     QAction *m_newTabAction = nullptr;
     QAction *m_closeTabAction = nullptr;
     QAction *m_duplicateAction = nullptr;
-    QAction *m_serialConnectAction = nullptr;
-    QAction *m_sshConnectAction = nullptr;
-    QAction *m_telnetConnectAction = nullptr;
+    /// The one File > New connection item. Upstream has one too, and the
+    /// accelerator that used to be spread over three items lands on it.
+    QAction *m_connectAction = nullptr;
     QAction *m_localShellAction = nullptr;
     QAction *m_breakAction = nullptr;
     QAction *m_logAction = nullptr;

@@ -58,12 +58,9 @@
 #include "QuickButtonBar.h"
 #include "QuickButtonRepeat.h"
 #include "QuickButtonsDialog.h"
-#include "SerialDialog.h"
 #include "Session.h"
 #include "SettingsDialog.h"
-#include "SshDialog.h"
 #include "SshPrompts.h"
-#include "TelnetDialog.h"
 #include "TerminalPage.h"
 #include "TerminalView.h"
 #include "UpdateSchedule.h"
@@ -286,13 +283,13 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
                 m_requestedPanel = panel;
                 switch (kind) {
                 case PanelContainer::ConnectionKind::Serial:
-                    showConnectDialog();
+                    showConnectDialog(ConnectDialog::Kind::Serial);
                     break;
                 case PanelContainer::ConnectionKind::Ssh:
-                    showSshDialog();
+                    showConnectDialog(ConnectDialog::Kind::Ssh);
                     break;
                 case PanelContainer::ConnectionKind::Telnet:
-                    showTelnetDialog();
+                    showConnectDialog(ConnectDialog::Kind::Telnet);
                     break;
                 case PanelContainer::ConnectionKind::Shell:
                     connectPty();
@@ -1137,11 +1134,11 @@ void MainWindow::onSettingsChanged()
     // these switches (`vtwin.cpp:1454`). Qt actions own their shortcuts, so a
     // disabled accelerator is represented by no shortcut while the menu item
     // remains available.
-    if (m_serialConnectAction) {
+    if (m_connectAction) {
         const bool enabled =
             m_session->setting(QStringLiteral("menu.accelerator_new_connection"))
             == QLatin1String("on");
-        m_serialConnectAction->setShortcut(
+        m_connectAction->setShortcut(
             enabled ? QKeySequence(Qt::ALT | Qt::Key_N) : QKeySequence());
     }
     if (m_localShellAction) {
@@ -1615,18 +1612,11 @@ void MainWindow::buildMenus()
         &MainWindow::closeCurrentTab);
     m_closeTabAction->setObjectName(QStringLiteral("closeTabAction"));
     file->addSeparator();
-    m_serialConnectAction = file->addAction(tr("Connect to serial port..."), this,
-                                             &MainWindow::showConnectDialog);
-    languageAction(m_serialConnectAction, "DLG_HOST_SERIAL",
-                   tr("Connect to serial port..."));
-    m_sshConnectAction = file->addAction(tr("Connect over SSH..."), this,
-                                          &MainWindow::showSshDialog);
-    languageAction(m_sshConnectAction, "MENU_SSH", tr("Connect over SSH..."),
-                   "TTSSH");
-    m_telnetConnectAction = file->addAction(tr("Connect over telnet..."), this,
-                                             &MainWindow::showTelnetDialog);
-    languageAction(m_telnetConnectAction, "DLG_TCPIP_TELNET",
-                   tr("Connect over telnet..."));
+    // One item, as upstream has: the screen behind it covers every transport.
+    m_connectAction = file->addAction(tr("New connection..."), this,
+                                      [this] { showConnectDialog(); });
+    m_connectAction->setObjectName(QStringLiteral("connectAction"));
+    languageAction(m_connectAction, "MENU_FILE_NEW", tr("New connection..."));
     m_duplicateAction = file->addAction(tr("Duplicate session"), this,
                                          &MainWindow::duplicateSession);
     m_duplicateAction->setObjectName(QStringLiteral("duplicateSessionAction"));
@@ -1942,19 +1932,97 @@ void MainWindow::checkForUpdatesOnStartup()
     });
 }
 
-void MainWindow::showConnectDialog()
+void MainWindow::showConnectDialog(ConnectDialog::Kind kind)
 {
-    SerialDialog dialog(this, m_i18n);
-    dialog.setInitial(m_lastPort, m_lastParams);
+    ConnectDialog dialog(this, m_i18n);
+    // Every half is seeded, not just the one being opened on: the point of one
+    // screen is that switching halves inside it costs nothing.
+    dialog.setInitialSerial(m_lastPort, m_lastParams);
+    dialog.setInitialSsh(m_lastSshHost, m_lastSshUser, m_lastSshPort,
+                         m_lastSshIdentity, m_lastSshLegacy);
+    dialog.setInitialTelnet(m_lastTelnetHost, m_lastTelnetPort, m_lastTelnetMode);
+    const bool history =
+        m_session->setting(QStringLiteral("connection.history_list"))
+        == QLatin1String("on");
+    dialog.setRemembersHistory(history);
+    if (history) {
+        dialog.setHistory(
+            m_session->setting(QStringLiteral("recent.host_history"))
+                .split(QLatin1Char(';'), Qt::SkipEmptyParts));
+    }
+    dialog.selectKind(kind);
+
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
-    if (dialog.portPath().isEmpty()) {
-        QMessageBox::warning(this, tr("Connect"),
-                             tr("No serial ports were found."));
+
+    // The box is a setting of its own, so unticking it is remembered even
+    // though nothing was connected to.
+    if (dialog.remembersHistory() != history) {
+        m_session->setSetting(
+            QStringLiteral("connection.history_list"),
+            dialog.remembersHistory() ? QStringLiteral("on") : QStringLiteral("off"),
+            nullptr);
+    }
+
+    switch (dialog.kind()) {
+    case ConnectDialog::Kind::Serial:
+        if (dialog.portPath().isEmpty()) {
+            QMessageBox::warning(this, tr("Connect"),
+                                 tr("No serial ports were found."));
+            return;
+        }
+        connectSerial(dialog.portPath(), dialog.serialParams());
+        return;
+    case ConnectDialog::Kind::Ssh: {
+        if (dialog.host().isEmpty()) {
+            QMessageBox::warning(this, tr("SSH"), tr("Enter a host to connect to."));
+            return;
+        }
+        TtSshParams params;
+        dialog.fillSsh(&params);
+        rememberHost(dialog.host(), dialog.remembersHistory());
+        startSsh(params, dialog.host());
         return;
     }
-    connectSerial(dialog.portPath(), dialog.params());
+    case ConnectDialog::Kind::Telnet: {
+        if (dialog.host().isEmpty()) {
+            QMessageBox::warning(this, tr("Telnet"), tr("Enter a host to connect to."));
+            return;
+        }
+        TtTelnetParams params;
+        dialog.fillTelnet(&params);
+        // The dialog's own params, not the ones `connectTelnet` would derive
+        // from `m_lastTelnetMode`: the mode is the reason the panel exists, and
+        // going through that member applied the chosen mode to the *next*
+        // connection rather than to this one.
+        rememberHost(dialog.host(), dialog.remembersHistory());
+        connectTelnet(dialog.host(), dialog.port(), &params);
+        return;
+    }
+    }
+}
+
+void MainWindow::rememberHost(const QString &host, bool remember)
+{
+    if (!remember || host.isEmpty()) {
+        return;
+    }
+    // Newest first, deduplicated, and bounded — an unbounded list would grow
+    // into the settings file for ever and the dialog only shows the top of it.
+    QStringList hosts = m_session->setting(QStringLiteral("recent.host_history"))
+                            .split(QLatin1Char(';'), Qt::SkipEmptyParts);
+    hosts.removeAll(host);
+    hosts.prepend(host);
+    while (hosts.size() > 16) {
+        hosts.removeLast();
+    }
+    // A `;` in a host name would split one entry into two on the way back, and
+    // no name can contain one — but a typo can, so it is dropped rather than
+    // corrupting the list.
+    hosts.removeIf([](const QString &h) { return h.contains(QLatin1Char(';')); });
+    m_session->setSetting(QStringLiteral("recent.host_history"),
+                          hosts.join(QLatin1Char(';')), nullptr);
 }
 
 void MainWindow::startFrom(TtCmdLine *cmd)
@@ -2193,24 +2261,6 @@ void MainWindow::connectSerial(const QString &path, const TtSerialParams &params
     updateStatus();
 }
 
-void MainWindow::showSshDialog()
-{
-    SshDialog dialog(this, m_i18n);
-    dialog.setInitial(m_lastSshHost, m_lastSshUser, m_lastSshPort,
-                      m_lastSshIdentity, m_lastSshLegacy);
-    if (dialog.exec() != QDialog::Accepted) {
-        return;
-    }
-    if (dialog.host().isEmpty()) {
-        QMessageBox::warning(this, tr("SSH"), tr("Enter a host to connect to."));
-        return;
-    }
-
-    TtSshParams params;
-    dialog.fill(&params);
-    startSsh(params, dialog.host());
-}
-
 void MainWindow::connectSsh(const QString &host, const QString &user, int port)
 {
     TtSshParams params;
@@ -2279,26 +2329,6 @@ void MainWindow::onSshAuthWanted(const AuthRequest &request)
         return;
     }
     m_session->answerAuth(dialog.answers());
-}
-
-void MainWindow::showTelnetDialog()
-{
-    TelnetDialog dialog(this, m_i18n);
-    dialog.setInitial(m_lastTelnetHost, m_lastTelnetPort, m_lastTelnetMode);
-    if (dialog.exec() != QDialog::Accepted) {
-        return;
-    }
-    if (dialog.host().isEmpty()) {
-        QMessageBox::warning(this, tr("Telnet"), tr("Enter a host to connect to."));
-        return;
-    }
-    TtTelnetParams params;
-    dialog.fill(&params);
-    // The dialog's own params, not the ones `connectTelnet` would derive from
-    // `m_lastTelnetMode`: the mode is the reason this is a dialog at all, and
-    // going through that member applied the chosen mode to the *next*
-    // connection rather than to this one.
-    connectTelnet(dialog.host(), dialog.port(), &params);
 }
 
 void MainWindow::connectTelnet(const QString &host, quint16 port,
@@ -3279,20 +3309,16 @@ void MainWindow::updateStatus()
         m_breakAction->setEnabled(m_session->supportsBreak() && !menuDisabled);
     }
     // `DisableMenuNewConnection` is consulted only while a connection is
-    // already open (`vtwin.cpp:1133`); the item is always grey while a new
-    // one is still connecting. Sterna splits upstream's one New connection
-    // dialog into one action per transport, so the same gate covers all three
-    // remote/device dialogs. Local shell is Cygwin connection's counterpart
-    // and remains independent upstream too.
+    // already open (`vtwin.cpp:1133`); the item is always grey while a new one
+    // is still connecting. One action, as upstream has — the gate covers every
+    // transport because the screen behind it does. Local shell is Cygwin
+    // connection's counterpart and remains independent upstream too.
     const bool disableNew =
         m_session->setting(QStringLiteral("menu.disable_new_connection"))
         == QLatin1String("on");
     const bool canOpenNew = !connecting && (!connected || !disableNew);
-    for (QAction *action : {m_serialConnectAction, m_sshConnectAction,
-                            m_telnetConnectAction}) {
-        if (action) {
-            action->setEnabled(canOpenNew);
-        }
+    if (m_connectAction) {
+        m_connectAction->setEnabled(canOpenNew);
     }
     // One transfer at a time, and only over something. The core refuses both
     // anyway, but a greyed item says so before the click rather than after.

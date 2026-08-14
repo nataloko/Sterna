@@ -1,14 +1,10 @@
 // Copyright (c) the Sterna authors. 3-clause BSD; see LICENSE.
 
-#include "SerialDialog.h"
+#include "SerialPanel.h"
 
 #include <QComboBox>
-#include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QIntValidator>
-#include <QPushButton>
-#include <QTimer>
-#include <QVBoxLayout>
 
 #include "I18n.h"
 
@@ -24,20 +20,12 @@ const int kBaudRates[] = {
 
 } // namespace
 
-SerialDialog::SerialDialog(QWidget *parent, const I18n *i18n)
-    : QDialog(parent)
+SerialPanel::SerialPanel(QWidget *parent, const I18n *i18n)
+    : QWidget(parent)
 {
     const auto text = [i18n](const char *key, const QString &fallback) {
         return i18n ? i18n->text(key, fallback) : fallback;
     };
-    const auto plainText = [i18n](const char *key, const QString &fallback) {
-        return i18n ? i18n->plainText(key, fallback) : fallback;
-    };
-
-    setWindowTitle(plainText("DLG_SERIAL_TITLE", tr("Serial connection")));
-
-    m_port = new QComboBox(this);
-    m_port->setMinimumWidth(360);
 
     m_baud = new QComboBox(this);
     m_baud->setEditable(true);
@@ -79,80 +67,16 @@ SerialDialog::SerialDialog(QWidget *parent, const I18n *i18n)
     m_flow->addItem(tr("RTS/CTS"), TT_FLOW_CONTROL_RTS_CTS);
     m_flow->addItem(tr("DSR/DTR"), TT_FLOW_CONTROL_DSR_DTR);
 
-    auto *form = new QFormLayout;
-    form->addRow(text("DLG_SERIAL_PORT", tr("Port:")), m_port);
+    auto *form = new QFormLayout(this);
+    form->setContentsMargins(0, 0, 0, 0);
     form->addRow(text("DLG_SERIAL_BAUD", tr("Baud rate:")), m_baud);
     form->addRow(text("DLG_SERIAL_DATA", tr("Data bits:")), m_dataBits);
     form->addRow(text("DLG_SERIAL_PARITY", tr("Parity:")), m_parity);
     form->addRow(text("DLG_SERIAL_STOP", tr("Stop bits:")), m_stopBits);
     form->addRow(text("DLG_SERIAL_FLOW", tr("Flow control:")), m_flow);
-
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
-                                         this);
-    buttons->button(QDialogButtonBox::Ok)
-        ->setText(text("BTN_OK", tr("OK")));
-    buttons->button(QDialogButtonBox::Cancel)
-        ->setText(text("BTN_CANCEL", tr("Cancel")));
-    connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-
-    auto *layout = new QVBoxLayout(this);
-    layout->addLayout(form);
-    layout->addWidget(buttons);
-
-    refreshPorts();
-    m_refresh = new QTimer(this);
-    m_refresh->setInterval(1000);
-    connect(m_refresh, &QTimer::timeout, this, &SerialDialog::refreshPorts);
-    m_refresh->start();
 }
 
-void SerialDialog::refreshPorts()
-{
-    TtPortList *list = tt_serial_enumerate();
-    if (!list) {
-        return;
-    }
-
-    // Rebuild only when the set actually changed. Replacing the model on every
-    // tick would reset the dropdown under a user who is halfway through
-    // choosing from it.
-    const size_t n = tt_port_list_len(list);
-    bool same = static_cast<size_t>(m_port->count()) == n;
-    for (size_t i = 0; same && i < n; i++) {
-        const TtPortInfo *info = tt_port_list_at(list, i);
-        same = info && m_port->itemData(static_cast<int>(i)).toString() ==
-                           QString::fromUtf8(info->open_path);
-    }
-    if (same) {
-        tt_port_list_free(list);
-        return;
-    }
-
-    const QString keep = portPath();
-    m_port->clear();
-    for (size_t i = 0; i < n; i++) {
-        const TtPortInfo *info = tt_port_list_at(list, i);
-        if (!info) {
-            continue;
-        }
-        m_port->addItem(QString::fromUtf8(info->label),
-                        QString::fromUtf8(info->open_path));
-    }
-    tt_port_list_free(list);
-
-    const int back = m_port->findData(keep);
-    if (back >= 0) {
-        m_port->setCurrentIndex(back);
-    }
-}
-
-QString SerialDialog::portPath() const
-{
-    return m_port->currentData().toString();
-}
-
-TtSerialParams SerialDialog::params() const
+TtSerialParams SerialPanel::params() const
 {
     TtSerialParams p;
     tt_serial_params_default(&p);
@@ -164,12 +88,8 @@ TtSerialParams SerialDialog::params() const
     return p;
 }
 
-void SerialDialog::setInitial(const QString &portPath, const TtSerialParams &params)
+void SerialPanel::setInitial(const TtSerialParams &params)
 {
-    const int idx = m_port->findData(portPath);
-    if (idx >= 0) {
-        m_port->setCurrentIndex(idx);
-    }
     m_baud->setCurrentText(QString::number(params.baud));
     const int bits = m_dataBits->findData(params.data_bits);
     if (bits >= 0) {

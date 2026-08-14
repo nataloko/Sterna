@@ -30,7 +30,7 @@
 #include <cstdlib>
 
 #include "Session.h"
-#include "SshDialog.h"
+#include "ConnectDialog.h"
 #include "SshPrompts.h"
 
 static int failures = 0;
@@ -130,7 +130,7 @@ void writeDialogs(const QString &dir)
     auth.lines = {{QStringLiteral("Password:"), false},
                   {QStringLiteral("Token code:"), false}};
     grabDialog(AuthDialog(auth), dir + QStringLiteral("/auth.png"));
-    grabDialog(SshDialog(), dir + QStringLiteral("/connect.png"));
+    grabDialog(ConnectDialog(), dir + QStringLiteral("/connect.png"));
     printf("wrote four PNGs to %s\n", qPrintable(dir));
 }
 
