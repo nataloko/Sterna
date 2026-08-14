@@ -1951,8 +1951,10 @@ void test_setup_menu_links_every_schema_page()
         CHECK(setup->actions().indexOf(font) == setup->actions().indexOf(last) + 1);
     }
 
-    // Loading a catalog translates the stable menu chrome and font picker,
-    // while the generated page links retain the exact text of their tabs.
+    // Loading a catalog translates the stable menu chrome, the font picker and
+    // the five generated page links upstream's own Setup menu had a key for.
+    // The other pages keep their schema title: upstream named eight dialogs and
+    // the schema has 26 pages, so most have no key to find.
     const QString translatedPath = dir.filePath(QStringLiteral("translated.ini"));
     QFile translatedFile(translatedPath);
     CHECK(translatedFile.open(QIODevice::WriteOnly));
@@ -1966,13 +1968,18 @@ void test_setup_menu_links_every_schema_page()
         translated.findChild<QAction *>(QStringLiteral("chooseFontAction"));
     auto *translatedTerminal =
         translated.findChild<QAction *>(QStringLiteral("settingsPageAction0"));
+    auto *translatedEncoding =
+        translated.findChild<QAction *>(QStringLiteral("settingsPageAction1"));
     CHECK(translatedSetup != nullptr);
     CHECK(translatedFont != nullptr);
     CHECK(translatedTerminal != nullptr);
-    if (translatedSetup && translatedFont && translatedTerminal) {
+    CHECK(translatedEncoding != nullptr);
+    if (translatedSetup && translatedFont && translatedTerminal
+        && translatedEncoding) {
         CHECK(translatedSetup->title() == QStringLiteral("設定"));
         CHECK(translatedFont->text() == QStringLiteral("フォント..."));
-        CHECK(translatedTerminal->text() == QStringLiteral("Terminal"));
+        CHECK(translatedTerminal->text() == QStringLiteral("端末..."));
+        CHECK(translatedEncoding->text() == QStringLiteral("Encoding"));
     }
 }
 

@@ -208,6 +208,31 @@ void languageAction(QAction *action, const char *key, const QString &fallback,
     action->setProperty("sternaLanguageFallback", fallback);
 }
 
+/// The `.lng` key for a settings page, or null where the catalogs have none.
+///
+/// Upstream's Setup menu named eight dialogs and the schema has 26 pages, so
+/// most entries have no key and keep the schema's own title. The five that do
+/// map are not optional decoration: without them a catalog that carries
+/// `MENU_SETUP_TERMINAL` shows a block of English inside an otherwise
+/// translated menu, which is what replacing the single `MENU_SETUP_ADDITION`
+/// entry with a page list would otherwise cost.
+///
+/// `font` is deliberately absent — `MENU_SETUP_FONT` belongs to the font
+/// picker below, and giving both the same key puts two identically named
+/// entries in one menu. `general` is absent for the opposite reason: no schema
+/// page means what upstream's General dialog meant.
+const char *settingsPageLanguageKey(const QString &page)
+{
+    static const QHash<QString, const char *> keys {
+        {QStringLiteral("terminal"), "MENU_SETUP_TERMINAL"},
+        {QStringLiteral("window"), "MENU_SETUP_WINDOW"},
+        {QStringLiteral("keyboard"), "MENU_SETUP_KEYBOARD"},
+        {QStringLiteral("serial"), "MENU_SETUP_SERIALPORT"},
+        {QStringLiteral("connection"), "MENU_SETUP_TCPIP"},
+    };
+    return keys.value(page, nullptr);
+}
+
 /// A `/K=` path in the active setup directory, with upstream's default `.CNF`
 /// extension when the file name contains no dot.
 QString keyboardFile(const QString &given, const QString &settingsPath)
@@ -1813,6 +1838,9 @@ void MainWindow::buildMenus()
                                          [this, i] { showSettingsDialog(i); });
         page->setObjectName(QStringLiteral("settingsPageAction%1").arg(i));
         page->setProperty("settingsPageIndex", i);
+        if (const char *key = settingsPageLanguageKey(settingsPages.at(i).id)) {
+            languageAction(page, key, settingsPages.at(i).title);
+        }
     }
     QAction *font =
         setup->addAction(tr("Choose font…"), this, &MainWindow::chooseFont);
