@@ -34,6 +34,10 @@ are available from the [GitHub releases page].
 
 - A file-transfer result is now visible; it had been overwritten in the same
   instant it was written.
+- Connect now opens the row you chose last. Choosing a remembered connection
+  and then choosing something else opened the remembered one anyway, which
+  mattered because the dropdown picks a row by itself as it opens.
+- Opening the dropdown during a session no longer greys out Disconnect.
 - A shell opened in the AppImage build no longer inherits the AppImage's own
   libraries. Programs run from that shell reported `no version information
   available`, and some — `flatpak` among them — refused to start at all.

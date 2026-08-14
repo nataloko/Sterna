@@ -367,6 +367,23 @@ void test_the_dropdown_offers_every_group()
     }
     CHECK(typed == QStringLiteral("shell"));
 
+    // **A record does not outlive the row chosen after it.** This is the
+    // sequence a user actually performs: the popup picks a row on its way
+    // open, they scroll to the one they wanted and click it, then Connect.
+    // The second choice replaced the words in the field and left the *record*
+    // behind it, so Connect opened the accident — pick a remembered shell by
+    // opening the dropdown, pick `myrouter` on purpose, and a shell opens.
+    chosen = -1;
+    typed.clear();
+    choose(rowWithText(combo, QStringLiteral("telnet 10.0.0.5:2323")));
+    choose(rowWithText(combo, QStringLiteral("Local shell")));
+    CHECK(bar.destination() == QStringLiteral("shell"));
+    if (connectAction) {
+        connectAction->trigger();
+    }
+    CHECK(chosen == -1);
+    CHECK(typed == QStringLiteral("shell"));
+
     // The two rows that are not destinations still act at once: neither opens
     // a connection, and both are at the far end of the list from where a
     // popup lands.
@@ -486,6 +503,52 @@ void test_a_typed_shell_connects_and_is_remembered()
     }
 }
 
+/// Opening the dropdown during a session must not disable Disconnect.
+///
+/// The button is the only way out of a connection on this bar, and choosing a
+/// row is something the popup does by itself on the way open — so a rule that
+/// touched the button's enabled state from there took Disconnect away from
+/// somebody who had merely looked at the list. Enabling it belongs to the
+/// field's own signal while nothing is open, and to `refresh` while something
+/// is; the choice has no business in it.
+void test_choosing_a_row_leaves_disconnect_alive()
+{
+    MainWindow window;
+    window.connectDestination(QStringLiteral("shell"));
+    qApp->processEvents();
+    CHECK(window.session()->isConnected());
+
+    auto *bar = window.findChild<ConnectBar *>(QStringLiteral("connectBar"));
+    CHECK(bar != nullptr);
+    if (!bar) {
+        return;
+    }
+    auto *combo =
+        bar->findChild<QComboBox *>(QStringLiteral("connectBarDestination"));
+    auto *action = bar->findChild<QAction *>(QStringLiteral("connectBarConnect"));
+    CHECK(combo != nullptr);
+    CHECK(action != nullptr);
+    if (!combo || !action) {
+        return;
+    }
+    CHECK(action->isEnabled());
+
+    // The shell that just connected is the first thing in the list, which is
+    // where a popup opening over the field lands.
+    int recent = -1;
+    for (int i = 0; i < combo->count() && recent < 0; i++) {
+        if (combo->itemText(i) == QStringLiteral("Local shell")) {
+            recent = i;
+        }
+    }
+    CHECK(recent >= 0);
+    if (recent >= 0) {
+        QMetaObject::invokeMethod(combo, "activated", Qt::DirectConnection,
+                                  Q_ARG(int, recent));
+    }
+    CHECK(action->isEnabled());
+}
+
 /// Connecting must not move the field either. The action's two words are
 /// different widths, and the field beside it is the expanding item in the
 /// toolbar — so without a reserved width, opening a session resizes the box.
@@ -602,6 +665,7 @@ int main(int argc, char **argv)
     }
 #ifndef Q_OS_WIN
     test_a_typed_shell_connects_and_is_remembered();
+    test_choosing_a_row_leaves_disconnect_alive();
     test_connecting_does_not_move_the_field();
     test_recording_can_be_turned_off_without_losing_the_list();
 #endif

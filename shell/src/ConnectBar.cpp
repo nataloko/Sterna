@@ -432,10 +432,19 @@ void ConnectBar::chose(int index)
     const QString payload =
         m_destination->itemData(index, RolePayload).toString();
 
-    // **Choosing a row fills the field; Connect is what connects.** A popup
-    // opens under the pointer, so the release that opened it lands on a row
-    // and `activated` arrives without anybody having chosen anything — and a
-    // connection is not something to start by accident. It also means the
+    // **The last row chosen is the only one that counts.** An `activated` that
+    // nobody meant is a fact of this widget — the popup opens under the
+    // pointer, so the release that opened it lands on a row — and the answer
+    // to that is to fill the field rather than connect, below. But a *record*
+    // survives being replaced by whatever the user picks next, unlike text,
+    // and the one they picked by accident was still the one Connect opened:
+    // choose a recent shell by opening the dropdown, choose `myrouter` on
+    // purpose, press Connect, and a local shell opens. So every other row
+    // clears it, and only [`textEdited`] is left to clear the rest.
+    m_chosen = -1;
+
+    // **Choosing a row fills the field; Connect is what connects.** A
+    // connection is not something to start by accident, and it means the
     // destination can be read before it is committed.
     switch (kind) {
     case Row::Recent: {
@@ -443,7 +452,6 @@ void ConnectBar::chose(int index)
         if (at >= 0 && at < m_recents.size()) {
             setDestination(m_destination->itemText(index));
             m_chosen = at;
-            m_connect->setEnabled(!m_connect->data().toBool());
         }
         return;
     }

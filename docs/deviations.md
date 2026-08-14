@@ -138,7 +138,10 @@ a host. The second click is the price of that, and it buys something as well:
 the destination can be read before it is committed. A row picked out of the
 list stays a *record* until then, so pressing Connect opens it with the
 identity and the flags it carries rather than re-reading its own label, which
-has spaces in it and would parse as a command line.
+has spaces in it and would parse as a command line. That record lasts exactly
+until the next thing anybody says — choosing another row or typing over it —
+because the row the popup picked on its way open is a row the user did not
+choose, and it must not outlive the one they did.
 
 **One word or a command line, and never half of each.** A destination with a
 space in it is handed to Tera Term's parser whole, which is how
