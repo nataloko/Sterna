@@ -1605,6 +1605,37 @@ pub extern "C" fn tt_settings_choice(index: usize, n: usize) -> *const c_char {
         .unwrap_or(ptr::null())
 }
 
+/// Whether a schema setting's key is explicitly present in an INI file.
+///
+/// This asks the compatible core parser rather than a frontend parser. That
+/// distinction is load-bearing for the first settings-dialog prompt: an
+/// absent boolean takes its default, while an explicit `off` records that the
+/// user has already answered. A missing file is a successful `false` result.
+/// Unknown setting names and null arguments are invalid.
+#[no_mangle]
+pub extern "C" fn tt_settings_file_has(
+    path: *const c_char,
+    name: *const c_char,
+    out_present: *mut bool,
+) -> TtStatus {
+    let Some(out_present) = (unsafe { out_present.as_mut() }) else {
+        return fail(TT_ERR_INVALID, "null settings presence output");
+    };
+    let (path, name) = match unsafe { (str_arg(path, usize::MAX), str_arg(name, usize::MAX)) } {
+        (Ok(path), Ok(name)) => (path, name),
+        (Err(error), _) | (_, Err(error)) => return error,
+    };
+    let Some(field) = tt_session::FIELDS.iter().find(|field| field.name == name) else {
+        return fail(TT_ERR_INVALID, format!("no setting named {name}"));
+    };
+    let ini = match Ini::load(Path::new(path)) {
+        Ok(ini) => ini,
+        Err(error) => return fail(TT_ERR_IO, format!("{path}: {error}")),
+    };
+    *out_present = ini.get(field.section, field.key).is_some();
+    TT_OK
+}
+
 /// One setting's current value, in the INI's own spelling. Null for a name
 /// that is not in the schema.
 ///
@@ -7440,6 +7471,76 @@ pub extern "C" fn tt_plugins_settings_save(
                 ),
             );
         }
+    }
+    match ini.save(path) {
+        Ok(()) => TT_OK,
+        Err(error) => fail(TT_ERR_IO, format!("{}: {error}", path.display())),
+    }
+}
+
+/// Write only the selected live plugin settings into their INI sections.
+///
+/// The indices are [`TtPluginSetting::id`] values from this handle. They are
+/// all validated before the file is touched, and an empty list is a no-op.
+/// This is the automatic-save counterpart to [`tt_plugins_settings_save`]: a
+/// dialog must not pin every plugin default merely because one row changed.
+#[no_mangle]
+pub extern "C" fn tt_plugins_settings_save_selected(
+    plugins: *const TtPlugins,
+    path: *const c_char,
+    indices: *const usize,
+    count: usize,
+) -> TtStatus {
+    let Some(plugins) = (unsafe { plugins.as_ref() }) else {
+        return fail(TT_ERR_INVALID, "null TtPlugins");
+    };
+    let Ok(path) = (unsafe { str_arg(path, usize::MAX) }) else {
+        return TT_ERR_INVALID;
+    };
+    if count == 0 {
+        return TT_OK;
+    }
+    if indices.is_null() {
+        return fail(TT_ERR_INVALID, "null plugin setting index array");
+    }
+    let indices = unsafe { std::slice::from_raw_parts(indices, count) };
+    if let Some(index) = indices
+        .iter()
+        .copied()
+        .find(|index| *index >= plugins.settings.len())
+    {
+        return fail(
+            TT_ERR_INVALID,
+            format!("plugin setting index {index} out of range"),
+        );
+    }
+
+    let path = Path::new(path);
+    let mut ini = match Ini::load(path) {
+        Ok(ini) => ini,
+        Err(error) => return fail(TT_ERR_IO, format!("{}: {error}", path.display())),
+    };
+    let before = ini.to_bytes();
+    for index in indices {
+        let setting = &plugins.settings[*index];
+        let value = setting.page.value(setting.field_index).unwrap_or_default();
+        if !ini.set(
+            setting.section.to_string_lossy().as_ref(),
+            setting.key.to_string_lossy().as_ref(),
+            &value,
+        ) {
+            return fail(
+                TT_ERR_INVALID,
+                format!(
+                    "plugin setting [{}] {} cannot be written",
+                    setting.section.to_string_lossy(),
+                    setting.key.to_string_lossy()
+                ),
+            );
+        }
+    }
+    if ini.to_bytes() == before {
+        return TT_OK;
     }
     match ini.save(path) {
         Ok(()) => TT_OK,

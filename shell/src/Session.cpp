@@ -1130,6 +1130,27 @@ bool Session::rememberSettings(const QVector<QPair<QString, QString>> &values,
     return true;
 }
 
+bool Session::settingPresent(const QString &path, const QString &name,
+                             bool *outPresent, QString *outError)
+{
+    if (!outPresent) {
+        if (outError) {
+            *outError = QStringLiteral("null settings presence output");
+        }
+        return false;
+    }
+    const QByteArray utf8 = path.toUtf8();
+    const QByteArray setting = name.toUtf8();
+    if (tt_settings_file_has(utf8.constData(), setting.constData(), outPresent)
+        != TT_OK) {
+        if (outError) {
+            *outError = QString::fromUtf8(tt_last_error());
+        }
+        return false;
+    }
+    return true;
+}
+
 TtSerialParams Session::serialParams() const
 {
     TtSerialParams params;

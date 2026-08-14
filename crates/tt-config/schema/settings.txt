@@ -1338,6 +1338,14 @@ settings.language_file | string | Tera Term | UILanguageFile | lang\Default.lng 
 # smaller close-time geometry save does not take this path.
 settings.auto_backup | bool | Tera Term | IniAutoBackup | on | -
 
+# **`[Sterna]`**, because Tera Term persists dialog changes only through
+# Setup > Save setup. Off by default: the first settings-dialog visit asks
+# whether accepted changes should be written automatically, and records the
+# explicit answer immediately. Automatic writes remain selective — only rows
+# changed successfully in that dialog — so comments, unknown keys and defaults
+# the user never touched stay unmodified. See `docs/deviations.md`.
+settings.auto_save_changes | bool | Sterna | AutoSaveSettings | off | -
+
 # --- serial ------------------------------------------------------------------
 #
 # The four enumerated ones share their spellings with `/CPARITY=` and friends,

@@ -46,9 +46,28 @@ QString TabRows::tabText(int index) const
     return index >= 0 && index < count() ? m_tabs.at(index).text : QString();
 }
 
+void TabRows::setTabVisible(int index, bool visible)
+{
+    if (index < 0 || index >= count() || m_tabs.at(index).visible == visible) {
+        return;
+    }
+    m_tabs[index].visible = visible;
+    if (!visible && m_hover == index) {
+        m_hover = -1;
+    }
+    relayout();
+    updateGeometry();
+    update();
+}
+
+bool TabRows::isTabVisible(int index) const
+{
+    return index >= 0 && index < count() && m_tabs.at(index).visible;
+}
+
 void TabRows::setCurrentIndex(int index)
 {
-    if (index < 0 || index >= count() || index == m_current) {
+    if (!isTabVisible(index) || index == m_current) {
         return;
     }
     m_current = index;
@@ -85,7 +104,17 @@ int TabRows::layout(int width, QVector<Tab> *out) const
 {
     ensureHints();
     QVector<Tab> tabs = m_tabs;
-    if (tabs.isEmpty()) {
+    QVector<int> visible;
+    for (int i = 0; i < tabs.size(); i++) {
+        tabs[i].rect = QRect();
+        tabs[i].row = -1;
+        tabs[i].first = false;
+        tabs[i].last = false;
+        if (tabs.at(i).visible) {
+            visible.append(i);
+        }
+    }
+    if (visible.isEmpty()) {
         if (out) {
             *out = tabs;
         }
@@ -96,15 +125,15 @@ int TabRows::layout(int width, QVector<Tab> *out) const
     int y = 0;
     int row = 0;
     int first = 0;
-    while (first < tabs.size()) {
+    while (first < visible.size()) {
         // At least one tab per row, however narrow the widget is: a row that
         // could hold nothing would not terminate.
         int last = first;
-        int used = tabs.at(first).hint.width();
-        while (last + 1 < tabs.size()
-               && used + tabs.at(last + 1).hint.width() <= avail) {
+        int used = tabs.at(visible.at(first)).hint.width();
+        while (last + 1 < visible.size()
+               && used + tabs.at(visible.at(last + 1)).hint.width() <= avail) {
             last++;
-            used += tabs.at(last).hint.width();
+            used += tabs.at(visible.at(last)).hint.width();
         }
 
         // Justified to the full width, which is what a multiline tab control
@@ -116,7 +145,7 @@ int TabRows::layout(int width, QVector<Tab> *out) const
         int x = 0;
         for (int i = first; i <= last; i++) {
             const int share = extra / n + ((i - first) < extra % n ? 1 : 0);
-            Tab &tab = tabs[i];
+            Tab &tab = tabs[visible.at(i)];
             tab.rect = QRect(x, y, tab.hint.width() + share, tab.hint.height());
             tab.row = row;
             tab.first = i == first;
@@ -125,7 +154,7 @@ int TabRows::layout(int width, QVector<Tab> *out) const
             height = qMax(height, tab.hint.height());
         }
         for (int i = first; i <= last; i++) {
-            tabs[i].rect.setHeight(height);
+            tabs[visible.at(i)].rect.setHeight(height);
         }
 
         y += height;
@@ -143,7 +172,7 @@ void TabRows::relayout()
 {
     const int rows = m_rows;
     layout(width(), &m_tabs);
-    m_rows = m_tabs.isEmpty() ? 1 : m_tabs.constLast().row + 1;
+    m_rows = rowCount(m_tabs);
     if (rows != m_rows) {
         // The height this widget wants has changed, so the layout has to ask
         // again. Without this the extra row is laid out and then clipped.
@@ -155,7 +184,7 @@ int TabRows::rowsForWidth(int width) const
 {
     QVector<Tab> probe;
     layout(width, &probe);
-    return probe.isEmpty() ? 1 : probe.constLast().row + 1;
+    return rowCount(probe);
 }
 
 int TabRows::widthForRows(int rows) const
@@ -167,6 +196,9 @@ int TabRows::widthForRows(int rows) const
     int narrowest = 0;
     int widest = 0;
     for (const Tab &tab : m_tabs) {
+        if (!tab.visible) {
+            continue;
+        }
         narrowest = qMax(narrowest, tab.hint.width());
         widest += tab.hint.width();
     }
@@ -200,6 +232,9 @@ QSize TabRows::minimumSizeHint() const
     ensureHints();
     int narrowest = 0;
     for (const Tab &tab : m_tabs) {
+        if (!tab.visible) {
+            continue;
+        }
         narrowest = qMax(narrowest, tab.hint.width());
     }
     // One tab wide is a real minimum width. The matching *height* is not a
@@ -216,7 +251,7 @@ QSize TabRows::minimumSizeHint() const
 QSize TabRows::sizeHint() const
 {
     // Two rows, deliberately, and not every tab in one row: that is a
-    // `QTabBar`'s hint and it would ask a 25-page dialog to open two thousand
+    // `QTabBar`'s hint and it would ask a 26-page dialog to open two thousand
     // pixels wide. `minimumSizeHint` still allows one tab per row, so the
     // dialog opens at two and wraps rather than clips when it is made narrower.
     ensurePolished();
@@ -251,6 +286,9 @@ void TabRows::paintEvent(QPaintEvent *)
     QStylePainter painter(this);
     for (int i = 0; i < count(); i++) {
         const Tab &tab = m_tabs.at(i);
+        if (!tab.visible) {
+            continue;
+        }
         QStyleOptionTab opt;
         opt.initFrom(this);
         opt.rect = tab.rect;
@@ -266,9 +304,9 @@ void TabRows::paintEvent(QPaintEvent *)
         opt.selectedPosition = QStyleOptionTab::NotAdjacent;
         if (m_current >= 0 && m_current < count()
             && m_tabs.at(m_current).row == tab.row) {
-            if (m_current == i + 1) {
+            if (m_current == nextVisible(i, 1)) {
                 opt.selectedPosition = QStyleOptionTab::NextIsSelected;
-            } else if (m_current == i - 1) {
+            } else if (m_current == nextVisible(i, -1)) {
                 opt.selectedPosition = QStyleOptionTab::PreviousIsSelected;
             }
         }
@@ -282,7 +320,7 @@ void TabRows::paintEvent(QPaintEvent *)
 int TabRows::tabAt(const QPoint &pos) const
 {
     for (int i = 0; i < count(); i++) {
-        if (m_tabs.at(i).rect.contains(pos)) {
+        if (m_tabs.at(i).visible && m_tabs.at(i).rect.contains(pos)) {
             return i;
         }
     }
@@ -328,10 +366,10 @@ void TabRows::keyPressEvent(QKeyEvent *event)
     }
     switch (event->key()) {
     case Qt::Key_Left:
-        setCurrentIndex(m_current - 1);
+        setCurrentIndex(nextVisible(m_current, -1));
         return;
     case Qt::Key_Right:
-        setCurrentIndex(m_current + 1);
+        setCurrentIndex(nextVisible(m_current, 1));
         return;
     case Qt::Key_Up:
     case Qt::Key_Down: {
@@ -344,7 +382,7 @@ void TabRows::keyPressEvent(QKeyEvent *event)
         int best = -1;
         int distance = 0;
         for (int i = 0; i < count(); i++) {
-            if (m_tabs.at(i).row != wanted) {
+            if (!m_tabs.at(i).visible || m_tabs.at(i).row != wanted) {
                 continue;
             }
             const int d = qAbs(m_tabs.at(i).rect.center().x() - centre);
@@ -362,4 +400,25 @@ void TabRows::keyPressEvent(QKeyEvent *event)
         break;
     }
     QWidget::keyPressEvent(event);
+}
+
+int TabRows::nextVisible(int from, int direction) const
+{
+    for (int i = from + direction; i >= 0 && i < count(); i += direction) {
+        if (m_tabs.at(i).visible) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int TabRows::rowCount(const QVector<Tab> &tabs)
+{
+    int rows = 0;
+    for (const Tab &tab : tabs) {
+        if (tab.visible) {
+            rows = qMax(rows, tab.row + 1);
+        }
+    }
+    return qMax(1, rows);
 }

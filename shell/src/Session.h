@@ -424,6 +424,10 @@ public:
     /// same port touches nothing.
     bool rememberSettings(const QVector<QPair<QString, QString>> &values,
                           const QString &path, QString *outError);
+    /// Whether `name` has a key in `path`, as opposed to merely taking its
+    /// schema default. Uses the core's compatible INI parser.
+    static bool settingPresent(const QString &path, const QString &name,
+                               bool *outPresent, QString *outError);
     /// The serial line settings the settings file describes, with the control
     /// lines' `-1` sentinel already resolved. What a connect dialog should open
     /// at, as opposed to `tt_serial_params_default`, which is what ships.

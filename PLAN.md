@@ -4,7 +4,7 @@ Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
 **Last updated:** 2026-08-14 · **Stage:** 4 complete, deliberate deviations
-landing (`docs/deviations.md`) · **Commits:** 659
+landing (`docs/deviations.md`) · **Commits:** 668
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -5566,6 +5566,16 @@ between the two. Typed plugin pages join the generated settings dialog, read
 and preserve the active INI, apply live, and copy with a duplicated tab. Sixel
 and the signed self-updater landed on 2026-08-12. **No deb** — the AppImage-only
 decision in Stage 1 covers this too.
+
+**Settings navigation and optional persistence landed 2026-08-14.** Setup now
+links all 26 stable schema pages by the dialog's own titles, while plugin pages
+remain inside the dialog. Search filters rows and whole tabs across both kinds
+of page, retains a matching page, reports an empty result, and restores the
+pre-search page when cleared. A first-use choice can make accepted dialog
+changes persist selectively: only successfully changed core and plugin keys are
+written, leaving comments, unknown keys and untouched defaults alone. Manual
+saving remains the default and Setup > Save setup retains its full-save and
+backup behaviour; deliberate deviation 12 records the boundary.
 
 **Sixel is inline, bounded and scrollback-aware, 2026-08-12.** `tt-vt` streams
 a DEC sixel DCS directly into an RGBA raster: repeat, raster attributes,

@@ -13,7 +13,7 @@
 ///
 /// **`QTabWidget` cannot do this and no amount of subclassing gets there**: a
 /// `QTabBar` lays its tabs out on one line internally and offers scroll buttons
-/// when they do not fit, which is exactly the arrangement that makes a 25-page
+/// when they do not fit, which is exactly the arrangement that makes a 26-page
 /// dialog unnavigable. So the tabs are laid out and painted here, through
 /// `QStyle` (`CT_TabBarTab`, `CE_TabBarTab`) rather than by hand, so they are
 /// the platform style's tabs in the platform style's metrics — only wrapped.
@@ -31,6 +31,11 @@ public:
     int count() const { return static_cast<int>(m_tabs.size()); }
     int currentIndex() const { return m_current; }
     QString tabText(int index) const;
+    /// Hide a tab without changing its index. Search uses this so the page
+    /// stack and every stored page number remain stable while only matches are
+    /// navigable.
+    void setTabVisible(int index, bool visible);
+    bool isTabVisible(int index) const;
     /// How many rows the current width needs. For tests, and for the one
     /// caller that wants to know whether its dialog is wide enough.
     int rows() const { return m_rows; }
@@ -73,6 +78,7 @@ private:
         /// style rounds its corners.
         bool first = false;
         bool last = false;
+        bool visible = true;
     };
 
     /// One tab's size in the platform style, the way `QTabBar::tabSizeHint`
@@ -93,6 +99,8 @@ private:
     int layout(int width, QVector<Tab> *out) const;
     void relayout();
     int tabAt(const QPoint &pos) const;
+    int nextVisible(int from, int direction) const;
+    static int rowCount(const QVector<Tab> &tabs);
 
     /// Mutable because the measurements are a cache: `sizeHint` is const and is
     /// where they are refreshed.

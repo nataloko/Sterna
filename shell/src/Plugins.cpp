@@ -170,6 +170,26 @@ bool Plugins::saveSettings(const QString &path, QString *outError) const
     return true;
 }
 
+bool Plugins::saveSelectedSettings(const QString &path,
+                                   const QVector<size_t> &ids,
+                                   QString *outError) const
+{
+    if (!m_plugins || ids.isEmpty()) {
+        return true;
+    }
+    const QByteArray utf8 = path.toUtf8();
+    if (tt_plugins_settings_save_selected(
+            m_plugins, utf8.constData(), ids.constData(),
+            static_cast<size_t>(ids.size()))
+        != TT_OK) {
+        if (outError) {
+            *outError = string(tt_last_error());
+        }
+        return false;
+    }
+    return true;
+}
+
 bool Plugins::invoke(size_t id, QString *outError)
 {
     if (!m_plugins) {

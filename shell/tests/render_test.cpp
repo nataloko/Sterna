@@ -29,6 +29,7 @@
 #include <climits>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -1274,6 +1275,123 @@ void test_continued_line_copy_joins_a_wrapped_line()
     CHECK(g.copied() == QStringLiteral("one\ntwo"));
 }
 
+/// Line edit overlays a second selectable text surface on the grid. Copy must
+/// follow the selection the user made last, through every route that can ask
+/// for the command, and an unselected draft must not mask terminal output.
+void test_line_edit_copy_uses_the_active_selection()
+{
+    Harness h;
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("terminal.line_edit"),
+                               QStringLiteral("on"), &error));
+    h.view.applySettings();
+    h.activate();
+    h.feed("terminal text");
+
+    auto *editor = h.view.findChild<QLineEdit *>(
+        QStringLiteral("terminalLineEditor"));
+    CHECK(editor != nullptr);
+    if (!editor) {
+        return;
+    }
+    editor->setText(QStringLiteral("draft text"));
+
+    // The built-in Ctrl+Shift+C: a grid drag takes the selection away from
+    // the draft and the empty draft selection falls through to the grid.
+    editor->setSelection(0, 5);
+    h.drag(h.px(0), h.py(0), h.px(7, 0.7), h.py(0));
+    CHECK(editor->selectedText().isEmpty());
+    QApplication::clipboard()->clear(QClipboard::Clipboard);
+    key(h.view, Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
+    CHECK(QApplication::clipboard()->text(QClipboard::Clipboard)
+          == QStringLiteral("terminal"));
+
+    // Selecting the draft does the reverse, so the same shortcut copies it
+    // without leaving two highlighted answers on screen.
+    editor->setSelection(0, 5);
+    CHECK(!h.view.hasSelection());
+    QApplication::clipboard()->clear(QClipboard::Clipboard);
+    key(h.view, Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
+    CHECK(QApplication::clipboard()->text(QClipboard::Clipboard)
+          == QStringLiteral("draft"));
+
+    // A KEYBOARD.CNF shortcut reaches the same decision point.
+    QTemporaryDir keys;
+    CHECK(keys.isValid());
+    const QString keyMap = keys.filePath(QStringLiteral("KEYBOARD.CNF"));
+    QFile file(keyMap);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[Shortcut keys]\nEditCopy=63\n");
+    file.close();
+    QVector<quint16> duplicates;
+    CHECK(h.session.loadKeyMap(keyMap, &duplicates, &error));
+    CHECK(duplicates.isEmpty());
+
+    h.drag(h.px(0), h.py(0), h.px(7, 0.7), h.py(0));
+    QApplication::clipboard()->clear(QClipboard::Clipboard);
+    key(h.view, Qt::Key_F5);
+    CHECK(QApplication::clipboard()->text(QClipboard::Clipboard)
+          == QStringLiteral("terminal"));
+    editor->setSelection(6, 4);
+    QApplication::clipboard()->clear(QClipboard::Clipboard);
+    key(h.view, Qt::Key_F5);
+    CHECK(QApplication::clipboard()->text(QClipboard::Clipboard)
+          == QStringLiteral("text"));
+
+    // The menu action belongs to MainWindow, but still delegates the whole
+    // choice to TerminalView.
+    QTemporaryDir config;
+    CHECK(config.isValid());
+    MainWindow window(config.filePath(QStringLiteral("copy.ini")));
+    auto *view = window.findChild<TerminalView *>();
+    auto *menuCopy = window.findChild<QAction *>(QStringLiteral("copyAction"));
+    CHECK(view != nullptr);
+    CHECK(menuCopy != nullptr);
+    if (!view || !menuCopy) {
+        return;
+    }
+    CHECK(window.session()->setSetting(QStringLiteral("terminal.line_edit"),
+                                       QStringLiteral("on"), &error));
+    view->applySettings();
+    view->resize(80 * view->theme().cellWidth(),
+                 24 * view->theme().cellHeight());
+    window.session()->feed(QByteArrayLiteral("menu output"));
+    auto *menuEditor = view->findChild<QLineEdit *>(
+        QStringLiteral("terminalLineEditor"));
+    CHECK(menuEditor != nullptr);
+    if (!menuEditor) {
+        return;
+    }
+    menuEditor->setText(QStringLiteral("menu draft"));
+
+    const auto drag = [view](int from, int to) {
+        const int cw = view->theme().cellWidth();
+        const int ch = view->theme().cellHeight();
+        for (const auto type : {QEvent::MouseButtonPress, QEvent::MouseMove,
+                                QEvent::MouseButtonRelease}) {
+            const int col = type == QEvent::MouseButtonPress ? from : to;
+            const double fraction = type == QEvent::MouseButtonPress ? 0.0 : 0.7;
+            const Qt::MouseButtons held = type == QEvent::MouseButtonRelease
+                                              ? Qt::NoButton
+                                              : Qt::LeftButton;
+            QMouseEvent event(type, QPointF((col + fraction) * cw, 0.5 * ch),
+                              QPointF((col + fraction) * cw, 0.5 * ch),
+                              Qt::LeftButton, held, Qt::NoModifier);
+            QCoreApplication::sendEvent(view, &event);
+        }
+    };
+    drag(0, 3);
+    QApplication::clipboard()->clear(QClipboard::Clipboard);
+    menuCopy->trigger();
+    CHECK(QApplication::clipboard()->text(QClipboard::Clipboard)
+          == QStringLiteral("menu"));
+    menuEditor->setSelection(5, 5);
+    QApplication::clipboard()->clear(QClipboard::Clipboard);
+    menuCopy->trigger();
+    CHECK(QApplication::clipboard()->text(QClipboard::Clipboard)
+          == QStringLiteral("draft"));
+}
+
 /// `SelectOnlyByLButton` and `AutoTextCopy`, which are one condition upstream:
 /// with the first on, a middle or right button coming up over a standing
 /// selection must not copy it (`vtwin.cpp:819`).
@@ -1656,7 +1774,7 @@ void test_the_settings_dialog_is_built_from_the_schema()
     auto *tabs = dialog.findChild<TabRows *>();
     CHECK(tabs != nullptr);
     if (tabs) {
-        CHECK(tabs->count() > 1);
+        CHECK(tabs->count() == 26);
         CHECK(tabs->tabText(0) == QStringLiteral("Terminal"));
         // Selecting a tab shows its page, which is the whole of what the two
         // widgets have to agree about.
@@ -1700,13 +1818,161 @@ void test_the_settings_dialog_is_built_from_the_schema()
 
     // The search box is what makes 600 settings navigable, and it filters
     // across every tab rather than the visible one.
-    auto *search = dialog.findChild<QLineEdit *>();
+    auto *search = dialog.findChild<QLineEdit *>(QStringLiteral("settingsSearch"));
+    auto *noResults = dialog.findChild<QLabel *>(
+        QStringLiteral("settingsNoResultsLabel"));
     CHECK(search != nullptr);
-    if (search && termId) {
-        search->setText(QStringLiteral("backspace"));
+    CHECK(noResults != nullptr);
+    if (search && termId && tabs && noResults) {
+        const int beforeSearch = tabs->currentIndex();
+        search->setText(QStringLiteral("keyboard.backspace"));
+        int visibleTabs = 0;
+        for (int i = 0; i < tabs->count(); i++) {
+            visibleTabs += tabs->isTabVisible(i) ? 1 : 0;
+        }
+        CHECK(visibleTabs == 1);
+        CHECK(tabs->tabText(tabs->currentIndex()) == QStringLiteral("Keyboard"));
         CHECK(!termId->isVisibleTo(&dialog));
+        CHECK(noResults->isHidden());
+
+        search->setText(QStringLiteral("nothing-can-match-this-setting"));
+        CHECK(tabs->isHidden());
+        CHECK(!noResults->isHidden());
+        CHECK(noResults->text() == QStringLiteral("No settings match your search."));
+
         search->setText(QString());
+        CHECK(!tabs->isHidden());
+        CHECK(tabs->currentIndex() == beforeSearch);
+        for (int i = 0; i < tabs->count(); i++) {
+            CHECK(tabs->isTabVisible(i));
+        }
         CHECK(termId->isVisibleTo(&dialog));
+
+        // A matching current page stays put, rather than jumping to the first
+        // matching page on every keystroke.
+        const int color = 4;
+        tabs->setCurrentIndex(color);
+        search->setText(QStringLiteral("color"));
+        CHECK(tabs->currentIndex() == color);
+        search->clear();
+
+        // Horizontal keyboard navigation crosses the stable index of a
+        // hidden tab instead of getting stuck on it.
+        tabs->setCurrentIndex(0);
+        tabs->setTabVisible(1, false);
+        QKeyEvent right(QEvent::KeyPress, Qt::Key_Right, Qt::NoModifier);
+        QCoreApplication::sendEvent(tabs, &right);
+        CHECK(tabs->currentIndex() == 2);
+        tabs->setTabVisible(1, true);
+    }
+}
+
+void test_setup_menu_links_every_schema_page()
+{
+    const QVector<SettingsDialog::Page> pages = SettingsDialog::corePages();
+    CHECK(pages.size() == 26);
+    const QStringList expected = {
+        QStringLiteral("Terminal"),   QStringLiteral("Encoding"),
+        QStringLiteral("Ime"),        QStringLiteral("Keyboard"),
+        QStringLiteral("Color"),      QStringLiteral("Cursor"),
+        QStringLiteral("Window"),     QStringLiteral("Font"),
+        QStringLiteral("Mouse"),      QStringLiteral("Url"),
+        QStringLiteral("Debug"),      QStringLiteral("Bell"),
+        QStringLiteral("Clipboard"),  QStringLiteral("Connection"),
+        QStringLiteral("Proxy"),      QStringLiteral("Macro"),
+        QStringLiteral("Settings"),   QStringLiteral("Serial"),
+        QStringLiteral("Log"),        QStringLiteral("Transfer"),
+        QStringLiteral("Printer"),    QStringLiteral("Tek"),
+        QStringLiteral("Broadcast"),  QStringLiteral("Menu"),
+        QStringLiteral("Recent"),     QStringLiteral("Updates"),
+    };
+    for (int i = 0; i < pages.size(); i++) {
+        CHECK(pages.at(i).title == expected.at(i));
+    }
+
+    Harness h;
+    SettingsDialog initial(&h.session, nullptr, nullptr, nullptr, 19);
+    auto *initialTabs = initial.findChild<TabRows *>();
+    CHECK(initialTabs != nullptr);
+    if (initialTabs) {
+        CHECK(initialTabs->currentIndex() == 19);
+        CHECK(initialTabs->tabText(19) == QStringLiteral("Transfer"));
+    }
+
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString menuPath = dir.filePath(QStringLiteral("menu.ini"));
+    QFile menuFile(menuPath);
+    CHECK(menuFile.open(QIODevice::WriteOnly));
+    menuFile.write("[Sterna]\nAutoSaveSettings=off\n");
+    menuFile.close();
+    MainWindow window(menuPath);
+    auto *setup = window.findChild<QMenu *>(QStringLiteral("setupMenu"));
+    auto *font = window.findChild<QAction *>(QStringLiteral("chooseFontAction"));
+    CHECK(setup != nullptr);
+    CHECK(font != nullptr);
+    if (!setup || !font) {
+        return;
+    }
+    CHECK(font->text() == QStringLiteral("Choose font…"));
+
+    for (int i = 0; i < pages.size(); i++) {
+        auto *action = window.findChild<QAction *>(
+            QStringLiteral("settingsPageAction%1").arg(i));
+        CHECK(action != nullptr);
+        if (!action) {
+            continue;
+        }
+        CHECK(action->text() == pages.at(i).title);
+        CHECK(action->property("settingsPageIndex").toInt() == i);
+
+        int opened = -1;
+        QTimer::singleShot(0, [&opened] {
+            auto *dialog = qobject_cast<SettingsDialog *>(
+                QApplication::activeModalWidget());
+            CHECK(dialog != nullptr);
+            if (!dialog) {
+                return;
+            }
+            auto *tabs = dialog->findChild<TabRows *>();
+            CHECK(tabs != nullptr);
+            if (tabs) {
+                opened = tabs->currentIndex();
+            }
+            dialog->reject();
+        });
+        action->trigger();
+        CHECK(opened == i);
+    }
+
+    auto *last = window.findChild<QAction *>(QStringLiteral("settingsPageAction25"));
+    CHECK(last != nullptr);
+    if (last) {
+        CHECK(setup->actions().indexOf(font) == setup->actions().indexOf(last) + 1);
+    }
+
+    // Loading a catalog translates the stable menu chrome and font picker,
+    // while the generated page links retain the exact text of their tabs.
+    const QString translatedPath = dir.filePath(QStringLiteral("translated.ini"));
+    QFile translatedFile(translatedPath);
+    CHECK(translatedFile.open(QIODevice::WriteOnly));
+    translatedFile.write("[Tera Term]\nUILanguageFile=lang\\ja_JP.lng\n"
+                         "[Sterna]\nAutoSaveSettings=off\n");
+    translatedFile.close();
+    MainWindow translated(translatedPath);
+    auto *translatedSetup =
+        translated.findChild<QMenu *>(QStringLiteral("setupMenu"));
+    auto *translatedFont =
+        translated.findChild<QAction *>(QStringLiteral("chooseFontAction"));
+    auto *translatedTerminal =
+        translated.findChild<QAction *>(QStringLiteral("settingsPageAction0"));
+    CHECK(translatedSetup != nullptr);
+    CHECK(translatedFont != nullptr);
+    CHECK(translatedTerminal != nullptr);
+    if (translatedSetup && translatedFont && translatedTerminal) {
+        CHECK(translatedSetup->title() == QStringLiteral("設定"));
+        CHECK(translatedFont->text() == QStringLiteral("フォント..."));
+        CHECK(translatedTerminal->text() == QStringLiteral("Terminal"));
     }
 }
 
@@ -1842,6 +2108,358 @@ void test_the_dialog_writes_only_what_changed()
     dialog.applyChanges();
     CHECK(h.session.setting(QStringLiteral("terminal.title"))
           == QStringLiteral("before"));
+    CHECK(dialog.appliedCoreChanges().isEmpty());
+    CHECK(dialog.appliedPluginChanges().isEmpty());
+}
+
+void test_settings_dialog_persistence_is_opt_in_and_selective()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const auto write = [](const QString &path, const QByteArray &bytes) {
+        QFile file(path);
+        CHECK(file.open(QIODevice::WriteOnly));
+        CHECK(file.write(bytes) == bytes.size());
+    };
+    const auto read = [](const QString &path) {
+        QFile file(path);
+        CHECK(file.open(QIODevice::ReadOnly));
+        return file.readAll();
+    };
+    using Edit = std::function<void(SettingsDialog *)>;
+
+    // Drive the real Setup action through its nested prompt and dialog. An
+    // empty `promptButton` means no prompt is expected. The optional warning
+    // is the automatic write failing after the live changes were accepted.
+    const auto runDialog = [](MainWindow &window, const QString &promptButton,
+                              const Edit &edit, bool accept, int *promptCount,
+                              bool expectWarning = false,
+                              int *warningCount = nullptr,
+                              bool expectPromptWarning = false) {
+        auto *action = window.findChild<QAction *>(
+            QStringLiteral("settingsPageAction0"));
+        CHECK(action != nullptr);
+        if (!action) {
+            return;
+        }
+        bool droveDialog = false;
+        std::function<void()> finishDialog;
+        finishDialog = [&] {
+            auto *dialog = qobject_cast<SettingsDialog *>(
+                QApplication::activeModalWidget());
+            CHECK(dialog != nullptr);
+            if (!dialog) {
+                return;
+            }
+            droveDialog = true;
+            edit(dialog);
+            auto *buttons = dialog->findChild<QDialogButtonBox *>();
+            CHECK(buttons != nullptr);
+            if (!buttons) {
+                dialog->reject();
+                return;
+            }
+            if (accept && expectWarning) {
+                QTimer::singleShot(0, [warningCount] {
+                    auto *warning = qobject_cast<QMessageBox *>(
+                        QApplication::activeModalWidget());
+                    CHECK(warning != nullptr);
+                    if (warning) {
+                        CHECK(warning->text().contains(
+                            QStringLiteral("Could not save")));
+                        if (warningCount) {
+                            (*warningCount)++;
+                        }
+                        warning->accept();
+                    }
+                });
+            }
+            buttons->button(accept ? QDialogButtonBox::Ok
+                                   : QDialogButtonBox::Cancel)
+                ->click();
+        };
+
+        QTimer::singleShot(0, [&] {
+            auto *prompt = qobject_cast<QMessageBox *>(
+                QApplication::activeModalWidget());
+            if (prompt && prompt->objectName()
+                              == QStringLiteral("autoSaveSettingsPrompt")) {
+                CHECK(!promptButton.isEmpty());
+                if (promptCount) {
+                    (*promptCount)++;
+                }
+                CHECK(prompt->defaultButton() != nullptr);
+                if (prompt->defaultButton()) {
+                    CHECK(prompt->defaultButton()->objectName()
+                          == QStringLiteral("autoSaveSettingsManualButton"));
+                }
+                auto *answer = prompt->findChild<QPushButton *>(
+                    promptButton.isEmpty()
+                        ? QStringLiteral("autoSaveSettingsManualButton")
+                        : promptButton);
+                CHECK(answer != nullptr);
+                if (expectPromptWarning) {
+                    QTimer::singleShot(0, [warningCount, finishDialog] {
+                        auto *warning = qobject_cast<QMessageBox *>(
+                            QApplication::activeModalWidget());
+                        CHECK(warning != nullptr);
+                        if (warning) {
+                            CHECK(warning->text().contains(
+                                QStringLiteral("Could not save")));
+                            if (warningCount) {
+                                (*warningCount)++;
+                            }
+                            QTimer::singleShot(0, finishDialog);
+                            warning->accept();
+                        }
+                    });
+                } else {
+                    QTimer::singleShot(0, finishDialog);
+                }
+                if (answer) {
+                    answer->click();
+                } else {
+                    prompt->reject();
+                }
+                return;
+            }
+            CHECK(promptButton.isEmpty());
+            finishDialog();
+        });
+        action->trigger();
+        CHECK(droveDialog);
+    };
+
+    // Keeping manual saving is the default answer. It is persisted even when
+    // the following dialog is cancelled, is not asked twice in this window or
+    // after a restart, and leaves later accepted changes live but unsaved.
+    const QString manualPath = dir.filePath(QStringLiteral("manual.ini"));
+    int prompts = 0;
+    {
+        MainWindow window(manualPath);
+        runDialog(window, QStringLiteral("autoSaveSettingsManualButton"),
+                  [](SettingsDialog *) {}, false, &prompts);
+        CHECK(prompts == 1);
+        QByteArray bytes = read(manualPath);
+        CHECK(bytes.contains("AutoSaveSettings=off"));
+
+        runDialog(
+            window, QString(),
+            [](SettingsDialog *dialog) {
+                auto *title = dialog->findChild<QLineEdit *>(
+                    QStringLiteral("settingEditor:terminal.title"));
+                CHECK(title != nullptr);
+                if (title) {
+                    title->setText(QStringLiteral("manual live"));
+                }
+            },
+            true, &prompts);
+        CHECK(prompts == 1);
+        CHECK(window.session()->setting(QStringLiteral("terminal.title"))
+              == QStringLiteral("manual live"));
+        bytes = read(manualPath);
+        CHECK(!bytes.contains("Title=manual live"));
+    }
+    {
+        MainWindow restart(manualPath);
+        runDialog(restart, QString(), [](SettingsDialog *) {}, false, &prompts);
+        CHECK(prompts == 1);
+    }
+
+    // The automatic answer writes only the accepted row, retaining comments,
+    // order and unknown keys without pinning untouched schema defaults.
+    const QString automaticPath = dir.filePath(QStringLiteral("automatic.ini"));
+    const QByteArray automaticBefore =
+        "; retained\n[Unrelated]\nKey=kept\n[Tera Term]\nSomethingElse=here\n";
+    write(automaticPath, automaticBefore);
+    {
+        MainWindow window(automaticPath);
+        runDialog(
+            window, QStringLiteral("autoSaveSettingsEnableButton"),
+            [](SettingsDialog *dialog) {
+                auto *title = dialog->findChild<QLineEdit *>(
+                    QStringLiteral("settingEditor:terminal.title"));
+                CHECK(title != nullptr);
+                if (title) {
+                    title->setText(QStringLiteral("automatic saved"));
+                }
+            },
+            true, &prompts);
+        CHECK(prompts == 2);
+        const QByteArray bytes = read(automaticPath);
+        CHECK(bytes.contains("; retained"));
+        CHECK(bytes.contains("[Unrelated]\nKey=kept"));
+        CHECK(bytes.contains("SomethingElse=here"));
+        CHECK(bytes.contains("AutoSaveSettings=on"));
+        CHECK(bytes.contains("Title=automatic saved"));
+        CHECK(!bytes.contains("TerminalSize="));
+        CHECK(bytes.indexOf("SomethingElse=here")
+              < bytes.indexOf("Title=automatic saved"));
+        CHECK(QDir(dir.path())
+                  .entryList(QStringList {QStringLiteral("*_automatic.ini")},
+                             QDir::Files)
+                  .isEmpty());
+    }
+    {
+        MainWindow restart(automaticPath);
+        CHECK(restart.session()->setting(QStringLiteral("terminal.title"))
+              == QStringLiteral("automatic saved"));
+        runDialog(restart, QString(), [](SettingsDialog *) {}, false, &prompts);
+        CHECK(prompts == 2);
+    }
+
+    // Cancel applies and writes nothing, even while automatic saving is on.
+    const QString cancelPath = dir.filePath(QStringLiteral("cancel.ini"));
+    const QByteArray cancelBefore =
+        "[Tera Term]\nTitle=before\n[Sterna]\nAutoSaveSettings=on\n";
+    write(cancelPath, cancelBefore);
+    {
+        MainWindow window(cancelPath);
+        runDialog(
+            window, QString(),
+            [](SettingsDialog *dialog) {
+                auto *title = dialog->findChild<QLineEdit *>(
+                    QStringLiteral("settingEditor:terminal.title"));
+                CHECK(title != nullptr);
+                if (title) {
+                    title->setText(QStringLiteral("cancelled"));
+                }
+            },
+            false, &prompts);
+        CHECK(window.session()->setting(QStringLiteral("terminal.title"))
+              == QStringLiteral("before"));
+        CHECK(read(cancelPath) == cancelBefore);
+    }
+
+    // The option's final value decides its siblings from the same OK. Turning
+    // it on saves all successful changes; turning it off saves only itself.
+    const QString toggleOnPath = dir.filePath(QStringLiteral("toggle-on.ini"));
+    write(toggleOnPath,
+          "[Tera Term]\nTitle=old\n[Sterna]\nAutoSaveSettings=off\n");
+    {
+        MainWindow window(toggleOnPath);
+        runDialog(
+            window, QString(),
+            [](SettingsDialog *dialog) {
+                auto *automatic = dialog->findChild<QCheckBox *>(
+                    QStringLiteral("settingEditor:settings.auto_save_changes"));
+                auto *title = dialog->findChild<QLineEdit *>(
+                    QStringLiteral("settingEditor:terminal.title"));
+                CHECK(automatic != nullptr);
+                CHECK(title != nullptr);
+                if (automatic) {
+                    automatic->setChecked(true);
+                }
+                if (title) {
+                    title->setText(QStringLiteral("saved together"));
+                }
+            },
+            true, &prompts);
+        const QByteArray bytes = read(toggleOnPath);
+        CHECK(bytes.contains("AutoSaveSettings=on"));
+        CHECK(bytes.contains("Title=saved together"));
+    }
+
+    const QString toggleOffPath = dir.filePath(QStringLiteral("toggle-off.ini"));
+    write(toggleOffPath,
+          "[Tera Term]\nTitle=file value\n[Sterna]\nAutoSaveSettings=on\n");
+    {
+        MainWindow window(toggleOffPath);
+        runDialog(
+            window, QString(),
+            [](SettingsDialog *dialog) {
+                auto *automatic = dialog->findChild<QCheckBox *>(
+                    QStringLiteral("settingEditor:settings.auto_save_changes"));
+                auto *title = dialog->findChild<QLineEdit *>(
+                    QStringLiteral("settingEditor:terminal.title"));
+                CHECK(automatic != nullptr);
+                CHECK(title != nullptr);
+                if (automatic) {
+                    automatic->setChecked(false);
+                }
+                if (title) {
+                    title->setText(QStringLiteral("live only"));
+                }
+            },
+            true, &prompts);
+        CHECK(window.session()->setting(QStringLiteral("terminal.title"))
+              == QStringLiteral("live only"));
+        const QByteArray bytes = read(toggleOffPath);
+        CHECK(bytes.contains("AutoSaveSettings=off"));
+        CHECK(bytes.contains("Title=file value"));
+        CHECK(!bytes.contains("Title=live only"));
+    }
+
+    // A write failure is reported after OK without rolling the successful
+    // live change back.
+    const QString lockedDir = dir.filePath(QStringLiteral("locked"));
+    CHECK(QDir().mkpath(lockedDir));
+    const QString failurePath = QDir(lockedDir).filePath(QStringLiteral("failure.ini"));
+    const QByteArray failureBefore =
+        "[Tera Term]\nTitle=before\n[Sterna]\nAutoSaveSettings=on\n";
+    write(failurePath, failureBefore);
+    CHECK(QFile::setPermissions(
+        lockedDir, QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+    int warnings = 0;
+    {
+        MainWindow window(failurePath);
+        runDialog(
+            window, QString(),
+            [](SettingsDialog *dialog) {
+                auto *title = dialog->findChild<QLineEdit *>(
+                    QStringLiteral("settingEditor:terminal.title"));
+                CHECK(title != nullptr);
+                if (title) {
+                    title->setText(QStringLiteral("unsaved but live"));
+                }
+            },
+            true, &prompts, true, &warnings);
+        CHECK(warnings == 1);
+        CHECK(window.session()->setting(QStringLiteral("terminal.title"))
+              == QStringLiteral("unsaved but live"));
+        CHECK(read(failurePath) == failureBefore);
+    }
+    CHECK(QFile::setPermissions(lockedDir,
+                                QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                                    | QFileDevice::ExeOwner));
+
+    // If recording the first answer fails, this window does not nag again,
+    // but a new window asks because the file still has no explicit key.
+    const QString choiceDir = dir.filePath(QStringLiteral("choice-locked"));
+    CHECK(QDir().mkpath(choiceDir));
+    const QString choicePath =
+        QDir(choiceDir).filePath(QStringLiteral("choice.ini"));
+    write(choicePath, "[Tera Term]\nTitle=before\n");
+    int choicePrompts = 0;
+    int choiceWarnings = 0;
+    {
+        MainWindow window(choicePath);
+        CHECK(QFile::setPermissions(
+            choiceDir, QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+        runDialog(window, QStringLiteral("autoSaveSettingsEnableButton"),
+                  [](SettingsDialog *) {}, false, &choicePrompts, false,
+                  &choiceWarnings, true);
+        CHECK(choicePrompts == 1);
+        CHECK(choiceWarnings == 1);
+        CHECK(window.session()->setting(
+                  QStringLiteral("settings.auto_save_changes"))
+              == QStringLiteral("on"));
+        CHECK(!read(choicePath).contains("AutoSaveSettings="));
+
+        runDialog(window, QString(), [](SettingsDialog *) {}, false,
+                  &choicePrompts);
+        CHECK(choicePrompts == 1);
+    }
+    CHECK(QFile::setPermissions(choiceDir,
+                                QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                                    | QFileDevice::ExeOwner));
+    {
+        MainWindow restart(choicePath);
+        runDialog(restart, QStringLiteral("autoSaveSettingsManualButton"),
+                  [](SettingsDialog *) {}, false, &choicePrompts);
+        CHECK(choicePrompts == 2);
+        CHECK(read(choicePath).contains("AutoSaveSettings=off"));
+    }
 }
 
 /// `AlphaBlendActive` and `AlphaBlend` are two focus states, both expressed
@@ -2841,6 +3459,7 @@ int main(int argc, char **argv)
     test_clear_commands_keep_or_drop_selection();
     test_the_edit_menu_and_key_map_share_clear_commands();
     test_continued_line_copy_joins_a_wrapped_line();
+    test_line_edit_copy_uses_the_active_selection();
     test_the_other_buttons_do_not_start_or_copy_a_selection();
     test_a_paste_with_a_line_break_is_confirmed();
     test_remote_clipboard_access_is_permissioned_and_notified();
@@ -2853,10 +3472,12 @@ int main(int argc, char **argv)
     test_attribute_colours_can_keep_the_normal_background();
     test_use_text_colour_repairs_only_the_three_same_colour_pairs();
     test_the_settings_dialog_is_built_from_the_schema();
+    test_setup_menu_links_every_schema_page();
     test_the_settings_dialog_uses_a_language_catalog();
     test_the_connection_dialogs_use_the_language_catalog();
     test_the_ssh_prompts_use_the_language_catalog();
     test_the_dialog_writes_only_what_changed();
+    test_settings_dialog_persistence_is_opt_in_and_selective();
     test_window_opacity_follows_activation();
     test_the_window_opens_at_the_configured_size();
     test_the_hidden_menu_is_the_ordinary_menu_as_a_popup();
