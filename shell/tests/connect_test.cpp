@@ -15,12 +15,20 @@
 #include <QAbstractItemView>
 #include <QAction>
 #include <QComboBox>
+#include <QFile>
 #include <QLineEdit>
 #include <QToolButton>
 #include <QMainWindow>
 #include <QStandardPaths>
 
 #include <cstdio>
+
+#ifndef Q_OS_WIN
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 
 #include "ConnectBar.h"
 #include "MainWindow.h"
@@ -55,6 +63,52 @@ int rowWithText(const QComboBox *combo, const QString &text)
     }
     return -1;
 }
+
+#ifndef Q_OS_WIN
+/// A listening localhost socket. The kernel completes a TCP connection from
+/// its backlog, so this needs no thread and no accept call.
+class Listener {
+public:
+    Listener()
+    {
+        m_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (m_fd < 0) {
+            return;
+        }
+        int on = 1;
+        ::setsockopt(m_fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on);
+        sockaddr_in addr = {};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        socklen_t len = sizeof addr;
+        if (::bind(m_fd, reinterpret_cast<sockaddr *>(&addr), len) != 0
+            || ::listen(m_fd, 1) != 0
+            || ::getsockname(m_fd, reinterpret_cast<sockaddr *>(&addr), &len)
+                   != 0) {
+            ::close(m_fd);
+            m_fd = -1;
+            return;
+        }
+        m_port = ntohs(addr.sin_port);
+    }
+
+    ~Listener()
+    {
+        if (m_fd >= 0) {
+            ::close(m_fd);
+        }
+    }
+
+    Listener(const Listener &) = delete;
+    Listener &operator=(const Listener &) = delete;
+
+    quint16 port() const { return m_port; }
+
+private:
+    int m_fd = -1;
+    quint16 m_port = 0;
+};
+#endif
 
 } // namespace
 
@@ -599,6 +653,31 @@ void test_connecting_does_not_move_the_field()
     CHECK(combo->width() == field);
 }
 
+/// A Tera Term line names settings and a connection together. When another
+/// session is live, both halves must land in the new tab rather than applying
+/// the settings to the old one before `openTarget` allocates the new page.
+void test_a_command_line_applies_to_the_page_it_opens()
+{
+    Listener listener;
+    CHECK(listener.port() != 0);
+    if (listener.port() == 0) {
+        return;
+    }
+
+    MainWindow window;
+    window.connectDestination(QStringLiteral("shell"));
+    qApp->processEvents();
+    CHECK(window.session()->isConnected());
+
+    window.connectDestination(
+        QStringLiteral("127.0.0.1:%1 /nossh /W=second")
+            .arg(listener.port()));
+    qApp->processEvents();
+    CHECK(window.session()->isConnected());
+    CHECK(window.session()->setting(QStringLiteral("terminal.title"))
+          == QStringLiteral("second"));
+}
+
 /// Off stops recording and leaves what is there: the entries are still on
 /// offer, because hiding a list nobody can add to takes away the way back as
 /// well as the way forward.
@@ -665,6 +744,10 @@ int main(int argc, char **argv)
     // somebody's real list of recent connections.
     QStandardPaths::setTestModeEnabled(true);
     QApplication app(argc, argv);
+    // Test mode protects the developer's real file; removing its own makes
+    // repeated runs independent too. The connection cases deliberately save
+    // recents immediately.
+    QFile::remove(MainWindow::settingsPath());
 
     test_a_record_survives_the_settings_file();
     test_a_broken_record_is_dropped_and_not_repaired();
@@ -682,6 +765,7 @@ int main(int argc, char **argv)
     test_a_typed_shell_connects_and_is_remembered();
     test_choosing_a_row_leaves_disconnect_alive();
     test_connecting_does_not_move_the_field();
+    test_a_command_line_applies_to_the_page_it_opens();
     test_recording_can_be_turned_off_without_losing_the_list();
 #endif
 
@@ -689,6 +773,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;
     }
+    QFile::remove(MainWindow::settingsPath());
     printf("connect ok\n");
     return 0;
 }

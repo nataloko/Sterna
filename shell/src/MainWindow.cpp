@@ -1923,6 +1923,12 @@ void MainWindow::connectDestination(const QString &text)
             note(tr("Connect"), tr("Could not read %1.").arg(where.text));
             return;
         }
+        // The settings and the target are one command line, so they belong to
+        // one page. `openTarget` also calls this, but that is too late when the
+        // active page is live: applying `/W=` or `/BAUD=` here would change
+        // the old terminal, then the target would open in a fresh page loaded
+        // from the file and never see it.
+        ensureIdlePage();
         QString error;
         // Applied first, so `/BAUD=` and its family are in the settings the
         // startup target is then built from. Upstream's order, and
