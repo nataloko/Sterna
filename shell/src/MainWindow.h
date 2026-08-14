@@ -559,10 +559,13 @@ private:
     QString m_lastTelnetHost;
     quint16 m_lastTelnetPort = 23;
     TtTelnetMode m_lastTelnetMode = TT_TELNET_NEGOTIATE;
-    /// The page whose SSH handshake has not finished. An SSH record is written
-    /// when that page reports a connection, because until then there is nothing
-    /// worth remembering — see the `connectionChanged` wiring.
-    TerminalPage *m_pendingSshPage = nullptr;
+    /// SSH handshakes that have not finished, by page. A record is written
+    /// only when its page reports a connection, because until then there is
+    /// nothing worth remembering — see the `connectionChanged` wiring.
+    ///
+    /// This cannot be one window-wide slot: starting a second handshake opens
+    /// a second page, and either attempt may finish first.
+    QHash<TerminalPage *, RecentConnection> m_pendingSsh;
     /// A connect button in the spare tile sets this for the synchronous dialog
     /// call. Acceptance consumes it in `ensureIdlePage`; cancellation clears it
     /// without ever allocating a page or a session.

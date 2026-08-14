@@ -592,19 +592,19 @@ void MainWindow::wirePage(TerminalPage *page)
         // `startSsh` returning true means the handshake has begun, and a host
         // whose key was refused or whose login failed should not become the
         // next dialog's default. Either outcome disarms it.
-        if (page == m_pendingSshPage) {
-            m_pendingSshPage = nullptr;
+        auto pending = m_pendingSsh.find(page);
+        if (pending != m_pendingSsh.end()
+            && !page->session()->isConnecting()) {
+            const RecentConnection recent = *pending;
+            m_pendingSsh.erase(pending);
             if (page->session()->isConnected()) {
-                rememberSsh(m_lastSshHost, m_lastSshUser, m_lastSshPort,
-                            m_lastSshIdentity, m_lastSshLegacy);
+                rememberSsh(recent.host, recent.user, recent.port,
+                            recent.identity, recent.legacy);
                 // Here rather than in `startSsh`, for the reason stated
                 // there: that call returning true means an attempt has
                 // *started*, and a refused host key is not a place to offer
                 // going back to.
-                rememberRecent(RecentConnection::ssh(
-                    m_lastSshHost, m_lastSshUser,
-                    static_cast<quint16>(m_lastSshPort), m_lastSshIdentity,
-                    m_lastSshLegacy));
+                rememberRecent(recent);
             }
         }
         if (page == m_page) {
@@ -640,6 +640,7 @@ void MainWindow::wirePage(TerminalPage *page)
             });
     connect(session, &Session::sshFailed, this,
             [this, page](const QString &error) {
+                m_pendingSsh.remove(page);
                 activatePage(page);
                 onSshFailed(error);
             });
@@ -786,9 +787,7 @@ void MainWindow::closePage(TerminalPage *page, bool confirm)
     // Before the page goes: an SSH record waiting on this page has nothing left
     // to wait for, and a pointer to a freed page could compare equal to a later
     // one allocated in its place.
-    if (page == m_pendingSshPage) {
-        m_pendingSshPage = nullptr;
-    }
+    m_pendingSsh.remove(page);
     m_panels->removePage(index);
     page->deleteLater();
     updateTabBar();
@@ -2693,8 +2692,22 @@ void MainWindow::connectSsh(const QString &host, const QString &user, int port)
 void MainWindow::startSsh(const TtSshParams &params, const QString &host)
 {
     ensureIdlePage();
+
+    // Arm this before `Session::startSsh`: that call polls once and is allowed
+    // to finish immediately. Its first `connectionChanged` only says
+    // "connecting" and deliberately leaves the entry in place; the terminal
+    // success/failure edge consumes it.
+    const RecentConnection recent = RecentConnection::ssh(
+        host, params.user ? QString::fromUtf8(params.user) : QString(),
+        params.port,
+        params.identities && params.identities[0]
+            ? QString::fromUtf8(params.identities[0])
+            : QString(),
+        params.legacy);
+    m_pendingSsh.insert(m_page, recent);
     QString error;
     if (!m_session->startSsh(params, &error)) {
+        m_pendingSsh.remove(m_page);
         QMessageBox::critical(this, tr("SSH"),
                               tr("Could not start the connection.\n\n%1").arg(error));
         return;
@@ -2704,22 +2717,14 @@ void MainWindow::startSsh(const TtSshParams &params, const QString &host)
     // through it too. A null string is not an empty one: it means "whatever
     // ~/.ssh/config says", and the record keeps that distinction.
     m_lastSshHost = host;
-    m_lastSshUser = params.user ? QString::fromUtf8(params.user) : QString();
-    m_lastSshPort = params.port;
-    m_lastSshIdentity = params.identities && params.identities[0]
-                            ? QString::fromUtf8(params.identities[0])
-                            : QString();
-    m_lastSshLegacy = params.legacy;
-
-    // Written when the handshake finishes, not now: unlike a serial open, this
-    // call returning true means an attempt has *started*, and a host key
-    // refusal or a failed login is not something to remember. `ensureIdlePage`
-    // has just made this the page the attempt belongs to.
-    m_pendingSshPage = m_page;
+    m_lastSshUser = recent.user;
+    m_lastSshPort = recent.port;
+    m_lastSshIdentity = recent.identity;
+    m_lastSshLegacy = recent.legacy;
 
     // No timeout: it stands until the handshake replaces it, which is what an
     // unbounded `QStatusBar::showMessage` did.
-    showPageMessage(m_pendingSshPage, tr("Connecting to %1...").arg(host), 0);
+    showPageMessage(m_page, tr("Connecting to %1...").arg(host), 0);
     updateStatus();
 }
 
@@ -2819,7 +2824,6 @@ void MainWindow::onRemoteResize(int cols, int rows)
 
 void MainWindow::onSshFailed(const QString &error)
 {
-    m_pendingSshPage = nullptr;
     QMessageBox::critical(this, tr("SSH"), error);
     updateStatus();
 }
