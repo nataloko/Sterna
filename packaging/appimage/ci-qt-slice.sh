@@ -30,17 +30,28 @@ if [ "$mode" = finish ]; then
 	exit 0
 fi
 
-build=(./build-qt.sh)
-[ "$mode" = resume ] && build+=(--resume)
+work=${STERNA_QT_BUILD_ROOT:-$PWD/toolchain/source-6.11.1}
+build=$work/build/qtbase
+if [ "$mode" = start ]; then
+	./build-qt.sh --configure-only
+else
+	[ -f "$build/CMakeCache.txt" ] || {
+		echo "qt: no configured Qt build to resume in $build" >&2
+		exit 2
+	}
+fi
+
+limit=${STERNA_QT_SLICE_LIMIT:-20m}
 set +e
-# Make and the compiler clean up interrupted targets on SIGINT. The KILL bound
-# prevents a descendant which failed to stop from carrying the step across the
-# hosted runner's communication window.
-timeout --kill-after=30s --signal=INT 20m "${build[@]}"
+# Put CMake and all of its descendants directly under timeout. Wrapping the
+# build-qt shell instead leaves Make holding the Docker exec stream after the
+# shell has gone away.
+timeout --kill-after=30s --signal=TERM "$limit" \
+	cmake --build "$build" --parallel
 status=$?
 set -e
 case "$status" in
 	0) echo "qt: build completed within the $mode slice" ;;
-	124) echo "qt: $mode slice ended after 20 minutes; the next slice will resume" ;;
+	124) echo "qt: $mode slice ended after $limit; the next slice will resume" ;;
 	*) exit "$status" ;;
 esac

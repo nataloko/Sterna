@@ -322,8 +322,9 @@ The AppImage, where two of the three failures are silent:
   across worker counts and after freeing the runner disk. Keep one prepared
   container alive across the release job: a fresh `docker run` per slice
   reinstalls the whole dependency set *before* the slice timer. Qt uses
-  `build-qt.sh --resume` in bounded commands and caches only the verified
-  installed prefix.
+  one worker (two consumed 14 of the runner's 15 GiB), puts CMake itself under
+  the slice timer, resumes with `build-qt.sh --resume`, and caches only the
+  verified installed prefix.
 - **`IdTitleReportEmpty` is 24 — `WF_TITLEREPORT` entire.** The "Empty"
   default sets *both* bits and lands on the `default:` arm (empty OSC
   answer); it is not "no bits". The flag-word trap disguised as a name.
