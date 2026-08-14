@@ -25,6 +25,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 8 | Editable lines for every connection type | Telnet LINEMODE negotiation only | 0.2.0 |
 | 9 | Receive CR defaults to Auto | A bare CR is the only default line ending | 0.2.1 |
 | 10 | A terminal-only dark mode | Colours come only from `TERATERM.INI` and the host | 0.2.1 |
+| 11 | Settings-dialog changes can be saved automatically | Only Setup > Save setup persists them | 0.2.1 |
 
 ---
 
@@ -374,3 +375,31 @@ by `Theme` after it reads the session's live colours. `ConnectBar` owns the
 right-aligned moon/sun action; `MainWindow` applies it to every tab and
 remembers the one window-wide preference. No `QApplication` or widget palette
 is changed.
+
+## 11. Optional automatic settings saves
+
+The first time Setup opens for an INI file, Sterna asks whether changes accepted
+with the Settings dialog's OK button should also be written to that file. Manual
+saving is the default answer. The choice is visible later as `[Sterna]
+AutoSaveSettings` (`settings.auto_save_changes`) on the Settings page, and an
+explicit answer is recorded immediately so the same file is not asked about
+again.
+
+**Why.** Applying a dialog and saving it are separate operations in Tera Term.
+That is useful for experiments, but it also makes an ordinary permanent change
+easy to lose at exit. Sterna offers the familiar application behavior without
+silently imposing it on a shared setup file.
+
+**What is deliberately narrow.** Automatic saving writes only schema or plugin
+rows that the accepted dialog changed successfully. It preserves comments,
+ordering, unknown keys and defaults the user did not touch; it does not create
+`IniAutoBackup` backups. Cancel writes nothing, and toolbar controls, scripts,
+commands, live echo/line-edit state and other changes outside the dialog keep
+their existing persistence rules. The option's final value controls its sibling
+changes from the same OK, while a change to the option itself is always saved.
+Setup > Save setup remains the full, backed-up save.
+
+**Failure behavior.** A write error is reported after the live changes have
+been applied; those changes are not rolled back. If the first answer itself
+cannot be recorded, that window suppresses a repeat prompt, but the next launch
+asks again because the core INI parser still sees the key as absent.

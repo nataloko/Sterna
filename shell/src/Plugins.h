@@ -77,6 +77,9 @@ public:
     bool setSetting(size_t id, const QString &value, QString *outError = nullptr);
     bool copySettingsFrom(const Plugins &source, QString *outError = nullptr);
     bool saveSettings(const QString &path, QString *outError = nullptr) const;
+    /// Persist only these successfully changed fields.
+    bool saveSelectedSettings(const QString &path, const QVector<size_t> &ids,
+                              QString *outError = nullptr) const;
     QString error() const { return m_error; }
     bool busy() const;
 

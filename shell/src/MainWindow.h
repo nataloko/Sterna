@@ -24,6 +24,7 @@ class Macro;
 class Plugins;
 class QLabel;
 class QLibrary;
+class SettingsDialog;
 class TerminalPage;
 class TerminalView;
 class XferProgressDialog;
@@ -356,6 +357,14 @@ private:
     /// active page's VM and terminal.
     void installPluginActions();
 
+    /// Ask once, when the active INI has no explicit automatic-save choice.
+    /// The answer is written immediately; a failed write is remembered only
+    /// for this window so the next launch can ask again.
+    void ensureAutoSaveChoice();
+    /// Persist the successfully applied rows from one accepted settings
+    /// dialog, according to the final value of `settings.auto_save_changes`.
+    void persistDialogChanges(const SettingsDialog &dialog);
+
     /// Seed the connect dialogs from the settings file, so this launch opens
     /// where the last one left off. Call it after the settings are loaded.
     ///
@@ -387,6 +396,7 @@ private:
     /// Not always [`settingsPath()`] — `/F=` names another one.
     QString m_settingsPath;
     QString m_pluginsPath;
+    bool m_autoSaveChoiceChecked = false;
     /// The active `KEYBOARD.CNF`, for reopening the file picker in its folder.
     QString m_keyMapPath;
     /// The highlight rules as loaded, so the editor opens on what is in force

@@ -534,6 +534,25 @@ fn setup_backups_are_on_by_default() {
 }
 
 #[test]
+fn automatic_settings_saves_are_opt_in() {
+    let mut settings = Settings::default();
+    assert!(!settings.settings_auto_save_changes);
+
+    let ini = Ini::parse(b"[Sterna]\r\nAutoSaveSettings=on\r\n");
+    settings = Settings::load(&ini);
+    assert!(settings.settings_auto_save_changes);
+    assert_eq!(
+        settings.get_str("settings.auto_save_changes"),
+        Some("on".into())
+    );
+
+    assert!(settings.set_str("settings.auto_save_changes", "off"));
+    let mut stored = ini;
+    assert!(settings.store_one(&mut stored, "settings.auto_save_changes"));
+    assert_eq!(stored.to_bytes(), b"[Sterna]\r\nAutoSaveSettings=off\r\n");
+}
+
+#[test]
 fn active_opacity_inherits_the_loaded_inactive_value() {
     let defaults = Settings::default();
     assert_eq!(defaults.window_opacity_inactive, 255);

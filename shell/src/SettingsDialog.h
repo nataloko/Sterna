@@ -58,6 +58,14 @@ public:
     /// Apply every changed row. Called on OK; public so a test can drive it
     /// without a button press.
     void applyChanges();
+    const QVector<QPair<QString, QString>> &appliedCoreChanges() const
+    {
+        return m_appliedCoreChanges;
+    }
+    const QVector<size_t> &appliedPluginChanges() const
+    {
+        return m_appliedPluginChanges;
+    }
 
 private:
     /// One editable setting, and how to read what the user typed.
@@ -67,12 +75,14 @@ private:
         QString haystack;
         QLabel *label = nullptr;
         QWidget *editor = nullptr;
-        /// What the setting held when the dialog opened, so that OK touches
-        /// only what changed — a setting nobody looked at must not be
-        /// rewritten, since writing one is what pins a default that might
-        /// otherwise follow upstream.
+        /// What the editor showed when the dialog opened, so that OK touches
+        /// only what the user changed. This is deliberately captured after Qt
+        /// normalises values an editor cannot represent; merely opening such a
+        /// row must not apply or persist that normalisation.
         QString original;
         int tab = -1;
+        bool plugin = false;
+        size_t pluginId = 0;
         std::function<QString()> value;
         std::function<bool(const QString &, QString *)> apply;
     };
@@ -95,6 +105,8 @@ private:
     QLineEdit *m_search = nullptr;
     QLabel *m_noResults = nullptr;
     QVector<Row> m_rows;
+    QVector<QPair<QString, QString>> m_appliedCoreChanges;
+    QVector<size_t> m_appliedPluginChanges;
     int m_initialPage = 0;
     int m_searchRestorePage = -1;
 };

@@ -1280,8 +1280,92 @@ void MainWindow::showPopupMenu(const QPoint &globalPos)
 
 void MainWindow::showSettingsDialog(int initialPage)
 {
+    ensureAutoSaveChoice();
     SettingsDialog dialog(m_session, m_plugins, m_i18n, this, initialPage);
-    dialog.exec();
+    if (dialog.exec() == QDialog::Accepted) {
+        persistDialogChanges(dialog);
+    }
+}
+
+void MainWindow::ensureAutoSaveChoice()
+{
+    if (m_autoSaveChoiceChecked) {
+        return;
+    }
+    m_autoSaveChoiceChecked = true;
+
+    const QString setting = QStringLiteral("settings.auto_save_changes");
+    bool present = false;
+    QString error;
+    if (!Session::settingPresent(m_settingsPath, setting, &present, &error)) {
+        onNotice(tr("Could not check whether settings changes should be saved: %1")
+                     .arg(error));
+        return;
+    }
+    if (present) {
+        return;
+    }
+
+    QMessageBox prompt(QMessageBox::Question, tr("Save settings changes?"),
+                       tr("Should changes accepted in the Settings dialog be "
+                          "saved to this setup file automatically? You can "
+                          "change this later on the Settings page."),
+                       QMessageBox::NoButton, this);
+    prompt.setObjectName(QStringLiteral("autoSaveSettingsPrompt"));
+    QPushButton *automatic = prompt.addButton(tr("Save automatically"),
+                                               QMessageBox::AcceptRole);
+    automatic->setObjectName(QStringLiteral("autoSaveSettingsEnableButton"));
+    QPushButton *manual = prompt.addButton(tr("Keep manual saving"),
+                                            QMessageBox::RejectRole);
+    manual->setObjectName(QStringLiteral("autoSaveSettingsManualButton"));
+    prompt.setDefaultButton(manual);
+    prompt.setEscapeButton(manual);
+    prompt.exec();
+
+    const QString value = prompt.clickedButton() == automatic
+                              ? QStringLiteral("on")
+                              : QStringLiteral("off");
+    QDir().mkpath(QFileInfo(m_settingsPath).absolutePath());
+    if (!m_session->rememberSettings({{setting, value}}, m_settingsPath, &error)) {
+        QMessageBox::warning(
+            this, tr("Setup"),
+            tr("Could not save the automatic-save choice: %1\n\nSterna will "
+               "ask again after it is restarted.")
+                .arg(error));
+    }
+}
+
+void MainWindow::persistDialogChanges(const SettingsDialog &dialog)
+{
+    const QString autoSave = QStringLiteral("settings.auto_save_changes");
+    const bool enabled = m_session->setting(autoSave) == QLatin1String("on");
+    QVector<QPair<QString, QString>> core;
+    for (const auto &change : dialog.appliedCoreChanges()) {
+        if (enabled || change.first == autoSave) {
+            core.append(change);
+        }
+    }
+
+    QStringList failures;
+    if (!core.isEmpty()) {
+        QDir().mkpath(QFileInfo(m_settingsPath).absolutePath());
+        QString error;
+        if (!m_session->rememberSettings(core, m_settingsPath, &error)) {
+            failures.append(tr("Could not save the settings: %1").arg(error));
+        }
+    }
+    if (enabled && !dialog.appliedPluginChanges().isEmpty()) {
+        QDir().mkpath(QFileInfo(m_settingsPath).absolutePath());
+        QString error;
+        if (!m_plugins->saveSelectedSettings(
+                m_settingsPath, dialog.appliedPluginChanges(), &error)) {
+            failures.append(
+                tr("Could not save the plugin settings: %1").arg(error));
+        }
+    }
+    if (!failures.isEmpty()) {
+        QMessageBox::warning(this, tr("Setup"), failures.join(QLatin1Char('\n')));
+    }
 }
 
 void MainWindow::reloadLanguage()

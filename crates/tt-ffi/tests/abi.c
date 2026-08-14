@@ -1237,6 +1237,56 @@ static void test_settings(void)
     tt_session_free(s);
 }
 
+static void test_setting_presence(void)
+{
+    const char *path = "/tmp/tt-ffi-abi-setting-presence.ini";
+    remove(path);
+
+    bool present = true;
+    CHECK_OK(tt_settings_file_has(path, "settings.auto_save_changes", &present));
+    CHECK(!present);
+
+    FILE *file = fopen(path, "wb");
+    CHECK(file != NULL);
+    if (file) {
+        fputs("[Sterna]\r\nAutoSaveSettings=off\r\n", file);
+        fclose(file);
+    }
+    CHECK_OK(tt_settings_file_has(path, "settings.auto_save_changes", &present));
+    CHECK(present);
+    CHECK_OK(tt_settings_file_has(path, "terminal.title", &present));
+    CHECK(!present);
+
+    file = fopen(path, "ab");
+    CHECK(file != NULL);
+    if (file) {
+        fputs("[Tera Term]\r\nTerminalSize=90,30\r\n", file);
+        fclose(file);
+    }
+    CHECK_OK(tt_settings_file_has(path, "terminal.cols", &present));
+    CHECK(present);
+    CHECK_OK(tt_settings_file_has(path, "terminal.rows", &present));
+    CHECK(present);
+
+    file = fopen(path, "wb");
+    CHECK(file != NULL);
+    if (file) {
+        fputs("[Sterna]\r\nAutoSaveSettings=on\r\n", file);
+        fclose(file);
+    }
+    CHECK_OK(tt_settings_file_has(path, "settings.auto_save_changes", &present));
+    CHECK(present);
+
+    CHECK(tt_settings_file_has(path, "no.such.setting", &present)
+          == TT_ERR_INVALID);
+    CHECK(tt_settings_file_has(NULL, "settings.auto_save_changes", &present)
+          == TT_ERR_INVALID);
+    CHECK(tt_settings_file_has(path, NULL, &present) == TT_ERR_INVALID);
+    CHECK(tt_settings_file_has(path, "settings.auto_save_changes", NULL)
+          == TT_ERR_INVALID);
+    remove(path);
+}
+
 /* What Sterna remembers about the last connection, which Tera Term does not —
  * see docs/deviations.md. The frontend's whole part in it is these two calls,
  * so this is the test that says what they promise. */
@@ -2670,6 +2720,46 @@ static void test_plugins(void)
     expect_row(s, 0, "afterboom");
 
     CHECK(tt_plugins_settings_save(plugins, settings_path) == TT_OK);
+    char selected_settings_path[512];
+    snprintf(selected_settings_path, sizeof selected_settings_path,
+             "%s/selected.ini", dir);
+    FILE *selected_file = fopen(selected_settings_path, "wb");
+    CHECK(selected_file != NULL);
+    if (selected_file) {
+        fputs("; retained\n[Lua ABI]\nUnknown=kept\n", selected_file);
+        fclose(selected_file);
+    }
+    const size_t selected[] = {prefix.id};
+    CHECK(tt_plugins_settings_save_selected(plugins, selected_settings_path,
+                                             selected, 1)
+          == TT_OK);
+    char selected_bytes[1024] = {0};
+    CHECK(read_file(selected_settings_path, selected_bytes,
+                    sizeof selected_bytes)
+          > 0);
+    CHECK(strstr(selected_bytes, "; retained") != NULL);
+    CHECK(strstr(selected_bytes, "Unknown=kept") != NULL);
+    CHECK(strstr(selected_bytes, "PromptPrefix=live:") != NULL);
+    CHECK(strstr(selected_bytes, "Enabled=") == NULL);
+    CHECK(strstr(selected_bytes, "Retries=") == NULL);
+    CHECK(strstr(selected_bytes, "Mode=") == NULL);
+
+    const size_t invalid[] = {99};
+    CHECK(tt_plugins_settings_save_selected(plugins, selected_settings_path,
+                                             invalid, 1)
+          == TT_ERR_INVALID);
+    CHECK(tt_plugins_settings_save_selected(plugins, selected_settings_path,
+                                             NULL, 0)
+          == TT_OK);
+    CHECK(tt_plugins_settings_save_selected(plugins, selected_settings_path,
+                                             NULL, 1)
+          == TT_ERR_INVALID);
+    CHECK(tt_plugins_settings_save_selected(NULL, selected_settings_path,
+                                             selected, 1)
+          == TT_ERR_INVALID);
+    CHECK(tt_plugins_settings_save_selected(plugins, NULL, selected, 1)
+          == TT_ERR_INVALID);
+    remove(selected_settings_path);
     TtSession *copy_session = tt_session_new(&cfg);
     TtPlugins *copy = tt_plugins_load(copy_session, dir, &ui);
     CHECK(copy != NULL);
@@ -3160,6 +3250,7 @@ int main(void)
     test_logging();
     test_log_name();
     test_settings();
+    test_setting_presence();
     test_remembered_connection();
     test_quick_buttons();
     test_cmdline();

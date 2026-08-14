@@ -228,7 +228,6 @@ void SettingsDialog::build()
         Row row;
         row.name = name;
         row.page = page;
-        row.original = current;
         row.tab = pageIndices.value(page);
         row.apply = [this, name](const QString &value, QString *error) {
             return m_session->setSetting(name, value, error);
@@ -333,6 +332,12 @@ void SettingsDialog::build()
         }
         }
 
+        // Compare against what the editor actually opened with. Some legacy
+        // sentinel or unknown values cannot be represented by a spin/combo
+        // box and Qt normalises those while constructing it; that is not a
+        // user edit and must not become a live change or an automatic write.
+        row.original = row.value();
+        row.editor->setObjectName(QStringLiteral("settingEditor:%1").arg(name));
         row.editor->setToolTip(row.label->toolTip());
         row.label->setBuddy(row.editor);
         form->addRow(row.label, row.editor);
@@ -354,8 +359,9 @@ void SettingsDialog::build()
             Row row;
             row.name = QStringLiteral("[%1] %2").arg(f.section, f.key);
             row.page = page;
-            row.original = current;
             row.tab = pageIndices.value(page);
+            row.plugin = true;
+            row.pluginId = f.id;
             row.label = new QLabel(f.label, this);
             QString tip = QStringLiteral("<b>%1</b><br>%2<br>[%3] %4 = %5")
                               .arg(f.plugin.toHtmlEscaped(), f.name.toHtmlEscaped(),
@@ -408,6 +414,7 @@ void SettingsDialog::build()
             }
             }
 
+            row.original = row.value();
             const size_t id = f.id;
             row.apply = [this, id](const QString &value, QString *error) {
                 return m_plugins->setSetting(id, value, error);
@@ -467,6 +474,8 @@ QFormLayout *SettingsDialog::addPage(const QString &title)
 
 void SettingsDialog::applyChanges()
 {
+    m_appliedCoreChanges.clear();
+    m_appliedPluginChanges.clear();
     QStringList failures;
     for (const Row &row : m_rows) {
         const QString value = row.value();
@@ -479,6 +488,10 @@ void SettingsDialog::applyChanges()
         QString error;
         if (!row.apply(value, &error)) {
             failures << QStringLiteral("%1: %2").arg(row.name, error);
+        } else if (row.plugin) {
+            m_appliedPluginChanges.append(row.pluginId);
+        } else {
+            m_appliedCoreChanges.append({row.name, value});
         }
     }
     if (!failures.isEmpty()) {

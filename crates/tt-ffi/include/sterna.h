@@ -3371,6 +3371,19 @@ const char *tt_settings_choice(size_t index,
                                size_t n);
 
 /**
+ * Whether a schema setting's key is explicitly present in an INI file.
+ *
+ * This asks the compatible core parser rather than a frontend parser. That
+ * distinction is load-bearing for the first settings-dialog prompt: an
+ * absent boolean takes its default, while an explicit `off` records that the
+ * user has already answered. A missing file is a successful `false` result.
+ * Unknown setting names and null arguments are invalid.
+ */
+TtStatus tt_settings_file_has(const char *path,
+                              const char *name,
+                              bool *out_present);
+
+/**
  * One setting's current value, in the INI's own spelling. Null for a name
  * that is not in the schema.
  *
@@ -4622,6 +4635,19 @@ TtStatus tt_plugins_copy_settings(TtPlugins *destination,
  * save: comments, ordering, encoding and keys no plugin owns survive.
  */
 TtStatus tt_plugins_settings_save(const TtPlugins *plugins, const char *path);
+
+/**
+ * Write only the selected live plugin settings into their INI sections.
+ *
+ * The indices are [`TtPluginSetting::id`] values from this handle. They are
+ * all validated before the file is touched, and an empty list is a no-op.
+ * This is the automatic-save counterpart to [`tt_plugins_settings_save`]: a
+ * dialog must not pin every plugin default merely because one row changed.
+ */
+TtStatus tt_plugins_settings_save_selected(const TtPlugins *plugins,
+                                           const char *path,
+                                           const size_t *indices,
+                                           size_t count);
 
 /**
  * Start one declared action. The callback runs asynchronously; wait on the

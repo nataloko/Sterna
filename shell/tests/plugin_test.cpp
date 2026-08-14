@@ -9,6 +9,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -16,6 +17,7 @@
 #include <QKeySequence>
 #include <QMenu>
 #include <QLineEdit>
+#include <QPushButton>
 #include <QStatusBar>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -121,7 +123,8 @@ void test_window_plugins()
     const QString ini = QDir(dir.path()).filePath(QStringLiteral("sterna.ini"));
     QFile settings(ini);
     CHECK(settings.open(QIODevice::WriteOnly));
-    settings.write("[Lua Window Test]\nPromptPrefix=saved:\nMode=safe\n");
+    settings.write("; retained\n[Lua Window Test]\nPromptPrefix=saved:\n"
+                   "Mode=safe\n[Sterna]\nAutoSaveSettings=on\n");
     settings.close();
 
     MainWindow window(ini, plugins);
@@ -172,6 +175,10 @@ void test_window_plugins()
             prefix->setText(QStringLiteral("live:"));
             dialog.applyChanges();
             CHECK(loaded->setting(2) == QStringLiteral("live:"));
+            CHECK(dialog.appliedPluginChanges().size() == 1);
+            if (dialog.appliedPluginChanges().size() == 1) {
+                CHECK(dialog.appliedPluginChanges().first() == 2);
+            }
         }
 
         // Plugin rows participate in the same cross-page search. The page is
@@ -209,14 +216,48 @@ void test_window_plugins()
         }
         CHECK(pageActions == 26);
 
+        // Accepting the window's real settings dialog automatically saves only
+        // the changed plugin row. Untouched plugin defaults remain absent.
+        QAction *settingsAction = window.findChild<QAction *>(
+            QStringLiteral("settingsPageAction0"));
+        CHECK(settingsAction != nullptr);
+        bool acceptedSettings = false;
+        if (settingsAction) {
+            QTimer::singleShot(0, [&] {
+                auto *opened = qobject_cast<SettingsDialog *>(
+                    QApplication::activeModalWidget());
+                CHECK(opened != nullptr);
+                if (!opened) {
+                    return;
+                }
+                auto *editor = opened->findChild<QLineEdit *>(
+                    QStringLiteral("luaPluginSetting2"));
+                auto *buttons = opened->findChild<QDialogButtonBox *>();
+                CHECK(editor != nullptr);
+                CHECK(buttons != nullptr);
+                if (editor && buttons) {
+                    editor->setText(QStringLiteral("automatic:"));
+                    acceptedSettings = true;
+                    buttons->button(QDialogButtonBox::Ok)->click();
+                } else {
+                    opened->reject();
+                }
+            });
+            settingsAction->trigger();
+        }
+        CHECK(acceptedSettings);
+
         window.session()->feed(QByteArray("setting"));
-        CHECK(screenText(*window.session()).contains(QStringLiteral("live:")));
+        CHECK(screenText(*window.session()).contains(
+            QStringLiteral("automatic:")));
         window.session()->feed(QByteArray("\033[2J\033[H"));
-        QString saveError;
-        CHECK(loaded->saveSettings(ini, &saveError));
-        CHECK(saveError.isEmpty());
         CHECK(settings.open(QIODevice::ReadOnly));
-        CHECK(settings.readAll().contains("PromptPrefix=live:"));
+        const QByteArray saved = settings.readAll();
+        CHECK(saved.contains("; retained"));
+        CHECK(saved.contains("PromptPrefix=automatic:"));
+        CHECK(saved.contains("Mode=safe"));
+        CHECK(!saved.contains("Enabled="));
+        CHECK(!saved.contains("Retries="));
         settings.close();
     }
 

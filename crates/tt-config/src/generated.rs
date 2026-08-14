@@ -3632,6 +3632,13 @@ pub struct Settings {
     /// `ttlib_static_cpp.cpp:1432`). A first save has no old file to copy, and the
     /// smaller close-time geometry save does not take this path.
     pub settings_auto_backup: bool,
+    /// **`[Sterna]`**, because Tera Term persists dialog changes only through
+    /// Setup > Save setup. Off by default: the first settings-dialog visit asks
+    /// whether accepted changes should be written automatically, and records the
+    /// explicit answer immediately. Automatic writes remain selective — only rows
+    /// changed successfully in that dialog — so comments, unknown keys and defaults
+    /// the user never touched stay unmodified. See `docs/deviations.md`.
+    pub settings_auto_save_changes: bool,
     /// `ttset.c:916`, narrowed to a `WORD` by the assignment as `MaxComPort` is.
     ///
     /// **The bound is a different setting and is not a clamp**: `:1223` resets the
@@ -4414,6 +4421,7 @@ impl Default for Settings {
             settings_source_version: String::from("5.7.0"),
             settings_language_file: String::from("lang\\Default.lng"),
             settings_auto_backup: true,
+            settings_auto_save_changes: false,
             serial_com_port: 1,
             serial_baud: 115200,
             serial_data_bits: SerialDataBits::default(),
@@ -5247,6 +5255,10 @@ impl Settings {
             settings_auto_backup: crate::schema::on_off(
                 ini.get("Tera Term", "IniAutoBackup"),
                 true,
+            ),
+            settings_auto_save_changes: crate::schema::on_off(
+                ini.get("Sterna", "AutoSaveSettings"),
+                false,
             ),
             serial_com_port: crate::schema::word(ini.get_int(
                 "Tera Term",
@@ -6989,6 +7001,16 @@ impl Settings {
             "Tera Term",
             "IniAutoBackup",
             &if self.settings_auto_backup {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "AutoSaveSettings",
+            &if self.settings_auto_save_changes {
                 "on"
             } else {
                 "off"
@@ -9514,6 +9536,18 @@ impl Settings {
                     .to_string(),
                 );
             }
+            "settings.auto_save_changes" => {
+                ini.set(
+                    "Sterna",
+                    "AutoSaveSettings",
+                    &if self.settings_auto_save_changes {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
             "serial.com_port" => {
                 ini.set("Tera Term", "ComPort", &self.serial_com_port.to_string());
             }
@@ -11278,6 +11312,12 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "settings.auto_save_changes" => if self.settings_auto_save_changes {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "serial.com_port" => self.serial_com_port.to_string(),
             "serial.baud" => self.serial_baud.to_string(),
             "serial.data_bits" => self.serial_data_bits.as_ini().to_string(),
@@ -12122,6 +12162,9 @@ impl Settings {
             "settings.language_file" => self.settings_language_file = value.to_string(),
             "settings.auto_backup" => {
                 self.settings_auto_backup = crate::schema::on_off(Some(value), true)
+            }
+            "settings.auto_save_changes" => {
+                self.settings_auto_save_changes = crate::schema::on_off(Some(value), false)
             }
             "serial.com_port" => {
                 self.serial_com_port =
@@ -14337,6 +14380,16 @@ pub const FIELDS: &[Field] = &[
         default: "on",
         label: None,
         doc: "`ttset.c:1999`, default **on**. Before Setup > Save setup overwrites the active file, upstream copies its old bytes to a sibling named `YYYYMMDDTHHMMSS+zzzz_TERATERM.INI` (`vtwin.cpp:4738`, `ttlib_static_cpp.cpp:1432`). A first save has no old file to copy, and the smaller close-time geometry save does not take this path.",
+    },
+    Field {
+        name: "settings.auto_save_changes",
+        page: "settings",
+        section: "Sterna",
+        key: "AutoSaveSettings",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "**`[Sterna]`**, because Tera Term persists dialog changes only through Setup > Save setup. Off by default: the first settings-dialog visit asks whether accepted changes should be written automatically, and records the explicit answer immediately. Automatic writes remain selective — only rows changed successfully in that dialog — so comments, unknown keys and defaults the user never touched stay unmodified. See `docs/deviations.md`.",
     },
     Field {
         name: "serial.com_port",
