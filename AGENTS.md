@@ -317,6 +317,18 @@ The AppImage, where two of the three failures are silent:
 - **An AppImage can quietly use the desktop's Qt 6.11.1 and pass every
   test.** Check `/proc/<pid>/maps`: `libQt6Core.so.6` must come from
   `/tmp/.mount_sterna*` (the prefix follows the image's current filename).
+- **GNOME draws no title bars, so a bundled plugin is the title bar.** Mutter
+  advertises no `zxdg_decoration_manager_v1` at all — check the registry, not
+  the presence of a bar — so Qt draws its own, and Qt Base ships only
+  `bradient`: a 3/30/3/3 frame with no clock in it, therefore no double click,
+  therefore no maximise. `adwaita` is Qt's own and does both
+  (`qwaylandadwaitadecoration.cpp:673`), lives in Qt Wayland, and its feature
+  switch turns itself *off* unless Qt Svg is installed first — so the order of
+  the three stages in `build-qt.sh` decides whether the plugin exists. Qt picks
+  it only when the desktop says GNOME (`qwaylandwindow.cpp:1147`), which is
+  right: every other compositor here draws its own. Verify by grepping
+  `/proc/<pid>/maps` for the decoration, the way the Qt-from-the-mount check
+  above works — a fallback to `bradient` opens a perfectly good window.
 - **GLVND frontends are not display drivers.** linuxdeploy excludes the whole
   OpenGL-shaped family, but QtGui has direct NEEDED entries for `libOpenGL`,
   `libEGL`, `libGLX` and `libGLdispatch`; a minimal host then fails before Qt
@@ -937,6 +949,15 @@ The painter (the differential dump cannot see any of this):
   a damage counter** — `Session::mark_damage` moves it, so a new path that
   edits the grid must go through that rather than pushing `Event::Damage`
   itself, or the screen keeps last frame's colours.
+- **A `Session` in a test has connected to nothing, so its background carries
+  `color.disconnected_shade`** — every `bgAt` and every `defaultBackground()`
+  in `render_test` moves by 12%, on a change that looks like it only touched a
+  disconnected window. `Harness` says `setConnected(true)` for that reason, and
+  a test that builds a `MainWindow` of its own has to say it too. The shade is
+  applied last in `Theme::resolve` and skips any background the host or a rule
+  chose (the `hostBackground` flag) — so a bold run, whose *configured* pair
+  carries a background of its own, shades with everything around it while
+  `SGR 41` does not.
 
 The colour OSCs (the whole family lives in `vtdisp.c`, which the oracle does
 not compile — `stubs_manual.c` is the transcription; diff it, don't invent):

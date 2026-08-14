@@ -4,7 +4,7 @@ Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
 **Last updated:** 2026-08-14 · **Stage:** 4 complete, deliberate deviations
-landing (`docs/deviations.md`) · **Commits:** 682
+landing (`docs/deviations.md`) · **Commits:** 686
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -5521,6 +5521,39 @@ network `AutoWinClose` removes only its page unless it was the last one. The
 tests pin the property underneath all of this: bytes fed to one session never
 appear in another's grid.
 
+**The menus were rearranged around what each one decides, 2026-08-14.** Setup
+had one item per settings page — 26 of them, a wall to read and a scrolling
+list to click, every one opening the same dialog on a different tab, which the
+dialog's own tab rows and search box already do better. One Preferences item
+replaces them, under `MENU_SETUP_ADDITION`, upstream's own key for the item
+that opens *its* tabbed everything-else dialog. That left a line worth drawing
+between the two menus: View decides whether a thing is on screen, Setup decides
+what the thing is — so Show toolbar, Show quick buttons and Highlight matches
+moved to View while the editors they switch stayed behind. Help's Release page
+moved into the About dialog, beside Check for Updates, where the version it is
+a page about is already on screen.
+
+**An idle terminal is a different shade, 2026-08-14.** Tera Term's window is one
+session and closing the connection usually closes it, so "is anything on the
+other end" is rarely a question there; here a tiled window shows several at
+once and a terminal whose device has gone looks exactly like one that is merely
+quiet, last screenful and all. `color.disconnected_shade` moves the background
+of every cell the host did not colour that percentage of the way towards the
+configured foreground — towards the foreground because `#000` cannot be
+darkened and `QColor::lighter` scales the HSV value, so a factor would have
+shaded nothing on the commonest theme there is. Deliberate deviation 13.
+
+**And the AppImage grew a title bar that behaves, the same day.** GNOME
+advertises no `zxdg_decoration_manager_v1` at all, so on that desktop the title
+bar above a Qt window is drawn by Qt. Qt Base ships only `bradient`, which has
+no clock in it and so cannot recognise a double click — which is why
+double-clicking the title bar did nothing, on a window that maximises perfectly
+well when asked. Qt's own `adwaita` decoration does it and matches the
+desktop's other title bars; it lives in Qt Wayland and its feature switch turns
+itself off unless Qt Svg is installed first, so `build-qt.sh` grew two ordered
+stages and both build scripts grew an assertion, because both halves of that
+failure are silent.
+
 **Tiles replaced panels, 2026-08-14.** The 0.2.x arrangement had tabs and
 panels running alongside each other: the layout chose how many of an unlimited
 tab set were on screen, so a connection past the fourth stayed alive where
@@ -5582,9 +5615,10 @@ and preserve the active INI, apply live, and copy with a duplicated tab. Sixel
 and the signed self-updater landed on 2026-08-12. **No deb** — the AppImage-only
 decision in Stage 1 covers this too.
 
-**Settings navigation and optional persistence landed 2026-08-14.** Setup now
-links all 26 stable schema pages by the dialog's own titles, while plugin pages
-remain inside the dialog. Search filters rows and whole tabs across both kinds
+**Settings navigation and optional persistence landed 2026-08-14.** The
+dialog's tab rows carry all 26 stable schema pages, while plugin pages join
+them from the plugins themselves. (Setup briefly linked each of the 26 as a
+menu item of its own; see the menu entry below for why it now links one.) Search filters rows and whole tabs across both kinds
 of page, retains a matching page, reports an empty result, and restores the
 pre-search page when cleared. A first-use choice can make accepted dialog
 changes persist selectively: only successfully changed core and plugin keys are
