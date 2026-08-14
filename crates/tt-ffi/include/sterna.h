@@ -3378,6 +3378,13 @@ const char *tt_settings_choice(size_t index,
  * absent boolean takes its default, while an explicit `off` records that the
  * user has already answered. A missing file is a successful `false` result.
  * Unknown setting names and null arguments are invalid.
+ *
+ * It asks for the *reader's* spelling of the key, and the one setting whose
+ * writer spells it differently is unaffected: `connection.cygwin_directory`
+ * is read as `CygwinDirectory ` and written without the trailing space
+ * (`ttset.c:1476` vs `:2250`), but a query key is trimmed before it is
+ * matched — by the core's `Ini` and by Win32 both, which `ini-audit`'s
+ * `key-query-spaced` case pins. So the two spellings find each other.
  */
 TtStatus tt_settings_file_has(const char *path,
                               const char *name,
