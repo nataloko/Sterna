@@ -596,6 +596,8 @@ void MainWindow::wirePage(TerminalPage *page)
         if (pending != m_pendingSsh.end()
             && !page->session()->isConnecting()) {
             const RecentConnection recent = *pending;
+            page->status()->clearMessage(
+                tr("Connecting to %1...").arg(recent.host));
             m_pendingSsh.erase(pending);
             if (page->session()->isConnected()) {
                 rememberSsh(recent.host, recent.user, recent.port,
@@ -640,7 +642,12 @@ void MainWindow::wirePage(TerminalPage *page)
             });
     connect(session, &Session::sshFailed, this,
             [this, page](const QString &error) {
-                m_pendingSsh.remove(page);
+                auto pending = m_pendingSsh.find(page);
+                if (pending != m_pendingSsh.end()) {
+                    page->status()->clearMessage(
+                        tr("Connecting to %1...").arg(pending->host));
+                    m_pendingSsh.erase(pending);
+                }
                 activatePage(page);
                 onSshFailed(error);
             });
@@ -2736,9 +2743,16 @@ void MainWindow::startSsh(const TtSshParams &params, const QString &host)
             : QString(),
         params.legacy);
     m_pendingSsh.insert(m_page, recent);
+    // Put the indefinite message in place before starting. `startSsh` polls
+    // once and may reach its terminal edge synchronously; in that case the
+    // connectionChanged handler above must see and dismiss the message rather
+    // than having this function put it back afterwards.
+    const QString connecting = tr("Connecting to %1...").arg(host);
+    showPageMessage(m_page, connecting, 0);
     QString error;
     if (!m_session->startSsh(params, &error)) {
         m_pendingSsh.remove(m_page);
+        m_page->status()->clearMessage(connecting);
         QMessageBox::critical(this, tr("SSH"),
                               tr("Could not start the connection.\n\n%1").arg(error));
         return;
@@ -2753,9 +2767,6 @@ void MainWindow::startSsh(const TtSshParams &params, const QString &host)
     m_lastSshIdentity = recent.identity;
     m_lastSshLegacy = recent.legacy;
 
-    // No timeout: it stands until the handshake replaces it, which is what an
-    // unbounded `QStatusBar::showMessage` did.
-    showPageMessage(m_page, tr("Connecting to %1...").arg(host), 0);
     updateStatus();
 }
 
@@ -2774,6 +2785,7 @@ void MainWindow::onSshAuthWanted(const AuthRequest &request)
         // a device that counts failures should not be walked toward a lockout
         // by someone who changed their mind.
         m_session->cancelSsh();
+        m_pendingSsh.remove(m_page);
         // `wirePage` activates the page before raising this dialog, so the
         // attempt's page is the active one.
         showPageMessage(m_page, tr("Connection cancelled"));

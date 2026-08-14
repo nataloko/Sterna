@@ -140,6 +140,16 @@ void PageStatusBar::showMessage(const QString &text, int ms)
     }
 }
 
+void PageStatusBar::clearMessage(const QString &text)
+{
+    if (m_message != text) {
+        return;
+    }
+    m_message.clear();
+    m_messageTimer->stop();
+    showName();
+}
+
 QString PageStatusBar::currentMessage() const { return m_message; }
 
 void PageStatusBar::setActive(bool active)

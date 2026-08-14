@@ -47,6 +47,10 @@ public:
     /// Say something for `ms` milliseconds, over the name. Upstream's
     /// `QStatusBar::showMessage`, scoped to the terminal it happened in.
     void showMessage(const QString &text, int ms = 5000);
+    /// Dismiss `text` if it is still the message being shown. A lifecycle edge
+    /// uses this form so it cannot erase a newer notice that arrived while the
+    /// operation was in progress.
+    void clearMessage(const QString &text);
     QString currentMessage() const;
 
     /// Paint the highlight that says window-level actions go here. Only ever

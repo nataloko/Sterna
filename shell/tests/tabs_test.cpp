@@ -708,6 +708,42 @@ void test_the_status_strip_belongs_to_its_own_page()
     CHECK(first->status()->currentMessage() == QStringLiteral("first says so"));
 }
 
+/// The left side says which host an SSH handshake is waiting for. It has no
+/// timeout because a prompt may take as long as the person answering it; the
+/// terminal edge therefore has to dismiss it explicitly.
+void test_an_ssh_attempt_dismisses_its_connecting_message()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("sterna.ini"));
+    QFile file(ini);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[Sterna]\r\n");
+    file.close();
+
+    Listener listener;
+    CHECK(listener.port() != 0);
+    MainWindow window(ini);
+    auto *page = static_cast<TerminalPage *>(
+        window.findChild<PanelContainer *>()->widget(0));
+
+    window.connectSsh(QStringLiteral("127.0.0.1"), QString(), listener.port());
+    CHECK(window.session()->isConnecting());
+    CHECK(page->status()->currentMessage()
+          == QStringLiteral("Connecting to 127.0.0.1..."));
+
+    window.session()->disconnectPort();
+    CHECK(!window.session()->isConnecting());
+    CHECK(page->status()->currentMessage().isEmpty());
+
+    // A message that superseded the connection progress belongs to its own
+    // timer and must survive the same lifecycle edge.
+    window.connectSsh(QStringLiteral("127.0.0.1"), QString(), listener.port());
+    page->status()->showMessage(QStringLiteral("newer notice"), 0);
+    window.session()->disconnectPort();
+    CHECK(page->status()->currentMessage() == QStringLiteral("newer notice"));
+}
+
 /// A status line must not decide how wide a terminal is.
 ///
 /// `describe()` can be a whole serial device path and a title is host-supplied,
@@ -956,6 +992,7 @@ int main(int argc, char **argv)
     test_the_view_menu_switches_tiling_and_persists_only_that_key();
     test_a_resized_window_survives_a_settings_change();
     test_the_status_strip_belongs_to_its_own_page();
+    test_an_ssh_attempt_dismisses_its_connecting_message();
     test_the_status_strip_never_widens_its_page();
     test_visible_panels_refit_and_receive_their_own_metrics();
     test_empty_panel_dialogs_cancel_or_connect_in_place();
