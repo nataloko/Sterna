@@ -2517,6 +2517,62 @@ void test_line_edit_toggle_confirms_an_unsent_draft()
     CHECK(!view->hasLineEditDraft());
 }
 
+/// `ClearOnResize` is about the terminal's *size*, and toggling a frontend
+/// setting does not change it. The screen used to be scrolled into history on
+/// every settings change because `Vt::set_config` resized unconditionally and
+/// the flag defeats `Grid::resize`'s early return — see the trap in AGENTS.md.
+void test_a_frontend_toggle_does_not_clear_on_resize()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    MainWindow window(dir.filePath(QStringLiteral("clear-on-resize.ini")));
+    window.show();
+    qApp->processEvents();
+
+    auto *line = window.findChild<QCheckBox *>(
+        QStringLiteral("connectBarLineEdit"));
+    auto *view = window.findChild<TerminalView *>();
+    CHECK(line != nullptr && view != nullptr);
+    if (!line || !view) {
+        return;
+    }
+
+    QString error;
+    CHECK(window.session()->setSetting(
+        QStringLiteral("terminal.clear_on_resize"), QStringLiteral("on"),
+        &error));
+    view->applySettings();
+
+    window.connectPty();
+    qApp->processEvents();
+    CHECK(window.session()->isConnected());
+
+    window.session()->feed(QByteArray("still here\r\n"));
+    qApp->processEvents();
+    const int before = window.session()->scrollbackLen();
+
+    // The reported gesture: the connect bar's checkbox, nothing else.
+    line->click();
+    qApp->processEvents();
+    CHECK(view->lineEditEnabled());
+    CHECK(window.session()->scrollbackLen() == before);
+
+    // And back off, which goes through the same path.
+    line->click();
+    qApp->processEvents();
+    CHECK(!view->lineEditEnabled());
+    CHECK(window.session()->scrollbackLen() == before);
+
+    size_t len = 0;
+    const TtCell *row = window.session()->row(0, &len);
+    QString first;
+    for (size_t x = 0; row && x < len; x++) {
+        const uint32_t cp = row[x].text[0];
+        first += cp ? QChar(static_cast<char16_t>(cp)) : QLatin1Char(' ');
+    }
+    CHECK(first.trimmed() == QStringLiteral("still here"));
+}
+
 /// `AutoWinClose` is decided in the core, but only the frontend owns a
 /// window. The request closes an ordinary window and honours upstream's
 /// IsWindowEnabled guard when a modal child has disabled its parent.
@@ -2811,6 +2867,7 @@ int main(int argc, char **argv)
     test_line_edit_drains_its_forced_echo_damage();
     test_line_edit_keeps_control_input_immediate_and_cleans_up();
     test_line_edit_toggle_confirms_an_unsent_draft();
+    test_a_frontend_toggle_does_not_clear_on_resize();
     test_an_auto_close_request_respects_window_state();
     test_window_geometry_has_full_and_close_only_saves();
 

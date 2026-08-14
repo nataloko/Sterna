@@ -1249,9 +1249,10 @@ impl Vt {
     /// `LFMode` and `AcceptWheelToCursor` are seeded from `ts` at reset
     /// (`vtterm.c:285`, `:290`) and `SetupTerm` never touches them.
     ///
-    /// The grid is resized to match, so a caller with a connection has to tell
-    /// the far end afterwards — `tt_session::Session::apply_settings` is the
-    /// thing that does both.
+    /// The grid is resized to match **when the size actually moved**, so a
+    /// caller with a connection has to tell the far end afterwards —
+    /// `tt_session::Session::apply_settings` is the thing that does both. The
+    /// comparison is upstream's and is not an optimisation; see the guard.
     pub fn set_config(&mut self, config: Config) {
         let s = &mut self.state;
         s.config = config;
@@ -1270,7 +1271,17 @@ impl Vt {
         s.grid.set_clear_on_resize(s.config.clear_on_resize);
         s.grid.set_back_wrap(s.config.back_wrap);
         s.grid.set_vt_compat_tab(s.config.vt_compat_tab);
-        s.grid.resize(s.config.cols, s.config.rows);
+        // **The guard is upstream's and it is load bearing** (`vtwin.cpp:1396`:
+        // `SetupTerm` compares before it calls `ChangeTerminalSize`). Resizing
+        // unconditionally reads as harmless — [`Grid::resize`] returns early
+        // when nothing moved — but that early return is itself conditional on
+        // `ClearOnResize` being *off* (`buffer.c:5028` puts the clear outside
+        // the size-changed `if`). With the flag on, an unguarded call here
+        // scrolls the page into history on **every settings change**, so
+        // toggling something entirely unrelated blanks the screen.
+        if s.config.cols != s.grid.cols() || s.config.rows != s.grid.rows() {
+            s.grid.resize(s.config.cols, s.config.rows);
+        }
 
         // `SetupTerm` opens with `ResetCharSet()`, so a G1 designation made by
         // the host does not survive the dialog. Reproduced rather than
