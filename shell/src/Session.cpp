@@ -1127,6 +1127,14 @@ bool Session::rememberSettings(const QVector<QPair<QString, QString>> &values,
     // one of these keys, and that signal re-applies the *file's* terminal size,
     // the font, the title and the window flags — which would make remembering a
     // connection's speed resize the window somebody had just dragged.
+    //
+    // The drain is not optional in the same way. `tt_session_settings_remember`
+    // applies the struct on its way to the file, so it pushes a `Damage` like
+    // any other settings change; leaving it in the queue means the next thing
+    // to drain — a keystroke's repaint — arrives carrying this change's
+    // damage. That is the trap `AGENTS.md` records against `setSetting`,
+    // `resize` and the settings loaders, and this path had it too.
+    dispatch();
     return true;
 }
 
