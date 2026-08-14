@@ -113,9 +113,11 @@ pub enum Event {
     BadByte(u8),
     /// The transport went away — unplugged, hung up, or the child exited.
     Disconnected,
-    /// `AutoWinClose`, after a network connection ended. The core cannot
-    /// close a window, so the frontend which owns one does it. Serial ports
-    /// and local ptys never produce this request.
+    /// `AutoWinClose`, after a network connection ended **on its own**. The
+    /// core cannot close a window, so the frontend which owns one does it.
+    /// Serial ports and local ptys never produce this request, and neither
+    /// does a disconnect this program was asked for — see
+    /// [`Session::disconnect`].
     CloseRequested,
     /// The **far end** says the terminal should be this size. Resize the
     /// window to suit, which is what upstream does — `buffer.c:5106` goes
@@ -571,6 +573,15 @@ impl Session {
         }
     }
 
+    /// Drop the connection because this program was asked to — the menu, the
+    /// bar's button, a macro's `disconnect`, the control socket.
+    ///
+    /// **`AutoWinClose` deliberately does not apply here (deviation 15).**
+    /// Upstream posts the same `FD_CLOSE` a dropped line does, so its
+    /// Disconnect closes the window; a window that closes itself the moment
+    /// somebody hangs up cannot offer them the next connection, and offering
+    /// it is what the connection bar is for. A line the far end drops still
+    /// takes the setting.
     pub fn disconnect(&mut self) {
         let kind = self.conn.as_ref().map(|c| c.link_kind());
         self.conn = None;
@@ -582,7 +593,7 @@ impl Session {
         // on top of it and no way to reach the end.
         self.transfer_disconnected();
         if let Some(kind) = kind {
-            self.connection_closed(kind);
+            self.connection_closed(kind, true);
         }
         // `close_note` is deliberately not cleared: the user disconnecting is
         // not a reason to forget why the *last* connection ended, and the note
@@ -1333,7 +1344,7 @@ impl Session {
                     self.restore_tcp_echo_cr();
                     self.transfer_disconnected();
                     self.events.push(Event::Disconnected);
-                    self.connection_closed(kind);
+                    self.connection_closed(kind, false);
                     return Ok(total);
                 }
                 Err(e) => return Err(e),
@@ -1973,7 +1984,7 @@ impl Session {
                 self.restore_tcp_echo_cr();
                 self.transfer_disconnected();
                 self.events.push(Event::Disconnected);
-                self.connection_closed(kind);
+                self.connection_closed(kind, false);
                 Ok(())
             }
             Err(e) => Err(e),
@@ -2071,14 +2082,22 @@ impl Session {
     /// core cannot know whether a disabled/modal frontend will accept that
     /// request; it is unobservable when the window does close and is the
     /// upstream fallback when it cannot.
-    fn connection_closed(&mut self, kind: tt_conn::LinkKind) {
+    ///
+    /// **`asked` is deviation 15's seam.** Upstream's Disconnect posts the same
+    /// `FD_CLOSE` a dropped line does (`vtwin.cpp:4462`), so `AutoWinClose`
+    /// closes the window either way; here it applies only to a connection that
+    /// ended on its own.
+    fn connection_closed(&mut self, kind: tt_conn::LinkKind, asked: bool) {
         self.connect_beep(kind);
 
         if self.settings.connection_clear_screen_on_close {
             self.clear_screen();
         }
 
-        if matches!(kind, tt_conn::LinkKind::Network) && self.settings.connection_auto_win_close {
+        if !asked
+            && matches!(kind, tt_conn::LinkKind::Network)
+            && self.settings.connection_auto_win_close
+        {
             self.events.push(Event::CloseRequested);
         }
     }

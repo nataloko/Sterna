@@ -463,8 +463,9 @@ signals:
     void notice(const QString &text);
     /// Connecting, connected, disconnected, or dropped by the far end.
     void connectionChanged();
-    /// `AutoWinClose` after a network connection ended. The window decides
-    /// whether it can close now; serial and local-pty sessions never ask.
+    /// `AutoWinClose` after a network connection ended on its own. The window
+    /// decides whether it can close now; serial and local-pty sessions never
+    /// ask, and neither does Disconnect — deviation 15.
     void closeRequested();
     /// A setting changed, so anything derived from one is stale — the colours
     /// the painter resolves with, and the terminal's size. Emitted once per

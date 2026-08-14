@@ -569,3 +569,28 @@ command line all still reach telnet deliberately.
 whole — `sterna /ssh myhost` and `sterna myhost` are different vocabularies and
 a `/OPTION` anywhere switches between them, in the connect bar's field as much
 as in `argv`. So a converted shortcut behaves as it did.
+
+## 15. Disconnecting does not close the window
+
+`AutoWinClose` closes a network window when the connection ends. Here it applies
+only to a connection that ended on its own — the far end hanging up, the socket
+dropping. Choosing Disconnect, or a macro or `ttctl` asking for one, leaves the
+window open with nothing connected.
+
+**Why.** Upstream's Disconnect posts the same `FD_CLOSE` a lost line does
+(`vtwin.cpp:4462`, into the `IdComEndTimer` arm at `:3023`), so the setting
+cannot tell them apart. Sterna's window outlives its connections by design: the
+connect bar is above the terminal offering the next one, the recent list holds
+what was opened before, and a window with one session is the whole application.
+Quitting because somebody hung up puts the button that reconnects on a window
+that no longer exists, and takes the scrollback of what just happened with it.
+
+**What is unchanged.** A far end that closes the connection still closes the
+window, which is the case the setting was written for and what every terminal
+emulator does when a shell exits; `AutoWinClose=off` still keeps the window in
+that case too. `ClearScreenOnCloseConnection`, the connect beep and the borrowed
+`TCPLocalEcho`/`TCPCRSend` values are applied by both paths exactly as before,
+and `ConfirmDisconnect` still asks first.
+
+**Where it lives.** `tt-session::Session::connection_closed` takes the one
+`asked` flag; `Session::disconnect` is the only caller that passes it.

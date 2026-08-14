@@ -617,17 +617,43 @@ fn auto_close_is_network_only() {
     assert_eq!(row(&s, 0), "");
 }
 
+/// Deviation 15. Upstream's Disconnect posts the same `FD_CLOSE` a dropped
+/// line does, so `AutoWinClose` closes the window either way; here the setting
+/// belongs to the line ending on its own. Everything else in the outcome still
+/// runs.
 #[test]
-fn choosing_disconnect_also_applies_the_close_outcome() {
-    let (mut s, _h) = connected(20, 4);
+fn choosing_disconnect_applies_the_close_outcome_and_keeps_the_window() {
+    let (mut s, h) = connected(20, 4);
+    let mut settings = s.settings().clone();
+    settings.terminal_cols = 20;
+    settings.terminal_rows = 4;
+    settings.connection_clear_screen_on_close = true;
+    assert!(settings.connection_auto_win_close, "the shipped default");
+    s.set_settings(settings);
     s.drain_events();
+
+    h.feed(b"keep me");
+    pump(&mut s);
+    assert_eq!(row(&s, 0), "keep me");
 
     s.disconnect();
     let events = s.drain_events();
-    assert!(events.contains(&Event::CloseRequested), "{events:?}");
+    // The window stays, so the clear that only runs when it stays runs.
+    assert!(!events.contains(&Event::CloseRequested), "{events:?}");
+    assert!(events.contains(&Event::Damage), "{events:?}");
+    assert_eq!(row(&s, 0), "");
     // The caller initiated this one and already knows the connection changed;
     // only a transport disappearing reports the generic disconnect notice.
     assert!(!events.contains(&Event::Disconnected), "{events:?}");
+    assert!(!s.is_connected());
+
+    // And the line dropping is still the setting's own case.
+    let (transport, h) = MemoryTransport::new();
+    s.connect(Box::new(transport));
+    s.drain_events();
+    h.with(|st| st.disconnected = true);
+    let events = pump(&mut s);
+    assert!(events.contains(&Event::CloseRequested), "{events:?}");
 }
 
 #[test]

@@ -32,6 +32,14 @@ are available from the [GitHub releases page].
 
 ### Fixed
 
+- Typing into an interactive host no longer puts every character on a new line.
+  With no `CRReceive` key set, Sterna now works out from the first line ending
+  whether the far end means CR, LF or CRLF and stays with that answer, instead
+  of reading a bare CR as a line ending for ever — a shell that redraws its
+  prompt sends one on every keystroke.
+- Disconnecting no longer closes the window. `AutoWinClose` now applies to a
+  connection the far end ended, not to one you asked to end, so the connect bar
+  is still there to open the next one.
 - A file-transfer result is now visible; it had been overwritten in the same
   instant it was written.
 - Connect now opens the row you chose last. Choosing a remembered connection

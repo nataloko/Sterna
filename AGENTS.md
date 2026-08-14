@@ -460,8 +460,12 @@ Telnet:
   session closes silently regardless; hence `tt_session_link_kind`. A
   macro's `disconnect` can raise the dialog upstream and deliberately cannot
   here (modal dialog inside a request holds the requester open).
-- **`AutoWinClose` is TCP only, and Disconnect takes the dropped-line
-  branch** (`FD_CLOSE` → `IdComEndTimer`, `vtwin.cpp:4462`, `:3005`). If the
+- **`AutoWinClose` is TCP only, and upstream's Disconnect takes the
+  dropped-line branch** (`FD_CLOSE` → `IdComEndTimer`, `vtwin.cpp:4462`,
+  `:3005`) — so choosing Disconnect closes the window there. **This port
+  deliberately does not** (deviation 15): the `asked` flag on
+  `connection_closed` is the seam, and a window that quits when somebody hangs
+  up cannot offer them the next connection. If the
   window cannot close, `ClearScreenOnCloseConnection` runs instead — and its
   "clear" is `BuffClearScreen`, a scroll into history. A disconnect found
   while *writing* must take the same branch, restore TCP's borrowed echo/CR

@@ -2089,8 +2089,9 @@ pub enum TtEventKind {
     ClipboardReadRejected = 13,
     /// The corresponding rejected write.
     ClipboardWriteRejected = 14,
-    /// `AutoWinClose` after a network connection ended. Close the window if
-    /// it can close now; serial ports and local ptys never emit this.
+    /// `AutoWinClose` after a network connection ended on its own. Close the
+    /// window if it can close now; serial ports and local ptys never emit
+    /// this, and neither does [`tt_session_disconnect`].
     CloseRequested = 15,
     /// A colour OSC moved something the painter caches. Re-read
     /// [`tt_session_palette_rgb`] and [`tt_session_color_rgb`], then repaint.
@@ -3981,9 +3982,14 @@ pub extern "C" fn tt_session_connect_pty(
     }
 }
 
-/// Drop the connection. Applies `AutoWinClose` and
-/// `ClearScreenOnCloseConnection`, whose results are drained as ordinary
-/// events. A no-op when there is no connection.
+/// Drop the connection, because the user or a script asked for it. Applies
+/// `ClearScreenOnCloseConnection`, whose result is drained as an ordinary
+/// event. A no-op when there is no connection.
+///
+/// **`AutoWinClose` is not applied here** — it belongs to a line the far end
+/// dropped, and a window that closes itself when somebody hangs up cannot
+/// offer them the next connection (deviation 15). Upstream does not draw that
+/// line; `vtwin.cpp:4462` posts the same `FD_CLOSE` either way.
 #[no_mangle]
 pub extern "C" fn tt_session_disconnect(session: *mut TtSession) {
     let s = session!(session);
