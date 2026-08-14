@@ -8,6 +8,7 @@
 #include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QKeySequenceEdit>
@@ -16,6 +17,7 @@
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
@@ -138,6 +140,36 @@ QuickButtonsDialog::QuickButtonsDialog(const QVector<QuickButton> &buttons,
     m_enter->setToolTip(tr("Adds a Return, the way pressing Enter would. Shift"
                            " and click sends it without one."));
 
+    // "Repeat: [10] times every [2.5] s" — one sentence on one row, because
+    // the count and the cadence are one decision and reading them apart
+    // invites a button that sends a hundred times a second.
+    auto *repeatRow = new QWidget(this);
+    auto *repeatLayout = new QHBoxLayout(repeatRow);
+    repeatLayout->setContentsMargins(0, 0, 0, 0);
+    m_repeat = new QSpinBox(repeatRow);
+    m_repeat->setObjectName(QStringLiteral("quickButtonRepeat"));
+    m_repeat->setRange(0, static_cast<int>(TT_QUICK_BUTTON_MAX_REPEAT));
+    // Below one, because a run with no end is what is reached for when no
+    // number is the right one. `QSpinBox` shows this in place of its minimum.
+    m_repeat->setSpecialValueText(tr("Until stopped"));
+    m_repeatTimes = new QLabel(repeatRow);
+    m_every = new QLabel(tr("every"), repeatRow);
+    m_interval = new QDoubleSpinBox(repeatRow);
+    m_interval->setObjectName(QStringLiteral("quickButtonInterval"));
+    m_interval->setDecimals(1);
+    m_interval->setSingleStep(0.5);
+    m_interval->setRange(TT_QUICK_BUTTON_MIN_INTERVAL_MS / 1000.0,
+                         TT_QUICK_BUTTON_MAX_INTERVAL_MS / 1000.0);
+    m_interval->setSuffix(tr(" s"));
+    repeatLayout->addWidget(m_repeat);
+    repeatLayout->addWidget(m_repeatTimes);
+    repeatLayout->addWidget(m_every);
+    repeatLayout->addWidget(m_interval);
+    repeatLayout->addStretch();
+    repeatRow->setToolTip(tr("Press the button again — or Escape in the "
+                             "terminal — to stop a repeat early. A repeat "
+                             "also ends when the connection does."));
+
     m_shortcut = new QKeySequenceEdit(this);
     m_shortcut->setObjectName(QStringLiteral("quickButtonShortcut"));
 
@@ -160,6 +192,7 @@ QuickButtonsDialog::QuickButtonsDialog(const QVector<QuickButton> &buttons,
     form->addRow(tr("Does:"), m_kind);
     form->addRow(tr("Command:"), m_value);
     form->addRow(QString(), m_enter);
+    form->addRow(tr("Repeat:"), repeatRow);
     form->addRow(tr("Shortcut:"), m_shortcut);
     form->addRow(QString(), m_warning);
     form->addRow(QString(), m_confirm);
@@ -244,6 +277,11 @@ QuickButtonsDialog::QuickButtonsDialog(const QVector<QuickButton> &buttons,
     connect(m_command, &QComboBox::currentIndexChanged, this, [this] { commit(); });
     connect(m_enter, &QCheckBox::toggled, this, [this] { commit(); });
     connect(m_confirm, &QCheckBox::toggled, this, [this] { commit(); });
+    connect(m_repeat, &QSpinBox::valueChanged, this, [this] {
+        applyRepeat();
+        commit();
+    });
+    connect(m_interval, &QDoubleSpinBox::valueChanged, this, [this] { commit(); });
     connect(m_shortcut, &QKeySequenceEdit::keySequenceChanged, this, [this] {
         checkShortcut();
         commit();
@@ -322,6 +360,14 @@ void QuickButtonsDialog::commit()
     }
     button.shortcut = m_shortcut->keySequence().toString(QKeySequence::PortableText);
     button.confirm = m_confirm->isChecked();
+    button.repeat = m_repeat->value() == 0
+        ? TT_QUICK_BUTTON_REPEAT_FOREVER
+        : static_cast<quint32>(m_repeat->value());
+    // Seconds on screen, milliseconds in the file: one decimal place is what
+    // this is asked for in and rounding here is what keeps 2.5 from becoming
+    // 2499.
+    button.intervalMs =
+        static_cast<quint32>(qRound(m_interval->value() * 1000.0));
     // `value` is the core's to produce; it is written when the window saves.
     button.value.clear();
 }
@@ -359,7 +405,12 @@ void QuickButtonsDialog::load(int row)
         m_shortcut->setKeySequence(
             QKeySequence::fromString(button.shortcut, QKeySequence::PortableText));
         m_confirm->setChecked(button.confirm);
+        m_repeat->setValue(button.repeatsForever()
+                               ? 0
+                               : static_cast<int>(button.repeat));
+        m_interval->setValue(button.intervalMs / 1000.0);
         applyKind();
+        applyRepeat();
     } else {
         m_label->clear();
         m_text->clear();
@@ -367,6 +418,9 @@ void QuickButtonsDialog::load(int row)
         m_shortcut->clear();
         m_confirm->setChecked(false);
         m_enter->setChecked(false);
+        m_repeat->setValue(1);
+        m_interval->setValue(1.0);
+        applyRepeat();
     }
     m_loading = false;
     checkShortcut();
@@ -389,6 +443,20 @@ void QuickButtonsDialog::applyKind()
     // Only the two sending kinds have a line ending to add.
     m_enter->setVisible(kind == TT_QUICK_BUTTON_TEXT
                         || kind == TT_QUICK_BUTTON_BYTES);
+}
+
+void QuickButtonsDialog::applyRepeat()
+{
+    const int times = m_repeat->value();
+    // Nothing to agree with when the spin box is showing "Until stopped".
+    m_repeatTimes->setVisible(times != 0);
+    m_repeatTimes->setText(times == 1 ? tr("time") : tr("times"));
+    // An interval belongs to a repeat: on a button that sends once it is a
+    // number that does nothing, and a number that does nothing is a number
+    // somebody will spend an afternoon believing in.
+    const bool repeating = times != 1;
+    m_every->setVisible(repeating);
+    m_interval->setVisible(repeating);
 }
 
 void QuickButtonsDialog::addButton()

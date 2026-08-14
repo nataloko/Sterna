@@ -56,6 +56,7 @@
 #include "Macro.h"
 #include "Plugins.h"
 #include "QuickButtonBar.h"
+#include "QuickButtonRepeat.h"
 #include "QuickButtonsDialog.h"
 #include "SerialDialog.h"
 #include "Session.h"
@@ -428,6 +429,14 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
                 buttons.remove(index);
                 storeQuickButtons(buttons);
             });
+    connect(m_quickBar, &QuickButtonBar::stopRequested, this,
+            [this](int index) { m_quickRepeat->stop(index); });
+
+    m_quickRepeat = new QuickButtonRepeat(this);
+    connect(m_quickRepeat, &QuickButtonRepeat::fire, this,
+            &MainWindow::sendQuickButton);
+    connect(m_quickRepeat, &QuickButtonRepeat::changed, this,
+            &MainWindow::quickRepeatChanged);
 
     buildMenus();
 
@@ -509,6 +518,12 @@ void MainWindow::activatePage(TerminalPage *page)
         showTitle(m_session->title());
         updateStatus();
         queueWindowMetrics();
+        // The stop key belongs to whichever view is in front, and the runs it
+        // stops belong to the window — so it is re-armed on the way in rather
+        // than left on a view the user has walked away from.
+        if (m_quickRepeat) {
+            m_view->setStopKeyArmed(!m_quickRepeat->isIdle());
+        }
         m_view->focusInput();
     }
 }
@@ -536,6 +551,13 @@ void MainWindow::wirePage(TerminalPage *page)
                 activatePage(page);
                 invokeMenuCommand(command);
             });
+    // Escape, and only while the view has been told something is running. Not
+    // per page: the bar is the window's, so its runs are too, and stopping
+    // them from whichever terminal is in front is the point of a stop key.
+    connect(view, &TerminalView::stopRequested, this, [this] {
+        m_quickRepeat->stopAll();
+        statusBar()->showMessage(tr("Stopped repeating"), 3000);
+    });
 
     connect(session, &Session::logStateChanged, this, [this, page] {
         if (page == m_page) {
@@ -2679,6 +2701,14 @@ void MainWindow::reloadQuickButtons()
     if (!m_quickBar) {
         return;
     }
+    // Every run is an index into the list that is about to be replaced, and a
+    // button at index 3 after an edit need not be the button that was at index
+    // 3 before it. Following one would mean guessing which; stopping is the
+    // answer that cannot be wrong, and the press to start it again is one
+    // click.
+    if (m_quickRepeat) {
+        m_quickRepeat->stopAll();
+    }
     const QVector<QuickButton> buttons = loadQuickButtons(m_settingsPath);
     m_quickBar->setButtons(buttons);
 
@@ -2735,6 +2765,15 @@ void MainWindow::runQuickButton(int index, bool withoutEnter)
     if (!m_quickBar || index < 0 || index >= m_quickBar->buttons().size()) {
         return;
     }
+    // A second press stops the run rather than starting a rival one — and
+    // before the confirmation, because "are you sure?" is not a question to
+    // ask somebody who is trying to make something stop.
+    if (m_quickRepeat->isRunning(index)) {
+        m_quickRepeat->stop(index);
+        statusBar()->showMessage(tr("Stopped repeating"), 3000);
+        return;
+    }
+
     const QuickButton button = withoutEnter
         ? m_quickBar->buttons()[index].withoutEnter()
         : m_quickBar->buttons()[index];
@@ -2747,12 +2786,98 @@ void MainWindow::runQuickButton(int index, bool withoutEnter)
         return;
     }
 
-    // The core does the sending and hands back what is left for the window,
-    // which is the same answer a pressed key gives.
-    runKeyAction(m_session->runQuickButton(button.kind, button.value));
+    // Recorded before the first send, so that every send in the run — this one
+    // included — goes to the session it was started on.
+    if (button.repeats()) {
+        m_quickRepeatPage.insert(index, m_page);
+    }
+    sendQuickButton(index, withoutEnter);
+    if (button.repeats()) {
+        m_quickRepeat->start(index, withoutEnter, button.repeat,
+                             static_cast<int>(button.intervalMs));
+        if (m_quickRepeat->isRunning(index)) {
+            statusBar()->showMessage(button.repeatSummary(), 5000);
+        } else {
+            m_quickRepeatPage.remove(index);
+        }
+    }
     // Typing goes to the live screen, and so does pressing a button that types.
     m_view->setViewOffset(0);
     m_view->setFocus();
+}
+
+void MainWindow::sendQuickButton(int index, bool withoutEnter)
+{
+    if (!m_quickBar || index < 0 || index >= m_quickBar->buttons().size()) {
+        return;
+    }
+    // A repeat sends where it was started, not to whichever tab happens to be
+    // in front: switching tabs to watch something else must never redirect a
+    // poll onto a different console.
+    Session *session = m_session;
+    if (m_quickRepeatPage.contains(index)) {
+        TerminalPage *page = m_quickRepeatPage.value(index);
+        if (!page) {
+            // Its tab has been closed. Nothing to send to and nothing to say:
+            // the window that would have shown a complaint has gone.
+            m_quickRepeat->stop(index);
+            return;
+        }
+        session = page->session();
+    }
+    if (!session) {
+        return;
+    }
+    const QuickButton button = withoutEnter
+        ? m_quickBar->buttons()[index].withoutEnter()
+        : m_quickBar->buttons()[index];
+    // The core does the sending and hands back what is left for the window,
+    // which is the same answer a pressed key gives.
+    runKeyAction(session->runQuickButton(button.kind, button.value));
+}
+
+void MainWindow::quickRepeatChanged(int index, int remaining)
+{
+    if (remaining == 0) {
+        m_quickRepeatPage.remove(index);
+    }
+    if (m_quickBar) {
+        m_quickBar->setRepeating(index, remaining);
+    }
+    // The stop key is the current view's, and `activatePage` re-arms whichever
+    // one comes forward — a background view left armed would otherwise keep
+    // swallowing an Escape the host should have had.
+    if (m_view) {
+        m_view->setStopKeyArmed(!m_quickRepeat->isIdle());
+    }
+}
+
+void MainWindow::stopRepeatsWithNoLink()
+{
+    if (!m_quickBar || !m_quickRepeat || m_quickRepeat->isIdle()) {
+        return;
+    }
+    const QVector<QuickButton> &buttons = m_quickBar->buttons();
+    for (int i = 0; i < buttons.size(); i++) {
+        if (!m_quickRepeat->isRunning(i)) {
+            continue;
+        }
+        const bool needsLink = buttons[i].kind == TT_QUICK_BUTTON_TEXT
+            || buttons[i].kind == TT_QUICK_BUTTON_BYTES;
+        if (!needsLink) {
+            continue;
+        }
+        // The session the run belongs to, which is not necessarily the one in
+        // front. A page whose tab has gone counts as no link at all.
+        Session *session = m_session;
+        if (m_quickRepeatPage.contains(i)) {
+            TerminalPage *page = m_quickRepeatPage.value(i);
+            session = page ? page->session() : nullptr;
+        }
+        if (!session || !session->isConnected()) {
+            m_quickRepeat->stop(i);
+        }
+    }
 }
 
 bool MainWindow::storeQuickButtons(const QVector<QuickButton> &buttons)
@@ -3069,6 +3194,9 @@ void MainWindow::updateStatus()
         m_connectBar->refresh(m_session);
     }
     if (m_quickBar) {
+        // Before the refresh, so a run that has just lost its line is already
+        // over by the time the bar decides what to grey out.
+        stopRepeatsWithNoLink();
         m_quickBar->refresh(m_session);
     }
     if (m_disconnectAction) {

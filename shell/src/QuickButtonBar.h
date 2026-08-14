@@ -40,6 +40,13 @@ public:
     /// does: a command with nowhere to go is not a command.
     void refresh(const Session *session);
 
+    /// Show `index` as repeating, with `remaining` sends to come — -1 for a
+    /// run with no end, and 0 for one that has finished or was never started.
+    ///
+    /// The clock is `QuickButtonRepeat`'s and the list is the window's; this
+    /// only paints the answer.
+    void setRepeating(int index, int remaining);
+
 signals:
     /// A button was pressed. `withoutEnter` is a Shift+click, which sends the
     /// command with its trailing Return left off so it can be edited on the
@@ -52,13 +59,21 @@ signals:
     void editRequested(int index);
     void removeRequested(int index);
     void duplicateRequested(int index);
+    /// Stop from the context menu. Pressing the button again also stops it,
+    /// but that arrives as `activated` — the window owns the rule that a
+    /// second press is a stop, because it is the one that knows a run started.
+    void stopRequested(int index);
 
 private:
     void showContextMenu(const QPoint &pos);
     /// Which button the widget under `pos` belongs to, or -1.
     int indexAt(const QPoint &pos) const;
+    /// Caption and tooltip for `index`, including whatever it is doing now.
+    void describeAction(int index);
 
     QVector<QuickButton> m_buttons;
     QVector<QAction *> m_actions;
+    /// Per button: sends left, -1 for a run with no end, 0 for not running.
+    QVector<int> m_remaining;
     QAction *m_add = nullptr;
 };

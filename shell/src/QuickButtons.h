@@ -29,6 +29,22 @@ struct QuickButton {
     /// receiving, so none is assigned on a user's behalf.
     QString shortcut;
     bool confirm = false;
+    /// How many times one press sends it: 1 is once, and
+    /// `TT_QUICK_BUTTON_REPEAT_FOREVER` is a run only a person stops.
+    quint32 repeat = 1;
+    /// Milliseconds between the starts of two sends while repeating.
+    quint32 intervalMs = 1000;
+
+    /// Whether one press sends more than once.
+    bool repeats() const { return repeat != 1; }
+    bool repeatsForever() const
+    {
+        return repeat == TT_QUICK_BUTTON_REPEAT_FOREVER;
+    }
+    /// "10 times, every 2.5 s", or empty when it sends once. For a tooltip and
+    /// for the question `confirm` puts in front of it — the count and the
+    /// cadence are exactly what somebody deciding whether to press it wants.
+    QString repeatSummary() const;
 
     /// What to write on it: the label, or the command itself when there is no
     /// label. A button with no name is still a button, and showing the command

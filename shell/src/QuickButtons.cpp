@@ -3,6 +3,7 @@
 #include "QuickButtons.h"
 
 #include <QCoreApplication>
+#include <QLocale>
 
 namespace {
 
@@ -65,21 +66,50 @@ QString QuickButton::shortCaption() const
     return oneLine(caption(), kCaptionChars);
 }
 
+QString QuickButton::repeatSummary() const
+{
+    if (!repeats()) {
+        return {};
+    }
+    // Seconds, because that is the unit somebody thinks in and `xx.x` is what
+    // the editor asks for; the file keeps milliseconds so it needs no decimal
+    // separator and therefore no locale.
+    const QString seconds = QLocale().toString(intervalMs / 1000.0, 'g', 4);
+    if (repeatsForever()) {
+        return QCoreApplication::translate("QuickButton",
+                                           "Repeats every %1 s until stopped")
+            .arg(seconds);
+    }
+    return QCoreApplication::translate("QuickButton", "Sends %1 times, every %2 s")
+        .arg(repeat)
+        .arg(seconds);
+}
+
 QString QuickButton::describe() const
 {
+    QString what;
     switch (kind) {
     case TT_QUICK_BUTTON_BYTES:
-        return QCoreApplication::translate("QuickButton", "Send bytes: %1")
-            .arg(oneLine(text, kDescribeChars));
+        what = QCoreApplication::translate("QuickButton", "Send bytes: %1")
+                   .arg(oneLine(text, kDescribeChars));
+        break;
     case TT_QUICK_BUTTON_MACRO:
-        return QCoreApplication::translate("QuickButton", "Run macro: %1").arg(text);
+        what = QCoreApplication::translate("QuickButton", "Run macro: %1").arg(text);
+        break;
     case TT_QUICK_BUTTON_COMMAND:
-        return QCoreApplication::translate("QuickButton", "Menu command %1").arg(text);
+        what = QCoreApplication::translate("QuickButton", "Menu command %1").arg(text);
+        break;
     case TT_QUICK_BUTTON_TEXT:
     default:
-        return QCoreApplication::translate("QuickButton", "Send: %1")
-            .arg(oneLine(text, kDescribeChars));
+        what = QCoreApplication::translate("QuickButton", "Send: %1")
+                   .arg(oneLine(text, kDescribeChars));
+        break;
     }
+    // On its own line rather than appended, because this is the half that
+    // decides whether pressing it is a keystroke or a quarter of an hour of
+    // them — and it is the half the confirmation exists to show.
+    const QString repeated = repeatSummary();
+    return repeated.isEmpty() ? what : what + QLatin1Char('\n') + repeated;
 }
 
 bool QuickButton::sendsEnter() const
@@ -125,6 +155,8 @@ QVector<QuickButton> loadQuickButtons(const QString &settingsPath)
         button.text = QString::fromUtf8(b->text);
         button.shortcut = QString::fromUtf8(b->shortcut);
         button.confirm = b->confirm;
+        button.repeat = b->repeat;
+        button.intervalMs = b->interval_ms;
         out.append(button);
     }
     tt_quick_buttons_free(list);
@@ -158,6 +190,8 @@ bool saveQuickButtons(const QString &settingsPath,
         entry.text = text.constData();
         entry.shortcut = shortcut.constData();
         entry.confirm = buttons[i].confirm;
+        entry.repeat = buttons[i].repeat;
+        entry.interval_ms = buttons[i].intervalMs;
         ok = tt_quick_buttons_set(list, static_cast<size_t>(i), &entry) == TT_OK;
     }
     if (ok) {

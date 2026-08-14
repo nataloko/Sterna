@@ -11,12 +11,14 @@
 
 class QCheckBox;
 class QComboBox;
+class QDoubleSpinBox;
 class QKeySequenceEdit;
 class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPlainTextEdit;
 class QPushButton;
+class QSpinBox;
 class QStackedWidget;
 class Session;
 
@@ -64,6 +66,9 @@ private:
     QString shortcutComplaint(const QKeySequence &sequence, int forRow) const;
     /// Which page of the value stack a kind wants.
     void applyKind();
+    /// Show or hide the parts of the repeat row that only mean something for
+    /// a button that sends more than once.
+    void applyRepeat();
 
     QVector<QuickButton> m_buttons;
     const Session *m_session = nullptr;
@@ -81,6 +86,16 @@ private:
     QLineEdit *m_path = nullptr;
     QComboBox *m_command = nullptr;
     QCheckBox *m_enter = nullptr;
+    /// Sends per press. Its minimum, 0, is shown as "Until stopped" and means
+    /// `TT_QUICK_BUTTON_REPEAT_FOREVER` — the count below one, since a run
+    /// with no end is what you reach for when no number is right.
+    QSpinBox *m_repeat = nullptr;
+    /// "time" or "times", and gone entirely when there is no count to agree
+    /// with. One row rather than two so the whole sentence is readable at a
+    /// glance: *10 times every 2.5 s*.
+    QLabel *m_repeatTimes = nullptr;
+    QLabel *m_every = nullptr;
+    QDoubleSpinBox *m_interval = nullptr;
     QKeySequenceEdit *m_shortcut = nullptr;
     QLabel *m_warning = nullptr;
     QCheckBox *m_confirm = nullptr;

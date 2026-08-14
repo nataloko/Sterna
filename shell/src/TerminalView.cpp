@@ -1415,6 +1415,17 @@ void TerminalView::keyPressEvent(QKeyEvent *event)
         return;
     }
 
+    // The window's stop key, and only while it has claimed one. Unmodified,
+    // so `Alt+Esc` and the Shift form above still belong to whoever had them;
+    // and before the keyboard-enabled check, because a run that has locked
+    // the terminal is exactly the run somebody is trying to stop.
+    if (m_stopKeyArmed && event->key() == Qt::Key_Escape
+        && (mods & ~Qt::KeypadModifier) == Qt::NoModifier) {
+        emit stopRequested();
+        event->accept();
+        return;
+    }
+
     // A blank tab has no wire to type onto. In particular, do not let its
     // saved Local echo preference turn ordinary typing into fake terminal
     // output. A line-editor draft is allowed to remain editable while a link

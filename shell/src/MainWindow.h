@@ -2,7 +2,9 @@
 
 #pragma once
 
+#include <QHash>
 #include <QMainWindow>
+#include <QPointer>
 #include <QString>
 #include <QVector>
 
@@ -15,6 +17,7 @@
 
 class ConnectBar;
 class QuickButtonBar;
+class QuickButtonRepeat;
 class Control;
 class I18n;
 class Macro;
@@ -317,6 +320,16 @@ private:
     bool storeQuickButtons(const QVector<QuickButton> &buttons);
     /// Setup > New quick button from selection.
     void quickButtonFromSelection();
+    /// Put button `index` on the wire once. The whole of what a press does,
+    /// and therefore also what each tick of a repeat does.
+    void sendQuickButton(int index, bool withoutEnter);
+    /// A run started, ticked or ended: the bar's face, the terminal's stop
+    /// key and the status line all follow from this one place.
+    void quickRepeatChanged(int index, int remaining);
+    /// End any run whose button needs a link the session no longer has. A
+    /// macro or menu-command button is left alone — those work offline, which
+    /// is why they are not greyed out either.
+    void stopRepeatsWithNoLink();
     /// Connect what a command line resolved to. The SSH arm goes through the
     /// same state machine the SSH dialog uses, because it has the same
     /// prompts to answer.
@@ -408,6 +421,15 @@ private:
     /// until the settings have been read, which is what makes the first apply
     /// happen at all.
     QString m_quickBarArea;
+    /// The clock for the buttons that send more than once. Owns no buttons —
+    /// only indices into the bar's list, which is why editing that list stops
+    /// every run.
+    QuickButtonRepeat *m_quickRepeat = nullptr;
+    /// The page each run belongs to, by button index. A run sends where it
+    /// started; without this, switching tabs would point a poll at whatever
+    /// console came forward. Guarded rather than raw, because closing a tab
+    /// while its run is going is exactly the case this exists for.
+    QHash<int, QPointer<TerminalPage>> m_quickRepeatPage;
     QAction *m_toolbarAction = nullptr;
     QAction *m_quickButtonsAction = nullptr;
     QAction *m_quickButtonFromSelectionAction = nullptr;

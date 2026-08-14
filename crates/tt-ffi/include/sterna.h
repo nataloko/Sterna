@@ -23,6 +23,22 @@
 #define TT_QUICK_BUTTON_REPEAT_FOREVER 4294967295
 
 /**
+ * The largest finite [`TtQuickButton::repeat`]. Past it, forever was meant.
+ */
+#define TT_QUICK_BUTTON_MAX_REPEAT 9999
+
+/**
+ * The floor on [`TtQuickButton::interval_ms`] — the bound that keeps a
+ * mistyped interval from turning a button into a flood.
+ */
+#define TT_QUICK_BUTTON_MIN_INTERVAL_MS 100
+
+/**
+ * ...and the ceiling, an hour.
+ */
+#define TT_QUICK_BUTTON_MAX_INTERVAL_MS 3600000
+
+/**
  * A colour a rule is not asking to change, in [`TtHighlight::fore`] and
  * friends. Every real colour is `0x00RRGGBB`, so this cannot collide with one.
  */

@@ -2907,6 +2907,20 @@ pub const TT_QUICK_BUTTON_REPEAT_FOREVER: u32 = 0xffff_ffff;
 // drift.
 const _: () = assert!(TT_QUICK_BUTTON_REPEAT_FOREVER == tt_session::buttons::REPEAT_FOREVER);
 
+/// The largest finite [`TtQuickButton::repeat`]. Past it, forever was meant.
+pub const TT_QUICK_BUTTON_MAX_REPEAT: u32 = 9999;
+/// The floor on [`TtQuickButton::interval_ms`] — the bound that keeps a
+/// mistyped interval from turning a button into a flood.
+pub const TT_QUICK_BUTTON_MIN_INTERVAL_MS: u32 = 100;
+/// ...and the ceiling, an hour.
+pub const TT_QUICK_BUTTON_MAX_INTERVAL_MS: u32 = 3600000;
+// Here so that an editor's spin boxes are bounded by the same numbers
+// [`tt_quick_buttons_set`] normalises to, rather than by a second copy of them
+// that agrees today.
+const _: () = assert!(TT_QUICK_BUTTON_MAX_REPEAT == tt_session::buttons::MAX_REPEAT);
+const _: () = assert!(TT_QUICK_BUTTON_MIN_INTERVAL_MS == tt_session::buttons::MIN_INTERVAL_MS);
+const _: () = assert!(TT_QUICK_BUTTON_MAX_INTERVAL_MS == tt_session::buttons::MAX_INTERVAL_MS);
+
 /// One button, borrowed from its list.
 ///
 /// `value` and `text` are the same string in two forms: stored, still

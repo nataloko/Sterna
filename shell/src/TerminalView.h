@@ -122,6 +122,16 @@ public:
     bool confirmDiscardLineEdit();
     void clearLineEditDraft();
 
+    /// Claim an unmodified Escape for the window while `armed`.
+    ///
+    /// **A key claimed here is a key the host stops receiving**, the same
+    /// bargain a quick button's shortcut makes — so the window arms this only
+    /// while a repeat is actually running, and Escape goes back to the far end
+    /// the moment the last one ends. The view knows nothing about what it is
+    /// stopping; it emits `stopRequested` and lets the window decide.
+    void setStopKeyArmed(bool armed) { m_stopKeyArmed = armed; }
+    bool stopKeyArmed() const { return m_stopKeyArmed; }
+
 public slots:
     /// Scroll the view back by `offset` lines; 0 is the live screen.
     void setViewOffset(int offset);
@@ -138,6 +148,9 @@ signals:
     void keyMacroRequested(const QString &path);
     /// A type-3 user key. Values are upstream's menu command ids.
     void keyCommandRequested(quint16 command);
+    /// Escape, while `setStopKeyArmed(true)`. The one key the window takes
+    /// back from the host, and only while there is something to stop.
+    void stopRequested();
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -228,6 +241,7 @@ private:
     bool m_rightAltDown = false;
     bool m_strictKeyMapping = false;
     bool m_deleteSendsDel = false;
+    bool m_stopKeyArmed = false;
 
     /// The two menu settings and the bar's current visibility, combined by
     /// `MainWindow`. `m_popupMenuPressed` consumes the matching release after
