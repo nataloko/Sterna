@@ -554,8 +554,15 @@ TerminalView::TerminalView(Session *session, QWidget *parent, const I18n *i18n)
     // separately about frontend state.
     connect(m_session, &Session::connectionChanged, this, [this] {
         clearLineEditDraft();
+        // Before `positionLineEditor`, which paints the line editor in the
+        // theme's background: the shade has to have moved by then.
+        m_theme.setConnected(m_session->isConnected());
         positionLineEditor();
+        // And a repaint of the whole view, not a damaged region — every cell
+        // the host did not colour is a cell whose background just moved.
+        update();
     });
+    m_theme.setConnected(m_session->isConnected());
 
     m_session->setCellPixels(m_theme.cellWidth(), m_theme.cellHeight());
 }

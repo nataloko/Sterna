@@ -3026,9 +3026,23 @@ pub struct Settings {
     ///
     /// On, and it costs nothing until a rule exists — matching runs over the visible
     /// rows as they are painted, so an empty rule set is an empty loop. The switch is
-    /// what Setup > Highlight matches writes, for turning every rule off at once
+    /// what View > Highlight matches writes, for turning every rule off at once
     /// without deleting any of them.
     pub color_highlighting: bool,
+    /// **`[Sterna]`**, because upstream has no idea a terminal can be idle: its
+    /// window is one session and closing the connection usually closes it.
+    ///
+    /// How far the terminal's background moves while nothing is connected, as a
+    /// percentage of the way towards the configured *foreground*. Towards the
+    /// foreground rather than towards black or white because a `#000` background
+    /// cannot be darkened and a `#fff` one cannot be lightened, and the configured
+    /// foreground is the one colour guaranteed to be visible against it — so the
+    /// shade shows up on any theme somebody has actually chosen. `0` turns it off.
+    ///
+    /// Only the default background moves. A cell the host coloured keeps the colour
+    /// the host asked for, and the text keeps its own: this says the terminal has
+    /// nobody on the other end, and it must not be mistaken for output.
+    pub color_disconnected_shade: i32,
     /// `ttset.c:718`, and the default is again the `else` branch.
     pub cursor_shape: CursorShape,
     /// `ttset.c:1227`.
@@ -4169,7 +4183,7 @@ pub struct Settings {
     /// compatible with. Whether the bar under the menu — port, connect, local echo,
     /// line edit, dark mode — is shown. It exists as a setting rather than as chrome nobody can remove:
     /// `window.popup_menu` and `window.hide_title` are about the *menu*, so neither
-    /// hides this, and Setup > Show toolbar writes it.
+    /// hides this, and View > Show toolbar writes it.
     pub window_toolbar: bool,
     /// **`[Sterna]`**, because simultaneous panes are a Sterna window feature rather
     /// than terminal state. Two states, and they are exclusive: `single` shows one
@@ -4185,7 +4199,7 @@ pub struct Settings {
     /// section of their own (`tt-config/src/buttons.rs`).
     ///
     /// On, but the bar is hidden while nobody has defined a button — an empty
-    /// toolbar is chrome for nothing. So this is what Setup > Show quick buttons
+    /// toolbar is chrome for nothing. So this is what View > Show quick buttons
     /// writes, not what decides whether the bar exists.
     pub window_quick_buttons: bool,
     /// Which edge the bar is on. Qt lets a toolbar be dragged to any of the four,
@@ -4338,6 +4352,7 @@ impl Default for Settings {
             color_use_text_color: false,
             color_use_normal_background: false,
             color_highlighting: true,
+            color_disconnected_shade: 12,
             cursor_shape: CursorShape::default(),
             cursor_nonblinking: false,
             cursor_show_unfocused: true,
@@ -4877,6 +4892,11 @@ impl Settings {
                 false,
             ),
             color_highlighting: crate::schema::on_off(ini.get("Sterna", "Highlighting"), true),
+            color_disconnected_shade: crate::schema::clamped(
+                ini.get_int("Sterna", "DisconnectedShade", d.color_disconnected_shade) as i32,
+                0,
+                100,
+            ),
             cursor_shape: match ini.get("Tera Term", "CursorShape") {
                 Some(v) => CursorShape::from_ini(v),
                 None => d.cursor_shape,
@@ -6350,6 +6370,11 @@ impl Settings {
             "Sterna",
             "Highlighting",
             &if self.color_highlighting { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "DisconnectedShade",
+            &self.color_disconnected_shade.to_string(),
         );
         ini.set(
             "Tera Term",
@@ -8667,6 +8692,13 @@ impl Settings {
                     "Sterna",
                     "Highlighting",
                     &if self.color_highlighting { "on" } else { "off" }.to_string(),
+                );
+            }
+            "color.disconnected_shade" => {
+                ini.set(
+                    "Sterna",
+                    "DisconnectedShade",
+                    &self.color_disconnected_shade.to_string(),
                 );
             }
             "cursor.shape" => {
@@ -11052,6 +11084,7 @@ impl Settings {
             }
             .to_string(),
             "color.highlighting" => if self.color_highlighting { "on" } else { "off" }.to_string(),
+            "color.disconnected_shade" => self.color_disconnected_shade.to_string(),
             "cursor.shape" => self.cursor_shape.as_ini().to_string(),
             "cursor.nonblinking" => if self.cursor_nonblinking { "on" } else { "off" }.to_string(),
             "cursor.show_unfocused" => if self.cursor_show_unfocused {
@@ -11914,6 +11947,13 @@ impl Settings {
             }
             "color.highlighting" => {
                 self.color_highlighting = crate::schema::on_off(Some(value), true)
+            }
+            "color.disconnected_shade" => {
+                self.color_disconnected_shade = crate::schema::clamped(
+                    crate::schema::int(value, self.color_disconnected_shade),
+                    0,
+                    100,
+                )
             }
             "cursor.shape" => self.cursor_shape = CursorShape::from_ini(value),
             "cursor.nonblinking" => {
@@ -13388,7 +13428,17 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "on",
         label: None,
-        doc: "**`[Sterna]`**, because upstream has no pattern highlighting and so no key to be compatible with — its regex library lives in `ttpmacro`, a separate process that never sees the screen.  This is only the *switch*: the rules themselves are a list, which no schema row can be, and they live in a `[Sterna Highlights]` section of their own (`tt-config/src/highlight.rs`).  On, and it costs nothing until a rule exists — matching runs over the visible rows as they are painted, so an empty rule set is an empty loop. The switch is what Setup > Highlight matches writes, for turning every rule off at once without deleting any of them.",
+        doc: "**`[Sterna]`**, because upstream has no pattern highlighting and so no key to be compatible with — its regex library lives in `ttpmacro`, a separate process that never sees the screen.  This is only the *switch*: the rules themselves are a list, which no schema row can be, and they live in a `[Sterna Highlights]` section of their own (`tt-config/src/highlight.rs`).  On, and it costs nothing until a rule exists — matching runs over the visible rows as they are painted, so an empty rule set is an empty loop. The switch is what View > Highlight matches writes, for turning every rule off at once without deleting any of them.",
+    },
+    Field {
+        name: "color.disconnected_shade",
+        page: "color",
+        section: "Sterna",
+        key: "DisconnectedShade",
+        kind: Kind::IntClamp(0, 100),
+        default: "12",
+        label: None,
+        doc: "**`[Sterna]`**, because upstream has no idea a terminal can be idle: its window is one session and closing the connection usually closes it.  How far the terminal's background moves while nothing is connected, as a percentage of the way towards the configured *foreground*. Towards the foreground rather than towards black or white because a `#000` background cannot be darkened and a `#fff` one cannot be lightened, and the configured foreground is the one colour guaranteed to be visible against it — so the shade shows up on any theme somebody has actually chosen. `0` turns it off.  Only the default background moves. A cell the host coloured keeps the colour the host asked for, and the text keeps its own: this says the terminal has nobody on the other end, and it must not be mistaken for output.",
     },
     Field {
         name: "cursor.shape",
@@ -15758,7 +15808,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "on",
         label: None,
-        doc: "**`[Sterna]`**, because upstream has no toolbar and so no key to be compatible with. Whether the bar under the menu — port, connect, local echo, line edit, dark mode — is shown. It exists as a setting rather than as chrome nobody can remove: `window.popup_menu` and `window.hide_title` are about the *menu*, so neither hides this, and Setup > Show toolbar writes it.",
+        doc: "**`[Sterna]`**, because upstream has no toolbar and so no key to be compatible with. Whether the bar under the menu — port, connect, local echo, line edit, dark mode — is shown. It exists as a setting rather than as chrome nobody can remove: `window.popup_menu` and `window.hide_title` are about the *menu*, so neither hides this, and View > Show toolbar writes it.",
     },
     Field {
         name: "window.panel_layout",
@@ -15778,7 +15828,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "on",
         label: None,
-        doc: "**`[Sterna]`** again, and these two are only the *bar*: the buttons on it are a list, which no schema row can be, and they live in a `[Sterna Buttons]` section of their own (`tt-config/src/buttons.rs`).  On, but the bar is hidden while nobody has defined a button — an empty toolbar is chrome for nothing. So this is what Setup > Show quick buttons writes, not what decides whether the bar exists.",
+        doc: "**`[Sterna]`** again, and these two are only the *bar*: the buttons on it are a list, which no schema row can be, and they live in a `[Sterna Buttons]` section of their own (`tt-config/src/buttons.rs`).  On, but the bar is hidden while nobody has defined a button — an empty toolbar is chrome for nothing. So this is what View > Show quick buttons writes, not what decides whether the bar exists.",
     },
     Field {
         name: "window.quick_buttons_area",

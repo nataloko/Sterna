@@ -102,6 +102,11 @@ struct Harness {
     Harness()
     {
         view.resize(80 * view.theme().cellWidth(), 24 * view.theme().cellHeight());
+        // A session this harness feeds bytes into is a session with something
+        // on the other end, and saying so keeps `color.disconnected_shade` out
+        // of every background these tests assert. The shade has a test of its
+        // own; see `test_an_idle_terminal_is_a_different_shade`.
+        view.theme().setConnected(true);
     }
 
     void feed(const char *bytes)
@@ -378,6 +383,55 @@ void test_dark_mode_changes_only_the_terminal_palette()
     h.render();
     CHECK(h.view.theme().defaultForeground() == kBlack);
     CHECK(h.view.theme().defaultBackground() == kWhite);
+}
+
+/// A terminal with nobody on the other end paints its own background a step
+/// towards its own foreground — and nothing else: not the text, and not a
+/// colour the host asked for by name.
+void test_an_idle_terminal_is_a_different_shade()
+{
+    Harness h;
+    h.feed("\033[41mred\033[0m plain");
+    h.render();
+    // The harness says "connected" so the rest of this file can assert plain
+    // colours; that is also this test's first half. `SGR 41` is read back
+    // rather than written down — which drawing index it lands on is
+    // `color.ansi_palette`'s business and is pinned elsewhere.
+    const QColor hostRed = h.bgAt(0, 0);
+    CHECK(hostRed != kWhite);
+    CHECK(h.view.theme().defaultBackground() == kWhite);
+    CHECK(h.bgAt(10, 0) == kWhite);
+
+    h.view.theme().setConnected(false);
+    h.render();
+
+    // 12 percent of the way from white towards black, the shipped default.
+    const QColor idle(225, 225, 225);
+    CHECK(h.view.theme().defaultBackground() == idle);
+    CHECK(h.bgAt(10, 0) == idle);
+    // Under the text as well as beside it: the shade is the terminal's
+    // background wherever the host did not choose one.
+    CHECK(h.bgAt(5, 0) == idle);
+    // And not under `SGR 41`, which is a colour the host did choose.
+    CHECK(h.bgAt(0, 0) == hostRed);
+    // The text is untouched — a dimmed screen would be saying something about
+    // the output rather than about the session. Asked of the resolver rather
+    // than of a pixel, because a glyph's edge pixels are a blend of the two.
+    TtCell plain {};
+    QColor fg;
+    QColor bg;
+    h.view.theme().resolve(plain, false, false, &fg, &bg);
+    CHECK(fg == kBlack);
+    CHECK(bg == idle);
+
+    // Zero is off, and the setting is read where every other colour setting is.
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("color.disconnected_shade"),
+                               QStringLiteral("0"), &error));
+    h.view.applySettings();
+    h.render();
+    CHECK(h.view.theme().defaultBackground() == kWhite);
+    CHECK(h.bgAt(10, 0) == kWhite);
 }
 
 void test_osc_colours_reach_the_painter()
@@ -3212,6 +3266,12 @@ void test_the_connect_bar_is_a_view_of_the_session()
     const QPalette windowPalette = window.palette();
     auto *view = window.findChild<TerminalView *>();
     CHECK(view != nullptr);
+    if (view) {
+        // This window has connected to nothing, so its background carries
+        // `color.disconnected_shade` — which is a different question from the
+        // one below, and would put the shade into every number here.
+        view->theme().setConnected(true);
+    }
     darkAction->trigger();
     CHECK(window.session()->setting(QStringLiteral("terminal.dark_mode"))
           == QStringLiteral("on"));
@@ -3226,7 +3286,7 @@ void test_the_connect_bar_is_a_view_of_the_session()
     darkAction->trigger();
     CHECK(view && view->theme().defaultBackground() == kWhite);
 
-    // Shipped on, and the Setup item is the same switch as the setting.
+    // Shipped on, and the View item is the same switch as the setting.
     CHECK(!bar->isHidden());
     CHECK(showAction->isChecked());
     QString error;
@@ -3750,6 +3810,7 @@ int main(int argc, char **argv)
     test_truecolor_resolves_through_upstreams_search();
     test_ansi_palette_changes_the_search_and_the_painter_together();
     test_dark_mode_changes_only_the_terminal_palette();
+    test_an_idle_terminal_is_a_different_shade();
     test_osc_colours_reach_the_painter();
     test_reverse_and_screen_reverse();
     test_a_visual_bell_inverts_the_screen_and_puts_it_back();

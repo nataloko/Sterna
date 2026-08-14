@@ -58,6 +58,41 @@ Theme::Theme()
     m_font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     m_font.setPointSizeF(11.0);
     setFont(m_font);
+    updateBackground();
+}
+
+QColor Theme::shaded(const QColor &background) const
+{
+    if (m_connected || m_shade <= 0) {
+        return background;
+    }
+    // Towards the configured foreground, not towards black or white: `#000`
+    // cannot be darkened and `#fff` cannot be lightened, and `QColor::lighter`
+    // scales the HSV value, so on a black background it returns black and the
+    // whole feature would be invisible on the commonest theme there is. The
+    // foreground is the one colour a person choosing a terminal theme has
+    // guaranteed is visible against this one.
+    const QColor &to = m_normal[0];
+    const auto mix = [this](int from, int toward) {
+        return from + (toward - from) * m_shade / 100;
+    };
+    return QColor(mix(background.red(), to.red()),
+                  mix(background.green(), to.green()),
+                  mix(background.blue(), to.blue()));
+}
+
+void Theme::updateBackground()
+{
+    m_background = shaded(m_normal[1]);
+}
+
+void Theme::setConnected(bool connected)
+{
+    if (connected == m_connected) {
+        return;
+    }
+    m_connected = connected;
+    updateBackground();
 }
 
 void Theme::readColors(const Session &session)
@@ -103,6 +138,11 @@ void Theme::readColors(const Session &session)
     if (readFlag(session, "terminal.dark_mode", false)) {
         applyDarkPalette();
     }
+
+    // Last, because every branch above can have moved either half of the pair
+    // the shade is computed from — and this is the whole answer to
+    // `colorsChanged` as well, so an `OSC 11` on an idle terminal moves it.
+    updateBackground();
 }
 
 void Theme::applyDarkPalette()
@@ -151,6 +191,8 @@ void Theme::applySettings(const Session &session)
         readFlag(session, "color.url_underline", m_urlUnderlineEnabled);
     m_drawResizedFont =
         readFlag(session, "font.draw_resized", m_drawResizedFont);
+    m_shade = readInt(session, "color.disconnected_shade", m_shade);
+    updateBackground();
 
     const int left = readInt(session, "font.space_left", m_spaceLeft);
     const int right = readInt(session, "font.space_right", m_spaceRight);
@@ -326,18 +368,24 @@ void Theme::resolve(const TtCell &cell, bool selected, bool screenReverse,
     // PC-style-16 modes — and both of those are off in a stock Tera Term. When
     // the settings schema makes `ColorFlag` reachable, that function is what
     // goes here.
+    // Whether the background about to be painted is one the *host* asked for,
+    // which is the only thing the idle shade at the bottom must not touch.
+    bool hostBackground = false;
+
     if (m_ansiColor && (attrs & TT_ATTR2_FORE)) {
         const QColor &c = paletteColor(cell.fg);
         if (!reverse) {
             *fg = c;
         } else {
             *bg = c;
+            hostBackground = true;
         }
     }
     if (m_ansiColor && (attrs & TT_ATTR2_BACK)) {
         const QColor &c = paletteColor(cell.bg);
         if (!reverse) {
             *bg = c;
+            hostBackground = true;
         } else {
             *fg = c;
         }
@@ -356,6 +404,9 @@ void Theme::resolve(const TtCell &cell, bool selected, bool screenReverse,
         const QColor *safe = reverse ? m_reverse : m_normal;
         *fg = safe[0];
         *bg = safe[1];
+        // The repair throws the host's pair away and puts a configured one
+        // back, so what is on screen is once again this program's colour.
+        hostBackground = false;
     }
 
     // And a highlight rule wins over all of it, including the repair above —
@@ -364,9 +415,23 @@ void Theme::resolve(const TtCell &cell, bool selected, bool screenReverse,
     if (over) {
         if (over->fg.isValid()) {
             *(reverse ? bg : fg) = over->fg;
+            hostBackground = hostBackground || reverse;
         }
         if (over->bg.isValid()) {
             *(reverse ? fg : bg) = over->bg;
+            hostBackground = hostBackground || !reverse;
         }
+    }
+
+    // Last of all, and only over a background nobody asked for by name: the
+    // idle shade. A terminal with nothing on the other end paints its own
+    // background a step towards its own foreground, so an idle tile is
+    // recognisable across a tiled window without reading a word of it.
+    //
+    // Text is not touched and neither is a colour the host or a highlight rule
+    // chose — this is a fact about the session, and a screen that dimmed its
+    // output would be saying something about the output instead.
+    if (!hostBackground) {
+        *bg = shaded(*bg);
     }
 }

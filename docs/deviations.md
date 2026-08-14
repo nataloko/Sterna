@@ -27,6 +27,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 10 | A terminal-only dark mode | Colours come only from `TERATERM.INI` and the host | 0.2.1 |
 | 11 | The right button raises Tera Term's own paste menu | The same menu, behind a key that ships off, so the right button pastes at once | 0.2.4 |
 | 12 | Settings-dialog changes can be saved automatically | Only Setup > Save setup persists them | 0.2.5 |
+| 13 | The terminal background is a different shade while nothing is connected | The background is what the file and the host say, always | 0.2.6 |
 
 ---
 
@@ -460,3 +461,36 @@ Setup > Save setup remains the full, backed-up save.
 been applied; those changes are not rolled back. If the first answer itself
 cannot be recorded, that window suppresses a repeat prompt, but the next launch
 asks again because the core INI parser still sees the key as absent.
+
+---
+
+## 13. An idle terminal is a different shade
+
+While a terminal has no connection, the background of every cell the host did
+not colour is painted `color.disconnected_shade` percent of the way from
+`color.normal`'s background towards its foreground — 12 percent by default, and
+`0` turns it off. Nothing else changes: the text keeps its colour, and a cell
+the host or a highlight rule coloured keeps the colour it was given.
+
+**Why.** Tera Term's window is one session, and closing the connection usually
+closes the window, so "is anything on the other end" is rarely a question there.
+Here one window holds several sessions and a tiled window shows them at once,
+where a terminal whose device has gone is otherwise indistinguishable from one
+that is merely quiet — the last screenful is still on it. The status line under
+each terminal already says so in words; this is the same fact at a glance,
+across a grid, without reading.
+
+**Why towards the foreground.** A `#000` background cannot be darkened and a
+`#fff` one cannot be lightened, and `QColor::lighter` scales the HSV value, so
+on the commonest terminal theme of all a factor would have produced no shade at
+all. The configured foreground is the one colour someone choosing a theme has
+guaranteed is visible against the background. A consequence worth knowing: a
+cell already painted in the foreground colour — a reversed one, or the whole
+screen under DECSCNM — does not move, because it is already at the far end of
+that blend.
+
+**What is unchanged.** The key is `[Sterna] DisconnectedShade`, which upstream
+neither reads nor writes, and nothing else here has a `TERATERM.INI` meaning.
+The shade lives in the painter alone: the grid, the session log, a macro's
+`wait` and every report a host can ask for are untouched, so nothing on the
+wire can tell whether it is applied.

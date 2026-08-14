@@ -563,9 +563,24 @@ color.use_normal_background | bool | Tera Term | UseNormalBGColor | off | DLG_WI
 #
 # On, and it costs nothing until a rule exists — matching runs over the visible
 # rows as they are painted, so an empty rule set is an empty loop. The switch is
-# what Setup > Highlight matches writes, for turning every rule off at once
+# what View > Highlight matches writes, for turning every rule off at once
 # without deleting any of them.
 color.highlighting | bool | Sterna | Highlighting | on | -
+
+# **`[Sterna]`**, because upstream has no idea a terminal can be idle: its
+# window is one session and closing the connection usually closes it.
+#
+# How far the terminal's background moves while nothing is connected, as a
+# percentage of the way towards the configured *foreground*. Towards the
+# foreground rather than towards black or white because a `#000` background
+# cannot be darkened and a `#fff` one cannot be lightened, and the configured
+# foreground is the one colour guaranteed to be visible against it — so the
+# shade shows up on any theme somebody has actually chosen. `0` turns it off.
+#
+# Only the default background moves. A cell the host coloured keeps the colour
+# the host asked for, and the text keeps its own: this says the terminal has
+# nobody on the other end, and it must not be mistaken for output.
+color.disconnected_shade | int_clamp(0..100) | Sterna | DisconnectedShade | 12 | -
 
 # --- cursor ------------------------------------------------------------------
 
@@ -2040,7 +2055,7 @@ window.corner_dontround | bool | Tera Term | WindowCornerDontround | off | -
 # compatible with. Whether the bar under the menu — port, connect, local echo,
 # line edit, dark mode — is shown. It exists as a setting rather than as chrome nobody can remove:
 # `window.popup_menu` and `window.hide_title` are about the *menu*, so neither
-# hides this, and Setup > Show toolbar writes it.
+# hides this, and View > Show toolbar writes it.
 window.toolbar | bool | Sterna | Toolbar | on | -
 
 # **`[Sterna]`**, because simultaneous panes are a Sterna window feature rather
@@ -2058,7 +2073,7 @@ window.panel_layout | enum(single/*=Single,tiled/two/four=Tiled) | Sterna | Pane
 # section of their own (`tt-config/src/buttons.rs`).
 #
 # On, but the bar is hidden while nobody has defined a button — an empty
-# toolbar is chrome for nothing. So this is what Setup > Show quick buttons
+# toolbar is chrome for nothing. So this is what View > Show quick buttons
 # writes, not what decides whether the bar exists.
 window.quick_buttons | bool | Sterna | QuickButtons | on | -
 

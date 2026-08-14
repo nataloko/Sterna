@@ -340,6 +340,18 @@ pair, after reversal has been decided. In the reversed arm it uses the
 configured reverse pair even when that pair is otherwise disabled. The grabbed
 pixel tests pin these combinations because no core or differential dump can.
 
+**And one shade that is not upstream's at all.** While the session has nothing
+on the other end, `Theme::resolve` moves the background it arrived at
+`color.disconnected_shade` percent of the way towards `color.normal`'s
+foreground — but only when the host did not choose that background itself, which
+is what the `hostBackground` flag through the function tracks. So a bold run,
+whose configured pair carries its own background, shades with everything around
+it, while `SGR 41` does not. The shade is why `Theme` holds one piece of
+session state (`setConnected`), and why `TerminalView` repaints the whole view
+on a connection edge rather than a damaged region. `docs/deviations.md` entry
+13 has the reasoning, including why the blend runs towards the foreground and
+what that means for a reversed cell.
+
 ## Highlight rules are the one colour the host did not choose
 
 Everything in the section above is upstream's, and every colour in it is

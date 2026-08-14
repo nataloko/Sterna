@@ -79,9 +79,27 @@ public:
     /// nearest-colour search against upstream's palette.
     const QColor &paletteColor(uint32_t index) const { return m_palette[index & 0xFF]; }
 
-    const QColor &defaultBackground() const { return m_normal[1]; }
+    /// The background a cell the host said nothing about is painted with.
+    ///
+    /// Not `m_normal[1]` itself: while nothing is connected this is that
+    /// colour moved `color.disconnected_shade` percent of the way towards the
+    /// foreground, so an idle terminal is a different shade at a glance. See
+    /// `setConnected`.
+    const QColor &defaultBackground() const { return m_background; }
     const QColor &defaultForeground() const { return m_normal[0]; }
     const QColor &cursorColor() const { return m_cursor; }
+
+    /// Whether this terminal has something on the other end.
+    ///
+    /// The one piece of session state the painter holds, and it is here rather
+    /// than in the view because it moves a *colour*: `resolve` shades every
+    /// background the host did not choose, so the shade covers the attribute
+    /// pairs' backgrounds too and a screen with bold text on it does not come
+    /// out in unshaded patches.
+    ///
+    /// Towards the foreground, which is why a reversed cell does not move: the
+    /// blend's far end is the colour it is already painted in.
+    void setConnected(bool connected);
 
     const QFont &font() const { return m_font; }
     /// The same face, bolded — cached because constructing a QFont per run of
@@ -116,6 +134,9 @@ public:
 private:
     void applyDarkPalette();
     void recomputeMetrics();
+    /// `m_normal[1]` moved towards `m_normal[0]`, or itself when connected.
+    void updateBackground();
+    QColor shaded(const QColor &background) const;
 
     QColor m_palette[256];
     // Each pair is { foreground, background }, as upstream stores them.
@@ -126,6 +147,12 @@ private:
     QColor m_url[2];
     QColor m_reverse[2];
     QColor m_cursor;
+    QColor m_background;
+
+    // `color.disconnected_shade`, and whether it currently applies. A window
+    // opens before it has connected, so the shade is on from the first frame.
+    int m_shade = 12;
+    bool m_connected = false;
 
     // `ts.ColorFlag`, `ts.FontFlag` and `ts.UseNormalBGColor`. Upstream's
     // defaults until `applySettings` reads the file.

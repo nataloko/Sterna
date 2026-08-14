@@ -15,6 +15,9 @@ are available from the [GitHub releases page].
   and its recording counter — instead of one shared line for the window. A
   transfer result or a message from a background session now appears on the
   terminal it belongs to.
+- The terminal background is now a different shade while nothing is connected,
+  so an idle terminal is recognisable at a glance in a tiled window. How far it
+  moves is `[Sterna] DisconnectedShade`; `0` turns it off.
 
 ### Fixed
 
@@ -24,11 +27,19 @@ are available from the [GitHub releases page].
   Local echo or Line edit, or changing anything in Setup, had restored it to
   the size in the settings file.
 - Changing the terminal size in Setup now resizes the window.
+- Double-clicking the title bar maximises the window on GNOME. The AppImage now
+  carries Qt's Adwaita window decoration, which also gives the window the
+  desktop's own title bar instead of Qt's fallback.
 
 ### Changed
 
 - `PanelLayout` in `[Sterna]` is now `single` or `tiled`. Files written by
   earlier versions saying `two` or `four` open tiled.
+- Setup lists one Preferences item instead of one item per settings page; the
+  dialog's own tabs and search box are the way to a page.
+- Show toolbar, Show quick buttons and Highlight matches moved from Setup to
+  View. Their editors — Highlighting and Quick buttons — stay in Setup.
+- Help's Release page moved into the About dialog, beside Check for Updates.
 
 ## [0.2.5] - 2026-08-14
 
