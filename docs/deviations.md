@@ -268,6 +268,23 @@ bar itself: `QuickButtons` (`window.quick_buttons`, on) and `QuickButtonsArea`
 dimension, so the bar goes where there is width to spare rather than where the
 connect bar is).
 
+**A button can repeat**: *n* sends every *x.x* seconds, or until stopped
+(`Repeat` and `IntervalMs`). Upstream has nothing of the kind — the nearest
+thing is a macro, which is a file, an interpreter and a window. The clock is
+the frontend's (`shell/src/QuickButtonRepeat.{h,cpp}`) and deliberately not the
+core's: the engine is a function of its bytes, so it records what a button was
+asked for and schedules nothing, the same split the bell's governor makes. A
+run stops on a second press, on Escape, from the bar's context menu, when the
+list is edited, or when its link goes away, and it stays bound to the session
+it started on rather than following the active tab.
+
+**That Escape is the one key this program takes from the host without being
+asked to** — and only while a run is going, which is the whole of the
+justification. It is the same bargain a shortcut makes (see below), made
+temporarily and only when there is something a person is likely to want
+stopped in a hurry; `TerminalView::setStopKeyArmed` is where it is claimed and
+released, and nothing arms it when nothing is repeating.
+
 **Two decisions worth defending.** The bar does not exist until a button does,
 where YAT — the program this borrows the idea from — shows twelve
 `<Define...>` placeholders; discoverability is worth a menu item, not permanent

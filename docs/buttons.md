@@ -48,6 +48,39 @@ A button that sends is greyed out while nothing is connected. A menu-command
 button is not, because Save setup and the settings dialog work perfectly well
 offline.
 
+## Repeating a command
+
+**Repeat** sends the same command more than once: *n* times every *x.x*
+seconds, or — with the count wound below one, where it reads **Until
+stopped** — for as long as it is left running. A `show clock` every five
+seconds while something is being chased down, a keepalive on a console that
+drops idle sessions, a `show interfaces` every minute during a change window.
+
+The first send happens the moment the button is pressed; the interval is the
+gap between one send and the next, so *3 times every 2 s* takes four seconds
+and not six.
+
+While a button is repeating it shows as pressed with a **⟳** after its label,
+and its tooltip counts down the sends still to come. **There are four ways it
+stops:**
+
+- **press the button again** — the second press is a stop, and it is not
+  confirmed even on a button that asks before running;
+- **Escape in the terminal**, which stops every run at once. Escape reaches the
+  host as usual the rest of the time — the terminal only claims it while
+  something is actually repeating;
+- **right-click the button > Stop repeating**;
+- by itself, when the count runs out, when the connection goes away, or when
+  the button list is edited.
+
+A run belongs to the session it was started on. Switching tabs to watch
+something else does not redirect it onto the console that happens to be in
+front, and closing that tab ends it.
+
+The interval has a floor of 0.1 s and a ceiling of an hour. The floor is not
+negotiable through the dialog or the file: it is what stops a mistyped number
+turning a button into a flood.
+
 ## Shortcuts, and the one thing to know about them
 
 **A shortcut is a key the terminal stops receiving.** Qt gives an action first
@@ -95,6 +128,11 @@ Button2Confirm=on
 Button3Label=Break
 Button3Kind=command
 Button3Value=50430
+
+Button4Label=Poll
+Button4Value=show clock$0D
+Button4Repeat=forever
+Button4IntervalMs=5000
 ```
 
 `Button1` … `Button99`, in that order; a gap is skipped. Only `Value` is
@@ -107,6 +145,8 @@ required — a button with no `Label` is captioned with its own command.
 | `Value` | The command. `$HH`-escaped for `text` and `bytes`; a file path for `macro`; a decimal menu id for `command` |
 | `Shortcut` | A Qt key sequence, such as `Ctrl+Alt+1`. Absent means none |
 | `Confirm` | `on` to ask first. Anything else is off |
+| `Repeat` | How many sends one press makes. `1` if absent; `forever` (or `0`) for a run only a person stops; anything unreadable is one send |
+| `IntervalMs` | Milliseconds between sends. 1000 if absent, and held between 100 and 3600000. Milliseconds, so the file needs no decimal point — the dialog is where this is seconds |
 
 `Value`'s escape is Tera Term's own — the one `Answerback` and `DelimList` are
 stored in. `$0D` is a Return, `$0A` a line feed, `$24` a literal `$`. Anything

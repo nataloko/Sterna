@@ -835,7 +835,9 @@ void render_widgets()
         "Button2Shortcut=Ctrl+Alt+2\r\n"
         "Button3Label=Save config\r\nButton3Value=write memory$0D\r\n"
         "Button4Label=Reload\r\nButton4Value=reload$0D\r\nButton4Confirm=on\r\n"
-        "Button5Label=Break\r\nButton5Kind=command\r\nButton5Value=50430\r\n");
+        "Button5Label=Break\r\nButton5Kind=command\r\nButton5Value=50430\r\n"
+        "Button6Label=Poll\r\nButton6Value=show clock$0D\r\n"
+        "Button6Repeat=forever\r\nButton6IntervalMs=5000\r\n");
 
     MainWindow window(ini);
     window.resize(760, 400);
@@ -849,6 +851,13 @@ void render_widgets()
     // overlaps the fields in the image and nowhere else.
     dialog.adjustSize();
     dialog.grab().save(g_writeTo + QStringLiteral("/quick-buttons-editor.png"));
+
+    // ...and the repeat row with something in it, which is the only state in
+    // which it shows an interval.
+    QuickButtonsDialog repeating(loadQuickButtons(ini), window.session(), &window);
+    repeating.selectRow(5);
+    repeating.adjustSize();
+    repeating.grab().save(g_writeTo + QStringLiteral("/quick-buttons-repeat.png"));
 }
 
 } // namespace

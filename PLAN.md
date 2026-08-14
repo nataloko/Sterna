@@ -5712,6 +5712,14 @@ Eight so far, all 2026-08-13:
    choices are argued in `docs/deviations.md` — the bar does not exist until a
    button does, and no button ships with a shortcut, because a Qt action
    outranks the terminal widget and takes the key from the host silently.
+   A button can also **repeat** — *n* sends every *x.x* seconds, or until it is
+   stopped. The count and the interval are two more keys in the same section;
+   the clock is not, and cannot be: the engine is a function of its bytes, so
+   `QuickButtonRepeat` schedules and the core only records what was asked for,
+   the same split the bell's governor makes. A run stops on a second press, on
+   Escape in the terminal, when the list is edited, or when the link it was
+   sending down goes away — and it stays bound to the session it started on
+   rather than following whichever tab is in front.
 8. **Editable lines for every connection type**, a small local editor at the
    terminal cursor that holds printable input until Return. It is deliberately
    separate from telnet LINEMODE: serial, SSH, raw TCP and local shells get the
