@@ -148,6 +148,7 @@ add_library(sterna_shell STATIC
     src/Macro.cpp
     src/Plugins.cpp
     src/ConnectBar.cpp
+    src/Recent.cpp
     src/Control.cpp
     src/Highlights.cpp
     src/HighlightsDialog.cpp
