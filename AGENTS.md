@@ -291,6 +291,16 @@ Oracle and core:
 
 The AppImage, where two of the three failures are silent:
 
+- **`LD_LIBRARY_PATH` is exported, so every child gets our libraries** — the
+  login shell, everything its rc files run, the browser a URL opens. They are
+  host programs built against the host's libraries and ours are older
+  (`manylinux_2_28`), so the first prompt fills with `no version information
+  available` and a `version 'MOUNT_2_40' not found` that is fatal to whatever
+  hit it. `environment::unshadowBundledLibraries()` takes the `$APPDIR`
+  entries back out at startup, which is safe because **glibc reads
+  `LD_LIBRARY_PATH` once, at `exec`** — a later `dlopen` uses the captured
+  list, so the bundled Qt plugins still resolve. One call at startup, not a
+  scrub at each spawn site; the next spawn site would forget.
 - **The update signature covers bytes, not an AppImage identity.** Verify the
   detached manifest before trusting even its URL or size; then the download's
   signed size, SHA-256 and Ed25519 signature. Linux: set executable perms on

@@ -41,6 +41,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "Environment.h"
 #include "MainWindow.h"
 #include "Session.h"
 #include "WindowTitle.h"
@@ -845,6 +846,56 @@ void test_a_host_name_connects_and_logs()
         QStringLiteral("hello from the far end")));
 }
 
+/// The AppImage's library path must not reach the shell the terminal opens.
+///
+/// It is a launch property rather than a transport one, which is why it is
+/// here: the same call runs before `QApplication` for every way of starting,
+/// and every child — the login shell, whatever its rc files run, the browser a
+/// URL opens — inherits whatever it left behind.
+void test_the_bundle_does_not_follow_a_child_process()
+{
+    const QByteArray hadAppDir = qgetenv("APPDIR");
+    const QByteArray hadPath = qgetenv("LD_LIBRARY_PATH");
+
+    // Outside an AppImage there is nothing to undo, and a developer's own
+    // LD_LIBRARY_PATH is not ours to edit.
+    qunsetenv("APPDIR");
+    qputenv("LD_LIBRARY_PATH", "/opt/mine/lib");
+    environment::unshadowBundledLibraries();
+    CHECK(qgetenv("LD_LIBRARY_PATH") == QByteArray("/opt/mine/lib"));
+
+    // The shipped case: the bundle is the only entry, so the variable goes
+    // rather than being left empty — an empty LD_LIBRARY_PATH means the
+    // working directory to `ld.so`, which is not what was there before.
+    qputenv("APPDIR", "/tmp/.mount_sterna42");
+    qputenv("LD_LIBRARY_PATH", "/tmp/.mount_sterna42/usr/lib");
+    environment::unshadowBundledLibraries();
+    CHECK(!qEnvironmentVariableIsSet("LD_LIBRARY_PATH"));
+
+    // ...and a user who had one of their own keeps exactly it, in order.
+    qputenv("LD_LIBRARY_PATH",
+            "/tmp/.mount_sterna42/usr/lib:/opt/mine/lib:/tmp/.mount_sterna42");
+    environment::unshadowBundledLibraries();
+    CHECK(qgetenv("LD_LIBRARY_PATH") == QByteArray("/opt/mine/lib"));
+
+    // A directory whose name merely starts the same way is somebody else's.
+    qputenv("LD_LIBRARY_PATH", "/tmp/.mount_sterna42-other/lib");
+    environment::unshadowBundledLibraries();
+    CHECK(qgetenv("LD_LIBRARY_PATH")
+          == QByteArray("/tmp/.mount_sterna42-other/lib"));
+
+    if (hadAppDir.isEmpty()) {
+        qunsetenv("APPDIR");
+    } else {
+        qputenv("APPDIR", hadAppDir);
+    }
+    if (hadPath.isEmpty()) {
+        qunsetenv("LD_LIBRARY_PATH");
+    } else {
+        qputenv("LD_LIBRARY_PATH", hadPath);
+    }
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -872,6 +923,7 @@ int main(int argc, char **argv)
     test_a_window_that_closes_with_a_macro_still_running();
     test_the_startup_macro_setting_and_its_overrides();
     test_a_host_name_connects_and_logs();
+    test_the_bundle_does_not_follow_a_child_process();
 
     if (failures) {
         fprintf(stderr, "%d check(s) failed\n", failures);

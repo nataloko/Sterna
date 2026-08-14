@@ -353,6 +353,12 @@ cat > "$appdir/AppRun" <<'APPRUN'
 # are byte-for-byte the build inputs, un-patched, preserving the LGPL
 # substitution seam. Plugins are found through usr/bin/qt.conf.
 here=$(readlink -f "$(dirname "$0")")
+# The programs take their own libraries back out of LD_LIBRARY_PATH before
+# they start anything, so that a shell opened in the terminal gets the host's
+# libraries and not ours; they find them by APPDIR. The AppImage runtime sets
+# it, an extracted AppDir run directly has nobody to, and the scrub is keyed on
+# it — so it is set here rather than assumed.
+export APPDIR="${APPDIR:-$here}"
 export LD_LIBRARY_PATH="$here/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 for hook in "$here"/apprun-hooks/*.sh; do
 	[ -e "$hook" ] && . "$hook"

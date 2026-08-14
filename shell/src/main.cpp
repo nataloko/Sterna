@@ -6,6 +6,7 @@
 #include <QFileInfo>
 
 #include "Branding.h"
+#include "Environment.h"
 #include "MainWindow.h"
 #include "sterna.h"
 
@@ -133,6 +134,11 @@ int runTeraTerm(QApplication &app, const QStringList &args)
 
 int main(int argc, char **argv)
 {
+    // Before anything can start a child, and before Qt can decide to: an
+    // AppImage exports its own library path, and the shell this terminal opens
+    // is a host program that must not be given our libraries.
+    environment::unshadowBundledLibraries();
+
     QApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("sterna"));
     QGuiApplication::setApplicationDisplayName(QStringLiteral("Sterna"));

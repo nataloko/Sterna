@@ -34,6 +34,9 @@ are available from the [GitHub releases page].
 
 - A file-transfer result is now visible; it had been overwritten in the same
   instant it was written.
+- A shell opened in the AppImage build no longer inherits the AppImage's own
+  libraries. Programs run from that shell reported `no version information
+  available`, and some — `flatpak` among them — refused to start at all.
 - The SSH hosts offered in a picker no longer include ones that can only be
   reached by running another program. On a systemd machine that removes
   `.host` and `machine/.host`, which come from the system-wide configuration

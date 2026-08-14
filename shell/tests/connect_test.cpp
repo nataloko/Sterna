@@ -318,6 +318,18 @@ void test_the_dropdown_offers_every_group()
                                   Q_ARG(int, row));
     };
 
+    auto *connectAction =
+        bar.findChild<QAction *>(QStringLiteral("connectBarConnect"));
+    CHECK(connectAction != nullptr);
+
+    // **Assert what the button looks like, not only what triggering it does.**
+    // `QAction::trigger()` emits `triggered` whether or not the action is
+    // enabled, so a test that only triggers passes over a Connect button
+    // nobody can click — which is every path through this bar on a fresh
+    // window, because the field starts empty and Connect starts greyed.
+    CHECK(bar.destination().isEmpty());
+    CHECK(connectAction && !connectAction->isEnabled());
+
     // **Choosing a row fills the field and connects to nothing.** A popup
     // opens under the pointer, so the release that opened it lands on a row
     // and `activated` arrives without anybody having chosen anything.
@@ -325,12 +337,11 @@ void test_the_dropdown_offers_every_group()
     CHECK(chosen == -1);
     CHECK(typed.isEmpty());
     CHECK(bar.destination() == QStringLiteral("telnet 10.0.0.5:2323"));
+    // Filling the field is only half of an answer if the button stays grey.
+    CHECK(connectAction && connectAction->isEnabled());
 
     // ...and committing it opens the *record*, not the words: the label has
     // spaces in it and would otherwise be read as a command line.
-    auto *connectAction =
-        bar.findChild<QAction *>(QStringLiteral("connectBarConnect"));
-    CHECK(connectAction != nullptr);
     if (connectAction) {
         connectAction->trigger();
     }
