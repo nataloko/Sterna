@@ -211,7 +211,13 @@ void SettingsDialog::build()
 
     for (size_t i = 0; i < count; i++) {
         TtSettingField f;
-        if (!tt_settings_field(i, &f)) {
+        // The same skip `corePages` applies, and it has to be the same one:
+        // the Setup menu addresses these tabs by index, so a field with no
+        // page that produced a tab here and none there would silently move
+        // every later page's action onto the wrong tab. `QString::fromUtf8`
+        // on a null gives an empty string rather than refusing, so without
+        // this the drift has nothing to announce it.
+        if (!tt_settings_field(i, &f) || !f.page) {
             continue;
         }
         const QString name = QString::fromUtf8(f.name);

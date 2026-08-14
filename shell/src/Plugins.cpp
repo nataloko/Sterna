@@ -174,6 +174,11 @@ bool Plugins::saveSelectedSettings(const QString &path,
                                    const QVector<size_t> &ids,
                                    QString *outError) const
 {
+    // The two halves of this are the same answer for different reasons. An
+    // empty list is an ordinary no-op. A null handle reaches here only if a
+    // caller invented an id: the dialog builds plugin rows out of `settings()`,
+    // which is empty without a handle, so a non-empty list already implies one.
+    // `saveSettings` above gives the rest of the argument.
     if (!m_plugins || ids.isEmpty()) {
         return true;
     }

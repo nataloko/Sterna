@@ -1339,16 +1339,21 @@ void MainWindow::ensureAutoSaveChoice()
     if (m_autoSaveChoiceChecked) {
         return;
     }
-    m_autoSaveChoiceChecked = true;
 
     const QString setting = QStringLiteral("settings.auto_save_changes");
     bool present = false;
     QString error;
+    // Not latched yet, deliberately: a read that failed has not answered the
+    // question. Latching here would let one unreadable file — an NFS mount
+    // that blipped — suppress the prompt for the window's whole life, and the
+    // only trace would be a status-bar line behind the modal dialog that
+    // follows. The next Setup gets to ask again.
     if (!Session::settingPresent(m_settingsPath, setting, &present, &error)) {
         onNotice(tr("Could not check whether settings changes should be saved: %1")
                      .arg(error));
         return;
     }
+    m_autoSaveChoiceChecked = true;
     if (present) {
         return;
     }
