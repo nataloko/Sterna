@@ -6,7 +6,8 @@
 
 namespace environment {
 
-/// Take the AppImage's own libraries back out of `LD_LIBRARY_PATH`.
+/// Take the AppImage's own libraries back out of `LD_LIBRARY_PATH`, and its
+/// private `APPDIR` marker out of the child environment.
 ///
 /// The AppImage resolves its bundled Qt by `LD_LIBRARY_PATH` rather than by
 /// rpath — deliberately, because patchelf corrupts `.relr.dyn` libraries and
@@ -30,8 +31,10 @@ namespace environment {
 /// Removing entries under `$APPDIR` is safe for *this* process because glibc
 /// reads `LD_LIBRARY_PATH` once, at `exec`, into the search list `dlopen` then
 /// uses; changing the variable afterwards cannot move a plugin we have not
-/// loaded yet. That is why this is one call at startup rather than a scrub at
-/// every place a child is spawned — the next such place would forget.
+/// loaded yet. `APPDIR` itself is only the launcher's package-root marker and
+/// must not describe Sterna's mount to an extracted AppDir started from the
+/// shell. That is why this is one call at startup rather than a scrub at every
+/// place a child is spawned — the next such place would forget.
 ///
 /// Outside an AppImage `APPDIR` is unset and this does nothing.
 void unshadowBundledLibraries();

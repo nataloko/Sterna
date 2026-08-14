@@ -13,6 +13,11 @@ void unshadowBundledLibraries()
     if (appdir.isEmpty()) {
         return;
     }
+    // This names *our* package root. A shell and everything it starts are host
+    // programs; leaving it behind can make an extracted AppDir mistake
+    // Sterna's mount for its own. Nothing in this process needs the launcher's
+    // spelling after it has supplied the prefix below.
+    qunsetenv("APPDIR");
     const QByteArray path = qgetenv("LD_LIBRARY_PATH");
     if (path.isEmpty()) {
         return;

@@ -870,15 +870,18 @@ void test_the_bundle_does_not_follow_a_child_process()
     qputenv("APPDIR", "/tmp/.mount_sterna42");
     qputenv("LD_LIBRARY_PATH", "/tmp/.mount_sterna42/usr/lib");
     environment::unshadowBundledLibraries();
+    CHECK(!qEnvironmentVariableIsSet("APPDIR"));
     CHECK(!qEnvironmentVariableIsSet("LD_LIBRARY_PATH"));
 
     // ...and a user who had one of their own keeps exactly it, in order.
+    qputenv("APPDIR", "/tmp/.mount_sterna42");
     qputenv("LD_LIBRARY_PATH",
             "/tmp/.mount_sterna42/usr/lib:/opt/mine/lib:/tmp/.mount_sterna42");
     environment::unshadowBundledLibraries();
     CHECK(qgetenv("LD_LIBRARY_PATH") == QByteArray("/opt/mine/lib"));
 
     // A directory whose name merely starts the same way is somebody else's.
+    qputenv("APPDIR", "/tmp/.mount_sterna42");
     qputenv("LD_LIBRARY_PATH", "/tmp/.mount_sterna42-other/lib");
     environment::unshadowBundledLibraries();
     CHECK(qgetenv("LD_LIBRARY_PATH")
