@@ -30,7 +30,8 @@ if [ -x "$qmake" ] \
     && [ "$($qmake -query QT_VERSION)" = "$version" ] \
 	&& [ -e "$prefix/plugins/platforms/libqxcb.so" ] \
 	&& [ -e "$prefix/plugins/platforms/libqwayland.so" ] \
-	&& [ -e "$prefix/plugins/wayland-shell-integration/libxdg-shell.so" ]; then
+	&& [ -e "$prefix/plugins/wayland-shell-integration/libxdg-shell.so" ] \
+	&& [ -e "$prefix/plugins/wayland-decoration-client/libadwaita.so" ]; then
 	printf 'qt: using cached Qt %s in %s\n' "$version" "$prefix"
 	exit 0
 fi
@@ -95,6 +96,49 @@ echo "qt: building Qt Base" >&2
 cmake --build "$build/qtbase" --parallel "$CMAKE_BUILD_PARALLEL_LEVEL"
 cmake --install "$build/qtbase"
 
+# Two more modules, for one plugin: `wayland-decoration-client/libadwaita.so`.
+#
+# GNOME offers no server-side decorations — its compositor advertises no
+# `zxdg_decoration_manager_v1` at all — so on a GNOME desktop the title bar
+# above this window is drawn by Qt, by whichever decoration plugin is
+# installed. Qt Base ships only `bradient`, which draws a title bar out of
+# 1995 and handles exactly two gestures: a click on a button, and a drag to
+# move. It has no clock in it, so it cannot recognise a double click, and
+# double-clicking the title bar of a Qt-decorated window does nothing.
+#
+# The `adwaita` decoration is Qt's own, matches the desktop's own title bars,
+# and toggles maximised on a double click
+# (`qwaylandadwaitadecoration.cpp:673`). It lives in Qt Wayland rather than Qt
+# Base, and `QT_FEATURE_wayland_decoration_adwaita` turns itself off unless Qt
+# Svg is already installed — which is why the order here is load-bearing and
+# why an AppImage built without these two stages is silently the old title bar.
+#
+# Both are built against the Qt Base just installed, with `qt-cmake` so they
+# take its toolchain file, and both install into the same prefix. They are
+# purely additive: Qt Base's own Wayland client library and platform plugin
+# come out byte-identical. Between them they cost about ten minutes, most of
+# which is Qt Wayland's compositor — which nothing here ships, and which
+# cannot be skipped without patching its build.
+for module in qtsvg qtwayland; do
+	case $module in
+	qtsvg) sha=7f3cf02f4824bf03c2c5859ea6db173bf1482a1daf24e6cdf7bc78cfa26a8a94 ;;
+	qtwayland) sha=95788aa502f75441d4edf65932b235f76523084e13dbbb7b9ee2d207b32bd9b3 ;;
+	esac
+	archive=$(fetch_module "$module" "$sha")
+	echo "qt: building $module $version" >&2
+	rm -rf "${src:?}/$module" "${build:?}/$module"
+	mkdir -p "$src/$module" "$build/$module"
+	tar -xf "$archive" -C "$src/$module" --strip-components=1
+	"$prefix/bin/qt-cmake" -S "$src/$module" -B "$build/$module" \
+		-G "Unix Makefiles" \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX="$prefix" \
+		-DQT_BUILD_EXAMPLES=OFF \
+		-DQT_BUILD_TESTS=OFF
+	cmake --build "$build/$module" --parallel "$CMAKE_BUILD_PARALLEL_LEVEL"
+	cmake --install "$build/$module"
+done
+
 [ -e "$prefix/plugins/platforms/libqxcb.so" ] || {
 	echo "qt: the X11 platform plugin was not built" >&2
 	exit 2
@@ -105,6 +149,12 @@ cmake --install "$build/qtbase"
 }
 [ -e "$prefix/plugins/wayland-shell-integration/libxdg-shell.so" ] || {
 	echo "qt: the Wayland shell integration was not built" >&2
+	exit 2
+}
+# Silence is this one's failure mode: without it the window still opens, still
+# has a title bar, and only a double click on that bar behaves differently.
+[ -e "$prefix/plugins/wayland-decoration-client/libadwaita.so" ] || {
+	echo "qt: the Adwaita window decoration was not built" >&2
 	exit 2
 }
 

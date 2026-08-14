@@ -233,6 +233,13 @@ done
 	echo "appimage: no xdg-shell integration — the window would never map" >&2
 	exit 2
 }
+# GNOME draws no title bars, so this plugin *is* the title bar. Falling back to
+# Qt Base's `bradient` is not an error and not visible from a log: the window
+# opens, wearing a title bar from 1995 that cannot recognise a double click.
+[ -e "$appdir/usr/plugins/wayland-decoration-client/libadwaita.so" ] || {
+	echo "appimage: no Adwaita decoration — the title bar would be bradient's" >&2
+	exit 2
+}
 
 # And every Qt library those plugins ask for has to come along with them. A
 # target system has glibc and Mesa; it does not have Qt, which is the whole
