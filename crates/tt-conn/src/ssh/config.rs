@@ -447,6 +447,14 @@ impl SshConfig {
     /// Wildcards are excluded because `*` is not somewhere to connect, and
     /// negations because `!bastion` names a host the block is *about* rather
     /// than one it configures.
+    ///
+    /// So is anything that would have to be dialled through a `ProxyCommand`
+    /// or a `ProxyJump`, because this program cannot honour either. The list
+    /// is drawn from the system config as well as the user's, and a Linux
+    /// desktop has entries of exactly that shape in it whether or not anybody
+    /// asked: systemd ships `Host .host machine/.host` with a `ProxyCommand`
+    /// onto an `AF_UNIX` socket, and neither name has a wildcard to catch it.
+    /// Offered, they would resolve as ordinary DNS names and fail.
     pub fn aliases(&self) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         for block in &self.blocks {
@@ -462,7 +470,18 @@ impl SshConfig {
                 }
             }
         }
+        out.retain(|a| !self.needs_a_proxy(a));
         out
+    }
+
+    /// Whether reaching `alias` means running something this program does not
+    /// run. Asked of the *resolved* config rather than of the block that names
+    /// it, so a `Host *` carrying the `ProxyCommand` counts too.
+    fn needs_a_proxy(&self, alias: &str) -> bool {
+        self.resolve(alias, None)
+            .unsupported
+            .iter()
+            .any(|u| u == "proxycommand" || u == "proxyjump")
     }
 }
 
@@ -915,6 +934,31 @@ mod tests {
     fn aliases_leaves_out_the_wildcards() {
         let c = parse("Host web db\n  User x\nHost *.example.com\n  User y\nHost !secret\n");
         assert_eq!(c.aliases(), vec!["web".to_string(), "db".to_string()]);
+    }
+
+    #[test]
+    fn aliases_leaves_out_what_needs_a_proxy() {
+        // systemd's `20-systemd-ssh-proxy.conf`, verbatim enough: two names
+        // with no wildcard between them, reachable only by running a command
+        // this program does not run. `machine/.host` is caught twice over —
+        // by its own block and by the `machine/*` one below it.
+        let c = parse(concat!(
+            "Host .host machine/.host\n",
+            "  ProxyCommand /usr/lib/systemd/systemd-ssh-proxy unix/... %p\n",
+            "Host machine/* vsock/*\n",
+            "  ProxyCommand /usr/lib/systemd/systemd-ssh-proxy %h %p\n",
+            "Host web\n  User x\n",
+            "Host behind\n  ProxyJump bastion\n",
+        ));
+        assert_eq!(c.aliases(), vec!["web".to_string()]);
+    }
+
+    #[test]
+    fn a_wildcard_proxy_hides_the_host_it_covers() {
+        // The reason the filter asks the resolver rather than the block: the
+        // name is configured in one place and made unreachable in another.
+        let c = parse("Host web\n  User x\nHost *\n  ProxyCommand nc %h %p\n");
+        assert!(c.aliases().is_empty(), "{:?}", c.aliases());
     }
 
     /// A scratch `~/.ssh`-shaped directory, for the tests that need real files.

@@ -556,6 +556,13 @@ SSH:
 - **`~/.ssh/config` takes the FIRST value for a keyword** — a `Host *` block
   at the top overrides everything below, silently. `IdentityFile` is the one
   exception (accumulates).
+- **The alias list is drawn from `/etc/ssh/ssh_config` too, and a Linux
+  desktop's already names two hosts that cannot be dialled** — systemd ships
+  `Host .host machine/.host` with a `ProxyCommand` onto an `AF_UNIX` socket,
+  and neither name has a wildcard in it to catch. `aliases()` therefore asks
+  `resolve()` and drops anything reporting `proxycommand`/`proxyjump`; the
+  question a dropdown entry has to answer is not "is it a name" but "can this
+  program open it".
 - **The `known_hosts` algorithm name comes from the key blob, not
   `PublicKey::algorithm()`** — an RSA host verified via `rsa-sha2-512` is
   recorded as `ssh-rsa` (RFC 8332); using the negotiated name reports every

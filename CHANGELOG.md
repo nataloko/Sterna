@@ -34,6 +34,10 @@ are available from the [GitHub releases page].
 
 - A file-transfer result is now visible; it had been overwritten in the same
   instant it was written.
+- The SSH hosts offered in a picker no longer include ones that can only be
+  reached by running another program. On a systemd machine that removes
+  `.host` and `machine/.host`, which come from the system-wide configuration
+  rather than yours and would have failed if picked.
 - A window resized by hand keeps its size when a setting is applied. Clicking
   Local echo or Line edit, or changing anything in Setup, had restored it to
   the size in the settings file.

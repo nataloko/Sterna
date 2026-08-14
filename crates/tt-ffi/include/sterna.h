@@ -4334,12 +4334,15 @@ void tt_ssh_connect_answer_auth(TtSshConnect *c,
 void tt_ssh_connect_free(TtSshConnect *c);
 
 /**
- * Every `Host` alias in `~/.ssh/config` that names one machine — no
- * wildcards, no negations — for filling a picker. Null on failure.
+ * Every `Host` alias in `~/.ssh/config` and `/etc/ssh/ssh_config` that names
+ * one machine this program can reach — for filling a picker. Null on failure.
  *
- * A `Host *` block is not somewhere to connect, and a `!bastion` names a host
- * its block is *about* rather than one it configures. Offering either would
- * put entries in a dropdown that cannot be connected to.
+ * A `Host *` block is not somewhere to connect, a `!bastion` names a host its
+ * block is *about* rather than one it configures, and anything needing a
+ * `ProxyCommand` or `ProxyJump` cannot be opened from here at all. Offering
+ * any of them would put entries in a dropdown that cannot be connected to —
+ * and the last is not hypothetical: the system config a Linux desktop already
+ * has names `.host` and `machine/.host` that way.
  */
 TtStringList *tt_ssh_config_aliases(void);
 
