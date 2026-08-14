@@ -297,7 +297,9 @@ The AppImage, where two of the three failures are silent:
   (`manylinux_2_28`), so the first prompt fills with `no version information
   available` and a `version 'MOUNT_2_40' not found` that is fatal to whatever
   hit it. `environment::unshadowBundledLibraries()` takes the `$APPDIR`
-  entries back out at startup, which is safe because **glibc reads
+  entries back out at startup and unsets `APPDIR` itself, which is our package
+  root and not a child program's. Removing the library entries is safe because
+  **glibc reads
   `LD_LIBRARY_PATH` once, at `exec`** — a later `dlopen` uses the captured
   list, so the bundled Qt plugins still resolve. One call at startup, not a
   scrub at each spawn site; the next spawn site would forget.
@@ -574,9 +576,10 @@ SSH:
   desktop's already names two hosts that cannot be dialled** — systemd ships
   `Host .host machine/.host` with a `ProxyCommand` onto an `AF_UNIX` socket,
   and neither name has a wildcard in it to catch. `aliases()` therefore asks
-  `resolve()` and drops anything reporting `proxycommand`/`proxyjump`; the
-  question a dropdown entry has to answer is not "is it a name" but "can this
-  program open it".
+  `resolve()` and drops anything whose effective first `ProxyCommand` or
+  `ProxyJump` requires a relay; either directive's `none` value is a direct
+  connection and stays. The question a dropdown entry has to answer is not
+  "is it a name" but "can this program open it".
 - **The `known_hosts` algorithm name comes from the key blob, not
   `PublicKey::algorithm()`** — an RSA host verified via `rsa-sha2-512` is
   recorded as `ssh-rsa` (RFC 8332); using the negotiated name reports every
@@ -941,9 +944,11 @@ The parser's own switches:
   below), so it puts each keystroke on a new line. It is reproduced exactly, and
   `DETECT` is Sterna's own and the default (deviation 9): the first LF resolves
   it — a CR immediately before means `CR LF` and the mode becomes `CR`, anything
-  else means `LF` alone — and `Session::connect` clears the decision, because a
-  new far end need not agree with the last one. Differential case 33 is AUTO, so
-  it stays comparable; nothing in `oracle/` can run DETECT.
+  else means `LF` alone. VT and FF call `LineFeed` directly upstream and are not
+  evidence. `Session::connect` clears the decision because a new far end need
+  not agree with the last one; explicitly changing the mode clears it too, while
+  applying an unrelated setting must not. Differential case 33 is AUTO, so it
+  stays comparable; nothing in `oracle/` can run DETECT.
 - **Debug display restores the wrong attribute** — `PutDebugChar` saves
   `svCharAttr` and restores `char_attr` (`charset.cpp:757`). Reproduced;
   the obvious fix changes what the next character looks like.

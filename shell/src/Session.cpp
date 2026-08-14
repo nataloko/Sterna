@@ -413,10 +413,10 @@ void Session::disconnectPort()
     delete m_notifier;
     m_notifier = nullptr;
     tt_session_disconnect(m_session);
-    // A deliberate disconnect takes the same upstream outcome branch as a
-    // dropped line: clear the screen or ask the network window to close. The
-    // caller already knows the connection changed, so the core does not also
-    // manufacture a generic Disconnected notice for this path.
+    // A deliberate disconnect still takes the clear-screen outcome branch,
+    // but never AutoWinClose: that setting is for a line which ended by itself.
+    // The caller already knows the connection changed, so the core does not
+    // also manufacture a generic Disconnected notice for this path.
     pumpAndDispatch(0);
     emit connectionChanged();
 }

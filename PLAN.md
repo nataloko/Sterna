@@ -4088,13 +4088,16 @@ that boundary.
 `crates/tt-config/`, `tt-session`, the C ABI and the shell, 2026-08-10.
 `AutoWinClose` was already parsed — including `/AUTOWINCLOSE=` — but had no
 window behavior behind it. `ClearScreenOnCloseConnection` was the remaining
-key in the same branch. Both now act whether the far end disappears, a write
-discovers the dead link, or the user chooses Disconnect.
+key in the same branch. Clear screen acts whether the far end disappears, a
+write discovers the dead link, or the user chooses Disconnect; auto-close is
+reserved for the two spontaneous paths.
 
 **Auto-close is network-only.** `vtwin.cpp:3020` tests `PortType==IdTCPIP`, so
-SSH, telnet and raw TCP request a window close while a serial port and a local
-pty stay open. This is independent of `ConfirmDisconnect`: confirmation asks
-before a deliberate TCP disconnect; auto-close decides what happens after it.
+SSH, telnet and raw TCP request a window close when the line ends by itself,
+while a serial port and a local pty stay open. A deliberate Disconnect leaves
+the window open, which keeps the new reusable terminal page reusable. This is
+independent of `ConfirmDisconnect`: confirmation asks before a deliberate TCP
+disconnect; auto-close decides what happens after a spontaneous one.
 The core emits a close request rather than pretending it owns a window, and
 the Qt shell retains upstream's `IsWindowEnabled` guard so a socket dying in a
 modal dialog's nested loop does not close the disabled parent out from under
@@ -5603,7 +5606,9 @@ only in `main.cpp`'s help text.
 stating: three of the four transports need hardware, a server or a name that
 resolves, so a switch that only *acts* can be asserted on one arm out of four.
 `connect_test` covers the vocabulary, the record encoding, the list's ordering
-and bounding, the dropdown's four groups, and one end-to-end local shell.
+and bounding, the dropdown's four groups, an end-to-end local shell, and a
+localhost Tera Term command line whose settings and connection must land on the
+same new page.
 Two things the old port list never had to answer also landed: enumeration is
 not a shortlist (this desktop returns thirty-two `ttyS` ports with nothing
 attached, so the group sorts real adapters first and bounds the tail), and the
