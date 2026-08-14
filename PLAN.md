@@ -440,7 +440,9 @@ sending BS because that is what Tera Term does).
   Windows runs the updater file-lock regression, and one final job creates a
   draft only after all three pass. The Ed25519 root stays local:
   `packaging/release.sh` downloads the exact GitHub-built bytes, signs their
-  manifest, checks the six-asset set and publishes the draft.
+  manifest, checks the six-asset set and publishes the draft. Linux bundles
+  GLVND's four driver-neutral ABI frontends but leaves the actual graphics
+  driver on the host.
 
   **Measured from the portable image:** 32 MB on disk in the local
   release-equivalent build. The prior Fedora-built image measured 46 MB RSS /

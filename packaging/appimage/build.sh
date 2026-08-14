@@ -124,7 +124,7 @@ docs=$appdir/usr/share/doc/sterna
 mkdir -p "$docs"
 cp "$root/LICENSE" "$docs/LICENSE"
 cp "$root/ATTRIBUTION.md" "$docs/ATTRIBUTION.md"
-cp QT-LGPL-NOTICE.md LGPL-3.0.txt GPL-3.0.txt "$docs/"
+cp QT-LGPL-NOTICE.md LIBGLVND-LICENSE.txt LGPL-3.0.txt GPL-3.0.txt "$docs/"
 
 # Named in QT-LGPL-NOTICE.md as where to look for the exact Qt this was built
 # against, so the offer of source points at something specific rather than at
@@ -191,6 +191,26 @@ echo "appimage: bundling ($want)" >&2
 	--desktop-file sterna.desktop \
 	"${icon_args[@]}" \
 	--plugin qt || exit 2
+
+# linuxdeploy classifies every OpenGL-shaped library as part of the host's
+# driver stack. QtGui, however, is directly linked to GLVND's driver-neutral
+# ABI frontends even when the application uses only the raster painter. A
+# machine without those four frontends cannot load Sterna far enough to select
+# the offscreen plugin. Bundle the dispatch ABI, never a Mesa/NVIDIA driver.
+for so in libOpenGL.so.0 libEGL.so.1 libGLX.so.0 libGLdispatch.so.0; do
+	found=
+	for d in /usr/lib64 /usr/lib /lib64; do
+		if [ -e "$d/$so" ]; then
+			cp -Lf "$d/$so" "$appdir/usr/lib/$so"
+			found=1
+			break
+		fi
+	done
+	[ -n "$found" ] || {
+		echo "appimage: required GLVND frontend $so is missing" >&2
+		exit 2
+	}
+done
 
 # The Wayland platform plugin loads *more* plugins to do anything at all, and
 # linuxdeploy does not know that. Without

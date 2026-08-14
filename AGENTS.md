@@ -317,6 +317,11 @@ The AppImage, where two of the three failures are silent:
 - **An AppImage can quietly use the desktop's Qt 6.11.1 and pass every
   test.** Check `/proc/<pid>/maps`: `libQt6Core.so.6` must come from
   `/tmp/.mount_sterna*` (the prefix follows the image's current filename).
+- **GLVND frontends are not display drivers.** linuxdeploy excludes the whole
+  OpenGL-shaped family, but QtGui has direct NEEDED entries for `libOpenGL`,
+  `libEGL`, `libGLX` and `libGLdispatch`; a minimal host then fails before Qt
+  can select `offscreen`. Bundle those four ABI dispatch libraries, not the
+  Mesa/NVIDIA implementation behind them.
 - **The hosted Qt build's fifty-minute disconnect is OOM, not a time limit.**
   Two workers consumed 14 of the runner's 15 GiB before it vanished with no
   retained log; one measured 6.3 GiB used / 8.9 GiB available. Keep one

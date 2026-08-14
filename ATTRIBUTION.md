@@ -153,6 +153,7 @@ Recorded as they land. Present:
 | **Oniguruma** | BSD-2-Clause | **C, statically linked** — vendored inside `onig_sys` |
 | `aes`, `ctr`, `pbkdf2`, `hmac`, `sha2` | MIT OR Apache-2.0 | Rust crate, `tt-ttl` |
 | `getrandom` | MIT OR Apache-2.0 | Rust crate, `tt-ttl` |
+| **libglvnd frontends** | MIT and BSD-1-Clause | **Shared libraries, AppImage only** |
 
 Planned, licences to be confirmed as they are added: `vte`, `portable-pty`,
 `mlua`, and Qt 6 (LGPLv3, **dynamically linked** — see the Qt posture note in
@@ -168,6 +169,12 @@ Windows installer, not only this file. Tera Term vendors and builds the same
 library, so this adds no third party the project did not already have — but
 upstream's obligation is not ours automatically, and this is where ours is
 recorded.
+
+**The AppImage bundles libglvnd's driver-neutral `libOpenGL`, `libEGL`,
+`libGLX` and `libGLdispatch` frontends**, but no Mesa or NVIDIA driver. The
+runtime sources are MIT licensed and include uthash under its one-clause BSD
+licence. Their retained notices ship as `LIBGLVND-LICENSE.txt` beside the
+other AppImage documentation.
 
 **`serialport` is MPL-2.0, which is file-level copyleft, and that interacts with
 a decision spike 4 already flagged.** Using the crate is unproblematic: MPL
