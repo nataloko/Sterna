@@ -672,9 +672,17 @@ void a_second_press_stops_a_run_with_no_end()
     CHECK(spin([session] { return markerCount(*session, "keepalive") >= 4; },
                4000));
     CHECK(buttonAction(window, 0)->isChecked());
-    CHECK(buttonAction(window, 0)->text() != QLatin1String("Keepalive"));
+    // The mark is fixed and the count is in the tooltip, so pressing the
+    // button next to this one does not become a moving target.
+    CHECK(buttonAction(window, 0)->text() == QString::fromUtf8("Keepalive ⟳"));
+    CHECK(buttonAction(window, 0)->toolTip().contains(
+        QLatin1String("Press again to stop")));
     TerminalView *view = window.findChild<TerminalView *>();
     CHECK(view != nullptr && view->stopKeyArmed());
+    if (!g_writeTo.isEmpty()) {
+        window.grab().save(g_writeTo
+                           + QStringLiteral("/quick-buttons-repeating.png"));
+    }
 
     press(window, 0);
     CHECK(!buttonAction(window, 0)->isChecked());
