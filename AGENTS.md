@@ -118,8 +118,8 @@ cmake --build build-win                       # Windows — sterna-fedora only
 ./bench/bench.py --update        # re-record baseline.json, on a QUIET machine
 cmake --build shell/build-release --target bench_shell   # it is EXCLUDE_FROM_ALL
 
-cd packaging/appimage            # the only Linux artifact — sterna-fedora only
-./build.sh                       # → build/sterna-x86_64.AppImage; --clean, --run
+cd packaging/appimage            # the only Linux artifact — manylinux_2_28 only
+./build-qt.sh && ./build.sh       # → build/sterna-x86_64.AppImage; see README
 
 cd packaging/windows             # the only Windows artifact — sterna-fedora
 ./build.sh                       # → build/sterna-0.1.0-x86_64-setup.exe
@@ -305,10 +305,10 @@ The AppImage, where two of the three failures are silent:
   plugins, invisible to the deployment closure. Linuxdeploy's Qt plugin
   carries the OpenSSL backend; the Windows stage copies
   `tls/qschannelbackend.dll` explicitly.
-- **linuxdeploy's `patchelf` corrupts every `.relr.dyn` library it bundles on
-  Fedora 44**, silently — segfault in `_init` before `main`, backtrace naming
-  whichever library loads first. `NO_STRIP=1` is set;
-  `packaging/appimage/build.sh` puts the originals back and resolves via
+- **linuxdeploy's `patchelf` corrupted every `.relr.dyn` library in the old
+  Fedora 44 build**, silently — segfault in `_init` before `main`, backtrace
+  naming whichever library loaded first. The portable build keeps the same
+  conservative repair: `NO_STRIP=1`, restore the originals, and resolve via
   `LD_LIBRARY_PATH`, not rpath.
 - **A Wayland window that never appears is not an error.** Without
   `wayland-shell-integration/libxdg-shell.so` the process binds the registry

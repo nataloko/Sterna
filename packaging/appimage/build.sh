@@ -5,20 +5,10 @@
 #   ./build.sh --run        ...and then start it, to prove it does
 #   ./build.sh --clean      throw the build tree away first
 #
-# **This must be run inside a container, not on the host, and which container is
-# the whole question.** An AppImage's floor is the glibc it was linked against,
-# so the base decides who can run the result:
-#
-#   sterna-fedora   glibc 2.43, Qt 6.11.1   Fedora 44+ and not much else
-#   the agents box    glibc 2.39, Qt 6.4.2    wide reach, old Qt — see below
-#
-# Built in `sterna-fedora` today (decision 2026-08-08): it matches the desktop
-# this is being written for, and everything below except the base is what a
-# portable build will need anyway. The Ubuntu box was considered and rejected as
-# a base: its Qt 6.4.2 loads Mesa's gallium driver under Wayland and costs 62 MB
-# of extra private memory (AGENTS.md), and bundling that would ship a regression
-# to every user of a terminal whose claim is being light. Reaching older distros
-# means an older base *and* a Qt fetched separately, which is the follow-up.
+# Run this inside the maintained manylinux_2_28 x86-64 container. The old Fedora
+# 44 build required glibc 2.43, which made a supposedly portable artifact run on
+# Fedora 44 and little else. This build has an enforced glibc 2.28 ceiling and
+# uses Qt 6.11.1 compiled on that same baseline by `build-qt.sh`.
 #
 # What the licence requires of this script, since an AppImage bundles Qt rather
 # than depending on the distribution's: never static-link Qt, keep it as
@@ -80,9 +70,9 @@ export NO_STRIP=1
 # cargo is on PATH only for login shells in the dev container.
 export PATH="$HOME/.cargo/bin:$tools:$PATH"
 command -v cargo >/dev/null || { echo "appimage: cargo not found" >&2; exit 2; }
-command -v qmake6 >/dev/null || { echo "appimage: qmake6 not found — is this the Qt container?" >&2; exit 2; }
+command -v qmake6 >/dev/null || { echo "appimage: qmake6 not found — run build-qt.sh first" >&2; exit 2; }
 command -v readelf >/dev/null || { echo "appimage: readelf not found — dnf install binutils" >&2; exit 2; }
-command -v zsyncmake >/dev/null || { echo "appimage: zsyncmake not found — dnf install zsync" >&2; exit 2; }
+command -v zsyncmake >/dev/null || { echo "appimage: zsyncmake not found — run install-build-deps.sh first" >&2; exit 2; }
 
 version=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' \
 	"$root/crates/Cargo.toml" | head -1)
@@ -90,13 +80,21 @@ version=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' \
 
 qt_plugins=$(qmake6 -query QT_INSTALL_PLUGINS)
 qt_libs=$(qmake6 -query QT_INSTALL_LIBS)
+qt_version=$(qmake6 -query QT_VERSION)
+[ "$qt_version" = 6.11.1 ] || {
+	echo "appimage: Qt 6.11.1 is required, found $qt_version" >&2
+	exit 2
+}
+# This Qt lives in a private, cached prefix rather than the base image's linker
+# cache. Make that prefix visible to linuxdeploy's dependency resolver.
+export LD_LIBRARY_PATH="$qt_libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 # --- build and install -------------------------------------------------------
 #
 # Release, which also builds the Rust core with --release: CMakeLists drives
 # cargo and picks the profile from CMAKE_BUILD_TYPE.
 echo "appimage: building" >&2
-cmake -S "$root/shell" -B "$build/cmake" -G Ninja \
+cmake -S "$root/shell" -B "$build/cmake" -G "Unix Makefiles" \
 	-DCMAKE_BUILD_TYPE=Release \
 	-DCMAKE_INSTALL_PREFIX="$appdir/usr" >/dev/null || exit 2
 cmake --build "$build/cmake" --target sterna || exit 2
@@ -113,10 +111,12 @@ cmake --install "$build/cmake" >/dev/null || exit 2
 # They go beside `sterna` and are reached through AppRun's first argument; see
 # the dispatch there.
 echo "appimage: building the clients" >&2
-cargo build --release --manifest-path "$root/crates/Cargo.toml" \
+client_target=$build/cmake/cargo
+CARGO_TARGET_DIR=$client_target cargo build --release \
+	--manifest-path "$root/crates/Cargo.toml" \
 	-p tt-ctl --bins || exit 2
 for client in ttctl ttpmacro; do
-	cp "$root/crates/target/release/$client" "$appdir/usr/bin/$client" || exit 2
+	cp "$client_target/release/$client" "$appdir/usr/bin/$client" || exit 2
 done
 
 # --- what the licences oblige ------------------------------------------------
@@ -136,7 +136,7 @@ cp QT-LGPL-NOTICE.md LGPL-3.0.txt GPL-3.0.txt "$docs/"
 	echo "commit:     $(git -C "$root" rev-parse HEAD 2>/dev/null || echo unknown)"
 	echo "base:       $(. /etc/os-release && echo "$PRETTY_NAME")"
 	echo "glibc:      $(ldd --version | head -1)"
-	echo "Qt:         $(qmake6 -query QT_VERSION), as packaged by the base above"
+	echo "Qt:         $qt_version, built from the official source on the base above"
 	echo "Qt source:  https://download.qt.io/official_releases/qt/"
 	echo
 	echo "The glibc line is this image's floor: it will not start on a system"
@@ -245,23 +245,11 @@ for _ in 1 2 3 4 5; do
 		[ -n "$so" ] && [ ! -e "$appdir/usr/lib/$so" ] && echo "$so"; done)" ] && break
 done
 
-# --- the repair --------------------------------------------------------------
+# --- restore the source libraries -------------------------------------------
 #
-# **linuxdeploy corrupts every library it bundles on this base, silently.**
-#
-# It rewrites each one's rpath with its own `patchelf`, and that patchelf is
-# older than `.relr.dyn`, the compact relocation format Fedora 44 uses
-# everywhere. Its `strip` says so out loud — "unknown type [0x13] section
-# `.relr.dyn`" — and NO_STRIP above silences that. Its `patchelf` hits the same
-# wall and does not say anything: the file comes out ~2 KB larger and segfaults
-# in its own `_init`, before `main`, before Qt can log a word. Whichever
-# bundled library the loader reaches first is the one in the backtrace, so the
-# crash appears to move around and to be about that library.
-#
-# So: let linuxdeploy do the discovery, which it does well, and then put the
-# originals back. Nothing then has an rpath, which is why AppRun below sets
-# LD_LIBRARY_PATH — resolution by environment instead of by patched binary.
-# It also means the image is no longer sensitive to which patchelf is around.
+# Keep the original Qt files rather than linuxdeploy's rpath-rewritten copies.
+# AppRun deliberately supplies their search path. This also preserves the LGPL
+# substitution seam and keeps the package recipe identical across build bases.
 echo "appimage: restoring the libraries linuxdeploy rewrote" >&2
 restored=0
 for f in "$appdir"/usr/lib/*.so*; do
@@ -286,6 +274,48 @@ while IFS= read -r p; do
 done < <(find "$appdir/usr/plugins" -name '*.so' 2>/dev/null)
 echo "appimage: restored $restored" >&2
 
+# Do not let a new Rust, C++ or Qt dependency silently undo the portable base.
+# Search every versioned import in every shipped ELF. libstdc++ is deliberately
+# supplied by the host, so its ABI ceiling matters just as much as glibc's.
+# These limits are the common denominator of the documented Debian 10, RHEL 8
+# and Fedora 29 floor.
+version_info=$(find "$appdir/usr" -type f -print0 | xargs -0 -r file | \
+	sed -n 's/: .*ELF.*//p' | while read -r file; do
+		readelf --version-info "$file" 2>/dev/null || true
+	done)
+glibc_floor=2.28
+glibcxx_ceiling=3.4.25
+cxxabi_ceiling=1.3.11
+newest_glibc=$(printf '%s\n' "$version_info" | grep -o 'GLIBC_[0-9][0-9.]*' | \
+	sed 's/GLIBC_//' | sort -Vu | tail -1)
+newest_glibcxx=$(printf '%s\n' "$version_info" | grep -o 'GLIBCXX_[0-9][0-9.]*' | \
+	sed 's/GLIBCXX_//' | sort -Vu | tail -1)
+newest_cxxabi=$(printf '%s\n' "$version_info" | grep -o 'CXXABI_[0-9][0-9.]*' | \
+	sed 's/CXXABI_//' | sort -Vu | tail -1)
+[ -n "$newest_glibc" ] || {
+	echo "appimage: could not determine the packaged glibc requirement" >&2
+	exit 2
+}
+[ -n "$newest_glibcxx" ] && [ -n "$newest_cxxabi" ] || {
+	echo "appimage: could not determine the packaged libstdc++ requirement" >&2
+	exit 2
+}
+if [ "$(printf '%s\n%s\n' "$glibc_floor" "$newest_glibc" | sort -Vu | tail -1)" != "$glibc_floor" ]; then
+	echo "appimage: packaged ELF requires GLIBC_$newest_glibc, above $glibc_floor" >&2
+	exit 2
+fi
+if [ "$(printf '%s\n%s\n' "$glibcxx_ceiling" "$newest_glibcxx" | sort -Vu | tail -1)" != "$glibcxx_ceiling" ]; then
+	echo "appimage: packaged ELF requires GLIBCXX_$newest_glibcxx, above $glibcxx_ceiling" >&2
+	exit 2
+fi
+if [ "$(printf '%s\n%s\n' "$cxxabi_ceiling" "$newest_cxxabi" | sort -Vu | tail -1)" != "$cxxabi_ceiling" ]; then
+	echo "appimage: packaged ELF requires CXXABI_$newest_cxxabi, above $cxxabi_ceiling" >&2
+	exit 2
+fi
+printf '\nverified max imports: GLIBC_%s, GLIBCXX_%s, CXXABI_%s\n' \
+	"$newest_glibc" "$newest_glibcxx" "$newest_cxxabi" \
+	>> "$docs/BUILD-INFO.txt"
+
 # Our own AppRun, replacing linuxdeploy's, for one reason: the restored
 # libraries have no rpath and have to find each other. linuxdeploy's version
 # sources exactly the hooks that existed when it ran, so adding one afterwards
@@ -293,8 +323,8 @@ echo "appimage: restored $restored" >&2
 cat > "$appdir/AppRun" <<'APPRUN'
 #!/usr/bin/env bash
 # Resolution is by LD_LIBRARY_PATH rather than by rpath: the bundled libraries
-# are byte-for-byte the distribution's, un-patched, because the tool that would
-# have patched them corrupts this base's. Plugins are found through usr/bin/qt.conf.
+# are byte-for-byte the build inputs, un-patched, preserving the LGPL
+# substitution seam. Plugins are found through usr/bin/qt.conf.
 here=$(readlink -f "$(dirname "$0")")
 export LD_LIBRARY_PATH="$here/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 for hook in "$here"/apprun-hooks/*.sh; do
@@ -336,7 +366,7 @@ readelf --string-dump=.upd_info "$build/$out" | grep -Fq "$update_info" || {
 
 echo
 echo "appimage: $build/$out"
-echo "          $(du -h "$build/$out" | cut -f1), glibc floor $(ldd --version | head -1 | grep -o '[0-9]\+\.[0-9]\+$')"
+echo "          $(du -h "$build/$out" | cut -f1), glibc floor $newest_glibc (ceiling $glibc_floor)"
 echo "appimage: $build/$zsync"
 echo "          $(du -h "$build/$zsync" | cut -f1)"
 

@@ -19,6 +19,9 @@ build/
 # A fifth, instrumented. `cmdline_test`'s use-after-free was invisible without
 # it and named in one run with it; the flags are on the test that needs them.
 /shell/build-asan
+# The source-built Qt used only to produce the portable AppImage. It is kept
+# outside packaging/appimage/build so `build.sh --clean` cannot erase it.
+/packaging/appimage/toolchain/
 *.o
 *.so
 *.a

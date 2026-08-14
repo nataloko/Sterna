@@ -14,26 +14,36 @@ path and a self-contained binary is the ordinary one.
 Release binaries are built by [`.github/workflows/release.yml`](../.github/workflows/release.yml).
 A manual run produces downloadable workflow artifacts without making a release;
 pushing a matching `vX.Y.Z` tag builds both platforms and creates a draft
-release. The workflow uses a Fedora 44 job container, the same base and package
-set as the `sterna-fedora` development container.
+release. The Linux job uses the maintained `manylinux_2_28` x86-64 image. Qt
+6.11.1 is built from its verified source archive on that base and cached
+between release runs.
 
-The local build remains useful while changing the package:
+The local release-equivalent build uses Podman directly. The first invocation
+builds Qt and is intentionally slow; the prefix under `toolchain/` is reused:
 
 ```sh
-distrobox-host-exec distrobox enter sterna-fedora --no-tty -- bash -lc '
-  cd ~/Projects/Sterna/packaging/appimage
-  ./build.sh --clean      # → build/sterna-x86_64.AppImage + .zsync
-  ./build.sh --run        # ...and start it
-'
+podman run --rm --security-opt label=disable \
+  -v "$PWD:/repo:rw" \
+  -v "$HOME/.cargo:/root/.cargo:rw" \
+  -v "$HOME/.rustup:/root/.rustup:ro" \
+  -w /repo \
+  quay.io/pypa/manylinux_2_28_x86_64@sha256:f854c50adf7b7a325bc4794316f3758d387a41d61f9e2ebca0f26c7dc8f761d4 \
+  bash -lc '
+    ./packaging/appimage/install-build-deps.sh
+    ./packaging/appimage/build-qt.sh
+    export PATH=$PWD/packaging/appimage/toolchain/qt-6.11.1/bin:$PATH
+    export CMAKE_BUILD_PARALLEL_LEVEL=4 CARGO_BUILD_JOBS=4
+    ./packaging/appimage/build.sh --clean
+  '
 ```
 
-Measured from the image on the desktop after signed updates landed, 2026-08-12:
-**48 MB on disk**, **46 MB RSS / 39 MB PSS** with a shell attached under
-Wayland. The earlier image was 37 MB; Qt Network, its TLS backend and the
-on-demand updater library are the increase. They are not mapped until Check for
-Updates is chosen; the direct-link prototype used about 5 MB more idle PSS.
-Startup was previously measured at about **144 ms** to a mapped window —
-including the SquashFS mount, which the build tree does not pay.
+The two Rust mounts reuse a normal rustup installation; compilation and
+linking still happen entirely against the container's glibc 2.28 userspace.
+
+The portable local release-equivalent image is **32 MB on disk**. The earlier
+Fedora-built release measured **46 MB RSS / 39 MB PSS** with a shell attached
+under Wayland and about **144 ms** to a mapped window, including its SquashFS
+mount. Remeasure those runtime figures once the portable image ships.
 
 ## One file, three programs
 
@@ -58,34 +68,28 @@ Shipping the window without them would be half a feature — the socket exists s
 a shell script can drive the terminal, and a user with only the image would have
 had a socket and nothing that speaks to it.
 
-## The base is the decision, and it is not settled
+## Portable baseline
 
-An AppImage's floor is the glibc it was linked against. This one is built in
-`sterna-fedora`, so:
+An AppImage's floor is the newest glibc symbol imported by any executable or
+library it ships. Sterna targets the same baseline as `manylinux_2_28`:
 
 | | |
 |---|---|
-| glibc floor | 2.43 — **Fedora 44 and newer, and not much else yet** |
-| Qt | 6.11.1, the version the desktop runs |
+| runtime glibc floor | 2.28 — Debian 10+, Ubuntu 20.04+, RHEL 8+, Fedora 29+ |
+| Qt | 6.11.1, built from official source on that baseline |
 
-That is deliberate and temporary. It matches the target desktop exactly, and
-everything in `build.sh` except the base is what a portable build will need
-anyway. **The follow-up is an older base plus a Qt fetched separately** —
-older base for reach, separate Qt because the old distributions that give reach
-also ship old Qt.
-
-The Ubuntu 24.04 container was considered as a base and rejected: glibc 2.39
-would reach much further, but its Qt 6.4.2 loads Mesa's gallium driver under
-Wayland and costs 62 MB of extra private memory (`AGENTS.md`). Bundling that
-would ship a regression to every user of a terminal whose claim is being light.
+`build.sh` inspects every packaged ELF and fails above `GLIBC_2.28`,
+`GLIBCXX_3.4.25`, or `CXXABI_1.3.11`. The C++ gates matter because AppImage
+correctly leaves the host's `libstdc++` in place. Together these make the stated
+reach a release gate rather than an assumption based only on the container's
+`ldd --version`. Musl distributions still need a glibc compatibility layer.
 
 ## GitHub builds the release image
 
 The ordinary test workflow still runs on Ubuntu 24.04. The release workflow
-uses a Fedora 44 job container instead, so moving the build to GitHub did not
-quietly change the glibc floor or substitute Ubuntu's older Qt. It builds from
-an empty runner and smoke-tests the completed AppImage before making it
-available to the draft-release job.
+uses the manylinux container, builds or restores its pinned Qt prefix, then
+smoke-tests the completed AppImage before making it available to the
+draft-release job.
 
 The update-signing key is deliberately absent from GitHub. The workflow stops
 at a draft containing the AppImage, zsync data and Windows installer; the local
@@ -111,19 +115,11 @@ living here.
 These cost the whole first afternoon. Each is a place the failure looks like
 something other than what it is.
 
-- **linuxdeploy corrupts every library it bundles on this base, silently.** It
-  rewrites each one's rpath with its own `patchelf`, and that patchelf predates
-  `.relr.dyn`, the compact relocation format Fedora 44 uses everywhere. Its
-  `strip` hits the same wall and *says so* — "unknown type [0x13] section
-  `.relr.dyn`" — which is why `NO_STRIP=1` is set. `patchelf` says nothing: the
-  file comes out about 2 KB larger and segfaults in its own `_init`, before
-  `main`, before Qt can log a word. Whichever bundled library the loader reaches
-  first is the one in the backtrace, so the crash appears to move between
-  libgomp, libicudata and whatever else, and to be about that library.
-  **The build lets linuxdeploy do the discovery and then puts the originals
-  back**, resolving by `LD_LIBRARY_PATH` from our own `AppRun` instead of by
-  patched rpath. A newer tool against an older base would be fine; this is the
-  other way round.
+- **Keep the deployed Qt libraries unmodified.** The build lets linuxdeploy do
+  dependency discovery, restores the original files from the pinned Qt prefix,
+  and resolves them through `LD_LIBRARY_PATH` in `AppRun`. Besides avoiding
+  packaging-tool rpath differences, this leaves the LGPL replacement seam
+  literal: the shipped shared libraries are the build's shared libraries.
 - **A Wayland window that never appears is not an error.** Qt's Wayland platform
   plugin loads *more* plugins to do anything: without
   `wayland-shell-integration/libxdg-shell.so` it binds the registry, creates no

@@ -3,8 +3,8 @@
 Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
-**Last updated:** 2026-08-13 · **Stage:** 4 complete, deliberate deviations
-landing (`docs/deviations.md`) · **Commits:** 633
+**Last updated:** 2026-08-14 · **Stage:** 4 complete, deliberate deviations
+landing (`docs/deviations.md`) · **Commits:** 634
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -427,24 +427,22 @@ sending BS because that is what Tera Term does).
   image**. That is a build step, not a note in a README, and
   `packaging/appimage/build.sh` does it.
 
-  **Release builds moved to GitHub Actions, 2026-08-13.** A Fedora 44 job
-  container preserves the chosen glibc and Qt base instead of inheriting the
-  Ubuntu runner. Linux and Windows packages build independently, native
+  **Release builds moved to GitHub Actions, 2026-08-13.** The Linux job now
+  uses a digest-pinned `manylinux_2_28` image and builds Qt 6.11.1 from its
+  verified source archive. Every ELF in the finished payload is checked for
+  maximum `GLIBC_2.28`, `GLIBCXX_3.4.25` and `CXXABI_1.3.11` imports, giving
+  the AppImage a real Debian 10 / Ubuntu 20.04 / RHEL 8 / Fedora 29 floor
+  rather than inheriting the developer's Fedora. Linux and Windows packages
+  build independently, native
   Windows runs the updater file-lock regression, and one final job creates a
   draft only after all three pass. The Ed25519 root stays local:
   `packaging/release.sh` downloads the exact GitHub-built bytes, signs their
   manifest, checks the six-asset set and publishes the draft.
 
-  **Measured from the image on the desktop:** 48 MB on disk after the signed
-  updater brought Qt Network, 46 MB RSS / 39 MB PSS with a shell attached under
-  Wayland, ~144 ms from exec to a mapped window
-  — the last of which includes mounting the SquashFS, a cost the build tree does
-  not pay. The base is `sterna-fedora`, so the **glibc floor is 2.43**: this
-  image runs on Fedora 44 and not much else yet, which is deliberate and
-  temporary. Reaching older distributions needs an older base *and* a Qt fetched
-  separately, because the distributions that give reach also ship old Qt — the
-  Ubuntu 24.04 container was rejected as a base for exactly that reason, its
-  Qt 6.4.2 being the one that costs 62 MB of extra private memory under Wayland.
+  **Measured from the portable image:** 32 MB on disk in the local
+  release-equivalent build. The prior Fedora-built image measured 46 MB RSS /
+  39 MB PSS with a shell attached under Wayland and ~144 ms from exec to a
+  mapped window; remeasure those two figures after the portable build ships.
 
   **Two of the three ways this fails are silent**, both now in `AGENTS.md`:
   linuxdeploy's `patchelf` predates `.relr.dyn` and corrupts every library it
