@@ -30,6 +30,14 @@ are available from the [GitHub releases page].
   so an idle terminal is recognisable at a glance in a tiled window. How far it
   moves is `[Sterna] DisconnectedShade`; `0` turns it off.
 
+- A serial port another program already has open is greyed out in the connect
+  bar's dropdown, with the holder's name beside it, instead of being offered
+  and then failing with a dialog. On Linux that covers anything holding a lock
+  — including another Sterna window — plus your own processes that took none;
+  a port held by a root-owned process such as ModemManager still looks free.
+  On Windows, where the system cannot be asked without opening the port, it
+  covers this program's other windows, which is what Tera Term manages too.
+
 ### Fixed
 
 - Typing into an interactive host no longer puts every character on a new line.

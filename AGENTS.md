@@ -640,6 +640,16 @@ SSH:
   changes width reflows the whole bar**, and an expanding widget beside it
   absorbs the difference — Connect/Disconnect resized the destination box until
   the button reserved the longer word.
+- **`ConnectBar::setRecents` is on the connect path** — `rememberRecent` calls
+  it after every successful open — so anything added to `composeList` lands
+  between the connect and the first prompt, which is the race `render_test`
+  already carries scar tissue for. The busy scan therefore runs on
+  `showPopup` only, and every other rebuild reuses the last answer.
+- **`ConnectBar::Entry::operator==` must compare everything that reaches the
+  widget.** `rebuildList` returns early on an unchanged list, so a row whose
+  *state* changed but whose text did not never repaints. Busy state is
+  deliberately a field rather than part of `text`: bake it into the words and
+  the comparison catches it by accident, which leaves the property untested.
 - **A `QAction` shortcut outranks `TerminalView::keyPressEvent`**, silently, so
   every shortcut installed on the window is a key the host stops receiving —
   and `Shift+F1`..`F12` are ordinary `KEYBOARD.CNF` bindings *and* F13-F24 to
@@ -744,6 +754,23 @@ Serial:
   from has to sort the real adapters first and bound the tail, or the one
   adapter they own is buried mid-alphabet. It is not free either: don't call
   it on the connect path to render a label.
+- **"Who has this port open" and "will opening it fail" are different
+  questions**, and only the first can be answered without opening it.
+  `serialport-rs` takes `TIOCEXCL` *and* an exclusive `flock` (`posix/tty.rs:131`),
+  but a plain `cat /dev/ttyUSB0` takes neither and does not stop a second open
+  — so `serial::inuse` greys a row and must never gate Connect. The two Linux
+  sources see different halves: `/proc/locks` is world-readable and names
+  `flock` holders of any uid (every Sterna window included), `/proc/<pid>/fd`
+  names this user's own processes lock or no lock. A root-owned holder that
+  took no lock is invisible to both, so the modal error stays as the backstop.
+- **Match a device by `st_rdev`, never by its name** — `/dev/ttyUSB0`,
+  `by-path` and `by-id` are three names for one node and the picker stores the
+  second; and `stat` the `/proc/<pid>/fd` entry rather than reading the link,
+  because the text lies about a renamed or deleted node.
+- **Probing a port by opening it raises DTR for the life of the probe** and
+  drops it on close — measured on the rig, where `ttyUSB0`'s DTR reaches
+  `ttyUSB1`'s DSR. That reboots an Arduino-style board and drops a modem's
+  carrier, which is why nothing in the busy check opens anything.
 - **A test byte with bit 7 set cannot tell 7 data bits from 8** — at seven
   bits the stop bit lands in bit 7. Use `0x25`.
 - **Ports left in flight leak into the next test** — bytes already at the
@@ -1499,6 +1526,10 @@ The control socket:
   nameless `connect` is refused outright; a failed open's message box is
   queued to the next event-loop turn. In a test this is a hang, not a
   failure.
+- **A claim is read through the endpoint list, not on its own** — a window
+  that crashed holding a port would otherwise grey it out for ever. `claims()`
+  keeps only the names `addr::live()` answers for and unlinks the rest, so the
+  claim expires exactly when the port is free again.
 - **`Vt::encode_text` translates CR, not LF** — `sendln` appends `\r`;
   `\n` reads as correct and is wrong under every `CRSend` setting.
 - **A `spin(predicate, ms)` helper calls the predicate once more for its
