@@ -920,12 +920,13 @@ clipboard.paste_rbutton_disabled | bool | Tera Term | DisablePasteMouseRButton |
 # round from what a Linux user expects of either.
 clipboard.paste_mbutton_disabled | bool | Tera Term | DisablePasteMouseMButton | on | -
 
-# `ttset.c:1428`, `CPF_CONFIRM_RBUTTON`. The right button raises a menu with
-# Paste on it instead of pasting, and the button-up paste is then suppressed
-# as well (`vtwin.cpp:2645` tests both bits). Half honoured: the suppression
-# is there and the menu is not, so setting this gives a right button that does
-# nothing rather than one that offers a choice.
-clipboard.confirm_paste_rbutton | bool | Tera Term | ConfirmPasteMouseRButton | off | -
+# `ttset.c:1428`, `CPF_CONFIRM_RBUTTON`. The right button raises `IDR_PASTEMENU`
+# — Paste and Paste<CR> (`vtwin.cpp:912`, `:1317`) — instead of pasting, and the
+# button-up paste is then suppressed as well (`vtwin.cpp:2645` tests both bits).
+# **Deliberately on where upstream ships it off**, which is the only setting in
+# this file whose default this port moves; see `docs/deviations.md`. Off gives
+# upstream's straight-to-the-wire right button back.
+clipboard.confirm_paste_rbutton | bool | Tera Term | ConfirmPasteMouseRButton | on | -
 
 # `ttset.c:1431`, `CPF_CONFIRM_CHANGEPASTE`. **On.** A paste holding a line
 # break is shown in a dialog first and can be edited there
@@ -935,10 +936,10 @@ clipboard.confirm_paste | bool | Tera Term | ConfirmChangePaste | on | -
 
 # `ttset.c:1434`, `CPF_CONFIRM_CHANGEPASTE_CR`. The same confirmation for
 # "paste and send a CR", where the newline is the one being *added* rather
-# than one already in the text. Only consulted on that path, so a plain paste
-# of text with no break is never confirmed by it — and that path is upstream's
-# `Paste<CR>` menu item, which this shell has no command for, so the key is
-# read and written and acts on nothing yet.
+# than one already in the text. It decides that path **alone**: with this off,
+# `Paste<CR>` is never confirmed even over text full of line breaks, because
+# `clipboar.c:150` does not search the text on that arm at all. Upstream's own
+# comment above it weighs whether that is right and keeps it.
 clipboard.confirm_paste_cr | bool | Tera Term | ConfirmChangePasteCR | on | -
 
 # `ttset.c:1437`. A file of strings, one per line: a paste containing any of

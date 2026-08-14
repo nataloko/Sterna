@@ -1225,6 +1225,21 @@ void test_a_paste_with_a_line_break_is_confirmed()
     CHECK(!PasteDialog::shouldConfirm(QStringLiteral("rm -rf /"),
                                       QStringLiteral("/nonexistent/dict.txt")));
 
+    // `Paste<CR>` asks a different question (`clipboar.c:150`): the CR being
+    // *added* is the change, so `ConfirmChangePasteCR` decides alone and the
+    // text is not searched for a line break at all. One word is confirmed...
+    CHECK(PasteDialog::shouldConfirm(QStringLiteral("one word"), QString(), true,
+                                     true));
+    // ...and with the key off, even a paste full of them is not.
+    CHECK(!PasteDialog::shouldConfirm(QStringLiteral("two\nlines"), QString(),
+                                      true, false));
+    // The dictionary still runs afterwards on that path, and can only turn
+    // confirmation on.
+    CHECK(PasteDialog::shouldConfirm(QStringLiteral("sudo rm -rf /tmp/x"),
+                                     dict.fileName(), true, false));
+    CHECK(!PasteDialog::shouldConfirm(QStringLiteral("ls -l"), dict.fileName(),
+                                      true, false));
+
     // The dialog opens at the size the settings hold, which is the whole
     // reason `PasteDialogSize` is a setting: upstream writes it back.
     QString error;
@@ -1888,6 +1903,92 @@ void test_the_hidden_menu_is_the_ordinary_menu_as_a_popup()
     }
 }
 
+/// The right button raises upstream's `IDR_PASTEMENU` rather than pasting —
+/// two items, Paste and Paste<CR> (`vtwin.cpp:912`, `:1317`). This port ships
+/// `ConfirmPasteMouseRButton` on where upstream ships it off, which is
+/// deviation 11; everything else here is upstream's condition.
+void test_the_right_button_offers_a_paste_menu()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    MainWindow window(dir.filePath(QStringLiteral("sterna.ini")));
+    window.show();
+    qApp->processEvents();
+
+    auto *view = window.findChild<TerminalView *>();
+    CHECK(view != nullptr);
+    QApplication::clipboard()->setText(QStringLiteral("show version"),
+                                       QClipboard::Clipboard);
+
+    const QPointF local(4, 4);
+    const auto rightPress = [&] {
+        QMouseEvent press(QEvent::MouseButtonPress, local,
+                          view->mapToGlobal(local), Qt::RightButton,
+                          Qt::RightButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(view, &press);
+        qApp->processEvents();
+        return window.findChild<QMenu *>(QStringLiteral("pasteMenu"));
+    };
+    const auto closeMenu = [](QMenu *menu) {
+        menu->close();
+        menu->deleteLater();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    };
+
+    // Unconnected there is nothing to paste into, so no menu — upstream's
+    // `cv.Ready`, and the reason the gesture cannot be tested without a link.
+    CHECK(rightPress() == nullptr);
+
+    window.connectPty();
+    qApp->processEvents();
+    CHECK(window.session()->isConnected());
+
+    QMenu *menu = rightPress();
+    CHECK(menu != nullptr);
+    if (menu) {
+        // The Edit menu's own two actions, not copies of them — the same
+        // argument `showPopupMenu` makes, and what keeps the `.lng` text and
+        // the `KEYBOARD.CNF` shortcuts attached.
+        CHECK(menu->actions().size() == 2);
+        auto *paste = window.findChild<QAction *>(QStringLiteral("pasteAction"));
+        auto *pasteCr =
+            window.findChild<QAction *>(QStringLiteral("pasteCrAction"));
+        CHECK(paste != nullptr && pasteCr != nullptr);
+        CHECK(menu->actions().contains(paste));
+        CHECK(menu->actions().contains(pasteCr));
+        closeMenu(menu);
+    }
+
+    // `DisablePasteMouseRButton` takes the button out of the clipboard's
+    // business altogether: the menu is a replacement for that paste, so a
+    // right button which was not going to paste does not grow one.
+    QString error;
+    CHECK(window.session()->setSetting(
+        QStringLiteral("clipboard.paste_rbutton_disabled"),
+        QStringLiteral("on"), &error));
+    view->applySettings();
+    CHECK(rightPress() == nullptr);
+    CHECK(window.session()->setSetting(
+        QStringLiteral("clipboard.paste_rbutton_disabled"),
+        QStringLiteral("off"), &error));
+    view->applySettings();
+
+    // An empty clipboard is upstream's `IsClipboardFormatAvailable` failing:
+    // no menu, and no paste on the way up either.
+    QApplication::clipboard()->clear(QClipboard::Clipboard);
+    CHECK(rightPress() == nullptr);
+    QApplication::clipboard()->setText(QStringLiteral("show version"),
+                                       QClipboard::Clipboard);
+
+    // Off is upstream's shipped value and the way back to a right button that
+    // pastes the instant it is pressed.
+    CHECK(window.session()->setSetting(
+        QStringLiteral("clipboard.confirm_paste_rbutton"), QStringLiteral("off"),
+        &error));
+    view->applySettings();
+    CHECK(rightPress() == nullptr);
+}
+
 /// The About item is the visible version check for an installed build. The
 /// real application takes this value from the Rust core, so the dialog must
 /// read Qt's application version live rather than duplicate it in the shell.
@@ -2539,6 +2640,7 @@ int main(int argc, char **argv)
     test_window_opacity_follows_activation();
     test_the_window_opens_at_the_configured_size();
     test_the_hidden_menu_is_the_ordinary_menu_as_a_popup();
+    test_the_right_button_offers_a_paste_menu();
     test_about_shows_the_application_version();
     test_the_connect_bar_is_a_view_of_the_session();
     test_line_edit_delays_edits_queues_and_reanchors();
