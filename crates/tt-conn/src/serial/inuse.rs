@@ -40,9 +40,11 @@ use std::path::Path;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Holder {
     pub pid: u32,
-    /// `/proc/<pid>/comm` — the program's own name, `minicom`, `sterna`. Empty
-    /// when the process left between being seen and being named.
-    pub program: String,
+    /// `/proc/<pid>/comm` — the program's own name, `minicom`, `sterna`.
+    /// `None` when the process left between being seen and being named, or
+    /// when it belongs to somebody whose `comm` this user may not read: the
+    /// pid is what says the port is held, and the name is a courtesy.
+    pub program: Option<String>,
 }
 
 /// One answer per path, in the order given; `None` where nothing visible holds
@@ -235,10 +237,10 @@ fn opened(proc_root: &Path, ids: &[Option<DeviceId>], found: &mut HashMap<u32, u
 /// `/proc/<pid>/comm`, which is world-readable — so a holder this process
 /// could not have found on its own can still be named once `/proc/locks` has
 /// pointed at it.
-fn program_name(proc_root: &Path, pid: u32) -> String {
-    fs::read_to_string(proc_root.join(pid.to_string()).join("comm"))
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default()
+fn program_name(proc_root: &Path, pid: u32) -> Option<String> {
+    let name = fs::read_to_string(proc_root.join(pid.to_string()).join("comm")).ok()?;
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 #[cfg(test)]
@@ -324,7 +326,7 @@ mod tests {
             answer[0],
             Some(Holder {
                 pid: 1234,
-                program: "minicom".into()
+                program: Some("minicom".into())
             })
         );
         assert_eq!(answer[1], None, "nothing holds /dev/zero");
@@ -357,9 +359,83 @@ mod tests {
             answer[0],
             Some(Holder {
                 pid: 4321,
-                program: "sterna".into()
+                program: Some("sterna".into())
             })
         );
+    }
+
+    /// Two thirds of the processes on an ordinary desktop belong to somebody
+    /// else, so an unreadable directory is the common case and must not stop
+    /// the walk. Without the skip, every port on a machine running
+    /// ModemManager would go unanswered.
+    #[test]
+    #[cfg(unix)]
+    fn another_users_process_is_stepped_over() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let scratch = Scratch::new("perm");
+        let shut = scratch.0.join("500").join("fd");
+        fs::create_dir_all(&shut).unwrap();
+        fs::set_permissions(&shut, fs::Permissions::from_mode(0o000)).unwrap();
+        scratch.holder(1234, "minicom", "/dev/null");
+
+        let answer = holders_under(&scratch.0, &["/dev/null"]);
+        let _ = fs::set_permissions(&shut, fs::Permissions::from_mode(0o755));
+        if !cfg!(target_os = "linux") {
+            return;
+        }
+        // Running as root reads it anyway; either way the readable holder is
+        // still found, which is the property.
+        assert_eq!(answer[0].as_ref().map(|h| h.pid), Some(1234));
+    }
+
+    /// The real `/proc`, with no hardware and no root: a pty is a character
+    /// device this test can make and open for itself.
+    ///
+    /// The half that matters is the assertion *before* the open — the master
+    /// side is a different node, so anything matching on the inode, or on the
+    /// mere existence of the pid, passes the second half and fails this one.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_device_this_process_holds_names_this_process() {
+        use std::ffi::CStr;
+
+        // SAFETY: the three calls take the descriptor they were given, and
+        // `ptsname_r` writes at most `buf.len()` bytes into `buf`.
+        let master = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY) };
+        if master < 0 {
+            eprintln!("SKIP: no /dev/ptmx here");
+            return;
+        }
+        let mut buf = [0 as libc::c_char; 128];
+        let named = unsafe {
+            libc::grantpt(master);
+            libc::unlockpt(master);
+            libc::ptsname_r(master, buf.as_mut_ptr(), buf.len())
+        };
+        assert_eq!(named, 0, "ptsname_r");
+        let slave = unsafe { CStr::from_ptr(buf.as_ptr()) }
+            .to_str()
+            .expect("pts name is ASCII")
+            .to_string();
+
+        assert_eq!(
+            holders(&[slave.as_str()])[0],
+            None,
+            "the master is a different node, so nothing holds the slave yet"
+        );
+
+        let held_by_us = fs::File::open(&slave).expect("open the slave side");
+        let held = holders(&[slave.as_str()]);
+        assert_eq!(
+            held[0].as_ref().map(|h| h.pid),
+            Some(std::process::id()),
+            "this process holds it: {held:?}"
+        );
+
+        drop(held_by_us);
+        // SAFETY: `master` is still ours and has not been closed.
+        unsafe { libc::close(master) };
     }
 
     /// A path that names nothing must not be reported as held, and must not
