@@ -332,16 +332,26 @@ command dispatched by id. Nothing about how a command reaches the wire is new,
 and a `KEYBOARD.CNF` full of user keys still works exactly as it did.
 
 **Where it lives.** `crates/tt-config/src/buttons.rs` owns the format;
-`shell/src/QuickButtonBar.{h,cpp}` is the bar inside a resizable dock and
-`shell/src/QuickButtonsDialog.{h,cpp}` the editor. The list is a
-`[Sterna Buttons]` section — its own, because a list is exactly what the
-settings schema cannot describe — plus two ordinary `[Sterna]` settings for the
-bar itself: `QuickButtons` (`window.quick_buttons`, on) and `QuickButtonsArea`
-(`window.quick_buttons_area`, `right` — a terminal's rows are the scarce
-dimension, so the bar goes where there is width to spare rather than where the
-connect bar is). The visibility setting applies even to an empty list: the
-panel then consists of the Add button, so the feature can be discovered and
-its first command defined without going through Setup.
+`shell/src/QuickButtonBar.{h,cpp}` is the bar, `shell/src/QuickButtonGrip.{h,cpp}`
+the handle that resizes it and `shell/src/QuickButtonsDialog.{h,cpp}` the
+editor. The list is a `[Sterna Buttons]` section — its own, because a list is
+exactly what the settings schema cannot describe — plus two ordinary `[Sterna]`
+settings for the bar itself: `QuickButtons` (`window.quick_buttons`, on) and
+`QuickButtonsWidth` (`window.quick_buttons_width`, `0` for as wide as the
+buttons need). The visibility setting applies even to an empty list: the panel
+then consists of the Add button, so the feature can be discovered and its first
+command defined without going through Setup.
+
+**The panel is fixed to the right and its width comes out of the window.** A
+terminal's rows are the scarce dimension, so it goes where there is width to
+spare rather than where the connect bar is; there is no setting for the other
+three edges because there is no dock to drag it to one. It shared a
+`QDockWidget` with the terminals until 0.5.4, and a dock separator divides the
+client area — so every pixel dragged into the panel came off a terminal that is
+fitted to what is left in whole cells, and `Grid::resize` truncates every line
+it shortens in the page *and* the scrollback. The grip moves the window's outer
+edge instead, and stops where the window can no longer grow. A gesture aimed at
+some chrome is not one anybody expects to destroy text.
 
 **A button can repeat**: *n* sends every *x.x* seconds, or until stopped
 (`Repeat` and `IntervalMs`). Upstream has nothing of the kind — the nearest

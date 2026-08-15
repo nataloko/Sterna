@@ -673,6 +673,34 @@ SSH:
   `ConnectBar::Entry::operator==`, and the same rule about the comparison
   covering every field. It cannot be `m_buttons.isEmpty()`: the empty panel
   still builds its `+`.
+- **...and a `QDockWidget` beside the terminal is that trap with a handle on
+  it.** A dock separator divides the client area, so dragging the quick-button
+  panel took its pixels off the terminal — and `Grid::resize` *truncates*,
+  page and scrollback alike, so a drag out and back destroyed the text past
+  the narrowest point for good. `ClearOnResize` only made it louder; the loss
+  is there with the flag off. There is no dock feature that turns the
+  separator off (the flags are Closable/Movable/Floatable/VerticalTitleBar),
+  which is why the panel is a plain widget in a central `QHBoxLayout` with
+  `QuickButtonGrip` between. **The rule for any chrome that can be resized
+  beside a terminal: move the window's outer edge, not the terminal's.**
+  `MainWindow::resizeQuickPanel` clamps against `QScreen::availableGeometry`
+  and `frameGeometry` so the window never has to steal, and holds every page's
+  grid across the change — `setFixedWidth` defers its layout while a top-level
+  `resize()` is a request a compositor answers later, so the two straddle a
+  pass in which the view is narrower and the window has not caught up.
+  `TerminalView::setGridHeld` also records whether it *swallowed* a refit: a
+  geometry change delivered during the hold never repeats, so that one is
+  answered on release and a hold that swallowed nothing is left to the resize
+  event still coming. A grip like this cannot follow the pointer — the left
+  edge is pinned, so growing the panel by N grows the window by N and the grip
+  stays where it is; a test that chases it is asserting the thing the design
+  deliberately does not do.
+- **Showing that panel is a resize too, and the window-grow arm cannot see
+  it.** `onSettingsChanged`'s arm runs while the panel is still hidden, so it
+  finds nothing to absorb, and it is gated on `count() == 1 && Single` — so a
+  panel beside a tiled grid was never covered at all. Anything that appears or
+  disappears beside the terminal goes through the same absorb helper, not
+  through that arm.
 - **Removing `QMainWindow::statusBar()` silently kills every `setStatusTip`** —
   the `QEvent::StatusTip` arm of `QMainWindow::event` needs a bar to show it in,
   and with none the event falls through and is dropped with no warning.
@@ -697,10 +725,10 @@ SSH:
   thickness, and it ignores the button's size policy in that direction — so a
   panel dragged wider puts every new pixel in the margin. The one lever that
   moves it, a minimum width per button, raises the bar's *own* minimum with it,
-  and the splitter beside it can then grow but never shrink: a ratchet, not a
+  and the grip beside it can then grow but never shrink: a ratchet, not a
   layout. Measured both ways. `QuickButtonBar` is a plain widget and a
   `QBoxLayout` for that reason, and the same answer is waiting for anything
-  else that wants a toolbar to fill a dock.
+  else that wants a toolbar to fill a panel.
 - **A combo popup opens under the pointer, so the release that opened it is a
   choice** — `activated` arrives without anybody having chosen anything, and a
   row that connects makes one click on the arrow dial a host. Choosing fills

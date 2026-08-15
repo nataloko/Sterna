@@ -5,6 +5,30 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+### Fixed
+
+- Resizing the quick-button panel no longer erases terminal text. The panel
+  shared its space with the terminal beside it, so dragging it wider narrowed
+  the terminal — and narrowing a terminal cuts every line at the new right-hand
+  edge, in the scrollback as well as on screen, and does not restore them when
+  the panel is dragged back. The panel's handle now changes the width of the
+  **window**: the terminal keeps every column and every character it had.
+  Where the window cannot get any wider, because it is maximised or already at
+  the edge of the screen, the drag stops there rather than taking the columns.
+  Showing the panel from View > Show quick buttons had the same effect and is
+  fixed the same way, including with several terminals tiled — a case the old
+  window-resizing path never covered.
+
+### Changed
+
+- The quick-button panel is fixed to the right-hand side and can no longer be
+  dragged to the top, bottom or left. That freedom came from the dock it lived
+  in, which is the thing that was taking pixels from the terminal. The
+  `QuickButtonsArea` setting is gone; `QuickButtonsWidth` replaces it, in
+  pixels, with `0` meaning as wide as the widest button needs. A settings file
+  that still names an edge is read without complaint — the key is simply no
+  longer one Sterna looks at.
+
 ## [0.5.3] - 2026-08-15
 
 ### Changed

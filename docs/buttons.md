@@ -22,12 +22,23 @@ Once the bar is there, the **+** at its end adds another — opening the editor
 on a new, empty button — and a right-click on any button offers Edit, Duplicate
 and Remove.
 
-The panel opens **down the right-hand side**, because a terminal's rows are the
+The panel lives **down the right-hand side**, because a terminal's rows are the
 scarce dimension: a window is usually far wider than the 80 columns it needs
 and exactly as tall as it can be, so a vertical bar costs nothing that is being
-used and the labels have room to be words. Drag its inner edge to resize it. It
-can also be dragged to any of the four edges, and where it was left is
-remembered.
+used and the labels have room to be words. It is as wide as its widest caption
+until you say otherwise.
+
+Drag the handle on its inner edge to resize it. **The pixels come out of the
+window, not out of the terminal** — the window gets wider and the terminal
+keeps every column and every character it had. Where the window cannot get any
+wider, because it is maximised or already at the edge of the screen, the drag
+stops there instead. That is deliberate: a terminal narrowed by a column loses
+whatever was past its right edge, in the scrollback as well as on screen, and
+it does not come back when the panel is dragged narrow again.
+
+A width you drag is remembered. One you never touch is not written down at all,
+so the panel goes on measuring its buttons and follows them when a caption
+changes.
 
 ## What a button can do
 
@@ -154,11 +165,13 @@ required — a button with no `Label` is captioned with its own command.
 stored in. `$0D` is a Return, `$0A` a line feed, `$24` a literal `$`. Anything
 the file cannot hold is written that way, and everything else is left legible.
 
-The two settings beside them are ordinary `[Sterna]` keys: `QuickButtons`
-(on) shows or hides the bar, and `QuickButtonsArea` (`right` by default, or
-`top`, `bottom`, `left`) is the edge it opens on. That one is written when the
-window closes, so a bar dragged somewhere else stays there for the rest of the
-session and comes back there next time.
+The two settings beside them are ordinary `[Sterna]` keys: `QuickButtons` (on)
+shows or hides the bar, and `QuickButtonsWidth` is how wide it is in pixels.
+`0` — the shipped value — means as wide as the widest button needs, which is
+where the panel sits until somebody drags it; the drag is what writes a number
+there. Pixels rather than a column count because the panel holds words and not
+cells, and the same captions want a different number of pixels at every font
+size.
 
 ## Menu command ids
 

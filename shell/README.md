@@ -903,32 +903,58 @@ each value twice, stored and decoded, so the escape has one implementation and
 it is not this one. `QuickButtonsDialog` therefore edits plain text and the
 core does the escaping when the window saves.
 
-**The bar does not exist until a button does.** `window.quick_buttons` is what
-View > Show quick buttons writes, but an empty list hides the bar whatever it
-says; the alternative is permanent chrome in a terminal, which the connect bar
-already argues against one section up (`docs/deviations.md`, entry 4).
+**`window.quick_buttons` alone decides whether the bar is there.** An empty
+list still shows it, because the panel with nothing on it is the `+` that
+defines the first command, and that is the shortest route into a feature
+nothing else advertises.
 
-**And where it sits is the user's, not the file's, while the window is open.**
-`window.quick_buttons_area` is applied when it *changes* rather than whenever
-the bar is not where it says, because the setting is written on close and
-`reloadQuickButtons` runs on every edit of the list — comparing against the
-live area would drag the bar back to the file's edge the moment somebody added
-a button. `m_quickBarArea` is the last value applied, and it starts empty so
-that the first reload places the bar at all.
+**Its width comes out of the window, never out of the terminal.** The bar and
+the terminals share one central widget — a `QHBoxLayout` of `PanelContainer`,
+the grip, and the bar at a fixed width — rather than the `QDockWidget` this was
+until 0.5.4. A dock separator divides the client area, so a drag took its
+pixels off a terminal fitted to whatever was left in whole cells; a few pixels
+is a column, a column is a real `Grid::resize`, and that truncates every line
+it shortens in the page and in the scrollback. Dragging the panel destroyed
+text and did not give it back on the way out.
+
+`MainWindow::resizeQuickPanel` is the whole rule. It clamps the width so the
+window never has to steal — shrinking always works, growing only while
+`windowGrowthRoom()` says there is space between the frame and the edge of the
+screen's work area — grows the window before it takes the pixels and shrinks it
+after it gives them up, and holds every page's grid across the change.
+
+**The hold is not an optimisation.** `setFixedWidth` marks the layout dirty and
+Qt lays out on the next turn, while a top-level `resize()` is a request the
+compositor answers when it likes; between them is a pass in which the view is
+narrower and the window has not caught up. `TerminalView::setGridHeld` stops
+that pass reaching `Session::resize`, and remembers whether it swallowed a
+refit — a geometry change delivered during the hold does not come again, so
+that one is answered on release, while a hold that swallowed nothing is left
+for the resize event still on its way.
+
+**Showing the panel is a resize too**, and it was the second route to the same
+lost text: `onSettingsChanged`'s own window-grow arm runs while the panel is
+still hidden, so it finds nothing to absorb, and it is gated on a single page
+in the untiled layout anyway. Both routes go through `resizeQuickPanel` now,
+which carries no such gate — a panel beside four tiles is the same question.
+
+`window.quick_buttons_width` is `0` for "as wide as the buttons need", which is
+what ships and what the panel did before it had a width at all. Only the end of
+a drag writes a number there. Nothing writes one at close: a backstop comparing
+the live pixels against the setting would find `0` against whatever the
+captions measured and pin every window that had never been dragged.
 
 **A button is as wide as the panel, not as wide as its caption.** The bar is a
 plain `QWidget` with a `QBoxLayout` of `QToolButton`s, which it was not until
 that mattered: `QToolBarLayout` sizes every item to its own text and centres it
 across the bar's thickness, whatever size policy the button carries, so room
-dragged out of the splitter went into the margins beside a ragged column of
-captions rather than into the buttons. The one lever that does move it — a
-minimum width on each button — raises the bar's own minimum with it, and the
-splitter can then grow but never shrink. Both measured. The buttons keep the
-top of the panel rather than being centred along it, for the reason a repeat
-count lives in the tooltip and not in the caption: a bar of things to click
-must not move when the window is resized or a button is added. Laid across the
-bottom or top edge the same rule gives buttons of their natural width, taking
-the panel's height, from the left.
+dragged out went into the margins beside a ragged column of captions rather
+than into the buttons. The one lever that does move it — a minimum width on
+each button — raises the bar's own minimum with it, and the panel can then grow
+but never shrink. Both measured. The buttons keep the top of the panel rather
+than being centred along it, for the reason a repeat count lives in the tooltip
+and not in the caption: a bar of things to click must not move when the window
+is resized or a button is added.
 
 Two traps live here:
 
