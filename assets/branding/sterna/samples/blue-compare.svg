@@ -65,14 +65,14 @@
     </filter>
 
     <g id="rows-strong" fill="#73F59B">
-      <rect x="118" y="112" width="724" height="24" rx="5" opacity=".25"/>
-      <rect x="118" y="232" width="844" height="24" rx="5" opacity=".21"/>
-      <rect x="118" y="352" width="612" height="24" rx="5" opacity=".32"/>
-      <rect x="118" y="472" width="790" height="24" rx="5" opacity=".25"/>
-      <rect x="118" y="592" width="674" height="24" rx="5" opacity=".34"/>
-      <rect x="118" y="712" width="864" height="24" rx="5" opacity=".23"/>
-      <rect x="118" y="832" width="746" height="24" rx="5" opacity=".30"/>
-      <rect x="118" y="952" width="546" height="24" rx="5" opacity=".32"/>
+      <rect x="118" y="112" width="724" height="24" rx="5"/>
+      <rect x="118" y="232" width="844" height="24" rx="5"/>
+      <rect x="118" y="352" width="612" height="24" rx="5"/>
+      <rect x="118" y="472" width="790" height="24" rx="5"/>
+      <rect x="118" y="592" width="674" height="24" rx="5"/>
+      <rect x="118" y="712" width="864" height="24" rx="5"/>
+      <rect x="118" y="832" width="746" height="24" rx="5"/>
+      <rect x="118" y="952" width="546" height="24" rx="5"/>
     </g>
 
     <g id="bird-wire-blue">
