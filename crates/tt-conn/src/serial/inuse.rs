@@ -259,8 +259,14 @@ mod tests {
     use super::*;
 
     /// A scratch `/proc`, the shape `ssh::config`'s tests use.
+    ///
+    /// Gated with the tests that build one: everything below this line answers
+    /// a question only a `/proc` can be asked, so on Windows this is a struct
+    /// nobody constructs — and `-D warnings` makes dead code an error there.
+    #[cfg(unix)]
     struct Scratch(std::path::PathBuf);
 
+    #[cfg(unix)]
     impl Scratch {
         fn new(name: &str) -> Scratch {
             let dir = std::env::temp_dir().join(format!("tt-inuse-{name}-{}", std::process::id()));
@@ -276,7 +282,6 @@ mod tests {
         }
 
         /// A process holding `device` on descriptor 3.
-        #[cfg(unix)]
         fn holder(&self, pid: u32, program: &str, device: &str) {
             let fd = self.0.join(pid.to_string()).join("fd");
             fs::create_dir_all(&fd).unwrap();
@@ -285,6 +290,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     impl Drop for Scratch {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
