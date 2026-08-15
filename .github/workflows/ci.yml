@@ -56,6 +56,12 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           version: latest
+      # A second here rather than a job of its own, which would spend twenty
+      # seconds booting a runner to run one grep. The release workflow's
+      # preflight asks the same question, but only a tag reaches that — and a
+      # version site left behind is easiest to fix on the push that left it.
+      - name: Every file names the same version
+        run: Sterna/packaging/bump-version.sh --check
       - name: Build
         run: make -C Sterna/oracle
       - name: Regression suite
