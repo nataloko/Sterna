@@ -25,19 +25,20 @@ class Session;
 ///
 /// It owns no state either. The list belongs to the window, which read it out
 /// of the settings file; the panel builds actions from it and reports a press.
-/// Its enclosing dock can be dragged to any of the four edges and resized —
-/// on the left or the right it costs no terminal rows, which on a short window
-/// is what makes the feature worth having.
+/// It is fixed down the right-hand side, where it costs no terminal rows —
+/// which on a short window is what makes the feature worth having — and it is
+/// resized by the grip on its inner edge, which moves the *window's* width
+/// rather than the terminal's. See `QuickButtonGrip`.
 ///
 /// **A plain widget and a box layout rather than a `QToolBar`**, which is what
 /// this was until the buttons had to fill the panel. `QToolBarLayout` sizes
 /// every item to its own text and centres it across the bar's thickness, and
 /// it does that whatever size policy the button carries — so a dragged-wider
-/// dock put all of its new room in the margins around a ragged column of
+/// panel put all of its new room in the margins around a ragged column of
 /// captions. The one lever that does move it, a minimum width on each button,
-/// raises the bar's own minimum with it and the splitter can then grow but
-/// never shrink. Measured, both of them. A box layout gives each button the
-/// panel's full width for free and needs no lever at all.
+/// raises the bar's own minimum with it and the panel can then grow but never
+/// shrink. Measured, both of them. A box layout gives each button the panel's
+/// full width for free and needs no lever at all.
 class QuickButtonBar : public QWidget {
     Q_OBJECT
 
@@ -59,11 +60,6 @@ public:
     /// The clock is `QuickButtonRepeat`'s and the list is the window's; this
     /// only paints the answer.
     void setRepeating(int index, int remaining);
-
-    /// Stack the buttons down the panel or lay them across it. The window
-    /// calls this from the dock's own edge, which the user can drag.
-    void setOrientation(Qt::Orientation orientation);
-    Qt::Orientation orientation() const { return m_orientation; }
 
     /// The widget `index` is pressed through, or null. The window has no use
     /// for it; a test measuring how wide a button ended up does.
@@ -109,5 +105,4 @@ private:
     QAction *m_add = nullptr;
     QBoxLayout *m_layout = nullptr;
     QFrame *m_separator = nullptr;
-    Qt::Orientation m_orientation = Qt::Vertical;
 };

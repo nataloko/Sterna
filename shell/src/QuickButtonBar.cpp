@@ -87,11 +87,17 @@ void QuickButtonBar::setButtons(const QVector<QuickButton> &buttons)
     // **The early return is load bearing, and not for the widgets it saves.**
     // This runs on every settings change, and a rebuild throws away every
     // button and makes new ones — so the panel's size hint drops to its empty
-    // width and comes back, and the dock holding it takes those pixels off the
-    // central widget and gives them back. The terminal beside it is fitted to
-    // that width in whole cells, so a few pixels either way is a column, which
-    // is a real resize of the grid; with `ClearOnResize` on, each one scrolls
-    // the page into history. Toggling line edit blanked the screen this way.
+    // width and comes back. It used to be the terminal that paid for that: the
+    // dock holding this bar took those pixels off the central widget and gave
+    // them back, and a few pixels either way is a column, which is a real
+    // `Grid::resize`. Toggling line edit blanked the screen this way.
+    //
+    // The panel takes its pixels from the window now, so the flicker is a
+    // window that jumps sideways rather than a terminal that loses text —
+    // better, and still not something to do on every unrelated setting. The
+    // other half never moved: a rebuild destroys every `QAction`, and the
+    // shortcuts and the repeat state hang off those.
+    //
     // `m_built` and not an empty check: the panel with no buttons on it still
     // has contents — the `+` that defines the first one is made here — so the
     // opening call has to run even though it changes nothing about the list.
@@ -135,6 +141,9 @@ void QuickButtonBar::setButtons(const QVector<QuickButton> &buttons)
     if (!m_buttons.isEmpty()) {
         m_separator = new QFrame(this);
         m_separator->setFrameShadow(QFrame::Sunken);
+        // A rule across the panel, because the buttons run down it. There is
+        // no other case: the panel is fixed to the right-hand side.
+        m_separator->setFrameShape(QFrame::HLine);
         m_layout->insertWidget(m_layout->count() - 1, m_separator);
     }
     // The empty panel is still useful: this is its shortest route to the first
@@ -145,21 +154,6 @@ void QuickButtonBar::setButtons(const QVector<QuickButton> &buttons)
     m_add->setToolTip(tr("This button opens the editor for a new quick button."));
     addButton(m_add);
     connect(m_add, &QAction::triggered, this, &QuickButtonBar::addRequested);
-
-    // The separator's shape follows the direction the buttons run in, and it
-    // has only just been made.
-    setOrientation(m_orientation);
-}
-
-void QuickButtonBar::setOrientation(Qt::Orientation orientation)
-{
-    m_orientation = orientation;
-    const bool vertical = orientation == Qt::Vertical;
-    m_layout->setDirection(vertical ? QBoxLayout::TopToBottom
-                                    : QBoxLayout::LeftToRight);
-    if (m_separator) {
-        m_separator->setFrameShape(vertical ? QFrame::HLine : QFrame::VLine);
-    }
 }
 
 QToolButton *QuickButtonBar::buttonWidget(int index) const
