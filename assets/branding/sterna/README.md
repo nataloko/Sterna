@@ -26,6 +26,7 @@ the source of truth; the PNG and ICO application assets are generated from it.
 | `samples/wire-bird-background-rows.{svg,png}` | Review sheet for six background terminal row treatments. |
 | `samples/full-field-terminal-studies.{svg,png}` | Review sheet for six full-field terminal row patterns. |
 | `samples/sparse-output-cursor-studies.{svg,png}` | Review sheet for sparse-output cursor and bird treatments. |
+| `samples/tall-cursor-bird-studies.{svg,png}` | Review sheet for tall cursor widths with wire and solid birds. |
 
 The primary and small marks use negative space for the white body, so use them
 on light backgrounds. Use a mono mark on coloured backgrounds. The application
