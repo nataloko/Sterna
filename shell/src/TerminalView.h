@@ -76,6 +76,9 @@ public:
     QSize sizeHint() const override;
     /// The pixel size this many cells needs, at the current font.
     QSize sizeForCells(int cols, int rows) const;
+    /// The terminal size the view asks its layout for. Moves with the
+    /// configured size, never with what `refit` measured — see `sizeHint`.
+    void setHintCells(int cols, int rows);
     /// Re-fit the grid to the current viewport without resizing its window.
     /// Panel settings use this after a cell-size change, including on a
     /// visible background page which never drives the top-level window.
@@ -249,6 +252,11 @@ private:
 
     /// `KeybEnabled`. A macro's `enablekeyb 0` clears it.
     bool m_keyboardEnabled = true;
+
+    /// The terminal size `sizeHint` quotes, in cells. Seeded from the grid the
+    /// view was constructed with and moved by `setHintCells`; never by `refit`,
+    /// which measures the width this decides.
+    QSize m_hintCells{80, 24};
 
     /// A one-line Qt editor laid over the live terminal cursor. It deliberately
     /// owns only printable input and editing gestures; the terminal view keeps

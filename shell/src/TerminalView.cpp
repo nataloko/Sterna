@@ -463,6 +463,10 @@ TerminalView::TerminalView(Session *session, QWidget *parent, const I18n *i18n)
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
     setCursor(Qt::IBeamCursor);
+    // The grid the session was built with, which is the configured size until
+    // settings are loaded — `applySettings` moves it from there.
+    m_hintCells = QSize(qMax(1, int(m_session->cols())),
+                        qMax(1, int(m_session->rows())));
 
     // The theme is this widget's, so the subscription is too — a host's
     // `OSC 4` has to reach the painter whether or not there is a MainWindow
@@ -572,7 +576,34 @@ QSize TerminalView::sizeHint() const
     // The terminal's size, not a constant: `TerminalSize` in the settings is
     // read before the window is laid out, so this is what makes a configured
     // 132x50 open at 132x50.
-    return sizeForCells(m_session->cols(), m_session->rows());
+    //
+    // **It is the size somebody asked for, never the size `refit` measured.**
+    // When the hint does not fit — a large font, a small screen, a window the
+    // compositor capped — the layout hands the view its share of the shortfall,
+    // so the view's width is a function of this hint. Answering with the live
+    // grid closes that into a cycle: refit shrinks the grid, the hint follows
+    // it, the layout redistributes, and the next resize event measures a
+    // different column count again. It does not converge, it wobbles by a cell
+    // either way, and with `ClearOnResize` on each step scrolls the page into
+    // history — so toggling something as small as line edit blanks the screen.
+    // `m_hintCells` therefore moves only when a person, a file or the host
+    // changes the terminal size, which is what the hint is for.
+    return sizeForCells(m_hintCells.width(), m_hintCells.height());
+}
+
+/// The size the view asks its layout for, in cells.
+///
+/// Set from the configured terminal size whenever settings are applied, and by
+/// the window after a resize it performed itself. Deliberately *not* set by
+/// [`refit`] — see `sizeHint`.
+void TerminalView::setHintCells(int cols, int rows)
+{
+    const QSize cells(qMax(1, cols), qMax(1, rows));
+    if (cells == m_hintCells) {
+        return;
+    }
+    m_hintCells = cells;
+    updateGeometry();
 }
 
 void TerminalView::refreshColors()
@@ -586,6 +617,14 @@ void TerminalView::applySettings()
 {
     m_theme.applySettings(*m_session);
     m_session->setCellPixels(m_theme.cellWidth(), m_theme.cellHeight());
+
+    // The size somebody asked for, which is what the hint is allowed to follow.
+    // Settings are loaded after the pages exist, so a configured 100x30 reaches
+    // the hint here and nowhere earlier; `Session::resize` writes a live resize
+    // back into the same keys, so after a drag this agrees with the grid and
+    // moves nothing.
+    setHintCells(m_session->setting(QStringLiteral("terminal.cols")).toInt(),
+                 m_session->setting(QStringLiteral("terminal.rows")).toInt());
 
     // The schema writes a boolean out as `on` or `off` whatever the file said,
     // so this is a comparison and not a second copy of `GetOnOff` — which is
