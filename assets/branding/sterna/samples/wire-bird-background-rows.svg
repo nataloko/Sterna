@@ -30,9 +30,9 @@
         <g transform="translate(544 544) scale(1.18) rotate(-20) translate(-544 -544)">
           <g transform="translate(0 254)">
             <g transform="translate(0 580) scale(.1 -.1)">
-              <use xlink:href="#tern-shape" fill="#03110A" stroke="#03110A" stroke-width="300"
+              <use xlink:href="#tern-shape" fill="#03110A" stroke="#03110A" stroke-width="540"
                    stroke-linejoin="round"/>
-              <use xlink:href="#tern-beak" fill="#03110A" stroke="#03110A" stroke-width="300"
+              <use xlink:href="#tern-beak" fill="#03110A" stroke="#03110A" stroke-width="540"
                    stroke-linejoin="round"/>
             </g>
           </g>
