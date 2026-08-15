@@ -16633,7 +16633,7 @@ pub const SETTING_HELP: &[&str] = &[
     "This setting keeps the last search patterns for the find bar list. Sterna keeps a maximum of twelve patterns. An empty value erases the list.",
     "This setting keeps the last value of the Case option in the find bar. With the on value, a search finds only text with the same uppercase and lowercase letters as the pattern.",
     "This setting keeps the last value of the Whole word option in the find bar. With the on value, a search finds the pattern only when a word boundary is at each end.",
-    "This setting keeps the last value of the Regex option in the find bar. With the on value, a search uses the pattern as a regular expression. With the off value, a search finds the exact characters of the pattern.",
+    "This setting keeps the last value of the Regex option in the find bar. With the on value, a search uses the pattern as a regular expression. With the off value, a search finds the same characters as the pattern.",
     "This setting does a check for a signed Sterna update when the application starts. Manual update checks stay available with the off value.",
     "This setting records the start time of the last update check in Coordinated Universal Time. Empty, invalid, or future values let Sterna do one more check at the next start.",
 ];

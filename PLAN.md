@@ -4,7 +4,7 @@ Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
 **Last updated:** 2026-08-15 · **Stage:** 4 complete, deliberate deviations
-landing (`docs/deviations.md`) · **Commits:** 781
+landing (`docs/deviations.md`) · **Commits:** 782
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -5865,6 +5865,13 @@ because each is a place the obvious build is wrong:
   decides the layout would be tidier. The current match is the terminal's
   selection, so it is scrolled to, painted and copied by machinery that already
   existed.
+
+Its interface text — the three tooltips, the two arrow buttons, the close
+button and the menu entry's status tip — went through rule 9 on the way in, and
+so did the five settings' `#@` help. The labels themselves (`Find`, `Case`,
+`Whole word`, `Regex`) and the status strip's `3 of 12` are interface labels
+and are left exactly as they are; `Regex` is the short form and its tooltip
+carries `regular expression` in full.
 
 The rest of `docs/yat-ideas.md` is unaffected: this is the graduation of its
 item 2, which that file called "the broadest missing everyday affordance".

@@ -73,29 +73,34 @@ FindBar::FindBar(TerminalView *view, Session *session)
     m_previous = new QToolButton(this);
     m_previous->setObjectName(QStringLiteral("findPreviousButton"));
     m_previous->setText(QStringLiteral("▲"));
-    m_previous->setToolTip(tr("The match before this one, wrapping at the top."));
+    m_previous->setToolTip(tr("This command finds the previous match. At the first "
+                              "match, this command finds the last match."));
     layout->addWidget(m_previous);
 
     m_next = new QToolButton(this);
     m_next->setObjectName(QStringLiteral("findNextButton"));
     m_next->setText(QStringLiteral("▼"));
-    m_next->setToolTip(tr("The match after this one, wrapping at the bottom."));
+    m_next->setToolTip(tr("This command finds the next match. At the last match, "
+                          "this command finds the first match."));
     layout->addWidget(m_next);
 
     m_case = new QCheckBox(tr("Case"), this);
     m_case->setObjectName(QStringLiteral("findCaseBox"));
-    m_case->setToolTip(tr("Match upper and lower case exactly."));
+    m_case->setToolTip(tr("This option finds only text with the same uppercase and "
+                          "lowercase letters as the pattern."));
     layout->addWidget(m_case);
 
     m_word = new QCheckBox(tr("Whole word"), this);
     m_word->setObjectName(QStringLiteral("findWholeWordBox"));
-    m_word->setToolTip(tr("Only where the match has a word boundary at each end."));
+    m_word->setToolTip(tr("This option finds the pattern only when a word boundary "
+                          "is at each end of the match."));
     layout->addWidget(m_word);
 
     m_regex = new QCheckBox(tr("Regex"), this);
     m_regex->setObjectName(QStringLiteral("findRegexBox"));
     m_regex->setToolTip(
-        tr("Read the pattern as a regular expression rather than as text."));
+        tr("This option uses the pattern as a regular expression. With the off "
+           "value, a search finds the same characters as the pattern."));
     layout->addWidget(m_regex);
 
     m_status = new QLabel(this);
@@ -110,7 +115,8 @@ FindBar::FindBar(TerminalView *view, Session *session)
     auto *close = new QToolButton(this);
     close->setObjectName(QStringLiteral("findCloseButton"));
     close->setText(QStringLiteral("✕"));
-    close->setToolTip(tr("Close the find bar. Escape does the same."));
+    close->setToolTip(tr("This command closes the find bar. The Escape key also "
+                         "closes the find bar."));
     layout->addWidget(close);
 
     m_debounce = new QTimer(this);

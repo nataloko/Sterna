@@ -2372,7 +2372,8 @@ void MainWindow::buildMenus()
         [this] { m_view->openFind(); });
     m_findAction->setObjectName(QStringLiteral("findAction"));
     m_findAction->setStatusTip(
-        tr("Searches this terminal's screen and its scrollback."));
+        tr("This command opens the find bar. Sterna finds text on the terminal "
+           "screen and in all scrollback."));
 
     // In Edit because it is the same gesture as Copy with a different
     // destination: select the command that worked, keep it. No upstream key.

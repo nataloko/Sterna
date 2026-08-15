@@ -2620,7 +2620,7 @@ recent.find_whole_word | bool | Sterna | FindWholeWord | off | -
 # Whether the pattern is a regular expression rather than text to be found.
 # Off, because a console is full of `.` and `[` and somebody searching for an
 # IP address should get the one they typed.
-#@ This setting keeps the last value of the Regex option in the find bar. With the on value, a search uses the pattern as a regular expression. With the off value, a search finds the exact characters of the pattern.
+#@ This setting keeps the last value of the Regex option in the find bar. With the on value, a search uses the pattern as a regular expression. With the off value, a search finds the same characters as the pattern.
 recent.find_regex | bool | Sterna | FindRegex | off | -
 
 # --- updates ----------------------------------------------------------------
