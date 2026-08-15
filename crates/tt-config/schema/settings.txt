@@ -2489,7 +2489,7 @@ window.quick_buttons | bool | Sterna | QuickButtons | on | -
 # a panel is really held to is its own minimum, which depends on the captions
 # and the font, so the window applies that too: validation at the boundary,
 # the way `TerminalUID` is.
-#@ This setting sets the width of the quick-button bar in pixels. Zero makes the bar as wide as its widest button. To change the width, move the inner edge of the bar. Sterna then changes the window width, and the terminal keeps its columns.
+#@ This setting sets the width of the quick-button bar in pixels. Zero makes the bar as wide as its widest button. Sterna then changes the window width, and the terminal keeps its columns.
 window.quick_buttons_width | int_clamp(0..2000) | Sterna | QuickButtonsWidth | 0 | -
 
 # --- recent -----------------------------------------------------------------

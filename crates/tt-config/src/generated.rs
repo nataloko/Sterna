@@ -16680,7 +16680,7 @@ pub const SETTING_HELP: &[&str] = &[
     "This setting shows the toolbar with connection controls, local echo, line editing, and dark mode.",
     "This setting selects one tabbed connection view or one tiled grid. The tiled grid shows all connections. The previous two-panel and four-panel values select the tiled layout.",
     "This setting shows the quick-button bar. You can change the buttons on this bar. An empty bar shows the Add button. You can use this button to make the first command.",
-    "This setting sets the width of the quick-button bar in pixels. Zero makes the bar as wide as its widest button. To change the width, move the inner edge of the bar. Sterna then changes the window width, and the terminal keeps its columns.",
+    "This setting sets the width of the quick-button bar in pixels. Zero makes the bar as wide as its widest button. Sterna then changes the window width, and the terminal keeps its columns.",
     "This setting stores the serial-device path that the connection dialog used last. Adapter renumbering changes a temporary name more frequently than a stable device link.",
     "This setting stores host entries for the New Connection dialog. This list puts the host from the last connection first. Host history must be active before Sterna updates this list.",
     "This setting stores the last SSH host or SSH configuration alias entered in the connection dialog. An empty value removes the SSH record.",
