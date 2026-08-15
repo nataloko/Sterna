@@ -4,7 +4,7 @@ Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
 **Last updated:** 2026-08-15 · **Stage:** 4 complete, deliberate deviations
-landing (`docs/deviations.md`) · **Commits:** 772
+landing (`docs/deviations.md`) · **Commits:** 781
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -5763,7 +5763,10 @@ The rule for going on that list: user-visible, not forced by the platform, and
 reproducing upstream instead would have been easy. A divergence Linux or Qt
 forces is a port, and belongs in a code comment and in `AGENTS.md`.
 
-Eight so far, all 2026-08-13:
+**`docs/deviations.md` is the canonical list and is ahead of this one.** The
+eight below are the first batch, all 2026-08-13, written up here because the
+argument for each is the argument for the section existing at all; the entries
+that followed are in that file and are summarised after them.
 
 1. **The default baud rate is 115200**, where `ttset.c:919` gives 9600. The
    key, its parse and its absence of bounds are unchanged, so `BaudRate=9600`
@@ -5830,6 +5833,41 @@ Eight so far, all 2026-08-13:
 `tt-config/tests/upstream.rs` now asserts in both directions: an upstream
 section's keys must exist upstream, and `[Sterna]`'s must not — a key in both
 places would be a second answer only one of which a real Tera Term can see.
+
+**Find landed 2026-08-15** as deviation 19, and is the largest of the entries
+after the first batch. Ctrl+Shift+F searches the page and the scrollback — case,
+whole word, regular expression, next and previous with wrap, every match on
+screen painted, and the last twelve patterns remembered. Upstream has nothing:
+the way to find something in a Tera Term buffer is to log the session and search
+the file in another program.
+
+Three decisions are worth keeping here rather than only in the deviations file,
+because each is a place the obvious build is wrong:
+
+- **It searches logical lines, in the core**, reusing `highlight.rs`'s flatten —
+  the byte-to-cell map, the wide-cell rule and the trailing-blank trim are one
+  implementation, so `^` and `$` mean the same thing in a find field as in a
+  highlight rule and a match across a soft wrap is found once and shown on both
+  rows. It is a *separate* matcher and memo from the rules, and ungated by
+  `color.highlighting`: a search silenced by a menu tick belonging to another
+  feature would be undiagnosable from the screen.
+- **Nothing is cached across output.** `find_next` scans live and stops at the
+  first hit; the painting path matches the visible row on demand. `yat-ideas.md`
+  asked for an epoch/revalidation rule for retained results — the answer is that
+  there are no retained results, so a line that has aged out of the scrollback is
+  simply not found and no caller has to check first.
+- **The bar floats over the bottom of the terminal rather than taking a row.**
+  A bar in the page's layout is a resize, and `Session::resize` sends a
+  scrolled-back view live, drops the selection and rewrites `TerminalSize` — so
+  *closing* it would throw away the position somebody had just searched to.
+  `find_test.cpp` asserts that opening and closing changes neither the grid size
+  nor the view offset, which is the case that will fail if a later reader
+  decides the layout would be tidier. The current match is the terminal's
+  selection, so it is scrolled to, painted and copied by machinery that already
+  existed.
+
+The rest of `docs/yat-ideas.md` is unaffected: this is the graduation of its
+item 2, which that file called "the broadest missing everyday affordance".
 
 ---
 

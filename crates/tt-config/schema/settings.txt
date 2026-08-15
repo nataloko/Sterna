@@ -668,6 +668,21 @@ color.highlighting | bool | Sterna | Highlighting | on | -
 #@ This setting changes the default background toward the text color by this percentage while disconnected. Zero disables shading. Host-selected backgrounds do not change.
 color.disconnected_shade | int_clamp(0..100) | Sterna | DisconnectedShade | 12 | -
 
+# **`[Sterna]`**, because upstream has no Find — and so, like the highlight
+# rules above, no key to be compatible with.
+#
+# The pair every match *except* the one you are stepping through is painted in.
+# The current one is the terminal's selection, which is how it gets scrolled to,
+# copied and drawn without a second idea of what "chosen" looks like; these are
+# the others, and they have to be a colour a selection is distinguishable from.
+#
+# Amber on black rather than a shade of the theme: a match is a claim about the
+# text, not a mood, and a search that quietly picked something close to the
+# background on somebody's palette would look broken in the one case it exists
+# for.
+#@ This setting sets the text and background colors for search matches. Sterna shows the selected match with the terminal selection colors.
+color.find | color2 | Sterna | FindColor | 0,0,0,255,220,120 | -
+
 # --- cursor ------------------------------------------------------------------
 
 # `ttset.c:718`, and the default is again the `else` branch.
@@ -2571,6 +2586,42 @@ recent.remember | bool | Sterna | RememberConnections | on | -
 # `LogDefaultPath` later falls back to somewhere real.
 #@ This setting stores the directory selected in the Log dialog. Without a default log directory, Sterna uses this directory for the next log.
 recent.log_dir | string | Sterna | LogDir |  | -
+
+# What was last typed into the find bar, newest first, separated by `;`.
+#
+# The same shape as `recent.host_history` above and for the same reason: a list
+# is not something a flat table of named settings can hold, and an indexed
+# family of keys would be a second mechanism for one. `%` and `;` are
+# percent-encoded, so a pattern containing either survives the round trip —
+# which matters more here than it does for a host name, since `;` is a
+# perfectly ordinary thing to search a console log for.
+#
+# Twelve are kept. Clearing the value forgets the lot, and there is no switch:
+# a search box with no memory of the last thing you searched for is a search
+# box you retype into, and nothing here reaches the network or the disk the way
+# a remembered connection does.
+#@ This setting keeps the last search patterns for the find bar list. Sterna keeps a maximum of twelve patterns. An empty value erases the list.
+recent.find_history | string | Sterna | FindHistory |  | -
+
+# The three boxes on the find bar, as they were left.
+#
+# Settings rather than window state because they change what a pattern *means*,
+# so somebody who works in regular expressions should not have to say so again
+# every time they open the bar. They live beside the remembered log directory
+# for the same reason it does: this is where the answer to "how was this last
+# set" goes.
+#@ This setting keeps the last value of the Case option in the find bar. With the on value, a search finds only text with the same uppercase and lowercase letters as the pattern.
+recent.find_case | bool | Sterna | FindCase | off | -
+
+# Whether a match has to have a word boundary at each end.
+#@ This setting keeps the last value of the Whole word option in the find bar. With the on value, a search finds the pattern only when a word boundary is at each end.
+recent.find_whole_word | bool | Sterna | FindWholeWord | off | -
+
+# Whether the pattern is a regular expression rather than text to be found.
+# Off, because a console is full of `.` and `[` and somebody searching for an
+# IP address should get the one they typed.
+#@ This setting keeps the last value of the Regex option in the find bar. With the on value, a search uses the pattern as a regular expression. With the off value, a search finds the exact characters of the pattern.
+recent.find_regex | bool | Sterna | FindRegex | off | -
 
 # --- updates ----------------------------------------------------------------
 #

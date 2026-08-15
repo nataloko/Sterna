@@ -1792,6 +1792,57 @@ typedef struct {
 } TtHighlightSpan;
 
 /**
+ * What Find is looking for.
+ *
+ * The three flags are spellings of one pattern rather than three matchers, so
+ * a frontend passes the boxes as they are ticked and does not compose anything
+ * itself. `pattern` is NUL-terminated UTF-8; empty is nothing to look for,
+ * which is not an error.
+ */
+typedef struct {
+    const char *pattern;
+    /**
+     * The pattern is text to be found, not an expression.
+     */
+    bool literal;
+    bool ignore_case;
+    /**
+     * Only a match with a word boundary at each end counts.
+     */
+    bool whole_word;
+} TtFindQuery;
+
+/**
+ * Where one match is, from [`tt_session_find_next`].
+ *
+ * Absolute line numbers and column boundaries — the coordinates a selection is
+ * held in, because they are the ones that survive the host printing underneath
+ * them. Two line numbers because a match can straddle a soft wrap: `line` and
+ * `from` are where it starts, `end_line` and `to` where it ends, `to`
+ * exclusive.
+ */
+typedef struct {
+    uint64_t line;
+    uint16_t from;
+    uint64_t end_line;
+    uint16_t to;
+} TtFindMatch;
+
+/**
+ * One run of columns a match covers, from [`tt_session_row_find`].
+ *
+ * No colours: what a match should look like is the frontend's `color.find`.
+ */
+typedef struct {
+    /**
+     * First column, and one past the last. A wide character's padding column
+     * is inside the run, the same shape as a selection range.
+     */
+    uint16_t from;
+    uint16_t to;
+} TtFindSpan;
+
+/**
  * What to do about a host key the `known_hosts` files do not already trust.
  *
  * `TT_HOST_KEY_POLICY_ASK` is what a GUI wants; the other three exist because
@@ -4383,6 +4434,76 @@ const char *tt_session_highlight_problems(TtSession *session);
 const TtHighlightSpan *tt_session_row_highlights(TtSession *session,
                                                  size_t y,
                                                  size_t *out_len);
+
+/**
+ * Whether the engine will take this pattern, for a find bar to complain as it
+ * is typed.
+ *
+ * Sessionless: the answer is a fact about the pattern, and the bar asks on
+ * every keystroke. An empty pattern is [`TT_OK`] — somebody has opened the bar
+ * and not typed yet, which is not a mistake to report.
+ */
+TtStatus tt_find_check(const TtFindQuery *query);
+
+/**
+ * Compile what Find is looking for, or clear it with a null `query`.
+ *
+ * A pattern the engine refuses leaves the previous search running and returns
+ * [`TT_ERR_INVALID`] — somebody typing `(ERROR)` passes through `(ERROR` on
+ * the way, and the matches they are looking at must not blink out while they
+ * finish the parenthesis.
+ */
+TtStatus tt_session_set_find(TtSession *session, const TtFindQuery *query);
+
+/**
+ * Whether a search is running, which is what decides if Next does anything.
+ */
+bool tt_session_has_find(const TtSession *session);
+
+/**
+ * The next match from `(line, x)`, or the previous one when `backwards`.
+ *
+ * True when `out` was filled. `wrap` continues from the far end after the near
+ * one runs out, so the second sweep can return a match *before* where it
+ * started — including the one it started on, when that is the only one there
+ * is.
+ *
+ * Searched live, every time: this walks the buffer as it is now rather than
+ * indexing a list the host would have invalidated between the search and the
+ * scroll. That also means a line which has aged out of the scrollback is
+ * simply not found, with nothing for the caller to check first.
+ */
+bool tt_session_find_next(TtSession *session,
+                          uint64_t line,
+                          uint16_t x,
+                          bool backwards,
+                          bool wrap,
+                          TtFindMatch *out);
+
+/**
+ * How many matches the whole buffer holds.
+ *
+ * One pass over the scrollback, so call it when the pattern changes and not
+ * per frame — it is the one thing here whose cost is the size of the history
+ * rather than the size of the screen.
+ */
+size_t tt_session_find_count(TtSession *session);
+
+/**
+ * Which columns of viewport row `y` a match covers, in column order.
+ *
+ * Borrowed, and valid until the next call on this session — the same contract
+ * as [`tt_session_row_highlights`] beside it, and it reads the grid without
+ * touching it for the same reason. Null with `*out_len` zero when nothing on
+ * the row matched, which is the answer whenever no search is running.
+ *
+ * Deliberately **not** gated by `Highlighting`: that switch is about the
+ * user's own rules, and a find that painted nothing because a tick in the View
+ * menu was off would be undiagnosable from the screen.
+ */
+const TtFindSpan *tt_session_row_find(TtSession *session,
+                                      size_t y,
+                                      size_t *out_len);
 
 /**
  * Fill `out` with the sensible defaults: read `~/.ssh/config`, use the agent,

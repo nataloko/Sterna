@@ -33,6 +33,40 @@ struct HostKeyRequest {
     QString alsoKnown;
 };
 
+/// What the find bar is looking for.
+///
+/// The three switches are named the way the boxes are labelled, which is the
+/// opposite of two of the ABI's — `regex` is the tick somebody makes, `literal`
+/// is what the engine is told. One negation, here, rather than at every caller.
+struct FindQuery {
+    QString pattern;
+    bool caseSensitive = false;
+    bool wholeWord = false;
+    bool regex = false;
+
+    bool operator==(const FindQuery &o) const
+    {
+        return pattern == o.pattern && caseSensitive == o.caseSensitive
+               && wholeWord == o.wholeWord && regex == o.regex;
+    }
+    bool operator!=(const FindQuery &o) const { return !(*this == o); }
+};
+
+/// Where one match is — absolute lines and column boundaries, so it is still
+/// true after the host has printed underneath it. Two line numbers because a
+/// match can straddle a soft wrap.
+struct FindMatch {
+    quint64 line = 0;
+    int from = 0;
+    quint64 endLine = 0;
+    int to = 0;
+
+    bool operator==(const FindMatch &o) const
+    {
+        return line == o.line && from == o.from && endLine == o.endLine && to == o.to;
+    }
+};
+
 /// Something that has to be typed before authentication can continue.
 struct AuthRequest {
     struct Line {
@@ -158,6 +192,31 @@ public:
     /// What the last `setHighlights` could not compile, or an empty string.
     /// Only a hand-edited file can produce one; the editor will not save one.
     QString highlightProblems() const;
+    /// Which columns of viewport row `y` a match covers, in column order.
+    ///
+    /// The same contract as `rowHighlights` beside it, and the same place the
+    /// matching happens — so a pattern typed now finds text that arrived an
+    /// hour ago, scrollback included. Deliberately not gated by
+    /// `color.highlighting`: that switch belongs to the user's own rules.
+    size_t rowFind(int y, const TtFindSpan **out);
+    /// Compile what Find is looking for. False leaves the previous search
+    /// running, which is what a half-typed `(` needs.
+    bool setFind(const FindQuery &query, QString *outError = nullptr);
+    /// Stop searching. The matches stop being painted.
+    void clearFind();
+    bool hasFind() const;
+    /// Whether the engine will take this pattern. Asked on every keystroke, so
+    /// it touches no session state.
+    static bool checkFindPattern(const FindQuery &query, QString *outError = nullptr);
+    /// The next match from `(line, x)`, or the previous one going backwards.
+    ///
+    /// Searched live rather than out of a retained list: the buffer's ends move
+    /// as the host prints, so a line that has aged out is simply not found and
+    /// there is nothing for the caller to check first.
+    bool findNext(quint64 line, int x, bool backwards, bool wrap, FindMatch *out);
+    /// How many matches the whole buffer holds. One pass over the scrollback —
+    /// ask when the pattern changes, not per frame.
+    int findCount();
     /// The absolute number of the line at viewport row `y`.
     quint64 lineAt(int y) const;
     /// The URL-marked run containing one cell, or an empty string when the

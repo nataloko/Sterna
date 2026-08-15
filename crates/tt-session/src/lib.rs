@@ -35,6 +35,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub mod bell;
+pub mod find;
 pub mod highlight;
 pub mod log;
 pub mod logname;
@@ -298,6 +299,16 @@ pub struct Session {
     /// a screen does not allocate once per row.
     highlight_flat: highlight::Flattened,
     highlight_styles: Vec<highlight::Style>,
+    /// What Find is looking for, compiled — see [`find`]. `None` is no search
+    /// running, which is the state a terminal spends nearly all its life in and
+    /// the one every entry point checks first.
+    find_re: Option<regex::Regex>,
+    /// The same memo arrangement as the highlight rules above, and separate
+    /// from it on purpose: sharing the buffers would make each paint of a row
+    /// throw away the other feature's answer for it.
+    find_memo: find::Memo,
+    find_flat: highlight::Flattened,
+    find_claimed: Vec<bool>,
 }
 
 impl Session {
@@ -335,6 +346,10 @@ impl Session {
             highlight_memo: highlight::Memo::default(),
             highlight_flat: highlight::Flattened::default(),
             highlight_styles: Vec::new(),
+            find_re: None,
+            find_memo: find::Memo::default(),
+            find_flat: highlight::Flattened::default(),
+            find_claimed: Vec::new(),
         }
     }
 
@@ -963,6 +978,15 @@ impl Session {
     /// as ` *$` would be a puzzle nobody should have to solve.
     fn flatten_logical_line(&mut self, first: u64, last: u64) {
         let mut flat = std::mem::take(&mut self.highlight_flat);
+        self.flatten_into(first, last, &mut flat);
+        self.highlight_flat = flat;
+    }
+
+    /// The same, into a buffer the caller owns.
+    ///
+    /// Find walks the buffer through this while the painter is using its own
+    /// copy, and neither should have to know the other exists.
+    fn flatten_into(&self, first: u64, last: u64, flat: &mut highlight::Flattened) {
         flat.clear();
         for line in first..=last {
             let Some(cells) = self.line(line) else {
@@ -996,7 +1020,199 @@ impl Session {
             flat.text.truncate(start as usize);
         }
         flat.starts.push(flat.text.len() as u32);
-        self.highlight_flat = flat;
+    }
+
+    // --- find ---------------------------------------------------------------
+
+    /// Compile what Find is looking for, or clear it.
+    ///
+    /// An empty pattern is not an error — it is somebody who has opened the bar
+    /// and not typed yet — and leaves nothing to look for, which every entry
+    /// point below reads as no matches. A pattern the engine refuses returns
+    /// the reason for the bar to show under the field, and leaves the previous
+    /// search alone: the alternative is a half-typed `(` silently unpainting
+    /// the matches somebody is looking at.
+    ///
+    /// Spelled out rather than this file's `Result`, which is `tt_conn`'s: a
+    /// pattern the engine refused is not something that happened to the link.
+    pub fn set_find(&mut self, query: Option<&find::Query>) -> std::result::Result<(), String> {
+        let compiled = match query {
+            Some(q) => find::compile(q).map_err(|e| e.to_string())?,
+            None => None,
+        };
+        self.find_re = compiled;
+        self.find_memo = find::Memo::default();
+        self.mark_damage();
+        Ok(())
+    }
+
+    /// Whether a search is running, which is what decides if Next does
+    /// anything.
+    pub fn has_find(&self) -> bool {
+        self.find_re.is_some()
+    }
+
+    /// The oldest and newest lines the buffer still holds.
+    ///
+    /// Both ends move as the host prints, so this is asked per walk rather than
+    /// remembered — the whole reason Find keeps no results between calls.
+    fn buffer_bounds(&self) -> (u64, u64) {
+        let grid = self.vt.grid();
+        let newest = grid.scrolled_off() + grid.rows() as u64 - 1;
+        let oldest = grid.scrolled_off() - grid.scrollback_len() as u64;
+        (oldest, newest)
+    }
+
+    /// The next match from `(line, x)`, or the previous one going backwards.
+    ///
+    /// Live, every time: this walks the buffer as it is now and stops at the
+    /// first hit, rather than indexing a list that the host would have
+    /// invalidated between the search and the scroll. `wrap` continues from the
+    /// far end after the near one runs out, so the second sweep can return a
+    /// match *before* where it started — including the one it started on, when
+    /// that is the only one there is.
+    pub fn find_next(
+        &mut self,
+        from: (u64, u16),
+        backwards: bool,
+        wrap: bool,
+    ) -> Option<find::Hit> {
+        let re = self.find_re.take()?;
+        let (oldest, newest) = self.buffer_bounds();
+        let mut flat = std::mem::take(&mut self.find_flat);
+
+        let start = from.0.clamp(oldest, newest);
+        let hit = self
+            .sweep(&re, &mut flat, start, from.1, backwards, oldest, newest)
+            .or_else(|| {
+                if !wrap {
+                    return None;
+                }
+                // From the far end, taking anything: the first sweep has
+                // already shown there is nothing beyond where we began.
+                let (edge, x) = if backwards {
+                    (newest, u16::MAX)
+                } else {
+                    (oldest, 0)
+                };
+                self.sweep(&re, &mut flat, edge, x, backwards, oldest, newest)
+            });
+
+        self.find_flat = flat;
+        self.find_re = Some(re);
+        hit
+    }
+
+    /// One walk over logical lines, in one direction, stopping at the first
+    /// hit.
+    ///
+    /// Whole logical lines, because that is the only unit in which a match
+    /// across a soft wrap exists at all — and stepping to the line past the
+    /// *bounds* rather than past the row is what stops a wrapped line being
+    /// searched once for each of its rows and reporting the same match twice.
+    #[allow(clippy::too_many_arguments)]
+    fn sweep(
+        &self,
+        re: &regex::Regex,
+        flat: &mut highlight::Flattened,
+        from_line: u64,
+        from_x: u16,
+        backwards: bool,
+        oldest: u64,
+        newest: u64,
+    ) -> Option<find::Hit> {
+        let mut cur = from_line;
+        let mut x = from_x;
+        loop {
+            let (first, last) = self.logical_line_bounds(cur);
+            self.flatten_into(first, last, flat);
+            let hit = if backwards {
+                find::last_before(re, flat, cur, x)
+            } else {
+                find::first_at_or_after(re, flat, cur, x)
+            };
+            if hit.is_some() {
+                return hit;
+            }
+            if backwards {
+                if first <= oldest {
+                    return None;
+                }
+                cur = first - 1;
+                x = u16::MAX;
+            } else {
+                if last >= newest {
+                    return None;
+                }
+                cur = last + 1;
+                x = 0;
+            }
+        }
+    }
+
+    /// How many matches the whole buffer holds.
+    ///
+    /// One pass, and the frontend calls it when the pattern changes rather than
+    /// per frame — it is the one thing here whose cost is the size of the
+    /// scrollback rather than the size of the screen.
+    pub fn find_count(&mut self) -> usize {
+        let Some(re) = self.find_re.take() else {
+            return 0;
+        };
+        let (oldest, newest) = self.buffer_bounds();
+        let mut flat = std::mem::take(&mut self.find_flat);
+        let mut total = 0;
+        let mut cur = oldest;
+        loop {
+            let (first, last) = self.logical_line_bounds(cur);
+            self.flatten_into(first, last, &mut flat);
+            total += find::count_in(&re, &flat);
+            if last >= newest {
+                break;
+            }
+            cur = last + 1;
+        }
+        self.find_flat = flat;
+        self.find_re = Some(re);
+        total
+    }
+
+    /// Which columns of viewport row `y` a match covers, in column order.
+    ///
+    /// Borrowed until the next call, the same contract as
+    /// [`Session::row_highlights`] beside it — and deliberately **not** gated by
+    /// `color.highlighting`. That switch is about the user's own rules; a find
+    /// that painted nothing because a menu tick somewhere else was off would be
+    /// a bug nobody could diagnose from the screen.
+    pub fn row_find(&mut self, y: usize) -> &[find::Span] {
+        if self.find_re.is_none() {
+            return &[];
+        }
+        let line = self.line_at(y);
+        if self.line(line).is_none() {
+            return &[];
+        }
+        if !self.find_memo.covers(self.damage_epoch, line) {
+            let (first, last) = self.logical_line_bounds(line);
+            // Taken out and put back so the buffers survive the call without
+            // borrowing `self` twice — the shape `row_highlights` uses.
+            let re = self.find_re.take().expect("checked above");
+            let mut flat = std::mem::take(&mut self.find_flat);
+            let mut claimed = std::mem::take(&mut self.find_claimed);
+            let mut rows = std::mem::take(&mut self.find_memo.rows);
+            self.flatten_into(first, last, &mut flat);
+            find::runs_into(&re, &flat, &mut claimed, &mut rows);
+            self.find_flat = flat;
+            self.find_claimed = claimed;
+            self.find_re = Some(re);
+            self.find_memo = find::Memo {
+                epoch: self.damage_epoch,
+                first,
+                last,
+                rows,
+            };
+        }
+        self.find_memo.row(line)
     }
 
     // --- session logging ----------------------------------------------------

@@ -152,6 +152,91 @@ QString Session::highlightProblems() const
     return problems ? QString::fromUtf8(problems) : QString();
 }
 
+size_t Session::rowFind(int y, const TtFindSpan **out)
+{
+    size_t len = 0;
+    const TtFindSpan *spans =
+        tt_session_row_find(m_session, static_cast<size_t>(qMax(0, y)), &len);
+    if (out) {
+        *out = spans;
+    }
+    return spans ? len : 0;
+}
+
+/// Fill the ABI struct from a Qt one.
+///
+/// The `QByteArray` is the caller's local rather than a temporary inside the
+/// initialiser: the struct borrows the bytes, and a temporary would be gone
+/// before the call. Same reason `Highlights.cpp` names its own.
+static TtFindQuery findQuery(const FindQuery &query, const QByteArray &pattern)
+{
+    TtFindQuery out {};
+    out.pattern = pattern.constData();
+    out.literal = !query.regex;
+    out.ignore_case = !query.caseSensitive;
+    out.whole_word = query.wholeWord;
+    return out;
+}
+
+bool Session::setFind(const FindQuery &query, QString *outError)
+{
+    const QByteArray pattern = query.pattern.toUtf8();
+    const TtFindQuery q = findQuery(query, pattern);
+    if (tt_session_set_find(m_session, &q) != TT_OK) {
+        if (outError) {
+            *outError = QString::fromUtf8(tt_last_error());
+        }
+        return false;
+    }
+    // Installing the pattern queues damage so the matches appear without
+    // waiting for the next keystroke from the host — the same reason
+    // `setHighlights` above drains its own.
+    dispatch();
+    return true;
+}
+
+void Session::clearFind()
+{
+    tt_session_set_find(m_session, nullptr);
+    dispatch();
+}
+
+bool Session::hasFind() const
+{
+    return tt_session_has_find(m_session);
+}
+
+bool Session::checkFindPattern(const FindQuery &query, QString *outError)
+{
+    const QByteArray pattern = query.pattern.toUtf8();
+    const TtFindQuery q = findQuery(query, pattern);
+    if (tt_find_check(&q) == TT_OK) {
+        return true;
+    }
+    if (outError) {
+        *outError = QString::fromUtf8(tt_last_error());
+    }
+    return false;
+}
+
+bool Session::findNext(quint64 line, int x, bool backwards, bool wrap, FindMatch *out)
+{
+    TtFindMatch m {};
+    if (!tt_session_find_next(m_session, line, static_cast<uint16_t>(qMax(0, x)),
+                              backwards, wrap, &m)) {
+        return false;
+    }
+    if (out) {
+        *out = FindMatch {m.line, m.from, m.end_line, m.to};
+    }
+    return true;
+}
+
+int Session::findCount()
+{
+    return static_cast<int>(tt_session_find_count(m_session));
+}
+
 quint64 Session::lineAt(int y) const
 {
     return tt_session_line_at(m_session, static_cast<size_t>(qMax(0, y)));

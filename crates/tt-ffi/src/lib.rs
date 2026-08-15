@@ -463,6 +463,10 @@ pub struct TtSession {
     highlight_spans: Vec<TtHighlightSpan>,
     /// What the last rule set failed to compile, if anything.
     highlight_problems: CString,
+    /// The last row of find spans handed out — the same arrangement as
+    /// `highlight_spans`, and separate because a painter asks for both about
+    /// the same row.
+    find_spans: Vec<TtFindSpan>,
     /// Active-screen sixel descriptors rebuilt by
     /// [`tt_session_sixel_images`]. Pixel storage remains in the terminal;
     /// this owns only the flat structs a C caller can walk.
@@ -525,6 +529,7 @@ pub extern "C" fn tt_session_new(config: *const TtConfig) -> *mut TtSession {
         url: CString::default(),
         highlight_spans: Vec::new(),
         highlight_problems: CString::default(),
+        find_spans: Vec::new(),
         sixel_images: Vec::new(),
         xfer_protocol: CString::default(),
         xfer_file: CString::default(),
@@ -5007,6 +5012,195 @@ pub extern "C" fn tt_session_row_highlights(
         return ptr::null();
     }
     s.highlight_spans.as_ptr()
+}
+
+// --- find -----------------------------------------------------------------
+
+/// What Find is looking for.
+///
+/// The three flags are spellings of one pattern rather than three matchers, so
+/// a frontend passes the boxes as they are ticked and does not compose anything
+/// itself. `pattern` is NUL-terminated UTF-8; empty is nothing to look for,
+/// which is not an error.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtFindQuery {
+    pub pattern: *const c_char,
+    /// The pattern is text to be found, not an expression.
+    pub literal: bool,
+    pub ignore_case: bool,
+    /// Only a match with a word boundary at each end counts.
+    pub whole_word: bool,
+}
+
+/// Where one match is, from [`tt_session_find_next`].
+///
+/// Absolute line numbers and column boundaries — the coordinates a selection is
+/// held in, because they are the ones that survive the host printing underneath
+/// them. Two line numbers because a match can straddle a soft wrap: `line` and
+/// `from` are where it starts, `end_line` and `to` where it ends, `to`
+/// exclusive.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TtFindMatch {
+    pub line: u64,
+    pub from: u16,
+    pub end_line: u64,
+    pub to: u16,
+}
+
+/// One run of columns a match covers, from [`tt_session_row_find`].
+///
+/// No colours: what a match should look like is the frontend's `color.find`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtFindSpan {
+    /// First column, and one past the last. A wide character's padding column
+    /// is inside the run, the same shape as a selection range.
+    pub from: u16,
+    pub to: u16,
+}
+
+/// Read a query, or say why it cannot be one.
+fn find_query(query: &TtFindQuery) -> Result<tt_session::find::Query, TtStatus> {
+    let pattern = unsafe { str_arg(query.pattern, usize::MAX) }?;
+    Ok(tt_session::find::Query {
+        pattern: pattern.to_string(),
+        literal: query.literal,
+        ignore_case: query.ignore_case,
+        whole_word: query.whole_word,
+    })
+}
+
+/// Whether the engine will take this pattern, for a find bar to complain as it
+/// is typed.
+///
+/// Sessionless: the answer is a fact about the pattern, and the bar asks on
+/// every keystroke. An empty pattern is [`TT_OK`] — somebody has opened the bar
+/// and not typed yet, which is not a mistake to report.
+#[no_mangle]
+pub extern "C" fn tt_find_check(query: *const TtFindQuery) -> TtStatus {
+    let Some(q) = (unsafe { query.as_ref() }) else {
+        return fail(TT_ERR_INVALID, "null TtFindQuery");
+    };
+    let parsed = match find_query(q) {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    match tt_session::find::check(&parsed) {
+        Ok(()) => TT_OK,
+        Err(reason) => fail(TT_ERR_INVALID, reason),
+    }
+}
+
+/// Compile what Find is looking for, or clear it with a null `query`.
+///
+/// A pattern the engine refuses leaves the previous search running and returns
+/// [`TT_ERR_INVALID`] — somebody typing `(ERROR)` passes through `(ERROR` on
+/// the way, and the matches they are looking at must not blink out while they
+/// finish the parenthesis.
+#[no_mangle]
+pub extern "C" fn tt_session_set_find(
+    session: *mut TtSession,
+    query: *const TtFindQuery,
+) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    let parsed = match unsafe { query.as_ref() } {
+        Some(q) => match find_query(q) {
+            Ok(p) => Some(p),
+            Err(status) => return status,
+        },
+        None => None,
+    };
+    match s.session.set_find(parsed.as_ref()) {
+        Ok(()) => TT_OK,
+        Err(reason) => fail(TT_ERR_INVALID, reason),
+    }
+}
+
+/// Whether a search is running, which is what decides if Next does anything.
+#[no_mangle]
+pub extern "C" fn tt_session_has_find(session: *const TtSession) -> bool {
+    let s = session_ref!(session, false);
+    s.session.has_find()
+}
+
+/// The next match from `(line, x)`, or the previous one when `backwards`.
+///
+/// True when `out` was filled. `wrap` continues from the far end after the near
+/// one runs out, so the second sweep can return a match *before* where it
+/// started — including the one it started on, when that is the only one there
+/// is.
+///
+/// Searched live, every time: this walks the buffer as it is now rather than
+/// indexing a list the host would have invalidated between the search and the
+/// scroll. That also means a line which has aged out of the scrollback is
+/// simply not found, with nothing for the caller to check first.
+#[no_mangle]
+pub extern "C" fn tt_session_find_next(
+    session: *mut TtSession,
+    line: u64,
+    x: u16,
+    backwards: bool,
+    wrap: bool,
+    out: *mut TtFindMatch,
+) -> bool {
+    let s = session!(session, false);
+    let Some(hit) = s.session.find_next((line, x), backwards, wrap) else {
+        return false;
+    };
+    if let Some(slot) = unsafe { out.as_mut() } {
+        *slot = TtFindMatch {
+            line: hit.line,
+            from: hit.from,
+            end_line: hit.end_line,
+            to: hit.to,
+        };
+    }
+    true
+}
+
+/// How many matches the whole buffer holds.
+///
+/// One pass over the scrollback, so call it when the pattern changes and not
+/// per frame — it is the one thing here whose cost is the size of the history
+/// rather than the size of the screen.
+#[no_mangle]
+pub extern "C" fn tt_session_find_count(session: *mut TtSession) -> usize {
+    let s = session!(session, 0);
+    s.session.find_count()
+}
+
+/// Which columns of viewport row `y` a match covers, in column order.
+///
+/// Borrowed, and valid until the next call on this session — the same contract
+/// as [`tt_session_row_highlights`] beside it, and it reads the grid without
+/// touching it for the same reason. Null with `*out_len` zero when nothing on
+/// the row matched, which is the answer whenever no search is running.
+///
+/// Deliberately **not** gated by `Highlighting`: that switch is about the
+/// user's own rules, and a find that painted nothing because a tick in the View
+/// menu was off would be undiagnosable from the screen.
+#[no_mangle]
+pub extern "C" fn tt_session_row_find(
+    session: *mut TtSession,
+    y: usize,
+    out_len: *mut usize,
+) -> *const TtFindSpan {
+    let s = session!(session, ptr::null());
+    s.find_spans.clear();
+    s.find_spans
+        .extend(s.session.row_find(y).iter().map(|span| TtFindSpan {
+            from: span.from,
+            to: span.to,
+        }));
+    if !out_len.is_null() {
+        unsafe { *out_len = s.find_spans.len() };
+    }
+    if s.find_spans.is_empty() {
+        return ptr::null();
+    }
+    s.find_spans.as_ptr()
 }
 
 // --- ssh ------------------------------------------------------------------

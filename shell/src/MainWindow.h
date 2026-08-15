@@ -369,6 +369,17 @@ private:
     /// Write a rule list to the settings file and reload from it, so the file
     /// stays the one source of truth.
     void storeHighlights(const QVector<QuickHighlight> &rules);
+    /// Read the remembered find patterns and boxes, and hand them to every
+    /// page's bar.
+    ///
+    /// The window's rather than a page's, for the reason the highlight rules
+    /// are: somebody who searched one console's log and opened a second one is
+    /// looking for the same string, and the boxes are one answer to how a
+    /// pattern should be read.
+    void reloadFindState();
+    /// Put a committed pattern at the top of the remembered list.
+    void rememberFindPattern(const QString &pattern);
+    void rememberFindOptions(bool caseSensitive, bool wholeWord, bool regex);
     /// A type-3 user key's upstream menu id, for the actions this window has.
     void invokeMenuCommand(quint16 command);
     /// Carry out whatever the core said a key or a quick button meant. Sending
@@ -480,6 +491,9 @@ private:
     /// and a new page can be handed the same set.
     QVector<QuickHighlight> m_highlights;
     QAction *m_highlightingAction = nullptr;
+    /// The find patterns as loaded, newest first — one list for every tab.
+    QStringList m_findHistory;
+    QAction *m_findAction = nullptr;
     I18n *m_i18n = nullptr;
     QString m_languageSetting;
     PanelContainer *m_panels = nullptr;

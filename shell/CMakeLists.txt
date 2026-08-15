@@ -151,6 +151,7 @@ add_library(sterna_shell STATIC
     src/ConnectBar.cpp
     src/Recent.cpp
     src/Control.cpp
+    src/FindBar.cpp
     src/Highlights.cpp
     src/HighlightsDialog.cpp
     src/I18n.cpp
@@ -270,6 +271,13 @@ if(UNIX)
     target_compile_options(highlight_test PRIVATE ${TT_WARNINGS})
     add_test(NAME highlight COMMAND highlight_test)
 endif()
+
+# Find, from the shortcut to the pixels. Needs no server and no hardware; the
+# terminal is fed directly.
+add_executable(find_test tests/find_test.cpp)
+target_link_libraries(find_test PRIVATE sterna_shell)
+target_compile_options(find_test PRIVATE ${TT_WARNINGS})
+add_test(NAME find COMMAND find_test)
 
 # A file transfer, driven by the window's event loop rather than by a pump
 # loop. It needs `lrzsz` for the transfer itself and skips loudly without it;

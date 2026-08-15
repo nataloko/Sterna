@@ -54,6 +54,7 @@
 
 #include "ConnectBar.h"
 #include "Control.h"
+#include "FindBar.h"
 #include "HighlightsDialog.h"
 #include "I18n.h"
 #include "LogDialog.h"
@@ -95,6 +96,53 @@ QString settingDefault(const char *name)
         }
     }
     return {};
+}
+
+/// How many find patterns are remembered — the bar's own ceiling, here because
+/// this is what writes the setting.
+constexpr int kFindHistoryMax = 12;
+
+QString on()
+{
+    return QStringLiteral("on");
+}
+QString off()
+{
+    return QStringLiteral("off");
+}
+
+/// A `;`-separated setting, with `%` and `;` percent-encoded.
+///
+/// `recent.host_history` gets away with dropping any host containing a `;`;
+/// a *search pattern* containing one is an ordinary thing to look for in a
+/// console log, so this list escapes rather than refuses. Two characters only,
+/// so the value stays readable to somebody editing the file by hand.
+QString encodeList(const QStringList &items)
+{
+    QStringList out;
+    out.reserve(items.size());
+    for (const QString &item : items) {
+        QString escaped = item;
+        escaped.replace(QLatin1Char('%'), QLatin1String("%25"));
+        escaped.replace(QLatin1Char(';'), QLatin1String("%3B"));
+        out.append(escaped);
+    }
+    return out.join(QLatin1Char(';'));
+}
+
+QStringList decodeList(const QString &value)
+{
+    QStringList out;
+    for (const QString &item : value.split(QLatin1Char(';'), Qt::SkipEmptyParts)) {
+        QString unescaped = item;
+        // `;` first, so a literal `%3B` written as `%253B` comes back as text
+        // rather than as a separator.
+        unescaped.replace(QLatin1String("%3B"), QStringLiteral(";"));
+        unescaped.replace(QLatin1String("%3b"), QStringLiteral(";"));
+        unescaped.replace(QLatin1String("%25"), QStringLiteral("%"));
+        out.append(unescaped);
+    }
+    return out;
 }
 
 PanelLayout panelLayout(const QString &value)
@@ -486,6 +534,9 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
     loadKeyMap(QDir(QFileInfo(m_settingsPath).absolutePath())
                    .filePath(QStringLiteral("KEYBOARD.CNF")));
     reloadHighlights();
+    // Same file, same moment: the remembered patterns and the three boxes are
+    // settings, and the bars they go into exist by now.
+    reloadFindState();
     // After the key map, so a button's shortcut can be checked against it, and
     // after the settings, which say where the bar goes.
     reloadQuickButtons();
@@ -558,6 +609,11 @@ void MainWindow::wirePage(TerminalPage *page)
     Printer *printer = page->printer();
     Macro *macro = page->macro();
     Plugins *plugins = page->plugins();
+
+    connect(view->findBar(), &FindBar::patternUsed, this,
+            &MainWindow::rememberFindPattern);
+    connect(view->findBar(), &FindBar::optionsChanged, this,
+            &MainWindow::rememberFindOptions);
 
     connect(view, &TerminalView::popupMenuRequested, this,
             [this, page](const QPoint &pos) {
@@ -1294,6 +1350,7 @@ bool MainWindow::onSettingsChanged()
     // is what moves the Highlight matches tick when the switch is flipped from
     // somewhere else.
     reloadHighlights();
+    reloadFindState();
 
     // Before the first show, upstream explicitly applies the active value
     // (`vtwin.cpp:780`). Afterwards the desktop's activation state decides,
@@ -2301,6 +2358,22 @@ void MainWindow::buildMenus()
     selectAll->setObjectName(QStringLiteral("selectAllAction"));
     selectAll->setStatusTip(tr("This command selects the page in view and all scrollback."));
     languageAction(selectAll, "MENU_EDIT_SELECTALL", tr("Select all"));
+    // Find, beside the two commands that also act on the whole buffer. No
+    // `.lng` key: Tera Term has no Find, so there is no upstream string to
+    // hang on it and no upstream order to keep.
+    //
+    // **Ctrl+Shift+F, not Ctrl+F.** A `QAction` shortcut silently outranks
+    // `TerminalView::keyPressEvent`, so every shortcut on this window is a key
+    // the host stops receiving — and `^F` is forward-a-character in readline
+    // and a page in vim and less. Ctrl+Shift is the bargain Copy and Paste
+    // above already make, for the same reason.
+    m_findAction = edit->addAction(
+        tr("Find..."), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F), this,
+        [this] { m_view->openFind(); });
+    m_findAction->setObjectName(QStringLiteral("findAction"));
+    m_findAction->setStatusTip(
+        tr("Searches this terminal's screen and its scrollback."));
+
     // In Edit because it is the same gesture as Copy with a different
     // destination: select the command that worked, keep it. No upstream key.
     edit->addSeparator();
@@ -3349,6 +3422,59 @@ void MainWindow::reloadHighlights()
     }
     if (m_view) {
         m_view->update();
+    }
+}
+
+void MainWindow::reloadFindState()
+{
+    // The remembered patterns and boxes belong to the *window*, not to a tab:
+    // somebody who searched a router's log and opens a second console is
+    // looking for the same string. One list, pushed into every bar.
+    m_findHistory = decodeList(m_session->setting(QStringLiteral("recent.find_history")));
+    const bool caseSensitive =
+        m_session->setting(QStringLiteral("recent.find_case")) == QLatin1String("on");
+    const bool wholeWord =
+        m_session->setting(QStringLiteral("recent.find_whole_word")) == QLatin1String("on");
+    const bool regex =
+        m_session->setting(QStringLiteral("recent.find_regex")) == QLatin1String("on");
+    for (int i = 0; i < m_panels->count(); i++) {
+        auto *page = static_cast<TerminalPage *>(m_panels->widget(i));
+        FindBar *bar = page->view()->findBar();
+        bar->setHistory(m_findHistory);
+        bar->setOptions(caseSensitive, wholeWord, regex);
+    }
+}
+
+void MainWindow::rememberFindPattern(const QString &pattern)
+{
+    if (pattern.isEmpty() || m_findHistory.value(0) == pattern) {
+        return;
+    }
+    m_findHistory.removeAll(pattern);
+    m_findHistory.prepend(pattern);
+    while (m_findHistory.size() > kFindHistoryMax) {
+        m_findHistory.removeLast();
+    }
+    rememberSettings(
+        {{QStringLiteral("recent.find_history"), encodeList(m_findHistory)}});
+    for (int i = 0; i < m_panels->count(); i++) {
+        auto *page = static_cast<TerminalPage *>(m_panels->widget(i));
+        page->view()->findBar()->setHistory(m_findHistory);
+    }
+}
+
+void MainWindow::rememberFindOptions(bool caseSensitive, bool wholeWord, bool regex)
+{
+    rememberSettings(
+        {{QStringLiteral("recent.find_case"), caseSensitive ? on() : off()},
+         {QStringLiteral("recent.find_whole_word"), wholeWord ? on() : off()},
+         {QStringLiteral("recent.find_regex"), regex ? on() : off()}});
+    // Into the other tabs as well: the boxes are one answer to "how should a
+    // pattern be read", and two terminals disagreeing about it would be a
+    // setting that depends on which tab you last touched.
+    for (int i = 0; i < m_panels->count(); i++) {
+        auto *page = static_cast<TerminalPage *>(m_panels->widget(i));
+        page->view()->findBar()->setOptions(caseSensitive, wholeWord, regex);
     }
 }
 

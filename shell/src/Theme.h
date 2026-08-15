@@ -116,6 +116,17 @@ public:
     }
     void setFont(const QFont &font);
 
+    /// What a find match that is not the current one is painted in.
+    ///
+    /// An override rather than a pair of its own in `resolve`, so it goes down
+    /// the same path a highlight rule does — including being inverted when a
+    /// selection is dragged across it, which is exactly what should happen when
+    /// the current match lands on top of another.
+    CellOverride findOverride() const
+    {
+        return CellOverride {m_find[0], m_find[1], 0};
+    }
+
     /// `DrawingResizedFont`: whether a glyph whose natural advance misses its
     /// cell box is stretched horizontally into that box.
     bool drawsResizedFont() const { return m_drawResizedFont; }
@@ -148,6 +159,10 @@ private:
     QColor m_reverse[2];
     QColor m_cursor;
     QColor m_background;
+    /// `color.find`. Not one of the six: those are attribute pairs a host can
+    /// move with an `OSC`, and this one is the window's answer to a question
+    /// the host never asked.
+    QColor m_find[2] = {QColor(0, 0, 0), QColor(255, 220, 120)};
 
     // `color.disconnected_shade`, and whether it currently applies. A window
     // opens before it has connected, so the shade is on from the first frame.

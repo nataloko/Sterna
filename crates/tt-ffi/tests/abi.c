@@ -562,6 +562,91 @@ static void test_highlights(void)
     tt_highlights_free(list);
 }
 
+static void test_find(void)
+{
+    /* What the bar asks on every keystroke, before it has a session in mind. */
+    TtFindQuery q;
+    memset(&q, 0, sizeof q);
+    q.pattern = "ERROR|FATAL";
+    CHECK(tt_find_check(&q) == TT_OK);
+    q.pattern = "(unclosed";
+    CHECK(tt_find_check(&q) != TT_OK);
+    CHECK(tt_last_error() != NULL);
+    /* A literal cannot fail: nothing in it is a metacharacter. */
+    q.literal = true;
+    CHECK(tt_find_check(&q) == TT_OK);
+    /* And an empty field is somebody who has not typed yet, not a mistake. */
+    q.pattern = "";
+    CHECK(tt_find_check(&q) == TT_OK);
+
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    cfg.cols = 20;
+    cfg.rows = 3;
+    TtSession *s = tt_session_new(&cfg);
+    static const char feed[] = "one hit\r\ntwo hit\r\nthree hit";
+    tt_session_feed(s, (const uint8_t *)feed, sizeof feed - 1);
+
+    /* Nothing running is nothing found, and costs one comparison a row. */
+    size_t len = 12345;
+    CHECK(!tt_session_has_find(s));
+    CHECK(tt_session_row_find(s, 0, &len) == NULL && len == 0);
+    CHECK(tt_session_find_count(s) == 0);
+
+    memset(&q, 0, sizeof q);
+    q.pattern = "hit";
+    q.literal = true;
+    CHECK(tt_session_set_find(s, &q) == TT_OK);
+    CHECK(tt_session_has_find(s));
+    CHECK(tt_session_find_count(s) == 3);
+
+    /* Stepping, in the coordinates a selection is held in. */
+    TtFindMatch m;
+    memset(&m, 0, sizeof m);
+    CHECK(tt_session_find_next(s, 0, 0, false, false, &m));
+    CHECK(m.line == 0 && m.from == 4 && m.end_line == 0 && m.to == 7);
+    CHECK(tt_session_find_next(s, m.end_line, m.to, false, false, &m));
+    CHECK(m.line == 1 && m.from == 4);
+    CHECK(tt_session_find_next(s, m.end_line, m.to, false, false, &m));
+    CHECK(m.line == 2 && m.from == 6 && m.to == 9);
+
+    /* Off the end without wrapping is nothing; with it, the first one again. */
+    TtFindMatch last = m;
+    CHECK(!tt_session_find_next(s, last.end_line, last.to, false, false, &m));
+    CHECK(tt_session_find_next(s, last.end_line, last.to, false, true, &m));
+    CHECK(m.line == 0 && m.from == 4);
+    /* And backwards, which is the same walk the other way. */
+    CHECK(tt_session_find_next(s, last.line, last.from, true, false, &m));
+    CHECK(m.line == 1 && m.from == 4);
+
+    /* The painting half. A caller may pass no length and read the first span. */
+    const TtFindSpan *spans = tt_session_row_find(s, 0, &len);
+    CHECK(spans != NULL && len == 1);
+    CHECK(spans[0].from == 4 && spans[0].to == 7);
+    CHECK(tt_session_row_find(s, 2, &len) != NULL && len == 1);
+    /* A row that does not exist is an empty answer, not an error. */
+    CHECK(tt_session_row_find(s, 99, &len) == NULL && len == 0);
+
+    /* The grid still says what the host sent — a search is reading only. */
+    const TtCell *row = tt_session_row(s, 0, &len);
+    CHECK(row != NULL && row[4].text[0] == 'h');
+
+    /* A pattern the engine refuses leaves the last one running, so a
+     * half-typed parenthesis does not unpaint what somebody is looking at. */
+    q.pattern = "(hit";
+    q.literal = false;
+    CHECK(tt_session_set_find(s, &q) != TT_OK);
+    CHECK(tt_session_has_find(s));
+    CHECK(tt_session_row_find(s, 0, &len) != NULL);
+
+    /* Null is how a frontend closes the bar. */
+    CHECK(tt_session_set_find(s, NULL) == TT_OK);
+    CHECK(!tt_session_has_find(s));
+    CHECK(tt_session_row_find(s, 0, &len) == NULL && len == 0);
+
+    tt_session_free(s);
+}
+
 static void test_logging(void)
 {
     TtConfig cfg;
@@ -2009,6 +2094,12 @@ static void test_null_safety(void)
     CHECK(tt_session_highlight_problems(NULL) == NULL);
     CHECK(tt_session_row_highlights(NULL, 0, NULL) == NULL);
     tt_highlights_free(NULL);
+    CHECK(tt_find_check(NULL) != TT_OK);
+    CHECK(tt_session_set_find(NULL, NULL) != TT_OK);
+    CHECK(!tt_session_has_find(NULL));
+    CHECK(!tt_session_find_next(NULL, 0, 0, false, false, NULL));
+    CHECK(tt_session_find_count(NULL) == 0);
+    CHECK(tt_session_row_find(NULL, 0, NULL) == NULL);
     tt_ssh_params_default(NULL);
     CHECK(tt_ssh_connect(NULL) == NULL);
     CHECK(tt_ssh_connect_for_session(NULL, NULL) == NULL);
@@ -3395,6 +3486,7 @@ int main(void)
     test_absolute_lines();
     test_url_lookup();
     test_highlights();
+    test_find();
     test_logging();
     test_log_name();
     test_settings();

@@ -302,7 +302,11 @@ impl Matcher {
 }
 
 /// Which cell a byte offset belongs to.
-fn cell_of(starts: &[u32], byte: usize) -> usize {
+///
+/// Shared with [`crate::find`], which asks the same question of the same
+/// [`Flattened`] — one byte-to-cell map in the tree, so a match cannot be
+/// painted over one run of columns and stepped to at another.
+pub(crate) fn cell_of(starts: &[u32], byte: usize) -> usize {
     starts
         .partition_point(|&o| o as usize <= byte)
         .saturating_sub(1)

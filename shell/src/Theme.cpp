@@ -29,6 +29,30 @@ int readInt(const Session &session, const char *name, int fallback)
     return ok ? value : fallback;
 }
 
+/// One `color2` setting — `fg_r,fg_g,fg_b,bg_r,bg_g,bg_b` — into a pair.
+///
+/// Anything that is not six numbers leaves the compiled-in default standing,
+/// which is the same answer the core gives a malformed value and keeps a
+/// hand-edited file from painting an invisible match.
+void readColorPair(const Session &session, const char *name, QColor *out)
+{
+    const QStringList parts =
+        session.setting(QString::fromLatin1(name)).split(QLatin1Char(','));
+    if (parts.size() != 6) {
+        return;
+    }
+    int v[6] = {0};
+    for (int i = 0; i < 6; i++) {
+        bool ok = false;
+        v[i] = parts[i].trimmed().toInt(&ok);
+        if (!ok || v[i] < 0 || v[i] > 255) {
+            return;
+        }
+    }
+    out[0] = QColor(v[0], v[1], v[2]);
+    out[1] = QColor(v[3], v[4], v[5]);
+}
+
 } // namespace
 
 Theme::Theme()
@@ -192,6 +216,7 @@ void Theme::applySettings(const Session &session)
     m_drawResizedFont =
         readFlag(session, "font.draw_resized", m_drawResizedFont);
     m_shade = readInt(session, "color.disconnected_shade", m_shade);
+    readColorPair(session, "color.find", m_find);
     updateBackground();
 
     const int left = readInt(session, "font.space_left", m_spaceLeft);
