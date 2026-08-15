@@ -103,7 +103,7 @@ impl Session {
     /// by two things at once. (Measured on the FTDI rig: the by-hand clear
     /// does move RTS, so this is a fight rather than a silent failure — the
     /// driver raises it again when it wants to.) Twenty-eighth on the list of
-    /// upstream defects; `PLAN.md` has it.
+    /// upstream defects; `docs/upstream-bugs.md` has it.
     pub fn set_flow_control(&mut self, flow: FlowControl) -> bool {
         if self.serial().is_none() {
             return false;

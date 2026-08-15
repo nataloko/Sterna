@@ -37,7 +37,7 @@
 //!   over the type it just read (`ProxyWSockHook.h:2143`), so
 //!   `/proxy=socks5://p:1080/` is *no proxy* where `/proxy=socks5://p:1080` is
 //!   a SOCKS5 one. The trailing slash is the whole difference, and nothing
-//!   says a word. That is the thirty-seventh defect in `PLAN.md` and the one
+//!   says a word. That is the thirty-seventh defect in `docs/upstream-bugs.md` and the one
 //!   thing here this port does not reproduce — see [`ProxyOptions::url`].
 //! - **A bare URL with no `/realhost` also switches it off**, by the arm above
 //!   it: what is returned is then the whole URL, `://` and all, and
@@ -207,7 +207,7 @@ impl ProxyOptions {
     /// consulting `prefix` (`ProxyWSockHook.h:2143`) — so
     /// `/proxy=socks5://p:1080/` is no proxy where `/proxy=socks5://p:1080` is
     /// a SOCKS5 one, a trailing slash apart and in silence. That is the
-    /// thirty-seventh defect on the list in `PLAN.md`, and it is the whole
+    /// thirty-seventh defect on the list in `docs/upstream-bugs.md`, and it is the whole
     /// point of `prefix` that the two callers are not the same: `/proxy=`
     /// discards the real host, so testing it there is testing a value the arm
     /// has already decided not to use. The harm is one-sided — a launcher

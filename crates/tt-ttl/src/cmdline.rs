@@ -55,7 +55,7 @@ use tt_config::cmdline::{dequote_param, get_param};
 /// of more than 511 characters is written up to 511 `wchar_t` past the end of a
 /// stack array. The first call, outside the loop, passes `_countof` and is
 /// right. Truncating at what the code meant is the only sane reproduction —
-/// see `PLAN.md`, where it is listed with the other `ttpmacro` defects.
+/// see `docs/upstream-bugs.md`, where it is listed with the other `ttpmacro` defects.
 const MAX_STR_LEN: usize = 512;
 
 /// `TopicName` is `wchar_t[11]` (`ttmdlg.cpp:62`), so `/D=` keeps ten

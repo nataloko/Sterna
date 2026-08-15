@@ -69,7 +69,7 @@ pub fn hex_decode(s: &str, max: usize) -> Vec<u8> {
 /// one byte here and the character U+00E9 there, and there is no length cap
 /// because upstream allocates instead of filling a fixed buffer.
 ///
-/// That allocation is where its own defect is — see `PLAN.md`.
+/// That allocation is where its own defect is — see `docs/upstream-bugs.md`.
 pub fn hex_decode_str(s: &str) -> String {
     let src: Vec<char> = s.chars().collect();
     let mut out = String::new();

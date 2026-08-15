@@ -14,7 +14,7 @@
 //!   "0 when the command fails" never happens — and an unrecognised folder
 //!   type reaches `strncpy_s` as a NULL source. Both are reproduced as far as
 //!   a macro can see them: `result` is always 1, an unknown type is the empty
-//!   string. Written up as an upstream defect in `PLAN.md`.
+//!   string. Written up as an upstream defect in `docs/upstream-bugs.md`.
 //! - **`getver` deliberately answers Tera Term's version**, not this port's.
 //!   See [`ScriptHost::version`].
 //! - **`clipb2var` reads out of a buffer the *previous* call filled.** The

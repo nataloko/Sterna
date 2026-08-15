@@ -21,7 +21,7 @@
 //!   case, the command silently does nothing there too. See
 //!   [`ScriptHost::set_system_date`].
 //!
-//! And one that is a defect rather than a quirk, written up in `PLAN.md`:
+//! And one that is a defect rather than a quirk, written up in `docs/upstream-bugs.md`:
 //! **the `<timezone>` argument leaks.** Upstream applies it by putting it in
 //! the process environment and puts the old value back on the way out — but
 //! the `GetFirstChar()` check sits *between* the two, so `gettime t '%H' 'UTC'

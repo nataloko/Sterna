@@ -535,7 +535,7 @@ The proxy — a Winsock hook upstream, so it has no seam at all:
   decoding to NUL is left as written (`StringUtil.h:255`). `\t` *is*
   recognised, so a hand-edited `C:\temp` comes back with a tab in it.
 - **The four relay defects are documented in the schema and the module**
-  (see the upstream-bugs list, items 33–36) — they are where somebody
+  (items 33–36 in `docs/upstream-bugs.md`) — they are where somebody
   diffing the implementations will think this port is wrong.
 - **An unrecognised `ProxyType` is a direct connection** — reproduced (the
   schema's ordinary enum rule), but it is the one place that rule has a real
@@ -554,7 +554,7 @@ The proxy — a Winsock hook upstream, so it has no seam at all:
 - **An unrecognised scheme leaves the configured proxy alone; a recognised
   scheme yielding no real host switches it off** (`TYPE_NONE` overwrite).
   `/proxy=socks5://p:1080/` disabling the proxy is the one parser behaviour
-  this port does not reproduce — defect 37 below.
+  this port does not reproduce — defect 37 in `docs/upstream-bugs.md`.
 - **`/proxy=` replaces the whole record** — a file's `ProxyUser` does not
   survive a `/proxy=` that named no user. Right, and unlike everything else
   in this parser.
@@ -1053,7 +1053,7 @@ The parser's own switches:
   ships.** A bare CR is a cursor motion far more often than a line ending — an
   interactive shell redrawing its prompt sends one per keystroke — and upstream's
   AUTO takes every one of them as a line ending for the whole session (defect 38
-  below), so it puts each keystroke on a new line. It is reproduced exactly, and
+  in `docs/upstream-bugs.md`), so it puts each keystroke on a new line. It is reproduced exactly, and
   `DETECT` is Sterna's own and the default (deviation 9): the first LF resolves
   it — a CR immediately before means `CR LF` and the mode becomes `CR`, anything
   else means `LF` alone. VT and FF call `LineFeed` directly upstream and are not
@@ -1139,7 +1139,7 @@ The colour OSCs (the whole family lives in `vtdisp.c`, which the oracle does
 not compile — `stubs_manual.c` is the transcription; diff it, don't invent):
 
 - **A host cannot read back a colour it just set** — `DispSetColor` writes
-  the live pair, `DispGetColor` reads `ts` (defect 31 below). Only the
+  the live pair, `DispGetColor` reads `ts` (defect 31 in `docs/upstream-bugs.md`). Only the
   palette round-trips (both halves are `vt->ANSIColor`), and Tek by
   accident. Why esctest's `ChangeDynamicColor` family cannot pass.
 - **`XsParseColor` accepts `rgb:` case-insensitively and parses it
@@ -1302,7 +1302,7 @@ The printer — controller mode does not take the stream away:
   line; IND and NEL pass zero and do not; the wrap's `LineFeed(LF, FALSE)`
   prints one.
 - **The dump is of the grid, not the stream** (`hello\rH` prints `Hello`).
-  Upstream's own version is defect 32 below; this port prints what it meant.
+  Upstream's own version is defect 32 in `docs/upstream-bugs.md`; this port prints what it meant.
 - **An `Option<String>` local put a destructor in every character's frame —
   4% of `core.plain`.** Auto print's snapshot is a `State` field assigned
   only under the flag; anything added to `Perform::print` wants
@@ -1460,7 +1460,7 @@ The macro language (TTL):
   `setflowctrl` are silent no-ops over SSH, not errors.
 - **`ttl.cpp` bounds-checks its handle arrays in about half the places** —
   assume the next array is unchecked until you have looked (seven OOBs
-  found, listed in `PLAN.md`).
+  found, listed in `docs/upstream-bugs.md`).
 - **Rust's whole-file lock is not TTL's Windows lock** — upstream pairs
   `LockFile`/`UnlockFile` over `(0,0,DWORD_MAX,DWORD_MAX)`; Wine accepts
   `LockFileEx` and refuses its unlock. `tt-ttl::files` uses the exact Win32
@@ -1821,88 +1821,14 @@ The desktop side:
 
 ## Bugs found upstream, not yet reported
 
-`docs/upstream-bugs.md` holds the five a differential run *proved* (four in
-`buffer.c`, one in `vtterm.c`; patches in `oracle/patches/`). Everything below
-was found by reading and is written up in `PLAN.md`; filing them all needs a
-GitHub account (an open item). Demonstrate each against real `ttpmacro.exe`
-in Stage 3 before filing.
-
-- **23 in `ttpmacro`** (`PLAN.md`'s TTL sections): `waitn`'s timeout mode
-  leak, `getmodemstatus` never failing, `logopen` discarding its own errors,
-  `filenamebox`'s Open/Save flags swapped, `inputbox`'s uninitialised-stack
-  copy on Escape, `getspecialfolder`'s always-1 result + NULL `strncpy_s`,
-  `gettime`'s TZ leak, seven OOB accesses (`strtrim`, `strsplit`,
-  `GetFactor`, `HandleGet`, `HandleFree`, `FPointer`, `logrotate`), six in
-  the password family (two v1 stack overflows, two v2 uninitialised reads +
-  a wild `free()`, a v1 record unreadable when the INI strips its quotes),
-  one regex-matcher NUL-before-buffer, and **one in `ParseParam` (`sizeof`
-  vs `wchar_t` count, up to 1022 bytes past a 512-element stack array) — the
-  only one an attacker reaches without already running a macro (the command
-  line). File that first.**
-- **Three where code and documentation disagree, and the port follows the
-  manual** (each says so at the cited symbol): `FLogWriteStr` cannot write
-  while paused (`filesys_log.cpp:833`, `:647`; `SessionLog::write_str`);
-  `/NOLOG` does not stop a `/L=` log (`ttset.c:3850` clears only the ANSI
-  name; `vtwin.cpp:3631`); `setflowctrl` changes the setting and not the
-  port (`ttdde.c:1002`, no `CommResetSerial`; `Session::set_flow_control`).
-- **Two in CygTerm** (`env_add`, `cygterm_cfg.cpp:42`): `-v FOO` with no `=`
-  is `strdup(NULL)`; replacing the first variable drops the rest. Neither
-  reproduced (`cmdline::cygterm::add_env`).
-- **29: `RingBell` never reads its argument** (`vtterm.c:5791`) — `ESC g`'s
-  visual bell gets an audible one or nothing. Reproduced (it is what a user
-  sees).
-- **30: two-byte heap overflow in `Hex2StrW`** (`ttlib_static_cpp.cpp:837`)
-  — a decoded length that is a multiple of 512 writes its NUL one past the
-  allocation. Reachable from `TERATERM.INI` and `keyboard.c:856`.
-- **31: a host cannot read back a colour it just set** (`DispSetColor`
-  writes the live pair, `DispGetColor` reads `ts`, `vtdisp.c:3376`/`:3561`).
-  Reproduced (the alternative reports something Tera Term never does); why
-  esctest's `ChangeDynamicColor` cannot pass.
-- **32: `BuffDumpCurrentLine` smashes the stack** (`buffer.c:2400`),
-  reachable from the wire when `PrinterCtrlSequence` is on. Four faults on
-  wide characters: a 1001-byte buffer filled two-per-column; the low DBCS
-  byte written twice; a write loop bounded by columns not bytes; and a
-  padding cell's zero hitting the *clear* form of `WriteToPrnFile` (`あab`
-  prints `a`). Not reproduced — the only entry where that means reproducing
-  a remote stack overflow; `Vt::dump_current_line` prints what upstream
-  meant.
-- **33–36, in `TTProxy`** (`ProxyWSockHook.h`; stated in `proxy.rs`, the
-  schema, and `tt-conn/README.md`): a blank `ProxyPort` dials the proxy and
-  never speaks the protocol (`:1792`); a username with no password is
-  `strlen(NULL)` on HTTP (`:1275`); every SOCKS read takes a short read as
-  full (`:1193`, uninitialised stack buffers — a refused connection can read
-  as granted); the seven `+ssl` types parse and fall to `default: result =
-  0` (`:1822`, reported connected, no handshake). Plus an unnumbered
-  `atoi(strchr(buf,' '))` NULL deref (`:1314`).
-- **38: `CRReceive=AUTO` is unusable on an interactive host** — a CR or an LF
-  generates CR+LF and the opposite immediately after is ignored
-  (`vtterm.c:727`), so a bare CR is a line ending for ever: a shell redrawing
-  its prompt puts every keystroke on a new line and a progress bar walks down
-  the screen. Reproduced (it is what the value means in a shared INI);
-  deviation 9 ships `DETECT` instead, which resolves at the first line ending.
-- **37: `-proxy=socks5://p:1080/` is no proxy at all** — `parseURL`'s
-  empty-host arm ignores the caller flag and assigns `TYPE_NONE`
-  (`:2143`). The one parser divergence this port does not reproduce (harm
-  one-sided, no documented form has the trailing slash, `-noproxy` /
-  `-proxy=none://` still work); the bare-token half *is* reproduced.
-  `cmdline::proxy::ProxyOptions::url`.
-- **In `vte` (a dependency, so not in that file; `docs/vte-bug.md`):**
-  0.15.0's `advance_partial_utf8` (`lib.rs:687`) drops complete characters
-  across a chunk boundary. Worked around in `tt-vt`.
-
-And five more in `buffer.c`/`vtterm.c`, ranked for filing:
-
-1. **`BuffGetAnyLineDataW` does not advance past padding cells** (`:5832`) —
-   session logging truncates any line at its first CJK character.
-2. **…and budgets output units with a column count** — lines with combining
-   marks truncate at ~half width. Independent of 1.
-3. **ECH writes past the end of the line** (`CSI Ps X` clamped to width then
-   written from the cursor) — attacker-controlled OOB write. **File first.**
-4. **`BuffSelectedErase*` index a line-relative pointer with an absolute
-   offset** (`:5491`, `:5531`) — DECSED writes the wrong cell and leaves the
-   allocation (ASan-proven). **File second.**
-5. **`MakeMouseReportStr` builds the row's lead byte from the column**
-   (`vtterm.c:5591`) — `DECSET 1005` past row 96 emits invalid UTF-8.
+**`docs/upstream-bugs.md` is the ledger**: the five a differential run
+*proved* (drafted ready to paste, patches in `oracle/patches/`; the two
+memory-safety ones — ECH and DECSED — go first) and everything found by
+reading since, numbered up to 38. Filing needs a GitHub account (an open
+item), and a found-by-reading entry wants demonstrating against a real
+`ttpmacro.exe`/Tera Term before it is filed — the exception worth hurrying is
+`ParseParam`'s command-line overflow, the only defect an attacker reaches
+without already running a macro. The bug in `vte` is `docs/vte-bug.md`.
 
 ## Layout
 

@@ -449,7 +449,7 @@ BOOL DispWindowIconified(vtdraw_t *vt)
  * writes the first, the reset copies the second over the first, and the getter
  * reads — for every colour except the palette and Tek — the *second*. So a
  * host cannot read back a dynamic colour it just set. That is upstream's
- * behaviour and this reproduces it; see PLAN.md.
+ * behaviour and this reproduces it; see docs/upstream-bugs.md.
  */
 
 /*

@@ -34,7 +34,7 @@
 //! # What is deliberately not reproduced
 //!
 //! Four things, and each one is an upstream defect rather than a behaviour.
-//! They are listed in `PLAN.md` and drafted in `docs/upstream-bugs.md`; the
+//! They are listed in `docs/upstream-bugs.md`; the
 //! short form is here because this is the file somebody comparing the two
 //! implementations will have open.
 //!

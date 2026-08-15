@@ -25,6 +25,79 @@ stream a terminal reads from the network: #3 leaves the allocation on the last
 line, and #4 does so once the page has scrolled into the second half of the ring
 buffer — confirmed under AddressSanitizer, not inferred.
 
+## Found by reading, not yet reported
+
+Everything below was found by reading upstream's source rather than by a
+differential run, so nothing here is drafted yet: demonstrate each against a
+real `ttpmacro.exe`/Tera Term before filing it. The story behind each finding
+is in `docs/history.md`'s stage narrative, and the trap-shaped consequences
+are in `AGENTS.md`. The first three bullets are defects 1–28 of the running
+count; the rest carry their own numbers. The five the differential run proved
+are the drafted reports below, not repeated here.
+
+- **23 in `ttpmacro`** (`docs/history.md`'s TTL sections): `waitn`'s timeout mode
+  leak, `getmodemstatus` never failing, `logopen` discarding its own errors,
+  `filenamebox`'s Open/Save flags swapped, `inputbox`'s uninitialised-stack
+  copy on Escape, `getspecialfolder`'s always-1 result + NULL `strncpy_s`,
+  `gettime`'s TZ leak, seven OOB accesses (`strtrim`, `strsplit`,
+  `GetFactor`, `HandleGet`, `HandleFree`, `FPointer`, `logrotate`), six in
+  the password family (two v1 stack overflows, two v2 uninitialised reads +
+  a wild `free()`, a v1 record unreadable when the INI strips its quotes),
+  one regex-matcher NUL-before-buffer, and **one in `ParseParam` (`sizeof`
+  vs `wchar_t` count, up to 1022 bytes past a 512-element stack array) — the
+  only one an attacker reaches without already running a macro (the command
+  line). File that first.**
+- **Three where code and documentation disagree, and the port follows the
+  manual** (each says so at the cited symbol): `FLogWriteStr` cannot write
+  while paused (`filesys_log.cpp:833`, `:647`; `SessionLog::write_str`);
+  `/NOLOG` does not stop a `/L=` log (`ttset.c:3850` clears only the ANSI
+  name; `vtwin.cpp:3631`); `setflowctrl` changes the setting and not the
+  port (`ttdde.c:1002`, no `CommResetSerial`; `Session::set_flow_control`).
+- **Two in CygTerm** (`env_add`, `cygterm_cfg.cpp:42`): `-v FOO` with no `=`
+  is `strdup(NULL)`; replacing the first variable drops the rest. Neither
+  reproduced (`cmdline::cygterm::add_env`).
+- **29: `RingBell` never reads its argument** (`vtterm.c:5791`) — `ESC g`'s
+  visual bell gets an audible one or nothing. Reproduced (it is what a user
+  sees).
+- **30: two-byte heap overflow in `Hex2StrW`** (`ttlib_static_cpp.cpp:837`)
+  — a decoded length that is a multiple of 512 writes its NUL one past the
+  allocation. Reachable from `TERATERM.INI` and `keyboard.c:856`.
+- **31: a host cannot read back a colour it just set** (`DispSetColor`
+  writes the live pair, `DispGetColor` reads `ts`, `vtdisp.c:3376`/`:3561`).
+  Reproduced (the alternative reports something Tera Term never does); why
+  esctest's `ChangeDynamicColor` cannot pass.
+- **32: `BuffDumpCurrentLine` smashes the stack** (`buffer.c:2400`),
+  reachable from the wire when `PrinterCtrlSequence` is on. Four faults on
+  wide characters: a 1001-byte buffer filled two-per-column; the low DBCS
+  byte written twice; a write loop bounded by columns not bytes; and a
+  padding cell's zero hitting the *clear* form of `WriteToPrnFile` (`あab`
+  prints `a`). Not reproduced — the only entry where that means reproducing
+  a remote stack overflow; `Vt::dump_current_line` prints what upstream
+  meant.
+- **33–36, in `TTProxy`** (`ProxyWSockHook.h`; stated in `proxy.rs`, the
+  schema, and `tt-conn/README.md`): a blank `ProxyPort` dials the proxy and
+  never speaks the protocol (`:1792`); a username with no password is
+  `strlen(NULL)` on HTTP (`:1275`); every SOCKS read takes a short read as
+  full (`:1193`, uninitialised stack buffers — a refused connection can read
+  as granted); the seven `+ssl` types parse and fall to `default: result =
+  0` (`:1822`, reported connected, no handshake). Plus an unnumbered
+  `atoi(strchr(buf,' '))` NULL deref (`:1314`).
+- **38: `CRReceive=AUTO` is unusable on an interactive host** — a CR or an LF
+  generates CR+LF and the opposite immediately after is ignored
+  (`vtterm.c:727`), so a bare CR is a line ending for ever: a shell redrawing
+  its prompt puts every keystroke on a new line and a progress bar walks down
+  the screen. Reproduced (it is what the value means in a shared INI);
+  deviation 9 ships `DETECT` instead, which resolves at the first line ending.
+- **37: `-proxy=socks5://p:1080/` is no proxy at all** — `parseURL`'s
+  empty-host arm ignores the caller flag and assigns `TYPE_NONE`
+  (`:2143`). The one parser divergence this port does not reproduce (harm
+  one-sided, no documented form has the trailing slash, `-noproxy` /
+  `-proxy=none://` still work); the bare-token half *is* reproduced.
+  `cmdline::proxy::ProxyOptions::url`.
+- **In `vte` (a dependency, so not in that file; `docs/vte-bug.md`):**
+  0.15.0's `advance_partial_utf8` (`lib.rs:687`) drops complete characters
+  across a chunk boundary. Worked around in `tt-vt`.
+
 ---
 
 # 1. `BuffGetAnyLineDataW()` truncates lines at the first full-width character

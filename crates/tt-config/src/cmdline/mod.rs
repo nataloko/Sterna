@@ -342,7 +342,7 @@ pub(super) fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// with `_countof` passed correctly, so a token is truncated at 511 characters.
 ///
 /// `ttpmacro` defines the same constant at the same value (`ttmdef.h:34`) and
-/// passes `sizeof` instead, which is the overflow listed in `PLAN.md`.
+/// passes `sizeof` instead, which is the overflow listed in `docs/upstream-bugs.md`.
 const MAX_STR_LEN: usize = 512;
 
 /// `TopicName` is `char[21]` at `ttdde.c`'s end of the wire, so `/D=` keeps
