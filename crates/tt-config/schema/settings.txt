@@ -2460,17 +2460,37 @@ window.panel_layout | enum(single/*=Single,tiled/two/four=Tiled) | Sterna | Pane
 #@ This setting shows the quick-button bar. You can change the buttons on this bar. An empty bar shows the Add button. You can use this button to make the first command.
 window.quick_buttons | bool | Sterna | QuickButtons | on | -
 
-# Which edge the resizable dock is on. Qt lets it be dragged to any of the four,
-# and this is where it opens.
+# How wide the panel is, in pixels. **The bar is always down the right-hand
+# side** — a terminal's rows are the scarce dimension, a window is usually far
+# wider than the 80 columns it needs and exactly as tall as it can be, so a
+# vertical bar costs nothing that is being used and the labels have room to be
+# words rather than abbreviations.
 #
-# **The right**, not the top, which is where the other bar is. A terminal's
-# rows are the scarce dimension — a window is usually far wider than the 80
-# columns it needs and exactly as tall as it can be — so a vertical bar costs
-# nothing that is being used, and the labels have room to be words rather than
-# abbreviations. An unrecognised spelling lands on the right as well, rather
-# than hiding the bar.
-#@ This setting sets the initial edge of the quick-button bar: right, top, bottom, or left. You can drag the bar to a different edge. Sterna then updates this setting.
-window.quick_buttons_area | enum(right/*=Right,top=Top,bottom=Bottom,left=Left) | Sterna | QuickButtonsArea | right | -
+# There was a `QuickButtonsArea` here until 0.5.4, naming one of the four
+# edges. It went with the dock that made it possible: a dock separator takes
+# its pixels out of the central widget, and the terminal beside it is fitted to
+# whatever width is left in whole cells — so dragging the panel resized the
+# grid, and `Grid::resize` truncates every line it shortens, page and
+# scrollback alike. The width below is the same gesture with the pixels coming
+# out of the *window* instead, which is a thing a terminal can survive.
+#
+# **Zero means as wide as the buttons need**, and it is what ships. Pixels are
+# the only honest unit for a panel of words — the same eight captions want a
+# different number of them at every font size and every scale factor — so a
+# shipped number would be a guess, and measuring is not. It also keeps a fresh
+# install exactly where it was before this setting existed: the panel hugged
+# its widest caption, and an empty one was as wide as its Add button.
+#
+# `int_clamp` rather than `int`: a number outside the range is somebody's typo,
+# and clamping it keeps the panel on screen where taking the default would
+# throw the width away and silently go back to measuring. The ceiling is a
+# corruption guard and not the real limit — the real one is how far the window
+# can grow before it leaves the screen, which only the window knows. The floor
+# a panel is really held to is its own minimum, which depends on the captions
+# and the font, so the window applies that too: validation at the boundary,
+# the way `TerminalUID` is.
+#@ This setting sets the width of the quick-button bar in pixels. Zero makes the bar as wide as its widest button. To change the width, move the inner edge of the bar. Sterna then changes the window width, and the terminal keeps its columns.
+window.quick_buttons_width | int_clamp(0..2000) | Sterna | QuickButtonsWidth | 0 | -
 
 # --- recent -----------------------------------------------------------------
 #

@@ -2541,67 +2541,6 @@ impl Default for WindowPanelLayout {
     }
 }
 
-/// Which edge the resizable dock is on. Qt lets it be dragged to any of the four,
-/// and this is where it opens.
-///
-/// **The right**, not the top, which is where the other bar is. A terminal's
-/// rows are the scarce dimension — a window is usually far wider than the 80
-/// columns it needs and exactly as tall as it can be — so a vertical bar costs
-/// nothing that is being used, and the labels have room to be words rather than
-/// abbreviations. An unrecognised spelling lands on the right as well, rather
-/// than hiding the bar.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WindowQuickButtonsArea {
-    /// `right`
-    Right,
-    /// `top`
-    Top,
-    /// `bottom`
-    Bottom,
-    /// `left`
-    Left,
-}
-
-impl WindowQuickButtonsArea {
-    /// The INI's own spelling, which is what gets written back.
-    pub fn as_ini(&self) -> &'static str {
-        match self {
-            Self::Right => "right",
-            Self::Top => "top",
-            Self::Bottom => "bottom",
-            Self::Left => "left",
-        }
-    }
-
-    /// Case-insensitive, and **anything unrecognised is `Right`** — which
-    /// is *not* this type's default. Upstream reads the key with a
-    /// default string and then runs a chain of comparisons whose last
-    /// arm catches everything, so an absent key and a misspelt value
-    /// are two different settings.
-    pub fn from_ini(s: &str) -> Self {
-        let s = s.trim();
-        if s.eq_ignore_ascii_case("right") {
-            return Self::Right;
-        }
-        if s.eq_ignore_ascii_case("top") {
-            return Self::Top;
-        }
-        if s.eq_ignore_ascii_case("bottom") {
-            return Self::Bottom;
-        }
-        if s.eq_ignore_ascii_case("left") {
-            return Self::Left;
-        }
-        Self::Right
-    }
-}
-
-impl Default for WindowQuickButtonsArea {
-    fn default() -> Self {
-        Self::Right
-    }
-}
-
 /// Which of the four framing/burst combinations was used (`TelnetMode::of`).
 /// `auto` is the shipped one: data until the first `IAC`, telnet after it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4270,16 +4209,36 @@ pub struct Settings {
     /// The whole visibility decision. An empty panel still shows its Add button, so
     /// checking this before any commands exist gives a direct route to the first.
     pub window_quick_buttons: bool,
-    /// Which edge the resizable dock is on. Qt lets it be dragged to any of the four,
-    /// and this is where it opens.
+    /// How wide the panel is, in pixels. **The bar is always down the right-hand
+    /// side** — a terminal's rows are the scarce dimension, a window is usually far
+    /// wider than the 80 columns it needs and exactly as tall as it can be, so a
+    /// vertical bar costs nothing that is being used and the labels have room to be
+    /// words rather than abbreviations.
     ///
-    /// **The right**, not the top, which is where the other bar is. A terminal's
-    /// rows are the scarce dimension — a window is usually far wider than the 80
-    /// columns it needs and exactly as tall as it can be — so a vertical bar costs
-    /// nothing that is being used, and the labels have room to be words rather than
-    /// abbreviations. An unrecognised spelling lands on the right as well, rather
-    /// than hiding the bar.
-    pub window_quick_buttons_area: WindowQuickButtonsArea,
+    /// There was a `QuickButtonsArea` here until 0.5.4, naming one of the four
+    /// edges. It went with the dock that made it possible: a dock separator takes
+    /// its pixels out of the central widget, and the terminal beside it is fitted to
+    /// whatever width is left in whole cells — so dragging the panel resized the
+    /// grid, and `Grid::resize` truncates every line it shortens, page and
+    /// scrollback alike. The width below is the same gesture with the pixels coming
+    /// out of the *window* instead, which is a thing a terminal can survive.
+    ///
+    /// **Zero means as wide as the buttons need**, and it is what ships. Pixels are
+    /// the only honest unit for a panel of words — the same eight captions want a
+    /// different number of them at every font size and every scale factor — so a
+    /// shipped number would be a guess, and measuring is not. It also keeps a fresh
+    /// install exactly where it was before this setting existed: the panel hugged
+    /// its widest caption, and an empty one was as wide as its Add button.
+    ///
+    /// `int_clamp` rather than `int`: a number outside the range is somebody's typo,
+    /// and clamping it keeps the panel on screen where taking the default would
+    /// throw the width away and silently go back to measuring. The ceiling is a
+    /// corruption guard and not the real limit — the real one is how far the window
+    /// can grow before it leaves the screen, which only the window knows. The floor
+    /// a panel is really held to is its own minimum, which depends on the captions
+    /// and the font, so the window applies that too: validation at the boundary,
+    /// the way `TerminalUID` is.
+    pub window_quick_buttons_width: i32,
     /// The device path, not a number: `ComPort` is upstream's and cannot spell
     /// `/dev/serial/by-id/usb-FTDI_…`. Written as the port was opened, so it is the
     /// `open_path` a stable symlink resolves from rather than the `ttyUSB<n>` that
@@ -4736,7 +4695,7 @@ impl Default for Settings {
             window_toolbar: true,
             window_panel_layout: WindowPanelLayout::default(),
             window_quick_buttons: true,
-            window_quick_buttons_area: WindowQuickButtonsArea::default(),
+            window_quick_buttons_width: 0,
             recent_serial_port: String::from(""),
             recent_host_history: String::from(""),
             recent_ssh_host: String::from(""),
@@ -5976,10 +5935,11 @@ impl Settings {
                 None => d.window_panel_layout,
             },
             window_quick_buttons: crate::schema::on_off(ini.get("Sterna", "QuickButtons"), true),
-            window_quick_buttons_area: match ini.get("Sterna", "QuickButtonsArea") {
-                Some(v) => WindowQuickButtonsArea::from_ini(v),
-                None => d.window_quick_buttons_area,
-            },
+            window_quick_buttons_width: crate::schema::clamped(
+                ini.get_int("Sterna", "QuickButtonsWidth", d.window_quick_buttons_width) as i32,
+                0,
+                2000,
+            ),
             recent_serial_port: ini
                 .get_or("Sterna", "SerialPort", &d.recent_serial_port)
                 .to_string(),
@@ -8180,8 +8140,8 @@ impl Settings {
         );
         ini.set(
             "Sterna",
-            "QuickButtonsArea",
-            &self.window_quick_buttons_area.as_ini().to_string(),
+            "QuickButtonsWidth",
+            &self.window_quick_buttons_width.to_string(),
         );
         ini.set("Sterna", "SerialPort", &self.recent_serial_port.clone());
         ini.set("Sterna", "HostHistory", &self.recent_host_history.clone());
@@ -11051,11 +11011,11 @@ impl Settings {
                     .to_string(),
                 );
             }
-            "window.quick_buttons_area" => {
+            "window.quick_buttons_width" => {
                 ini.set(
                     "Sterna",
-                    "QuickButtonsArea",
-                    &self.window_quick_buttons_area.as_ini().to_string(),
+                    "QuickButtonsWidth",
+                    &self.window_quick_buttons_width.to_string(),
                 );
             }
             "recent.serial_port" => {
@@ -12013,7 +11973,7 @@ impl Settings {
                 "off"
             }
             .to_string(),
-            "window.quick_buttons_area" => self.window_quick_buttons_area.as_ini().to_string(),
+            "window.quick_buttons_width" => self.window_quick_buttons_width.to_string(),
             "recent.serial_port" => self.recent_serial_port.clone(),
             "recent.host_history" => self.recent_host_history.clone(),
             "recent.ssh_host" => self.recent_ssh_host.clone(),
@@ -12944,8 +12904,12 @@ impl Settings {
             "window.quick_buttons" => {
                 self.window_quick_buttons = crate::schema::on_off(Some(value), true)
             }
-            "window.quick_buttons_area" => {
-                self.window_quick_buttons_area = WindowQuickButtonsArea::from_ini(value)
+            "window.quick_buttons_width" => {
+                self.window_quick_buttons_width = crate::schema::clamped(
+                    crate::schema::int(value, self.window_quick_buttons_width),
+                    0,
+                    2000,
+                )
             }
             "recent.serial_port" => self.recent_serial_port = value.to_string(),
             "recent.host_history" => self.recent_host_history = value.to_string(),
@@ -16193,14 +16157,14 @@ pub const FIELDS: &[Field] = &[
         doc: "**`[Sterna]`** again, and these two are only the *bar*: the buttons on it are a list, which no schema row can be, and they live in a `[Sterna Buttons]` section of their own (`tt-config/src/buttons.rs`).  The whole visibility decision. An empty panel still shows its Add button, so checking this before any commands exist gives a direct route to the first.",
     },
     Field {
-        name: "window.quick_buttons_area",
+        name: "window.quick_buttons_width",
         page: "window",
         section: "Sterna",
-        key: "QuickButtonsArea",
-        kind: Kind::Enum(&["right", "top", "bottom", "left"]),
-        default: "right",
+        key: "QuickButtonsWidth",
+        kind: Kind::IntClamp(0, 2000),
+        default: "0",
         label: None,
-        doc: "Which edge the resizable dock is on. Qt lets it be dragged to any of the four, and this is where it opens.  **The right**, not the top, which is where the other bar is. A terminal's rows are the scarce dimension — a window is usually far wider than the 80 columns it needs and exactly as tall as it can be — so a vertical bar costs nothing that is being used, and the labels have room to be words rather than abbreviations. An unrecognised spelling lands on the right as well, rather than hiding the bar.",
+        doc: "How wide the panel is, in pixels. **The bar is always down the right-hand side** — a terminal's rows are the scarce dimension, a window is usually far wider than the 80 columns it needs and exactly as tall as it can be, so a vertical bar costs nothing that is being used and the labels have room to be words rather than abbreviations.  There was a `QuickButtonsArea` here until 0.5.4, naming one of the four edges. It went with the dock that made it possible: a dock separator takes its pixels out of the central widget, and the terminal beside it is fitted to whatever width is left in whole cells — so dragging the panel resized the grid, and `Grid::resize` truncates every line it shortens, page and scrollback alike. The width below is the same gesture with the pixels coming out of the *window* instead, which is a thing a terminal can survive.  **Zero means as wide as the buttons need**, and it is what ships. Pixels are the only honest unit for a panel of words — the same eight captions want a different number of them at every font size and every scale factor — so a shipped number would be a guess, and measuring is not. It also keeps a fresh install exactly where it was before this setting existed: the panel hugged its widest caption, and an empty one was as wide as its Add button.  `int_clamp` rather than `int`: a number outside the range is somebody's typo, and clamping it keeps the panel on screen where taking the default would throw the width away and silently go back to measuring. The ceiling is a corruption guard and not the real limit — the real one is how far the window can grow before it leaves the screen, which only the window knows. The floor a panel is really held to is its own minimum, which depends on the captions and the font, so the window applies that too: validation at the boundary, the way `TerminalUID` is.",
     },
     Field {
         name: "recent.serial_port",
@@ -16716,7 +16680,7 @@ pub const SETTING_HELP: &[&str] = &[
     "This setting shows the toolbar with connection controls, local echo, line editing, and dark mode.",
     "This setting selects one tabbed connection view or one tiled grid. The tiled grid shows all connections. The previous two-panel and four-panel values select the tiled layout.",
     "This setting shows the quick-button bar. You can change the buttons on this bar. An empty bar shows the Add button. You can use this button to make the first command.",
-    "This setting sets the initial edge of the quick-button bar: right, top, bottom, or left. You can drag the bar to a different edge. Sterna then updates this setting.",
+    "This setting sets the width of the quick-button bar in pixels. Zero makes the bar as wide as its widest button. To change the width, move the inner edge of the bar. Sterna then changes the window width, and the terminal keeps its columns.",
     "This setting stores the serial-device path that the connection dialog used last. Adapter renumbering changes a temporary name more frequently than a stable device link.",
     "This setting stores host entries for the New Connection dialog. This list puts the host from the last connection first. Host history must be active before Sterna updates this list.",
     "This setting stores the last SSH host or SSH configuration alias entered in the connection dialog. An empty value removes the SSH record.",

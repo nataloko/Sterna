@@ -5,8 +5,7 @@ use tt_config::{
     ConnectionPortType, EncodingDecSpecialDirection, EncodingReceive, EncodingSend, FontDrawApi,
     FontQuality, Ini, KeyboardBackspace, KeyboardMeta8bit, Kind, LogTimestampType,
     ProxySocksResolve, ProxyType, SerialDataBits, SerialFlow, SerialParity, SerialStopBits,
-    Settings, TerminalCrReceive, TerminalId, WindowIcon, WindowPanelLayout, WindowQuickButtonsArea,
-    FIELDS, SETTING_HELP,
+    Settings, TerminalCrReceive, TerminalId, WindowIcon, WindowPanelLayout, FIELDS, SETTING_HELP,
 };
 
 #[test]
@@ -148,19 +147,27 @@ fn the_panel_layout_is_a_sterna_setting_with_a_safe_fallback() {
 fn the_quick_button_bar_ships_on_and_down_the_right() {
     let d = Settings::default();
     assert!(d.window_quick_buttons);
-    // The right rather than the top: a terminal's rows are the scarce
-    // dimension, and a vertical bar costs none of them.
-    assert_eq!(d.window_quick_buttons_area, WindowQuickButtonsArea::Right);
+    // Down the right is no longer a setting — it is where the panel is. What
+    // the file carries instead is how wide it was left, and zero means nobody
+    // has said: measure the buttons.
+    assert_eq!(d.window_quick_buttons_width, 0);
 
     let load = |value: &str| {
         Settings::load(&Ini::parse(
-            format!("[Sterna]\r\nQuickButtonsArea={value}\r\n").as_bytes(),
+            format!("[Sterna]\r\nQuickButtonsWidth={value}\r\n").as_bytes(),
         ))
-        .window_quick_buttons_area
+        .window_quick_buttons_width
     };
-    assert_eq!(load("top"), WindowQuickButtonsArea::Top);
-    assert_eq!(load("BOTTOM"), WindowQuickButtonsArea::Bottom);
-    assert_eq!(load("sideways"), WindowQuickButtonsArea::Right);
+    assert_eq!(load("240"), 240);
+    // **Clamped, not defaulted.** `int_clamp` is the third of the three
+    // bounds: `int(lo..hi)` would answer 0 here, which throws the width away
+    // and quietly goes back to measuring instead of honouring what was meant.
+    assert_eq!(load("99999"), 2000);
+    // A word is 0 and so is a negative, which both land on the sentinel — the
+    // one place this key cannot tell "measure it" from "that made no sense".
+    // Harmless because the answer is the same and it is the shipped one.
+    assert_eq!(load("wide"), 0);
+    assert_eq!(load("-40"), 0);
 
     // Default on, so `GetOnOff` reads anything but a literal `off` as on —
     // the asymmetry `AGENTS.md` warns about, asserted rather than assumed.
