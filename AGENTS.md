@@ -645,6 +645,13 @@ SSH:
   between the connect and the first prompt, which is the race `render_test`
   already carries scar tissue for. The busy scan therefore runs on
   `showPopup` only, and every other rebuild reuses the last answer.
+- **A connect makes its page before it makes its connection** — `ensureIdlePage`
+  runs at the top of every `connectX`, so `activatePage` and everything hanging
+  off it fires on a page connected to nothing, in the middle of the connect
+  path, and again for a connect that then fails. Hence
+  `refreshConnectionSelector` leaves the destination field alone for a blank
+  page: emptying it there is emptying the field New tab is about to connect
+  *from*, and the one holding the host somebody mistyped.
 - **`ConnectBar::Entry::operator==` must compare everything that reaches the
   widget.** `rebuildList` returns early on an unchanged list, so a row whose
   *state* changed but whose text did not never repaints. Busy state is

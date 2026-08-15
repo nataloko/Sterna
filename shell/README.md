@@ -161,6 +161,25 @@ construction: without that, the button narrows when a session opens, the
 toolbar reflows, and the expanding field beside it absorbs the difference, so
 *connecting* resizes the destination box.
 
+**One bar, one field, and several terminals behind it.** The field belongs to
+whichever page is in front, the way every other control on the bar does:
+`TerminalPage` keeps the `RecentConnection` its session was opened with and
+`MainWindow::refreshConnectionSelector` puts it back when that page is
+activated, so a window with three sessions in it can be asked what each one is
+connected to by clicking on it. The record is kept beside its label because a
+label cannot be parsed back — an SSH row's identity file and compatibility mode
+are not in the words — and the label is kept beside the record so that
+selecting a serial tab does not re-enumerate `/dev` to render a friendly name
+it already had.
+
+Two things it must not do. Only a *genuine* page change refreshes the field: a
+click inside the page that is already in front comes through `activatePage`
+too, and would erase a destination half typed. And a page connected to nothing
+leaves the field alone rather than emptying it — the connect path itself runs
+through here, because `ensureIdlePage` makes the new page before the connection
+exists, so clearing on a blank page greys out New tab's own Connect button and
+throws away the host somebody mistyped when a second connection fails.
+
 Two things the port list this replaced did not have to answer. Enumeration is
 not a shortlist — an ordinary desktop returns thirty-two motherboard `ttyS`
 ports with nothing attached — so the group sorts real adapters first, shows six

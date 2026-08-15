@@ -5,6 +5,14 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+### Changed
+
+- The destination field now follows the terminal in front of it. Each tab or
+  tile remembers what it was opened with, so selecting one shows where that
+  session is connected rather than wherever the window connected last. It now
+  also shows a connection that was not added to the list, which it did not do
+  with `RememberConnections=off`.
+
 ## [0.3.0] - 2026-08-14
 
 ### Added
