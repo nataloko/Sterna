@@ -1,74 +1,90 @@
 # Sterna
 
-Sterna is a native communications terminal for Linux and Windows. It connects
-to serial devices, SSH and telnet servers, named pipes, and local shells while
-supporting Tera Term-compatible workflows and configuration.
+Sterna is a desktop communications terminal for Linux and Windows. It connects
+to serial devices, SSH servers, telnet servers, named pipes, and local shells.
+It is compatible with Tera Term settings and Tera Term scripts.
 
-## Features
+## Functions
 
-- Serial communication with break signalling, modem-line control, flow
-  control, and hotplug handling
-- SSH2 and telnet, including `~/.ssh/config` aliases and `known_hosts`
-- Multiple sessions in movable tabs, with SSH and telnet session duplication
-- [TTL scripting](docs/macro/README.md) for existing `.ttl` scripts
-- [Lua plugins](docs/plugins.md) for menus, global shortcuts, connection hooks,
-  byte-stream filters, and settings pages
+Sterna has these functions:
+
+- Serial communication with break signals, modem-line control, flow control,
+  and hotplug detection
+- SSH2 and telnet, with `~/.ssh/config` aliases and `known_hosts`
+- More than one session in movable tabs, with a copy function for SSH and
+  telnet sessions
+- [TTL scripts](docs/macro/README.md), which let you use your `.ttl` files
+  without changes
+- [Lua plugins](docs/plugins.md) for menus, global shortcuts, connection
+  hooks, byte-stream filters, and settings pages
 - XMODEM, YMODEM, ZMODEM, Kermit, B-Plus, and Quick-VAN file transfers
-- Inline [sixel graphics](docs/sixel.md), including images in scrollback
-- [Find](docs/find.md): search the screen and the scrollback, with case,
-  whole-word and regular-expression matching
-- [Highlight rules](docs/highlighting.md): regular expressions that recolour
-  the screen and the scrollback
-- [Quick buttons](docs/buttons.md): a bar of commands one click away, each one
-  optionally on a keyboard shortcut
-- Per-tab line editing that holds an editable command locally until Return,
-  over serial, SSH, telnet, raw TCP, or a local shell
-- A terminal-only dark mode that leaves menus and dialogs in the desktop theme
+- [Sixel graphics](docs/sixel.md) in the terminal, and images in the
+  scrollback
+- [Find](docs/find.md), which finds text on the screen and in the scrollback
+  with case, whole-word, and regular-expression modes
+- [Highlight rules](docs/highlighting.md), which are regular expressions that
+  change the colors on the screen and in the scrollback
+- [Quick buttons](docs/buttons.md), a bar of commands that you click to start,
+  each one with an optional keyboard shortcut
+- Line edit in each tab, which holds a command until you push Return, over
+  serial, SSH, telnet, raw TCP, or a local shell
+- A dark mode for the terminal only, which keeps the desktop theme in the
+  menus and the dialogs
 - `KEYBOARD.CNF` key mappings and `TERATERM.INI`-compatible settings
-- Printing, a local control socket, and a signed updater that checks once a day
-- Localized interface using Tera Term's 14 language catalogs
+- A printer function, a local control socket, and a signed updater that does a
+  check one time each day
+- An interface that uses the 14 language catalogs of Tera Term.
 
-Compatibility notes and intentional differences from Tera Term are documented
-in [docs/deviations.md](docs/deviations.md). Attribution and licensing details
-for incorporated Tera Term components are in
-[ATTRIBUTION.md](ATTRIBUTION.md). See [CHANGELOG.md](CHANGELOG.md) for the
-release history.
+[docs/deviations.md](docs/deviations.md) gives the compatibility notes and the
+deviations from Tera Term. Each deviation is a decision and not a defect.
+[ATTRIBUTION.md](ATTRIBUTION.md) gives the attribution and the licenses for the
+Tera Term components in Sterna. [CHANGELOG.md](CHANGELOG.md) records the
+changes in each release.
 
 ## Installation
 
-Download the latest release from the
-[GitHub releases page](https://github.com/nataloko/Sterna/releases/latest).
+The [GitHub releases page](https://github.com/nataloko/Sterna/releases/latest)
+has the newest release.
 
-- **Windows:** download and run the `x86_64-setup.exe` installer.
-- **Linux:** download the `x86_64.AppImage`, make it executable with
-  `chmod +x sterna-*.AppImage`, then run it.
+For Windows, do these steps:
+
+1. Download the `x86_64-setup.exe` installer.
+2. Start the installer.
+
+For Linux, do these steps:
+
+1. Download the `x86_64.AppImage` file.
+2. Set the execute permission with `chmod +x sterna-*.AppImage`.
+3. Start the AppImage.
 
 ## Architecture
 
-Sterna has a Rust core exposed through a flat C ABI and a Qt 6 Widgets desktop
-application.
+Sterna has two parts: a Rust core and a Qt 6 Widgets desktop application. A
+flat C ABI connects the two parts.
 
-The core handles terminal emulation, scrollback, transports, file-transfer
-protocols, scripting, configuration, and localization. The desktop application
-handles rendering, dialogs, menus, the clipboard, and platform integration.
+The core does the terminal emulation, the scrollback, the transports, the
+file-transfer protocols, the scripts, the configuration, and the localization.
+The desktop application shows the terminal on the screen. It also does the
+dialogs, the menus, the clipboard, and the integration with the operating
+system.
 
-## Build
+## Compilation
 
-Build the desktop application with CMake and Ninja:
+Use CMake and Ninja to compile the desktop application:
 
 ```sh
 cmake -S shell -B shell/build -G Ninja
 cmake --build shell/build
 ```
 
-This requires Rust, Cargo, CMake, Ninja, and the Qt 6 Widgets, PrintSupport, and
-Network development packages.
+Rust, Cargo, CMake, Ninja, and the Qt 6 Widgets, PrintSupport, and Network
+development packages are necessary.
 
-## Licence and attribution
+## License and attribution
 
-Sterna is distributed under the 3-clause BSD licence. See [LICENSE](LICENSE)
-and [ATTRIBUTION.md](ATTRIBUTION.md) for the licence and notices covering the
-incorporated components.
+Sterna has the 3-clause BSD license. [LICENSE](LICENSE) and
+[ATTRIBUTION.md](ATTRIBUTION.md) give the license and the notices for the
+components in Sterna.
 
 Tera Term is © 1994-1998 T. Teranishi and © the TeraTerm Project. Sterna is
 not affiliated with or endorsed by the TeraTerm Project.
