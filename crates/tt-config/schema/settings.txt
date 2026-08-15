@@ -1594,8 +1594,9 @@ log.timestamp_format | string | Tera Term | LogTimestampFormat | %Y-%m-%d %H:%M:
 # see `docs/deviations.md`. One fixed name means every log lands on the last
 # one, and whether that overwrites it or appends to it is decided by a setting
 # the person starting the log is not looking at. A template that carries the
-# clock cannot collide, and this is upstream's own Setup preset
-# (`log_pp.cpp:125`) without its `&h`.
+# clock cannot collide; the shape is upstream's own Setup preset
+# (`log_pp.cpp:125`), with the program's name in front so that a log directory
+# shared with anything else says which program wrote which file.
 #
 # **Without the `&h` on purpose**, tempting as it is for anybody logging more
 # than one console. `&h` is `ts.HostName`, and here that is whatever path the
@@ -1606,7 +1607,7 @@ log.timestamp_format | string | Tera Term | LogTimestampFormat | %Y-%m-%d %H:%M:
 # underscores on the end of every log. A local shell has no host name at all
 # and would leave a bare separator. Both are fine in a template somebody chose;
 # neither is fine in the one everybody gets.
-log.default_name | string | Tera Term | LogDefaultName | %Y%m%d_%H%M%S.log | -
+log.default_name | string | Tera Term | LogDefaultName | sterna-%Y%m%d_%H%M%S.log | -
 
 # `ttset.c:1023`. Where a relative log name lands. Empty falls back to
 # `FileDir` if that exists and to the per-user log directory otherwise —
@@ -2221,13 +2222,17 @@ recent.remember | bool | Sterna | RememberConnections | on | -
 # answers the same three-way question every time (`log.default_path`, then
 # `transfer.file_dir`, then the per-user directory).
 #
-# It is a **choice**, not a configured default, which is why it wins over
-# `log.default_path`: somebody who browsed to a directory in the picker has
-# said where the next log goes more recently than the file did. Only the dialog
-# writes it — a `/L=` path or an auto-started template is a script's choice and
-# must not retarget the next log a person opens — so a file that sets
-# `LogDefaultPath` and nothing else still opens there, and clearing this value
-# hands the question back.
+# **Consulted only when `log.default_path` is empty.** A configured log
+# directory is somebody saying where logs go, and a remembered one that
+# silently overrode it would make the setting look broken. What this replaces
+# is the *rest* of `GetTermLogDir`'s chain — the file-transfer directory, then
+# a per-user directory nobody chose — which is where an unconfigured log lands
+# and is not a place anyone would look twice.
+#
+# Only the log dialog writes it: a `/L=` path or an auto-started template is a
+# script's choice and must not retarget the next log a person opens. It is
+# recorded whether or not it is currently being consulted, so clearing
+# `LogDefaultPath` later falls back to somewhere real.
 recent.log_dir | string | Sterna | LogDir |  | -
 
 # --- updates ----------------------------------------------------------------

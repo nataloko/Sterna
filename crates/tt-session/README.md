@@ -124,8 +124,9 @@ plain name; `FLogGetLogFilename` puts it through four passes — `strftime`, the
 `&h`, `&p` and `&u` for the connection, then a sweep for characters a file name
 cannot hold, then a join against the log directory (`LogDefaultPath`, or the
 *file-transfer* directory if that exists, or a per-user one). This port ships
-`%Y%m%d_%H%M%S.log` instead, so two logs cannot collide; the machinery is
-unchanged and the value is one of upstream's own presets, without its `&h` —
+`sterna-%Y%m%d_%H%M%S.log` instead, so two logs cannot collide and a shared log
+directory says which program wrote which file; the machinery is unchanged and
+the shape is one of upstream's own presets, without its `&h` —
 which on this side of the port is the path a port was opened by, and a
 `by-path` serial device would put thirty-eight swept characters of PCI
 topology on the end of every log's name.

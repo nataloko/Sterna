@@ -404,10 +404,17 @@ void LogOptionsDialog::refreshName()
 
     QString dir = m_file->text().isEmpty() ? QString() : QFileInfo(m_file->text()).absolutePath();
     if (dir.isEmpty()) {
-        // First pass. The directory somebody last chose beats the one the
-        // settings file names, because it is the more recent answer to the
-        // same question; with neither, the core's own chain decides.
-        dir = m_session->setting(QStringLiteral("recent.log_dir"));
+        // First pass. **A configured `LogDefaultPath` wins**: somebody who
+        // named a log directory in the settings has said where logs go, and a
+        // remembered directory that quietly overrode it would make the setting
+        // look broken. So the memory only answers when the setting is silent —
+        // which is the case it was added for, since the fallback behind it is
+        // `GetTermLogDir`'s chain and that ends in a per-user directory nobody
+        // chose. `logName()` has already resolved all of that, so its own
+        // directory is the answer whenever the setting had one.
+        if (m_session->setting(QStringLiteral("log.default_path")).isEmpty()) {
+            dir = m_session->setting(QStringLiteral("recent.log_dir"));
+        }
         if (dir.isEmpty() || !QDir(dir).exists()) {
             dir = QFileInfo(expanded).absolutePath();
         }

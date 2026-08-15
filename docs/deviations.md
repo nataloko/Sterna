@@ -685,17 +685,20 @@ either program still opens in the other.
 
 ## 18. A log names itself by the clock and remembers its directory
 
-`LogDefaultName` ships as `%Y%m%d_%H%M%S.log` where `ttset.c:1018` gives
+`LogDefaultName` ships as `sterna-%Y%m%d_%H%M%S.log` where `ttset.c:1018` gives
 `teraterm.log`, and the directory the last log was written to is kept in
-`[Sterna] LogDir` and offered ahead of `LogDefaultPath`. Upstream remembers
+`[Sterna] LogDir` and used when `LogDefaultPath` is empty. Upstream remembers
 nothing: `GetTermLogDir` answers the same three-way question every time.
 
 **Why the name.** One fixed name means every log lands on the last one, and
 whether that overwrites it or appends to it is decided by `LogAppend` — a
 setting the person starting the log is not looking at. Both outcomes are bad in
 different ways and neither is visible until afterwards. A template that carries
-the clock cannot collide, and this is not an invention: it is one of upstream's
-own Setup presets (`log_pp.cpp:125`).
+the clock cannot collide, and the shape is not an invention: it is one of
+upstream's own Setup presets (`log_pp.cpp:125`). The program's name goes in
+front of it because a log directory is rarely one program's — a bare
+`20260815_143022.log` beside the same name from something else is a file you
+have to open to identify.
 
 **And without the `&h` that preset has**, which is the tempting part for
 anybody logging more than one console. `&h` is `ts.HostName`, which here is the
@@ -708,10 +711,18 @@ would leave a bare separator. Both are fine in a template somebody chose, and
 `&h`, `&p` and `&u` all still work; neither is fine in the one everybody gets.
 
 **Why the directory.** The same reason the connect dialog remembers its last
-connection (deviation 2): where a log went is a choice somebody made in a file
-picker, and it is a more recent answer to "where do logs go" than the settings
-file is. `LogDefaultPath` still seeds the first one and clearing `[Sterna]
-LogDir` hands the question back. Only the dialog writes it — a `/L=` path or an
+connection (deviation 2): with nothing configured, upstream's answer is
+`GetTermLogDir`'s chain, which ends in a per-user directory nobody chose and
+few people could name. A directory somebody browsed to is a better answer to
+"where do logs go" than that is.
+
+**But only when nothing is configured.** `LogDefaultPath` wins whenever it is
+set: somebody who named a log directory has said where logs go, and a
+remembered one that silently overrode it would make the setting look broken
+with nothing on screen to explain why. What the memory replaces is the *rest*
+of the chain, not the setting. It is recorded either way, so clearing
+`LogDefaultPath` later falls back to somewhere real rather than to the per-user
+directory again; and only the dialog writes it — a `/L=` path or an
 auto-started template is a script's choice and must not retarget the next log a
 person opens.
 

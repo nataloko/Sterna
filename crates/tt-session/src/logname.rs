@@ -10,9 +10,10 @@
 //! literally would write every session into one file.
 //!
 //! Which is why **this port ships a template rather than the plain name**:
-//! `%Y%m%d_%H%M%S.log`, so a second log cannot land on the first (see
+//! `sterna-%Y%m%d_%H%M%S.log`, so a second log cannot land on the first and a
+//! shared log directory says which program wrote which file (see
 //! `docs/deviations.md`). Nothing here changes for it — the four passes are
-//! upstream's and the shipped value is one of the Setup page's own presets
+//! upstream's and the shape is one of the Setup page's own presets
 //! (`log_pp.cpp:125`) without the `&h`, which on this side of the port is the
 //! path a port was opened by rather than a host name.
 //!
@@ -689,7 +690,7 @@ mod tests {
         };
 
         let first = expand_name(&settings.log_default_name, &ctx, when());
-        assert_eq!(first, "20260809_123456.log");
+        assert_eq!(first, "sterna-20260809_123456.log");
 
         let a_second_later = Civil::from_unix(1_786_278_897, 0);
         assert_ne!(

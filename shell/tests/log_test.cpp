@@ -22,6 +22,7 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMouseEvent>
@@ -226,11 +227,11 @@ void test_a_choice_disables_what_it_makes_meaningless()
     CHECK(!bom->isEnabled());
 }
 
-/// The field opens on the directory the last log went to, and on the settings'
-/// own when nothing has been written yet. Whichever it is, the *name* is the
-/// template expanded now — which is what stops a second log landing on the
-/// first.
-void test_the_field_offers_the_last_directory_and_a_dated_name()
+/// A configured log directory decides where the field opens; the remembered
+/// one only answers when there is no configured answer to override. Whichever
+/// it is, the *name* is the template expanded now — which is what stops a
+/// second log landing on the first.
+void test_the_field_prefers_a_configured_directory_over_the_last_one()
 {
     QTemporaryDir dir;
     QTemporaryDir elsewhere;
@@ -238,31 +239,31 @@ void test_the_field_offers_the_last_directory_and_a_dated_name()
     Session session(24, 4);
     CHECK(session.setSetting(QStringLiteral("log.default_path"), dir.path(), nullptr));
 
-    {
-        LogOptionsDialog dialog(&session);
+    const auto fieldText = [](Session *s) {
+        LogOptionsDialog dialog(s);
         auto *file = dialog.findChild<QLineEdit *>(QStringLiteral("logFile"));
-        CHECK(file != nullptr);
-        if (!file) {
-            return;
-        }
-        CHECK(file->text().startsWith(dir.path()));
-        // The shipped `LogDefaultName` is a template, so the offered name
-        // carries the date rather than being one constant for every session.
-        CHECK(!file->text().endsWith(QStringLiteral("teraterm.log")));
-        CHECK(file->text().endsWith(QStringLiteral(".log")));
-    }
+        return file ? file->text() : QString();
+    };
 
-    // A directory somebody chose is a more recent answer than the one the file
-    // names, so it wins next time.
+    QString shown = fieldText(&session);
+    CHECK(shown.startsWith(dir.path()));
+    // The shipped `LogDefaultName` is a template, so the offered name carries
+    // the date rather than being one constant for every session.
+    CHECK(!shown.endsWith(QStringLiteral("teraterm.log")));
+    CHECK(QFileInfo(shown).fileName().startsWith(QStringLiteral("sterna-")));
+    CHECK(shown.endsWith(QStringLiteral(".log")));
+
+    // A remembered directory must not quietly override a configured one: the
+    // setting would look broken and nothing would say why.
     CHECK(session.setSetting(QStringLiteral("recent.log_dir"), elsewhere.path(), nullptr));
-    {
-        LogOptionsDialog dialog(&session);
-        auto *file = dialog.findChild<QLineEdit *>(QStringLiteral("logFile"));
-        CHECK(file != nullptr);
-        if (file) {
-            CHECK(file->text().startsWith(elsewhere.path()));
-        }
-    }
+    shown = fieldText(&session);
+    CHECK(shown.startsWith(dir.path()));
+
+    // With the setting cleared it is the memory's question to answer, because
+    // what it replaces is a per-user directory nobody chose.
+    CHECK(session.setSetting(QStringLiteral("log.default_path"), QString(), nullptr));
+    shown = fieldText(&session);
+    CHECK(shown.startsWith(elsewhere.path()));
 }
 
 /// File > Log opens the dialog, what it says reaches the file, and the
@@ -442,7 +443,7 @@ int main(int argc, char **argv)
 
     test_the_dialog_is_seeded_from_the_settings_and_writes_them_back();
     test_a_choice_disables_what_it_makes_meaningless();
-    test_the_field_offers_the_last_directory_and_a_dated_name();
+    test_the_field_prefers_a_configured_directory_over_the_last_one();
     test_the_menu_item_starts_the_log_the_dialog_configured();
     test_pausing_stops_the_bytes_from_either_place();
     render_dialogs();

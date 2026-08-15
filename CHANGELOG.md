@@ -23,14 +23,17 @@ are available from the [GitHub releases page].
 ### Changed
 
 - A log names itself by the clock. The default file name is now
-  `%Y%m%d_%H%M%S.log` rather than `teraterm.log`, so a second log cannot land
-  on the first — which, depending on a setting you were not looking at, either
-  overwrote it or appended to it. The name is still a template and a file that
-  sets `LogDefaultName` keeps whatever it says; `&h` for the host, `&p` for the
-  port and `&u` for the user still work if you want them in there.
-- The log dialog opens on the directory the last log was written to, remembered
-  in `[Sterna] LogDir`. `LogDefaultPath` still decides where the first one
-  goes, and clearing the new key hands the question back to it.
+  `sterna-%Y%m%d_%H%M%S.log` rather than `teraterm.log`, so a second log cannot
+  land on the first — which, depending on a setting you were not looking at,
+  either overwrote it or appended to it — and a log directory shared with
+  anything else says which program wrote which file. The name is still a
+  template and a file that sets `LogDefaultName` keeps whatever it says; `&h`
+  for the host, `&p` for the port and `&u` for the user still work if you want
+  them in there.
+- With no log directory configured, the log dialog opens on the one the last
+  log was written to, remembered in `[Sterna] LogDir` — instead of the per-user
+  directory it fell back to before. A `LogDefaultPath` you have set still
+  decides, every time.
 - Quick buttons now fill the panel they sit in. Down the left or right edge
   each button is as wide as the panel, so widening it makes the buttons wider
   instead of leaving a strip of empty space beside them, and every button is

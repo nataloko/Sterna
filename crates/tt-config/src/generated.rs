@@ -3861,8 +3861,9 @@ pub struct Settings {
     /// see `docs/deviations.md`. One fixed name means every log lands on the last
     /// one, and whether that overwrites it or appends to it is decided by a setting
     /// the person starting the log is not looking at. A template that carries the
-    /// clock cannot collide, and this is upstream's own Setup preset
-    /// (`log_pp.cpp:125`) without its `&h`.
+    /// clock cannot collide; the shape is upstream's own Setup preset
+    /// (`log_pp.cpp:125`), with the program's name in front so that a log directory
+    /// shared with anything else says which program wrote which file.
     ///
     /// **Without the `&h` on purpose**, tempting as it is for anybody logging more
     /// than one console. `&h` is `ts.HostName`, and here that is whatever path the
@@ -4324,13 +4325,17 @@ pub struct Settings {
     /// answers the same three-way question every time (`log.default_path`, then
     /// `transfer.file_dir`, then the per-user directory).
     ///
-    /// It is a **choice**, not a configured default, which is why it wins over
-    /// `log.default_path`: somebody who browsed to a directory in the picker has
-    /// said where the next log goes more recently than the file did. Only the dialog
-    /// writes it — a `/L=` path or an auto-started template is a script's choice and
-    /// must not retarget the next log a person opens — so a file that sets
-    /// `LogDefaultPath` and nothing else still opens there, and clearing this value
-    /// hands the question back.
+    /// **Consulted only when `log.default_path` is empty.** A configured log
+    /// directory is somebody saying where logs go, and a remembered one that
+    /// silently overrode it would make the setting look broken. What this replaces
+    /// is the *rest* of `GetTermLogDir`'s chain — the file-transfer directory, then
+    /// a per-user directory nobody chose — which is where an unconfigured log lands
+    /// and is not a place anyone would look twice.
+    ///
+    /// Only the log dialog writes it: a `/L=` path or an auto-started template is a
+    /// script's choice and must not retarget the next log a person opens. It is
+    /// recorded whether or not it is currently being consulted, so clearing
+    /// `LogDefaultPath` later falls back to somewhere real.
     pub recent_log_dir: String,
     /// Whether starting Sterna may look for a new release. On, so an installed
     /// terminal learns about a signed update without anyone remembering to ask.
@@ -4556,7 +4561,7 @@ impl Default for Settings {
             log_timestamp_type: LogTimestampType::default(),
             log_timestamp_utc: false,
             log_timestamp_format: String::from("%Y-%m-%d %H:%M:%S.%N"),
-            log_default_name: String::from("%Y%m%d_%H%M%S.log"),
+            log_default_name: String::from("sterna-%Y%m%d_%H%M%S.log"),
             log_default_path: String::from(""),
             log_rotate: 0,
             log_rotate_size: 0,
@@ -14855,9 +14860,9 @@ pub const FIELDS: &[Field] = &[
         section: "Tera Term",
         key: "LogDefaultName",
         kind: Kind::Str,
-        default: "%Y%m%d_%H%M%S.log",
+        default: "sterna-%Y%m%d_%H%M%S.log",
         label: None,
-        doc: "`ttset.c:1018`, the name `LogAutoStart` and the log dialog both start from. It is a **template**: `strftime` conversions, then `&h` for the host (`COMn` on a serial line), `&p` for the TCP port and `&u` for the user name.  **The default is not upstream's `teraterm.log`, and that is deliberate** — see `docs/deviations.md`. One fixed name means every log lands on the last one, and whether that overwrites it or appends to it is decided by a setting the person starting the log is not looking at. A template that carries the clock cannot collide, and this is upstream's own Setup preset (`log_pp.cpp:125`) without its `&h`.  **Without the `&h` on purpose**, tempting as it is for anybody logging more than one console. `&h` is `ts.HostName`, and here that is whatever path the port was *opened* by — the connect bar opens a serial port through its `/dev/serial/by-path/` name so a replug cannot move it, and the sweep for characters a file name cannot hold then turns `pci-0000:c8:00.3-usb-0:1.3.2:1.0-port0` into thirty-eight characters of underscores on the end of every log. A local shell has no host name at all and would leave a bare separator. Both are fine in a template somebody chose; neither is fine in the one everybody gets.",
+        doc: "`ttset.c:1018`, the name `LogAutoStart` and the log dialog both start from. It is a **template**: `strftime` conversions, then `&h` for the host (`COMn` on a serial line), `&p` for the TCP port and `&u` for the user name.  **The default is not upstream's `teraterm.log`, and that is deliberate** — see `docs/deviations.md`. One fixed name means every log lands on the last one, and whether that overwrites it or appends to it is decided by a setting the person starting the log is not looking at. A template that carries the clock cannot collide; the shape is upstream's own Setup preset (`log_pp.cpp:125`), with the program's name in front so that a log directory shared with anything else says which program wrote which file.  **Without the `&h` on purpose**, tempting as it is for anybody logging more than one console. `&h` is `ts.HostName`, and here that is whatever path the port was *opened* by — the connect bar opens a serial port through its `/dev/serial/by-path/` name so a replug cannot move it, and the sweep for characters a file name cannot hold then turns `pci-0000:c8:00.3-usb-0:1.3.2:1.0-port0` into thirty-eight characters of underscores on the end of every log. A local shell has no host name at all and would leave a bare separator. Both are fine in a template somebody chose; neither is fine in the one everybody gets.",
     },
     Field {
         name: "log.default_path",
@@ -16077,7 +16082,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Str,
         default: "",
         label: None,
-        doc: "The directory the last log was written to, so the log dialog opens where the last one landed rather than where the settings file was pointing when it was written. Upstream has no key for this and does not remember: `GetTermLogDir` answers the same three-way question every time (`log.default_path`, then `transfer.file_dir`, then the per-user directory).  It is a **choice**, not a configured default, which is why it wins over `log.default_path`: somebody who browsed to a directory in the picker has said where the next log goes more recently than the file did. Only the dialog writes it — a `/L=` path or an auto-started template is a script's choice and must not retarget the next log a person opens — so a file that sets `LogDefaultPath` and nothing else still opens there, and clearing this value hands the question back.",
+        doc: "The directory the last log was written to, so the log dialog opens where the last one landed rather than where the settings file was pointing when it was written. Upstream has no key for this and does not remember: `GetTermLogDir` answers the same three-way question every time (`log.default_path`, then `transfer.file_dir`, then the per-user directory).  **Consulted only when `log.default_path` is empty.** A configured log directory is somebody saying where logs go, and a remembered one that silently overrode it would make the setting look broken. What this replaces is the *rest* of `GetTermLogDir`'s chain — the file-transfer directory, then a per-user directory nobody chose — which is where an unconfigured log lands and is not a place anyone would look twice.  Only the log dialog writes it: a `/L=` path or an auto-started template is a script's choice and must not retarget the next log a person opens. It is recorded whether or not it is currently being consulted, so clearing `LogDefaultPath` later falls back to somewhere real.",
     },
     Field {
         name: "updates.check_on_startup",
