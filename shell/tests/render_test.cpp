@@ -2252,6 +2252,66 @@ void test_the_view_menu_owns_the_three_switches()
     }
 }
 
+/// ...and each of the four survives the program that set it.
+///
+/// A menu tick is a preference, so it goes into the settings file at once —
+/// the rule View > Tiled already had. `AutoSaveSettings=off` is in the file on
+/// purpose: that switch governs the settings *dialog*, whose changes are
+/// provisional until its OK button, and a menu has no OK button to wait for.
+void test_the_view_switches_survive_a_restart()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("switches.ini"));
+    QFile file(path);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[Sterna]\nAutoSaveSettings=off\n");
+    file.close();
+
+    // The action, and the setting it writes. Each is flipped away from
+    // whatever it currently says rather than to a fixed value, so the trigger
+    // is a change whichever way the schema's default points.
+    const QVector<QPair<QString, QString>> switches = {
+        {QStringLiteral("showToolbarAction"), QStringLiteral("window.toolbar")},
+        {QStringLiteral("showQuickButtonsAction"),
+         QStringLiteral("window.quick_buttons")},
+        {QStringLiteral("showLineNumbersAction"),
+         QStringLiteral("terminal.line_numbers")},
+        {QStringLiteral("highlightMatchesAction"),
+         QStringLiteral("color.highlighting")},
+    };
+
+    QVector<QString> wanted;
+    {
+        MainWindow window(path);
+        for (const auto &item : switches) {
+            auto *action = window.findChild<QAction *>(item.first);
+            CHECK(action != nullptr);
+            if (!action) {
+                return;
+            }
+            const bool on =
+                window.session()->setting(item.second) == QLatin1String("on");
+            action->trigger();
+            wanted.append(on ? QStringLiteral("off") : QStringLiteral("on"));
+            CHECK(window.session()->setting(item.second) == wanted.last());
+        }
+    }
+
+    // The next launch, on the same file. Read back through a second window
+    // rather than by grepping the INI: the four keys have their own spellings
+    // in `[Sterna]`, and what has to come back is the *setting*.
+    MainWindow again(path);
+    for (int i = 0; i < switches.size(); i++) {
+        CHECK(again.session()->setting(switches.at(i).second) == wanted.at(i));
+        auto *action = again.findChild<QAction *>(switches.at(i).first);
+        CHECK(action != nullptr);
+        if (action) {
+            CHECK(action->isChecked() == (wanted.at(i) == QLatin1String("on")));
+        }
+    }
+}
+
 /// The release page moved out of Help and into the dialog that names the
 /// version it is a page about.
 void test_the_about_dialog_carries_the_release_page()
@@ -4079,6 +4139,7 @@ int main(int argc, char **argv)
     test_the_settings_dialog_is_built_from_the_schema();
     test_the_setup_menu_opens_one_settings_dialog();
     test_the_view_menu_owns_the_three_switches();
+    test_the_view_switches_survive_a_restart();
     test_the_about_dialog_carries_the_release_page();
     test_the_settings_dialog_uses_a_language_catalog();
     test_the_connection_dialogs_use_the_language_catalog();

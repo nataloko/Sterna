@@ -1853,6 +1853,25 @@ void MainWindow::rememberSettings(const QVector<QPair<QString, QString>> &values
     }
 }
 
+void MainWindow::setViewSwitch(const QString &name, bool on,
+                               const QString &failure)
+{
+    const QString value = on ? QStringLiteral("on") : QStringLiteral("off");
+    QString error;
+    if (!m_session->setSetting(name, value, &error)) {
+        onNotice(failure.arg(error));
+        return;
+    }
+    // Applied first, written second, which is the order View > Tiled and the
+    // toolbar's dark-mode switch already use: `tt_session_settings_remember`
+    // applies the value on its way to the file but deliberately emits no
+    // `settingsChanged`, so on its own it would move the file and leave the
+    // widget where it was. The live change is not rolled back when the write
+    // fails — `rememberSettings` says so on stderr and the window goes on
+    // doing what the user asked.
+    rememberSettings({{name, value}});
+}
+
 void MainWindow::rememberSerial(const QString &path, const TtSerialParams &params)
 {
     // The line settings go into `[Tera Term]`'s own keys, which is where the
@@ -2444,43 +2463,30 @@ void MainWindow::buildMenus()
     // — so there is no `.lng` key to hang on any of them and no upstream order
     // to keep. Each writes its setting rather than hiding its widget directly,
     // so that this menu, the settings dialog and Save setup all mean the same
-    // thing.
+    // thing — and each writes it to the *file* as well, through
+    // `setViewSwitch`, which is where View > Tiled already goes and which is
+    // the difference between a preference and an experiment.
     view->addSeparator();
     m_toolbarAction = view->addAction(tr("Show toolbar"));
     m_toolbarAction->setObjectName(QStringLiteral("showToolbarAction"));
     m_toolbarAction->setCheckable(true);
     connect(m_toolbarAction, &QAction::triggered, this, [this](bool on) {
-        QString error;
-        if (!m_session->setSetting(QStringLiteral("window.toolbar"),
-                                   on ? QStringLiteral("on")
-                                      : QStringLiteral("off"),
-                                   &error)) {
-            onNotice(tr("Could not change the toolbar: %1").arg(error));
-        }
+        setViewSwitch(QStringLiteral("window.toolbar"), on,
+                      tr("Could not change the toolbar: %1"));
     });
     m_quickButtonsAction = view->addAction(tr("Show quick buttons"));
     m_quickButtonsAction->setObjectName(QStringLiteral("showQuickButtonsAction"));
     m_quickButtonsAction->setCheckable(true);
     connect(m_quickButtonsAction, &QAction::triggered, this, [this](bool on) {
-        QString error;
-        if (!m_session->setSetting(QStringLiteral("window.quick_buttons"),
-                                   on ? QStringLiteral("on")
-                                      : QStringLiteral("off"),
-                                   &error)) {
-            onNotice(tr("Could not change the quick buttons: %1").arg(error));
-        }
+        setViewSwitch(QStringLiteral("window.quick_buttons"), on,
+                      tr("Could not change the quick buttons: %1"));
     });
     m_lineNumbersAction = view->addAction(tr("Show line numbers"));
     m_lineNumbersAction->setObjectName(QStringLiteral("showLineNumbersAction"));
     m_lineNumbersAction->setCheckable(true);
     connect(m_lineNumbersAction, &QAction::triggered, this, [this](bool on) {
-        QString error;
-        if (!m_session->setSetting(QStringLiteral("terminal.line_numbers"),
-                                   on ? QStringLiteral("on")
-                                      : QStringLiteral("off"),
-                                   &error)) {
-            onNotice(tr("Could not change the line numbers: %1").arg(error));
-        }
+        setViewSwitch(QStringLiteral("terminal.line_numbers"), on,
+                      tr("Could not change the line numbers: %1"));
     });
     // Not a setting, so it does not write one: a mark is a moment, and the
     // counter it moves belongs to the tab in front. No shortcut, for the reason
@@ -2514,12 +2520,8 @@ void MainWindow::buildMenus()
     m_highlightingAction->setObjectName(QStringLiteral("highlightMatchesAction"));
     m_highlightingAction->setCheckable(true);
     connect(m_highlightingAction, &QAction::triggered, this, [this](bool on) {
-        QString error;
-        if (!m_session->setSetting(QStringLiteral("color.highlighting"),
-                                   on ? QStringLiteral("on") : QStringLiteral("off"),
-                                   &error)) {
-            onNotice(tr("Could not change highlighting: %1").arg(error));
-        }
+        setViewSwitch(QStringLiteral("color.highlighting"), on,
+                      tr("Could not change highlighting: %1"));
     });
 
     // "Setup", which is Tera Term's own name for this menu, so that someone

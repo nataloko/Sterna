@@ -465,6 +465,23 @@ private:
     /// asked for has just succeeded, and a modal complaint about the
     /// bookkeeping behind it would be the first thing they see.
     void rememberSettings(const QVector<QPair<QString, QString>> &values);
+    /// Flip one of the View menu's switches: live, and into the settings file.
+    ///
+    /// Both halves are necessary and neither is the other's. `setSetting`
+    /// emits `settingsChanged`, which is what actually hides the toolbar or
+    /// paints the gutter; `rememberSettings` writes the one key and emits
+    /// nothing. Calling only the second would move the file and leave the
+    /// window as it was.
+    ///
+    /// **Persisted at once**, which is View > Tiled's rule and the toolbar's
+    /// dark-mode switch's, not the settings dialog's: a menu tick is a
+    /// preference somebody set, and there is no OK button behind it to make
+    /// the change provisional. `settings.auto_save_changes` governs the dialog
+    /// and deliberately not this — `docs/deviations.md` 12 says the surfaces
+    /// outside it keep their own rules.
+    ///
+    /// `failure` is a message with one `%1` in it for the core's reason.
+    void setViewSwitch(const QString &name, bool on, const QString &failure);
     void rememberSerial(const QString &path, const TtSerialParams &params);
     void rememberSsh(const QString &host, const QString &user, int port,
                      const QString &identity, bool legacy);

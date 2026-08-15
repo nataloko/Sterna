@@ -540,6 +540,15 @@ their existing persistence rules. The option's final value controls its sibling
 changes from the same OK, while a change to the option itself is always saved.
 Setup > Save setup remains the full, backed-up save.
 
+**The View menu does not wait for it.** Tiled, Show toolbar, Show quick
+buttons, Show line numbers and Highlight matches write their one key to the
+settings file as they are ticked, whatever this option says. A dialog change is
+provisional until its OK button, which is what makes an automatic save a
+question worth asking; a menu tick has no OK button behind it, and a switch
+that forgets what it was set to at the next launch is not a switch. Each writes
+only its own key (`MainWindow::setViewSwitch`), so a shared file keeps every
+other line it had.
+
 **Failure behaviour.** A write error is reported after the live changes have
 been applied; those changes are not rolled back. If the first answer itself
 cannot be recorded, that window suppresses a repeat prompt, but the next launch
