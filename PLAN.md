@@ -4,7 +4,7 @@ Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
 **Last updated:** 2026-08-15 · **Stage:** 4 complete, deliberate deviations
-landing (`docs/deviations.md`) · **Commits:** 784
+landing (`docs/deviations.md`) · **Commits:** 796
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -5875,6 +5875,57 @@ carries `regular expression` in full.
 
 The rest of `docs/yat-ideas.md` is unaffected: this is the graduation of its
 item 2, which that file called "the broadest missing everyday affordance".
+
+**Line numbers landed 2026-08-15** as deviation 20 — a column beside the
+terminal, `terminal.line_numbers` and `terminal.line_number_width`, with
+View > Show line numbers and View > Reset line counter over them. The number is
+the absolute session line and a line keeps it into the scrollback, which is
+`Grid::scrolled_off` — the same thing the selection already rides so a highlight
+survives the output scrolling underneath it. It is not on any idea list; it
+comes from what the program gets pointed at, where "the error is about forty
+lines back" is how people talk about a wall of console output.
+
+Four decisions, each a place the obvious build is wrong:
+
+- **The numbers are a widget beside the terminal, not columns inside it**, and
+  that placement *is* the guarantee that they can never be selected, copied,
+  logged, printed or matched by a macro's `wait`: every one of those reads the
+  core's cells and this owns none. The alternative, an origin offset inside
+  `TerminalView`, would have put it at the mercy of the painter, both
+  hit-testing functions, the five places raw pixels reach the core's mouse
+  reporting, sixel and cursor placement, the line editor and `refit` — and only
+  some of those would look wrong on screen. `gutter_test` asserts the copy.
+- **Turning it on widens the window rather than narrowing the terminal**, and
+  the load-bearing line is `TerminalPage::applySettings` activating its layout
+  *synchronously*. Qt delivers the resize from that inside the call, so `refit`
+  runs and `Session::resize` writes the smaller `terminal.cols` back before
+  `onSettingsChanged` reads it — the setting follows the gutter down and the
+  window never grows, permanently. `onSettingsChanged` now reads the configured
+  size first, and `AGENTS.md` carries it as a trap because the next thing to
+  take room from the view lands on it.
+- **A number too long for its column is not drawn at all.** It cannot spill: the
+  column is the leftmost widget in the page and Qt clips a widget to its own
+  rectangle, so a negative x loses the *leading* digits — this shipped at four
+  digits, where line 10001 read `0001`. That is two lines wearing one number,
+  silently, which is the single failure the feature must not have. It takes the
+  rule the reset mark already set (a number it cannot state honestly gets none)
+  and the default is six digits, because a session's line number has no ceiling
+  and four of them is a few minutes of `cat`.
+- **View > Reset line counter is a command, not a setting.** The mark is one
+  line *below* the cursor, so the next line the host prints is 1 — reset at a
+  prompt, run the command, read its output off as 1, 2, 3. It belongs to the tab
+  and to the moment: two consoles are two things to count, and a saved mark
+  would number the next session from a point that never happened in it. The
+  action is enabled on the settings edge *and* on `aboutToShow`, because a
+  disabled `QAction` refuses `trigger()` as silently as it refuses a click.
+
+Its interface text went through rule 9. Only one of the four strings is prose —
+the status line's `Line numbers start again at the next line`, which lost
+`restart` for the dictionary's `START ... AGAIN`. `Show line numbers` and
+`Reset line counter` are interface labels and `Could not change the line
+numbers: %1` is one of four identically worded notices, so all three are left
+alone, as Find's labels were. `.ste100.toml` now records the variant
+(`official`) so no later session has to ask.
 
 ---
 
