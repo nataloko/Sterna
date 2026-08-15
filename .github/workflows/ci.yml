@@ -42,10 +42,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: Sterna
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: TeraTermProject/teraterm
           ref: ${{ env.TERATERM_REF }}
@@ -53,7 +53,7 @@ jobs:
       # apply_patches.py is a PEP 723 script run via `uv run --script`, so the
       # oracle cannot build without uv. Missing this is why the oracle job was
       # red with "Error 127" from the moment patches were introduced.
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10
         with:
           version: latest
       # A second here rather than a job of its own, which would spend twenty
@@ -72,10 +72,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: Sterna
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: TeraTermProject/teraterm
           ref: ${{ env.TERATERM_REF }}
@@ -94,7 +94,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -116,10 +116,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: Sterna
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: TeraTermProject/teraterm
           ref: ${{ env.TERATERM_REF }}
@@ -127,7 +127,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10
         with:
           version: latest
       - uses: swatinem/rust-cache@v2
@@ -241,7 +241,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
@@ -265,7 +265,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -296,7 +296,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
@@ -305,7 +305,7 @@ jobs:
       # --script`, so without this the two telnet servers die the instant they
       # are started and `telnet_test` reports a connection refused — three
       # minutes and a whole Qt build after the actual failure.
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10
         with:
           version: latest
       # qt6-base-dev is Qt 6.4.2 here and the desktop runs 6.11.1 — a gap that
@@ -406,7 +406,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
       - uses: swatinem/rust-cache@v2
         with:
@@ -430,7 +430,7 @@ jobs:
         run: cd crates/fuzz && cargo fuzz run telnet -- -max_total_time=300
       # The crash file is the whole finding. Without this it dies with the
       # runner and the log has only a byte array to retype by hand.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: fuzz-artifacts
@@ -441,7 +441,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
@@ -477,7 +477,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fetch and verify the published Qt
         env:
           GH_TOKEN: ${{ github.token }}

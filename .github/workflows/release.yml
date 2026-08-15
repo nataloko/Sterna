@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Check release version
         shell: bash
         # `bump-version.sh --check` owns the list of files the version is
@@ -55,7 +55,7 @@ jobs:
     # one downloads it and finishes in under ten minutes.
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Make room for the Qt bootstrap
         # Standard runners expose only 14 GiB. Keep the manylinux build in
         # Docker, but reclaim host toolchains this job never uses first.
@@ -163,7 +163,7 @@ jobs:
             cmake gcc-c++ git gzip nasm ninja-build perl tar \
             mingw32-nsis mingw64-binutils mingw64-gcc-c++ mingw64-nsis \
             mingw64-qt6-qtbase
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-gnu
@@ -191,7 +191,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: jurplel/install-qt-action@v4
         with:
