@@ -34,6 +34,7 @@
 #include <QTimer>
 
 #include <cstdio>
+#include <limits>
 
 #include "LogDialog.h"
 #include "MainWindow.h"
@@ -164,10 +165,11 @@ void test_a_choice_disables_what_it_makes_meaningless()
     auto *type = dialog.findChild<QComboBox *>(QStringLiteral("logTimestampType"));
     auto *rotate = dialog.findChild<QCheckBox *>(QStringLiteral("logRotate"));
     auto *size = dialog.findChild<QSpinBox *>(QStringLiteral("logRotateSize"));
+    auto *keep = dialog.findChild<QSpinBox *>(QStringLiteral("logRotateKeep"));
     CHECK(file && overwrite && append && text && binary && bom && plain && timestamp && type
-          && rotate && size);
+          && rotate && size && keep);
     if (!file || !overwrite || !append || !text || !binary || !bom || !plain || !timestamp
-        || !type || !rotate || !size) {
+        || !type || !rotate || !size || !keep) {
         return;
     }
 
@@ -198,6 +200,17 @@ void test_a_choice_disables_what_it_makes_meaningless()
     CHECK(size->value() > 0);
     auto *unit = dialog.findChild<QComboBox *>(QStringLiteral("logRotateUnit"));
     CHECK(unit && unit->currentIndex() == 2);
+    // The stored size is signed in the schema. Values above it used to work
+    // for this capture through the ABI's u64 and wrap negative in the setting,
+    // so the next dialog silently opened with rotation off.
+    CHECK(size->maximum() == 2047);
+    unit->setCurrentIndex(1);
+    CHECK(size->maximum() == 2097151);
+    unit->setCurrentIndex(0);
+    CHECK(size->maximum() == std::numeric_limits<qint32>::max());
+    // Zero means upstream's built-in ten-thousand cap, but an explicit WORD
+    // can ask for more and must not be clamped merely by opening the dialog.
+    CHECK(keep->maximum() == std::numeric_limits<quint16>::max());
     // ...and having proposed one, it is the user's number: unticking and
     // ticking again must not overwrite it.
     size->setValue(7);
@@ -213,6 +226,12 @@ void test_a_choice_disables_what_it_makes_meaningless()
     CHECK(!append->isEnabled());
     CHECK(overwrite->isChecked());
 
+    // QFileInfo::exists is also true for a directory; upstream accepts only a
+    // non-directory file here, and appending to a directory can never open.
+    file->setText(dir.path());
+    emit file->textEdited(dir.path());
+    CHECK(!append->isEnabled());
+
     const QString here = dir.filePath(QStringLiteral("here.log"));
     QFile f(here);
     CHECK(f.open(QIODevice::WriteOnly));
@@ -225,6 +244,19 @@ void test_a_choice_disables_what_it_makes_meaningless()
     // one however the tick was left.
     append->setChecked(true);
     CHECK(!bom->isEnabled());
+
+    // Binary greys the text-only choices and upstream leaves their settings
+    // alone. A greyed choice made before switching modes must not take effect
+    // on the next text log.
+    CHECK(session.setSetting(QStringLiteral("log.plain_text"), QStringLiteral("off"), nullptr));
+    CHECK(session.setSetting(QStringLiteral("log.timestamp"), QStringLiteral("off"), nullptr));
+    text->setChecked(true);
+    plain->setChecked(true);
+    timestamp->setChecked(true);
+    binary->setChecked(true);
+    dialog.applySettings();
+    CHECK(session.setting(QStringLiteral("log.plain_text")) == QLatin1String("off"));
+    CHECK(session.setting(QStringLiteral("log.timestamp")) == QLatin1String("off"));
 }
 
 /// A configured log directory decides where the field opens; the remembered

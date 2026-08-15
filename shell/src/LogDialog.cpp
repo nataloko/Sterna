@@ -21,6 +21,8 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <limits>
+
 #include "I18n.h"
 
 namespace {
@@ -41,6 +43,15 @@ quint64 unitScale(int type)
     default:
         return 1;
     }
+}
+
+/// The settings schema carries `LogRotateSize` as a signed integer. Keep the
+/// dialog inside that range whichever display unit is selected; otherwise a
+/// value the current capture accepts as `u64` wraps negative when it is written
+/// back and silently disables rotation the next time the dialog opens.
+int maxRotationUnits(int type)
+{
+    return static_cast<int>(std::numeric_limits<qint32>::max() / unitScale(type));
 }
 
 /// The setting spelling for each row of the timestamp combo, in the order the
@@ -181,7 +192,6 @@ LogOptionsDialog::LogOptionsDialog(Session *session, QWidget *parent, const I18n
 
     m_rotateSize = new QSpinBox(rotateGroup);
     m_rotateSize->setObjectName(QStringLiteral("logRotateSize"));
-    m_rotateSize->setRange(0, 1000000);
     m_rotateUnit = new QComboBox(rotateGroup);
     m_rotateUnit->setObjectName(QStringLiteral("logRotateUnit"));
     m_rotateUnit->addItem(tr("Byte"));
@@ -194,6 +204,7 @@ LogOptionsDialog::LogOptionsDialog(Session *session, QWidget *parent, const I18n
         const int type =
             session ? session->setting(QStringLiteral("log.rotate_size_type")).toInt() : 0;
         m_rotateUnit->setCurrentIndex(qBound(0, type, 2));
+        m_rotateSize->setRange(0, maxRotationUnits(m_rotateUnit->currentIndex()));
         const quint64 bytes =
             session ? session->setting(QStringLiteral("log.rotate_size")).toULongLong() : 0;
         m_rotateSize->setValue(static_cast<int>(bytes / unitScale(m_rotateUnit->currentIndex())));
@@ -204,7 +215,7 @@ LogOptionsDialog::LogOptionsDialog(Session *session, QWidget *parent, const I18n
     // Upstream's `LogRotateStep` of zero is its internal cap of ten thousand
     // generations rather than none, which is a strange thing for a spin box to
     // show as `0` — so the zero says what it means.
-    m_rotateKeep->setRange(0, 10000);
+    m_rotateKeep->setRange(0, std::numeric_limits<quint16>::max());
     m_rotateKeep->setSpecialValueText(tr("all (10000)"));
     m_rotateKeep->setValue(
         session ? session->setting(QStringLiteral("log.rotate_step")).toInt() : 0);
@@ -250,6 +261,9 @@ LogOptionsDialog::LogOptionsDialog(Session *session, QWidget *parent, const I18n
         connect(b, &QRadioButton::toggled, this, &LogOptionsDialog::refreshEnabled);
     }
     connect(m_timestamp, &QCheckBox::toggled, this, &LogOptionsDialog::refreshEnabled);
+    connect(m_rotateUnit, &QComboBox::currentIndexChanged, this, [this](int type) {
+        m_rotateSize->setMaximum(maxRotationUnits(type));
+    });
     connect(m_rotate, &QCheckBox::toggled, this, [this](bool on) {
         // A rotation of zero bytes is no rotation — `LogRotateSize` defaults
         // to 0 and both engines treat it as off — so a tick with nothing
@@ -332,9 +346,14 @@ void LogOptionsDialog::applySettings() const
 
     set(QStringLiteral("log.binary"), onOff(m_binaryMode->isChecked()));
     set(QStringLiteral("log.append"), onOff(m_append->isChecked()));
-    set(QStringLiteral("log.plain_text"), onOff(m_plainText->isChecked()));
+    // `SetLogFlags` leaves these two settings alone in binary mode. The
+    // controls are disabled then too; writing a value somebody chose before
+    // switching to Binary would make a greyed choice take effect later.
+    if (!m_binaryMode->isChecked()) {
+        set(QStringLiteral("log.plain_text"), onOff(m_plainText->isChecked()));
+        set(QStringLiteral("log.timestamp"), onOff(m_timestamp->isChecked()));
+    }
     set(QStringLiteral("log.include_screen_buffer"), onOff(m_includeScreen->isChecked()));
-    set(QStringLiteral("log.timestamp"), onOff(m_timestamp->isChecked()));
     // Written as a name rather than as an index. Upstream writes
     // `GetCurSel() - 1` here (`logdlg.cpp:106`) against the plain index it
     // reads back with at `:322`, which is a bug and not a convention.
@@ -373,7 +392,8 @@ void LogOptionsDialog::refreshEnabled()
     // steps, so upstream greys the choice until the name exists
     // (`logdlg.cpp:180`) — re-tested on every edit, which is why this runs
     // from `textEdited` too.
-    const bool exists = QFileInfo::exists(m_file->text());
+    const QFileInfo file(m_file->text());
+    const bool exists = file.exists() && file.isFile();
     m_append->setEnabled(exists);
     if (!exists && m_append->isChecked()) {
         m_overwrite->setChecked(true);
