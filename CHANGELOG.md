@@ -5,6 +5,13 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+### Changed
+
+- The application icon. The tern is now blue instead of phosphor green, and
+  the rows of output behind it are brighter. The dark tile and the orange
+  cursor block are unchanged. Launchers, window icons and the Windows
+  executable all show the new icon.
+
 ## [0.5.2] - 2026-08-15
 
 ### Fixed

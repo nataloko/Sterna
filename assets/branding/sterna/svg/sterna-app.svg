@@ -2,7 +2,7 @@
      viewBox="0 0 1088 1088" width="1088" height="1088" role="img"
      aria-labelledby="title description">
   <title id="title">Sterna</title>
-  <desc id="description">A phosphor tern above terminal rows and a cursor.</desc>
+  <desc id="description">A blue tern above bright terminal rows and a cursor.</desc>
 
   <defs>
     <g id="tern-shape">
@@ -22,14 +22,14 @@
   <rect width="1088" height="1088" rx="190" fill="#03110A"/>
 
   <g fill="#73F59B">
-    <rect x="118" y="112" width="724" height="24" rx="5" opacity=".25"/>
-    <rect x="118" y="232" width="844" height="24" rx="5" opacity=".21"/>
-    <rect x="118" y="352" width="612" height="24" rx="5" opacity=".32"/>
-    <rect x="118" y="472" width="790" height="24" rx="5" opacity=".25"/>
-    <rect x="118" y="592" width="674" height="24" rx="5" opacity=".34"/>
-    <rect x="118" y="712" width="864" height="24" rx="5" opacity=".23"/>
-    <rect x="118" y="832" width="746" height="24" rx="5" opacity=".30"/>
-    <rect x="118" y="952" width="546" height="24" rx="5" opacity=".32"/>
+    <rect x="118" y="112" width="724" height="24" rx="5"/>
+    <rect x="118" y="232" width="844" height="24" rx="5"/>
+    <rect x="118" y="352" width="612" height="24" rx="5"/>
+    <rect x="118" y="472" width="790" height="24" rx="5"/>
+    <rect x="118" y="592" width="674" height="24" rx="5"/>
+    <rect x="118" y="712" width="864" height="24" rx="5"/>
+    <rect x="118" y="832" width="746" height="24" rx="5"/>
+    <rect x="118" y="952" width="546" height="24" rx="5"/>
   </g>
   <rect x="684" y="938" width="38" height="52" rx="6" fill="#F99E2A"/>
 
@@ -54,7 +54,7 @@
       <g transform="translate(544 544) scale(1.18) rotate(-20) translate(-544 -544)">
         <g transform="translate(0 254)">
           <g transform="translate(0 580) scale(.1 -.1)">
-            <use xlink:href="#tern-shape" fill="#73F59B"/>
+            <use xlink:href="#tern-shape" fill="#7DA8FF"/>
             <use xlink:href="#tern-beak" fill="#F99E2A"/>
           </g>
         </g>
