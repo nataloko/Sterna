@@ -142,10 +142,6 @@ void PageStatusBar::setLogging(bool logging, quint64 bytes, bool paused)
     if (text != m_log->text()) {
         m_log->setText(text);
     }
-    m_log->setCursor(logging ? Qt::PointingHandCursor : Qt::ArrowCursor);
-    m_log->setToolTip(logging ? (paused ? tr("Click to resume logging")
-                                        : tr("Click to pause logging"))
-                              : QString());
     // **Both halves of the state, not just `logging`.** The early return here
     // is what keeps a per-read call cheap, and a pause that was not part of
     // the comparison would never repaint — the same shape as
@@ -155,6 +151,14 @@ void PageStatusBar::setLogging(bool logging, quint64 bytes, bool paused)
     }
     m_logging = logging;
     m_logPaused = paused;
+    // These depend on state, not on the byte count. Keep them behind the same
+    // early return as the timer and style: `setLogging` runs for every read of
+    // every recording session, and resetting widget properties there turns a
+    // cheap size-label update into repeated event and palette work.
+    m_log->setCursor(logging ? Qt::PointingHandCursor : Qt::ArrowCursor);
+    m_log->setToolTip(logging ? (paused ? tr("Click to resume logging")
+                                        : tr("Click to pause logging"))
+                              : QString());
     m_logBlinkOn = logging;
     if (logging && !paused) {
         m_logBlinkTimer->start();
