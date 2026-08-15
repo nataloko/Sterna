@@ -1,0 +1,231 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     viewBox="0 0 2240 1700" width="2240" height="1700" role="img"
+     aria-labelledby="title description">
+  <title id="title">Sterna wire bird with background terminal rows</title>
+  <desc id="description">Six phosphor row patterns behind the Sterna wire bird.</desc>
+
+  <defs>
+    <g id="tern-shape">
+      <path d="M10585 5604c-16-2-79-9-140-15-289-28-711-120-1005-218-780-260-1415-685-1825-1221l-65-85 153-5c135-5 238-22 237-39-1-3-39-31-87-61-365-233-454-369-584-884-85-340-172-567-298-778-256-430-674-774-1161-957-58-21-106-38-108-36-2 2 23 56 56 121 229 458 388 947 443 1361 7 51 11 95 8 97-19 20-597 49-799 41-1871-75-3631-763-5072-1983-82-69-146-127-145-129 2-2 124 56 272 127 772 377 1360 610 1975 784 1328 376 2542 378 3090 6 32-22 62-45 65-50 13-21-182-305-379-550-192-240-301-359-731-800l-140-144 80 44c141 76 639 372 955 567 46 28 86 50 88 48 4-4-144-295-239-470l-43-80 39 29c248 184 930 784 1269 1116 452 443 637 688 1106 1470 438 731 706 1088 1106 1480 519 508 1088 859 1891 1170 128 49 128 49 73 48-30-1-68-3-85-4z"/>
+      <path d="M6880 4124c-305-80-544-406-649-885l-18-86 191 192c357 359 630 515 902 515h53l-6 68c-7 82-33 114-128 161-104 52-233 65-345 35z"/>
+    </g>
+
+    <path id="tern-beak"
+          d="M7520 3993c-19-2-53-5-75-8l-40-5v-115c0-63 2-115 4-115 3 0 12 6 20 14 9 7 97 59 196 116 99 56 184 106 190 111 8 8-213 10-295 2z"/>
+
+    <g id="bird-shield">
+      <g transform="translate(544 544) scale(.82) translate(-544 -544)">
+        <g transform="translate(544 544) scale(1.18) rotate(-20) translate(-544 -544)">
+          <g transform="translate(0 254)">
+            <g transform="translate(0 580) scale(.1 -.1)">
+              <use xlink:href="#tern-shape" fill="#03110A" opacity=".86"/>
+            </g>
+          </g>
+        </g>
+      </g>
+    </g>
+
+    <g id="wire-tern">
+      <g transform="translate(544 544) scale(.82) translate(-544 -544)">
+        <g transform="translate(544 544) scale(1.18) rotate(-20) translate(-544 -544)">
+          <g transform="translate(0 254)">
+            <g transform="translate(0 580) scale(.1 -.1)">
+              <use xlink:href="#tern-shape" fill="none" stroke="#73F59B" stroke-width="180"
+                   stroke-linejoin="round"/>
+              <use xlink:href="#tern-beak" fill="#F99E2A"/>
+            </g>
+          </g>
+        </g>
+      </g>
+    </g>
+
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+
+    <g id="rows-full" fill="#73F59B">
+      <rect x="118" y="232" width="748" height="18" rx="4" opacity=".15"/>
+      <rect x="118" y="304" width="854" height="18" rx="4" opacity=".11"/>
+      <rect x="118" y="376" width="632" height="18" rx="4" opacity=".17"/>
+      <rect x="118" y="448" width="804" height="18" rx="4" opacity=".13"/>
+      <rect x="118" y="520" width="712" height="18" rx="4" opacity=".18"/>
+      <rect x="118" y="592" width="882" height="18" rx="4" opacity=".12"/>
+      <rect x="118" y="664" width="570" height="18" rx="4" opacity=".16"/>
+      <rect x="118" y="736" width="788" height="18" rx="4" opacity=".14"/>
+      <rect x="118" y="808" width="654" height="18" rx="4" opacity=".17"/>
+    </g>
+
+    <g id="rows-left" fill="#73F59B">
+      <rect x="118" y="294" width="416" height="20" rx="4" opacity=".18"/>
+      <rect x="118" y="372" width="328" height="20" rx="4" opacity=".13"/>
+      <rect x="118" y="450" width="464" height="20" rx="4" opacity=".21"/>
+      <rect x="118" y="528" width="368" height="20" rx="4" opacity=".15"/>
+      <rect x="118" y="606" width="442" height="20" rx="4" opacity=".19"/>
+      <rect x="118" y="684" width="298" height="20" rx="4" opacity=".14"/>
+      <rect x="118" y="762" width="396" height="20" rx="4" opacity=".20"/>
+    </g>
+
+    <g id="rows-right" fill="#73F59B">
+      <rect x="554" y="272" width="416" height="20" rx="4" opacity=".18"/>
+      <rect x="626" y="350" width="344" height="20" rx="4" opacity=".13"/>
+      <rect x="518" y="428" width="452" height="20" rx="4" opacity=".21"/>
+      <rect x="602" y="506" width="368" height="20" rx="4" opacity=".15"/>
+      <rect x="548" y="584" width="422" height="20" rx="4" opacity=".19"/>
+      <rect x="674" y="662" width="296" height="20" rx="4" opacity=".14"/>
+      <rect x="578" y="740" width="392" height="20" rx="4" opacity=".20"/>
+    </g>
+
+    <g id="rows-band" fill="#73F59B">
+      <rect x="116" y="388" width="856" height="22" rx="5" opacity=".13"/>
+      <rect x="116" y="456" width="718" height="22" rx="5" opacity=".19"/>
+      <rect x="116" y="524" width="804" height="22" rx="5" opacity=".15"/>
+      <rect x="116" y="592" width="616" height="22" rx="5" opacity=".22"/>
+      <rect x="116" y="660" width="760" height="22" rx="5" opacity=".16"/>
+    </g>
+
+    <g id="rows-dense" fill="#73F59B" opacity=".12">
+      <rect x="108" y="202" width="844" height="9" rx="3"/>
+      <rect x="108" y="246" width="728" height="9" rx="3"/>
+      <rect x="108" y="290" width="890" height="9" rx="3"/>
+      <rect x="108" y="334" width="650" height="9" rx="3"/>
+      <rect x="108" y="378" width="804" height="9" rx="3"/>
+      <rect x="108" y="422" width="754" height="9" rx="3"/>
+      <rect x="108" y="466" width="874" height="9" rx="3"/>
+      <rect x="108" y="510" width="696" height="9" rx="3"/>
+      <rect x="108" y="554" width="838" height="9" rx="3"/>
+      <rect x="108" y="598" width="768" height="9" rx="3"/>
+      <rect x="108" y="642" width="886" height="9" rx="3"/>
+      <rect x="108" y="686" width="628" height="9" rx="3"/>
+      <rect x="108" y="730" width="818" height="9" rx="3"/>
+      <rect x="108" y="774" width="742" height="9" rx="3"/>
+      <rect x="108" y="818" width="866" height="9" rx="3"/>
+      <rect x="108" y="862" width="684" height="9" rx="3"/>
+    </g>
+
+    <g id="rows-split" fill="#73F59B">
+      <g opacity=".17">
+        <rect x="116" y="286" width="330" height="16" rx="4"/>
+        <rect x="116" y="356" width="258" height="16" rx="4"/>
+        <rect x="116" y="426" width="304" height="16" rx="4"/>
+        <rect x="116" y="496" width="276" height="16" rx="4"/>
+        <rect x="116" y="566" width="324" height="16" rx="4"/>
+        <rect x="116" y="636" width="238" height="16" rx="4"/>
+        <rect x="116" y="706" width="296" height="16" rx="4"/>
+        <rect x="116" y="776" width="270" height="16" rx="4"/>
+      </g>
+      <g opacity=".13">
+        <rect x="640" y="286" width="330" height="16" rx="4"/>
+        <rect x="682" y="356" width="288" height="16" rx="4"/>
+        <rect x="640" y="426" width="270" height="16" rx="4"/>
+        <rect x="672" y="496" width="298" height="16" rx="4"/>
+        <rect x="640" y="566" width="314" height="16" rx="4"/>
+        <rect x="704" y="636" width="266" height="16" rx="4"/>
+        <rect x="640" y="706" width="292" height="16" rx="4"/>
+        <rect x="666" y="776" width="304" height="16" rx="4"/>
+      </g>
+    </g>
+
+    <g id="bird-on-top">
+      <use xlink:href="#bird-shield"/>
+      <g filter="url(#glow)"><use xlink:href="#wire-tern"/></g>
+    </g>
+
+    <symbol id="tile-full" viewBox="0 0 1088 1088">
+      <rect width="1088" height="1088" rx="190" fill="#03110A"/>
+      <use xlink:href="#rows-full"/>
+      <use xlink:href="#bird-on-top"/>
+    </symbol>
+    <symbol id="tile-left" viewBox="0 0 1088 1088">
+      <rect width="1088" height="1088" rx="190" fill="#03110A"/>
+      <use xlink:href="#rows-left"/>
+      <use xlink:href="#bird-on-top"/>
+    </symbol>
+    <symbol id="tile-right" viewBox="0 0 1088 1088">
+      <rect width="1088" height="1088" rx="190" fill="#03110A"/>
+      <use xlink:href="#rows-right"/>
+      <use xlink:href="#bird-on-top"/>
+    </symbol>
+    <symbol id="tile-band" viewBox="0 0 1088 1088">
+      <rect width="1088" height="1088" rx="190" fill="#03110A"/>
+      <use xlink:href="#rows-band"/>
+      <use xlink:href="#bird-on-top"/>
+    </symbol>
+    <symbol id="tile-dense" viewBox="0 0 1088 1088">
+      <rect width="1088" height="1088" rx="190" fill="#03110A"/>
+      <use xlink:href="#rows-dense"/>
+      <use xlink:href="#bird-on-top"/>
+    </symbol>
+    <symbol id="tile-split" viewBox="0 0 1088 1088">
+      <rect width="1088" height="1088" rx="190" fill="#03110A"/>
+      <use xlink:href="#rows-split"/>
+      <use xlink:href="#bird-on-top"/>
+    </symbol>
+  </defs>
+
+  <rect width="2240" height="1700" fill="#EAE8E1"/>
+  <text x="80" y="82" fill="#28292A" font-family="sans-serif" font-size="46" font-weight="700">
+    Phosphor terminal rows behind the wire bird
+  </text>
+  <text x="80" y="124" fill="#5C5D5E" font-family="sans-serif" font-size="24">
+    The bird stays bright above each background pattern.
+  </text>
+
+  <g font-family="sans-serif" text-anchor="middle">
+    <g transform="translate(80 170)">
+      <use xlink:href="#tile-full" x="24" width="432" height="432"/>
+      <text x="240" y="480" fill="#28292A" font-size="30" font-weight="700">Full field</text>
+      <text x="240" y="516" fill="#5C5D5E" font-size="22">Rows fill the complete tile</text>
+      <use xlink:href="#tile-full" x="120" y="560" width="64" height="64"/>
+      <use xlink:href="#tile-full" x="226" y="576" width="32" height="32"/>
+      <use xlink:href="#tile-full" x="304" y="584" width="16" height="16"/>
+      <g fill="#5C5D5E" font-size="18"><text x="152" y="654">64</text><text x="242" y="654">32</text><text x="312" y="654">16</text></g>
+    </g>
+    <g transform="translate(790 170)">
+      <use xlink:href="#tile-left" x="24" width="432" height="432"/>
+      <text x="240" y="480" fill="#28292A" font-size="30" font-weight="700">Left block</text>
+      <text x="240" y="516" fill="#5C5D5E" font-size="22">Rows sit behind the lower wing</text>
+      <use xlink:href="#tile-left" x="120" y="560" width="64" height="64"/>
+      <use xlink:href="#tile-left" x="226" y="576" width="32" height="32"/>
+      <use xlink:href="#tile-left" x="304" y="584" width="16" height="16"/>
+      <g fill="#5C5D5E" font-size="18"><text x="152" y="654">64</text><text x="242" y="654">32</text><text x="312" y="654">16</text></g>
+    </g>
+    <g transform="translate(1500 170)">
+      <use xlink:href="#tile-right" x="24" width="432" height="432"/>
+      <text x="240" y="480" fill="#28292A" font-size="30" font-weight="700">Right block</text>
+      <text x="240" y="516" fill="#5C5D5E" font-size="22">Rows fill the right side</text>
+      <use xlink:href="#tile-right" x="120" y="560" width="64" height="64"/>
+      <use xlink:href="#tile-right" x="226" y="576" width="32" height="32"/>
+      <use xlink:href="#tile-right" x="304" y="584" width="16" height="16"/>
+      <g fill="#5C5D5E" font-size="18"><text x="152" y="654">64</text><text x="242" y="654">32</text><text x="312" y="654">16</text></g>
+    </g>
+
+    <g transform="translate(80 910)">
+      <use xlink:href="#tile-band" x="24" width="432" height="432"/>
+      <text x="240" y="480" fill="#28292A" font-size="30" font-weight="700">Center band</text>
+      <text x="240" y="516" fill="#5C5D5E" font-size="22">Wide rows cross the center</text>
+      <use xlink:href="#tile-band" x="120" y="560" width="64" height="64"/>
+      <use xlink:href="#tile-band" x="226" y="576" width="32" height="32"/>
+      <use xlink:href="#tile-band" x="304" y="584" width="16" height="16"/>
+      <g fill="#5C5D5E" font-size="18"><text x="152" y="654">64</text><text x="242" y="654">32</text><text x="312" y="654">16</text></g>
+    </g>
+    <g transform="translate(790 910)">
+      <use xlink:href="#tile-dense" x="24" width="432" height="432"/>
+      <text x="240" y="480" fill="#28292A" font-size="30" font-weight="700">Dense screen</text>
+      <text x="240" y="516" fill="#5C5D5E" font-size="22">Thin rows form a screen texture</text>
+      <use xlink:href="#tile-dense" x="120" y="560" width="64" height="64"/>
+      <use xlink:href="#tile-dense" x="226" y="576" width="32" height="32"/>
+      <use xlink:href="#tile-dense" x="304" y="584" width="16" height="16"/>
+      <g fill="#5C5D5E" font-size="18"><text x="152" y="654">64</text><text x="242" y="654">32</text><text x="312" y="654">16</text></g>
+    </g>
+    <g transform="translate(1500 910)">
+      <use xlink:href="#tile-split" x="24" width="432" height="432"/>
+      <text x="240" y="480" fill="#28292A" font-size="30" font-weight="700">Split screen</text>
+      <text x="240" y="516" fill="#5C5D5E" font-size="22">Two output columns fill the tile</text>
+      <use xlink:href="#tile-split" x="120" y="560" width="64" height="64"/>
+      <use xlink:href="#tile-split" x="226" y="576" width="32" height="32"/>
+      <use xlink:href="#tile-split" x="304" y="584" width="16" height="16"/>
+      <g fill="#5C5D5E" font-size="18"><text x="152" y="654">64</text><text x="242" y="654">32</text><text x="312" y="654">16</text></g>
+    </g>
+  </g>
+</svg>
