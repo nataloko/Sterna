@@ -154,6 +154,7 @@ add_library(sterna_shell STATIC
     src/Highlights.cpp
     src/HighlightsDialog.cpp
     src/I18n.cpp
+    src/LogDialog.cpp
     src/Theme.cpp
     src/PasteDialog.cpp
     src/Printer.cpp
@@ -357,6 +358,19 @@ if(WIN32)
 endif()
 target_compile_options(tabs_test PRIVATE ${TT_WARNINGS})
 add_test(NAME tabs COMMAND tabs_test)
+
+# The log dialog and the two ways to pause what it starts. Needs nothing: the
+# dialog is measured before it is shown and the log is written by a session fed
+# its bytes directly. What this catches that the core's own tests cannot is the
+# half above `start_log` — which of the three menu items is reachable, what a
+# dialog decides to pass, and the settings it writes back.
+add_executable(log_test tests/log_test.cpp)
+target_link_libraries(log_test PRIVATE sterna_shell)
+if(WIN32)
+    target_link_libraries(log_test PRIVATE ws2_32)
+endif()
+target_compile_options(log_test PRIVATE ${TT_WARNINGS})
+add_test(NAME log COMMAND log_test)
 
 # The quick buttons, which are the one feature whose whole path is above the
 # ABI: a list in a file the window owns, a press through a QAction on a

@@ -1043,6 +1043,25 @@ typedef struct {
      * Linux.
      */
     bool crlf;
+    /**
+     * Start a new text file with a UTF-8 byte-order mark.
+     *
+     * The one field here that is **not** a `TERATERM.INI` key: upstream's is
+     * a checkbox on the log dialog that lives for as long as the dialog does.
+     * So a null `options` never asks for one, and this is how a frontend that
+     * put the question to somebody passes on the answer. Ignored for a raw
+     * log and for an append, which is upstream's gate.
+     */
+    bool bom;
+    /**
+     * Write the scrollback and the page into the log before the first live
+     * byte — `LogIncludeScreenBuffer`.
+     *
+     * A one-shot action at open rather than a property of the file, and text
+     * mode only. What upstream does here truncates every line at its first
+     * wide character; this does not.
+     */
+    bool include_screen;
 } TtLogOptions;
 
 /**
@@ -3060,10 +3079,9 @@ void tt_log_options_default(TtLogOptions *out);
  * that a caller allocates, so it always comes from the settings — an override
  * changes which clock is printed, never how.
  *
- * Nothing is logged retroactively — the capture starts here. (Upstream can
- * prepend the scrollback; the function it uses to do that is one of the
- * upstream bugs on file, since it truncates every line at its first wide
- * character, so that option waits for the report to be answered.)
+ * Nothing is logged retroactively unless `include_screen` asks for it, which
+ * is `LogIncludeScreenBuffer` and puts the buffer in ahead of the first live
+ * byte.
  */
 TtStatus tt_session_log_start(TtSession *session,
                               const char *path,
@@ -3085,6 +3103,44 @@ const char *tt_session_log_path(TtSession *session);
  * Bytes written to the log since it was opened, across all generations.
  */
 uint64_t tt_session_log_bytes(const TtSession *session);
+
+/**
+ * Stop or resume writing the log — upstream's `File > Pause Logging` and the
+ * button on its logging dialog, and TTL's `logpause`/`logstart`.
+ *
+ * **What arrives while a log is paused is discarded, not held.** That is
+ * upstream in two places at once — a binary log drops the byte at the input
+ * (`filesys_log.cpp:1038`) and a text one drops it on the way out of the ring
+ * (`:647`) — and it is what the pause is for: a pause that buffered would
+ * write the gap into the file the moment it ended.
+ *
+ * **Not an error with no log open**, in either direction, which is upstream's
+ * `FLogPause` returning on a NULL `LogVar`.
+ */
+void tt_session_log_pause(TtSession *session,
+                          bool paused);
+
+/**
+ * Whether the log is open *and* paused. False when nothing is logging.
+ */
+bool tt_session_log_paused(const TtSession *session);
+
+/**
+ * Fill `out` with what this session's settings say a log would be written as.
+ *
+ * A frontend calls this to seed a log dialog, and the alternative is the
+ * reason it exists: deriving these from the settings by hand means a second
+ * copy of three rules that are not guessable — `LogTimestampType`'s empty
+ * value falls back to Tera Term 4's `LogTimestampUTC`, `LogRotateSize` counts
+ * for nothing unless `LogRotate` is exactly 1, and a `LogRotateStep` of zero
+ * means ten thousand generations rather than none.
+ *
+ * `bom` and `include_screen` come back as the settings' own answer: there is
+ * no key for the first, so it is always false and the caller supplies it.
+ *
+ * Does nothing on a null pointer.
+ */
+void tt_session_log_defaults(const TtSession *session, TtLogOptions *out);
 
 /**
  * Say what this session is connected to, for the `&h` and `&p` a log name may

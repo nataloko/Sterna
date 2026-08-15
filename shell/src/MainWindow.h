@@ -235,7 +235,12 @@ private slots:
     void sendBreak();
     void sendFile();
     void receiveFile();
-    void toggleLogging();
+    /// File > Log — the options dialog, then the log it configures. A no-op
+    /// while one is already open, which is what upstream's greyed item means.
+    void showLogDialog();
+    /// File > Pause logging, and the `REC` indicator's click.
+    void togglePauseLogging();
+    void stopLogging();
     /// Ask for a `.ttl` or a `.lua` and run it. Upstream's Control > Macro.
     void runMacro();
     void onMacroFinished(int exitCode);
@@ -531,6 +536,8 @@ private:
     QAction *m_localShellAction = nullptr;
     QAction *m_breakAction = nullptr;
     QAction *m_logAction = nullptr;
+    QAction *m_pauseLogAction = nullptr;
+    QAction *m_stopLogAction = nullptr;
     QAction *m_sendAction = nullptr;
     QAction *m_receiveAction = nullptr;
     QAction *m_stopMacroAction = nullptr;

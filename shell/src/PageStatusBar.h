@@ -42,7 +42,11 @@ public:
     /// `REC <size>`, blinking red, or nothing when this session is not
     /// logging. `Session::damaged` drives the count; a small local timer drives
     /// only the warning blink.
-    void setLogging(bool logging, quint64 bytes);
+    ///
+    /// Paused it says `PAUSED <size>` in amber and stops blinking: a steady
+    /// label is the honest shape for a counter that has stopped moving, and
+    /// the blink is there to say a recording is running.
+    void setLogging(bool logging, quint64 bytes, bool paused = false);
 
     /// Say something for `ms` milliseconds, over the name. Upstream's
     /// `QStatusBar::showMessage`, scoped to the terminal it happened in.
@@ -58,10 +62,22 @@ public:
     /// nothing to disambiguate and a highlighted strip is noise.
     void setActive(bool active);
 
+signals:
+    /// The recording indicator was clicked.
+    ///
+    /// Tera Term's Pause button is on its logging window, and this program
+    /// deliberately has no such window — the counter in this strip is what
+    /// replaced it, so the counter is where the button goes. Only emitted
+    /// while something is being counted.
+    void logClicked();
+
 protected:
     /// Re-elide the name: how much of it fits is a function of the width the
     /// tile was just given.
     void resizeEvent(QResizeEvent *event) override;
+    /// The indicator is a `QLabel`, which has no clicked signal of its own, so
+    /// the press is caught here rather than by subclassing one label.
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     void applyPalette();
@@ -80,5 +96,6 @@ private:
     bool m_active = false;
     bool m_linkDown = true;
     bool m_logging = false;
+    bool m_logPaused = false;
     bool m_logBlinkOn = false;
 };

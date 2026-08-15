@@ -40,7 +40,9 @@ struct MenuCommand {
 
 const MenuCommand kCommands[] = {
     {50430, QT_TRANSLATE_NOOP("QuickButtonsDialog", "Send break")},
-    {50120, QT_TRANSLATE_NOOP("QuickButtonsDialog", "Start or stop logging")},
+    {50120, QT_TRANSLATE_NOOP("QuickButtonsDialog", "Log...")},
+    {50124, QT_TRANSLATE_NOOP("QuickButtonsDialog", "Pause or resume logging")},
+    {50125, QT_TRANSLATE_NOOP("QuickButtonsDialog", "Stop logging")},
     {50130, QT_TRANSLATE_NOOP("QuickButtonsDialog", "Send file...")},
     {50131, QT_TRANSLATE_NOOP("QuickButtonsDialog", "Receive file...")},
     {50210, QT_TRANSLATE_NOOP("QuickButtonsDialog", "Copy")},

@@ -69,6 +69,41 @@ fn the_shipped_receive_cr_is_detect() {
     );
 }
 
+/// A log names itself by the clock so a second one cannot land on the first.
+/// Upstream's `teraterm.log` (`ttset.c:1018`) is one fixed name for every
+/// session, and whether the second log overwrites the first or appends to it is
+/// decided by `LogAppend`, which the person starting it is not looking at. The
+/// key, the template language and a file that spells the old name are all
+/// unchanged, which the second half checks.
+#[test]
+fn the_shipped_log_name_carries_the_clock() {
+    assert_eq!(
+        Settings::default().log_default_name,
+        "sterna-%Y%m%d_%H%M%S.log",
+        "ttset.c:1018 is teraterm.log"
+    );
+
+    let ini = Ini::parse(b"[Tera Term]\r\nLogDefaultName=teraterm.log\r\n");
+    assert_eq!(Settings::load(&ini).log_default_name, "teraterm.log");
+}
+
+/// Where the last log went, in this program's own section — upstream asks
+/// `GetTermLogDir` the same three-way question every time and remembers
+/// nothing. Empty until a log has been written, so a fresh install falls
+/// through to `LogDefaultPath` and the chain behind it.
+#[test]
+fn the_log_directory_is_remembered_in_sternas_own_section() {
+    assert_eq!(Settings::default().recent_log_dir, "");
+
+    let ini = Ini::parse(b"[Sterna]\r\nLogDir=/var/log/consoles\r\n");
+    let settings = Settings::load(&ini);
+    assert_eq!(settings.recent_log_dir, "/var/log/consoles");
+
+    let mut out = Ini::parse(b"");
+    settings.store(&mut out);
+    assert_eq!(out.get("Sterna", "LogDir"), Some("/var/log/consoles"));
+}
+
 #[test]
 fn terminal_dark_mode_is_a_sterna_setting_that_ships_off() {
     assert!(!Settings::default().terminal_dark_mode);

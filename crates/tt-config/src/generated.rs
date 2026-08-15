@@ -3856,6 +3856,24 @@ pub struct Settings {
     /// `ttset.c:1018`, the name `LogAutoStart` and the log dialog both start from.
     /// It is a **template**: `strftime` conversions, then `&h` for the host (`COMn`
     /// on a serial line), `&p` for the TCP port and `&u` for the user name.
+    ///
+    /// **The default is not upstream's `teraterm.log`, and that is deliberate** —
+    /// see `docs/deviations.md`. One fixed name means every log lands on the last
+    /// one, and whether that overwrites it or appends to it is decided by a setting
+    /// the person starting the log is not looking at. A template that carries the
+    /// clock cannot collide; the shape is upstream's own Setup preset
+    /// (`log_pp.cpp:125`), with the program's name in front so that a log directory
+    /// shared with anything else says which program wrote which file.
+    ///
+    /// **Without the `&h` on purpose**, tempting as it is for anybody logging more
+    /// than one console. `&h` is `ts.HostName`, and here that is whatever path the
+    /// port was *opened* by — the connect bar opens a serial port through its
+    /// `/dev/serial/by-path/` name so a replug cannot move it, and the sweep for
+    /// characters a file name cannot hold then turns
+    /// `pci-0000:c8:00.3-usb-0:1.3.2:1.0-port0` into thirty-eight characters of
+    /// underscores on the end of every log. A local shell has no host name at all
+    /// and would leave a bare separator. Both are fine in a template somebody chose;
+    /// neither is fine in the one everybody gets.
     pub log_default_name: String,
     /// `ttset.c:1023`. Where a relative log name lands. Empty falls back to
     /// `FileDir` if that exists and to the per-user log directory otherwise —
@@ -3886,11 +3904,12 @@ pub struct Settings {
     /// setting is read and written and acts on nothing.
     pub log_hide_dialog: bool,
     /// `ttset.c:993`, and the field is `LogAllBuffIncludedInFirst`. Write the
-    /// scrollback into the log before starting on live output. Read and written and
-    /// **not acted on**: the function upstream does it with,
-    /// `BuffGetAnyLineDataW`, truncates any line at its first wide character and at
-    /// about half the width when a line holds combining marks — two of the five
-    /// upstream bugs on file. It waits on those reports being answered.
+    /// scrollback into the log before starting on live output, in text mode only
+    /// (`vtwin.cpp:4145`). `Session::buffer_text` reads the grid directly rather
+    /// than transcribing `FLogOutputAllBuffer`: that function walks
+    /// `BuffGetAnyLineDataW`, which truncates any line at its first wide character
+    /// and at about half the width when a line holds combining marks — two of the
+    /// upstream bugs on file — and caps every line at 512 wchars on top of that.
     pub log_include_screen_buffer: bool,
     /// `ttset.c:1766`, and a `GetOnOff` whose default is **on** — so `=1` reads as
     /// on here where the same value reads as off for every setting above that ships
@@ -4301,6 +4320,24 @@ pub struct Settings {
     /// somebody can no longer add to is taking away the entries *and* the way to
     /// reach them. The bar's own Forget item is what removes them.
     pub recent_remember: bool,
+    /// The directory the last log was written to, so the log dialog opens where the
+    /// last one landed rather than where the settings file was pointing when it was
+    /// written. Upstream has no key for this and does not remember: `GetTermLogDir`
+    /// answers the same three-way question every time (`log.default_path`, then
+    /// `transfer.file_dir`, then the per-user directory).
+    ///
+    /// **Consulted only when `log.default_path` is empty.** A configured log
+    /// directory is somebody saying where logs go, and a remembered one that
+    /// silently overrode it would make the setting look broken. What this replaces
+    /// is the *rest* of `GetTermLogDir`'s chain — the file-transfer directory, then
+    /// a per-user directory nobody chose — which is where an unconfigured log lands
+    /// and is not a place anyone would look twice.
+    ///
+    /// Only the log dialog writes it: a `/L=` path or an auto-started template is a
+    /// script's choice and must not retarget the next log a person opens. It is
+    /// recorded whether or not it is currently being consulted, so clearing
+    /// `LogDefaultPath` later falls back to somewhere real.
+    pub recent_log_dir: String,
     /// Whether starting Sterna may look for a new release. On, so an installed
     /// terminal learns about a signed update without anyone remembering to ask.
     pub updates_check_on_startup: bool,
@@ -4525,7 +4562,7 @@ impl Default for Settings {
             log_timestamp_type: LogTimestampType::default(),
             log_timestamp_utc: false,
             log_timestamp_format: String::from("%Y-%m-%d %H:%M:%S.%N"),
-            log_default_name: String::from("teraterm.log"),
+            log_default_name: String::from("sterna-%Y%m%d_%H%M%S.log"),
             log_default_path: String::from(""),
             log_rotate: 0,
             log_rotate_size: 0,
@@ -4647,6 +4684,7 @@ impl Default for Settings {
             recent_telnet_mode: RecentTelnetMode::default(),
             recent_connections: String::from(""),
             recent_remember: true,
+            recent_log_dir: String::from(""),
             updates_check_on_startup: true,
             updates_last_check: String::from(""),
         }
@@ -5901,6 +5939,9 @@ impl Settings {
                 .get_or("Sterna", "Recent", &d.recent_connections)
                 .to_string(),
             recent_remember: crate::schema::on_off(ini.get("Sterna", "RememberConnections"), true),
+            recent_log_dir: ini
+                .get_or("Sterna", "LogDir", &d.recent_log_dir)
+                .to_string(),
             updates_check_on_startup: crate::schema::on_off(
                 ini.get("Sterna", "CheckUpdatesOnStartup"),
                 true,
@@ -8061,6 +8102,7 @@ impl Settings {
             "RememberConnections",
             &if self.recent_remember { "on" } else { "off" }.to_string(),
         );
+        ini.set("Sterna", "LogDir", &self.recent_log_dir.clone());
         ini.set(
             "Sterna",
             "CheckUpdatesOnStartup",
@@ -10912,6 +10954,9 @@ impl Settings {
                     &if self.recent_remember { "on" } else { "off" }.to_string(),
                 );
             }
+            "recent.log_dir" => {
+                ini.set("Sterna", "LogDir", &self.recent_log_dir.clone());
+            }
             "updates.check_on_startup" => {
                 ini.set(
                     "Sterna",
@@ -11792,6 +11837,7 @@ impl Settings {
             "recent.telnet_mode" => self.recent_telnet_mode.as_ini().to_string(),
             "recent.connections" => self.recent_connections.clone(),
             "recent.remember" => if self.recent_remember { "on" } else { "off" }.to_string(),
+            "recent.log_dir" => self.recent_log_dir.clone(),
             "updates.check_on_startup" => if self.updates_check_on_startup {
                 "on"
             } else {
@@ -12712,6 +12758,7 @@ impl Settings {
             "recent.telnet_mode" => self.recent_telnet_mode = RecentTelnetMode::from_ini(value),
             "recent.connections" => self.recent_connections = value.to_string(),
             "recent.remember" => self.recent_remember = crate::schema::on_off(Some(value), true),
+            "recent.log_dir" => self.recent_log_dir = value.to_string(),
             "updates.check_on_startup" => {
                 self.updates_check_on_startup = crate::schema::on_off(Some(value), true)
             }
@@ -14814,9 +14861,9 @@ pub const FIELDS: &[Field] = &[
         section: "Tera Term",
         key: "LogDefaultName",
         kind: Kind::Str,
-        default: "teraterm.log",
+        default: "sterna-%Y%m%d_%H%M%S.log",
         label: None,
-        doc: "`ttset.c:1018`, the name `LogAutoStart` and the log dialog both start from. It is a **template**: `strftime` conversions, then `&h` for the host (`COMn` on a serial line), `&p` for the TCP port and `&u` for the user name.",
+        doc: "`ttset.c:1018`, the name `LogAutoStart` and the log dialog both start from. It is a **template**: `strftime` conversions, then `&h` for the host (`COMn` on a serial line), `&p` for the TCP port and `&u` for the user name.  **The default is not upstream's `teraterm.log`, and that is deliberate** — see `docs/deviations.md`. One fixed name means every log lands on the last one, and whether that overwrites it or appends to it is decided by a setting the person starting the log is not looking at. A template that carries the clock cannot collide; the shape is upstream's own Setup preset (`log_pp.cpp:125`), with the program's name in front so that a log directory shared with anything else says which program wrote which file.  **Without the `&h` on purpose**, tempting as it is for anybody logging more than one console. `&h` is `ts.HostName`, and here that is whatever path the port was *opened* by — the connect bar opens a serial port through its `/dev/serial/by-path/` name so a replug cannot move it, and the sweep for characters a file name cannot hold then turns `pci-0000:c8:00.3-usb-0:1.3.2:1.0-port0` into thirty-eight characters of underscores on the end of every log. A local shell has no host name at all and would leave a bare separator. Both are fine in a template somebody chose; neither is fine in the one everybody gets.",
     },
     Field {
         name: "log.default_path",
@@ -14886,7 +14933,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "off",
         label: None,
-        doc: "`ttset.c:993`, and the field is `LogAllBuffIncludedInFirst`. Write the scrollback into the log before starting on live output. Read and written and **not acted on**: the function upstream does it with, `BuffGetAnyLineDataW`, truncates any line at its first wide character and at about half the width when a line holds combining marks — two of the five upstream bugs on file. It waits on those reports being answered.",
+        doc: "`ttset.c:993`, and the field is `LogAllBuffIncludedInFirst`. Write the scrollback into the log before starting on live output, in text mode only (`vtwin.cpp:4145`). `Session::buffer_text` reads the grid directly rather than transcribing `FLogOutputAllBuffer`: that function walks `BuffGetAnyLineDataW`, which truncates any line at its first wide character and at about half the width when a line holds combining marks — two of the upstream bugs on file — and caps every line at 512 wchars on top of that.",
     },
     Field {
         name: "log.lock_exclusive",
@@ -16027,6 +16074,16 @@ pub const FIELDS: &[Field] = &[
         default: "on",
         label: None,
         doc: "Whether opening a connection adds it to that list. On, unlike upstream's `HistoryList` — a bar whose list is empty until a preference is found and ticked is a bar that does nothing on the day it is installed. Off stops recording only: what is already there stays on offer, because hiding a list somebody can no longer add to is taking away the entries *and* the way to reach them. The bar's own Forget item is what removes them.",
+    },
+    Field {
+        name: "recent.log_dir",
+        page: "recent",
+        section: "Sterna",
+        key: "LogDir",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "The directory the last log was written to, so the log dialog opens where the last one landed rather than where the settings file was pointing when it was written. Upstream has no key for this and does not remember: `GetTermLogDir` answers the same three-way question every time (`log.default_path`, then `transfer.file_dir`, then the per-user directory).  **Consulted only when `log.default_path` is empty.** A configured log directory is somebody saying where logs go, and a remembered one that silently overrode it would make the setting look broken. What this replaces is the *rest* of `GetTermLogDir`'s chain — the file-transfer directory, then a per-user directory nobody chose — which is where an unconfigured log lands and is not a place anyone would look twice.  Only the log dialog writes it: a `/L=` path or an auto-started template is a script's choice and must not retarget the next log a person opens. It is recorded whether or not it is currently being consulted, so clearing `LogDefaultPath` later falls back to somewhere real.",
     },
     Field {
         name: "updates.check_on_startup",

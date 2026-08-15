@@ -638,10 +638,10 @@ which is noticed on the next pump rather than through a resize event.
 
 ## Session logging
 
-`Terminal > Start logging` writes what arrives to a file, with a `REC <size>`
-in the status bar. Timestamps default to **elapsed** rather than wall clock,
-because the question on a console is nearly always "how long after reset did it
-stop", not what time it was.
+`File > Log...` writes what arrives to a file, with a `REC <size>` on that
+terminal's own status line. Timestamps default to **elapsed** rather than wall
+clock, because the question on a console is nearly always "how long after reset
+did it stop", not what time it was.
 
 The indicator is driven by `damaged`, not by a timer: the byte count changes
 exactly when bytes arrive, and that is what `damaged` means. A one-second
@@ -652,6 +652,61 @@ Text mode strips escape sequences because the *parser* does — the tap is insid
 `tt-vt` at upstream's `FLogPutUTF32` seam. Raw mode keeps every byte and is
 silently untimestamped, which is upstream's rule and the right one: a `[time] `
 in the middle of a byte capture makes it no longer replayable.
+
+### The dialog is upstream's shape, minus a window it does not have
+
+`LogDialog.{h,cpp}`. Tera Term 4 customised the Win32 common save dialog with a
+strip of options; Tera Term 5 replaced that with `IDD_LOGDLG`
+(`logdlg.cpp:267`) — a filename field, a `...` button onto the real picker, and
+the options underneath. That is this dialog, which is also the only shape Qt
+can offer: the desktop's file dialog is a portal on the other side of D-Bus and
+nothing can be bolted to it.
+
+Upstream's enabling rules are the dialog's only real logic and they are
+reproduced (`ArrangeControls`, `logdlg.cpp:167`): Append is greyed until the
+name names something that exists, binary greys plain text and the whole
+timestamp row, and the byte-order mark is only offered for a new text file.
+Two upstream defects are deliberately not: the `GetCurSel() - 1` the timestamp
+type is written with against the plain index it is read back with
+(`logdlg.cpp:106` versus `:322`), and "New / Overwrite" implemented as a
+`DeleteFileW` before the open (`vtwin.cpp:4142`), where a file that cannot be
+deleted quietly becomes an append.
+
+**Hide dialog is not here**, because there is nothing to hide: upstream's
+logging status window — file name, byte count, Pause, Close — is the thing the
+per-terminal `REC` counter replaced. **The UTF-8/UTF-16 combo is not here**
+either; a log is written from a Rust `String`, so it is UTF-8 and only the mark
+is a question. **Rotation is here** where upstream keeps it on its Setup page,
+because whether a capture should roll over is a fact about the capture. Its
+unit is a multiplier and nothing else — `LogRotateSize` is bytes whatever
+`LogRotateSizeType` says — and a "keep" of zero is upstream's ten thousand
+generations rather than none, so the spin box says so.
+
+On OK the dialog writes every control that has a `TERATERM.INI` key back to the
+live settings, which is what `SetLogFlags` does to `ts`; only Setup > Save puts
+any of it in the file. The two questions no key answers — the mark, and whether
+to write the screen in first — ride the `TtLogOptions` struct instead, which is
+the one call in the shell that passes one rather than a null.
+
+### Pausing, and where the button went
+
+`File > Pause logging` is checkable and so is the `REC` indicator: clicking the
+counter pauses the log it is counting. Tera Term's Pause is a button on the
+logging window this program does not have, so the thing showing the count is
+the thing that stops it. Paused, the label says `PAUSED`, turns amber and stops
+blinking — a steady number is the honest shape for a count that has stopped,
+and the blink is what says a recording is running.
+
+**What arrives while a log is paused is discarded, not held.** That is upstream
+in two places at once — a binary log drops the byte at the input
+(`filesys_log.cpp:1038`) and a text one drops it on the way out of the ring
+(`:647`) — and it is the point of the feature: a pause that buffered would
+write the gap into the file the moment it ended.
+
+`PageStatusBar::setLogging` compares its whole state before returning early. It
+is reached from `Session::damaged`, so it runs on every read on every open
+session and the early return is load-bearing; a paused flag left out of that
+comparison would never repaint. Same shape as `ConnectBar::Entry::operator==`.
 
 ## Connecting over SSH is a conversation, not a call
 

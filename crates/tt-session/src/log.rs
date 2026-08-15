@@ -94,7 +94,40 @@ pub struct LogOptions {
     /// back anything else as literal text. This is the one field of the
     /// options that does not cross the C ABI — see `tt_session_log_start`.
     pub format: String,
+    /// Start the file with a UTF-8 byte-order mark.
+    ///
+    /// Upstream's `IDC_BOM` (`logdlg.cpp:274`), and like upstream's it has no
+    /// INI key at all: it is a per-open choice the dialog carries in
+    /// `FLogDlgInfo_t.bom` and forgets. The gate is upstream's exactly
+    /// (`filesys_log.cpp:382`) — a *new* file, in *text* mode, with this asked
+    /// for — because a mark in the middle of an appended file is a stray
+    /// U+FEFF and a mark in a binary capture is three bytes the device never
+    /// sent. Rotation writes it again for each new generation (`:565`).
+    ///
+    /// Upstream pairs it with a UTF-8/UTF-16LE/UTF-16BE combo. There is no
+    /// such choice here: a log is written from a Rust `String`, so it is UTF-8
+    /// and only the mark is a question.
+    pub bom: bool,
+    /// Write what is already on the screen and in the scrollback before the
+    /// first live byte — upstream's `LogIncludeScreenBuffer` /
+    /// `ts.LogAllBuffIncludedInFirst`, applied by `FLogOutputAllBuffer`
+    /// (`filesys_log.cpp:432`).
+    ///
+    /// **An action taken once when the log opens, not a property of the file.**
+    /// It rides here because it is one of the questions the log dialog asks and
+    /// a caller should be able to answer all of them in one struct;
+    /// [`SessionLog`] itself never reads it — [`Session::start_log`] does, and
+    /// it is the only thing that can, because the buffer is not the log's.
+    ///
+    /// Text mode only, which is upstream's gate too (`vtwin.cpp:4145`).
+    ///
+    /// [`Session::start_log`]: crate::Session::start_log
+    pub include_screen: bool,
 }
+
+/// The three bytes of a UTF-8 byte-order mark (`FLogOutputBOM`,
+/// `filesys_log.cpp:1157`).
+const UTF8_BOM: &[u8] = b"\xef\xbb\xbf";
 
 impl Default for LogOptions {
     fn default() -> Self {
@@ -106,6 +139,8 @@ impl Default for LogOptions {
             rotate_keep: 0,
             crlf: false,
             format: String::from(DEFAULT_TIMESTAMP_FORMAT),
+            bom: false,
+            include_screen: false,
         }
     }
 }
@@ -151,7 +186,7 @@ impl SessionLog {
         } else {
             0
         };
-        Ok(SessionLog {
+        let mut log = SessionLog {
             path: path.to_path_buf(),
             file: BufWriter::new(file),
             opts,
@@ -160,7 +195,26 @@ impl SessionLog {
             started: Instant::now(),
             at_line_start: true,
             paused: false,
-        })
+        };
+        if !log.opts.append {
+            log.write_bom()?;
+        }
+        Ok(log)
+    }
+
+    /// `FLogOutputBOM` (`filesys_log.cpp:1150`), for a file that has just been
+    /// created — see [`LogOptions::bom`].
+    ///
+    /// "Just been created" is the caller's knowledge and upstream keeps it
+    /// there too: the gate at `:382` tests `ts.Append` because that call site
+    /// is the open, and the one at `:565` does not because a rotated file is
+    /// new whatever `Append` said. Counted like any other write, because
+    /// upstream counts it as well (`:1159`).
+    fn write_bom(&mut self) -> std::io::Result<()> {
+        if !self.opts.bom || self.opts.mode != LogMode::Text {
+            return Ok(());
+        }
+        self.put(UTF8_BOM)
     }
 
     pub fn path(&self) -> &Path {
@@ -388,7 +442,10 @@ impl SessionLog {
         self.file = BufWriter::new(file);
         self.written = 0;
         self.at_line_start = true;
-        Ok(())
+        // Upstream's order: the count is cleared and then the mark is written
+        // into it (`filesys_log.cpp:524`, `:565`), so a generation's first
+        // three bytes are part of its size.
+        self.write_bom()
     }
 }
 

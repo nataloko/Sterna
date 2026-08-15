@@ -487,6 +487,65 @@ fn a_script_can_open_pause_annotate_and_close_the_terminals_log() {
     );
 }
 
+/// The optional `logopen` flags reach the terminal rather than stopping at the
+/// language boundary. Include-screen is the one this specifically guards: the
+/// core gained the implementation with the log dialog, and the macro host kept
+/// discarding the already-parsed flag until this end-to-end case exercised it.
+#[test]
+fn logopen_applies_its_flags_and_includes_the_existing_screen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("with-screen.log");
+    let script = format!(
+        "dispstr 'already there'\n\
+         logopen '{}' 0 0 1 1 1 1 3\n\
+         loginfo name\n\
+         int2str flags result\n\
+         sendln flags",
+        path.display()
+    );
+
+    let mut r = drive(&script, |_| Vec::new());
+    // Plain text, timestamp and hide-dialog are the three `loginfo` bits; the
+    // include-screen flag deliberately is not part of that five-bit answer.
+    assert_eq!(r.sent, b"28\r");
+    assert!(r.session.settings().log_plain_text);
+    assert!(r.session.settings().log_hide_dialog);
+    let opts = r.session.log_options().unwrap();
+    assert!(opts.include_screen);
+    assert_eq!(opts.timestamp, tt_session::Timestamp::ElapsedConnection);
+
+    r.session.stop_log();
+    let written = std::fs::read_to_string(path).unwrap();
+    assert!(
+        written.contains("already there"),
+        "the pre-existing screen was not logged: {written:?}"
+    );
+}
+
+/// There is one terminal log. `CmdLogOpen` refuses a second one with
+/// `DDE_FNOTPROCESSED`; replacing the first silently loses the capture a person
+/// or an earlier line of the script deliberately left running.
+#[test]
+fn a_second_logopen_fails_without_replacing_the_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("first.log");
+    let second = dir.path().join("second.log");
+    let script = format!(
+        "logopen '{}' 0 0\n\
+         logopen '{}' 0 0\n\
+         int2str opened result\n\
+         sendln opened\n\
+         logclose",
+        first.display(),
+        second.display()
+    );
+
+    let r = drive(&script, |_| Vec::new());
+    assert_eq!(r.sent, b"1\r", "the second open should report failure");
+    assert!(first.exists());
+    assert!(!second.exists(), "the refused log was created anyway");
+}
+
 /// `logrotate` reconfigures and rotates nothing now, and none of the family is
 /// an error with no log open — `FLogPause` and the three rotation setters all
 /// return on a NULL `LogVar`, so a macro cannot tell.

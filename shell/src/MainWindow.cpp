@@ -56,6 +56,7 @@
 #include "Control.h"
 #include "HighlightsDialog.h"
 #include "I18n.h"
+#include "LogDialog.h"
 #include "Macro.h"
 #include "Plugins.h"
 #include "QuickButtonBar.h"
@@ -594,6 +595,22 @@ void MainWindow::wirePage(TerminalPage *page)
     });
     connect(session, &Session::damaged, this, [this, page] {
         updateLogStatus(page);
+    });
+    // The indicator pauses the log it is counting. It belongs to *this* page,
+    // so it pauses this page's log whether or not the page is the active one —
+    // the menu item is the one that follows the front terminal.
+    connect(page->status(), &PageStatusBar::logClicked, this, [this, page] {
+        Session *s = page->session();
+        if (!s->isLogging()) {
+            return;
+        }
+        const bool paused = !s->logPaused();
+        s->pauseLog(paused);
+        page->status()->showMessage(paused ? tr("Logging paused") : tr("Logging resumed"),
+                                    3000);
+        if (page == m_page) {
+            updateStatus();
+        }
     });
     connect(session, &Session::titleChanged, this,
             [this, page](const QString &title) {
@@ -2184,11 +2201,26 @@ void MainWindow::buildMenus()
         file->addAction(tr("Local shell"), this, [this] { connectPty(); });
     languageAction(m_localShellAction, "MENU_FILE_GYGWIN", tr("Local shell"));
     file->addSeparator();
-    // Upstream's File > Log. Its text is live — `updateStatus` swaps it for
-    // MENU_FILE_STOPLOG while a log is open — so it takes no language key of
-    // its own here.
-    m_logAction = file->addAction(tr("Start logging..."), this,
-                                 &MainWindow::toggleLogging);
+    // Upstream's three log items, in its order and with its enabling rules
+    // (`vtwin.cpp:1176`): Log opens the dialog and is greyed while one is
+    // running, and Pause and Stop are the other way round. One item that
+    // flipped its own caption was fewer widgets and it cost the pause a home —
+    // and `KEYBOARD.CNF` and a menu-command quick button can both name 50124
+    // and 50125, which need somewhere to arrive.
+    m_logAction = file->addAction(tr("Log..."), this, &MainWindow::showLogDialog);
+    m_logAction->setObjectName(QStringLiteral("logAction"));
+    languageAction(m_logAction, "MENU_FILE_LOG", tr("Log..."));
+    m_pauseLogAction =
+        file->addAction(tr("Pause logging"), this, &MainWindow::togglePauseLogging);
+    m_pauseLogAction->setObjectName(QStringLiteral("pauseLogAction"));
+    m_pauseLogAction->setCheckable(true);
+    languageAction(m_pauseLogAction, "MENU_FILE_PAUSELOG", tr("Pause logging"));
+    m_pauseLogAction->setStatusTip(
+        tr("Stop writing to the log without closing it. What arrives while it "
+           "is paused is not written later — it is not kept."));
+    m_stopLogAction = file->addAction(tr("Stop logging"), this, &MainWindow::stopLogging);
+    m_stopLogAction->setObjectName(QStringLiteral("stopLogAction"));
+    languageAction(m_stopLogAction, "MENU_FILE_STOPLOG", tr("Stop logging"));
     file->addSeparator();
     // Under File, next to the connection, because that is where upstream puts
     // it and because a transfer is a thing you do *to* a connection.
@@ -3349,7 +3381,9 @@ void MainWindow::invokeMenuCommand(quint16 command)
     case 50110: showConnectDialog(); break;
     case 50111: duplicateSession(); break;
     case 50112: connectPty(); break;
-    case 50120: toggleLogging(); break;
+    case 50120: showLogDialog(); break;
+    case 50124: togglePauseLogging(); break;
+    case 50125: stopLogging(); break;
     case 50130: sendFile(); break;
     case 50131: receiveFile(); break;
     case 50190: disconnectPort(); break;
@@ -3765,32 +3799,81 @@ void MainWindow::onMacroFinished(int exitCode)
                            : tr("Macro finished, exit code %1").arg(exitCode));
 }
 
-void MainWindow::toggleLogging()
+void MainWindow::showLogDialog()
 {
+    // A second log would replace the first silently. Upstream greys its Log
+    // item instead of guarding here; both are true, and the guard is what
+    // makes `KEYBOARD.CNF`'s 50120 safe, since a key binding does not consult
+    // a menu's enabled state.
     if (m_session->isLogging()) {
-        m_session->stopLog();
-        showPageMessage(m_page, tr("Logging stopped"), 3000);
-        updateStatus();
         return;
     }
 
-    // `LogDefaultName` in `LogDefaultPath`, both expanded — so a user whose
-    // file says `&h-%Y%m%d.log` is offered today's file for this host rather
-    // than a name this window made up.
-    const QString path = QFileDialog::getSaveFileName(
-        this, m_i18n->plainText("FILEDLG_TRANS_TITLE_LOG", tr("Log session to")),
-        m_session->logName(),
-        tr("Log files (*.log);;All files (*)"));
+    LogOptionsDialog dialog(m_session, this, m_i18n);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const QString path = dialog.path();
     if (path.isEmpty()) {
         return;
     }
 
+    // Settings first, because two of them decide what the log *is* rather than
+    // how it is opened: `log.plain_text` reaches the parser's tap, and the
+    // rest are what the next dialog will open on. Then the options, which
+    // carry the two questions no key can be asked.
+    dialog.applySettings();
+    const TtLogOptions options = dialog.options();
+
     QString error;
-    if (!m_session->startLog(path, &error)) {
+    if (!m_session->startLog(path, &error, &options)) {
         QMessageBox::critical(this, tr("Logging"),
                               tr("Could not write %1.\n\n%2").arg(path, error));
         return;
     }
+
+    // Remember only a file that was actually opened. `applySettings` cannot
+    // do this: it runs before `startLog`, and a directory from a failed open
+    // is not where the last log was written. This one setting is bookkeeping,
+    // like the recent connection, so it survives a restart without turning
+    // all the dialog's deliberately live-only choices into saved settings.
+    const QString directory = QFileInfo(path).absolutePath();
+    if (!directory.isEmpty()) {
+        rememberSettings({{QStringLiteral("recent.log_dir"), directory}});
+        // Every existing tab owns its own settings snapshot. Keep the memory
+        // window-wide so the next File > Log follows the last one even after
+        // the user changes tabs; a new tab copies the active snapshot already.
+        for (int i = 0; i < m_panels->count(); i++) {
+            auto *page = static_cast<TerminalPage *>(m_panels->widget(i));
+            if (page->session() == m_session) {
+                continue;
+            }
+            QString ignored;
+            page->session()->setSetting(QStringLiteral("recent.log_dir"), directory,
+                                        &ignored);
+        }
+    }
+    updateStatus();
+}
+
+void MainWindow::togglePauseLogging()
+{
+    if (!m_session->isLogging()) {
+        return;
+    }
+    const bool paused = !m_session->logPaused();
+    m_session->pauseLog(paused);
+    showPageMessage(m_page, paused ? tr("Logging paused") : tr("Logging resumed"), 3000);
+    updateStatus();
+}
+
+void MainWindow::stopLogging()
+{
+    if (!m_session->isLogging()) {
+        return;
+    }
+    m_session->stopLog();
+    showPageMessage(m_page, tr("Logging stopped"), 3000);
     updateStatus();
 }
 
@@ -3873,7 +3956,8 @@ void MainWindow::updateLogStatus(TerminalPage *page)
     // not even asked for unless this page is recording, and `setLogging`
     // compares before it assigns: a quiet page costs a pointer test, and a
     // busy one costs a relayout only when the formatted size actually moves.
-    page->status()->setLogging(logging, logging ? session->logBytes() : 0);
+    page->status()->setLogging(logging, logging ? session->logBytes() : 0,
+                               logging && session->logPaused());
 }
 
 void MainWindow::updatePanelActions()
@@ -3917,11 +4001,18 @@ void MainWindow::showPageMessage(TerminalPage *page, const QString &text,
 
 void MainWindow::updateStatus()
 {
+    // `vtwin.cpp:1176`'s table: which of the three is reachable depends only
+    // on whether a log is open, and Pause carries the tick.
+    const bool logging = m_session->isLogging();
     if (m_logAction) {
-        m_logAction->setText(
-            m_session->isLogging()
-                ? m_i18n->plainText("MENU_FILE_STOPLOG", tr("Stop logging"))
-                : m_i18n->plainText("MENU_FILE_LOG", tr("Start logging...")));
+        m_logAction->setEnabled(!logging);
+    }
+    if (m_pauseLogAction) {
+        m_pauseLogAction->setEnabled(logging);
+        m_pauseLogAction->setChecked(logging && m_session->logPaused());
+    }
+    if (m_stopLogAction) {
+        m_stopLogAction->setEnabled(logging);
     }
     updatePageStatus(m_page);
     if (m_stopMacroAction) {

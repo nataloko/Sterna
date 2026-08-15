@@ -29,6 +29,10 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 12 | Settings-dialog changes can be saved automatically | Only Setup > Save setup persists them | 0.2.5 |
 | 13 | The terminal background is a different shade while nothing is connected | The background is what the file and the host say, always | 0.2.6 |
 | 14 | A bare host name means SSH | It means telnet | 0.2.0 |
+| 15 | Disconnecting does not close the window | `AutoWinClose` closes it however the line ended | 0.3.0 |
+| 16 | A port another program holds is greyed, not hidden | The row is hidden, and only other Tera Term windows count | 0.3.0 |
+| 17 | The log dialog also asks about rotation | Rotation is on the Setup page only | 0.3.2 |
+| 18 | A log names itself by the clock and remembers its directory | `teraterm.log`, in whatever directory the settings resolve to | 0.3.2 |
 
 ---
 
@@ -648,3 +652,82 @@ connect path — `is in use by another program` — is still where the truth liv
 `tt_ctl::claim` is the published half, `tt_serial_holders` unions them, and
 `ConnectBar::rescanBusy` asks as the dropdown opens — never on the connect
 path, which `setRecents` also reaches.
+
+---
+
+## 17. The log dialog also asks about rotation
+
+`File > Log...` carries `LogRotate`, `LogRotateSize`, `LogRotateSizeType` and
+`LogRotateStep` alongside the mode and timestamp questions. Tera Term's
+`IDD_LOGDLG` has none of them; they live on Setup > Additional settings > Log
+(`log_pp.cpp`), and the log dialog is start-time options only.
+
+**Why.** Whether a capture should roll over is a fact about the capture, not
+about the installation. A week on a router's console and ten seconds of a boot
+log want different answers, and the moment somebody knows which one they are
+starting is the moment the dialog is open. Sending them to a settings page
+first — and back afterwards, to undo it — is the sort of trip that ends with
+one enormous file.
+
+The other three controls the Setup page has and the log dialog does not
+(`LogDefaultName`, `LogDefaultPath`, `LogAutoStart`) stay where upstream keeps
+them: those really are about the installation.
+
+**What is unchanged.** The four keys, their meanings and their traps. The size
+is stored in bytes whatever the unit combo says — the dialog multiplies on the
+way in and divides on the way out, exactly as `log_pp.cpp:156` does — and a
+`LogRotateStep` of zero is still upstream's ten thousand generations rather
+than none, which the spin box's zero says out loud instead of leaving to be
+discovered. The Setup page still edits the same keys, and a file written by
+either program still opens in the other.
+
+---
+
+## 18. A log names itself by the clock and remembers its directory
+
+`LogDefaultName` ships as `sterna-%Y%m%d_%H%M%S.log` where `ttset.c:1018` gives
+`teraterm.log`, and the directory the last log was written to is kept in
+`[Sterna] LogDir` and used when `LogDefaultPath` is empty. Upstream remembers
+nothing: `GetTermLogDir` answers the same three-way question every time.
+
+**Why the name.** One fixed name means every log lands on the last one, and
+whether that overwrites it or appends to it is decided by `LogAppend` — a
+setting the person starting the log is not looking at. Both outcomes are bad in
+different ways and neither is visible until afterwards. A template that carries
+the clock cannot collide, and the shape is not an invention: it is one of
+upstream's own Setup presets (`log_pp.cpp:125`). The program's name goes in
+front of it because a log directory is rarely one program's — a bare
+`20260815_143022.log` beside the same name from something else is a file you
+have to open to identify.
+
+**And without the `&h` that preset has**, which is the tempting part for
+anybody logging more than one console. `&h` is `ts.HostName`, which here is the
+path the port was *opened* by: the connect bar opens a serial port through its
+`/dev/serial/by-path/` name so that a replug cannot move it, and the sweep for
+characters a file name cannot hold then turns
+`pci-0000:c8:00.3-usb-0:1.3.2:1.0-port0` into thirty-eight characters of
+underscores on the end of every log. A local shell has no host name at all and
+would leave a bare separator. Both are fine in a template somebody chose, and
+`&h`, `&p` and `&u` all still work; neither is fine in the one everybody gets.
+
+**Why the directory.** The same reason the connect dialog remembers its last
+connection (deviation 2): with nothing configured, upstream's answer is
+`GetTermLogDir`'s chain, which ends in a per-user directory nobody chose and
+few people could name. A directory somebody browsed to is a better answer to
+"where do logs go" than that is.
+
+**But only when nothing is configured.** `LogDefaultPath` wins whenever it is
+set: somebody who named a log directory has said where logs go, and a
+remembered one that silently overrode it would make the setting look broken
+with nothing on screen to explain why. What the memory replaces is the *rest*
+of the chain, not the setting. It is recorded either way, so clearing
+`LogDefaultPath` later falls back to somewhere real rather than to the per-user
+directory again; and only the dialog writes it — a `/L=` path or an
+auto-started template is a script's choice and must not retarget the next log a
+person opens.
+
+**What is unchanged.** Every key, every rule and every expander. The name is
+still a template put through `strftime`, then `&h`/`&p`/`&u`, then the sweep
+for characters a file name cannot hold; a file that sets `LogDefaultName` keeps
+whatever it says, `teraterm.log` included. `[Sterna]` is this program's own
+section and nothing upstream reads it.

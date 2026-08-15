@@ -1047,19 +1047,74 @@ impl Session {
     /// the log would be a second parser to keep in agreement with the one
     /// that is verified against Tera Term.
     ///
-    /// Nothing is logged retroactively. Upstream can prepend the scrollback
-    /// (`LogAllBuffIncludedInFirst`) and the function it uses to do that is
-    /// one of the upstream bugs on file — it truncates every line at its first
-    /// wide character — so that option waits for the report to be answered.
+    /// Nothing is logged retroactively unless
+    /// [`LogOptions::include_screen`] asks for it, which is upstream's
+    /// `LogAllBuffIncludedInFirst` and prepends the buffer before the first
+    /// live byte — see [`Session::buffer_text`] for why it is not a
+    /// transcription of the function upstream does it with.
     pub fn start_log(&mut self, path: &Path, opts: LogOptions) -> std::io::Result<()> {
         let text = opts.mode == LogMode::Text;
-        let log = SessionLog::open(path, opts)?;
+        // Asked before the options move into the log, and acted on only in
+        // text mode — `vtwin.cpp:4145` gates the call the same way, because a
+        // binary log is a record of what the far end sent and the screen is
+        // not something it sent.
+        let prologue = (text && opts.include_screen).then(|| self.buffer_text());
+        let mut log = SessionLog::open(path, opts)?;
+        if let Some(prologue) = prologue {
+            log.write_text(&prologue)?;
+        }
         self.log = Some(log);
         self.sync_log_epoch();
         self.vt.set_log_text_enabled(text);
         // Whatever the tap collected before this point belongs to no log.
         let _ = self.vt.take_log_text();
         Ok(())
+    }
+
+    /// The scrollback and the page as text, oldest line first, for
+    /// [`LogOptions::include_screen`].
+    ///
+    /// **Deliberately not a transcription of `FLogOutputAllBuffer`**
+    /// (`filesys_log.cpp:432`). That walks the buffer through
+    /// `BuffGetAnyLineDataW`, which is two of the upstream defects on file at
+    /// once: it does not advance past a padding cell, so every line stops at
+    /// its first full-width character, and it budgets its output with a column
+    /// count, so a line carrying combining marks stops at about half its
+    /// width. On top of that the caller caps a line at 512 wchars. Reproducing
+    /// any of that would mean shipping a feature that silently truncates the
+    /// thing it was asked to preserve.
+    ///
+    /// So the rule here is the one [`tt_vt::Vt`]'s own line dump already uses
+    /// for the printer: skip the padding half of a wide character, take every
+    /// code point of the cells that are left, and trim the trailing spaces
+    /// that are the erased rest of the line rather than anything printed.
+    fn buffer_text(&self) -> String {
+        let grid = self.vt.grid();
+        let mut out = String::new();
+        let mut push = |line: &[Cell]| {
+            let end = line
+                .iter()
+                .rposition(|c| c.text[0] != u32::from(b' ') || c.width_class == WIDTH_PAD)
+                .map_or(0, |i| i + 1);
+            for cell in &line[..end] {
+                if cell.width_class == WIDTH_PAD {
+                    continue;
+                }
+                for &cp in cell.text.iter().take_while(|&&cp| cp != 0) {
+                    if let Some(c) = char::from_u32(cp) {
+                        out.push(c);
+                    }
+                }
+            }
+            out.push('\n');
+        };
+        for line in grid.scrollback() {
+            push(line);
+        }
+        for y in 0..grid.rows() {
+            push(grid.line(y));
+        }
+        out
     }
 
     /// Close the log, flushing it. A no-op when none is open.

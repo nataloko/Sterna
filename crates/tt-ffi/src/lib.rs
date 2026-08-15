@@ -653,6 +653,21 @@ pub struct TtLogOptions {
     /// this defaults to off, because the artefact is a text file read on
     /// Linux.
     pub crlf: bool,
+    /// Start a new text file with a UTF-8 byte-order mark.
+    ///
+    /// The one field here that is **not** a `TERATERM.INI` key: upstream's is
+    /// a checkbox on the log dialog that lives for as long as the dialog does.
+    /// So a null `options` never asks for one, and this is how a frontend that
+    /// put the question to somebody passes on the answer. Ignored for a raw
+    /// log and for an append, which is upstream's gate.
+    pub bom: bool,
+    /// Write the scrollback and the page into the log before the first live
+    /// byte — `LogIncludeScreenBuffer`.
+    ///
+    /// A one-shot action at open rather than a property of the file, and text
+    /// mode only. What upstream does here truncates every line at its first
+    /// wide character; this does not.
+    pub include_screen: bool,
 }
 
 /// Fill `out` with the defaults: text, no timestamp, truncate, no rotation.
@@ -670,6 +685,8 @@ pub extern "C" fn tt_log_options_default(out: *mut TtLogOptions) {
         rotate_size: d.rotate_size,
         rotate_keep: d.rotate_keep,
         crlf: d.crlf,
+        bom: d.bom,
+        include_screen: d.include_screen,
     };
 }
 
@@ -684,10 +701,9 @@ pub extern "C" fn tt_log_options_default(out: *mut TtLogOptions) {
 /// that a caller allocates, so it always comes from the settings — an override
 /// changes which clock is printed, never how.
 ///
-/// Nothing is logged retroactively — the capture starts here. (Upstream can
-/// prepend the scrollback; the function it uses to do that is one of the
-/// upstream bugs on file, since it truncates every line at its first wide
-/// character, so that option waits for the report to be answered.)
+/// Nothing is logged retroactively unless `include_screen` asks for it, which
+/// is `LogIncludeScreenBuffer` and puts the buffer in ahead of the first live
+/// byte.
 #[no_mangle]
 pub extern "C" fn tt_session_log_start(
     session: *mut TtSession,
@@ -709,6 +725,8 @@ pub extern "C" fn tt_session_log_start(
             rotate_size: o.rotate_size,
             rotate_keep: o.rotate_keep,
             crlf: o.crlf,
+            bom: o.bom,
+            include_screen: o.include_screen,
             format: from_settings.format,
         },
     };
@@ -747,6 +765,61 @@ pub extern "C" fn tt_session_log_path(session: *mut TtSession) -> *const c_char 
 #[no_mangle]
 pub extern "C" fn tt_session_log_bytes(session: *const TtSession) -> u64 {
     session_ref!(session, 0).session.log_bytes()
+}
+
+/// Stop or resume writing the log — upstream's `File > Pause Logging` and the
+/// button on its logging dialog, and TTL's `logpause`/`logstart`.
+///
+/// **What arrives while a log is paused is discarded, not held.** That is
+/// upstream in two places at once — a binary log drops the byte at the input
+/// (`filesys_log.cpp:1038`) and a text one drops it on the way out of the ring
+/// (`:647`) — and it is what the pause is for: a pause that buffered would
+/// write the gap into the file the moment it ended.
+///
+/// **Not an error with no log open**, in either direction, which is upstream's
+/// `FLogPause` returning on a NULL `LogVar`.
+#[no_mangle]
+pub extern "C" fn tt_session_log_pause(session: *mut TtSession, paused: bool) {
+    let s = session!(session);
+    s.session.pause_log(paused);
+}
+
+/// Whether the log is open *and* paused. False when nothing is logging.
+#[no_mangle]
+pub extern "C" fn tt_session_log_paused(session: *const TtSession) -> bool {
+    session_ref!(session, false).session.log_paused()
+}
+
+/// Fill `out` with what this session's settings say a log would be written as.
+///
+/// A frontend calls this to seed a log dialog, and the alternative is the
+/// reason it exists: deriving these from the settings by hand means a second
+/// copy of three rules that are not guessable — `LogTimestampType`'s empty
+/// value falls back to Tera Term 4's `LogTimestampUTC`, `LogRotateSize` counts
+/// for nothing unless `LogRotate` is exactly 1, and a `LogRotateStep` of zero
+/// means ten thousand generations rather than none.
+///
+/// `bom` and `include_screen` come back as the settings' own answer: there is
+/// no key for the first, so it is always false and the caller supplies it.
+///
+/// Does nothing on a null pointer.
+#[no_mangle]
+pub extern "C" fn tt_session_log_defaults(session: *const TtSession, out: *mut TtLogOptions) {
+    let (Some(s), Some(out)) = (unsafe { session.as_ref() }, unsafe { out.as_mut() }) else {
+        set_error("null session or TtLogOptions");
+        return;
+    };
+    let d = tt_session::log_options(s.session.settings());
+    *out = TtLogOptions {
+        raw: d.mode == LogMode::Raw,
+        timestamp: d.timestamp,
+        append: d.append,
+        rotate_size: d.rotate_size,
+        rotate_keep: d.rotate_keep,
+        crlf: d.crlf,
+        bom: d.bom,
+        include_screen: d.include_screen,
+    };
 }
 
 /// Say what this session is connected to, for the `&h` and `&p` a log name may

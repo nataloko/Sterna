@@ -58,7 +58,7 @@ Two things about how it is generated, both learned the hard way:
 | Connection | `_connect_serial`, `_connect_telnet`, `_connect_pty`, `_disconnect`, `_is_connected`, `_describe`, `_close_note`, `_pump`, `_drain_events`, `_poll_fd`, `_wait_handle` |
 | SSH | `tt_ssh_params_default`, `tt_ssh_connect`, `_poll`, `_poll_fd`, `_wait_handle`, `_host_key`, `_auth`, `_answer_host_key`, `_answer_auth`, `_free` |
 | Ports | `tt_serial_enumerate`, `tt_port_list_len` / `_at` / `_free`, `tt_ssh_config_aliases` + `tt_string_list_*` |
-| Logging | `tt_log_options_default`, `tt_session_log_start` / `_stop` / `_path` / `_bytes` |
+| Logging | `tt_log_options_default`, `tt_session_log_start` / `_stop` / `_pause` / `_paused` / `_path` / `_bytes` / `_name` / `_defaults` |
 | Settings | `tt_settings_field_count` / `_field` / `tt_settings_choice` / `_file_has`, `tt_session_setting` / `_set_setting` / `_settings_load` / `_settings_save`; selected plugin fields via `tt_plugins_settings_save_selected` |
 | Languages | `tt_i18n_load` / `_text` / `_free`; `_text` returns an explicit-length UTF-8 span because file-dialog filters contain embedded NULs |
 | Macros | `tt_macro_start` / `_poll_fd` / `_wait_handle` / `_service` / `_running` / `_cancel` / `_exit_code` / `_free`, `tt_session_unlink_macro`, and `TtMacroUi` |

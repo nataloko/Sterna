@@ -1534,6 +1534,39 @@ The session log:
   `/FD=` moves the log.
 - **A relative `/L=` lands in the log directory, not the working
   directory** (`filesys_log.cpp:964`).
+- **A paused log discards, it does not hold** — a binary log drops the byte at
+  the input (`filesys_log.cpp:1038`), a text one drops it draining the ring
+  (`:647`). `logwrite` deliberately writes anyway, which is the manual against
+  the code; the divergence is stated at `SessionLog::write_str`.
+- **The BOM has a three-way gate and a fourth place it appears** — new file,
+  text mode, asked for (`filesys_log.cpp:382`), and again at the head of every
+  rotated generation (`:565`, which does *not* re-test `Append`, because a
+  rotated file is new whatever `Append` said). It has no INI key in either
+  program: upstream carries it in `FLogDlgInfo_t.bom` and forgets it when the
+  dialog closes, so it rides `LogOptions`/`TtLogOptions` here.
+- **`LogIncludeScreenBuffer` is text-mode only** (`vtwin.cpp:4145`), and
+  `FLogOutputAllBuffer` is not worth transcribing — it walks
+  `BuffGetAnyLineDataW`, which is upstream bugs 1 and 2 on file (every line
+  stops at its first full-width character; the budget is columns, not code
+  points), under a 512-wchar cap. `Session::buffer_text` reads the grid.
+- **Tera Term 5's log dialog is not Tera Term 4's** — TT4 customised the common
+  save dialog; TT5's is a plain `IDD_LOGDLG` (`logdlg.cpp:267`) with a `...`
+  button. Two of its own defects are not reproduced: it writes
+  `LogTimestampType` as `GetCurSel() - 1` against the plain index it reads back
+  (`:106` vs `:322`), and "New / Overwrite" is a `DeleteFileW` before the open
+  (`vtwin.cpp:4142`), so an undeletable file silently becomes an append.
+- **`PageStatusBar::setLogging` returns early on an unchanged state, and the
+  pause is part of that state** — it is reached from `Session::damaged`, so it
+  runs on every read on every open session and the early return is
+  load-bearing. A flag left out of the comparison never repaints: the same
+  shape as `ConnectBar::Entry::operator==`.
+- **Logging is suppressed for the duration of a file transfer** —
+  `ProtoGetProtoFlag()` sits in the same two `if`s as the pause
+  (`filesys_log.cpp:646`, `:1038`). The same outcome falls out here for a
+  different reason: the transfer arm of the pump `continue`s before
+  `log_bytes_in`, so a protocol's traffic never reaches the log in either mode.
+  Nothing tests it as a log property — if the transfer arm ever stops owning
+  the stream, this goes with it silently.
 
 A macro reached from outside the process:
 

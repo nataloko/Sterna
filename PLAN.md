@@ -4,7 +4,7 @@ Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
 **Last updated:** 2026-08-15 · **Stage:** 4 complete, deliberate deviations
-landing (`docs/deviations.md`) · **Commits:** 744
+landing (`docs/deviations.md`) · **Commits:** 765
 
 | | Stage 0 spike | Status |
 |---|---|---|
@@ -3000,9 +3000,12 @@ gained `strelapsedW`'s leading days field, which had been quietly dropped.
 
 Three of the seventeen are read and written and act on nothing, each saying so
 where it is declared: `LogHideDialog` (this port has a status-bar indicator
-rather than a progress window), `LogIncludeScreenBuffer` (the function upstream
-does it with is two of the five upstream bugs on file) and `LogLockExclusive`
-plus `DeferredLogWriteMode` (Win32 share modes and a writer thread).
+rather than a progress window), `LogLockExclusive` and
+`DeferredLogWriteMode` (Win32 share modes and a writer thread).
+`LogIncludeScreenBuffer` joined the live log on 2026-08-15: it reads the grid
+directly instead of transcribing `FLogOutputAllBuffer`, so wide and combining
+characters survive rather than inheriting that function's two truncation bugs
+and 512-wchar line cap.
 
 #### And four keys that were in no Tera Term
 

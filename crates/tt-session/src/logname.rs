@@ -1,13 +1,21 @@
 //! The log's file name, which is a template rather than a name.
 //!
-//! `LogDefaultName` ships as `teraterm.log` and looks like a plain file name,
-//! which is why the machinery behind it is easy to miss —
+//! `LogDefaultName` ships upstream as `teraterm.log` and looks like a plain
+//! file name, which is why the machinery behind it is easy to miss —
 //! `FLogGetLogFilename` (`filesys_log.cpp:964`) puts it through four passes
 //! before anything is opened: a `strftime` expansion, then `&h`/`&p`/`&u` for
 //! the connection, then a sweep for characters a file name cannot hold, and
 //! finally a join against the log directory. Anybody logging more than one
 //! console ends up with a `&h-%Y%m%d.log`, and a port that took the name
 //! literally would write every session into one file.
+//!
+//! Which is why **this port ships a template rather than the plain name**:
+//! `sterna-%Y%m%d_%H%M%S.log`, so a second log cannot land on the first and a
+//! shared log directory says which program wrote which file (see
+//! `docs/deviations.md`). Nothing here changes for it — the four passes are
+//! upstream's and the shape is one of the Setup page's own presets
+//! (`log_pp.cpp:125`) without the `&h`, which on this side of the port is the
+//! path a port was opened by rather than a host name.
 //!
 //! **There are two strftime expanders upstream and they are not the same
 //! one**, which is the finding that decided the shape of this module. A log
@@ -668,6 +676,47 @@ mod tests {
         };
         assert_eq!(expand_name("&h.log", &ctx, when()), "fe80__1.log");
         assert_eq!(expand_name("a/b*c?.log", &ctx, when()), "b_c_.log");
+    }
+
+    /// The shipped template, which is the reason this port does not use
+    /// upstream's plain `teraterm.log` — two sessions a second apart get two
+    /// files, and neither of them depends on `LogAppend` to survive.
+    #[test]
+    fn the_shipped_template_cannot_name_the_same_file_twice() {
+        let settings = Settings::default();
+        let ctx = LogContext {
+            host: Some("router1".into()),
+            ..LogContext::default()
+        };
+
+        let first = expand_name(&settings.log_default_name, &ctx, when());
+        assert_eq!(first, "sterna-20260809_123456.log");
+
+        let a_second_later = Civil::from_unix(1_786_278_897, 0);
+        assert_ne!(
+            expand_name(&settings.log_default_name, &ctx, a_second_later),
+            first
+        );
+
+        // The same name whatever is connected — and that is the decision, not
+        // an oversight. `&h` is the path the port was *opened* by, so a serial
+        // console dialled through `/dev/serial/by-path/` would carry
+        // thirty-eight swept characters of PCI topology, and a local shell
+        // would carry a bare separator. It stays available to anyone who wants
+        // it; it is not what everyone gets.
+        assert_eq!(
+            expand_name(&settings.log_default_name, &LogContext::default(), when()),
+            first
+        );
+        let by_path = LogContext {
+            host: Some("pci-0000:c8:00.3-usb-0:1.3.2:1.0-port0".into()),
+            ..LogContext::default()
+        };
+        assert_eq!(
+            expand_name("&h.log", &by_path, when()),
+            "pci-0000_c8_00.3-usb-0_1.3.2_1.0-port0.log",
+            "which is what the shipped name would carry if it kept the &h"
+        );
     }
 
     #[test]

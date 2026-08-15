@@ -449,33 +449,68 @@ impl ScriptHost for SessionHost {
 
     fn log_open(&mut self, req: &LogOpen<'_>) -> Result<bool, TtlError> {
         let path = resolve(&self.transfer_dir, req.path);
+        let plain_text = req.plain_text && !req.binary;
+        let timestamp = req.timestamp && !req.binary;
+        let timestamp_type = match req.timestamp_type {
+            LogClock::Local => "Local",
+            LogClock::Utc => "UTC",
+            LogClock::ElapsedLog => "LoggingElapsed",
+            LogClock::ElapsedConnection => "ConnectionElapsed",
+        };
         let opts = LogOptions {
             mode: if req.binary {
                 LogMode::Raw
             } else {
                 LogMode::Text
             },
-            timestamp: if req.timestamp {
+            timestamp: if timestamp {
                 match req.timestamp_type {
                     LogClock::Local => Timestamp::Local,
                     LogClock::Utc => Timestamp::Utc,
-                    // Upstream measures its two elapsed clocks from different
-                    // events; this log has one, from the file being opened.
-                    LogClock::ElapsedLog | LogClock::ElapsedConnection => Timestamp::Elapsed,
+                    LogClock::ElapsedLog => Timestamp::Elapsed,
+                    LogClock::ElapsedConnection => Timestamp::ElapsedConnection,
                 }
             } else {
                 Timestamp::None
             },
             append: req.append,
+            include_screen: req.include_screen,
             ..LogOptions::default()
         };
-        // `hide_dialog` is the log's progress window, which this port does not
-        // have; `include_screen` is `LogAllBuffIncludedInFirst`, whose upstream
-        // implementation is one of the reported bugs — it truncates every line
-        // at its first wide character — so it waits for that report to be
-        // answered rather than being reproduced. `plain_text` is the mode.
-        let _ = (req.hide_dialog, req.include_screen, req.plain_text);
-        self.ask(move |s| s.start_log(&path, opts).is_ok())
+        let binary = req.binary;
+        let append = req.append;
+        let hide_dialog = req.hide_dialog;
+        let include_screen = req.include_screen;
+        self.ask(move |s| {
+            // `CmdSetLogOpt` writes all seven values into `ts` before
+            // `CmdLogOpen`, including when a log is already open and the open
+            // itself will fail. Keep the live settings in step for `loginfo`,
+            // the next dialog and the parser's plain-text tap. `FixLogOption`
+            // clears the two text-only flags for a binary log.
+            for (name, value) in [
+                ("log.binary", if binary { "on" } else { "off" }),
+                ("log.append", if append { "on" } else { "off" }),
+                ("log.plain_text", if plain_text { "on" } else { "off" }),
+                ("log.timestamp", if timestamp { "on" } else { "off" }),
+                ("log.hide_dialog", if hide_dialog { "on" } else { "off" }),
+                (
+                    "log.include_screen_buffer",
+                    if include_screen { "on" } else { "off" },
+                ),
+                ("log.timestamp_type", timestamp_type),
+            ] {
+                let named = s.set_setting(name, value);
+                debug_assert!(named, "no setting named {name}");
+            }
+
+            // Tera Term has one terminal log. A macro asking for another gets
+            // `DDE_FNOTPROCESSED`; it must not silently replace the file that
+            // File > Log or an earlier `logopen` is still recording.
+            if s.log_path().is_some() {
+                return false;
+            }
+            s.start_log(&path, opts).is_ok()
+        })
     }
 
     fn log_close(&mut self) -> Result<(), TtlError> {
@@ -510,15 +545,13 @@ impl ScriptHost for SessionHost {
                 path: s.log_path()?.to_string_lossy().into_owned().into_bytes(),
                 binary: opts.mode == LogMode::Raw,
                 append: opts.append,
-                // One flag upstream, two here — `LogTypePlainText` is what a
-                // text log *is* in this port, because there is no mode that
-                // writes decoded text with the escape sequences left in. So it
-                // answers what the log does rather than what `logopen` was
-                // handed, which for `logopen` is the same thing.
-                plain_text: opts.mode == LogMode::Text,
+                // These two are live `ts` fields in `FLogInfo`, not properties
+                // of the file. `logopen` above writes them before opening for
+                // the same reason upstream's `CmdSetLogOpt` does.
+                plain_text: s.settings().log_plain_text,
                 timestamp: opts.timestamp != Timestamp::None,
                 // The log's progress window, which this port does not have.
-                hide_dialog: false,
+                hide_dialog: s.settings().log_hide_dialog,
             })
         })
     }
