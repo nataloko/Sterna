@@ -84,6 +84,21 @@ void QuickButtonBar::clearContents()
 
 void QuickButtonBar::setButtons(const QVector<QuickButton> &buttons)
 {
+    // **The early return is load bearing, and not for the widgets it saves.**
+    // This runs on every settings change, and a rebuild throws away every
+    // button and makes new ones — so the panel's size hint drops to its empty
+    // width and comes back, and the dock holding it takes those pixels off the
+    // central widget and gives them back. The terminal beside it is fitted to
+    // that width in whole cells, so a few pixels either way is a column, which
+    // is a real resize of the grid; with `ClearOnResize` on, each one scrolls
+    // the page into history. Toggling line edit blanked the screen this way.
+    // `m_built` and not an empty check: the panel with no buttons on it still
+    // has contents — the `+` that defines the first one is made here — so the
+    // opening call has to run even though it changes nothing about the list.
+    if (m_built && buttons == m_buttons) {
+        return;
+    }
+    m_built = true;
     m_buttons = buttons;
     // Nothing is repeating across a rebuild: the indices these count against
     // have just been renumbered, and the window stops every run for the same

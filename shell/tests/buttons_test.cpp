@@ -308,6 +308,58 @@ void a_button_that_asks_sends_nothing_when_the_question_is_dismissed()
     CHECK(!screenText(*session).contains(QLatin1String("dangerous-thing")));
 }
 
+/// An unrelated settings change does not rebuild the panel.
+///
+/// `reloadQuickButtons` runs on every `settingsChanged`, and a rebuild throws
+/// away every button widget and makes new ones — which drops the panel's size
+/// hint to its empty width and brings it back, so the dock takes those pixels
+/// off the central widget and returns them. The terminal beside it is fitted
+/// to that width in whole cells, so a few pixels either way is a column, and
+/// with `ClearOnResize` on each such resize scrolls the page into history.
+/// Toggling line edit blanked the screen this way; CI caught it because a
+/// runner with one font makes the cell wide enough for the window to be short
+/// of a column in the first place.
+///
+/// The `QAction` identity is the assertion because it is what a rebuild
+/// destroys, and it is what the shortcut and the repeat state hang off.
+void an_unrelated_setting_leaves_the_buttons_alone()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = writeIni(dir,
+                                 "[Sterna Buttons]\r\nButton1Label=Greet\r\n"
+                                 "Button1Value=echo hello$0D\r\n");
+
+    MainWindow window(ini);
+    window.show();
+    QuickButtonBar *bar = barOf(window);
+    CHECK(bar != nullptr);
+    CHECK(spin([bar] { return bar->isVisible(); }, 2000));
+
+    QAction *before = buttonAction(window, 0);
+    CHECK(before != nullptr);
+    const int cols = window.session()->cols();
+    const int rows = window.session()->rows();
+
+    CHECK(window.session()->setSetting(QStringLiteral("terminal.local_echo"),
+                                       QStringLiteral("on"), nullptr));
+    qApp->processEvents();
+
+    CHECK(buttonAction(window, 0) == before);
+    CHECK(bar->buttons().size() == 1);
+    // And the terminal it shares the window with kept its size.
+    CHECK(window.session()->cols() == cols);
+    CHECK(window.session()->rows() == rows);
+
+    // A change to the list itself still rebuilds, or nothing would ever
+    // appear — the guard is about equality, not about the path being dead.
+    QVector<QuickButton> edited = bar->buttons();
+    edited[0].label = QStringLiteral("Renamed");
+    bar->setButtons(edited);
+    CHECK(buttonAction(window, 0) != before);
+    CHECK(bar->buttons()[0].label == QLatin1String("Renamed"));
+}
+
 /// An empty list keeps the checked panel and its Add button visible, and
 /// defining the first command fills that same panel without a restart.
 void an_empty_list_keeps_the_add_button()
@@ -942,6 +994,7 @@ int main(int argc, char **argv)
     a_macro_button_is_available_offline();
     a_text_button_repaints_local_echo_immediately();
     a_button_that_asks_sends_nothing_when_the_question_is_dismissed();
+    an_unrelated_setting_leaves_the_buttons_alone();
     an_empty_list_keeps_the_add_button();
     the_editor_round_trips_a_button();
     the_editor_preserves_an_unknown_command();

@@ -35,6 +35,20 @@ struct QuickButton {
     /// Milliseconds between the starts of two sends while repeating.
     quint32 intervalMs = 1000;
 
+    /// **Every field, because a rebuild is skipped when this says equal.**
+    /// `QuickButtonBar::setButtons` destroys and recreates every widget, which
+    /// is a new size hint for the panel holding them; a field left out here is
+    /// a change that never reaches the screen. Same rule as
+    /// `ConnectBar::Entry::operator==`.
+    bool operator==(const QuickButton &other) const
+    {
+        return label == other.label && kind == other.kind
+               && value == other.value && text == other.text
+               && shortcut == other.shortcut && confirm == other.confirm
+               && repeat == other.repeat && intervalMs == other.intervalMs;
+    }
+    bool operator!=(const QuickButton &other) const { return !(*this == other); }
+
     /// Whether one press sends more than once.
     bool repeats() const { return repeat != 1; }
     bool repeatsForever() const

@@ -99,6 +99,9 @@ private:
     void clearContents();
 
     QVector<QuickButton> m_buttons;
+    /// Whether `setButtons` has laid the panel out once. Until it has, an
+    /// unchanged list is still a rebuild worth doing — see `setButtons`.
+    bool m_built = false;
     QVector<QAction *> m_actions;
     QVector<QToolButton *> m_widgets;
     /// Per button: sends left, -1 for a run with no end, 0 for not running.
