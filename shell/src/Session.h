@@ -318,11 +318,18 @@ public:
 
     // --- session logging ----------------------------------------------------
 
-    /// Start logging to `path` with whatever the settings say — the mode, the
-    /// timestamp, appending and rotation are all `TERATERM.INI` keys, and a
-    /// window that assembled its own would be a second copy of the schema.
+    /// Start logging to `path`. With `options` null it is whatever the
+    /// settings say — the mode, the timestamp, appending and rotation are all
+    /// `TERATERM.INI` keys, and a window that assembled its own would be a
+    /// second copy of the schema. The log dialog passes a struct, because two
+    /// of its questions (the byte-order mark, and whether to write the screen
+    /// in first) have no key to be asked through.
     /// Returns false and fills `outError` on failure.
-    bool startLog(const QString &path, QString *outError);
+    bool startLog(const QString &path, QString *outError,
+                  const TtLogOptions *options = nullptr);
+    /// What the settings say a log would be written as, for a dialog to open
+    /// on. The derivation is the core's — see `tt_session_log_defaults`.
+    TtLogOptions logDefaults() const;
     /// The file a log would be opened under: `requested` expanded against the
     /// template rules, or `LogDefaultName` when it is empty.
     ///
@@ -336,6 +343,12 @@ public:
     bool isLogging() const;
     QString logPath() const;
     quint64 logBytes() const;
+    /// Suspend or resume the log. **What arrives while it is paused is
+    /// discarded rather than held**, which is upstream's behaviour and the
+    /// point of the feature — see `tt_session_log_pause`. A no-op with no log
+    /// open, in either direction.
+    void pauseLog(bool paused);
+    bool logPaused() const;
 
     // --- file transfer ------------------------------------------------------
     //

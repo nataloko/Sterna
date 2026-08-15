@@ -822,12 +822,21 @@ QString Session::logName(const QString &requested) const
     return name ? QString::fromUtf8(name) : QString();
 }
 
-bool Session::startLog(const QString &path, QString *outError)
+TtLogOptions Session::logDefaults() const
+{
+    TtLogOptions options = {};
+    tt_log_options_default(&options);
+    tt_session_log_defaults(m_session, &options);
+    return options;
+}
+
+bool Session::startLog(const QString &path, QString *outError, const TtLogOptions *options)
 {
     const QByteArray utf8 = path.toUtf8();
-    // Null options: "however the settings say", which is the only thing this
-    // window has ever wanted and is now a real answer rather than a guess.
-    if (tt_session_log_start(m_session, utf8.constData(), nullptr) != TT_OK) {
+    // Null options: "however the settings say", which is what the command
+    // line, `LogAutoStart` and a resumed session all want. The dialog is the
+    // one caller that passes a struct.
+    if (tt_session_log_start(m_session, utf8.constData(), options) != TT_OK) {
         if (outError) {
             *outError = QString::fromUtf8(tt_last_error());
         }
@@ -864,6 +873,23 @@ QString Session::logPath() const
 quint64 Session::logBytes() const
 {
     return tt_session_log_bytes(m_session);
+}
+
+void Session::pauseLog(bool paused)
+{
+    if (logPaused() == paused) {
+        return;
+    }
+    tt_session_log_pause(m_session, paused);
+    // The same reason `startLog` emits: pausing is a state change the whole
+    // window shows — the menu item's tick, the indicator's colour — and a
+    // caller that refreshed only its own corner would leave the other stale.
+    emit logStateChanged();
+}
+
+bool Session::logPaused() const
+{
+    return tt_session_log_paused(m_session);
 }
 
 // --- file transfer -----------------------------------------------------------
