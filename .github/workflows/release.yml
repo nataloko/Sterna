@@ -64,6 +64,28 @@ jobs:
         with:
           path: packaging/appimage/toolchain/qt-6.11.1
           key: appimage-qt-6.11.1-manylinux-2-28-x86-64-v2
+          # **This job runs on a tag, and a cache belongs to the ref that wrote
+          # it.** A run reads its own ref's caches and the default branch's,
+          # nothing else — so the Qt this job saves is readable by this tag
+          # alone, and every release before v0.3.1 rebuilt Qt from source for
+          # that reason. What makes the exact key hit is `ci.yml`'s warm job,
+          # which writes it on *main*. Keep the two keys equal; the check at the
+          # top of that job fails the build if they drift.
+          #
+          # The fallback is for the window where main has no such entry — the
+          # warm job broken, or its 26 MiB evicted by the 10 GB repository limit
+          # behind caches fifteen times its size. It restores the newest Qt
+          # built under a related key and lets `build-qt.sh` decide: that script
+          # re-checks the version and the four plugins the AppImage cannot open
+          # a window without, and rebuilds if the tree does not satisfy them, so
+          # nothing reaches an artifact without passing the same contract a
+          # fresh build passes. The cost of missing it entirely is 50 minutes.
+          #
+          # It also means **bumping `-vN` no longer forces a rebuild by
+          # itself**: a bump for something `build-qt.sh` does not test for wants
+          # `gh cache delete` on the old entry as well.
+          restore-keys: |
+            appimage-qt-6.11.1-manylinux-2-28-x86-64-
       - name: Start portable build container
         run: |
           docker run --detach --name sterna-manylinux \

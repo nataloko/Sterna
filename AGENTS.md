@@ -346,6 +346,22 @@ The AppImage, where two of the three failures are silent:
   `libEGL`, `libGLX` and `libGLdispatch`; a minimal host then fails before Qt
   can select `offscreen`. Bundle those four ABI dispatch libraries, not the
   Mesa/NVIDIA implementation behind them.
+- **A GitHub cache belongs to the ref that wrote it, so the release cannot read
+  its own last Qt.** A run reads its own ref's caches and the default branch's;
+  the release job runs on a tag, so the 50 minutes of Qt it saves is reachable
+  from `refs/tags/vX.Y.Z` and from nothing else ever again — four releases in a
+  row each built Qt and each left a cache no later one could open. `ci.yml`'s
+  warm job on *main* is the only thing that produces a readable entry, which
+  makes its own health load-bearing: it sat failing on the key-consistency check
+  for an evening and the next release silently paid the full bootstrap. Ask
+  `gh api repos/OWNER/REPO/actions/caches --jq '.actions_caches[].ref'` before
+  believing a key is the problem — a tag-scoped hit reads as a plain miss.
+- **...and the 10 GB repository limit evicts by least-recently-used, so the
+  26 MiB Qt goes before anything else.** Seven `v0-rust-*` caches at 300–400 MiB
+  each had the repository at 7.6 GB; the one entry a release depends on is the
+  cheapest thing there and the first out. Keep the newest cache per prefix and
+  delete the rest (`gh cache delete <id>`) rather than watching for the symptom,
+  which is a release that takes 55 minutes instead of 6.
 - **The hosted Qt build's fifty-minute disconnect is OOM, not a time limit.**
   Two workers consumed 14 of the runner's 15 GiB before it vanished with no
   retained log; one measured 6.3 GiB used / 8.9 GiB available. Keep one

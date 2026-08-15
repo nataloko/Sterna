@@ -478,6 +478,15 @@ jobs:
       # image, so a drift here would hand the release a Qt built against a
       # different base. The step below fails the job rather than let that be
       # silent.
+      #
+      # **This job is the only thing that makes the release's cache readable.**
+      # A cache belongs to the ref that wrote it, and a run may read its own
+      # ref's and the default branch's; the release runs on a tag, so a Qt it
+      # saves is reachable from that tag and nowhere else. Warming the same key
+      # here, on main, is what every future tag reads. The restore below is
+      # deliberately exact and `lookup-only` — this job must build the entry it
+      # is named for, so a bumped key is a genuinely fresh Qt, which is the
+      # invalidation `release.yml`'s fallback leans on.
       MANYLINUX_IMAGE: quay.io/pypa/manylinux_2_28_x86_64@sha256:f854c50adf7b7a325bc4794316f3758d387a41d61f9e2ebca0f26c7dc8f761d4
       QT_CACHE_KEY: appimage-qt-6.11.1-manylinux-2-28-x86-64-v2
       QT_CACHE_PATH: packaging/appimage/toolchain/qt-6.11.1
