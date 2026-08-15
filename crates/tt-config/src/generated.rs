@@ -2704,6 +2704,22 @@ pub struct Settings {
     /// menus, dialogs, toolbars and status bars remain the desktop theme. The
     /// connect bar persists the switch immediately and applies it to every tab.
     pub terminal_dark_mode: bool,
+    /// **`[Sterna]`**. A column of line numbers down the left of the terminal.
+    ///
+    /// The number is the absolute session line, counted from 1: line 1 is the first
+    /// line the host printed, and a line keeps its number as it scrolls into
+    /// history. The gutter is painted by a widget beside the terminal rather than
+    /// into it, so the numbers are not cells and cannot reach the clipboard, the
+    /// log, the printer or a macro's tap.
+    pub terminal_line_numbers: bool,
+    /// **`[Sterna]`**. How many digits the gutter above reserves.
+    ///
+    /// Fixed rather than sized to the largest number on screen, so the terminal
+    /// never re-flows mid-session at line 1000; a longer number simply overflows its
+    /// field. `int_clamp` and not `int(1..10)` because there is no upstream reader
+    /// to reproduce here, and clamping is the predictable answer where `ttset.c:615`
+    /// would take the default for anything below the floor.
+    pub terminal_line_number_width: i32,
     /// `ttset.c:625`. With it on, resizing the window resizes the terminal.
     pub terminal_size_follows_window: bool,
     /// `ttset.c:628`. With it on, a remote resize resizes the window.
@@ -4362,6 +4378,8 @@ impl Default for Settings {
             terminal_local_echo: false,
             terminal_line_edit: false,
             terminal_dark_mode: false,
+            terminal_line_numbers: false,
+            terminal_line_number_width: 4,
             terminal_size_follows_window: false,
             terminal_auto_win_resize: false,
             terminal_clear_on_resize: false,
@@ -4731,6 +4749,12 @@ impl Settings {
             terminal_local_echo: crate::schema::on_off(ini.get("Tera Term", "LocalEcho"), false),
             terminal_line_edit: crate::schema::on_off(ini.get("Sterna", "LineEdit"), false),
             terminal_dark_mode: crate::schema::on_off(ini.get("Sterna", "DarkMode"), false),
+            terminal_line_numbers: crate::schema::on_off(ini.get("Sterna", "LineNumbers"), false),
+            terminal_line_number_width: crate::schema::clamped(
+                ini.get_int("Sterna", "LineNumberWidth", d.terminal_line_number_width) as i32,
+                1,
+                10,
+            ),
             terminal_size_follows_window: crate::schema::on_off(
                 ini.get("Tera Term", "TermIsWin"),
                 false,
@@ -6005,6 +6029,21 @@ impl Settings {
             "Sterna",
             "DarkMode",
             &if self.terminal_dark_mode { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "LineNumbers",
+            &if self.terminal_line_numbers {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "LineNumberWidth",
+            &self.terminal_line_number_width.to_string(),
         );
         ini.set(
             "Tera Term",
@@ -8196,6 +8235,25 @@ impl Settings {
                     "Sterna",
                     "DarkMode",
                     &if self.terminal_dark_mode { "on" } else { "off" }.to_string(),
+                );
+            }
+            "terminal.line_numbers" => {
+                ini.set(
+                    "Sterna",
+                    "LineNumbers",
+                    &if self.terminal_line_numbers {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "terminal.line_number_width" => {
+                ini.set(
+                    "Sterna",
+                    "LineNumberWidth",
+                    &self.terminal_line_number_width.to_string(),
                 );
             }
             "terminal.size_follows_window" => {
@@ -10997,6 +11055,13 @@ impl Settings {
             .to_string(),
             "terminal.line_edit" => if self.terminal_line_edit { "on" } else { "off" }.to_string(),
             "terminal.dark_mode" => if self.terminal_dark_mode { "on" } else { "off" }.to_string(),
+            "terminal.line_numbers" => if self.terminal_line_numbers {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "terminal.line_number_width" => self.terminal_line_number_width.to_string(),
             "terminal.size_follows_window" => if self.terminal_size_follows_window {
                 "on"
             } else {
@@ -11876,6 +11941,16 @@ impl Settings {
             }
             "terminal.dark_mode" => {
                 self.terminal_dark_mode = crate::schema::on_off(Some(value), false)
+            }
+            "terminal.line_numbers" => {
+                self.terminal_line_numbers = crate::schema::on_off(Some(value), false)
+            }
+            "terminal.line_number_width" => {
+                self.terminal_line_number_width = crate::schema::clamped(
+                    crate::schema::int(value, self.terminal_line_number_width),
+                    1,
+                    10,
+                )
             }
             "terminal.size_follows_window" => {
                 self.terminal_size_follows_window = crate::schema::on_off(Some(value), false)
@@ -12854,6 +12929,26 @@ pub const FIELDS: &[Field] = &[
         default: "off",
         label: None,
         doc: "**`[Sterna]`**. A painter-only dark palette for the terminal grid and its local line editor. It deliberately does not change QApplication's palette: menus, dialogs, toolbars and status bars remain the desktop theme. The connect bar persists the switch immediately and applies it to every tab.",
+    },
+    Field {
+        name: "terminal.line_numbers",
+        page: "terminal",
+        section: "Sterna",
+        key: "LineNumbers",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "**`[Sterna]`**. A column of line numbers down the left of the terminal.  The number is the absolute session line, counted from 1: line 1 is the first line the host printed, and a line keeps its number as it scrolls into history. The gutter is painted by a widget beside the terminal rather than into it, so the numbers are not cells and cannot reach the clipboard, the log, the printer or a macro's tap.",
+    },
+    Field {
+        name: "terminal.line_number_width",
+        page: "terminal",
+        section: "Sterna",
+        key: "LineNumberWidth",
+        kind: Kind::IntClamp(1, 10),
+        default: "4",
+        label: None,
+        doc: "**`[Sterna]`**. How many digits the gutter above reserves.  Fixed rather than sized to the largest number on screen, so the terminal never re-flows mid-session at line 1000; a longer number simply overflows its field. `int_clamp` and not `int(1..10)` because there is no upstream reader to reproduce here, and clamping is the predictable answer where `ttset.c:615` would take the default for anything below the floor.",
     },
     Field {
         name: "terminal.size_follows_window",
