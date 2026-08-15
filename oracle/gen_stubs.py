@@ -1,8 +1,5 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.11"
-# dependencies = []
-# ///
+#!/usr/bin/env python3
+# Needs Python 3.11 or later. No third-party packages.
 """
 Generate the Sterna oracle's stub layer from Tera Term's own headers.
 

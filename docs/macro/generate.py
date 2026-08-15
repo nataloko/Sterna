@@ -1,7 +1,5 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.11"
-# ///
+#!/usr/bin/env python3
+# Needs Python 3.11 or later. No third-party packages.
 """Generate Sterna's Markdown TTL reference from the pinned Tera Term manual."""
 
 from __future__ import annotations

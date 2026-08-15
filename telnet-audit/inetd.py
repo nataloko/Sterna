@@ -1,7 +1,5 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.11"
-# ///
+#!/usr/bin/env python3
+# Needs Python 3.11 or later. No third-party packages.
 """A one-line inetd, so a real `telnetd` can be interoped against.
 
 GNU inetutils' `telnetd` has no standalone listening mode — it expects to be

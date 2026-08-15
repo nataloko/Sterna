@@ -47,6 +47,15 @@ banked tern tracing an S-shaped flight path.
    in a worktree. Use its Issue 9 rule index and dictionary workflow instead of
    memory, and preserve exact interface labels, commands, identifiers, and
    necessary technical terminology.
+10. **Python scripts here are plain `python3`, not `uv`** — a deliberate
+    exception to the general preference for PEP 723 headers, decided
+    2026-08-15 and scoped to this repository only. All seven declared no
+    dependencies, so uv was a launcher enforcing a `>=3.11` floor that nothing
+    here needs: no script uses a 3.11-only feature, and every environment they
+    run in ships 3.12 or newer. It bought one more thing to install on a
+    release machine, three CI steps, and a cache with nothing in it. Don't add
+    a `# /// script` block back; the version note at the top of each file is
+    what replaced it.
 
 ## Build and test
 

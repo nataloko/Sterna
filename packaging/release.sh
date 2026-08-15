@@ -13,7 +13,7 @@ if [ "$tag" != "v$version" ]; then
     echo "release: tag $tag does not match workspace version $version" >&2
     exit 2
 fi
-for command in gh uv openssl; do
+for command in gh python3 openssl; do
     command -v "$command" >/dev/null || {
         echo "release: $command is required" >&2
         exit 2

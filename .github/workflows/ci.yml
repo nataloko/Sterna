@@ -50,28 +50,6 @@ jobs:
           repository: TeraTermProject/teraterm
           ref: ${{ env.TERATERM_REF }}
           path: teraterm
-      # apply_patches.py is a PEP 723 script run via `uv run --script`, so the
-      # oracle cannot build without uv. Missing this is why the oracle job was
-      # red with "Error 127" from the moment patches were introduced.
-      #
-      # **v7 is the newest one that can be written this way.** setup-uv stopped
-      # publishing a floating major tag after it: v8, v9 and v10 exist only as
-      # `vX.Y.Z`, so `@v10` is not an old reference — it is not a reference at
-      # all, and three jobs died in `Set up job` with "unable to find version".
-      # v7 is the release that moved to Node 24, which is the whole reason to
-      # be off v5, and it is still a *major* tag, so it keeps collecting fixes
-      # the way every other `uses:` here does. Going higher means pinning a
-      # patch and hand-bumping it forever.
-      #
-      # No cache: every PEP 723 script in this repository declares an empty
-      # `dependencies`, so uv's package cache would hold nothing. v6 changed the
-      # default `cache-dependency-glob` and v7 then warned, truthfully, that
-      # nothing matched it and "the cache will never get invalidated" — while
-      # two jobs raced to reserve the same empty entry.
-      - uses: astral-sh/setup-uv@v7
-        with:
-          version: latest
-          enable-cache: false
       # A second here rather than a job of its own, which would spend twenty
       # seconds booting a runner to run one grep. The release workflow's
       # preflight asks the same question, but only a tag reaches that — and a
@@ -143,10 +121,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-      - uses: astral-sh/setup-uv@v7  # NOT v8+ — see the note at the first use
-        with:
-          version: latest
-          enable-cache: false
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: Sterna/crates -> target
@@ -318,14 +292,6 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: crates -> target
-      # telnet-audit's `inetd.py` is a PEP 723 script run through `uv run
-      # --script`, so without this the two telnet servers die the instant they
-      # are started and `telnet_test` reports a connection refused — three
-      # minutes and a whole Qt build after the actual failure.
-      - uses: astral-sh/setup-uv@v7  # NOT v8+ — see the note at the first use
-        with:
-          version: latest
-          enable-cache: false
       # qt6-base-dev is Qt 6.4.2 here and the desktop runs 6.11.1 — a gap that
       # has already produced one false finding, so this job's job is "does it
       # compile and does the painter still agree", NOT anything about

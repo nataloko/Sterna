@@ -15,12 +15,11 @@ shell/build-release/bench_shell          # the Qt shell, on its own
 shell-iced/target/release/bench_iced     # ...and the iced one
 ```
 
-The Qt half needs the `sterna-fedora` container and its `$HOME/.local/bin` on
-`PATH` for `uv`:
+The Qt half needs the `sterna-fedora` container:
 
 ```sh
 distrobox-host-exec distrobox enter sterna-fedora --no-tty -- bash -lc '
-  export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+  export PATH="$HOME/.cargo/bin:$PATH"
   cd ~/Projects/Sterna
   cmake -S shell -B shell/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
   cmake --build shell/build-release --target bench_shell

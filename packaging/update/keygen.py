@@ -1,7 +1,5 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.11"
-# ///
+#!/usr/bin/env python3
+# Needs Python 3.11 or later. No third-party packages.
 """Create Sterna's one-time Ed25519 updater signing key.
 
 The private half and its random password stay under the ignored `.private/`

@@ -1,7 +1,5 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.11"
-# ///
+#!/usr/bin/env python3
+# Needs Python 3.11 or later. No third-party packages.
 """Sign release artifacts and create Sterna's updater manifest."""
 
 from __future__ import annotations

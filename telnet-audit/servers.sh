@@ -42,11 +42,11 @@ start)
 	"$HERE/inetd.py" "$RAW_PORT" -- /bin/cat > "$DIR/raw.log" 2>&1 &
 	echo $! > "$DIR/raw.pid"
 	# Wait for the listeners rather than for a second, and say so if they
-	# never arrive. `inetd.py` is a PEP 723 script run through `uv`, so on a
-	# machine without `uv` both children die immediately — and printing
-	# "telnetd on :2323" anyway is how a CI job spent three minutes building a
-	# Qt frontend to discover a connection refused. The error is in the log
-	# file; put it where whoever ran this will see it.
+	# never arrive. Both children are `inetd.py`, so anything that stops it
+	# starting kills them instantly — and printing "telnetd on :2323" anyway is
+	# how a CI job spent three minutes building a Qt frontend to discover a
+	# connection refused. The error is in the log file; put it where whoever
+	# ran this will see it.
 	for name in telnetd:$TELNET_PORT raw:$RAW_PORT; do
 		port="${name#*:}"
 		for _ in $(seq 50); do
