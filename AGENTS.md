@@ -56,6 +56,13 @@ banked tern tracing an S-shaped flight path.
     release machine, three CI steps, and a cache with nothing in it. Don't add
     a `# /// script` block back; the version note at the top of each file is
     what replaced it.
+11. **Never delete the `iced` worktree or the `worktree-iced` branch** unless
+    the user asks for it in so many words. It is a long-running experiment,
+    not a stale branch, and it will look like one: merged work leaves its
+    worktree ready to remove, and `git worktree prune`, `worktree remove` and
+    a tidy-up of merged branches all reach for this one. Leave it where it is.
+    The rule is only about that branch's *lifetime* — merging into it, working
+    in it and rebasing it are ordinary.
 
 ## Build and test
 
