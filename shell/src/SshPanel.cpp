@@ -42,11 +42,11 @@ SshPanel::SshPanel(QWidget *parent, const I18n *i18n)
     // CBC ciphers and `ssh-rsa` host keys out of its defaults — correct
     // posture, and the reason a console server from 2012 will not answer.
     m_legacy = new QCheckBox(tr("Offer pre-2020 algorithms (old equipment)"), this);
-    m_legacy->setToolTip(tr("SHA-1 key exchange, CBC ciphers and ssh-rsa host "
-                            "keys. Off by default because they are weak; "
-                            "needed to reach older console servers and "
-                            "switches. A ~/.ssh/config that already names them "
-                            "turns this on by itself."));
+    m_legacy->setToolTip(
+        tr("This option lets Sterna use pre-2020 SSH security methods. Some console "
+           "servers cannot operate without these methods. These methods give less "
+           "security. This option is only for applicable equipment. Your SSH "
+           "configuration can enable these methods automatically."));
 
     m_useConfig = new QCheckBox(tr("Read ~/.ssh/config"), this);
     m_useConfig->setChecked(true);

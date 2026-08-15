@@ -127,9 +127,10 @@ LogOptionsDialog::LogOptionsDialog(Session *session, QWidget *parent, const I18n
     m_binaryMode = new QRadioButton(plainText("DLG_FOPT_BINARY", tr("Binary")), modeGroup);
     m_binaryMode->setObjectName(QStringLiteral("logBinary"));
     (defaults.raw ? m_binaryMode : m_textMode)->setChecked(true);
-    m_binaryMode->setToolTip(tr("Every byte as it arrived, escape sequences included, so "
-                                "the session can be replayed. A binary log is never "
-                                "timestamped."));
+    m_binaryMode->setToolTip(
+        tr("This option records all bytes without changes. These bytes include "
+           "escape sequences. You can send this data to a terminal again. "
+           "Binary logs do not include timestamps."));
     auto *modeRow = new QHBoxLayout(modeGroup);
     modeRow->addWidget(m_textMode);
     modeRow->addWidget(m_binaryMode);
@@ -140,8 +141,10 @@ LogOptionsDialog::LogOptionsDialog(Session *session, QWidget *parent, const I18n
     m_bom = new QCheckBox(plainText("DLG_FOPT_BOM", tr("BOM")), this);
     m_bom->setObjectName(QStringLiteral("logBom"));
     m_bom->setChecked(defaults.bom);
-    m_bom->setToolTip(tr("Start the file with a UTF-8 byte-order mark. Windows editors "
-                         "may want one; most Linux tools would rather not see it."));
+    m_bom->setToolTip(
+        tr("This option adds a UTF-8 byte-order mark at the start of the file. "
+           "It is necessary for some Windows editors. It is not necessary for "
+           "most Linux tools."));
 
     m_plainText = new QCheckBox(plainText("DLG_FOPT_PLAIN", tr("Plain text")), this);
     m_plainText->setObjectName(QStringLiteral("logPlainText"));
@@ -153,8 +156,9 @@ LogOptionsDialog::LogOptionsDialog(Session *session, QWidget *parent, const I18n
         new QCheckBox(plainText("DLG_FOPT_ALLBUFFINFIRST", tr("Include screen buffer")), this);
     m_includeScreen->setObjectName(QStringLiteral("logIncludeScreen"));
     m_includeScreen->setChecked(defaults.include_screen);
-    m_includeScreen->setToolTip(tr("Write what is already on the screen and in the "
-                                   "scrollback before the first new byte."));
+    m_includeScreen->setToolTip(
+        tr("This option first writes the screen and scrollback. After this "
+           "operation, Sterna writes received output."));
 
     m_timestamp = new QCheckBox(plainText("DLG_FOPT_TIMESTAMP", tr("Timestamp")), this);
     m_timestamp->setObjectName(QStringLiteral("logTimestamp"));

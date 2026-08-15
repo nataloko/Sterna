@@ -50,29 +50,30 @@ QString displayPageTitle(const QString &page)
     return text;
 }
 
-/// The tooltip: what the setting is, where it lives in the file, and the
-/// citation for its default.
-///
-/// The citation is the part worth carrying all the way to the UI. Four of
-/// these defaults are an `else` branch or a flag word built up a thousand
-/// lines from where it was zeroed, and `AGENTS.md` has a trap written about
-/// each — so "why is this on?" has an answer in the dialog rather than in the
-/// source.
-QString tooltip(const TtSettingField &f)
+QString displayDefault(QString value, bool automatic = false)
 {
-    QString text = QStringLiteral("<b>%1</b><br>[%2] %3 = %4")
-                       .arg(QString::fromUtf8(f.name),
-                            QString::fromUtf8(f.section),
-                            QString::fromUtf8(f.key),
-                            QString::fromUtf8(f.default_value));
-    if (f.label) {
-        text += QStringLiteral("<br>%1").arg(QString::fromUtf8(f.label));
+    if (value.isEmpty()) {
+        return SettingsDialog::tr("(empty)");
     }
-    const QString doc = QString::fromUtf8(f.doc);
-    if (!doc.isEmpty()) {
-        text += QStringLiteral("<hr>%1").arg(doc.toHtmlEscaped());
+    if (automatic && value == QStringLiteral("-2147483648")) {
+        return SettingsDialog::tr("Automatic");
     }
-    return text;
+    return value;
+}
+
+/// Explain the setting without exposing the schema's implementation notes.
+QString tooltip(const TtSettingField &f, const char *help)
+{
+    const QString name = QString::fromUtf8(f.name);
+    const bool automatic = name == QLatin1String("window.x")
+                           || name == QLatin1String("window.y")
+                           || name == QLatin1String("tek.x")
+                           || name == QLatin1String("tek.y");
+    return QStringLiteral("%1<hr><b>%2</b> %3")
+        .arg(QString::fromUtf8(help).toHtmlEscaped(),
+             SettingsDialog::tr("Default:"),
+             displayDefault(QString::fromUtf8(f.default_value), automatic)
+                 .toHtmlEscaped());
 }
 
 /// A button that shows a colour and opens a picker. The colour lives on the
@@ -247,11 +248,13 @@ void SettingsDialog::build()
             }
         }
         row.label = new QLabel(label, this);
-        row.label->setToolTip(tooltip(f));
+        const char *help = tt_settings_help(i);
+        row.label->setToolTip(tooltip(f, help ? help : ""));
         row.haystack = (name + QLatin1Char(' ') + displayPageTitle(page)
                         + QLatin1Char(' ') + row.label->text() + QLatin1Char(' ')
                         + QString::fromUtf8(f.key) + QLatin1Char(' ')
-                        + QString::fromUtf8(f.doc))
+                         + QString::fromUtf8(f.doc) + QLatin1Char(' ')
+                         + QString::fromUtf8(help ? help : ""))
                            .toLower();
 
         switch (f.kind) {
@@ -373,13 +376,13 @@ void SettingsDialog::build()
             row.plugin = true;
             row.pluginId = f.id;
             row.label = new QLabel(f.label, this);
-            QString tip = QStringLiteral("<b>%1</b><br>%2<br>[%3] %4 = %5")
-                              .arg(f.plugin.toHtmlEscaped(), f.name.toHtmlEscaped(),
-                                   f.section.toHtmlEscaped(), f.key.toHtmlEscaped(),
-                                   f.defaultValue.toHtmlEscaped());
-            if (!f.description.isEmpty()) {
-                tip += QStringLiteral("<hr>%1").arg(f.description.toHtmlEscaped());
+            QString tip = f.description.toHtmlEscaped();
+            if (!tip.isEmpty()) {
+                tip += QStringLiteral("<hr>");
             }
+            tip += QStringLiteral("<b>%1</b> %2")
+                       .arg(tr("Default:"),
+                            displayDefault(f.defaultValue).toHtmlEscaped());
             row.label->setToolTip(tip);
             row.haystack = (f.plugin + QLatin1Char(' ') + f.page + QLatin1Char(' ')
                             + f.section + QLatin1Char(' ') + f.key + QLatin1Char(' ')

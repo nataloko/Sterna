@@ -60,6 +60,7 @@ pub use tt_config::buttons;
 use tt_config::ConnectionTcpCrSend;
 pub use tt_config::{
     Button, Field, Ini, KeyboardMap, Kind, Settings, Shortcut, UserKey, UserKeyType, FIELDS,
+    SETTING_HELP,
 };
 pub use tt_vt::DebugMode;
 pub use tt_vt::{PrinterEvent, WindowMetrics, WindowRequest};

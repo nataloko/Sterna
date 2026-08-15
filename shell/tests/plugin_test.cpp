@@ -91,7 +91,7 @@ void test_window_plugins()
         "  { name = 'enabled', label = 'Enabled', kind = 'bool', default = true },\n"
         "  { name = 'retries', label = 'Retries', kind = 'int', min = 1, max = 9, default = 3 },\n"
         "  { name = 'prefix', key = 'PromptPrefix', label = 'Prefix', "
-        "description = 'Text before setting probes', kind = 'string', default = 'default:' },\n"
+        "description = 'Text before setting probes', kind = 'string', default = '-2147483648' },\n"
         "  { name = 'mode', label = 'Mode', kind = 'enum', "
         "choices = {'fast', 'safe'}, default = 'fast' },\n"
         "} }\n"
@@ -172,6 +172,8 @@ void test_window_plugins()
         CHECK(prefix != nullptr);
         if (prefix) {
             CHECK(prefix->text() == QStringLiteral("saved:"));
+            CHECK(prefix->toolTip().contains(
+                QStringLiteral("<b>Default:</b> -2147483648")));
             prefix->setText(QStringLiteral("live:"));
             dialog.applyChanges();
             CHECK(loaded->setting(2) == QStringLiteral("live:"));

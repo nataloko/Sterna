@@ -6,7 +6,7 @@ use tt_config::{
     FontQuality, Ini, KeyboardBackspace, KeyboardMeta8bit, Kind, LogTimestampType,
     ProxySocksResolve, ProxyType, SerialDataBits, SerialFlow, SerialParity, SerialStopBits,
     Settings, TerminalCrReceive, TerminalId, WindowIcon, WindowPanelLayout, WindowQuickButtonsArea,
-    FIELDS,
+    FIELDS, SETTING_HELP,
 };
 
 #[test]
@@ -751,10 +751,75 @@ fn every_setting_is_reachable_by_name() {
 #[test]
 fn the_metadata_describes_what_is_really_there() {
     assert!(FIELDS.len() >= 39);
-    for field in FIELDS {
+    assert_eq!(FIELDS.len(), SETTING_HELP.len());
+    for (field, help) in FIELDS.iter().zip(SETTING_HELP) {
         assert!(field.name.contains('.'), "{} is not dotted", field.name);
         assert!(field.name.starts_with(field.page), "{}", field.name);
         assert!(!field.doc.is_empty(), "{} has no documentation", field.name);
+        assert!(!help.is_empty(), "{} has no user help", field.name);
+        assert!(
+            help.starts_with("This setting "),
+            "{} user help has no explicit subject: {}",
+            field.name,
+            help
+        );
+        assert!(
+            !help.contains('`') && !help.contains("ttset.c") && !help.contains("->"),
+            "{} exposes implementation details in user help: {}",
+            field.name,
+            help
+        );
+        assert!(
+            !help.contains(';'),
+            "{} uses a semicolon in user help: {}",
+            field.name,
+            help
+        );
+        let sentences: Vec<_> = help
+            .split(['.', '!', '?'])
+            .filter(|s| !s.trim().is_empty())
+            .collect();
+        assert!(
+            sentences.len() <= 6,
+            "{} has more than six user-help sentences: {}",
+            field.name,
+            help
+        );
+        for sentence in sentences {
+            assert!(
+                sentence.split_whitespace().count() <= 25,
+                "{} has user help longer than 25 words: {}",
+                field.name,
+                sentence.trim()
+            );
+        }
+        let prose = format!(" {} ", help.to_ascii_lowercase());
+        for phrase in [
+            " currently ",
+            " whether ",
+            " instead ",
+            " turn on ",
+            " turns on ",
+            " turning on ",
+            " turn off ",
+            " turns off ",
+            " turning off ",
+            " fall back ",
+            " falls back ",
+            " back up ",
+            " backs up ",
+            " colour ",
+            " colours ",
+            " acknowledgement ",
+        ] {
+            assert!(
+                !prose.contains(phrase),
+                "{} uses non-STE wording {:?}: {}",
+                field.name,
+                phrase.trim(),
+                help
+            );
+        }
         assert!(!field.section.is_empty());
         assert!(!field.key.is_empty());
         // A default that the setting's own parser does not accept is a schema

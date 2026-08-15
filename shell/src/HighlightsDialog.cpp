@@ -164,9 +164,8 @@ HighlightsDialog::HighlightsDialog(const QVector<QuickHighlight> &rules, QWidget
     m_group->setSpecialValueText(tr("Entire match"));
     m_group->setPrefix(tr("Capture group "));
     m_group->setToolTip(
-        tr("Use Entire match normally. Choose a capture group to apply the "
-           "colour and style only to text matched inside that numbered pair "
-           "of parentheses."));
+        tr("The style usually changes the full match. A capture group changes "
+           "only the text in its numbered parentheses."));
     form->addRow(tr("Apply to"), m_group);
 
     auto *groupHelp = new QLabel(

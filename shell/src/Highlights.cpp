@@ -42,32 +42,42 @@ QString QuickHighlight::describe() const
 {
     QStringList does;
     if (fore.isValid()) {
-        does << QCoreApplication::translate("Highlights", "text %1").arg(fore.name());
+        does << QCoreApplication::translate("Highlights", "This rule uses text color %1.")
+                    .arg(fore.name());
     }
     if (back.isValid()) {
-        does << QCoreApplication::translate("Highlights", "background %1").arg(back.name());
+        does << QCoreApplication::translate("Highlights", "This rule uses background color %1.")
+                    .arg(back.name());
     }
     if (style & TT_HIGHLIGHT_BOLD) {
-        does << QCoreApplication::translate("Highlights", "bold");
+        does << QCoreApplication::translate("Highlights", "This rule makes the text bold.");
     }
     if (style & TT_HIGHLIGHT_UNDERLINE) {
-        does << QCoreApplication::translate("Highlights", "underline");
+        does << QCoreApplication::translate("Highlights", "This rule underlines the text.");
     }
     if (style & TT_HIGHLIGHT_REVERSE) {
-        does << QCoreApplication::translate("Highlights", "reverse");
+        does << QCoreApplication::translate(
+            "Highlights", "This rule interchanges the text and background colors.");
     }
     if (does.isEmpty()) {
-        does << QCoreApplication::translate("Highlights", "nothing yet");
+        does << QCoreApplication::translate("Highlights",
+                                             "This rule makes no visual change.");
     }
 
     const QString what = literal
-                             ? QCoreApplication::translate("Highlights", "text \"%1\"").arg(pattern)
-                             : QCoreApplication::translate("Highlights", "/%1/").arg(pattern);
+                             ? QCoreApplication::translate("Highlights", "This rule finds \"%1\".")
+                                   .arg(pattern)
+                             : QCoreApplication::translate(
+                                   "Highlights",
+                                   "This rule finds text that matches the pattern \"%1\".")
+                                   .arg(pattern);
     const QString where = wholeLine
-                              ? QCoreApplication::translate("Highlights", "the whole line")
-                              : QCoreApplication::translate("Highlights", "the match");
-    return QCoreApplication::translate("Highlights", "%1 → %2: %3")
-        .arg(what, where, does.join(QStringLiteral(", ")));
+                              ? QCoreApplication::translate("Highlights",
+                                                             "This rule changes the style of the full line.")
+                              : QCoreApplication::translate("Highlights",
+                                                             "This rule changes the style of the matching text.");
+    return QCoreApplication::translate("Highlights", "%1\n%2\n%3")
+        .arg(what, where, does.join(QLatin1Char('\n')));
 }
 
 QVector<QuickHighlight> loadHighlights(const QString &settingsPath)

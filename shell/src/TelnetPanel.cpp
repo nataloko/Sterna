@@ -18,16 +18,15 @@ TelnetPanel::TelnetPanel(QWidget *parent, const I18n *i18n)
     m_mode->addItem(tr("Auto-detect"), TT_TELNET_AUTO);
     m_mode->addItem(tr("Raw (no telnet at all)"), TT_TELNET_RAW);
     m_mode->setToolTip(
-        tr("A terminal server puts one TCP port on each serial line, and those "
-           "ports are not telnet servers — opening at one with a negotiation "
-           "puts protocol bytes into the console behind it. Raw never looks at "
-           "a byte, which is also what a binary transfer needs. This follows "
-           "the port until you change it."));
+        tr("Negotiate is for a Telnet server. Raw does not change bytes. "
+           "Auto-detect changes to Telnet mode after the first 0xFF byte, even in "
+           "non-Telnet data. Sterna stores this selection for the port."));
 
     m_binary = new QCheckBox(tr("Ask for 8-bit (BINARY) mode"), this);
-    m_binary->setToolTip(tr("Stops a carriage return being padded with a NUL. "
-                            "Tera Term leaves this off and agrees if the "
-                            "server asks."));
+    m_binary->setToolTip(
+        tr("This option sends a Telnet request for 8-bit data mode. If the server "
+           "agrees, Sterna does not add a zero byte after each carriage return "
+           "that it sends. Sterna also accepts a server request for this mode."));
 
     connect(m_mode, &QComboBox::activated, this, [this] { m_modePinned = true; });
 

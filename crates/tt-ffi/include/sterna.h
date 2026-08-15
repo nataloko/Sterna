@@ -1257,8 +1257,8 @@ typedef struct {
      */
     const char *label;
     /**
-     * The schema's own comment, which is where the citation for the default
-     * lives. Meant for a tooltip and for the generated documentation.
+     * Developer documentation with behavioural citations. This is not
+     * user-facing help; use [`tt_settings_help`] for display text.
      */
     const char *doc;
     TtSettingKind kind;
@@ -3449,6 +3449,14 @@ size_t tt_settings_field_count(void);
  * Describe setting `index`. False, and `out` untouched, past the end.
  */
 bool tt_settings_field(size_t index, TtSettingField *out);
+
+/**
+ * Explain what setting `index` changes in plain language, or return null.
+ *
+ * The returned string lives for the life of the process. This is a separate
+ * function so adding user help does not change the size of [`TtSettingField`].
+ */
+const char *tt_settings_help(size_t index);
 
 /**
  * The `n`th spelling an `Enum` setting accepts, or null.

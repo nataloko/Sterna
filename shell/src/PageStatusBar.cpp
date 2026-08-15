@@ -156,8 +156,8 @@ void PageStatusBar::setLogging(bool logging, quint64 bytes, bool paused)
     // every recording session, and resetting widget properties there turns a
     // cheap size-label update into repeated event and palette work.
     m_log->setCursor(logging ? Qt::PointingHandCursor : Qt::ArrowCursor);
-    m_log->setToolTip(logging ? (paused ? tr("Click to resume logging")
-                                        : tr("Click to pause logging"))
+    m_log->setToolTip(logging ? (paused ? tr("This button continues the session log.")
+                                        : tr("This button pauses the session log."))
                               : QString());
     m_logBlinkOn = logging;
     if (logging && !paused) {

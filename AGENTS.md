@@ -41,6 +41,12 @@ banked tern tracing an S-shaped flight path.
 8. **Some divergence is deliberate.** `docs/deviations.md` is the list and the
    rule for joining it — a difference recorded there is not a bug to fix, and
    a change that creates one gets its entry in the same commit.
+9. **Use ASD-STE100 for user-facing English.** Before writing, rewriting, or
+   reviewing user-facing text, load and follow the `ste100` skill from the
+   adjacent `STE100` repository. Resolve it from the main checkout when working
+   in a worktree. Use its Issue 9 rule index and dictionary workflow instead of
+   memory, and preserve exact interface labels, commands, identifiers, and
+   necessary technical terminology.
 
 ## Build and test
 

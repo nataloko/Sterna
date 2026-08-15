@@ -18,7 +18,7 @@
 
 use std::fmt::Write as _;
 
-/// One row of the schema, with the comment lines above it as its docs.
+/// One row of the schema, with separate developer docs and user help.
 struct Setting {
     name: String,
     kind: Kind,
@@ -46,6 +46,7 @@ struct Setting {
     /// which is the Win32 integer parser's separate rule.
     default_from: Option<String>,
     doc: Vec<String>,
+    help: Vec<String>,
 }
 
 /// The width of the `ts` field the value lands in, when it is narrower than
@@ -204,16 +205,23 @@ fn narrowed(expr: String, width: &Option<Width>) -> String {
 fn parse(text: &str) -> Vec<Setting> {
     let mut out = Vec::new();
     let mut doc = Vec::new();
+    let mut help = Vec::new();
     for line in text.lines() {
         let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("#@") {
+            help.push(rest.trim().to_string());
+            continue;
+        }
         if let Some(rest) = trimmed.strip_prefix('#') {
-            // A run of comments directly above a setting is its documentation.
-            // A run followed by a blank line is a section heading for humans.
+            // Ordinary comments keep the behavioural evidence for developers.
+            // User-facing help has its own `#@` prefix so implementation notes
+            // never leak into the settings dialog.
             doc.push(rest.trim().to_string());
             continue;
         }
         if trimmed.is_empty() {
             doc.clear();
+            help.clear();
             continue;
         }
         // The first four fields from the left and the label from the right,
@@ -269,6 +277,7 @@ fn parse(text: &str) -> Vec<Setting> {
             write_if,
             default_from,
             doc: std::mem::take(&mut doc),
+            help: std::mem::take(&mut help),
         });
     }
 
@@ -965,6 +974,18 @@ fn emit(settings: &[Setting]) -> String {
         writeln!(out, "        label: {label},").expect("string");
         writeln!(out, "        doc: \"{}\",", escape(&s.doc.join(" "))).expect("string");
         writeln!(out, "    }},").expect("string");
+    }
+    out.push_str("];\n\n");
+
+    // User help stays separate from `Field`. The C ABI already exposes that
+    // struct, so adding a pointer to it would change the size of callers' stack
+    // values. Both tables have schema order and the test below pins their size.
+    out.push_str(
+        "/// Plain-language help for each entry in [`FIELDS`], in the same order.\n\
+         pub const SETTING_HELP: &[&str] = &[\n",
+    );
+    for s in settings {
+        writeln!(out, "    \"{}\",", escape(&s.help.join(" "))).expect("string");
     }
     out.push_str("];\n");
     out

@@ -1316,9 +1316,9 @@ void test_the_edit_menu_and_key_map_share_clear_commands()
 
     CHECK(clearScreen->text() == QStringLiteral("Clear screen"));
     CHECK(clearBuffer->text() == QStringLiteral("Clear buffer"));
-    CHECK(clearScreen->statusTip().contains(QStringLiteral("keeps it in scrollback")));
+    CHECK(clearScreen->statusTip().contains(QStringLiteral("scrollback on")));
     CHECK(clearBuffer->statusTip().contains(
-        QStringLiteral("permanently removes all scrollback")));
+        QStringLiteral("permanently deletes all scrollback")));
     CHECK(clearScreen->shortcut().isEmpty());
     CHECK(clearBuffer->shortcut().isEmpty());
     const int screenAt = edit->actions().indexOf(clearScreen);
@@ -1390,8 +1390,8 @@ void test_the_edit_menu_offers_both_ways_to_select()
 
     CHECK(selectScreen->text() == QStringLiteral("Select screen"));
     CHECK(selectAll->text() == QStringLiteral("Select all"));
-    CHECK(selectScreen->statusTip().contains(QStringLiteral("wherever the view")));
-    CHECK(selectAll->statusTip().contains(QStringLiteral("whole buffer")));
+    CHECK(selectScreen->statusTip().contains(QStringLiteral("lines in view")));
+    CHECK(selectAll->statusTip().contains(QStringLiteral("page in view")));
     // Neither takes a shortcut. Upstream gives them none, and a `QAction`
     // shortcut is a key the host stops receiving — see `AGENTS.md`.
     CHECK(selectScreen->shortcut().isEmpty());
@@ -2010,10 +2010,31 @@ void test_the_settings_dialog_is_built_from_the_schema()
     CHECK(termId != nullptr);
     if (termId) {
         CHECK(termId->currentText() == QStringLiteral("VT100"));
+        CHECK(termId->toolTip().contains(
+            QStringLiteral("This setting selects the terminal model")));
+        CHECK(termId->toolTip().contains(QStringLiteral("<b>Default:</b> VT100")));
+        CHECK(!termId->toolTip().contains(QStringLiteral("ttset.c")));
+        CHECK(!termId->toolTip().contains(QStringLiteral("[Tera Term]")));
         termId->setCurrentIndex(termId->findText(QStringLiteral("VT320")));
         dialog.applyChanges();
         CHECK(h.session.setting(QStringLiteral("terminal.id"))
               == QStringLiteral("VT320"));
+    }
+
+    auto *emptyDefault = dialog.findChild<QWidget *>(
+        QStringLiteral("settingEditor:terminal.answerback"));
+    auto *automaticDefault = dialog.findChild<QWidget *>(
+        QStringLiteral("settingEditor:window.x"));
+    auto *escapedHelp = dialog.findChild<QWidget *>(
+        QStringLiteral("settingEditor:log.default_name"));
+    CHECK(emptyDefault != nullptr);
+    CHECK(automaticDefault != nullptr);
+    CHECK(escapedHelp != nullptr);
+    if (emptyDefault && automaticDefault && escapedHelp) {
+        CHECK(emptyDefault->toolTip().contains(QStringLiteral("<b>Default:</b> (empty)")));
+        CHECK(automaticDefault->toolTip().contains(
+            QStringLiteral("<b>Default:</b> Automatic")));
+        CHECK(escapedHelp->toolTip().contains(QStringLiteral("&amp;h")));
     }
 
     // The search box is what makes 600 settings navigable, and it filters
@@ -3428,10 +3449,11 @@ void test_the_connect_bar_is_a_view_of_the_session()
     }
 
     CHECK(echoBox->toolTip()
-          == QStringLiteral("Shows your keystrokes locally. Turn this on when "
-                            "the connected device does not echo what you type; "
-                            "leave it off if characters appear twice."));
-    CHECK(lineBox->toolTip().contains(QStringLiteral("until Enter sends the line")));
+          == QStringLiteral("This option shows each key while you type. The on value "
+                            "is applicable if the connected device does not show your "
+                            "input. The off value is applicable if each character shows "
+                            "two times."));
+    CHECK(lineBox->toolTip().contains(QStringLiteral("The Enter key sends")));
     CHECK(darkAction->toolTip().contains(QStringLiteral("terminal views")));
     CHECK(!darkAction->icon().isNull());
     CHECK(darkButton->toolButtonStyle() == Qt::ToolButtonIconOnly);
@@ -3473,7 +3495,7 @@ void test_the_connect_bar_is_a_view_of_the_session()
           == QStringLiteral("on"));
     CHECK(view && view->theme().defaultBackground() == QColor(0x1e, 0x1e, 0x1e));
     CHECK(darkAction->isChecked());
-    CHECK(darkAction->toolTip().contains(QStringLiteral("light palette")));
+    CHECK(darkAction->toolTip().contains(QStringLiteral("to a light palette")));
     CHECK(window.palette() == windowPalette);
     QFile saved(settingsPath);
     CHECK(saved.open(QIODevice::ReadOnly));

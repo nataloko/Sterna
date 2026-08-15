@@ -1176,6 +1176,8 @@ static void test_settings(void)
         TtSettingField f;
         CHECK(tt_settings_field(i, &f));
         CHECK(f.name && f.page && f.section && f.key && f.default_value && f.doc);
+        const char *help = tt_settings_help(i);
+        CHECK(help && help[0] != '\0');
         /* The page is the dotted name's first component, which is what puts a
          * setting on a tab without a second table saying so. */
         CHECK(strncmp(f.name, f.page, strlen(f.page)) == 0);
@@ -1218,6 +1220,7 @@ static void test_settings(void)
 
     TtSettingField f;
     CHECK(!tt_settings_field(n, &f));
+    CHECK(tt_settings_help(n) == NULL);
 
     /* Reading and writing by name, and the value is the file's spelling both
      * ways so a combo box can round-trip it. */
