@@ -654,6 +654,15 @@ SSH:
   `addAction(text)` parents them to the bar — so a rebuilt toolbar keeps every
   previous action alive as a child, holding its shortcut and answering
   `findChild` first. The symptom is a widget that stops following the session.
+- **A `QToolBar` cannot have a button wider than its own caption.**
+  `QToolBarLayout` sizes each item to its text and centres it across the bar's
+  thickness, and it ignores the button's size policy in that direction — so a
+  panel dragged wider puts every new pixel in the margin. The one lever that
+  moves it, a minimum width per button, raises the bar's *own* minimum with it,
+  and the splitter beside it can then grow but never shrink: a ratchet, not a
+  layout. Measured both ways. `QuickButtonBar` is a plain widget and a
+  `QBoxLayout` for that reason, and the same answer is waiting for anything
+  else that wants a toolbar to fill a dock.
 - **A combo popup opens under the pointer, so the release that opened it is a
   choice** — `activated` arrives without anybody having chosen anything, and a
   row that connects makes one click on the arrow dial a host. Choosing fills

@@ -5,6 +5,14 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+### Changed
+
+- Quick buttons now fill the panel they sit in. Down the left or right edge
+  each button is as wide as the panel, so widening it makes the buttons wider
+  instead of leaving a strip of empty space beside them, and every button is
+  the same size whatever its label; along the top or bottom edge they take the
+  panel's height the same way.
+
 ## [0.3.1] - 2026-08-15
 
 ### Added

@@ -4,58 +4,103 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QBoxLayout>
+#include <QFrame>
 #include <QMenu>
 #include <QSizePolicy>
+#include <QToolButton>
 
 #include "Session.h"
 
-QuickButtonBar::QuickButtonBar(QWidget *parent) : QToolBar(parent)
+QuickButtonBar::QuickButtonBar(QWidget *parent) : QWidget(parent)
 {
     setObjectName(QStringLiteral("quickButtonBar"));
     setWindowTitle(tr("Quick buttons"));
-    // The enclosing dock owns movement and resizing. Letting the inner toolbar
-    // move as well produces a second drag handle which can float independently
-    // of the panel that gives it a resizable edge.
-    setMovable(false);
-    setFloatable(false);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    // Text: there is no icon theme this program ships, and there is certainly
-    // no themed icon for "show version".
-    setToolButtonStyle(Qt::ToolButtonTextOnly);
+
+    m_layout = new QBoxLayout(QBoxLayout::TopToBottom, this);
+    m_layout->setContentsMargins(4, 4, 4, 4);
+    m_layout->setSpacing(4);
+    // One trailing stretch, so the buttons keep the top of the panel and the
+    // room the user has dragged out collects below them. Not centred along
+    // this axis, deliberately: centring would move every button when the
+    // window is resized or a button is added, and a bar of things to click
+    // must not move — the same rule `describeAction` keeps a counter out of a
+    // caption for. Everything added goes in before this item, which is the
+    // only one `clearContents` leaves behind.
+    m_layout->addStretch();
 
     setContextMenuPolicy(Qt::CustomContextMenu);
     connect(this, &QWidget::customContextMenuRequested, this,
             &QuickButtonBar::showContextMenu);
 }
 
+QToolButton *QuickButtonBar::addButton(QAction *action)
+{
+    auto *button = new QToolButton(this);
+    button->setDefaultAction(action);
+    // Text: there is no icon theme this program ships, and there is certainly
+    // no themed icon for "show version".
+    button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    // A framed button rather than a toolbar's flat one. A flat button shows
+    // its extent only under the pointer, which on a panel-wide button reads as
+    // a centred caption and nothing to press.
+    button->setAutoRaise(false);
+    // The terminal keeps the keyboard. A button that took focus would leave
+    // the next keystroke going nowhere, and there is nothing to type here.
+    button->setFocusPolicy(Qt::NoFocus);
+    // Preferred in both directions: the layout hands an item the panel's full
+    // width (or height, laid across) and the surplus along its own direction
+    // goes to the trailing stretch, which is the only expanding item here.
+    button->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+    m_layout->insertWidget(m_layout->count() - 1, button);
+    return button;
+}
+
+void QuickButtonBar::clearContents()
+{
+    // Take everything out and delete it, the stretch included, then put the
+    // stretch back — a stretch is a spacer item with no widget, so this is
+    // cheaper than finding the widgets among them.
+    while (QLayoutItem *item = m_layout->takeAt(0)) {
+        delete item->widget();
+        delete item;
+    }
+    m_layout->addStretch();
+    m_widgets.clear();
+    m_separator = nullptr;
+
+    // The actions are children of this widget rather than of the buttons, so
+    // that `findChild` can install a shortcut on one; deleting the buttons
+    // therefore does not take them with it. Left alive they would keep
+    // answering their old shortcuts and hand `findChild` a button that is no
+    // longer on screen — the symptom is a button that stops following the
+    // session. `buttons_test` found it in the toolbar this replaced.
+    qDeleteAll(m_actions);
+    m_actions.clear();
+    delete m_add;
+    m_add = nullptr;
+}
+
 void QuickButtonBar::setButtons(const QVector<QuickButton> &buttons)
 {
     m_buttons = buttons;
-    m_actions.clear();
     // Nothing is repeating across a rebuild: the indices these count against
     // have just been renumbered, and the window stops every run for the same
     // reason.
     m_remaining.fill(0, buttons.size());
-    m_add = nullptr;
-
-    // **`QToolBar::clear()` removes its actions and does not delete them**, and
-    // `addAction(text)` parents them here — so a rebuild without this leaves
-    // every previous action alive as a child of the bar, holding its shortcut
-    // and answering `findChild` before the live one does. The symptom is a
-    // button that stops following the session.
-    const QList<QAction *> previous = actions();
-    clear();
-    qDeleteAll(previous);
+    clearContents();
 
     for (int i = 0; i < m_buttons.size(); i++) {
         const QuickButton &button = m_buttons[i];
-        QAction *action = addAction(button.shortCaption());
+        auto *action = new QAction(button.shortCaption(), this);
         action->setObjectName(QStringLiteral("quickButton%1").arg(i));
         // Checkable only for a button that can repeat, because "on" here means
         // a run in progress and a button that cannot start one must never look
         // as though it has.
         action->setCheckable(button.repeats());
         m_actions.append(action);
+        m_widgets.append(addButton(action));
         describeAction(i);
         connect(action, &QAction::triggered, this, [this, i, action] {
             // Qt has already toggled a checkable action by the time this runs,
@@ -73,15 +118,38 @@ void QuickButtonBar::setButtons(const QVector<QuickButton> &buttons)
     }
 
     if (!m_buttons.isEmpty()) {
-        addSeparator();
+        m_separator = new QFrame(this);
+        m_separator->setFrameShadow(QFrame::Sunken);
+        m_layout->insertWidget(m_layout->count() - 1, m_separator);
     }
     // The empty panel is still useful: this is its shortest route to the first
     // button, and it keeps View > Show quick buttons truthful before one has
     // been defined.
-    m_add = addAction(QStringLiteral("+"));
+    m_add = new QAction(QStringLiteral("+"), this);
     m_add->setObjectName(QStringLiteral("quickButtonAdd"));
     m_add->setToolTip(tr("Add a quick button..."));
+    addButton(m_add);
     connect(m_add, &QAction::triggered, this, &QuickButtonBar::addRequested);
+
+    // The separator's shape follows the direction the buttons run in, and it
+    // has only just been made.
+    setOrientation(m_orientation);
+}
+
+void QuickButtonBar::setOrientation(Qt::Orientation orientation)
+{
+    m_orientation = orientation;
+    const bool vertical = orientation == Qt::Vertical;
+    m_layout->setDirection(vertical ? QBoxLayout::TopToBottom
+                                    : QBoxLayout::LeftToRight);
+    if (m_separator) {
+        m_separator->setFrameShape(vertical ? QFrame::HLine : QFrame::VLine);
+    }
+}
+
+QToolButton *QuickButtonBar::buttonWidget(int index) const
+{
+    return m_widgets.value(index, nullptr);
 }
 
 void QuickButtonBar::describeAction(int index)
@@ -161,10 +229,9 @@ int QuickButtonBar::indexAt(const QPoint &pos) const
     // can be a child of its own, and the answer wanted is the action.
     for (QWidget *child = childAt(pos); child && child != this;
          child = child->parentWidget()) {
-        for (int i = 0; i < m_actions.size(); i++) {
-            if (widgetForAction(m_actions[i]) == child) {
-                return i;
-            }
+        const int index = m_widgets.indexOf(qobject_cast<QToolButton *>(child));
+        if (index >= 0) {
+            return index;
         }
     }
     return -1;

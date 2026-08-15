@@ -34,7 +34,6 @@
 #include <QStatusTipEvent>
 #include <QTimer>
 #include <QUrl>
-#include <QVBoxLayout>
 
 #include <QDir>
 #include <QStandardPaths>
@@ -385,15 +384,12 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
     m_quickDock->setObjectName(QStringLiteral("quickButtonDock"));
     m_quickDock->setAllowedAreas(Qt::AllDockWidgetAreas);
     m_quickDock->setFeatures(QDockWidget::DockWidgetMovable);
-    auto *quickPanel = new QWidget(m_quickDock);
-    quickPanel->setObjectName(QStringLiteral("quickButtonPanel"));
-    auto *quickLayout = new QVBoxLayout(quickPanel);
-    quickLayout->setContentsMargins(0, 0, 0, 0);
-    quickLayout->setSpacing(0);
-    m_quickBar = new QuickButtonBar(quickPanel);
-    quickLayout->addWidget(m_quickBar, 0, Qt::AlignTop);
-    quickLayout->addStretch();
-    m_quickDock->setWidget(quickPanel);
+    // The bar is the dock's whole widget rather than something aligned inside a
+    // panel: it owns the stretches that centre its buttons, and a wrapper that
+    // capped its height would leave them pinned to one end of the panel with
+    // the empty room all at the other.
+    m_quickBar = new QuickButtonBar(m_quickDock);
+    m_quickDock->setWidget(m_quickBar);
     addDockWidget(Qt::RightDockWidgetArea, m_quickDock);
     m_quickDock->hide();
     const auto orientQuickBar = [this](Qt::DockWidgetArea area) {

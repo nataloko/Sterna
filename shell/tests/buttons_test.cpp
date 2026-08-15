@@ -30,6 +30,7 @@
 #include <QSpinBox>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QToolButton>
 
 #include <cstdio>
 
@@ -528,8 +529,13 @@ void the_bar_opens_down_the_right_and_stays_where_it_is_put()
 {
     QTemporaryDir dir;
     CHECK(dir.isValid());
-    const QString shipped =
-        writeIni(dir, "[Sterna Buttons]\r\nButton1Label=Hi\r\nButton1Value=hi$0D\r\n");
+    // Two captions of very different lengths, because the property below is
+    // that both buttons come out the same width.
+    const QString shipped = writeIni(
+        dir,
+        "[Sterna Buttons]\r\nButton1Label=Hi\r\nButton1Value=hi$0D\r\n"
+        "Button2Label=Show the running configuration\r\n"
+        "Button2Value=show run$0D\r\n");
 
     {
         // Nothing in the file about the bar, so this is the shipped answer: a
@@ -548,6 +554,28 @@ void the_bar_opens_down_the_right_and_stays_where_it_is_put()
         if (dock) {
             window.resizeDocks({dock}, {before + 100}, Qt::Horizontal);
             CHECK(spin([dock, before] { return dock->width() > before; }, 2000));
+        }
+
+        // ...and the buttons take that width with them. A button is as wide as
+        // the panel and not as wide as its own caption, so a short one and a
+        // long one measure the same and both follow the splitter — the room
+        // dragged out goes into the buttons rather than into the margin beside
+        // them.
+        QuickButtonBar *bar = barOf(window);
+        QToolButton *first = bar ? bar->buttonWidget(0) : nullptr;
+        QToolButton *second = bar ? bar->buttonWidget(1) : nullptr;
+        CHECK(first != nullptr && second != nullptr);
+        if (first && second) {
+            CHECK(spin([first, dock] { return first->width() > dock->width() / 2; },
+                       2000));
+            CHECK(first->width() == second->width());
+            CHECK(first->width() > bar->width() - 24);
+            // Grown again: the widths above are what this window opened with,
+            // and a splitter drag has to reach them.
+            const int wide = first->width();
+            window.resizeDocks({dock}, {dock->width() + 120}, Qt::Horizontal);
+            CHECK(spin([first, wide] { return first->width() > wide; }, 2000));
+            CHECK(first->width() == second->width());
         }
     }
 
@@ -873,6 +901,14 @@ void render_widgets()
     window.show();
     spin([] { return false; }, 300);
     window.grab().save(g_writeTo + QStringLiteral("/quick-buttons-window.png"));
+
+    // ...and dragged to the bottom edge, where the same buttons run across the
+    // panel and take its height instead of its width.
+    QString error;
+    window.session()->setSetting(QStringLiteral("window.quick_buttons_area"),
+                                 QStringLiteral("bottom"), &error);
+    spin([] { return false; }, 300);
+    window.grab().save(g_writeTo + QStringLiteral("/quick-buttons-bottom.png"));
 
     QuickButtonsDialog dialog(loadQuickButtons(ini), window.session(), &window);
     dialog.selectRow(3);

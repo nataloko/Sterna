@@ -861,13 +861,29 @@ live area would drag the bar back to the file's edge the moment somebody added
 a button. `m_quickBarArea` is the last value applied, and it starts empty so
 that the first reload places the bar at all.
 
+**A button is as wide as the panel, not as wide as its caption.** The bar is a
+plain `QWidget` with a `QBoxLayout` of `QToolButton`s, which it was not until
+that mattered: `QToolBarLayout` sizes every item to its own text and centres it
+across the bar's thickness, whatever size policy the button carries, so room
+dragged out of the splitter went into the margins beside a ragged column of
+captions rather than into the buttons. The one lever that does move it — a
+minimum width on each button — raises the bar's own minimum with it, and the
+splitter can then grow but never shrink. Both measured. The buttons keep the
+top of the panel rather than being centred along it, for the reason a repeat
+count lives in the tooltip and not in the caption: a bar of things to click
+must not move when the window is resized or a button is added. Laid across the
+bottom or top edge the same rule gives buttons of their natural width, taking
+the panel's height, from the left.
+
 Two traps live here:
 
-- **`QToolBar::clear()` does not delete the actions it removes**, and
-  `addAction(text)` parents them to the bar. Rebuilding without deleting them
-  leaves every previous action alive as a child, holding its shortcut and
-  answering `findChild` before the live one — the symptom is a button that
-  stops following the session. `buttons_test` found it.
+- **Deleting the buttons does not delete the actions.** They are children of
+  the bar rather than of the buttons, so that `findChild` can install a
+  shortcut on one; a rebuild that leaves them alive keeps every previous action
+  answering its shortcut and hands `findChild` a button that is no longer on
+  screen — the symptom is a button that stops following the session.
+  `buttons_test` found it under the `QToolBar` this replaced, where the same
+  fact wore `QToolBar::clear()`'s name.
 - **A shortcut is a key the terminal stops receiving.** A `QAction` outranks
   `TerminalView::keyPressEvent`, silently, which is why no button ships with a
   shortcut and why the editor checks a sequence against the window's actions,
