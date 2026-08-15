@@ -5,6 +5,20 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-08-15
+
+### Fixed
+
+- The View menu's switches are remembered. Show toolbar, Show quick buttons,
+  Show line numbers and Highlight matches moved the terminal in front of you
+  and nothing else, so the next launch read the settings file and put all four
+  back where they had been. Each now writes its own setting as it is ticked,
+  the way View > Tiled already did. This is deliberately not governed by the
+  automatic-save option on the Settings page: that option is about the Setup
+  dialog, whose changes are provisional until its OK button, and a menu tick
+  has no OK button behind it to wait for. Only the one key is written, so a
+  settings file shared with Tera Term keeps every other line it had.
+
 ## [0.5.1] - 2026-08-15
 
 ### Changed
@@ -383,7 +397,8 @@ Initial public release.
 - Linux AppImage and Windows installer packages.
 
 [GitHub releases page]: https://github.com/nataloko/Sterna/releases
-[Unreleased]: https://github.com/nataloko/Sterna/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/nataloko/Sterna/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/nataloko/Sterna/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/nataloko/Sterna/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/nataloko/Sterna/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/nataloko/Sterna/compare/v0.4.0...v0.4.1
