@@ -4,7 +4,7 @@ Canonical roadmap. Update the status markers as work lands; this file is the
 thing a fresh session should read first, together with `AGENTS.md`.
 
 **Last updated:** 2026-08-15 · **Stage:** 4 complete, deliberate deviations
-landing (`docs/deviations.md`) · **Commits:** 796
+landing (`docs/deviations.md`) · **Commits:** 799
 
 | | Stage 0 spike | Status |
 |---|---|---|

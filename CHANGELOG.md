@@ -5,6 +5,8 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-15
+
 ### Added
 
 - Edit > Find (Ctrl+Shift+F) searches the terminal — the page in front of you
@@ -369,7 +371,8 @@ Initial public release.
 - Linux AppImage and Windows installer packages.
 
 [GitHub releases page]: https://github.com/nataloko/Sterna/releases
-[Unreleased]: https://github.com/nataloko/Sterna/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/nataloko/Sterna/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/nataloko/Sterna/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/nataloko/Sterna/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/nataloko/Sterna/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/nataloko/Sterna/compare/v0.3.0...v0.3.1
