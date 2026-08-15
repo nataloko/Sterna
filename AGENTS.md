@@ -347,6 +347,27 @@ The AppImage, where two of the three failures are silent:
 - **An AppImage can quietly use the desktop's Qt 6.11.1 and pass every
   test.** Check `/proc/<pid>/maps`: `libQt6Core.so.6` must come from
   `/tmp/.mount_sterna*` (the prefix follows the image's current filename).
+  Two things make that check harder than it reads. The pid you want is not
+  the one you launched — argv[0] is the image, and the process doing the
+  work is `/tmp/.mount_sternaXXXX/usr/bin/sterna`, so `pgrep -f "sterna
+  --shell"` finds nothing and `pgrep -f "AppImage --shell"` finds the
+  *launcher*, whose maps hold no libraries at all. And the child's maps
+  spell its libraries `/usr/lib/...` with no mount prefix, which reads
+  exactly like the host's — tell them apart by the device column (the mount
+  has its own) or by the fact that this host keeps its Qt in `/usr/lib64`
+  and has no `/usr/lib/libQt6Core.so.6` to load.
+- **Building the AppImage from a git worktree needs two mounts and a
+  relative symlink.** `packaging/appimage/toolchain/` is gitignored, so a
+  worktree has no Qt; symlinking it to the main checkout's only works if the
+  link is **relative** — an absolute one spells this container's `$HOME`
+  (`/home/nata/agents-home`) and dangles inside a container that mounts the
+  host's (`/var/home/nata/...`), where the failure is `qmake6 not found —
+  run build-qt.sh first`. And a worktree's `.git` is a *file* holding an
+  absolute gitdir in the container-side spelling, so `build.sh`'s
+  `git rev-parse HEAD` fails and `BUILD-INFO.txt` says `commit: unknown`
+  — mount the repository at *both* paths to fix it. `.gitignore`'s
+  `/packaging/appimage/toolchain/` has a trailing slash and does not match a
+  symlink, so the link shows up as untracked: remove it when done.
 - **GNOME draws no title bars, so a bundled plugin is the title bar.** Mutter
   advertises no `zxdg_decoration_manager_v1` at all — check the registry, not
   the presence of a bar — so Qt draws its own, and Qt Base ships only
