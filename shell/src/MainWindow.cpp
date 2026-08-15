@@ -3695,7 +3695,7 @@ void MainWindow::reloadQuickButtons()
     // happens a turn later with nothing left to grow the window. Route it
     // through the same helper the grip uses, which holds the grids and moves
     // the window's edge by exactly the room the panel takes.
-    if (wanted != !m_quickBar->isHidden()) {
+    if (m_quickBar->isHidden() == wanted) {
         const int strip = m_quickPanelWidth + m_quickGrip->sizeHint().width();
         // **Nothing to absorb before the first show.** The panel is part of
         // what `sizeHint` asks for, so a window that has not opened yet has
@@ -3799,16 +3799,24 @@ int MainWindow::resizeQuickPanel(int wanted)
         holdTerminalGrids(true);
     }
     m_quickPanelWidth = width;
+    // **The window moves only for a panel that is on screen.** `isVisible()`
+    // is the window's, not the panel's, and the two come apart: a width
+    // arriving from the settings while the panel is switched off would
+    // otherwise widen the window to make room for something nobody can see.
+    // The width is still applied — the panel opens at it when it is switched
+    // on, and the arm in `reloadQuickButtons` grows the window by the whole
+    // strip at that point.
+    const bool onScreen = isVisible() && !m_quickBar->isHidden();
     // **Grow the window before the panel and shrink it after.** Either way the
     // intermediate state is one where the terminals have more room than they
     // end with rather than less, so a layout pass landing in the middle — and
     // on Wayland the window's half is a request the compositor answers when it
     // likes — cannot be the pass that discovers a narrower terminal.
-    if (delta > 0 && isVisible()) {
+    if (delta > 0 && onScreen) {
         resize(size().width() + delta, height());
     }
     m_quickBar->setFixedWidth(width);
-    if (delta < 0 && isVisible()) {
+    if (delta < 0 && onScreen) {
         resize(size().width() + delta, height());
     }
     // Synchronously, so the pass that would have refitted runs inside the hold

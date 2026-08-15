@@ -890,7 +890,17 @@ void showing_the_panel_leaves_every_terminal_alone()
     const QVector<int> before = columns();
     CHECK(before.size() > 1);
 
+    // A width arriving while the panel is switched off must move nothing. The
+    // window's visibility and the panel's come apart here, and taking the
+    // window's would widen it to make room for something nobody can see.
     QString error;
+    const int idle = window.width();
+    CHECK(window.session()->setSetting(
+        QStringLiteral("window.quick_buttons_width"), QStringLiteral("220"),
+        &error));
+    CHECK(spin([&window, idle] { return window.width() != idle; }, 300) == false);
+    CHECK(columns() == before);
+
     CHECK(window.session()->setSetting(QStringLiteral("window.quick_buttons"),
                                        QStringLiteral("on"), &error));
     CHECK(spin([&window] { return !barOf(window)->isHidden(); }, 2000));
