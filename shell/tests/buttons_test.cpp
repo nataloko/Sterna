@@ -876,6 +876,7 @@ void the_panel_menu_offers_the_width()
     if (!bar) {
         return;
     }
+    const int natural = bar->width();
 
     // -1 is a click on the panel rather than on a button, which is the case
     // that offers nothing else — so the width has to be there, or a panel with
@@ -903,6 +904,21 @@ void the_panel_menu_offers_the_width()
     menu = bar->buildContextMenu(-1);
     fit = menu->findChild<QAction *>(QStringLiteral("quickMenuFit"));
     CHECK(fit != nullptr && !fit->isChecked());
+
+    // **And the item is wired, not merely present.** Everything above asks
+    // what the menu says; nothing asked whether pressing it does anything, and
+    // this menu is the route somebody finds — the settings page is the other
+    // end of the same key and would go on working with the connection cut. So
+    // trigger the action itself rather than the signal behind it, which is
+    // what `a_narrow_panel_shortens_its_captions` emits by hand because it is
+    // testing the width and not the wiring.
+    if (fit) {
+        fit->trigger();
+        CHECK(spin([bar, natural] { return bar->width() == natural; }, 2000));
+        CHECK(window.session()->setting(
+                  QStringLiteral("window.quick_buttons_width"))
+              == QLatin1String("0"));
+    }
     delete menu;
 }
 
