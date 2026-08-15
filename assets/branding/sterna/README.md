@@ -18,6 +18,9 @@ the source of truth; the PNG and ICO application assets are generated from it.
 | `size-test-{light,dark}.png` | Review sheets; not application resources. |
 | `samples/computery-concepts.{svg,png}` | Review sheet for four computer-related icon concepts. |
 | `samples/terminal-tile-concepts.{svg,png}` | Review sheet for six dark terminal tile concepts. |
+| `samples/phosphor-brand-concepts.{svg,png}` | Review sheet for nine phosphor brand concepts. |
+| `samples/phosphor-prompt-sizes.{svg,png}` | Review sheet for six prompt sizes. |
+| `samples/phosphor-pixel-tern.png` | 32 px source for the pixel tern concept. |
 
 The primary and small marks use negative space for the white body, so use them
 on light backgrounds. Use a mono mark on coloured backgrounds. The application
