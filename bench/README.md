@@ -5,12 +5,14 @@ that CI should enforce it; this is where the numbers come from.
 
 ```sh
 ./bench/bench.py                 # measure, and compare against baseline.json
-./bench/bench.py --core          # the Rust half only — no Qt, runs anywhere
+./bench/bench.py --core          # the Rust half only — no window, runs anywhere
+./bench/bench.py --frontend qt   # one shell rather than every one built
 ./bench/bench.py --update        # re-record the baseline, on a QUIET machine
 ./bench/bench.py --json out.json # keep the raw numbers as well
 
-crates/target/release/tt-bench   # the core half, on its own
-shell/build-release/bench_shell  # the shell half, on its own
+crates/target/release/tt-bench           # the core half, on its own
+shell/build-release/bench_shell          # the Qt shell, on its own
+shell-iced/target/release/bench_iced     # ...and the iced one
 ```
 
 The Qt half needs the `sterna-fedora` container and its `$HOME/.local/bin` on
@@ -41,6 +43,31 @@ seven releases behind the desktop's 6.11.1 and has already produced one false
 finding and one set of numbers flattering by 2x (see `AGENTS.md`). Build it in
 `sterna-fedora`, in Release, and run it on the real desktop.
 
+## There is more than one shell, and the baseline holds both
+
+Qt is the shipping frontend; `shell-iced` is the side-by-side evaluation
+`PLAN.md` records. Each measures into **its own metric prefix** —
+`shell.qt.start_ms` beside `shell.iced.start_ms` — rather than into a
+`machine.frontend` field, because everything here keys on the metric *name*: a
+field would make the two records mutually exclusive, which is exactly wrong for
+a comparison. `--frontend` picks one; the default measures every shell that has
+been built.
+
+Two consequences worth knowing:
+
+- **A frontend identifies itself by the strings it prints.** Qt reports
+  `platform` and `qt`; iced reports `platform`, `iced` and `renderer`. The
+  script compares the whole descriptor and knows which keys mean nothing — so a
+  winit version or a second renderer becomes part of the identity without an
+  edit here.
+- **`--update` carries over what it did not measure**, and names what it
+  carried. Without that, re-recording on a machine where only one frontend is
+  built deletes the other's numbers, silently — the one failure a side-by-side
+  baseline exists to prevent.
+
+Budgets are keyed without the frontend segment: `shell.start_ms` covers both,
+because a budget belongs to what is measured and not to who measured it.
+
 ## What is measured
 
 | | |
@@ -48,10 +75,15 @@ finding and one set of numbers flattering by 2x (see `AGENTS.md`). Build it in
 | `core.plain` | a scrolling log, CRLF-terminated, the `cat` case |
 | `core.sgr` | the same coloured with 256-colour SGR — a build log, `ls --color` |
 | `core.fullscreen` | a program repainting 24 rows in place; nothing ever scrolls |
-| `shell.start_ms` | **exec** to the first frame — the dynamic loader included |
-| `shell.idle_rss_mb` / `pss_mb` | with a shell attached and nothing arriving |
-| `shell.latency_ms` | a keystroke to the frame that shows it |
-| `shell.throughput_mb_s` | 10 MB out of a pty, painted, first byte to hangup |
+| `shell.<fe>.start_ms` | **exec** to the first frame — the dynamic loader included |
+| `shell.<fe>.idle_rss_mb` / `pss_mb` | with a shell attached and nothing arriving |
+| `shell.<fe>.latency_ms` | a keystroke to the frame that shows it |
+| `shell.<fe>.throughput_mb_s` | 10 MB out of a pty, painted, first byte to hangup |
+
+`<fe>` is `qt` or `iced`. Four more names are accepted and recorded when a
+frontend's bench prints them — `binary_mb`, `package_mb`, `ldd_count`,
+`build_s` — which is what the evaluation's last phase compares packaging on.
+The Qt bench does not print them yet.
 
 The corpus is generated from a fixed seed rather than committed, and the shell's
 throughput runs `tt-bench --emit` on the far end of the pty — **the same bytes**
@@ -84,9 +116,10 @@ the hard way.
 - **Same machine for the hard gate.** tine tried cross-machine normalisation
   and found the calibration loop too unlike the work being measured to trust
   it. A baseline from a different CPU is advisory and cannot fail a run.
-- **The Qt version is part of the machine's identity**, not just the platform
-  name: 6.4.2 and 6.11.1 both answer `"wayland"`. A shell metric measured under
-  a different Qt is advisory; the core metrics still gate.
+- **The toolkit version is part of a frontend's identity**, not just the
+  platform name: Qt 6.4.2 and 6.11.1 both answer `"wayland"`. A shell metric
+  measured under a different descriptor is advisory; the core metrics still
+  gate, and so does the *other* frontend.
 - **Budgets are per metric**, each above that metric's own noise: 15% for
   memory, which is nearly exact run to run, and 40% for keystroke latency,
   which waits on a scheduler.
