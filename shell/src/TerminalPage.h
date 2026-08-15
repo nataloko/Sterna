@@ -7,6 +7,10 @@
 #include <QString>
 #include <QWidget>
 
+#include <optional>
+
+#include "Recent.h"
+
 class I18n;
 class Macro;
 class PageStatusBar;
@@ -50,6 +54,23 @@ public:
     Macro *macro() const { return m_macro; }
     Plugins *plugins() const { return m_plugins; }
     XferProgressDialog *transferDialog() const { return m_xferDialog; }
+    /// What the shared connection selector shows when this page is active.
+    ///
+    /// The record is kept as well as its label: a recent SSH row carries an
+    /// identity and compatibility mode which cannot be recovered from the
+    /// words in the field. The label is cached so selecting a serial tab does
+    /// not enumerate every device again merely to redisplay its friendly name.
+    const std::optional<RecentConnection> &selectorConnection() const
+    {
+        return m_selectorConnection;
+    }
+    QString selectorLabel() const { return m_selectorLabel; }
+    void setSelectorConnection(const RecentConnection &connection,
+                               const QString &label)
+    {
+        m_selectorConnection = connection;
+        m_selectorLabel = label;
+    }
     /// Replace the modeless transfer dialog. The page owns it even though its
     /// visual parent is the window, so closing a tab cannot strand one.
     void setTransferDialog(XferProgressDialog *dialog);
@@ -66,4 +87,6 @@ private:
     Macro *m_macro = nullptr;
     Plugins *m_plugins = nullptr;
     XferProgressDialog *m_xferDialog = nullptr;
+    std::optional<RecentConnection> m_selectorConnection;
+    QString m_selectorLabel;
 };

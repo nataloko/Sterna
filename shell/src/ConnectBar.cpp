@@ -294,8 +294,7 @@ void ConnectBar::showConnection(const RecentConnection &recent)
     // connect path: enumerating `/dev` to render the words "Local shell" is
     // work in the way of the thing somebody actually asked for.
     if (recent.kind != RecentConnection::Kind::Serial) {
-        setDestination(recent.label());
-        m_chosen = recent;
+        showConnection(recent, recent.label());
         return;
     }
     if (TtPortList *list = tt_serial_enumerate()) {
@@ -307,7 +306,13 @@ void ConnectBar::showConnection(const RecentConnection &recent)
         }
         tt_port_list_free(list);
     }
-    setDestination(recent.label(deviceFor));
+    showConnection(recent, recent.label(deviceFor));
+}
+
+void ConnectBar::showConnection(const RecentConnection &recent,
+                                const QString &label)
+{
+    setDestination(label);
     m_chosen = recent;
 }
 

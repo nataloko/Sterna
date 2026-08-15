@@ -56,6 +56,9 @@ public:
     /// Show a connection that was just opened, in the same words the list
     /// would have offered it in.
     void showConnection(const RecentConnection &recent);
+    /// Restore a page's already-rendered connection without enumerating serial
+    /// devices again. `label` came from this bar when the page connected.
+    void showConnection(const RecentConnection &recent, const QString &label);
 
     /// The list the dropdown offers. Held rather than read on demand because
     /// the bar has no session to read it from; the window pushes it whenever

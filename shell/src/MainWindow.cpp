@@ -516,6 +516,7 @@ void MainWindow::activatePage(TerminalPage *page)
     if (!page) {
         return;
     }
+    const bool pageChanged = page != m_page;
     if (m_panels && m_panels->currentWidget() != page) {
         m_panels->setCurrentWidget(page);
     }
@@ -535,6 +536,12 @@ void MainWindow::activatePage(TerminalPage *page)
     if (m_connectBar) {
         reloadLanguage();
         showTitle(m_session->title());
+        // A click or context menu inside the already-active page also comes
+        // through here. Do not erase a destination being typed there; only a
+        // genuine page change makes another page's selector authoritative.
+        if (pageChanged) {
+            refreshConnectionSelector(page);
+        }
         updateStatus();
         queueWindowMetrics();
         // The stop key belongs to whichever view is in front, and the runs it
@@ -794,6 +801,14 @@ void MainWindow::duplicateSession()
         activatePage(source);
         QMessageBox::critical(this, tr("Duplicate session"), error);
         return;
+    }
+    if (const auto &connection = source->selectorConnection()) {
+        // Duplicate reopens the same target, including the parts of an SSH
+        // record that are not visible in its label. Give the new page its own
+        // copy so either tab can restore the shared selector later.
+        destination->setSelectorConnection(*connection,
+                                           source->selectorLabel());
+        refreshConnectionSelector(destination);
     }
     updateTabTitle(destination);
     updateStatus();
@@ -1809,8 +1824,52 @@ void MainWindow::rememberRecent(const RecentConnection &recent)
                        recent::encode(m_recents)}});
     if (m_connectBar) {
         m_connectBar->setRecents(m_recents);
-        m_connectBar->showConnection(recent);
     }
+}
+
+void MainWindow::setPageConnection(TerminalPage *page,
+                                   const RecentConnection &connection)
+{
+    if (!page) {
+        return;
+    }
+    if (page == m_page && m_connectBar) {
+        m_connectBar->showConnection(connection);
+        page->setSelectorConnection(connection, m_connectBar->destination());
+        return;
+    }
+    // All ordinary opens activate their page first. This fallback is for a
+    // connection finishing in the background; only serial labels need the
+    // device enumerator's friendlier spelling, and that work waits until the
+    // page is actually selected.
+    page->setSelectorConnection(
+        connection, connection.kind == RecentConnection::Kind::Serial
+                        ? QString()
+                        : connection.label());
+}
+
+void MainWindow::refreshConnectionSelector(TerminalPage *page)
+{
+    if (!m_connectBar || !page) {
+        return;
+    }
+    if (const auto &connection = page->selectorConnection()) {
+        const QString label = page->selectorLabel();
+        if (label.isEmpty()) {
+            m_connectBar->showConnection(*connection);
+            page->setSelectorConnection(*connection,
+                                        m_connectBar->destination());
+        } else {
+            m_connectBar->showConnection(*connection, label);
+        }
+        return;
+    }
+    // Connections made directly by a macro do not carry a RecentConnection,
+    // but their transport still has an honest short description. A genuinely
+    // blank page has neither and therefore gets an empty field.
+    m_connectBar->setDestination(page->session()->isConnected()
+                                     ? page->session()->describe()
+                                     : QString());
 }
 
 void MainWindow::loadRecents()
@@ -1834,7 +1893,7 @@ void MainWindow::forgetRecents()
     rememberSettings({{QStringLiteral("recent.connections"), QString()}});
     if (m_connectBar) {
         m_connectBar->setRecents(m_recents);
-        m_connectBar->setDestination(QString());
+        refreshConnectionSelector(m_page);
     }
 }
 
@@ -2774,7 +2833,9 @@ void MainWindow::connectSerial(const QString &path, const TtSerialParams &params
     rememberSerial(path, params);
     // Whatever opened the port — the dialog, `--port`, a macro — the bar shows
     // the one that is open and the list has it at the top.
-    rememberRecent(RecentConnection::serial(path, params));
+    const RecentConnection recent = RecentConnection::serial(path, params);
+    setPageConnection(m_page, recent);
+    rememberRecent(recent);
     updateStatus();
 }
 
@@ -2834,6 +2895,7 @@ void MainWindow::startSsh(const TtSshParams &params, const QString &host)
     m_lastSshPort = recent.port;
     m_lastSshIdentity = recent.identity;
     m_lastSshLegacy = recent.legacy;
+    setPageConnection(m_page, recent);
 
     updateStatus();
 }
@@ -2887,7 +2949,10 @@ void MainWindow::connectTelnet(const QString &host, quint16 port,
     m_lastTelnetPort = port;
     m_lastTelnetMode = params.mode;
     rememberTelnet(host, port, params.mode);
-    rememberRecent(RecentConnection::telnet(host, port, params.mode));
+    const RecentConnection recent =
+        RecentConnection::telnet(host, port, params.mode);
+    setPageConnection(m_page, recent);
+    rememberRecent(recent);
     updateStatus();
 }
 
@@ -2904,7 +2969,9 @@ void MainWindow::connectPty(const QStringList &argv)
     // command, and a list that offered to re-run one would be offering
     // something this record cannot describe.
     if (argv.isEmpty()) {
-        rememberRecent(RecentConnection::shell());
+        const RecentConnection recent = RecentConnection::shell();
+        setPageConnection(m_page, recent);
+        rememberRecent(recent);
     }
     updateStatus();
 }

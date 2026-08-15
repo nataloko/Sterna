@@ -456,6 +456,11 @@ private:
     /// Put a connection at the top of the bar's list and write it back, unless
     /// `recent.remember` is off.
     void rememberRecent(const RecentConnection &recent);
+    /// Bind a selector entry to one page and show it when that page is active.
+    void setPageConnection(TerminalPage *page,
+                           const RecentConnection &connection);
+    /// Point the shared selector at this page without re-reading its label.
+    void refreshConnectionSelector(TerminalPage *page);
     void loadRecents();
     void forgetRecents();
 
