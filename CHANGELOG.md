@@ -22,16 +22,27 @@ are available from the [GitHub releases page].
 ### Changed
 
 - The quick-button panel is fixed to the right-hand side, and its width is now
-  a number in Setup > Preferences rather than an edge you drag. Both the
-  four-edge move and the drag came from the dock the panel lived in, which is
-  the thing that was taking pixels from the terminal; a handle that grows the
-  window rather than the terminal cannot follow your pointer, so it is a
-  setting instead. It works on a maximised window, from the keyboard and from a
-  macro, none of which the handle did. `QuickButtonsArea` is gone and
-  `QuickButtonsWidth` replaces it, in pixels, with `0` — the shipped value —
-  meaning as wide as the widest button needs. A settings file that still names
-  an edge is read without complaint; the key is simply no longer one Sterna
-  looks at.
+  a menu item rather than an edge you drag: **right-click the panel > Panel
+  width**, with *Set width…* and *Fit to buttons*. It is also on the Window
+  page of Setup > Preferences. Both the four-edge move and the drag came from
+  the dock the panel lived in, which is the thing that was taking pixels from
+  the terminal; a handle that grows the window rather than the terminal cannot
+  follow your pointer, so it is a menu instead — one that works on a maximised
+  window, from the keyboard and from a macro, none of which the handle did.
+  `QuickButtonsArea` is gone and `QuickButtonsWidth` replaces it, in pixels,
+  with `0` — the shipped value — meaning as wide as the widest button needs. A
+  settings file that still names an edge is read without complaint; the key is
+  simply no longer one Sterna looks at.
+
+### Added
+
+- The quick-button panel can be made narrower than its own button labels. The
+  labels shorten with an ellipsis rather than holding the panel open, so one
+  long caption no longer widens every other button, and a narrow strip of stubs
+  down the edge of the screen is now possible. The full label is in the
+  button's tooltip whenever it does not fit, and it is what the editor and the
+  settings file still hold. The panel will not go below 48 pixels, which is
+  about the narrowest thing you can reliably click.
 
 ## [0.5.3] - 2026-08-15
 

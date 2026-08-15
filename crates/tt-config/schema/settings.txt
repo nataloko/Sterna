@@ -2474,6 +2474,11 @@ window.quick_buttons | bool | Sterna | QuickButtons | on | -
 # scrollback alike. The width below is the same gesture with the pixels coming
 # out of the *window* instead, which is a thing a terminal can survive.
 #
+# **The reachable route to this is the panel's own context menu** — Panel width
+# > Fit to buttons, or Set width… — because a panel that looks draggable and is
+# not needs its answer within reach of the thing it is about. This row is the
+# same setting from the other end.
+#
 # **Zero means as wide as the buttons need**, and it is what ships. Pixels are
 # the only honest unit for a panel of words — the same eight captions want a
 # different number of them at every font size and every scale factor — so a
@@ -2488,8 +2493,10 @@ window.quick_buttons | bool | Sterna | QuickButtons | on | -
 # can grow before it leaves the screen, which only the window knows. The floor
 # a panel is really held to is its own minimum, which depends on the captions
 # and the font, so the window applies that too: validation at the boundary,
-# the way `TerminalUID` is.
-#@ This setting sets the width of the quick-button bar in pixels. Zero makes the bar as wide as its widest button. Sterna then changes the window width, and the terminal keeps its columns.
+# the way `TerminalUID` is — and that floor is a fixed number rather than the
+# widest caption, because the buttons shorten their text instead of holding the
+# panel open. What it buys is a target a pointer can hit.
+#@ This setting sets the width of the quick-button bar in pixels. Zero makes the bar as wide as its widest button. A narrow bar makes the text on the buttons shorter. Sterna changes the window width, and the terminal keeps its columns. You can also set the width from the menu of the bar.
 window.quick_buttons_width | int_clamp(0..2000) | Sterna | QuickButtonsWidth | 0 | -
 
 # --- recent -----------------------------------------------------------------

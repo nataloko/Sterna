@@ -358,8 +358,19 @@ handle's screen position never moves and the window's far edge shoots out —
 the truthful rendering of the rule and nothing like what a splitter feels like.
 Making it feel right wants a rubber band that follows the pointer, or a window
 that grows leftward, and `QWidget::move()` is silently ignored on Wayland. The
-setting does the same job and reaches places the handle could not: a maximised
-window, the keyboard, a macro.
+panel's own context menu carries **Panel width > Fit to buttons / Set width…**
+instead, and reaches places the handle could not: a maximised window, the
+keyboard, a macro.
+
+**A button shortens its caption rather than holding the panel open.**
+`QToolButton` refuses to be narrower than its own text and says so through
+`minimumSizeHint`, which is the panel's minimum too — so the longest label on
+the bar decided how narrow the whole panel could be, and one wordy button
+widened the other nine. `BarButton` drops that demand and elides at paint time;
+`text()` keeps the real caption, so the tooltip, the editor and the settings
+file are unaffected and only the pixels are short. The floor is then a fixed 48
+pixels — a target a pointer can hit — rather than a number that moved whenever
+somebody renamed a button.
 
 **A button can repeat**: *n* sends every *x.x* seconds, or until stopped
 (`Repeat` and `IntervalMs`). Upstream has nothing of the kind — the nearest

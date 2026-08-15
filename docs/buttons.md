@@ -28,24 +28,33 @@ and exactly as tall as it can be, so a vertical bar costs nothing that is being
 used and the labels have room to be words. It is as wide as its widest caption
 until you say otherwise.
 
-To give it a different width, set one in **Setup > Preferences**, on the Window
-page. **The pixels come out of the window, not out of the terminal** — the
-window gets wider and the terminal keeps every column and every character it
-had. Where the window cannot get any wider, because it is maximised or already
-at the edge of the screen, the panel stays where it is instead. That is
+To give it a different width, **right-click the panel and use Panel width** —
+*Set width…* for a number, *Fit to buttons* to go back to measuring the
+captions. The same thing is on the Window page of Setup > Preferences, under
+`Quick buttons width`.
+
+**The pixels come out of the window, not out of the terminal** — the window
+gets wider and the terminal keeps every column and every character it had.
+Where the window cannot get any wider, because it is maximised or already at
+the edge of the screen, the panel stays where it is instead. That is
 deliberate: a terminal narrowed by a column loses whatever was past its right
 edge, in the scrollback as well as on screen, and it does not come back when
 the panel is made narrow again.
 
-It will not go narrower than its own widest caption either, because a button
-clipped to nothing is not a narrower panel.
+**It will go narrower than its own captions**, and the buttons shorten their
+text with an ellipsis when it does — a panel of stubs down the edge of the
+screen is a perfectly reasonable thing to want, and one long label should not
+widen the other nine buttons. The full caption is still there: it is in the
+tooltip whenever the button is too narrow to show it, and it is what the editor
+and the settings file hold. There is a floor of 48 pixels, which is about a
+target you can still hit.
 
 **There is no handle to drag**, and that is a decision rather than an omission.
 One was built and taken out again: a window cannot move its own left edge on
 every desktop, so widening the panel widens the window to the *right* and the
 handle never moves out from under the pointer — which is exactly the opposite
-of how a handle should feel. A number in Setup does the same job, and it works
-on a maximised window, from the keyboard, and from a macro.
+of how a handle should feel. The menu does the same job, and it works on a
+maximised window, from the keyboard, and from a macro.
 
 ## What a button can do
 
