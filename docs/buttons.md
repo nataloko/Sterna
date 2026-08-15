@@ -36,6 +36,10 @@ stops there instead. That is deliberate: a terminal narrowed by a column loses
 whatever was past its right edge, in the scrollback as well as on screen, and
 it does not come back when the panel is dragged narrow again.
 
+It will not go narrower than its own widest caption, because a button clipped
+to nothing is not a narrower panel. A panel you have widened comes back down to
+that point and stops there.
+
 A width you drag is remembered. One you never touch is not written down at all,
 so the panel goes on measuring its buttons and follows them when a caption
 changes.
