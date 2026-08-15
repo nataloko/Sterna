@@ -21,6 +21,7 @@
 #include <QImage>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QWheelEvent>
 
 #include <cstdio>
 #include <cstring>
@@ -214,6 +215,27 @@ void test_the_width_setting_moves_the_gutter()
     CHECK(h.gutter->digits() == 1);
 }
 
+void test_the_wheel_over_the_gutter_scrolls_the_terminal()
+{
+    Harness h;
+    h.set("terminal.line_numbers", QStringLiteral("on"));
+    for (int i = 0; i < 60; i++) {
+        h.feed("line\r\n");
+    }
+    CHECK(h.window.session()->scrollbackLen() > 0);
+    CHECK(h.window.session()->viewOffset() == 0);
+
+    // One notch, delivered to the gutter rather than to the terminal. A gutter
+    // that swallowed it would be a dead strip down the side of the window.
+    const QPointF pos(2.0, 10.0);
+    QWheelEvent wheel(pos, h.gutter->mapToGlobal(pos), QPoint(), QPoint(0, 120),
+                      Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QCoreApplication::sendEvent(h.gutter, &wheel);
+    h.settle();
+
+    CHECK(h.window.session()->viewOffset() > 0);
+}
+
 void test_the_gutter_follows_the_terminals_colours()
 {
     Harness h;
@@ -263,6 +285,7 @@ int main(int argc, char **argv)
     test_the_numbers_are_not_copied();
     test_the_window_grows_and_the_terminal_does_not_shrink();
     test_the_width_setting_moves_the_gutter();
+    test_the_wheel_over_the_gutter_scrolls_the_terminal();
     test_the_gutter_follows_the_terminals_colours();
     test_numbers_follow_the_history();
 

@@ -46,15 +46,27 @@ public:
     /// Re-measure after the font or the cell size moved.
     void updateMetrics();
 
+    /// Where a wheel notch over the gutter goes.
+    ///
+    /// The terminal, because a person reading line 400 and rolling the wheel
+    /// is scrolling the *terminal* — they have not aimed at a widget, they have
+    /// aimed at the text. The alternative is a five-column dead strip down the
+    /// side of the window, which is the kind of thing that reads as a bug.
+    /// Clicks are not forwarded: the gutter has nothing to select, and a drag
+    /// that started here would have no honest first character.
+    void setWheelTarget(QWidget *target) { m_wheelTarget = target; }
+
     QSize sizeHint() const override;
 
 protected:
     void paintEvent(QPaintEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
 
 private:
     int widthForDigits() const;
 
     const Session *m_session;
     const Theme &m_theme;
+    QWidget *m_wheelTarget = nullptr;
     int m_digits = 4;
 };

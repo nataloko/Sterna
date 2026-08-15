@@ -2,7 +2,9 @@
 
 #include "LineNumberGutter.h"
 
+#include <QCoreApplication>
 #include <QPainter>
+#include <QWheelEvent>
 
 #include "Session.h"
 #include "Theme.h"
@@ -14,12 +16,11 @@ LineNumberGutter::LineNumberGutter(const Session *session, const Theme &theme,
     , m_theme(theme)
 {
     setObjectName(QStringLiteral("lineNumberGutter"));
-    // It never wants a click: the terminal beside it owns selection, and a
-    // gutter that took focus would be a way to lose the keyboard by aiming
-    // badly. Wheel events still reach the view because they are not this
-    // widget's to consume.
+    // It never wants a click or the keyboard: the terminal beside it owns
+    // selection, and a gutter that took focus would be a way to lose the
+    // keyboard by aiming badly. The wheel is the exception and is forwarded —
+    // see `setWheelTarget`.
     setFocusPolicy(Qt::NoFocus);
-    setAttribute(Qt::WA_TransparentForMouseEvents);
     updateMetrics();
 }
 
@@ -54,6 +55,26 @@ void LineNumberGutter::updateMetrics()
 QSize LineNumberGutter::sizeHint() const
 {
     return QSize(widthForDigits(), m_theme.cellHeight());
+}
+
+void LineNumberGutter::wheelEvent(QWheelEvent *event)
+{
+    if (!m_wheelTarget) {
+        QWidget::wheelEvent(event);
+        return;
+    }
+    // Re-pointed at the terminal rather than replayed at this position: the
+    // view answers a wheel with the host's own mouse reporting when the host
+    // asked for it, and a column five cells to the left of the terminal is not
+    // a column it can report. The left edge of the terminal is the honest
+    // nearest thing, and the row is the one the pointer is actually on.
+    const QPointF local(0.0, event->position().y());
+    QWheelEvent forwarded(local, m_wheelTarget->mapToGlobal(local),
+                          event->pixelDelta(), event->angleDelta(),
+                          event->buttons(), event->modifiers(), event->phase(),
+                          event->inverted(), event->source());
+    QCoreApplication::sendEvent(m_wheelTarget, &forwarded);
+    event->accept();
 }
 
 void LineNumberGutter::paintEvent(QPaintEvent *)

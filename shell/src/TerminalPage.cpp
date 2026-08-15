@@ -59,6 +59,8 @@ TerminalPage::TerminalPage(const I18n *i18n, QWidget *macroWindow,
     row->addWidget(m_gutter);
     row->addWidget(m_view, 1);
     row->addWidget(m_scroll);
+    // A wheel notch over the numbers is aimed at the text, not at the widget.
+    m_gutter->setWheelTarget(m_view);
     // Hidden until a setting says otherwise, so a page that is never told
     // anything looks exactly as it did before this existed.
     m_gutter->hide();
