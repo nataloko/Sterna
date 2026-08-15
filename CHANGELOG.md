@@ -5,6 +5,16 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+### Fixed
+
+- A settings change no longer clears the terminal when the window is too small
+  to hold the terminal size you configured — a large font on a small screen, or
+  a window the desktop capped. The quick button panel was rebuilt on every
+  settings change, and the few pixels its panel gave up and took back were
+  enough to move the terminal by a column; with Clear on resize turned on, each
+  of those scrolled the page into the scrollback. Toggling line edit was enough
+  to do it.
+
 ## [0.4.0] - 2026-08-15
 
 ### Added

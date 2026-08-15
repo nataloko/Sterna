@@ -641,6 +641,26 @@ SSH:
   900x630 while the layout above it read 720x525; ask the *item*
   (`layout()->itemAt(i)->sizeHint()`), not the widget, or the numbers agree and
   the window still comes out wrong.
+- **...and that hint must never be the size `refit` measured.** When the window
+  cannot hold the configured terminal — a wide font, a small screen, a capped
+  window — the layout hands the view its share of the *shortfall*, so the view's
+  width is a function of its own hint. Answering `sizeHint` with the live grid
+  closes the loop: refit shrinks the grid, the hint follows, the layout
+  redistributes, the next resize event measures a different column count. It
+  wobbles by a cell rather than settling. `TerminalView::m_hintCells` moves only
+  from the configured size, in `applySettings`.
+- **Anything that relays out the window's chrome resizes the terminal, and
+  `ClearOnResize` turns that into a clear.** The terminal is fitted to whatever
+  width is left in whole cells, so a few pixels of chrome either way is a
+  column, and a column is a real `Grid::resize` — which with the flag on scrolls
+  the page into history (`buffer.c:5028` puts the clear outside the
+  size-changed `if`). `reloadQuickButtons` runs on *every* settings change and
+  rebuilt every button widget, so toggling line edit blanked the screen. Hence
+  `QuickButtonBar::setButtons` returns early on an unchanged list — the same
+  load-bearing early return as `PageStatusBar::setLogging` and
+  `ConnectBar::Entry::operator==`, and the same rule about the comparison
+  covering every field. It cannot be `m_buttons.isEmpty()`: the empty panel
+  still builds its `+`.
 - **Removing `QMainWindow::statusBar()` silently kills every `setStatusTip`** —
   the `QEvent::StatusTip` arm of `QMainWindow::event` needs a bar to show it in,
   and with none the event falls through and is dropped with no warning.
@@ -1710,6 +1730,15 @@ The desktop side:
 - **But CI's Qt is the Ubuntu container's** — a CI paint failure reproduces
   here, in the gitignored `build-ubuntu` tree. Measurements in
   `sterna-fedora`; CI verdicts where CI gave them.
+- **...except for the fonts, and that gap hides whole failures.** CI runs on a
+  bare `ubuntu-24.04` runner whose only added font is `fonts-dejavu-core`;
+  both containers have hundreds. DejaVu's cell is wide enough that 80 columns
+  do not fit the offscreen screen, so the window opens short of its configured
+  size — a state neither container ever reaches, and the one the layout cycle
+  below only shows up in. Reproduce with a `FONTCONFIG_FILE` naming just
+  `/usr/share/fonts/truetype/dejavu`; it is harsher than CI (six metric
+  assertions fail that CI passes), so read *which* checks failed, not how
+  many.
 - **A glyph can put ink outside its own advance** — a margin measured from
   column 0 clamps at the image edge. Measure a column with a blank one
   beside it and let the answer be negative.
