@@ -99,6 +99,7 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/macro_test               # a TTL macro, driven by the event loop
 ./build/print_test               # the printer, which is a file, so it needs none
 ./build/highlight_test           # the highlight rules, to the pixels — needs nothing
+./build/gutter_test              # line numbers: painted, and never copied
 ./build/buttons_test             # the quick buttons, over a pty — needs nothing
 QT_QPA_PLATFORM=offscreen \
   ./build/cmdline_test           # a Tera Term command line, argv to connected
@@ -972,6 +973,16 @@ Scrollback and the wheel:
   many cells the *view* has room for; and when it does resize the window it
   must suppress the refit that follows, or the view's old geometry writes the
   old size straight back through `Session::resize`.
+- **...and it must read the configured size *before* anything reacts to the
+  settings.** `QLayout::activate()` sets its children's geometry there and
+  then, and Qt delivers the resize event from that synchronously — so
+  `TerminalView::refit` runs inside the call and `Session::resize` has written
+  the new, smaller `terminal.cols` before the comparison below gets to read it.
+  It then always finds the setting equal to what the view has room for and the
+  window never moves. That is how the line-number gutter came to cost five
+  columns permanently instead of widening the window: the setting had already
+  followed it down. Anything else that takes room from the view on a settings
+  change — a second gutter, a margin, a side panel — lands on this.
 - **`AutoScrollOnlyInBottomLine` ships off** — output drags a scrolled-back
   view down by the *minimum* scroll (`buffer.c:3794`, `:3805`, `:3866`).
   And the cursor-following belongs to the feed, not to a settings change —
