@@ -33,6 +33,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 16 | A port another program holds is greyed, not hidden | The row is hidden, and only other Tera Term windows count | 0.3.0 |
 | 17 | The log dialog also asks about rotation | Rotation is on the Setup page only | 0.3.2 |
 | 18 | A log names itself by the clock and remembers its directory | `teraterm.log`, in whatever directory the settings resolve to | 0.3.2 |
+| 19 | Edit > Find searches the screen and the scrollback | Nothing searches the buffer; the log and another program do | 0.3.2 |
 
 ---
 
@@ -731,3 +732,61 @@ still a template put through `strftime`, then `&h`/`&p`/`&u`, then the sweep
 for characters a file name cannot hold; a file that sets `LogDefaultName` keeps
 whatever it says, `teraterm.log` included. `[Sterna]` is this program's own
 section and nothing upstream reads it.
+
+---
+
+## 19. Edit > Find searches the screen and the scrollback
+
+Ctrl+Shift+F opens a bar over the bottom of the terminal: a pattern, case,
+whole-word and regular-expression switches, previous and next, and a count.
+Tera Term has nothing of the kind — the way to find something in a Tera Term
+buffer is to log the session and search the file in another program.
+
+**Why.** That workaround loses both halves of what somebody wants. It loses the
+context — you find the line and are now looking at a text editor rather than at
+the terminal it came from — and it loses the ability to go *there*, scroll
+around it, and copy it. Every other terminal on either platform has this, and a
+console session is exactly the kind of text people need to search: you scrolled
+past the error four minutes ago and you want it back.
+
+**Why Ctrl+Shift+F and not Ctrl+F.** A `QAction` shortcut silently outranks
+`TerminalView::keyPressEvent`, so every shortcut this window installs is a key
+the far end stops receiving — permanently, in every session, whether or not the
+bar is open. `^F` is forward-a-character in readline and a page forward in vim
+and less, which makes it one of the worst keys in the set to take. Ctrl+Shift is
+the bargain Copy and Paste already make here for the same reason, so the
+terminal's own answer to "what does Ctrl+letter do" is unchanged: it goes to the
+host.
+
+**Why the bar floats over the terminal rather than sitting under it.** A bar in
+the page's layout would take a row from the grid, which is a resize — and a
+resize sends a scrolled-back view live, drops the selection, and moves
+`TerminalSize` with it, because upstream's `ts.TerminalWidth`/`Height` are live
+variables that `BuffChangeTerminalSize` assigns (`buffer.c:5022`). So *closing*
+the bar would throw away the position you had just searched to, which is the one
+thing a find feature must not do. Floating costs the bottom row of view while
+the bar is open and nothing at all when it is closed, and it works in a tiled
+window, where growing the window to make room is not available.
+`find_test.cpp`'s `test_the_bar_does_not_resize_the_terminal` is that argument
+as an assertion.
+
+**The current match is the selection.** Not a fourth kind of coloured text: it
+is scrolled to, painted, and copied by machinery that already exists, and
+Ctrl+Shift+C after a search takes the match. The *other* matches are painted in
+`[Sterna] FindColor`, and they are the only thing the feature adds to the
+painter.
+
+**And they are painted by the same engine the highlight rules use** (deviation
+6), over the same logical lines — so `^` and `$` mean the same thing in a find
+field as in a rule, a match that straddles a soft wrap is found once and shown
+on both rows, and the pattern syntax needs describing once. What Find does *not*
+share is `Highlighting`: a search that painted nothing because View > Highlight
+matches happened to be off would be undiagnosable from the screen.
+
+**What it costs when it is closed:** one comparison per row painted, and
+nothing on the receive path — matching happens while drawing, which is what
+lets a pattern typed now find text that arrived an hour ago.
+
+**Compatibility.** `FindColor`, `FindHistory` and the three switches are keys in
+`[Sterna]`, this program's own section. No real Tera Term reads it, and a
+settings file shared with one still opens correctly in both.

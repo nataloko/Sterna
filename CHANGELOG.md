@@ -7,6 +7,16 @@ are available from the [GitHub releases page].
 
 ### Added
 
+- Edit > Find (Ctrl+Shift+F) searches the terminal — the page in front of you
+  and all of the scrollback — with case, whole-word and regular-expression
+  matching, next and previous, and the last twelve patterns on a dropdown. The
+  match you are on is selected, so it scrolls into view and Copy takes it; the
+  others on screen are filled in amber. Tera Term has nothing of the kind: the
+  way to find something in its buffer is to log the session and search the file
+  in another program. The shortcut is Ctrl+Shift+F rather than Ctrl+F because a
+  shortcut on this window is a key the host stops receiving, and `^F` is a page
+  forward in vim and less; Copy and Paste make the same bargain here already.
+
 - File > Log now opens a dialog with the options Tera Term offers, instead of a
   bare file picker: text or binary, overwrite or append, a byte-order mark,
   plain text, timestamps and which clock they use, and whether to write what is

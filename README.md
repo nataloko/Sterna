@@ -15,6 +15,8 @@ supporting Tera Term-compatible workflows and configuration.
   byte-stream filters, and settings pages
 - XMODEM, YMODEM, ZMODEM, Kermit, B-Plus, and Quick-VAN file transfers
 - Inline [sixel graphics](docs/sixel.md), including images in scrollback
+- [Find](docs/find.md): search the screen and the scrollback, with case,
+  whole-word and regular-expression matching
 - [Highlight rules](docs/highlighting.md): regular expressions that recolour
   the screen and the scrollback
 - [Quick buttons](docs/buttons.md): a bar of commands one click away, each one
