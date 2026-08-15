@@ -80,9 +80,14 @@ because a budget belongs to what is measured and not to who measured it.
 | `shell.<fe>.throughput_mb_s` | 10 MB out of a pty, painted, first byte to hangup |
 
 `<fe>` is `qt` or `iced`. Four more names are accepted and recorded when a
-frontend's bench prints them — `binary_mb`, `package_mb`, `ldd_count`,
+frontend's bench prints them — `binary_mb`, `package_mb`, `lib_count`,
 `build_s` — which is what the evaluation's last phase compares packaging on.
 The Qt bench does not print them yet.
+
+**`lib_count` is what is mapped while running, not what `ldd` says.** iced
+opens `libwayland-client` and `libxkbcommon` with `dlopen`, so `ldd` on the
+binary answers four — libc, libm, libgcc_s and the loader — for a program with
+a whole window system open. The real answer is 14.
 
 The corpus is generated from a fixed seed rather than committed, and the shell's
 throughput runs `tt-bench --emit` on the far end of the pty — **the same bytes**

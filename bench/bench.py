@@ -95,7 +95,7 @@ FRONTENDS = {
 # print them yet.
 SHELL_METRICS = (
     "start_ms", "idle_rss_mb", "idle_pss_mb", "latency_ms", "throughput_mb_s",
-    "binary_mb", "package_mb", "ldd_count", "build_s",
+    "binary_mb", "package_mb", "lib_count", "build_s",
 )
 
 # How much worse than the baseline a metric may be before it is a regression.
@@ -117,7 +117,7 @@ BUDGETS = {
     "shell.throughput_mb_s": 0.30,
     "shell.binary_mb": 0.10,
     "shell.package_mb": 0.10,
-    "shell.ldd_count": 0.05,
+    "shell.lib_count": 0.05,
     "shell.build_s": 0.30,
 }
 
@@ -128,7 +128,7 @@ HIGHER_IS_BETTER = {"core.plain", "core.sgr", "core.fullscreen", "shell.throughp
 # calibration would import CPU noise into the one metric that has none. Nor
 # does a binary shrink on one.
 NOT_CPU_BOUND = {"shell.idle_rss_mb", "shell.idle_pss_mb",
-                 "shell.binary_mb", "shell.package_mb", "shell.ldd_count"}
+                 "shell.binary_mb", "shell.package_mb", "shell.lib_count"}
 
 # A calibration this much worse than the baseline's means the machine is busy,
 # not that the code is slow.
