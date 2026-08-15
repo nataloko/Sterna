@@ -23,10 +23,11 @@ are available from the [GitHub releases page].
 ### Changed
 
 - A log names itself by the clock. The default file name is now
-  `%Y%m%d_%H%M%S_&h.log` rather than `teraterm.log`, so a second log cannot
-  land on the first — which, depending on a setting you were not looking at,
-  either overwrote it or appended to it. The name is still a template and a
-  file that sets `LogDefaultName` keeps whatever it says.
+  `%Y%m%d_%H%M%S.log` rather than `teraterm.log`, so a second log cannot land
+  on the first — which, depending on a setting you were not looking at, either
+  overwrote it or appended to it. The name is still a template and a file that
+  sets `LogDefaultName` keeps whatever it says; `&h` for the host, `&p` for the
+  port and `&u` for the user still work if you want them in there.
 - The log dialog opens on the directory the last log was written to, remembered
   in `[Sterna] LogDir`. `LogDefaultPath` still decides where the first one
   goes, and clearing the new key hands the question back to it.

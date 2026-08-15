@@ -9,11 +9,12 @@
 //! console ends up with a `&h-%Y%m%d.log`, and a port that took the name
 //! literally would write every session into one file.
 //!
-//! Which is why **this port ships the template rather than the plain name**:
-//! `%Y%m%d_%H%M%S_&h.log`, so a second log cannot land on the first (see
+//! Which is why **this port ships a template rather than the plain name**:
+//! `%Y%m%d_%H%M%S.log`, so a second log cannot land on the first (see
 //! `docs/deviations.md`). Nothing here changes for it — the four passes are
-//! upstream's and the shipped value is one they offer themselves, on the Setup
-//! page's preset list (`log_pp.cpp:125`).
+//! upstream's and the shipped value is one of the Setup page's own presets
+//! (`log_pp.cpp:125`) without the `&h`, which on this side of the port is the
+//! path a port was opened by rather than a host name.
 //!
 //! **There are two strftime expanders upstream and they are not the same
 //! one**, which is the finding that decided the shape of this module. A log
@@ -688,7 +689,7 @@ mod tests {
         };
 
         let first = expand_name(&settings.log_default_name, &ctx, when());
-        assert_eq!(first, "20260809_123456_router1.log");
+        assert_eq!(first, "20260809_123456.log");
 
         let a_second_later = Civil::from_unix(1_786_278_897, 0);
         assert_ne!(
@@ -696,12 +697,24 @@ mod tests {
             first
         );
 
-        // A local shell has no host name, so the separator is left with
-        // nothing after it. Upstream's own preset does the same and it is not
-        // worth a rule of our own to tidy.
+        // The same name whatever is connected — and that is the decision, not
+        // an oversight. `&h` is the path the port was *opened* by, so a serial
+        // console dialled through `/dev/serial/by-path/` would carry
+        // thirty-eight swept characters of PCI topology, and a local shell
+        // would carry a bare separator. It stays available to anyone who wants
+        // it; it is not what everyone gets.
         assert_eq!(
             expand_name(&settings.log_default_name, &LogContext::default(), when()),
-            "20260809_123456_.log"
+            first
+        );
+        let by_path = LogContext {
+            host: Some("pci-0000:c8:00.3-usb-0:1.3.2:1.0-port0".into()),
+            ..LogContext::default()
+        };
+        assert_eq!(
+            expand_name("&h.log", &by_path, when()),
+            "pci-0000_c8_00.3-usb-0_1.3.2_1.0-port0.log",
+            "which is what the shipped name would carry if it kept the &h"
         );
     }
 

@@ -685,7 +685,7 @@ either program still opens in the other.
 
 ## 18. A log names itself by the clock and remembers its directory
 
-`LogDefaultName` ships as `%Y%m%d_%H%M%S_&h.log` where `ttset.c:1018` gives
+`LogDefaultName` ships as `%Y%m%d_%H%M%S.log` where `ttset.c:1018` gives
 `teraterm.log`, and the directory the last log was written to is kept in
 `[Sterna] LogDir` and offered ahead of `LogDefaultPath`. Upstream remembers
 nothing: `GetTermLogDir` answers the same three-way question every time.
@@ -694,10 +694,18 @@ nothing: `GetTermLogDir` answers the same three-way question every time.
 whether that overwrites it or appends to it is decided by `LogAppend` — a
 setting the person starting the log is not looking at. Both outcomes are bad in
 different ways and neither is visible until afterwards. A template that carries
-the clock cannot collide, and this is not an invention: it is upstream's own
-Setup preset `%y%m%d_%H%M%S_&h.log` (`log_pp.cpp:125`) with a four-digit year.
-A session with no host name — a local shell — leaves the `&h` empty and keeps
-the separator, which is what upstream's preset does too.
+the clock cannot collide, and this is not an invention: it is one of upstream's
+own Setup presets (`log_pp.cpp:125`).
+
+**And without the `&h` that preset has**, which is the tempting part for
+anybody logging more than one console. `&h` is `ts.HostName`, which here is the
+path the port was *opened* by: the connect bar opens a serial port through its
+`/dev/serial/by-path/` name so that a replug cannot move it, and the sweep for
+characters a file name cannot hold then turns
+`pci-0000:c8:00.3-usb-0:1.3.2:1.0-port0` into thirty-eight characters of
+underscores on the end of every log. A local shell has no host name at all and
+would leave a bare separator. Both are fine in a template somebody chose, and
+`&h`, `&p` and `&u` all still work; neither is fine in the one everybody gets.
 
 **Why the directory.** The same reason the connect dialog remembers its last
 connection (deviation 2): where a log went is a choice somebody made in a file

@@ -3861,10 +3861,18 @@ pub struct Settings {
     /// see `docs/deviations.md`. One fixed name means every log lands on the last
     /// one, and whether that overwrites it or appends to it is decided by a setting
     /// the person starting the log is not looking at. A template that carries the
-    /// clock cannot collide, and this is upstream's own preset
-    /// (`log_pp.cpp:125`, `%y%m%d_%H%M%S_&h.log`) with a four-digit year. A session
-    /// with no host name — a local shell — leaves the `&h` empty and keeps the
-    /// separator, which is what upstream's preset does too.
+    /// clock cannot collide, and this is upstream's own Setup preset
+    /// (`log_pp.cpp:125`) without its `&h`.
+    ///
+    /// **Without the `&h` on purpose**, tempting as it is for anybody logging more
+    /// than one console. `&h` is `ts.HostName`, and here that is whatever path the
+    /// port was *opened* by — the connect bar opens a serial port through its
+    /// `/dev/serial/by-path/` name so a replug cannot move it, and the sweep for
+    /// characters a file name cannot hold then turns
+    /// `pci-0000:c8:00.3-usb-0:1.3.2:1.0-port0` into thirty-eight characters of
+    /// underscores on the end of every log. A local shell has no host name at all
+    /// and would leave a bare separator. Both are fine in a template somebody chose;
+    /// neither is fine in the one everybody gets.
     pub log_default_name: String,
     /// `ttset.c:1023`. Where a relative log name lands. Empty falls back to
     /// `FileDir` if that exists and to the per-user log directory otherwise —
@@ -4548,7 +4556,7 @@ impl Default for Settings {
             log_timestamp_type: LogTimestampType::default(),
             log_timestamp_utc: false,
             log_timestamp_format: String::from("%Y-%m-%d %H:%M:%S.%N"),
-            log_default_name: String::from("%Y%m%d_%H%M%S_&h.log"),
+            log_default_name: String::from("%Y%m%d_%H%M%S.log"),
             log_default_path: String::from(""),
             log_rotate: 0,
             log_rotate_size: 0,
@@ -14847,9 +14855,9 @@ pub const FIELDS: &[Field] = &[
         section: "Tera Term",
         key: "LogDefaultName",
         kind: Kind::Str,
-        default: "%Y%m%d_%H%M%S_&h.log",
+        default: "%Y%m%d_%H%M%S.log",
         label: None,
-        doc: "`ttset.c:1018`, the name `LogAutoStart` and the log dialog both start from. It is a **template**: `strftime` conversions, then `&h` for the host (`COMn` on a serial line), `&p` for the TCP port and `&u` for the user name.  **The default is not upstream's `teraterm.log`, and that is deliberate** — see `docs/deviations.md`. One fixed name means every log lands on the last one, and whether that overwrites it or appends to it is decided by a setting the person starting the log is not looking at. A template that carries the clock cannot collide, and this is upstream's own preset (`log_pp.cpp:125`, `%y%m%d_%H%M%S_&h.log`) with a four-digit year. A session with no host name — a local shell — leaves the `&h` empty and keeps the separator, which is what upstream's preset does too.",
+        doc: "`ttset.c:1018`, the name `LogAutoStart` and the log dialog both start from. It is a **template**: `strftime` conversions, then `&h` for the host (`COMn` on a serial line), `&p` for the TCP port and `&u` for the user name.  **The default is not upstream's `teraterm.log`, and that is deliberate** — see `docs/deviations.md`. One fixed name means every log lands on the last one, and whether that overwrites it or appends to it is decided by a setting the person starting the log is not looking at. A template that carries the clock cannot collide, and this is upstream's own Setup preset (`log_pp.cpp:125`) without its `&h`.  **Without the `&h` on purpose**, tempting as it is for anybody logging more than one console. `&h` is `ts.HostName`, and here that is whatever path the port was *opened* by — the connect bar opens a serial port through its `/dev/serial/by-path/` name so a replug cannot move it, and the sweep for characters a file name cannot hold then turns `pci-0000:c8:00.3-usb-0:1.3.2:1.0-port0` into thirty-eight characters of underscores on the end of every log. A local shell has no host name at all and would leave a bare separator. Both are fine in a template somebody chose; neither is fine in the one everybody gets.",
     },
     Field {
         name: "log.default_path",

@@ -79,7 +79,7 @@ fn the_shipped_receive_cr_is_detect() {
 fn the_shipped_log_name_carries_the_clock() {
     assert_eq!(
         Settings::default().log_default_name,
-        "%Y%m%d_%H%M%S_&h.log",
+        "%Y%m%d_%H%M%S.log",
         "ttset.c:1018 is teraterm.log"
     );
 

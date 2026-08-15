@@ -124,8 +124,11 @@ plain name; `FLogGetLogFilename` puts it through four passes — `strftime`, the
 `&h`, `&p` and `&u` for the connection, then a sweep for characters a file name
 cannot hold, then a join against the log directory (`LogDefaultPath`, or the
 *file-transfer* directory if that exists, or a per-user one). This port ships
-`%Y%m%d_%H%M%S_&h.log` instead, so two logs cannot collide; the machinery is
-unchanged and the value is one of upstream's own presets.
+`%Y%m%d_%H%M%S.log` instead, so two logs cannot collide; the machinery is
+unchanged and the value is one of upstream's own presets, without its `&h` —
+which on this side of the port is the path a port was opened by, and a
+`by-path` serial device would put thirty-eight swept characters of PCI
+topology on the end of every log's name.
 
 The part that decided this module's shape: **a file name and a timestamp go
 through different expanders**. A name is validated against Visual Studio 2005's
