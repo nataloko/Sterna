@@ -1043,6 +1043,25 @@ typedef struct {
      * Linux.
      */
     bool crlf;
+    /**
+     * Start a new text file with a UTF-8 byte-order mark.
+     *
+     * The one field here that is **not** a `TERATERM.INI` key: upstream's is
+     * a checkbox on the log dialog that lives for as long as the dialog does.
+     * So a null `options` never asks for one, and this is how a frontend that
+     * put the question to somebody passes on the answer. Ignored for a raw
+     * log and for an append, which is upstream's gate.
+     */
+    bool bom;
+    /**
+     * Write the scrollback and the page into the log before the first live
+     * byte — `LogIncludeScreenBuffer`.
+     *
+     * A one-shot action at open rather than a property of the file, and text
+     * mode only. What upstream does here truncates every line at its first
+     * wide character; this does not.
+     */
+    bool include_screen;
 } TtLogOptions;
 
 /**
@@ -3060,10 +3079,9 @@ void tt_log_options_default(TtLogOptions *out);
  * that a caller allocates, so it always comes from the settings — an override
  * changes which clock is printed, never how.
  *
- * Nothing is logged retroactively — the capture starts here. (Upstream can
- * prepend the scrollback; the function it uses to do that is one of the
- * upstream bugs on file, since it truncates every line at its first wide
- * character, so that option waits for the report to be answered.)
+ * Nothing is logged retroactively unless `include_screen` asks for it, which
+ * is `LogIncludeScreenBuffer` and puts the buffer in ahead of the first live
+ * byte.
  */
 TtStatus tt_session_log_start(TtSession *session,
                               const char *path,

@@ -653,6 +653,21 @@ pub struct TtLogOptions {
     /// this defaults to off, because the artefact is a text file read on
     /// Linux.
     pub crlf: bool,
+    /// Start a new text file with a UTF-8 byte-order mark.
+    ///
+    /// The one field here that is **not** a `TERATERM.INI` key: upstream's is
+    /// a checkbox on the log dialog that lives for as long as the dialog does.
+    /// So a null `options` never asks for one, and this is how a frontend that
+    /// put the question to somebody passes on the answer. Ignored for a raw
+    /// log and for an append, which is upstream's gate.
+    pub bom: bool,
+    /// Write the scrollback and the page into the log before the first live
+    /// byte — `LogIncludeScreenBuffer`.
+    ///
+    /// A one-shot action at open rather than a property of the file, and text
+    /// mode only. What upstream does here truncates every line at its first
+    /// wide character; this does not.
+    pub include_screen: bool,
 }
 
 /// Fill `out` with the defaults: text, no timestamp, truncate, no rotation.
@@ -670,6 +685,8 @@ pub extern "C" fn tt_log_options_default(out: *mut TtLogOptions) {
         rotate_size: d.rotate_size,
         rotate_keep: d.rotate_keep,
         crlf: d.crlf,
+        bom: d.bom,
+        include_screen: d.include_screen,
     };
 }
 
@@ -684,10 +701,9 @@ pub extern "C" fn tt_log_options_default(out: *mut TtLogOptions) {
 /// that a caller allocates, so it always comes from the settings — an override
 /// changes which clock is printed, never how.
 ///
-/// Nothing is logged retroactively — the capture starts here. (Upstream can
-/// prepend the scrollback; the function it uses to do that is one of the
-/// upstream bugs on file, since it truncates every line at its first wide
-/// character, so that option waits for the report to be answered.)
+/// Nothing is logged retroactively unless `include_screen` asks for it, which
+/// is `LogIncludeScreenBuffer` and puts the buffer in ahead of the first live
+/// byte.
 #[no_mangle]
 pub extern "C" fn tt_session_log_start(
     session: *mut TtSession,
@@ -709,6 +725,8 @@ pub extern "C" fn tt_session_log_start(
             rotate_size: o.rotate_size,
             rotate_keep: o.rotate_keep,
             crlf: o.crlf,
+            bom: o.bom,
+            include_screen: o.include_screen,
             format: from_settings.format,
         },
     };

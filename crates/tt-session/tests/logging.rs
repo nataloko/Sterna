@@ -270,6 +270,152 @@ fn rotation_shifts_the_generations_oldest_first() {
     );
 }
 
+/// `LogIncludeScreenBuffer`: the page and the history that were already there
+/// go in ahead of the first live byte. Upstream's own version of this truncates
+/// a line at its first wide character — see `Session::buffer_text` — so the two
+/// agree on plain text and this port keeps more of anything else.
+#[test]
+fn the_screen_can_be_written_into_the_log_ahead_of_the_live_bytes() {
+    let dir = Scratch::new("prologue");
+    let path = dir.path("session.log");
+    let mut s = session();
+
+    s.feed(b"before\r\n");
+    s.start_log(
+        &path,
+        LogOptions {
+            include_screen: true,
+            ..LogOptions::default()
+        },
+    )
+    .unwrap();
+    s.feed(b"after\r\n");
+    s.stop_log();
+
+    let written = fs::read_to_string(&path).unwrap();
+    let lines: Vec<&str> = written.lines().collect();
+    assert_eq!(lines[0], "before");
+    // The rest of the page is blank rows, trimmed to nothing rather than to
+    // forty spaces each, and the live text follows all of them.
+    assert!(
+        lines[1..lines.len() - 1].iter().all(|l| l.is_empty()),
+        "the empty rows of the page should be empty: {lines:?}"
+    );
+    assert_eq!(lines[lines.len() - 1], "after");
+}
+
+/// The gate is upstream's: a binary log records what the far end sent, and the
+/// screen is not something it sent (`vtwin.cpp:4145`).
+#[test]
+fn a_raw_log_never_gets_the_screen_however_it_is_asked() {
+    let dir = Scratch::new("prologue-raw");
+    let path = dir.path("session.log");
+    let mut s = session();
+
+    s.feed(b"before\r\n");
+    s.start_log(
+        &path,
+        LogOptions {
+            mode: LogMode::Raw,
+            include_screen: true,
+            ..LogOptions::default()
+        },
+    )
+    .unwrap();
+    s.feed(b"after\r\n");
+    s.stop_log();
+
+    assert_eq!(fs::read(&path).unwrap(), b"after\r\n");
+}
+
+/// The BOM's three-way gate — new file, text mode, asked for — and the fourth
+/// place it appears, which is the head of every rotated generation.
+#[test]
+fn the_byte_order_mark_goes_on_a_new_text_file_and_nowhere_else() {
+    let dir = Scratch::new("bom");
+    const BOM: &[u8] = b"\xef\xbb\xbf";
+
+    let asked = LogOptions {
+        bom: true,
+        ..LogOptions::default()
+    };
+
+    let path = dir.path("plain.log");
+    let mut s = session();
+    s.start_log(&path, asked.clone()).unwrap();
+    s.feed(b"hello\r\n");
+    s.stop_log();
+    assert_eq!(fs::read(&path).unwrap(), [BOM, b"hello\n"].concat());
+
+    // Appending would put a stray U+FEFF in the middle of the file.
+    s.start_log(
+        &path,
+        LogOptions {
+            append: true,
+            ..asked.clone()
+        },
+    )
+    .unwrap();
+    s.feed(b"more\r\n");
+    s.stop_log();
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        [BOM, b"hello\nmore\n"].concat(),
+        "one mark, at the head"
+    );
+
+    // A binary capture is bytes the device sent, and it sent no mark.
+    let raw = dir.path("raw.log");
+    s.start_log(
+        &raw,
+        LogOptions {
+            mode: LogMode::Raw,
+            ..asked.clone()
+        },
+    )
+    .unwrap();
+    s.feed(b"hi");
+    s.stop_log();
+    assert_eq!(fs::read(&raw).unwrap(), b"hi");
+
+    // ...and not asking for one is the default.
+    let bare = dir.path("bare.log");
+    s.start_log(&bare, LogOptions::default()).unwrap();
+    s.feed(b"hello\r\n");
+    s.stop_log();
+    assert_eq!(fs::read(&bare).unwrap(), b"hello\n");
+}
+
+#[test]
+fn every_rotated_generation_starts_with_its_own_mark() {
+    let dir = Scratch::new("bom-rotate");
+    let path = dir.path("session.log");
+    let mut s = session();
+    s.start_log(
+        &path,
+        LogOptions {
+            bom: true,
+            rotate_size: 24,
+            rotate_keep: 3,
+            ..LogOptions::default()
+        },
+    )
+    .unwrap();
+    for _ in 0..12 {
+        s.feed(b"0123456789\r\n");
+    }
+    s.stop_log();
+
+    for name in ["session.log", "session.log.1", "session.log.2"] {
+        let bytes = fs::read(dir.path(name)).unwrap();
+        assert!(
+            bytes.starts_with(b"\xef\xbb\xbf"),
+            "{name} has no mark: {:?}",
+            &bytes[..bytes.len().min(8)]
+        );
+    }
+}
+
 #[test]
 fn nothing_is_logged_before_the_log_was_opened() {
     let dir = Scratch::new("late");

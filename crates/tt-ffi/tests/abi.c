@@ -572,6 +572,8 @@ static void test_logging(void)
     tt_log_options_default(&opts);
     CHECK(!opts.raw);
     CHECK(opts.timestamp == TT_LOG_TIMESTAMP_NONE);
+    CHECK(!opts.bom);
+    CHECK(!opts.include_screen);
 
     CHECK(tt_session_log_path(s) == NULL);
     CHECK(tt_session_log_bytes(s) == 0);
@@ -605,6 +607,32 @@ static void test_logging(void)
         fclose(f);
         CHECK(n == 7);
         CHECK(strcmp(buf, "logged\n") == 0);
+        remove(path);
+    }
+
+    /* The two fields no INI key answers for, which is why they are on the
+     * struct at all: a mark at the head of a new text file, and the buffer
+     * that was already on the screen written in ahead of the live bytes. */
+    tt_log_options_default(&opts);
+    opts.bom = true;
+    opts.include_screen = true;
+    CHECK_OK(tt_session_log_start(s, path, &opts));
+    tt_session_feed(s, (const uint8_t *)"after\r\n", 7);
+    tt_session_log_stop(s);
+
+    f = fopen(path, "rb");
+    CHECK(f != NULL);
+    if (f) {
+        char buf[256] = {0};
+        size_t n = fread(buf, 1, sizeof buf - 1, f);
+        fclose(f);
+        CHECK(n > 9);
+        CHECK(memcmp(buf, "\xef\xbb\xbf", 3) == 0);
+        /* `logged` was on the screen when the log opened, and it is in the
+         * file before anything that arrived afterwards. */
+        const char *screen = strstr(buf, "logged");
+        const char *live = strstr(buf, "after");
+        CHECK(screen != NULL && live != NULL && screen < live);
         remove(path);
     }
 

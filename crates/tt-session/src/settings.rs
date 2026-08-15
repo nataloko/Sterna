@@ -266,6 +266,12 @@ pub fn log_options(s: &Settings) -> LogOptions {
         // here the schema does not decide. See `LogOptions::crlf` for why the
         // default is the other way round.
         crlf: LogOptions::default().crlf,
+        include_screen: s.log_include_screen_buffer,
+        // The other field with no key. Upstream's is a checkbox on the log
+        // dialog that is forgotten when the dialog closes — see
+        // `LogOptions::bom` — so the settings have no answer to give and the
+        // only caller that can is whoever put the dialog up.
+        bom: LogOptions::default().bom,
     }
 }
 
