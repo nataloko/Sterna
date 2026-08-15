@@ -139,8 +139,8 @@ QuickButtonsDialog::QuickButtonsDialog(const QVector<QuickButton> &buttons,
 
     m_enter = new QCheckBox(tr("Send Enter after"), this);
     m_enter->setObjectName(QStringLiteral("quickButtonEnter"));
-    m_enter->setToolTip(tr("Adds a Return, the way pressing Enter would. Shift"
-                           " and click sends it without one."));
+    m_enter->setToolTip(tr("This option adds Enter after the button's text or bytes. "
+                           "A Shift-click sends the same content without Enter."));
 
     // "Repeat: [10] times every [2.5] s" — one sentence on one row, because
     // the count and the cadence are one decision and reading them apart
@@ -168,9 +168,9 @@ QuickButtonsDialog::QuickButtonsDialog(const QVector<QuickButton> &buttons,
     repeatLayout->addWidget(m_every);
     repeatLayout->addWidget(m_interval);
     repeatLayout->addStretch();
-    repeatRow->setToolTip(tr("Press the button again — or Escape in the "
-                             "terminal — to stop a repeat early. A repeat "
-                             "also ends when the connection does."));
+    repeatRow->setToolTip(
+        tr("A second button press stops the repeat. The Escape key in the terminal "
+           "also stops the repeat. A lost connection stops the repeat."));
 
     m_shortcut = new QKeySequenceEdit(this);
     m_shortcut->setObjectName(QStringLiteral("quickButtonShortcut"));
@@ -181,8 +181,9 @@ QuickButtonsDialog::QuickButtonsDialog(const QVector<QuickButton> &buttons,
     m_warning->setStyleSheet(QStringLiteral("QLabel { color: #b71c1c; }"));
 
     auto *standard = new QPushButton(tr("Assign Ctrl+Alt+1...0"), this);
-    standard->setToolTip(tr("Give the first ten buttons a shortcut each. Any "
-                            "shortcut is a key the terminal stops receiving."));
+    standard->setToolTip(
+        tr("This command adds the Ctrl+Alt+1 thru Ctrl+Alt+0 shortcuts to buttons "
+           "1 thru 10. The remote system will not receive these key combinations."));
 
     m_confirm = new QCheckBox(tr("Ask before running"), this);
     m_confirm->setObjectName(QStringLiteral("quickButtonConfirm"));

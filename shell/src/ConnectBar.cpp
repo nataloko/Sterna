@@ -223,9 +223,10 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
     m_echo = new QCheckBox(plain("DLG_TERM_LOCALECHO", tr("Local echo")), this);
     m_echo->setObjectName(QStringLiteral("connectBarLocalEcho"));
     m_echo->setContentsMargins(4, 0, 4, 0);
-    m_echo->setToolTip(tr("Shows your keystrokes locally. Turn this on when the "
-                          "connected device does not echo what you type; leave "
-                          "it off if characters appear twice."));
+    m_echo->setToolTip(
+        tr("This option shows each key while you type. The on value is applicable "
+           "if the connected device does not show your input. The off value is "
+           "applicable if each character shows two times."));
     connect(m_echo, &QCheckBox::toggled, this, &ConnectBar::localEchoRequested);
     addWidget(m_echo);
 
@@ -233,8 +234,8 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
     m_lineEdit->setObjectName(QStringLiteral("connectBarLineEdit"));
     m_lineEdit->setContentsMargins(4, 0, 4, 0);
     m_lineEdit->setToolTip(
-        tr("Keeps ordinary text local and editable at the terminal cursor "
-           "until Enter sends the line."));
+        tr("This option lets you edit text in the terminal before you send it. "
+           "The Enter key sends the full line."));
     connect(m_lineEdit, &QCheckBox::toggled, this,
             &ConnectBar::lineEditRequested);
     addWidget(m_lineEdit);
@@ -537,11 +538,11 @@ void ConnectBar::rebuildList(bool rescan)
             markBusy(m_destination, at);
             QString tip;
             if (entry.busy.program.isEmpty()) {
-                tip = tr("Something else has this port open");
+                tip = tr("A different program uses this port.");
             } else if (entry.busy.pid == 0) {
-                tip = tr("%1 has this port open").arg(entry.busy.program);
+                tip = tr("%1 uses this port.").arg(entry.busy.program);
             } else {
-                tip = tr("%1 (pid %2) has this port open")
+                tip = tr("%1 uses this port (process %2).")
                           .arg(entry.busy.program)
                           .arg(entry.busy.pid);
             }
@@ -688,8 +689,8 @@ void ConnectBar::updateDarkModeAction(bool darkMode)
         appearanceIcon(darkMode, palette().color(QPalette::ButtonText)));
     m_darkMode->setToolTip(
         darkMode
-            ? tr("Use the light palette for terminal views. Menus and dialogs "
-                 "continue to use the desktop theme.")
-            : tr("Use the dark palette for terminal views. Menus and dialogs "
-                 "continue to use the desktop theme."));
+            ? tr("This command changes terminal views to a light palette. Menus and dialogs "
+                 "keep the desktop theme.")
+            : tr("This command changes terminal views to a dark palette. Menus and dialogs "
+                 "keep the desktop theme."));
 }

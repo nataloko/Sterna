@@ -76,11 +76,13 @@ QString QuickButton::repeatSummary() const
     // separator and therefore no locale.
     const QString seconds = QLocale().toString(intervalMs / 1000.0, 'g', 4);
     if (repeatsForever()) {
-        return QCoreApplication::translate("QuickButton",
-                                           "Repeats every %1 s until stopped")
+        return QCoreApplication::translate(
+                   "QuickButton",
+                   "This button sends at intervals of %1 seconds. A second activation stops the repeat.")
             .arg(seconds);
     }
-    return QCoreApplication::translate("QuickButton", "Sends %1 times, every %2 s")
+    return QCoreApplication::translate("QuickButton",
+                                       "This button sends %1 times at %2-second intervals.")
         .arg(repeat)
         .arg(seconds);
 }
@@ -90,18 +92,20 @@ QString QuickButton::describe() const
     QString what;
     switch (kind) {
     case TT_QUICK_BUTTON_BYTES:
-        what = QCoreApplication::translate("QuickButton", "Send bytes: %1")
+        what = QCoreApplication::translate("QuickButton", "This button sends these bytes: %1.")
                    .arg(oneLine(text, kDescribeChars));
         break;
     case TT_QUICK_BUTTON_MACRO:
-        what = QCoreApplication::translate("QuickButton", "Run macro: %1").arg(text);
+        what = QCoreApplication::translate("QuickButton", "This button runs this macro: %1.")
+                   .arg(text);
         break;
     case TT_QUICK_BUTTON_COMMAND:
-        what = QCoreApplication::translate("QuickButton", "Menu command %1").arg(text);
+        what = QCoreApplication::translate("QuickButton", "This button runs this menu command: %1.")
+                   .arg(text);
         break;
     case TT_QUICK_BUTTON_TEXT:
     default:
-        what = QCoreApplication::translate("QuickButton", "Send: %1")
+        what = QCoreApplication::translate("QuickButton", "This button sends this text: %1.")
                    .arg(oneLine(text, kDescribeChars));
         break;
     }

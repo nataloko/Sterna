@@ -86,10 +86,13 @@
 # half of them. It also reads into a 4-byte buffer, so only the first three
 # characters are compared and `offline` is `off`. All of it is reproduced.
 #
-# Comment lines immediately above a setting become its documentation, in the
-# generated Rust and in the dialog's tooltip. Cite the line in `ttset.c` that
-# proves the default — `AGENTS.md` has four traps that are all "the default is
-# not where it looks like it is".
+# Comment lines immediately above a setting become its developer documentation.
+# Cite the line in `ttset.c` that proves the default — `AGENTS.md` has four traps
+# that are all "the default is not where it looks like it is".
+#
+# Lines that start with `#@` become the setting's user help. Explain what the
+# setting changes and when it is useful. Do not expose source names, internal
+# fields or implementation details there.
 
 # --- terminal ---------------------------------------------------------------
 
@@ -97,9 +100,11 @@
 # this used to say; 500 is `TermHeightMax`, the next line of `tttypes.h:633`.
 # Zero or less takes the default rather than the floor, which is what the range
 # means here.
+#@ This setting sets the terminal width in character columns. A larger value gives remote programs more horizontal space.
 terminal.cols | int_zero(1..1000) | Tera Term | TerminalSize.1 | 80 | DLG_TABSHEET_TITLE_TERM
 
 # `ttset.c:619`, the second half of the same key, bounded by `TermHeightMax`.
+#@ This setting sets the terminal height in character rows. A larger value shows more output without scrolling.
 terminal.rows | int_zero(1..500) | Tera Term | TerminalSize.2 | 24 | DLG_TABSHEET_TITLE_TERM
 
 # `ts.TerminalID`. `ttset.c:709` reads the key with an empty default and hands
@@ -109,6 +114,7 @@ terminal.rows | int_zero(1..500) | Tera Term | TerminalSize.2 | 24 | DLG_TABSHEE
 # VT100, and so does `TerminalID=vt320` in the wrong case. The one enumerated
 # setting here that is not `_stricmp`, hence `enum_exact`. Note `dumb` is
 # lower-case in upstream's own table while every other spelling is upper.
+#@ This setting selects the terminal model for behavior and capability replies. Each name is case-sensitive. An unknown name selects VT100. The selected model must agree with the model that the host expects.
 terminal.id | enum_exact(VT100=Vt100,VT100J=Vt100J,VT101=Vt101,VT102=Vt102,VT102J=Vt102J,VT220=Vt220,VT220J=Vt220J,VT282=Vt282,VT320=Vt320,VT382=Vt382,VT420=Vt420,VT520=Vt520,VT525=Vt525,dumb=Dumb) | Tera Term | TerminalID | VT100 | DLG_TERM_TERMID
 
 # **`ttset.c:631`, and upstream's default is the `else` branch.** A bare CR is
@@ -122,12 +128,15 @@ terminal.id | enum_exact(VT100=Vt100,VT100J=Vt100J,VT101=Vt101,VT102=Vt102,VT102
 # its spelling and a host still gets its cursor motions. Every upstream
 # spelling, `CRReceive=CR` included, remains byte-for-byte compatible; Tera Term
 # reads `DETECT` as the unrecognised value it is, which is its own `CR` default.
+#@ This setting controls how received carriage-return (CR) and line-feed (LF) bytes create new lines. Detect selects a mode from the first LF and keeps a standalone CR as cursor movement.
 terminal.cr_receive | enum(CR=Cr,CRLF=CrLf,LF=Lf,AUTO=Auto,DETECT=Detect) | Tera Term | CRReceive | DETECT | DLG_TERM_CRRECEIVE
 
 # `ttset.c:646`, the same shape, one variant short — there is no AUTO on send.
+#@ This setting selects CR, CRLF, or LF for carriage-return output from terminal input.
 terminal.cr_send | enum(CR=Cr,CRLF=CrLf,LF=Lf) | Tera Term | CRSend | CR | DLG_TERM_CRSEND
 
 # `ttset.c:660`.
+#@ This setting shows typed characters locally without an echo from the remote host.
 terminal.local_echo | bool | Tera Term | LocalEcho | off | DLG_TERM_LOCALECHO
 
 # **`[Sterna]`**, because this is a local editor rather than telnet LINEMODE
@@ -136,18 +145,22 @@ terminal.local_echo | bool | Tera Term | LocalEcho | off | DLG_TERM_LOCALECHO
 # for that send without overwriting `terminal.local_echo`, so leaving the mode
 # restores the user's preference. Off by default: an ordinary terminal remains
 # immediate unless the user explicitly opts in.
+#@ This setting edits printable input locally until Return sends the line. Backspace, Delete, selection, and usual editing shortcuts also stay local. Other keys send immediately.
 terminal.line_edit | bool | Sterna | LineEdit | off | -
 
 # **`[Sterna]`**. A painter-only dark palette for the terminal grid and its
 # local line editor. It deliberately does not change QApplication's palette:
 # menus, dialogs, toolbars and status bars remain the desktop theme. The
 # connect bar persists the switch immediately and applies it to every tab.
+#@ This setting uses a dark palette for terminal content and its line editor. Menus, dialogs, and other application controls keep the desktop theme.
 terminal.dark_mode | bool | Sterna | DarkMode | off | -
 
 # `ttset.c:625`. With it on, resizing the window resizes the terminal.
+#@ This setting stores Tera Term's option for resizing the terminal with its window. Sterna always fits the terminal to its view. Thus, this setting has no effect.
 terminal.size_follows_window | bool | Tera Term | TermIsWin | off | DLG_TERM_TERMISWIN
 
 # `ttset.c:628`. With it on, a remote resize resizes the window.
+#@ This setting stores Tera Term's option for remote terminal-size requests. Sterna handles supported remote resize requests even if this setting is off.
 terminal.auto_win_resize | bool | Tera Term | AutoWinResize | off | -
 
 # `ttset.c:1676`, part of `TermFlag` — the same trap as `ColorFlag`. Whether
@@ -159,6 +172,7 @@ terminal.auto_win_resize | bool | Tera Term | AutoWinResize | off | -
 # `BuffScroll` sits outside the `if (size changed)` block (`:5028`); and
 # DECCOLM tests it and skips its own clear, since `ChangeTerminalSize` has
 # already done one (`vtterm.c:2925`).
+#@ This setting clears the displayed page and homes the cursor each time Sterna applies terminal size. It can also clear the page if the size does not change.
 terminal.clear_on_resize | bool | Tera Term | ClearOnResize | off | DLG_TAB_GENERAL_CLEAR_ON_RESIZE
 
 # `ttset.c:1444`. Whether `ED 0` with the cursor already at the home position
@@ -171,13 +185,16 @@ terminal.clear_on_resize | bool | Tera Term | ClearOnResize | off | DLG_TAB_GENE
 # programs send in place of `ESC [ 2 J` — takes that path too. Turning it off
 # leaves those programs erasing to the end of the screen, which is what the
 # sequence literally asks for and loses the screen out of the history.
+#@ This setting treats a move home followed by erase-to-end as a full screen clear. The clear moves the old page into scrollback.
 terminal.home_erase_clears_screen | bool | Tera Term | ScrollWindowClearScreen | on | -
 
 # `ttset.c:743`. Off keeps the terminal to one screen and no history.
+#@ This setting keeps lines that scroll off the page in view. The off value keeps only the current screen.
 terminal.scrollback_enabled | bool | Tera Term | EnableScrollBuff | on | DLG_TERM_SCROLLBUFF
 
 # `ttset.c:751`. Upstream ships **100** lines, which is small for a console
 # log; it is a setting rather than a constant precisely so it can be raised.
+#@ This setting sets the total number of lines when scrollback is on. The total includes the page in view. A value no larger than the page gives no scrollback. A larger value gives more history.
 terminal.scrollback_lines | int | Tera Term | ScrollBuffSize | 100 | DLG_TERM_SCROLLBUFF
 
 # `ttset.c:1212`, and upstream's comment on it is "special option" — there is
@@ -186,6 +203,7 @@ terminal.scrollback_lines | int | Tera Term | ScrollBuffSize | 100 | DLG_TERM_SC
 # the *terminal's row count* with it too, so `MaxBuffSize=10` is a ten-row
 # terminal however big the window is. Below 24 takes the default rather than
 # the floor, which is the `TerminalSize` bound with no ceiling on it.
+#@ This setting sets the maximum total buffer size and terminal row count. Values less than 24 use the default.
 terminal.buffer_max_lines | int(24..) | Tera Term | MaxBuffSize | 10000 | -
 
 # `ttset.c:1875`. Which ISO-2022 shifts the terminal honours, as a
@@ -200,9 +218,11 @@ terminal.buffer_max_lines | int(24..) | Tera Term | MaxBuffSize | 10000 | -
 # `"on"` is what upstream uses when the key is *absent*, and a key that is
 # present starts at `ISO2022_SHIFT_NONE`, so `ISO2022ShiftFunction=-SS2` is a
 # terminal with every shift disabled rather than all but one.
+#@ This setting selects accepted ISO-2022 character-set shifts. The on and all values select all shifts. The off and none values select no shifts. A custom list accepts SI, SO, LS2, LS3, LS1R, LS2R, LS3R, SS2, and SS3. The prefixes + and - are optional.
 terminal.iso2022_shifts | string | Tera Term | ISO2022ShiftFunction | on | -
 
 # `ts.Title`, `ttset.c:713`. The window title before the host sends one.
+#@ This setting sets the base window title. Sterna shows this title before a remote host gives a title.
 terminal.title | string | Tera Term | Title | Tera Term | DLG_TERM_TITLE
 
 # `ttset.c:663`. What the terminal sends when the host asks it who it is with
@@ -223,6 +243,7 @@ terminal.title | string | Tera Term | Title | Tera Term | DLG_TERM_TITLE
 # `ttset.c:1132` replaces it outright with B Plus's five-byte activation string
 # when `BPAuto=on`, a hundred lines after reading it, so a file that sets both
 # loses this one without a word. See `transfer.bplus_auto`.
+#@ This setting sets the bytes sent for an enquiry (ENQ) request. A dollar sign and two hexadecimal digits identify each non-text byte.
 terminal.answerback | string | Tera Term | Answerback |  | -
 
 # `ttset.c:1108`, `TF_BACKWRAP`. Whether a BS on the left margin steps back to
@@ -234,6 +255,7 @@ terminal.answerback | string | Tera Term | Answerback |  | -
 # Only the arm that moves taps a BS into the log and the macro language's
 # received-line buffer, so this key also decides whether a script's `wait` ever
 # sees one at column zero.
+#@ This setting moves the cursor to the right margin of the previous line when the host sends Backspace at the left margin. The off value prevents this movement.
 terminal.back_wrap | bool | Tera Term | BackWrap | off | -
 
 # `ttset.c:1343`, and it is read in two places that do not sound like the same
@@ -245,6 +267,7 @@ terminal.back_wrap | bool | Tera Term | BackWrap | off | -
 #
 # CHT (`CSI Ps I`) is unaffected by the first half: it calls `CursorForwardTab`
 # directly and never sees the wrap.
+#@ This setting makes a Tab from the host move only the cursor. With the off value, a received Tab can wrap a full line like a printed character.
 terminal.vt_compat_tab | bool | Tera Term | VTCompatTab | off | -
 
 # `ttset.c:1717`, `ts.TabStopFlag`. Which sequences a *host* is allowed to move
@@ -257,6 +280,7 @@ terminal.vt_compat_tab | bool | Tera Term | VTCompatTab | off | -
 # the bits it names. Unlike that key, this one starts from `TABF_NONE` only in
 # the *list* arm and the default applies whenever the value is absent **or**
 # matches `on`.
+#@ This setting selects the host commands that can change tab stops. The on and all values select all commands. The off and none values select no commands. HTS7 and HTS8 set a stop. TBC0 clears the current stop. TBC3 clears all stops.
 terminal.tab_stop_modify | string | Tera Term | TabStopModifySequence | on | -
 
 # `ttset.c:1756`, `TF_INVALIDDECRPSS`, and upstream's own comment is "(for
@@ -265,6 +289,7 @@ terminal.tab_stop_modify | string | Tera Term | TabStopModifySequence | on | -
 # recognise this" — and an invalid one answers `1$r` with an empty body. It is
 # there to exercise the *host's* error handling, and the only setting in the
 # terminal whose purpose is to lie.
+#@ This setting makes terminal status-string replies show the opposite success state. This setting is only for a test of host error handling.
 terminal.invalid_decrqss | bool | Tera Term | UseInvalidDECRQSSResponse | off | -
 
 # `ttset.c:1688`. The eight hex digits the tertiary DA (`CSI = c`) answers with,
@@ -275,6 +300,7 @@ terminal.invalid_decrqss | bool | Tera Term | UseInvalidDECRQSSResponse | off | 
 # value, becomes `FFFFFFFF`. That is `ts.BSKey`'s shape rather than an enum's,
 # so it is held as a string and checked at the point of use; a file keeps
 # whatever it wrote, and the terminal answers with the valid form.
+#@ This setting sets the terminal identifier for reports to hosts. The identifier has eight hexadecimal digits. Invalid values use FFFFFFFF.
 terminal.uid | string | Tera Term | TerminalUID | FFFFFFFF | -
 
 # `ttset.c:1711`, `TF_LOCKTUID`, and the default is **on** — so DECSTUI
@@ -282,6 +308,7 @@ terminal.uid | string | Tera Term | TerminalUID | FFFFFFFF | -
 # with the key off a host may set the UID above, with it on the sequence is
 # read and dropped. The same eight-hex-digit validation applies there as
 # applies to the file, in a second place.
+#@ This setting prevents a remote host from changing the terminal identifier. The off value lets the host assign that identifier.
 terminal.lock_uid | bool | Tera Term | LockTUID | on | -
 
 # `ttset.c:1101`, `TF_AUTOINVOKE`. Whether designating a character set into G0
@@ -293,6 +320,7 @@ terminal.lock_uid | bool | Tera Term | LockTUID | on | -
 # character, so an unrecognised designation like `ESC ( Z` still invokes; and it
 # is *not* gated on `ts.ISO2022Flag`, unlike every other locking shift in the
 # parser, so a terminal with `ISO2022ShiftFunction=off` still performs this one.
+#@ This setting automatically activates a character set when the host designates it as the primary set. This can occur even when other ISO-2022 shifts are disabled.
 terminal.auto_invoke | bool | Tera Term | AutoInvoke | off | -
 
 # `ttset.c:1789`. The ceiling on the buffer an OSC or DCS string is collected
@@ -302,17 +330,20 @@ terminal.auto_invoke | bool | Tera Term | AutoInvoke | off | -
 #
 # It is the only bound on a string a host controls the length of, which is why
 # it is not merely cosmetic.
+#@ This setting sets the maximum length, in bytes, of host-sent title and control strings. Sterna discards content beyond this limit without a message.
 terminal.max_osc_buffer | int | Tera Term | MaxOSCBufferSize | 4096 | -
 
 # `ttset.c:1078`, `TF_ALLOWWRONGSEQUENCE`, default off. Its remaining upstream
 # consumer accepts a non-regular Japanese coding sequence (`coding_pp.cpp:247`)
 # and permits the otherwise-refused `KanjiOut=H`; CJK is deferred here, so the
 # compatibility switch round-trips and acts on nothing for now.
+#@ This setting stores Tera Term's option to accept nonstandard Japanese character-set sequences. Sterna's UTF-8 terminal does not use this setting.
 terminal.allow_wrong_sequence | bool | Tera Term | AllowWrongSequence | off | -
 
 # `ttset.c:1187`, `TF_ENABLESLINE`, default **on**. Gates DECSSDT/DECSASD
 # (`vtterm.c:3827`). `tt-grid` deliberately has no third status-line buffer yet,
 # so the key is retained until that parser feature exists.
+#@ This setting controls host use of a different terminal status line. Sterna has no status-line area. Thus, this setting has no effect at this time.
 terminal.status_line_enabled | bool | Tera Term | EnableStatusLine | on | -
 
 # --- encoding ---------------------------------------------------------------
@@ -326,75 +357,93 @@ terminal.status_line_enabled | bool | Tera Term | EnableStatusLine | on | -
 # case-sensitive `strcmp` (`ttlib_charset.cpp:147`). Empty and unknown values
 # become UTF-8. Aliases are ordered with the spelling `GetKanjiCodeStr` writes
 # first: EUC is written as `EUC-JP`, and CP1251 as `Windows-1251`.
+#@ This setting selects the character encoding for data from the remote host. At this time, Sterna uses UTF-8. Sterna keeps the other selections only for compatibility.
 encoding.receive | enum_exact(UTF-8/*=Utf8,ISO8859-1=Iso8859_1,ISO8859-2=Iso8859_2,ISO8859-3=Iso8859_3,ISO8859-4=Iso8859_4,ISO8859-5=Iso8859_5,ISO8859-6=Iso8859_6,ISO8859-7=Iso8859_7,ISO8859-8=Iso8859_8,ISO8859-9=Iso8859_9,ISO8859-10=Iso8859_10,ISO8859-11=Iso8859_11,ISO8859-13=Iso8859_13,ISO8859-14=Iso8859_14,ISO8859-15=Iso8859_15,ISO8859-16=Iso8859_16,SJIS=Sjis,EUC-JP/EUC=Euc,JIS=Jis,Windows-1251/CP1251=Windows1251,KOI8-R=Koi8R,CP866=Cp866,KS5601=Ks5601,GB2312=Gb2312,BIG5=Big5,CP437=Cp437,CP737=Cp737,CP775=Cp775,CP850=Cp850,CP852=Cp852,CP855=Cp855,CP857=Cp857,CP860=Cp860,CP861=Cp861,CP862=Cp862,CP863=Cp863,CP864=Cp864,CP865=Cp865,CP869=Cp869,CP874=Cp874,CP1250=Cp1250,CP1252=Cp1252,CP1253=Cp1253,CP1254=Cp1254,CP1255=Cp1255,CP1256=Cp1256,CP1257=Cp1257,CP1258=Cp1258) | Tera Term | KanjiReceive | UTF-8 | DLG_TERMK_KANJI
 
 # `ttset.c:683`, the same exact table and UTF-8 fallback for transmitted text.
+#@ This setting selects the character encoding for transmitted text. At this time, Sterna sends UTF-8. Sterna keeps the other selections only for compatibility.
 encoding.send | enum_exact(UTF-8/*=Utf8,ISO8859-1=Iso8859_1,ISO8859-2=Iso8859_2,ISO8859-3=Iso8859_3,ISO8859-4=Iso8859_4,ISO8859-5=Iso8859_5,ISO8859-6=Iso8859_6,ISO8859-7=Iso8859_7,ISO8859-8=Iso8859_8,ISO8859-9=Iso8859_9,ISO8859-10=Iso8859_10,ISO8859-11=Iso8859_11,ISO8859-13=Iso8859_13,ISO8859-14=Iso8859_14,ISO8859-15=Iso8859_15,ISO8859-16=Iso8859_16,SJIS=Sjis,EUC-JP/EUC=Euc,JIS=Jis,Windows-1251/CP1251=Windows1251,KOI8-R=Koi8R,CP866=Cp866,KS5601=Ks5601,GB2312=Gb2312,BIG5=Big5,CP437=Cp437,CP737=Cp737,CP775=Cp775,CP850=Cp850,CP852=Cp852,CP855=Cp855,CP857=Cp857,CP860=Cp860,CP861=Cp861,CP862=Cp862,CP863=Cp863,CP864=Cp864,CP865=Cp865,CP869=Cp869,CP874=Cp874,CP1250=Cp1250,CP1252=Cp1252,CP1253=Cp1253,CP1254=Cp1254,CP1255=Cp1255,CP1256=Cp1256,CP1257=Cp1257,CP1258=Cp1258) | Tera Term | KanjiSend | UTF-8 | DLG_TERMK_KANJISEND
 
 # `ttset.c:675`; only the literal `7` selects seven-bit JIS Katakana, and the
 # empty default and every other value select eight-bit.
+#@ This setting selects seven-bit or eight-bit Katakana for received Japanese text. This compatibility selection has no effect in Sterna at this time.
 encoding.katakana_receive | enum(7=Seven,8/*=Eight) | Tera Term | KatakanaReceive | 8 | -
 
 # `ttset.c:688`, the transmit-side copy of the same switch.
+#@ This setting selects seven-bit or eight-bit Katakana for transmitted Japanese text. This compatibility selection has no effect in Sterna at this time.
 encoding.katakana_send | enum(7=Seven,8/*=Eight) | Tera Term | KatakanaSend | 8 | -
 
 # `ttset.c:696` and `makeoutputstring.cpp:72`; exact `@` selects the 1978 JIS
 # designation and exact `B` plus everything else selects the 1983 one.
+#@ This setting selects the Japanese character-set designation for received text. This compatibility selection has no effect in Sterna at this time.
 encoding.kanji_in | enum_exact(@=At,B/*=B) | Tera Term | KanjiIn | B | DLG_TERM_KIN
 
 # `ttset.c:701` and `makeoutputstring.cpp:83`; exact `B`, `J` and `H` are the
 # three designations and an absent or unknown value takes `J`.
+#@ This setting selects the Japanese character-set designation for transmitted text. This compatibility selection has no effect in Sterna at this time.
 encoding.kanji_out | enum_exact(B=B,J/*=J,H=H) | Tera Term | KanjiOut | J | DLG_TERM_KOUT
 
 # `ttset.c:1158`, `TF_CTRLINKANJI`, default on. It lets C0 controls interrupt a
 # two-byte Japanese character; retained until those decoders exist here.
+#@ This setting lets control bytes interrupt a two-byte Japanese character. It has no effect in Sterna at this time.
 encoding.ctrl_in_kanji | bool | Tera Term | CtrlInKanji | on | -
 
 # `ttset.c:1194`, `TF_FIXEDJIS`, default off. The writer does not emit this
 # legacy hand-edited key, but a changed generated setting must still be able to.
+#@ This setting keeps a legacy fixed Japanese encoding option. It has no effect in Sterna at this time.
 encoding.fixed_jis | bool | Tera Term | FixedJIS | off | -
 
 # `ttset.c:1957`, default off. Upstream's experimental fallback decodes bytes
 # that are invalid UTF-8 as CP932; the decoder is part of the deferred CJK work.
+#@ This setting uses Japanese CP932 encoding for bytes that are not valid UTF-8. This alternative encoding has no effect in Sterna at this time.
 encoding.fallback_cp932 | bool | Tera Term | FallbackToCP932 | off | -
 
 # `ttset.c:911`. Only `KOI8-R`, case-insensitively, selects that keyboard map;
 # the `Windows` spelling and everything else select the Windows map.
+#@ This setting selects the Windows or KOI8-R keyboard map for Russian text. This compatibility selection has no effect in Sterna at this time.
 encoding.russian_keyboard | enum(KOI8-R=Koi8R,Windows/*=Windows) | Tera Term | RussKeyb | Windows | -
 
 # `ttset.c:1537`. Values 0, 1 and 2 select Unicode-to-DEC, DEC-to-Unicode and
 # no mapping. An out-of-range integer falls back to the first, not to the file
 # default of 2, so `*` records the separate else arm.
+#@ This setting controls mappings between special DEC graphics and Unicode. The selections are DEC-to-Unicode, Unicode-to-DEC, and no mapping. This setting has no effect in Sterna at this time.
 encoding.dec_special_direction | enum(0/*=UnicodeToDec,1=DecToUnicode,2=Off) | Tera Term | DecSpMappingDir | 2 | -
 
 # `ttset.c:1547`, assigned to a `WORD`. The low three bits choose the symbol
 # groups mapped to DEC special graphics; unknown high bits survive a save.
+#@ This setting selects the symbol groups that map from Unicode to DEC special graphics. This numeric compatibility mask has no effect in Sterna at this time.
 encoding.unicode_to_dec_special | uint16 | Tera Term | UnicodeToDecSpMapping | 3 | -
 
 # `ttset.c:1965`. Only 1 and 2 are valid, and either invalid end takes
 # `GetDefaultUnicodeWidth()`, which is 1 in this upstream tree.
+#@ This setting selects one or two cells for characters with ambiguous display width. This policy has no effect in Sterna at this time.
 encoding.ambiguous_width | uint8_default(1..2) | Tera Term | UnicodeAmbiguousWidth | 1 | -
 
 # `ttset.c:1969`, default off. When enabled, Emoji-property characters use the
 # explicit width below instead of their East Asian Width property.
+#@ This setting uses the configured emoji width, not the standard width property of each emoji. This override has no effect in Sterna at this time.
 encoding.emoji_override | bool | Tera Term | UnicodeEmojiOverride | off | -
 
 # `ttset.c:1970`, the same accept-only-1-or-2 rule and default 1 as ambiguous
 # width. Width policy remains deliberately deferred with CJK.
+#@ This setting selects one or two terminal cells for emoji when the override is on. This setting has no effect in Sterna at this time.
 encoding.emoji_width | uint8_default(1..2) | Tera Term | UnicodeEmojiWidth | 1 | -
 
 # --- input method -----------------------------------------------------------
 
 # `ttset.c:1198`, default on. This is Win32 IME enablement; Qt input-method
 # integration remains deferred with CJK, so the compatibility key is carried.
+#@ This setting enables an input method editor for complex character composition. This setting has no effect in Sterna at this time.
 ime.enabled | bool | Tera Term | IME | on | -
 
 # `ttset.c:1201`, default on. Selects inline composition in upstream and acts
 # on nothing until the input-method surface exists here.
+#@ This setting shows input method composition in the terminal and not in a different window. This setting has no effect in Sterna at this time.
 ime.inline | bool | Tera Term | IMEInline | on | -
 
 # `ttset.c:1684`, `WF_IMECURSORCHANGE`, default off. Changes the cursor while
 # an IME composition is active; the setting is retained with that deferred UI.
+#@ This setting changes the cursor during text composition by an input method editor. This setting has no effect in Sterna at this time.
 ime.cursor_related | bool | Tera Term | IMERelatedCursor | off | DLG_TAB_GENERAL_CURSOR_CHANGE_IME
 
 # --- keyboard ----------------------------------------------------------------
@@ -405,16 +454,19 @@ ime.cursor_related | bool | Tera Term | IMERelatedCursor | off | DLG_TAB_GENERAL
 # `stty erase` set to `^?`, so backspace echoes instead of erasing until the
 # host sets DECBKM. Faithful by default, and changeable — which is the whole
 # point of this file existing.
+#@ This setting selects BS (0x08) or DEL (0x7F) for Backspace. The selection must agree with the erase character that the remote host expects.
 keyboard.backspace | enum(BS=Bs,DEL=Del) | Tera Term | BSKey | BS | DLG_KEYB_BSKEY
 
 # `ttset.c:887`. Upstream ships this **off**, and every Linux line editor and
 # Emacs expects Alt to prefix an ESC. The shell has been diverging from
 # upstream here since it was written; this is where that divergence becomes a
 # setting instead of a hard-coded opinion.
+#@ This setting selects the Alt key that acts as the Meta input modifier. A different setting controls how Meta changes each character.
 keyboard.meta | enum(off=Off,on=On,left=Left,right=Right) | Tera Term | MetaKey | off | DLG_KEYB_METAKEY
 
 # `ttset.c:882`. Whether the Delete key sends DEL rather than the VT220
 # Remove sequence.
+#@ This setting changes Delete output from the terminal's Remove key sequence to the DEL byte.
 keyboard.delete_sends_del | bool | Tera Term | DeleteKey | off | DLG_KEYB_DELKEY
 
 # `ttset.c:903`, and a **veto rather than a mode**: DECNKM still sets, and
@@ -422,15 +474,18 @@ keyboard.delete_sends_del | bool | Tera Term | DeleteKey | off | DLG_KEYB_DELKEY
 # switches the keypad to application mode gets the numeric one anyway and is
 # not told. Named the way upstream names it, negation included, because a row
 # called `app_keypad` would mean the opposite of the key it is written from.
+#@ This setting keeps keypad keys in numeric mode after an application-keypad request from a host. The terminal ignores the request without a message to the host.
 keyboard.disable_app_keypad | bool | Tera Term | DisableAppKeypad | off | -
 
 # `ttset.c:907`. The same veto for DECCKM and the cursor keys.
+#@ This setting keeps cursor keys on their normal sequences after an application-cursor request from a host.
 keyboard.disable_app_cursor | bool | Tera Term | DisableAppCursor | off | -
 
 # `ttset.c:1167`, and the value is **hex-escaped** (`Hex2StrW`): `$20` is a
 # space. The default is a space plus every ASCII punctuation mark except
 # underscore, which is what makes `some_name` one word and `some-name` three
 # when you double-click it.
+#@ This setting contains characters that end a word during mouse selection. For example, dollar-prefixed hexadecimal escapes can identify spaces.
 keyboard.word_delimiters | string | Tera Term | DelimList | $20!"#$24%&'()*+,-./:;<=>?@[\]^`{|}~ | -
 
 # `ttset.c:1176`. When a word starts on a non-delimiter, changing between a
@@ -438,17 +493,20 @@ keyboard.word_delimiters | string | Tera Term | DelimList | $20!"#$24%&'()*+,-./
 # so double-clicking `abc北京def` selects one of the three width runs rather than
 # the whole string. A run that starts on a delimiter is unaffected: upstream's
 # other arm still groups consecutive copies of that same character.
+#@ This setting ends a selected word when character width changes between one and multiple cells. This separates mixed Latin and wide-character runs.
 keyboard.width_delimits_word | bool | Tera Term | DelimDBCS | on | -
 
 # `ttset.c:1598`, default off. With it on, a PC key that has no explicit
 # `KEYBOARD.CNF` entry sends nothing instead of falling back to Tera Term's
 # built-in VT sequence (`keyboard.c:960` onward).
+#@ This setting sends nothing for an unmapped special key and does not use a built-in terminal sequence. A complete custom keyboard map is necessary.
 keyboard.strict_mapping | bool | Tera Term | StrictKeyMapping | off | -
 
 # `ttset.c:1643`. What an enabled Meta key does to a one-byte character: `raw`
 # sets bit 7 on the byte, `text` sets U+0080 on the character before encoding,
 # and `off` prefixes ESC. `on` is a read-only alias of `raw`; the writer emits
 # `raw` (`ttset.c:3012`).
+#@ This setting controls the change to a one-byte character when Alt acts as Meta. Off prefixes Escape. Raw sets bit 7. Text changes the character before encoding.
 keyboard.meta_8bit | enum(off=Off,raw/on=Raw,text=Text) | Tera Term | Meta8Bit | off | -
 
 # --- colour ------------------------------------------------------------------
@@ -460,49 +518,61 @@ keyboard.meta_8bit | enum(off=Off,raw/on=Raw,text=Text) | Tera Term | Meta8Bit |
 
 # `ttset.c:754`. Black on white, which is what Tera Term looks like out of the
 # box and surprises people who expect a terminal to be dark.
+#@ This setting sets the normal text and background colors for text without special attributes.
 color.normal | color2 | Tera Term | VTColor | 0,0,0,255,255,255 | DLG_TAB_VISUAL_FGCOLOR
 
 # `ttset.c:757`. Blue.
+#@ This setting sets the text and background colors for bold terminal text when bold colors are on.
 color.bold | color2 | Tera Term | VTBoldColor | 0,0,255,255,255,255 | DLG_TAB_VISUAL_FGCOLOR
 
 # `ttset.c:762`. Red.
+#@ This setting sets the text and background colors for blinking terminal text when blink colors are on.
 color.blink | color2 | Tera Term | VTBlinkColor | 255,0,0,255,255,255 | DLG_TAB_VISUAL_FGCOLOR
 
 # `ttset.c:786`. Magenta.
+#@ This setting sets the text and background colors for underlined terminal text when underline colors are on.
 color.underline | color2 | Tera Term | VTUnderlineColor | 255,0,255,255,255,255 | DLG_TAB_VISUAL_FGCOLOR
 
 # `ttset.c:767`. White on black — and unlike the other three this one ships
 # **off**, so reverse video uses the normal pair swapped instead.
+#@ This setting sets colors for reverse video when custom reverse colors are on. Otherwise, reverse video uses the normal text and background colors in reverse order.
 color.reverse | color2 | Tera Term | VTReverseColor | 255,255,255,0,0,0 | DLG_TAB_VISUAL_FGCOLOR
 
 # `ttset.c:775`. The pair applied to a cell carrying `AttrURL`: green on
 # white as shipped. URL is its own attribute rather than an SGR colour, and
 # an explicit SGR foreground or background still wins over the corresponding
 # half later in `vtdisp.c:GetDrawAttr` (`:2499`, then `:2522`).
+#@ This setting sets colors for recognized URLs. Colors from the host can replace either color in this pair.
 color.url | color2 | Tera Term | URLColor | 0,255,0,255,255,255 | DLG_WIN_URL
 
 # `ttset.c:776`, the `CF_URLCOLOR` bit. This gates only the URL colour pair;
 # URL detection and `URLUnderline` are independent, so turning it off leaves a
 # detected URL underlined in the ordinary text colour.
+#@ This setting uses the configured URL colors for recognized links. The settings for URL recognition, underlining, and opening are independent.
 color.url_enabled | bool | Tera Term | EnableURLColor | on | DLG_TAB_VISUAL_URL_COLOR
 
 # `ttset.c:780`, the `FF_URLUNDERLINE` bit. Independent of both the URL colour
 # and whether a double-click is allowed to open one.
+#@ This setting underlines recognized URLs. Different settings control URL colors and link opening.
 color.url_underline | bool | Tera Term | URLUnderline | on | DLG_TAB_VISUAL_URL_FONT
 
 # `ttset.c:758`.
+#@ This setting uses the configured color pair for bold text. A different setting controls font weight.
 color.bold_enabled | bool | Tera Term | EnableBoldAttrColor | on | -
 
 # `ttset.c:763`.
+#@ This setting uses the configured color pair for blinking text.
 color.blink_enabled | bool | Tera Term | EnableBlinkAttrColor | on | -
 
 # `ttset.c:768`. **Off**, which is why `SGR 7` swaps the normal pair rather
 # than using the colours above.
+#@ This setting uses the configured color pair for reverse video. With the off value, reverse video uses the normal colors in reverse order.
 color.reverse_enabled | bool | Tera Term | EnableReverseAttrColor | off | -
 
 # `ttset.c:784`. Whether `SGR 4` gets its own colour pair at all, and **on** —
 # unlike its two neighbours above, whose keys carry the `Enable` prefix this one
 # does not. `vtdisp.c:2412` is the only reader.
+#@ This setting uses the configured color pair for underlined text. A different setting controls the underline.
 color.underline_enabled | bool | Tera Term | UnderlineAttrColor | on | -
 
 # `ttset.c:797`. Sixteen `(legacy index,r,g,b)` groups in one `MAX_PATH`
@@ -510,19 +580,23 @@ color.underline_enabled | bool | Tera Term | UnderlineAttrColor | on | -
 # and wrapped IDs, and byte-wrapped channels; the behavioral parse belongs by
 # the terminal palette in `tt-session`. The default is upstream's exact colour
 # values with only its alignment whitespace removed.
+#@ This setting sets the 16-color palette. Each group contains index, red, green, and blue values. Indexes use 0 thru 15. Colors use 0 thru 255. The last value for a repeated index replaces the previous value. Sterna ignores a final group that does not have all four values.
 color.ansi_palette | string | Tera Term | ANSIColor | 0,0,0,0,1,255,0,0,2,0,255,0,3,255,255,0,4,0,0,255,5,255,0,255,6,0,255,255,7,255,255,255,8,128,128,128,9,128,0,0,10,0,128,0,11,128,128,0,12,0,0,128,13,128,0,128,14,0,128,128,15,192,192,192 | -
 
 # `ttset.c:741`. **On**, and this is one of the four flag words `AGENTS.md`
 # warns about: `ColorFlag` is zeroed at the top of `ttset.c` and built up from
 # per-key calls a thousand lines later, so reading the zero as the default
 # turns 256-colour off and looks like a parser bug.
+#@ This setting lets escape sequences select colors from the 256-color terminal palette.
 color.xterm_256 | bool | Tera Term | Xterm256Color | on | -
 
 # `ttset.c:738`. **Off**, so `SGR 90-97` and `100-107` are ignored and the
 # previous pen stands — which looks exactly like a painter bug.
+#@ This setting lets aixterm-style escape sequences select bright foreground and background colors. The off value prevents color changes from these sequences.
 color.aixterm_16 | bool | Tera Term | Aixterm16Color | off | -
 
 # `ttset.c:735`. PC-style bold colour mapping.
+#@ This setting uses PC-style bright colors for bold text in the 16-color palette.
 color.pc_bold_16 | bool | Tera Term | PcBoldColor | off | -
 
 # `ttset.c:856`, and the last of the four `ColorFlag` bits. **On**, and it is
@@ -531,17 +605,20 @@ color.pc_bold_16 | bool | Tera Term | PcBoldColor | off | -
 # is `color.normal` while the buffer says otherwise. The two reports that name
 # a colour — DECRQSS' SGR (`vtterm.c:4332`) and `Co` in the termcap query
 # (`:4451`) — go quiet with it, which is how a host is told.
+#@ This setting lets standard terminal colors appear. The off value draws normal colors and keeps stored colors. It also stops color capability replies.
 color.ansi_enabled | bool | Tera Term | EnableANSIColor | on | -
 
 # `ttset.c:868`, `FF_BOLD`. Whether SGR 1 selects a bold *font*, independently
 # of `color.bold_enabled`, which decides whether it selects the bold colour
 # pair. Both ship on, but either may be disabled alone — a bold cell can be
 # blue in a regular face or bold in the normal text colour.
+#@ This setting draws bold text with a bold font. A different setting selects the configured bold color.
 color.bold_font | bool | Tera Term | EnableBold | on | DLG_TAB_VISUAL_BOLD_FONT
 
 # `ttset.c:782`, `FF_UNDERLINE`. The font half of SGR 4, independent of
 # `color.underline_enabled`'s magenta colour pair. Off keeps the underline
 # attribute in the grid and changes only how it is drawn.
+#@ This setting draws an underline for underlined text. A different setting selects the configured underline color.
 color.underline_font | bool | Tera Term | UnderlineAttrFont | on | DLG_TAB_VISUAL_UNDERLINE_FONT
 
 # `ttset.c:1335`, `CF_USETEXTCOLOR`. A compatibility escape for applications
@@ -550,12 +627,14 @@ color.underline_font | bool | Tera Term | UnderlineAttrFont | on | DLG_TAB_VISUA
 # the configured normal pair when both indices match and the foreground is
 # black (0), white (7), or bright white (15). Under reverse video it uses the
 # configured reverse pair — even when `color.reverse_enabled` is off.
+#@ This setting replaces some invisible black-on-black or white-on-white text with configured colors. Other same-color pairs do not change.
 color.use_text_color | bool | Tera Term | UseTextColor | off | -
 
 # `ttset.c:1561`. Bold, blink, underline and URL colours are pairs of their
 # own; on, their configured background half is ignored and the normal text
 # background is used instead. Reverse swaps that normal background into the
 # foreground (`vtdisp.c:2453`).
+#@ This setting uses the normal background behind bold, blink, underline, and URL text. Explicit host-selected backgrounds override this setting.
 color.use_normal_background | bool | Tera Term | UseNormalBGColor | off | DLG_WIN_ALWAYSBG
 
 # **`[Sterna]`**, because upstream has no pattern highlighting and so no key to
@@ -570,6 +649,7 @@ color.use_normal_background | bool | Tera Term | UseNormalBGColor | off | DLG_WI
 # rows as they are painted, so an empty rule set is an empty loop. The switch is
 # what View > Highlight matches writes, for turning every rule off at once
 # without deleting any of them.
+#@ This setting uses all configured text-highlighting rules. The off value disables all rules but does not delete them.
 color.highlighting | bool | Sterna | Highlighting | on | -
 
 # **`[Sterna]`**, because upstream has no idea a terminal can be idle: its
@@ -585,47 +665,58 @@ color.highlighting | bool | Sterna | Highlighting | on | -
 # Only the default background moves. A cell the host coloured keeps the colour
 # the host asked for, and the text keeps its own: this says the terminal has
 # nobody on the other end, and it must not be mistaken for output.
+#@ This setting changes the default background toward the text color by this percentage while disconnected. Zero disables shading. Host-selected backgrounds do not change.
 color.disconnected_shade | int_clamp(0..100) | Sterna | DisconnectedShade | 12 | -
 
 # --- cursor ------------------------------------------------------------------
 
 # `ttset.c:718`, and the default is again the `else` branch.
+#@ This setting selects a block, vertical bar, or horizontal underline for the active terminal cursor.
 cursor.shape | enum(block=Block,vertical=Vertical,horizontal=Horizontal) | Tera Term | CursorShape | block | DLG_TAB_VISUAL_CURSOR
 
 # `ttset.c:1227`.
+#@ This setting stops terminal cursor blinking.
 cursor.nonblinking | bool | Tera Term | NonblinkingCursor | off | DLG_TAB_VISUAL_CURSOR
 
 # `ttset.c:1231`. Whether a window without keyboard focus keeps a hollow
 # cursor on the live screen. `CaretKillFocus` (`vtdisp.c:1872`) draws a
 # full-cell outline regardless of the configured active cursor shape; off, an
 # unfocused window has no cursor at all.
+#@ This setting shows a hollow full-cell cursor when the terminal lacks keyboard focus. The off value hides the unfocused cursor.
 cursor.show_unfocused | bool | Tera Term | KillFocusCursor | on | -
 
 # --- window ------------------------------------------------------------------
 
 # `ttset.c:1653`, part of `WindowFlag` — the same trap as `ColorFlag`. Gates
 # every XTWINOPS operation that *changes* something, the resize included.
+#@ This setting lets host requests move, resize, raise, lower, or maximize the window. The desktop can ignore these requests. Wayland ignores move requests.
 window.change_allowed | bool | Tera Term | WindowCtrlSequence | on | -
 
 # `ttset.c:1661`. Gates the ones that answer back.
+#@ This setting lets host escape sequences request window size, position, state, and title reports.
 window.report_allowed | bool | Tera Term | WindowReportSequence | on | -
 
 # `ttset.c:1656`. **Off**, so DECSCUSR and `DECSET 12` do nothing until it is
 # turned on, and DECRQM reports them reset.
+#@ This setting lets the host change cursor shape and blinking with escape sequences. The off value makes these requests have no effect.
 window.cursor_ctrl_allowed | bool | Tera Term | CursorCtrlSequence | off | -
 
 # `ttset.c:1075`, part of `TermFlag`. Whether 8-bit C1 bytes are executed as
 # controls.
+#@ This setting accepts single-byte 8-bit forms of terminal control characters from the host.
 window.accept_8bit_ctrl | bool | Tera Term | Accept8BitCtrl | on | -
 
 # `ttset.c:1283`. Whether *replies* use 8-bit C1 introducers.
+#@ This setting sends terminal replies with single-byte 8-bit control introducers and not with their 7-bit escape forms.
 window.send_8bit_ctrl | bool | Tera Term | Send8BitCtrl | off | -
 
 # `ttset.c:1681`, part of `TermFlag`. The alternate screen, which `vim` and
 # `less` need.
+#@ This setting lets full-screen programs use an alternate screen. Vim and Less are examples of programs that frequently use this feature.
 window.alt_screen | bool | Tera Term | AlternateScreenBuffer | on | -
 
 # `ttset.c:1950`. Whether `ED 3` may discard the scrollback.
+#@ This setting lets a host escape sequence erase all scrollback history.
 window.remote_clears_buffer | bool | Tera Term | ClearScrollBufferFromRemote | on | -
 
 # `ttset.c:1564`. Whether output arriving while the user has scrolled back
@@ -637,6 +728,7 @@ window.remote_clears_buffer | bool | Tera Term | ClearScrollBufferFromRemote | o
 # `:3805`). Scrolling back through a boot log on a device that is still
 # talking is the case it ruins, and this port had upstream's `on` behaviour
 # hardcoded before there was a key to read.
+#@ This setting keeps your scrolled-back view in position while new output arrives. With the off value, each new line moves the view toward the cursor.
 window.auto_scroll_only_at_bottom | bool | Tera Term | AutoScrollOnlyInBottomLine | off | DLG_TAB_GENERAL_AUTOSCROLL_ONLY_IN_BOTTOM_LINE
 
 # `ttset.c:1273`. How many scrolled lines upstream lets accumulate before it
@@ -647,6 +739,7 @@ window.auto_scroll_only_at_bottom | bool | Tera Term | AutoScrollOnlyInBottomLin
 # the equivalent is `TerminalView`'s 8 ms frame floor, which measures the same
 # thing in the unit a compositor cares about. Carried so a file round-trips,
 # the way `bell.notify_sound` is.
+#@ This setting sets a legacy line-based repaint threshold. Sterna uses time-based repainting. Thus, this value has no effect at this time.
 window.scroll_threshold | int | Tera Term | ScrollThreshold | 12 | -
 
 # `ttset.c:1466`. `255` is fully opaque and `0` fully transparent; upstream
@@ -660,6 +753,7 @@ window.scroll_threshold | int | Tera Term | ScrollThreshold | 12 | -
 # makes **255** — an opaque window — where the clamp reads a bare -1 as below
 # the floor and gives 0, a window nobody can see. `AlphaBlend=256` is 0 for the
 # same reason, not 255.
+#@ This setting sets inactive-window opacity from 0, fully transparent, thru 255, fully opaque. Wayland accepts this value but does not change the opacity on the screen.
 window.opacity_inactive | uint8 | Tera Term | AlphaBlend | 255 | DLG_TAB_VISUAL_ALPHA_INACTIVE
 
 # `ttset.c:1470`, with the same dead clamp behind the same narrowing. Its
@@ -668,6 +762,7 @@ window.opacity_inactive | uint8 | Tera Term | AlphaBlend | 255 | DLG_TAB_VISUAL_
 # value inherits too; a non-numeric one is zero under `GetPrivateProfileInt`'s
 # own rules. Applied at startup, after settings changes and whenever the window
 # gains focus (`vtwin.cpp:780`, `:1357`, `:1539`).
+#@ This setting sets active-window opacity from 0 thru 255. An empty value uses inactive opacity. Wayland does not change the opacity on the screen.
 window.opacity_active | uint8 | Tera Term | AlphaBlendActive | 255 | DLG_TAB_VISUAL_ALPHA_ACTIVE | default-from=window.opacity_inactive
 
 # `ttset.c:1339`, a six-bit word rather than an enum: 1 shows the endpoint,
@@ -680,6 +775,7 @@ window.opacity_active | uint8 | Tera Term | AlphaBlendActive | 255 | DLG_TAB_VIS
 # round-trip through upstream unchanged. Upstream's dialog presents the
 # low six as checkboxes; the generated first-pass dialog exposes the word
 # directly until it grows a bit-field widget.
+#@ This setting builds the window title from numbered options. The value 1 adds the endpoint. The value 2 adds the session number. The value 4 adds the terminal type. Values 16 and 32 add the TCP port and serial speed. The value 8 puts the endpoint before the title.
 window.title_format | uint16 | Tera Term | TitleFormat | 13 | DLG_TAB_GENERAL_TITLEFMT_GROUP
 
 # `ttset.c:1568`. How the title the host set and `terminal.title` combine, and
@@ -691,6 +787,7 @@ window.title_format | uint16 | Tera Term | TitleFormat | 13 | DLG_TAB_GENERAL_TI
 # so `AcceptTitleChangeRequest=ovewrite` is a terminal that ignores every OSC
 # title while an absent key is one that accepts them. Absent and misspelt are
 # two different settings, and only the second is the `else`.
+#@ This setting selects how a host-provided title combines with the configured title. Off discards remote titles and disables the remote title stack. An unknown value also selects Off.
 window.title_change | enum(overwrite/on=Overwrite,ahead=Ahead,last=Last,off/*=Off) | Tera Term | AcceptTitleChangeRequest | overwrite | -
 
 # `ttset.c:1664`, and it is `WindowFlag` again — with the extra turn that
@@ -700,42 +797,52 @@ window.title_change | enum(overwrite/on=Overwrite,ahead=Ahead,last=Last,off/*=Of
 # terminal that echoes its own title into the input stream lets anything which
 # can write to the screen put text in front of the shell. `accept` reports the
 # real title, combined with `window.title_change`'s four spellings.
+#@ This setting controls replies when a host asks for the window title. The Empty value does not send host-controlled title text to terminal input.
 window.title_report | enum(empty=Empty,accept=Accept,ignore/off=Ignore) | Tera Term | TitleReportSequence | empty | -
 
 # --- font --------------------------------------------------------------------
 
 # `ttset.c:1769`. The Win32 `LOGFONT` rasterisation request. Anything unknown
 # falls to `default`; comparisons are case-insensitive.
+#@ This setting selects default, smoothed, or unsmoothed text on all platforms. ClearType uses standard smoothing because the desktop controls subpixel rendering.
 font.quality | enum(default=Default,nonantialiased=NonAntialiased,antialiased=Antialiased,cleartype=ClearType) | Tera Term | FontQuality | default | DLG_TAB_VISUAL_FONT_QUALITY
 
 # `ttset.c:1988`, default **on**. Upstream fits glyphs whose natural advance
 # does not match the cell into the cell (`vtdisp.c:2902`).
+#@ This setting fits glyphs when their natural width does not agree with the terminal cell width. This action helps keep unusual fonts aligned with the grid.
 font.draw_resized | bool | Tera Term | DrawingResizedFont | on | -
 
 # `ttset.c:2017`, parsed by `VTDrawFromIni` (`vtdraw.cpp:63`). These are the
 # three Win32 text APIs upstream can select; an unknown spelling returns to
 # `Auto`. Qt always draws Unicode glyphs, so this remains compatibility data.
+#@ This setting selects a legacy method for Windows text drawing. Sterna always draws Unicode text. Thus, this setting has no effect at this time.
 font.draw_api | enum(Auto=Auto,Unicode=Unicode,ANSI=Ansi) | Tera Term | VTDrawAPI | Auto | -
 
 # `ttset.c:2021`. Zero asks the Windows renderer for the process ANSI code
 # page; a positive value overrides it. It has no effect on Qt's Unicode text
 # path, but preserving it matters to a settings file shared with Tera Term.
+#@ This setting overrides the character encoding that legacy Windows uses for font drawing. Zero uses the system default. This setting has no effect in Sterna at this time.
 font.draw_ansi_code_page | int | Tera Term | VTDrawACP | 0 | -
 
 # `ttset.c:1346`, the first field of `VTFontSpace`. Upstream adds the left and
 # right values to the cell width and offsets the glyph by the left value.
+#@ This setting sets the left glyph offset in pixels and includes this offset in the cell-width calculation. Positive values move glyphs to the right. Negative values move glyphs to the left.
 font.space_left | int_zero | Tera Term | VTFontSpace.1 | 0 | -
 # The second field of `VTFontSpace`; it adds space after the glyph.
+#@ This setting adds the specified number of pixels to the terminal cell width after each glyph. Negative values decrease the cell width.
 font.space_right | int_zero | Tera Term | VTFontSpace.2 | 0 | -
 # The third field of `VTFontSpace`; it offsets the glyph downward and adds to
 # the cell height (`vtdisp.c:2838`). Negative spacing remains meaningful.
+#@ This setting sets the top glyph offset in pixels and includes this offset in the cell-height calculation. Positive values move glyphs down. Negative values move glyphs up.
 font.space_top | int_zero | Tera Term | VTFontSpace.3 | 0 | -
 # The fourth field of `VTFontSpace`; it adds space below the glyph.
+#@ This setting adds the specified number of pixels below each glyph to the terminal cell height. Negative values decrease the cell height.
 font.space_bottom | int_zero | Tera Term | VTFontSpace.4 | 0 | -
 
 # `ttset.c:1640`, default off and marked "test". Its only consumer is inside a
 # `#if 0` block at `vtwin.cpp:2718`, so carrying it without runtime behavior is
 # faithful to current upstream rather than an omission.
+#@ This setting keeps a disabled legacy font-scaling test option. It has no runtime effect.
 font.scaling | bool | Tera Term | FontScaling | off | -
 
 # --- mouse -------------------------------------------------------------------
@@ -743,19 +850,23 @@ font.scaling | bool | Tera Term | FontScaling | off | -
 # `ttset.c:1523`. **On**, and it was left zeroed here for a while, which
 # silently disabled every mouse mode and made DECRQM answer "permanently
 # reset" for all of them.
+#@ This setting lets remote applications receive mouse-button, movement, and wheel reports after they request a supported mouse mode.
 mouse.tracking | bool | Tera Term | MouseEventTracking | on | -
 
 # `ttset.c:1591`. Holding Ctrl suppresses the report so text can still be
 # selected in a full-screen application.
+#@ This setting temporarily stops mouse reports while you hold Ctrl. You can then select terminal text in a mouse-aware application.
 mouse.ctrl_disables_tracking | bool | Tera Term | DisableMouseTrackingByCtrl | on | -
 
 # `ttset.c:1515`. Gates `DECSET 7786`, and is what a reset restores it to.
+#@ This setting lets a host request cursor-key output from the mouse wheel. The mouse wheel then sends cursor keys and does not scroll local history.
 mouse.wheel_to_cursor | bool | Tera Term | TranslateWheelToCursor | on | -
 
 # `ttset.c:1594`. Holding Ctrl cancels the translation above, so the wheel
 # scrolls the terminal's own history instead of sending arrow keys to the
 # full-screen application in front of it (`vtterm.c:5847`). The pair to
 # `mouse.ctrl_disables_tracking`, and on for the same reason.
+#@ This setting temporarily makes the wheel scroll local history while you hold Ctrl. The wheel sends no cursor keys during this action.
 mouse.ctrl_disables_wheel_to_cursor | bool | Tera Term | DisableWheelToCursorByCtrl | on | -
 
 # `ttset.c:1276`. How many lines one notch of the wheel moves.
@@ -771,11 +882,13 @@ mouse.ctrl_disables_wheel_to_cursor | bool | Tera Term | DisableWheelToCursorByC
 # the title bar the wheel changes the window's opacity, by this many units of
 # 255 (`vtwin.cpp:2500`). One setting, two meanings, the way `TelEcho` and
 # `ts.BSKey` each have two.
+#@ This setting sets the number of lines for one wheel notch. A value of zero or less causes a one-line scroll. Sterna does not use this setting to change title-bar opacity.
 mouse.wheel_scroll_line | int | Tera Term | MouseWheelScrollLine | 3 | DLG_TAB_GENERAL_MOUSEWHEEL_SCROLL_LINE
 
 # `ttset.c:771`. URL recognition, colouring and underlining happen regardless;
 # this controls only the hand cursor and the double-click that launches one
 # (`vtwin.cpp:2426`, `buffer.c:4411`). It ships off.
+#@ This setting shows a hand pointer over recognized URLs and lets a double-click open them. URL recognition and styling stay active with the off value.
 mouse.clickable_url | bool | Tera Term | EnableClickableUrl | off | DLG_TAB_GENERAL_CLICKURL
 
 # `ttset.c:1460`. The ordinary pointer over the terminal: `ARROW`, `IBEAM`,
@@ -787,6 +900,7 @@ mouse.clickable_url | bool | Tera Term | EnableClickableUrl | off | DLG_TAB_GENE
 # without changing the current pointer when none of the four names matches.
 # Normalising an unknown value to the default would therefore change both a
 # shared file and the live no-op behavior upstream gives it.
+#@ This setting selects the usual terminal pointer shape. The permitted values are ARROW, IBEAM, CROSS, and HAND. An unknown value does not change the pointer.
 mouse.cursor | string | Tera Term | MouseCursor | IBEAM | DLG_TAB_VISUAL_MOUSE
 
 # --- URL ---------------------------------------------------------------------
@@ -794,21 +908,25 @@ mouse.cursor | string | Tera Term | MouseCursor | IBEAM | DLG_TAB_VISUAL_MOUSE
 # `ttset.c:1760`. An empty string uses the operating system's URL handler.
 # A configured executable is tried only for HTTP, HTTPS and FTP; SFTP, TFTP,
 # NEWS and MMS still go straight to the system handler (`buffer.c:4084`).
+#@ This setting contains a program name for HTTP, HTTPS, and FTP link opening. An empty value selects the default handler of the operating system.
 url.browser | string | Tera Term | ClickableUrlBrowser |  | -
 
 # `ttset.c:1762`. Prepended to the URL when `url.browser` is used; ignored for
 # the four schemes that always use the system handler.
+#@ This setting adds command-line arguments when the configured browser opens HTTP, HTTPS, or FTP links. Link types that the system handles ignore these arguments.
 url.browser_args | string | Tera Term | ClickableUrlBrowserArg |  | -
 
 # `ttset.c:1792`. Read, written and documented, but never consulted anywhere
 # in upstream's current source: continued display lines are joined according
 # to `AttrLineContinued` regardless. Carried so the file round-trips; it acts
 # on nothing here for the same reason it acts on nothing there.
+#@ This setting keeps a legacy option for joining URLs across wrapped lines. At this time, the URL-joining function ignores this setting.
 url.join_split | bool | Tera Term | JoinSplitURL | off | -
 
 # `ttset.c:1794`. Upstream keeps only the first byte (a backslash by default),
 # but — like `JoinSplitURL` itself — no current code reads the result. Carried
 # in the file and deliberately not given invented behaviour.
+#@ This setting stores a character for the URL-joining function to ignore. At this time, the URL-joining function ignores this setting.
 url.join_split_ignore_eol_char | string | Tera Term | JoinSplitURLIgnoreEOLChar | \ | -
 
 # --- debug -------------------------------------------------------------------
@@ -816,6 +934,7 @@ url.join_split_ignore_eol_char | string | Tera Term | JoinSplitURLIgnoreEOLChar 
 # `ttset.c:1162`, default off. When enabled, Shift+Escape cycles through the
 # receive-display modes selected by `debug.modes`; TTL's `setdebug` can select
 # one directly without changing this keyboard gate.
+#@ This setting lets Shift+Escape select each enabled receive-display mode in sequence. Macro commands can select a mode directly with the off value.
 debug.enabled | bool | Tera Term | Debug | off | -
 
 # `ttset.c:1798`. `all` permits normal, hex and no-output modes; otherwise a
@@ -823,6 +942,7 @@ debug.enabled | bool | Tera Term | Debug | off | -
 # is an alias for all, while `off`, `none`, or a list with no recognised word
 # also disables `Debug` upstream. Kept raw because order and duplicate words
 # are part of the file even though only the resulting mask affects cycling.
+#@ This setting selects the receive-display modes for Shift+Escape. Normal shows received text. Hex shows byte values. Noout hides received output. The setting accepts all, off, or a comma-separated list. A list with no recognized mode also disables Debug.
 debug.modes | string | Tera Term | DebugModes | all | -
 
 # --- bell --------------------------------------------------------------------
@@ -842,6 +962,7 @@ debug.modes | string | Tera Term | DebugModes | all | -
 # below matches nothing and lands on the same `else` the absent key does, which
 # is why both give the same variant here. Ninth member of the family
 # `AGENTS.md` keeps returning to.
+#@ This setting selects a sound, a screen flash, or no action for a terminal bell.
 bell.mode | enum(off=Off,visual=Visual,on=On) | Tera Term | Beep | on | -
 
 # `ttset.c:1121`, `PF_BEEPONCONNECT`. **A TCP/IP connection only**: both places
@@ -849,10 +970,12 @@ bell.mode | enum(off=Off,visual=Visual,on=On) | Tera Term | Beep | on | -
 # serial console opening and closing is silent however this is set. It also
 # bypasses `RingBell` entirely — always audible, never the visual bell, and
 # never governed by the four below.
+#@ This setting makes a bell sound when a non-serial connection opens or closes. A local-shell connection also makes this sound. Serial connections make no sound. Bell mode and repeated-bell limits have no effect on this sound.
 bell.on_connect | bool | Tera Term | BeepOnConnect | off | -
 
 # `ttset.c:1125`. How long the screen stays inverted for a visual bell, in
 # milliseconds — `int_min`, since it floors at 1 rather than taking the default.
+#@ This setting sets the visual-bell inversion time in milliseconds.
 bell.visual_wait_ms | int_min(1) | Tera Term | BeepVBellWait | 10 | -
 
 # `ttset.c:1781`. How many bells inside `bell.over_used_time` seconds are
@@ -860,10 +983,12 @@ bell.visual_wait_ms | int_min(1) | Tera Term | BeepVBellWait | 10 | -
 # manual**: `teraterm-term.html` says five bells are permitted and six sound,
 # because `RingBell`'s inner `if` decides the *next* bell's fate and the switch
 # that makes the noise sits outside it (`vtterm.c:5800`).
+#@ This setting sets the bell count that starts a no-sound period. The bell after this count also makes a sound.
 bell.over_used_count | int | Tera Term | BeepOverUsedCount | 5 | -
 
 # `ttset.c:1783`. The window the count is measured over, in seconds. A gap
 # longer than this refills the count.
+#@ This setting sets the bell-count period in seconds. A longer quiet interval sets the count to zero.
 bell.over_used_time | int | Tera Term | BeepOverUsedTime | 2 | -
 
 # `ttset.c:1785`. How long the terminal stays silent once the count is used up,
@@ -874,6 +999,7 @@ bell.over_used_time | int | Tera Term | BeepOverUsedTime | 2 | -
 # though it were a fixed delay; the code is the specification and this follows
 # the code, because a governor that let a runaway through every five seconds
 # would not do the job it exists for.
+#@ This setting sets the necessary quiet time before a bell can make a sound again. Each new bell starts this quiet period again.
 bell.suppress_time | int | Tera Term | BeepSuppressTime | 5 | -
 
 # `ttset.c:1996`. Whether the *notification* makes a sound — upstream's tray
@@ -881,6 +1007,7 @@ bell.suppress_time | int | Tera Term | BeepSuppressTime | 5 | -
 # and written and acting on nothing here, because there is no notification
 # surface yet; it is in this section because a user looking for "the sound
 # settings" will look here.
+#@ This setting stores the desktop-notification sound selection. Sterna has no notification surface at this time. Thus, this setting has no effect.
 bell.notify_sound | bool | Tera Term | NotifySound | on | -
 
 # --- clipboard ---------------------------------------------------------------
@@ -901,11 +1028,13 @@ bell.notify_sound | bool | Tera Term | NotifySound | on | -
 # the wire and FALSE for the pair the terminal generated itself, and only the
 # generated pair is dropped. So a macro's `wait` matches a wrapped line as one
 # line, which is the whole point of the setting.
+#@ This setting joins wrapped display rows when copying a logical line. It also removes wrap-generated line breaks from session logs and macro input.
 clipboard.continued_line_copy | bool | Tera Term | EnableContinuedLineCopy | off | -
 
 # `ttset.c:1105`. Copy the selection the moment the button comes up, with no
 # Ctrl-Insert — which is what this shell has always done to the X11 primary
 # selection, and now does from a key rather than from an opinion.
+#@ This setting copies selected text automatically when you release the mouse button.
 clipboard.auto_copy | bool | Tera Term | AutoTextCopy | on | -
 
 # `ttset.c:1280`, `ts.SelOnActive`. Off **eats** the click that activates the
@@ -913,23 +1042,27 @@ clipboard.auto_copy | bool | Tera Term | AutoTextCopy | on | -
 # terminal forward cannot start a selection by accident. Read and written and
 # acting on nothing yet: Qt delivers no `WM_MOUSEACTIVATE`, so the equivalent
 # is a first-click filter the view does not have.
+#@ This setting lets the window-activation click start a selection. This setting has no effect in Sterna at this time.
 clipboard.select_on_activate | bool | Tera Term | SelectOnActivate | on | -
 
 # `ttset.c:1449`. On, only the left button starts a selection — and a middle
 # or right button coming up over a standing selection does **not** copy it
 # (`vtwin.cpp:819`), which is the half of the setting its name does not say
 # and the bug it was added to fix.
+#@ This setting lets only the left mouse button start a selection. A middle-button or right-button release also stops the automatic copy of an active selection.
 clipboard.select_only_by_lbutton | bool | Tera Term | SelectOnlyByLButton | on | -
 
 # `ttset.c:1954`, `ts.SelectStartDelay`, in milliseconds. How long the button
 # is held before a drag counts as a selection rather than as a click. Read and
 # written and acting on nothing yet; it ships at 0, which is what the view
 # does.
+#@ This setting sets the mouse-button hold time before a drag starts a selection. This delay has no effect in Sterna at this time.
 clipboard.select_start_delay | int | Tera Term | MouseSelectStartDelay | 0 | -
 
 # `ttset.c:1422`, `CPF_DISABLE_RBUTTON`. **Upstream pastes on the right button
 # by default** — the arm is the `else` of this test (`vtwin.cpp:2645`), so a
 # right-click over the terminal puts the clipboard on the wire.
+#@ This setting disables direct clipboard-text pastes from the right mouse button.
 clipboard.paste_rbutton_disabled | bool | Tera Term | DisablePasteMouseRButton | off | -
 
 # `ttset.c:1425`, `CPF_DISABLE_MBUTTON`, and the **on** is upstream's: Tera
@@ -938,6 +1071,7 @@ clipboard.paste_rbutton_disabled | bool | Tera Term | DisablePasteMouseRButton |
 # here the way `keyboard.meta`'s did — faithful by default and one line in the
 # file away from the other behaviour. Note the two buttons ship opposite ways
 # round from what a Linux user expects of either.
+#@ This setting disables clipboard-text pastes from the middle mouse button.
 clipboard.paste_mbutton_disabled | bool | Tera Term | DisablePasteMouseMButton | on | -
 
 # `ttset.c:1428`, `CPF_CONFIRM_RBUTTON`. The right button raises `IDR_PASTEMENU`
@@ -946,12 +1080,14 @@ clipboard.paste_mbutton_disabled | bool | Tera Term | DisablePasteMouseMButton |
 # **Deliberately on where upstream ships it off**, which is the only setting in
 # this file whose default this port moves; see `docs/deviations.md`. Off gives
 # upstream's straight-to-the-wire right button back.
+#@ This setting opens a Paste or Paste with CR menu after a right-click. Thus, the menu prevents immediate clipboard-text transmission.
 clipboard.confirm_paste_rbutton | bool | Tera Term | ConfirmPasteMouseRButton | on | -
 
 # `ttset.c:1431`, `CPF_CONFIRM_CHANGEPASTE`. **On.** A paste holding a line
 # break is shown in a dialog first and can be edited there
 # (`clipboar.c:126`), because a newline pasted into a shell runs whatever
 # came before it.
+#@ This setting shows an editable confirmation dialog before a paste that contains a line break. A pasted line break can run a shell command.
 clipboard.confirm_paste | bool | Tera Term | ConfirmChangePaste | on | -
 
 # `ttset.c:1434`, `CPF_CONFIRM_CHANGEPASTE_CR`. The same confirmation for
@@ -960,16 +1096,19 @@ clipboard.confirm_paste | bool | Tera Term | ConfirmChangePaste | on | -
 # `Paste<CR>` is never confirmed even over text full of line breaks, because
 # `clipboar.c:150` does not search the text on that arm at all. Upstream's own
 # comment above it weighs whether that is right and keeps it.
+#@ This setting confirms a paste when Paste with CR adds a final carriage return. This action does not examine line breaks in the pasted text.
 clipboard.confirm_paste_cr | bool | Tera Term | ConfirmChangePasteCR | on | -
 
 # `ttset.c:1437`. A file of strings, one per line: a paste containing any of
 # them is confirmed even with no line break in it. Resolved against the home
 # directory rather than the working one (`GetFullPathW(ts.HomeDirW, …)`), and
 # consulted only when `clipboard.confirm_paste` is on.
+#@ This setting contains a file name for one literal match on each line when paste confirmation is on. Confirmation is necessary for a paste that contains listed text. Relative paths start from the home directory.
 clipboard.confirm_paste_dictionary | string | Tera Term | ConfirmChangePasteStringFile |  | -
 
 # `ttset.c:1871`, `CPF_TRIM_TRAILING_NL`. Off, so the newline on the end of a
 # copied line is pasted and the shell runs the line.
+#@ This setting removes a final newline from copied text before a paste. The off value keeps the final newline and lets a copied line run immediately.
 clipboard.trim_trailing_newline | bool | Tera Term | TrimTrailingNLonPaste | off | -
 
 # `ttset.c:1633`, milliseconds between the lines of a paste — for a host with
@@ -978,15 +1117,18 @@ clipboard.trim_trailing_newline | bool | Tera Term | TrimTrailingNLonPaste | off
 # that is a third bound rather than one of the other two. Read and written and
 # acting on nothing yet: pacing a paste means handing the send path a schedule,
 # and `Session::paste` queues the whole thing.
+#@ This setting stores a delay of 0 thru 5000 milliseconds between pasted lines. Sterna does not apply this delay at this time.
 clipboard.paste_delay_per_line | int_clamp(0..5000) | Tera Term | PasteDelayPerLine | 10 | -
 
 # `ttset.c:1580`. Upstream writes the size back when the confirmation dialog
 # is resized, which is the whole reason it is a setting. Below zero takes the
 # default and there is no ceiling, so it is the `TerminalSize` bound rather
 # than a clamp.
+#@ This setting sets the initial width of the paste-confirmation dialog in pixels. Sterna updates this value after the dialog closes.
 clipboard.paste_dialog_width | int_zero(0..) | Tera Term | PasteDialogSize.1 | 330 | -
 
 # The second half of the same key, with a default of its own.
+#@ This setting sets the initial height of the paste-confirmation dialog in pixels. Sterna updates this value after the dialog closes.
 clipboard.paste_dialog_height | int_zero(0..) | Tera Term | PasteDialogSize.2 | 220 | -
 
 # `ttset.c:2002`. **A second gate on `DECSET 2004`**, and the one to know
@@ -994,6 +1136,7 @@ clipboard.paste_dialog_height | int_zero(0..) | Tera Term | PasteDialogSize.2 | 
 # asked for bracketed paste gets an unbracketed one when this is off. It ships
 # on, so the mode alone is usually the answer — which is exactly why a port
 # that omits the key looks right until somebody turns it off.
+#@ This setting adds markers to pasted text after a remote application requests bracketed paste. These markers identify pasted text and typed text as different. Sterna sends no markers with the off value.
 clipboard.bracketed | bool | Tera Term | BracketedSupport | on | -
 
 # `ttset.c:2003`. Brackets only a paste that **contains a control character**
@@ -1001,6 +1144,7 @@ clipboard.bracketed | bool | Tera Term | BracketedSupport | on | -
 # block is bracketed. The test runs while the line breaks are still CR LF and
 # again gives the same answer once they are CR, so any multi-line paste
 # qualifies either way.
+#@ This setting adds bracketed-paste markers only if the text contains a control character, for example, a tab or line break. Plain text without controls stays unbracketed.
 clipboard.bracketed_control_only | bool | Tera Term | BracketedControlOnly | off | -
 
 # `ttset.c:1742`, `ts.CtrlFlag & CSF_CBMASK`. The two bits are independent:
@@ -1012,12 +1156,14 @@ clipboard.bracketed_control_only | bool | Tera Term | BracketedControlOnly | off
 # password or token which never went near this terminal, while writing it can
 # replace text the user is about to paste somewhere else. `/OSC52=` overrides
 # this setting for one launch through the same four-state value.
+#@ This setting lets remote escape sequences read or replace the local clipboard. The off value prevents disclosure of clipboard secrets and replacement of pending paste content.
 clipboard.remote_access | enum(on/readwrite=ReadWrite,read=Read,write=Write,off/*=Off) | Tera Term | ClipboardAccessFromRemote | off | DLG_TAB_SEQUENCE_CLIPBOARD_ACCESS
 
 # `ttset.c:1753`, `GetOnOff(…, TRUE)`. Upstream raises a balloon for accepted
 # and rejected reads and writes. It does not change the permission above: with
 # access off (the default), this being on is what makes a rejected attempt
 # visible instead of silently dropping it.
+#@ This setting shows a notification after Sterna accepts or rejects a remote clipboard read or write. This setting does not give clipboard access.
 clipboard.remote_notify | bool | Tera Term | NotifyClipboardAccess | on | DLG_TAB_SEQUENCE_CLIPBOARD_NOTIFY
 
 # --- connection --------------------------------------------------------------
@@ -1037,6 +1183,7 @@ clipboard.remote_notify | bool | Tera Term | NotifyClipboardAccess | on | DLG_TA
 
 # `ttset.c:589`, and the default is the `else` branch: a `Port=` that says
 # anything but `serial` is TCP/IP, including `Port=tcp` and `Port=`.
+#@ This setting selects a serial port or TCP/IP for the default connection. An unknown value selects TCP/IP.
 connection.port_type | enum(serial=Serial,tcpip=TcpIp) | Tera Term | Port | tcpip | DLG_HOST_TITLE
 
 # **`ttset.c:966`, and its default is an initialiser rather than the setting it
@@ -1046,19 +1193,23 @@ connection.port_type | enum(serial=Serial,tcpip=TcpIp) | Tera Term | Port | tcpi
 # `TelPort=2323` and no `TCPPort=` therefore opens port **23**, not 2323.
 # Reading the file's `TelPort` as the default here is the obvious thing and it
 # is wrong.
+#@ This setting sets the network port for a direct host connection. The default stays 23 after a change to the different Telnet port.
 connection.tcp_port | uint16 | Tera Term | TCPPort | 23 | DLG_HOST_TCPIPPORT
 
 # `ttset.c:958`, `GetOnOff(…, TRUE)` — so `Telnet=1` is **on** and `Telnet=off`
 # is the only way to turn it off. See `schema.rs`'s `on_off` for why that is
 # not the same as `Telnet=0`.
+#@ This setting enables Telnet framing from the first byte. Sterna starts negotiation only if the connection port agrees with the configured Telnet port.
 connection.telnet | bool | Tera Term | Telnet | on | DLG_TCPIP_TELNET
 
 # `ttset.c:1311`. What the New Connection dialog fills the port box with when
 # Telnet is chosen, and — as above — *not* what `TCPPort` defaults to.
+#@ This setting sets the port that the connection dialog gives for Telnet. It does not change the default direct-network port.
 connection.telnet_port | uint16 | Tera Term | TelPort | 23 | DLG_TCPIP_PORT
 
 # `ttset.c:1301`, `GetOnOff(…, FALSE)` — so here `TelBin=1` reads as **off**,
 # which is the opposite of what the same value means for `Telnet=` above.
+#@ This setting requests Telnet binary mode. This mode transmits data without text-oriented conversions.
 connection.telnet_binary | bool | Tera Term | TelBin | off | -
 
 # **`ttset.c:1298`, and it is the reason `Telnet=off` is not a raw socket.**
@@ -1073,6 +1224,7 @@ connection.telnet_binary | bool | Tera Term | TelBin | off | -
 #
 # The two keys together are four states rather than two, and `TelnetMode` in
 # `tt-conn` carries all four. See `tt_session::open::telnet_params`.
+#@ This setting enables Telnet framing after the first 0xFF byte. For a raw network stream, this setting and Telnet must be off.
 connection.telnet_auto_detect | bool | Tera Term | TelAutoDetect | on | -
 
 # `ttset.c:1304`. **Not "echo locally" — it is "let the ECHO option decide".**
@@ -1083,6 +1235,7 @@ connection.telnet_auto_detect | bool | Tera Term | TelAutoDetect | on | -
 # which asks the server to echo only if local echo is currently off and asks it
 # **not** to (`DONT ECHO`) if local echo is on. The setting and the mode are one
 # variable, the same shape as DECBKM and `ts.BSKey`.
+#@ This setting lets Telnet ECHO negotiation control local echo. With the off value, ECHO negotiation does not change the terminal local-echo setting.
 connection.telnet_echo | bool | Tera Term | TelEcho | off | -
 
 # `ttset.c:1307`, which ORs `LOG_TEL` into `ts.LogFlag` rather than keeping a
@@ -1094,6 +1247,7 @@ connection.telnet_echo | bool | Tera Term | TelEcho | off | -
 # receive path logs at all — so the `>` that leads each line has no inbound
 # counterpart and a file that looks like a negotiation trace is one half of the
 # conversation.
+#@ This setting replaces the Telnet diagnostic log at each connection. The log records only commands that Sterna sends. It does not record received Telnet commands.
 connection.telnet_log | bool | Tera Term | TelLog | off | -
 
 # `ttset.c:1314`, in **seconds**, zero meaning no keepalive. An `IAC NOP` for a
@@ -1106,6 +1260,7 @@ connection.telnet_log | bool | Tera Term | TelLog | off | -
 # — `TelStartKeepAliveThread` is called inside `vtwin.cpp:3666`'s
 # `TCPPort == TelPort` arm — so a telnet-framed connection to a port that is not
 # the telnet port gets no keepalive at all.
+#@ This setting sends a Telnet keepalive after the specified number of quiet seconds. The keepalive operates only if the connection port agrees with the configured Telnet port. Zero disables the keepalive.
 connection.telnet_keepalive | uint16 | Tera Term | TelKeepAliveInterval | 300 | -
 
 # `ttset.c:1322`. Local echo for a TCP connection that is **not** speaking
@@ -1118,6 +1273,7 @@ connection.telnet_keepalive | uint16 | Tera Term | TelKeepAliveInterval | 300 | 
 # pristine copy of the file's value precisely because the connection spends the
 # live one. Off means "leave the terminal's own setting alone", so this is one
 # of the settings where 0 is not a value.
+#@ This setting enables local echo during non-Telnet network connections with the on value. The off value keeps the terminal local-echo selection.
 connection.tcp_local_echo | bool | Tera Term | TCPLocalEcho | off | -
 
 # `ttset.c:1325`, the same override for the line ending, and the empty spelling
@@ -1127,12 +1283,14 @@ connection.tcp_local_echo | bool | Tera Term | TCPLocalEcho | off | -
 #
 # The `else` and the default are the same arm here, unlike
 # `window.title_change`: an unrecognised spelling is disabled too.
+#@ This setting overrides the line ending for non-Telnet network connections. An empty value keeps the terminal CR setting.
 connection.tcp_cr_send | enum(=Disabled,CR=Cr,CRLF=CrLf) | Tera Term | TCPCRSend |  | -
 
 # `ttset.c:1154`, on by default, and it is `PortFlag` rather than a field.
 # Whether closing the window or choosing Disconnect asks first. **TCP only** —
 # both tests are `cv.PortType==IdTCPIP` (`vtwin.cpp:1668`, `:4448`), so a serial
 # session closes without a word however this is set.
+#@ This setting requests confirmation before a network-session disconnection. Serial sessions disconnect without confirmation.
 connection.confirm_disconnect | bool | Tera Term | ConfirmDisconnect | on | -
 
 # `ttset.c:972`, off by default. Whether a host that was connected to is
@@ -1143,6 +1301,7 @@ connection.confirm_disconnect | bool | Tera Term | ConfirmDisconnect | on | -
 # case-insensitively, which `ini-audit/` measured rather than assumed — and it
 # is not the only one: `Metakey`, `XmodemRcvCommand`, `YmodemRcvCommand` and
 # `ZmodemRcvCommand` are written in a case their own readers do not use either.
+#@ This setting adds connections to the New Connection history after they open. Saved history stays available with the off value.
 connection.history_list | bool | Tera Term | HistoryList | off | -
 
 # `ttset.c:961`. What `TERMINAL-TYPE` answers with, and what an SSH session
@@ -1150,6 +1309,7 @@ connection.history_list | bool | Tera Term | HistoryList | off | -
 # diverging from with a hardcoded `xterm-256color` — a defensible choice and
 # not one a hardcoded string should be making, since the answer decides what
 # every curses program on the far end believes about the terminal.
+#@ This setting sets the terminal type for reports to Telnet and SSH hosts. Remote full-screen programs use this type to select supported capabilities.
 connection.term_type | string | Tera Term | TermType | xterm | -
 
 # `ttset.c:1936`. One number or two, `input,output`, for `TERMINAL-SPEED`.
@@ -1162,11 +1322,13 @@ connection.term_type | string | Tera Term | TermType | xterm | -
 # a terminal claiming two different speeds. Zero or less takes 38400 for the
 # first field and the first field for the second, so `TerminalSpeed=0,0` is
 # 38400 both ways.
+#@ This setting sets the input and output speeds for remote reports. One number sets both speeds. Two comma-separated numbers set the input speed and then the output speed.
 connection.terminal_speed | string | Tera Term | TerminalSpeed | 38400 | -
 
 # `ttset.c:969`, on by default. Whether the window closes when the connection
 # does. `/AUTOWINCLOSE=` on a command line is **not** `GetOnOff`: it tests for
 # `on` and everything else is off, so the two readers disagree about `1`.
+#@ This setting closes a network-connection tab if the connection ends without a user action. Sterna closes the window if this tab is the only tab. The Disconnect action keeps the tab open.
 connection.auto_win_close | bool | Tera Term | AutoWinClose | on | DLG_TCPIP_AUTOCLOSE
 
 # `ttset.c:1610`, off by default. When a connection ends and the window is
@@ -1177,20 +1339,24 @@ connection.auto_win_close | bool | Tera Term | AutoWinClose | on | DLG_TCPIP_AUT
 # It sits after the auto-close decision. A network session with
 # `connection.auto_win_close` on closes its window instead, while serial and
 # local-pty sessions never take that network-only branch.
+#@ This setting moves the current page into scrollback and homes the cursor after a connection closes. This operation occurs only if the window stays open.
 connection.clear_screen_on_close | bool | Tera Term | ClearScreenOnCloseConnection | off | -
 
 # `ttset.c:1457`, in seconds, zero meaning the stack's own timeout. `/TIMEOUT=`
 # refuses a negative value rather than clamping it.
+#@ This setting sets the connection timeout in seconds. Zero selects the network stack timeout.
 connection.timeout | int | Tera Term | ConnectingTimeout | 0 | -
 
 # `ttset.c:1520`, on by default — the New Connection dialog at startup, which
 # `/DS` suppresses and `/ES` asks for.
+#@ This setting opens the New Connection dialog when Sterna starts.
 connection.host_dialog_on_startup | bool | Tera Term | HostDialogOnStartup | on | -
 
 # `ttset.c:1673`, default **on**. A TCP connection begins in local line mode
 # until telnet negotiation says otherwise (`commlib.c:341`); serial is never
 # affected. The async transport currently sends keystrokes immediately, so the
 # key is carried pending a negotiated line buffer.
+#@ This setting keeps a legacy selection for local line buffering in network connections. Sterna sends keystrokes immediately at this time. Thus, this setting has no effect.
 connection.line_mode | bool | Tera Term | EnableLineMode | on | -
 
 # --- proxy -------------------------------------------------------------------
@@ -1228,10 +1394,12 @@ connection.line_mode | bool | Tera Term | EnableLineMode | on | -
 # included by nothing and listed in no build. Leaving them out puts them on the
 # unrecognised arm, which is the honest place for a spelling that has never
 # meant anything.
+#@ This setting selects the proxy protocol. An unknown value starts a direct connection without a proxy. Thus, a spelling error can cause a direct connection.
 proxy.type | enum(none=None,http=Http,telnet=Telnet,socks4=Socks4,socks/socks5=Socks5) | TTProxy | ProxyType | none | -
 
 # `ProxyWSockHook.h:1976`. Empty is no proxy however `proxy.type` is set —
 # `_load` demotes a type it has no host for rather than dialling an empty name.
+#@ This setting sets the proxy-server address. An empty address disables the proxy with all proxy types.
 proxy.host | string_esc | TTProxy | ProxyHost | | -
 
 # `ProxyWSockHook.h:1980`, read with `getInteger`'s default of **0** and
@@ -1244,6 +1412,7 @@ proxy.host | string_esc | TTProxy | ProxyHost | | -
 # HTTP, and the connect hook uses it for the address (`:1770`) — and then the
 # guard deciding whether to speak the protocol at all tests the raw stored port
 # instead (`:1792`). Leaving the dialog's port box empty is enough to reach it.
+#@ This setting sets the proxy-server port. Zero selects the default port for the selected proxy protocol.
 proxy.port | uint16 | TTProxy | ProxyPort | 0 | -
 
 # `ProxyWSockHook.h:1981`. The proxy's own credentials, not the host's: Basic
@@ -1256,6 +1425,7 @@ proxy.port | uint16 | TTProxy | ProxyPort | 0 | -
 # distinction reaches exactly one place: a SOCKS5 method list that offers
 # username/password with two empty strings in hand. No server accepts that, so
 # nothing observable is lost by treating both as "no credentials".
+#@ This setting sets the proxy user name. An empty value is applicable if proxy authentication is not necessary.
 proxy.user | string_esc | TTProxy | ProxyUser | | -
 
 # `ProxyWSockHook.h:1983`, and it is stored in plain text, as upstream stores
@@ -1265,6 +1435,7 @@ proxy.user | string_esc | TTProxy | ProxyUser | | -
 # dereference on the first HTTP proxy connection, and the dialog produces
 # exactly that pair from an empty password box (`:1013`). Here an absent
 # password is the empty string, which is what `user:` means to Basic.
+#@ This setting sets the proxy password in plain text. Sterna uses it only if the proxy user name is not empty.
 proxy.pass | string_esc | TTProxy | ProxyPass | | -
 
 # `ProxyWSockHook.h:1987`, in seconds. It bounds every send and receive of the
@@ -1274,6 +1445,7 @@ proxy.pass | string_esc | TTProxy | ProxyPass | | -
 # The floor is a divergence with no cost: a negative value makes upstream's
 # `timeval` invalid, so `select` fails with `EINVAL` and every proxy connection
 # breaks. Below zero takes the default instead.
+#@ This setting sets a time limit in seconds for each proxy-handshake operation. Zero causes a wait with no time limit.
 proxy.timeout | int(0..) | TTProxy | ConnectionTimeout | 10 | -
 
 # `ProxyWSockHook.h:1990`. Who turns the host name into an address — `local`
@@ -1285,6 +1457,7 @@ proxy.timeout | int(0..) | TTProxy | ConnectionTimeout | 10 | -
 # as text and have no choice to make. For SOCKS4 it is also what decides
 # whether the request is a 4a one, since that protocol expresses an unresolved
 # name by an address of `0.0.0.1` and a name after the user ID.
+#@ This setting selects the location for SOCKS destination-name resolution. Auto tries local resolution first. Remote always sends the name to the proxy.
 proxy.socks_resolve | enum(auto=Auto,local=Local,remote=Remote) | TTProxy | SocksResolve | auto | -
 
 # `ProxyWSockHook.h:1999`. The five strings the `telnet` proxy type watches for
@@ -1295,18 +1468,23 @@ proxy.socks_resolve | enum(auto=Auto,local=Local,remote=Remote) | TTProxy | Sock
 # reads to a newline and then looks for each of the five in what it has, so a
 # prompt split across two lines is never found and a line holding two of them
 # takes the first. The trailing space in this one is part of the value.
+#@ This setting sets the one-line prompt that makes a Telnet proxy request the destination host. The prompt can occur at any position in the line.
 proxy.telnet_hostname_prompt | string_esc | TTProxy | TelnetHostnamePrompt | `>> Host name: ` | -
 
 # `ProxyWSockHook.h:2000`. Answered with `proxy.user`.
+#@ This setting sets the one-line prompt that makes a Telnet proxy request the proxy user name.
 proxy.telnet_username_prompt | string_esc | TTProxy | TelnetUsernamePrompt | Username: | -
 
 # `ProxyWSockHook.h:2001`. Answered with `proxy.pass`.
+#@ This setting sets the one-line prompt that makes a Telnet proxy request the proxy password.
 proxy.telnet_password_prompt | string_esc | TTProxy | TelnetPasswordPrompt | Password: | -
 
 # `ProxyWSockHook.h:2002`. Seeing this ends the relay and starts the session.
+#@ This setting sets the one-line message that tells Sterna the Telnet proxy connected to the destination.
 proxy.telnet_connected_message | string_esc | TTProxy | TelnetConnectedMessage | `-- Connected to ` | -
 
 # `ProxyWSockHook.h:2003`. Seeing this ends the relay as a refusal.
+#@ This setting sets the one-line message that tells Sterna a Telnet proxy refused the connection.
 proxy.telnet_error_message | string_esc | TTProxy | TelnetErrorMessage | !!!!!!!! | -
 
 # `ProxyWSockHook.h:2005`, and the only diagnostic there is for a handshake
@@ -1324,6 +1502,7 @@ proxy.telnet_error_message | string_esc | TTProxy | TelnetErrorMessage | !!!!!!!
 # it. The one departure is when the file appears: upstream opens it as it reads
 # this key, so the key alone creates an empty file in a session that never
 # connects, and here the first handshake with something to say creates it.
+#@ This setting writes a detailed proxy-handshake trace to this file. The trace contains credentials. Thus, file protection is necessary. File removal is necessary after troubleshooting.
 proxy.debug_log | string_esc | TTProxy | DebugLog | | -
 
 # --- macro ------------------------------------------------------------------
@@ -1333,6 +1512,7 @@ proxy.debug_log | string_esc | TTProxy | DebugLog | | -
 # starts; a leading `*` makes TTPMACRO put up its file picker
 # (`ttmmain.cpp:285`). `/M` can replace it and a `/D=` topic clears it, so a
 # terminal launched by a macro does not recursively launch another one.
+#@ This setting runs this macro when the terminal window starts. A leading asterisk opens the macro file picker as an alternative.
 macro.startup_file | string | Tera Term | StartupMacro |  | -
 
 # --- settings ---------------------------------------------------------------
@@ -1341,6 +1521,7 @@ macro.startup_file | string | Tera Term | StartupMacro |  | -
 # compatibility migrations to apply, and its writer stamps the running Tera
 # Term version. Sterna preserves the source metadata without claiming that it
 # is that program; 5.7.0 is the current upstream fallback this schema targets.
+#@ This setting records the Tera Term version for this settings file. Sterna keeps this metadata but does not use it for migrations.
 settings.source_version | string | Tera Term | Version | 5.7.0 | -
 
 # `ttset.c:1489` delegates this read to `GetUILanguageFileFullW`, whose own
@@ -1349,6 +1530,7 @@ settings.source_version | string | Tera Term | Version | 5.7.0 | -
 # to the source-language text embedded in the application. Upstream resolves a
 # relative value beside its executable; the shell does the platform-specific
 # installed-data resolution after this compatible value has been read.
+#@ This setting selects the interface-language catalog. Missing translations cause Sterna to use its built-in English text.
 settings.language_file | string | Tera Term | UILanguageFile | lang\Default.lng | DLG_GEN_LANG_UI
 
 # `ttset.c:1999`, default **on**. Before Setup > Save setup overwrites the
@@ -1356,6 +1538,7 @@ settings.language_file | string | Tera Term | UILanguageFile | lang\Default.lng 
 # `YYYYMMDDTHHMMSS+zzzz_TERATERM.INI` (`vtwin.cpp:4738`,
 # `ttlib_static_cpp.cpp:1432`). A first save has no old file to copy, and the
 # smaller close-time geometry save does not take this path.
+#@ This setting makes a timestamped backup before Save setup overwrites a saved settings file. It does not make a backup for smaller position saves at close time.
 settings.auto_backup | bool | Tera Term | IniAutoBackup | on | -
 
 # **`[Sterna]`**, because Tera Term persists dialog changes only through
@@ -1364,6 +1547,7 @@ settings.auto_backup | bool | Tera Term | IniAutoBackup | on | -
 # explicit answer immediately. Automatic writes remain selective — only rows
 # changed successfully in that dialog — so comments, unknown keys and defaults
 # the user never touched stay unmodified. See `docs/deviations.md`.
+#@ This setting automatically saves settings-dialog changes that have no error. With the off value, the first dialog visit gives the user an automatic-save selection.
 settings.auto_save_changes | bool | Sterna | AutoSaveSettings | off | -
 
 # --- serial ------------------------------------------------------------------
@@ -1387,6 +1571,7 @@ settings.auto_save_changes | bool | Sterna | AutoSaveSettings | off | -
 #
 # What a number means on Linux is a separate question: this port opens a device
 # path, so `/C=1` is resolved against enumeration rather than against `COM1`.
+#@ This setting selects the numbered serial port for compatible commands. A value outside the configured maximum sets port 1. On Linux, Sterna maps the number to the device list at connection time.
 serial.com_port | uint16 | Tera Term | ComPort | 1 | DLG_SERIAL_PORT
 
 # `ttset.c:919`. Unbounded, and the hardware decides what it can do with it —
@@ -1398,33 +1583,41 @@ serial.com_port | uint16 | Tera Term | ComPort | 1 | DLG_SERIAL_PORT
 # thing to change before the first useful connection. The key, its bounds and
 # what a value in the file means are unchanged, so a `TERATERM.INI` that says
 # `BaudRate=9600` still opens at 9600 in both programs.
+#@ This setting sets the serial-line speed in bits per second. The value must agree with the connected-device configuration.
 serial.baud | int | Tera Term | BaudRate | 115200 | DLG_SERIAL_BAUD
 
 # `ttset.c:929`, default `IdDataBit8` from the `if (!…)` arm. Upstream's dialog
 # offers only these two; `tt-conn` can do 5 and 6 as well, which is a widening
 # and not a setting.
+#@ This setting selects seven or eight data bits for each serial character. The value must agree with the device configuration.
 serial.data_bits | enum(8=Eight,7=Seven) | Tera Term | DataBit | 8 | DLG_SERIAL_DATA
 
 # `ttset.c:922`, default `IdParityNone`.
+#@ This setting selects the serial parity check. The value must agree with the parity setting of the connected device.
 serial.parity | enum(none=None,odd=Odd,even=Even,mark=Mark,space=Space) | Tera Term | Parity | none | DLG_SERIAL_PARITY
 
 # `ttset.c:936`, default `IdStopBit1`.
+#@ This setting selects one or two serial stop bits. The value must agree with the connected-device configuration.
 serial.stop_bits | enum(1=One,2=Two) | Tera Term | StopBit | 1 | DLG_SERIAL_STOP
 
 # `ttset.c:943`, default `IdFlowNone`. `rtscts` is a second spelling of `hard`
 # and the only alias in any of the four tables (`ttset.c:111`); the schema lists
 # the canonical one first, which is what gets written back.
+#@ This setting selects serial flow control. The options are none, XON/XOFF software control, RTS/CTS hardware control, and DSR/DTR control.
 serial.flow | enum(none=None,x=XonXoff,hard/rtscts=Hardware,dsrdtr=DsrDtr) | Tera Term | FlowCtrl | none | DLG_SERIAL_FLOW
 
 # `ttset.c:951`, milliseconds between characters — for a device that cannot
 # keep up with a paste.
+#@ This setting stores Tera Term's serial transmit delay for each character, in milliseconds. At this time, Sterna does not use this delay.
 serial.delay_per_char | uint16 | Tera Term | DelayPerChar | 0 | DLG_SERIAL_DELAYCHAR
 
 # `ttset.c:955`, milliseconds between lines.
+#@ This setting stores Tera Term's serial transmit delay for each line, in milliseconds. At this time, Sterna does not use this delay.
 serial.delay_per_line | uint16 | Tera Term | DelayPerLine | 0 | DLG_SERIAL_DELAYLINE
 
 # `ttset.c:1151`. Wait for the port to appear instead of failing — a USB
 # adapter that has not been plugged in yet.
+#@ This setting stores the Tera Term option that waits for a missing serial port. At this time, Sterna immediately gives an error if it cannot open the port. Thus, this setting has no effect.
 serial.wait_com | bool | Tera Term | WaitCom | off | -
 
 # `ttset.c:1218`, floored at 4 and capped at `MAXCOMPORT` (4096,
@@ -1438,6 +1631,7 @@ serial.wait_com | bool | Tera Term | WaitCom | off | -
 # `int_clamp` would read the -1 as below the floor and answer **4**, the other
 # end of the range. `int(4..4096)` was wrong a second way as well, since below
 # the floor it gave the default of 256 rather than upstream's 4.
+#@ This setting sets the highest serial port number that connection options accept. The permitted range is 4 thru 4096.
 serial.max_com_port | uint16_clamp(4..4096) | Tera Term | MaxComPort | 256 | -
 
 # **`ttset.c:2034`, and the default is a sentinel rather than a value.** Read
@@ -1464,12 +1658,14 @@ serial.max_com_port | uint16_clamp(4..4096) | Tera Term | MaxComPort | 256 | -
 # back**, so its own save pins the line and changing the flow control
 # afterwards no longer moves it; this port keeps the `-1`, which a real Tera
 # Term reads the same way it reads an absent key.
+#@ This setting controls the request-to-send (RTS) line. A value of -1 makes the flow control setting control the line. A value of 0 disables the line. A value of 1 enables the line. A value of 2 selects handshake. A value of 3 selects toggle.
 serial.rts | int | Tera Term | FlowCtrlRTS | -1 | -
 
 # `ttset.c:2042`, the same sentinel as `serial.rts` against a different arm:
 # DTR becomes Handshake under `FlowCtrl=dsrdtr` and Enable otherwise. There is
 # no toggle for DTR — `serial_pp.cpp:75` lists three — and Win32 has no
 # `DTR_CONTROL_TOGGLE` to list.
+#@ This setting controls the data-terminal-ready (DTR) line. A value of -1 makes the flow control setting control the line. A value of 0 disables the line. A value of 1 enables the line. A value of 2 selects handshake.
 serial.dtr | int | Tera Term | FlowCtrlDTR | -1 | -
 
 # `ttset.c:1147`, `GetOnOff(…, TRUE)`. Purge whatever the driver has already
@@ -1481,6 +1677,7 @@ serial.dtr | int | Tera Term | FlowCtrlDTR | -1 | -
 # It gates the purge on **open** only. Control > Reset port purges whatever
 # this says (`vtwin.cpp:4913` passes TRUE outright), so the setting is not the
 # answer to "does resetting the port clear it".
+#@ This setting discards bytes that the serial driver buffered before the port opened. This setting does not control a manual port reset. A manual port reset always discards these bytes.
 serial.clear_buffer_on_open | bool | Tera Term | ClearComBuffOnOpen | on | -
 
 # `ttset.c:1286`, milliseconds. How long `CommSendBreak` holds the line at
@@ -1492,6 +1689,7 @@ serial.clear_buffer_on_open | bool | Tera Term | ClearComBuffOnOpen | on | -
 # This port had **three** durations and none of them was the file's — 300 ms
 # in `MainWindow.cpp`, 250 ms in `tt-macro`, and whatever a caller of
 # `tt_session_send_break` passed.
+#@ This setting sets the serial-break duration in milliseconds. A specified duration can be necessary for device boot loaders and firmware consoles.
 serial.break_time | int | Tera Term | SendBreakTime | 1000 | -
 
 # `ttset.c:1086`, `GetOnOff(…, TRUE)`. Reopen the port by itself when the
@@ -1501,10 +1699,12 @@ serial.break_time | int | Tera Term | SendBreakTime | 1000 | -
 # Upstream drives it from `WM_DEVICECHANGE` (`vtwin.cpp:311`), so the Linux
 # half is a udev monitor and is not built yet; the four keys below describe a
 # state machine this port carries and does not yet run.
+#@ This setting controls automatic reopening of a disconnected serial adapter when it becomes available again. At this time, Sterna does not have automatic reconnection.
 serial.auto_reconnect | bool | Tera Term | AutoComPortReconnect | on | -
 
 # `ttset.c:1088`, milliseconds. The wait between the device arriving and the
 # reopen, for the case where the arrival named the port it was about.
+#@ This setting sets the wait, in milliseconds, before Sterna reopens a serial adapter when Sterna knows the port number. At this time, automatic reconnection is not available in Sterna.
 serial.auto_reconnect_delay | uint16 | Tera Term | AutoComPortReconnectDelayNormal | 500 | -
 
 # `ttset.c:1090`, milliseconds, and **"illegal" is about the notification and
@@ -1512,9 +1712,11 @@ serial.auto_reconnect_delay | uint16 | Tera Term | AutoComPortReconnectDelayNorm
 # never the `DBT_DEVTYP_PORT` that would say *which* port arrived
 # (`vtwin.cpp:335`), so this is the longer wait taken when the port number is
 # unknown and the reopen is a guess.
+#@ This setting sets the longer wait before Sterna tries a device with no identification as the serial adapter. At this time, automatic reconnection is not available in Sterna.
 serial.auto_reconnect_delay_unknown_port | uint16 | Tera Term | AutoComPortReconnectDelayIllegal | 2000 | -
 
 # `ttset.c:1092`, milliseconds between one failed reopen and the next.
+#@ This setting sets the interval, in milliseconds, after each attempt that does not reopen the serial port. At this time, Sterna does not have automatic reconnection.
 serial.auto_reconnect_retry_interval | uint16 | Tera Term | AutoComPortReconnectRetryInterval | 1000 | -
 
 # `ttset.c:1094`. Retries **after** the first attempt, so three is four tries —
@@ -1528,6 +1730,7 @@ serial.auto_reconnect_retry_interval | uint16 | Tera Term | AutoComPortReconnect
 # 16 bits: a two-minute retry interval written as `120000` is 54464 ms there
 # and 120000 here. Not reproduced — the schema has no type for it and the
 # divergence only exists for values nobody means.
+#@ This setting sets the number of retries after the first attempt to reopen the serial port. Thus, a value of three gives four total attempts. At this time, Sterna does not have automatic reconnection.
 serial.auto_reconnect_retries | uint16 | Tera Term | AutoComPortReconnectRetryCount | 3 | -
 
 # --- log ---------------------------------------------------------------------
@@ -1535,6 +1738,7 @@ serial.auto_reconnect_retries | uint16 | Tera Term | AutoComPortReconnectRetryCo
 # `ttset.c:1026`. Start logging as soon as the session opens, under
 # `LogDefaultName` in `LogDefaultPath`. `/NOLOG` turns it off; `/L=` names the
 # file, which is **not** a setting — `ts.LogFN` has no key of its own.
+#@ This setting automatically starts a session log when a connection opens. The default name setting and default path setting select the file.
 log.auto_start | bool | Tera Term | LogAutoStart | off | -
 
 # `ttset.c:978`. A byte-for-byte capture of what arrived, rather than the text
@@ -1542,11 +1746,13 @@ log.auto_start | bool | Tera Term | LogAutoStart | off | -
 # through a terminal, and the only one that keeps what a corrupt line really
 # sent. `filesys_log.cpp:243` overrules `LogTypePlainText` and `LogTimestamp`
 # when this is on.
+#@ This setting records all received bytes without changes. Binary logs omit text timestamps. You can send a binary log to a terminal again.
 log.binary | bool | Tera Term | LogBinary | off | -
 
 # `ttset.c:981`, and the key is not the field: it is `ts.Append`, which is why
 # grepping the struct for `LogAppend` finds nothing. Add to an existing file
 # rather than truncating it.
+#@ This setting adds new session output to a log file. It does not replace the file contents.
 log.append | bool | Tera Term | LogAppend | off | -
 
 # `ttset.c:984`, and it is **not** "strip the escape sequences" — a text log
@@ -1555,11 +1761,13 @@ log.append | bool | Tera Term | LogAppend | off | -
 # cursor, and this suppresses it, so a line the host corrected reads as the
 # correction rather than as the keystrokes. The tap is shared with the macro
 # language's received-line buffer, so it changes what `wait` sees too.
+#@ This setting removes logged Backspace characters after the terminal processes them. It also changes the text that macro wait commands receive.
 log.plain_text | bool | Tera Term | LogTypePlainText | off | -
 
 # `ttset.c:988`. A `[time] ` at the head of each line. Silently dropped for a
 # binary log (`filesys_log.cpp:243`), which is the right way round: a timestamp
 # in the middle of a byte capture makes it no longer a capture.
+#@ This setting adds a timestamp at the start of each logged text line. Binary logs ignore this setting.
 log.timestamp | bool | Tera Term | LogTimestamp | off | -
 
 # `ttset.c:1000`, **and the empty spelling is load-bearing.** Four `_stricmp`s
@@ -1574,16 +1782,19 @@ log.timestamp | bool | Tera Term | LogTimestamp | off | -
 # upstream and to the empty spelling here, because the schema has one fallback
 # and it is the default. It differs only in a file that misspells this key and
 # carries `LogTimestampUTC=on` as well.
+#@ This setting selects local time, Coordinated Universal Time, logging elapsed time, or connection elapsed time for timestamps. An empty value uses the Tera Term 4 universal-time option.
 log.timestamp_type | enum(=Unset,Local=Local,UTC=Utc,LoggingElapsed=LoggingElapsed,ConnectionElapsed=ConnectionElapsed) | Tera Term | LogTimestampType |  | -
 
 # `ttset.c:1007`. Tera Term 4's key, read only when `LogTimestampType` is absent
 # or empty — see that setting. Upstream reads it and never writes it back, so a
 # file keeps it until somebody deletes it by hand.
+#@ This setting supplies the Tera Term 4 Coordinated Universal Time option only when LogTimestampType is empty. It has no effect after a type is selected.
 log.timestamp_utc | bool | Tera Term | LogTimestampUTC | off | -
 
 # `ttset.c:996`, handed to `wcsftime` — plus `%N`, which is upstream's own
 # addition for fractional seconds and not a strftime conversion. Not applied to
 # an elapsed-time stamp, which has no date in it to format.
+#@ This setting sets the pattern for wall-clock log timestamps. The pattern supports %a, %b, %d, %e, %H, %m, %M, %S, %w, %y, %Y, and %N for milliseconds. Unknown placeholders do not change. Elapsed-time stamps ignore this setting.
 log.timestamp_format | string | Tera Term | LogTimestampFormat | %Y-%m-%d %H:%M:%S.%N | -
 
 # `ttset.c:1018`, the name `LogAutoStart` and the log dialog both start from.
@@ -1607,12 +1818,14 @@ log.timestamp_format | string | Tera Term | LogTimestampFormat | %Y-%m-%d %H:%M:
 # underscores on the end of every log. A local shell has no host name at all
 # and would leave a bare separator. Both are fine in a template somebody chose;
 # neither is fine in the one everybody gets.
+#@ This setting sets the template for automatic log filenames. The template supports date placeholders, &h for host, &p for port, and &u for user.
 log.default_name | string | Tera Term | LogDefaultName | sterna-%Y%m%d_%H%M%S.log | -
 
 # `ttset.c:1023`. Where a relative log name lands. Empty falls back to
 # `FileDir` if that exists and to the per-user log directory otherwise —
 # `GetTermLogDir` (`ttlib_types.cpp:63`), which is why the transfer directory
 # can decide where a log goes.
+#@ This setting sets the directory for relative log filenames. An empty value uses the transfer directory, when available, and then the per-user log directory.
 log.default_path | string | Tera Term | LogDefaultPath |  | -
 
 # `ttset.c:1029`. `rotate_mode`: 0 none, 1 by size (`tttypes.h:106`). Read with
@@ -1620,27 +1833,32 @@ log.default_path | string | Tera Term | LogDefaultPath |  | -
 # takes anything that is neither of the two as "do not rotate" — so this is an
 # int here rather than a range, which would turn a 2 into a 1 and switch
 # rotation on for a file that had it off.
+#@ This setting selects log rotation with a number. Zero disables rotation. One rotates by size. All other values also keep rotation off.
 log.rotate | int | Tera Term | LogRotate | 0 | -
 
 # `ttset.c:1030`, **in bytes whatever `LogRotateSizeType` says.** The dialog
 # multiplies by 1024 per unit before storing (`log_pp.cpp:471`), so a value
 # read back and scaled again turns the 1 MB the user asked for into a
 # terabyte. Zero disables rotation, as does a `LogRotate` of 0.
+#@ This setting sets the log rotation threshold in bytes. Zero disables size-based rotation.
 log.rotate_size | int | Tera Term | LogRotateSize | 0 | -
 
 # `ttset.c:1031`. 0 bytes, 1 KB, 2 MB (`log_pp.cpp:72`) — the unit the *dialog*
 # shows `LogRotateSize` in, and nothing else. It is stored so that reopening
 # the dialog offers the number the user typed rather than its expansion.
+#@ This setting stores the unit that Tera Term's log dialog shows. Sterna displays the rotation threshold in bytes. Thus, this setting has no effect.
 log.rotate_size_type | uint16 | Tera Term | LogRotateSizeType | 0 | -
 
 # `ttset.c:1032`. How many generations to keep: `file.1` is the newest.
 # **Zero is not "none"** — `filesys_log.cpp:507` leaves `loopmax` at its
 # hardcoded 10000, so an unset step with rotation on keeps ten thousand files.
+#@ This setting sets the number of log generations to keep after rotation. Zero means ten thousand generations, not none.
 log.rotate_step | uint16 | Tera Term | LogRotateStep | 0 | -
 
 # `ttset.c:991`. Upstream puts a file-transfer-shaped progress window up for
 # the duration of a log; this port has a status-bar indicator instead, so the
 # setting is read and written and acts on nothing.
+#@ This setting keeps the Tera Term option that hides the log progress dialog. Sterna uses a status indicator. Thus, this setting has no effect.
 log.hide_dialog | bool | Tera Term | LogHideDialog | off | -
 
 # `ttset.c:993`, and the field is `LogAllBuffIncludedInFirst`. Write the
@@ -1650,18 +1868,21 @@ log.hide_dialog | bool | Tera Term | LogHideDialog | off | -
 # `BuffGetAnyLineDataW`, which truncates any line at its first wide character
 # and at about half the width when a line holds combining marks — two of the
 # upstream bugs on file — and caps every line at 512 wchars on top of that.
+#@ This setting adds the scrollback to the start of a new text log. Binary logs ignore this setting.
 log.include_screen_buffer | bool | Tera Term | LogIncludeScreenBuffer | off | -
 
 # `ttset.c:1766`, and a `GetOnOff` whose default is **on** — so `=1` reads as
 # on here where the same value reads as off for every setting above that ships
 # off. Win32 share modes; nothing on this side opens the file exclusively, so
 # it is read and written and acts on nothing.
+#@ This setting keeps the Tera Term option that locks a log file for one process. Sterna does not use this lock. Thus, this setting has no effect.
 log.lock_exclusive | bool | Tera Term | LogLockExclusive | on | -
 
 # `ttset.c:1035`, default **on**, the same asymmetry as `LogLockExclusive`.
 # Upstream hands the write to a logging thread instead of blocking the one
 # parsing the stream; here the write is buffered and the terminal's own read
 # loop is not on the UI thread, so there is nothing to defer.
+#@ This setting keeps the Tera Term option that uses a second thread to write logs. The Sterna logging path does not use this setting.
 log.deferred_write | bool | Tera Term | DeferredLogWriteMode | on | -
 
 # --- transfer ----------------------------------------------------------------
@@ -1669,21 +1890,25 @@ log.deferred_write | bool | Tera Term | DeferredLogWriteMode | on | -
 # `ttset.c:1060`. Where a file transfer starts looking, and where a protocol
 # that names its own file puts it — `GetRecievePath`. `/FD=` sets it, but only
 # if the directory exists.
+#@ This setting sets the start directory for file transfers. It also sets the destination for files that receive their names from the protocol.
 transfer.dir | string | Tera Term | FileDir |  | -
 
 # `ttset.c:975`. The Binary checkbox both file dialogs carry, remembered
 # between transfers — `filesys.cpp:231` copies it into `fv->BinaryMode` and
 # `:454` uses it to decide whether a send translates line endings. Off, so a
 # send is text by default and CR becomes CRLF.
+#@ This setting controls binary mode for ZMODEM transfers. At this time, Sterna does not use this setting for raw sends or other transfer protocols.
 transfer.binary | bool | Tera Term | TransBin | off | -
 
 # `ttset.c:1097`, part of `FTFlag`. On receive, never overwrite: add `.1`,
 # `.2`. Off, so upstream ships willing to replace a file it already has.
+#@ This setting changes the name of a received file when a file with the same name is at the destination. If the setting is off, a receive can replace that file.
 transfer.auto_rename | bool | Tera Term | AutoFileRename | off | -
 
 # `ttset.c:1014`. Upstream's transfer progress window; this port has a status
 # bar for it, so the setting is read and written and acts on nothing — the same
 # arrangement as `log.hide_dialog`.
+#@ This setting keeps the Tera Term option that hides the transfer progress dialog. Sterna uses a status indicator. Thus, this setting has no effect.
 transfer.hide_dialog | bool | Tera Term | FTHideDialog | off | -
 
 # --- transfer: XMODEM ---------------------------------------------------------
@@ -1695,111 +1920,140 @@ transfer.hide_dialog | bool | Tera Term | FTHideDialog | off | -
 # reader has no arm for and which round-trips solely because anything
 # unmatched takes the default. Kept here as the default spelling for that
 # reason.
+#@ This setting selects 128-byte or 1024-byte XMODEM blocks with checksum or cyclic redundancy checking. Plain checksum is the default. It is possibly not satisfactory for modern peers.
 transfer.xmodem_opt | enum(checksum=Checksum,crc=Crc,1k=Crc1K,1ksum=Checksum1K) | Tera Term | XmodemOpt | checksum | -
 
 # `ttset.c:1051`. **On** — so XMODEM's own binary flag defaults the opposite
 # way to `TransBin` above, which is the flag every other protocol uses.
+#@ This setting controls text conversion for XMODEM receives. Binary mode keeps line endings and padding. This setting has no effect on XMODEM sends.
 transfer.xmodem_binary | bool | Tera Term | XmodemBin | on | -
 
 # `ttset.c:1054`. What upstream sends to the host to start a receive. Read and
 # written; this port has no "send a command, then receive" path yet, and the
 # empty default is upstream's, so nothing is lost by an empty one here.
+#@ This setting stores a host command to send before an XMODEM receive starts. At this time, Sterna does not send this command automatically.
 transfer.xmodem_rcv_command | string | Tera Term | XModemRcvCommand |  | -
 
 # `ttset.c:1384`, part of `LogFlag`. A per-protocol transfer log, which is
 # `ttpfile`'s own diagnostic and not the session log.
+#@ This setting writes a diagnostic log for the XMODEM protocol. This log is different from the terminal session log.
 transfer.xmodem_log | bool | Tera Term | XmodemLog | off | -
 
 # `ttset.c:1820`, and **these five floor at 1 rather than taking the default**
 # — `int_min`, not `int`. `XmodemTimeouts=0,0,0,0,0` is five one-second
 # timeouts. Field 1: how long to wait for the first block.
+#@ This setting sets the number of seconds that XMODEM waits for the first block. Values less than 1 use 1 second.
 transfer.xmodem_timeout_init | int_min(1) | Tera Term | XmodemTimeouts.1 | 10 | -
 
 # `ttset.c:1824`. Field 2: the same, while still asking for CRC mode.
+#@ This setting sets the number of seconds that XMODEM waits for the first block during the request for cyclic redundancy checking. Values less than 1 use 1 second.
 transfer.xmodem_timeout_init_crc | int_min(1) | Tera Term | XmodemTimeouts.2 | 3 | -
 
 # `ttset.c:1827`. Field 3.
+#@ This setting sets XMODEM's short response timeout in seconds. Values less than 1 use 1 second.
 transfer.xmodem_timeout_short | int_min(1) | Tera Term | XmodemTimeouts.3 | 10 | -
 
 # `ttset.c:1830`. Field 4.
+#@ This setting sets XMODEM's long response timeout in seconds. Values less than 1 use 1 second.
 transfer.xmodem_timeout_long | int_min(1) | Tera Term | XmodemTimeouts.4 | 20 | -
 
 # `ttset.c:1833`. Field 5.
+#@ This setting sets XMODEM's longest response timeout in seconds. Values less than 1 use 1 second.
 transfer.xmodem_timeout_vlong | int_min(1) | Tera Term | XmodemTimeouts.5 | 60 | -
 
 # --- transfer: YMODEM ---------------------------------------------------------
 
 # `ttset.c:1392`, and unlike XMODEM's this one ships with a value: `rb`.
+#@ This setting stores a host command to send before a YMODEM receive starts. At this time, Sterna does not send this command automatically.
 transfer.ymodem_rcv_command | string | Tera Term | YModemRcvCommand | rb | -
 
 # `ttset.c:1388`.
+#@ This setting writes a diagnostic log for the YMODEM protocol. This log is different from the terminal session log.
 transfer.ymodem_log | bool | Tera Term | YmodemLog | off | -
 
 # `ttset.c:1838`, the same five fields and the same floor as XMODEM's.
+#@ This setting sets the number of seconds that YMODEM waits for the first block. Values less than 1 use 1 second.
 transfer.ymodem_timeout_init | int_min(1) | Tera Term | YmodemTimeouts.1 | 10 | -
 
 # `ttset.c:1842`.
+#@ This setting sets the number of seconds that YMODEM waits for the first block during the request for cyclic redundancy checking. Values less than 1 use 1 second.
 transfer.ymodem_timeout_init_crc | int_min(1) | Tera Term | YmodemTimeouts.2 | 3 | -
 
 # `ttset.c:1845`.
+#@ This setting sets YMODEM's short response timeout in seconds. Values less than 1 use 1 second.
 transfer.ymodem_timeout_short | int_min(1) | Tera Term | YmodemTimeouts.3 | 10 | -
 
 # `ttset.c:1848`.
+#@ This setting sets YMODEM's long response timeout in seconds. Values less than 1 use 1 second.
 transfer.ymodem_timeout_long | int_min(1) | Tera Term | YmodemTimeouts.4 | 20 | -
 
 # `ttset.c:1851`.
+#@ This setting sets YMODEM's longest response timeout in seconds. Values less than 1 use 1 second.
 transfer.ymodem_timeout_vlong | int_min(1) | Tera Term | YmodemTimeouts.5 | 60 | -
 
 # --- transfer: ZMODEM ---------------------------------------------------------
 
 # `ttset.c:1396`, part of `FTFlag`. Whether the terminal watches the stream for
 # a peer's `ZRQINIT` and starts a receive by itself.
+#@ This setting starts a ZMODEM receive automatically when the remote peer sends its opening request.
 transfer.zmodem_auto | bool | Tera Term | ZmodemAuto | off | -
 
 # `ttset.c:1400`. The subpacket size when sending; `zmodem.c:780` floors it at
 # 64 and caps it against the block-size ladder, so this is an upper bound
 # rather than the value used.
+#@ This setting sets the maximum size, in bytes, of a ZMODEM send subpacket. The protocol can select a smaller available size.
 transfer.zmodem_data_len | int | Tera Term | ZmodemDataLen | 1024 | -
 
 # `ttset.c:1403`. How far ahead the sender may run before an ACK.
+#@ This setting sets the number of ZMODEM data bytes that Sterna can send before Sterna waits for an acknowledgment.
 transfer.zmodem_win_size | int | Tera Term | ZmodemWinSize | 32767 | -
 
 # `ttset.c:1407`, part of `FTFlag`. Escape control characters, for a link that
 # eats them — a telnet server that has not been told `binary`, or a modem with
 # software flow control in the path.
+#@ This setting escapes control characters during ZMODEM transfers. This option can be necessary when Telnet framing, a modem, or software flow control can remove those bytes.
 transfer.zmodem_escape_ctl | bool | Tera Term | ZmodemEscCtl | off | -
 
 # `ttset.c:1411`.
+#@ This setting writes a diagnostic log for the ZMODEM protocol. This log is different from the terminal session log.
 transfer.zmodem_log | bool | Tera Term | ZmodemLog | off | -
 
 # `ttset.c:1415`.
+#@ This setting stores a host command to send before a ZMODEM receive starts. At this time, Sterna does not send this command automatically.
 transfer.zmodem_rcv_command | string | Tera Term | ZModemRcvCommand | rz | -
 
 # `ttset.c:1857`. Four fields rather than five, and **the second floors at 0
 # rather than 1** because 0 is meaningful there: it is how "never time out" is
 # spelt. Field 1, the normal timeout on a serial link.
+#@ This setting sets the standard ZMODEM timeout for a serial connection, in seconds. Values less than 1 use 1 second.
 transfer.zmodem_timeout_normal | int_min(1) | Tera Term | ZmodemTimeouts.1 | 10 | -
 
 # `ttset.c:1861`. Field 2, and **0 by default**: on a network link a stalled
 # ZMODEM waits for the socket to notice rather than timing out itself.
+#@ This setting sets the ZMODEM timeout for a network connection, in seconds. With zero, this timeout does not stop the transfer. A network-connection failure then stops the transfer.
 transfer.zmodem_timeout_tcpip | int_min(0) | Tera Term | ZmodemTimeouts.2 | 0 | -
 
 # `ttset.c:1865`. Field 3.
+#@ This setting sets ZMODEM's startup timeout in seconds. Values less than 1 use 1 second.
 transfer.zmodem_timeout_init | int_min(1) | Tera Term | ZmodemTimeouts.3 | 10 | -
 
 # `ttset.c:1868`. Field 4.
+#@ This setting sets ZMODEM's finishing timeout in seconds. Values less than 1 use 1 second.
 transfer.zmodem_timeout_fin | int_min(1) | Tera Term | ZmodemTimeouts.4 | 3 | -
 
 # --- transfer: Kermit, B-Plus, Quick-VAN --------------------------------------
 
 # `ttset.c:1206`, part of `KermitOpt`. Long packets, which every Kermit written
 # this century supports and which upstream still ships off.
+#@ This setting lets Kermit use long packets for faster transfers with modern Kermit peers.
 transfer.kermit_long_packet | bool | Tera Term | KmtLongPacket | off | -
 
 # `ttset.c:1208`. Send the file's attributes in an `A` packet.
+#@ This setting sends file attributes, for example, the name and metadata, in a Kermit attribute packet.
 transfer.kermit_file_attr | bool | Tera Term | KmtFileAttr | off | -
 
 # `ttset.c:1204`.
+#@ This setting writes a diagnostic log for the Kermit protocol. This log is different from the terminal session log.
 transfer.kermit_log | bool | Tera Term | KmtLog | off | -
 
 # **`ttset.c:1130`, and turning this on rewrites `Answerback`** — the arm below
@@ -1807,18 +2061,23 @@ transfer.kermit_log | bool | Tera Term | KmtLog | off | -
 # trigger, so a setting on the transfer page silently changes what the terminal
 # replies to ENQ. Not reproduced: this port's answerback is not wired to it,
 # and doing so from a settings load would be a surprise a user cannot see.
+#@ This setting automatically detects B-Plus transfer requests. Tera Term also changes the terminal answerback. At this time, Sterna does not make that change.
 transfer.bplus_auto | bool | Tera Term | BPAuto | off | -
 
 # `ttset.c:1139`, part of `FTFlag`.
+#@ This setting escapes control characters during B-Plus transfers on links that can remove them.
 transfer.bplus_escape_ctl | bool | Tera Term | BPEscCtl | off | -
 
 # `ttset.c:1143`.
+#@ This setting writes a diagnostic log for the B-Plus protocol. This log is different from the terminal session log.
 transfer.bplus_log | bool | Tera Term | BPLog | off | -
 
 # `ttset.c:1270`.
+#@ This setting sets the number of Quick-VAN data packets that stay in the active transfer window.
 transfer.quickvan_win_size | int | Tera Term | QVWinSize | 8 | -
 
 # `ttset.c:1266`.
+#@ This setting writes a diagnostic log for the Quick-VAN protocol. This log is different from the terminal session log.
 transfer.quickvan_log | bool | Tera Term | QVLog | off | -
 
 # --- transfer: the raw capture ------------------------------------------------
@@ -1827,89 +2086,113 @@ transfer.quickvan_log | bool | Tera Term | QVLog | off | -
 # to go quiet before stopping — and **the clock starts at the first byte**
 # (`raw.c:168`), so a capture the host never answers waits for ever whatever
 # this says.
+#@ This setting stops a raw file capture after the specified number of quiet seconds. The timer starts only after the first received byte. Thus, an empty capture does not stop.
 transfer.raw_autostop | int | Tera Term | ReceivefileAutoStopWaitTime | 5 | -
 
 # `ttset.c:1063`. A file-dialog mask such as `*.txt;*.log`. Upstream uses it
 # for raw Send file and every protocol's send picker.
+#@ This setting sets the filename filter that protocol send dialogs show. For example, the filter can be *.txt or *.log. At this time, Sterna does not have a raw-send dialog.
 transfer.send_filter | string | Tera Term | FileSendFilter |  | -
 
 # `ttset.c:2029`. The corresponding mask for raw Receive file. Protocols that
 # carry their own filename do not ask for one and therefore do not use it.
+#@ This setting stores the filename filter for Tera Term's raw receive dialog. At this time, Sterna does not have this dialog. Thus, this setting has no effect.
 transfer.receive_filter | string | Tera Term | FileReceiveFilter |  | -
 
 # `ttset.c:1068`. The destination directory offered by drag-and-drop SCP.
 # `scp` is one of the macro host's explicitly unsupported transport commands,
 # so this is retained for the file and the future implementation.
+#@ This setting stores the destination directory for drag-and-drop secure copy transfers. At this time, Sterna does not have this transfer method.
 transfer.scp_send_dir | string | Tera Term | ScpSendDir |  | -
 
 # `ttset.c:1191`, default **on**. The boosted raw sender is used only for a
 # binary serial send at 115200 baud or faster with no echo, telnet framing or
 # bracketed paste (`filesys.cpp:365`). It does not govern X/Y/ZMODEM or Kermit.
+#@ This setting stores Tera Term's high-speed raw serial-send option. At this time, Sterna does not use this setting.
 transfer.raw_high_speed | bool | Tera Term | FileSendHighSpeedMode | on | -
 
 # `ttset.c:1511`, default **on**. Whether dropping files opens the choice
 # between raw send, SCP and cancel. The shell has no file-drop target yet.
+#@ This setting stores the Tera Term option that shows a selection after a user drops files. The selection contains raw send, SCP, and cancel. At this time, users cannot drop files into Sterna.
 transfer.confirm_file_drop | bool | Tera Term | ConfirmFileDragAndDrop | on | -
 
 # `ttset.c:2006`. How raw Send file spaces writes. Anything unrecognised takes
 # `NoDelay`, including an empty present value.
+#@ This setting stores the Tera Term option that pauses a raw send after each character, line, or chunk. At this time, Sterna does not use this setting to add raw-send delays.
 transfer.raw_send_delay_type | enum(NoDelay=NoDelay,PerChar=PerChar,PerLine=PerLine,PerSendSize=PerSendSize) | Tera Term | SendfileDelayType | NoDelay | -
 
 # `ttset.c:2011`, in milliseconds. The delay selected above; zero is a real
 # value and means no wait.
+#@ This setting stores the raw-send pause in milliseconds for Tera Term's selected delay mode. At this time, Sterna does not use this pause.
 transfer.raw_send_delay_tick | uint16 | Tera Term | SendfileDelayTick | 0 | -
 
 # `ttset.c:2012`. The chunk size for `PerSendSize`, and the raw sender's read
 # size. Upstream applies no range at settings-load time.
+#@ This setting stores Tera Term's raw-send chunk size in bytes. At this time, Sterna does not use this setting.
 transfer.raw_send_size | int | Tera Term | SendfileSize | 4096 | -
 
 # `ttset.c:2013`. Use Tera Term 4's sequential file reader rather than loading
 # chunks into memory before sending them. Off is the newer sender.
+#@ This setting controls the sequential raw-file sender from Tera Term 4. At this time, Sterna does not use this setting.
 transfer.raw_send_sequential | bool | Tera Term | SendfileSequential | off | -
 
 # `ttset.c:2014`. Skip raw Send file's option page and use the remembered
 # binary and delay settings directly.
+#@ This setting controls the raw Send File options. With the on value, Tera Term skips these options. At this time, Sterna does not have this options dialog. Thus, this setting has no effect.
 transfer.raw_send_skip_dialog | bool | Tera Term | SendfileSkipOptionDialog | off | -
 
 # `ttset.c:2030`. The corresponding switch for raw Receive file.
+#@ This setting controls the raw Receive File options. With the on value, Tera Term skips these options. At this time, Sterna does not have this options dialog. Thus, this setting has no effect.
 transfer.raw_receive_skip_dialog | bool | Tera Term | ReceivefileSkipOptionDialog | off | -
 
 # --- printer -----------------------------------------------------------------
 #
-# Printing is Stage 3 work. These settings are still first-class compatibility
-# data: a shared file keeps them, the generated dialog exposes them, and no
-# terminal or protocol behavior is invented in their absence.
+# Sterna supports controller-mode, automatic and screen printing. The two
+# resolution overrides remain compatibility data because Qt uses the printer's
+# own resolution.
 
 # `ttset.c:1237`, assigned to the 16-bit `ts.PassThruDelay` and written
-# unsigned. It is the delay before controller-mode pass-through printing starts.
+# unsigned. Sterna waits this long after a job closes so nearby automatic-print
+# output can join the same job.
+#@ This setting sets the number of seconds that Sterna waits after a printer job closes before Sterna sends it. Automatic-print output at short intervals becomes part of one job during this wait.
 printer.passthrough_delay | uint16 | Tera Term | PassThruDelay | 3 | -
 
 # `ttset.c:1241`. The raw printer device used for pass-through mode; empty lets
 # upstream choose its ordinary printer path.
+#@ This setting sends all printer output directly to this device or file. This output includes automatic printing and screen printing. An empty value uses the system printer.
 printer.passthrough_port | string | Tera Term | PassThruPort |  | -
 
 # `ttset.c:1245`, `TF_PRINTERCTRL`, default off. Gates the printer control
 # sequences themselves, independently of whether a printer device was named.
+#@ This setting lets host escape sequences print the screen or enter printer-controller and automatic-print modes. A host can always stop automatic printing.
 printer.control_sequences | bool | Tera Term | PrinterCtrlSequence | off | -
 
 # `ttset.c:1255`. Margins are hundredths of an inch, left, right, top and
 # bottom. `GetNthNum` makes a missing field zero in a present value.
+#@ This setting sets the left margin in hundredths of an inch for system-printer jobs. Direct pass-through output ignores this margin.
 printer.margin_left | int_zero | Tera Term | PrnMargin.1 | 50 | -
 # The second field of `PrnMargin`, under the same `ttset.c:1255` rule.
+#@ This setting sets the right margin in hundredths of an inch for system-printer jobs. Direct pass-through output ignores this margin.
 printer.margin_right | int_zero | Tera Term | PrnMargin.2 | 50 | -
 # The third field of `PrnMargin`, under the same `ttset.c:1255` rule.
+#@ This setting sets the top margin in hundredths of an inch for system-printer jobs. Direct pass-through output ignores this margin.
 printer.margin_top | int_zero | Tera Term | PrnMargin.3 | 50 | -
 # The fourth field of `PrnMargin`, under the same `ttset.c:1255` rule.
+#@ This setting sets the bottom margin in hundredths of an inch for system-printer jobs. Direct pass-through output ignores this margin.
 printer.margin_bottom | int_zero | Tera Term | PrnMargin.4 | 50 | -
 
 # `ttset.c:1263`, default off. Converts a form feed to a newline while printing.
+#@ This setting changes each form feed to a line break for system-printer jobs. Thus, a form feed does not start a new page. This setting does not change direct pass-through output.
 printer.convert_form_feed | bool | Tera Term | PrnConvFF | off | -
 
 # `ttset.c:1368`, first field. A positive value overrides the printer's native
 # horizontal pixels per inch for VT printing; zero uses the device value.
+#@ This setting stores the horizontal printer-resolution override in pixels per inch. Zero selects the printer's value. At this time, Sterna ignores this override.
 printer.vt_ppi_x | int_zero | Tera Term | VTPPI.1 | 0 | -
 # The second field of `VTPPI`, the vertical printer resolution under the same
-# rule. Printing is Stage 3 work, so both fields currently round-trip only.
+# rule. Sterna lets Qt choose the printer's resolution, so both fields currently
+# round-trip only.
+#@ This setting stores the vertical printer-resolution override in pixels per inch. Zero selects the printer's value. At this time, Sterna ignores this override.
 printer.vt_ppi_y | int_zero | Tera Term | VTPPI.2 | 0 | -
 
 # --- TEK compatibility -------------------------------------------------------
@@ -1920,28 +2203,36 @@ printer.vt_ppi_y | int_zero | Tera Term | VTPPI.2 | 0 | -
 
 # `ttset.c:603`. The TEK window's x/y position, using the same `CW_USEDEFAULT`
 # sentinel and `GetNthNum` zero-for-a-missing-field rule as `VTPos`.
+#@ This setting stores the horizontal position of the removed Tektronix window. It has no effect in Sterna.
 tek.x | int_zero | Tera Term | TEKPos.1 | -2147483648 | -
 # The second field of `TEKPos`, under the same `ttset.c:603` rule.
+#@ This setting stores the vertical position of the removed Tektronix window. It has no effect in Sterna.
 tek.y | int_zero | Tera Term | TEKPos.2 | -2147483648 | -
 
 # `ttset.c:789`, black on white. The pair remains a pair even though no TEK
 # painter consumes it here.
+#@ This setting stores the text colors and the background colors for the removed Tektronix display. It has no effect in Sterna.
 tek.color | color2 | Tera Term | TEKColor | 0,0,0,255,255,255 | -
 
 # `ttset.c:860`, default off. Enables colour emulation in the dropped TEK parser.
+#@ This setting controls color emulation for the removed Tektronix display. It has no effect in Sterna.
 tek.color_emulation | bool | Tera Term | TEKColorEmulation | off | -
 
 # `ttset.c:1295`. The byte a TEK GIN mouse report uses, with no load-time range.
+#@ This setting stores the mouse-report byte for the removed Tektronix display. It has no effect in Sterna.
 tek.gin_mouse_code | int | Tera Term | TEKGINMouseCode | 32 | -
 
 # `ttset.c:1555` passes the value through `IconName2IconId`. The ten known
 # names compare case-insensitively; anything else becomes `Default`.
+#@ This setting stores the icon selection for the removed Tektronix window. It has no effect in Sterna.
 tek.icon | enum(tterm=Tterm,vt=Vt,tek=Tek,tterm_classic=TtermClassic,vt_classic=VtClassic,tterm_3d=Tterm3d,vt_3d=Vt3d,tterm_flat=TtermFlat,vt_flat=VtFlat,cygterm=Cygterm,Default/*=Default) | Tera Term | TEKIcon | Default | -
 
 # `ttset.c:1374`. Both positive values override the printer's native pixels
 # per inch for a TEK print; zero in either axis means use the device values.
+#@ This setting stores the horizontal printer resolution, in pixels per inch, for the removed Tektronix print function. Zero uses the printer value. It has no effect in Sterna.
 tek.ppi_x | int_zero | Tera Term | TEKPPI.1 | 0 | -
 # The second field of `TEKPPI`, under the same `ttset.c:1374` rule.
+#@ This setting stores the vertical printer resolution, in pixels per inch, for the removed Tektronix print function. Zero uses the printer value. It has no effect in Sterna.
 tek.ppi_y | int_zero | Tera Term | TEKPPI.2 | 0 | -
 
 # --- window ------------------------------------------------------------------
@@ -1949,39 +2240,46 @@ tek.ppi_y | int_zero | Tera Term | TEKPPI.2 | 0 | -
 # `ttset.c:1527`. The string `on` means 2; every other present value goes
 # through `atoi`, then narrows into a Win32 `WORD`. This controls an old
 # maximised-window sizing workaround and has no corresponding Qt defect.
+#@ This setting stores the Tera Term workaround for a maximized window size. This workaround is not necessary in Sterna. Thus, this setting has no effect.
 window.maximized_bug_tweak | uint16_alias(on=2) | Tera Term | MaximizedBugTweak | 2 | -
 
 # `ttset.c:1550`, through `IconName2IconId`. The ten names compare
 # case-insensitively and anything else becomes `Default`. Sterna keeps its own
 # mark, so this is compatibility data for a shared Tera Term setup.
+#@ This setting stores the icon selection for a Tera Term window in shared settings files. Sterna always uses its own icon.
 window.icon | enum(tterm=Tterm,vt=Vt,tek=Tek,tterm_classic=TtermClassic,vt_classic=VtClassic,tterm_3d=Tterm3d,vt_3d=Vt3d,tterm_flat=TtermFlat,vt_flat=VtFlat,cygterm=Cygterm,Default/*=Default) | Tera Term | VTIcon | Default | -
 
 # `ttset.c:728`. No title bar, which `/H` also asks for. `/I` and `/V` —
 # minimised and invisible — have no keys at all: `_ReadIniFile` zeroes both at
 # `:554` and never reads one, so they are command-line-only.
+#@ This setting hides the window title bar. It also removes the usual menu bar.
 window.hide_title | bool | Tera Term | HideTitle | off | -
 
 # `ttset.c:731`. Hide the ordinary menu bar. When it is hidden, upstream opens
 # the same menus as a popup on Ctrl+left-click (`vtwin.cpp:863`); this is not a
 # choice between two different menus. `HideTitle` also removes the menu bar,
 # independently of this key (`vtwin.cpp:3461`).
+#@ This setting hides the usual menu bar. When popup menus are on, Ctrl+left-click opens the same menus.
 window.popup_menu | bool | Tera Term | PopupMenu | off | DLG_WIN_HIDEMENU
 
 # `ttset.c:1179`, default **on**. The gate on Ctrl+left-click opening the full
 # menu while the bar is hidden. It does not decide whether the bar is hidden —
 # that is `window.popup_menu`, or `window.hide_title` as a side effect.
+#@ This setting lets Ctrl+left-click open the full application menu while the usual menu bar is hidden.
 window.popup_menu_enabled | bool | Tera Term | EnablePopupMenu | on | -
 
 # `ttset.c:1183`, default **on**. With the bar hidden, upstream adds "Show menu
 # bar" to the Win32 system menu (`vtwin.cpp:3509`). Qt cannot add application
 # actions to a compositor-owned system menu, so the shell puts the recovery
 # action in the Ctrl+left-click popup instead.
+#@ This setting adds a Show menu bar recovery action while the menu bar is hidden.
 window.show_menu_enabled | bool | Tera Term | EnableShowMenu | on | -
 
 # `ttset.c:1380`, default **on**. Adds the dynamic Window menu, whose entries
 # are every open VT and TEK window (`vtwin.cpp:1116`). This process owns one
 # terminal window and TEK is out of scope, so it is read and written and acts
 # on nothing until Stage 3 gives the shell multiple sessions to list.
+#@ This setting makes a dynamic list of open windows show in the Window menu. This setting has no effect in Sterna at this time.
 window.window_menu | bool | Tera Term | WindowMenu | on | -
 
 # `ttset.c:608`, default off. Upstream updates `ts.VTPos` on every move but
@@ -1989,15 +2287,18 @@ window.window_menu | bool | Tera Term | WindowMenu | on | -
 # window close (`SaveVTPos`, `:3340`). The switch itself is read-only upstream:
 # `_WriteIniFile` never writes the key, so a user enables it by hand. This port
 # exposes it through the generated dialog and writes the same upstream key.
+#@ This setting saves the window position when Sterna saves the settings or when the window closes. The saved position does not change if this setting is off.
 window.save_position | bool | Tera Term | SaveVTWinPos | off | -
 
 # `ttset.c:598`, first half. `CW_USEDEFAULT` is `INT_MIN`, so an absent key asks
 # the window manager to place the window rather than meaning coordinate zero.
 # **Conditionally written**: with `SaveVTWinPos=off`, `_WriteIniFile` leaves an
 # existing `VTPos` line byte-for-byte alone (`ttset.c:2109`).
+#@ This setting sets the saved position on the horizontal axis. If the settings file supplies no position, the window manager selects it. Wayland ignores requested window positions.
 window.x | int_zero | Tera Term | VTPos.1 | -2147483648 | - | write-if=window.save_position
 
 # `ttset.c:600`, second half of the same pair and the same sentinel.
+#@ This setting sets the saved position on the vertical axis. If the settings file supplies no position, the window manager selects it. Wayland ignores requested window positions.
 window.y | int_zero | Tera Term | VTPos.2 | -2147483648 | - | write-if=window.save_position
 
 # --- shell integration and multi-window compatibility ------------------------
@@ -2005,74 +2306,92 @@ window.y | int_zero | Tera Term | VTPos.2 | -2147483648 | - | write-if=window.sa
 # `ttset.c:706`, default off. Upstream switches between its VT and TEK windows
 # when either parser sees the other terminal's sequence. TEK is deliberately
 # out of scope here, so the key round-trips and acts on nothing.
+#@ This setting controls switching between a standard terminal window and a Tektronix window. Sterna has no Tektronix window. Thus, this setting has no effect.
 window.auto_vt_tek_switch | bool | Tera Term | AutoWinSwitch | off | -
 
 # `ttset.c:1476`. The trailing space is in upstream's **reader literal** and
 # the writer at `:2250` omits it. Backticks retain that space in the schema;
 # `write-key` reproduces the writer. This is a Windows Cygwin install path, not
 # the local pty's working directory, so it has no runtime effect here.
+#@ This setting stores the installation directory for Windows Cygwin in shared settings files. It does not set the working directory of the Sterna local shell.
 connection.cygwin_directory | string | Tera Term | `CygwinDirectory ` | c:\cygwin | - | write-key=CygwinDirectory
 
 # `ttset.c:1483`. The external editor used by View log. Sterna has no View log
 # command yet, so the Windows default is preserved and the key round-trips.
+#@ This setting stores the external editor that the legacy View Log command uses. At this time, Sterna does not have that command.
 log.viewer | string | Tera Term | ViewlogEditor | notepad.exe | -
 
 # `ttset.c:1485`; the allocated-string helper's null fallback becomes empty.
 # Arguments for `log.viewer`, carried until that command exists.
+#@ This setting stores command-line arguments for the external log viewer. At this time, Sterna does not have the View Log command.
 log.viewer_args | string | Tera Term | ViewlogEditorArg |  | -
 
 # `ttset.c:1493`, default off. Whether the broadcast dialog records commands.
 # Broadcast is a multi-window feature and this shell owns one terminal today.
+#@ This setting controls storage of sent commands in the broadcast dialog history. At this time, Sterna does not have multi-window command broadcasting.
 broadcast.command_history | bool | Tera Term | BroadcastCommandHistory | off | -
 
 # `ttset.c:1497`, default **on**. Whether this terminal accepts a command from
 # another Tera Term window. There is no broadcast channel in Sterna yet.
+#@ This setting lets this terminal receive commands that a different window broadcasts. At this time, Sterna does not have a broadcast channel.
 broadcast.accept | bool | Tera Term | AcceptBroadcast | on | -
 
 # `ttset.c:1501`. What the non-realtime broadcast dialog appends. The else arm
 # is `None`, so an unrecognised value and an absent key agree.
+#@ This setting selects the key that the non-realtime broadcast dialog adds to each command. At this time, Sterna does not have command broadcasting.
 broadcast.submit_key | enum(None=None,Enter=Enter,CTRL+M=CtrlM) | Tera Term | BroadcastSubmitKey | None | -
 
 # `ttset.c:1319`. Upstream's misspelling is the public key and is preserved.
 # It caps the broadcast command history, which is not built yet.
+#@ This setting sets the maximum number of commands that the broadcast dialog keeps. At this time, Sterna does not have command broadcasting.
 broadcast.max_history | uint16 | Tera Term | MaxBroadcatHistory | 99 | -
 
 # `ttset.c:1452`. Suppresses Alt+B while leaving Control > Send break alone.
+#@ This setting disables the Alt+B shortcut that sends a break. The menu command stays available.
 menu.disable_accelerator_send_break | bool | Tera Term | DisableAcceleratorSendBreak | off | -
 
 # `ttset.c:1606`. Greys Control > Send break even when the transport supports
 # it. This is independent of the accelerator switch above.
+#@ This setting disables the Send break menu command. The command stays disabled when break signals are available for the connection.
 menu.disable_send_break | bool | Tera Term | DisableMenuSendBreak | off | -
 
 # `ttset.c:1614`. Suppresses Alt+D while leaving File > Duplicate session.
+#@ This setting disables the Alt+D shortcut that duplicates the session. The menu command stays available.
 menu.disable_accelerator_duplicate | bool | Tera Term | DisableAcceleratorDuplicateSession | off | -
 
 # `ttset.c:1617`, default **on**. Enables Alt+N for New connection.
+#@ This setting enables the Alt+N shortcut that opens a new connection.
 menu.accelerator_new_connection | bool | Tera Term | AcceleratorNewConnection | on | -
 
 # `ttset.c:1620`, default **on**. Enables Alt+G for Cygwin connection; Sterna's
 # equivalent command is Local shell.
+#@ This setting enables the Alt+G shortcut that opens a local shell connection.
 menu.accelerator_local_shell | bool | Tera Term | AcceleratorCygwinConnection | on | -
 
 # `ttset.c:1624`. Greys Duplicate session.
+#@ This setting disables the Duplicate session menu command.
 menu.disable_duplicate | bool | Tera Term | DisableMenuDuplicateSession | off | -
 
 # `ttset.c:1628`. While already connected, greys New connection rather than
 # allowing the current line to be replaced.
+#@ This setting disables the New connection menu command while a session is connected.
 menu.disable_new_connection | bool | Tera Term | DisableMenuNewConnection | off | -
 
 # `ttset.c:1602`, default off. Upstream mirrors received text into shared
 # memory only under this switch so `wait4all` can inspect every macro process.
 # Sterna has no process-global DDE ring; the command remains explicitly
 # unsupported and the compatibility key still round-trips.
+#@ This setting lets macros examine text that all terminal processes receive. Sterna does not have the wait4all macro command.
 macro.wait4all | bool | Tera Term | Wait4allMacroCommand | off | -
 
 # `ttset.c:1714`, default **on**. Adds recent connections to the Windows taskbar
 # jump list. Qt/Linux has no equivalent owned by this process.
+#@ This setting makes recent connections show in the Windows taskbar jump list. This setting has no effect in Sterna at this time.
 window.jump_list | bool | Tera Term | JumpList | on | -
 
 # `ttset.c:1993`, default off. Requests square corners from Windows 11 DWM.
 # Window decoration belongs to the compositor on Linux, so it is carried only.
+#@ This setting stores Tera Term's Windows 11 square-corner preference. At this time, Sterna does not use this setting.
 window.corner_dontround | bool | Tera Term | WindowCornerDontround | off | -
 
 # **`[Sterna]`**, because upstream has no toolbar and so no key to be
@@ -2080,6 +2399,7 @@ window.corner_dontround | bool | Tera Term | WindowCornerDontround | off | -
 # line edit, dark mode — is shown. It exists as a setting rather than as chrome nobody can remove:
 # `window.popup_menu` and `window.hide_title` are about the *menu*, so neither
 # hides this, and View > Show toolbar writes it.
+#@ This setting shows the toolbar with connection controls, local echo, line editing, and dark mode.
 window.toolbar | bool | Sterna | Toolbar | on | -
 
 # **`[Sterna]`**, because simultaneous panes are a Sterna window feature rather
@@ -2090,6 +2410,7 @@ window.toolbar | bool | Sterna | Toolbar | on | -
 # ran alongside it; they are read as `tiled` and rewritten as such. A missing or
 # unrecognised spelling returns to the single layout, so an edited file cannot
 # leave the window without a usable view.
+#@ This setting selects one tabbed connection view or one tiled grid. The tiled grid shows all connections. The previous two-panel and four-panel values select the tiled layout.
 window.panel_layout | enum(single/*=Single,tiled/two/four=Tiled) | Sterna | PanelLayout | single | -
 
 # **`[Sterna]`** again, and these two are only the *bar*: the buttons on it are
@@ -2098,6 +2419,7 @@ window.panel_layout | enum(single/*=Single,tiled/two/four=Tiled) | Sterna | Pane
 #
 # The whole visibility decision. An empty panel still shows its Add button, so
 # checking this before any commands exist gives a direct route to the first.
+#@ This setting shows the quick-button bar. You can change the buttons on this bar. An empty bar shows the Add button. You can use this button to make the first command.
 window.quick_buttons | bool | Sterna | QuickButtons | on | -
 
 # Which edge the resizable dock is on. Qt lets it be dragged to any of the four,
@@ -2109,6 +2431,7 @@ window.quick_buttons | bool | Sterna | QuickButtons | on | -
 # nothing that is being used, and the labels have room to be words rather than
 # abbreviations. An unrecognised spelling lands on the right as well, rather
 # than hiding the bar.
+#@ This setting sets the initial edge of the quick-button bar: right, top, bottom, or left. You can drag the bar to a different edge. Sterna then updates this setting.
 window.quick_buttons_area | enum(right/*=Right,top=Top,bottom=Bottom,left=Left) | Sterna | QuickButtonsArea | right | -
 
 # --- recent -----------------------------------------------------------------
@@ -2135,6 +2458,7 @@ window.quick_buttons_area | enum(right/*=Right,top=Top,bottom=Bottom,left=Left) 
 # `/dev/serial/by-id/usb-FTDI_…`. Written as the port was opened, so it is the
 # `open_path` a stable symlink resolves from rather than the `ttyUSB<n>` that
 # moves on replug.
+#@ This setting stores the serial-device path that the connection dialog used last. Adapter renumbering changes a temporary name more frequently than a stable device link.
 recent.serial_port | string | Sterna | SerialPort |  | -
 
 # The hosts the New connection dialog offers, newest first, separated by `;`.
@@ -2150,42 +2474,51 @@ recent.serial_port | string | Sterna | SerialPort |  | -
 # Gated by `connection.history_list`, which is upstream's `HistoryList` and
 # ships **off** — so nothing is remembered until the dialog's History box is
 # ticked, and clearing this value forgets everything.
+#@ This setting stores host entries for the New Connection dialog. This list puts the host from the last connection first. Host history must be active before Sterna updates this list.
 recent.host_history | string | Sterna | HostHistory |  | -
 
 # The SSH host the dialog was given — an alias out of `~/.ssh/config` as
 # readily as a name, since that is what the dialog's combo box is filled from.
 # Empty is the whole record's switch: nothing remembered, so the dialog opens
 # as it does on a fresh install.
+#@ This setting stores the last SSH host or SSH configuration alias entered in the connection dialog. An empty value removes the SSH record.
 recent.ssh_host | string | Sterna | SshHost |  | -
 
 # The user, where one was typed. Empty means "whatever `~/.ssh/config` says",
 # which is not the same as an empty user name — so the absence round-trips
 # rather than being resolved on the way in.
+#@ This setting stores the last entered SSH user. An empty value does not identify an SSH user. The SSH configuration then selects the user.
 recent.ssh_user | string | Sterna | SshUser |  | -
 
 # The port, where one was asked for. Zero is the same kind of absence as an
 # empty user: it leaves the choice to `~/.ssh/config` and, failing that, to 22.
+#@ This setting stores the last entered SSH port. Zero does not identify an SSH port. The SSH configuration then selects the port. Without an SSH configuration port, SSH uses port 22.
 recent.ssh_port | uint16 | Sterna | SshPort | 0 | -
 
 # The private key the dialog was given, if it was given one. `~/.ssh/config`
 # and the agent are consulted regardless, so this is an addition to them.
+#@ This setting stores the last selected SSH private key. Sterna also refers to the SSH configuration and the SSH agent.
 recent.ssh_identity | string | Sterna | SshIdentity |  | -
 
 # The pre-2020 algorithm switch, which is a property of the equipment at the
 # far end rather than a preference — a console server that needed it once needs
 # it every time, and that is the whole reason this record exists.
+#@ This setting stores the pre-2020 algorithm selection for the last SSH host. This selection is applicable only to equipment that cannot use modern algorithms.
 recent.ssh_legacy | bool | Sterna | SshLegacy | off | -
 
 # The telnet host. Empty is this record's switch, as `SshHost` is its own.
+#@ This setting stores the last Telnet host entered in the connection dialog. An empty value removes the Telnet record.
 recent.telnet_host | string | Sterna | TelnetHost |  | -
 
 # The telnet port, kept separate from `[Tera Term] TCPPort` deliberately: that
 # one is also what a bare host name on the command line opens, so remembering a
 # console server's per-line port there would move an SSH connection to it.
+#@ This setting stores the last Telnet port. It does not change the general network port for other connection types.
 recent.telnet_port | uint16 | Sterna | TelnetPort | 23 | -
 
 # Which of the four framing/burst combinations was used (`TelnetMode::of`).
 # `auto` is the shipped one: data until the first `IAC`, telnet after it.
+#@ This setting stores the last Telnet mode. Negotiate starts Telnet immediately. Framed escapes Telnet bytes without startup negotiation. Auto waits for 0xFF. Raw changes no bytes.
 recent.telnet_mode | enum(auto=Auto,negotiate=Negotiate,framed=Framed,raw=Raw) | Sterna | TelnetMode | auto | -
 
 # The connections that were actually opened, newest first, at most ten,
@@ -2207,6 +2540,7 @@ recent.telnet_mode | enum(auto=Auto,negotiate=Negotiate,framed=Framed,raw=Raw) |
 # freeze answers the settings file is supposed to own. `%` and the six
 # delimiters are percent-encoded; a record that does not parse is dropped
 # rather than repaired, because this file is hand-edited.
+#@ This setting stores a maximum of ten recent connections for the toolbar. Each entry keeps its connection type and the parameters necessary to open it again.
 recent.connections | string | Sterna | Recent |  | -
 
 # Whether opening a connection adds it to that list. On, unlike upstream's
@@ -2215,6 +2549,7 @@ recent.connections | string | Sterna | Recent |  | -
 # recording only: what is already there stays on offer, because hiding a list
 # somebody can no longer add to is taking away the entries *and* the way to
 # reach them. The bar's own Forget item is what removes them.
+#@ This setting adds opened connections to the recent list on the toolbar. The off value prevents new entries. Previous entries stay available.
 recent.remember | bool | Sterna | RememberConnections | on | -
 
 # The directory the last log was written to, so the log dialog opens where the
@@ -2234,6 +2569,7 @@ recent.remember | bool | Sterna | RememberConnections | on | -
 # script's choice and must not retarget the next log a person opens. It is
 # recorded whether or not it is currently being consulted, so clearing
 # `LogDefaultPath` later falls back to somewhere real.
+#@ This setting stores the directory selected in the Log dialog. Without a default log directory, Sterna uses this directory for the next log.
 recent.log_dir | string | Sterna | LogDir |  | -
 
 # --- updates ----------------------------------------------------------------
@@ -2248,6 +2584,7 @@ recent.log_dir | string | Sterna | LogDir |  | -
 
 # Whether starting Sterna may look for a new release. On, so an installed
 # terminal learns about a signed update without anyone remembering to ask.
+#@ This setting does a check for a signed Sterna update when the application starts. Manual update checks stay available with the off value.
 updates.check_on_startup | bool | Sterna | CheckUpdatesOnStartup | on | -
 
 # When the last look happened, as ISO-8601 UTC — the "once a day" half of it.
@@ -2257,4 +2594,5 @@ updates.check_on_startup | bool | Sterna | CheckUpdatesOnStartup | on | -
 # unparsable, and anything in the future — a clock moved back, an edited file —
 # reads the same way, because the alternative is a terminal that never looks
 # again.
+#@ This setting records the start time of the last update check in Coordinated Universal Time. Empty, invalid, or future values let Sterna do one more check at the next start.
 updates.last_check | string | Sterna | LastUpdateCheck |  | -

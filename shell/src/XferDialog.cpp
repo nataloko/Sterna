@@ -57,16 +57,19 @@ XferOptionsDialog::XferOptionsDialog(bool sending, Session *session, QWidget *pa
     m_protocol->addItem(tr("B-Plus (untested)"), TT_XFER_PROTOCOL_B_PLUS);
     m_protocol->addItem(tr("Quick-VAN (untested)"), TT_XFER_PROTOCOL_QUICK_VAN);
     m_protocol->setToolTip(
-        tr("ZMODEM unless the far end cannot. B-Plus was CompuServe's and "
-           "Quick-VAN was NIFTY-Serve's; both services are gone, so neither "
-           "has been tested against anything and both are best-effort."));
+        tr("The recommended protocol is ZMODEM if both systems support it. The "
+           "original online services for B-Plus and Quick-VAN are not available. "
+           "Thus, Sterna cannot test these protocols. Sterna will try these "
+           "protocols. Protocol failure is possible."));
 
     m_option = new QComboBox(this);
     m_optionLabel = new QLabel(text("DLG_XOPT", tr("Blocks:")), this);
 
     m_text = new QCheckBox(tr("Text mode (translate line endings)"), this);
-    m_text->setToolTip(tr("XMODEM only, and off unless the file is text: it "
-                          "rewrites CRLF and pads the last block with ^Z."));
+    m_text->setToolTip(
+        tr("This option is only for text files received with XMODEM. It changes "
+           "CR-only and LF-only line endings to CRLF and removes Ctrl+Z padding. "
+           "This option has no effect during transmission."));
 
     connect(m_protocol, &QComboBox::currentIndexChanged, this,
             &XferOptionsDialog::protocolChanged);

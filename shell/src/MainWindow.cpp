@@ -2216,8 +2216,8 @@ void MainWindow::buildMenus()
     m_pauseLogAction->setCheckable(true);
     languageAction(m_pauseLogAction, "MENU_FILE_PAUSELOG", tr("Pause logging"));
     m_pauseLogAction->setStatusTip(
-        tr("Stop writing to the log without closing it. What arrives while it "
-           "is paused is not written later — it is not kept."));
+        tr("This command pauses the log but keeps it open. Sterna discards output "
+           "that it receives during the pause."));
     m_stopLogAction = file->addAction(tr("Stop logging"), this, &MainWindow::stopLogging);
     m_stopLogAction->setObjectName(QStringLiteral("stopLogAction"));
     languageAction(m_stopLogAction, "MENU_FILE_STOPLOG", tr("Stop logging"));
@@ -2266,20 +2266,21 @@ void MainWindow::buildMenus()
                                       [this] { m_view->pasteClipboard(true); });
     m_pasteCrAction->setObjectName(QStringLiteral("pasteCrAction"));
     m_pasteCrAction->setStatusTip(
-        tr("Pastes the clipboard and adds the Return that runs it."));
+        tr("This command pastes the clipboard text and then sends Enter."));
     languageAction(m_pasteCrAction, "MENU_EDIT_PASTECR", tr("Paste<CR>"));
     edit->addSeparator();
     QAction *clearScreen = edit->addAction(
         tr("Clear screen"), this, [this] { m_view->clearScreen(); });
     clearScreen->setObjectName(QStringLiteral("clearScreenAction"));
     clearScreen->setStatusTip(
-        tr("Clears the visible page and keeps it in scrollback."));
+        tr("This command clears the page in view. With scrollback on, the page "
+           "contents stay available."));
     languageAction(clearScreen, "MENU_EDIT_CLSCREEN", tr("Clear screen"));
     QAction *clearBuffer = edit->addAction(
         tr("Clear buffer"), this, [this] { m_view->clearBuffer(); });
     clearBuffer->setObjectName(QStringLiteral("clearBufferAction"));
     clearBuffer->setStatusTip(
-        tr("Clears the visible page and permanently removes all scrollback."));
+        tr("This command clears the page in view and permanently deletes all scrollback."));
     languageAction(clearBuffer, "MENU_EDIT_CLBUFFER", tr("Clear buffer"));
     // Upstream's own pair, in upstream's order (`ID_EDIT_SELECTSCREEN`,
     // `ID_EDIT_SELECTALL`). Neither takes a shortcut: it has none there, there
@@ -2292,12 +2293,13 @@ void MainWindow::buildMenus()
         tr("Select screen"), this, [this] { m_view->selectScreen(); });
     selectScreen->setObjectName(QStringLiteral("selectScreenAction"));
     selectScreen->setStatusTip(
-        tr("Selects the lines on screen, wherever the view is scrolled to."));
+        tr("This command selects all lines in view. The selection also includes "
+           "lines from scrollback."));
     languageAction(selectScreen, "MENU_EDIT_SELECTSCREEN", tr("Select screen"));
     QAction *selectAll = edit->addAction(
         tr("Select all"), this, [this] { m_view->selectAll(); });
     selectAll->setObjectName(QStringLiteral("selectAllAction"));
-    selectAll->setStatusTip(tr("Selects the whole buffer, scrollback and all."));
+    selectAll->setStatusTip(tr("This command selects the page in view and all scrollback."));
     languageAction(selectAll, "MENU_EDIT_SELECTALL", tr("Select all"));
     // In Edit because it is the same gesture as Copy with a different
     // destination: select the command that worked, keep it. No upstream key.

@@ -1559,8 +1559,8 @@ pub struct TtSettingField {
     /// for this setting. Those are real settings people set by hand; they have
     /// no widget yet, not no meaning.
     pub label: *const c_char,
-    /// The schema's own comment, which is where the citation for the default
-    /// lives. Meant for a tooltip and for the generated documentation.
+    /// Developer documentation with behavioural citations. This is not
+    /// user-facing help; use [`tt_settings_help`] for display text.
     pub doc: *const c_char,
     pub kind: TtSettingKind,
     /// Bounds, for `TT_SETTING_KIND_INT_RANGE`. Note what the file does
@@ -1578,6 +1578,7 @@ pub struct TtSettingField {
 struct Schema {
     fields: Vec<TtSettingField>,
     choices: Vec<Vec<*const c_char>>,
+    helps: Vec<*const c_char>,
 }
 
 // Raw pointers into leaked, immutable, `NUL`-terminated strings. Nothing here
@@ -1598,7 +1599,8 @@ fn schema() -> &'static Schema {
     SCHEMA.get_or_init(|| {
         let mut fields = Vec::with_capacity(tt_session::FIELDS.len());
         let mut choices = Vec::with_capacity(tt_session::FIELDS.len());
-        for f in tt_session::FIELDS {
+        let mut helps = Vec::with_capacity(tt_session::FIELDS.len());
+        for (i, f) in tt_session::FIELDS.iter().enumerate() {
             let (kind, min, max) = match f.kind {
                 tt_session::Kind::Bool => (TtSettingKind::Bool, 0, 0),
                 tt_session::Kind::Int => (TtSettingKind::Int, i32::MIN, i32::MAX),
@@ -1637,8 +1639,13 @@ fn schema() -> &'static Schema {
                 choices: spellings.len(),
             });
             choices.push(spellings);
+            helps.push(leak(tt_session::SETTING_HELP[i]));
         }
-        Schema { fields, choices }
+        Schema {
+            fields,
+            choices,
+            helps,
+        }
     })
 }
 
@@ -1663,6 +1670,15 @@ pub extern "C" fn tt_settings_field(index: usize, out: *mut TtSettingField) -> b
         }
         None => false,
     }
+}
+
+/// Explain what setting `index` changes in plain language, or return null.
+///
+/// The returned string lives for the life of the process. This is a separate
+/// function so adding user help does not change the size of [`TtSettingField`].
+#[no_mangle]
+pub extern "C" fn tt_settings_help(index: usize) -> *const c_char {
+    schema().helps.get(index).copied().unwrap_or(ptr::null())
 }
 
 /// The `n`th spelling an `Enum` setting accepts, or null.

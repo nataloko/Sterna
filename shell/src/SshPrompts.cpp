@@ -153,8 +153,9 @@ HostKeyDialog::HostKeyDialog(const HostKeyRequest &request, QWidget *parent,
     save->setDefault(!changed);
     if (changed) {
         save->setEnabled(false);
-        save->setToolTip(tr("Remove the recorded key at %1 first, once you know "
-                            "why it changed.")
+        save->setToolTip(tr("You can use this command after you remove the recorded key "
+                            "from %1. You must know the cause of the server key change "
+                            "before removal.")
                              .arg(request.recordedAt));
     }
 

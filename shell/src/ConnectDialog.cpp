@@ -84,8 +84,7 @@ ConnectDialog::ConnectDialog(QWidget *parent, const I18n *i18n)
 
     m_history = new QCheckBox(text("DLG_HOST_TCPIPHISTORY", tr("History")), m_tcpBox);
     m_history->setObjectName(QStringLiteral("connectHistory"));
-    m_history->setToolTip(tr("Remember the hosts connected to, and offer them "
-                             "in the list above."));
+    m_history->setToolTip(tr("This option keeps connected hosts in the host list."));
 
     m_telnetService = new QRadioButton(tr("Telnet"), m_tcpBox);
     m_telnetService->setObjectName(QStringLiteral("connectServiceTelnet"));
@@ -94,8 +93,8 @@ ConnectDialog::ConnectDialog(QWidget *parent, const I18n *i18n)
     m_otherService =
         new QRadioButton(text("DLG_HOST_TCPIPOTHER", tr("Other")), m_tcpBox);
     m_otherService->setObjectName(QStringLiteral("connectServiceOther"));
-    m_otherService->setToolTip(tr("A plain TCP connection with telnet switched "
-                                  "off entirely."));
+    m_otherService->setToolTip(
+        tr("This option opens a direct TCP connection without Telnet commands."));
     // SSH is the one people want on a Linux desktop, and it is what upstream
     // preselects when TTSSH is enabled (`ttxssh.c`: `pvar->settings.Enabled`).
     m_sshService->setChecked(true);

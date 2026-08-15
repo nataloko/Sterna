@@ -55,8 +55,7 @@ pub struct Field {
     pub default: &'static str,
     /// The `.lng` key for the dialog label, where upstream has a dialog for it.
     pub label: Option<&'static str>,
-    /// The schema's own comment, which is where the citation for the default
-    /// lives. Shown as a tooltip and printed in the docs.
+    /// The schema's developer documentation, including behavioural citations.
     pub doc: &'static str,
 }
 

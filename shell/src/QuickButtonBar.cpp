@@ -127,7 +127,7 @@ void QuickButtonBar::setButtons(const QVector<QuickButton> &buttons)
     // been defined.
     m_add = new QAction(QStringLiteral("+"), this);
     m_add->setObjectName(QStringLiteral("quickButtonAdd"));
-    m_add->setToolTip(tr("Add a quick button..."));
+    m_add->setToolTip(tr("This button opens the editor for a new quick button."));
     addButton(m_add);
     connect(m_add, &QAction::triggered, this, &QuickButtonBar::addRequested);
 
@@ -177,17 +177,22 @@ void QuickButtonBar::describeAction(int index)
         tip += QStringLiteral(" (%1)").arg(button.shortcut);
     }
     if (button.confirm) {
-        tip += QLatin1Char('\n') + tr("Asks before running.");
+        tip += QLatin1Char('\n')
+            + tr("This button shows a confirmation dialog before it runs.");
     }
     if (button.sendsEnter()) {
-        tip += QLatin1Char('\n') + tr("Shift+click sends it without Enter.");
+        tip += QLatin1Char('\n')
+            + tr("A Shift-click on this button sends the content without Enter.");
     }
     if (left < 0) {
-        tip += QLatin1Char('\n') + tr("Repeating. Press again to stop.");
-    } else if (left > 0) {
         tip += QLatin1Char('\n')
-            + tr("Repeating: %n send(s) to go. Press again to stop.", nullptr,
-                 left);
+            + tr("This button sends again and again. A second press stops the repeat.");
+    } else if (left > 0) {
+        tip += QLatin1Char('\n');
+        tip += left == 1
+                   ? tr("This button will send one more time. A second press stops the repeat.")
+                   : tr("This button will send %1 more times. A second press stops the repeat.")
+                         .arg(left);
     }
     action->setToolTip(tip);
     // One line: a status bar shows a line feed as a box, and the repeat's own

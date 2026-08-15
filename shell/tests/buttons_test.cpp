@@ -725,7 +725,7 @@ void a_second_press_stops_a_run_with_no_end()
     // button next to this one does not become a moving target.
     CHECK(buttonAction(window, 0)->text() == QString::fromUtf8("Keepalive ⟳"));
     CHECK(buttonAction(window, 0)->toolTip().contains(
-        QLatin1String("Press again to stop")));
+        QLatin1String("A second press stops the repeat")));
     TerminalView *view = window.findChild<TerminalView *>();
     CHECK(view != nullptr && view->stopKeyArmed());
     if (!g_writeTo.isEmpty()) {
