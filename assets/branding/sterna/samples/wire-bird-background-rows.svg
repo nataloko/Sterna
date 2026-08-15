@@ -45,7 +45,7 @@
         <g transform="translate(544 544) scale(1.18) rotate(-20) translate(-544 -544)">
           <g transform="translate(0 254)">
             <g transform="translate(0 580) scale(.1 -.1)">
-              <use xlink:href="#tern-shape" fill="#165C36"/>
+              <use xlink:href="#tern-shape" fill="#73F59B"/>
             </g>
           </g>
         </g>
