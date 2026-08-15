@@ -40,17 +40,9 @@
       </g>
     </g>
 
-    <g id="bird-fill-solid">
-      <g transform="translate(544 544) scale(.82) translate(-544 -544)">
-        <g transform="translate(544 544) scale(1.18) rotate(-20) translate(-544 -544)">
-          <g transform="translate(0 254)">
-            <g transform="translate(0 580) scale(.1 -.1)">
-              <use xlink:href="#tern-shape" fill="#73F59B"/>
-            </g>
-          </g>
-        </g>
-      </g>
-    </g>
+    <path id="bird-body-mask"
+          d="M644 385c44 7 70 47 67 107-4 76-38 142-106 198 20-79 21-146 7-202-12-49-8-88 32-103z"
+          fill="#03110A" stroke="#03110A" stroke-width="42" stroke-linejoin="round"/>
 
     <g id="wire-tern">
       <g transform="translate(544 544) scale(.82) translate(-544 -544)">
@@ -164,8 +156,8 @@
     </g>
 
     <g id="bird-on-top-clear">
+      <use xlink:href="#bird-body-mask"/>
       <use xlink:href="#bird-shield-clear"/>
-      <use xlink:href="#bird-fill-solid"/>
       <g filter="url(#glow)"><use xlink:href="#wire-tern"/></g>
     </g>
 
