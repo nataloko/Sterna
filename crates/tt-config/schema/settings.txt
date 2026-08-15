@@ -1644,11 +1644,12 @@ log.rotate_step | uint16 | Tera Term | LogRotateStep | 0 | -
 log.hide_dialog | bool | Tera Term | LogHideDialog | off | -
 
 # `ttset.c:993`, and the field is `LogAllBuffIncludedInFirst`. Write the
-# scrollback into the log before starting on live output. Read and written and
-# **not acted on**: the function upstream does it with,
-# `BuffGetAnyLineDataW`, truncates any line at its first wide character and at
-# about half the width when a line holds combining marks — two of the five
-# upstream bugs on file. It waits on those reports being answered.
+# scrollback into the log before starting on live output, in text mode only
+# (`vtwin.cpp:4145`). `Session::buffer_text` reads the grid directly rather
+# than transcribing `FLogOutputAllBuffer`: that function walks
+# `BuffGetAnyLineDataW`, which truncates any line at its first wide character
+# and at about half the width when a line holds combining marks — two of the
+# upstream bugs on file — and caps every line at 512 wchars on top of that.
 log.include_screen_buffer | bool | Tera Term | LogIncludeScreenBuffer | off | -
 
 # `ttset.c:1766`, and a `GetOnOff` whose default is **on** — so `=1` reads as

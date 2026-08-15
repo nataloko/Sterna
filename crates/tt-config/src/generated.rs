@@ -3904,11 +3904,12 @@ pub struct Settings {
     /// setting is read and written and acts on nothing.
     pub log_hide_dialog: bool,
     /// `ttset.c:993`, and the field is `LogAllBuffIncludedInFirst`. Write the
-    /// scrollback into the log before starting on live output. Read and written and
-    /// **not acted on**: the function upstream does it with,
-    /// `BuffGetAnyLineDataW`, truncates any line at its first wide character and at
-    /// about half the width when a line holds combining marks — two of the five
-    /// upstream bugs on file. It waits on those reports being answered.
+    /// scrollback into the log before starting on live output, in text mode only
+    /// (`vtwin.cpp:4145`). `Session::buffer_text` reads the grid directly rather
+    /// than transcribing `FLogOutputAllBuffer`: that function walks
+    /// `BuffGetAnyLineDataW`, which truncates any line at its first wide character
+    /// and at about half the width when a line holds combining marks — two of the
+    /// upstream bugs on file — and caps every line at 512 wchars on top of that.
     pub log_include_screen_buffer: bool,
     /// `ttset.c:1766`, and a `GetOnOff` whose default is **on** — so `=1` reads as
     /// on here where the same value reads as off for every setting above that ships
@@ -14932,7 +14933,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "off",
         label: None,
-        doc: "`ttset.c:993`, and the field is `LogAllBuffIncludedInFirst`. Write the scrollback into the log before starting on live output. Read and written and **not acted on**: the function upstream does it with, `BuffGetAnyLineDataW`, truncates any line at its first wide character and at about half the width when a line holds combining marks — two of the five upstream bugs on file. It waits on those reports being answered.",
+        doc: "`ttset.c:993`, and the field is `LogAllBuffIncludedInFirst`. Write the scrollback into the log before starting on live output, in text mode only (`vtwin.cpp:4145`). `Session::buffer_text` reads the grid directly rather than transcribing `FLogOutputAllBuffer`: that function walks `BuffGetAnyLineDataW`, which truncates any line at its first wide character and at about half the width when a line holds combining marks — two of the upstream bugs on file — and caps every line at 512 wchars on top of that.",
     },
     Field {
         name: "log.lock_exclusive",
