@@ -155,6 +155,26 @@ terminal.line_edit | bool | Sterna | LineEdit | off | -
 #@ This setting uses a dark palette for terminal content and its line editor. Menus, dialogs, and other application controls keep the desktop theme.
 terminal.dark_mode | bool | Sterna | DarkMode | off | -
 
+# **`[Sterna]`**. A column of line numbers down the left of the terminal.
+#
+# The number is the absolute session line, counted from 1: line 1 is the first
+# line the host printed, and a line keeps its number as it scrolls into
+# history. The gutter is painted by a widget beside the terminal rather than
+# into it, so the numbers are not cells and cannot reach the clipboard, the
+# log, the printer or a macro's tap.
+#@ This setting shows line numbers in a column at the left side of the terminal. The first line from the host is line 1, and a line keeps its number in the scrollback. The numbers are not terminal content. Sterna does not include them in a selection, the session log, the printer output, or macro text.
+terminal.line_numbers | bool | Sterna | LineNumbers | off | -
+
+# **`[Sterna]`**. How many digits the gutter above reserves.
+#
+# Fixed rather than sized to the largest number on screen, so the terminal
+# never re-flows mid-session at line 1000; a longer number simply overflows its
+# field. `int_clamp` and not `int(1..10)` because there is no upstream reader
+# to reproduce here, and clamping is the predictable answer where `ttset.c:615`
+# would take the default for anything below the floor.
+#@ This setting sets the number of digits in the line-number column. The width stays the same for the full session, because a change would move the terminal. Values use 1 thru 10.
+terminal.line_number_width | int_clamp(1..10) | Sterna | LineNumberWidth | 4 | -
+
 # `ttset.c:625`. With it on, resizing the window resizes the terminal.
 #@ This setting stores Tera Term's option for resizing the terminal with its window. Sterna always fits the terminal to its view. Thus, this setting has no effect.
 terminal.size_follows_window | bool | Tera Term | TermIsWin | off | DLG_TERM_TERMISWIN

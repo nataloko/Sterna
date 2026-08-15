@@ -1241,6 +1241,7 @@ void MainWindow::onPageSettingsChanged(TerminalPage *page)
         resizing = onSettingsChanged();
     } else {
         page->view()->applySettings();
+        page->applySettings();
     }
     // Not when the window has just been asked to change size: the view still
     // has its old geometry here, so refitting now would put the grid straight
@@ -1300,6 +1301,23 @@ bool MainWindow::onSettingsChanged()
     reloadLanguage();
     const QSize oldCell = m_view->sizeForCells(1, 1);
     m_view->applySettings();
+    // What the settings *ask* for, read before anything can react to them.
+    //
+    // The read has to happen here rather than beside its use below, because
+    // `TerminalPage::applySettings` re-lays-out the terminal row synchronously
+    // and Qt delivers the resize event from that immediately — so the view
+    // refits to its new width and `Session::resize` writes the smaller number
+    // straight back into `terminal.cols` on the way past. Reading afterwards
+    // reads that, always finds it equal to what the view has room for, and the
+    // window never grows: the gutter would silently cost five columns instead,
+    // permanently, because the setting has already followed it down. This is
+    // `AGENTS.md`'s `TerminalSize` write-back trap; the window resize below
+    // puts the setting back where it started.
+    const int cols = m_session->setting(QStringLiteral("terminal.cols")).toInt();
+    const int rows = m_session->setting(QStringLiteral("terminal.rows")).toInt();
+
+    // The page's own settings, which is the line-number gutter.
+    m_page->applySettings();
     // PanelContainer deliberately supplies one terminal's hint regardless of
     // how many slots are visible. The page is below a stacked pane layout, so
     // carry the child's invalidation to QMainWindow explicitly; otherwise the
@@ -1375,9 +1393,9 @@ bool MainWindow::onSettingsChanged()
     // refit above putting it back, and the window never moving at all. What is
     // still true here is how many cells the view has room for, which is what
     // `TerminalView::refit` would give the grid.
+    // `cols` and `rows` were read at the top of this function, before the page
+    // could react to the settings and move them — see there.
     bool resizing = false;
-    const int cols = m_session->setting(QStringLiteral("terminal.cols")).toInt();
-    const int rows = m_session->setting(QStringLiteral("terminal.rows")).toInt();
     const QSize cell = m_view->sizeForCells(1, 1);
     const int haveCols = cell.width() > 0 ? m_view->width() / cell.width() : cols;
     const int haveRows = cell.height() > 0 ? m_view->height() / cell.height() : rows;
@@ -1430,6 +1448,24 @@ bool MainWindow::onSettingsChanged()
     }
     if (m_toolbarAction) {
         m_toolbarAction->setChecked(toolbar);
+    }
+    // The same, for the gutter — so flipping it in the settings dialog, or from
+    // a script, moves the menu's tick with it.
+    const bool lineNumbers =
+        m_session->setting(QStringLiteral("terminal.line_numbers"))
+        == QLatin1String("on");
+    if (m_lineNumbersAction) {
+        const QSignalBlocker block(m_lineNumbersAction);
+        m_lineNumbersAction->setChecked(lineNumbers);
+    }
+    // And the command beside it, which has nothing to reset while nothing is
+    // numbered. The View menu asks this question again as it opens, because
+    // this runs for the page in front and a tab switch is not a settings
+    // change — but a disabled `QAction` refuses `trigger()` as well as a click,
+    // so leaving the answer until the menu opens would put every other way of
+    // reaching it behind a menu nobody opened.
+    if (m_resetLineCounterAction) {
+        m_resetLineCounterAction->setEnabled(lineNumbers);
     }
     updatePanelActions();
     // The buttons themselves are not settings, so this rereads the list as
@@ -2401,13 +2437,13 @@ void MainWindow::buildMenus()
     });
     updatePanelActions();
 
-    // The three switches that decide what the window *shows*. Their editors
-    // stay in Setup, which is the line between the two menus: this one answers
-    // "is it on screen", that one answers "what is on it". Upstream has none of
-    // the three — no toolbar, no quick buttons, no pattern highlighting — so
-    // there is no `.lng` key to hang on any of them and no upstream order to
-    // keep. Each writes its setting rather than hiding its widget directly, so
-    // that this menu, the settings dialog and Save setup all mean the same
+    // The switches that decide what the window *shows*. Their editors stay in
+    // Setup, which is the line between the two menus: this one answers "is it
+    // on screen", that one answers "what is on it". Upstream has none of them
+    // — no toolbar, no quick buttons, no line numbers, no pattern highlighting
+    // — so there is no `.lng` key to hang on any of them and no upstream order
+    // to keep. Each writes its setting rather than hiding its widget directly,
+    // so that this menu, the settings dialog and Save setup all mean the same
     // thing.
     view->addSeparator();
     m_toolbarAction = view->addAction(tr("Show toolbar"));
@@ -2434,6 +2470,44 @@ void MainWindow::buildMenus()
             onNotice(tr("Could not change the quick buttons: %1").arg(error));
         }
     });
+    m_lineNumbersAction = view->addAction(tr("Show line numbers"));
+    m_lineNumbersAction->setObjectName(QStringLiteral("showLineNumbersAction"));
+    m_lineNumbersAction->setCheckable(true);
+    connect(m_lineNumbersAction, &QAction::triggered, this, [this](bool on) {
+        QString error;
+        if (!m_session->setSetting(QStringLiteral("terminal.line_numbers"),
+                                   on ? QStringLiteral("on")
+                                      : QStringLiteral("off"),
+                                   &error)) {
+            onNotice(tr("Could not change the line numbers: %1").arg(error));
+        }
+    });
+    // Not a setting, so it does not write one: a mark is a moment, and the
+    // counter it moves belongs to the tab in front. No shortcut, for the reason
+    // View > Tiled has none.
+    m_resetLineCounterAction =
+        view->addAction(tr("Reset line counter"), this, [this] {
+            m_page->resetLineCounter();
+            // Because the effect is usually a gutter that goes blank: the mark
+            // is below the cursor, so at a prompt on the bottom row every line
+            // on screen is now above it. The sentence says the numbers are
+            // coming back and when.
+            showPageMessage(m_page,
+                            tr("Line numbers restart at the next line"), 3000);
+        });
+    m_resetLineCounterAction->setObjectName(
+        QStringLiteral("resetLineCounterAction"));
+    m_resetLineCounterAction->setEnabled(false);
+    // And asked again as the menu opens, so that the answer is the page in
+    // *front*: `terminal.line_numbers` belongs to a session, and a tab switch
+    // is not a settings change, so `onSettingsChanged` never runs for it. The
+    // Edit menu asks about a selection the same way.
+    connect(view, &QMenu::aboutToShow, this, [this] {
+        m_resetLineCounterAction->setEnabled(
+            m_session->setting(QStringLiteral("terminal.line_numbers"))
+            == QLatin1String("on"));
+    });
+
     m_highlightingAction = view->addAction(tr("Highlight matches"));
     m_highlightingAction->setObjectName(QStringLiteral("highlightMatchesAction"));
     m_highlightingAction->setCheckable(true);

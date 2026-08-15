@@ -34,6 +34,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 17 | The log dialog also asks about rotation | Rotation is on the Setup page only | 0.3.2 |
 | 18 | A log names itself by the clock and remembers its directory | `teraterm.log`, in whatever directory the settings resolve to | 0.3.2 |
 | 19 | Edit > Find searches the screen and the scrollback | Nothing searches the buffer; the log and another program do | 0.3.2 |
+| 20 | An optional column of line numbers down the left of the terminal | Nothing numbers the lines | 0.3.2 |
 
 ---
 
@@ -790,3 +791,92 @@ lets a pattern typed now find text that arrived an hour ago.
 **Compatibility.** `FindColor`, `FindHistory` and the three switches are keys in
 `[Sterna]`, this program's own section. No real Tera Term reads it, and a
 settings file shared with one still opens correctly in both.
+
+---
+
+## 20. An optional column of line numbers down the left of the terminal
+
+`terminal.line_numbers` puts a gutter beside the terminal, numbering each
+visible row; `terminal.line_number_width` says how many digits it reserves.
+Both are `[Sterna]` keys, both land on the Terminal tab of Setup, and the
+switch is also View > Show line numbers.
+
+**Why it is worth a deviation.** What this program gets pointed at is a
+console: a switch, a bootloader, a device that answers in walls of text. "The
+error is about forty lines back" and "read me the line after the banner" are
+how people talk about that output, and with nothing numbering it the only way
+to act on either sentence is to count with a finger on the screen. It costs a
+few columns when it is on and nothing at all when it is off, which is how it
+ships.
+
+**The number is the absolute session line, counted from 1.** Line 1 is the
+first line the host printed, and a line keeps its number as it scrolls up into
+history — so a number somebody writes down stays true for as long as the
+session does. That is not a new idea in this code: it is `Grid::scrolled_off`,
+which the selection already uses for the same reason, so that a highlight
+survives the output scrolling underneath it. The gutter reads it through
+`Session::lineAt` and adds one, because the core calls the first line zero and
+nothing a person uses does.
+
+**Unless somebody restarts the count, which View > Reset line counter does.**
+The mark it sets is one line *below* the cursor, so the next line the host
+prints is line 1 — a counter is reset before the thing it is going to count,
+and at a prompt the line you are standing on is the prompt, not the output you
+are about to ask for. That is the sentence the item is for: reset, run the
+command, and its first line of output is 1.
+
+Everything printed before the mark then carries no number at all, rather than a
+zero or a negative one. It was printed before there was a counter to count it,
+and a minus sign would spend a quarter of the field on a distance nobody asked
+for — on screen far longer than the blank is, since the blank ends at the
+host's next line and the negatives would follow the mark up into the history
+for the rest of the session. The visible effect of a reset at a prompt on the
+bottom row is therefore a gutter that goes blank, which is why the status line
+says `Line numbers restart at the next line`: a column of numbers that vanishes
+with nothing to explain it reads as a bug.
+
+The mark belongs to the tab and to the moment. Each console is counting its own
+output, so resetting one leaves the others alone; and it is a command rather
+than a setting, so nothing writes it to the file — a saved mark would number
+the next session from a point that never happened in it. It does cost the one
+promise above: a number written down before a reset stops being true. That is
+the point of asking for one, and nothing else moves a number.
+
+**The numbers are not in the terminal, and that is the whole design.** The
+gutter is a separate widget beside the view rather than columns reserved inside
+it. It follows that they cannot be selected, cannot be copied, are not in the
+session log, never reach the printer, and are invisible to a macro's `wait` —
+every one of those reads the grid, and the grid has never heard of them. The
+alternative, an origin offset inside `TerminalView`, would have put that
+guarantee at the mercy of a dozen coordinate conversions: the painter, both
+hit-testing functions, the five places raw pixels are handed to the core's
+mouse reporting, sixel and cursor placement, the line editor and the refit. Any
+one of them wrong is a paste with line numbers in it, and only some of them
+would look wrong on screen.
+
+**Turning it on widens the window; it does not narrow the terminal.** A
+configured 80x24 stays 80x24 and the window grows by the width of the gutter.
+The alternative is worse than it first looks: the terminal would refit to 75
+columns, and `TerminalSize` follows a refit — so the gutter would quietly cost
+five columns *permanently*, and turning it off again would not give them back.
+On a window that cannot grow, tiled or maximised, the terminal does give up the
+columns, which is the answer every other constraint gets here.
+
+**The width is fixed rather than measured.** A gutter that sized itself to the
+largest number on screen would gain a column at line 1000 and re-flow the
+terminal underneath whoever was reading it. Four digits is the default; a
+number too long for its field spills leftwards instead, which is untidy for one
+session rather than disruptive for every session.
+
+**Two things it decides rather than discovers.** A row that a wrap landed on
+gets its own number, because the core numbers grid lines and a wrapped row is
+one — the clipboard still joins the two when `EnableContinuedLineCopy` says to,
+so the two answers are allowed to differ. And growing the terminal renumbers
+what is already on screen, because `Grid::resize` pulls lines back out of the
+scrollback without adjusting the counter; the selection copes with that by
+dropping itself, and the gutter simply shows the new numbers.
+
+**What is unchanged.** Nothing upstream reads either key, no cell is written,
+and no existing setting changes meaning. A `TERATERM.INI` shared with a real
+Tera Term opens identically in both programs, with the gutter absent from the
+one that has never heard of it.

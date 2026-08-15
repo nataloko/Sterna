@@ -89,6 +89,21 @@ public:
     const QColor &defaultForeground() const { return m_normal[0]; }
     const QColor &cursorColor() const { return m_cursor; }
 
+    /// What the line-number gutter writes its digits in.
+    ///
+    /// The foreground run part of the way toward the background — the same mix
+    /// [`shaded`] does, in the other direction, and for the same reason: those
+    /// two are the only colours a person choosing a terminal theme has
+    /// guaranteed are visible against each other, so a fixed grey would
+    /// disappear on half of them. Computed rather than stored because both ends
+    /// move: a host's `OSC 10`/`11` and a switch to the dark palette each
+    /// change it, and nothing would refresh a cached copy.
+    ///
+    /// Numbers are chrome, not content, so they should read as quieter than the
+    /// text beside them without becoming unreadable — hence a mix rather than
+    /// the foreground itself.
+    QColor lineNumberColor() const;
+
     /// Whether this terminal has something on the other end.
     ///
     /// The one piece of session state the painter holds, and it is here rather

@@ -16,6 +16,19 @@ are available from the [GitHub releases page].
   in another program. The shortcut is Ctrl+Shift+F rather than Ctrl+F because a
   shortcut on this window is a key the host stops receiving, and `^F` is a page
   forward in vim and less; Copy and Paste make the same bargain here already.
+- Line numbers, in a column beside the terminal. View > Show line numbers turns
+  them on, or `[Sterna] LineNumbers` and `LineNumberWidth` on the Terminal tab
+  of Setup; the number is the session's own line, counted from the first line
+  the host printed, and a line keeps it as it scrolls up into the history. The
+  numbers are beside the terminal rather than in it, so they cannot be selected
+  or copied and never reach the session log, the printer or a macro's `wait` —
+  and turning them on widens the window instead of taking columns off the
+  terminal.
+- View > Reset line counter starts the count again: the next line the host
+  prints is line 1, so you can reset at a prompt, run a command and read its
+  output off as 1, 2, 3. Lines printed before the mark carry no number, and the
+  status line says so. Each tab counts its own output, and the mark is not
+  saved with the settings.
 
 ## [0.4.1] - 2026-08-15
 

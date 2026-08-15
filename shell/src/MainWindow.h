@@ -534,6 +534,13 @@ private:
     /// the layout is a mode now, not a count.
     QAction *m_tiledAction = nullptr;
     QAction *m_quickButtonsAction = nullptr;
+    /// View > Show line numbers. The gutter itself belongs to `TerminalPage`;
+    /// this only writes `terminal.line_numbers`.
+    QAction *m_lineNumbersAction = nullptr;
+    /// View > Reset line counter. The one item in this menu that is a command
+    /// and not a switch, so it writes no setting and is greyed while the page
+    /// in front is not numbering anything.
+    QAction *m_resetLineCounterAction = nullptr;
     QAction *m_quickButtonFromSelectionAction = nullptr;
     /// The Edit menu's clipboard commands, which the right button's menu
     /// borrows rather than duplicating.

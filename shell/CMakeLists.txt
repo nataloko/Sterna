@@ -155,6 +155,7 @@ add_library(sterna_shell STATIC
     src/Highlights.cpp
     src/HighlightsDialog.cpp
     src/I18n.cpp
+    src/LineNumberGutter.cpp
     src/LogDialog.cpp
     src/Theme.cpp
     src/PasteDialog.cpp
@@ -230,6 +231,15 @@ add_executable(render_test tests/render_test.cpp)
 target_link_libraries(render_test PRIVATE sterna_shell)
 target_compile_options(render_test PRIVATE ${TT_WARNINGS})
 add_test(NAME render COMMAND render_test)
+
+# The line-number gutter. Its own binary rather than a case in `render_test`,
+# whose harness is a bare `TerminalView` — this needs a whole window, because
+# half of what it asserts is that turning the gutter on widens the window
+# instead of narrowing the terminal.
+add_executable(gutter_test tests/gutter_test.cpp)
+target_link_libraries(gutter_test PRIVATE sterna_shell)
+target_compile_options(gutter_test PRIVATE ${TT_WARNINGS})
+add_test(NAME gutter COMMAND gutter_test)
 
 # The only thing that exercises the *window's* event loop against a real
 # server. Skips loudly without TT_SSH_HOST, so it is safe to leave in ctest.
