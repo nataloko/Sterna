@@ -40,10 +40,14 @@ jobs:
     needs: preflight
     runs-on: ubuntu-24.04
     # AlmaLinux 8, maintained by the manylinux project. Every shipped ELF is
-    # checked against its glibc 2.28 contract by the package build.
+    # checked against its glibc 2.28 contract by the package build. The image
+    # and the Qt built on it are pinned in `packaging/appimage/toolchain.env`,
+    # which the step below loads — one file, so this workflow and `ci.yml`
+    # cannot disagree about them.
+    #
+    # The ceiling is for the rare run that has to build Qt itself; the ordinary
+    # one downloads it and finishes in under ten minutes.
     timeout-minutes: 120
-    env:
-      MANYLINUX_IMAGE: quay.io/pypa/manylinux_2_28_x86_64@sha256:f854c50adf7b7a325bc4794316f3758d387a41d61f9e2ebca0f26c7dc8f761d4
     steps:
       - uses: actions/checkout@v6
       - name: Make room for the Qt bootstrap
@@ -59,33 +63,30 @@ jobs:
           docker image prune --all --force
           df -h /
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/cache/restore@v5
-        id: qt-cache
-        with:
-          path: packaging/appimage/toolchain/qt-6.11.1
-          key: appimage-qt-6.11.1-manylinux-2-28-x86-64-v2
-          # **This job runs on a tag, and a cache belongs to the ref that wrote
-          # it.** A run reads its own ref's caches and the default branch's,
-          # nothing else — so the Qt this job saves is readable by this tag
-          # alone, and every release before v0.3.1 rebuilt Qt from source for
-          # that reason. What makes the exact key hit is `ci.yml`'s warm job,
-          # which writes it on *main*. Keep the two keys equal; the check at the
-          # top of that job fails the build if they drift.
-          #
-          # The fallback is for the window where main has no such entry — the
-          # warm job broken, or its 26 MiB evicted by the 10 GB repository limit
-          # behind caches fifteen times its size. It restores the newest Qt
-          # built under a related key and lets `build-qt.sh` decide: that script
-          # re-checks the version and the four plugins the AppImage cannot open
-          # a window without, and rebuilds if the tree does not satisfy them, so
-          # nothing reaches an artifact without passing the same contract a
-          # fresh build passes. The cost of missing it entirely is 50 minutes.
-          #
-          # It also means **bumping `-vN` no longer forces a rebuild by
-          # itself**: a bump for something `build-qt.sh` does not test for wants
-          # `gh cache delete` on the old entry as well.
-          restore-keys: |
-            appimage-qt-6.11.1-manylinux-2-28-x86-64-
+      - name: Pinned build inputs
+        # Assignments only. `$GITHUB_ENV` is not a shell: a comment line in it
+        # is "Invalid format" and the step fails, and that file is mostly
+        # comments because it is where the reasoning lives.
+        run: grep -E '^[A-Z_][A-Z0-9_]*=' packaging/appimage/toolchain.env >> "$GITHUB_ENV"
+      - name: Portable Qt toolchain
+        # **Downloaded, not cached.** This job runs on a tag, and an Actions
+        # cache belongs to the ref that wrote it — a run reads its own ref's
+        # and the default branch's, nothing else — so for four releases each
+        # tag built Qt, saved it under `refs/tags/vX.Y.Z`, and left an entry no
+        # later run could open. Warming it on main worked until the 10 GB
+        # repository limit evicted 26 MiB of Qt from behind 400 MiB Rust
+        # caches. A release asset is scoped to nobody and evicted by nothing.
+        #
+        # A failure is not fatal: `fetch-qt.sh` exits 1 for a missing asset, a
+        # digest that does not match, or an unpacked tree that fails
+        # `build-qt.sh --check`, and the step below then builds Qt the slow way.
+        # The release gets later, never blocked, and nothing enters an artifact
+        # without passing the check a fresh build passes.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./packaging/appimage/fetch-qt.sh \
+            || echo "QT_FROM_SOURCE=1" >> "$GITHUB_ENV"
       - name: Start portable build container
         run: |
           docker run --detach --name sterna-manylinux \
@@ -100,16 +101,15 @@ jobs:
           docker exec sterna-manylinux bash -lc \
             './packaging/appimage/install-build-deps.sh'
       - name: Build portable Qt
-        if: steps.qt-cache.outputs.cache-hit != 'true'
+        # Only when the published toolchain could not be had. One worker: two
+        # consumed 14 of the runner's 15 GiB and the job vanished with no
+        # retained log, which reads as a time limit and is not one (AGENTS.md).
+        # Forty minutes, and the way out of repeating it is
+        # `packaging/appimage/publish-qt.sh`, not a cache.
+        if: env.QT_FROM_SOURCE == '1'
         run: |
           docker exec sterna-manylinux bash -lc \
             'export CMAKE_BUILD_PARALLEL_LEVEL=1; ./packaging/appimage/build-qt.sh'
-      - name: Cache portable Qt
-        if: steps.qt-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
-        with:
-          path: packaging/appimage/toolchain/qt-6.11.1
-          key: ${{ steps.qt-cache.outputs.cache-primary-key }}
       - name: Build AppImage
         run: |
           docker exec sterna-manylinux bash -lc '

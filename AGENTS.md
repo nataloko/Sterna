@@ -346,22 +346,27 @@ The AppImage, where two of the three failures are silent:
   `libEGL`, `libGLX` and `libGLdispatch`; a minimal host then fails before Qt
   can select `offscreen`. Bundle those four ABI dispatch libraries, not the
   Mesa/NVIDIA implementation behind them.
-- **A GitHub cache belongs to the ref that wrote it, so the release cannot read
-  its own last Qt.** A run reads its own ref's caches and the default branch's;
-  the release job runs on a tag, so the 50 minutes of Qt it saves is reachable
-  from `refs/tags/vX.Y.Z` and from nothing else ever again — four releases in a
-  row each built Qt and each left a cache no later one could open. `ci.yml`'s
-  warm job on *main* is the only thing that produces a readable entry, which
-  makes its own health load-bearing: it sat failing on the key-consistency check
-  for an evening and the next release silently paid the full bootstrap. Ask
-  `gh api repos/OWNER/REPO/actions/caches --jq '.actions_caches[].ref'` before
-  believing a key is the problem — a tag-scoped hit reads as a plain miss.
-- **...and the 10 GB repository limit evicts by least-recently-used, so the
-  26 MiB Qt goes before anything else.** Seven `v0-rust-*` caches at 300–400 MiB
-  each had the repository at 7.6 GB; the one entry a release depends on is the
-  cheapest thing there and the first out. Keep the newest cache per prefix and
-  delete the rest (`gh cache delete <id>`) rather than watching for the symptom,
-  which is a release that takes 55 minutes instead of 6.
+- **The Actions cache is the wrong place for a build input a *tag* needs, and
+  it fails silently in two ways.** A cache belongs to the ref that wrote it and
+  is readable only from that ref or the default branch — the release job runs
+  on `refs/tags/vX.Y.Z`, so four releases each spent 40 minutes on Qt and each
+  saved it where no later run could open it. Warming it on main fixes the scope
+  and leaves the second half: the 10 GB repository limit evicts
+  least-recently-used, and 26 MiB of Qt behind seven 400 MiB `v0-rust-*` caches
+  is the cheapest thing to drop. Both symptoms are one symptom — a release that
+  takes 55 minutes instead of 6, with nothing in the log calling it unusual.
+  Qt now ships as a **release asset** pinned by SHA-256 in
+  `packaging/appimage/toolchain.env` (`fetch-qt.sh`, `publish-qt.sh`), which has
+  neither property. Before blaming a cache key, ask
+  `gh api repos/OWNER/REPO/actions/caches --jq '.actions_caches[].ref'`: a
+  tag-scoped hit reads exactly like a plain miss.
+- **Two workflow files with the same constant in them is one constant too
+  many.** `ci.yml` and `release.yml` each held the image digest and cache key,
+  with a step that grepped one for the other's strings. It worked once and then
+  the job holding the check became the thing that broke — main red on every
+  push, the release quietly uncached. One sourced file (`toolchain.env`) has
+  nothing to disagree about; note that `$GITHUB_ENV` is not a shell, so a
+  comment line in it fails the step and the workflow greps assignments out.
 - **The hosted Qt build's fifty-minute disconnect is OOM, not a time limit.**
   Two workers consumed 14 of the runner's 15 GiB before it vanished with no
   retained log; one measured 6.3 GiB used / 8.9 GiB available. Keep one

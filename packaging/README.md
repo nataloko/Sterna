@@ -14,14 +14,44 @@ path and a self-contained binary is the ordinary one.
 Release binaries are built by [`.github/workflows/release.yml`](../.github/workflows/release.yml).
 A manual run produces downloadable workflow artifacts without making a release;
 pushing a matching `vX.Y.Z` tag builds both platforms and creates a draft
-release. The Linux job uses the maintained `manylinux_2_28` x86-64 image. Qt
-6.11.1 is built from its verified source archive on that base and cached
-between release runs.
+release. The Linux job uses the maintained `manylinux_2_28` x86-64 image.
 
-The local release-equivalent build uses Podman directly. The first invocation
-builds Qt and is intentionally slow; the prefix under `toolchain/` is reused:
+## The Qt in the image is downloaded, not built and not cached
+
+Qt 6.11.1 is compiled from its verified source archives on that base — the
+official Linux binaries need glibc 2.39 and would raise the floor by eleven
+releases of it. Compiling it takes forty minutes on one worker, so it is done
+**once, by hand**, and published as a release asset that every build downloads
+in seconds:
+
+| | |
+|---|---|
+| pinned in | [`appimage/toolchain.env`](appimage/toolchain.env) — image digest, tag, file, SHA-256 |
+| fetched by | [`appimage/fetch-qt.sh`](appimage/fetch-qt.sh), which verifies the digest and then `build-qt.sh --check` |
+| rebuilt by | [`appimage/publish-qt.sh`](appimage/publish-qt.sh), when Qt, the recipe or the base image moves |
+| checked by | `ci.yml`'s `qt-toolchain` job, on every push |
+
+An Actions cache was tried first and is the wrong shape twice over. A cache
+belongs to the ref that wrote it and is readable only from that ref or the
+default branch — so a tag build saved forty minutes of Qt that no later release
+could ever open, four times. Warming it on `main` fixes the scope but not the
+10 GB repository limit, which evicts least-recently-used: 26 MiB of Qt goes
+before anything else in a repository full of 400 MiB Rust caches, and the
+symptom is a release that takes fifty minutes with no explanation. A release
+asset is scoped to nobody and evicted by nothing.
+
+Nothing is trusted because it was downloaded. The digest ties the bytes to the
+publish that was reviewed, and `build-qt.sh --check` then holds the unpacked
+tree to the same contract a fresh build passes — the exact version, and the
+four plugins without which the window never appears (`AGENTS.md` has the story
+of the missing one). If any of that fails, the release job builds Qt from
+source and takes fifty minutes instead. Slower, never blocked.
+
+The local release-equivalent build uses Podman directly. `fetch-qt.sh` needs no
+credentials, so the toolchain arrives the same way it does in CI:
 
 ```sh
+./packaging/appimage/fetch-qt.sh
 podman run --rm --security-opt label=disable \
   -v "$PWD:/repo:rw" \
   -v "$HOME/.cargo:/root/.cargo:rw" \
@@ -36,6 +66,9 @@ podman run --rm --security-opt label=disable \
     ./packaging/appimage/build.sh --clean
   '
 ```
+
+`build-qt.sh` inside the container then finds the prefix, checks it and exits;
+drop the fetch to build Qt yourself instead.
 
 The two Rust mounts reuse a normal rustup installation; compilation and
 linking still happen entirely against the container's glibc 2.28 userspace.

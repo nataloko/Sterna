@@ -10,12 +10,27 @@ cd "$(dirname "$0")"
 
 version=6.11.1
 resume=0
-if [ "${1:-}" = --resume ]; then
-	resume=1
-	shift
-fi
+check=0
+while :; do
+	case "${1:-}" in
+	--resume)
+		resume=1
+		shift
+		;;
+	# Ask the question this script already asks itself, and answer it instead
+	# of acting on it: is there a usable Qt here? `fetch-qt.sh` uses it to
+	# decide whether the downloaded toolchain is worth keeping, and CI uses it
+	# to fail on a published toolchain that has gone bad without waiting for a
+	# release to discover it.
+	--check)
+		check=1
+		shift
+		;;
+	*) break ;;
+	esac
+done
 [ "$#" -le 1 ] || {
-	echo "usage: $0 [--resume] [PREFIX]" >&2
+	echo "usage: $0 [--resume] [--check] [PREFIX]" >&2
 	exit 2
 }
 prefix=${1:-${STERNA_QT_PREFIX:-$PWD/toolchain/qt-$version}}
@@ -34,6 +49,10 @@ if [ -x "$qmake" ] \
 	&& [ -e "$prefix/plugins/wayland-decoration-client/libadwaita.so" ]; then
 	printf 'qt: using cached Qt %s in %s\n' "$version" "$prefix"
 	exit 0
+fi
+if [ "$check" = 1 ]; then
+	printf 'qt: no usable Qt %s in %s\n' "$version" "$prefix" >&2
+	exit 1
 fi
 
 for command in cmake curl make sha256sum tar; do

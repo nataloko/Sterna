@@ -449,106 +449,33 @@ jobs:
           cargo run --locked
           ./servers.sh stop
 
-  # Build the AppImage's Qt once, here, so that `release.yml` can restore it.
+  # The AppImage's Qt is a published release asset, and this is what says it is
+  # still there and still good.
   #
-  # **A cache belongs to the ref that wrote it, and a run may only restore
-  # from its own ref or from the default branch.** `release.yml` triggers on
-  # `tags: ["v*"]` alone, so each release ran on a fresh `refs/tags/vX.Y.Z`
-  # scope: it missed, spent ~40 minutes building Qt, saved to its own tag
-  # scope, and nothing could ever read that entry again. Three identical
-  # 24 MiB entries under three different tag refs, none of them ever restored
-  # — the cache was write-only and every release paid full price.
+  # **It used to be an Actions cache, built here so that `release.yml` could
+  # restore it.** That never worked: a cache belongs to the ref that wrote it
+  # and a run restores only from its own ref or the default branch, so four
+  # releases each spent forty minutes building Qt and saving it under
+  # `refs/tags/vX.Y.Z`, where nothing could reach it again. Warming it on main
+  # fixed the scope and left the second half — the 10 GB repository limit
+  # evicts least-recently-used, and 26 MiB of Qt behind seven 400 MiB Rust
+  # caches is the cheapest thing to drop. A release asset has neither property.
   #
-  # Warming it on main is the fix, because default-branch caches are readable
-  # from every ref including tags. `release.yml` needs no change: its existing
-  # restore step simply starts hitting. This job is a few seconds once the
-  # entry exists, and pays the full build only when the key changes.
-  qt-cache:
-    name: portable Qt — warm the AppImage cache
-    # Main only. A cache saved from a pull request lands in that PR's own
-    # scope and is discarded with it, which is the same dead end by another
-    # route.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  # So this job no longer builds anything. It downloads what a release will
+  # download, checks it against the digest pinned in `toolchain.env`, and asks
+  # `build-qt.sh --check` whether it is a Qt that can open a window — a minute,
+  # on every push, so a deleted or corrupted asset is found here rather than by
+  # a release quietly taking fifty minutes instead of six.
+  qt-toolchain:
+    name: portable Qt — the published toolchain is still good
     runs-on: ubuntu-24.04
-    # The build is a one-worker bootstrap and slow by design; see the OOM note
-    # on the parallelism below.
-    timeout-minutes: 120
-    env:
-      # MUST match `release.yml`'s `linux` job — the key does not name the
-      # image, so a drift here would hand the release a Qt built against a
-      # different base. The step below fails the job rather than let that be
-      # silent.
-      #
-      # **This job is the only thing that makes the release's cache readable.**
-      # A cache belongs to the ref that wrote it, and a run may read its own
-      # ref's and the default branch's; the release runs on a tag, so a Qt it
-      # saves is reachable from that tag and nowhere else. Warming the same key
-      # here, on main, is what every future tag reads. The restore below is
-      # deliberately exact and `lookup-only` — this job must build the entry it
-      # is named for, so a bumped key is a genuinely fresh Qt, which is the
-      # invalidation `release.yml`'s fallback leans on.
-      MANYLINUX_IMAGE: quay.io/pypa/manylinux_2_28_x86_64@sha256:f854c50adf7b7a325bc4794316f3758d387a41d61f9e2ebca0f26c7dc8f761d4
-      QT_CACHE_KEY: appimage-qt-6.11.1-manylinux-2-28-x86-64-v2
-      QT_CACHE_PATH: packaging/appimage/toolchain/qt-6.11.1
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Both workflows must pin the same image and key
-        run: |
-          set -euo pipefail
-          for name in "$MANYLINUX_IMAGE" "$QT_CACHE_KEY" "$QT_CACHE_PATH"; do
-            grep -qF "$name" .github/workflows/release.yml || {
-              echo "ci.yml and release.yml disagree about: $name" >&2
-              echo "The cache key does not name the image or the path, so a" >&2
-              echo "drift would silently ship a Qt built somewhere else." >&2
-              exit 1
-            }
-          done
-      - uses: actions/cache/restore@v5
-        id: qt-cache
-        with:
-          path: ${{ env.QT_CACHE_PATH }}
-          key: ${{ env.QT_CACHE_KEY }}
-          # Only the answer is wanted, not 24 MiB of Qt this job never uses.
-          lookup-only: true
-      - name: Make room for the Qt bootstrap
-        if: steps.qt-cache.outputs.cache-hit != 'true'
-        # Standard runners expose only 14 GiB. Same reclaim as the release
-        # job, for the same reason.
-        run: |
-          sudo rm -rf \
-            /usr/local/lib/android \
-            /usr/share/dotnet \
-            /opt/ghc \
-            /usr/local/.ghcup \
-            /opt/hostedtoolcache/CodeQL
-          docker image prune --all --force
-          df -h /
-      - name: Start portable build container
-        if: steps.qt-cache.outputs.cache-hit != 'true'
-        run: |
-          docker run --detach --name sterna-manylinux \
-            --volume "$GITHUB_WORKSPACE:/repo:rw" \
-            --workdir /repo \
-            --entrypoint /bin/sleep \
-            "$MANYLINUX_IMAGE" infinity
-      - name: Install portable build dependencies
-        if: steps.qt-cache.outputs.cache-hit != 'true'
-        run: |
-          docker exec sterna-manylinux bash -lc \
-            './packaging/appimage/install-build-deps.sh'
-      - name: Build portable Qt
-        if: steps.qt-cache.outputs.cache-hit != 'true'
-        # One worker. Two consumed 14 of the runner's 15 GiB and the job
-        # vanished with no retained log, which reads as a time limit and is
-        # not one — see AGENTS.md.
-        run: |
-          docker exec sterna-manylinux bash -lc \
-            'export CMAKE_BUILD_PARALLEL_LEVEL=1; ./packaging/appimage/build-qt.sh'
-      - uses: actions/cache/save@v5
-        if: steps.qt-cache.outputs.cache-hit != 'true'
-        with:
-          path: ${{ env.QT_CACHE_PATH }}
-          key: ${{ env.QT_CACHE_KEY }}
+      - name: Fetch and verify the published Qt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./packaging/appimage/fetch-qt.sh
 
 # The Windows job covers `crates/` only, and the oracle and xfer both need a
 # POSIX toolchain, so neither will ever join it.
