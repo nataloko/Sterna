@@ -1245,11 +1245,22 @@ bool MainWindow::onSettingsChanged()
     reloadLanguage();
     const QSize oldCell = m_view->sizeForCells(1, 1);
     m_view->applySettings();
-    // The page's own settings, which is the line-number gutter — and it has to
-    // be before the `haveCols` measurement below, because that measurement is
-    // what turns a gutter appearing into a wider window rather than a narrower
-    // terminal. `TerminalPage::applySettings` re-lays-out the row synchronously
-    // so the view's width is already the post-gutter one by then.
+    // What the settings *ask* for, read before anything can react to them.
+    //
+    // The read has to happen here rather than beside its use below, because
+    // `TerminalPage::applySettings` re-lays-out the terminal row synchronously
+    // and Qt delivers the resize event from that immediately — so the view
+    // refits to its new width and `Session::resize` writes the smaller number
+    // straight back into `terminal.cols` on the way past. Reading afterwards
+    // reads that, always finds it equal to what the view has room for, and the
+    // window never grows: the gutter would silently cost five columns instead,
+    // permanently, because the setting has already followed it down. This is
+    // `AGENTS.md`'s `TerminalSize` write-back trap; the window resize below
+    // puts the setting back where it started.
+    const int cols = m_session->setting(QStringLiteral("terminal.cols")).toInt();
+    const int rows = m_session->setting(QStringLiteral("terminal.rows")).toInt();
+
+    // The page's own settings, which is the line-number gutter.
     m_page->applySettings();
     // PanelContainer deliberately supplies one terminal's hint regardless of
     // how many slots are visible. The page is below a stacked pane layout, so
@@ -1325,9 +1336,9 @@ bool MainWindow::onSettingsChanged()
     // refit above putting it back, and the window never moving at all. What is
     // still true here is how many cells the view has room for, which is what
     // `TerminalView::refit` would give the grid.
+    // `cols` and `rows` were read at the top of this function, before the page
+    // could react to the settings and move them — see there.
     bool resizing = false;
-    const int cols = m_session->setting(QStringLiteral("terminal.cols")).toInt();
-    const int rows = m_session->setting(QStringLiteral("terminal.rows")).toInt();
     const QSize cell = m_view->sizeForCells(1, 1);
     const int haveCols = cell.width() > 0 ? m_view->width() / cell.width() : cols;
     const int haveRows = cell.height() > 0 ? m_view->height() / cell.height() : rows;

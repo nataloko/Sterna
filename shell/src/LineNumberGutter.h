@@ -27,6 +27,8 @@ class Theme;
 /// same reason `TerminalView` is one: this draws digits in cell coordinates and
 /// scrolls only because the rows underneath it do.
 class LineNumberGutter : public QWidget {
+    Q_OBJECT
+
 public:
     LineNumberGutter(const Session *session, const Theme &theme,
                      QWidget *parent = nullptr);
