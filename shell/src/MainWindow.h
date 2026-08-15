@@ -18,7 +18,6 @@
 #include "Session.h"
 
 class ConnectBar;
-class QuickButtonGrip;
 class QuickButtonBar;
 class QuickButtonRepeat;
 class Control;
@@ -290,12 +289,6 @@ private slots:
     /// then activated **synchronously**, so the pass that would have refitted
     /// happens inside the hold rather than on the next turn outside it.
     int resizeQuickPanel(int wanted);
-    /// Remember what the panel and the window measured before a drag, so that
-    /// `resizeQuickPanel` can be asked for an absolute width on every move.
-    void beginQuickPanelResize();
-    /// Write the dragged width to the settings. On the release and not on
-    /// every move: the file is not a drag's undo history.
-    void endQuickPanelResize();
     /// Hold or release every page's grid, tiles included — they all sit beside
     /// the one panel.
     void holdTerminalGrids(bool held);
@@ -562,9 +555,6 @@ private:
     QWidget *m_centralRow = nullptr;
     /// The user's own commands, always down the right-hand side.
     QuickButtonBar *m_quickBar = nullptr;
-    /// The panel's resize edge, which moves the window rather than the
-    /// terminal.
-    QuickButtonGrip *m_quickGrip = nullptr;
     /// The panel's width in pixels, as applied — never the sentinel.
     /// `window.quick_buttons_width` is 0 for "as wide as the buttons need",
     /// and this is what that resolved to.
@@ -573,13 +563,6 @@ private:
     /// until it is shown, and because a drag against `m_quickBar->width()`
     /// would compound the rounding of every move into a panel that creeps.
     int m_quickPanelWidth = 0;
-    /// What `m_quickPanelWidth` was when the current drag began. Every move
-    /// asks for a width measured from here, so a drag that wanders back to
-    /// where it started asks for the width it started with.
-    int m_quickDragWidth = 0;
-    /// Whether a grip drag is running, which is what makes the grid hold span
-    /// the gesture rather than one mouse-move — see `resizeQuickPanel`.
-    bool m_quickDragging = false;
     /// The clock for the buttons that send more than once. Owns no buttons —
     /// only indices into the bar's list, which is why editing that list stops
     /// every run.

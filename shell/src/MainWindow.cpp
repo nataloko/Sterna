@@ -61,7 +61,6 @@
 #include "Macro.h"
 #include "Plugins.h"
 #include "QuickButtonBar.h"
-#include "QuickButtonGrip.h"
 #include "QuickButtonRepeat.h"
 #include "QuickButtonsDialog.h"
 #include "Session.h"
@@ -428,23 +427,25 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
     // owns the stretch that keeps its buttons at the top, and anything capping
     // its height would leave them pinned to one end with the empty room all at
     // the other.
-    m_quickGrip = new QuickButtonGrip(m_centralRow);
     m_quickBar = new QuickButtonBar(m_centralRow);
-    centralLayout->addWidget(m_quickGrip);
     centralLayout->addWidget(m_quickBar, 0);
     // The width is pinned by the first `reloadQuickButtons` below, once the
     // settings have been read — fixed and not stretched, so the panel is
     // exactly the width somebody chose and the terminals take everything else.
     // That is what keeps a window resize out of the panel and a panel resize
     // out of the terminal.
-    m_quickGrip->hide();
+    //
+    // **There is deliberately no handle to drag.** One was built and taken out
+    // again: with the window's left edge pinned, growing the panel by N grows
+    // the window by N, so the handle's position on screen never moves and the
+    // window's far edge shoots out instead — which is the truthful rendering
+    // of "the drag moves the window" and nothing like what a splitter feels
+    // like. Making it feel right needs either a rubber band that follows the
+    // pointer or a window that grows leftward, and `move()` is silently
+    // ignored on Wayland. `window.quick_buttons_width` in Setup is the width,
+    // and it works maximised, from the keyboard, and from a macro — none of
+    // which a handle managed.
     m_quickBar->hide();
-    connect(m_quickGrip, &QuickButtonGrip::resizeStarted, this,
-            &MainWindow::beginQuickPanelResize);
-    connect(m_quickGrip, &QuickButtonGrip::resizeMoved, this,
-            [this](int delta) { resizeQuickPanel(m_quickDragWidth + delta); });
-    connect(m_quickGrip, &QuickButtonGrip::resizeFinished, this,
-            &MainWindow::endQuickPanelResize);
     connect(m_quickBar, &QuickButtonBar::activated, this,
             &MainWindow::runQuickButton);
     connect(m_quickBar, &QuickButtonBar::addRequested, this, [this] {
@@ -3693,10 +3694,10 @@ void MainWindow::reloadQuickButtons()
     // runs a hundred lines before this, while the panel is still hidden, so it
     // finds nothing to absorb — and the layout that squeezes the terminal
     // happens a turn later with nothing left to grow the window. Route it
-    // through the same helper the grip uses, which holds the grids and moves
+    // through the same helper the width does, which holds the grids and moves
     // the window's edge by exactly the room the panel takes.
     if (m_quickBar->isHidden() == wanted) {
-        const int strip = m_quickPanelWidth + m_quickGrip->sizeHint().width();
+        const int strip = m_quickPanelWidth;
         // **Nothing to absorb before the first show.** The panel is part of
         // what `sizeHint` asks for, so a window that has not opened yet has
         // already counted it — the constructor reaches here, and resizing
@@ -3713,7 +3714,6 @@ void MainWindow::reloadQuickButtons()
             resize(size().width() + delta, height());
         }
         m_quickBar->setVisible(wanted);
-        m_quickGrip->setVisible(wanted);
         if (delta < 0) {
             resize(qMax(1, size().width() + delta), height());
         }
@@ -3771,7 +3771,7 @@ void MainWindow::holdTerminalGrids(bool held)
 
 int MainWindow::resizeQuickPanel(int wanted)
 {
-    if (!m_quickBar || !m_quickGrip) {
+    if (!m_quickBar) {
         return m_quickPanelWidth;
     }
     // The floor is the panel's own minimum — a button clipped to nothing is
@@ -3788,16 +3788,7 @@ int MainWindow::resizeQuickPanel(int wanted)
         return m_quickPanelWidth;
     }
 
-    // **The hold belongs to the gesture, not to this call.** A drag arrives as
-    // one of these per mouse-move, and releasing at the end of each one fires
-    // the refit it just swallowed — so a compositor that answers `resize()`
-    // late would get a real `Grid::resize` per pixel of drag, which is the
-    // thing this function exists to prevent. `beginQuickPanelResize` owns the
-    // hold while a drag is running; only a lone call takes and gives it back.
-    const bool ownHold = !m_quickDragging;
-    if (ownHold) {
-        holdTerminalGrids(true);
-    }
+    holdTerminalGrids(true);
     m_quickPanelWidth = width;
     // **The window moves only for a panel that is on screen.** `isVisible()`
     // is the window's, not the panel's, and the two come apart: a width
@@ -3825,31 +3816,8 @@ int MainWindow::resizeQuickPanel(int wanted)
     if (QLayout *row = m_centralRow->layout()) {
         row->activate();
     }
-    if (ownHold) {
-        holdTerminalGrids(false);
-    }
-    return m_quickPanelWidth;
-}
-
-void MainWindow::beginQuickPanelResize()
-{
-    m_quickDragWidth = m_quickPanelWidth;
-    m_quickDragging = true;
-    holdTerminalGrids(true);
-}
-
-void MainWindow::endQuickPanelResize()
-{
-    m_quickDragging = false;
-    // One release for the whole gesture, which is where a refit swallowed
-    // anywhere in it is finally answered — at the geometry the drag actually
-    // ended on rather than at each of the sizes it passed through.
     holdTerminalGrids(false);
-    if (m_quickPanelWidth == m_quickDragWidth) {
-        return;
-    }
-    rememberSettings({{QStringLiteral("window.quick_buttons_width"),
-                       QString::number(m_quickPanelWidth)}});
+    return m_quickPanelWidth;
 }
 
 void MainWindow::runQuickButton(int index, bool withoutEnter)

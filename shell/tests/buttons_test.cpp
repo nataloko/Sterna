@@ -120,21 +120,35 @@ QuickButtonBar *barOf(const MainWindow &window)
     return window.findChild<QuickButtonBar *>(QStringLiteral("quickButtonBar"));
 }
 
-QWidget *gripOf(const MainWindow &window)
+/// Ask for a panel width the way Setup's Window page does, and wait for the
+/// panel to take it.
+///
+/// There is no handle to drag: `window.quick_buttons_width` *is* the gesture,
+/// so a test that drove synthetic mouse events would be exercising a widget
+/// this program does not have. The property is the same either way — the
+/// pixels come out of the window and never out of the terminal.
+bool setPanelWidth(MainWindow &window, int px)
 {
-    return window.findChild<QWidget *>(QStringLiteral("quickButtonGrip"));
+    QString error;
+    if (!window.session()->setSetting(
+            QStringLiteral("window.quick_buttons_width"),
+            QString::number(px), &error)) {
+        return false;
+    }
+    QuickButtonBar *bar = barOf(window);
+    return spin([bar, px] { return bar && bar->width() == px; }, 2000);
 }
 
-/// Put the window where a drag has at least `room` pixels to grow into, and
-/// say whether it landed there.
+/// Put the window where a widening panel has at least `room` pixels to grow
+/// into, and say whether it landed there.
 ///
 /// **Every number computed from the work area, never a literal.** The
 /// offscreen plugin's screen is 800x800 and is not the desktop's, so a window
 /// opened at a comfortable-looking 900 is already past the right-hand edge —
-/// `windowGrowthRoom` then answers 0, the drag is correctly clamped to
-/// nothing, and five checks fail for a reason that has nothing to do with what
+/// `windowGrowthRoom` then answers 0, the width is correctly clamped to
+/// nothing, and the checks fail for a reason that has nothing to do with what
 /// they are testing. A window that genuinely has no room is its own case, in
-/// `a_drag_stops_at_the_edge_of_the_screen`.
+/// `a_width_stops_at_the_edge_of_the_screen`.
 bool placeForGrowth(MainWindow &window, int room)
 {
     const QScreen *display = window.screen();
@@ -146,72 +160,6 @@ bool placeForGrowth(MainWindow &window, int room)
     window.resize(qMax(360, work.width() - room - 40), qMin(500, work.height()));
     spin([] { return false; }, 100);
     return work.right() - window.frameGeometry().right() >= room;
-}
-
-/// Drag the panel's grip `by` pixels to the left, which is the direction that
-/// makes the panel wider, and let go.
-///
-/// Real `QMouseEvent`s rather than a call into the window's own arithmetic:
-/// the property under test is the gesture, and the sign of the delta is a
-/// thing this can get wrong in a way a direct call cannot. `mid` is left where
-/// the press happened because the grip does **not** follow the pointer — the
-/// window's left edge is pinned, so growing the panel by N grows the window by
-/// N and the grip stays exactly where it was. That is the honest rendering of
-/// "the drag moves the window's edge", and a test that chased the grip would
-/// be asserting a thing the design deliberately does not do.
-/// The three halves are separate because **every move is measured from the
-/// press**, not from the move before it. A test that wants to look at the
-/// mid-drag state and then finish the gesture has to release the press it
-/// already made; pressing again re-bases the arithmetic on the width the first
-/// drag reached, and asking for 140 twice moves the panel 280.
-void pressGrip(MainWindow &window)
-{
-    QWidget *grip = gripOf(window);
-    if (!grip) {
-        return;
-    }
-    const QPointF mid(grip->width() / 2.0, grip->height() / 2.0);
-    QMouseEvent down(QEvent::MouseButtonPress, mid, grip->mapToGlobal(mid),
-                     Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(grip, &down);
-}
-
-void moveGrip(MainWindow &window, int by)
-{
-    QWidget *grip = gripOf(window);
-    if (!grip) {
-        return;
-    }
-    const QPointF mid(grip->width() / 2.0, grip->height() / 2.0);
-    const QPointF to = mid - QPointF(by, 0);
-    // `NoButton` as the button and `LeftButton` as the buttons is how Qt
-    // spells a move *during* a drag; sending LeftButton for both is a press
-    // the grip has already had.
-    QMouseEvent move(QEvent::MouseMove, to, grip->mapToGlobal(to),
-                     Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(grip, &move);
-}
-
-void releaseGrip(MainWindow &window, int by)
-{
-    QWidget *grip = gripOf(window);
-    if (!grip) {
-        return;
-    }
-    const QPointF mid(grip->width() / 2.0, grip->height() / 2.0);
-    const QPointF to = mid - QPointF(by, 0);
-    QMouseEvent up(QEvent::MouseButtonRelease, to, grip->mapToGlobal(to),
-                   Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
-    QApplication::sendEvent(grip, &up);
-}
-
-/// Drag the panel's grip `by` pixels to the left, which is the direction that
-/// makes the panel wider, and let go.
-void dragGrip(MainWindow &window, int by)
-{
-    pressGrip(window);
-    moveGrip(window, by);
-    releaseGrip(window, by);
 }
 
 QAction *buttonAction(const MainWindow &window, int index)
@@ -463,7 +411,6 @@ void an_empty_list_keeps_the_add_button()
     window.show();
     QuickButtonBar *bar = barOf(window);
     CHECK(bar != nullptr);
-    CHECK(gripOf(window) != nullptr);
     CHECK(bar->buttons().isEmpty());
     CHECK(spin([bar] { return bar->isVisible(); }, 2000));
     QAction *add = window.findChild<QAction *>(QStringLiteral("quickButtonAdd"));
@@ -668,7 +615,7 @@ void a_shortcut_is_installed_and_released_with_the_bar()
 
 /// The panel opens down the right, and its grip widens it — taking the pixels
 /// from the window, so the buttons grow and the terminal does not shrink.
-void the_panel_opens_down_the_right_and_the_grip_widens_it()
+void the_panel_opens_down_the_right_and_a_width_widens_it()
 {
     QTemporaryDir dir;
     CHECK(dir.isValid());
@@ -688,31 +635,28 @@ void the_panel_opens_down_the_right_and_the_grip_widens_it()
     }
 
     QuickButtonBar *bar = barOf(window);
-    QWidget *grip = gripOf(window);
-    CHECK(bar != nullptr && grip != nullptr);
-    if (!bar || !grip) {
+    CHECK(bar != nullptr);
+    if (!bar) {
         return;
     }
-    CHECK(!bar->isHidden() && !grip->isHidden());
-    // Down the right: the panel starts after the terminals do, and the grip
-    // sits between them. Asked of the geometry rather than of a dock area,
-    // because there is no longer an enum to ask.
+    CHECK(!bar->isHidden());
+    // Down the right: the panel starts after the terminals end. Asked of the
+    // geometry rather than of a dock area, because there is no longer an enum
+    // to ask.
     auto *panels = window.findChild<PanelContainer *>();
     CHECK(panels != nullptr);
     if (panels) {
-        CHECK(grip->x() >= panels->x() + panels->width());
-        CHECK(bar->x() >= grip->x() + grip->width());
+        CHECK(bar->x() >= panels->x() + panels->width());
     }
 
     const int before = bar->width();
-    dragGrip(window, 100);
-    CHECK(spin([bar, before] { return bar->width() > before; }, 2000));
+    CHECK(setPanelWidth(window, before + 100));
     CHECK(bar->width() == before + 100);
 
     // ...and the buttons take that width with them. A button is as wide as the
     // panel and not as wide as its own caption, so a short one and a long one
-    // measure the same and both follow the grip — the room dragged out goes
-    // into the buttons rather than into the margin beside them.
+    // measure the same and both follow the setting — the extra room goes into
+    // the buttons rather than into the margin beside them.
     QToolButton *first = bar->buttonWidget(0);
     QToolButton *second = bar->buttonWidget(1);
     CHECK(first != nullptr && second != nullptr);
@@ -726,13 +670,13 @@ void the_panel_opens_down_the_right_and_the_grip_widens_it()
 
 /// **The bug this whole arrangement exists for.**
 ///
-/// Dragging the panel used to take its pixels out of the terminal beside it,
+/// Widening the panel used to take its pixels out of the terminal beside it,
 /// and `Grid::resize` truncates every line it shortens — in the page and in
 /// the scrollback, and it does not give them back on the way out. So the check
 /// that matters is not that the column count came back: it is that the text
 /// did. A shrink that truncated and then re-widened passes a column count and
 /// fails this.
-void dragging_the_grip_grows_the_window_and_not_the_grid()
+void widening_the_panel_grows_the_window_and_not_the_grid()
 {
     QTemporaryDir dir;
     CHECK(dir.isValid());
@@ -768,15 +712,8 @@ void dragging_the_grip_grows_the_window_and_not_the_grid()
     const QString before = screenText(*session);
     CHECK(cols > 0 && before.contains(line));
 
-    // Out, and hold it there: the mid-drag state is where a squeezed layout
-    // pass would have done the damage.
-    pressGrip(window);
-    moveGrip(window, 140);
-    QCoreApplication::processEvents();
-    CHECK(session->cols() == cols);
-    CHECK(session->rows() == rows);
-
-    releaseGrip(window, 140);
+    const int wide = barOf(window)->width() + 140;
+    CHECK(setPanelWidth(window, wide));
     CHECK(spin([&window, windowWidth] { return window.width() != windowWidth; },
                2000));
     // The window absorbed it, exactly.
@@ -788,7 +725,7 @@ void dragging_the_grip_grows_the_window_and_not_the_grid()
 
     // ...and back, which is the half a truncating resize cannot survive: the
     // text is gone by now if anything shortened a line on the way out.
-    dragGrip(window, -140);
+    CHECK(setPanelWidth(window, wide - 140));
     CHECK(spin([&window, windowWidth] { return window.width() == windowWidth; },
                2000));
     CHECK(session->cols() == cols);
@@ -796,12 +733,12 @@ void dragging_the_grip_grows_the_window_and_not_the_grid()
     CHECK(screenText(*session).contains(line));
 }
 
-/// A drag stops at the edge of the screen rather than taking the columns.
+/// A width stops at the edge of the screen rather than taking the columns.
 ///
 /// The window cannot grow past its work area, and the whole rule is that the
-/// terminal never pays for the panel — so the honest answer there is a drag
-/// that does nothing, not one that quietly falls back to the old behaviour.
-void a_drag_stops_at_the_edge_of_the_screen()
+/// terminal never pays for the panel — so the honest answer there is a width
+/// that is not reached, not one that quietly falls back to the old behaviour.
+void a_width_stops_at_the_edge_of_the_screen()
 {
     QTemporaryDir dir;
     CHECK(dir.isValid());
@@ -839,8 +776,13 @@ void a_drag_stops_at_the_edge_of_the_screen()
     }
     const int width = bar->width();
     const int cols = session->cols();
-    dragGrip(window, 200);
-    QCoreApplication::processEvents();
+    QString error;
+    CHECK(window.session()->setSetting(
+        QStringLiteral("window.quick_buttons_width"),
+        QString::number(width + 200), &error));
+    // Not `setPanelWidth`, which waits for the panel to reach the number: the
+    // whole point here is that it does not, and cannot.
+    spin([] { return false; }, 200);
     CHECK(bar->width() == width);
     CHECK(session->cols() == cols);
 }
@@ -914,61 +856,44 @@ void showing_the_panel_leaves_every_terminal_alone()
     CHECK(columns() == before);
 }
 
-/// A dragged width outlives the window that was dragged, and a shipped one is
-/// not written at all — zero means "as wide as the buttons need", so a window
-/// nobody sized must not quietly pin itself to whatever its captions measured.
-void the_panel_width_outlives_the_window()
+/// A configured width is opened at, and changing it live costs the terminal
+/// nothing — which is the whole of the feature now that there is no handle.
+///
+/// The *writing* half is the settings dialog's own save path and is not this
+/// feature's to test. What is this feature's: reading the number, applying it
+/// through the helper that takes the pixels from the window, and leaving the
+/// shipped zero alone so a window nobody has sized goes on measuring its
+/// buttons.
+void the_configured_panel_width_is_opened_at()
 {
     QTemporaryDir dir;
     CHECK(dir.isValid());
-    const QString path = writeIni(
-        dir, "[Sterna Buttons]\r\nButton1Label=Hi\r\nButton1Value=hi$0D\r\n");
-
-    int dragged = 0;
+    const QString path = dir.filePath(QStringLiteral("sterna.ini"));
     {
-        MainWindow window(path);
-        window.show();
-        CHECK(spin([&window] { return window.isVisible(); }, 2000));
-        if (!placeForGrowth(window, 200)) {
-            return;
-        }
-        dragGrip(window, 90);
-        CHECK(spin([&window] { return barOf(window)->width() > 0; }, 2000));
-        dragged = barOf(window)->width();
-        window.close();
+        QFile file(path);
+        CHECK(file.open(QIODevice::WriteOnly));
+        file.write("[Tera Term]\r\nTerminalSize=60,12\r\n"
+                   "[Sterna]\r\nQuickButtonsWidth=240\r\n"
+                   "[Sterna Buttons]\r\nButton1Label=Hi\r\nButton1Value=hi$0D\r\n");
     }
-    CHECK(dragged > 0);
 
-    QFile file(path);
-    CHECK(file.open(QIODevice::ReadOnly));
-    const QByteArray ini = file.readAll();
-    file.close();
-    CHECK(ini.contains("QuickButtonsWidth="));
-    CHECK(ini.contains(QByteArray("QuickButtonsWidth=")
-                       + QByteArray::number(dragged)));
+    MainWindow window(path);
+    window.show();
+    CHECK(spin([&window] { return window.isVisible(); }, 2000));
+    CHECK(spin([&window] { return barOf(window)->width() == 240; }, 2000));
 
-    MainWindow second(path);
-    second.show();
-    CHECK(spin([&second] { return second.isVisible(); }, 2000));
-    CHECK(spin([&second, dragged] { return barOf(second)->width() == dragged; },
-               2000));
-
-    // ...and the setting is a live one, not only something read at startup.
-    // The schema-driven Window page grew a spin box for it when the area combo
-    // went, and that box is the keyboard route to a width — the only route at
-    // all for a maximised window, where the grip is clamped to nothing.
-    if (!placeForGrowth(second, 200)) {
+    // ...and a live change goes through the same helper, so it costs the
+    // terminal nothing either. This is the Setup route, which is the only
+    // route — and the one that still works on a maximised window.
+    if (!placeForGrowth(window, 200)) {
         return;
     }
-    const int cols = second.session()->cols();
-    QString error;
-    CHECK(second.session()->setSetting(
-        QStringLiteral("window.quick_buttons_width"),
-        QString::number(dragged + 60), &error));
-    CHECK(spin([&second, dragged] { return barOf(second)->width() == dragged + 60; },
+    const int cols = window.session()->cols();
+    const int windowWidth = window.width();
+    CHECK(setPanelWidth(window, 300));
+    CHECK(window.session()->cols() == cols);
+    CHECK(spin([&window, windowWidth] { return window.width() == windowWidth + 60; },
                2000));
-    // ...through the same helper, so it costs the terminal nothing either.
-    CHECK(second.session()->cols() == cols);
 }
 
 /// Add — the `+` at the end of the bar, and Add in its context menu — opens
@@ -1255,9 +1180,9 @@ void render_widgets()
     spin([] { return false; }, 300);
     window.grab().save(g_writeTo + QStringLiteral("/quick-buttons-window.png"));
 
-    // ...and dragged wider, which is the same window with a wider panel in it
-    // and a terminal that has not lost a column to pay for it.
-    dragGrip(window, 90);
+    // ...and wider, which is the same window with a wider panel in it and a
+    // terminal that has not lost a column to pay for it.
+    setPanelWidth(window, barOf(window)->width() + 90);
     spin([] { return false; }, 300);
     window.grab().save(g_writeTo + QStringLiteral("/quick-buttons-wide.png"));
 
@@ -1299,11 +1224,11 @@ int main(int argc, char **argv)
     the_editor_preserves_an_unknown_command();
     the_editor_warns_about_a_key_the_host_wants();
     a_shortcut_is_installed_and_released_with_the_bar();
-    the_panel_opens_down_the_right_and_the_grip_widens_it();
-    dragging_the_grip_grows_the_window_and_not_the_grid();
-    a_drag_stops_at_the_edge_of_the_screen();
+    the_panel_opens_down_the_right_and_a_width_widens_it();
+    widening_the_panel_grows_the_window_and_not_the_grid();
+    a_width_stops_at_the_edge_of_the_screen();
     showing_the_panel_leaves_every_terminal_alone();
-    the_panel_width_outlives_the_window();
+    the_configured_panel_width_is_opened_at();
     adding_starts_on_a_new_row();
     a_repeat_sends_its_count_and_stops();
     a_second_press_stops_a_run_with_no_end();
