@@ -2,7 +2,9 @@
 
 This file is the AppImage's. The Windows installer is a second artifact with a
 README of its own — see [`windows/`](windows/README.md), which is where the
-NSIS build and its traps are written down.
+NSIS build and its traps are written down. **Cutting a release is
+[`RELEASING.md`](RELEASING.md)**, which is the order of operations and the two
+scripts; this file is what the Linux artifact is made of.
 
 One artifact on Linux: an **AppImage**, and nothing else. No rpm, no deb —
 decided 2026-08-08, recorded in `PLAN.md`. One thing to build, one thing to

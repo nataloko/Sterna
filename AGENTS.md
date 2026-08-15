@@ -132,9 +132,11 @@ cd packaging/windows             # the only Windows artifact — sterna-fedora
 ./build.sh                       # → build/sterna-0.1.0-x86_64-setup.exe
 ./build.sh --stage               # ...the file tree, without makensis
 
-# Releases are built by .github/workflows/release.yml after a vX.Y.Z tag.
-# It creates a draft; the updater key stays local and this signs + publishes it:
-./packaging/release.sh v0.1.0
+# Releases: the whole procedure is packaging/RELEASING.md — read it, do not
+# assemble one from these three lines. The version is in six files and only
+# this script knows all six; CI and the tag preflight both run its --check.
+./packaging/bump-version.sh 0.1.0    # ...and --check, which is what they call
+./packaging/release.sh v0.1.0        # sign the built draft and publish it
 
 cd esctest                       # conformance, from inside our own terminal
 ./run_tests.sh                   # 568 cases; gates on drift from `expected`
