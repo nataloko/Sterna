@@ -24,9 +24,9 @@
           </g>
         </g>
       </g>
-      <path d="m776 308 48 24-48 24" fill="none" stroke="#F99E2A" stroke-width="22"
+      <path d="m680 354 48 24-48 24" fill="none" stroke="#F99E2A" stroke-width="22"
             stroke-linecap="square" stroke-linejoin="miter"/>
-      <rect x="840" y="354" width="58" height="20" rx="3" fill="#F99E2A"/>
+      <rect x="744" y="396" width="58" height="20" rx="3" fill="#F99E2A"/>
     </symbol>
 
     <symbol id="concept-feathers" viewBox="0 0 1088 1088">
