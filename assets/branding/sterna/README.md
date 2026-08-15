@@ -28,6 +28,7 @@ the source of truth; the PNG and ICO application assets are generated from it.
 | `samples/sparse-output-cursor-studies.{svg,png}` | Review sheet for sparse-output cursor and bird treatments. |
 | `samples/tall-cursor-bird-studies.{svg,png}` | Review sheet for tall cursor widths with wire and solid birds. |
 | `samples/row-strength-bird-studies.{svg,png}` | Review sheet for terminal row strengths with wire and solid birds. |
+| `samples/blue-compare.{svg,png}` | Review sheet for blue wire and solid birds over strong terminal rows. |
 
 The primary and small marks use negative space for the white body, so use them
 on light backgrounds. Use a mono mark on coloured backgrounds. The application
