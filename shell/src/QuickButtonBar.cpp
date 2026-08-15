@@ -8,9 +8,97 @@
 #include <QFrame>
 #include <QMenu>
 #include <QSizePolicy>
+#include <QHelpEvent>
+#include <QStyleOptionToolButton>
+#include <QStylePainter>
 #include <QToolButton>
+#include <QToolTip>
 
 #include "Session.h"
+
+namespace {
+
+/// A tool button that shortens its caption instead of demanding room for it.
+///
+/// **`QToolButton` will not go narrower than its own text**, and it enforces
+/// that through `minimumSizeHint` — which is the panel's minimum too, so the
+/// longest caption on the bar decided how narrow the whole panel could be. A
+/// person who wants a strip of stubs down the edge of the screen, or who put
+/// a sentence on one button and does not want the other nine widened for it,
+/// could not have one.
+///
+/// So the minimum is dropped and the caption is elided at paint time. The full
+/// text stays in `text()`, so the tooltip, the context menu and every test
+/// asking what a button says get the real answer — only the pixels are short.
+///
+/// Defined here rather than in the header for the same reason `PaneFrame` is:
+/// nothing outside this file constructs one.
+class BarButton : public QToolButton {
+public:
+    using QToolButton::QToolButton;
+
+    QSize minimumSizeHint() const override
+    {
+        // The height a button needs, and no width demand at all. The floor
+        // that stops the panel becoming a sliver is the window's
+        // (`kQuickPanelMinWidth`), where it can be one number rather than a
+        // consequence of whatever somebody last typed into a caption.
+        QSize hint = QToolButton::minimumSizeHint();
+        hint.setWidth(0);
+        return hint;
+    }
+
+    /// The caption, when the pixels no longer carry it.
+    ///
+    /// A tooltip here describes what the button *sends*, which is the useful
+    /// half while the label is legible and not enough on its own once it is
+    /// three letters and an ellipsis — two buttons on a 48-pixel panel can
+    /// both read `Sh…`. So the full caption joins the tooltip exactly when the
+    /// paint had to shorten it, and stays out of the way the rest of the time.
+    bool event(QEvent *event) override
+    {
+        if (event->type() == QEvent::ToolTip && m_elided && !text().isEmpty()) {
+            const QString tip = toolTip().isEmpty()
+                ? text()
+                : text() + QLatin1Char('\n') + toolTip();
+            QToolTip::showText(static_cast<QHelpEvent *>(event)->globalPos(),
+                               tip, this);
+            return true;
+        }
+        return QToolButton::event(event);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QStylePainter painter(this);
+        QStyleOptionToolButton option;
+        initStyleOption(&option);
+        // The room the style will actually put text in. Asked of the style
+        // rather than assumed, then inset by the same margin the style uses,
+        // because a button drawn to its own frame reads as clipped rather
+        // than as shortened.
+        const QRect area =
+            style()->subControlRect(QStyle::CC_ToolButton, &option,
+                                    QStyle::SC_ToolButton, this);
+        const int margin =
+            2 * style()->pixelMetric(QStyle::PM_ButtonMargin, &option, this);
+        const int room = area.width() - margin;
+        if (room > 0) {
+            option.text = option.fontMetrics.elidedText(option.text,
+                                                        Qt::ElideRight, room);
+        }
+        m_elided = option.text != text();
+        painter.drawComplexControl(QStyle::CC_ToolButton, option);
+    }
+
+private:
+    /// Whether the last paint had to shorten the caption. Read by `event`,
+    /// which is the only thing that needs to know.
+    bool m_elided = false;
+};
+
+} // namespace
 
 QuickButtonBar::QuickButtonBar(QWidget *parent) : QWidget(parent)
 {
@@ -37,7 +125,7 @@ QuickButtonBar::QuickButtonBar(QWidget *parent) : QWidget(parent)
 
 QToolButton *QuickButtonBar::addButton(QAction *action)
 {
-    auto *button = new QToolButton(this);
+    auto *button = new BarButton(this);
     button->setDefaultAction(action);
     // Text: there is no icon theme this program ships, and there is certainly
     // no themed icon for "show version".
@@ -277,5 +365,21 @@ void QuickButtonBar::showContextMenu(const QPoint &pos)
     }
     QAction *add = menu.addAction(tr("Add..."));
     connect(add, &QAction::triggered, this, &QuickButtonBar::addRequested);
+
+    // **The width lives here because this is where the hand already is.** It is
+    // an ordinary setting on Setup's Window page and reachable there too, but a
+    // panel that looks draggable and is not needs the answer within reach of
+    // the thing it is about — twenty-six pages of a settings dialog is not
+    // within reach. Same argument the Add item makes one line above.
+    menu.addSeparator();
+    QMenu *width = menu.addMenu(tr("Panel width"));
+    QAction *fit = width->addAction(tr("Fit to buttons"));
+    fit->setCheckable(true);
+    fit->setChecked(m_fitted);
+    QAction *exact = width->addAction(tr("Set width..."));
+    connect(fit, &QAction::triggered, this, &QuickButtonBar::fitWidthRequested);
+    connect(exact, &QAction::triggered, this,
+            &QuickButtonBar::setWidthRequested);
+
     menu.exec(mapToGlobal(pos));
 }

@@ -289,6 +289,12 @@ private slots:
     /// then activated **synchronously**, so the pass that would have refitted
     /// happens inside the hold rather than on the next turn outside it.
     int resizeQuickPanel(int wanted);
+    /// Write `window.quick_buttons_width` and apply it. 0 means "as wide as
+    /// the buttons need". The panel's context menu is the reachable route to
+    /// this; the Window page of Setup is the other.
+    void setQuickPanelWidth(int px);
+    /// Ask for a width, then set it — the context menu's Set width… item.
+    void askQuickPanelWidth();
     /// Hold or release every page's grid, tiles included — they all sit beside
     /// the one panel.
     void holdTerminalGrids(bool held);

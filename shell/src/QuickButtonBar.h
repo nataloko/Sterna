@@ -66,6 +66,14 @@ public:
     /// for it; a test measuring how wide a button ended up does.
     QToolButton *buttonWidget(int index) const;
 
+    /// Whether the panel is measuring its own buttons rather than holding a
+    /// width somebody chose — `window.quick_buttons_width` being 0.
+    ///
+    /// Display state, the way `setRepeating` is: it decides one tick in the
+    /// context menu and nothing else. The bar has no session to ask, and the
+    /// window that does calls this whenever the setting moves.
+    void setFitted(bool fitted) { m_fitted = fitted; }
+
 signals:
     /// A button was pressed. `withoutEnter` is a Shift+click, which sends the
     /// command with its trailing Return left off so it can be edited on the
@@ -82,6 +90,12 @@ signals:
     /// but that arrives as `activated` — the window owns the rule that a
     /// second press is a stop, because it is the one that knows a run started.
     void stopRequested(int index);
+    /// Panel width > Fit to buttons — go back to measuring the captions.
+    void fitWidthRequested();
+    /// Panel width > Set width… — ask for a number. The window owns the
+    /// prompt: it is the one that knows what the width will be clamped to and
+    /// what the screen has room for.
+    void setWidthRequested();
 
 private:
     void showContextMenu(const QPoint &pos);
@@ -106,4 +120,6 @@ private:
     QAction *m_add = nullptr;
     QBoxLayout *m_layout = nullptr;
     QFrame *m_separator = nullptr;
+    /// See `setFitted`.
+    bool m_fitted = true;
 };

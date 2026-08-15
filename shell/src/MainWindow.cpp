@@ -18,6 +18,7 @@
 #include <QGuiApplication>
 #include <QHash>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QKeySequence>
 #include <QLabel>
 #include <QMenu>
@@ -164,12 +165,20 @@ QString panelLayoutSetting(PanelLayout layout)
                                         : QStringLiteral("single");
 }
 
-/// The ceiling `window.quick_buttons_width` is held under, which is the
-/// schema's own — repeated here because a drag is clamped before any value
-/// reaches the file, and one that could leave the range would write a width
-/// the next launch does not open at. There is no matching floor: the real one
-/// is the panel's own minimum, which depends on the captions and the font and
-/// is therefore the widget's answer rather than a number.
+/// What `window.quick_buttons_width` is held between. The ceiling is the
+/// schema's own, repeated because a width is clamped before any value reaches
+/// the file and one that could leave the range would write a number the next
+/// launch does not open at.
+///
+/// **The floor is a fixed number and deliberately not the panel's own
+/// minimum.** A button elides its caption rather than demanding room for it
+/// (`BarButton`), so the widest label on the bar no longer decides how narrow
+/// the panel may be — somebody who wants a strip of stubs down the edge can
+/// have one. What a floor still has to buy is a target a pointer can hit and a
+/// button that shows *something*: 48 logical pixels is a few characters and an
+/// ellipsis at any ordinary size, and it is not a value anybody arrives at by
+/// accident.
+constexpr int kQuickPanelMinWidth = 48;
 constexpr int kQuickPanelMaxWidth = 2000;
 
 /// Whether this window system gives a client coordinates it may restore.
@@ -452,6 +461,10 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
         const QuickButton blank;
         editQuickButtons(-1, &blank);
     });
+    connect(m_quickBar, &QuickButtonBar::fitWidthRequested, this,
+            [this] { setQuickPanelWidth(0); });
+    connect(m_quickBar, &QuickButtonBar::setWidthRequested, this,
+            &MainWindow::askQuickPanelWidth);
     connect(m_quickBar, &QuickButtonBar::editRequested, this,
             [this](int index) { editQuickButtons(index); });
     connect(m_quickBar, &QuickButtonBar::duplicateRequested, this,
@@ -3685,6 +3698,10 @@ void MainWindow::reloadQuickButtons()
     if (width > 0 && width != m_quickPanelWidth) {
         resizeQuickPanel(width);
     }
+    // ...and the panel's own menu ticks "Fit to buttons" from this, because it
+    // has no session to ask and the sentinel is not something a width can be
+    // read back from — 160 measured is indistinguishable from 160 chosen.
+    m_quickBar->setFitted(setting <= 0);
     // The setting alone owns visibility. An empty list still has a useful +
     // button, which is the shortest route to defining the first command.
     const bool wanted =
@@ -3740,6 +3757,53 @@ void MainWindow::reloadQuickButtons()
     m_quickBar->refresh(m_session);
 }
 
+void MainWindow::setQuickPanelWidth(int px)
+{
+    // Applied first, written second — the order View > Tiled and the toolbar's
+    // switches already use, and for the same reason:
+    // `tt_session_settings_remember` applies the value on its way to the file
+    // but emits no `settingsChanged`, so on its own it would move the file and
+    // leave the panel where it was.
+    QString error;
+    const QString value = QString::number(qMax(0, px));
+    if (!m_session->setSetting(QStringLiteral("window.quick_buttons_width"),
+                               value, &error)) {
+        onNotice(tr("The quick button panel's width could not be set: %1")
+                     .arg(error));
+        return;
+    }
+    rememberSettings({{QStringLiteral("window.quick_buttons_width"), value}});
+}
+
+void MainWindow::askQuickPanelWidth()
+{
+    if (!m_quickBar) {
+        return;
+    }
+    // The same floor `resizeQuickPanel` clamps to, so the dialog cannot offer
+    // a number that would be silently raised the moment it was accepted.
+    const int low = kQuickPanelMinWidth;
+    bool chosen = false;
+    const int px = QInputDialog::getInt(
+        this, tr("Quick button panel"), tr("Panel width in pixels:"),
+        qMax(low, m_quickPanelWidth), low, kQuickPanelMaxWidth, 10, &chosen);
+    if (!chosen) {
+        return;
+    }
+    setQuickPanelWidth(px);
+    // **Say so when the answer was not the one asked for.** The width is
+    // clamped to what the window can grow into, so on a maximised window or
+    // one already at the edge of the screen a request for 400 quietly becomes
+    // whatever there was room for. Silence there reads as a bug in the number
+    // somebody just typed.
+    if (m_quickPanelWidth < px) {
+        onNotice(tr("The panel is %1 pixels wide. It cannot be wider without "
+                    "taking columns from the terminal, and this window cannot "
+                    "grow any further.")
+                     .arg(m_quickPanelWidth));
+    }
+}
+
 int MainWindow::windowGrowthRoom() const
 {
     // A maximised or full-screen window does not get to change size, so there
@@ -3774,10 +3838,9 @@ int MainWindow::resizeQuickPanel(int wanted)
     if (!m_quickBar) {
         return m_quickPanelWidth;
     }
-    // The floor is the panel's own minimum — a button clipped to nothing is
-    // not a narrower panel, it is a broken one. Capped at the ceiling so that
-    // a very long caption cannot invert the range below.
-    const int low = qMin(m_quickBar->minimumSizeHint().width(), kQuickPanelMaxWidth);
+    // A fixed floor, not the panel's own minimum: the buttons elide, so the
+    // longest caption no longer holds the panel open. See `kQuickPanelMinWidth`.
+    const int low = kQuickPanelMinWidth;
     // ...and the ceiling is whatever the window can still grow into. Shrinking
     // needs no room, which is why only this half consults the screen.
     const int high =

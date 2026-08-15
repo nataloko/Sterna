@@ -857,6 +857,79 @@ void showing_the_panel_leaves_every_terminal_alone()
     CHECK(columns() == before);
 }
 
+/// A panel can be made narrower than its own captions: the buttons shorten
+/// their text rather than holding the panel open.
+///
+/// And there is still a floor, because a panel two pixels wide is a panel
+/// nobody can hit. The floor is a fixed number rather than the widest caption
+/// — which is the whole point, since the widest caption is exactly what used
+/// to decide this.
+void a_narrow_panel_shortens_its_captions()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    // One caption far too long for the panel it is about to be given.
+    const QString path = writeIni(
+        dir,
+        "[Sterna Buttons]\r\nButton1Label=Show the running configuration\r\n"
+        "Button1Value=show run$0D\r\n");
+
+    MainWindow window(path);
+    window.show();
+    CHECK(spin([&window] { return window.isVisible(); }, 2000));
+    if (!placeForGrowth(window, 200)) {
+        return;
+    }
+
+    QuickButtonBar *bar = barOf(window);
+    CHECK(bar != nullptr);
+    if (!bar) {
+        return;
+    }
+    const int natural = bar->width();
+    QToolButton *button = bar->buttonWidget(0);
+    CHECK(button != nullptr);
+    if (!button) {
+        return;
+    }
+    const QString caption = button->text();
+    CHECK(caption.startsWith(QLatin1String("Show the running")));
+    // The caption really is wider than the panel is about to be, or this
+    // proves nothing.
+    CHECK(button->fontMetrics().horizontalAdvance(caption) > 90);
+
+    CHECK(setPanelWidth(window, 90));
+    CHECK(bar->width() == 90);
+    // The button went with it rather than overflowing the panel it is in.
+    CHECK(button->width() <= 90);
+    CHECK(button->width() > 0);
+    // **Elision is paint-only.** The full caption is still what the button
+    // says, so the tooltip, the editor and this test get the real answer —
+    // shortening it in `text()` would put an ellipsis into the settings file
+    // the moment somebody opened the editor on it.
+    CHECK(button->text() == caption);
+
+    // ...and the floor holds. 10 is below it, so the panel stops at 48 rather
+    // than becoming something nobody can hit.
+    QString error;
+    CHECK(window.session()->setSetting(
+        QStringLiteral("window.quick_buttons_width"), QStringLiteral("10"),
+        &error));
+    CHECK(spin([bar] { return bar->width() == 48; }, 2000));
+
+    // Back to fitting, through the signal the context menu's Fit to buttons
+    // emits rather than through the setting it ends at — the menu item is the
+    // reachable route and the wiring behind it is what could rot. Emitting the
+    // signal because `showContextMenu` execs a modal menu, which a test cannot
+    // click.
+    CHECK(QMetaObject::invokeMethod(bar, "fitWidthRequested"));
+    CHECK(spin([bar, natural] { return bar->width() == natural; }, 2000));
+    // ...and it wrote the sentinel rather than the number it measured, or the
+    // panel would stop following its captions from here on.
+    CHECK(window.session()->setting(
+              QStringLiteral("window.quick_buttons_width")) == QLatin1String("0"));
+}
+
 /// The width is reachable from Setup, which is the **only** way to set one now
 /// that there is no handle.
 ///
@@ -1257,6 +1330,7 @@ int main(int argc, char **argv)
     showing_the_panel_leaves_every_terminal_alone();
     the_configured_panel_width_is_opened_at();
     the_width_has_a_control_in_setup();
+    a_narrow_panel_shortens_its_captions();
     adding_starts_on_a_new_row();
     a_repeat_sends_its_count_and_stops();
     a_second_press_stops_a_run_with_no_end();
