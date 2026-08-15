@@ -5,6 +5,8 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-15
+
 ### Added
 
 - File > Log now opens a dialog with the options Tera Term offers, instead of a
@@ -19,6 +21,13 @@ are available from the [GitHub releases page].
   not written later; it is not kept, which is also Tera Term's behaviour.
 - File > Stop logging is its own item, so a keyboard mapping or a quick button
   can reach starting, pausing and stopping separately.
+- Every setting in the Setup dialog now explains itself. Hovering one gives a
+  plain-language description of what it changes and when it matters, written to
+  the simplified English (ASD-STE100) the project now uses for anything a user
+  reads, and the tooltip ends with the setting's default — spelled `(empty)` or
+  `Automatic` where the stored value is a blank or a sentinel. A setting Sterna
+  carries for file compatibility but does not act on says so, instead of
+  describing behaviour you will not get. The search box searches the help too.
 
 ### Changed
 
@@ -39,6 +48,11 @@ are available from the [GitHub releases page].
   instead of leaving a strip of empty space beside them, and every button is
   the same size whatever its label; along the top or bottom edge they take the
   panel's height the same way.
+- A setting's tooltip no longer carries the schema's own notes, which are the
+  citations that prove where a default comes from. Those are developer
+  documentation and they stay in the schema and in the generated docs; the
+  dialog shows the help and the default. Menu status tips and the connect bar's
+  tooltips are rewritten to the same rules.
 
 ## [0.3.1] - 2026-08-15
 
@@ -316,7 +330,8 @@ Initial public release.
 - Linux AppImage and Windows installer packages.
 
 [GitHub releases page]: https://github.com/nataloko/Sterna/releases
-[Unreleased]: https://github.com/nataloko/Sterna/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/nataloko/Sterna/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/nataloko/Sterna/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/nataloko/Sterna/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/nataloko/Sterna/compare/v0.2.5...v0.3.0
 [0.2.5]: https://github.com/nataloko/Sterna/compare/v0.2.4...v0.2.5
