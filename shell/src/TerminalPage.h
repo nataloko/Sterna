@@ -91,6 +91,14 @@ public:
     /// load-bearing — see the implementation.
     void applySettings();
 
+    /// View > Reset line counter, for this page alone.
+    ///
+    /// The mark belongs to the gutter, so it belongs to the tab: each console
+    /// is counting its own output and a window-wide mark would renumber a
+    /// session nobody was looking at. Nothing forwards it to the core — the
+    /// numbers are not cells, and this does not make them any more so.
+    void resetLineCounter();
+
 private:
     Session *m_session = nullptr;
     Printer *m_printer = nullptr;

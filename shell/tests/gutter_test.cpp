@@ -15,10 +15,12 @@
 // columns off it — and `TerminalSize` follows a shrunken terminal, so getting
 // that wrong is permanent.
 
+#include <QAction>
 #include <QApplication>
 #include <QColor>
 #include <QDir>
 #include <QImage>
+#include <QMenu>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QWheelEvent>
@@ -268,6 +270,146 @@ void test_numbers_follow_the_history()
     CHECK(h.ink(image, 3, 0) > 0);
 }
 
+/// The View menu decides the reset item's state as it opens, so a test that
+/// wants that state has to open it. Signals are invokable meta-methods, which
+/// is cheaper here than showing a menu and pumping the events it wants.
+void openViewMenu(Harness &h)
+{
+    QMenu *menu = h.window.findChild<QMenu *>(QStringLiteral("viewMenu"));
+    CHECK(menu != nullptr);
+    if (menu) {
+        QMetaObject::invokeMethod(menu, "aboutToShow");
+    }
+}
+
+void test_the_reset_is_greyed_while_nothing_is_numbered()
+{
+    Harness h;
+    QAction *reset =
+        h.window.findChild<QAction *>(QStringLiteral("resetLineCounterAction"));
+    CHECK(reset != nullptr);
+    if (!reset) {
+        return;
+    }
+    // The gutter ships off, and an item that quietly did nothing would read as
+    // broken rather than as unavailable.
+    openViewMenu(h);
+    CHECK(!reset->isEnabled());
+
+    h.set("terminal.line_numbers", QStringLiteral("on"));
+    openViewMenu(h);
+    CHECK(reset->isEnabled());
+}
+
+void test_reset_starts_the_count_at_the_next_line()
+{
+    Harness h;
+    h.set("terminal.line_numbers", QStringLiteral("on"));
+    // Well past a screenful, so every number on screen is three figures and
+    // cannot be mistaken for one the reset produced.
+    for (int i = 0; i < 140; i++) {
+        h.feed("line\r\n");
+    }
+    const int rows = h.window.session()->rows();
+    const QImage before = h.gutter->grab().toImage();
+    CHECK(h.ink(before, 1, 0) > 0);
+    CHECK(h.gutter->origin() == 0);
+
+    QAction *reset =
+        h.window.findChild<QAction *>(QStringLiteral("resetLineCounterAction"));
+    CHECK(reset != nullptr);
+    if (!reset) {
+        return;
+    }
+    openViewMenu(h);
+    CHECK(reset->isEnabled());
+    reset->trigger();
+    h.settle();
+
+    // The mark is one line below the cursor and the cursor is on the bottom
+    // row, so every line on screen was printed before the counter existed and
+    // there is not a digit anywhere in the gutter. That blank is what the
+    // status line explains.
+    const QImage cleared = h.gutter->grab().toImage();
+    for (int y = 0; y < rows; y++) {
+        for (int col = 0; col < h.gutter->digits(); col++) {
+            CHECK(h.ink(cleared, col, y) == 0);
+        }
+    }
+
+    // ...and the line the host prints next is line 1. The feed lands its text
+    // on the line the cursor was already on — which is above the mark, and
+    // stays unnumbered — and leaves the cursor on the mark itself.
+    h.feed("alpha\r\n");
+    CHECK(h.window.session()->lineAt(rows - 1) == h.gutter->origin());
+    const QImage first = h.gutter->grab().toImage();
+    CHECK(h.ink(first, 3, rows - 1) > 0);
+    CHECK(h.ink(first, 2, rows - 1) == 0);
+    CHECK(h.ink(first, 3, rows - 2) == 0);
+
+    // One digit, not three: the count is the session's again from here, so the
+    // next line is 2 and not 143.
+    h.feed("bravo\r\n");
+    const QImage second = h.gutter->grab().toImage();
+    CHECK(h.ink(second, 3, rows - 1) > 0);
+    CHECK(h.ink(second, 2, rows - 1) == 0);
+    CHECK(h.ink(second, 3, rows - 2) > 0);
+
+    // The mark outlives the widget being hidden: the counter belongs to the
+    // page, and turning the numbers off is not the same as forgetting where
+    // they were counting from.
+    const quint64 origin = h.gutter->origin();
+    h.set("terminal.line_numbers", QStringLiteral("off"));
+    h.set("terminal.line_numbers", QStringLiteral("on"));
+    CHECK(h.gutter->origin() == origin);
+}
+
+void test_the_mark_belongs_to_the_tab()
+{
+    Harness h;
+    h.set("terminal.line_numbers", QStringLiteral("on"));
+    h.feed("alpha\r\n");
+
+    QAction *newTab =
+        h.window.findChild<QAction *>(QStringLiteral("newTabAction"));
+    QAction *reset =
+        h.window.findChild<QAction *>(QStringLiteral("resetLineCounterAction"));
+    CHECK(newTab != nullptr);
+    CHECK(reset != nullptr);
+    if (!newTab || !reset) {
+        return;
+    }
+    // The gutter the window opened with, caught while it is the only one:
+    // `findChildren` answers in the order the widget tree holds them, which a
+    // second page rearranges, and there is no `qobject_cast` back to the page
+    // to ask instead — `TerminalPage` is a plain `QWidget`.
+    LineNumberGutter *first = h.gutter;
+    newTab->trigger();
+    h.settle();
+
+    const QList<LineNumberGutter *> gutters =
+        h.window.findChildren<LineNumberGutter *>(
+            QStringLiteral("lineNumberGutter"));
+    CHECK(gutters.size() == 2);
+    if (gutters.size() != 2) {
+        return;
+    }
+    LineNumberGutter *second = gutters[0] == first ? gutters[1] : gutters[0];
+    CHECK(second != first);
+
+    // A new tab reads the settings file, not the tab it was opened from.
+    h.set("terminal.line_numbers", QStringLiteral("on"));
+    h.feed("bravo\r\n");
+    openViewMenu(h);
+    reset->trigger();
+    h.settle();
+
+    // The count restarted in the tab in front and in no other: two consoles
+    // are two things to count.
+    CHECK(second->origin() > 0);
+    CHECK(first->origin() == 0);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -288,6 +430,9 @@ int main(int argc, char **argv)
     test_the_wheel_over_the_gutter_scrolls_the_terminal();
     test_the_gutter_follows_the_terminals_colours();
     test_numbers_follow_the_history();
+    test_the_reset_is_greyed_while_nothing_is_numbered();
+    test_reset_starts_the_count_at_the_next_line();
+    test_the_mark_belongs_to_the_tab();
 
     // `--write DIR` dumps what this looks like, the way every other test binary
     // here does — the layout of a thing is the part no assertion can judge.
@@ -306,6 +451,25 @@ int main(int argc, char **argv)
         const QString path = dir + QStringLiteral("/line-numbers.png");
         h.window.grab().save(path);
         printf("wrote %s\n", qPrintable(path));
+
+        // And what a reset looks like, which is the half of it no check above
+        // can judge: the banner keeps no numbers, the command that follows is
+        // 1, 2, 3, and the status line says where the missing ones went.
+        Harness r;
+        r.window.resize(820, 420);
+        r.settle();
+        r.set("terminal.line_numbers", QStringLiteral("on"));
+        r.feed("$ ls\r\nAGENTS.md  crates  shell\r\n$ ");
+        if (QAction *reset = r.window.findChild<QAction *>(
+                QStringLiteral("resetLineCounterAction"))) {
+            reset->trigger();
+        }
+        r.feed("show version\r\nCisco IOS Software, Version 15.2(4)\r\n"
+               "Uptime is 41 weeks, 3 days\r\nSystem image file is "
+               "\"flash:c2960s.bin\"\r\n$ ");
+        const QString after = dir + QStringLiteral("/line-numbers-reset.png");
+        r.window.grab().save(after);
+        printf("wrote %s\n", qPrintable(after));
     }
 
     if (failures) {

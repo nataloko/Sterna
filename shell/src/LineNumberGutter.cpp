@@ -43,6 +43,17 @@ void LineNumberGutter::setDigits(int digits)
     updateMetrics();
 }
 
+void LineNumberGutter::resetCounter()
+{
+    // `TtCursor::y` is a row on the live screen and `topLine()` is that
+    // screen's first absolute line, so this is where the host is writing
+    // whether or not the view has scrolled back to look at something else —
+    // which matters, because a person scrolled up into history is exactly the
+    // person who reaches for this menu.
+    m_origin = m_session->topLine() + m_session->cursor().y + 1;
+    update();
+}
+
 void LineNumberGutter::updateMetrics()
 {
     // Fixed, so the layout beside it cannot stretch or squeeze the column and
@@ -99,8 +110,23 @@ void LineNumberGutter::paintEvent(QPaintEvent *)
             break;
         }
         // 1-based: the core counts the first line the host printed as 0, and
-        // no editor, pager or compiler anybody has met counts that way.
-        const QString text = QString::number(m_session->lineAt(y) + 1);
+        // no editor, pager or compiler anybody has met counts that way. The
+        // count starts at the session's first line until a reset moves the
+        // origin, and is signed for that reason — everything above a mark is
+        // zero or less. The two casts are safe by a wide margin: these are
+        // lines a host has printed, not a range.
+        const qint64 number =
+            qint64(m_session->lineAt(y)) - qint64(m_origin) + 1;
+        if (number < 1) {
+            // Printed before there was a counter, so it gets no number at all.
+            // A negative one is a fourth of the field spent on a minus sign in
+            // front of a distance nobody asked for, and it would be on screen
+            // far longer than the blank is: the blank ends at the host's next
+            // line, and the negatives would follow the reset point up into the
+            // history for the rest of the session. See `resetCounter`.
+            continue;
+        }
+        const QString text = QString::number(number);
         // Right-aligned by cell arithmetic rather than by measuring the string
         // or by handing Qt a rectangle: `Theme` has given this font absolute
         // letter spacing that makes one glyph exactly one cell, so a digit's

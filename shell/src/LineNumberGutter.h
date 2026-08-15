@@ -43,6 +43,31 @@ public:
     void setDigits(int digits);
     int digits() const { return m_digits; }
 
+    /// Start the count again: the next line the host prints is line 1.
+    ///
+    /// The mark is placed one line *below* the cursor because a counter is
+    /// reset before the thing it is going to count — somebody at a prompt about
+    /// to run a command wants that command's first line of output to be 1, and
+    /// the line they are standing on is the prompt. It is held as an absolute
+    /// line number, so the newline that follows may scroll the page as much as
+    /// it likes without moving the mark.
+    ///
+    /// A line above the mark carries no number at all, rather than a zero or a
+    /// negative one: it was printed before there was a counter to count it. So
+    /// the gutter goes blank from the cursor upwards until the host prints
+    /// something, which is why the window says what it has done in the status
+    /// line — a column of numbers that vanishes with nothing to explain it is
+    /// the sort of thing that reads as a bug.
+    ///
+    /// Display only, and deliberately not a setting: a mark is a moment in one
+    /// session, and a saved one would number the next session from a point that
+    /// never happened in it.
+    void resetCounter();
+
+    /// The absolute line the count starts from — zero, the session's own first
+    /// line, until something resets it.
+    quint64 origin() const { return m_origin; }
+
     /// Re-measure after the font or the cell size moved.
     void updateMetrics();
 
@@ -69,4 +94,5 @@ private:
     const Theme &m_theme;
     QWidget *m_wheelTarget = nullptr;
     int m_digits = 4;
+    quint64 m_origin = 0;
 };

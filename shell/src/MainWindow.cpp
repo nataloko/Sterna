@@ -1394,11 +1394,21 @@ bool MainWindow::onSettingsChanged()
     }
     // The same, for the gutter — so flipping it in the settings dialog, or from
     // a script, moves the menu's tick with it.
+    const bool lineNumbers =
+        m_session->setting(QStringLiteral("terminal.line_numbers"))
+        == QLatin1String("on");
     if (m_lineNumbersAction) {
         const QSignalBlocker block(m_lineNumbersAction);
-        m_lineNumbersAction->setChecked(
-            m_session->setting(QStringLiteral("terminal.line_numbers"))
-            == QLatin1String("on"));
+        m_lineNumbersAction->setChecked(lineNumbers);
+    }
+    // And the command beside it, which has nothing to reset while nothing is
+    // numbered. The View menu asks this question again as it opens, because
+    // this runs for the page in front and a tab switch is not a settings
+    // change — but a disabled `QAction` refuses `trigger()` as well as a click,
+    // so leaving the answer until the menu opens would put every other way of
+    // reaching it behind a menu nobody opened.
+    if (m_resetLineCounterAction) {
+        m_resetLineCounterAction->setEnabled(lineNumbers);
     }
     updatePanelActions();
     // The buttons themselves are not settings, so this rereads the list as
@@ -2396,6 +2406,32 @@ void MainWindow::buildMenus()
             onNotice(tr("Could not change the line numbers: %1").arg(error));
         }
     });
+    // Not a setting, so it does not write one: a mark is a moment, and the
+    // counter it moves belongs to the tab in front. No shortcut, for the reason
+    // View > Tiled has none.
+    m_resetLineCounterAction =
+        view->addAction(tr("Reset line counter"), this, [this] {
+            m_page->resetLineCounter();
+            // Because the effect is usually a gutter that goes blank: the mark
+            // is below the cursor, so at a prompt on the bottom row every line
+            // on screen is now above it. The sentence says the numbers are
+            // coming back and when.
+            showPageMessage(m_page,
+                            tr("Line numbers restart at the next line"), 3000);
+        });
+    m_resetLineCounterAction->setObjectName(
+        QStringLiteral("resetLineCounterAction"));
+    m_resetLineCounterAction->setEnabled(false);
+    // And asked again as the menu opens, so that the answer is the page in
+    // *front*: `terminal.line_numbers` belongs to a session, and a tab switch
+    // is not a settings change, so `onSettingsChanged` never runs for it. The
+    // Edit menu asks about a selection the same way.
+    connect(view, &QMenu::aboutToShow, this, [this] {
+        m_resetLineCounterAction->setEnabled(
+            m_session->setting(QStringLiteral("terminal.line_numbers"))
+            == QLatin1String("on"));
+    });
+
     m_highlightingAction = view->addAction(tr("Highlight matches"));
     m_highlightingAction->setObjectName(QStringLiteral("highlightMatchesAction"));
     m_highlightingAction->setCheckable(true);

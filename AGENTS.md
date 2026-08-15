@@ -1302,6 +1302,14 @@ The menu:
   and clears only `PopupMenu`.
 - **The popup reuses the menu bar's `QAction`s** — a second tree would
   drift. Destroying the temporary `QMenu` only removes the association.
+- **A disabled `QAction` refuses `trigger()` as well as a click**, silently —
+  so an enabled state computed only in the menu's `aboutToShow` is an item
+  nothing but a mouse can reach, and a test or a script that triggers it does
+  nothing and reports nothing. View > Reset line counter sets its state on the
+  settings edge *and* refreshes it as the menu opens: the first is what makes
+  `trigger()` work, the second is what makes the answer the front tab's, since
+  `terminal.line_numbers` belongs to a session and a tab switch is not a
+  settings change.
 
 The keyboard:
 

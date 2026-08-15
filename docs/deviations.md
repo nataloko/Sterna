@@ -759,6 +759,30 @@ survives the output scrolling underneath it. The gutter reads it through
 `Session::lineAt` and adds one, because the core calls the first line zero and
 nothing a person uses does.
 
+**Unless somebody restarts the count, which View > Reset line counter does.**
+The mark it sets is one line *below* the cursor, so the next line the host
+prints is line 1 — a counter is reset before the thing it is going to count,
+and at a prompt the line you are standing on is the prompt, not the output you
+are about to ask for. That is the sentence the item is for: reset, run the
+command, and its first line of output is 1.
+
+Everything printed before the mark then carries no number at all, rather than a
+zero or a negative one. It was printed before there was a counter to count it,
+and a minus sign would spend a quarter of the field on a distance nobody asked
+for — on screen far longer than the blank is, since the blank ends at the
+host's next line and the negatives would follow the mark up into the history
+for the rest of the session. The visible effect of a reset at a prompt on the
+bottom row is therefore a gutter that goes blank, which is why the status line
+says `Line numbers restart at the next line`: a column of numbers that vanishes
+with nothing to explain it reads as a bug.
+
+The mark belongs to the tab and to the moment. Each console is counting its own
+output, so resetting one leaves the others alone; and it is a command rather
+than a setting, so nothing writes it to the file — a saved mark would number
+the next session from a point that never happened in it. It does cost the one
+promise above: a number written down before a reset stops being true. That is
+the point of asking for one, and nothing else moves a number.
+
 **The numbers are not in the terminal, and that is the whole design.** The
 gutter is a separate widget beside the view rather than columns reserved inside
 it. It follows that they cannot be selected, cannot be copied, are not in the

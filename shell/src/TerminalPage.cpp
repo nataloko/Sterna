@@ -183,6 +183,11 @@ void TerminalPage::applySettings()
     }
 }
 
+void TerminalPage::resetLineCounter()
+{
+    m_gutter->resetCounter();
+}
+
 void TerminalPage::setTransferDialog(XferProgressDialog *dialog)
 {
     if (dialog == m_xferDialog) {
