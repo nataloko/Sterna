@@ -5,6 +5,18 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-15
+
+### Changed
+
+- A new application icon. The tern now flies across a dark terminal tile, in
+  phosphor green over dim rows of output, with the cursor block in orange
+  beside the beak. It is the same bird on the same S-shaped flight path; what
+  changed is the ground it is on. The old tile was warm white, which made it
+  the one bright square in a dock of dark ones and said nothing about what the
+  program is. Windows, Linux launchers and the window itself all take the new
+  one.
+
 ## [0.5.0] - 2026-08-15
 
 ### Added
@@ -371,7 +383,8 @@ Initial public release.
 - Linux AppImage and Windows installer packages.
 
 [GitHub releases page]: https://github.com/nataloko/Sterna/releases
-[Unreleased]: https://github.com/nataloko/Sterna/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/nataloko/Sterna/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/nataloko/Sterna/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/nataloko/Sterna/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/nataloko/Sterna/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/nataloko/Sterna/compare/v0.3.1...v0.4.0
