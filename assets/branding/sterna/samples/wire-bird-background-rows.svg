@@ -25,6 +25,21 @@
       </g>
     </g>
 
+    <g id="bird-shield-clear">
+      <g transform="translate(544 544) scale(.82) translate(-544 -544)">
+        <g transform="translate(544 544) scale(1.18) rotate(-20) translate(-544 -544)">
+          <g transform="translate(0 254)">
+            <g transform="translate(0 580) scale(.1 -.1)">
+              <use xlink:href="#tern-shape" fill="#03110A" stroke="#03110A" stroke-width="300"
+                   stroke-linejoin="round"/>
+              <use xlink:href="#tern-beak" fill="#03110A" stroke="#03110A" stroke-width="300"
+                   stroke-linejoin="round"/>
+            </g>
+          </g>
+        </g>
+      </g>
+    </g>
+
     <g id="wire-tern">
       <g transform="translate(544 544) scale(.82) translate(-544 -544)">
         <g transform="translate(544 544) scale(1.18) rotate(-20) translate(-544 -544)">
@@ -54,6 +69,7 @@
       <rect x="118" y="664" width="570" height="18" rx="4" opacity=".16"/>
       <rect x="118" y="736" width="788" height="18" rx="4" opacity=".14"/>
       <rect x="118" y="808" width="654" height="18" rx="4" opacity=".17"/>
+      <rect x="790" y="801" width="32" height="32" rx="4" fill="#F99E2A" opacity="1"/>
     </g>
 
     <g id="rows-left" fill="#73F59B">
@@ -131,10 +147,15 @@
       <g filter="url(#glow)"><use xlink:href="#wire-tern"/></g>
     </g>
 
+    <g id="bird-on-top-clear">
+      <use xlink:href="#bird-shield-clear"/>
+      <g filter="url(#glow)"><use xlink:href="#wire-tern"/></g>
+    </g>
+
     <symbol id="tile-full" viewBox="0 0 1088 1088">
       <rect width="1088" height="1088" rx="190" fill="#03110A"/>
       <use xlink:href="#rows-full"/>
-      <use xlink:href="#bird-on-top"/>
+      <use xlink:href="#bird-on-top-clear"/>
     </symbol>
     <symbol id="tile-left" viewBox="0 0 1088 1088">
       <rect width="1088" height="1088" rx="190" fill="#03110A"/>
