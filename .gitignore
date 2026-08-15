@@ -49,3 +49,8 @@ compile_commands.json
 # artifacts, not kept in the source tree.
 /release-update/
 /release-build/
+
+# Where an agent puts a branch it is working on (`git worktree add`). The work
+# is in the repository already, as commits on that branch; this is only the
+# checkout, and one of them holds a whole build tree.
+/.claude/worktrees/
