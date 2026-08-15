@@ -2491,9 +2491,11 @@ void MainWindow::buildMenus()
             // Because the effect is usually a gutter that goes blank: the mark
             // is below the cursor, so at a prompt on the bottom row every line
             // on screen is now above it. The sentence says the numbers are
-            // coming back and when.
-            showPageMessage(m_page,
-                            tr("Line numbers restart at the next line"), 3000);
+            // coming back and when. `restart` is not an approved word
+            // (rule 9); `START ... AGAIN` is what the dictionary offers, and
+            // it fits the strip the same way `Logging stopped` does.
+            showPageMessage(
+                m_page, tr("Line numbers start again at the next line"), 3000);
         });
     m_resetLineCounterAction->setObjectName(
         QStringLiteral("resetLineCounterAction"));
