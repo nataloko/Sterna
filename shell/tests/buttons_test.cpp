@@ -39,6 +39,7 @@
 #include "QuickButtonBar.h"
 #include "QuickButtons.h"
 #include "QuickButtonsDialog.h"
+#include "SettingsDialog.h"
 #include "Session.h"
 #include "TerminalPage.h"
 #include "TerminalView.h"
@@ -856,6 +857,32 @@ void showing_the_panel_leaves_every_terminal_alone()
     CHECK(columns() == before);
 }
 
+/// The width is reachable from Setup, which is the **only** way to set one now
+/// that there is no handle.
+///
+/// The control is generated from the schema rather than written by hand, so
+/// this is really asking that `int_clamp` still crosses the ABI as something
+/// the dialog knows how to draw. A schema kind it did not recognise would
+/// leave the row out of the page and the width unreachable — with nothing
+/// failing anywhere else, because every other test sets it through the session.
+void the_width_has_a_control_in_setup()
+{
+    Session session(80, 24);
+    SettingsDialog dialog(&session);
+    dialog.adjustSize();
+    QSpinBox *box = dialog.findChild<QSpinBox *>(
+        QStringLiteral("settingEditor:window.quick_buttons_width"));
+    CHECK(box != nullptr);
+    if (!box) {
+        return;
+    }
+    CHECK(box->minimum() == 0);
+    CHECK(box->maximum() == 2000);
+    // Zero is the shipped sentinel and has to survive the round trip through a
+    // spin box, or a visit to the Window page pins every panel to a number.
+    CHECK(box->value() == 0);
+}
+
 /// A configured width is opened at, and changing it live costs the terminal
 /// nothing — which is the whole of the feature now that there is no handle.
 ///
@@ -1229,6 +1256,7 @@ int main(int argc, char **argv)
     a_width_stops_at_the_edge_of_the_screen();
     showing_the_panel_leaves_every_terminal_alone();
     the_configured_panel_width_is_opened_at();
+    the_width_has_a_control_in_setup();
     adding_starts_on_a_new_row();
     a_repeat_sends_its_count_and_stops();
     a_second_press_stops_a_run_with_no_end();
