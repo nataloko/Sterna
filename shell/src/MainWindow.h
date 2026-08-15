@@ -577,6 +577,9 @@ private:
     /// asks for a width measured from here, so a drag that wanders back to
     /// where it started asks for the width it started with.
     int m_quickDragWidth = 0;
+    /// Whether a grip drag is running, which is what makes the grid hold span
+    /// the gesture rather than one mouse-move — see `resizeQuickPanel`.
+    bool m_quickDragging = false;
     /// The clock for the buttons that send more than once. Owns no buttons —
     /// only indices into the bar's list, which is why editing that list stops
     /// every run.

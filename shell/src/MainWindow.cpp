@@ -3788,7 +3788,16 @@ int MainWindow::resizeQuickPanel(int wanted)
         return m_quickPanelWidth;
     }
 
-    holdTerminalGrids(true);
+    // **The hold belongs to the gesture, not to this call.** A drag arrives as
+    // one of these per mouse-move, and releasing at the end of each one fires
+    // the refit it just swallowed — so a compositor that answers `resize()`
+    // late would get a real `Grid::resize` per pixel of drag, which is the
+    // thing this function exists to prevent. `beginQuickPanelResize` owns the
+    // hold while a drag is running; only a lone call takes and gives it back.
+    const bool ownHold = !m_quickDragging;
+    if (ownHold) {
+        holdTerminalGrids(true);
+    }
     m_quickPanelWidth = width;
     // **Grow the window before the panel and shrink it after.** Either way the
     // intermediate state is one where the terminals have more room than they
@@ -3808,17 +3817,26 @@ int MainWindow::resizeQuickPanel(int wanted)
     if (QLayout *row = m_centralRow->layout()) {
         row->activate();
     }
-    holdTerminalGrids(false);
+    if (ownHold) {
+        holdTerminalGrids(false);
+    }
     return m_quickPanelWidth;
 }
 
 void MainWindow::beginQuickPanelResize()
 {
     m_quickDragWidth = m_quickPanelWidth;
+    m_quickDragging = true;
+    holdTerminalGrids(true);
 }
 
 void MainWindow::endQuickPanelResize()
 {
+    m_quickDragging = false;
+    // One release for the whole gesture, which is where a refit swallowed
+    // anywhere in it is finally answered — at the geometry the drag actually
+    // ended on rather than at each of the sizes it passed through.
+    holdTerminalGrids(false);
     if (m_quickPanelWidth == m_quickDragWidth) {
         return;
     }
