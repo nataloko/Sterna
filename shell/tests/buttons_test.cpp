@@ -942,6 +942,23 @@ void the_panel_width_outlives_the_window()
     CHECK(spin([&second] { return second.isVisible(); }, 2000));
     CHECK(spin([&second, dragged] { return barOf(second)->width() == dragged; },
                2000));
+
+    // ...and the setting is a live one, not only something read at startup.
+    // The schema-driven Window page grew a spin box for it when the area combo
+    // went, and that box is the keyboard route to a width — the only route at
+    // all for a maximised window, where the grip is clamped to nothing.
+    if (!placeForGrowth(second, 200)) {
+        return;
+    }
+    const int cols = second.session()->cols();
+    QString error;
+    CHECK(second.session()->setSetting(
+        QStringLiteral("window.quick_buttons_width"),
+        QString::number(dragged + 60), &error));
+    CHECK(spin([&second, dragged] { return barOf(second)->width() == dragged + 60; },
+               2000));
+    // ...through the same helper, so it costs the terminal nothing either.
+    CHECK(second.session()->cols() == cols);
 }
 
 /// Add — the `+` at the end of the bar, and Add in its context menu — opens
