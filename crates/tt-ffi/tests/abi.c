@@ -636,6 +636,57 @@ static void test_logging(void)
         remove(path);
     }
 
+    /* Pause discards rather than holds, so the count stops and what arrived
+     * meanwhile never appears — which is what makes it a pause rather than a
+     * delay. */
+    tt_log_options_default(&opts);
+    CHECK_OK(tt_session_log_start(s, path, &opts));
+    CHECK(!tt_session_log_paused(s));
+    tt_session_feed(s, (const uint8_t *)"kept\r\n", 6);
+    uint64_t at_pause = tt_session_log_bytes(s);
+    CHECK(at_pause == 5);
+
+    tt_session_log_pause(s, true);
+    CHECK(tt_session_log_paused(s));
+    tt_session_feed(s, (const uint8_t *)"lost\r\n", 6);
+    CHECK(tt_session_log_bytes(s) == at_pause);
+
+    tt_session_log_pause(s, false);
+    CHECK(!tt_session_log_paused(s));
+    tt_session_feed(s, (const uint8_t *)"kept2\r\n", 7);
+    CHECK(tt_session_log_bytes(s) > at_pause);
+    tt_session_log_stop(s);
+    /* ...and a closed log is not a paused one. */
+    CHECK(!tt_session_log_paused(s));
+
+    f = fopen(path, "rb");
+    CHECK(f != NULL);
+    if (f) {
+        char buf[256] = {0};
+        fread(buf, 1, sizeof buf - 1, f);
+        fclose(f);
+        CHECK(strcmp(buf, "kept\nkept2\n") == 0);
+        remove(path);
+    }
+
+    /* The settings' own answer, which is what a log dialog opens on. The three
+     * rules worth having in one place: the timestamp type is two keys, the
+     * rotation size counts for nothing unless LogRotate is 1, and a step of
+     * zero is ten thousand generations. */
+    CHECK_OK(tt_session_set_setting(s, "log.binary", "on"));
+    CHECK_OK(tt_session_set_setting(s, "log.append", "on"));
+    CHECK_OK(tt_session_set_setting(s, "log.rotate_size", "4096"));
+    tt_session_log_defaults(s, &opts);
+    CHECK(opts.raw);
+    CHECK(opts.append);
+    CHECK(opts.rotate_size == 0); /* LogRotate is still 0 */
+    CHECK(!opts.bom);             /* no key answers for it */
+
+    CHECK_OK(tt_session_set_setting(s, "log.rotate", "1"));
+    tt_session_log_defaults(s, &opts);
+    CHECK(opts.rotate_size == 4096);
+    CHECK(opts.rotate_keep == 10000); /* LogRotateStep 0 */
+
     tt_session_free(s);
 }
 
@@ -1911,6 +1962,9 @@ static void test_null_safety(void)
     tt_session_log_stop(NULL);
     CHECK(tt_session_log_path(NULL) == NULL);
     CHECK(tt_session_log_bytes(NULL) == 0);
+    tt_session_log_pause(NULL, true);
+    CHECK(!tt_session_log_paused(NULL));
+    tt_session_log_defaults(NULL, NULL);
     CHECK(tt_session_view_offset(NULL) == 0);
     tt_session_set_view_offset(NULL, 5);
     tt_session_clear_screen(NULL);

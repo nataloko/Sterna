@@ -3105,6 +3105,44 @@ const char *tt_session_log_path(TtSession *session);
 uint64_t tt_session_log_bytes(const TtSession *session);
 
 /**
+ * Stop or resume writing the log — upstream's `File > Pause Logging` and the
+ * button on its logging dialog, and TTL's `logpause`/`logstart`.
+ *
+ * **What arrives while a log is paused is discarded, not held.** That is
+ * upstream in two places at once — a binary log drops the byte at the input
+ * (`filesys_log.cpp:1038`) and a text one drops it on the way out of the ring
+ * (`:647`) — and it is what the pause is for: a pause that buffered would
+ * write the gap into the file the moment it ended.
+ *
+ * **Not an error with no log open**, in either direction, which is upstream's
+ * `FLogPause` returning on a NULL `LogVar`.
+ */
+void tt_session_log_pause(TtSession *session,
+                          bool paused);
+
+/**
+ * Whether the log is open *and* paused. False when nothing is logging.
+ */
+bool tt_session_log_paused(const TtSession *session);
+
+/**
+ * Fill `out` with what this session's settings say a log would be written as.
+ *
+ * A frontend calls this to seed a log dialog, and the alternative is the
+ * reason it exists: deriving these from the settings by hand means a second
+ * copy of three rules that are not guessable — `LogTimestampType`'s empty
+ * value falls back to Tera Term 4's `LogTimestampUTC`, `LogRotateSize` counts
+ * for nothing unless `LogRotate` is exactly 1, and a `LogRotateStep` of zero
+ * means ten thousand generations rather than none.
+ *
+ * `bom` and `include_screen` come back as the settings' own answer: there is
+ * no key for the first, so it is always false and the caller supplies it.
+ *
+ * Does nothing on a null pointer.
+ */
+void tt_session_log_defaults(const TtSession *session, TtLogOptions *out);
+
+/**
  * Say what this session is connected to, for the `&h` and `&p` a log name may
  * hold. `host` may be null and a `tcp_port` of 0 means "none".
  *
