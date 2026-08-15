@@ -324,8 +324,10 @@ void test_the_menu_item_starts_the_log_the_dialog_configured()
 
 /// Pausing means what arrives meanwhile is dropped rather than held, which is
 /// the whole point of it: a pause that buffered would write the gap into the
-/// file the moment it ended.
-void test_pausing_stops_the_bytes()
+/// file the moment it ended. Reachable from the menu and from the indicator
+/// counting the bytes, which is where Tera Term's Pause button would be if
+/// this program had the logging window it lives on.
+void test_pausing_stops_the_bytes_from_either_place()
 {
     QTemporaryDir dir;
     QTemporaryDir logs;
@@ -355,9 +357,38 @@ void test_pausing_stops_the_bytes()
     session->feed(QByteArray("lost\r\n"));
     CHECK(session->logBytes() == atPause);
 
-    pause->trigger();
+    auto *page = static_cast<TerminalPage *>(
+        window.findChild<PanelContainer *>()->widget(0));
+    auto *label = page->status()->findChild<QLabel *>(QStringLiteral("statusLog"));
+    CHECK(label != nullptr);
+    if (!label) {
+        return;
+    }
+    // Paused it says so and stops blinking — a steady number is the honest
+    // shape for a counter that has stopped, and the blink is what says a
+    // recording is running.
+    auto *blink = page->status()->findChild<QTimer *>(QStringLiteral("statusLogBlinkTimer"));
+    CHECK(blink != nullptr);
+    CHECK(label->text().startsWith(QStringLiteral("PAUSED ")));
+    CHECK(label->styleSheet().contains(QStringLiteral("#f9a825")));
+    CHECK(blink && !blink->isActive());
+
+    const auto click = [label] {
+        QMouseEvent press(QEvent::MouseButtonPress, QPointF(2, 2), QPointF(2, 2),
+                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(label, &press);
+    };
+    click();
     CHECK(!session->logPaused());
     CHECK(!pause->isChecked());
+    CHECK(label->text().startsWith(QStringLiteral("REC ")));
+    CHECK(blink && blink->isActive());
+
+    // ...and back the other way, from the same place.
+    click();
+    CHECK(session->logPaused());
+    click();
+    CHECK(!session->logPaused());
 
     session->feed(QByteArray("kept2\r\n"));
     CHECK(session->logBytes() > atPause);
@@ -402,7 +433,7 @@ int main(int argc, char **argv)
     test_a_choice_disables_what_it_makes_meaningless();
     test_the_field_offers_the_last_directory_and_a_dated_name();
     test_the_menu_item_starts_the_log_the_dialog_configured();
-    test_pausing_stops_the_bytes();
+    test_pausing_stops_the_bytes_from_either_place();
     render_dialogs();
 
     if (failures != 0) {

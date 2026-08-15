@@ -6,6 +6,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLocale>
+#include <QMouseEvent>
 #include <QResizeEvent>
 #include <QTimer>
 
@@ -48,6 +49,7 @@ PageStatusBar::PageStatusBar(QWidget *parent)
 
     m_log = new QLabel(this);
     m_log->setObjectName(QStringLiteral("statusLog"));
+    m_log->installEventFilter(this);
     layout->addWidget(m_log);
 
     m_connection = new QLabel(this);
@@ -122,15 +124,17 @@ void PageStatusBar::setConnection(bool connected, bool connecting,
     }
 }
 
-void PageStatusBar::setLogging(bool logging, quint64 bytes)
+void PageStatusBar::setLogging(bool logging, quint64 bytes, bool paused)
 {
     // `formattedDataSize` rather than a KiB division, so a log that has only
     // just started reads "REC 44 bytes" instead of "REC 0 KiB" — the number
-    // anyone actually checks is whether it is *moving*.
-    const QString text = logging
-                             ? tr("REC %1").arg(QLocale().formattedDataSize(
-                                   static_cast<qint64>(bytes)))
-                             : QString();
+    // anyone actually checks is whether it is *moving*. Which is also why the
+    // paused state says so in the word rather than only in the colour: a
+    // number that has stopped looks exactly like an idle line.
+    const QString size = QLocale().formattedDataSize(static_cast<qint64>(bytes));
+    const QString text = !logging  ? QString()
+                         : paused  ? tr("PAUSED %1").arg(size)
+                                   : tr("REC %1").arg(size);
     // Compared before it is assigned. This is reached from `Session::damaged`,
     // which fires on every read on every open session, and `QLabel::setText`
     // is a relayout — so an unchanged size must cost a string compare and
@@ -138,17 +142,38 @@ void PageStatusBar::setLogging(bool logging, quint64 bytes)
     if (text != m_log->text()) {
         m_log->setText(text);
     }
-    if (logging == m_logging) {
+    m_log->setCursor(logging ? Qt::PointingHandCursor : Qt::ArrowCursor);
+    m_log->setToolTip(logging ? (paused ? tr("Click to resume logging")
+                                        : tr("Click to pause logging"))
+                              : QString());
+    // **Both halves of the state, not just `logging`.** The early return here
+    // is what keeps a per-read call cheap, and a pause that was not part of
+    // the comparison would never repaint — the same shape as
+    // `ConnectBar::Entry::operator==`.
+    if (logging == m_logging && paused == m_logPaused) {
         return;
     }
     m_logging = logging;
+    m_logPaused = paused;
     m_logBlinkOn = logging;
-    if (logging) {
+    if (logging && !paused) {
         m_logBlinkTimer->start();
     } else {
         m_logBlinkTimer->stop();
     }
     applyLogAppearance();
+}
+
+bool PageStatusBar::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_log && event->type() == QEvent::MouseButtonPress && m_logging) {
+        auto *press = static_cast<QMouseEvent *>(event);
+        if (press->button() == Qt::LeftButton) {
+            emit logClicked();
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void PageStatusBar::showMessage(const QString &text, int ms)
@@ -236,6 +261,13 @@ void PageStatusBar::applyLogAppearance()
 {
     if (!m_logging) {
         m_log->setStyleSheet(QString());
+        return;
+    }
+    if (m_logPaused) {
+        // Steady, and a colour that is neither the running red nor the
+        // ordinary text: a paused recording is still a recording somebody left
+        // open, and it must not read as "nothing is happening".
+        m_log->setStyleSheet(QStringLiteral("QLabel { color: #f9a825; font-weight: bold; }"));
         return;
     }
     // Bold in both phases so the label never changes width while it blinks.

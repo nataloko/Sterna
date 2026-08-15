@@ -809,6 +809,17 @@ void test_the_logging_indicator_blinks_red()
     status.setLogging(true, 45);
     CHECK(log->styleSheet().contains(QStringLiteral("transparent")));
 
+    // Paused is a third state and it has to reach the label: the early return
+    // that keeps a per-read call cheap compares the whole state, not just
+    // whether something is logging.
+    status.setLogging(true, 45, true);
+    CHECK(log->text().startsWith(QStringLiteral("PAUSED ")));
+    CHECK(log->styleSheet().contains(QStringLiteral("#f9a825")));
+    CHECK(!blink->isActive());
+    status.setLogging(true, 46, false);
+    CHECK(log->text().startsWith(QStringLiteral("REC ")));
+    CHECK(blink->isActive());
+
     status.setLogging(false, 45);
     CHECK(log->text().isEmpty());
     CHECK(log->styleSheet().isEmpty());

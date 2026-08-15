@@ -596,6 +596,22 @@ void MainWindow::wirePage(TerminalPage *page)
     connect(session, &Session::damaged, this, [this, page] {
         updateLogStatus(page);
     });
+    // The indicator pauses the log it is counting. It belongs to *this* page,
+    // so it pauses this page's log whether or not the page is the active one —
+    // the menu item is the one that follows the front terminal.
+    connect(page->status(), &PageStatusBar::logClicked, this, [this, page] {
+        Session *s = page->session();
+        if (!s->isLogging()) {
+            return;
+        }
+        const bool paused = !s->logPaused();
+        s->pauseLog(paused);
+        page->status()->showMessage(paused ? tr("Logging paused") : tr("Logging resumed"),
+                                    3000);
+        if (page == m_page) {
+            updateStatus();
+        }
+    });
     connect(session, &Session::titleChanged, this,
             [this, page](const QString &title) {
                 updateTabTitle(page);
@@ -3918,7 +3934,8 @@ void MainWindow::updateLogStatus(TerminalPage *page)
     // not even asked for unless this page is recording, and `setLogging`
     // compares before it assigns: a quiet page costs a pointer test, and a
     // busy one costs a relayout only when the formatted size actually moves.
-    page->status()->setLogging(logging, logging ? session->logBytes() : 0);
+    page->status()->setLogging(logging, logging ? session->logBytes() : 0,
+                               logging && session->logPaused());
 }
 
 void MainWindow::updatePanelActions()
