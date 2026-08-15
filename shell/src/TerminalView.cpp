@@ -1151,8 +1151,30 @@ void TerminalView::closeFind()
     m_findBar->close();
 }
 
+void TerminalView::setGridHeld(bool held)
+{
+    if (m_gridHeld == held) {
+        return;
+    }
+    m_gridHeld = held;
+    if (held) {
+        m_refitHeld = false;
+        return;
+    }
+    if (m_refitHeld) {
+        m_refitHeld = false;
+        refit();
+    }
+}
+
 void TerminalView::refit()
 {
+    // The window is mid-way through absorbing a chrome change and the widget's
+    // width is not the answer yet. See `setGridHeld`.
+    if (m_gridHeld) {
+        m_refitHeld = true;
+        return;
+    }
     const int cols = qBound(1, width() / m_theme.cellWidth(), TT_BUFF_X_MAX);
     const int rows = qMax(1, height() / m_theme.cellHeight());
     if (cols != m_session->cols() || rows != m_session->rows()) {

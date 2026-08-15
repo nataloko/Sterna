@@ -12,12 +12,12 @@
 #include <QCloseEvent>
 #include <QDateTime>
 #include <QDesktopServices>
-#include <QDockWidget>
 #include <QEvent>
 #include <QFile>
 #include <QFontDialog>
 #include <QGuiApplication>
 #include <QHash>
+#include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
 #include <QMenu>
@@ -61,6 +61,7 @@
 #include "Macro.h"
 #include "Plugins.h"
 #include "QuickButtonBar.h"
+#include "QuickButtonGrip.h"
 #include "QuickButtonRepeat.h"
 #include "QuickButtonsDialog.h"
 #include "Session.h"
@@ -164,38 +165,13 @@ QString panelLayoutSetting(PanelLayout layout)
                                         : QStringLiteral("single");
 }
 
-/// `window.quick_buttons_area`, as a Qt dock area.
-///
-/// The schema already refuses an unrecognised spelling — its enum arm is
-/// `top/*` — so this only has to name the four.
-Qt::DockWidgetArea quickButtonArea(const QString &setting)
-{
-    if (setting == QLatin1String("bottom")) {
-        return Qt::BottomDockWidgetArea;
-    }
-    if (setting == QLatin1String("left")) {
-        return Qt::LeftDockWidgetArea;
-    }
-    if (setting == QLatin1String("right")) {
-        return Qt::RightDockWidgetArea;
-    }
-    return Qt::TopDockWidgetArea;
-}
-
-/// ...and back, for remembering where the dock was dragged to.
-QString quickButtonAreaName(Qt::DockWidgetArea area)
-{
-    switch (area) {
-    case Qt::BottomDockWidgetArea:
-        return QStringLiteral("bottom");
-    case Qt::LeftDockWidgetArea:
-        return QStringLiteral("left");
-    case Qt::RightDockWidgetArea:
-        return QStringLiteral("right");
-    default:
-        return QStringLiteral("top");
-    }
-}
+/// The ceiling `window.quick_buttons_width` is held under, which is the
+/// schema's own — repeated here because a drag is clamped before any value
+/// reaches the file, and one that could leave the range would write a width
+/// the next launch does not open at. There is no matching floor: the real one
+/// is the panel's own minimum, which depends on the captions and the font and
+/// is therefore the widget's answer rather than a number.
+constexpr int kQuickPanelMaxWidth = 2000;
 
 /// Whether this window system gives a client coordinates it may restore.
 ///
@@ -313,7 +289,29 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
 {
     m_i18n = new I18n(this);
     m_panels = new PanelContainer(this);
-    setCentralWidget(m_panels);
+
+    // **The terminals and the quick-button panel share one central widget**,
+    // rather than the panel living in a dock beside it.
+    //
+    // A `QMainWindow` dock is the obvious home for a resizable side panel and
+    // it is the wrong one: its separator divides the client area, so every
+    // pixel dragged into the panel comes out of the central widget. The
+    // terminal there is fitted to whatever width is left in whole cells, so a
+    // few pixels is a column, and a column is a real `Grid::resize` — which
+    // truncates every line it shortens, in the page and in the scrollback, and
+    // does not give them back when the panel is dragged narrow again. Dragging
+    // a panel destroyed text.
+    //
+    // Owning the row instead means the handle can move the *window's* outer
+    // edge and leave the terminal's width alone, which is what
+    // `resizeQuickPanel` does. The panel spans the whole central area, so it
+    // sits beside every tab and every tile exactly as the right dock area did.
+    m_centralRow = new QWidget(this);
+    auto *centralLayout = new QHBoxLayout(m_centralRow);
+    centralLayout->setContentsMargins(0, 0, 0, 0);
+    centralLayout->setSpacing(0);
+    centralLayout->addWidget(m_panels, 1);
+    setCentralWidget(m_centralRow);
 
     m_page = createPage();
     m_panels->addPage(m_page, tr("Terminal"));
@@ -425,30 +423,28 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
         rememberSettings({{name, value}});
     });
 
-    // The user's own commands live in a dock rather than directly in a
-    // QMainWindow toolbar area: dock splitters are user-resizable, toolbar
-    // bands are not. Its area comes from the settings below once they have
-    // been read.
-    m_quickDock = new QDockWidget(tr("Quick buttons"), this);
-    m_quickDock->setObjectName(QStringLiteral("quickButtonDock"));
-    m_quickDock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    m_quickDock->setFeatures(QDockWidget::DockWidgetMovable);
-    // The bar is the dock's whole widget rather than something aligned inside a
-    // panel: it owns the stretches that centre its buttons, and a wrapper that
-    // capped its height would leave them pinned to one end of the panel with
-    // the empty room all at the other.
-    m_quickBar = new QuickButtonBar(m_quickDock);
-    m_quickDock->setWidget(m_quickBar);
-    addDockWidget(Qt::RightDockWidgetArea, m_quickDock);
-    m_quickDock->hide();
-    const auto orientQuickBar = [this](Qt::DockWidgetArea area) {
-        const bool horizontal = area == Qt::TopDockWidgetArea
-            || area == Qt::BottomDockWidgetArea;
-        m_quickBar->setOrientation(horizontal ? Qt::Horizontal : Qt::Vertical);
-    };
-    connect(m_quickDock, &QDockWidget::dockLocationChanged, this,
-            orientQuickBar);
-    orientQuickBar(Qt::RightDockWidgetArea);
+    // The user's own commands, down the right of the terminals, in the central
+    // row built above. The bar goes in bare rather than inside a wrapper: it
+    // owns the stretch that keeps its buttons at the top, and anything capping
+    // its height would leave them pinned to one end with the empty room all at
+    // the other.
+    m_quickGrip = new QuickButtonGrip(m_centralRow);
+    m_quickBar = new QuickButtonBar(m_centralRow);
+    centralLayout->addWidget(m_quickGrip);
+    centralLayout->addWidget(m_quickBar, 0);
+    // The width is pinned by the first `reloadQuickButtons` below, once the
+    // settings have been read — fixed and not stretched, so the panel is
+    // exactly the width somebody chose and the terminals take everything else.
+    // That is what keeps a window resize out of the panel and a panel resize
+    // out of the terminal.
+    m_quickGrip->hide();
+    m_quickBar->hide();
+    connect(m_quickGrip, &QuickButtonGrip::resizeStarted, this,
+            &MainWindow::beginQuickPanelResize);
+    connect(m_quickGrip, &QuickButtonGrip::resizeMoved, this,
+            [this](int delta) { resizeQuickPanel(m_quickDragWidth + delta); });
+    connect(m_quickGrip, &QuickButtonGrip::resizeFinished, this,
+            &MainWindow::endQuickPanelResize);
     connect(m_quickBar, &QuickButtonBar::activated, this,
             &MainWindow::runQuickButton);
     connect(m_quickBar, &QuickButtonBar::addRequested, this, [this] {
@@ -1324,6 +1320,15 @@ bool MainWindow::onSettingsChanged()
     // first `sizeHint()` after loading a 100x30 setup can still be the hint the
     // disconnected 80x24 page had at construction.
     m_panels->updateGeometry();
+    // Two levels, not one. `updateGeometry` invalidates the item holding
+    // *that* widget, and the central row's layout is holding the container's
+    // item — so without this the row goes on quoting the hint the container
+    // had at construction and the invalidation never reaches `QMainWindow`.
+    // Same fact as `TerminalPage::sizeHint` being composed by hand; the panel
+    // beside the terminals is what added the level.
+    if (m_centralRow && m_centralRow->layout()) {
+        m_centralRow->layout()->invalidate();
+    }
     if (layout()) {
         layout()->invalidate();
     }
@@ -3267,17 +3272,14 @@ void MainWindow::closeEvent(QCloseEvent *event)
         return;
     }
 
-    // Where the quick button dock was left. On close rather than on the drag,
-    // because this is exactly what `SaveVTPos` does with the window's own
-    // position one line further down.
-    // Unlike that one it has no switch: the bar is this program's own and
-    // somebody who moved it meant it.
-    if (m_quickDock) {
-        const QString area = quickButtonAreaName(dockWidgetArea(m_quickDock));
-        if (area != m_session->setting(QStringLiteral("window.quick_buttons_area"))) {
-            rememberSettings({{QStringLiteral("window.quick_buttons_area"), area}});
-        }
-    }
+    // The quick-button panel's width used to be written here, the way
+    // `SaveVTPos` writes the window's position below. It is written at the end
+    // of the drag that sets it instead — and deliberately **nowhere else**,
+    // because the shipped width is the sentinel 0 meaning "measure the
+    // buttons". A close-time backstop comparing the live pixels against the
+    // setting would find 0 against whatever the captions happened to need and
+    // write that number down, quietly pinning every window that had never been
+    // dragged to the width its buttons wanted on the day it last closed.
 
     if (m_session->setting(QStringLiteral("window.save_position"))
         != QLatin1String("on")) {
@@ -3669,26 +3671,159 @@ void MainWindow::reloadQuickButtons()
         action->setShortcut(sequence);
     }
 
-    // **Only when the setting itself has moved**, not whenever the dock is not
-    // where the file says. A drag is the user placing it, and this runs on
-    // every edit of the list — comparing against the live area would put the
-    // bar back at the file's edge the moment somebody added a button, and the
-    // file is not written until the window closes.
-    const QString setting =
-        m_session->setting(QStringLiteral("window.quick_buttons_area"));
-    if (setting != m_quickDockArea) {
-        m_quickDockArea = setting;
-        addDockWidget(quickButtonArea(setting), m_quickDock);
+    // Zero is the shipped value and means "as wide as the buttons need", so
+    // the panel hugs its widest caption until somebody drags it — which is
+    // exactly where it sat before it had a width at all.
+    //
+    // **Only when the answer has moved.** This runs on every settings change,
+    // and applying a width unconditionally would nudge the window sideways
+    // every time any unrelated setting was touched.
+    const int setting =
+        m_session->setting(QStringLiteral("window.quick_buttons_width")).toInt();
+    const int width = setting > 0 ? setting : m_quickBar->sizeHint().width();
+    if (width > 0 && width != m_quickPanelWidth) {
+        resizeQuickPanel(width);
     }
     // The setting alone owns visibility. An empty list still has a useful +
     // button, which is the shortest route to defining the first command.
     const bool wanted =
         m_session->setting(QStringLiteral("window.quick_buttons")) == QLatin1String("on");
-    m_quickDock->setVisible(wanted);
+    // **Showing the panel is a resize too**, and it used to be the second way
+    // this feature ate the terminal: `onSettingsChanged`'s own window-grow arm
+    // runs a hundred lines before this, while the panel is still hidden, so it
+    // finds nothing to absorb — and the layout that squeezes the terminal
+    // happens a turn later with nothing left to grow the window. Route it
+    // through the same helper the grip uses, which holds the grids and moves
+    // the window's edge by exactly the room the panel takes.
+    if (wanted != !m_quickBar->isHidden()) {
+        const int strip = m_quickPanelWidth + m_quickGrip->sizeHint().width();
+        // **Nothing to absorb before the first show.** The panel is part of
+        // what `sizeHint` asks for, so a window that has not opened yet has
+        // already counted it — the constructor reaches here, and resizing
+        // there overwrites the hint with a number measured from a window that
+        // has no geometry yet. The symptom is a configured 100x30 opening at
+        // whatever the unshown window happened to measure.
+        //
+        // Growing is bounded by the screen; giving the room back never is.
+        const int delta = !isVisible() ? 0
+            : wanted                   ? qMin(strip, windowGrowthRoom())
+                                       : -strip;
+        holdTerminalGrids(true);
+        if (delta > 0) {
+            resize(size().width() + delta, height());
+        }
+        m_quickBar->setVisible(wanted);
+        m_quickGrip->setVisible(wanted);
+        if (delta < 0) {
+            resize(qMax(1, size().width() + delta), height());
+        }
+        if (QLayout *row = m_centralRow->layout()) {
+            row->activate();
+        }
+        holdTerminalGrids(false);
+        // **Only when the window was shown and could not move.** If it moved,
+        // the resize event answering that request is what refits, and on
+        // Wayland it arrives later than this line — refitting here would
+        // measure the old geometry, shrink the grid, and truncate lines the
+        // window was in the middle of making room for. If it could not move,
+        // the terminal really is losing columns and has to be told, or it
+        // paints a grid wider than the widget until something else resizes.
+        if (isVisible() && delta == 0) {
+            for (QWidget *widget : m_panels->visiblePages()) {
+                static_cast<TerminalPage *>(widget)->view()->refitToViewport();
+            }
+        }
+    }
     if (m_quickButtonsAction) {
         m_quickButtonsAction->setChecked(wanted);
     }
     m_quickBar->refresh(m_session);
+}
+
+int MainWindow::windowGrowthRoom() const
+{
+    // A maximised or full-screen window does not get to change size, so there
+    // is nothing to give the panel. Saying so here rather than letting the
+    // resize fail silently is what turns "the drag stops" into a rule instead
+    // of a platform accident.
+    if (isMaximized() || isFullScreen()) {
+        return 0;
+    }
+    const QScreen *display = screen();
+    if (!display) {
+        return 0;
+    }
+    // The *work* area and the *frame*: decorations are pixels the compositor
+    // will not give us, and a panel sized against the client rectangle walks
+    // the window's title bar off the edge of the screen.
+    return qMax(0, display->availableGeometry().right() - frameGeometry().right());
+}
+
+void MainWindow::holdTerminalGrids(bool held)
+{
+    for (int i = 0; i < m_panels->count(); i++) {
+        auto *page = static_cast<TerminalPage *>(m_panels->widget(i));
+        if (page && page->view()) {
+            page->view()->setGridHeld(held);
+        }
+    }
+}
+
+int MainWindow::resizeQuickPanel(int wanted)
+{
+    if (!m_quickBar || !m_quickGrip) {
+        return m_quickPanelWidth;
+    }
+    // The floor is the panel's own minimum — a button clipped to nothing is
+    // not a narrower panel, it is a broken one. Capped at the ceiling so that
+    // a very long caption cannot invert the range below.
+    const int low = qMin(m_quickBar->minimumSizeHint().width(), kQuickPanelMaxWidth);
+    // ...and the ceiling is whatever the window can still grow into. Shrinking
+    // needs no room, which is why only this half consults the screen.
+    const int high =
+        qMax(low, qMin(kQuickPanelMaxWidth, m_quickPanelWidth + windowGrowthRoom()));
+    const int width = qBound(low, wanted, high);
+    const int delta = width - m_quickPanelWidth;
+    if (delta == 0) {
+        return m_quickPanelWidth;
+    }
+
+    holdTerminalGrids(true);
+    m_quickPanelWidth = width;
+    // **Grow the window before the panel and shrink it after.** Either way the
+    // intermediate state is one where the terminals have more room than they
+    // end with rather than less, so a layout pass landing in the middle — and
+    // on Wayland the window's half is a request the compositor answers when it
+    // likes — cannot be the pass that discovers a narrower terminal.
+    if (delta > 0 && isVisible()) {
+        resize(size().width() + delta, height());
+    }
+    m_quickBar->setFixedWidth(width);
+    if (delta < 0 && isVisible()) {
+        resize(size().width() + delta, height());
+    }
+    // Synchronously, so the pass that would have refitted runs inside the hold
+    // instead of on the next turn outside it. `TerminalPage::applySettings`
+    // does the same thing one level down, for the same reason.
+    if (QLayout *row = m_centralRow->layout()) {
+        row->activate();
+    }
+    holdTerminalGrids(false);
+    return m_quickPanelWidth;
+}
+
+void MainWindow::beginQuickPanelResize()
+{
+    m_quickDragWidth = m_quickPanelWidth;
+}
+
+void MainWindow::endQuickPanelResize()
+{
+    if (m_quickPanelWidth == m_quickDragWidth) {
+        return;
+    }
+    rememberSettings({{QStringLiteral("window.quick_buttons_width"),
+                       QString::number(m_quickPanelWidth)}});
 }
 
 void MainWindow::runQuickButton(int index, bool withoutEnter)

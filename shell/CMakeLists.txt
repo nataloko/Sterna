@@ -161,6 +161,7 @@ add_library(sterna_shell STATIC
     src/PasteDialog.cpp
     src/Printer.cpp
     src/QuickButtonBar.cpp
+    src/QuickButtonGrip.cpp
     src/QuickButtonRepeat.cpp
     src/QuickButtons.cpp
     src/QuickButtonsDialog.cpp

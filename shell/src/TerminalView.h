@@ -84,6 +84,34 @@ public:
     /// visible background page which never drives the top-level window.
     void refitToViewport() { refit(); }
 
+    /// Stop [`refit`] from following the widget, for a change that is going to
+    /// move the window rather than the terminal.
+    ///
+    /// **A held grid is not a frozen one** — nothing else is suspended, and
+    /// `m_hintCells` is untouched, so `sizeHint` goes on quoting the size
+    /// somebody asked for and the layout keeps redistributing around it. Only
+    /// the write back into the core is stopped.
+    ///
+    /// It exists because the two halves of "the panel grew and the window grew
+    /// with it" cannot be made to land together. `setFixedWidth` marks the
+    /// layout dirty and Qt lays out on the next turn; a top-level `resize()` is
+    /// a *request*, which on Wayland the compositor acknowledges later. Between
+    /// them is a layout pass in which the view is narrower and the window has
+    /// not caught up, and an unheld `refit` there is a real `Grid::resize` —
+    /// which truncates every line it shortens, in the scrollback too. The
+    /// clipped column that a held grid shows for those few frames costs
+    /// nothing and comes back.
+    ///
+    /// **Releasing refits only if a refit was swallowed.** A geometry change
+    /// delivered during the hold is consumed and does not come again, so
+    /// letting the release stay silent leaves the grid at a size the widget
+    /// is not — a clipped right-hand column that never heals. A hold that
+    /// swallowed nothing is left alone on purpose: the late resize is still
+    /// on its way, and refitting here would measure the geometry it is about
+    /// to replace.
+    void setGridHeld(bool held);
+    bool gridHeld() const { return m_gridHeld; }
+
     /// `enablekeyb` — swallow keystrokes instead of sending them, so a macro's
     /// own prompts are not typed over.
     ///
@@ -282,6 +310,11 @@ private:
     /// view was constructed with and moved by `setHintCells`; never by `refit`,
     /// which measures the width this decides.
     QSize m_hintCells{80, 24};
+    /// Whether [`refit`] is allowed to move the grid — see `setGridHeld`.
+    bool m_gridHeld = false;
+    /// Whether a refit was asked for and refused while held, which is what
+    /// the release has to answer for.
+    bool m_refitHeld = false;
 
     /// A one-line Qt editor laid over the live terminal cursor. It deliberately
     /// owns only printable input and editing gestures; the terminal view keeps
