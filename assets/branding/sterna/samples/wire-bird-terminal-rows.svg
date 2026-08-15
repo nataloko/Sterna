@@ -1,0 +1,182 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     viewBox="0 0 2240 1700" width="2240" height="1700" role="img"
+     aria-labelledby="title description">
+  <title id="title">Sterna wire bird terminal rows</title>
+  <desc id="description">Six phosphor terminal row treatments beside the Sterna wire bird.</desc>
+
+  <defs>
+    <g id="tern-shape">
+      <path d="M10585 5604c-16-2-79-9-140-15-289-28-711-120-1005-218-780-260-1415-685-1825-1221l-65-85 153-5c135-5 238-22 237-39-1-3-39-31-87-61-365-233-454-369-584-884-85-340-172-567-298-778-256-430-674-774-1161-957-58-21-106-38-108-36-2 2 23 56 56 121 229 458 388 947 443 1361 7 51 11 95 8 97-19 20-597 49-799 41-1871-75-3631-763-5072-1983-82-69-146-127-145-129 2-2 124 56 272 127 772 377 1360 610 1975 784 1328 376 2542 378 3090 6 32-22 62-45 65-50 13-21-182-305-379-550-192-240-301-359-731-800l-140-144 80 44c141 76 639 372 955 567 46 28 86 50 88 48 4-4-144-295-239-470l-43-80 39 29c248 184 930 784 1269 1116 452 443 637 688 1106 1470 438 731 706 1088 1106 1480 519 508 1088 859 1891 1170 128 49 128 49 73 48-30-1-68-3-85-4z"/>
+      <path d="M6880 4124c-305-80-544-406-649-885l-18-86 191 192c357 359 630 515 902 515h53l-6 68c-7 82-33 114-128 161-104 52-233 65-345 35z"/>
+    </g>
+
+    <path id="tern-beak"
+          d="M7520 3993c-19-2-53-5-75-8l-40-5v-115c0-63 2-115 4-115 3 0 12 6 20 14 9 7 97 59 196 116 99 56 184 106 190 111 8 8-213 10-295 2z"/>
+
+    <g id="wire-tern">
+      <g transform="translate(544 544) scale(.82) translate(-544 -544)">
+        <g transform="translate(544 544) scale(1.18) rotate(-20) translate(-544 -544)">
+          <g transform="translate(0 254)">
+            <g transform="translate(0 580) scale(.1 -.1)">
+              <use xlink:href="#tern-shape" fill="none" stroke="#73F59B" stroke-width="180"
+                   stroke-linejoin="round"/>
+              <use xlink:href="#tern-beak" fill="#F99E2A"/>
+            </g>
+          </g>
+        </g>
+      </g>
+    </g>
+
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+
+    <g id="rows-compact">
+      <g fill="#73F59B">
+        <rect x="710" y="700" width="180" height="18" rx="4" opacity=".42"/>
+        <rect x="710" y="745" width="132" height="18" rx="4" opacity=".58"/>
+        <rect x="710" y="790" width="145" height="18" rx="4" opacity=".78"/>
+      </g>
+      <rect x="874" y="785" width="46" height="28" rx="4" fill="#F99E2A"/>
+    </g>
+
+    <g id="rows-ragged" fill="#73F59B">
+      <rect x="700" y="670" width="205" height="18" rx="4" opacity=".42"/>
+      <rect x="700" y="713" width="138" height="18" rx="4" opacity=".52"/>
+      <rect x="700" y="756" width="174" height="18" rx="4" opacity=".62"/>
+      <rect x="700" y="799" width="104" height="18" rx="4" opacity=".78"/>
+    </g>
+
+    <g id="rows-right" fill="#73F59B">
+      <rect x="760" y="690" width="170" height="18" rx="4" opacity=".42"/>
+      <rect x="808" y="738" width="122" height="18" rx="4" opacity=".58"/>
+      <rect x="782" y="786" width="148" height="18" rx="4" opacity=".78"/>
+    </g>
+
+    <g id="rows-active">
+      <g fill="#73F59B" opacity=".46">
+        <rect x="710" y="700" width="184" height="18" rx="4"/>
+        <rect x="710" y="748" width="140" height="18" rx="4"/>
+      </g>
+      <rect x="710" y="796" width="126" height="22" rx="4" fill="#F99E2A"/>
+    </g>
+
+    <g id="rows-green" fill="#73F59B">
+      <rect x="710" y="700" width="180" height="18" rx="4" opacity=".42"/>
+      <rect x="710" y="745" width="132" height="18" rx="4" opacity=".58"/>
+      <rect x="710" y="790" width="145" height="18" rx="4" opacity=".78"/>
+      <rect x="874" y="785" width="46" height="28" rx="4"/>
+    </g>
+
+    <g id="rows-cells">
+      <g fill="#73F59B">
+        <rect x="704" y="690" width="34" height="22" rx="3" opacity=".45"/>
+        <rect x="750" y="690" width="62" height="22" rx="3" opacity=".45"/>
+        <rect x="824" y="690" width="42" height="22" rx="3" opacity=".45"/>
+        <rect x="704" y="740" width="78" height="22" rx="3" opacity=".62"/>
+        <rect x="794" y="740" width="34" height="22" rx="3" opacity=".62"/>
+        <rect x="704" y="790" width="46" height="22" rx="3" opacity=".78"/>
+        <rect x="762" y="790" width="70" height="22" rx="3" opacity=".78"/>
+      </g>
+      <rect x="844" y="787" width="44" height="28" rx="4" fill="#F99E2A"/>
+    </g>
+
+    <symbol id="tile-compact" viewBox="0 0 1088 1088">
+      <rect width="1088" height="1088" rx="190" fill="#03110A"/>
+      <g filter="url(#glow)"><use xlink:href="#wire-tern"/></g>
+      <use xlink:href="#rows-compact"/>
+    </symbol>
+    <symbol id="tile-ragged" viewBox="0 0 1088 1088">
+      <rect width="1088" height="1088" rx="190" fill="#03110A"/>
+      <g filter="url(#glow)"><use xlink:href="#wire-tern"/></g>
+      <use xlink:href="#rows-ragged"/>
+    </symbol>
+    <symbol id="tile-right" viewBox="0 0 1088 1088">
+      <rect width="1088" height="1088" rx="190" fill="#03110A"/>
+      <g filter="url(#glow)"><use xlink:href="#wire-tern"/></g>
+      <use xlink:href="#rows-right"/>
+    </symbol>
+    <symbol id="tile-active" viewBox="0 0 1088 1088">
+      <rect width="1088" height="1088" rx="190" fill="#03110A"/>
+      <g filter="url(#glow)"><use xlink:href="#wire-tern"/></g>
+      <use xlink:href="#rows-active"/>
+    </symbol>
+    <symbol id="tile-green" viewBox="0 0 1088 1088">
+      <rect width="1088" height="1088" rx="190" fill="#03110A"/>
+      <g filter="url(#glow)"><use xlink:href="#wire-tern"/></g>
+      <use xlink:href="#rows-green"/>
+    </symbol>
+    <symbol id="tile-cells" viewBox="0 0 1088 1088">
+      <rect width="1088" height="1088" rx="190" fill="#03110A"/>
+      <g filter="url(#glow)"><use xlink:href="#wire-tern"/></g>
+      <use xlink:href="#rows-cells"/>
+    </symbol>
+  </defs>
+
+  <rect width="2240" height="1700" fill="#EAE8E1"/>
+  <text x="80" y="82" fill="#28292A" font-family="sans-serif" font-size="46" font-weight="700">
+    Phosphor wire bird with terminal rows
+  </text>
+  <text x="80" y="124" fill="#5C5D5E" font-family="sans-serif" font-size="24">
+    The rows stay separate from the bird.
+  </text>
+
+  <g font-family="sans-serif" text-anchor="middle">
+    <g transform="translate(80 170)">
+      <use xlink:href="#tile-compact" x="24" width="432" height="432"/>
+      <text x="240" y="480" fill="#28292A" font-size="30" font-weight="700">Compact stack</text>
+      <text x="240" y="516" fill="#5C5D5E" font-size="22">Three rows and a cursor</text>
+      <use xlink:href="#tile-compact" x="120" y="560" width="64" height="64"/>
+      <use xlink:href="#tile-compact" x="226" y="576" width="32" height="32"/>
+      <use xlink:href="#tile-compact" x="304" y="584" width="16" height="16"/>
+      <g fill="#5C5D5E" font-size="18"><text x="152" y="654">64</text><text x="242" y="654">32</text><text x="312" y="654">16</text></g>
+    </g>
+    <g transform="translate(790 170)">
+      <use xlink:href="#tile-ragged" x="24" width="432" height="432"/>
+      <text x="240" y="480" fill="#28292A" font-size="30" font-weight="700">Ragged output</text>
+      <text x="240" y="516" fill="#5C5D5E" font-size="22">Four rows without a cursor</text>
+      <use xlink:href="#tile-ragged" x="120" y="560" width="64" height="64"/>
+      <use xlink:href="#tile-ragged" x="226" y="576" width="32" height="32"/>
+      <use xlink:href="#tile-ragged" x="304" y="584" width="16" height="16"/>
+      <g fill="#5C5D5E" font-size="18"><text x="152" y="654">64</text><text x="242" y="654">32</text><text x="312" y="654">16</text></g>
+    </g>
+    <g transform="translate(1500 170)">
+      <use xlink:href="#tile-right" x="24" width="432" height="432"/>
+      <text x="240" y="480" fill="#28292A" font-size="30" font-weight="700">Right aligned</text>
+      <text x="240" y="516" fill="#5C5D5E" font-size="22">Three rows share one edge</text>
+      <use xlink:href="#tile-right" x="120" y="560" width="64" height="64"/>
+      <use xlink:href="#tile-right" x="226" y="576" width="32" height="32"/>
+      <use xlink:href="#tile-right" x="304" y="584" width="16" height="16"/>
+      <g fill="#5C5D5E" font-size="18"><text x="152" y="654">64</text><text x="242" y="654">32</text><text x="312" y="654">16</text></g>
+    </g>
+
+    <g transform="translate(80 910)">
+      <use xlink:href="#tile-active" x="24" width="432" height="432"/>
+      <text x="240" y="480" fill="#28292A" font-size="30" font-weight="700">Active row</text>
+      <text x="240" y="516" fill="#5C5D5E" font-size="22">Amber marks the current row</text>
+      <use xlink:href="#tile-active" x="120" y="560" width="64" height="64"/>
+      <use xlink:href="#tile-active" x="226" y="576" width="32" height="32"/>
+      <use xlink:href="#tile-active" x="304" y="584" width="16" height="16"/>
+      <g fill="#5C5D5E" font-size="18"><text x="152" y="654">64</text><text x="242" y="654">32</text><text x="312" y="654">16</text></g>
+    </g>
+    <g transform="translate(790 910)">
+      <use xlink:href="#tile-green" x="24" width="432" height="432"/>
+      <text x="240" y="480" fill="#28292A" font-size="30" font-weight="700">Green only</text>
+      <text x="240" y="516" fill="#5C5D5E" font-size="22">The rows use one phosphor color</text>
+      <use xlink:href="#tile-green" x="120" y="560" width="64" height="64"/>
+      <use xlink:href="#tile-green" x="226" y="576" width="32" height="32"/>
+      <use xlink:href="#tile-green" x="304" y="584" width="16" height="16"/>
+      <g fill="#5C5D5E" font-size="18"><text x="152" y="654">64</text><text x="242" y="654">32</text><text x="312" y="654">16</text></g>
+    </g>
+    <g transform="translate(1500 910)">
+      <use xlink:href="#tile-cells" x="24" width="432" height="432"/>
+      <text x="240" y="480" fill="#28292A" font-size="30" font-weight="700">Cell rows</text>
+      <text x="240" y="516" fill="#5C5D5E" font-size="22">Blocks suggest terminal characters</text>
+      <use xlink:href="#tile-cells" x="120" y="560" width="64" height="64"/>
+      <use xlink:href="#tile-cells" x="226" y="576" width="32" height="32"/>
+      <use xlink:href="#tile-cells" x="304" y="584" width="16" height="16"/>
+      <g fill="#5C5D5E" font-size="18"><text x="152" y="654">64</text><text x="242" y="654">32</text><text x="312" y="654">16</text></g>
+    </g>
+  </g>
+</svg>
