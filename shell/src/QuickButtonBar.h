@@ -11,6 +11,7 @@
 
 class QAction;
 class QBoxLayout;
+class QMenu;
 class QFrame;
 class QToolButton;
 class Session;
@@ -65,6 +66,13 @@ public:
     /// The widget `index` is pressed through, or null. The window has no use
     /// for it; a test measuring how wide a button ended up does.
     QToolButton *buttonWidget(int index) const;
+
+    /// The context menu for the button at `index`, or for the panel itself
+    /// when `index` is -1. Owned by the caller.
+    ///
+    /// Public so a test can inspect it: `showContextMenu` execs it, and a
+    /// modal loop is not something a test can click through.
+    QMenu *buildContextMenu(int index);
 
     /// Whether the panel is measuring its own buttons rather than holding a
     /// width somebody chose — `window.quick_buttons_width` being 0.

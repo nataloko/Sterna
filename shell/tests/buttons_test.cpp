@@ -38,6 +38,8 @@
 #include "MainWindow.h"
 #include "QuickButtonBar.h"
 #include "QuickButtons.h"
+#include <QMenu>
+
 #include "QuickButtonsDialog.h"
 #include "SettingsDialog.h"
 #include "Session.h"
@@ -857,6 +859,53 @@ void showing_the_panel_leaves_every_terminal_alone()
     CHECK(columns() == before);
 }
 
+/// The width is on the panel's own context menu, ticked to say which mode it
+/// is in — which is the route somebody actually finds.
+void the_panel_menu_offers_the_width()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString path = writeIni(
+        dir, "[Sterna Buttons]\r\nButton1Label=Hi\r\nButton1Value=hi$0D\r\n");
+
+    MainWindow window(path);
+    window.show();
+    CHECK(spin([&window] { return window.isVisible(); }, 2000));
+    QuickButtonBar *bar = barOf(window);
+    CHECK(bar != nullptr);
+    if (!bar) {
+        return;
+    }
+
+    // -1 is a click on the panel rather than on a button, which is the case
+    // that offers nothing else — so the width has to be there, or a panel with
+    // one button on it has a menu with only Add in it.
+    QMenu *menu = bar->buildContextMenu(-1);
+    CHECK(menu != nullptr);
+    if (!menu) {
+        return;
+    }
+    CHECK(menu->findChild<QMenu *>(QStringLiteral("quickMenuWidth")) != nullptr);
+    QAction *fit = menu->findChild<QAction *>(QStringLiteral("quickMenuFit"));
+    QAction *set = menu->findChild<QAction *>(QStringLiteral("quickMenuSetWidth"));
+    CHECK(fit != nullptr && set != nullptr);
+    // Shipped state is fitting, and the tick says so.
+    CHECK(fit && fit->isCheckable() && fit->isChecked());
+    delete menu;
+
+    // ...and it stops saying so once a width has been chosen, or the menu is
+    // lying about which of its two modes the panel is in.
+    QString error;
+    CHECK(window.session()->setSetting(
+        QStringLiteral("window.quick_buttons_width"), QStringLiteral("150"),
+        &error));
+    CHECK(spin([bar] { return bar->width() == 150; }, 2000));
+    menu = bar->buildContextMenu(-1);
+    fit = menu->findChild<QAction *>(QStringLiteral("quickMenuFit"));
+    CHECK(fit != nullptr && !fit->isChecked());
+    delete menu;
+}
+
 /// A panel can be made narrower than its own captions: the buttons shorten
 /// their text rather than holding the panel open.
 ///
@@ -1330,6 +1379,7 @@ int main(int argc, char **argv)
     showing_the_panel_leaves_every_terminal_alone();
     the_configured_panel_width_is_opened_at();
     the_width_has_a_control_in_setup();
+    the_panel_menu_offers_the_width();
     a_narrow_panel_shortens_its_captions();
     adding_starts_on_a_new_row();
     a_repeat_sends_its_count_and_stops();

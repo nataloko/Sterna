@@ -341,8 +341,21 @@ int QuickButtonBar::indexAt(const QPoint &pos) const
 
 void QuickButtonBar::showContextMenu(const QPoint &pos)
 {
-    const int index = indexAt(pos);
-    QMenu menu(this);
+    QMenu *menu = buildContextMenu(indexAt(pos));
+    menu->exec(mapToGlobal(pos));
+    delete menu;
+}
+
+/// The menu, built but not shown.
+///
+/// Separate from `showContextMenu` because `QMenu::exec` spins its own event
+/// loop and a test cannot click through one — and this menu is now the
+/// reachable route to the panel's width, so "the item is there and wired" is
+/// worth being able to ask.
+QMenu *QuickButtonBar::buildContextMenu(int index)
+{
+    auto *out = new QMenu(this);
+    QMenu &menu = *out;
     if (index >= 0 && m_remaining.value(index) != 0) {
         // First, and above a separator: while something is repeating it is the
         // only thing anybody opened this menu for.
@@ -364,6 +377,7 @@ void QuickButtonBar::showContextMenu(const QPoint &pos)
                 [this, index] { emit removeRequested(index); });
     }
     QAction *add = menu.addAction(tr("Add..."));
+    add->setObjectName(QStringLiteral("quickMenuAdd"));
     connect(add, &QAction::triggered, this, &QuickButtonBar::addRequested);
 
     // **The width lives here because this is where the hand already is.** It is
@@ -373,13 +387,15 @@ void QuickButtonBar::showContextMenu(const QPoint &pos)
     // within reach. Same argument the Add item makes one line above.
     menu.addSeparator();
     QMenu *width = menu.addMenu(tr("Panel width"));
+    width->setObjectName(QStringLiteral("quickMenuWidth"));
     QAction *fit = width->addAction(tr("Fit to buttons"));
+    fit->setObjectName(QStringLiteral("quickMenuFit"));
     fit->setCheckable(true);
     fit->setChecked(m_fitted);
     QAction *exact = width->addAction(tr("Set width..."));
+    exact->setObjectName(QStringLiteral("quickMenuSetWidth"));
     connect(fit, &QAction::triggered, this, &QuickButtonBar::fitWidthRequested);
     connect(exact, &QAction::triggered, this,
             &QuickButtonBar::setWidthRequested);
-
-    menu.exec(mapToGlobal(pos));
+    return out;
 }
