@@ -1185,6 +1185,7 @@ void MainWindow::onPageSettingsChanged(TerminalPage *page)
         resizing = onSettingsChanged();
     } else {
         page->view()->applySettings();
+        page->applySettings();
     }
     // Not when the window has just been asked to change size: the view still
     // has its old geometry here, so refitting now would put the grid straight
@@ -1244,6 +1245,12 @@ bool MainWindow::onSettingsChanged()
     reloadLanguage();
     const QSize oldCell = m_view->sizeForCells(1, 1);
     m_view->applySettings();
+    // The page's own settings, which is the line-number gutter — and it has to
+    // be before the `haveCols` measurement below, because that measurement is
+    // what turns a gutter appearing into a wider window rather than a narrower
+    // terminal. `TerminalPage::applySettings` re-lays-out the row synchronously
+    // so the view's width is already the post-gutter one by then.
+    m_page->applySettings();
     // PanelContainer deliberately supplies one terminal's hint regardless of
     // how many slots are visible. The page is below a stacked pane layout, so
     // carry the child's invalidation to QMainWindow explicitly; otherwise the
@@ -1373,6 +1380,14 @@ bool MainWindow::onSettingsChanged()
     }
     if (m_toolbarAction) {
         m_toolbarAction->setChecked(toolbar);
+    }
+    // The same, for the gutter — so flipping it in the settings dialog, or from
+    // a script, moves the menu's tick with it.
+    if (m_lineNumbersAction) {
+        const QSignalBlocker block(m_lineNumbersAction);
+        m_lineNumbersAction->setChecked(
+            m_session->setting(QStringLiteral("terminal.line_numbers"))
+            == QLatin1String("on"));
     }
     updatePanelActions();
     // The buttons themselves are not settings, so this rereads the list as
@@ -2325,13 +2340,13 @@ void MainWindow::buildMenus()
     });
     updatePanelActions();
 
-    // The three switches that decide what the window *shows*. Their editors
-    // stay in Setup, which is the line between the two menus: this one answers
-    // "is it on screen", that one answers "what is on it". Upstream has none of
-    // the three — no toolbar, no quick buttons, no pattern highlighting — so
-    // there is no `.lng` key to hang on any of them and no upstream order to
-    // keep. Each writes its setting rather than hiding its widget directly, so
-    // that this menu, the settings dialog and Save setup all mean the same
+    // The switches that decide what the window *shows*. Their editors stay in
+    // Setup, which is the line between the two menus: this one answers "is it
+    // on screen", that one answers "what is on it". Upstream has none of them
+    // — no toolbar, no quick buttons, no line numbers, no pattern highlighting
+    // — so there is no `.lng` key to hang on any of them and no upstream order
+    // to keep. Each writes its setting rather than hiding its widget directly,
+    // so that this menu, the settings dialog and Save setup all mean the same
     // thing.
     view->addSeparator();
     m_toolbarAction = view->addAction(tr("Show toolbar"));
@@ -2356,6 +2371,18 @@ void MainWindow::buildMenus()
                                       : QStringLiteral("off"),
                                    &error)) {
             onNotice(tr("Could not change the quick buttons: %1").arg(error));
+        }
+    });
+    m_lineNumbersAction = view->addAction(tr("Show line numbers"));
+    m_lineNumbersAction->setObjectName(QStringLiteral("showLineNumbersAction"));
+    m_lineNumbersAction->setCheckable(true);
+    connect(m_lineNumbersAction, &QAction::triggered, this, [this](bool on) {
+        QString error;
+        if (!m_session->setSetting(QStringLiteral("terminal.line_numbers"),
+                                   on ? QStringLiteral("on")
+                                      : QStringLiteral("off"),
+                                   &error)) {
+            onNotice(tr("Could not change the line numbers: %1").arg(error));
         }
     });
     m_highlightingAction = view->addAction(tr("Highlight matches"));

@@ -7,6 +7,7 @@
 #include <QSignalBlocker>
 #include <QVBoxLayout>
 
+#include "LineNumberGutter.h"
 #include "Macro.h"
 #include "PageStatusBar.h"
 #include "Plugins.h"
@@ -23,6 +24,10 @@ TerminalPage::TerminalPage(const I18n *i18n, QWidget *macroWindow,
     , m_session(new Session(80, 24, this))
     , m_printer(new Printer(m_session, this))
     , m_view(new TerminalView(m_session, this, i18n))
+    // After the view, because it borrows the view's theme — that is the same
+    // object the terminal paints with, so the two can never disagree about a
+    // cell's size, the font or the background.
+    , m_gutter(new LineNumberGutter(m_session, m_view->theme(), this))
     , m_scroll(new QScrollBar(Qt::Vertical, this))
     // Declaration order is what actually decides construction order, so this
     // sits where the header puts it. The strip points at nothing and nothing
@@ -42,12 +47,21 @@ TerminalPage::TerminalPage(const I18n *i18n, QWidget *macroWindow,
     // the parent widget, and the symptom is a window that opens at 80x24
     // whatever `TerminalSize` says — the terminal's own hint was 900x630 and
     // the page quoted 720x525.
-    auto *terminal = new QWidget(this);
+    m_terminalRow = new QWidget(this);
+    auto *terminal = m_terminalRow;
     auto *row = new QHBoxLayout(terminal);
     row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(0);
+    // The gutter is a sibling of the terminal rather than columns inside it,
+    // which is what keeps line numbers out of the clipboard: the view builds a
+    // copy out of the core's cells, and this widget owns none. See
+    // `LineNumberGutter`.
+    row->addWidget(m_gutter);
     row->addWidget(m_view, 1);
     row->addWidget(m_scroll);
+    // Hidden until a setting says otherwise, so a page that is never told
+    // anything looks exactly as it did before this existed.
+    m_gutter->hide();
 
     // The status line belongs to the page rather than to the window or to the
     // pane holding it: it then follows this session between tiles and between
@@ -61,6 +75,18 @@ TerminalPage::TerminalPage(const I18n *i18n, QWidget *macroWindow,
 
     connect(m_view, &TerminalView::viewChanged, this,
             &TerminalPage::syncScrollBar);
+    // The one signal the gutter needs. `TerminalView` emits it from its own
+    // `Session::damaged` handler as well as from a scroll gesture, so it
+    // already covers both things that can move a line number: output pushing
+    // the page along, and the viewport moving over the history.
+    //
+    // `update()` schedules and Qt coalesces, so this adds no repaint path that
+    // could get around the view's 8 ms frame floor. It can put the gutter one
+    // frame ahead of the text during heavy output, which is under the floor
+    // and has not been visible; the fix if it ever is would be to repaint from
+    // the view's own `paintEvent`, at the cost of a coupling.
+    connect(m_view, &TerminalView::viewChanged, this,
+            [this] { m_gutter->update(); });
     connect(m_scroll, &QScrollBar::valueChanged, this, [this](int value) {
         // The scrollbar counts down from the top of the history; the session
         // counts back from the live screen. One subtraction, in one place.
@@ -89,6 +115,14 @@ QSize TerminalPage::sizeHint() const
 {
     m_status->ensurePolished();
     QSize out = m_view->sizeHint();
+    // The gutter is added on top of the terminal's own size rather than taken
+    // out of it: a configured 80x24 keeps its 80 columns and the window opens
+    // wider to hold the numbers. That is the whole of "the window grows" —
+    // `MainWindow::onSettingsChanged` does the rest for a live toggle, because
+    // it resizes the window by however many columns the *view* lost.
+    if (!m_gutter->isHidden()) {
+        out.rwidth() += m_gutter->sizeHint().width();
+    }
     // The scrollbar is hidden while there is nothing to scroll, so an 80x24
     // window is not permanently a few pixels narrower than the terminal in it.
     if (!m_scroll->isHidden()) {
@@ -96,6 +130,44 @@ QSize TerminalPage::sizeHint() const
     }
     out.rheight() += m_status->sizeHint().height();
     return out;
+}
+
+void TerminalPage::applySettings()
+{
+    const bool on = m_session->setting(QStringLiteral("terminal.line_numbers"))
+                    == QLatin1String("on");
+    bool ok = false;
+    const int digits =
+        m_session->setting(QStringLiteral("terminal.line_number_width")).toInt(&ok);
+    // How much of the row the gutter was taking, so that a changed digit count
+    // counts as a change as well as a changed switch — both move the terminal.
+    const int before = m_gutter->isHidden() ? 0 : m_gutter->width();
+
+    m_gutter->setDigits(ok ? digits : 4);
+    // Even while hidden: the font or the cell size may have moved, and a
+    // gutter shown later must already be the right width for them.
+    m_gutter->updateMetrics();
+    m_gutter->setVisible(on);
+    const int after = on ? m_gutter->width() : 0;
+
+    if (before == after) {
+        return;
+    }
+    // **Synchronously**, and this is the one non-obvious line in the feature.
+    //
+    // `MainWindow::onSettingsChanged` decides whether to resize the window by
+    // asking how many cells the *view* has room for, and it does that a few
+    // dozen lines after calling this. A `QLayout` marked dirty does not
+    // re-lay-out until the next event-loop turn, so without this the view
+    // still reports its pre-gutter width, the window does not grow, and the
+    // deferred layout then squeezes the terminal instead — which refits to 75
+    // columns and writes `TerminalSize` down to 75x24 behind the user's back.
+    // That is `AGENTS.md`'s `TerminalSize` write-back trap, reached by a new
+    // route: the symptom would be a window that keeps shrinking every time
+    // line numbers are switched on.
+    if (QLayout *layout = m_terminalRow->layout()) {
+        layout->activate();
+    }
 }
 
 void TerminalPage::setTransferDialog(XferProgressDialog *dialog)

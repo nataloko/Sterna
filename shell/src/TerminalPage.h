@@ -12,6 +12,7 @@
 #include "Recent.h"
 
 class I18n;
+class LineNumberGutter;
 class Macro;
 class PageStatusBar;
 class Plugins;
@@ -23,11 +24,11 @@ class XferProgressDialog;
 
 /// The lifetime boundary for one tab.
 ///
-/// A session cannot safely be separated from its view, printer or macro: all
-/// four keep a pointer to it, and the scripts may still have workers and
-/// native notifiers alive when the page closes. Keeping the six together
-/// makes closing a tab one destruction rather than an ordering convention in
-/// `MainWindow`.
+/// A session cannot safely be separated from its view, gutter, printer or
+/// macro: each of them keeps a pointer to it, and the scripts may still have
+/// workers and native notifiers alive when the page closes. Keeping them all
+/// together makes closing a tab one destruction rather than an ordering
+/// convention in `MainWindow`.
 class TerminalPage : public QWidget {
 public:
     TerminalPage(const I18n *i18n, QWidget *macroWindow,
@@ -35,7 +36,8 @@ public:
                  QWidget *parent = nullptr);
     ~TerminalPage() override;
 
-    /// The terminal's own size, plus the scrollbar and the status line.
+    /// The terminal's own size, plus the gutter, the scrollbar and the status
+    /// line.
     ///
     /// Composed here rather than left to the layout. A `QWidgetItem` caches
     /// its widget's size hint and is invalidated by that widget's
@@ -78,10 +80,25 @@ public:
     /// Follow the core's viewport after output or a scroll gesture.
     void syncScrollBar();
 
+    /// Take the page's own settings — currently the line-number gutter.
+    ///
+    /// Separate from `TerminalView::applySettings` because the gutter is not
+    /// the view's: it is the widget beside it, and putting the read there would
+    /// mean the view reaching sideways through its parent to configure a
+    /// sibling. `MainWindow` calls both, in that order.
+    ///
+    /// **It re-lays-out the terminal row synchronously**, and that is
+    /// load-bearing — see the implementation.
+    void applySettings();
+
 private:
     Session *m_session = nullptr;
     Printer *m_printer = nullptr;
     TerminalView *m_view = nullptr;
+    LineNumberGutter *m_gutter = nullptr;
+    /// The widget holding the gutter, the view and the scrollbar. Kept so that
+    /// `applySettings` can activate its layout without going looking for it.
+    QWidget *m_terminalRow = nullptr;
     QScrollBar *m_scroll = nullptr;
     PageStatusBar *m_status = nullptr;
     Macro *m_macro = nullptr;

@@ -154,6 +154,7 @@ add_library(sterna_shell STATIC
     src/Highlights.cpp
     src/HighlightsDialog.cpp
     src/I18n.cpp
+    src/LineNumberGutter.cpp
     src/LogDialog.cpp
     src/Theme.cpp
     src/PasteDialog.cpp

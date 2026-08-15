@@ -81,6 +81,18 @@ QColor Theme::shaded(const QColor &background) const
                   mix(background.blue(), to.blue()));
 }
 
+QColor Theme::lineNumberColor() const
+{
+    // Against `m_background` rather than `m_normal[1]`, so the digits follow
+    // the disconnected shade the rest of the window is wearing instead of
+    // being mixed toward a background nothing is currently painted in.
+    const QColor &from = m_normal[0];
+    const QColor &to = m_background;
+    const auto mix = [](int a, int b) { return a + (b - a) * 45 / 100; };
+    return QColor(mix(from.red(), to.red()), mix(from.green(), to.green()),
+                  mix(from.blue(), to.blue()));
+}
+
 void Theme::updateBackground()
 {
     m_background = shaded(m_normal[1]);
