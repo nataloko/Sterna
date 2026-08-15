@@ -168,12 +168,15 @@ terminal.line_numbers | bool | Sterna | LineNumbers | off | -
 # **`[Sterna]`**. How many digits the gutter above reserves.
 #
 # Fixed rather than sized to the largest number on screen, so the terminal
-# never re-flows mid-session at line 1000; a longer number simply overflows its
-# field. `int_clamp` and not `int(1..10)` because there is no upstream reader
-# to reproduce here, and clamping is the predictable answer where `ttset.c:615`
-# would take the default for anything below the floor.
-#@ This setting sets the number of digits in the line-number column. The width stays the same for the full session, because a change would move the terminal. Values use 1 thru 10.
-terminal.line_number_width | int_clamp(1..10) | Sterna | LineNumberWidth | 4 | -
+# never re-flows mid-session at line 1000; a number that does not fit is left
+# blank rather than clipped, because the column is at the window's left edge
+# and a clipped `10001` reads as `0001`. Six because the number a session
+# reaches has no ceiling — four is a few minutes of `cat`. `int_clamp` and not
+# `int(1..10)` because there is no upstream reader to reproduce here, and
+# clamping is the predictable answer where `ttset.c:615` would take the default
+# for anything below the floor.
+#@ This setting sets the number of digits in the line-number column. The width stays the same for the full session, because a change would move the terminal. A line with a longer number has no number. Values use 1 thru 10.
+terminal.line_number_width | int_clamp(1..10) | Sterna | LineNumberWidth | 6 | -
 
 # `ttset.c:625`. With it on, resizing the window resizes the terminal.
 #@ This setting stores Tera Term's option for resizing the terminal with its window. Sterna always fits the terminal to its view. Thus, this setting has no effect.

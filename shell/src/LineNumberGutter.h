@@ -37,9 +37,11 @@ public:
     ///
     /// Fixed rather than measured against the largest number on screen: a
     /// gutter that widened at line 1000 would re-flow the terminal underneath
-    /// somebody's cursor. A number too long for its field overflows to the left
-    /// instead, which is ugly for one session rather than disruptive for every
-    /// session.
+    /// somebody's cursor. A number too long for its field is therefore not
+    /// drawn at all — see `paintEvent`, where the alternative is a *wrong*
+    /// number rather than an untidy one. Six digits by default, which is a
+    /// million lines: the number a session can reach has no ceiling, so a
+    /// default of four went blank a few minutes into any `cat`.
     void setDigits(int digits);
     int digits() const { return m_digits; }
 
@@ -93,6 +95,6 @@ private:
     const Session *m_session;
     const Theme &m_theme;
     QWidget *m_wheelTarget = nullptr;
-    int m_digits = 4;
+    int m_digits = 6;
     quint64 m_origin = 0;
 };

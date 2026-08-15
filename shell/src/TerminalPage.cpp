@@ -156,7 +156,7 @@ void TerminalPage::applySettings()
     // counts as a change as well as a changed switch — both move the terminal.
     const int before = m_gutter->isHidden() ? 0 : m_gutter->width();
 
-    m_gutter->setDigits(ok ? digits : 4);
+    m_gutter->setDigits(ok ? digits : 6);
     // Even while hidden: the font or the cell size may have moved, and a
     // gutter shown later must already be the right width for them.
     m_gutter->updateMetrics();

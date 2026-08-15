@@ -864,9 +864,19 @@ columns, which is the answer every other constraint gets here.
 
 **The width is fixed rather than measured.** A gutter that sized itself to the
 largest number on screen would gain a column at line 1000 and re-flow the
-terminal underneath whoever was reading it. Four digits is the default; a
-number too long for its field spills leftwards instead, which is untidy for one
-session rather than disruptive for every session.
+terminal underneath whoever was reading it.
+
+**And a number that does not fit is left out, not cut down.** The column sits
+at the window's left edge and Qt clips a widget's painting to its own rectangle,
+so a number drawn from a negative column does not hang off the side — it loses
+its leading digits and lands looking like a smaller number that is perfectly
+plausible. This shipped at four digits, where line 10001 read `0001`: two
+different lines wearing one number, silently, and a line number a person can say
+out loud is the whole point of the column. So it takes the rule the reset mark
+already set — a number this column cannot state honestly gets no number — and
+the default is six digits, a million lines. A session's line number has no
+ceiling and four of them is a few minutes of `cat`, which is a gutter that goes
+quietly blank halfway through the job it was turned on for.
 
 **Two things it decides rather than discovers.** A row that a wrap landed on
 gets its own number, because the core numbers grid lines and a wrapped row is

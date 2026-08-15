@@ -1761,6 +1761,14 @@ The desktop side:
 - **A glyph can put ink outside its own advance** — a margin measured from
   column 0 clamps at the image edge. Measure a column with a blank one
   beside it and let the answer be negative.
+- **...and a widget clips its own painting, so text that overruns a
+  right-aligned field is cut, not spilled** — and cut at the *start*, which is
+  where the significant digits are. `LineNumberGutter` drew a number too wide
+  for its column from a negative x and got `0001` for line 10001: a wrong
+  number, on screen, with nothing saying so. The rule for any fixed field: ask
+  whether it fits and draw nothing when it does not. There is nowhere for it to
+  spill — the gutter is the leftmost widget in the page, and the thing on the
+  other side of a field's far end is usually somebody else's pixels.
 - **You can screenshot your own widgets, not the desktop** —
   `QWidget::grab()` works everywhere (offscreen re-render, which is what we
   want); Shell screenshot D-Bus is `AccessDenied`, `grabWindow(0)` is

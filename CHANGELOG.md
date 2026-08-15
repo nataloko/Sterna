@@ -23,7 +23,9 @@ are available from the [GitHub releases page].
   numbers are beside the terminal rather than in it, so they cannot be selected
   or copied and never reach the session log, the printer or a macro's `wait` —
   and turning them on widens the window instead of taking columns off the
-  terminal.
+  terminal. The column is a fixed six digits wide, so it never re-flows the
+  terminal mid-session; a line whose number needs more than that carries none,
+  rather than a number with its leading digits missing.
 - View > Reset line counter starts the count again: the next line the host
   prints is line 1, so you can reset at a prompt, run a command and read its
   output off as 1, 2, 3. Lines printed before the mark carry no number, and the

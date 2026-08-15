@@ -132,18 +132,18 @@ void test_turning_it_on_paints_numbers()
     h.set("terminal.line_numbers", QStringLiteral("on"));
 
     CHECK(!h.gutter->isHidden());
-    // Four digits plus the padding column that carries the rule.
+    // Six digits plus the padding column that carries the rule.
     const int cw = h.view->theme().cellWidth();
-    CHECK(h.gutter->width() == 5 * cw);
+    CHECK(h.gutter->width() == 7 * cw);
 
     const QImage image = h.gutter->grab().toImage();
-    // Right-aligned in four digits, so a one-digit number lands in column 3 and
-    // columns 0..2 of that row are blank. Rows 0, 1 and 2 are lines 1, 2 and 3.
-    CHECK(h.ink(image, 3, 0) > 0);
-    CHECK(h.ink(image, 3, 1) > 0);
-    CHECK(h.ink(image, 3, 2) > 0);
+    // Right-aligned in six digits, so a one-digit number lands in column 5 and
+    // columns 0..4 of that row are blank. Rows 0, 1 and 2 are lines 1, 2 and 3.
+    CHECK(h.ink(image, 5, 0) > 0);
+    CHECK(h.ink(image, 5, 1) > 0);
+    CHECK(h.ink(image, 5, 2) > 0);
     CHECK(h.ink(image, 0, 0) == 0);
-    CHECK(h.ink(image, 1, 0) == 0);
+    CHECK(h.ink(image, 4, 0) == 0);
 }
 
 void test_the_numbers_are_not_copied()
@@ -202,11 +202,11 @@ void test_the_width_setting_moves_the_gutter()
     Harness h;
     h.set("terminal.line_numbers", QStringLiteral("on"));
     const int cw = h.view->theme().cellWidth();
-    CHECK(h.gutter->width() == 5 * cw);
-
-    h.set("terminal.line_number_width", QStringLiteral("6"));
-    CHECK(h.gutter->digits() == 6);
     CHECK(h.gutter->width() == 7 * cw);
+
+    h.set("terminal.line_number_width", QStringLiteral("4"));
+    CHECK(h.gutter->digits() == 4);
+    CHECK(h.gutter->width() == 5 * cw);
 
     // Clamped at both ends rather than falling back to the default, which is
     // what `int_clamp` in the schema says and what a person hand-editing the
@@ -215,6 +215,41 @@ void test_the_width_setting_moves_the_gutter()
     CHECK(h.gutter->digits() == 10);
     h.set("terminal.line_number_width", QStringLiteral("0"));
     CHECK(h.gutter->digits() == 1);
+}
+
+/// A number that does not fit its field is absent, not clipped.
+///
+/// This is the check the feature was missing. The gutter is the leftmost widget
+/// in the page and `QPainter` clips to the widget's rect, so drawing a longer
+/// number at its negative column does not spill it leftwards — it loses the
+/// leading digits. At two digits, line 131 painted `31`; at the four digits
+/// this shipped with, line 10001 painted `0001`, and a session's line number
+/// has no ceiling. A wrong number is the one thing this column must never show,
+/// and nothing on screen says it is wrong.
+void test_a_number_too_long_for_its_field_is_not_shown()
+{
+    Harness h;
+    h.set("terminal.line_numbers", QStringLiteral("on"));
+    h.set("terminal.line_number_width", QStringLiteral("2"));
+    for (int i = 0; i < 150; i++) {
+        h.feed("line\r\n");
+    }
+    // Three figures at the top of the view, two digits of field.
+    CHECK(h.window.session()->lineAt(0) + 1 > 99);
+
+    const QImage image = h.gutter->grab().toImage();
+    for (int col = 0; col < h.gutter->digits(); col++) {
+        CHECK(h.ink(image, col, 0) == 0);
+    }
+
+    // ...and the same gutter still numbers what does fit: two digits of it is
+    // rows 9 to 98, which the widened field below then covers entirely.
+    h.set("terminal.line_number_width", QStringLiteral("6"));
+    const QImage wide = h.gutter->grab().toImage();
+    CHECK(h.ink(wide, 5, 0) > 0);
+    CHECK(h.ink(wide, 4, 0) > 0);
+    CHECK(h.ink(wide, 3, 0) > 0);
+    CHECK(h.ink(wide, 2, 0) == 0);
 }
 
 void test_the_wheel_over_the_gutter_scrolls_the_terminal()
@@ -266,8 +301,8 @@ void test_numbers_follow_the_history()
 
     const QImage image = h.gutter->grab().toImage();
     // Two digits now, so the tens column has ink where it had none at line 1.
-    CHECK(h.ink(image, 2, 0) > 0);
-    CHECK(h.ink(image, 3, 0) > 0);
+    CHECK(h.ink(image, 4, 0) > 0);
+    CHECK(h.ink(image, 5, 0) > 0);
 }
 
 /// The View menu decides the reset item's state as it opens, so a test that
@@ -312,7 +347,7 @@ void test_reset_starts_the_count_at_the_next_line()
     }
     const int rows = h.window.session()->rows();
     const QImage before = h.gutter->grab().toImage();
-    CHECK(h.ink(before, 1, 0) > 0);
+    CHECK(h.ink(before, 3, 0) > 0);
     CHECK(h.gutter->origin() == 0);
 
     QAction *reset =
@@ -343,17 +378,17 @@ void test_reset_starts_the_count_at_the_next_line()
     h.feed("alpha\r\n");
     CHECK(h.window.session()->lineAt(rows - 1) == h.gutter->origin());
     const QImage first = h.gutter->grab().toImage();
-    CHECK(h.ink(first, 3, rows - 1) > 0);
-    CHECK(h.ink(first, 2, rows - 1) == 0);
-    CHECK(h.ink(first, 3, rows - 2) == 0);
+    CHECK(h.ink(first, 5, rows - 1) > 0);
+    CHECK(h.ink(first, 4, rows - 1) == 0);
+    CHECK(h.ink(first, 5, rows - 2) == 0);
 
     // One digit, not three: the count is the session's again from here, so the
     // next line is 2 and not 143.
     h.feed("bravo\r\n");
     const QImage second = h.gutter->grab().toImage();
-    CHECK(h.ink(second, 3, rows - 1) > 0);
-    CHECK(h.ink(second, 2, rows - 1) == 0);
-    CHECK(h.ink(second, 3, rows - 2) > 0);
+    CHECK(h.ink(second, 5, rows - 1) > 0);
+    CHECK(h.ink(second, 4, rows - 1) == 0);
+    CHECK(h.ink(second, 5, rows - 2) > 0);
 
     // The mark outlives the widget being hidden: the counter belongs to the
     // page, and turning the numbers off is not the same as forgetting where
@@ -427,6 +462,7 @@ int main(int argc, char **argv)
     test_the_numbers_are_not_copied();
     test_the_window_grows_and_the_terminal_does_not_shrink();
     test_the_width_setting_moves_the_gutter();
+    test_a_number_too_long_for_its_field_is_not_shown();
     test_the_wheel_over_the_gutter_scrolls_the_terminal();
     test_the_gutter_follows_the_terminals_colours();
     test_numbers_follow_the_history();

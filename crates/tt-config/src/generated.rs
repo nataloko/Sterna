@@ -2715,10 +2715,13 @@ pub struct Settings {
     /// **`[Sterna]`**. How many digits the gutter above reserves.
     ///
     /// Fixed rather than sized to the largest number on screen, so the terminal
-    /// never re-flows mid-session at line 1000; a longer number simply overflows its
-    /// field. `int_clamp` and not `int(1..10)` because there is no upstream reader
-    /// to reproduce here, and clamping is the predictable answer where `ttset.c:615`
-    /// would take the default for anything below the floor.
+    /// never re-flows mid-session at line 1000; a number that does not fit is left
+    /// blank rather than clipped, because the column is at the window's left edge
+    /// and a clipped `10001` reads as `0001`. Six because the number a session
+    /// reaches has no ceiling — four is a few minutes of `cat`. `int_clamp` and not
+    /// `int(1..10)` because there is no upstream reader to reproduce here, and
+    /// clamping is the predictable answer where `ttset.c:615` would take the default
+    /// for anything below the floor.
     pub terminal_line_number_width: i32,
     /// `ttset.c:625`. With it on, resizing the window resizes the terminal.
     pub terminal_size_follows_window: bool,
@@ -4422,7 +4425,7 @@ impl Default for Settings {
             terminal_line_edit: false,
             terminal_dark_mode: false,
             terminal_line_numbers: false,
-            terminal_line_number_width: 4,
+            terminal_line_number_width: 6,
             terminal_size_follows_window: false,
             terminal_auto_win_resize: false,
             terminal_clear_on_resize: false,
@@ -13085,9 +13088,9 @@ pub const FIELDS: &[Field] = &[
         section: "Sterna",
         key: "LineNumberWidth",
         kind: Kind::IntClamp(1, 10),
-        default: "4",
+        default: "6",
         label: None,
-        doc: "**`[Sterna]`**. How many digits the gutter above reserves.  Fixed rather than sized to the largest number on screen, so the terminal never re-flows mid-session at line 1000; a longer number simply overflows its field. `int_clamp` and not `int(1..10)` because there is no upstream reader to reproduce here, and clamping is the predictable answer where `ttset.c:615` would take the default for anything below the floor.",
+        doc: "**`[Sterna]`**. How many digits the gutter above reserves.  Fixed rather than sized to the largest number on screen, so the terminal never re-flows mid-session at line 1000; a number that does not fit is left blank rather than clipped, because the column is at the window's left edge and a clipped `10001` reads as `0001`. Six because the number a session reaches has no ceiling — four is a few minutes of `cat`. `int_clamp` and not `int(1..10)` because there is no upstream reader to reproduce here, and clamping is the predictable answer where `ttset.c:615` would take the default for anything below the floor.",
     },
     Field {
         name: "terminal.size_follows_window",
@@ -16402,7 +16405,7 @@ pub const SETTING_HELP: &[&str] = &[
     "This setting edits printable input locally until Return sends the line. Backspace, Delete, selection, and usual editing shortcuts also stay local. Other keys send immediately.",
     "This setting uses a dark palette for terminal content and its line editor. Menus, dialogs, and other application controls keep the desktop theme.",
     "This setting shows line numbers in a column at the left side of the terminal. The first line from the host is line 1, and a line keeps its number in the scrollback. The numbers are not terminal content. Sterna does not include them in a selection, the session log, the printer output, or macro text.",
-    "This setting sets the number of digits in the line-number column. The width stays the same for the full session, because a change would move the terminal. Values use 1 thru 10.",
+    "This setting sets the number of digits in the line-number column. The width stays the same for the full session, because a change would move the terminal. A line with a longer number has no number. Values use 1 thru 10.",
     "This setting stores Tera Term's option for resizing the terminal with its window. Sterna always fits the terminal to its view. Thus, this setting has no effect.",
     "This setting stores Tera Term's option for remote terminal-size requests. Sterna handles supported remote resize requests even if this setting is off.",
     "This setting clears the displayed page and homes the cursor each time Sterna applies terminal size. It can also clear the page if the size does not change.",

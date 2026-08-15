@@ -127,6 +127,20 @@ void LineNumberGutter::paintEvent(QPaintEvent *)
             continue;
         }
         const QString text = QString::number(number);
+        if (text.size() > m_digits) {
+            // Too long for its field, so it gets no number — the same rule as
+            // the line above a mark, and for the same reason: a number this
+            // column cannot state is better absent than wrong.
+            //
+            // It does **not** spill leftwards. This widget is the leftmost
+            // thing in the page, `QPainter` clips to its rect, and a negative
+            // column therefore loses the leading digits rather than drawing
+            // them somewhere: at four digits, line 10001 read `0001`. Two
+            // different lines wearing the same number is the one failure this
+            // feature must not have, and it is silent — the digits that
+            // survive look like a perfectly good number.
+            continue;
+        }
         // Right-aligned by cell arithmetic rather than by measuring the string
         // or by handing Qt a rectangle: `Theme` has given this font absolute
         // letter spacing that makes one glyph exactly one cell, so a digit's
@@ -134,9 +148,6 @@ void LineNumberGutter::paintEvent(QPaintEvent *)
         // the numbers on the same baseline as the text beside them — which an
         // `AlignVCenter` rectangle would miss by however much the font's
         // ascent and descent differ.
-        //
-        // A number longer than its field gets a negative column and spills
-        // leftwards, which is the documented overflow.
         p.drawText(QPoint((m_digits - text.size()) * cw + m_theme.textOffsetX(),
                           top + m_theme.baseline()),
                    text);
