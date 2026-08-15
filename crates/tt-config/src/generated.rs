@@ -3059,6 +3059,19 @@ pub struct Settings {
     /// the host asked for, and the text keeps its own: this says the terminal has
     /// nobody on the other end, and it must not be mistaken for output.
     pub color_disconnected_shade: i32,
+    /// **`[Sterna]`**, because upstream has no Find — and so, like the highlight
+    /// rules above, no key to be compatible with.
+    ///
+    /// The pair every match *except* the one you are stepping through is painted in.
+    /// The current one is the terminal's selection, which is how it gets scrolled to,
+    /// copied and drawn without a second idea of what "chosen" looks like; these are
+    /// the others, and they have to be a colour a selection is distinguishable from.
+    ///
+    /// Amber on black rather than a shade of the theme: a match is a claim about the
+    /// text, not a mood, and a search that quietly picked something close to the
+    /// background on somebody's palette would look broken in the one case it exists
+    /// for.
+    pub color_find: [u8; 6],
     /// `ttset.c:718`, and the default is again the `else` branch.
     pub cursor_shape: CursorShape,
     /// `ttset.c:1227`.
@@ -4338,6 +4351,34 @@ pub struct Settings {
     /// recorded whether or not it is currently being consulted, so clearing
     /// `LogDefaultPath` later falls back to somewhere real.
     pub recent_log_dir: String,
+    /// What was last typed into the find bar, newest first, separated by `;`.
+    ///
+    /// The same shape as `recent.host_history` above and for the same reason: a list
+    /// is not something a flat table of named settings can hold, and an indexed
+    /// family of keys would be a second mechanism for one. `%` and `;` are
+    /// percent-encoded, so a pattern containing either survives the round trip —
+    /// which matters more here than it does for a host name, since `;` is a
+    /// perfectly ordinary thing to search a console log for.
+    ///
+    /// Twelve are kept. Clearing the value forgets the lot, and there is no switch:
+    /// a search box with no memory of the last thing you searched for is a search
+    /// box you retype into, and nothing here reaches the network or the disk the way
+    /// a remembered connection does.
+    pub recent_find_history: String,
+    /// The three boxes on the find bar, as they were left.
+    ///
+    /// Settings rather than window state because they change what a pattern *means*,
+    /// so somebody who works in regular expressions should not have to say so again
+    /// every time they open the bar. They live beside the remembered log directory
+    /// for the same reason it does: this is where the answer to "how was this last
+    /// set" goes.
+    pub recent_find_case: bool,
+    /// Whether a match has to have a word boundary at each end.
+    pub recent_find_whole_word: bool,
+    /// Whether the pattern is a regular expression rather than text to be found.
+    /// Off, because a console is full of `.` and `[` and somebody searching for an
+    /// IP address should get the one they typed.
+    pub recent_find_regex: bool,
     /// Whether starting Sterna may look for a new release. On, so an installed
     /// terminal learns about a signed update without anyone remembering to ask.
     pub updates_check_on_startup: bool,
@@ -4432,6 +4473,7 @@ impl Default for Settings {
             color_use_normal_background: false,
             color_highlighting: true,
             color_disconnected_shade: 12,
+            color_find: [0, 0, 0, 255, 220, 120],
             cursor_shape: CursorShape::default(),
             cursor_nonblinking: false,
             cursor_show_unfocused: true,
@@ -4685,6 +4727,10 @@ impl Default for Settings {
             recent_connections: String::from(""),
             recent_remember: true,
             recent_log_dir: String::from(""),
+            recent_find_history: String::from(""),
+            recent_find_case: false,
+            recent_find_whole_word: false,
+            recent_find_regex: false,
             updates_check_on_startup: true,
             updates_last_check: String::from(""),
         }
@@ -4979,6 +5025,7 @@ impl Settings {
                 0,
                 100,
             ),
+            color_find: crate::schema::color2(ini.get("Sterna", "FindColor"), d.color_find),
             cursor_shape: match ini.get("Tera Term", "CursorShape") {
                 Some(v) => CursorShape::from_ini(v),
                 None => d.cursor_shape,
@@ -5942,6 +5989,15 @@ impl Settings {
             recent_log_dir: ini
                 .get_or("Sterna", "LogDir", &d.recent_log_dir)
                 .to_string(),
+            recent_find_history: ini
+                .get_or("Sterna", "FindHistory", &d.recent_find_history)
+                .to_string(),
+            recent_find_case: crate::schema::on_off(ini.get("Sterna", "FindCase"), false),
+            recent_find_whole_word: crate::schema::on_off(
+                ini.get("Sterna", "FindWholeWord"),
+                false,
+            ),
+            recent_find_regex: crate::schema::on_off(ini.get("Sterna", "FindRegex"), false),
             updates_check_on_startup: crate::schema::on_off(
                 ini.get("Sterna", "CheckUpdatesOnStartup"),
                 true,
@@ -6464,6 +6520,11 @@ impl Settings {
             "Sterna",
             "DisconnectedShade",
             &self.color_disconnected_shade.to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "FindColor",
+            &crate::schema::color2_str(&self.color_find),
         );
         ini.set(
             "Tera Term",
@@ -8103,6 +8164,27 @@ impl Settings {
             &if self.recent_remember { "on" } else { "off" }.to_string(),
         );
         ini.set("Sterna", "LogDir", &self.recent_log_dir.clone());
+        ini.set("Sterna", "FindHistory", &self.recent_find_history.clone());
+        ini.set(
+            "Sterna",
+            "FindCase",
+            &if self.recent_find_case { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "FindWholeWord",
+            &if self.recent_find_whole_word {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "FindRegex",
+            &if self.recent_find_regex { "on" } else { "off" }.to_string(),
+        );
         ini.set(
             "Sterna",
             "CheckUpdatesOnStartup",
@@ -8795,6 +8877,13 @@ impl Settings {
                     "Sterna",
                     "DisconnectedShade",
                     &self.color_disconnected_shade.to_string(),
+                );
+            }
+            "color.find" => {
+                ini.set(
+                    "Sterna",
+                    "FindColor",
+                    &crate::schema::color2_str(&self.color_find),
                 );
             }
             "cursor.shape" => {
@@ -10957,6 +11046,35 @@ impl Settings {
             "recent.log_dir" => {
                 ini.set("Sterna", "LogDir", &self.recent_log_dir.clone());
             }
+            "recent.find_history" => {
+                ini.set("Sterna", "FindHistory", &self.recent_find_history.clone());
+            }
+            "recent.find_case" => {
+                ini.set(
+                    "Sterna",
+                    "FindCase",
+                    &if self.recent_find_case { "on" } else { "off" }.to_string(),
+                );
+            }
+            "recent.find_whole_word" => {
+                ini.set(
+                    "Sterna",
+                    "FindWholeWord",
+                    &if self.recent_find_whole_word {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "recent.find_regex" => {
+                ini.set(
+                    "Sterna",
+                    "FindRegex",
+                    &if self.recent_find_regex { "on" } else { "off" }.to_string(),
+                );
+            }
             "updates.check_on_startup" => {
                 ini.set(
                     "Sterna",
@@ -11194,6 +11312,7 @@ impl Settings {
             .to_string(),
             "color.highlighting" => if self.color_highlighting { "on" } else { "off" }.to_string(),
             "color.disconnected_shade" => self.color_disconnected_shade.to_string(),
+            "color.find" => crate::schema::color2_str(&self.color_find),
             "cursor.shape" => self.cursor_shape.as_ini().to_string(),
             "cursor.nonblinking" => if self.cursor_nonblinking { "on" } else { "off" }.to_string(),
             "cursor.show_unfocused" => if self.cursor_show_unfocused {
@@ -11838,6 +11957,15 @@ impl Settings {
             "recent.connections" => self.recent_connections.clone(),
             "recent.remember" => if self.recent_remember { "on" } else { "off" }.to_string(),
             "recent.log_dir" => self.recent_log_dir.clone(),
+            "recent.find_history" => self.recent_find_history.clone(),
+            "recent.find_case" => if self.recent_find_case { "on" } else { "off" }.to_string(),
+            "recent.find_whole_word" => if self.recent_find_whole_word {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "recent.find_regex" => if self.recent_find_regex { "on" } else { "off" }.to_string(),
             "updates.check_on_startup" => if self.updates_check_on_startup {
                 "on"
             } else {
@@ -12067,6 +12195,7 @@ impl Settings {
                     100,
                 )
             }
+            "color.find" => self.color_find = crate::schema::color2(Some(value), self.color_find),
             "cursor.shape" => self.cursor_shape = CursorShape::from_ini(value),
             "cursor.nonblinking" => {
                 self.cursor_nonblinking = crate::schema::on_off(Some(value), false)
@@ -12759,6 +12888,14 @@ impl Settings {
             "recent.connections" => self.recent_connections = value.to_string(),
             "recent.remember" => self.recent_remember = crate::schema::on_off(Some(value), true),
             "recent.log_dir" => self.recent_log_dir = value.to_string(),
+            "recent.find_history" => self.recent_find_history = value.to_string(),
+            "recent.find_case" => self.recent_find_case = crate::schema::on_off(Some(value), false),
+            "recent.find_whole_word" => {
+                self.recent_find_whole_word = crate::schema::on_off(Some(value), false)
+            }
+            "recent.find_regex" => {
+                self.recent_find_regex = crate::schema::on_off(Some(value), false)
+            }
             "updates.check_on_startup" => {
                 self.updates_check_on_startup = crate::schema::on_off(Some(value), true)
             }
@@ -13554,6 +13691,16 @@ pub const FIELDS: &[Field] = &[
         default: "12",
         label: None,
         doc: "**`[Sterna]`**, because upstream has no idea a terminal can be idle: its window is one session and closing the connection usually closes it.  How far the terminal's background moves while nothing is connected, as a percentage of the way towards the configured *foreground*. Towards the foreground rather than towards black or white because a `#000` background cannot be darkened and a `#fff` one cannot be lightened, and the configured foreground is the one colour guaranteed to be visible against it — so the shade shows up on any theme somebody has actually chosen. `0` turns it off.  Only the default background moves. A cell the host coloured keeps the colour the host asked for, and the text keeps its own: this says the terminal has nobody on the other end, and it must not be mistaken for output.",
+    },
+    Field {
+        name: "color.find",
+        page: "color",
+        section: "Sterna",
+        key: "FindColor",
+        kind: Kind::Color2,
+        default: "0,0,0,255,220,120",
+        label: None,
+        doc: "**`[Sterna]`**, because upstream has no Find — and so, like the highlight rules above, no key to be compatible with.  The pair every match *except* the one you are stepping through is painted in. The current one is the terminal's selection, which is how it gets scrolled to, copied and drawn without a second idea of what \"chosen\" looks like; these are the others, and they have to be a colour a selection is distinguishable from.  Amber on black rather than a shade of the theme: a match is a claim about the text, not a mood, and a search that quietly picked something close to the background on somebody's palette would look broken in the one case it exists for.",
     },
     Field {
         name: "cursor.shape",
@@ -16084,6 +16231,46 @@ pub const FIELDS: &[Field] = &[
         default: "",
         label: None,
         doc: "The directory the last log was written to, so the log dialog opens where the last one landed rather than where the settings file was pointing when it was written. Upstream has no key for this and does not remember: `GetTermLogDir` answers the same three-way question every time (`log.default_path`, then `transfer.file_dir`, then the per-user directory).  **Consulted only when `log.default_path` is empty.** A configured log directory is somebody saying where logs go, and a remembered one that silently overrode it would make the setting look broken. What this replaces is the *rest* of `GetTermLogDir`'s chain — the file-transfer directory, then a per-user directory nobody chose — which is where an unconfigured log lands and is not a place anyone would look twice.  Only the log dialog writes it: a `/L=` path or an auto-started template is a script's choice and must not retarget the next log a person opens. It is recorded whether or not it is currently being consulted, so clearing `LogDefaultPath` later falls back to somewhere real.",
+    },
+    Field {
+        name: "recent.find_history",
+        page: "recent",
+        section: "Sterna",
+        key: "FindHistory",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "What was last typed into the find bar, newest first, separated by `;`.  The same shape as `recent.host_history` above and for the same reason: a list is not something a flat table of named settings can hold, and an indexed family of keys would be a second mechanism for one. `%` and `;` are percent-encoded, so a pattern containing either survives the round trip — which matters more here than it does for a host name, since `;` is a perfectly ordinary thing to search a console log for.  Twelve are kept. Clearing the value forgets the lot, and there is no switch: a search box with no memory of the last thing you searched for is a search box you retype into, and nothing here reaches the network or the disk the way a remembered connection does.",
+    },
+    Field {
+        name: "recent.find_case",
+        page: "recent",
+        section: "Sterna",
+        key: "FindCase",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "The three boxes on the find bar, as they were left.  Settings rather than window state because they change what a pattern *means*, so somebody who works in regular expressions should not have to say so again every time they open the bar. They live beside the remembered log directory for the same reason it does: this is where the answer to \"how was this last set\" goes.",
+    },
+    Field {
+        name: "recent.find_whole_word",
+        page: "recent",
+        section: "Sterna",
+        key: "FindWholeWord",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "Whether a match has to have a word boundary at each end.",
+    },
+    Field {
+        name: "recent.find_regex",
+        page: "recent",
+        section: "Sterna",
+        key: "FindRegex",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "Whether the pattern is a regular expression rather than text to be found. Off, because a console is full of `.` and `[` and somebody searching for an IP address should get the one they typed.",
     },
     Field {
         name: "updates.check_on_startup",
