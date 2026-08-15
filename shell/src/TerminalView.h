@@ -114,6 +114,31 @@ public:
     void selectScreen();
     /// Select the whole buffer, scrollback and page — `ID_EDIT_SELECTALL`.
     void selectAll();
+    /// Select an arbitrary span, for a caller with no mouse.
+    ///
+    /// What Find uses to show the match it stepped to: the current match *is*
+    /// the selection, which is how it gets painted, scrolled to and copied
+    /// without a second idea of what "chosen" looks like.
+    void selectSpan(SelPoint from, SelPoint to);
+    /// Scroll `line` into view, centred, if it is not on screen already.
+    void revealLine(quint64 line);
+    /// Open the find bar and put the keyboard in it. Already open, it takes
+    /// the focus back and selects what is there, which is what pressing the
+    /// shortcut twice means everywhere else.
+    void openFind();
+    /// Close it, and give the keyboard back to the terminal.
+    void closeFind();
+    /// This terminal's find bar, which exists from construction and is hidden.
+    /// Public so the window can hand it the remembered patterns.
+    class FindBar *findBar() const { return m_findBar; }
+    /// Put the find bar along the bottom edge, over the terminal.
+    ///
+    /// **Over rather than above.** A bar that took layout space would shrink
+    /// the terminal by a row, and `Session::resize` sends a scrolled-back view
+    /// live and rewrites `TerminalSize` — so closing the bar would throw away
+    /// the position somebody had just searched to. Floating costs the bottom
+    /// row of text while it is open and nothing else.
+    void positionFindBar();
     /// Blank the live page but keep it and any retained selection in
     /// scrollback.
     void clearScreen();
@@ -256,6 +281,11 @@ private:
     QLineEdit *m_lineEditor = nullptr;
     QQueue<QString> m_queuedLines;
     bool m_lineEditEnabled = false;
+
+    /// The find bar, floating over the bottom of the terminal. Constructed
+    /// hidden and per terminal, because a window can be showing nine of them
+    /// and a search belongs to one session's scrollback.
+    class FindBar *m_findBar = nullptr;
 
     /// The three keyboard settings which decide whether Qt's Alt key belongs
     /// to the desktop or to the terminal, and how a Meta character is put on

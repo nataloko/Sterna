@@ -21,6 +21,7 @@
 #include <QWheelEvent>
 
 #include "DecGraphics.h"
+#include "FindBar.h"
 #include "PasteDialog.h"
 #include "Session.h"
 
@@ -490,6 +491,11 @@ TerminalView::TerminalView(Session *session, QWidget *parent, const I18n *i18n)
         }
     });
 
+    // Hidden until Ctrl+Shift+F, and a child of this widget rather than of the
+    // page: floating over the terminal is what keeps opening it from resizing
+    // the grid — see `positionFindBar`.
+    m_findBar = new FindBar(this, m_session);
+
     // Only ever runs while output is arriving faster than the frame floor
     // below, and stops itself at the next frame. Same shape as the session's
     // pending-out retry: a timer that exists during a burst and not otherwise.
@@ -787,6 +793,14 @@ void TerminalView::paintEvent(QPaintEvent *)
         const size_t spanCount = m_session->rowHighlights(y, &spans);
         size_t spanAt = 0;
 
+        // And what a running search claimed, matched the same way and over the
+        // same logical line. Kept apart from the rules rather than folded into
+        // them: a search is transient and answers to nobody's configuration,
+        // and it must not be silenced by View > Highlight matches.
+        const TtFindSpan *hits = nullptr;
+        const size_t hitCount = m_session->rowFind(y, &hits);
+        size_t hitAt = 0;
+
         // One `drawText` per run of cells that look alike. Real console output
         // is mostly long runs of one colour, so this is a large win over a
         // call per cell — and it is only safe because the font was given
@@ -860,10 +874,22 @@ void TerminalView::paintEvent(QPaintEvent *)
                 spanAt++;
             }
             CellOverride over;
-            const bool highlighted = spanAt < spanCount && x >= spans[spanAt].from
-                                     && x < spans[spanAt].to;
+            bool highlighted = spanAt < spanCount && x >= spans[spanAt].from
+                               && x < spans[spanAt].to;
             if (highlighted) {
                 over = highlightOverride(spans[spanAt]);
+            }
+
+            // A match wins over a rule that happens to cover the same cell:
+            // one of the two is what somebody just asked to be shown, and a
+            // search that could be hidden by a colour they set last month
+            // would be a search that sometimes does not work.
+            while (hitAt < hitCount && hits[hitAt].to <= x) {
+                hitAt++;
+            }
+            if (hitAt < hitCount && x >= hits[hitAt].from && x < hits[hitAt].to) {
+                over = m_theme.findOverride();
+                highlighted = true;
             }
 
             QColor fg;
@@ -997,6 +1023,17 @@ void TerminalView::paintEvent(QPaintEvent *)
                             break;
                         }
                     }
+                    // And a match under the cursor, on the same terms and with
+                    // the same precedence the grid loop gives it.
+                    const TtFindSpan *hits = nullptr;
+                    const size_t hitCount = m_session->rowFind(cursorRow, &hits);
+                    for (size_t i = 0; i < hitCount; i++) {
+                        if (cx >= hits[i].from && cx < hits[i].to) {
+                            over = m_theme.findOverride();
+                            highlighted = true;
+                            break;
+                        }
+                    }
                     QColor fg;
                     QColor bg;
                     m_theme.resolve(cell, false, screenReverse, &fg, &bg,
@@ -1052,6 +1089,27 @@ void TerminalView::resizeEvent(QResizeEvent *)
 {
     refit();
     positionLineEditor();
+    positionFindBar();
+}
+
+void TerminalView::positionFindBar()
+{
+    if (!m_findBar || m_findBar->isHidden()) {
+        return;
+    }
+    const int h = qMin(m_findBar->sizeHint().height(), height());
+    m_findBar->setGeometry(0, height() - h, width(), h);
+    m_findBar->raise();
+}
+
+void TerminalView::openFind()
+{
+    m_findBar->open();
+}
+
+void TerminalView::closeFind()
+{
+    m_findBar->close();
 }
 
 void TerminalView::refit()
@@ -2257,18 +2315,45 @@ void TerminalView::selectAll()
 /// one rule for both.
 void TerminalView::selectLines(quint64 first, quint64 last)
 {
+    selectSpan(SelPoint {first, 0}, SelPoint {last, m_session->cols()});
+}
+
+void TerminalView::selectSpan(SelPoint from, SelPoint to)
+{
     // Same reason as `startSelection`: one selection at a time, or Copy has to
     // guess which of the two painted ones was meant.
     m_lineEditor->deselect();
     m_selUnit = SelUnit::Char;
-    m_selAnchor = SelPoint {first, 0};
-    m_selAnchorEnd = SelPoint {last, m_session->cols()};
+    m_selAnchor = from;
+    m_selAnchorEnd = to;
     m_selHead = m_selAnchorEnd;
+    // Without this the next `Session::damaged` carrying a changed size drops
+    // the selection — which is right for one somebody dragged and would be
+    // silent breakage for one a search just made.
     m_selSize = QSize(m_session->cols(), m_session->rows());
     m_hasSelection = true;
     m_selecting = false;
     m_autoScroll->stop();
     update();
+}
+
+void TerminalView::revealLine(quint64 line)
+{
+    // A line already in front of somebody does not need moving, and moving it
+    // would be worse than doing nothing: stepping between two matches on the
+    // same screen would jerk the text under the one they are reading.
+    const int rows = m_session->rows();
+    if (line >= m_session->lineAt(0) && line <= m_session->lineAt(rows - 1)) {
+        return;
+    }
+    // `lineAt(y) == topLine() - viewOffset() + y`, so this is that identity
+    // solved for the offset that puts `line` halfway down the window — where
+    // there is context above it as well as below. The core clamps again on its
+    // own side; this clamp is here so the cast cannot overflow.
+    const qint64 top = static_cast<qint64>(m_session->topLine());
+    const qint64 offset = top - (static_cast<qint64>(line) - rows / 2);
+    const qint64 most = m_session->scrollbackLen();
+    setViewOffset(static_cast<int>(qBound(qint64(0), offset, most)));
 }
 
 void TerminalView::clearSelection()
