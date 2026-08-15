@@ -16,6 +16,7 @@
 // that wrong is permanent.
 
 #include <QApplication>
+#include <QColor>
 #include <QDir>
 #include <QImage>
 #include <QStandardPaths>
@@ -213,6 +214,22 @@ void test_the_width_setting_moves_the_gutter()
     CHECK(h.gutter->digits() == 1);
 }
 
+void test_the_gutter_follows_the_terminals_colours()
+{
+    Harness h;
+    h.set("terminal.line_numbers", QStringLiteral("on"));
+    const QColor before = h.gutter->grab().toImage().pixelColor(0, 0);
+    CHECK(before == h.view->theme().defaultBackground());
+
+    // A host repainting the background reaches the gutter, which is not a
+    // given: `OSC 11` emits `colorsChanged` and no line number moved, so
+    // nothing on the `viewChanged` path would have run.
+    h.feed("\033]11;#000080\033\\");
+    const QColor after = h.gutter->grab().toImage().pixelColor(0, 0);
+    CHECK(after == h.view->theme().defaultBackground());
+    CHECK(after != before);
+}
+
 void test_numbers_follow_the_history()
 {
     Harness h;
@@ -246,6 +263,7 @@ int main(int argc, char **argv)
     test_the_numbers_are_not_copied();
     test_the_window_grows_and_the_terminal_does_not_shrink();
     test_the_width_setting_moves_the_gutter();
+    test_the_gutter_follows_the_terminals_colours();
     test_numbers_follow_the_history();
 
     // `--write DIR` dumps what this looks like, the way every other test binary

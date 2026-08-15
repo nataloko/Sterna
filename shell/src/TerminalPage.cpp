@@ -87,6 +87,17 @@ TerminalPage::TerminalPage(const I18n *i18n, QWidget *macroWindow,
     // the view's own `paintEvent`, at the cost of a coupling.
     connect(m_view, &TerminalView::viewChanged, this,
             [this] { m_gutter->update(); });
+    // The two things that move the gutter's *colours* without moving a line
+    // number, so neither reaches `viewChanged`: a host repainting the
+    // background with `OSC 11`, and connecting or disconnecting, which moves
+    // every background the host did not choose by `color.disconnected_shade`.
+    // The gutter reads both out of the same `Theme` the terminal paints with,
+    // and `update()` only schedules — so it does not matter that the view's
+    // handlers are the ones that refresh that theme, or in which order.
+    connect(m_session, &Session::colorsChanged, this,
+            [this] { m_gutter->update(); });
+    connect(m_session, &Session::connectionChanged, this,
+            [this] { m_gutter->update(); });
     connect(m_scroll, &QScrollBar::valueChanged, this, [this](int value) {
         // The scrollbar counts down from the top of the history; the session
         // counts back from the live screen. One subtraction, in one place.
