@@ -41,6 +41,12 @@ compile_commands.json
 # code. `AGENTS.md` tells an agent to read it if it is there.
 /AGENTS.local.md
 
+# A survey of another project (YAT, LGPL-2.1) for ideas worth borrowing. Not
+# tracked because it is notes about somebody else's program rather than a
+# decision about this one, and because nothing in it has been agreed. An item
+# that becomes work graduates into PLAN.md or docs/deviations.md.
+/docs/yat-ideas.md
+
 # The self-updater's release signing key and password. The public key is
 # committed under packaging/update; these two files must never be.
 /.private/
