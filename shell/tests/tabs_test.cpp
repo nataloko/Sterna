@@ -528,6 +528,19 @@ void test_connection_selector_follows_the_active_page()
     CHECK(bar->destination() == firstLabel);
     panels->setCurrentWidget(second);
     CHECK(bar->destination() == secondLabel);
+
+    // A page connected to nothing has nothing to say, and saying it anyway
+    // empties the field somebody is about to connect from — including the one
+    // `loadRecents` fills in so that going back where you were is one click.
+    // Every open makes a page, so this is also the field a second connection
+    // that failed comes back to.
+    window.findChild<QAction *>(QStringLiteral("newTabAction"))->trigger();
+    auto *blank = static_cast<TerminalPage *>(panels->currentWidget());
+    CHECK(blank != second);
+    CHECK(!blank->session()->isConnected());
+    CHECK(bar->destination() == secondLabel);
+    panels->setCurrentWidget(second);
+    CHECK(bar->destination() == secondLabel);
 }
 
 void test_new_tabs_load_the_saved_line_edit_default()

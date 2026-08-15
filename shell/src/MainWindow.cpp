@@ -1865,11 +1865,19 @@ void MainWindow::refreshConnectionSelector(TerminalPage *page)
         return;
     }
     // Connections made directly by a macro do not carry a RecentConnection,
-    // but their transport still has an honest short description. A genuinely
-    // blank page has neither and therefore gets an empty field.
-    m_connectBar->setDestination(page->session()->isConnected()
-                                     ? page->session()->describe()
-                                     : QString());
+    // but their transport still has an honest short description.
+    if (page->session()->isConnected()) {
+        m_connectBar->setDestination(page->session()->describe());
+        return;
+    }
+    // A page connected to nothing has nothing to say about the destination, so
+    // the field keeps what it had. Clearing it here reads as tidier and takes
+    // away the two things that field is holding at exactly this moment: the
+    // last connection, which `loadRecents` puts there so that going back is one
+    // click, and a destination somebody is part way through typing. Both are
+    // reachable — every open makes a page (`ensureIdlePage`), so File > New tab
+    // greyed out its own Connect button, and a second connection that failed
+    // arrived on a fresh page having thrown away the host that was mistyped.
 }
 
 void MainWindow::loadRecents()
@@ -1893,6 +1901,11 @@ void MainWindow::forgetRecents()
     rememberSettings({{QStringLiteral("recent.connections"), QString()}});
     if (m_connectBar) {
         m_connectBar->setRecents(m_recents);
+        // Emptied because the field may be holding the entry `loadRecents`
+        // took out of the list just forgotten; then put back, because this
+        // page's own connection is not one of the things being forgotten and
+        // is still open.
+        m_connectBar->setDestination(QString());
         refreshConnectionSelector(m_page);
     }
 }
