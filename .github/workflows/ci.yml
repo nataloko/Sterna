@@ -479,7 +479,7 @@ jobs:
       # different base. The step below fails the job rather than let that be
       # silent.
       MANYLINUX_IMAGE: quay.io/pypa/manylinux_2_28_x86_64@sha256:f854c50adf7b7a325bc4794316f3758d387a41d61f9e2ebca0f26c7dc8f761d4
-      QT_CACHE_KEY: appimage-qt-6.11.1-manylinux-2-28-x86-64-v1
+      QT_CACHE_KEY: appimage-qt-6.11.1-manylinux-2-28-x86-64-v2
       QT_CACHE_PATH: packaging/appimage/toolchain/qt-6.11.1
     steps:
       - uses: actions/checkout@v4
