@@ -1,13 +1,19 @@
 //! The log's file name, which is a template rather than a name.
 //!
-//! `LogDefaultName` ships as `teraterm.log` and looks like a plain file name,
-//! which is why the machinery behind it is easy to miss —
+//! `LogDefaultName` ships upstream as `teraterm.log` and looks like a plain
+//! file name, which is why the machinery behind it is easy to miss —
 //! `FLogGetLogFilename` (`filesys_log.cpp:964`) puts it through four passes
 //! before anything is opened: a `strftime` expansion, then `&h`/`&p`/`&u` for
 //! the connection, then a sweep for characters a file name cannot hold, and
 //! finally a join against the log directory. Anybody logging more than one
 //! console ends up with a `&h-%Y%m%d.log`, and a port that took the name
 //! literally would write every session into one file.
+//!
+//! Which is why **this port ships the template rather than the plain name**:
+//! `%Y%m%d_%H%M%S_&h.log`, so a second log cannot land on the first (see
+//! `docs/deviations.md`). Nothing here changes for it — the four passes are
+//! upstream's and the shipped value is one they offer themselves, on the Setup
+//! page's preset list (`log_pp.cpp:125`).
 //!
 //! **There are two strftime expanders upstream and they are not the same
 //! one**, which is the finding that decided the shape of this module. A log
@@ -668,6 +674,35 @@ mod tests {
         };
         assert_eq!(expand_name("&h.log", &ctx, when()), "fe80__1.log");
         assert_eq!(expand_name("a/b*c?.log", &ctx, when()), "b_c_.log");
+    }
+
+    /// The shipped template, which is the reason this port does not use
+    /// upstream's plain `teraterm.log` — two sessions a second apart get two
+    /// files, and neither of them depends on `LogAppend` to survive.
+    #[test]
+    fn the_shipped_template_cannot_name_the_same_file_twice() {
+        let settings = Settings::default();
+        let ctx = LogContext {
+            host: Some("router1".into()),
+            ..LogContext::default()
+        };
+
+        let first = expand_name(&settings.log_default_name, &ctx, when());
+        assert_eq!(first, "20260809_123456_router1.log");
+
+        let a_second_later = Civil::from_unix(1_786_278_897, 0);
+        assert_ne!(
+            expand_name(&settings.log_default_name, &ctx, a_second_later),
+            first
+        );
+
+        // A local shell has no host name, so the separator is left with
+        // nothing after it. Upstream's own preset does the same and it is not
+        // worth a rule of our own to tidy.
+        assert_eq!(
+            expand_name(&settings.log_default_name, &LogContext::default(), when()),
+            "20260809_123456_.log"
+        );
     }
 
     #[test]

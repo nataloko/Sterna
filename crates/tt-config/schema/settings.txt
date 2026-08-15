@@ -1589,7 +1589,16 @@ log.timestamp_format | string | Tera Term | LogTimestampFormat | %Y-%m-%d %H:%M:
 # `ttset.c:1018`, the name `LogAutoStart` and the log dialog both start from.
 # It is a **template**: `strftime` conversions, then `&h` for the host (`COMn`
 # on a serial line), `&p` for the TCP port and `&u` for the user name.
-log.default_name | string | Tera Term | LogDefaultName | teraterm.log | -
+#
+# **The default is not upstream's `teraterm.log`, and that is deliberate** —
+# see `docs/deviations.md`. One fixed name means every log lands on the last
+# one, and whether that overwrites it or appends to it is decided by a setting
+# the person starting the log is not looking at. A template that carries the
+# clock cannot collide, and this is upstream's own preset
+# (`log_pp.cpp:125`, `%y%m%d_%H%M%S_&h.log`) with a four-digit year. A session
+# with no host name — a local shell — leaves the `&h` empty and keeps the
+# separator, which is what upstream's preset does too.
+log.default_name | string | Tera Term | LogDefaultName | %Y%m%d_%H%M%S_&h.log | -
 
 # `ttset.c:1023`. Where a relative log name lands. Empty falls back to
 # `FileDir` if that exists and to the per-user log directory otherwise —
@@ -2197,6 +2206,21 @@ recent.connections | string | Sterna | Recent |  | -
 # somebody can no longer add to is taking away the entries *and* the way to
 # reach them. The bar's own Forget item is what removes them.
 recent.remember | bool | Sterna | RememberConnections | on | -
+
+# The directory the last log was written to, so the log dialog opens where the
+# last one landed rather than where the settings file was pointing when it was
+# written. Upstream has no key for this and does not remember: `GetTermLogDir`
+# answers the same three-way question every time (`log.default_path`, then
+# `transfer.file_dir`, then the per-user directory).
+#
+# It is a **choice**, not a configured default, which is why it wins over
+# `log.default_path`: somebody who browsed to a directory in the picker has
+# said where the next log goes more recently than the file did. Only the dialog
+# writes it — a `/L=` path or an auto-started template is a script's choice and
+# must not retarget the next log a person opens — so a file that sets
+# `LogDefaultPath` and nothing else still opens there, and clearing this value
+# hands the question back.
+recent.log_dir | string | Sterna | LogDir |  | -
 
 # --- updates ----------------------------------------------------------------
 #
