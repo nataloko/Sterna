@@ -343,15 +343,26 @@ mod tests {
         assert!(check(&q).is_err());
     }
 
-    /// The same subset `docs/highlighting.md` documents: the workspace pins
-    /// `regex` with the script and age tables left out, so this fails to
-    /// compile rather than matching nothing.
+    /// The same subset `docs/highlighting.md` documents, and the half of it
+    /// that is a property of the engine rather than of a feature flag:
+    /// backreferences and lookaround are what `regex` gives up to promise
+    /// linear time, so a pattern using either is refused in every build.
+    ///
+    /// The other half — script and age classes, which the workspace pins
+    /// `regex` without — is deliberately **not** asserted here. Cargo unifies
+    /// features across everything one invocation builds, and `tt-fuzz`'s
+    /// `proptest` asks for `regex-syntax`'s defaults, so `\p{Greek}` compiles
+    /// under `cargo test` at the workspace root and not under
+    /// `cargo test -p tt-session`. A test that reads the dependency graph
+    /// rather than this crate is a test that fails depending on how it is run.
     #[test]
-    fn script_classes_are_not_in_this_build() {
-        let q = Query {
-            pattern: r"\p{Greek}".into(),
-            ..Query::default()
-        };
-        assert!(check(&q).is_err());
+    fn the_engine_refuses_what_it_cannot_do_in_linear_time() {
+        for pattern in [r"(a)\1", r"(?=foo)bar", r"(?<=foo)bar"] {
+            let q = Query {
+                pattern: pattern.into(),
+                ..Query::default()
+            };
+            assert!(check(&q).is_err(), "{pattern} compiled");
+        }
     }
 }
