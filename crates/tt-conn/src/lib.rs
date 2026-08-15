@@ -8,7 +8,7 @@
 //! The serial layer is built against the requirement in Tera Term's
 //! `commlib.c` rather than against a generic idea of what a serial port does.
 //! That is why MARK/SPACE parity, DSR flow control and break *detection* are
-//! here at all — see `../README.md` and `PLAN.md`'s spike 4 result for what
+//! here at all — see `../README.md` and `docs/history.md`'s spike 4 result for what
 //! that requirement turned out to be, and which parts of it Linux cannot
 //! express.
 //!

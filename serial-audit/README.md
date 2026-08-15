@@ -3,7 +3,7 @@
 Does `serialport-rs` cover what a Tera Term successor needs from a serial port,
 and where it doesn't, is a raw-fd patch enough or do we need our own layer?
 
-**Answer: adopt it, plus a thin patch layer.** Full findings are in `PLAN.md`
+**Answer: adopt it, plus a thin patch layer.** Full findings are in `docs/history.md`
 under "Spike 4 result". This crate is what produced them, and it stays as the
 regression test for the patch layer once `tt-conn` exists.
 

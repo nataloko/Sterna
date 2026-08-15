@@ -134,7 +134,7 @@ request, so its return value proves nothing on its own.
 five data bits while the wire carried eight, and the corruption would look like
 a cabling fault.
 
-This also corrects a claim in `PLAN.md`'s spike 4 result: "5–8 data bits" came
+This also corrects a claim in `docs/history.md`'s spike 4 result: "5–8 data bits" came
 from the `serialport-rs` *enum* covering four values, not from any of them
 reaching the wire. Seven does — `seven_data_bits_reach_the_wire` proves it by
 transmitting at seven and receiving at eight, where the stop bit lands in bit 7

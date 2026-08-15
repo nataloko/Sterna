@@ -98,7 +98,7 @@ pub fn enumerate() -> Result<Vec<PortInfo>> {
 
 /// `ts.ComPort` — a Tera Term command line's `/C=<n>`, resolved to a port.
 ///
-/// **A decision, not a translation** (2026-08-09, recorded in `PLAN.md`): the
+/// **A decision, not a translation** (2026-08-09, recorded in `docs/history.md`): the
 /// number is a 1-based index into [`enumerate`], so `/C=1` is the first entry
 /// the port picker shows. The alternative was a literal `COM<n>` →
 /// `/dev/ttyS<n-1>` map, which is stable and useless on a machine whose only

@@ -83,7 +83,7 @@ the same thing to the host.
 ## `Event::Damage` is deliberately coarse
 
 It says "the screen changed", not which rows. The measured baseline is a full
-80x24 repaint in 3.9 ms on the target Qt (`PLAN.md`) — roughly 40x what a
+80x24 repaint in 3.9 ms on the target Qt (`docs/history.md`) — roughly 40x what a
 115200 baud link can dirty — so per-row damage is an optimisation to add when
 something says it is needed, not a thing to design around now. The event exists
 so the interface does not have to change when it is.

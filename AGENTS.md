@@ -1911,6 +1911,8 @@ PLAN.md          roadmap + status — read first
 AGENTS.md        this file: the working agreements and the traps
 CLAUDE.md        one `@AGENTS.md` import, so Claude Code reads the same text
 ATTRIBUTION.md   licensing, and what still needs clearing before vendoring
+docs/            the ledgers: deviations, upstream bugs, the build record
+                 (`history.md`), and per-feature notes
 oracle/          Tera Term's real VT engine, headless on Linux (see its README)
 esctest/         the conformance suite, run inside our own terminal
 packaging/       the AppImage and the NSIS installer — all of Linux/Windows packaging
@@ -1933,8 +1935,8 @@ winshim/         what Tera Term's C needs from Windows — shared by the three
 ```
 
 None of `xfer/`, `serial-audit/`, `ssh-audit/` is throwaway — they are the
-regression suites for `tt-xfer` and `tt-conn`, and every `PLAN.md` spike
-claim is reproducible from them.
+regression suites for `tt-xfer` and `tt-conn`, and every spike claim in
+`docs/history.md` is reproducible from them.
 
 `ssh-audit/servers.sh` needs `sudo` (sshd + dropbear on localhost, a
 throwaway `sterna-test` account). **Run `./servers.sh stop` when done** — that

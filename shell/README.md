@@ -351,7 +351,7 @@ Windows. The pump runs only when there is something to pump — with a budget of
 turns of the event loop and the window keeps painting through it.
 
 Measured: **zero CPU ticks over five seconds** with a port open and idle, at
-65 MB RSS — in line with `PLAN.md`'s ~60 MB Qt floor. Re-measured with a local
+65 MB RSS — in line with `docs/history.md`'s ~60 MB Qt floor. Re-measured with a local
 shell attached, which is the harder case because there is a live child process
 on the other end: 80 ms to start and paint `bash`'s prompt, then **zero ticks
 over the next six seconds**, at 72 MB.

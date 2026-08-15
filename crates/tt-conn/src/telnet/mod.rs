@@ -1,7 +1,7 @@
 //! Telnet over TCP.
 //!
 //! Third transport, and the one that matters most after serial for the reason
-//! `PLAN.md` gives: a terminal server puts one TCP port on each serial line,
+//! `docs/history.md` gives: a terminal server puts one TCP port on each serial line,
 //! and reaching those ports is the same job as reaching the cable. That also
 //! shapes the defaults — see [`TelnetMode`], where "raw" is a first-class
 //! choice rather than a degraded one.

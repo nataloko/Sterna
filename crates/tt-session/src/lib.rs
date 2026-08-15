@@ -101,7 +101,7 @@ pub trait StreamFilter: Send {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     /// The screen changed. Coarse on purpose — a full 80x24 repaint measured
-    /// 3.9 ms on the target Qt (`PLAN.md`), roughly 40x what a 115200 baud
+    /// 3.9 ms on the target Qt (`docs/history.md`), roughly 40x what a 115200 baud
     /// link can dirty, so per-row damage is an optimisation to add when
     /// something says it is needed rather than a thing to design around now.
     Damage,

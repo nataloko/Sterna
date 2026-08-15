@@ -1,6 +1,6 @@
 //! `~/.ssh/config` — so that typing an alias the user already has works.
 //!
-//! This is the adoption lever `PLAN.md` names. A Linux user's `~/.ssh/config`
+//! This is the adoption lever `docs/history.md` names. A Linux user's `~/.ssh/config`
 //! already says which key, which account and which port go with `myrouter`;
 //! Tera Term keeps that in its own store and its own dialogs, so switching
 //! means entering everything twice and keeping it in step. Reading OpenSSH's

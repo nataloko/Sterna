@@ -7,7 +7,7 @@ NSIS build and its traps are written down. **Cutting a release is
 scripts; this file is what the Linux artifact is made of.
 
 One artifact on Linux: an **AppImage**, and nothing else. No rpm, no deb —
-decided 2026-08-08, recorded in `PLAN.md`. One thing to build, one thing to
+decided 2026-08-08, recorded in `docs/history.md`. One thing to build, one thing to
 test, and no per-distro packaging to keep alive alongside the Windows installer
 while this is one person's project. It also suits the machine it is written for:
 the host is Bluefin, an image-based Fedora where layering an rpm is the awkward

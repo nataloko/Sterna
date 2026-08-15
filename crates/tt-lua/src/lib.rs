@@ -153,7 +153,7 @@ impl Script {
     /// A 1-based array, which is Lua's convention and happens to be TTL's
     /// `param1`..`param9` renumbered by one: `tt.args[1]` is the first
     /// parameter. Unlike TTL there is no ninth-parameter ceiling and no
-    /// `params[0]` holding the command line — see `PLAN.md` on why upstream's
+    /// `params[0]` holding the command line — see `docs/history.md` on why upstream's
     /// index 0 is the whole line.
     pub fn with_args(mut self, args: Vec<Vec<u8>>) -> Self {
         self.args = args;

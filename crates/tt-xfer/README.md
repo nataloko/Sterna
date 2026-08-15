@@ -8,7 +8,7 @@ cargo check -p tt-xfer --target x86_64-pc-windows-gnu
 The protocols are Tera Term's, vendored verbatim under `vendor/ttpfile/` and
 compiled in by `build.rs`. This crate is the **host** they attach to: the three
 vtables in `csrc/tt_xfer.c`, and the loop that drives them in `src/lib.rs`.
-Nothing is reimplemented. `PLAN.md`'s spike 2 is the argument for that, and the
+Nothing is reimplemented. `docs/history.md`'s spike 2 is the argument for that, and the
 short version is that B-Plus was CompuServe's and Quick-VAN was NIFTY-Serve's,
 both services are gone, and a rewrite of either could only ever be checked
 against a reading of the code it replaced.

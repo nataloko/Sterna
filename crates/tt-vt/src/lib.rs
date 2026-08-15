@@ -4216,7 +4216,7 @@ impl State {
     /// What this cannot do is bound the *allocation*: `vte` collects the OSC
     /// into a `Vec` of its own with no ceiling under the `std` feature, so an
     /// OSC that never terminates still grows without limit. That half of the
-    /// setting is `vte`'s to enforce and is recorded in `PLAN.md`.
+    /// setting is `vte`'s to enforce and is recorded in `docs/history.md`.
     fn osc_string(&self, params: &[&[u8]]) -> Vec<u8> {
         let limit = self.config.max_osc_buffer.saturating_sub(1);
         let mut out: Vec<u8> = Vec::new();
