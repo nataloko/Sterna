@@ -28,21 +28,24 @@ and exactly as tall as it can be, so a vertical bar costs nothing that is being
 used and the labels have room to be words. It is as wide as its widest caption
 until you say otherwise.
 
-Drag the handle on its inner edge to resize it. **The pixels come out of the
-window, not out of the terminal** — the window gets wider and the terminal
-keeps every column and every character it had. Where the window cannot get any
-wider, because it is maximised or already at the edge of the screen, the drag
-stops there instead. That is deliberate: a terminal narrowed by a column loses
-whatever was past its right edge, in the scrollback as well as on screen, and
-it does not come back when the panel is dragged narrow again.
+To give it a different width, set one in **Setup > Preferences**, on the Window
+page. **The pixels come out of the window, not out of the terminal** — the
+window gets wider and the terminal keeps every column and every character it
+had. Where the window cannot get any wider, because it is maximised or already
+at the edge of the screen, the panel stays where it is instead. That is
+deliberate: a terminal narrowed by a column loses whatever was past its right
+edge, in the scrollback as well as on screen, and it does not come back when
+the panel is made narrow again.
 
-It will not go narrower than its own widest caption, because a button clipped
-to nothing is not a narrower panel. A panel you have widened comes back down to
-that point and stops there.
+It will not go narrower than its own widest caption either, because a button
+clipped to nothing is not a narrower panel.
 
-A width you drag is remembered. One you never touch is not written down at all,
-so the panel goes on measuring its buttons and follows them when a caption
-changes.
+**There is no handle to drag**, and that is a decision rather than an omission.
+One was built and taken out again: a window cannot move its own left edge on
+every desktop, so widening the panel widens the window to the *right* and the
+handle never moves out from under the pointer — which is exactly the opposite
+of how a handle should feel. A number in Setup does the same job, and it works
+on a maximised window, from the keyboard, and from a macro.
 
 ## What a button can do
 
@@ -172,10 +175,9 @@ the file cannot hold is written that way, and everything else is left legible.
 The two settings beside them are ordinary `[Sterna]` keys: `QuickButtons` (on)
 shows or hides the bar, and `QuickButtonsWidth` is how wide it is in pixels.
 `0` — the shipped value — means as wide as the widest button needs, which is
-where the panel sits until somebody drags it; the drag is what writes a number
-there. Pixels rather than a column count because the panel holds words and not
-cells, and the same captions want a different number of pixels at every font
-size.
+where the panel sits until somebody puts a number there. Pixels rather than a
+column count because the panel holds words and not cells, and the same captions
+want a different number of pixels at every font size.
 
 ## Menu command ids
 

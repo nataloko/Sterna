@@ -701,9 +701,9 @@ SSH:
   the narrowest point for good. `ClearOnResize` only made it louder; the loss
   is there with the flag off. There is no dock feature that turns the
   separator off (the flags are Closable/Movable/Floatable/VerticalTitleBar),
-  which is why the panel is a plain widget in a central `QHBoxLayout` with
-  `QuickButtonGrip` between. **The rule for any chrome that can be resized
-  beside a terminal: move the window's outer edge, not the terminal's.**
+  which is why the panel is a plain widget in a central `QHBoxLayout`.
+  **The rule for any chrome that can be resized beside a terminal: move the
+  window's outer edge, not the terminal's.**
   `MainWindow::resizeQuickPanel` clamps against `QScreen::availableGeometry`
   and `frameGeometry` so the window never has to steal, and holds every page's
   grid across the change — `setFixedWidth` defers its layout while a top-level
@@ -712,10 +712,19 @@ SSH:
   `TerminalView::setGridHeld` also records whether it *swallowed* a refit: a
   geometry change delivered during the hold never repeats, so that one is
   answered on release and a hold that swallowed nothing is left to the resize
-  event still coming. A grip like this cannot follow the pointer — the left
-  edge is pinned, so growing the panel by N grows the window by N and the grip
-  stays where it is; a test that chases it is asserting the thing the design
-  deliberately does not do.
+  event still coming.
+- **...and that rule is also why the panel has no drag handle.** One was built
+  and taken out. With the window's left edge pinned, growing the panel by N
+  grows the window by N — so the handle's screen position never moves and the
+  window's far edge shoots out instead, which is the honest rendering of the
+  rule and nothing like what a splitter feels like. The two ways to make it
+  feel right are a rubber band that follows the pointer with one apply on
+  release, or growing leftward — and `QWidget::move()` is silently ignored on
+  Wayland, so the second degrades to the first behaviour without saying so.
+  `window.quick_buttons_width` in Setup is the width instead, and it reaches
+  what a handle could not: a maximised window, the keyboard, a macro. Before
+  adding a handle to anything else beside the terminal, work out which edge
+  moves.
 - **Showing that panel is a resize too, and the window-grow arm cannot see
   it.** `onSettingsChanged`'s arm runs while the panel is still hidden, so it
   finds nothing to absorb, and it is gated on `count() == 1 && Single` — so a
@@ -746,7 +755,7 @@ SSH:
   thickness, and it ignores the button's size policy in that direction — so a
   panel dragged wider puts every new pixel in the margin. The one lever that
   moves it, a minimum width per button, raises the bar's *own* minimum with it,
-  and the grip beside it can then grow but never shrink: a ratchet, not a
+  and the panel beside it can then grow but never shrink: a ratchet, not a
   layout. Measured both ways. `QuickButtonBar` is a plain widget and a
   `QBoxLayout` for that reason, and the same answer is waiting for anything
   else that wants a toolbar to fill a panel.

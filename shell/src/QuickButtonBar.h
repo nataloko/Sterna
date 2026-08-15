@@ -26,9 +26,10 @@ class Session;
 /// It owns no state either. The list belongs to the window, which read it out
 /// of the settings file; the panel builds actions from it and reports a press.
 /// It is fixed down the right-hand side, where it costs no terminal rows —
-/// which on a short window is what makes the feature worth having — and it is
-/// resized by the grip on its inner edge, which moves the *window's* width
-/// rather than the terminal's. See `QuickButtonGrip`.
+/// which on a short window is what makes the feature worth having — and as
+/// wide as `window.quick_buttons_width` says, which the window applies by
+/// moving its own outer edge rather than the terminal's. There is no handle to
+/// drag; `docs/deviations.md` entry 7 says why one was built and removed.
 ///
 /// **A plain widget and a box layout rather than a `QToolBar`**, which is what
 /// this was until the buttons had to fill the panel. `QToolBarLayout` sizes

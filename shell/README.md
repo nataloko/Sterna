@@ -909,15 +909,17 @@ defines the first command, and that is the shortest route into a feature
 nothing else advertises.
 
 **Its width comes out of the window, never out of the terminal.** The bar and
-the terminals share one central widget — a `QHBoxLayout` of `PanelContainer`,
-the grip, and the bar at a fixed width — rather than the `QDockWidget` this was
-until 0.5.4. A dock separator divides the client area, so a drag took its
+the terminals share one central widget — a `QHBoxLayout` of `PanelContainer`
+and the bar at a fixed width — rather than the `QDockWidget` this was until
+0.5.4. A dock separator divides the client area, so a drag took its
 pixels off a terminal fitted to whatever was left in whole cells; a few pixels
 is a column, a column is a real `Grid::resize`, and that truncates every line
 it shortens in the page and in the scrollback. Dragging the panel destroyed
 text and did not give it back on the way out.
 
-`MainWindow::resizeQuickPanel` is the whole rule. It clamps the width so the
+There is deliberately no handle on it; see `docs/deviations.md` entry 7 for
+why one was built and taken out again. `window.quick_buttons_width` is the
+width, and `MainWindow::resizeQuickPanel` is the whole rule. It clamps the width so the
 window never has to steal — shrinking always works, growing only while
 `windowGrowthRoom()` says there is space between the frame and the edge of the
 screen's work area — grows the window before it takes the pixels and shrinks it
@@ -939,10 +941,10 @@ in the untiled layout anyway. Both routes go through `resizeQuickPanel` now,
 which carries no such gate — a panel beside four tiles is the same question.
 
 `window.quick_buttons_width` is `0` for "as wide as the buttons need", which is
-what ships and what the panel did before it had a width at all. Only the end of
-a drag writes a number there. Nothing writes one at close: a backstop comparing
-the live pixels against the setting would find `0` against whatever the
-captions measured and pin every window that had never been dragged.
+what ships and what the panel did before it had a width at all. Only Setup puts
+a number there. Nothing writes one at close: a backstop comparing the live
+pixels against the setting would find `0` against whatever the captions
+measured and pin every window that had never been given a width.
 
 **A button is as wide as the panel, not as wide as its caption.** The bar is a
 plain `QWidget` with a `QBoxLayout` of `QToolButton`s, which it was not until

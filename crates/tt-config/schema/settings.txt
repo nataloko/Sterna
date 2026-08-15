@@ -2469,7 +2469,7 @@ window.quick_buttons | bool | Sterna | QuickButtons | on | -
 # There was a `QuickButtonsArea` here until 0.5.4, naming one of the four
 # edges. It went with the dock that made it possible: a dock separator takes
 # its pixels out of the central widget, and the terminal beside it is fitted to
-# whatever width is left in whole cells — so dragging the panel resized the
+# whatever width is left in whole cells — so widening the panel resized the
 # grid, and `Grid::resize` truncates every line it shortens, page and
 # scrollback alike. The width below is the same gesture with the pixels coming
 # out of the *window* instead, which is a thing a terminal can survive.

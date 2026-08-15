@@ -613,8 +613,8 @@ void a_shortcut_is_installed_and_released_with_the_bar()
     CHECK(spin([&window] { return !barOf(window)->isVisible(); }, 2000));
 }
 
-/// The panel opens down the right, and its grip widens it — taking the pixels
-/// from the window, so the buttons grow and the terminal does not shrink.
+/// The panel opens down the right, and a configured width widens it — taking
+/// the pixels from the window, so the buttons grow and the terminal does not.
 void the_panel_opens_down_the_right_and_a_width_widens_it()
 {
     QTemporaryDir dir;

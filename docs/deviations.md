@@ -332,9 +332,8 @@ command dispatched by id. Nothing about how a command reaches the wire is new,
 and a `KEYBOARD.CNF` full of user keys still works exactly as it did.
 
 **Where it lives.** `crates/tt-config/src/buttons.rs` owns the format;
-`shell/src/QuickButtonBar.{h,cpp}` is the bar, `shell/src/QuickButtonGrip.{h,cpp}`
-the handle that resizes it and `shell/src/QuickButtonsDialog.{h,cpp}` the
-editor. The list is a `[Sterna Buttons]` section — its own, because a list is
+`shell/src/QuickButtonBar.{h,cpp}` is the bar and
+`shell/src/QuickButtonsDialog.{h,cpp}` the editor. The list is a `[Sterna Buttons]` section — its own, because a list is
 exactly what the settings schema cannot describe — plus two ordinary `[Sterna]`
 settings for the bar itself: `QuickButtons` (`window.quick_buttons`, on) and
 `QuickButtonsWidth` (`window.quick_buttons_width`, `0` for as wide as the
@@ -347,11 +346,20 @@ terminal's rows are the scarce dimension, so it goes where there is width to
 spare rather than where the connect bar is; there is no setting for the other
 three edges because there is no dock to drag it to one. It shared a
 `QDockWidget` with the terminals until 0.5.4, and a dock separator divides the
-client area — so every pixel dragged into the panel came off a terminal that is
+client area — so every pixel given to the panel came off a terminal that is
 fitted to what is left in whole cells, and `Grid::resize` truncates every line
-it shortens in the page *and* the scrollback. The grip moves the window's outer
-edge instead, and stops where the window can no longer grow. A gesture aimed at
-some chrome is not one anybody expects to destroy text.
+it shortens in the page *and* the scrollback. `MainWindow::resizeQuickPanel`
+moves the window's outer edge instead, and stops where the window can no longer
+grow. A change to some chrome is not one anybody expects to destroy text.
+
+**And there is no handle**, which is a decision. One was built: with the
+window's left edge pinned, growing the panel by N grows the window by N, so the
+handle's screen position never moves and the window's far edge shoots out —
+the truthful rendering of the rule and nothing like what a splitter feels like.
+Making it feel right wants a rubber band that follows the pointer, or a window
+that grows leftward, and `QWidget::move()` is silently ignored on Wayland. The
+setting does the same job and reaches places the handle could not: a maximised
+window, the keyboard, a macro.
 
 **A button can repeat**: *n* sends every *x.x* seconds, or until stopped
 (`Repeat` and `IntervalMs`). Upstream has nothing of the kind — the nearest
