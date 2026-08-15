@@ -40,6 +40,7 @@
 #endif
 
 #include "MainWindow.h"
+#include "ConnectBar.h"
 #include "PageStatusBar.h"
 #include "PanelContainer.h"
 #include "Session.h"
@@ -471,6 +472,75 @@ void test_tabs_are_independent_and_actions_follow_the_active_one()
     CHECK(panels->count() == 1);
     CHECK(window.session() == first->session());
     CHECK(!panels->tabsClosable());
+}
+
+void test_connection_selector_follows_the_active_page()
+{
+    Listener listener;
+    CHECK(listener.port() != 0);
+    if (listener.port() == 0) {
+        return;
+    }
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("sterna.ini"));
+    QFile file(ini);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[Sterna]\r\nPanelLayout=tiled\r\n");
+    file.close();
+
+    MainWindow window(ini);
+    auto *panels = window.findChild<PanelContainer *>();
+    auto *bar = window.findChild<ConnectBar *>(QStringLiteral("connectBar"));
+    CHECK(panels != nullptr);
+    CHECK(bar != nullptr);
+    if (!panels || !bar) {
+        return;
+    }
+
+    window.connectTelnet(QStringLiteral("127.0.0.1"), listener.port());
+    listener.acceptOne();
+    auto *first = static_cast<TerminalPage *>(panels->currentWidget());
+    const QString firstLabel =
+        QStringLiteral("telnet 127.0.0.1:%1").arg(listener.port());
+    CHECK(bar->destination() == firstLabel);
+
+    window.connectTelnet(QStringLiteral("localhost"), listener.port());
+    listener.acceptOne();
+    auto *second = static_cast<TerminalPage *>(panels->currentWidget());
+    const QString secondLabel =
+        QStringLiteral("telnet localhost:%1").arg(listener.port());
+    CHECK(second != first);
+    CHECK(bar->destination() == secondLabel);
+
+    // Tiled pages share the same toolbar, but selecting one makes all of its
+    // per-session controls authoritative, including the destination record.
+    panels->setCurrentWidget(first);
+    CHECK(window.session() == first->session());
+    CHECK(bar->destination() == firstLabel);
+    panels->setCurrentWidget(second);
+    CHECK(window.session() == second->session());
+    CHECK(bar->destination() == secondLabel);
+
+    // The same currentChanged path serves ordinary tabs.
+    panels->setLayoutMode(PanelLayout::Single);
+    panels->setCurrentWidget(first);
+    CHECK(bar->destination() == firstLabel);
+    panels->setCurrentWidget(second);
+    CHECK(bar->destination() == secondLabel);
+
+    // A page connected to nothing has nothing to say, and saying it anyway
+    // empties the field somebody is about to connect from — including the one
+    // `loadRecents` fills in so that going back where you were is one click.
+    // Every open makes a page, so this is also the field a second connection
+    // that failed comes back to.
+    window.findChild<QAction *>(QStringLiteral("newTabAction"))->trigger();
+    auto *blank = static_cast<TerminalPage *>(panels->currentWidget());
+    CHECK(blank != second);
+    CHECK(!blank->session()->isConnected());
+    CHECK(bar->destination() == secondLabel);
+    panels->setCurrentWidget(second);
+    CHECK(bar->destination() == secondLabel);
 }
 
 void test_new_tabs_load_the_saved_line_edit_default()
@@ -1025,6 +1095,7 @@ int main(int argc, char **argv)
     test_tiled_panels_fit_the_session_count();
     test_empty_panels_request_connections_without_creating_pages();
     test_tabs_are_independent_and_actions_follow_the_active_one();
+    test_connection_selector_follows_the_active_page();
     test_new_tabs_load_the_saved_line_edit_default();
     test_the_view_menu_switches_tiling_and_persists_only_that_key();
     test_a_resized_window_survives_a_settings_change();
