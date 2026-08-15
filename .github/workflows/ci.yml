@@ -362,6 +362,15 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: cd shell && ./build/control_test
+      # The quick buttons, which need nothing either — the connected cases fork
+      # `/bin/sh` onto a pty, exactly as `pty_test` above does. It was never in
+      # this list, so the panel's own regressions ran nowhere: the case that
+      # holds a panel drag to the window's edge instead of the terminal's
+      # belongs on a gate, because what it is watching for destroys text.
+      - name: The quick buttons, and the panel that must not eat the terminal
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: cd shell && ./build/buttons_test
       # A printer is a file when `PassThruPort` names one, so this needs no
       # printer, no spooler and no CUPS — which is why it is here rather than
       # out with `xfer_test`.
