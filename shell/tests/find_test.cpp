@@ -359,9 +359,23 @@ void test_the_menu_item_and_its_shortcut()
         CHECK(action->shortcut() != plain);
     }
 
+    window.show();
+    QCoreApplication::processEvents();
     find->trigger();
     auto *bar = window.findChild<FindBar *>(QStringLiteral("findBar"));
     CHECK(bar != nullptr && !bar->isHidden());
+    if (!bar) {
+        return;
+    }
+    QCoreApplication::processEvents();
+    // At a real window's width rather than the 40 columns the harness above
+    // uses: the status label is the first thing a narrow bar loses, and it is
+    // the half that says which match you are on.
+    CHECK(bar->width() > 0);
+    if (!writeDir.isEmpty()) {
+        bar->grab().save(QDir(writeDir).filePath(QStringLiteral("find-bar.png")));
+    }
+    CHECK(bar->findChild<QLabel *>(QStringLiteral("findStatus"))->width() > 0);
 }
 
 /// A committed pattern is remembered, and offered to the next tab.

@@ -66,15 +66,19 @@ FindBar::FindBar(TerminalView *view, Session *session)
     m_pattern->setMinimumContentsLength(12);
     layout->addWidget(m_pattern, 1);
 
+    // Arrows rather than "Previous" and "Next". A terminal is as narrow as
+    // somebody made it — 40 columns is an ordinary console width — and two
+    // words here cost about a fifth of the bar, which comes out of the pattern
+    // field and the count. The tooltip carries the sentence.
     m_previous = new QToolButton(this);
     m_previous->setObjectName(QStringLiteral("findPreviousButton"));
-    m_previous->setText(tr("Previous"));
+    m_previous->setText(QStringLiteral("▲"));
     m_previous->setToolTip(tr("The match before this one, wrapping at the top."));
     layout->addWidget(m_previous);
 
     m_next = new QToolButton(this);
     m_next->setObjectName(QStringLiteral("findNextButton"));
-    m_next->setText(tr("Next"));
+    m_next->setText(QStringLiteral("▼"));
     m_next->setToolTip(tr("The match after this one, wrapping at the bottom."));
     layout->addWidget(m_next);
 
@@ -105,7 +109,8 @@ FindBar::FindBar(TerminalView *view, Session *session)
 
     auto *close = new QToolButton(this);
     close->setObjectName(QStringLiteral("findCloseButton"));
-    close->setText(tr("Close"));
+    close->setText(QStringLiteral("✕"));
+    close->setToolTip(tr("Close the find bar. Escape does the same."));
     layout->addWidget(close);
 
     m_debounce = new QTimer(this);
