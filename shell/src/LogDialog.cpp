@@ -250,7 +250,18 @@ LogOptionsDialog::LogOptionsDialog(Session *session, QWidget *parent, const I18n
         connect(b, &QRadioButton::toggled, this, &LogOptionsDialog::refreshEnabled);
     }
     connect(m_timestamp, &QCheckBox::toggled, this, &LogOptionsDialog::refreshEnabled);
-    connect(m_rotate, &QCheckBox::toggled, this, &LogOptionsDialog::refreshEnabled);
+    connect(m_rotate, &QCheckBox::toggled, this, [this](bool on) {
+        // A rotation of zero bytes is no rotation — `LogRotateSize` defaults
+        // to 0 and both engines treat it as off — so a tick with nothing
+        // beside it is a switch that does nothing and says nothing. Ticking it
+        // proposes a size; the number is then the user's, and unticking leaves
+        // it where they put it.
+        if (on && m_rotateSize->value() == 0) {
+            m_rotateUnit->setCurrentIndex(2);
+            m_rotateSize->setValue(1);
+        }
+        refreshEnabled();
+    });
 
     refreshName();
     refreshEnabled();

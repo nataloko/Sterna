@@ -192,6 +192,17 @@ void test_a_choice_disables_what_it_makes_meaningless()
     CHECK(!size->isEnabled());
     rotate->setChecked(true);
     CHECK(size->isEnabled());
+    // A rotation of zero bytes is no rotation, so a tick with nothing beside
+    // it would be a switch that silently does nothing.
+    CHECK(size->value() > 0);
+    auto *unit = dialog.findChild<QComboBox *>(QStringLiteral("logRotateUnit"));
+    CHECK(unit && unit->currentIndex() == 2);
+    // ...and having proposed one, it is the user's number: unticking and
+    // ticking again must not overwrite it.
+    size->setValue(7);
+    rotate->setChecked(false);
+    rotate->setChecked(true);
+    CHECK(size->value() == 7);
 
     // Appending to a file that does not exist is overwriting it with extra
     // steps, so the choice is not offered until the name names something.
