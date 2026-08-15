@@ -40,6 +40,18 @@
       </g>
     </g>
 
+    <g id="bird-fill-solid">
+      <g transform="translate(544 544) scale(.82) translate(-544 -544)">
+        <g transform="translate(544 544) scale(1.18) rotate(-20) translate(-544 -544)">
+          <g transform="translate(0 254)">
+            <g transform="translate(0 580) scale(.1 -.1)">
+              <use xlink:href="#tern-shape" fill="#165C36"/>
+            </g>
+          </g>
+        </g>
+      </g>
+    </g>
+
     <g id="wire-tern">
       <g transform="translate(544 544) scale(.82) translate(-544 -544)">
         <g transform="translate(544 544) scale(1.18) rotate(-20) translate(-544 -544)">
@@ -60,6 +72,8 @@
     </filter>
 
     <g id="rows-full" fill="#73F59B">
+      <rect x="220" y="88" width="610" height="18" rx="4" opacity=".13"/>
+      <rect x="142" y="160" width="748" height="18" rx="4" opacity=".16"/>
       <rect x="118" y="232" width="748" height="18" rx="4" opacity=".15"/>
       <rect x="118" y="304" width="854" height="18" rx="4" opacity=".11"/>
       <rect x="118" y="376" width="632" height="18" rx="4" opacity=".17"/>
@@ -69,7 +83,9 @@
       <rect x="118" y="664" width="570" height="18" rx="4" opacity=".16"/>
       <rect x="118" y="736" width="788" height="18" rx="4" opacity=".14"/>
       <rect x="118" y="808" width="654" height="18" rx="4" opacity=".17"/>
-      <rect x="790" y="801" width="32" height="32" rx="4" fill="#F99E2A" opacity="1"/>
+      <rect x="142" y="880" width="804" height="18" rx="4" opacity=".12"/>
+      <rect x="220" y="952" width="570" height="18" rx="4" opacity=".16"/>
+      <rect x="808" y="945" width="32" height="32" rx="4" fill="#F99E2A" opacity="1"/>
     </g>
 
     <g id="rows-left" fill="#73F59B">
@@ -149,6 +165,7 @@
 
     <g id="bird-on-top-clear">
       <use xlink:href="#bird-shield-clear"/>
+      <use xlink:href="#bird-fill-solid"/>
       <g filter="url(#glow)"><use xlink:href="#wire-tern"/></g>
     </g>
 
