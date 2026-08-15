@@ -9,7 +9,7 @@ builds and runs the updater tests before the installer can reach a draft.
 # Local packaging work still lives in sterna-fedora. See AGENTS.md for why.
 distrobox-host-exec distrobox enter sterna-fedora --no-tty -- bash -lc '
   cd ~/Projects/Sterna/packaging/windows
-  ./build.sh              # → build/sterna-0.3.0-x86_64-setup.exe
+  ./build.sh              # → build/sterna-0.3.1-x86_64-setup.exe
   ./build.sh --clean      # ...from scratch
   ./build.sh --stage      # ...stopping at the file tree, without makensis
 '
@@ -198,7 +198,7 @@ the boot entirely.
 
 ```sh
 export WINEPREFIX=$(mktemp -d)/wp && cp -r ~/.wine "$WINEPREFIX"
-setup=packaging/windows/build/sterna-0.3.0-x86_64-setup.exe
+setup=packaging/windows/build/sterna-0.3.1-x86_64-setup.exe
 
 # 1. it installs, silently, and lands 55 files
 /usr/lib/wine/wine64 "$setup" /S
