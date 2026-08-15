@@ -17,7 +17,6 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
-#include <QDockWidget>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
@@ -34,11 +33,14 @@
 
 #include <cstdio>
 
+#include <QScreen>
+
 #include "MainWindow.h"
 #include "QuickButtonBar.h"
 #include "QuickButtons.h"
 #include "QuickButtonsDialog.h"
 #include "Session.h"
+#include "TerminalPage.h"
 #include "TerminalView.h"
 
 static int failures = 0;
@@ -118,9 +120,98 @@ QuickButtonBar *barOf(const MainWindow &window)
     return window.findChild<QuickButtonBar *>(QStringLiteral("quickButtonBar"));
 }
 
-QDockWidget *dockOf(const MainWindow &window)
+QWidget *gripOf(const MainWindow &window)
 {
-    return window.findChild<QDockWidget *>(QStringLiteral("quickButtonDock"));
+    return window.findChild<QWidget *>(QStringLiteral("quickButtonGrip"));
+}
+
+/// Put the window where a drag has at least `room` pixels to grow into, and
+/// say whether it landed there.
+///
+/// **Every number computed from the work area, never a literal.** The
+/// offscreen plugin's screen is 800x800 and is not the desktop's, so a window
+/// opened at a comfortable-looking 900 is already past the right-hand edge —
+/// `windowGrowthRoom` then answers 0, the drag is correctly clamped to
+/// nothing, and five checks fail for a reason that has nothing to do with what
+/// they are testing. A window that genuinely has no room is its own case, in
+/// `a_drag_stops_at_the_edge_of_the_screen`.
+bool placeForGrowth(MainWindow &window, int room)
+{
+    const QScreen *display = window.screen();
+    if (!display) {
+        return false;
+    }
+    const QRect work = display->availableGeometry();
+    window.move(work.topLeft());
+    window.resize(qMax(360, work.width() - room - 40), qMin(500, work.height()));
+    spin([] { return false; }, 100);
+    return work.right() - window.frameGeometry().right() >= room;
+}
+
+/// Drag the panel's grip `by` pixels to the left, which is the direction that
+/// makes the panel wider, and let go.
+///
+/// Real `QMouseEvent`s rather than a call into the window's own arithmetic:
+/// the property under test is the gesture, and the sign of the delta is a
+/// thing this can get wrong in a way a direct call cannot. `mid` is left where
+/// the press happened because the grip does **not** follow the pointer — the
+/// window's left edge is pinned, so growing the panel by N grows the window by
+/// N and the grip stays exactly where it was. That is the honest rendering of
+/// "the drag moves the window's edge", and a test that chased the grip would
+/// be asserting a thing the design deliberately does not do.
+/// The three halves are separate because **every move is measured from the
+/// press**, not from the move before it. A test that wants to look at the
+/// mid-drag state and then finish the gesture has to release the press it
+/// already made; pressing again re-bases the arithmetic on the width the first
+/// drag reached, and asking for 140 twice moves the panel 280.
+void pressGrip(MainWindow &window)
+{
+    QWidget *grip = gripOf(window);
+    if (!grip) {
+        return;
+    }
+    const QPointF mid(grip->width() / 2.0, grip->height() / 2.0);
+    QMouseEvent down(QEvent::MouseButtonPress, mid, grip->mapToGlobal(mid),
+                     Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(grip, &down);
+}
+
+void moveGrip(MainWindow &window, int by)
+{
+    QWidget *grip = gripOf(window);
+    if (!grip) {
+        return;
+    }
+    const QPointF mid(grip->width() / 2.0, grip->height() / 2.0);
+    const QPointF to = mid - QPointF(by, 0);
+    // `NoButton` as the button and `LeftButton` as the buttons is how Qt
+    // spells a move *during* a drag; sending LeftButton for both is a press
+    // the grip has already had.
+    QMouseEvent move(QEvent::MouseMove, to, grip->mapToGlobal(to),
+                     Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(grip, &move);
+}
+
+void releaseGrip(MainWindow &window, int by)
+{
+    QWidget *grip = gripOf(window);
+    if (!grip) {
+        return;
+    }
+    const QPointF mid(grip->width() / 2.0, grip->height() / 2.0);
+    const QPointF to = mid - QPointF(by, 0);
+    QMouseEvent up(QEvent::MouseButtonRelease, to, grip->mapToGlobal(to),
+                   Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(grip, &up);
+}
+
+/// Drag the panel's grip `by` pixels to the left, which is the direction that
+/// makes the panel wider, and let go.
+void dragGrip(MainWindow &window, int by)
+{
+    pressGrip(window);
+    moveGrip(window, by);
+    releaseGrip(window, by);
 }
 
 QAction *buttonAction(const MainWindow &window, int index)
@@ -372,7 +463,7 @@ void an_empty_list_keeps_the_add_button()
     window.show();
     QuickButtonBar *bar = barOf(window);
     CHECK(bar != nullptr);
-    CHECK(dockOf(window) != nullptr);
+    CHECK(gripOf(window) != nullptr);
     CHECK(bar->buttons().isEmpty());
     CHECK(spin([bar] { return bar->isVisible(); }, 2000));
     QAction *add = window.findChild<QAction *>(QStringLiteral("quickButtonAdd"));
@@ -575,9 +666,9 @@ void a_shortcut_is_installed_and_released_with_the_bar()
     CHECK(spin([&window] { return !barOf(window)->isVisible(); }, 2000));
 }
 
-/// The resizable dock opens down the right unless the file says otherwise, and
-/// stays wherever it was dragged for as long as the window is open.
-void the_bar_opens_down_the_right_and_stays_where_it_is_put()
+/// The panel opens down the right, and its grip widens it — taking the pixels
+/// from the window, so the buttons grow and the terminal does not shrink.
+void the_panel_opens_down_the_right_and_the_grip_widens_it()
 {
     QTemporaryDir dir;
     CHECK(dir.isValid());
@@ -589,85 +680,268 @@ void the_bar_opens_down_the_right_and_stays_where_it_is_put()
         "Button2Label=Show the running configuration\r\n"
         "Button2Value=show run$0D\r\n");
 
-    {
-        // Nothing in the file about the bar, so this is the shipped answer: a
-        // terminal's rows are the scarce dimension and a vertical bar costs
-        // none of them.
-        MainWindow window(shipped);
-        window.resize(900, 500);
-        window.show();
-        QDockWidget *dock = dockOf(window);
-        CHECK(dock != nullptr);
-        CHECK(window.dockWidgetArea(dock) == Qt::RightDockWidgetArea);
-
-        // A dock has a splitter edge. Moving it changes the panel width rather
-        // than merely changing how much empty space surrounds fixed buttons.
-        const int before = dock ? dock->width() : 0;
-        if (dock) {
-            window.resizeDocks({dock}, {before + 100}, Qt::Horizontal);
-            CHECK(spin([dock, before] { return dock->width() > before; }, 2000));
-        }
-
-        // ...and the buttons take that width with them. A button is as wide as
-        // the panel and not as wide as its own caption, so a short one and a
-        // long one measure the same and both follow the splitter — the room
-        // dragged out goes into the buttons rather than into the margin beside
-        // them.
-        QuickButtonBar *bar = barOf(window);
-        QToolButton *first = bar ? bar->buttonWidget(0) : nullptr;
-        QToolButton *second = bar ? bar->buttonWidget(1) : nullptr;
-        CHECK(first != nullptr && second != nullptr);
-        if (first && second) {
-            CHECK(spin([first, dock] { return first->width() > dock->width() / 2; },
-                       2000));
-            CHECK(first->width() == second->width());
-            CHECK(first->width() > bar->width() - 24);
-            // Grown again: the widths above are what this window opened with,
-            // and a splitter drag has to reach them.
-            const int wide = first->width();
-            window.resizeDocks({dock}, {dock->width() + 120}, Qt::Horizontal);
-            CHECK(spin([first, wide] { return first->width() > wide; }, 2000));
-            CHECK(first->width() == second->width());
-        }
+    MainWindow window(shipped);
+    window.show();
+    CHECK(spin([&window] { return window.isVisible(); }, 2000));
+    if (!placeForGrowth(window, 200)) {
+        return;
     }
 
-    QTemporaryDir other;
-    CHECK(other.isValid());
-    const QString ini =
-        writeIni(other,
-                 "[Sterna]\r\nQuickButtonsArea=left\r\n"
-                 "[Sterna Buttons]\r\nButton1Label=Hi\r\nButton1Value=hi$0D\r\n");
+    QuickButtonBar *bar = barOf(window);
+    QWidget *grip = gripOf(window);
+    CHECK(bar != nullptr && grip != nullptr);
+    if (!bar || !grip) {
+        return;
+    }
+    CHECK(!bar->isHidden() && !grip->isHidden());
+    // Down the right: the panel starts after the terminals do, and the grip
+    // sits between them. Asked of the geometry rather than of a dock area,
+    // because there is no longer an enum to ask.
+    auto *panels = window.findChild<PanelContainer *>();
+    CHECK(panels != nullptr);
+    if (panels) {
+        CHECK(grip->x() >= panels->x() + panels->width());
+        CHECK(bar->x() >= grip->x() + grip->width());
+    }
 
-    MainWindow window(ini);
+    const int before = bar->width();
+    dragGrip(window, 100);
+    CHECK(spin([bar, before] { return bar->width() > before; }, 2000));
+    CHECK(bar->width() == before + 100);
+
+    // ...and the buttons take that width with them. A button is as wide as the
+    // panel and not as wide as its own caption, so a short one and a long one
+    // measure the same and both follow the grip — the room dragged out goes
+    // into the buttons rather than into the margin beside them.
+    QToolButton *first = bar->buttonWidget(0);
+    QToolButton *second = bar->buttonWidget(1);
+    CHECK(first != nullptr && second != nullptr);
+    if (first && second) {
+        CHECK(spin([first, bar] { return first->width() > bar->width() / 2; },
+                   2000));
+        CHECK(first->width() == second->width());
+        CHECK(first->width() > bar->width() - 24);
+    }
+}
+
+/// **The bug this whole arrangement exists for.**
+///
+/// Dragging the panel used to take its pixels out of the terminal beside it,
+/// and `Grid::resize` truncates every line it shortens — in the page and in
+/// the scrollback, and it does not give them back on the way out. So the check
+/// that matters is not that the column count came back: it is that the text
+/// did. A shrink that truncated and then re-widened passes a column count and
+/// fails this.
+void dragging_the_grip_grows_the_window_and_not_the_grid()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("sterna.ini"));
+    {
+        QFile file(path);
+        CHECK(file.open(QIODevice::WriteOnly));
+        // `ClearOnResize` on, which is the amplifier: with it, a resize that
+        // moved by one column also scrolls the whole page into history. Off is
+        // the shipped value and would hide half of what this is watching for.
+        file.write("[Tera Term]\r\nTerminalSize=60,12\r\nClearOnResize=on\r\n"
+                   "[Sterna Buttons]\r\nButton1Label=Hi\r\nButton1Value=hi$0D\r\n");
+    }
+
+    MainWindow window(path);
     window.show();
-    CHECK(window.dockWidgetArea(dockOf(window)) == Qt::LeftDockWidgetArea);
+    CHECK(spin([&window] { return window.isVisible(); }, 2000));
+    if (!placeForGrowth(window, 260)) {
+        return;
+    }
 
-    // A drag is the user placing it. Editing the list rebuilds the bar, and
-    // that must not put it back where the file — which is not written until
-    // the window closes — still says it was.
-    window.addDockWidget(Qt::BottomDockWidgetArea, dockOf(window));
-    CHECK(window.dockWidgetArea(dockOf(window)) == Qt::BottomDockWidgetArea);
+    Session *session = window.session();
+    // A line that reaches the right-hand edge, so anything that narrows the
+    // grid cuts a character off the end of it rather than off trailing blanks.
+    const QString line(session->cols(), QLatin1Char('x'));
+    session->feed(line.toUtf8());
+    QCoreApplication::processEvents();
 
-    QVector<QuickButton> buttons = barOf(window)->buttons();
-    QuickButton added;
-    added.label = QStringLiteral("Second");
-    added.text = QStringLiteral("uptime\r");
-    buttons.append(added);
+    const int cols = session->cols();
+    const int rows = session->rows();
+    const int history = session->scrollbackLen();
+    const int windowWidth = window.width();
+    const QString before = screenText(*session);
+    CHECK(cols > 0 && before.contains(line));
+
+    // Out, and hold it there: the mid-drag state is where a squeezed layout
+    // pass would have done the damage.
+    pressGrip(window);
+    moveGrip(window, 140);
+    QCoreApplication::processEvents();
+    CHECK(session->cols() == cols);
+    CHECK(session->rows() == rows);
+
+    releaseGrip(window, 140);
+    CHECK(spin([&window, windowWidth] { return window.width() != windowWidth; },
+               2000));
+    // The window absorbed it, exactly.
+    CHECK(window.width() == windowWidth + 140);
+    CHECK(session->cols() == cols);
+    CHECK(session->rows() == rows);
+    CHECK(session->scrollbackLen() == history);
+    CHECK(screenText(*session) == before);
+
+    // ...and back, which is the half a truncating resize cannot survive: the
+    // text is gone by now if anything shortened a line on the way out.
+    dragGrip(window, -140);
+    CHECK(spin([&window, windowWidth] { return window.width() == windowWidth; },
+               2000));
+    CHECK(session->cols() == cols);
+    CHECK(session->scrollbackLen() == history);
+    CHECK(screenText(*session).contains(line));
+}
+
+/// A drag stops at the edge of the screen rather than taking the columns.
+///
+/// The window cannot grow past its work area, and the whole rule is that the
+/// terminal never pays for the panel — so the honest answer there is a drag
+/// that does nothing, not one that quietly falls back to the old behaviour.
+void a_drag_stops_at_the_edge_of_the_screen()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString path = writeIni(
+        dir, "[Sterna Buttons]\r\nButton1Label=Hi\r\nButton1Value=hi$0D\r\n");
+
+    MainWindow window(path);
+    window.show();
+    CHECK(spin([&window] { return window.isVisible(); }, 2000));
+
+    const QScreen *display = window.screen();
+    CHECK(display != nullptr);
+    if (!display) {
+        return;
+    }
+    // Computed, never a literal: the offscreen plugin's screen is 800x800 and
+    // is not the desktop's.
+    const QRect work = display->availableGeometry();
+    window.resize(work.width(), qMin(500, work.height()));
+    window.move(work.topLeft());
+    CHECK(spin([&window, &work] { return window.frameGeometry().right() >= work.right() - 2; },
+               2000));
+    if (window.frameGeometry().right() < work.right() - 2) {
+        // A compositor that would not put the window there — Wayland ignores
+        // `move()` outright. Nothing to measure, and saying so beats asserting
+        // against a window somewhere else.
+        return;
+    }
+
+    QuickButtonBar *bar = barOf(window);
+    Session *session = window.session();
+    CHECK(bar != nullptr);
+    if (!bar) {
+        return;
+    }
+    const int width = bar->width();
+    const int cols = session->cols();
+    dragGrip(window, 200);
+    QCoreApplication::processEvents();
+    CHECK(bar->width() == width);
+    CHECK(session->cols() == cols);
+}
+
+/// Showing the panel is a resize too, and it is the second route to the same
+/// lost text — one the old absorb arm never covered, because that one is gated
+/// on a single page in the untiled layout.
+void showing_the_panel_leaves_every_terminal_alone()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("sterna.ini"));
+    {
+        QFile file(path);
+        CHECK(file.open(QIODevice::WriteOnly));
+        file.write("[Tera Term]\r\nTerminalSize=60,12\r\nClearOnResize=on\r\n"
+                   "[Sterna]\r\nQuickButtons=off\r\nPanelLayout=tiled\r\n"
+                   "[Sterna Buttons]\r\nButton1Label=Hi\r\nButton1Value=hi$0D\r\n");
+    }
+
+    MainWindow window(path);
+    window.show();
+    CHECK(spin([&window] { return window.isVisible(); }, 2000));
+    if (!placeForGrowth(window, 260)) {
+        return;
+    }
+    QMetaObject::invokeMethod(&window, "newTab", Qt::DirectConnection);
+    // Through the container rather than `findChildren<TerminalPage *>`, which
+    // does not compile: `TerminalPage` carries no `Q_OBJECT`.
+    auto *panels = window.findChild<PanelContainer *>();
+    CHECK(panels != nullptr);
+    if (!panels) {
+        return;
+    }
+    CHECK(spin([panels] { return panels->count() > 1; }, 2000));
+
+    // Every tile, not just the front one. The old absorb arm was gated on one
+    // page in the untiled layout, so this is exactly the shape it could not
+    // see: two terminals side by side, both of them beside the one panel.
+    const auto columns = [panels] {
+        QVector<int> out;
+        for (QWidget *widget : panels->visiblePages()) {
+            out.append(static_cast<TerminalPage *>(widget)->session()->cols());
+        }
+        return out;
+    };
+    const QVector<int> before = columns();
+    CHECK(before.size() > 1);
+
     QString error;
-    CHECK(saveQuickButtons(ini, buttons, &error));
-    QMetaObject::invokeMethod(window.session(), "settingsChanged");
-    CHECK(spin([&window] { return barOf(window)->buttons().size() == 2; }, 2000));
-    CHECK(window.dockWidgetArea(dockOf(window)) == Qt::BottomDockWidgetArea);
+    CHECK(window.session()->setSetting(QStringLiteral("window.quick_buttons"),
+                                       QStringLiteral("on"), &error));
+    CHECK(spin([&window] { return !barOf(window)->isHidden(); }, 2000));
+    CHECK(columns() == before);
 
-    // ...and a setting that really changes still moves it.
-    CHECK(window.session()->setSetting(QStringLiteral("window.quick_buttons_area"),
-                                       QStringLiteral("top"), &error));
-    CHECK(spin(
-        [&window] {
-            return window.dockWidgetArea(dockOf(window))
-                == Qt::TopDockWidgetArea;
-        },
-        2000));
+    // ...and off again, which gives the room back rather than handing it to
+    // the terminals and then taking it away on the next show.
+    CHECK(window.session()->setSetting(QStringLiteral("window.quick_buttons"),
+                                       QStringLiteral("off"), &error));
+    CHECK(spin([&window] { return barOf(window)->isHidden(); }, 2000));
+    CHECK(columns() == before);
+}
+
+/// A dragged width outlives the window that was dragged, and a shipped one is
+/// not written at all — zero means "as wide as the buttons need", so a window
+/// nobody sized must not quietly pin itself to whatever its captions measured.
+void the_panel_width_outlives_the_window()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString path = writeIni(
+        dir, "[Sterna Buttons]\r\nButton1Label=Hi\r\nButton1Value=hi$0D\r\n");
+
+    int dragged = 0;
+    {
+        MainWindow window(path);
+        window.show();
+        CHECK(spin([&window] { return window.isVisible(); }, 2000));
+        if (!placeForGrowth(window, 200)) {
+            return;
+        }
+        dragGrip(window, 90);
+        CHECK(spin([&window] { return barOf(window)->width() > 0; }, 2000));
+        dragged = barOf(window)->width();
+        window.close();
+    }
+    CHECK(dragged > 0);
+
+    QFile file(path);
+    CHECK(file.open(QIODevice::ReadOnly));
+    const QByteArray ini = file.readAll();
+    file.close();
+    CHECK(ini.contains("QuickButtonsWidth="));
+    CHECK(ini.contains(QByteArray("QuickButtonsWidth=")
+                       + QByteArray::number(dragged)));
+
+    MainWindow second(path);
+    second.show();
+    CHECK(spin([&second] { return second.isVisible(); }, 2000));
+    CHECK(spin([&second, dragged] { return barOf(second)->width() == dragged; },
+               2000));
 }
 
 /// Add — the `+` at the end of the bar, and Add in its context menu — opens
@@ -954,13 +1228,11 @@ void render_widgets()
     spin([] { return false; }, 300);
     window.grab().save(g_writeTo + QStringLiteral("/quick-buttons-window.png"));
 
-    // ...and dragged to the bottom edge, where the same buttons run across the
-    // panel and take its height instead of its width.
-    QString error;
-    window.session()->setSetting(QStringLiteral("window.quick_buttons_area"),
-                                 QStringLiteral("bottom"), &error);
+    // ...and dragged wider, which is the same window with a wider panel in it
+    // and a terminal that has not lost a column to pay for it.
+    dragGrip(window, 90);
     spin([] { return false; }, 300);
-    window.grab().save(g_writeTo + QStringLiteral("/quick-buttons-bottom.png"));
+    window.grab().save(g_writeTo + QStringLiteral("/quick-buttons-wide.png"));
 
     QuickButtonsDialog dialog(loadQuickButtons(ini), window.session(), &window);
     dialog.selectRow(3);
@@ -1000,7 +1272,11 @@ int main(int argc, char **argv)
     the_editor_preserves_an_unknown_command();
     the_editor_warns_about_a_key_the_host_wants();
     a_shortcut_is_installed_and_released_with_the_bar();
-    the_bar_opens_down_the_right_and_stays_where_it_is_put();
+    the_panel_opens_down_the_right_and_the_grip_widens_it();
+    dragging_the_grip_grows_the_window_and_not_the_grid();
+    a_drag_stops_at_the_edge_of_the_screen();
+    showing_the_panel_leaves_every_terminal_alone();
+    the_panel_width_outlives_the_window();
     adding_starts_on_a_new_row();
     a_repeat_sends_its_count_and_stops();
     a_second_press_stops_a_run_with_no_end();
