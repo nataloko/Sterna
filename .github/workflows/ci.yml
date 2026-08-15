@@ -53,7 +53,16 @@ jobs:
       # apply_patches.py is a PEP 723 script run via `uv run --script`, so the
       # oracle cannot build without uv. Missing this is why the oracle job was
       # red with "Error 127" from the moment patches were introduced.
-      - uses: astral-sh/setup-uv@v10
+      #
+      # **v7 is the newest one that can be written this way.** setup-uv stopped
+      # publishing a floating major tag after it: v8, v9 and v10 exist only as
+      # `vX.Y.Z`, so `@v10` is not an old reference — it is not a reference at
+      # all, and three jobs died in `Set up job` with "unable to find version".
+      # v7 is the release that moved to Node 24, which is the whole reason to
+      # be off v5, and it is still a *major* tag, so it keeps collecting fixes
+      # the way every other `uses:` here does. Going higher means pinning a
+      # patch and hand-bumping it forever.
+      - uses: astral-sh/setup-uv@v7
         with:
           version: latest
       # A second here rather than a job of its own, which would spend twenty
@@ -127,7 +136,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v7  # NOT v8+ — see the note at the first use
         with:
           version: latest
       - uses: swatinem/rust-cache@v2
@@ -305,7 +314,7 @@ jobs:
       # --script`, so without this the two telnet servers die the instant they
       # are started and `telnet_test` reports a connection refused — three
       # minutes and a whole Qt build after the actual failure.
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v7  # NOT v8+ — see the note at the first use
         with:
           version: latest
       # qt6-base-dev is Qt 6.4.2 here and the desktop runs 6.11.1 — a gap that
