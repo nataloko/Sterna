@@ -153,7 +153,10 @@ QSize FindBar::sizeHint() const
 
 void FindBar::open()
 {
-    if (!isVisible()) {
+    // `isHidden` rather than `isVisible`: a window that has not been shown yet
+    // has no visible children at all, and opening the bar has to mean the same
+    // thing whether or not somebody is looking at it.
+    if (isHidden()) {
         show();
         raise();
         m_view->positionFindBar();
@@ -165,7 +168,7 @@ void FindBar::open()
 
 void FindBar::close()
 {
-    if (!isVisible()) {
+    if (isHidden()) {
         return;
     }
     m_debounce->stop();
@@ -174,6 +177,8 @@ void FindBar::close()
     // is what somebody was looking at, and it is what Copy should still take.
     m_session->clearFind();
     m_haveCurrent = false;
+    // The session has no pattern now, so reopening has to give it one again.
+    m_haveApplied = false;
     m_view->setFocus(Qt::OtherFocusReason);
 }
 
@@ -223,14 +228,31 @@ void FindBar::patternEdited()
     m_debounce->start();
 }
 
-void FindBar::apply()
+bool FindBar::install()
 {
     const FindQuery q = query();
+    if (m_haveApplied && q == m_applied) {
+        return true;
+    }
     QString reason;
     if (!m_session->setFind(q, &reason)) {
         setStatus(reason, true);
+        return false;
+    }
+    m_applied = q;
+    m_haveApplied = true;
+    // A new pattern is a new search: where the old one landed says nothing
+    // about where this one should resume from.
+    m_haveCurrent = false;
+    return true;
+}
+
+void FindBar::apply()
+{
+    if (!install()) {
         return;
     }
+    const FindQuery q = query();
     if (q.pattern.isEmpty()) {
         m_haveCurrent = false;
         setStatus(QString(), false);
@@ -253,6 +275,13 @@ void FindBar::step(bool backwards)
 {
     const FindQuery q = query();
     if (q.pattern.isEmpty()) {
+        return;
+    }
+    // Typing is debounced, and Enter can arrive inside that window — somebody
+    // who types quickly and presses it would otherwise step through the last
+    // pattern rather than the one on the screen in front of them.
+    m_debounce->stop();
+    if (!install()) {
         return;
     }
     // Committing the pattern: Enter and the two buttons are somebody saying

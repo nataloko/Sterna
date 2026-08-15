@@ -76,8 +76,12 @@ protected:
     void keyPressEvent(QKeyEvent *event) override;
 
 private:
-    /// Compile the pattern, repaint the matches and recount — everything that
-    /// has to happen when the pattern or a box changes.
+    /// Give the session the pattern in the field, if it does not have it
+    /// already. False when the engine refused it, in which case the previous
+    /// search is still running and the label says why.
+    bool install();
+    /// Install, then search from the top of the window and report — everything
+    /// that has to happen when the pattern or a box changes.
     void apply();
     /// The debounced half of `apply`, so a pattern that matches nothing does
     /// not scan the whole scrollback once per keystroke.
@@ -112,6 +116,11 @@ private:
     QTimer *m_debounce = nullptr;
 
     QStringList m_history;
+    /// What the session was last given, so typing and stepping cannot install
+    /// the same pattern twice — each install throws away where the last search
+    /// had got to.
+    FindQuery m_applied;
+    bool m_haveApplied = false;
     /// Where the last step landed, so the count can say which one it is and
     /// the next step knows where to resume from.
     FindMatch m_current;
