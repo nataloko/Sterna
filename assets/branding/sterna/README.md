@@ -16,6 +16,7 @@ the source of truth; the PNG and ICO application assets are generated from it.
 | `sterna.ico` | Windows icon with 16 through 256 px frames. |
 | `sterna-master.png` | 1254 px render of the primary square mark. |
 | `size-test-{light,dark}.png` | Review sheets; not application resources. |
+| `samples/computery-concepts.{svg,png}` | Review sheet for four computer-related icon concepts. |
 
 The primary and small marks use negative space for the white body, so use them
 on light backgrounds. Use a mono mark on coloured backgrounds. The application
