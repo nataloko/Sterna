@@ -3831,6 +3831,28 @@ void MainWindow::showLogDialog()
                               tr("Could not write %1.\n\n%2").arg(path, error));
         return;
     }
+
+    // Remember only a file that was actually opened. `applySettings` cannot
+    // do this: it runs before `startLog`, and a directory from a failed open
+    // is not where the last log was written. This one setting is bookkeeping,
+    // like the recent connection, so it survives a restart without turning
+    // all the dialog's deliberately live-only choices into saved settings.
+    const QString directory = QFileInfo(path).absolutePath();
+    if (!directory.isEmpty()) {
+        rememberSettings({{QStringLiteral("recent.log_dir"), directory}});
+        // Every existing tab owns its own settings snapshot. Keep the memory
+        // window-wide so the next File > Log follows the last one even after
+        // the user changes tabs; a new tab copies the active snapshot already.
+        for (int i = 0; i < m_panels->count(); i++) {
+            auto *page = static_cast<TerminalPage *>(m_panels->widget(i));
+            if (page->session() == m_session) {
+                continue;
+            }
+            QString ignored;
+            page->session()->setSetting(QStringLiteral("recent.log_dir"), directory,
+                                        &ignored);
+        }
+    }
     updateStatus();
 }
 

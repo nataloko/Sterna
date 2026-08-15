@@ -275,6 +275,14 @@ void test_the_menu_item_starts_the_log_the_dialog_configured()
     CHECK(dir.isValid() && logs.isValid());
     const QString ini = makeIni(dir);
     MainWindow window(ini);
+    // Existing tabs each hold a settings snapshot. Remembering the directory
+    // is window-wide, so opening the log on the second must update the first
+    // as well as the file a future process will load.
+    auto *newTab = window.findChild<QAction *>(QStringLiteral("newTabAction"));
+    CHECK(newTab != nullptr);
+    if (newTab) {
+        newTab->trigger();
+    }
     window.session()->feed(QByteArray("already here\r\n"));
 
     auto *action = window.findChild<QAction *>(QStringLiteral("logAction"));
@@ -330,8 +338,23 @@ void test_the_menu_item_starts_the_log_the_dialog_configured()
     CHECK(written.contains("live bytes"));
     CHECK(written.indexOf("already here") < written.indexOf("live bytes"));
 
-    // Where it went is remembered, for the next dialog to open on.
+    // Where it went is remembered in every existing tab...
     CHECK(window.session()->setting(QStringLiteral("recent.log_dir")) == logs.path());
+    auto *panels = window.findChild<PanelContainer *>();
+    CHECK(panels && panels->count() == 2);
+    if (panels && panels->count() == 2) {
+        for (int i = 0; i < panels->count(); i++) {
+            auto *page = static_cast<TerminalPage *>(panels->widget(i));
+            CHECK(page->session()->setting(QStringLiteral("recent.log_dir"))
+                  == logs.path());
+        }
+    }
+
+    // ...and in `[Sterna] LogDir`, so it is still the answer after a restart.
+    Session reloaded(24, 4);
+    QString error;
+    CHECK(reloaded.loadSettings(ini, &error));
+    CHECK(reloaded.setting(QStringLiteral("recent.log_dir")) == logs.path());
 }
 
 /// Pausing means what arrives meanwhile is dropped rather than held, which is

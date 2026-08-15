@@ -350,14 +350,6 @@ void LogOptionsDialog::applySettings() const
         QString::number(static_cast<quint64>(m_rotateSize->value()) *
                         unitScale(m_rotateUnit->currentIndex())));
     set(QStringLiteral("log.rotate_step"), QString::number(m_rotateKeep->value()));
-
-    // Where it went, so the next dialog opens there — see the schema's
-    // `recent.log_dir`. Only this path writes it: a `/L=` or an auto-started
-    // log is a choice somebody's script made, not one they made.
-    const QString dir = QFileInfo(m_file->text()).absolutePath();
-    if (!dir.isEmpty()) {
-        set(QStringLiteral("recent.log_dir"), dir);
-    }
 }
 
 void LogOptionsDialog::refreshEnabled()
