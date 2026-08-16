@@ -738,6 +738,28 @@ SSH:
   panel beside a tiled grid was never covered at all. Anything that appears or
   disappears beside the terminal goes through the same absorb helper, not
   through that arm.
+- **...and a column of widgets beside the terminal decides the window's
+  *height* unless something stops it.** A `QBoxLayout`'s minimum is the sum of
+  its children's, and `QToolButton::minimumSizeHint` is its natural height —
+  so the quick panel's minimum grew with the list: twenty buttons made the
+  window at least twenty buttons tall, changing to a page with more of them on
+  it grew it again, and past the point where the screen ran out Qt shared the
+  shortfall among the items and every button became a sliver. Both symptoms,
+  one missing viewport. The fix is not the scrollbar but the **size hint**:
+  `ButtonScroll` asks for its content's width and *no height at all*, so the
+  terminal goes on deciding. A scroll area's own hint is its content's height
+  and would put the panel straight back in charge, and its own
+  `minimumSizeHint` is room for a scrollbar and a frame, which would silently
+  become the narrowest the panel could be — both are overridden. The same
+  answer is waiting for anything else that grows without bound beside a
+  terminal.
+- **A rebuilt `QObject` can land on the freed one's address**, so
+  `CHECK(thing() != before)` after a rebuild is a comparison against freed
+  memory that passes on the allocator's habits. `an_unrelated_setting_leaves_
+  the_buttons_alone` had it and went green for a year; it broke on a change
+  that only reordered the deletes in `clearContents`, which reads as a panel
+  that stopped rebuilding. `QPointer` answers the question actually being
+  asked — was it destroyed — and never dereferences the corpse.
 - **Removing `QMainWindow::statusBar()` silently kills every `setStatusTip`** —
   the `QEvent::StatusTip` arm of `QMainWindow::event` needs a bar to show it in,
   and with none the event falls through and is dropped with no warning.
@@ -867,6 +889,21 @@ Serial:
   `CommThread`/`ReadEnd` handshake); cancel with `SetCommMask(handle, 0)`
   before the original dies. Wine rejects port setup (`ERROR_NOT_SUPPORTED`);
   `tests/serial_windows.rs` needs native Windows.
+- **...and an adapter unplugged on Windows therefore tells nobody.** Three
+  silences, all reported as one bug — a session that said it was connected
+  until somebody typed, and then answered `os error 22`. (1) `ERROR_BAD_COMMAND`
+  (22) and its six relatives have no Rust `ErrorKind`, so a failed write came
+  back `Uncategorized` and never reached `is_disconnected` —
+  `windows_device_gone` in `error.rs` is the list, and `ERROR_INVALID_HANDLE`
+  is deliberately not on it. (2) The wait worker's `break`s ended the only
+  thing that can wake the frontend, and removal arrives as an
+  `ERROR_OPERATION_ABORTED` completion with an empty mask, which is
+  indistinguishable from our own `SetCommMask(handle, 0)` — so the loop has
+  one exit and it always knocks. (3) Nothing asks at all on a quiet line:
+  `Transport::tick` probes with `GetCommModemStatus`, **not** `ClearCommError`,
+  which clears the errors it reports and would eat a break. `Session::tick`
+  routes the answer to `line_went_away` and `Session.cpp`'s tick drains, or the
+  events sit in a queue whose notifier went with the port.
 - **And that worker is why the handle must be opened `FILE_FLAG_OVERLAPPED`,
   which `serialport-rs` does not** — a synchronous file object serialises its
   I/O and a duplicate shares the file object, so the worker's pending wait
