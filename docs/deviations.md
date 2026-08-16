@@ -35,6 +35,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 18 | A log names itself by the clock and remembers its directory | `teraterm.log`, in whatever directory the settings resolve to | 0.3.2 |
 | 19 | Edit > Find searches the screen and the scrollback | Nothing searches the buffer; the log and another program do | 0.3.2 |
 | 20 | An optional column of line numbers down the left of the terminal | Nothing numbers the lines | 0.3.2 |
+| 21 | A serial port that goes away is opened again by itself, and a reopen that gives up says so on the terminal's own line | The same five keys, driven by `WM_DEVICECHANGE`, with a message box on the last try | 0.5.5 |
 
 ---
 
@@ -928,3 +929,70 @@ dropping itself, and the gutter simply shows the new numbers.
 and no existing setting changes meaning. A `TERATERM.INI` shared with a real
 Tera Term opens identically in both programs, with the gutter absent from the
 one that has never heard of it.
+
+---
+
+## 21. A reopen that gives up says so on the terminal's own line
+
+`AutoComPortReconnect` and its four timings are Tera Term's, and Sterna now runs
+them: a serial line that ends on its own starts a wait, and the port is opened
+again when the adapter comes back, with the scrollback that explains why it
+dropped still in place. The switch is on the Serial half of the New connection
+dialog as well as on the Serial page of Setup, and it ships on, which is
+upstream's default.
+
+The feature is not the deviation. Three decisions inside it are.
+
+**A failed reopen is a notice, not a message box.** Upstream suppresses its
+error box on every attempt but the last, and lets that one raise it
+(`vtwin.cpp:479-486`, where the suppression tests `retry_left_ != 0`). Here the
+same edge emits the ordinary `Session::notice` that a disconnect already uses,
+and it lands on the status line of the terminal it happened in.
+
+*Why.* Deviation 4 put up to nine terminals in one window and deviation 15 keeps
+that window open when a line drops, so by the time the last try fails the person
+is usually looking at a different tab — or a different connection entirely. A
+modal box arriving over that cannot say which terminal it is about, and it
+arrives without having been asked for, minutes after the event that caused it.
+The rule this follows is the one already in the code: message boxes are for a
+connect somebody just asked for (`MainWindow::connectSerial`), and a line that
+went away on its own reports through the page.
+
+**The longer of the two waits is chosen by the path, not by a message.**
+`AutoComPortReconnectDelayIllegal` exists because some Windows drivers send
+`DBT_DEVTYP_DEVICEINTERFACE` and never the `DBT_DEVTYP_PORT` that would say
+*which* port arrived (`vtwin.cpp:335`), so the reopen is a guess and gets two
+seconds instead of half of one. Linux sends no such message, and the same doubt
+has a mechanical spelling here: `devtmpfs` creates `/dev/ttyUSB0` the instant
+the driver binds, while udev applies the group and mode and makes the
+`/dev/serial/…` symlink afterwards. A bare node appearing therefore means udev
+has *not* finished — opening it there gets `EACCES` or `EBUSY` — and a
+`by-path` name appearing means it has.
+
+So the key keeps its meaning ("I saw a device" against "I saw *the* device, set
+up") and changes what asks the question. It carries the attach-order doubt with
+it: `/dev/ttyUSB<n>` is assigned in the order adapters attach, so a bare node
+that came back need not be the one that left. Windows always takes the shorter
+wait, because `QueryDosDeviceW` names the exact port and nothing there is a
+guess — the one place this port is *less* uncertain than upstream.
+
+**A node that goes away again while settling goes back to waiting.** Upstream
+disarms entirely if a device-removal message arrives during a reconnect
+(`vtwin.cpp:411`). Here it returns to the wait and spends nothing: the retry
+budget is for opens that failed, and no open was tried. A supply that bounces
+on the way up, or a hub that enumerates twice, is exactly the case the feature
+is for, and giving up on the first flicker would make it useless for the boards
+it exists to serve.
+
+**What is unchanged.** All five keys keep their upstream names, their upstream
+defaults and their upstream arithmetic — three retries is four tries, and an
+attempt made while the node has gone again costs one of them without opening
+anything, which is `CheckComPort`'s guard at `vtwin.cpp:475`. A `TERATERM.INI`
+written by either program still opens correctly in the other.
+
+**Not a deviation, for the record.** Watching for the node by asking whether it
+exists, rather than by registering for `WM_DEVICECHANGE`, is forced by the
+platform: Linux has no such message and the equivalent is a udev monitor. That
+is a port, not a decision, and it lives in a comment at
+`tt-session::reopen` and in `AGENTS.md`. Nothing about it is user-visible except
+that the wait is bounded below by half a second.

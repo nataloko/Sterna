@@ -133,7 +133,8 @@ ConnectDialog::ConnectDialog(QWidget *parent, const I18n *i18n)
     // rather than behind Details because it is about the *port*, like the box
     // above it, and because a board that reboots is the reason somebody is
     // choosing a serial port in the first place.
-    m_serialReopen = new QCheckBox(tr("Reopen if the port comes back"), m_serialBox);
+    m_serialReopen =
+        new QCheckBox(tr("Open the port again automatically"), m_serialBox);
     m_serialReopen->setObjectName(QStringLiteral("connectSerialReopen"));
     m_serialReopen->setToolTip(
         tr("This option opens the serial port again when the adapter becomes "

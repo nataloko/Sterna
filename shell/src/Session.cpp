@@ -1551,7 +1551,7 @@ void Session::dispatch()
         const QString note = closeNote();
         const QString ended = note.isEmpty() ? tr("Disconnected") : note;
         if (reopenStarted) {
-            emit notice(tr("%1 Waiting for %2 to come back.")
+            emit notice(tr("%1 Waiting for %2 to become available.")
                             .arg(ended, *reopenStarted));
         } else {
             emit notice(ended);
@@ -1560,7 +1560,7 @@ void Session::dispatch()
     } else if (reopenStarted) {
         // The write path can arm one without the read path having reported the
         // drop in the same drain.
-        emit notice(tr("Waiting for %1 to come back.").arg(*reopenStarted));
+        emit notice(tr("Waiting for %1 to become available.").arg(*reopenStarted));
         emit connectionChanged();
     }
     if (reopenDone) {

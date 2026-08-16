@@ -258,8 +258,12 @@ The live remainder, collected here so it cannot hide in the narrative:
 - **`ini-audit`'s two divergences are Wine's alone** (line-ending rewrite on
   write, `[ s ]` → `[s]`) — re-run the battery on native Windows;
   `exercise.exe` compiles there.
-- **Serial auto-reconnect**: the five keys are carried and not yet run; the
-  Linux half is a udev monitor this port has not built.
+- **Serial auto-reconnect watches for the node rather than being told about
+  it** — the five keys run (deviation 21, `docs/serial-reopen.md`), but the
+  arrival is a `stat` on a timer where upstream has `WM_DEVICECHANGE`. A udev
+  monitor on Linux, and a `WM_DEVICECHANGE` native event filter on Windows,
+  would replace the poll and change nothing above it. Windows is the one that
+  would gain: its half of `serial::present` is a `QueryDosDeviceW` per tick.
 - **`sendfile` and the two serial send delays** stay refused in the macro
   host pending a `SendMem`-shaped send queue with its four callers;
   `crates/tt-macro/src/host.rs` keeps the list.
@@ -291,8 +295,8 @@ The rule for going on that list: user-visible, not forced by the platform, and
 reproducing upstream instead would have been easy. A divergence Linux or Qt
 forces is a port, and belongs in a code comment and in `AGENTS.md`.
 
-**`docs/deviations.md` is the canonical list** — twenty entries as of
-2026-08-15, each with its reason, what stays compatible, and where it lives.
+**`docs/deviations.md` is the canonical list** — twenty-one entries as of
+2026-08-16, each with its reason, what stays compatible, and where it lives.
 The write-ups that used to sit here — the first batch of eight, Find, and
 line numbers — are in `docs/history.md`.
 
