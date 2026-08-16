@@ -503,3 +503,92 @@ fn the_control_lines_reach_the_wire_as_the_settings_ask() {
     assert!(lines.dsr, "DTR did not come up for the derived default");
     drop(near);
 }
+
+/// The auto-reopen, end to end and with no human: the machine waits for a node
+/// that is not there, and opens the **real** adapter when it appears.
+///
+/// A node cannot be made to come and go without a hand on the cable, so the
+/// session is armed against a symlink in a scratch directory that points at
+/// `TT_SERIAL_A`. Removing and recreating the link is what a replug looks like
+/// to `serial::present`, and everything after that — the settle wait, the open,
+/// the reattach — is the real path against the real port.
+///
+/// `src/reopen.rs` covers the arithmetic and `tests/reopen.rs` covers the
+/// arming rules. This covers the one thing neither can: that the open works and
+/// that the session comes back carrying it.
+#[test]
+fn a_port_that_comes_back_is_opened_again_and_carries_the_session() {
+    let Some((a, b)) = rig() else { return };
+
+    let dir = tempfile::tempdir().expect("scratch");
+    let link_path = dir.path().join("port");
+    let link = link_path.to_str().expect("utf-8 path").to_string();
+
+    // The far end, so the reopened port can be shown to carry bytes.
+    let mut far = SerialConn::open(&b, &params()).expect("open the far end");
+
+    let mut s = Session::new(Config::default());
+    // Short enough that the whole case runs in about a second. The scratch
+    // path is not a `/dev/serial/…` name, so it takes the unknown-port wait.
+    for (name, value) in [
+        ("serial.auto_reconnect", "on"),
+        ("serial.auto_reconnect_delay", "50"),
+        ("serial.auto_reconnect_delay_unknown_port", "50"),
+        ("serial.auto_reconnect_retry_interval", "50"),
+        ("serial.auto_reconnect_retries", "40"),
+    ] {
+        assert!(s.set_setting(name, value), "{name} is not a setting");
+    }
+
+    // Armed the way a dropped line arms it, without needing one: a
+    // serial-shaped memory transport that reports the symlink as what would
+    // open it again.
+    let (transport, handle) = tt_session::MemoryTransport::with_kind(tt_conn::LinkKind::Serial {
+        baud: 115200,
+        seven_bit: false,
+    });
+    s.connect(Box::new(transport.reopening_as(&link, params())));
+    handle.with(|st| st.disconnected = true);
+    s.pump(Duration::from_millis(20)).expect("pump");
+    assert!(s.is_reopening(), "the drop did not start a wait");
+    assert_eq!(s.reopening_port(), Some(link.as_str()));
+
+    // Nothing at that path yet, so it waits — however long it is serviced for.
+    let deadline = Instant::now() + Duration::from_millis(400);
+    while Instant::now() < deadline {
+        s.service_reopen();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(s.is_reopening(), "an absent node should be waited for");
+    assert!(!s.is_connected(), "nothing should have been opened");
+
+    // The adapter comes back.
+    std::os::unix::fs::symlink(&a, &link_path).expect("symlink");
+    let mut events = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline && !s.is_connected() {
+        s.service_reopen();
+        events.extend(s.drain_events());
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(s.is_connected(), "the port did not open again: {events:?}");
+    assert!(!s.is_reopening(), "a successful open ends the wait");
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::Reopened(p) if p == &link)),
+        "no Reopened event: {events:?}"
+    );
+
+    // ...and it is a working port, not merely an open one.
+    far.write(b"back\r\n", Duration::from_millis(200))
+        .expect("write from the far end");
+    pump_until(&mut s, Duration::from_secs(3), |s| {
+        row(s, 0).contains("back")
+    });
+    assert!(
+        row(&s, 0).contains("back"),
+        "the reopened port carried nothing: {:?}",
+        row(&s, 0)
+    );
+}

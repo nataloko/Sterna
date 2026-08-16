@@ -41,4 +41,4 @@ mod windows_reader;
 pub use error::{Error, Result};
 pub use netif::local_ip_addresses;
 pub use proxy::{ProxyKind, ProxyParams, Resolve as ProxyResolve, TelnetPrompts};
-pub use transport::{LinkKind, Transport, TransportEvent};
+pub use transport::{LinkKind, ReopenTarget, Transport, TransportEvent};

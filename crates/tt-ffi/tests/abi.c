@@ -2119,6 +2119,11 @@ static void test_null_safety(void)
     tt_pty_params_default(NULL);
     CHECK(tt_session_connect_pty(NULL, NULL) == TT_ERR_INVALID);
     CHECK(tt_session_close_note(NULL) == NULL);
+    CHECK(!tt_session_is_reopening(NULL));
+    CHECK(tt_session_reopen_port(NULL) == NULL);
+    CHECK(tt_session_reopen_deadline_ms(NULL) == -1);
+    tt_session_service_reopen(NULL);
+    tt_session_cancel_reopen(NULL);
     CHECK(!tt_session_supports_break(NULL));
     CHECK(tt_session_setting(NULL, "terminal.cols") == NULL);
     CHECK(tt_session_set_setting(NULL, "terminal.cols", "80") == TT_ERR_INVALID);
@@ -2181,6 +2186,16 @@ static void test_null_safety(void)
     CHECK(tt_session_copy_settings(s, NULL) == TT_ERR_INVALID);
     CHECK(tt_session_copy_settings(NULL, s) == TT_ERR_INVALID);
     CHECK(tt_session_close_note(s) == NULL);
+    /* Nothing has disconnected, so nothing is being waited for — and a
+     * frontend's timer is allowed to fire anyway, which must cost nothing and
+     * say nothing. */
+    CHECK(!tt_session_is_reopening(s));
+    CHECK(tt_session_reopen_port(s) == NULL);
+    CHECK(tt_session_reopen_deadline_ms(s) == -1);
+    tt_session_service_reopen(s);
+    tt_session_cancel_reopen(s);
+    CHECK(!tt_session_is_reopening(s));
+    CHECK(tt_session_drain_events(s, NULL) == 0);
     /* A null argv is a caller bug; a `/M` that named nothing is the command
      * line's to report, and both refuse here rather than opening a file. */
     CHECK(tt_macro_start(s, NULL, NULL) == NULL);

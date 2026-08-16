@@ -134,6 +134,82 @@ pub fn number_of_port(path: &str) -> Result<Option<u16>> {
         .map(|i| (i + 1) as u16))
 }
 
+/// Is there a serial device at this path — asked **without opening it**.
+///
+/// The constraint is `inuse`'s: opening a port raises DTR for as long as the
+/// descriptor lives, so anything that asks this on a timer would reset an
+/// Arduino-style board once per tick. Upstream asks the same question the same
+/// way — `CheckComPort` (`ttpcmn/ttcmn_cominfo.c:89`) enumerates and compares,
+/// it does not probe.
+///
+/// On Unix this follows a `/dev/serial/by-path/…` symlink to the node it names
+/// and insists the answer is a character device, so a remembered path that has
+/// become an ordinary file reads as absent rather than as a port.
+///
+/// Windows has no node to stat — `Path::exists("COM3")` is false for a port
+/// that is plugged in and working — so it asks the object manager instead.
+/// **Not [`enumerate`], which is what upstream's `CheckComPort` does**: that
+/// runs SetupAPI over every port on the machine, and an ordinary desktop
+/// answers with thirty-three of them. `QueryDosDeviceW` reads one symbolic
+/// link. Same answer, and it is the difference between a question that can be
+/// asked twice a second and one that cannot.
+///
+/// This is deliberately stricter than the existence test in
+/// [`crate::Error::from_open`], which asks a different question — see the
+/// comment there.
+pub fn present(path: &str) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        std::fs::metadata(path).is_ok_and(|md| md.file_type().is_char_device())
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::ERROR_INSUFFICIENT_BUFFER;
+        use windows_sys::Win32::Storage::FileSystem::QueryDosDeviceW;
+
+        // `QueryDosDeviceW` wants the object-manager name — `COM3`, not
+        // `\\.\COM3` and not `COM3:`. Both spellings reach here: `\\.\` is
+        // what a port above COM9 has to be opened as, and a hand-edited
+        // settings file may carry the trailing colon.
+        let name = path
+            .strip_prefix(r"\\.\")
+            .unwrap_or(path)
+            .trim_end_matches(':');
+        if name.is_empty() {
+            return false;
+        }
+        let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut buf = [0u16; 256];
+        // Zero is the only failure. A short buffer means the name resolved and
+        // its target did not fit, which is a *present* port — the easy half of
+        // this to get wrong, because it arrives as an error.
+        let n = unsafe { QueryDosDeviceW(wide.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) };
+        n != 0
+            || unsafe { windows_sys::Win32::Foundation::GetLastError() }
+                == ERROR_INSUFFICIENT_BUFFER
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+/// Does this path name a physical socket rather than a kernel device node?
+///
+/// The distinction is the one this module opens with: `/dev/ttyUSB<n>` is
+/// assigned in attach order, so it can name a different adapter after a replug,
+/// while a `/dev/serial/…` name is the USB topology and holds still. It is
+/// therefore the difference between reopening *this* port and reopening
+/// whatever has taken its number — see [`PortInfo::stable_id`].
+///
+/// Always false on Windows: a `COM<n>` is a kernel name and there is no
+/// topology spelling of it.
+pub fn is_stable_path(path: &str) -> bool {
+    cfg!(unix) && path.starts_with("/dev/serial/")
+}
+
 fn canonical(path: &str) -> Option<PathBuf> {
     std::fs::canonicalize(path).ok()
 }
@@ -209,5 +285,46 @@ mod tests {
         assert!(number_of_port("/dev/nonexistent")
             .expect("unknown")
             .is_none());
+    }
+
+    /// The auto-reopen loop asks this once a tick while it waits, so the two
+    /// answers it must never get wrong are "a path that is not there" and "a
+    /// path that is there and is not a port".
+    #[test]
+    fn a_missing_node_is_absent_and_an_ordinary_file_is_not_a_port() {
+        assert!(!present("/dev/sterna-no-such-port"));
+        assert!(!present(""));
+        // Every enumerated port is present by definition, whichever of its two
+        // names the caller holds.
+        for p in enumerate().expect("enumeration") {
+            assert!(present(&p.device), "{} enumerated but absent", p.device);
+            if let Some(id) = &p.stable_id {
+                assert!(present(id), "{id} enumerated but absent");
+            }
+        }
+        #[cfg(unix)]
+        {
+            // A directory exists and is not a serial port. `Path::exists`
+            // alone would call this one present.
+            assert!(!present("/tmp"));
+            // ...and so does a character device that is not an adapter, which
+            // is the point: this answers "is there a device", not "is it the
+            // right one". Reopening is by the path that was opened.
+            assert!(present("/dev/null"));
+        }
+    }
+
+    #[test]
+    fn only_a_topology_name_survives_a_replug() {
+        assert_eq!(
+            is_stable_path("/dev/serial/by-path/pci-0000:00:14.0-usb-0:2:1.0-port0"),
+            cfg!(unix)
+        );
+        assert_eq!(
+            is_stable_path("/dev/serial/by-id/usb-FTDI_x-if00-port0"),
+            cfg!(unix)
+        );
+        assert!(!is_stable_path("/dev/ttyUSB0"));
+        assert!(!is_stable_path("COM3"));
     }
 }

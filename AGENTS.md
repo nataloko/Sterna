@@ -944,6 +944,49 @@ Serial:
   port purges regardless (`vtwin.cpp:4913`). Only testable on real hardware.
 - **`SendBreakTime` is the only break length there is** — no per-caller
   `ms` parameter; this port once had three different values.
+- **"Is the node there" and "is there anything at this path" are two
+  questions, and `tt-conn` answers them separately on purpose.**
+  `serial::present` follows a symlink and insists on a character device, and on
+  Windows asks `QueryDosDeviceW` rather than stat'ing (`Path::exists("COM3")`
+  is false for a working port) or enumerating (upstream's `CheckComPort` runs
+  SetupAPI over all thirty-three ports a desktop has). `Error::from_open` keeps
+  its plain `Path::exists`: making it strict turns `cannot open
+  /home/me/notaport: Is a directory` into "the device disconnected", which says
+  nothing about what to fix. Do not unify them.
+- **The reopen record has to be taken before `self.conn = None`**, beside
+  `closing_note` and for the same reason — the live `SerialParams` die with the
+  port, and a frontend remembering what it passed to `connect` brings a session
+  back at the speed in the settings file rather than the speed a macro's
+  `setbaud` left it at. `Transport::reopen_target` is that moment;
+  `Session::line_went_away` is the one place both disconnect paths reach it.
+- **`Session::tick` is not where the auto-reopen runs, and the reason is a Qt
+  timer type.** The shell's tick is `Qt::VeryCoarseTimer` (`Session.cpp:76`),
+  which rounds to whole seconds, and `AutoComPortReconnectDelayNormal` ships at
+  500 ms — riding it would round a setting to twice its value and say nothing.
+  The core owns the instant (`tt_session_reopen_deadline_ms`) and
+  `Session::m_reopenTimer` owns the sleep, which is `m_xferTimer`'s
+  arrangement. `tick` keeps its "no-op with nothing connected, raises no
+  events" contract.
+- **...and that arrangement makes every deadline the core hands out a *when*,
+  never a *how long from now*.** `Session::rearm` re-reads the deadline and
+  restarts one single-shot timer, and it is called from far more than the pump
+  — `Session::mouse` calls it on **every mouse-move event**, and
+  `TerminalView` has mouse tracking on for the URL cursor. So a state whose
+  deadline is an interval measured from the moment it is asked gets a fresh
+  full wait sixty times a second, and never fires. `Reopen`'s indefinite
+  `Waiting` had this: the poll backs off to two seconds after half a minute,
+  so moving the pointer over a terminal that was waiting for its adapter
+  stopped it noticing the adapter until the pointer stopped. `State::Waiting`
+  carries `next` as an `Instant` for that reason, and `Reopen::deadline` is
+  idempotent in all four states. Anything else that grows a deadline owes the
+  same property — the frontend cannot supply it, because it has no way to know
+  which of the answers it just got was a countdown and which was a fresh wait.
+- **A reopening session must not count as *connecting*.** `ensureIdlePage`
+  (`MainWindow.cpp:860`) opens a **new tab** for a session that is connecting,
+  so folding `isReopening` into `isConnecting` takes somebody who gave up
+  waiting and clicked Connect to a fresh tab — throwing away the scrollback the
+  feature exists to keep. It is a separate predicate, and File > Disconnect is
+  the one command that calls a wait off.
 
 Settings — all of it out of `ini-audit/`:
 

@@ -7,6 +7,21 @@ are available from the [GitHub releases page].
 
 ### Added
 
+- **A serial port that goes away is opened again by itself when it comes back.**
+  Power-cycle a board and its USB adapter leaves `/dev` with it; the session now
+  waits for the adapter and reconnects when it returns, keeping the screen and
+  the scrollback that explain why the board went down. The switch is *Open the
+  port again automatically*, in the Serial half of the New connection dialog,
+  and it ships on. Tera Term has had `AutoComPortReconnect` and its four timings for
+  years and Sterna has read them since it had a settings file; this is the first
+  release that acts on them. The wait for the adapter has no time limit — a
+  board switched off overnight is reconnected in the morning — while the opening
+  is tried four times and then reported on the terminal's own status line rather
+  than in a dialog. Nothing is opened to find out whether the port is back:
+  probing a serial port raises DTR, which reboots an Arduino-style board and
+  drops a modem's carrier. The port comes back at the speed it was actually
+  using, which is not always the speed in the settings file. See
+  [`docs/serial-reopen.md`](docs/serial-reopen.md).
 - The terminal can stop following the window. View > **Wrap lines**, or "Term
   size = win size" on the Setup > Terminal page — one switch, either name. With
   it on, which is how Sterna has always behaved, lines wrap where the window

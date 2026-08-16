@@ -2808,6 +2808,9 @@ void MainWindow::showConnectDialog(ConnectDialog::Kind kind)
         m_session->setting(QStringLiteral("connection.history_list"))
         == QLatin1String("on");
     dialog.setRemembersHistory(history);
+    const bool reopen = m_session->setting(QStringLiteral("serial.auto_reconnect"))
+                        == QLatin1String("on");
+    dialog.setReopensSerial(reopen);
     if (history) {
         dialog.setHistory(
             m_session->setting(QStringLiteral("recent.host_history"))
@@ -2818,13 +2821,26 @@ void MainWindow::showConnectDialog(ConnectDialog::Kind kind)
     }
 
     // The box is a setting of its own, so unticking it is remembered even
-    // though nothing was connected to.
+    // though nothing was connected to. Both boxes, and for the same reason.
     if (dialog.remembersHistory() != history) {
         rememberSettings({
             {QStringLiteral("connection.history_list"),
              dialog.remembersHistory() ? QStringLiteral("on")
                                        : QStringLiteral("off")},
         });
+    }
+    if (dialog.reopensSerial() != reopen) {
+        // `setSetting` as well as the write: `rememberSettings` applies the
+        // value on its way to the file but emits no `settingsChanged`, and
+        // turning this off has to reach a wait that is already running.
+        const QString value =
+            dialog.reopensSerial() ? QStringLiteral("on") : QStringLiteral("off");
+        QString error;
+        if (!m_session->setSetting(QStringLiteral("serial.auto_reconnect"), value,
+                                   &error)) {
+            onNotice(tr("Could not change the reopen setting: %1").arg(error));
+        }
+        rememberSettings({{QStringLiteral("serial.auto_reconnect"), value}});
     }
 
     switch (dialog.kind()) {
@@ -4455,9 +4471,13 @@ void MainWindow::markActiveTile()
 void MainWindow::updatePageStatus(TerminalPage *page)
 {
     Session *session = page->session();
-    page->status()->setConnection(session->isConnected(),
-                                  session->isConnecting(),
-                                  session->describe());
+    const bool reopening = session->isReopening();
+    page->status()->setConnection(
+        session->isConnected()    ? PageStatusBar::Link::Up
+        : session->isConnecting() ? PageStatusBar::Link::Connecting
+        : reopening               ? PageStatusBar::Link::Reopening
+                                  : PageStatusBar::Link::Down,
+        reopening ? session->reopeningPort() : session->describe());
     updateLogStatus(page);
 }
 
@@ -4503,8 +4523,13 @@ void MainWindow::updateStatus()
     }
     if (m_disconnectAction) {
         // Enabled while connecting too: stopping an attempt that is waiting on
-        // a slow key exchange is a thing people need to be able to do.
-        m_disconnectAction->setEnabled(connected || connecting);
+        // a slow key exchange is a thing people need to be able to do. A port
+        // being waited for is the same case, and this is the only command that
+        // says "stop waiting" — the connect bar's button is left alone, because
+        // a page with nothing on it is the right one to connect somewhere else
+        // with.
+        m_disconnectAction->setEnabled(connected || connecting
+                                       || m_session->isReopening());
     }
     if (m_duplicateAction) {
         const bool disabled =

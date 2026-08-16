@@ -3765,18 +3765,31 @@ pub struct Settings {
     /// adapter comes back — the USB-serial cable somebody unplugged, which is the
     /// whole reason the setting exists.
     ///
-    /// Upstream drives it from `WM_DEVICECHANGE` (`vtwin.cpp:311`), so the Linux
-    /// half is a udev monitor and is not built yet; the four keys below describe a
-    /// state machine this port carries and does not yet run.
+    /// Upstream drives it from `WM_DEVICECHANGE` (`vtwin.cpp:311`). There is no such
+    /// message on Linux, so the machine in `tt-session::reopen` watches for the node
+    /// instead — `tt_conn::serial::present`, which stats a path and opens nothing,
+    /// because a probe that opened one would raise DTR and reboot an Arduino-style
+    /// board once per interval. Forced by the platform, so it is a port and not a
+    /// deviation; a udev monitor would replace the poll and change nothing above it.
     pub serial_auto_reconnect: bool,
     /// `ttset.c:1088`, milliseconds. The wait between the device arriving and the
-    /// reopen, for the case where the arrival named the port it was about.
+    /// reopen, for the case where the arrival named the port it was about — here,
+    /// where the path names the socket rather than the attach order. See the key
+    /// below for what decides which of the two waits applies.
     pub serial_auto_reconnect_delay: i32,
     /// `ttset.c:1090`, milliseconds, and **"illegal" is about the notification and
     /// not about a value.** Some drivers send only `DBT_DEVTYP_DEVICEINTERFACE` and
     /// never the `DBT_DEVTYP_PORT` that would say *which* port arrived
     /// (`vtwin.cpp:335`), so this is the longer wait taken when the port number is
     /// unknown and the reopen is a guess.
+    ///
+    /// The same doubt has a mechanical Linux spelling: `devtmpfs` makes
+    /// `/dev/ttyUSB0` when the driver binds, and udev applies the group and mode and
+    /// makes the `/dev/serial/…` symlink afterwards. So a bare node appearing means
+    /// udev has *not* finished — opening it there gets `EACCES` or `EBUSY` — and a
+    /// `by-path` name appearing means it has. `ReopenLimits::delay_unknown` picks
+    /// between them on `is_stable_path`; Windows always takes the shorter wait,
+    /// because `QueryDosDeviceW` names the exact port and nothing there is a guess.
     pub serial_auto_reconnect_delay_unknown_port: i32,
     /// `ttset.c:1092`, milliseconds between one failed reopen and the next.
     pub serial_auto_reconnect_retry_interval: i32,
@@ -3785,7 +3798,13 @@ pub struct Settings {
     /// not in the name: an attempt where the port is still absent costs a retry
     /// without opening anything (`vtwin.cpp:475`'s `CheckComPort` guard), and the
     /// *last* attempt is the one allowed to raise the error box, because the
-    /// suppression tests `retry_left_ != 0` (`:481`).
+    /// suppression tests `retry_left_ != 0` (`:481`). Both reproduced — the second
+    /// as a notice on the terminal's own status line rather than a modal box, which
+    /// is deviation 23.
+    ///
+    /// **The budget is for opens, not for the wait.** Watching for the node costs
+    /// nothing and is indefinite, the way upstream waits for a device-arrival
+    /// message indefinitely; these four tries begin once the node is back.
     ///
     /// The four above are `WORD` in `tttypes.h:602`, so upstream truncates them to
     /// 16 bits: a two-minute retry interval written as `120000` is 54464 ms there
@@ -15013,7 +15032,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "on",
         label: None,
-        doc: "`ttset.c:1086`, `GetOnOff(…, TRUE)`. Reopen the port by itself when the adapter comes back — the USB-serial cable somebody unplugged, which is the whole reason the setting exists.  Upstream drives it from `WM_DEVICECHANGE` (`vtwin.cpp:311`), so the Linux half is a udev monitor and is not built yet; the four keys below describe a state machine this port carries and does not yet run.",
+        doc: "`ttset.c:1086`, `GetOnOff(…, TRUE)`. Reopen the port by itself when the adapter comes back — the USB-serial cable somebody unplugged, which is the whole reason the setting exists.  Upstream drives it from `WM_DEVICECHANGE` (`vtwin.cpp:311`). There is no such message on Linux, so the machine in `tt-session::reopen` watches for the node instead — `tt_conn::serial::present`, which stats a path and opens nothing, because a probe that opened one would raise DTR and reboot an Arduino-style board once per interval. Forced by the platform, so it is a port and not a deviation; a udev monitor would replace the poll and change nothing above it.",
     },
     Field {
         name: "serial.auto_reconnect_delay",
@@ -15023,7 +15042,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::IntWord,
         default: "500",
         label: None,
-        doc: "`ttset.c:1088`, milliseconds. The wait between the device arriving and the reopen, for the case where the arrival named the port it was about.",
+        doc: "`ttset.c:1088`, milliseconds. The wait between the device arriving and the reopen, for the case where the arrival named the port it was about — here, where the path names the socket rather than the attach order. See the key below for what decides which of the two waits applies.",
     },
     Field {
         name: "serial.auto_reconnect_delay_unknown_port",
@@ -15033,7 +15052,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::IntWord,
         default: "2000",
         label: None,
-        doc: "`ttset.c:1090`, milliseconds, and **\"illegal\" is about the notification and not about a value.** Some drivers send only `DBT_DEVTYP_DEVICEINTERFACE` and never the `DBT_DEVTYP_PORT` that would say *which* port arrived (`vtwin.cpp:335`), so this is the longer wait taken when the port number is unknown and the reopen is a guess.",
+        doc: "`ttset.c:1090`, milliseconds, and **\"illegal\" is about the notification and not about a value.** Some drivers send only `DBT_DEVTYP_DEVICEINTERFACE` and never the `DBT_DEVTYP_PORT` that would say *which* port arrived (`vtwin.cpp:335`), so this is the longer wait taken when the port number is unknown and the reopen is a guess.  The same doubt has a mechanical Linux spelling: `devtmpfs` makes `/dev/ttyUSB0` when the driver binds, and udev applies the group and mode and makes the `/dev/serial/…` symlink afterwards. So a bare node appearing means udev has *not* finished — opening it there gets `EACCES` or `EBUSY` — and a `by-path` name appearing means it has. `ReopenLimits::delay_unknown` picks between them on `is_stable_path`; Windows always takes the shorter wait, because `QueryDosDeviceW` names the exact port and nothing there is a guess.",
     },
     Field {
         name: "serial.auto_reconnect_retry_interval",
@@ -15053,7 +15072,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::IntWord,
         default: "3",
         label: None,
-        doc: "`ttset.c:1094`. Retries **after** the first attempt, so three is four tries — and unlike `BeepOverUsedCount` the name is honest about it. Two details are not in the name: an attempt where the port is still absent costs a retry without opening anything (`vtwin.cpp:475`'s `CheckComPort` guard), and the *last* attempt is the one allowed to raise the error box, because the suppression tests `retry_left_ != 0` (`:481`).  The four above are `WORD` in `tttypes.h:602`, so upstream truncates them to 16 bits: a two-minute retry interval written as `120000` is 54464 ms there and 120000 here. Not reproduced — the schema has no type for it and the divergence only exists for values nobody means.",
+        doc: "`ttset.c:1094`. Retries **after** the first attempt, so three is four tries — and unlike `BeepOverUsedCount` the name is honest about it. Two details are not in the name: an attempt where the port is still absent costs a retry without opening anything (`vtwin.cpp:475`'s `CheckComPort` guard), and the *last* attempt is the one allowed to raise the error box, because the suppression tests `retry_left_ != 0` (`:481`). Both reproduced — the second as a notice on the terminal's own status line rather than a modal box, which is deviation 23.  **The budget is for opens, not for the wait.** Watching for the node costs nothing and is indefinite, the way upstream waits for a device-arrival message indefinitely; these four tries begin once the node is back.  The four above are `WORD` in `tttypes.h:602`, so upstream truncates them to 16 bits: a two-minute retry interval written as `120000` is 54464 ms there and 120000 here. Not reproduced — the schema has no type for it and the divergence only exists for values nobody means.",
     },
     Field {
         name: "log.auto_start",
@@ -16637,11 +16656,11 @@ pub const SETTING_HELP: &[&str] = &[
     "This setting controls the data-terminal-ready (DTR) line. A value of -1 makes the flow control setting control the line. A value of 0 disables the line. A value of 1 enables the line. A value of 2 selects handshake.",
     "This setting discards bytes that the serial driver buffered before the port opened. This setting does not control a manual port reset. A manual port reset always discards these bytes.",
     "This setting sets the serial-break duration in milliseconds. A specified duration can be necessary for device boot loaders and firmware consoles.",
-    "This setting controls automatic reopening of a disconnected serial adapter when it becomes available again. At this time, Sterna does not have automatic reconnection.",
-    "This setting sets the wait, in milliseconds, before Sterna reopens a serial adapter when Sterna knows the port number. At this time, automatic reconnection is not available in Sterna.",
-    "This setting sets the longer wait before Sterna tries a device with no identification as the serial adapter. At this time, automatic reconnection is not available in Sterna.",
-    "This setting sets the interval, in milliseconds, after each attempt that does not reopen the serial port. At this time, Sterna does not have automatic reconnection.",
-    "This setting sets the number of retries after the first attempt to reopen the serial port. Thus, a value of three gives four total attempts. At this time, Sterna does not have automatic reconnection.",
+    "This setting opens the serial port again when the adapter becomes available after a connection stops. The text on the screen and in the scrollback stays.",
+    "This setting sets the wait, in milliseconds, after the adapter becomes available and before Sterna opens the serial port again. Sterna uses this wait when the port name identifies the device.",
+    "This setting sets a longer wait, in milliseconds, for a serial port with a name that does not identify the device. A port with such a name can be a different adapter, or the system possibly did not prepare it.",
+    "This setting sets the interval, in milliseconds, after each try that does not open the serial port and before the next try.",
+    "This setting sets how many more times Sterna tries to open the serial port after the first try. Thus, a value of three gives four tries.",
     "This setting automatically starts a session log when a connection opens. The default name setting and default path setting select the file.",
     "This setting records all received bytes without changes. Binary logs omit text timestamps. You can send a binary log to a terminal again.",
     "This setting adds new session output to a log file. It does not replace the file contents.",

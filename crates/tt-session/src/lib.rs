@@ -41,6 +41,7 @@ pub mod log;
 pub mod logname;
 pub mod macros;
 pub mod open;
+pub mod reopen;
 mod serial;
 pub mod settings;
 pub mod xfer;
@@ -196,6 +197,24 @@ pub enum Event {
     /// nothing either way. What it must not do is act on a `Write` without
     /// having seen its `Open`.
     Printer(PrinterEvent),
+    /// A serial line ended on its own and `AutoComPortReconnect` is on, so the
+    /// session is now watching for the adapter to come back. `String` is the
+    /// port it is watching. Follows the [`Disconnected`](Event::Disconnected)
+    /// for the same drop.
+    ///
+    /// Indefinite: it is raised once, and the wait ends in a
+    /// [`Reopened`](Event::Reopened), a [`ReopenFailed`](Event::ReopenFailed),
+    /// or somebody doing something else with the session.
+    Reopening(String),
+    /// ...and the port came back. The session is connected again, with the
+    /// scrollback that explains why it dropped still in place.
+    ///
+    /// The transport is a new one, so anything the frontend was waiting on —
+    /// a descriptor, a handle — belongs to the previous connection and must be
+    /// asked for again.
+    Reopened(String),
+    /// The retries are spent. `String` is why the last attempt failed.
+    ReopenFailed(String),
 }
 
 /// What pressing a legacy `KEYBOARD.CNF` scan code did.
@@ -243,6 +262,10 @@ pub struct Session {
     seen_size: (usize, usize),
     /// What the last transport said on its way out, if it said anything.
     close_note: Option<String>,
+    /// The serial port to put back when the adapter returns, and how far
+    /// through trying it is. Armed only by a line that ended on its own — see
+    /// [`Session::tick`].
+    reopen: reopen::Reopen,
     /// Every setting, including the ones this layer does not act on — see
     /// [`Session::settings`].
     settings: Settings,
@@ -330,6 +353,7 @@ impl Session {
             tcp_local_echo_used: false,
             tcp_cr_send_used: false,
             close_note: None,
+            reopen: reopen::Reopen::default(),
             settings: Settings::default(),
             key_map: KeyboardMap::default(),
             xfer: None,
@@ -402,6 +426,12 @@ impl Session {
     /// already discarded it on their own.
     pub fn set_settings(&mut self, settings: Settings) {
         let config = vt_config(&settings, self.vt.config());
+        // Turning the switch off stops a wait already running, rather than
+        // only stopping the next one. `set_setting` routes through here too,
+        // so this covers a script and the dialog alike.
+        if !settings.serial_auto_reconnect {
+            self.reopen.cancel();
+        }
         self.settings = settings;
         self.vt.set_config(config);
         // `set_config` may have resized the grid, which is the one thing here
@@ -464,6 +494,9 @@ impl Session {
     pub fn connect(&mut self, conn: Box<dyn Transport>) {
         self.pending.clear();
         self.close_note = None;
+        // Whatever this is, it is what the session is now about. A reopen still
+        // watching for the last port would otherwise open it underneath.
+        self.reopen.cancel();
         self.connected_at = Some(Instant::now());
         // Upstream reads `cv.ConnectedTime` at every stamp rather than at the
         // log's open, so a log left running across a reconnect restarts its
@@ -534,11 +567,119 @@ impl Session {
     ///
     /// Separate from [`Session::pump`] because the whole point is that it runs
     /// when *nothing* arrived; a frontend drives it from a timer.
+    ///
+    /// **The serial auto-reopen is deliberately not here.** It runs while there
+    /// is no transport, and it has deadlines of its own that this timer's
+    /// once-a-second frontend cadence cannot express — see
+    /// [`Session::reopen_deadline`].
     pub fn tick(&mut self) -> Result<()> {
         match self.conn.as_mut() {
             Some(c) => c.tick(),
             None => Ok(()),
         }
+    }
+
+    /// The four timings, as this session's settings currently spell them.
+    ///
+    /// Read afresh each time rather than captured at arming: a wait can be long,
+    /// and somebody changing the interval during one should not have to drop the
+    /// line again for it to take.
+    fn reopen_limits(&self) -> reopen::ReopenLimits {
+        let ms = |n: i32| Duration::from_millis(n.max(0) as u64);
+        reopen::ReopenLimits {
+            delay: ms(self.settings.serial_auto_reconnect_delay),
+            delay_unknown: ms(self.settings.serial_auto_reconnect_delay_unknown_port),
+            retry_interval: ms(self.settings.serial_auto_reconnect_retry_interval),
+            retries: self.settings.serial_auto_reconnect_retries.max(0) as u32,
+        }
+    }
+
+    /// How long until the reopen wants attention, or `None` if it does not.
+    ///
+    /// The frontend owns the timer and the core owns the instant — the same
+    /// arrangement as the file-transfer deadline, and for the same reason: a
+    /// frontend cannot know a delay that came out of the settings file, and
+    /// this one has to be honoured to better than the whole second the session
+    /// tick rounds to.
+    pub fn reopen_deadline(&self) -> Option<Duration> {
+        self.reopen.deadline(Instant::now())
+    }
+
+    /// Whether a port is being waited for. Distinct from "connecting": nothing
+    /// is being negotiated, and the session is idle and available.
+    pub fn is_reopening(&self) -> bool {
+        self.reopen.is_armed()
+    }
+
+    /// One step of the reopen machine, and the open it may ask for. Called when
+    /// [`Session::reopen_deadline`] has elapsed; a no-op at any other time, so
+    /// an early or spurious call costs nothing.
+    ///
+    /// The presence check never opens anything — see
+    /// [`tt_conn::serial::present`] — and an attempt made while the node has
+    /// gone again costs a retry without an open, which is upstream's
+    /// `CheckComPort` guard (`vtwin.cpp:477`).
+    ///
+    /// It can raise [`Event::Reopened`], after which **the frontend must ask
+    /// for the poll descriptor again**: the transport is a new one and whatever
+    /// it was watching belonged to the connection that ended.
+    pub fn service_reopen(&mut self) {
+        self.step_reopen(Instant::now());
+    }
+
+    fn step_reopen(&mut self, now: Instant) {
+        if !self.reopen.is_armed() {
+            return;
+        }
+        let limits = self.reopen_limits();
+        let present = self
+            .reopen
+            .waiting_for()
+            .is_some_and(tt_conn::serial::present);
+        if self.reopen.poll(now, present, &limits) != reopen::ReopenAction::Attempt {
+            return;
+        }
+
+        let Some(target) = self.reopen.target().cloned() else {
+            return;
+        };
+        // `present` is from the top of this call and the settle wait has run
+        // since; ask again rather than open a path that has just gone.
+        let opened = if tt_conn::serial::present(&target.path) {
+            tt_conn::serial::SerialConn::open(&target.path, &target.params)
+        } else {
+            Err(tt_conn::Error::Disconnected)
+        };
+        let why = opened.as_ref().err().map(|e| e.to_string());
+        let ok = opened.is_ok();
+        if let Ok(conn) = opened {
+            // Before `connect`, which cancels the machine on its way past.
+            self.reopen.attempted(now, true, &limits);
+            self.connect(Box::new(conn));
+            self.events.push(Event::Reopened(target.path));
+            return;
+        }
+        if self.reopen.attempted(now, ok, &limits) == reopen::ReopenAction::GiveUp {
+            self.events.push(Event::ReopenFailed(
+                why.unwrap_or_else(|| "the port did not come back".into()),
+            ));
+        }
+    }
+
+    /// Stop watching for a port that went away.
+    ///
+    /// Every deliberate thing anybody does with the session ends the wait:
+    /// connecting somewhere, disconnecting, or turning the setting off. A
+    /// frontend needs this only for the one connect path that does not reach
+    /// [`Session::connect`] — an SSH handshake, which has no transport until it
+    /// finishes and would otherwise have a serial port opened underneath it.
+    pub fn cancel_reopen(&mut self) {
+        self.reopen.cancel();
+    }
+
+    /// The port being waited for, if one is.
+    pub fn reopening_port(&self) -> Option<&str> {
+        self.reopen.waiting_for()
     }
 
     /// `ClearComBuffOnOpen` — `CommOpen` purges the driver's queues as the
@@ -601,6 +742,10 @@ impl Session {
     pub fn disconnect(&mut self) {
         let kind = self.conn.as_ref().map(|c| c.link_kind());
         self.conn = None;
+        // Unconditionally, and this is the *only* thing here that runs with
+        // nothing connected: Disconnect while a reopen is waiting means stop
+        // waiting, and there is nothing else it could mean.
+        self.reopen.cancel();
         self.pending.clear();
         self.restore_tcp_echo_cr();
         // A transfer has to be told here rather than on the next pump: with
@@ -1606,17 +1751,7 @@ impl Session {
             let n = match conn.read(&mut self.rx, &mut self.rx_events) {
                 Ok(n) => n,
                 Err(e) if e.is_disconnected() => {
-                    // Asked before the transport is dropped, which is the only
-                    // moment it still knows: a pty's exit status dies with the
-                    // child handle.
-                    let kind = conn.link_kind();
-                    self.close_note = conn.closing_note();
-                    self.conn = None;
-                    self.pending.clear();
-                    self.restore_tcp_echo_cr();
-                    self.transfer_disconnected();
-                    self.events.push(Event::Disconnected);
-                    self.connection_closed(kind, false);
+                    self.line_went_away();
                     return Ok(total);
                 }
                 Err(e) => return Err(e),
@@ -2259,18 +2394,44 @@ impl Session {
                 Ok(())
             }
             Err(e) if e.is_disconnected() => {
-                let kind = conn.link_kind();
-                self.close_note = conn.closing_note();
-                self.conn = None;
-                self.pending.clear();
-                self.restore_tcp_echo_cr();
-                self.transfer_disconnected();
-                self.events.push(Event::Disconnected);
-                self.connection_closed(kind, false);
+                self.line_went_away();
                 Ok(())
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// The far end left without being asked to — the read path and the write
+    /// path reach this from the same error, and they must do the same things
+    /// in the same order.
+    ///
+    /// Everything here happens **before the transport is dropped**, because
+    /// that is the only moment it still knows any of it: a pty's exit status
+    /// dies with the child handle, and a serial port's live parameters die
+    /// with the port.
+    fn line_went_away(&mut self) {
+        let Some(conn) = self.conn.as_mut() else {
+            return;
+        };
+        let kind = conn.link_kind();
+        self.close_note = conn.closing_note();
+        let target = conn.reopen_target();
+        self.conn = None;
+        self.pending.clear();
+        self.restore_tcp_echo_cr();
+        self.transfer_disconnected();
+        self.events.push(Event::Disconnected);
+        // After the `Disconnected`, so a frontend reading the queue in order
+        // sees the line drop and then sees what is being done about it.
+        if self.settings.serial_auto_reconnect {
+            if let Some(target) = target {
+                let path = target.path.clone();
+                self.reopen
+                    .arm(Instant::now(), target, &self.reopen_limits());
+                self.events.push(Event::Reopening(path));
+            }
+        }
+        self.connection_closed(kind, false);
     }
 
     /// The title is state on `Vt`, not an event, so an edge has to be found.
@@ -2489,6 +2650,7 @@ impl MemoryHandle {
 pub struct MemoryTransport {
     handle: MemoryHandle,
     kind: tt_conn::LinkKind,
+    reopen: Option<tt_conn::ReopenTarget>,
 }
 
 impl MemoryTransport {
@@ -2507,9 +2669,22 @@ impl MemoryTransport {
             MemoryTransport {
                 handle: handle.clone(),
                 kind,
+                reopen: None,
             },
             handle,
         )
+    }
+
+    /// Answer [`Transport::reopen_target`] with this, so that the *arming*
+    /// rules — which drops start a wait, which do not, and what ends one — can
+    /// be tested without an adapter to unplug. The open itself still needs
+    /// hardware, and `tests/serial_loopback.rs` is where that lives.
+    pub fn reopening_as(mut self, path: &str, params: tt_conn::serial::SerialParams) -> Self {
+        self.reopen = Some(tt_conn::ReopenTarget {
+            path: path.to_string(),
+            params,
+        });
+        self
     }
 }
 
@@ -2563,5 +2738,9 @@ impl Transport for MemoryTransport {
 
     fn describe(&self) -> String {
         "memory".to_string()
+    }
+
+    fn reopen_target(&mut self) -> Option<tt_conn::ReopenTarget> {
+        self.reopen.clone()
     }
 }

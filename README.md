@@ -22,6 +22,8 @@ Sterna has these functions:
   scrollback
 - [Find](docs/find.md), which finds text on the screen and in the scrollback
   with case, whole-word, and regular-expression modes
+- [Serial ports that open again by themselves](docs/serial-reopen.md) when you
+  power-cycle the equipment, keeping the screen and the scrollback
 - [Highlight rules](docs/highlighting.md), which are regular expressions that
   change the colors on the screen and in the scrollback
 - [Quick buttons](docs/buttons.md), a bar of commands that you click to start,

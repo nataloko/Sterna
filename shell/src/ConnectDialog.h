@@ -85,6 +85,12 @@ public:
     bool remembersHistory() const;
     void setRemembersHistory(bool on);
 
+    /// Whether a serial port that goes away should be opened again by itself —
+    /// `AutoComPortReconnect`. Like the history box, it is a setting of its
+    /// own: unticking it is remembered even when nothing was connected to.
+    bool reopensSerial() const;
+    void setReopensSerial(bool on);
+
 private slots:
     void refreshPorts();
 
@@ -105,6 +111,7 @@ private:
     QRadioButton *m_otherService;
     QSpinBox *m_port;
     QComboBox *m_serialPort;
+    QCheckBox *m_serialReopen;
     QGroupBox *m_tcpBox;
     QGroupBox *m_serialBox;
 

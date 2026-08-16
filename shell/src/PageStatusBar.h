@@ -36,9 +36,24 @@ public:
 
     /// What this connection is called: the same string the tab carries.
     void setName(const QString &name);
-    /// The link, in the three states the window used to paint: connected shows
-    /// `describe()`, connecting says so, and disconnected is a red chip.
-    void setConnection(bool connected, bool connecting, const QString &text);
+
+    /// What the link is doing.
+    ///
+    /// An enum rather than a run of booleans because the states are exclusive
+    /// and a third flag beside `connected`/`connecting` would let a caller
+    /// spell a combination that means nothing.
+    enum class Link {
+        /// Nothing connected, and nothing being done about it. A red chip.
+        Down,
+        /// An attempt is under way and asking questions — an SSH handshake.
+        Connecting,
+        /// A serial port that went away is being waited for. Still a red chip:
+        /// the link *is* down, and only the words change.
+        Reopening,
+        /// Connected; the text is `describe()`.
+        Up,
+    };
+    void setConnection(Link state, const QString &text);
     /// `REC <size>`, blinking red, or nothing when this session is not
     /// logging. `Session::damaged` drives the count; a small local timer drives
     /// only the warning blink.

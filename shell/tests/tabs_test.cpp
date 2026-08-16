@@ -890,7 +890,7 @@ void test_the_status_strip_never_widens_its_page()
     page->status()->setName(QStringLiteral(
         "/dev/serial/by-path/pci-0000:c8:00.3-usb-0:1.3.2:1.0-port0"));
     page->status()->setConnection(
-        true, false,
+        PageStatusBar::Link::Up,
         QStringLiteral("/dev/serial/by-path/"
                        "pci-0000:c8:00.3-usb-0:1.3.2:1.0-port0 115200"));
     QApplication::processEvents();

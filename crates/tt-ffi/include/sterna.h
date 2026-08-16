@@ -620,6 +620,30 @@ enum TtEventKind
      * plugin and error; the bytes were passed through rather than lost.
      */
     TT_EVENT_KIND_STREAM_FILTER_FAILED = 19,
+    /**
+     * A serial line ended on its own with `AutoComPortReconnect` on, so the
+     * session is now watching for the adapter to come back. `text` is the
+     * port. Follows the [`TtEventKind::Disconnected`] for the same drop.
+     *
+     * Nothing else is raised until the wait ends, which is indefinite. Drive
+     * it with [`tt_session_reopen_deadline_ms`] and
+     * [`tt_session_service_reopen`].
+     */
+    TT_EVENT_KIND_REOPENING = 20,
+    /**
+     * ...and it came back. The session is connected again with its scrollback
+     * intact, and `text` is the port.
+     *
+     * **Re-read [`tt_session_poll_fd`] / [`tt_session_wait_handle`] after
+     * this.** The transport is a new one, so anything the frontend was
+     * watching belonged to the connection that ended.
+     */
+    TT_EVENT_KIND_REOPENED = 21,
+    /**
+     * The tries are spent and the wait is over. `text` is why the last one
+     * failed.
+     */
+    TT_EVENT_KIND_REOPEN_FAILED = 22,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -4264,6 +4288,65 @@ const char *tt_session_describe(TtSession *session);
  * Borrowed, and valid until the next call to this function on this session.
  */
 const char *tt_session_close_note(TtSession *session);
+
+/**
+ * Is the session watching for a serial adapter to come back?
+ *
+ * **This is not "connecting".** Nothing is being negotiated and the session is
+ * idle: it is the right session to connect somewhere else with, and a frontend
+ * that folds this into its connecting state will open a second window for the
+ * next connect and throw away the scrollback this feature exists to keep.
+ *
+ * Armed by `AutoComPortReconnect` when a serial line ends **on its own**;
+ * cleared by any connect, by [`tt_session_disconnect`], by turning the setting
+ * off, and by giving up.
+ */
+bool tt_session_is_reopening(const TtSession *session);
+
+/**
+ * The port being waited for, or null when nothing is.
+ *
+ * Borrowed, and valid until the next call to this function on this session.
+ */
+const char *tt_session_reopen_port(TtSession *session);
+
+/**
+ * Milliseconds until [`tt_session_service_reopen`] should be called, or -1
+ * when nothing is armed.
+ *
+ * **The core owns the instant and the frontend owns the timer**, the same
+ * arrangement as [`tt_session_transfer_deadline_ms`] and for the same reason:
+ * the delays come out of the settings file, which the frontend does not read.
+ * Do not try to ride [`tt_session_tick`] instead — a once-a-second timer
+ * cannot express the shipped 500 ms settle delay, and a coarse one rounds it
+ * to twice its value.
+ *
+ * Re-read it after every [`tt_session_service_reopen`].
+ */
+int64_t tt_session_reopen_deadline_ms(const TtSession *session);
+
+/**
+ * Step the reopen: look for the node, and open the port when it is time.
+ *
+ * Nothing here opens a device to find out whether it is there — a probe that
+ * did would raise DTR for its lifetime and reboot an Arduino-style board once
+ * per interval — so this is cheap to call, and a no-op when nothing is armed
+ * or the deadline has not come. A frontend's timer is allowed to be early.
+ *
+ * Drain afterwards: it can raise [`TtEventKind::Reopened`], after which the
+ * poll descriptor **must** be read again.
+ */
+void tt_session_service_reopen(TtSession *session);
+
+/**
+ * Stop watching, without disconnecting anything.
+ *
+ * Only one caller needs this: a connect that does not finish by handing the
+ * session a transport — an SSH handshake, which leaves the session with
+ * nothing attached while it runs and would otherwise have a serial port opened
+ * underneath it. Every other route already clears the wait.
+ */
+void tt_session_cancel_reopen(TtSession *session);
 
 /**
  * Every serial port the system can see, sorted by device node so a picker
