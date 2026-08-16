@@ -120,9 +120,13 @@ void test_the_gutter_ships_off()
     CHECK(h.view != nullptr);
     CHECK(h.gutter && h.gutter->isHidden());
     // And it takes no room while hidden: the terminal starts where the row it
-    // is in starts, exactly as it did before this existed.
-    CHECK(h.view && h.view->parentWidget()
-          && h.view->mapTo(h.view->parentWidget(), QPoint(0, 0)).x() == 0);
+    // is in starts, exactly as it did before this existed. Measured against the
+    // gutter's own parent rather than the view's — the view gained a column
+    // widget of its own when the horizontal scrollbar arrived, and mapping to
+    // *that* would be asking whether the view is at the left edge of a box
+    // built around it, which it always is.
+    CHECK(h.gutter && h.gutter->parentWidget() && h.view
+          && h.view->mapTo(h.gutter->parentWidget(), QPoint(0, 0)).x() == 0);
 }
 
 void test_turning_it_on_paints_numbers()

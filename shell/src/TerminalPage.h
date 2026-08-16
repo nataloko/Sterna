@@ -107,7 +107,16 @@ private:
     /// The widget holding the gutter, the view and the scrollbar. Kept so that
     /// `applySettings` can activate its layout without going looking for it.
     QWidget *m_terminalRow = nullptr;
+    /// The view and the horizontal scrollbar, stacked. A column of its own so
+    /// the bar is exactly as wide as the terminal it scrolls — under the
+    /// gutter's numbers or under the vertical bar it would be lying about
+    /// where the text it moves begins and ends.
+    QWidget *m_viewColumn = nullptr;
     QScrollBar *m_scroll = nullptr;
+    /// Sideways, when the window is narrower than the terminal — which only
+    /// happens with `terminal.size_follows_window` off. Hidden the rest of the
+    /// time, like its vertical sibling.
+    QScrollBar *m_hscroll = nullptr;
     PageStatusBar *m_status = nullptr;
     Macro *m_macro = nullptr;
     Plugins *m_plugins = nullptr;

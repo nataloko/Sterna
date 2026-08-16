@@ -241,6 +241,11 @@ target_link_libraries(gutter_test PRIVATE sterna_shell)
 target_compile_options(gutter_test PRIVATE ${TT_WARNINGS})
 add_test(NAME gutter COMMAND gutter_test)
 
+add_executable(wrap_test tests/wrap_test.cpp)
+target_link_libraries(wrap_test PRIVATE sterna_shell)
+target_compile_options(wrap_test PRIVATE ${TT_WARNINGS})
+add_test(NAME wrap COMMAND wrap_test)
+
 # The only thing that exercises the *window's* event loop against a real
 # server. Skips loudly without TT_SSH_HOST, so it is safe to leave in ctest.
 add_executable(ssh_test tests/ssh_test.cpp)
