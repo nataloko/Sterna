@@ -7,6 +7,24 @@ are available from the [GitHub releases page].
 
 ### Added
 
+- The quick-button panel has **pages**. One flat column is the right shape until
+  somebody keeps commands for four different devices; then a `reload` for one of
+  them is sitting next to a `show version` for another. A drop-down appears at
+  the top of the panel as soon as there is a second page, and the panel's
+  right-click menu grows **Page** and **Move to page**. In the editor, the list
+  is one page's, with a **Pages** menu beside it for adding, renaming and
+  removing one and an **On page** field on every button. The page you were on is
+  where the window opens next time, per settings file. Removing a page keeps its
+  commands — they move to the page beside it — because deleting a command is
+  Remove, which asks by name. A shortcut works from every page: a key the
+  terminal has given up must not come back depending on which page is showing.
+- A page can be **exported and imported** — Pages > Export page… writes it as an
+  ordinary settings file holding one `[Sterna Buttons]` section, and Import
+  page… reads one back. So a page can be pasted into a settings file by hand,
+  any settings file can be imported as a page, and exporting onto a file that
+  already exists replaces its buttons and leaves the rest of it alone. Imported
+  buttons arrive without their shortcuts, since the file they came from knows
+  nothing about the keys this one has already given away.
 - The terminal can stop following the window. View > **Wrap lines**, or "Term
   size = win size" on the Setup > Terminal page — one switch, either name. With
   it on, which is how Sterna has always behaved, lines wrap where the window
@@ -25,6 +43,11 @@ are available from the [GitHub releases page].
 
 ### Fixed
 
+- A settings change no longer stops a repeating quick button. Any change at all
+  — a font, a colour, a switch in Setup, a macro's `setsetting` — re-read the
+  button list and ended every run in progress, with nothing on screen saying
+  why. A run now stops only when the list itself changes, which is what the
+  documentation always said.
 - A host asking for a different terminal size — `CSI 8 t`, which is what a
   program that wants 132 columns sends — now resizes the window to hold it.
   The request reached the terminal but never the window, so the extra columns

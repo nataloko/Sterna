@@ -336,10 +336,11 @@ and a `KEYBOARD.CNF` full of user keys still works exactly as it did.
 **Where it lives.** `crates/tt-config/src/buttons.rs` owns the format;
 `shell/src/QuickButtonBar.{h,cpp}` is the bar and
 `shell/src/QuickButtonsDialog.{h,cpp}` the editor. The list is a `[Sterna Buttons]` section — its own, because a list is
-exactly what the settings schema cannot describe — plus two ordinary `[Sterna]`
-settings for the bar itself: `QuickButtons` (`window.quick_buttons`, on) and
-`QuickButtonsWidth` (`window.quick_buttons_width`, `0` for as wide as the
-buttons need). The visibility setting applies even to an empty list: the panel
+exactly what the settings schema cannot describe — plus three ordinary
+`[Sterna]` settings for the bar itself: `QuickButtons`
+(`window.quick_buttons`, on), `QuickButtonsWidth`
+(`window.quick_buttons_width`, `0` for as wide as the buttons need) and
+`QuickButtonsPage` (`window.quick_buttons_page`, the page it opens on). The visibility setting applies even to an empty list: the panel
 then consists of the Add button, so the feature can be discovered and its first
 command defined without going through Setup.
 
@@ -390,6 +391,31 @@ justification. It is the same bargain a shortcut makes (see below), made
 temporarily and only when there is something a person is likely to want
 stopped in a hurry; `TerminalView::setStopKeyArmed` is where it is claimed and
 released, and nothing arms it when nothing is repeating.
+
+**The panel has pages, and a page is a field on a button.** `Button4Page=2` in
+the same `[Sterna Buttons]` section, absent for the first page, with
+`Page2Name=BMCs` beside it; the writer groups each page's buttons as it
+renumbers, so the file reads in page order and a file that has never had a
+second page is byte for byte what it was. The alternative — a section per page —
+would have cost the thing everything else here depends on: **the index stays
+flat.** A repeat in progress is an index (`QuickButtonRepeat` holds nothing
+else), a shortcut hangs off the `QAction` at that index, and the panel's
+parallel vectors are positions in one list. A page filters which widgets exist
+and never renumbers anything, which is why switching pages keeps a run going
+where editing the list still stops one. The selector appears only with a second
+page, for the same reason the bar waits for its first button.
+
+**A shortcut fires from every page**, which is a decision and not an oversight.
+A shortcut here is a key the terminal stops receiving; one that came and went
+with the page showing would be a key that works when nobody is looking at the
+panel and not when they are, with nothing on screen to explain either half.
+So every button's action is added to the bar rather than only to its widget —
+hiding the panel still hands every key back, on every page.
+
+**Removing a page keeps its commands**, moving them to the page beside it.
+Removing a page is arranging; removing a command is its own act and the one
+that asks by name. That is what makes pages safe to experiment with, and it is
+why nothing asks before a page goes.
 
 **Two decisions worth defending.** The bar does not exist until a button does,
 where YAT — the program this borrows the idea from — shows twelve

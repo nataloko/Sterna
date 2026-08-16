@@ -958,6 +958,40 @@ than being centred along it, for the reason a repeat count lives in the tooltip
 and not in the caption: a bar of things to click must not move when the window
 is resized or a button is added.
 
+**A page filters the widgets and never the list.** `QuickButton::page` is a
+field on the record, so `QuickButtonBar` holds every button on every page and
+`m_widgets` is the same length as `m_buttons` with a null where a button is not
+on the page showing. That is not tidiness: `QuickButtonRepeat` holds indices and
+nothing else, the shortcut loop finds an action by `quickButton%1`, and
+`m_quickRepeatPage` is keyed the same way — a page that renumbered would point a
+running repeat at somebody else's command. So `setButtons` builds every action
+and `rebuildPageColumn` builds only the buttons, and `setPage` calls the second
+alone. A page switch therefore destroys no `QAction`, loses no shortcut and
+stops no run, where an edit to the list still does all three.
+
+Three consequences worth naming:
+
+- **The actions go on the bar, not only on their buttons.** `addAction` on the
+  panel is what keeps an off-page shortcut live; Qt registers one shortcut per
+  action however many widgets it is associated with, so `setDefaultAction`
+  adding it again is not an ambiguity. Hiding the panel still releases every
+  key, on every page, because both routes hang off a widget inside it.
+- **`indexAt` has to check its cast now.** `m_widgets.indexOf(nullptr)` answers
+  with the first off-page slot, so a right-click on the drop-down or the panel's
+  background offered to remove somebody else's button.
+- **`PageBox` drops its minimum width for `BarButton`'s reason.**
+  `QComboBox::minimumSizeHint` sizes to its longest *item*, so one page called
+  `Out-of-band management` would hold the whole panel open. `sizeHint` is left
+  alone, because that is what Fit to buttons measures and a fit that cut the
+  page name off would be unreadable. The drop-down is built only when there is
+  a second page, which is what keeps a one-page panel pixel-identical.
+
+The page itself is written with `rememberSettings` and not `setSetting` —
+the opposite of the width, and deliberately. The width needs `setSetting` first
+because the panel only moves through `onSettingsChanged`; here the drop-down has
+already moved it, so an emit would buy nothing and cost a whole settings pass on
+a click that changed which buttons are drawn.
+
 Two traps live here:
 
 - **Deleting the buttons does not delete the actions.** They are children of
