@@ -5,6 +5,28 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+### Added
+
+- Counters in each terminal's status line. The field gives the time since the
+  connection opened and how fast data moves in each direction, and a click on
+  it opens the other counts: the data received and sent, the lines, the breaks,
+  and the send queue, which is the data that waits because flow control holds
+  the line. On a serial port
+  there are also the four control lines — **CTS**, **DSR**, **CD** and **RI** —
+  which frequently tell you why nothing moves. Sterna reads the control lines
+  only while you look at them.
+
+  The counters are about one connection: a new connection starts them at zero,
+  and the connection time beside them says which connection the totals are for.
+  When a connection stops, the counters keep the totals and the clock stops,
+  because "how much did that session move" is a question you ask after the line
+  stops. A file transfer is included in the counts, which the session log does
+  not record. See [Counters](docs/counters.md).
+
+  **View > Show counters** and the Window page of Setup > Preferences control
+  the field, with the `Counters` key. It is on when Sterna is installed.
+  `ttctl status` reports the same counts.
+
 ## [0.5.4] - 2026-08-16
 
 ### Fixed
