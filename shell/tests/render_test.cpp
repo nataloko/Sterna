@@ -3603,7 +3603,8 @@ void test_the_connect_dialog_persists_the_serial_reopen_switch()
 
 /// Nothing is connected in a test, so this drives the status line directly:
 /// what matters is that waiting for a port says which port, and that the chip
-/// stays in its disconnected colour — the link *is* down.
+/// is neither of the two colours it could be mistaken for — a session waiting
+/// for its adapter is not down for good and it is not connected.
 void test_the_status_line_says_which_port_it_is_waiting_for()
 {
     QTemporaryDir dir;
@@ -3629,14 +3630,23 @@ void test_the_status_line_says_which_port_it_is_waiting_for()
                           QStringLiteral("/dev/ttyUSB0"));
     CHECK(label->toolTip().contains(QStringLiteral("/dev/ttyUSB0")));
     CHECK(label->toolTip().contains(QStringLiteral("waiting")));
-    // The chip stays exactly as it was: the link *is* down while a port is
-    // being waited for, and only the words beside it change.
-    CHECK(label->styleSheet() == downChip);
+    // Amber, and **not** the red one: red is the state that stays until
+    // somebody acts on it, and a reopen is already acting.
+    const QString waitChip = label->styleSheet();
+    CHECK(waitChip.contains(QStringLiteral("#f9a825")));
+    CHECK(!waitChip.contains(QStringLiteral("#b71c1c")));
 
     // A port that was never named still says what it is doing.
     status->setConnection(PageStatusBar::Link::Reopening, QString());
     CHECK(label->toolTip().contains(QStringLiteral("waiting")));
+    CHECK(label->styleSheet() == waitChip);
+
+    // ...and going back to plain down goes back to red, which is the half a
+    // three-state chip is most likely to lose.
+    status->setConnection(PageStatusBar::Link::Down, QString());
     CHECK(label->styleSheet() == downChip);
+    status->setConnection(PageStatusBar::Link::Reopening, QString());
+    CHECK(label->styleSheet() == waitChip);
 
     status->setConnection(PageStatusBar::Link::Up,
                           QStringLiteral("/dev/ttyUSB0 115200"));

@@ -181,11 +181,8 @@ void PageStatusBar::setConnection(Link state, const QString &text)
         fontMetrics().averageCharWidth() * kConnectionChars));
     showName();
 
-    // Reopening counts as down: the link *is* down, and a chip that stopped
-    // being red would say the opposite of what the words beside it say.
-    const bool down = state == Link::Down || state == Link::Reopening;
-    if (down != m_linkDown) {
-        m_linkDown = down;
+    if (state != m_link) {
+        m_link = state;
         applyPalette();
     }
 }
@@ -399,10 +396,29 @@ void PageStatusBar::applyPalette()
     // The disconnected chip, which the window's status bar also painted red.
     // A stylesheet rather than a palette because it has to win over the
     // highlight the strip around it may be wearing.
-    m_connection->setStyleSheet(
-        m_linkDown ? QStringLiteral("QLabel { background-color: #b71c1c; "
-                                    "color: white; padding: 1px 6px; }")
-                   : QString());
+    //
+    // **Amber for a port being waited for, and the difference is not
+    // decoration.** Red is the state somebody has to do something about; a
+    // reopen is already doing it, and a chip that shouted the same colour for
+    // both would train the eye to ignore the one that matters. Black on amber
+    // rather than the white the red chip uses: white on #f9a825 fails contrast
+    // at this size, and the amber is the one the paused recording already uses.
+    switch (m_link) {
+    case Link::Down:
+        m_connection->setStyleSheet(
+            QStringLiteral("QLabel { background-color: #b71c1c; "
+                           "color: white; padding: 1px 6px; }"));
+        break;
+    case Link::Reopening:
+        m_connection->setStyleSheet(
+            QStringLiteral("QLabel { background-color: #f9a825; "
+                           "color: black; padding: 1px 6px; }"));
+        break;
+    case Link::Connecting:
+    case Link::Up:
+        m_connection->setStyleSheet(QString());
+        break;
+    }
 }
 
 void PageStatusBar::applyLogAppearance()
