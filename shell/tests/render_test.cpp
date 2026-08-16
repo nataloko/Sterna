@@ -2348,15 +2348,25 @@ void test_a_wrapped_row_gets_no_line_end_mark()
     CHECK(h.session.setSetting(QStringLiteral("terminal.show_eol"),
                                QStringLiteral("on"), &error));
     h.view.applySettings();
-    // 80 columns of text, so row 0 fills and row 1 continues it.
+    // More than a row of text, so row 0 fills and row 1 continues it.
     h.feed(QByteArray(85, 'x').constData());
     h.render();
 
-    for (int x = 0; x < 80; x++) {
-        CHECK(h.ink(x, 0) > 0); // all text, no room for a mark anyway
-    }
-    // Row 1 holds five characters and has not ended, so it gets nothing.
-    CHECK(h.ink(6, 1) == 0);
+    // Row 0 is full to the margin, which is what wrapped it, so there is no
+    // room for a mark on it whatever the switch says. Asked of the grid and
+    // not of the pixels: how far along a row of 80 identical glyphs the
+    // painter gets is a question about font metrics, and a bare runner's
+    // answer to it is not what this test is about.
+    const int cols = h.session.cols();
+    CHECK(cols > 1 && cols < 85);
+    CHECK(rowText(h.session, 0).size() == cols);
+
+    // Row 1 holds what did not fit and has not ended, so past its text there
+    // is one column of air and then nothing — where the line that *did* end,
+    // two tests above, has its mark.
+    const int rest = 85 - cols;
+    CHECK(rowText(h.session, 1).size() == rest);
+    CHECK(h.ink(rest + 1, 1) == 0);
 }
 
 /// ...and each of the seven survives the program that set it.
