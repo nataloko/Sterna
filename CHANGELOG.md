@@ -5,6 +5,8 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-08-16
+
 ### Fixed
 
 - **A serial adapter unplugged on Windows is noticed.** The session went on
@@ -577,7 +579,8 @@ Initial public release.
 - Linux AppImage and Windows installer packages.
 
 [GitHub releases page]: https://github.com/nataloko/Sterna/releases
-[Unreleased]: https://github.com/nataloko/Sterna/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/nataloko/Sterna/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/nataloko/Sterna/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/nataloko/Sterna/compare/v0.5.4...v0.6.0
 [0.5.4]: https://github.com/nataloko/Sterna/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/nataloko/Sterna/compare/v0.5.2...v0.5.3
