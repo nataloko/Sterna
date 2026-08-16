@@ -41,6 +41,7 @@ pub mod log;
 pub mod logname;
 pub mod macros;
 pub mod open;
+pub mod reopen;
 mod serial;
 pub mod settings;
 pub mod xfer;
