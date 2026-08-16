@@ -439,6 +439,10 @@ pub struct TtSession {
     /// The open serial device, for `tt_session_serial_path` — kept apart from
     /// `describe` because one is a status line and the other is an identity.
     serial_path: CString,
+    /// The port a serial auto-reopen is waiting for, for
+    /// `tt_session_reopen_port`. Its own slot rather than `serial_path`'s: one
+    /// names an open port and the other names one that is not open.
+    reopen_port: CString,
     title: CString,
     log_path: CString,
     /// The last answer from `tt_session_log_name`, which is a *different*
@@ -519,6 +523,7 @@ pub extern "C" fn tt_session_new(config: *const TtConfig) -> *mut TtSession {
         event_texts: Vec::new(),
         describe: CString::default(),
         serial_path: CString::default(),
+        reopen_port: CString::default(),
         log_path: CString::default(),
         log_name: CString::default(),
         close_note: CString::default(),
@@ -2209,6 +2214,24 @@ pub enum TtEventKind {
     /// A Lua byte-stream filter failed and was disabled. `text` names the
     /// plugin and error; the bytes were passed through rather than lost.
     StreamFilterFailed = 19,
+    /// A serial line ended on its own with `AutoComPortReconnect` on, so the
+    /// session is now watching for the adapter to come back. `text` is the
+    /// port. Follows the [`TtEventKind::Disconnected`] for the same drop.
+    ///
+    /// Nothing else is raised until the wait ends, which is indefinite. Drive
+    /// it with [`tt_session_reopen_deadline_ms`] and
+    /// [`tt_session_service_reopen`].
+    Reopening = 20,
+    /// ...and it came back. The session is connected again with its scrollback
+    /// intact, and `text` is the port.
+    ///
+    /// **Re-read [`tt_session_poll_fd`] / [`tt_session_wait_handle`] after
+    /// this.** The transport is a new one, so anything the frontend was
+    /// watching belonged to the connection that ended.
+    Reopened = 21,
+    /// The tries are spent and the wait is over. `text` is why the last one
+    /// failed.
+    ReopenFailed = 22,
 }
 
 #[repr(C)]
@@ -2312,6 +2335,21 @@ pub extern "C" fn tt_session_drain_events(
                 s.event_texts.push(CString::new(msg).unwrap_or_default());
                 let p = s.event_texts.last().expect("just pushed").as_ptr();
                 (TtEventKind::StreamFilterFailed, 0, p)
+            }
+            Event::Reopening(path) => {
+                s.event_texts.push(cstring(&path));
+                let p = s.event_texts.last().expect("just pushed").as_ptr();
+                (TtEventKind::Reopening, 0, p)
+            }
+            Event::Reopened(path) => {
+                s.event_texts.push(cstring(&path));
+                let p = s.event_texts.last().expect("just pushed").as_ptr();
+                (TtEventKind::Reopened, 0, p)
+            }
+            Event::ReopenFailed(why) => {
+                s.event_texts.push(cstring(&why));
+                let p = s.event_texts.last().expect("just pushed").as_ptr();
+                (TtEventKind::ReopenFailed, 0, p)
             }
             // The payload does not travel in the event: `TtEvent` is a fixed
             // struct and a transfer's is two strings and six numbers. It is
@@ -4209,6 +4247,86 @@ pub extern "C" fn tt_session_close_note(session: *mut TtSession) -> *const c_cha
         }
         None => ptr::null(),
     }
+}
+
+// --- reopening a serial port that went away -------------------------------
+
+/// Is the session watching for a serial adapter to come back?
+///
+/// **This is not "connecting".** Nothing is being negotiated and the session is
+/// idle: it is the right session to connect somewhere else with, and a frontend
+/// that folds this into its connecting state will open a second window for the
+/// next connect and throw away the scrollback this feature exists to keep.
+///
+/// Armed by `AutoComPortReconnect` when a serial line ends **on its own**;
+/// cleared by any connect, by [`tt_session_disconnect`], by turning the setting
+/// off, and by giving up.
+#[no_mangle]
+pub extern "C" fn tt_session_is_reopening(session: *const TtSession) -> bool {
+    let s = session_ref!(session, false);
+    s.session.is_reopening()
+}
+
+/// The port being waited for, or null when nothing is.
+///
+/// Borrowed, and valid until the next call to this function on this session.
+#[no_mangle]
+pub extern "C" fn tt_session_reopen_port(session: *mut TtSession) -> *const c_char {
+    let s = session!(session, ptr::null());
+    match s.session.reopening_port() {
+        Some(p) => {
+            s.reopen_port = cstring(p);
+            s.reopen_port.as_ptr()
+        }
+        None => ptr::null(),
+    }
+}
+
+/// Milliseconds until [`tt_session_service_reopen`] should be called, or -1
+/// when nothing is armed.
+///
+/// **The core owns the instant and the frontend owns the timer**, the same
+/// arrangement as [`tt_session_transfer_deadline_ms`] and for the same reason:
+/// the delays come out of the settings file, which the frontend does not read.
+/// Do not try to ride [`tt_session_tick`] instead — a once-a-second timer
+/// cannot express the shipped 500 ms settle delay, and a coarse one rounds it
+/// to twice its value.
+///
+/// Re-read it after every [`tt_session_service_reopen`].
+#[no_mangle]
+pub extern "C" fn tt_session_reopen_deadline_ms(session: *const TtSession) -> i64 {
+    let s = session_ref!(session, -1);
+    match s.session.reopen_deadline() {
+        Some(d) => d.as_millis() as i64,
+        None => -1,
+    }
+}
+
+/// Step the reopen: look for the node, and open the port when it is time.
+///
+/// Nothing here opens a device to find out whether it is there — a probe that
+/// did would raise DTR for its lifetime and reboot an Arduino-style board once
+/// per interval — so this is cheap to call, and a no-op when nothing is armed
+/// or the deadline has not come. A frontend's timer is allowed to be early.
+///
+/// Drain afterwards: it can raise [`TtEventKind::Reopened`], after which the
+/// poll descriptor **must** be read again.
+#[no_mangle]
+pub extern "C" fn tt_session_service_reopen(session: *mut TtSession) {
+    let s = session!(session);
+    s.session.service_reopen();
+}
+
+/// Stop watching, without disconnecting anything.
+///
+/// Only one caller needs this: a connect that does not finish by handing the
+/// session a transport — an SSH handshake, which leaves the session with
+/// nothing attached while it runs and would otherwise have a serial port opened
+/// underneath it. Every other route already clears the wait.
+#[no_mangle]
+pub extern "C" fn tt_session_cancel_reopen(session: *mut TtSession) {
+    let s = session!(session);
+    s.session.cancel_reopen();
 }
 
 // --- port enumeration -----------------------------------------------------
