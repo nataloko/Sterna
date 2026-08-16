@@ -18,9 +18,9 @@ empty row.
 The shortest way in is **Edit > New quick button from selection…**: select the
 command that just worked, and the editor opens with it filled in.
 
-Once the bar is there, the **+** at its end adds another — opening the editor
-on a new, empty button — and a right-click on any button offers Edit, Duplicate
-and Remove.
+Once the bar is there, the **+** at the bottom of the panel adds another —
+opening the editor on a new, empty button — and a right-click on any button
+offers Edit, Duplicate and Remove.
 
 The panel lives **down the right-hand side**, because a terminal's rows are the
 scarce dimension: a window is usually far wider than the 80 columns it needs
@@ -49,6 +49,15 @@ tooltip whenever the button is too narrow to show it, and it is what the editor
 and the settings file hold. There is a floor of 48 pixels, which is about a
 target you can still hit.
 
+**The buttons scroll when there are more of them than there is panel**, and the
+**+** and the page list stay put underneath. A column of buttons in a plain
+layout is a column that demands its own height: before it scrolled, twenty
+buttons made the window at least twenty buttons tall, changing to a page with
+more of them on it grew the window again, and past the point where the screen
+ran out every button shrank instead until they were slivers. The panel takes
+the height it is given — the terminal's — and what does not fit is one wheel
+away.
+
 **There is no handle to drag**, and that is a decision rather than an omission.
 One was built and taken out again: a window cannot move its own left edge on
 every desktop, so widening the panel widens the window to the *right* and the
@@ -67,11 +76,13 @@ another.
 So the panel has pages. Each button is on one, and the panel shows one at a
 time.
 
-**A drop-down appears at the top of the panel when there is a second page**,
+**A drop-down appears at the bottom of the panel when there is a second page**,
 and not before: a control that can only say one thing is chrome in a program
-whose claim is being light. It is also on the panel's own right-click menu,
-under **Page**, along with *Add, rename or remove pages…* — which opens the
-editor on its page controls.
+whose claim is being light. It sits under the **+**, where the two things that
+work the panel are together and out of the way of the buttons they work on —
+and where neither of them scrolls away with a long list. It is also on the
+panel's own right-click menu, under **Page**, along with *Add, rename or remove
+pages…* — which opens the editor on its page controls.
 
 In the editor, the list on the left is one page's, with the page above it and a
 **Pages** menu beside it. A button's own **On page** field moves it, and so
