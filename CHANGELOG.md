@@ -5,6 +5,26 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+### Added
+
+- The terminal can show what the wire is carrying. **View > Show control
+  characters** puts a two-cell caret mark where each control character went
+  past — `^G` for the bell, `^S` for XOFF — while the terminal goes on
+  interpreting everything else, so colours, cursor motion and full-screen
+  programs keep working. **View > Show line ends** marks the end of every line
+  the host ended, spelling out `^M^J`, `^M` or `^J` when control characters are
+  shown, so "which line ending is this device sending?" is answerable by
+  looking. A line the terminal wrapped at the right margin gets no mark, which
+  also tells a wrapped line from a real one at a glance. **View > Remove CR and
+  LF marks** drops back to a plain `¶` where the two are more noise than
+  information. All three are off by default and are also on the Terminal tab of
+  Setup, as `ShowControlChars`, `ShowEol` and `HideCrLf`.
+
+  The marks are annotations, not text: they never reach a selection, the session
+  log, the printer, a macro's `wait` or Find, and a search still matches a word a
+  mark is sitting inside. Showing control characters does move the host's layout,
+  because each mark takes two columns.
+
 ## [0.5.4] - 2026-08-16
 
 ### Fixed

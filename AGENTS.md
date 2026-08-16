@@ -1160,6 +1160,24 @@ The parser's own switches:
   `ISO2022ShiftFunction=off` does not stop it.
 - **`UseInvalidDECRQSSResponse` flips the digit and keeps the body**
   (`vtterm.c:4400`) — the one setting whose purpose is to lie.
+- **`Perform::execute` is a control byte's only channel here, and it is not
+  the byte stream.** A C0 *inside* a sequence does execute — `ESC [ 1 BEL m`
+  rings the bell and still turns bold on, which is the same fact as the
+  printer's `ESC [ 12 BEL m` trap — but `ESC` itself, a sequence's parameter
+  and final bytes, and an OSC's terminating BEL never arrive; `rewrite_c1`
+  folds 8-bit C1 before vte sees it; and DEL reaches `Perform::print` as a
+  character rather than arriving here at all. That is the whole limit of
+  `terminal.show_control_chars` (deviation 21), and the reason it is not debug
+  display mode. **Anything that must see every byte wants a tap on the
+  transport**, not this — the marks are also the one thing in the grid the
+  clipboard, the printer's dump, Find, `ttctl` and DECRQCRA all have to skip,
+  by `ATTR_CONTROL`, so a new reader of grid *text* needs that skip too.
+- **A caret mark is ASCII because DejaVu Sans Mono has no Control Pictures.**
+  `fc-match -f '%{family}\n' 'DejaVu Sans Mono:charset=240d'` answers a
+  different family; CI's runner carries only `fonts-dejavu-core`, so `␍` would
+  render from a fallback or as a box. `¶` (U+00B6) is there and is what the
+  line-end mark uses. Check any new glyph this way before a pixel test depends
+  on it.
 
 The painter (the differential dump cannot see any of this):
 
