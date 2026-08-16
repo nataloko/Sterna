@@ -49,8 +49,8 @@ pub struct Counters {
     pub lines_in: u64,
     /// Breaks received, from whichever transport can produce one.
     pub breaks: u64,
-    /// Bytes per second over the last complete second, or zero once the line
-    /// has been quiet for two.
+    /// Bytes per second over the last complete second — zero once the line has
+    /// been quiet for two, and zero from the moment it ended.
     pub rate_in: u64,
     pub rate_out: u64,
     /// How long the connection has been up, or how long the last one lasted.
@@ -119,7 +119,10 @@ impl CounterState {
         *self = CounterState::new(at);
     }
 
-    /// A connection ended. The first call wins: the three teardown paths reach
+    /// A connection ended: the clock stops here and both rates read zero from
+    /// this moment, while every total stays as it was.
+    ///
+    /// The first call wins: the three teardown paths reach
     /// [`Session::connection_closed`] once each, but a second stop would move
     /// a clock that has already been read.
     pub(crate) fn stop(&mut self, at: Instant) {
@@ -214,6 +217,17 @@ impl CounterState {
     /// where the answer is asked for — which is also what keeps the getter
     /// `&self`, and with it the C ABI's `const TtSession *`.
     fn rates(&self, now: Instant) -> (u64, u64) {
+        // A connection that has ended is quiet, whatever its last bucket held.
+        // Without this the bucket goes on decaying against the wall clock for
+        // the two seconds after the line dropped, so a dimmed field can still
+        // be claiming 1.2 MB/s of a cable nobody is holding — and the three
+        // tests asserting a dead line reads zero pass only while the
+        // disconnect lands inside the first window. Everything else about a
+        // stopped connection is frozen; a rate is the one number for which
+        // frozen and zero are the same answer.
+        if self.stopped_at.is_some() {
+            return (0, 0);
+        }
         let age = now.saturating_duration_since(self.window_at);
         if age >= STALE {
             (0, 0)
@@ -363,6 +377,28 @@ mod tests {
             c.snapshot(Some(base), false).connected_for,
             Some(Duration::from_millis(5000))
         );
+    }
+
+    /// A stopped connection reads zero however busy its last second was, and
+    /// it does so at once rather than two seconds later. The rate is read at
+    /// the moment somebody asks, so without this the answer depends on how
+    /// long ago the line dropped — which is a clock the caller cannot see.
+    #[test]
+    fn a_stopped_connection_is_quiet_whatever_it_was_doing() {
+        let base = Instant::now();
+        let mut c = CounterState::new(base);
+        c.bytes_in = 4000;
+        c.window_in = 4000;
+        c.roll(at(base, 1000));
+        assert_eq!(c.rates(at(base, 1000)), (4000, 0), "still running");
+
+        c.stop(at(base, 1000));
+        assert_eq!(c.rates(at(base, 1000)), (0, 0));
+        // And the open bucket cannot come back either, at any distance.
+        assert_eq!(c.rates(at(base, 1500)), (0, 0));
+        let s = c.snapshot(Some(base), false);
+        assert_eq!((s.rate_in, s.rate_out), (0, 0));
+        assert_eq!(s.bytes_in, 4000, "the totals are untouched by the freeze");
     }
 
     #[test]
