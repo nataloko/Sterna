@@ -887,3 +887,197 @@ fn the_printer_gate_comes_from_the_settings() {
     assert_eq!(row(&s, 0), "A");
     assert_eq!(row(&s, 1), "B");
 }
+
+// ---------------------------------------------------------------------------
+// Counters — deviation 21. `counters.rs`'s own tests cover the arithmetic and
+// the clock; what is covered here is the wiring: that the five sites are on the
+// paths every transport really takes.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_counters_count_both_directions() {
+    let (mut s, h) = connected(20, 4);
+    h.feed(b"hello");
+    pump(&mut s);
+    s.send_text("hi").unwrap();
+    s.pump(TICK).unwrap();
+
+    let c = s.counters();
+    assert_eq!(c.bytes_in, 5);
+    assert_eq!(c.bytes_out, 2);
+    assert!(c.live);
+}
+
+/// The line rule, over the wire rather than over a synthetic buffer: `CR`, `LF`
+/// and `CR LF` are one line each, and a `CR LF` cut in half by a read boundary
+/// stays one.
+#[test]
+fn a_line_is_a_line_ending_however_it_is_spelt() {
+    let (mut s, h) = connected(20, 8);
+    h.feed(b"one\rtwo\nthree\r\n");
+    pump(&mut s);
+    assert_eq!(s.counters().lines_in, 3);
+
+    h.feed(b"four\r");
+    pump(&mut s);
+    h.feed(b"\nfive");
+    pump(&mut s);
+    assert_eq!(s.counters().lines_in, 4, "the CR LF straddled two reads");
+}
+
+/// A bare `CR` is a line here, which is the whole reason the rule is not "count
+/// the LF bytes": an interactive console that ends its lines with one would
+/// otherwise sit at zero while the screen filled.
+#[test]
+fn a_cr_only_device_still_counts_lines() {
+    let (mut s, h) = connected(20, 4);
+    h.feed(b"a\rb\rc\r");
+    pump(&mut s);
+    assert_eq!(s.counters().lines_in, 3);
+}
+
+#[test]
+fn a_break_from_the_far_end_is_counted() {
+    let (mut s, h) = connected(20, 4);
+    h.with(|st| st.events.push(tt_conn::TransportEvent::Break));
+    let events = pump(&mut s);
+    assert!(events.contains(&Event::Break));
+    assert_eq!(s.counters().breaks, 1);
+}
+
+/// A short write counts what went, not what was asked for — the queue keeps the
+/// rest and the next pump counts that.
+#[test]
+fn a_write_held_by_flow_control_counts_what_left() {
+    let (mut s, h) = connected(20, 4);
+    h.with(|st| st.write_chunk = 2);
+    s.send_text("abcdef").unwrap();
+    // How many flushes it took to get here is not the point and is not pinned
+    // — every send path flushes on its own way out. What is pinned is that the
+    // count follows the transport rather than the queue.
+    let held = s.counters().bytes_out;
+    assert!(held > 0 && held < 6, "flow control held the rest: {held}");
+    assert_eq!(held as usize + s.pending_out(), 6);
+
+    h.with(|st| st.write_chunk = 0);
+    s.pump(TICK).unwrap();
+    assert_eq!(s.counters().bytes_out, 6);
+    assert_eq!(s.pending_out(), 0);
+}
+
+/// Disconnecting freezes the numbers rather than clearing them: "how much did
+/// that session move before it died" is the question the counters are for, and
+/// it is asked *after* the line has gone. `close_note` makes the same choice.
+#[test]
+fn a_disconnect_freezes_the_counters_and_keeps_them() {
+    let (mut s, h) = connected(20, 4);
+    h.feed(b"hello\r\n");
+    pump(&mut s);
+    let before = s.counters();
+    assert!(before.live);
+    assert!(before.connected_for.is_some());
+
+    h.with(|st| st.disconnected = true);
+    pump(&mut s);
+
+    let after = s.counters();
+    assert!(!after.live);
+    assert_eq!(after.bytes_in, before.bytes_in);
+    assert_eq!(after.lines_in, before.lines_in);
+    assert_eq!(
+        (after.rate_in, after.rate_out),
+        (0, 0),
+        "a dead line is quiet"
+    );
+    // The clock stopped, so asking twice gives the same answer.
+    assert_eq!(s.counters().connected_for, after.connected_for);
+}
+
+/// ...and an asked-for disconnect takes the same path.
+#[test]
+fn the_menus_disconnect_stops_the_clock_too() {
+    let (mut s, h) = connected(20, 4);
+    h.feed(b"x");
+    pump(&mut s);
+    s.disconnect();
+
+    let first = s.counters();
+    assert!(!first.live);
+    assert_eq!(first.bytes_in, 1);
+    assert_eq!(s.counters().connected_for, first.connected_for);
+}
+
+/// The counters restart where the terminal deliberately does not.
+#[test]
+fn reconnecting_starts_the_counters_over_and_keeps_the_scrollback() {
+    let (mut s, h) = connected(20, 4);
+    h.feed(b"first line\r\n");
+    pump(&mut s);
+    assert!(s.counters().bytes_in > 0);
+
+    h.with(|st| st.disconnected = true);
+    pump(&mut s);
+    let (transport, h2) = MemoryTransport::new();
+    s.connect(Box::new(transport));
+
+    let c = s.counters();
+    assert_eq!(
+        (c.bytes_in, c.bytes_out, c.lines_in, c.breaks),
+        (0, 0, 0, 0)
+    );
+    assert!(c.live);
+    // The grid is untouched, which is `Session::connect`'s own promise.
+    assert_eq!(row(&s, 0), "first line");
+
+    h2.feed(b"second");
+    pump(&mut s);
+    assert_eq!(s.counters().bytes_in, 6);
+}
+
+/// Nothing has connected, so there is no clock — and every number is still a
+/// number. A frontend paints this state on every idle tab.
+#[test]
+fn a_session_that_never_connected_answers_zero() {
+    let s = Session::new(Config::default());
+    let c = s.counters();
+    assert_eq!(
+        (c.bytes_in, c.bytes_out, c.lines_in, c.breaks),
+        (0, 0, 0, 0)
+    );
+    assert_eq!(c.connected_for, None);
+    assert!(!c.live);
+}
+
+/// Stopping the clock must not disturb the log's own origin: `connected_at` is
+/// what `ElapsedConnection` counts from, which is why the counters carry a
+/// second instant instead of clearing it.
+#[test]
+fn the_log_epoch_survives_a_stopped_clock() {
+    use tt_session::{LogMode, LogOptions, Timestamp};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.log");
+    let (mut s, h) = connected(20, 4);
+    s.start_log(
+        &path,
+        LogOptions {
+            mode: LogMode::Text,
+            timestamp: Timestamp::ElapsedConnection,
+            ..LogOptions::default()
+        },
+    )
+    .unwrap();
+
+    h.feed(b"before\r\n");
+    pump(&mut s);
+    h.with(|st| st.disconnected = true);
+    pump(&mut s);
+    s.stop_log();
+
+    let text = std::fs::read_to_string(&path).unwrap();
+    // The stamp is an elapsed time from the connect, so it starts at zero
+    // rather than at a wall clock. What matters is that it was written at all:
+    // a cleared `connected_at` makes the whole line disappear.
+    assert!(text.contains("before"), "{text}");
+    assert!(text.starts_with('['), "no elapsed stamp: {text}");
+}

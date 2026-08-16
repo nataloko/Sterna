@@ -35,6 +35,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub mod bell;
+pub mod counters;
 pub mod find;
 pub mod highlight;
 pub mod log;
@@ -46,6 +47,8 @@ pub mod settings;
 pub mod xfer;
 
 pub use bell::{BellGovernor, BellLimits};
+use counters::CounterState;
+pub use counters::Counters;
 pub use log::{LogMode, LogOptions, SessionLog, Timestamp};
 pub use macros::{MacroLink, MACRO_BUF_SIZE};
 use settings::cr_send_of;
@@ -279,6 +282,10 @@ pub struct Session {
     /// opened, for the one log timestamp that counts from there rather than
     /// from the log. `None` until something connects.
     connected_at: Option<Instant>,
+    /// What this connection has moved — see [`counters`]. Reset by a connect
+    /// and frozen by a disconnect, unlike `connected_at` above, which the log
+    /// epoch owns and nothing here may clear.
+    counters: CounterState,
     /// `ts.HostName` and `ts.TCPPort`, as far as a log name is concerned. See
     /// [`Session::set_connection_name`].
     conn_host: Option<String>,
@@ -338,6 +345,7 @@ impl Session {
             plugin_link: None,
             stream_filter: None,
             connected_at: None,
+            counters: CounterState::default(),
             conn_host: None,
             conn_port: None,
             bell: BellGovernor::default(),
@@ -464,7 +472,17 @@ impl Session {
     pub fn connect(&mut self, conn: Box<dyn Transport>) {
         self.pending.clear();
         self.close_note = None;
-        self.connected_at = Some(Instant::now());
+        // One reading of the clock for both, so the connect time and the
+        // rate window share an origin. Two calls differ by a few hundred
+        // nanoseconds, which is invisible in use and enough to make an
+        // exact-equality test flaky.
+        let at = Instant::now();
+        self.connected_at = Some(at);
+        // The counters start again where the terminal deliberately does not.
+        // A byte total spanning three reconnects is not a number anybody can
+        // use, and the readout carries the connect time beside it, so the
+        // total always says what it covers.
+        self.counters.restart(at);
         // Upstream reads `cv.ConnectedTime` at every stamp rather than at the
         // log's open, so a log left running across a reconnect restarts its
         // connection clock. Reproduced here by moving the origin, since the
@@ -649,6 +667,17 @@ impl Session {
     /// non-zero, so the idle case still costs nothing.
     pub fn pending_out(&self) -> usize {
         self.pending.len()
+    }
+
+    /// What this connection has moved, and for how long — see [`counters`].
+    ///
+    /// Cheap enough to ask once a second per open session: one clock reading
+    /// and a struct copy, no I/O and nothing cached. Every number is reset by
+    /// a connect and frozen by a disconnect, so with
+    /// [`Counters::live`] false they describe the connection that ended.
+    pub fn counters(&self) -> Counters {
+        self.counters
+            .snapshot(self.connected_at, self.is_connected())
     }
 
     /// A descriptor that becomes readable when [`pump`](Session::pump) has
@@ -1622,9 +1651,26 @@ impl Session {
                 Err(e) => return Err(e),
             };
 
+            // Counted here, at the one place the transport hands bytes over,
+            // rather than beside `log_bytes_in` below — and that is the
+            // opposite of what the session log does, on purpose. The transfer
+            // arm further down `continue`s before the log sees a byte, so a
+            // ZMODEM download is invisible to the log in either mode; a
+            // counter whose whole job is "is anything coming out of this
+            // thing" must not go blank for the one case where a great deal
+            // is. It is also the wire count, before `filter_stream`: a plugin
+            // that rewrites the stream has not changed what the cable carried.
+            self.counters.record_in(&self.rx);
+
             for ev in self.rx_events.drain(..) {
                 match ev {
-                    TransportEvent::Break => self.events.push(Event::Break),
+                    // The one funnel every transport's break reaches: serial's
+                    // `PARMRK`/`CE_BREAK` decoders, telnet's `IAC BRK`, and
+                    // SSH, which declines to have one.
+                    TransportEvent::Break => {
+                        self.counters.record_break();
+                        self.events.push(Event::Break);
+                    }
                     TransportEvent::BadByte(b) => self.events.push(Event::BadByte(b)),
                     TransportEvent::Resize { cols, rows } => {
                         self.events.push(Event::Resize { cols, rows })
@@ -2255,6 +2301,12 @@ impl Session {
         };
         match conn.write(&self.pending, self.write_timeout) {
             Ok(n) => {
+                // The only place that sees every outbound byte. `queue` above
+                // merely buffers, and a file transfer writes straight into
+                // `self.pending` without passing through it (`xfer.rs`). `n`
+                // rather than `pending.len()`, so a short write under flow
+                // control counts what went and not what was asked for.
+                self.counters.record_out(n);
                 self.pending.drain(..n);
                 Ok(())
             }
@@ -2370,6 +2422,12 @@ impl Session {
     /// closes the window either way; here it applies only to a connection that
     /// ended on its own.
     fn connection_closed(&mut self, kind: tt_conn::LinkKind, asked: bool) {
+        // The one funnel all three teardowns reach — `disconnect`, and the
+        // disconnected arm of each of `pump` and `flush_pending`. The totals
+        // are kept and only the clock stops: `close_note` two functions up
+        // makes the same choice for the same reason, and "how much did that
+        // session move before it died" is the question this feature is for.
+        self.counters.stop(Instant::now());
         self.connect_beep(kind);
 
         if self.settings.connection_clear_screen_on_close {
