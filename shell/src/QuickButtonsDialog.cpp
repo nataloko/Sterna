@@ -91,8 +91,10 @@ QuickButtonsDialog::QuickButtonsDialog(const QuickButtonSet &set, int page,
     setWindowTitle(tr("Quick buttons"));
     m_page = qBound(1, page, m_set.pageCount());
 
-    // The page row, above the list it filters. Hidden until there is a second
-    // page — until then it is a control that can only say one thing.
+    // The page row, above the list it filters. The drop-down is greyed until
+    // there is a second page — a control that can only say one thing — but the
+    // row stays, because the Pages menu beside it is where the second page
+    // comes from and hiding the whole row would hide the way in.
     m_pageRow = new QWidget(this);
     auto *pageLayout = new QHBoxLayout(m_pageRow);
     pageLayout->setContentsMargins(0, 0, 0, 0);
@@ -712,9 +714,11 @@ void QuickButtonsDialog::rebuildPages()
 
 void QuickButtonsDialog::applyPageControls()
 {
-    // A page control that can only say one thing is a row of chrome telling
-    // somebody about a feature they have not asked for. The panel keeps the
-    // same rule, and Pages > Add page… is how the second one gets made.
+    // A page control that can only say one thing is greyed rather than hidden:
+    // this is the editor, where finding out that pages exist is part of the
+    // point, and Pages > Add page... beside it stays live. The *panel* keeps
+    // the stricter rule — no drop-down at all until there is a second page —
+    // because that one is chrome beside a terminal.
     const bool several = m_set.pageCount() > 1;
     m_pageList->setEnabled(several);
     m_pageOf->setEnabled(several);

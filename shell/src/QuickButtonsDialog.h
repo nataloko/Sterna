@@ -81,8 +81,8 @@ private:
     void removePage();
     void importPage();
     void exportPage();
-    /// Show or hide the page row, which is worth nothing until there is a
-    /// second page to move between.
+    /// Grey the page controls that need a second page, and leave the Pages
+    /// menu alone — that is where the second page comes from.
     void applyPageControls();
     /// Update the warning under the shortcut field.
     void checkShortcut();
