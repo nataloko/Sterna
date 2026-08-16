@@ -590,6 +590,9 @@ private:
     /// and not a switch, so it writes no setting and is greyed while the page
     /// in front is not numbering anything.
     QAction *m_resetLineCounterAction = nullptr;
+    /// View > Break lines at the window edge, which is `terminal.size_follows_window`
+    /// and therefore the same switch as Setup's own "Term size = win size".
+    QAction *m_wrapAction = nullptr;
     QAction *m_quickButtonFromSelectionAction = nullptr;
     /// The Edit menu's clipboard commands, which the right button's menu
     /// borrows rather than duplicating.

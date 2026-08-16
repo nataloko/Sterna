@@ -1414,15 +1414,22 @@ bool MainWindow::onSettingsChanged()
     // `TerminalView::refit` would give the grid.
     // `cols` and `rows` were read at the top of this function, before the page
     // could react to the settings and move them — see there.
+    // **And the width is only the window's question while the terminal is the
+    // window.** With `TermIsWin` off the two are different numbers on purpose:
+    // a terminal wider than its window is what the horizontal scrollbar is for,
+    // so a window that grew to swallow it would undo the setting on the next
+    // thing that changed any setting at all. The height is still the window's
+    // either way — nothing scrolls a terminal sideways to find its rows.
     bool resizing = false;
+    const bool follows = m_view->sizeFollowsWindow();
     const QSize cell = m_view->sizeForCells(1, 1);
     const int haveCols = cell.width() > 0 ? m_view->width() / cell.width() : cols;
     const int haveRows = cell.height() > 0 ? m_view->height() / cell.height() : rows;
     if (!m_loadingPage && m_panels->count() == 1
         && m_panels->layoutMode() == PanelLayout::Single && isVisible()
         && cols > 0 && rows > 0
-        && (cellSizeChanged || cols != haveCols || rows != haveRows)) {
-        const QSize want = m_view->sizeForCells(cols, rows);
+        && (cellSizeChanged || (follows && cols != haveCols) || rows != haveRows)) {
+        const QSize want = m_view->sizeForCells(follows ? cols : haveCols, rows);
         resize(size() + (want - m_view->size()));
         resizing = true;
     }
@@ -1485,6 +1492,12 @@ bool MainWindow::onSettingsChanged()
     // reaching it behind a menu nobody opened.
     if (m_resetLineCounterAction) {
         m_resetLineCounterAction->setEnabled(lineNumbers);
+    }
+    // And the line-break switch, whose tick has to follow the Setup page's
+    // checkbox as well as its own menu item — they are one setting.
+    if (m_wrapAction) {
+        const QSignalBlocker block(m_wrapAction);
+        m_wrapAction->setChecked(m_view->sizeFollowsWindow());
     }
     updatePanelActions();
     // The buttons themselves are not settings, so this rereads the list as
@@ -2541,6 +2554,35 @@ void MainWindow::buildMenus()
     connect(m_highlightingAction, &QAction::triggered, this, [this](bool on) {
         setViewSwitch(QStringLiteral("color.highlighting"), on,
                       tr("Could not change highlighting: %1"));
+    });
+
+    view->addSeparator();
+    // `TermIsWin` from the other end. Upstream's own label for it is "Term size
+    // = win size" and stays on the Setup page, translated, because it is
+    // upstream's word for upstream's key. This one names what a person watching
+    // the screen sees change, which is where a line ends. `wrap` is not an
+    // approved word (rule 9) and `BREAK` is the dictionary's, which is lucky:
+    // "break" is also the more accurate verb, because the line is still broken
+    // when this is off — just at the terminal's edge instead, out of sight.
+    m_wrapAction = view->addAction(tr("Break lines at the window edge"));
+    m_wrapAction->setObjectName(QStringLiteral("breakLinesAction"));
+    m_wrapAction->setCheckable(true);
+    connect(m_wrapAction, &QAction::triggered, this, [this](bool on) {
+        if (!on) {
+            // The freeze. `Session::resize` has been writing every refit into
+            // `terminal.cols`, so the live width is already in the setting —
+            // this is what puts it in the *file*, so that the terminal the
+            // window is about to stop following is still that wide after a
+            // restart. Written first: the switch below is what makes it load
+            // bearing, and a file that carried the switch without the width
+            // would open at whatever `TerminalSize` last said.
+            rememberSettings({{QStringLiteral("terminal.cols"),
+                               QString::number(m_session->cols())},
+                              {QStringLiteral("terminal.rows"),
+                               QString::number(m_session->rows())}});
+        }
+        setViewSwitch(QStringLiteral("terminal.size_follows_window"), on,
+                      tr("Could not change the line breaks: %1"));
     });
 
     // "Setup", which is Tera Term's own name for this menu, so that someone

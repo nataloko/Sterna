@@ -624,6 +624,35 @@ void TerminalView::applySettings()
     m_theme.applySettings(*m_session);
     m_session->setCellPixels(m_theme.cellWidth(), m_theme.cellHeight());
 
+    // The schema writes a boolean out as `on` or `off` whatever the file said,
+    // so this is a comparison and not a second copy of `GetOnOff` — which is
+    // default-biased and belongs in exactly one place.
+    const auto flag = [this](const char *name, bool fallback) {
+        const QString value = m_session->setting(QString::fromLatin1(name));
+        return value.isEmpty() ? fallback : value == QLatin1String("on");
+    };
+
+    // `TermIsWin`, and it is read before the hint below because turning it on
+    // moves the very setting the hint is taken from.
+    //
+    // **The terminal comes to the window, not the window to the terminal.**
+    // Upstream does the opposite — `ResetSetup` applies the configured size and
+    // `BuffChangeWinSize` then grows the window to it (`vtwin.cpp:1396`) — but
+    // upstream is not offering this as a view command. Somebody who asks for
+    // lines to break at the window edge is asking about the window they are
+    // looking at, and a toggle that answered by making the window three times
+    // wider would be a surprising way to say yes. The cost is upstream's own:
+    // a narrower terminal loses what was to the right of it.
+    const bool follows = flag("terminal.size_follows_window", true);
+    if (follows != m_sizeFollowsWindow) {
+        m_sizeFollowsWindow = follows;
+        if (follows) {
+            refit();
+        } else {
+            emit viewChanged();
+        }
+    }
+
     // The size somebody asked for, which is what the hint is allowed to follow.
     // Settings are loaded after the pages exist, so a configured 100x30 reaches
     // the hint here and nowhere earlier; `Session::resize` writes a live resize
@@ -632,13 +661,6 @@ void TerminalView::applySettings()
     setHintCells(m_session->setting(QStringLiteral("terminal.cols")).toInt(),
                  m_session->setting(QStringLiteral("terminal.rows")).toInt());
 
-    // The schema writes a boolean out as `on` or `off` whatever the file said,
-    // so this is a comparison and not a second copy of `GetOnOff` — which is
-    // default-biased and belongs in exactly one place.
-    const auto flag = [this](const char *name, bool fallback) {
-        const QString value = m_session->setting(QString::fromLatin1(name));
-        return value.isEmpty() ? fallback : value == QLatin1String("on");
-    };
     setLineEditEnabled(flag("terminal.line_edit", false));
     m_clipboard.autoCopy = flag("clipboard.auto_copy", m_clipboard.autoCopy);
     m_clipboard.selectOnlyByLButton =
@@ -796,8 +818,22 @@ void TerminalView::paintEvent(QPaintEvent *)
     const int rows = m_session->rows();
 
     // Whatever is not grid — the few pixels left over when the window is not
-    // an exact multiple of the cell size.
+    // an exact multiple of the cell size, and the whole letterbox to the right
+    // of a terminal narrower than its window.
     p.fillRect(rect(), screenReverse ? QColor(Qt::black) : m_theme.defaultBackground());
+
+    // **Everything below paints in terminal columns, not in widget pixels.**
+    // One translation here rather than an origin term in each of the four
+    // boxes, the underline, the sixel and the cursor: they all describe the
+    // same grid, and a coordinate that got the term wrong would be a run of
+    // text a column out from the cell it belongs to. Widget-space work — the
+    // fill above, the two floating children — happens outside it.
+    p.translate(-m_originX * cw, 0);
+    // The first column that can put ink on screen. One further left than the
+    // origin, because a wide glyph whose lead cell is just off the edge still
+    // paints its right half into view; the widget clips the rest.
+    const int firstCol = qMax(0, m_originX - 1);
+    const int lastCol = m_originX + visibleCols() + 1;
 
     // Once per frame, not once per row: expanding a word selection reads the
     // line it is on, and this is the path a screenful of output repaints
@@ -898,7 +934,7 @@ void TerminalView::paintEvent(QPaintEvent *)
             }
         };
 
-        for (int x = 0; x < static_cast<int>(len);) {
+        for (int x = firstCol; x < qMin(static_cast<int>(len), lastCol);) {
             const TtCell &cell = cells[x];
             if (cell.width_class == TT_WIDTH_PAD) {
                 // The right half of a wide character, reached only if the lead
@@ -1167,6 +1203,31 @@ void TerminalView::setGridHeld(bool held)
     }
 }
 
+int TerminalView::visibleCols() const
+{
+    return qBound(1, width() / m_theme.cellWidth(), qMax(1, m_session->cols()));
+}
+
+QPointF TerminalView::gridPos(const QPointF &pos) const
+{
+    return QPointF(pos.x() + m_originX * m_theme.cellWidth(), pos.y());
+}
+
+void TerminalView::setOriginX(int column)
+{
+    const int wanted = qBound(0, column, qMax(0, m_session->cols() - visibleCols()));
+    if (wanted == m_originX) {
+        return;
+    }
+    m_originX = wanted;
+    // The same three as `setViewOffset`, for the same reasons: the selection is
+    // held in absolute coordinates and moves with the text, the line editor is
+    // placed in columns, and a scrollbar is watching rather than assuming.
+    update();
+    positionLineEditor();
+    emit viewChanged();
+}
+
 void TerminalView::refit()
 {
     // The window is mid-way through absorbing a chrome change and the widget's
@@ -1175,12 +1236,29 @@ void TerminalView::refit()
         m_refitHeld = true;
         return;
     }
-    const int cols = qBound(1, width() / m_theme.cellWidth(), TT_BUFF_X_MAX);
+    // **Width is the window's only while `TermIsWin` is on.** With it off the
+    // terminal keeps the width it was given and this widget shows part of it,
+    // which is upstream's ordinary state (`buffer.c:4930` clamps `WinWidth`
+    // down to `NumOfColumns` and leaves the terminal alone). Height follows the
+    // window either way: upstream does the same, and shortening a grid slides
+    // rows into the scrollback instead of cutting them.
+    const int cols = m_sizeFollowsWindow
+                         ? qBound(1, width() / m_theme.cellWidth(), TT_BUFF_X_MAX)
+                         : m_session->cols();
     const int rows = qMax(1, height() / m_theme.cellHeight());
     if (cols != m_session->cols() || rows != m_session->rows()) {
         clearSelection();
         m_session->resize(cols, rows);
     }
+    // A wider window can leave the origin past the end of the range, and a
+    // narrower one changes how much of the terminal is on screen even when
+    // nothing about the grid moved — both are a scrollbar's business.
+    const int clamped = qBound(0, m_originX, qMax(0, m_session->cols() - visibleCols()));
+    if (clamped != m_originX) {
+        m_originX = clamped;
+        positionLineEditor();
+    }
+    emit viewChanged();
 }
 
 /// The character boundary nearest a widget position.
@@ -1192,10 +1270,14 @@ void TerminalView::refit()
 /// wide character is taken or left whole.
 SelPoint TerminalView::cellAt(const QPointF &pos) const
 {
+    // Widget coordinates in, terminal coordinates out — a scrolled view names
+    // the cell under the pointer and not the one that would be there if the
+    // leftmost column on screen were column 0.
+    const QPointF at = gridPos(pos);
     const int cols = m_session->cols();
-    const int row = qBound(0, static_cast<int>(pos.y()) / m_theme.cellHeight(),
+    const int row = qBound(0, static_cast<int>(at.y()) / m_theme.cellHeight(),
                            m_session->rows() - 1);
-    int x = qBound(0, static_cast<int>(pos.x()) / m_theme.cellWidth(), cols - 1);
+    int x = qBound(0, static_cast<int>(at.x()) / m_theme.cellWidth(), cols - 1);
 
     size_t len = 0;
     const TtCell *cells = m_session->row(row, &len);
@@ -1234,7 +1316,7 @@ SelPoint TerminalView::boundaryAt(const QPointF &pos) const
                        cells[out.x].width_class == TT_WIDTH_WIDE)
                           ? 2
                           : 1;
-    const int px = qBound(0, static_cast<int>(pos.x()), cols * cw - 1);
+    const int px = qBound(0, static_cast<int>(gridPos(pos).x()), cols * cw - 1);
     if (px >= out.x * cw + width * cw / 2) {
         out.x = qMin(out.x + width, cols);
     }
@@ -1314,7 +1396,10 @@ void TerminalView::positionLineEditor()
     const int ch = m_theme.cellHeight();
     const int column = qBound(0, static_cast<int>(cursor.x),
                               qMax(0, m_session->cols() - 1));
-    const int left = column * cw;
+    // Negative when the cursor is off to the left of a scrolled view, which is
+    // the honest position: Qt clips the editor to this widget, so the text in
+    // it stays lined up with the column it is editing.
+    const int left = (column - m_originX) * cw;
     m_lineEditor->setGeometry(left, row * ch, qMax(cw, width() - left), ch);
     m_lineEditor->setFont(m_theme.font());
     m_lineEditor->setTextMargins(m_theme.textOffsetX(), 0, 0, 0);
@@ -1799,9 +1884,13 @@ void TerminalView::mousePressEvent(QMouseEvent *event)
     // tracking mode *and* on Ctrl being held, which upstream uses to keep
     // ctrl-click available for selection — so the core's answer is the one to
     // branch on rather than a mode check of our own.
+    // The core reads these as pixels from the terminal's own left edge, so a
+    // scrolled view has to add the origin back — otherwise a host tracking the
+    // mouse is told about a column the pointer is nowhere near.
     const QPointF p = event->position();
-    if (m_session->mouse(TT_MOUSE_EVENT_PRESS, button, static_cast<int>(p.x()),
-                         static_cast<int>(p.y()), modifiersOf(event->modifiers()))) {
+    const QPointF g = gridPos(p);
+    if (m_session->mouse(TT_MOUSE_EVENT_PRESS, button, static_cast<int>(g.x()),
+                         static_cast<int>(g.y()), modifiersOf(event->modifiers()))) {
         return;
     }
 
@@ -1894,8 +1983,9 @@ void TerminalView::mouseMoveEvent(QMouseEvent *event)
     } else if (event->buttons() & Qt::RightButton) {
         button = TT_BUTTON_RIGHT;
     }
-    m_session->mouse(TT_MOUSE_EVENT_MOVE, button, static_cast<int>(p.x()),
-                     static_cast<int>(p.y()), modifiersOf(event->modifiers()));
+    const QPointF g = gridPos(p);
+    m_session->mouse(TT_MOUSE_EVENT_MOVE, button, static_cast<int>(g.x()),
+                     static_cast<int>(g.y()), modifiersOf(event->modifiers()));
 }
 
 void TerminalView::mouseReleaseEvent(QMouseEvent *event)
@@ -1942,7 +2032,7 @@ void TerminalView::mouseReleaseEvent(QMouseEvent *event)
     } else if (event->button() == Qt::RightButton) {
         button = TT_BUTTON_RIGHT;
     }
-    const QPointF p = event->position();
+    const QPointF p = gridPos(event->position());
     m_session->mouse(TT_MOUSE_EVENT_RELEASE, button, static_cast<int>(p.x()),
                      static_cast<int>(p.y()), modifiersOf(event->modifiers()));
 
@@ -1969,7 +2059,8 @@ void TerminalView::mouseDoubleClickEvent(QMouseEvent *event)
 {
     const QPointF p = event->position();
     if (event->button() != Qt::LeftButton ||
-        m_session->mouse(TT_MOUSE_EVENT_PRESS, TT_BUTTON_LEFT, static_cast<int>(p.x()),
+        m_session->mouse(TT_MOUSE_EVENT_PRESS, TT_BUTTON_LEFT,
+                         static_cast<int>(gridPos(p).x()),
                          static_cast<int>(p.y()), modifiersOf(event->modifiers()))) {
         return;
     }
@@ -2026,7 +2117,7 @@ void TerminalView::wheelEvent(QWheelEvent *event)
     }
     // `vtwin.cpp:2542` passes `zDelta < 0`, so 0 is up and 1 is down.
     const uint8_t button = delta > 0 ? 0 : 1;
-    const QPointF p = event->position();
+    const QPointF p = gridPos(event->position());
     const TtModifiers mods = modifiersOf(event->modifiers());
 
     // How far one message is worth, `vtwin.cpp:2536`. The setting multiplies
@@ -2079,8 +2170,19 @@ void TerminalView::dragTo(const QPointF &pos)
     m_dragPos = pos;
 
     const int step = pos.y() < 0 ? 1 : (pos.y() >= height() ? -1 : 0);
-    if (step != 0) {
-        setViewOffset(m_session->viewOffset() + step);
+    // And sideways, past either edge of a window narrower than its terminal —
+    // upstream's `DispAutoScroll` moves both origins from one gesture
+    // (`vtdisp.c:3237`). A column at a time rather than a line's worth: the
+    // text moves under the pointer at reading speed either way, and a page a
+    // tick would overshoot the word somebody is dragging to.
+    const int sideStep = pos.x() < 0 ? -1 : (pos.x() >= width() ? 1 : 0);
+    if (sideStep != 0) {
+        setOriginX(m_originX + sideStep);
+    }
+    if (step != 0 || sideStep != 0) {
+        if (step != 0) {
+            setViewOffset(m_session->viewOffset() + step);
+        }
         if (!m_autoScroll->isActive()) {
             m_autoScroll->start();
         }
@@ -2415,6 +2517,22 @@ void TerminalView::revealLine(quint64 line)
     const qint64 offset = top - (static_cast<qint64>(line) - rows / 2);
     const qint64 most = m_session->scrollbackLen();
     setViewOffset(static_cast<int>(qBound(qint64(0), offset, most)));
+}
+
+void TerminalView::revealColumn(int column)
+{
+    // The same bargain sideways, and the same reason for the early return: a
+    // match already on screen must not drag the line it is on out from under
+    // the eye reading it. There is nothing to do at all while the whole
+    // terminal fits, which is the ordinary case.
+    const int visible = visibleCols();
+    if (column >= m_originX && column < m_originX + visible) {
+        return;
+    }
+    // Not centred, unlike a line. Text runs left to right, so a match brought
+    // in from the right is read forwards from where it lands — and one that
+    // sits near the start of the line should show the start of the line.
+    setOriginX(column < m_originX ? column : column - visible + 1);
 }
 
 void TerminalView::clearSelection()

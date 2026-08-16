@@ -318,6 +318,7 @@ void FindBar::showMatch(const FindMatch &match)
     m_current = match;
     m_haveCurrent = true;
     m_view->revealLine(match.line);
+    m_view->revealColumn(match.from);
     m_view->selectSpan(SelPoint {match.line, match.from},
                        SelPoint {match.endLine, match.to});
 }
