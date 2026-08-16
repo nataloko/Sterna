@@ -1085,6 +1085,29 @@ Scrollback and the wheel:
   columns permanently instead of widening the window: the setting had already
   followed it down. Anything else that takes room from the view on a settings
   change — a second gutter, a margin, a side panel — lands on this.
+- **...and the same question asked about a *host's* resize has the same wrong
+  answer.** `CSI 8 t` is applied by the core — `collect_window_requests` resizes
+  the grid and then reports it — so `onRemoteResize` comparing the request
+  against `Session::cols()` found them equal every time and returned before
+  growing the window. The symptom is invisible in the obvious place: the
+  terminal really is 132 columns, and 52 of them are off the right-hand edge
+  until the next resize event refits them away. Compare against the view.
+- **`TermIsWin` off means the window is a viewport, and the origin lives in the
+  frontend** — the core has no idea any of this is happening.
+  `TerminalView::m_originX` is upstream's `WinOrgX`, applied as one
+  `QPainter::translate` in `paintEvent` and undone by one `gridPos` on the way
+  in. Two places, not a dozen: anything new that turns a pixel into a column
+  must go through `gridPos`, and anything that paints must do it inside the
+  translate. The host's mouse reporting is the one that fails quietly if you
+  forget — the selection is visibly wrong, a tracked click is merely in the
+  wrong column.
+- **Moving a `bool` default is a listed act, because `GetOnOff` is
+  default-biased.** `tt-config/tests/upstream.rs`'s `DEFAULTS_MOVED_ON_PURPOSE`
+  is the list and it is deliberately one key at a time: with a default of on
+  anything but literal `off` is on, so flipping a default changes what
+  `Key=1` means in a shared file. Two entries so far
+  (`ConfirmPasteMouseRButton`, `TermIsWin`), each owing `docs/deviations.md` a
+  paragraph about exactly that.
 - **`AutoScrollOnlyInBottomLine` ships off** — output drags a scrolled-back
   view down by the *minimum* scroll (`buffer.c:3794`, `:3805`, `:3866`).
   And the cursor-following belongs to the feed, not to a settings change —

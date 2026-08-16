@@ -5,6 +5,33 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+### Added
+
+- The terminal can stop following the window. View > **Break lines at the
+  window edge**, or "Term size = win size" on the Setup > Terminal page — one
+  switch, either name. With it on, which is how Sterna has always behaved,
+  lines break where the window ends and dragging the window narrower changes
+  the terminal. With it off the terminal keeps the width it has, a horizontal
+  scrollbar appears under it, and **the text survives**: narrowing a terminal
+  cuts every line at its new right-hand edge, in the scrollback as well as on
+  screen, and nothing puts the ends back. It is also how to give a 200-column
+  device menu a window that does not have to be 200 columns wide. Turning the
+  switch off freezes the terminal at the width it has at that moment, so
+  nothing is lost in the act of turning it on.
+- The terminal shows its size in characters while the window is being resized —
+  `100x30`, in the middle of the terminal, gone a second after the last change.
+  With the terminal fixed it reads `100x30 of 132x30`: what fits, and what
+  there is. Setup > Window > Show terminal size turns it off.
+
+### Fixed
+
+- A host asking for a different terminal size — `CSI 8 t`, which is what a
+  program that wants 132 columns sends — now resizes the window to hold it.
+  The request reached the terminal but never the window, so the extra columns
+  were off the right-hand edge until the next resize discarded them. With the
+  terminal fixed to its own width, "Auto win resize" decides instead: on, the
+  window follows the host; off, the scrollbar covers the difference.
+
 ## [0.5.4] - 2026-08-16
 
 ### Fixed

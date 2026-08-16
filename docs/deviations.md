@@ -35,6 +35,8 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 18 | A log names itself by the clock and remembers its directory | `teraterm.log`, in whatever directory the settings resolve to | 0.3.2 |
 | 19 | Edit > Find searches the screen and the scrollback | Nothing searches the buffer; the log and another program do | 0.3.2 |
 | 20 | An optional column of line numbers down the left of the terminal | Nothing numbers the lines | 0.3.2 |
+| 21 | The terminal is the window on a fresh install, and the switch is in the View menu | `TermIsWin` ships off, and lives on the Setup page alone | 0.5.5 |
+| 22 | The terminal's size appears over it while the window changes, and can be switched off | A tooltip beside the corner being dragged, with no switch | 0.5.5 |
 
 ---
 
@@ -928,3 +930,133 @@ dropping itself, and the gutter simply shows the new numbers.
 and no existing setting changes meaning. A `TERATERM.INI` shared with a real
 Tera Term opens identically in both programs, with the gutter absent from the
 one that has never heard of it.
+
+## 21. The terminal is the window by default, and the switch says so in the View menu
+
+`terminal.size_follows_window` is upstream's `TermIsWin` (`ttset.c:625`), which
+ships **off**: a Tera Term window is a viewport onto a terminal of its own
+size, and dragging the window changes how much of that terminal you can see and
+nothing else. The window class has carried `WS_HSCROLL` since before this port
+existed (`vtwin.cpp:650`), and the bar's range is the columns that do not fit
+(`vtdisp.c:3070`).
+
+This port ships it **on**, and until 0.5.5 did not read the key at all —
+`TerminalView::refit` turned the widget's width into the grid's column count on
+every resize event, so the setting round-tripped through the file and decided
+nothing. Shipping it on is what that was, said out loud.
+
+**Why on.** It is what every terminal on this desktop does, and it is what this
+program has always done, so flipping the default to upstream's would change the
+feel of the program for everybody on upgrade to fix a problem nobody had
+reported. The state worth having is reachable in two clicks and remembered.
+
+**Why the key rather than a new one.** The behaviour is upstream's exactly, so a
+`[Sterna]` key of its own would be a second name for a setting Tera Term already
+has — and a file carrying both would be a file the two programs read
+differently. `TermIsWin=on` means the same thing in both.
+
+**What the default costs, and it is not nothing.** `GetOnOff` is default-biased
+(`ttset.c:344`): with a default of on, anything but the literal `off` is on;
+with a default of off, only the literal `on` is on. So the two programs disagree
+about `TermIsWin=1` — Sterna reads it as on, Tera Term as off. Both write `on`
+and `off` and neither writes anything else, so this is reachable only by hand,
+but it is the reason this deviation is one line in
+`tt-config/tests/upstream.rs`'s `DEFAULTS_MOVED_ON_PURPOSE` rather than a free
+choice. `ConfirmPasteMouseRButton` (deviation 11) is the other.
+
+**Why the menu item is not called what the checkbox is called.** Setup >
+Terminal keeps upstream's own label, `DLG_TERM_TERMISWIN` — "Term size = win
+size" — in all fourteen translations, because it is upstream's word for
+upstream's key and somebody arriving from Tera Term should find it. The View
+menu says **Break lines at the window edge**, which is what a person watching
+the screen sees the switch do. They are one setting: either one moves the other,
+and the tick follows a change made by a script or by a hand-edited file.
+
+The verb is not "wrap" because `wrap` is not an approved word (`AGENTS.md`
+rule 9, and the dictionary offers `PUT` and `WIND`, neither of which is this).
+`BREAK` is approved, and it is also the more accurate word: with the switch off
+the line is still broken, just at the terminal's own edge instead, out of sight
+until you scroll to it.
+
+**Turning it off freezes the width where it is.** `Session::resize` has been
+writing every refit into `terminal.cols` all along, so the live width is already
+the setting; turning the switch off from the menu writes that number to the file
+as well, so the terminal the window has just stopped following is still that
+wide after a restart. Nothing is truncated at the moment of the toggle, which
+was the whole reason not to apply the configured size instead.
+
+**Turning it back on brings the terminal to the window, not the window to the
+terminal.** Upstream does the opposite — `ResetSetup` applies the configured
+size and the window grows to it (`vtwin.cpp:1396`) — but upstream is not
+offering this as a view command. Somebody who asks for lines to break at the
+window edge is asking about the window in front of them, and a toggle that
+answered by making the window three times wider would be a surprising way to say
+yes. The cost is upstream's own: a terminal that gets narrower loses what was to
+the right of it.
+
+**Which is the point of the feature.** `Grid::resize` truncates every line it
+shortens, page and scrollback alike, and nothing puts the ends back — this is
+upstream's behaviour and it is reproduced. With the terminal free of the window,
+a drag costs nothing at all: the columns that do not fit are behind a scrollbar
+rather than gone. That is also what makes a terminal wider than any window
+useful, which is the state a 200-column device menu wants.
+
+**What is unchanged.** `TermIsWin` keeps its meaning, its spelling and its
+section, and so does `AutoWinResize` beside it — which this release also makes
+load-bearing for the first time, deciding whether a host's own resize request
+moves the window or raises the scrollbar (`buffer.c:5078`). A `TERATERM.INI`
+shared with a real Tera Term opens correctly in both programs.
+
+**Where it lives.** `schema/settings.txt`'s `terminal.size_follows_window` row,
+`TerminalView::refit` and `TerminalView::applySettings`, the horizontal half of
+`TerminalPage::syncScrollBar`, and `MainWindow`'s View menu. `shell/tests/wrap_test.cpp`
+is the whole of it, and its `test_a_narrowed_window_keeps_its_text` is the
+property the feature exists for.
+
+## 22. The terminal shows its size while the window is changing
+
+Upstream shows the same two numbers: `sizetip.c` puts a `%dx%d` tooltip beside
+the corner being dragged, created on `WM_ENTERSIZEMOVE` and destroyed on
+`WM_EXITSIZEMOVE` (`sizetip.c:111`, `vtwin.cpp:3111`, whose comment says in as
+many words that this is one of the two things a resize does). It has no setting:
+the modal size-move loop is the whole of its lifetime.
+
+Sterna puts the numbers in the middle of the terminal instead, in the terminal's
+own font and colours, and takes them away one second after the last change.
+
+**Why not the tooltip.** Both halves of upstream's are Win32. Wayland sends no
+enter/exit-size-move pair, so there is nothing to bracket a tooltip's life with,
+and a client cannot place a window near the pointer — `QWidget::move()` is
+silently ignored there. What survives the port is a child of the terminal and a
+timer, which is what the terminals this program sits beside on a Linux desktop
+do anyway. It floats rather than taking layout space, for the reason the find
+bar does: a widget in the page's layout would take a row from the grid, and
+taking a row is a resize — so a box that reports resizes would cause one, and
+then report that.
+
+**Why it has a switch.** Upstream's cannot be turned off because it exists only
+during a drag somebody is performing. This one appears for any change of size,
+including the ones a host asks for, so it is worth being able to say no to —
+`window.show_terminal_size`, `[Sterna]`, on by default.
+
+**What it says.** `100x30` while the terminal is the window. While it is not
+(deviation 21), `100x30 of 132x30`: the pair that moved is the visible one and
+the pair that decides where a line ends is still the terminal's, and one pair
+could not say which of the two it was. Upstream shows the viewport alone in that
+state (`vtwin.cpp:2794`), which has the same ambiguity and no scrollbar-free
+window to disambiguate it.
+
+**What it does not do is announce a window opening.** That is a burst of resize
+events — the layout settles, the settings are applied, the window grows to the
+configured terminal size — and none of it is something a person did. The
+baseline is taken one turn after the terminal is first shown, so the first thing
+this ever reports is the first thing a hand changed.
+
+**What is unchanged.** No upstream key exists to conflict with, no cell is
+written, and the box takes no room from the grid: a terminal with this switched
+off is the terminal that was there before it existed. A `TERATERM.INI` shared
+with a real Tera Term opens identically in both programs.
+
+**Where it lives.** `shell/src/SizeIndicator.{h,cpp}`, `TerminalView::announceSize`
+and `TerminalView::showEvent`, and the `window.show_terminal_size` row in
+`schema/settings.txt`.
