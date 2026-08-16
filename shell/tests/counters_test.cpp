@@ -168,6 +168,77 @@ void test_the_port_is_only_read_while_somebody_is_looking()
     CHECK(!poll->isActive());
 }
 
+/// The serial row, against the loopback rig.
+///
+/// Skipped without one, loudly, the way the core's own rig tests are:
+///
+///   TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1
+///   QT_QPA_PLATFORM=offscreen ./build/counters_test
+///
+/// **Both ends are needed, and that is the point of the wiring.** A port's own
+/// CTS and DSR are driven by what the *other* end asserts — the rig has A's RTS
+/// going to B's CTS and A's DTR to B's DSR, so opening A alone leaves A's two
+/// inputs floating. Opening B raises them, because `SerialParams::default`
+/// asserts DTR and RTS. That is what makes this the one case which proves the
+/// four lamps are reading a port rather than a struct somebody filled in.
+void test_the_serial_row_reads_the_port()
+{
+    const QByteArray near = qgetenv("TT_SERIAL_A");
+    const QByteArray far = qgetenv("TT_SERIAL_B");
+    if (near.isEmpty() || far.isEmpty()) {
+        fprintf(stderr, "  serial: skipped, set TT_SERIAL_A and TT_SERIAL_B\n");
+        return;
+    }
+
+    TtSerialParams params;
+    tt_serial_params_default(&params);
+    QString error;
+
+    Session session(40, 10);
+    if (!session.connectSerial(QString::fromLocal8Bit(near), params, &error)) {
+        fprintf(stderr, "  serial: skipped, cannot open %s: %s\n", near.constData(),
+                qPrintable(error));
+        return;
+    }
+    // Opened only to drive this end's inputs. Nothing is read from it.
+    Session driver(40, 10);
+    if (!driver.connectSerial(QString::fromLocal8Bit(far), params, &error)) {
+        fprintf(stderr, "  serial: skipped, cannot open %s: %s\n", far.constData(),
+                qPrintable(error));
+        return;
+    }
+
+    CountersPopover popover;
+    // A pin change crosses a USB bus, so it is never instant.
+    spin(
+        [&] {
+            TtModemLines lines;
+            return session.modemLines(&lines) && lines.cts && lines.dsr;
+        },
+        2000);
+    popover.refresh(&session);
+    auto *serial = popover.findChild<QWidget *>(QStringLiteral("countersSerial"));
+    CHECK(serial != nullptr);
+    CHECK(serial != nullptr && !serial->isHidden());
+
+    // The far end asserted DTR and RTS on open, and the rig carries them to
+    // this end's DSR and CTS.
+    auto *cts = popover.findChild<QLabel *>(QStringLiteral("countersCts"));
+    auto *dsr = popover.findChild<QLabel *>(QStringLiteral("countersDsr"));
+    CHECK(cts != nullptr && dsr != nullptr);
+    if (cts && dsr) {
+        CHECK(cts->styleSheet().contains(QStringLiteral("#2e7d32")));
+        CHECK(dsr->styleSheet().contains(QStringLiteral("#2e7d32")));
+        CHECK(cts->toolTip().contains(QStringLiteral("CTS")));
+    }
+
+    if (!writeDir.isEmpty()) {
+        popover.adjustSize();
+        popover.grab().save(
+            QDir(writeDir).filePath(QStringLiteral("counters-serial.png")));
+    }
+}
+
 /// What the field leaves for the host name on a tiled quarter-window.
 ///
 /// The question the design turns on: the only stretching item in that row is
@@ -220,6 +291,7 @@ int main(int argc, char **argv)
     test_a_session_that_never_connected_says_so();
     test_the_counters_survive_the_shell_exiting();
     test_the_port_is_only_read_while_somebody_is_looking();
+    test_the_serial_row_reads_the_port();
     test_the_field_leaves_the_name_room_on_a_quarter_window();
 
     if (failures) {
