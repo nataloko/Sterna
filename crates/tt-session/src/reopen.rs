@@ -256,7 +256,19 @@ impl Reopen {
                     }
                     return ReopenAction::Nothing;
                 }
-                let delay = if tt_conn::serial::is_stable_path(&target.path) {
+                // **`cfg!(windows)` first, and it is not a shortcut.**
+                // [`tt_conn::serial::is_stable_path`] answers false for every
+                // Windows path *correctly* — there is no topology spelling of a
+                // `COM<n>` for it to recognise, and `PortInfo::stable_id` needs
+                // that answer. But the question here is a different one: is this
+                // reopen a guess? On Windows it never is, because
+                // `QueryDosDeviceW` named the exact port, so the doubt
+                // [`ReopenLimits::delay_unknown`] is for — udev's, and the
+                // attach-order doubt behind `/dev/ttyUSB<n>` — has no Windows
+                // half. Reading the one answer as the other spent the
+                // guess-length two seconds on every Windows reopen, which is the
+                // opposite of what that field's own documentation promises.
+                let delay = if cfg!(windows) || tt_conn::serial::is_stable_path(&target.path) {
                     limits.delay
                 } else {
                     limits.delay_unknown
@@ -338,7 +350,9 @@ mod tests {
     }
 
     /// The stable name, so the short delay applies and the arithmetic is about
-    /// the retries rather than about which wait was picked.
+    /// the retries rather than about which wait was picked. On Windows the
+    /// short delay applies to every path, so there it is simply a path — which
+    /// is why every test below it runs on both.
     const STABLE: &str = "/dev/serial/by-path/pci-0000:00:14.0-usb-0:2:1.0-port0";
 
     #[test]
@@ -396,6 +410,12 @@ mod tests {
     /// A kernel name may be a different adapter than the one that left, so it
     /// takes the longer wait. The topology name cannot be, and takes the short
     /// one — checked above.
+    ///
+    /// **Unix only, because the doubt is udev's.** `/dev/ttyUSB0` can appear
+    /// before the rules that make it openable have run, and it is assigned in
+    /// attach order besides. Neither is true of a `COM<n>`, which is what the
+    /// Windows half below pins.
+    #[cfg(unix)]
     #[test]
     fn a_kernel_name_waits_longer_than_a_topology_name() {
         let base = Instant::now();
@@ -406,6 +426,25 @@ mod tests {
         assert_eq!(r.poll(base, true, &limits), ReopenAction::Nothing);
         assert_eq!(r.poll(at(base, 1999), true, &limits), ReopenAction::Nothing);
         assert_eq!(r.poll(at(base, 2000), true, &limits), ReopenAction::Attempt);
+    }
+
+    /// ...and the other side of it: **Windows takes the short wait for every
+    /// path**, which is the one place this port is less uncertain than
+    /// upstream. `is_stable_path` cannot say so — it has no topology spelling
+    /// of a `COM<n>` to recognise — so without the `cfg!(windows)` arm in
+    /// `poll` every Windows reopen spends the guess-length two seconds on a
+    /// port `QueryDosDeviceW` named exactly.
+    #[cfg(windows)]
+    #[test]
+    fn windows_takes_the_short_wait_for_a_kernel_name() {
+        let base = Instant::now();
+        let limits = ReopenLimits::default();
+        let mut r = Reopen::default();
+        r.arm(base, target("COM3"), &limits);
+
+        assert_eq!(r.poll(base, true, &limits), ReopenAction::Nothing);
+        assert_eq!(r.poll(at(base, 499), true, &limits), ReopenAction::Nothing);
+        assert_eq!(r.poll(at(base, 500), true, &limits), ReopenAction::Attempt);
     }
 
     #[test]
