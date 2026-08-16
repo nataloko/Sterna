@@ -230,6 +230,13 @@ on the first page, and `PageNName` only for a page that has been named. Sterna
 groups each page's buttons together when it writes the section, so a file that
 has pages reads in page order however it was edited.
 
+One thing to know if you go **back** to a Sterna older than pages: it reads a
+paged file happily, showing every button in one column, but it does not know
+the `Page` keys are there. Saving from it renumbers the buttons and leaves
+those keys where they were, so they end up on whichever button now has that
+number. Copy the file before downgrading, the same as for any other setting a
+newer version wrote.
+
 | Key | Meaning |
 |---|---|
 | `Label` | What is written on the button. Plain text |
