@@ -967,6 +967,20 @@ Serial:
   `Session::m_reopenTimer` owns the sleep, which is `m_xferTimer`'s
   arrangement. `tick` keeps its "no-op with nothing connected, raises no
   events" contract.
+- **...and that arrangement makes every deadline the core hands out a *when*,
+  never a *how long from now*.** `Session::rearm` re-reads the deadline and
+  restarts one single-shot timer, and it is called from far more than the pump
+  — `Session::mouse` calls it on **every mouse-move event**, and
+  `TerminalView` has mouse tracking on for the URL cursor. So a state whose
+  deadline is an interval measured from the moment it is asked gets a fresh
+  full wait sixty times a second, and never fires. `Reopen`'s indefinite
+  `Waiting` had this: the poll backs off to two seconds after half a minute,
+  so moving the pointer over a terminal that was waiting for its adapter
+  stopped it noticing the adapter until the pointer stopped. `State::Waiting`
+  carries `next` as an `Instant` for that reason, and `Reopen::deadline` is
+  idempotent in all four states. Anything else that grows a deadline owes the
+  same property — the frontend cannot supply it, because it has no way to know
+  which of the answers it just got was a countdown and which was a fresh wait.
 - **A reopening session must not count as *connecting*.** `ensureIdlePage`
   (`MainWindow.cpp:860`) opens a **new tab** for a session that is connecting,
   so folding `isReopening` into `isConnecting` takes somebody who gave up

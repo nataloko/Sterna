@@ -119,9 +119,22 @@ enum State {
     Idle,
     /// The node is not there. Indefinite — upstream waits for a device-arrival
     /// message for ever, and a board switched off overnight should still be
-    /// there in the morning. The instant is when this wait began, which is
-    /// what the poll backs off from.
-    Waiting(Instant),
+    /// there in the morning.
+    ///
+    /// `since` is when this wait began, which is what the poll backs off from.
+    /// `next` is when to look again, and it is an **instant rather than an
+    /// interval** for the same reason the other two states hold one: a frontend
+    /// re-reads [`Reopen::deadline`] whenever anything else happens to the
+    /// session and restarts its timer with the answer. An interval measured
+    /// from *now* is a fresh full wait each time, so anything that asks often
+    /// enough postpones the look for ever — and `Session::mouse` asks on every
+    /// mouse-move event, which is faster than [`POLL_SLOW`] by three orders of
+    /// magnitude. The symptom is an adapter that comes back and is not noticed
+    /// until the pointer stops moving.
+    Waiting {
+        since: Instant,
+        next: Instant,
+    },
     /// The node is back; leave it alone until this instant.
     Settling(Instant),
     /// An open failed; try again at this instant.
@@ -158,7 +171,10 @@ impl Reopen {
     /// case takes the ordinary settle-then-open path rather than a second one.
     pub fn arm(&mut self, now: Instant, target: tt_conn::ReopenTarget, limits: &ReopenLimits) {
         self.left = limits.retries;
-        self.state = State::Waiting(now);
+        self.state = State::Waiting {
+            since: now,
+            next: now + POLL_FAST,
+        };
         self.target = Some(target);
     }
 
@@ -193,23 +209,30 @@ impl Reopen {
     /// the instant, the frontend owns the timer.
     ///
     /// `None` when nothing is armed. `Duration::ZERO` means now.
+    ///
+    /// **Idempotent in every state**, which is what makes it safe for a
+    /// frontend to ask again after anything at all and restart its timer with
+    /// the answer — see [`State::Waiting`] for what asking a relative question
+    /// costs.
     pub fn deadline(&self, now: Instant) -> Option<Duration> {
         self.target.as_ref()?;
         let at = match self.state {
             State::Idle => return None,
-            // Indefinite, so there is no instant to wait for — only how long
-            // to leave it before looking again.
-            State::Waiting(since) => {
-                let poll = if now.saturating_duration_since(since) < SLOW_AFTER {
-                    POLL_FAST
-                } else {
-                    POLL_SLOW
-                };
-                return Some(poll);
-            }
+            State::Waiting { next, .. } => next,
             State::Settling(at) | State::Retrying(at) => at,
         };
         Some(at.saturating_duration_since(now))
+    }
+
+    /// How long to leave a node that is not there before looking again. Fast
+    /// while something is likely to be happening, slower once the wait has
+    /// turned into an overnight one.
+    fn poll_interval(since: Instant, now: Instant) -> Duration {
+        if now.saturating_duration_since(since) < SLOW_AFTER {
+            POLL_FAST
+        } else {
+            POLL_SLOW
+        }
     }
 
     /// Step the machine. `present` is [`tt_conn::serial::present`] for
@@ -221,8 +244,16 @@ impl Reopen {
         };
         match self.state {
             State::Idle => ReopenAction::Nothing,
-            State::Waiting(_) => {
+            State::Waiting { since, next } => {
                 if !present {
+                    // Only once the look was due, so an early or spurious call
+                    // reads the node and does not push the next one out.
+                    if now >= next {
+                        self.state = State::Waiting {
+                            since,
+                            next: now + Self::poll_interval(since, now),
+                        };
+                    }
                     return ReopenAction::Nothing;
                 }
                 let delay = if tt_conn::serial::is_stable_path(&target.path) {
@@ -239,7 +270,10 @@ impl Reopen {
                     // nothing: the budget is for opens that failed, and no open
                     // has been tried. The poll goes back to its fast rate for
                     // the same reason — something is happening.
-                    self.state = State::Waiting(now);
+                    self.state = State::Waiting {
+                        since: now,
+                        next: now + POLL_FAST,
+                    };
                     return ReopenAction::Nothing;
                 }
                 if now < at {
@@ -560,6 +594,10 @@ mod tests {
     }
 
     /// An indefinite wait must not stay a twice-a-second wakeup for ever.
+    ///
+    /// Driven the way a frontend drives it — look when the deadline says to,
+    /// and ask for the next one — because the back-off is a property of the
+    /// looking rather than of the asking.
     #[test]
     fn the_poll_backs_off_once_the_wait_is_long() {
         let base = Instant::now();
@@ -567,14 +605,67 @@ mod tests {
         let mut r = Reopen::default();
         r.arm(base, target(STABLE), &limits);
 
-        assert_eq!(r.deadline(at(base, 29_999)), Some(POLL_FAST));
-        assert_eq!(r.deadline(at(base, 30_000)), Some(POLL_SLOW));
-        assert_eq!(r.deadline(at(base, 86_400_000)), Some(POLL_SLOW));
+        let mut ms = 0u64;
+        let mut last = POLL_FAST;
+        while ms < 29_999 {
+            let d = r.deadline(at(base, ms)).expect("armed");
+            ms += d.as_millis() as u64;
+            r.poll(at(base, ms), false, &limits);
+            last = d;
+        }
+        assert_eq!(last, POLL_FAST, "under half a minute it is the fast rate");
+        assert_eq!(
+            r.deadline(at(base, ms)),
+            Some(POLL_SLOW),
+            "and then it is not"
+        );
 
         // ...and a node that appears and goes again is activity, so the fast
         // rate comes back with it.
         r.poll(at(base, 40_000), true, &limits);
         r.poll(at(base, 40_100), false, &limits);
         assert_eq!(r.deadline(at(base, 40_100)), Some(POLL_FAST));
+    }
+
+    /// The deadline is a question a frontend asks again after *anything* — it
+    /// re-reads it and restarts one timer, and `Session::mouse` re-reads it on
+    /// every mouse-move event. So asking must not move the answer: an interval
+    /// measured from now would make a moving pointer over a waiting terminal
+    /// postpone the look for ever, and the adapter would come back unnoticed
+    /// until the pointer stopped.
+    #[test]
+    fn asking_for_the_deadline_does_not_move_it() {
+        let base = Instant::now();
+        let limits = ReopenLimits::default();
+        let mut r = Reopen::default();
+        r.arm(base, target(STABLE), &limits);
+
+        // A pointer moving over the terminal, once a frame, for the whole wait.
+        for ms in 0..500 {
+            assert_eq!(
+                r.deadline(at(base, ms)),
+                Some(Duration::from_millis(500 - ms)),
+                "the answer counts down rather than starting again"
+            );
+        }
+        assert_eq!(r.deadline(at(base, 500)), Some(Duration::ZERO));
+
+        // ...and the same for a wait long enough to have backed off, which is
+        // where an interval-shaped answer starves outright: 2 s of poll against
+        // a question asked every few milliseconds.
+        let mut ms = 0u64;
+        while ms < 40_000 {
+            let d = r.deadline(at(base, ms)).expect("armed");
+            ms += d.as_millis() as u64;
+            r.poll(at(base, ms), false, &limits);
+        }
+        let due = r.deadline(at(base, ms)).expect("armed");
+        assert_eq!(due, POLL_SLOW);
+        for step in 0..due.as_millis() as u64 {
+            assert_eq!(
+                r.deadline(at(base, ms + step)),
+                Some(due - Duration::from_millis(step))
+            );
+        }
     }
 }
