@@ -39,6 +39,15 @@
 #define TT_QUICK_BUTTON_MAX_INTERVAL_MS 3600000
 
 /**
+ * The largest [`TtQuickButton::page`]. A page above it is clamped to it, not
+ * moved back to the first — the number names where somebody put the button.
+ *
+ * The same ceiling as the button count, deliberately: a lower one would merge
+ * two pages of a hand-edited file into one and say nothing.
+ */
+#define TT_QUICK_BUTTON_MAX_PAGES 99
+
+/**
  * A colour a rule is not asking to change, in [`TtHighlight::fore`] and
  * friends. Every real colour is `0x00RRGGBB`, so this cannot collide with one.
  */
@@ -944,7 +953,8 @@ typedef struct TtPortHolders TtPortHolders;
 typedef struct TtPortList TtPortList;
 
 /**
- * An owned list of quick buttons. Free it with [`tt_quick_buttons_free`].
+ * An owned list of quick buttons, and what its pages are called. Free it with
+ * [`tt_quick_buttons_free`].
  */
 typedef struct TtQuickButtons TtQuickButtons;
 
@@ -1491,6 +1501,17 @@ typedef struct {
      * Zero is read as the default rather than as no wait at all.
      */
     uint32_t interval_ms;
+    /**
+     * Which page of the panel it is on, counting from 1 and bounded by
+     * [`TT_QUICK_BUTTON_MAX_PAGES`]. `0` is read as 1, so a zeroed struct is
+     * an ordinary button on the first page.
+     *
+     * A page is a filter on what a frontend shows, never a renumbering: the
+     * list stays flat, and the index a button has here is the index it has
+     * everywhere. Anything holding an index — a repeat in progress, a
+     * shortcut on an action — depends on that.
+     */
+    uint32_t page;
 } TtQuickButton;
 
 /**
@@ -3934,6 +3955,56 @@ TtStatus tt_quick_buttons_remove(TtQuickButtons *list, size_t index);
  * Move a button, closing the gap behind it — a drag in a list, not a swap.
  */
 TtStatus tt_quick_buttons_move(TtQuickButtons *list, size_t from, size_t to);
+
+/**
+ * How many pages the list has.
+ *
+ * Enough to hold every button, and every page that has been named — a named
+ * page with nothing on it counts, which is what lets somebody make a page and
+ * then fill it. Never zero: a list with no buttons still has a first page.
+ */
+uint32_t tt_quick_buttons_page_count(const TtQuickButtons *list);
+
+/**
+ * Borrow the name of `page`, counting from 1.
+ *
+ * Empty for a page nobody has named, which a frontend shows as `Page N` — the
+ * name is optional and its absence is not an error. Null only for a null list
+ * or a page outside the list. Valid until the list is changed or freed.
+ */
+const char *tt_quick_buttons_page_name(const TtQuickButtons *list,
+                                       uint32_t page);
+
+/**
+ * Name `page`. An empty string un-names it; a null one is the same thing.
+ *
+ * Naming a page beyond the last is how a page is *made*: the name is the only
+ * thing a file can hold about a page with no buttons on it yet.
+ */
+TtStatus tt_quick_buttons_set_page_name(TtQuickButtons *list,
+                                        uint32_t page,
+                                        const char *name);
+
+/**
+ * Remove `page` and its name, moving its buttons to the page beside it and
+ * pulling the pages above it down one.
+ *
+ * **Removing a page never removes a command**: the buttons land on the page
+ * before this one, or on what was the second when the first goes. Removing a
+ * command is its own act and the one that asks first. The rule lives here so
+ * that two frontends cannot disagree about it; the flat list is not
+ * renumbered, so a caller's indices survive.
+ */
+TtStatus tt_quick_buttons_remove_page(TtQuickButtons *list, uint32_t page);
+
+/**
+ * Move a page and everything on it, the way dragging a tab would.
+ *
+ * The buttons keep their places in the flat list; only the page numbers move.
+ */
+TtStatus tt_quick_buttons_move_page(TtQuickButtons *list,
+                                    uint32_t from,
+                                    uint32_t to);
 
 /**
  * Write the list into a settings file, leaving every other line alone.

@@ -1785,6 +1785,95 @@ static void test_quick_buttons(void)
     tt_session_free(s);
 }
 
+/* Pages: a field on a button, so the list stays flat and the index a frontend
+ * holds keeps meaning what it meant. */
+static void test_quick_button_pages(void)
+{
+    const char *path = "/tmp/tt-ffi-abi-buttons-pages.ini";
+    remove(path);
+    FILE *f = fopen(path, "wb");
+    CHECK(f != NULL);
+    if (f) {
+        fputs("; a comment\r\n[Tera Term]\r\nBaudRate=9600\r\n"
+              "[Sterna Buttons]\r\nPage2Name=BMCs\r\n"
+              "Button1Label=Show version\r\nButton1Value=show version$0D\r\n"
+              "Button2Label=Power status\r\nButton2Page=2\r\n"
+              "Button2Value=power status$0D\r\n",
+              f);
+        fclose(f);
+    }
+
+    TtQuickButtons *list = tt_quick_buttons_load(path);
+    CHECK(list != NULL && tt_quick_buttons_len(list) == 2);
+    /* Absent is the first page, which is every file written before pages. */
+    CHECK(tt_quick_buttons_at(list, 0)->page == 1);
+    CHECK(tt_quick_buttons_at(list, 1)->page == 2);
+    CHECK(tt_quick_buttons_page_count(list) == 2);
+    CHECK(strcmp(tt_quick_buttons_page_name(list, 2), "BMCs") == 0);
+    /* Unnamed is empty rather than absent: a page with no name is a page. */
+    CHECK(strcmp(tt_quick_buttons_page_name(list, 1), "") == 0);
+    CHECK(tt_quick_buttons_page_name(list, 0) == NULL);
+    CHECK(tt_quick_buttons_page_name(list, 9) == NULL);
+
+    /* A zeroed struct is an ordinary button on the first page, and a page past
+     * the ceiling lands on the last one rather than back among page 1. */
+    TtQuickButton zeroed = {0};
+    zeroed.kind = TT_QUICK_BUTTON_TEXT;
+    zeroed.text = "uptime\r";
+    CHECK_OK(tt_quick_buttons_set(list, 2, &zeroed));
+    CHECK(tt_quick_buttons_at(list, 2)->page == 1);
+    zeroed.page = 999;
+    CHECK_OK(tt_quick_buttons_set(list, 2, &zeroed));
+    CHECK(tt_quick_buttons_at(list, 2)->page == TT_QUICK_BUTTON_MAX_PAGES);
+    zeroed.page = 3;
+    CHECK_OK(tt_quick_buttons_set(list, 2, &zeroed));
+
+    /* Naming a page beyond the last is how one is made — the name is all a
+     * file can hold about a page with nothing on it. */
+    CHECK_OK(tt_quick_buttons_set_page_name(list, 4, "Switches"));
+    CHECK(tt_quick_buttons_page_count(list) == 4);
+    CHECK(tt_quick_buttons_set_page_name(list, 0, "x") == TT_ERR_INVALID);
+    CHECK(tt_quick_buttons_set_page_name(list, 100, "x") == TT_ERR_INVALID);
+
+    char buf[65536] = {0};
+    CHECK_OK(tt_quick_buttons_save(list, path));
+    CHECK(read_file(path, buf, sizeof buf) > 0);
+    CHECK(strstr(buf, "Page2Name=BMCs") != NULL);
+    CHECK(strstr(buf, "Page4Name=Switches") != NULL);
+    /* Grouped as they are renumbered, and the first page says nothing. */
+    CHECK(strstr(buf, "Button1Label=Show version") != NULL);
+    CHECK(strstr(buf, "Button1Page") == NULL);
+    CHECK(strstr(buf, "Button2Page=2") != NULL);
+    CHECK(strstr(buf, "Button3Page=3") != NULL);
+    CHECK(strstr(buf, "BaudRate=9600") != NULL);
+
+    /* Removing a page keeps every command: they land on the page beside it,
+     * and the pages above come down one. */
+    CHECK_OK(tt_quick_buttons_remove_page(list, 2));
+    CHECK(tt_quick_buttons_len(list) == 3);
+    CHECK(tt_quick_buttons_at(list, 1)->page == 1);
+    CHECK(tt_quick_buttons_at(list, 2)->page == 2);
+    CHECK(strcmp(tt_quick_buttons_page_name(list, 3), "Switches") == 0);
+    CHECK(tt_quick_buttons_remove_page(list, 0) == TT_ERR_INVALID);
+    CHECK(tt_quick_buttons_remove_page(list, 99) == TT_ERR_INVALID);
+
+    /* A move takes the buttons with it and leaves the flat order alone. */
+    CHECK_OK(tt_quick_buttons_move_page(list, 1, 2));
+    CHECK(tt_quick_buttons_at(list, 0)->page == 2);
+    CHECK(tt_quick_buttons_at(list, 2)->page == 1);
+    CHECK(strcmp(tt_quick_buttons_at(list, 0)->label, "Show version") == 0);
+    CHECK(tt_quick_buttons_move_page(list, 1, 9) == TT_ERR_INVALID);
+
+    CHECK(tt_quick_buttons_page_count(NULL) == 0);
+    CHECK(tt_quick_buttons_page_name(NULL, 1) == NULL);
+    CHECK(tt_quick_buttons_set_page_name(NULL, 1, "x") == TT_ERR_INVALID);
+    CHECK(tt_quick_buttons_remove_page(NULL, 1) == TT_ERR_INVALID);
+    CHECK(tt_quick_buttons_move_page(NULL, 1, 2) == TT_ERR_INVALID);
+
+    tt_quick_buttons_free(list);
+    remove(path);
+}
+
 /* Parse, apply, resolve — the three calls a frontend makes at startup, in the
  * order it has to make them.
  *
@@ -3493,6 +3582,7 @@ int main(void)
     test_setting_presence();
     test_remembered_connection();
     test_quick_buttons();
+    test_quick_button_pages();
     test_cmdline();
     test_input();
     test_palette();
