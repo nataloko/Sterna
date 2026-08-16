@@ -12,8 +12,8 @@
 use tt_charset::{gset_from_intermediate, sbcs_final, Iso2022, Iso2022State, Shift};
 use tt_grid::{
     Grid, Pen, Rect, ATTR2_BACK, ATTR2_COLOR_MASK, ATTR2_FORE, ATTR2_PROTECT, ATTR_BLINK,
-    ATTR_BOLD, ATTR_MASK, ATTR_REVERSE, ATTR_SGR_MASK, ATTR_SPECIAL, ATTR_UNDER, DEFAULT_BG,
-    DEFAULT_FG,
+    ATTR_BOLD, ATTR_CONTROL, ATTR_EOL_CR, ATTR_EOL_LF, ATTR_MASK, ATTR_REVERSE, ATTR_SGR_MASK,
+    ATTR_SPECIAL, ATTR_UNDER, DEFAULT_BG, DEFAULT_FG,
 };
 use vte::{Params, Perform};
 
@@ -454,6 +454,20 @@ pub struct Config {
     pub debug_enabled: bool,
     /// `DebugModes=`: which three non-off modes that key cycles through.
     pub debug_modes: DebugModes,
+    /// `ShowControlChars=`. Every control character the terminal executes also
+    /// leaves a two-cell caret mark where it happened.
+    ///
+    /// A near relative of [`DebugMode::Normal`] and deliberately not the same
+    /// thing: debug display replaces the stream, so escape sequences stop being
+    /// interpreted. This annotates a terminal that is still working, which is
+    /// what makes it usable on a live console — and is why it can only ever
+    /// cover the controls that reach `Perform::execute`.
+    ///
+    /// Its two neighbours in the settings file, `ShowEol` and `HideCrLf`, are
+    /// deliberately **not** here. They decide how a line's ending is drawn, and
+    /// the bits that ending is drawn from are recorded whatever they say, so
+    /// there is nothing for the engine to know.
+    pub show_control_chars: bool,
     pub color_flags: ColorFlags,
     /// The terminal's 256 drawing colours. Entries 0-15 come from the
     /// `ANSIColor` setting after `vtdisp.c:GetIndex256From16` swaps its legacy
@@ -722,6 +736,7 @@ impl Default for Config {
             cr_receive: CrReceive::Cr,
             debug_enabled: false,
             debug_modes: DebugModes::ALL,
+            show_control_chars: false,
             color_flags: ColorFlags::default(),
             palette: *palette::default_palette(),
             // `ttset.c:754` and the keys around it: black on white, blue,
@@ -2545,7 +2560,10 @@ impl State {
         }
         let mut out = String::new();
         for cell in &line[..end] {
-            if cell.width_class == tt_grid::WIDTH_PAD {
+            // A control mark is this terminal annotating the screen, not
+            // anything the host printed — and "the dump is of the grid, not
+            // the stream" is exactly why the printer would otherwise get it.
+            if cell.width_class == tt_grid::WIDTH_PAD || cell.attrs & ATTR_CONTROL != 0 {
                 continue;
             }
             for &cp in cell.text.iter().take_while(|&&cp| cp != 0) {
@@ -2591,6 +2609,7 @@ impl State {
         match self.cr_mode() {
             CrReceive::Auto => {
                 if !self.prev_was_lf || !self.auto_generated_crlf {
+                    self.mark_line_end(ATTR_EOL_CR);
                     self.carriage_return(true);
                     // Upstream's `LineFeed(CR, TRUE)`, minus the LNM tail —
                     // see the note on `line_feed`, which this deliberately does
@@ -2599,6 +2618,11 @@ impl State {
                     self.grid.line_feed();
                     self.auto_generated_crlf = true;
                 } else {
+                    // The second half of an `LF CR` this mode has already
+                    // broken a line for. No new break, but the ending was
+                    // spelt with a CR in it and the row that was left should
+                    // say so.
+                    self.mark_previous_line_end(ATTR_EOL_CR);
                     self.auto_generated_crlf = false;
                 }
             }
@@ -2606,11 +2630,13 @@ impl State {
             // the line, and let an LF arriving straight after it resolve the
             // question rather than break a second one.
             CrReceive::Detect => {
+                self.mark_line_end(ATTR_EOL_CR);
                 self.carriage_return(true);
                 self.tap(0x0a);
                 self.grid.line_feed();
             }
             CrReceive::CrLf => {
+                self.mark_line_end(ATTR_EOL_CR);
                 self.carriage_return(true);
                 // Upstream returns here and pushes an LF back into the input
                 // stream instead (`CommInsert1Byte`), which arrives as an
@@ -2619,6 +2645,9 @@ impl State {
                 self.tap(0x0a);
                 self.grid.line_feed();
             }
+            // `Cr` and `Lf`, where this byte is a carriage return and nothing
+            // more. It ends no line, so it marks none — which is the whole
+            // point of recording the ending rather than the byte.
             _ => self.carriage_return(true),
         }
     }
@@ -2671,18 +2700,27 @@ impl State {
 
     /// `vtterm.c:747`.
     fn process_lf(&mut self, byte: u8) {
+        // What the ending was spelt with, which is not the same question as
+        // what this byte does. In `Cr` and `Lf` modes a CR immediately before
+        // this LF was a plain carriage return and broke nothing — but it was
+        // still part of how the far end ends a line, and that is what the mark
+        // is for.
+        let bits = ATTR_EOL_LF | if self.prev_was_cr { ATTR_EOL_CR } else { 0 };
         match self.cr_mode() {
             CrReceive::Lf => {
                 // "the server sends LF alone" — so LF means CR+LF.
+                self.mark_line_end(bits);
                 self.carriage_return(true);
                 self.line_feed(byte);
             }
             CrReceive::Auto => {
                 if !self.prev_was_cr || !self.auto_generated_crlf {
+                    self.mark_line_end(bits);
                     self.carriage_return(true);
                     self.line_feed(byte);
                     self.auto_generated_crlf = true;
                 } else {
+                    self.mark_previous_line_end(ATTR_EOL_LF);
                     self.auto_generated_crlf = false;
                 }
             }
@@ -2693,13 +2731,22 @@ impl State {
             CrReceive::Detect => {
                 if self.prev_was_cr {
                     self.detected_cr_receive = Some(CrReceive::Cr);
+                    // The CR marked the row on its way out; this says the
+                    // ending had an LF in it too, so the pair reads `^M^J`.
+                    self.mark_previous_line_end(ATTR_EOL_LF);
                 } else {
                     self.detected_cr_receive = Some(CrReceive::Lf);
+                    self.mark_line_end(bits);
                     self.carriage_return(true);
                     self.line_feed(byte);
                 }
             }
-            _ => self.line_feed(byte),
+            // `Cr` and `CrLf`, where an LF is a line feed and nothing more —
+            // but it still ends the row it is on, so it still marks it.
+            _ => {
+                self.mark_line_end(bits);
+                self.line_feed(byte);
+            }
         }
     }
 
@@ -3049,6 +3096,11 @@ impl State {
                 let mut sum: u16 = 0;
                 for y in area.y0..=area.y1 {
                     for cell in &self.grid.line(y)[area.x0..=area.x1] {
+                        // A host must not be able to read back a cell it did
+                        // not write. A control mark is ours.
+                        if cell.attrs & ATTR_CONTROL != 0 {
+                            continue;
+                        }
                         for cp in cell.codepoints() {
                             sum = sum.wrapping_add(cp as u16);
                         }
@@ -4515,6 +4567,108 @@ impl State {
             self.osc_reset(number, color::UNSPEC);
         }
     }
+
+    // --- the two annotations, which are not upstream's ---------------------
+
+    /// `terminal.show_control_chars`: leave a two-cell caret mark where a
+    /// control character went past.
+    ///
+    /// The spelling is [`Vt::debug_byte`]'s, because that is the one this
+    /// program already reproduces and two notations for one byte would be two
+    /// things to learn. Unlike debug display it writes the cells itself instead
+    /// of going through [`State::print`], and that is the whole of the promise
+    /// the setting makes:
+    ///
+    /// * **Nothing is tapped.** No `tap`, no `printer_tap`, no `log_text`. The
+    ///   session log, the printer and every macro `wait` see exactly what they
+    ///   would have seen with the setting off, so turning it on cannot change
+    ///   what a script matches.
+    /// * **`ATTR_CONTROL` rides the cells**, which is how the clipboard, the
+    ///   printer's dump and Find know to skip them, and how the painter knows
+    ///   this `^G` is the terminal talking rather than the host.
+    ///
+    /// A mark that does not fit is not written. Letting [`Grid::put`] wrap here
+    /// would invent a line break whose `CR LF` the character path taps and this
+    /// path does not — a break the log and the macro tap never hear about, to
+    /// annotate one byte. The line-number gutter took the same rule for the
+    /// same reason: a mark this row cannot state honestly gets no mark.
+    fn put_control_mark(&mut self, byte: u8) {
+        // Four bytes are deliberately left unmarked.
+        //
+        // CR and LF have already moved the cursor by the time they run, so a
+        // mark at it lands on top of the line; they are the line's own ending
+        // and are drawn from its `ATTR_EOL_*` bits instead.
+        //
+        // BS moves the cursor *left*, so its `^H` is stepped back onto and the
+        // next character overwrites the `H` — leaving a bare `^` one column to
+        // the right of the erasure. The classic rubout echo `BS SP BS` turns
+        // that into a trail of carets marching across the line, and it hides
+        // the very erasure it is supposed to show.
+        //
+        // `0x88` is HTS in its 8-bit spelling, the one byte above C0 that gets
+        // this far (`rewrite_c1` folds the rest). Caret notation has no
+        // spelling for it: upstream's debug display says `^H` in reverse, which
+        // is a backspace's mark wearing a colour. A mark that cannot be told
+        // from another byte's is worse than no mark.
+        let Some(letter) = (match byte {
+            0x08 | 0x0a | 0x0d => None,
+            0x00..=0x1f => Some(byte + 0x40),
+            _ => None,
+        }) else {
+            return;
+        };
+        // Two cells or none. `Grid::put` breaks the line when the wrap is
+        // already pending and arms it at the right margin, so the mark fits
+        // exactly when neither is true of the column the `^` would take.
+        let last = self
+            .grid
+            .margins()
+            .1
+            .min(self.grid.cols().saturating_sub(1));
+        if self.grid.cursor.pending_wrap || self.grid.cursor.x + 1 > last {
+            return;
+        }
+        // The pen must not keep the bit — `Perform::print`'s `ATTR_SPECIAL`
+        // arm borrows it exactly this way, and for the same reason: left on,
+        // it would spread down the rest of the row.
+        let attrs = self.grid.pen.attrs;
+        self.grid.pen.attrs |= ATTR_CONTROL;
+        self.grid.put(u32::from(b'^'));
+        self.grid.put(u32::from(letter));
+        self.grid.pen.attrs = attrs;
+    }
+
+    /// Record that a line ending is about to take the cursor off the row it is
+    /// standing on, and which byte spelt it.
+    ///
+    /// Called **before** the feed, while the cursor is still on the row being
+    /// left.
+    ///
+    /// Deliberately not gated on `terminal.show_eol`. The bits cost one `|=`
+    /// per line ending, they are invisible to everything that is not looking
+    /// for them, and recording them always is what lets the switch show the
+    /// screenful that is *already* there — a mark that only appeared on lines
+    /// arriving after the menu item was ticked would read as a bug. It is the
+    /// same arrangement `ATTR_LINE_CONTINUED` has: always written, read only by
+    /// whoever is asking.
+    fn mark_line_end(&mut self, bits: u32) {
+        let y = self.grid.cursor.y;
+        self.grid.set_line_end(y, bits);
+    }
+
+    /// The other half of a pair, landing on a row the cursor has already left.
+    ///
+    /// After a feed the row that was left is always the one above the cursor:
+    /// at the bottom of the scroll region everything moved up by one, and
+    /// anywhere else the cursor moved down by one, so the offset is the same
+    /// both ways. A row that went into the history instead is out of reach and
+    /// keeps the half it already has, which is the half that matters.
+    fn mark_previous_line_end(&mut self, bits: u32) {
+        if self.grid.cursor.y > 0 {
+            let y = self.grid.cursor.y - 1;
+            self.grid.set_line_end(y, bits);
+        }
+    }
 }
 
 impl Perform for State {
@@ -4599,6 +4753,20 @@ impl Perform for State {
     }
 
     fn execute(&mut self, byte: u8) {
+        // Before the byte acts, because most of what acts moves the cursor and
+        // the mark belongs where the byte arrived. Which bytes get one, and
+        // which four deliberately do not, is `put_control_mark`'s.
+        //
+        // This is every control the terminal *executes* and no more, which is
+        // both the point and the limit. A C0 inside a CSI does reach here —
+        // `ESC [ 12 BEL m` is an executed BEL — but `ESC` itself, a sequence's
+        // parameter and final bytes, an OSC's terminating BEL, and DEL never
+        // do. That is exactly why escape sequences still work while this is on,
+        // and it is the whole difference from debug display mode. Anything that
+        // must see every byte wants a tap on the transport, not this.
+        if self.config.show_control_chars {
+            self.put_control_mark(byte);
+        }
         match byte {
             // ENQ. `vtterm.c:1075` writes `ts.Answerback` with `CommBinaryOut`
             // — the binary path, so the bytes go out exactly as the file spelt
@@ -7176,5 +7344,230 @@ mod tests {
         let mut vt = Vt::new(Config::default());
         vt.feed(&b"\x1b[5t".repeat(500));
         assert_eq!(vt.take_window_requests().len(), 64);
+    }
+
+    // --- the control-character marks and the line ending -------------------
+
+    fn marks(cols: usize) -> Vt {
+        Vt::new(Config {
+            cols,
+            rows: 6,
+            show_control_chars: true,
+            ..Config::default()
+        })
+    }
+
+    #[test]
+    fn a_control_character_leaves_a_caret_mark_where_it_happened() {
+        let mut vt = marks(20);
+        // BEL, and XOFF out of the arm that used to drop its byte in silence —
+        // which is most of the reason somebody turns this on.
+        vt.feed(b"a\x07b\x13c");
+        assert_eq!(row(&vt, 0), "a^Gb^Sc");
+
+        // And the bit that says the terminal wrote them, not the host.
+        let line = vt.grid().line(0);
+        assert_eq!(line[0].attrs & ATTR_CONTROL, 0);
+        assert_ne!(line[1].attrs & ATTR_CONTROL, 0);
+        assert_ne!(line[2].attrs & ATTR_CONTROL, 0);
+        assert_eq!(line[3].attrs & ATTR_CONTROL, 0);
+    }
+
+    /// A C0 *inside* a sequence is executed and so is marked — upstream's own
+    /// printer trap says `ESC [ 12 BEL m` prints as-is — while the sequence
+    /// goes on working. ESC itself, the sequence's own bytes and DEL never
+    /// reach `execute` and can never be marked, which is exactly why this is
+    /// not debug display mode.
+    #[test]
+    fn only_the_controls_the_terminal_executes_can_be_marked() {
+        let mut vt = marks(20);
+        vt.feed(b"\x1b[1\x07mbold\x1b[m.");
+        assert_eq!(row(&vt, 0), "^Gbold.");
+        // The BEL was executed and marked, and the CSI it interrupted kept its
+        // parameter and still turned bold on — and off again afterwards.
+        assert_ne!(vt.grid().line(0)[2].attrs & ATTR_BOLD, 0);
+        assert_eq!(vt.grid().line(0)[6].attrs & ATTR_BOLD, 0);
+    }
+
+    /// The four bytes that get no mark, each for its own reason.
+    #[test]
+    fn cr_lf_bs_and_hts8_are_left_unmarked() {
+        let mut vt = marks(20);
+        // A backspace's `^H` would be stepped back onto and half overwritten,
+        // leaving a stray caret one column right of the erasure it hid.
+        vt.feed(b"ab\x08c");
+        assert_eq!(row(&vt, 0), "ac");
+
+        // HTS in its 8-bit spelling is the one byte above C0 that reaches
+        // `execute`, and caret notation has no form for it that is not a
+        // backspace's — so it sets its tab stop and says nothing. Asserted
+        // through the guard rather than through the wire, because a raw `0x88`
+        // is also invalid UTF-8 and the decoder answers first.
+        let mut vt = marks(20);
+        vt.state.put_control_mark(0x88);
+        assert_eq!(row(&vt, 0), "");
+
+        // CR and LF are the line's, not a column's.
+        let mut vt = marks(20);
+        vt.feed(b"hi\r\n");
+        assert_eq!(row(&vt, 0), "hi");
+    }
+
+    /// The one thing this feature must not do. A macro's `wait` and the text
+    /// session log both read the tap, and a switch about what the screen looks
+    /// like cannot be allowed to change what a script matches.
+    #[test]
+    fn a_mark_reaches_neither_the_macro_tap_nor_the_log() {
+        let stream = b"one\x07two\r\nthree\x09four\r\n";
+        let quiet = tapped(stream, 20, 6);
+
+        let mut vt = Vt::new(Config {
+            cols: 20,
+            rows: 6,
+            show_control_chars: true,
+            ..Config::default()
+        });
+        vt.set_macro_tap_enabled(true);
+        vt.feed(stream);
+        assert_eq!(vt.take_macro_bytes(), quiet);
+    }
+
+    #[test]
+    fn a_mark_that_does_not_fit_is_not_written() {
+        let mut vt = marks(6);
+        // Five characters and a bell: the mark needs two columns and only one
+        // is left, so the row keeps its text and gains nothing.
+        vt.feed(b"abcde\x07");
+        assert_eq!(row(&vt, 0), "abcde");
+        assert_eq!(row(&vt, 1), "");
+        // ...and the wrap was not armed by a mark that never happened.
+        vt.feed(b"f");
+        assert_eq!(row(&vt, 0), "abcdef");
+    }
+
+    /// CR and LF are not marked in the text — by the time either runs the
+    /// cursor is at column 0 and a mark would land on top of the line. They
+    /// are recorded on the row instead.
+    #[test]
+    fn the_line_ending_is_recorded_and_not_written() {
+        let mut vt = marks(20);
+        vt.feed(b"hello\r\nworld");
+        assert_eq!(row(&vt, 0), "hello");
+        assert_eq!(row(&vt, 1), "world");
+        assert_eq!(vt.grid().line_end(0), ATTR_EOL_CR | ATTR_EOL_LF);
+        // The line still being written has no ending yet.
+        assert_eq!(vt.grid().line_end(1), 0);
+    }
+
+    #[test]
+    fn each_spelling_of_a_line_ending_is_recorded_as_itself() {
+        let ending = |mode: CrReceive, stream: &[u8]| {
+            let mut vt = Vt::new(Config {
+                cols: 20,
+                rows: 6,
+                cr_receive: mode,
+                ..Config::default()
+            });
+            vt.feed(stream);
+            vt.grid().line_end(0)
+        };
+
+        // Detect, which is what ships: the first ending resolves the question
+        // and the row says which one it was.
+        assert_eq!(
+            ending(CrReceive::Detect, b"a\r\nb"),
+            ATTR_EOL_CR | ATTR_EOL_LF
+        );
+        assert_eq!(ending(CrReceive::Detect, b"a\nb"), ATTR_EOL_LF);
+        assert_eq!(ending(CrReceive::Detect, b"a\rb"), ATTR_EOL_CR);
+
+        // `Cr` reads the two bytes literally — the CR breaks nothing and the
+        // LF does the feed — and the row still says the far end sends both.
+        assert_eq!(ending(CrReceive::Cr, b"a\r\nb"), ATTR_EOL_CR | ATTR_EOL_LF);
+        assert_eq!(ending(CrReceive::Lf, b"a\r\nb"), ATTR_EOL_CR | ATTR_EOL_LF);
+        assert_eq!(
+            ending(CrReceive::Auto, b"a\r\nb"),
+            ATTR_EOL_CR | ATTR_EOL_LF
+        );
+
+        // A bare CR that only returns the carriage ends no line and marks none.
+        assert_eq!(ending(CrReceive::Cr, b"abc\rd"), 0);
+
+        // VT and FF call `LineFeed` directly and are not evidence about how a
+        // far end spells a line ending, so they leave the row unmarked. Their
+        // own mark is the ordinary `^K`/`^L` in the text.
+        assert_eq!(ending(CrReceive::Detect, b"a\x0bb"), 0);
+        assert_eq!(ending(CrReceive::Detect, b"a\x0cb"), 0);
+    }
+
+    /// The bits are recorded whatever the switch says, so ticking Show EOL
+    /// marks the screenful that is already there rather than only what arrives
+    /// next. Nothing else can see them.
+    #[test]
+    fn the_line_ending_is_recorded_with_every_switch_off() {
+        let mut vt = Vt::new(Config::default());
+        vt.feed(b"hello\r\n");
+        assert_eq!(vt.grid().line_end(0), ATTR_EOL_CR | ATTR_EOL_LF);
+        assert_eq!(row(&vt, 0), "hello");
+    }
+
+    /// A line feed arrives on a row that has not ended yet, so it takes the
+    /// old ending off with the old continuation bit — otherwise a full-screen
+    /// program redrawing over an old row leaves it wearing somebody else's.
+    #[test]
+    fn a_row_a_feed_lands_on_loses_the_ending_it_used_to_have() {
+        let mut vt = Vt::new(Config {
+            cols: 20,
+            rows: 4,
+            ..Config::default()
+        });
+        vt.feed(b"one\r\ntwo\r\n");
+        assert_ne!(vt.grid().line_end(1), 0);
+        // Home, then write over row 1 without ending it.
+        vt.feed(b"\x1b[2;1Hover");
+        assert_eq!(vt.grid().line_end(1), 0);
+    }
+
+    /// The printer dumps the grid rather than the stream, so without a skip it
+    /// would be the one reader that prints the terminal's own annotations.
+    #[test]
+    fn the_printer_and_a_host_query_do_not_see_a_mark() {
+        let mut vt = Vt::new(Config {
+            cols: 20,
+            rows: 4,
+            show_control_chars: true,
+            decrqcra: true,
+            printer_ctrl_sequence: true,
+            ..Config::default()
+        });
+        // Auto print on, then a line with a bell in it.
+        vt.feed(b"\x1b[?5ihi\x07there\r\n");
+        assert_eq!(row(&vt, 0), "hi^Gthere");
+        let printed: String = vt
+            .take_printer_events()
+            .into_iter()
+            .filter_map(|e| match e {
+                printer::PrinterEvent::Write(s) => Some(s),
+                _ => None,
+            })
+            .collect();
+        assert!(printed.contains("hithere"), "{printed:?}");
+        assert!(!printed.contains('^'), "{printed:?}");
+
+        // And the checksum a host can ask for is of what the host wrote. The
+        // two rectangles are different widths on purpose: the marks take two
+        // columns, so asking for the same *columns* would be asking about two
+        // trailing spaces rather than about the skip. These two cover the same
+        // seven characters.
+        vt.feed(b"\x1b[1;1;1;1;1;9*y");
+        let with_mark = vt.take_reply();
+        let mut plain = Vt::new(Config {
+            cols: 20,
+            rows: 4,
+            decrqcra: true,
+            ..Config::default()
+        });
+        plain.feed(b"hi\x07there\r\n\x1b[1;1;1;1;1;7*y");
+        assert_eq!(with_mark, plain.take_reply());
     }
 }

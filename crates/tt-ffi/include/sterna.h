@@ -121,6 +121,42 @@
 #define TT_ATTR2_PROTECT 1024
 
 /**
+ * This cell is a mark **the terminal wrote about a control character**, not
+ * text the host sent — `terminal.show_control_chars`. The distinction is the
+ * whole point of the bit: a host is perfectly entitled to send the two
+ * characters `^` and `M`, and without this nothing could tell that apart from
+ * the terminal's own note that a CR went past.
+ *
+ * It is also what keeps the promise that a mark is annotation and never
+ * content: every reader of grid *text* — the clipboard, the printer's dump,
+ * Find, the highlight rules, `LogIncludeScreenBuffer` — skips a cell carrying
+ * it. The session log and the macro tap need no such check, because the write
+ * path that puts these down deliberately does not tap.
+ */
+#define TT_ATTR_CONTROL 2048
+
+/**
+ * A line ending arrived on this row and it had a CR in it, and the same for an
+ * LF — `terminal.show_eol`. Both live on **cell 0 of the row the terminator
+ * left**, which is the trick [`ATTR_LINE_CONTINUED`] already uses for the
+ * mirror-image question: [`Line`] is a bare `Vec<Cell>`, there is no per-line
+ * struct to hold this, and making one would ripple through `absolute_line`,
+ * the scrollback and the whole FFI seam for two bits.
+ *
+ * A soft wrap sets neither, which is what makes the pair worth having: with
+ * them the frontend can tell a line the host ended from one the terminal
+ * broke, and say *how* it was ended, neither of which survives anywhere else.
+ */
+#define TT_ATTR_EOL_CR 4096
+
+#define TT_ATTR_EOL_LF 8192
+
+/**
+ * Both ends, for the callers that only want to ask "did this line end".
+ */
+#define TT_ATTR_EOL_MASK (TT_ATTR_EOL_CR | TT_ATTR_EOL_LF)
+
+/**
  * Tera Term's `AttrDefaultFG` / `AttrDefaultBG` are both 0, not 7/0.
  */
 #define TT_DEFAULT_FG 0

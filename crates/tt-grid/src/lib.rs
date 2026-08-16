@@ -976,8 +976,14 @@ impl Grid {
         // and sets the bit in the wrap path without gating on anything, which
         // leaves the flag stale in exactly the case where nothing reads it.
         // Clearing unconditionally is the same terminal and a coherent grid.
+        //
+        // [`ATTR_EOL_MASK`] goes with it, for the reason the comment above
+        // gives about the continuation bit: a row the cursor has just arrived
+        // on has not ended yet, and a full-screen program that redraws over an
+        // old row would otherwise leave it wearing the ending of whatever text
+        // used to be there.
         let y = self.cursor.y;
-        self.lines[y][0].attrs &= !ATTR_LINE_CONTINUED;
+        self.lines[y][0].attrs &= !(ATTR_LINE_CONTINUED | ATTR_EOL_MASK);
     }
 
     /// `BuffLineContinued` (`buffer.c:5366`) — mark the cursor's row as
