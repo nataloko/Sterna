@@ -640,6 +640,12 @@ void TerminalView::applySettings()
         return value.isEmpty() ? fallback : value == QLatin1String("on");
     };
     setLineEditEnabled(flag("terminal.line_edit", false));
+    // The two that decide how a line's ending is drawn. The third,
+    // `terminal.show_control_chars`, is the core's — it writes cells — and is
+    // read here only because it also decides whether the ending is *spelt*.
+    m_showControlChars = flag("terminal.show_control_chars", false);
+    m_showEol = flag("terminal.show_eol", false);
+    m_hideCrLf = flag("terminal.hide_cr_lf", false);
     m_clipboard.autoCopy = flag("clipboard.auto_copy", m_clipboard.autoCopy);
     m_clipboard.selectOnlyByLButton =
         flag("clipboard.select_only_by_lbutton", m_clipboard.selectOnlyByLButton);
@@ -779,6 +785,68 @@ void TerminalView::requestRepaint()
     if (!m_repaint->isActive()) {
         m_repaint->start(int(kMinFrameMs - since));
     }
+}
+
+void TerminalView::paintLineEnd(QPainter &p, const TtCell *cells, size_t len, int y)
+{
+    // Which bytes ended this row, recorded by the parser on cell 0 — the same
+    // cell `TT_ATTR_LINE_CONTINUED` uses to say the opposite thing. A row that
+    // wrapped, was erased, or is still being written carries neither bit, which
+    // is what makes the mark worth having: a soft wrap now reads differently
+    // from a line the host actually ended.
+    const uint32_t eol = len > 0 ? (cells[0].attrs & TT_ATTR_EOL_MASK) : 0;
+    if (eol == 0) {
+        return;
+    }
+
+    QString mark;
+    if (m_showControlChars && !m_hideCrLf) {
+        // Spelt, because the switch says show control characters and these are
+        // two control characters. This is the answer to the question the whole
+        // feature exists for: `^M^J`, `^M` or `^J`, whichever really arrived.
+        if (eol & TT_ATTR_EOL_CR) {
+            mark += QStringLiteral("^M");
+        }
+        if (eol & TT_ATTR_EOL_LF) {
+            mark += QStringLiteral("^J");
+        }
+    } else if (m_showEol) {
+        // U+00B6, and deliberately not the Control Pictures block: DejaVu Sans
+        // Mono has no U+2400 glyphs and CI's runner carries only
+        // `fonts-dejavu-core`, so `U+240D` would arrive from a fallback family
+        // or as a box. The pilcrow is Latin-1 and is what an editor showing
+        // line ends has always used.
+        mark = QStringLiteral("¶");
+    }
+    if (mark.isEmpty()) {
+        return;
+    }
+
+    // One column of air past the last thing on the row, so the mark reads as
+    // something after the line rather than part of it.
+    int end = int(len);
+    while (end > 0 && cells[end - 1].text[0] == uint32_t(' ')
+           && cells[end - 1].width_class != TT_WIDTH_PAD) {
+        end--;
+    }
+    const int at = end == 0 ? 0 : end + 1;
+    // The gutter's rule, for the reason the gutter learnt it: a widget clips
+    // its own painting, so a mark that does not fit would be cut rather than
+    // spilled — and half a `^M` is a lie about what ended the line. Draw
+    // nothing instead.
+    if (at + mark.size() > int(len)) {
+        return;
+    }
+
+    const int cw = m_theme.cellWidth();
+    const int ch = m_theme.cellHeight();
+    // No `fillRect`: every cell of this row has already been painted by its own
+    // run, so this draws over a background that is already right — including a
+    // selection's, which the mark sits on top of rather than joining.
+    p.setPen(m_theme.annotationColor());
+    p.setFont(m_theme.font());
+    p.drawText(QPoint(at * cw + m_theme.textOffsetX(), y * ch + m_theme.baseline()),
+               mark);
 }
 
 void TerminalView::paintEvent(QPaintEvent *)
@@ -935,6 +1003,15 @@ void TerminalView::paintEvent(QPaintEvent *)
             QColor bg;
             m_theme.resolve(cell, x >= selFrom && x < selTo, screenReverse, &fg, &bg,
                             highlighted ? &over : nullptr);
+            if (cell.attrs & TT_ATTR_CONTROL) {
+                // A `^G` the terminal wrote, not two characters the host sent.
+                // Only the ink moves: the background stays whatever the run
+                // around it resolved to, so a mark inside a coloured line does
+                // not punch a hole in it. Nothing else is needed to keep the
+                // batching honest — `joins` below already compares `fg`, so the
+                // run flushes either side of the mark by itself.
+                fg = m_theme.annotationColor();
+            }
             // A rule's own bold and underline join the cell's, which is why
             // these two read the combined word rather than `cell.attrs`.
             const uint32_t attrs = cell.attrs | over.attrs;
@@ -972,6 +1049,8 @@ void TerminalView::paintEvent(QPaintEvent *)
             }
         }
         flush();
+
+        paintLineEnd(p, cells, len, y);
     }
 
     // Sixel pixels are drawn after the grid they replaced and before the
@@ -2325,7 +2404,14 @@ QString TerminalView::selectedText() const
                             static_cast<int>(len));
         QString line;
         for (int x = from; x < to; x++) {
-            if (cells[x].width_class == TT_WIDTH_PAD) {
+            // A control mark is the terminal annotating its own screen, so it
+            // is not in a copy of what the host said — the promise deviation 20
+            // keeps for the line-number gutter by putting it in another widget,
+            // kept here by an attribute bit instead. Unconditional rather than
+            // gated on `m_showControlChars`, because a copy made after the
+            // switch was turned off must not pick up marks still on screen.
+            if (cells[x].width_class == TT_WIDTH_PAD
+                || (cells[x].attrs & TT_ATTR_CONTROL) != 0) {
                 continue;
             }
             line += cellText(cells[x]);

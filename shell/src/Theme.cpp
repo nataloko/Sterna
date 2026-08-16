@@ -105,7 +105,7 @@ QColor Theme::shaded(const QColor &background) const
                   mix(background.blue(), to.blue()));
 }
 
-QColor Theme::lineNumberColor() const
+QColor Theme::annotationColor() const
 {
     // Against `m_background` rather than `m_normal[1]`, so the digits follow
     // the disconnected shade the rest of the window is wearing instead of
