@@ -344,7 +344,10 @@ void QuickButtonBar::rebuildPageColumn()
     for (QToolButton *widget : m_widgets) {
         delete widget;
     }
-    m_widgets.assign(m_set.buttons.size(), nullptr);
+    // `fill` and not `assign`: the latter is Qt 6.6 and CI builds against the
+    // Ubuntu container's 6.4.2, where this is the difference between a green
+    // run and a compile error nothing local would have shown.
+    m_widgets.fill(nullptr, m_set.buttons.size());
     delete m_separator;
     m_separator = nullptr;
     // **The action and its widget, both.** `m_addWidget` is not in `m_widgets`
