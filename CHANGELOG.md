@@ -13,6 +13,11 @@ are available from the [GitHub releases page].
   what came back was `os error 22` rather than a reconnection. It is found
   within a second now, from the clock, and it starts the same wait for the port
   as every other kind of disconnection.
+- A serial port coming back on Windows is opened after the ordinary settling
+  delay — 500 ms as shipped — rather than the two seconds meant for a port
+  nobody could name. Windows always knows exactly which port arrived; the
+  longer wait is for the Linux case where a device node can appear before it is
+  usable and need not even be the adapter that left.
 
 ### Changed
 
