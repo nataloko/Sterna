@@ -47,8 +47,10 @@ public:
         Down,
         /// An attempt is under way and asking questions — an SSH handshake.
         Connecting,
-        /// A serial port that went away is being waited for. Still a red chip:
-        /// the link *is* down, and only the words change.
+        /// A serial port that went away is being waited for. An amber chip: the
+        /// link is down, so the chip is not the connected one, and something is
+        /// already being done about it, so it is not the red one either — red
+        /// is for a session that will stay down until somebody acts.
         Reopening,
         /// Connected; the text is `describe()`.
         Up,
@@ -142,7 +144,10 @@ private:
     QString m_connectionText;
     QString m_message;
     bool m_active = false;
-    bool m_linkDown = true;
+    /// What the chip is painting. The whole state rather than a `down` flag:
+    /// waiting for a port is neither up nor plain down, and a bool cannot hold
+    /// three answers.
+    Link m_link = Link::Down;
     bool m_logging = false;
     bool m_logPaused = false;
     bool m_logBlinkOn = false;

@@ -29,9 +29,9 @@ use std::time::Duration;
 
 use serialport::COMPort;
 use windows_sys::Win32::Devices::Communication::{
-    ClearCommError, GetCommState, SetCommMask, SetCommState, SetupComm, WaitCommEvent, CE_BREAK,
-    COMSTAT, DCB, EVENPARITY, EV_BREAK, EV_ERR, EV_RXCHAR, MARKPARITY, NOPARITY, ODDPARITY,
-    ONESTOPBIT, SPACEPARITY, TWOSTOPBITS,
+    ClearCommError, GetCommModemStatus, GetCommState, SetCommMask, SetCommState, SetupComm,
+    WaitCommEvent, CE_BREAK, COMSTAT, DCB, EVENPARITY, EV_BREAK, EV_ERR, EV_RXCHAR, MARKPARITY,
+    NOPARITY, ODDPARITY, ONESTOPBIT, SPACEPARITY, TWOSTOPBITS,
 };
 use windows_sys::Win32::Foundation::{
     ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_INVALID_NAME, ERROR_IO_PENDING,
@@ -307,6 +307,27 @@ fn wait_ms(timeout: Duration) -> u32 {
     timeout.as_millis().clamp(1, u32::MAX as u128 - 1) as u32
 }
 
+/// Ask the driver whether the device is still attached.
+///
+/// **A COM handle whose adapter has been unplugged does not become readable,
+/// and it does not report anything at all until something touches it.** The
+/// pending `WaitCommEvent` is no help either: drivers differ on whether they
+/// complete it on removal, and one that does not leaves the worker blocked for
+/// ever. So the clock asks, once a second, through the cheapest call that
+/// reaches the device stack.
+///
+/// `GetCommModemStatus` and not `ClearCommError`, which is the other candidate:
+/// that one *clears* the line errors it reports, so a probe on a timer would
+/// eat the `CE_BREAK` the worker is about to publish.
+pub(super) fn health(port: &COMPort) -> Result<()> {
+    let mut bits = 0u32;
+    // SAFETY: the handle and the output word are live for the call.
+    if unsafe { GetCommModemStatus(port.as_raw_handle() as HANDLE, &mut bits) } == 0 {
+        return Err(Error::from_io(std::io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
 /// Output depth, retaining a break which `ClearCommError` would otherwise eat.
 pub(super) fn output_queue(port: &COMPort) -> Result<QueueStatus> {
     let mut errors = 0;
@@ -499,12 +520,17 @@ impl WindowsSerialWake {
                         }
                         .is_err()
                         {
-                            publish_end(&notice_tx, &worker_wake);
                             break;
                         }
                         // `SetCommMask(handle, 0)` is the documented way to
                         // cancel a WaitCommEvent; it completes with an empty
-                        // mask rather than reporting a disconnect.
+                        // mask rather than reporting a disconnect. **A device
+                        // that was pulled out lands here too**: the driver
+                        // cancels the pending request, `finish` reads that as
+                        // the `ERROR_OPERATION_ABORTED` it expects, and the
+                        // mask comes back empty. The two are indistinguishable
+                        // from inside this thread, which is why leaving is what
+                        // gets published rather than why it left.
                         if events == 0 {
                             break;
                         }
@@ -521,7 +547,6 @@ impl WindowsSerialWake {
                                 )
                             } == 0
                         {
-                            publish_end(&notice_tx, &worker_wake);
                             break;
                         }
                         Notice {
@@ -540,6 +565,15 @@ impl WindowsSerialWake {
                         Err(_) => break,
                     };
                 }
+                // **One exit, and it always knocks.** Every `break` above ends
+                // the only thing that can wake this port's frontend, so a
+                // worker that stopped quietly left a window watching a handle
+                // nothing would ever signal — connected as far as it knew,
+                // until somebody typed. Whether it stopped because the adapter
+                // was pulled out or because `cancel` asked is not a question
+                // this side can answer, and both want the same knock: the
+                // reader learns from the channel, which has ended either way.
+                publish_end(&notice_tx, &worker_wake);
                 drop(clone);
             })
             .map_err(Error::from_io)?;
@@ -608,10 +642,17 @@ impl WindowsSerialWake {
     }
 }
 
+/// Say that no more notices are coming, and wake whoever is waiting for one.
+///
+/// **`try_send`, and the signal happens either way.** The channel holds one
+/// notice, and blocking here on a frontend that has not read it yet would mean
+/// never signalling at all — the deadlock this function exists to prevent. When
+/// the End cannot be queued the pending notice is read first and the
+/// `acknowledge` that follows it fails, which reports the same disconnection
+/// through the path [`WindowsSerialWake::acknowledge`] already has for it.
 fn publish_end(tx: &SyncSender<Message>, wake: &ManualEvent) {
-    if tx.send(Message::End).is_ok() {
-        wake.signal();
-    }
+    let _ = tx.try_send(Message::End);
+    wake.signal();
 }
 
 #[cfg(test)]

@@ -9,6 +9,8 @@
 #include <QComboBox>
 #include <QFrame>
 #include <QMenu>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QHelpEvent>
@@ -156,6 +158,51 @@ private:
     bool m_elided = false;
 };
 
+/// The buttons' own viewport, and the reason the panel no longer resizes the
+/// window.
+///
+/// **A column of buttons in a plain layout demands its own height.** A
+/// `QBoxLayout`'s minimum is the sum of its children's, and a `QToolButton`'s
+/// minimum height is its natural height — so ten buttons made the window at
+/// least ten buttons tall, switching to a page with more of them grew the
+/// window to fit, and past the point where the screen ran out Qt distributed
+/// the shortfall instead and every button became a sliver. Three complaints,
+/// one missing widget.
+///
+/// `sizeHint` is where the fix lives rather than in the scrolling. A scroll
+/// area's own hint is its contents' height, which would leave the panel
+/// deciding how tall the window opens — so this one asks for the width its
+/// buttons need and **no height at all**. The height it gets is whatever is
+/// left beside the terminal, which is the rule for everything else in this
+/// panel: move the window's outer edge, never the terminal's.
+///
+/// The width includes the scrollbar, because "Fit to buttons" measures this
+/// hint and a fit that the scrollbar then ate would elide every caption the
+/// moment the panel filled up.
+class ButtonScroll : public QScrollArea {
+public:
+    using QScrollArea::QScrollArea;
+
+    QSize sizeHint() const override
+    {
+        const QWidget *column = widget();
+        if (!column) {
+            return QScrollArea::sizeHint();
+        }
+        int width = column->sizeHint().width() + 2 * frameWidth();
+        if (verticalScrollBarPolicy() != Qt::ScrollBarAlwaysOff) {
+            width += verticalScrollBar()->sizeHint().width();
+        }
+        return QSize(width, 0);
+    }
+
+    /// No floor of its own, for `BarButton::minimumSizeHint`'s reason. A scroll
+    /// area's own minimum is room for a scrollbar, a frame and a slice of
+    /// viewport, and it would quietly become the narrowest the panel could be —
+    /// the one number that decides that is the window's `kQuickPanelMinWidth`.
+    QSize minimumSizeHint() const override { return QSize(0, 0); }
+};
+
 } // namespace
 
 QuickButtonBar::QuickButtonBar(QWidget *parent) : QWidget(parent)
@@ -164,8 +211,43 @@ QuickButtonBar::QuickButtonBar(QWidget *parent) : QWidget(parent)
     setWindowTitle(tr("Quick buttons"));
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
-    m_layout = new QBoxLayout(QBoxLayout::TopToBottom, this);
-    m_layout->setContentsMargins(4, 4, 4, 4);
+    // Two parts, and which part a thing goes in is the whole layout decision
+    // here: the buttons scroll, and the controls for working the panel do not.
+    // Somebody with thirty buttons must still be able to reach **+** and the
+    // page list without scrolling to the end of their own list to find them.
+    m_outer = new QBoxLayout(QBoxLayout::TopToBottom, this);
+    m_outer->setContentsMargins(4, 4, 4, 4);
+    m_outer->setSpacing(4);
+
+    m_scroll = new ButtonScroll(this);
+    m_scroll->setObjectName(QStringLiteral("quickButtonScroll"));
+    m_scroll->setFrameShape(QFrame::NoFrame);
+    // Never sideways: a caption too long for the panel is elided by
+    // `BarButton`, which is the answer this panel already had, and a horizontal
+    // bar would take a row of pixels off every button to say so twice.
+    m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    // The column is resized to the viewport's width, so a button still gets the
+    // panel's full width and elides rather than scrolling out to the right.
+    m_scroll->setWidgetResizable(true);
+    // The terminal keeps the keyboard. A scroll area takes focus on a wheel by
+    // default, which would leave the next keystroke going nowhere; the wheel
+    // still scrolls it, because that is delivered to whatever is under the
+    // pointer.
+    m_scroll->setFocusPolicy(Qt::NoFocus);
+    // The panel's own background, not a text area's: this is a strip of
+    // chrome, and a viewport painting `Base` would draw a white well down the
+    // side of a dark terminal.
+    m_scroll->viewport()->setAutoFillBackground(false);
+
+    m_column = new QWidget(m_scroll);
+    m_column->setObjectName(QStringLiteral("quickButtonColumn"));
+    m_scroll->setWidget(m_column);
+
+    m_layout = new QBoxLayout(QBoxLayout::TopToBottom, m_column);
+    // No margins of its own: the panel's are on the layout above, and a second
+    // set would inset the buttons from the scrollbar by twice as much again.
+    m_layout->setContentsMargins(0, 0, 0, 0);
     m_layout->setSpacing(4);
     // One trailing stretch, so the buttons keep the top of the panel and the
     // room the user has dragged out collects below them. Not centred along
@@ -176,14 +258,33 @@ QuickButtonBar::QuickButtonBar(QWidget *parent) : QWidget(parent)
     // only one `clearContents` leaves behind.
     m_layout->addStretch();
 
+    m_outer->addWidget(m_scroll, 1);
+
     setContextMenuPolicy(Qt::CustomContextMenu);
     connect(this, &QWidget::customContextMenuRequested, this,
             &QuickButtonBar::showContextMenu);
+    // **The column needs its own**, because the menu is now two widgets away
+    // from the panel and a context-menu event that has to climb through a
+    // scroll area's viewport to get here is a route worth not depending on.
+    // Mapped through the screen rather than through the parent chain: the
+    // column is scrolled, so its origin is not the panel's.
+    m_column->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_column, &QWidget::customContextMenuRequested, this,
+            [this](const QPoint &pos) {
+                showContextMenu(mapFromGlobal(m_column->mapToGlobal(pos)));
+            });
 }
 
 QToolButton *QuickButtonBar::addButton(QAction *action)
 {
-    auto *button = new BarButton(this);
+    QToolButton *button = makeButton(action, m_column);
+    m_layout->insertWidget(m_layout->count() - 1, button);
+    return button;
+}
+
+QToolButton *QuickButtonBar::makeButton(QAction *action, QWidget *parent)
+{
+    auto *button = new BarButton(parent);
     button->setDefaultAction(action);
     // Text: there is no icon theme this program ships, and there is certainly
     // no themed icon for "show version".
@@ -199,13 +300,12 @@ QToolButton *QuickButtonBar::addButton(QAction *action)
     // width (or height, laid across) and the surplus along its own direction
     // goes to the trailing stretch, which is the only expanding item here.
     button->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
-    m_layout->insertWidget(m_layout->count() - 1, button);
     return button;
 }
 
 void QuickButtonBar::clearContents()
 {
-    // Take everything out and delete it, the stretch included, then put the
+    // The scrolling column: everything in it and the stretch included, then the
     // stretch back — a stretch is a spacer item with no widget, so this is
     // cheaper than finding the widgets among them.
     while (QLayoutItem *item = m_layout->takeAt(0)) {
@@ -214,9 +314,18 @@ void QuickButtonBar::clearContents()
     }
     m_layout->addStretch();
     m_widgets.clear();
+
+    // ...and the footer, one at a time, because the sweep above cannot reach
+    // it: these belong to the panel rather than to the page showing, which is
+    // exactly why they are down there. **Naming them is the point** — the rule
+    // a duplicated **+** taught this class is that a partial rebuild has to
+    // list what it leaves behind, and what these leave behind is every
+    // `QAction`, deleted below.
+    delete m_separator;
     m_separator = nullptr;
-    // Deleted by the sweep above; the pointers have to follow them.
+    delete m_pageBox;
     m_pageBox = nullptr;
+    delete m_addWidget;
     m_addWidget = nullptr;
 
     // The actions are children of this widget rather than of the buttons, so
@@ -306,9 +415,43 @@ void QuickButtonBar::setButtons(const QuickButtonSet &set)
         });
     }
 
+    buildFooter();
+    rebuildPageColumn();
+}
+
+void QuickButtonBar::buildFooter()
+{
+    if (!m_set.buttons.isEmpty()) {
+        m_separator = new QFrame(this);
+        m_separator->setFrameShadow(QFrame::Sunken);
+        // A rule across the panel, because the buttons run down it. There is
+        // no other case: the panel is fixed to the right-hand side.
+        m_separator->setFrameShape(QFrame::HLine);
+        m_outer->addWidget(m_separator);
+    }
+
+    // **At the bottom, and outside the scrolling part.** It used to sit under
+    // the last button, which on a panel with more buttons than room put the way
+    // to make another one somewhere off the end of the list. The empty panel is
+    // still what this is mainly for: it is the shortest route to the first
+    // button, and it keeps View > Show quick buttons truthful before one has
+    // been defined.
+    m_add = new QAction(QStringLiteral("+"), this);
+    m_add->setObjectName(QStringLiteral("quickButtonAdd"));
+    m_add->setToolTip(tr("This button opens the editor for a new quick button."));
+    m_addWidget = makeButton(m_add, this);
+    m_outer->addWidget(m_addWidget);
+    connect(m_add, &QAction::triggered, this, &QuickButtonBar::addRequested);
+
     // Only when there is a second page, the same rule that keeps the bar itself
     // out of the way until a button exists — so a panel nobody has made a page
     // on is the panel it always was, fitted width included.
+    //
+    // **Under the `+` rather than over the buttons.** The two of them are the
+    // panel's controls and they belong together, out of the way of the list
+    // they work on; a drop-down at the top was one more thing between somebody
+    // and the button they were reaching for, and it scrolled away with the
+    // buttons the moment the list outgrew the panel.
     if (pageCount() > 1) {
         m_pageBox = new PageBox(this);
         m_pageBox->setObjectName(QStringLiteral("quickButtonPageBox"));
@@ -327,7 +470,7 @@ void QuickButtonBar::setButtons(const QuickButtonSet &set)
         // is never told. Set before `connect` rather than under a blocker, so
         // there is no signal to suppress.
         m_pageBox->setCurrentIndex(m_page - 1);
-        m_layout->insertWidget(0, m_pageBox);
+        m_outer->addWidget(m_pageBox);
         connect(m_pageBox, &QComboBox::currentIndexChanged, this,
                 [this](int index) {
                     // **A combo popup opens under the pointer**, so the release
@@ -341,15 +484,21 @@ void QuickButtonBar::setButtons(const QuickButtonSet &set)
                     }
                 });
     }
-
-    rebuildPageColumn();
 }
 
 void QuickButtonBar::rebuildPageColumn()
 {
-    // Take out only what belongs to the page: the buttons, the rule and the
-    // `+`. The actions stay — they are the whole list's, and deleting them
-    // would take every shortcut and every running repeat with them.
+    // **Only the buttons.** Everything else the panel is made of — the rule,
+    // the `+`, the page list — belongs to the whole set rather than to the page
+    // showing, and lives in the footer, which a page switch does not touch. The
+    // actions stay too: they are the whole list's, and deleting them would take
+    // every shortcut and every running repeat with them.
+    //
+    // That is also why this can say what it deletes in one line now. The old
+    // shape of this function had to rebuild the `+` as well, and the `+`'s
+    // widget is not in `m_widgets` — one slot per button — so a version that
+    // deleted the action and not the widget left a live button in the layout
+    // still reading `+`, and every page switch added another one.
     for (QToolButton *widget : m_widgets) {
         delete widget;
     }
@@ -357,16 +506,6 @@ void QuickButtonBar::rebuildPageColumn()
     // Ubuntu container's 6.4.2, where this is the difference between a green
     // run and a compile error nothing local would have shown.
     m_widgets.fill(nullptr, m_set.buttons.size());
-    delete m_separator;
-    m_separator = nullptr;
-    // **The action and its widget, both.** `m_addWidget` is not in `m_widgets`
-    // — that vector is one slot per button — so deleting only the action left a
-    // live `QToolButton` in the layout still reading `+`, and every page switch
-    // added another.
-    delete m_add;
-    m_add = nullptr;
-    delete m_addWidget;
-    m_addWidget = nullptr;
 
     for (int i = 0; i < m_set.buttons.size(); i++) {
         if (static_cast<int>(m_set.buttons[i].page) != m_page) {
@@ -375,23 +514,6 @@ void QuickButtonBar::rebuildPageColumn()
         m_widgets[i] = addButton(m_actions[i]);
         describeAction(i);
     }
-
-    if (!m_set.buttons.isEmpty()) {
-        m_separator = new QFrame(this);
-        m_separator->setFrameShadow(QFrame::Sunken);
-        // A rule across the panel, because the buttons run down it. There is
-        // no other case: the panel is fixed to the right-hand side.
-        m_separator->setFrameShape(QFrame::HLine);
-        m_layout->insertWidget(m_layout->count() - 1, m_separator);
-    }
-    // The empty panel is still useful: this is its shortest route to the first
-    // button, and it keeps View > Show quick buttons truthful before one has
-    // been defined.
-    m_add = new QAction(QStringLiteral("+"), this);
-    m_add->setObjectName(QStringLiteral("quickButtonAdd"));
-    m_add->setToolTip(tr("This button opens the editor for a new quick button."));
-    m_addWidget = addButton(m_add);
-    connect(m_add, &QAction::triggered, this, &QuickButtonBar::addRequested);
 }
 
 void QuickButtonBar::setPage(int page)

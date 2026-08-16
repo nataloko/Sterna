@@ -25,7 +25,11 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QKeyEvent>
+#include <QWheelEvent>
 #include <QPlainTextEdit>
+#include <QPointer>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QSpinBox>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -378,8 +382,15 @@ void an_unrelated_setting_leaves_the_buttons_alone()
     CHECK(bar != nullptr);
     CHECK(spin([bar] { return bar->isVisible(); }, 2000));
 
-    QAction *before = buttonAction(window, 0);
-    CHECK(before != nullptr);
+    // **A `QPointer`, because the second half of this case is about an object
+    // that gets destroyed.** A raw pointer compared after the rebuild is a
+    // comparison against freed memory, and the answer depends on whether the
+    // allocator happened to hand the same address back — which it does, as soon
+    // as anything changes the order in which this class deletes its widgets.
+    // The question being asked is "was it destroyed", and this is the type that
+    // answers it.
+    QPointer<QAction> before = buttonAction(window, 0);
+    CHECK(!before.isNull());
     const int cols = window.session()->cols();
     const int rows = window.session()->rows();
 
@@ -387,7 +398,7 @@ void an_unrelated_setting_leaves_the_buttons_alone()
                                        QStringLiteral("on"), nullptr));
     qApp->processEvents();
 
-    CHECK(buttonAction(window, 0) == before);
+    CHECK(before == buttonAction(window, 0));
     CHECK(bar->buttons().size() == 1);
     // And the terminal it shares the window with kept its size.
     CHECK(window.session()->cols() == cols);
@@ -398,7 +409,11 @@ void an_unrelated_setting_leaves_the_buttons_alone()
     QVector<QuickButton> edited = bar->buttons();
     edited[0].label = QStringLiteral("Renamed");
     bar->setButtons(QuickButtonSet {edited, {}});
-    CHECK(buttonAction(window, 0) != before);
+    CHECK(before.isNull());
+    CHECK(buttonAction(window, 0) != nullptr);
+    if (buttonAction(window, 0)) {
+        CHECK(buttonAction(window, 0)->text() == QLatin1String("Renamed"));
+    }
     CHECK(bar->buttons()[0].label == QLatin1String("Renamed"));
 }
 
@@ -1108,6 +1123,49 @@ QComboBox *pageBoxOf(const MainWindow &window)
     return window.findChild<QComboBox *>(QStringLiteral("quickButtonPageBox"));
 }
 
+QScrollArea *scrollOf(const MainWindow &window)
+{
+    return window.findChild<QScrollArea *>(QStringLiteral("quickButtonScroll"));
+}
+
+/// The **+**, found the way somebody looking at the panel would find it. It
+/// carries no index, so there is nothing else to ask for it by.
+QToolButton *plusOf(const MainWindow &window)
+{
+    QuickButtonBar *bar = barOf(window);
+    if (!bar) {
+        return nullptr;
+    }
+    for (QToolButton *widget : bar->findChildren<QToolButton *>()) {
+        if (widget->text() == QLatin1String("+")) {
+            return widget;
+        }
+    }
+    return nullptr;
+}
+
+/// A `[Sterna Buttons]` section with `first` buttons on page 1 and `second` on
+/// page 2 — enough of them, at the sizes below, to outgrow any panel.
+QByteArray buttonsOnTwoPages(int first, int second)
+{
+    QByteArray out = "[Sterna Buttons]\r\n";
+    if (second > 0) {
+        out += "Page2Name=BMCs\r\n";
+    }
+    int n = 0;
+    for (int i = 0; i < first + second; i++) {
+        n++;
+        QString entry = QStringLiteral("Button%1Label=Command %1\r\n"
+                                       "Button%1Value=command$0D\r\n")
+                            .arg(n);
+        if (i >= first) {
+            entry += QStringLiteral("Button%1Page=2\r\n").arg(n);
+        }
+        out += entry.toUtf8();
+    }
+    return out;
+}
+
 /// The selector is chrome, so it arrives with the second page and not before.
 void a_second_page_puts_a_selector_on_the_panel()
 {
@@ -1192,6 +1250,158 @@ void the_panel_shows_only_the_current_page()
     bar->setPage(2);
     bar->setPage(1);
     CHECK(plusCount() == 1);
+}
+
+/// A long list scrolls. It does not make the window taller, and it does not
+/// make the buttons smaller.
+///
+/// Both of those were one missing widget: a `QBoxLayout`'s minimum is the sum
+/// of its children's, and a `QToolButton`'s minimum height is its natural
+/// height — so the panel's minimum grew with the list until the screen ran out,
+/// and past that point Qt shared the shortfall among the buttons and every one
+/// of them became a sliver.
+void a_long_list_scrolls_rather_than_growing_the_window()
+{
+    QTemporaryDir few;
+    QTemporaryDir many;
+    CHECK(few.isValid() && many.isValid());
+
+    int shortWindow = 0;
+    {
+        MainWindow window(writeIni(few, buttonsOnTwoPages(3, 0)));
+        window.show();
+        QuickButtonBar *bar = barOf(window);
+        CHECK(bar != nullptr && spin([bar] { return bar->isVisible(); }, 2000));
+        shortWindow = window.height();
+    }
+
+    MainWindow window(writeIni(many, buttonsOnTwoPages(30, 0)));
+    window.show();
+    QuickButtonBar *bar = barOf(window);
+    CHECK(bar != nullptr && spin([bar] { return bar->isVisible(); }, 2000));
+
+    // **The terminal decides how tall the window is, whatever the panel holds.**
+    CHECK(window.height() == shortWindow);
+
+    // ...and the way that is paid for is a scrollbar with somewhere to go.
+    QScrollArea *scroll = scrollOf(window);
+    CHECK(scroll != nullptr);
+    CHECK(scroll != nullptr
+          && spin([scroll] { return scroll->verticalScrollBar()->maximum() > 0; },
+                  2000));
+
+    // The buttons keep their own height. This is the assertion the complaint
+    // was about: thirty of them used to share the panel's height between them.
+    QToolButton *first = bar->buttonWidget(0);
+    CHECK(first != nullptr);
+    if (!first) {
+        return;
+    }
+    CHECK(first->height() >= first->sizeHint().height());
+
+    // ...and a wheel notch moves it. **Delivered to the viewport, which is
+    // where a real one arrives**: a wheel over a button propagates up the
+    // parent chain, because `QToolButton` does not handle one, but only when it
+    // is *spontaneous* — `QApplication::notify` returns a synthesized wheel
+    // event straight to its receiver rather than propagating it, so a test that
+    // sent one to the button would be asserting on that rule and not on this
+    // panel. What is ours to get wrong is the rest: an area that scrolls, with
+    // somewhere to scroll to, and a focus policy that does not steal the
+    // keyboard on the way.
+    QScrollBar *vertical = scroll->verticalScrollBar();
+    const int at = vertical->value();
+    const QPointF middle(scroll->viewport()->width() / 2.0,
+                         scroll->viewport()->height() / 2.0);
+    QWheelEvent wheel(middle, scroll->viewport()->mapToGlobal(middle),
+                      QPoint(0, -40), QPoint(0, -120), Qt::NoButton,
+                      Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(scroll->viewport(), &wheel);
+    CHECK(vertical->value() > at);
+    CHECK(scroll->focusPolicy() == Qt::NoFocus);
+
+    // A right-click still finds the button under it. `indexAt` walks up from
+    // `childAt`, and the buttons are two widgets deeper than they were — a
+    // scroll area's viewport is between them and the panel now.
+    //
+    // Back to the top first: a button scrolled out of the viewport is still
+    // `isVisible()`, and its middle is a point outside the panel. That is not a
+    // fault to assert on — nobody can click what is not on screen — but it is a
+    // very easy way to write a test that fails for the wrong reason.
+    vertical->setValue(0);
+    spin([] { return false; }, 50);
+    const QPoint middleOf(first->width() / 2, first->height() / 2);
+    const QWidget *hit = bar->childAt(bar->mapFromGlobal(first->mapToGlobal(middleOf)));
+    CHECK(hit == first || (hit && first->isAncestorOf(hit)));
+}
+
+/// The **+** and the page list are under the scrolling part, not in it.
+///
+/// Somebody with more buttons than panel must not have to scroll to the end of
+/// their own list to find the way to make another one, or to change page.
+void the_add_button_and_the_page_list_stay_under_the_scrolling_part()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    MainWindow window(writeIni(dir, buttonsOnTwoPages(30, 2)));
+    window.show();
+    QuickButtonBar *bar = barOf(window);
+    CHECK(bar != nullptr && spin([bar] { return bar->isVisible(); }, 2000));
+
+    QScrollArea *scroll = scrollOf(window);
+    QToolButton *plus = plusOf(window);
+    QComboBox *box = pageBoxOf(window);
+    CHECK(scroll != nullptr);
+    CHECK(plus != nullptr);
+    CHECK(box != nullptr);
+    if (!scroll || !plus || !box) {
+        return;
+    }
+
+    // Not inside it: the ancestry is what makes them immune to the scroll, and
+    // the geometry below is only what that looks like.
+    CHECK(!scroll->isAncestorOf(plus));
+    CHECK(!scroll->isAncestorOf(box));
+    // ...and in this order down the panel: buttons, then **+**, then the pages.
+    CHECK(plus->y() >= scroll->geometry().bottom());
+    CHECK(box->y() >= plus->geometry().bottom());
+
+    const int plusY = plus->y();
+    const int boxY = box->y();
+    QScrollBar *bar_ = scroll->verticalScrollBar();
+    CHECK(bar_->maximum() > 0);
+    bar_->setValue(bar_->maximum());
+    spin([] { return false; }, 50);
+    CHECK(plus->isVisible() && plus->y() == plusY);
+    CHECK(box->isVisible() && box->y() == boxY);
+}
+
+/// Changing page changes which buttons are drawn and nothing else.
+///
+/// It used to change the window: the panel's minimum was its list's height, so
+/// a page with more buttons on it than the one showing pushed the whole window
+/// taller — and left it there.
+void switching_pages_leaves_the_window_where_it_is()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    MainWindow window(writeIni(dir, buttonsOnTwoPages(2, 24)));
+    window.show();
+    QuickButtonBar *bar = barOf(window);
+    CHECK(bar != nullptr && spin([bar] { return bar->isVisible(); }, 2000));
+
+    const QSize before = window.size();
+    const int panel = bar->width();
+
+    bar->setPage(2);
+    spin([] { return false; }, 100);
+    CHECK(bar->page() == 2);
+    CHECK(window.size() == before);
+    CHECK(bar->width() == panel);
+
+    bar->setPage(1);
+    spin([] { return false; }, 100);
+    CHECK(window.size() == before);
+    CHECK(bar->width() == panel);
 }
 
 /// A shortcut is a key the host stops receiving. It must not come and go with
@@ -1974,6 +2184,17 @@ void render_widgets()
     pagedWindow.grab().save(g_writeTo
                             + QStringLiteral("/quick-buttons-page-two.png"));
 
+    // ...and a list longer than the panel, which is the state the scrolling is
+    // for: the buttons keep their size, the window keeps its height, and the
+    // **+** and the page list are still where they were.
+    QTemporaryDir crowded;
+    MainWindow crowdedWindow(writeIni(crowded, buttonsOnTwoPages(24, 3)));
+    crowdedWindow.resize(760, 400);
+    crowdedWindow.show();
+    spin([] { return false; }, 300);
+    crowdedWindow.grab().save(g_writeTo
+                              + QStringLiteral("/quick-buttons-scrolled.png"));
+
     QuickButtonsDialog pages(loadQuickButtons(pagedIni), 2,
                              pagedWindow.session(), &pagedWindow);
     pages.selectRow(4);
@@ -2019,6 +2240,9 @@ int main(int argc, char **argv)
     escape_stops_every_run_and_only_then();
     a_second_page_puts_a_selector_on_the_panel();
     the_panel_shows_only_the_current_page();
+    a_long_list_scrolls_rather_than_growing_the_window();
+    the_add_button_and_the_page_list_stay_under_the_scrolling_part();
+    switching_pages_leaves_the_window_where_it_is();
     a_shortcut_fires_from_another_page();
     switching_pages_leaves_a_repeat_running();
     the_remembered_page_is_opened_at();

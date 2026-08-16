@@ -5,6 +5,29 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+### Fixed
+
+- **A serial adapter unplugged on Windows is noticed.** The session went on
+  saying it was connected — nothing there becomes readable when a COM port's
+  device leaves, unlike a Unix device node — until somebody typed at it, and
+  what came back was `os error 22` rather than a reconnection. It is found
+  within a second now, from the clock, and it starts the same wait for the port
+  as every other kind of disconnection.
+
+### Changed
+
+- **The quick buttons scroll.** More of them than there was panel used to make
+  the window taller to fit, make it taller again on changing to a fuller page,
+  and, past the point where the screen ran out, share the panel's height among
+  the buttons until each was a sliver. The panel takes the height it is given
+  and the rest is one wheel away.
+- **The + is at the bottom of the panel and the page list is under it**, where
+  neither scrolls away from somebody with enough buttons to need them. The page
+  drop-down was at the top.
+- The status line paints a port it is **waiting for in amber** rather than in
+  the red it uses for a session that is simply down. Red is the state somebody
+  has to act on, and a reopen is already acting.
+
 ## [0.6.0] - 2026-08-16
 
 ### Added

@@ -68,6 +68,13 @@ impl Error {
     /// actually returns — an undocumented crate detail, and the reason this
     /// lives in one function instead of at each call site. The raw errnos are
     /// checked too, because a port opened by any other route reports those.
+    ///
+    /// **Win32 says the same thing in numbers Rust has no `ErrorKind` for**, so
+    /// that half needs [`windows_device_gone`] rather than `e.kind()`: an
+    /// unplugged adapter answers `ERROR_BAD_COMMAND`, which arrives as
+    /// `Uncategorized` and would fall through to [`Error::Io`]. What that looks
+    /// like is a window that goes on believing it is connected until somebody
+    /// types, and then says `os error 22` instead of reconnecting.
     pub fn from_io(e: std::io::Error) -> Error {
         use std::io::ErrorKind::*;
         #[cfg(unix)]
@@ -75,6 +82,10 @@ impl Error {
             e.raw_os_error(),
             Some(libc::EIO) | Some(libc::ENXIO) | Some(libc::ENODEV)
         ) {
+            return Error::Disconnected;
+        }
+        #[cfg(windows)]
+        if windows_device_gone(e.raw_os_error()) {
             return Error::Disconnected;
         }
         match e.kind() {
@@ -150,6 +161,68 @@ impl Error {
     }
 }
 
+/// The Win32 errors that mean **the device behind this handle has gone**.
+///
+/// Unix says it in three errnos and Rust gives two of them an `ErrorKind`;
+/// Windows says it in seven numbers and gives none of them one, so every answer
+/// here arrives as `ErrorKind::Uncategorized` and has to be recognised by value.
+/// `ERROR_BAD_COMMAND` is the one an FTDI or CDC adapter gives after a surprise
+/// removal, and the one that reached a user as `os error 22`.
+///
+/// The list is deliberately short: each entry is a driver's statement about the
+/// *device*, never about the request, because the cost of a wrong entry is a
+/// working session dropped. `ERROR_INVALID_HANDLE` is left out for that reason —
+/// it is what a bug in this program looks like, and swallowing it as a
+/// disconnect would hide one.
+#[cfg(any(windows, test))]
+mod device_gone {
+    /// The device object is gone; the I/O manager fails the request rather than
+    /// the driver refusing it.
+    pub(super) const ACCESS_DENIED: i32 = 5;
+    /// "The device does not recognize the command" — a stale COM handle.
+    pub(super) const BAD_COMMAND: i32 = 22;
+    /// "A device attached to the system is not functioning."
+    pub(super) const GEN_FAILURE: i32 = 31;
+    /// "The specified device is no longer available."
+    pub(super) const DEV_NOT_EXIST: i32 = 55;
+    pub(super) const NO_SUCH_DEVICE: i32 = 433;
+    pub(super) const DEVICE_NOT_CONNECTED: i32 = 1167;
+    pub(super) const DEVICE_REMOVED: i32 = 1617;
+
+    /// The numbers are literals so that the list compiles — and is tested —
+    /// where the tests run, which is not Windows. This is the diff that says
+    /// they are the real ones, made by the compiler rather than by reading.
+    #[cfg(windows)]
+    const _: () = {
+        use windows_sys::Win32::Foundation as win;
+        assert!(ACCESS_DENIED as u32 == win::ERROR_ACCESS_DENIED);
+        assert!(BAD_COMMAND as u32 == win::ERROR_BAD_COMMAND);
+        assert!(GEN_FAILURE as u32 == win::ERROR_GEN_FAILURE);
+        assert!(DEV_NOT_EXIST as u32 == win::ERROR_DEV_NOT_EXIST);
+        assert!(NO_SUCH_DEVICE as u32 == win::ERROR_NO_SUCH_DEVICE);
+        assert!(DEVICE_NOT_CONNECTED as u32 == win::ERROR_DEVICE_NOT_CONNECTED);
+        assert!(DEVICE_REMOVED as u32 == win::ERROR_DEVICE_REMOVED);
+    };
+}
+
+/// Whether a Win32 error code says the device has left. See [`device_gone`].
+#[cfg(any(windows, test))]
+pub(crate) fn windows_device_gone(code: Option<i32>) -> bool {
+    use device_gone::*;
+    matches!(
+        code,
+        Some(
+            ACCESS_DENIED
+                | BAD_COMMAND
+                | GEN_FAILURE
+                | DEV_NOT_EXIST
+                | NO_SUCH_DEVICE
+                | DEVICE_NOT_CONNECTED
+                | DEVICE_REMOVED
+        )
+    )
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -206,5 +279,51 @@ impl From<serialport::Error> for Error {
             serialport::ErrorKind::NoDevice => Error::Disconnected,
             _ => Error::from_io(std::io::Error::from(e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The Windows half of [`Error::from_io`], asserted on the list rather than
+    /// through the function: the arm that consults it is `#[cfg(windows)]` and
+    /// is not compiled where these tests run.
+    #[test]
+    fn a_removed_windows_device_is_a_disconnection() {
+        // The one a user reported. Everything else here shares its shape: the
+        // handle is still open and the device behind it is not.
+        assert!(windows_device_gone(Some(22)), "ERROR_BAD_COMMAND");
+        assert!(windows_device_gone(Some(5)), "ERROR_ACCESS_DENIED");
+        assert!(windows_device_gone(Some(31)), "ERROR_GEN_FAILURE");
+        assert!(windows_device_gone(Some(55)), "ERROR_DEV_NOT_EXIST");
+        assert!(windows_device_gone(Some(433)), "ERROR_NO_SUCH_DEVICE");
+        assert!(
+            windows_device_gone(Some(1167)),
+            "ERROR_DEVICE_NOT_CONNECTED"
+        );
+        assert!(windows_device_gone(Some(1617)), "ERROR_DEVICE_REMOVED");
+    }
+
+    /// The other half, and the one that costs a live session if it is wrong.
+    #[test]
+    fn an_ordinary_windows_failure_is_not_a_disconnection() {
+        assert!(!windows_device_gone(None), "no code at all");
+        assert!(
+            !windows_device_gone(Some(6)),
+            "ERROR_INVALID_HANDLE is a bug in this program, not an unplugged cable"
+        );
+        assert!(
+            !windows_device_gone(Some(995)),
+            "ERROR_OPERATION_ABORTED is a cancelled request, which `finish` expects"
+        );
+        assert!(
+            !windows_device_gone(Some(121)),
+            "ERROR_SEM_TIMEOUT is a quiet line"
+        );
+        assert!(
+            !windows_device_gone(Some(87)),
+            "ERROR_INVALID_PARAMETER is a setting this port cannot take"
+        );
     }
 }

@@ -75,6 +75,38 @@ fn a_serial_line_that_dropped_by_itself_starts_a_wait() {
     assert!(disconnected < reopening);
 }
 
+/// The same drop, found by the clock instead of by a read.
+///
+/// **This is the only way Windows finds one on a serial port.** An unplugged
+/// COM adapter makes no descriptor readable and completes no pending wait, so
+/// nothing calls `read` and nothing ever asks: the window went on saying
+/// "connected" until somebody typed at it, and then reported `os error 22`
+/// rather than reconnecting. `Session::tick` therefore has to reach the same
+/// `line_went_away` the read and write paths do, arming and all.
+#[test]
+fn a_line_the_clock_finds_gone_starts_the_same_wait() {
+    let (mut s, h) = connected_serial(PORT);
+    h.with(|st| st.disconnected = true);
+    // No pump: the point is that nothing read anything.
+    assert!(s.tick().is_ok(), "a dropped line is not a tick failure");
+
+    assert!(!s.is_connected());
+    assert!(s.is_reopening());
+    assert_eq!(s.reopening_port(), Some(PORT));
+
+    let events = drain(&mut s);
+    assert!(events.iter().any(|e| matches!(e, Event::Disconnected)));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, Event::Reopening(p) if p == PORT)));
+
+    // ...and it happens once. A second tick has no transport to ask.
+    assert!(s.tick().is_ok());
+    assert!(!drain(&mut s)
+        .iter()
+        .any(|e| matches!(e, Event::Disconnected)));
+}
+
 /// The setting ships on, so this is the off case rather than the on one.
 #[test]
 fn the_setting_off_means_no_wait() {

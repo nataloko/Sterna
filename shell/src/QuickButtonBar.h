@@ -14,6 +14,7 @@ class QBoxLayout;
 class QComboBox;
 class QMenu;
 class QFrame;
+class QScrollArea;
 class QToolButton;
 class Session;
 
@@ -42,6 +43,14 @@ class Session;
 /// raises the bar's own minimum with it and the panel can then grow but never
 /// shrink. Measured, both of them. A box layout gives each button the panel's
 /// full width for free and needs no lever at all.
+///
+/// It is in two parts, and which part a thing goes in is the layout decision
+/// worth knowing about here. The **buttons scroll**; the controls for working
+/// the panel — the **+** and the page list — sit under them and do not. The
+/// scrolling is what stops a long list deciding how tall the window is (see
+/// `ButtonScroll` in the implementation, where the reason is a size hint rather
+/// than the scrollbar), and keeping the two controls out of it is what stops
+/// them scrolling away from somebody who has enough buttons to need them.
 class QuickButtonBar : public QWidget {
     Q_OBJECT
 
@@ -141,15 +150,21 @@ private:
     int indexAt(const QPoint &pos) const;
     /// Caption and tooltip for `index`, including whatever it is doing now.
     void describeAction(int index);
-    /// A button for `action`, added before the trailing stretch.
+    /// A button for `action`, in the scrolling column, before its stretch.
     QToolButton *addButton(QAction *action);
-    /// Empty the layout and delete everything that was in it, actions
+    /// One styled button, parented to `parent` and in no layout yet — the
+    /// **+** is a button of the same shape and is not in the column.
+    QToolButton *makeButton(QAction *action, QWidget *parent);
+    /// Empty both parts and delete everything that was in them, actions
     /// included, leaving the stretch that holds what comes next to the top.
     void clearContents();
-    /// Rebuild only what belongs to the page showing: the buttons, the rule
-    /// under them and the **+**. The actions and the repeat state are the
-    /// whole list's and are left alone, which is what lets a page switch keep
-    /// a run going and a shortcut installed.
+    /// The rule, the **+** and the page list, under the scrolling column.
+    /// Built once per set, because none of it depends on the page showing.
+    void buildFooter();
+    /// Rebuild only the buttons the page showing has. The actions, the repeat
+    /// state and the whole footer are the set's rather than the page's and are
+    /// left alone, which is what lets a page switch keep a run going, a
+    /// shortcut installed and the panel's own size unchanged.
     void rebuildPageColumn();
 
     QuickButtonSet m_set;
@@ -170,8 +185,18 @@ private:
     /// ...and the widget holding it, which is **not** in `m_widgets` — that
     /// vector is one slot per button and this is not a button. Deleting the
     /// action alone leaves the widget in the layout still reading `+`, so a
-    /// page switch grew one more of them each time.
+    /// page switch grew one more of them each time. It is in the footer now,
+    /// which a page switch does not rebuild at all.
     QToolButton *m_addWidget = nullptr;
+    /// The panel: the scrolling column, then the footer under it.
+    QBoxLayout *m_outer = nullptr;
+    /// The scrolling part, and the widget inside it the buttons are laid out
+    /// in. `m_column` is what the scroll area sizes to its viewport, so a
+    /// button still gets the panel's width and elides rather than scrolling
+    /// sideways.
+    QScrollArea *m_scroll = nullptr;
+    QWidget *m_column = nullptr;
+    /// The buttons' own layout, inside `m_column`.
     QBoxLayout *m_layout = nullptr;
     QFrame *m_separator = nullptr;
     /// The page drop-down, or null when there is only one page — the same rule

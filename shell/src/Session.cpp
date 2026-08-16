@@ -86,6 +86,14 @@ Session::Session(int cols, int rows, QObject *parent)
     m_tick->setTimerType(Qt::VeryCoarseTimer);
     connect(m_tick, &QTimer::timeout, this, [this] {
         tt_session_tick(m_session);
+        // **Drained, because the clock can now report a disconnection.** A
+        // Windows serial port whose adapter was pulled out is found here and
+        // nowhere else — there is no readable descriptor to find it on — and
+        // the event that says so, and the reopen deadline `dispatch` arms
+        // through `rearm`, would otherwise sit in the queue with nothing left
+        // to come and collect them: the notifier is gone with the port. An
+        // ordinary tick drains nothing and costs one call.
+        dispatch();
         emit ticked();
     });
     m_tick->start();

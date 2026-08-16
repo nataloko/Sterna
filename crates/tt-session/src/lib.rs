@@ -581,7 +581,8 @@ impl Session {
     }
 
     /// Give the transport the wakeup a quiet line cannot give it — telnet's
-    /// keepalive, and nothing else so far. Cheap on every other transport.
+    /// keepalive, and Windows serial asking whether its adapter is still
+    /// plugged in. Cheap on every other transport.
     ///
     /// Separate from [`Session::pump`] because the whole point is that it runs
     /// when *nothing* arrived; a frontend drives it from a timer.
@@ -590,10 +591,21 @@ impl Session {
     /// is no transport, and it has deadlines of its own that this timer's
     /// once-a-second frontend cadence cannot express — see
     /// [`Session::reopen_deadline`].
+    ///
+    /// A transport that reports the line gone lands in the same
+    /// [`Session::line_went_away`] the read and write paths use, because a
+    /// disconnect discovered by the clock has to do all the same things: the
+    /// reopen is armed from there, and only there.
     pub fn tick(&mut self) -> Result<()> {
-        match self.conn.as_mut() {
-            Some(c) => c.tick(),
-            None => Ok(()),
+        let Some(conn) = self.conn.as_mut() else {
+            return Ok(());
+        };
+        match conn.tick() {
+            Err(e) if e.is_disconnected() => {
+                self.line_went_away();
+                Ok(())
+            }
+            other => other,
         }
     }
 
@@ -2799,6 +2811,22 @@ impl Transport for MemoryTransport {
     fn resize(&mut self, cols: u16, rows: u16) -> Result<()> {
         self.handle.with(|s| s.last_resize = Some((cols, rows)));
         Ok(())
+    }
+
+    /// The clock finds a dropped line as well as the read path does.
+    ///
+    /// That is not a convenience: it is how a Windows serial port finds one at
+    /// all. There is no descriptor that becomes readable when a COM adapter is
+    /// unplugged, so [`Transport::tick`] is the only thing that ever notices,
+    /// and the route from there to an armed reopen needs testing on a machine
+    /// with nothing to unplug.
+    fn tick(&mut self) -> Result<()> {
+        self.handle.with(|s| {
+            if s.disconnected {
+                return Err(Error::Disconnected);
+            }
+            Ok(())
+        })
     }
 
     fn link_kind(&self) -> tt_conn::LinkKind {
