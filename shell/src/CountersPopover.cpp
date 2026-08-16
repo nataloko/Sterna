@@ -138,7 +138,7 @@ void CountersPopover::refresh(const Session *session)
     if (!session) {
         return;
     }
-    m_session = session;
+    watch(session);
 
     const TtCounters c = session->counters();
     m_connected->setText(elapsedText(c.connected_ms));
@@ -163,6 +163,27 @@ void CountersPopover::refresh(const Session *session)
         setLamp(m_cd, lines.cd);
         setLamp(m_ri, lines.ri);
     }
+}
+
+void CountersPopover::watch(const Session *session)
+{
+    if (session == m_session) {
+        return;
+    }
+    // **The poll outlives nothing.** A `Qt::Popup` grabs the pointer and the
+    // keyboard, and it spins no event loop of its own — so the event loop goes
+    // on running underneath it, and a macro's `closett` or a control-socket
+    // request can delete the page this is showing while it is on screen. The
+    // timer would then read a freed `Session` a second later. `closePage`
+    // already carries the same rule for `m_pendingSsh`, and states it there.
+    if (m_session) {
+        disconnect(m_session, &QObject::destroyed, this, nullptr);
+    }
+    m_session = session;
+    connect(session, &QObject::destroyed, this, [this] {
+        m_session = nullptr;
+        hide();
+    });
 }
 
 void CountersPopover::setLamp(QLabel *label, bool on)

@@ -925,6 +925,16 @@ void MainWindow::closePage(TerminalPage *page, bool confirm)
     // to wait for, and a pointer to a freed page could compare equal to a later
     // one allocated in its place.
     m_pendingSsh.remove(page);
+    // ...and the counters popover is showing this page's numbers, on the same
+    // rule: `updateCounters` decides whose tick repaints it by comparing this
+    // pointer, and a later page allocated in the freed one's place would then
+    // be repainting somebody else's popover.
+    if (m_countersPage == page) {
+        m_countersPage = nullptr;
+        if (m_countersPopover) {
+            m_countersPopover->hide();
+        }
+    }
     m_panels->removePage(index);
     page->deleteLater();
     updateTabBar();

@@ -54,6 +54,10 @@ protected:
 
 private:
     void setLamp(QLabel *label, bool on);
+    /// Hold `session` as the one being polled, and let go of it when it dies.
+    /// A popup grabs the input and not the event loop, so the page behind this
+    /// can be closed by a macro or the control socket while it is up.
+    void watch(const Session *session);
 
     const Session *m_session = nullptr;
     QTimer *m_poll = nullptr;

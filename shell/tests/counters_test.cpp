@@ -168,6 +168,31 @@ void test_the_port_is_only_read_while_somebody_is_looking()
     CHECK(!poll->isActive());
 }
 
+/// The session behind the popover can die while the popover is on screen.
+///
+/// A `Qt::Popup` grabs the pointer and the keyboard and spins no event loop of
+/// its own, so everything underneath goes on running: a macro's `closett` or a
+/// control-socket request closes the page, and a second later the poll would
+/// be reading a freed `Session`. `MainWindow::closePage` has carried the same
+/// rule for `m_pendingSsh` since before this existed.
+void test_the_popover_lets_go_of_a_session_that_dies()
+{
+    auto *session = new Session(40, 10);
+    CountersPopover popover;
+    popover.popUp(nullptr, session);
+    auto *poll = popover.findChild<QTimer *>(QStringLiteral("countersPollTimer"));
+    CHECK(poll != nullptr);
+    CHECK(poll != nullptr && poll->isActive());
+
+    delete session;
+    CHECK(!popover.isVisible());
+    CHECK(poll != nullptr && !poll->isActive());
+    // And the tick that would have read it does nothing at all.
+    if (poll) {
+        QMetaObject::invokeMethod(poll, "timeout", Qt::DirectConnection);
+    }
+}
+
 /// The serial row, against the loopback rig.
 ///
 /// Skipped without one, loudly, the way the core's own rig tests are:
@@ -291,6 +316,7 @@ int main(int argc, char **argv)
     test_a_session_that_never_connected_says_so();
     test_the_counters_survive_the_shell_exiting();
     test_the_port_is_only_read_while_somebody_is_looking();
+    test_the_popover_lets_go_of_a_session_that_dies();
     test_the_serial_row_reads_the_port();
     test_the_field_leaves_the_name_room_on_a_quarter_window();
 
