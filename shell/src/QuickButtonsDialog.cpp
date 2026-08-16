@@ -767,6 +767,16 @@ void QuickButtonsDialog::addPage()
 {
     commit();
     const int made = m_set.pageCount() + 1;
+    // Refused here rather than at the save, where a page past the ceiling
+    // fails the *whole* write and takes every other edit in the dialog with
+    // it. Not a number anybody reaches by hand; a total loss if they do.
+    if (made > TT_QUICK_BUTTON_MAX_PAGES) {
+        QMessageBox::warning(
+            this, tr("Add page"),
+            tr("A settings file holds %1 pages of quick buttons.")
+                .arg(TT_QUICK_BUTTON_MAX_PAGES));
+        return;
+    }
     bool chosen = false;
     const QString name = QInputDialog::getText(
         this, tr("Add page"), tr("Page name:"), QLineEdit::Normal,
@@ -896,10 +906,21 @@ void QuickButtonsDialog::importPage()
         return;
     }
 
+    const int base = m_set.pageCount();
+    // The same refusal as Add page, and for the same reason: past the ceiling
+    // the save fails entirely rather than the import failing.
+    if (base + in.pageCount() > TT_QUICK_BUTTON_MAX_PAGES) {
+        QMessageBox::warning(
+            this, tr("Import page"),
+            tr("A settings file holds %1 pages of quick buttons, and this "
+               "import needs more.")
+                .arg(TT_QUICK_BUTTON_MAX_PAGES));
+        return;
+    }
+
     // **A file with several pages arrives as several pages**, one for one. Not
     // the first page only, which loses commands, and not flattened onto one,
     // which merges them — both silently.
-    const int base = m_set.pageCount();
     for (const QuickButton &button : in.buttons) {
         QuickButton copy = button;
         copy.page = static_cast<quint32>(base + static_cast<int>(button.page));

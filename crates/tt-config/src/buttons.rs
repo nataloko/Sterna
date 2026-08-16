@@ -519,16 +519,17 @@ pub fn write_into(ini: &mut Ini, buttons: &Buttons) {
         }
     }
 
-    let ordered = buttons
-        .items
-        .iter()
-        .filter(|b| b.page <= 1)
-        .chain(
-            (2..=buttons.page_count().min(MAX_PAGES))
-                .flat_map(|p| buttons.items.iter().filter(move |b| b.page == p)),
-        )
-        .take(MAX);
-    for (n, button) in ordered.enumerate() {
+    // **A stable sort rather than a filter per page**, so that a page nothing
+    // else can produce still writes its buttons somewhere. `items` is public;
+    // the reader and the C ABI both clamp, but a `Buttons` built in Rust need
+    // not have been through either, and a writer that silently drops a command
+    // is the worst way to find that out. The order within a page is the order
+    // it had, which is the order the buttons are pressed in.
+    let mut ordered: Vec<&Button> = buttons.items.iter().collect();
+    ordered.sort_by_key(|b| b.page.clamp(1, MAX_PAGES));
+    // ...and `take` after the sort, so the cap is on the whole section the way
+    // `MAX` reads, rather than on each page.
+    for (n, button) in ordered.into_iter().take(MAX).enumerate() {
         let i = n + 1;
         ini.set(SECTION, &key(i, "Label"), &button.label);
         ini.set(SECTION, &key(i, "Kind"), kind_name(button.kind));
@@ -541,9 +542,11 @@ pub fn write_into(ini: &mut Ini, buttons: &Buttons) {
         }
         // Omitted for page 1, the way every other optional field is omitted at
         // its default — which is what keeps a file that has never had a second
-        // page byte-for-byte the file it was before pages existed.
-        if button.page > 1 {
-            ini.set(SECTION, &key(i, "Page"), &button.page.to_string());
+        // page byte-for-byte the file it was before pages existed. Written as
+        // the clamped number, matching where the sort above put it.
+        let page = button.page.clamp(1, MAX_PAGES);
+        if page > 1 {
+            ini.set(SECTION, &key(i, "Page"), &page.to_string());
         }
         // The pair travels together: an interval with no repeat behind it is
         // a line that reads as though the button waits a second before doing
@@ -982,6 +985,34 @@ mod tests {
         b.remove_page(1);
         assert_eq!(labels(&b, 1), ["one", "two"]);
         assert_eq!(b.page_count(), 1);
+    }
+
+    #[test]
+    fn the_writer_drops_no_button_whatever_page_it_names() {
+        // `items` is public and neither the reader nor the C ABI is on this
+        // path, so a page past the ceiling can exist here — and a writer that
+        // silently dropped the command would be the worst way to discover it.
+        let mut b = flat(vec![
+            Button {
+                label: "sane".into(),
+                ..Button::with_text(UserKeyType::Text, "a")
+            },
+            Button {
+                label: "wild".into(),
+                page: 4000,
+                ..Button::with_text(UserKeyType::Text, "b")
+            },
+        ]);
+        b.items[0].page = 1;
+        let mut ini = Ini::new();
+        write_into(&mut ini, &b);
+        let text = String::from_utf8(ini.to_bytes()).unwrap();
+        assert!(text.contains("Button1Label=sane"), "{text}");
+        assert!(text.contains("Button2Label=wild"), "{text}");
+        // Clamped to the last page rather than dropped, and written as the
+        // number it was clamped to.
+        assert!(text.contains(&format!("Button2Page={MAX_PAGES}")), "{text}");
+        assert_eq!(from_ini(&ini).items.len(), 2);
     }
 
     #[test]
