@@ -60,6 +60,20 @@ distrobox-host-exec distrobox enter sterna-fedora --no-tty -- bash -lc '
            cmdline control pty; do ./build/${t}_test || echo "FAILED $t"; done'
 ```
 
+...and the hardware, which no runner can do for you. The FTDI pair covers the
+wire; the ESP32-S3 rig in `~/Projects/sterna-rig` covers the USB side of a port
+and is the only thing that unplugs one:
+
+```sh
+TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
+  cargo test -p tt-conn -- --test-threads=1     # ...then -p tt-session
+cd ~/Projects/sterna-rig && ./run.sh all        # needs the board plugged in
+```
+
+Skip them when the board is not to hand — every case skips loudly rather than
+failing — but say so in the release notes rather than letting a green run imply
+they ran. `./run.sh mutate` is what proves the suite can still fail at all.
+
 A change that touched neither the core nor the shell — packaging, docs — still
 wants `--check` and CI, which is what steps 6 and 7 already wait for.
 

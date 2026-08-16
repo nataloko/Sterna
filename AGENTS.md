@@ -93,6 +93,10 @@ TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
   cargo test -p tt-conn -- --test-threads=1   # + the serial hardware tests
 TT_SERIAL_A=/dev/ttyUSB0 TT_SERIAL_B=/dev/ttyUSB1 \
   cargo test -p tt-session -- --test-threads=1   # one package at a time
+(cd ../../sterna-rig && ./run.sh all)   # + the OTHER rig, in a subshell
+                                # because the `cd`s below are relative: an
+                                # ESP32-S3 that witnesses the USB side of a
+                                # port and can unplug itself. See its README.
 cd ../ssh-audit && ./servers.sh start            # + the SSH tests need a server
 D=$XDG_RUNTIME_DIR/sterna-ssh-audit
 TT_SSH_HOST=127.0.0.1 TT_SSH_PORT=2222 TT_SSH_USER=$USER \
@@ -2062,6 +2066,30 @@ winshim/         what Tera Term's C needs from Windows — shared by the three
 None of `xfer/`, `serial-audit/`, `ssh-audit/` is throwaway — they are the
 regression suites for `tt-xfer` and `tt-conn`, and every spike claim in
 `docs/history.md` is reproducible from them.
+
+**There is a second hardware rig, and it lives outside this repository.**
+`~/Projects/sterna-rig` is an ESP32-S3 presenting two USB CDC interfaces: one is
+a port under test, the other answers questions about what the first was asked
+for. It records every `SET_LINE_CODING` and every DTR/RTS change with
+microsecond stamps, describes itself however a test tells it to, and drops its
+own USB pullup on a schedule — so it can be unplugged without anybody touching
+a cable.
+
+That closes three things this file lists as untested or human-driven: real
+hotplug for `tt-session/src/reopen.rs` (`serial-audit/src/bin/hotplug.rs` needs
+a person, and `tests/serial_loopback.rs` fakes the *return* with a symlink
+because nothing could fake the departure); line settings read back through
+something other than the driver that applied them (the FTDI accepts `CS5` and
+transmits eight bits); and the rule that enumeration must never open a port,
+which is stated here and had nothing behind it.
+
+It complements the FTDI pair rather than replacing it — with native USB only
+there is no wire, so break, framing errors, parity errors, RTS/CTS gating and
+modem-line input stay here. It depends on this repository by path and this
+repository knows nothing about it, which is the right direction and also means
+**it is not in CI and cannot be**: no runner has the board. Run it before a
+release, and after anything that touches `tt-conn::serial` or
+`tt-session::reopen` — it will not tell you it has gone stale.
 
 `ssh-audit/servers.sh` needs `sudo` (sshd + dropbear on localhost, a
 throwaway `sterna-test` account). **Run `./servers.sh stop` when done** — that
