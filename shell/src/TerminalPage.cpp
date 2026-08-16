@@ -270,5 +270,23 @@ void TerminalPage::syncScrollBar()
     // the rows are moving in that same gesture and a row slid into the
     // scrollback is not a row lost. The panel had neither excuse — it appeared
     // on a settings change, and it took *columns*, which `Grid::resize` cuts.
-    m_hscroll->setVisible(range > 0);
+    const bool want = range > 0;
+    if (want == m_hscroll->isHidden()) {
+        m_hscroll->setVisible(want);
+        // **And it has to ask for a layout, because it is inside one.** This
+        // runs from `viewChanged`, which the view emits from `refit`, which
+        // runs in the view's own resize event — so the invalidation
+        // `setVisible` posts is consumed by the pass already in flight and the
+        // bar is left visible at zero height until something else happens to
+        // ask for a layout. The symptom is a scrollbar that appears one drag
+        // late. Same synchronous `activate()` as `applySettings`, one level up
+        // so the column's new height demand reaches the row holding it.
+        if (QLayout *layout = m_viewColumn->layout()) {
+            layout->invalidate();
+        }
+        if (QLayout *layout = m_terminalRow->layout()) {
+            layout->invalidate();
+            layout->activate();
+        }
+    }
 }

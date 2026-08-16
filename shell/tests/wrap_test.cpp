@@ -16,6 +16,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
@@ -214,6 +215,11 @@ void test_a_narrowed_window_keeps_its_text()
     CHECK(h.hbar && h.hbar->minimum() == 0);
     CHECK(h.hbar && h.hbar->maximum() == width - h.view->visibleCols());
     CHECK(h.hbar && h.hbar->maximum() > 0);
+    // And it is on screen in the same gesture, not one drag later. It is shown
+    // from inside the view's own resize event, so the layout it needs has to be
+    // asked for rather than waited for — see `TerminalPage::syncScrollBar`.
+    CHECK(h.hbar && h.hbar->height() > 0);
+    CHECK(h.hbar && h.hbar->y() >= h.view->height());
 
     // Widening it back is not a repair — nothing was broken — so the text is
     // still the text, and the bar goes when it has nothing left to cover.
@@ -468,6 +474,45 @@ int main(int argc, char **argv)
     test_the_size_shows_while_the_window_changes();
     test_a_fixed_terminal_reports_both_pairs();
     test_the_readout_can_be_switched_off();
+
+    // `--write DIR` dumps what this looks like, the way every other test binary
+    // here does — where a scrollbar sits and whether a box is legible over the
+    // text under it are the parts no assertion can judge.
+    for (int i = 1; i + 1 < argc; i++) {
+        if (strcmp(argv[i], "--write") != 0) {
+            continue;
+        }
+        const QString dir = QString::fromUtf8(argv[i + 1]);
+        QDir().mkpath(dir);
+
+        Harness h;
+        h.set("terminal.size_follows_window", QStringLiteral("off"));
+        // Something wider than the window will be, with a right-hand end worth
+        // scrolling to — a router's interface table is the case this is for.
+        h.feed("router# show interface status\r\n");
+        for (int n = 1; n <= 6; n++) {
+            h.feed(QStringLiteral("Gi1/0/%1        connected    trunk         "
+                                  "a-full   a-1000  10/100/1000BaseTX     "
+                                  "uplink-to-core-%1\r\n")
+                       .arg(n)
+                       .toUtf8()
+                       .constData());
+        }
+        h.feed("router# ");
+        h.narrowBy(38);
+        h.view->setOriginX(24);
+        h.settle();
+        const QString scrolled = dir + QStringLiteral("/wrap-scrolled.png");
+        h.window.grab().save(scrolled);
+        printf("wrote %s\n", qPrintable(scrolled));
+
+        // And the readout, which exists for a second at a time and is therefore
+        // the hardest thing here to see on purpose.
+        h.narrowBy(3);
+        const QString sized = dir + QStringLiteral("/wrap-size.png");
+        h.window.grab().save(sized);
+        printf("wrote %s\n", qPrintable(sized));
+    }
 
     if (failures) {
         fprintf(stderr, "%d check(s) failed\n", failures);
