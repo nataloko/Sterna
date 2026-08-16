@@ -119,8 +119,11 @@ impl Error {
         }
 
         // No errno: the crate raised this itself. If the node is gone the
-        // device really did leave.
-        if !std::path::Path::new(path).exists() {
+        // device really did leave. Asked through `serial::present` so that
+        // this and the auto-reopen loop cannot disagree about what "the node
+        // is there" means — and it opens nothing, which is what lets the
+        // reopen loop ask it on a timer.
+        if !crate::serial::present(path) {
             return Error::Disconnected;
         }
         let text = io.to_string().to_ascii_lowercase();

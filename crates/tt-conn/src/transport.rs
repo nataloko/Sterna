@@ -251,4 +251,34 @@ pub trait Transport: Send {
     fn closing_note(&mut self) -> Option<String> {
         None
     }
+
+    /// What it would take to open this connection again, for a link that can
+    /// come back as the same thing it was.
+    ///
+    /// Asked at the same moment as [`closing_note`](Transport::closing_note)
+    /// and for the same reason: it is the last one at which the transport
+    /// still knows. The parameters are the **port's**, not the ones the caller
+    /// passed — `setbaud` and `setflowctrl` move them
+    /// (`tt_session::Session::reset_serial` says why), so a session whose macro
+    /// raised the speed before the cable was pulled must come back at the speed
+    /// it was using and not at the one in the settings file.
+    ///
+    /// Serial only. A socket that dropped has no equivalent: reopening it is a
+    /// new connection to a host that may have gone somewhere else, which is a
+    /// decision for whoever is watching rather than one the transport can make.
+    fn reopen_target(&mut self) -> Option<ReopenTarget> {
+        None
+    }
+}
+
+/// Where a serial link was, and how it was being spoken to — everything
+/// [`crate::serial::SerialConn::open`] needs to put it back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReopenTarget {
+    /// The path the port was opened with, exactly as it was given. A
+    /// `/dev/serial/…` name comes back to the same physical socket; a
+    /// `/dev/ttyUSB<n>` is attach-order and may not — see
+    /// [`crate::serial::is_stable_path`].
+    pub path: String,
+    pub params: crate::serial::SerialParams,
 }

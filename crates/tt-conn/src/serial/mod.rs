@@ -16,7 +16,9 @@ mod linux;
 mod windows;
 
 mod enumerate;
-pub use enumerate::{enumerate, number_of_port, port_by_number, PortInfo, UsbInfo};
+pub use enumerate::{
+    enumerate, is_stable_path, number_of_port, port_by_number, present, PortInfo, UsbInfo,
+};
 
 mod inuse;
 pub use inuse::{holders, holders_under, Holder};
@@ -714,6 +716,16 @@ impl crate::transport::Transport for SerialConn {
 
     fn serial_path(&self) -> Option<&str> {
         Some(&self.path)
+    }
+
+    /// `self.params` rather than anything derived from the settings: it is
+    /// whatever [`SerialConn::apply`] last put on the wire, which is what a
+    /// reopen has to restore.
+    fn reopen_target(&mut self) -> Option<crate::transport::ReopenTarget> {
+        Some(crate::transport::ReopenTarget {
+            path: self.path.clone(),
+            params: self.params,
+        })
     }
 }
 

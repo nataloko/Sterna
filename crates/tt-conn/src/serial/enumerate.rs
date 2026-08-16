@@ -134,6 +134,55 @@ pub fn number_of_port(path: &str) -> Result<Option<u16>> {
         .map(|i| (i + 1) as u16))
 }
 
+/// Is there a serial device at this path — asked **without opening it**.
+///
+/// The constraint is `inuse`'s: opening a port raises DTR for as long as the
+/// descriptor lives, so anything that asks this on a timer would reset an
+/// Arduino-style board once per tick. Upstream asks the same question the same
+/// way — `CheckComPort` (`ttpcmn/ttcmn_cominfo.c:89`) enumerates and compares,
+/// it does not probe.
+///
+/// On Unix this follows a `/dev/serial/by-path/…` symlink to the node it names
+/// and insists the answer is a character device, so a remembered path that has
+/// become an ordinary file reads as absent rather than as a port. On Windows
+/// there is no node to stat — `Path::exists("COM3")` is false for a port that
+/// is plugged in and working — so it goes through [`enumerate`], which is what
+/// makes this the expensive arm of the two.
+pub fn present(path: &str) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        std::fs::metadata(path).is_ok_and(|md| md.file_type().is_char_device())
+    }
+    #[cfg(not(unix))]
+    {
+        // Case-insensitively, because `com3` names the same port as `COM3` and
+        // a settings file may hold either.
+        enumerate().is_ok_and(|ports| {
+            ports.iter().any(|p| {
+                p.device.eq_ignore_ascii_case(path)
+                    || p.stable_id
+                        .as_deref()
+                        .is_some_and(|id| id.eq_ignore_ascii_case(path))
+            })
+        })
+    }
+}
+
+/// Does this path name a physical socket rather than a kernel device node?
+///
+/// The distinction is the one this module opens with: `/dev/ttyUSB<n>` is
+/// assigned in attach order, so it can name a different adapter after a replug,
+/// while a `/dev/serial/…` name is the USB topology and holds still. It is
+/// therefore the difference between reopening *this* port and reopening
+/// whatever has taken its number — see [`PortInfo::stable_id`].
+///
+/// Always false on Windows: a `COM<n>` is a kernel name and there is no
+/// topology spelling of it.
+pub fn is_stable_path(path: &str) -> bool {
+    cfg!(unix) && path.starts_with("/dev/serial/")
+}
+
 fn canonical(path: &str) -> Option<PathBuf> {
     std::fs::canonicalize(path).ok()
 }
@@ -209,5 +258,46 @@ mod tests {
         assert!(number_of_port("/dev/nonexistent")
             .expect("unknown")
             .is_none());
+    }
+
+    /// The auto-reopen loop asks this once a tick while it waits, so the two
+    /// answers it must never get wrong are "a path that is not there" and "a
+    /// path that is there and is not a port".
+    #[test]
+    fn a_missing_node_is_absent_and_an_ordinary_file_is_not_a_port() {
+        assert!(!present("/dev/sterna-no-such-port"));
+        assert!(!present(""));
+        // Every enumerated port is present by definition, whichever of its two
+        // names the caller holds.
+        for p in enumerate().expect("enumeration") {
+            assert!(present(&p.device), "{} enumerated but absent", p.device);
+            if let Some(id) = &p.stable_id {
+                assert!(present(id), "{id} enumerated but absent");
+            }
+        }
+        #[cfg(unix)]
+        {
+            // A directory exists and is not a serial port. `Path::exists`
+            // alone would call this one present.
+            assert!(!present("/tmp"));
+            // ...and so does a character device that is not an adapter, which
+            // is the point: this answers "is there a device", not "is it the
+            // right one". Reopening is by the path that was opened.
+            assert!(present("/dev/null"));
+        }
+    }
+
+    #[test]
+    fn only_a_topology_name_survives_a_replug() {
+        assert_eq!(
+            is_stable_path("/dev/serial/by-path/pci-0000:00:14.0-usb-0:2:1.0-port0"),
+            cfg!(unix)
+        );
+        assert_eq!(
+            is_stable_path("/dev/serial/by-id/usb-FTDI_x-if00-port0"),
+            cfg!(unix)
+        );
+        assert!(!is_stable_path("/dev/ttyUSB0"));
+        assert!(!is_stable_path("COM3"));
     }
 }
