@@ -25,6 +25,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QKeyEvent>
+#include <QWheelEvent>
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QScrollArea>
@@ -1293,9 +1294,30 @@ void a_long_list_scrolls_rather_than_growing_the_window()
     // was about: thirty of them used to share the panel's height between them.
     QToolButton *first = bar->buttonWidget(0);
     CHECK(first != nullptr);
-    if (first) {
-        CHECK(first->height() >= first->sizeHint().height());
+    if (!first) {
+        return;
     }
+    CHECK(first->height() >= first->sizeHint().height());
+
+    // ...and a wheel notch moves it. **Delivered to the viewport, which is
+    // where a real one arrives**: a wheel over a button propagates up the
+    // parent chain, because `QToolButton` does not handle one, but only when it
+    // is *spontaneous* — `QApplication::notify` returns a synthesized wheel
+    // event straight to its receiver rather than propagating it, so a test that
+    // sent one to the button would be asserting on that rule and not on this
+    // panel. What is ours to get wrong is the rest: an area that scrolls, with
+    // somewhere to scroll to, and a focus policy that does not steal the
+    // keyboard on the way.
+    QScrollBar *vertical = scroll->verticalScrollBar();
+    const int at = vertical->value();
+    const QPointF middle(scroll->viewport()->width() / 2.0,
+                         scroll->viewport()->height() / 2.0);
+    QWheelEvent wheel(middle, scroll->viewport()->mapToGlobal(middle),
+                      QPoint(0, -40), QPoint(0, -120), Qt::NoButton,
+                      Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(scroll->viewport(), &wheel);
+    CHECK(vertical->value() > at);
+    CHECK(scroll->focusPolicy() == Qt::NoFocus);
 }
 
 /// The **+** and the page list are under the scrolling part, not in it.
