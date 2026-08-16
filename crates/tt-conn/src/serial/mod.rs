@@ -679,6 +679,37 @@ impl crate::transport::Transport for SerialConn {
         Ok(())
     }
 
+    /// Windows only: ask the driver whether the adapter is still there.
+    ///
+    /// **A pulled-out USB adapter tells nobody on Windows.** A Unix character
+    /// device wakes every `poll` on it and reads `EIO`, so the ordinary read
+    /// path finds out within one timeout; a COM handle has no such edge. The
+    /// pending `WaitCommEvent` is not a substitute — some drivers complete it
+    /// on removal and some leave it pending for ever — so the clock asks, and
+    /// the answer travels the same route as a read's: [`Error::Disconnected`],
+    /// which is what arms the reopen wait.
+    ///
+    /// What this replaces is a window that stayed "connected" until the user
+    /// typed at it and got `os error 22` back.
+    ///
+    /// **Anything other than "the device is gone" is not evidence.** A driver
+    /// answering some other error to a status query has not said the adapter
+    /// left, and dropping a working session on it would be a worse failure than
+    /// the silence this is fixing.
+    #[cfg(windows)]
+    fn tick(&mut self) -> Result<()> {
+        if self.dead {
+            return Err(Error::Disconnected);
+        }
+        match windows::health(&self.port) {
+            Err(e) if e.is_disconnected() => {
+                self.dead = true;
+                Err(e)
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// The port's own descriptor. `serialport-rs` opens the tty and we already
     /// reach through to it for the patch layer, so there is nothing to
     /// construct here — the same escape hatch, used for waiting instead of for
