@@ -181,6 +181,29 @@ fn the_quick_button_bar_ships_on_and_down_the_right() {
     assert!(on("0"));
 }
 
+/// Which page the panel opens on. The pages themselves are a field on a
+/// button, in the same `[Sterna Buttons]` list — this is only the selection.
+#[test]
+fn the_panel_opens_on_the_page_it_was_left_on() {
+    assert_eq!(Settings::default().window_quick_buttons_page, 1);
+
+    let load = |value: &str| {
+        Settings::load(&Ini::parse(
+            format!("[Sterna]\r\nQuickButtonsPage={value}\r\n").as_bytes(),
+        ))
+        .window_quick_buttons_page
+    };
+    assert_eq!(load("3"), 3);
+    // Clamped at both ends, for the width's reason: a number outside the range
+    // is a typo, and the panel should still show something.
+    assert_eq!(load("0"), 1);
+    assert_eq!(load("999"), 99);
+    assert_eq!(load("first"), 1);
+    // The ceiling here is only a corruption guard. What a page really has to
+    // be inside is the number of pages that exist, which is not in the file
+    // and not in this crate — the window clamps again on the way in.
+}
+
 #[test]
 fn the_highlighting_switch_is_a_sterna_setting_that_ships_on() {
     assert!(Settings::default().color_highlighting);

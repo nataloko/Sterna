@@ -2513,6 +2513,32 @@ window.quick_buttons | bool | Sterna | QuickButtons | on | -
 #@ This setting sets the width of the quick-button bar in pixels. Zero makes the bar as wide as its widest button. A narrow bar makes the text on the buttons shorter. Sterna changes the window width, and the terminal keeps its columns. You can also set the width from the menu of the bar.
 window.quick_buttons_width | int_clamp(0..2000) | Sterna | QuickButtonsWidth | 0 | -
 
+# Which page of buttons the panel is showing.
+#
+# A flat list is the wrong shape as soon as somebody keeps commands for four
+# different devices, so a button carries the page it is on (`Button4Page=2` in
+# `[Sterna Buttons]`, absent for the first page) and the panel shows one page
+# at a time. This is which one — written by the panel's own drop-down, the way
+# the width is written by the panel's own menu.
+#
+# **It is remembered rather than reset**, because the page somebody works on is
+# a preference and not a mode: a console engineer with a page per device does
+# not start every morning on the first one. Written with `rememberSettings`
+# alone and not `setSetting` first, which is the opposite of the width — the
+# panel has already moved by the time this is written, so emitting
+# `settingsChanged` would re-apply every terminal's settings on a click that
+# only changed which buttons are drawn.
+#
+# `int_clamp` for the width's reason: a number outside the range is a typo, and
+# clamping keeps the panel showing something where taking the default would
+# throw away a deliberate choice. The ceiling is the section's own — pages are
+# bounded by how many buttons there can be. The *real* bound is how many pages
+# exist, which only the window knows, so the window clamps again on the way in
+# and writes the answer back when a page has stopped existing: validation at
+# the boundary, the way `TerminalUID` is.
+#@ This setting selects the page of quick buttons that the bar shows. The bar shows the list of pages only when there is more than one page. Sterna keeps this page for the next time you open the program.
+window.quick_buttons_page | int_clamp(1..99) | Sterna | QuickButtonsPage | 1 | -
+
 # **`[Sterna]`**, because upstream's is a tooltip and has no key at all: it is
 # created on `WM_ENTERSIZEMOVE` and destroyed on `WM_EXITSIZEMOVE`
 # (`sizetip.c:111`, `vtwin.cpp:3111`), so there is nothing to store. Wayland
