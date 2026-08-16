@@ -107,6 +107,12 @@ fn ping(tx: &CtlSender) -> Result<Value, RpcError> {
 fn status(tx: &CtlSender) -> Result<Value, RpcError> {
     gone(tx.call(|s, h| {
         let m = h.macro_status();
+        let c = s.counters();
+        // Asked here rather than left to the caller, because this is the one
+        // place a script can reach them at all — and it costs an ioctl only on
+        // a serial link, where `modem_lines` answers `None` for everything
+        // else without touching the port.
+        let modem = s.modem_lines();
         json!({
             "connected": s.is_connected(),
             "transport": s.describe(),
@@ -116,6 +122,27 @@ fn status(tx: &CtlSender) -> Result<Value, RpcError> {
             "scrollback": s.scrollback_len(),
             "log": s.log_path().map(|p| p.display().to_string()),
             "macro": { "running": m.running, "exit": m.exit },
+            // Deviation 21. Every number belongs to the current connection, or
+            // to the last one when `live` is false.
+            "counters": {
+                "bytes_in": c.bytes_in,
+                "bytes_out": c.bytes_out,
+                "lines_in": c.lines_in,
+                "breaks": c.breaks,
+                "rate_in": c.rate_in,
+                "rate_out": c.rate_out,
+                // `null`, where the C ABI spells this -1: a sentinel is right
+                // in a struct with no room for absence and wrong in JSON,
+                // which has a spelling of its own.
+                "connected_ms": c.connected_for.map(|d| d.as_millis() as u64),
+                "live": c.live,
+            },
+            // Null on every link that is not serial, and on a serial port whose
+            // read failed — one answer for both, as `getmodemstatus` gives a
+            // macro one.
+            "modem": modem.map(|l| json!({
+                "cts": l.cts, "dsr": l.dsr, "ri": l.ri, "cd": l.cd,
+            })),
         })
     }))
 }
@@ -470,6 +497,22 @@ mod tests {
         assert_eq!(v["title"], json!("a title"));
         assert_eq!(v["cols"], json!(80));
         assert_eq!(v["macro"]["running"], json!(false));
+    }
+
+    /// Nothing has connected, so the counters are the shape a script has to
+    /// read before it asserts anything: present, zero, and honest about the
+    /// two things that have no value yet.
+    #[test]
+    fn status_reports_the_counters() {
+        let mut s = session();
+        let v = run(&mut s, "status", json!({})).unwrap();
+        assert_eq!(v["counters"]["bytes_in"], json!(0));
+        assert_eq!(v["counters"]["lines_in"], json!(0));
+        assert_eq!(v["counters"]["live"], json!(false));
+        // Absent rather than -1 or 0: neither of those is "never connected".
+        assert_eq!(v["counters"]["connected_ms"], json!(null));
+        // And a session with no serial port has no control lines to report.
+        assert_eq!(v["modem"], json!(null));
     }
 
     #[test]
