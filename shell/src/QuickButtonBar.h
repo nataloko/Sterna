@@ -11,6 +11,7 @@
 
 class QAction;
 class QBoxLayout;
+class QComboBox;
 class QMenu;
 class QFrame;
 class QToolButton;
@@ -47,10 +48,31 @@ class QuickButtonBar : public QWidget {
 public:
     explicit QuickButtonBar(QWidget *parent = nullptr);
 
-    /// Rebuild from `buttons`. The window calls this at startup and whenever
-    /// the editor has been through.
-    void setButtons(const QVector<QuickButton> &buttons);
-    const QVector<QuickButton> &buttons() const { return m_buttons; }
+    /// Rebuild from `set`. The window calls this at startup and whenever the
+    /// editor has been through.
+    void setButtons(const QuickButtonSet &set);
+    const QVector<QuickButton> &buttons() const { return m_set.buttons; }
+    const QuickButtonSet &set() const { return m_set; }
+
+    /// Whether `setButtons` would rebuild — the same comparison it makes.
+    ///
+    /// The window asks because a rebuild renumbers, and a renumber is what has
+    /// to stop every repeat. Asking the question twice in two expressions is
+    /// how the two come apart: a rebuild without a stop leaves
+    /// `QuickButtonRepeat` firing at indices that have moved.
+    bool wouldRebuild(const QuickButtonSet &set) const;
+
+    /// Which page is showing, counting from 1.
+    int page() const { return m_page; }
+    int pageCount() const { return m_set.pageCount(); }
+
+    /// Show `page`, clamped to the pages that exist.
+    ///
+    /// Only the buttons are rebuilt: the actions, their shortcuts and the
+    /// repeat state all belong to the whole list and survive. Silent — the
+    /// drop-down is moved with its signals blocked, and nothing is emitted;
+    /// `pageChanged` is what the drop-down itself reports through.
+    void setPage(int page);
 
     /// Enable or disable every button from the session, the way `ConnectBar`
     /// does: a command with nowhere to go is not a command.
@@ -104,6 +126,14 @@ signals:
     /// prompt: it is the one that knows what the width will be clamped to and
     /// what the screen has room for.
     void setWidthRequested();
+    /// The page showing has changed, from the drop-down or from the menu. The
+    /// window writes it down; the panel has already moved.
+    void pageChanged(int page);
+    /// Move a button to another page — the button's own context menu.
+    void moveToPageRequested(int index, int page);
+    /// Add page… / Rename page… / Remove page, which the editor owns because
+    /// it is the one holding a copy to edit.
+    void editPagesRequested();
 
 private:
     void showContextMenu(const QPoint &pos);
@@ -116,18 +146,32 @@ private:
     /// Empty the layout and delete everything that was in it, actions
     /// included, leaving the stretch that holds what comes next to the top.
     void clearContents();
+    /// Rebuild only what belongs to the page showing: the buttons, the rule
+    /// under them and the **+**. The actions and the repeat state are the
+    /// whole list's and are left alone, which is what lets a page switch keep
+    /// a run going and a shortcut installed.
+    void rebuildPageColumn();
 
-    QVector<QuickButton> m_buttons;
+    QuickButtonSet m_set;
+    /// Which page is showing, counting from 1.
+    int m_page = 1;
     /// Whether `setButtons` has laid the panel out once. Until it has, an
     /// unchanged list is still a rebuild worth doing — see `setButtons`.
     bool m_built = false;
+    /// One per button, on every page — so a shortcut belongs to the window and
+    /// not to whichever page happens to be showing.
     QVector<QAction *> m_actions;
+    /// The same length, and **null for a button that is not on this page**.
+    /// Every index in this class is a position in the whole list.
     QVector<QToolButton *> m_widgets;
     /// Per button: sends left, -1 for a run with no end, 0 for not running.
     QVector<int> m_remaining;
     QAction *m_add = nullptr;
     QBoxLayout *m_layout = nullptr;
     QFrame *m_separator = nullptr;
+    /// The page drop-down, or null when there is only one page — the same rule
+    /// that keeps the bar itself out of the way until a button exists.
+    QComboBox *m_pageBox = nullptr;
     /// See `setFitted`.
     bool m_fitted = true;
 };

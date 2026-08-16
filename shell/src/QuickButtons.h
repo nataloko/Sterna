@@ -34,6 +34,11 @@ struct QuickButton {
     quint32 repeat = 1;
     /// Milliseconds between the starts of two sends while repeating.
     quint32 intervalMs = 1000;
+    /// Which page of the panel it is on, counting from 1. A page is a filter
+    /// on what is drawn and never a renumbering: this button's place in the
+    /// list is the same on every page, which is what a repeat in progress and
+    /// an installed shortcut depend on.
+    quint32 page = 1;
 
     /// **Every field, because a rebuild is skipped when this says equal.**
     /// `QuickButtonBar::setButtons` destroys and recreates every widget, which
@@ -45,7 +50,8 @@ struct QuickButton {
         return label == other.label && kind == other.kind
                && value == other.value && text == other.text
                && shortcut == other.shortcut && confirm == other.confirm
-               && repeat == other.repeat && intervalMs == other.intervalMs;
+               && repeat == other.repeat && intervalMs == other.intervalMs
+               && page == other.page;
     }
     bool operator!=(const QuickButton &other) const { return !(*this == other); }
 
@@ -75,12 +81,55 @@ struct QuickButton {
     QuickButton withoutEnter() const;
 };
 
-/// Read the buttons out of `settingsPath`. A file that is not there is a first
-/// run and has no buttons, which is not a failure.
-QVector<QuickButton> loadQuickButtons(const QString &settingsPath);
+/// The whole `[Sterna Buttons]` section: the buttons, and what its pages are
+/// called.
+///
+/// One type rather than two calls, so that saving cannot write the buttons and
+/// lose the page names — which is the shape that bug takes every time.
+struct QuickButtonSet {
+    QVector<QuickButton> buttons;
+    /// Page names, index 0 being page 1's. An empty entry is a page nobody has
+    /// named, which shows as `Page N`; the list stops at the last named page,
+    /// so it is not a second answer to how many pages there are.
+    QStringList pageNames;
 
-/// Write them back, replacing `[Sterna Buttons]` and leaving every other line
+    bool operator==(const QuickButtonSet &other) const
+    {
+        return buttons == other.buttons && pageNames == other.pageNames;
+    }
+    bool operator!=(const QuickButtonSet &other) const { return !(*this == other); }
+
+    /// How many pages there are: the highest any button names, the highest
+    /// that has a name of its own, and never fewer than one.
+    ///
+    /// **A named page with nothing on it counts.** That is what lets somebody
+    /// make a page and then fill it, and it is why the names are not merely
+    /// decoration.
+    int pageCount() const;
+    /// What page `page` is called, or the default spelling `Page 2`.
+    QString pageLabel(int page) const;
+};
+
+/// Read the section out of `settingsPath`. A file that is not there is a first
+/// run and has no buttons, which is not a failure.
+QuickButtonSet loadQuickButtons(const QString &settingsPath);
+
+/// Write it back, replacing `[Sterna Buttons]` and leaving every other line
 /// in the file alone.
-bool saveQuickButtons(const QString &settingsPath,
-                      const QVector<QuickButton> &buttons,
+bool saveQuickButtons(const QString &settingsPath, const QuickButtonSet &set,
                       QString *outError = nullptr);
+
+/// Remove `page`, moving its buttons to the page beside it.
+///
+/// **Removing a page never removes a command.** The buttons land on the page
+/// before it — or, for the first page, on what was the second. Removing a
+/// command is its own act and the one that asks first, so this needs no
+/// question in front of it.
+///
+/// It goes through the core rather than editing the vectors here, because the
+/// rule for where the pages above end up belongs with the format and not with
+/// whichever dialog happened to want it.
+QuickButtonSet removeQuickButtonPage(const QuickButtonSet &set, int page);
+
+/// Move a page and everything on it, the way dragging a tab would.
+QuickButtonSet moveQuickButtonPage(const QuickButtonSet &set, int from, int to);

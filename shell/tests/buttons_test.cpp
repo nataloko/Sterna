@@ -397,7 +397,7 @@ void an_unrelated_setting_leaves_the_buttons_alone()
     // appear — the guard is about equality, not about the path being dead.
     QVector<QuickButton> edited = bar->buttons();
     edited[0].label = QStringLiteral("Renamed");
-    bar->setButtons(edited);
+    bar->setButtons(QuickButtonSet {edited, {}});
     CHECK(buttonAction(window, 0) != before);
     CHECK(bar->buttons()[0].label == QLatin1String("Renamed"));
 }
@@ -427,7 +427,7 @@ void an_empty_list_keeps_the_add_button()
     made.text = QStringLiteral("uptime\r");
     buttons.append(made);
     QString error;
-    CHECK(saveQuickButtons(ini, buttons, &error));
+    CHECK(saveQuickButtons(ini, QuickButtonSet {buttons, {}}, &error));
 
     // The window rereads on a settings change, which is what the editor's OK
     // ends in.
@@ -453,7 +453,7 @@ void the_editor_round_trips_a_button()
     const QString ini = writeIni(dir, "");
 
     MainWindow window(ini);
-    QuickButtonsDialog dialog(QVector<QuickButton>(), window.session(), &window);
+    QuickButtonsDialog dialog(QuickButtonSet(), 1, window.session(), &window);
     QuickButton seed;
     seed.kind = TT_QUICK_BUTTON_TEXT;
     seed.text = QStringLiteral("show version\r");
@@ -493,8 +493,8 @@ void the_editor_round_trips_a_button()
     CHECK(dialog.buttons()[0].text == QLatin1String("show version\r"));
 
     QString error;
-    CHECK(saveQuickButtons(ini, dialog.buttons(), &error));
-    const QVector<QuickButton> back = loadQuickButtons(ini);
+    CHECK(saveQuickButtons(ini, dialog.set(), &error));
+    const QVector<QuickButton> back = loadQuickButtons(ini).buttons;
     CHECK(back.size() == 1);
     CHECK(back[0].label == QLatin1String("Version"));
     CHECK(back[0].value == QLatin1String("show version$0D"));
@@ -514,7 +514,8 @@ void the_editor_preserves_an_unknown_command()
     QuickButton unknown;
     unknown.kind = TT_QUICK_BUTTON_COMMAND;
     unknown.text = QStringLiteral("60000");
-    QuickButtonsDialog dialog({unknown}, window.session(), &window);
+    QuickButtonsDialog dialog(QuickButtonSet {{unknown}, {}}, 1, window.session(),
+                              &window);
     auto *command =
         dialog.findChild<QComboBox *>(QStringLiteral("quickButtonCommand"));
     auto *confirm =
@@ -552,7 +553,8 @@ void the_editor_warns_about_a_key_the_host_wants()
     taken.shortcut = QStringLiteral("Ctrl+Alt+9");
     existing.append(taken);
 
-    QuickButtonsDialog dialog(existing, window.session(), &window);
+    QuickButtonsDialog dialog(QuickButtonSet {existing, {}}, 1, window.session(),
+                              &window);
     QuickButton seed;
     seed.text = QStringLiteral("y\r");
     dialog.appendButton(seed);
@@ -1073,7 +1075,7 @@ void adding_starts_on_a_new_row()
                  "Button2Label=Two\r\nButton2Value=b$0D\r\n");
 
     MainWindow window(ini);
-    QuickButtonsDialog dialog(barOf(window)->buttons(), window.session(), &window);
+    QuickButtonsDialog dialog(barOf(window)->set(), 1, window.session(), &window);
     auto *list = dialog.findChild<QListWidget *>(QStringLiteral("quickButtonsList"));
     auto *label = dialog.findChild<QLineEdit *>(QStringLiteral("quickButtonLabel"));
     CHECK(list != nullptr && label != nullptr);
@@ -1329,7 +1331,7 @@ void the_editor_round_trips_a_repeat()
     const QString ini = writeIni(dir, "");
 
     MainWindow window(ini);
-    QuickButtonsDialog dialog(QVector<QuickButton>(), window.session(), &window);
+    QuickButtonsDialog dialog(QuickButtonSet(), 1, window.session(), &window);
     QuickButton seed;
     seed.kind = TT_QUICK_BUTTON_TEXT;
     seed.text = QStringLiteral("show clock\r");
@@ -1355,8 +1357,8 @@ void the_editor_round_trips_a_repeat()
     CHECK(dialog.buttons()[0].repeatsForever());
 
     QString error;
-    CHECK(saveQuickButtons(ini, dialog.buttons(), &error));
-    const QVector<QuickButton> back = loadQuickButtons(ini);
+    CHECK(saveQuickButtons(ini, dialog.set(), &error));
+    const QVector<QuickButton> back = loadQuickButtons(ini).buttons;
     CHECK(back.size() == 1);
     CHECK(back[0].repeatsForever());
     CHECK(back[0].intervalMs == 2500);
@@ -1399,7 +1401,7 @@ void render_widgets()
     spin([] { return false; }, 300);
     window.grab().save(g_writeTo + QStringLiteral("/quick-buttons-wide.png"));
 
-    QuickButtonsDialog dialog(loadQuickButtons(ini), window.session(), &window);
+    QuickButtonsDialog dialog(loadQuickButtons(ini), 1, window.session(), &window);
     dialog.selectRow(3);
     // Without this the dialog is grabbed before layout and the wrapped warning
     // overlaps the fields in the image and nowhere else.
@@ -1408,7 +1410,8 @@ void render_widgets()
 
     // ...and the repeat row with something in it, which is the only state in
     // which it shows an interval.
-    QuickButtonsDialog repeating(loadQuickButtons(ini), window.session(), &window);
+    QuickButtonsDialog repeating(loadQuickButtons(ini), 1, window.session(),
+                                 &window);
     repeating.selectRow(5);
     repeating.adjustSize();
     repeating.grab().save(g_writeTo + QStringLiteral("/quick-buttons-repeat.png"));

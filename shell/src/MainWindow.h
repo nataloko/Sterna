@@ -426,7 +426,16 @@ private:
     /// `seed` prefilled into that new one.
     void editQuickButtons(int index, const QuickButton *seed = nullptr);
     /// Write the list back to the settings file and rebuild the bar.
-    bool storeQuickButtons(const QVector<QuickButton> &buttons);
+    bool storeQuickButtons(const QuickButtonSet &set);
+    /// Write down which page the panel is showing.
+    ///
+    /// **`rememberSettings` alone, which is the opposite of the width's rule.**
+    /// `tt_session_settings_remember` applies the value on its way to the file
+    /// and emits no `settingsChanged` — the width needs `setSetting` first
+    /// because the panel only moves through `onSettingsChanged`. Here the panel
+    /// has already moved, so an emit would buy nothing and cost a full settings
+    /// pass, on a click that changed only which buttons are drawn.
+    void setQuickButtonsPage(int page);
     /// Setup > New quick button from selection.
     void quickButtonFromSelection();
     /// Put button `index` on the wire once. The whole of what a press does,
