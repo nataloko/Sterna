@@ -39,6 +39,15 @@
 #define TT_QUICK_BUTTON_MAX_INTERVAL_MS 3600000
 
 /**
+ * How many buttons a settings file holds, every page together.
+ *
+ * Here so that a frontend importing a set can refuse before it truncates:
+ * [`tt_quick_buttons_set`] rejects the append that would pass this, which
+ * answers one button at a time and not "will this whole file fit".
+ */
+#define TT_QUICK_BUTTON_MAX 99
+
+/**
  * The largest [`TtQuickButton::page`]. A page above it is clamped to it, not
  * moved back to the first — the number names where somebody put the button.
  *

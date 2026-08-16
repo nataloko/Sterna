@@ -2,6 +2,8 @@
 
 #include "QuickButtonsDialog.h"
 
+#include <algorithm>
+
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
@@ -859,12 +861,12 @@ void QuickButtonsDialog::importPage()
     }
     // Refused rather than truncated: a silent half-import is the worst of the
     // three answers.
-    if (m_set.buttons.size() + in.buttons.size() > TT_QUICK_BUTTON_MAX_PAGES) {
+    if (m_set.buttons.size() + in.buttons.size() > TT_QUICK_BUTTON_MAX) {
         QMessageBox::warning(
             this, tr("Import page"),
-            tr("There is room for %1 quick buttons in a settings file, and this "
-               "import needs more.")
-                .arg(TT_QUICK_BUTTON_MAX_PAGES));
+            tr("A settings file holds %1 quick buttons, all pages together, and "
+               "this import needs more.")
+                .arg(TT_QUICK_BUTTON_MAX));
         return;
     }
 

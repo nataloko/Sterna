@@ -3076,6 +3076,14 @@ const _: () = assert!(TT_QUICK_BUTTON_MAX_REPEAT == tt_session::buttons::MAX_REP
 const _: () = assert!(TT_QUICK_BUTTON_MIN_INTERVAL_MS == tt_session::buttons::MIN_INTERVAL_MS);
 const _: () = assert!(TT_QUICK_BUTTON_MAX_INTERVAL_MS == tt_session::buttons::MAX_INTERVAL_MS);
 
+/// How many buttons a settings file holds, every page together.
+///
+/// Here so that a frontend importing a set can refuse before it truncates:
+/// [`tt_quick_buttons_set`] rejects the append that would pass this, which
+/// answers one button at a time and not "will this whole file fit".
+pub const TT_QUICK_BUTTON_MAX: u32 = 99;
+const _: () = assert!(TT_QUICK_BUTTON_MAX as usize == tt_session::buttons::MAX);
+
 /// The largest [`TtQuickButton::page`]. A page above it is clamped to it, not
 /// moved back to the first — the number names where somebody put the button.
 ///
