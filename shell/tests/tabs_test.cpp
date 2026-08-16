@@ -907,6 +907,11 @@ void test_the_status_strip_never_widens_its_page()
     // already moved the height by itself, because the disconnected chip is a
     // stylesheet with padding in it and going connected takes the padding away.
     const QSize beforeCounters = page->sizeHint();
+    // Already there, without waiting for a tick: the field ships on, and a
+    // status line that filled itself in a second after the window opened would
+    // read as the window still starting up.
+    CHECK(page->status()->findChild<QLabel *>(QStringLiteral("statusCounters"))
+              ->isVisible());
     auto *tick = page->session()->findChild<QTimer *>(
         QStringLiteral("sessionTickTimer"));
     CHECK(tick != nullptr);
