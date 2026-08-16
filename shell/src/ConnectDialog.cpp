@@ -128,8 +128,22 @@ ConnectDialog::ConnectDialog(QWidget *parent, const I18n *i18n)
     m_serialPort->setObjectName(QStringLiteral("connectSerialPort"));
     m_serialPort->setMinimumWidth(320);
 
+    // `AutoComPortReconnect`, which upstream has as a setting and gives no
+    // dialog — hence a plain `tr()` rather than a `.lng` key. It is here
+    // rather than behind Details because it is about the *port*, like the box
+    // above it, and because a board that reboots is the reason somebody is
+    // choosing a serial port in the first place.
+    m_serialReopen = new QCheckBox(tr("Reopen if the port comes back"), m_serialBox);
+    m_serialReopen->setObjectName(QStringLiteral("connectSerialReopen"));
+    m_serialReopen->setToolTip(
+        tr("This option opens the serial port again when the adapter becomes "
+           "available after a connection stops. The text on the screen stays."));
+
     auto *serialForm = new QFormLayout(m_serialBox);
     serialForm->addRow(text("DLG_HOST_SERIALPORT", tr("Port:")), m_serialPort);
+    // An empty label column, the way the History box under the host field is
+    // laid out: the box carries its own words.
+    serialForm->addRow(QString(), m_serialReopen);
 
     // The two halves are exclusive, and Qt will not group radios across
     // different parents on its own.
@@ -386,6 +400,16 @@ bool ConnectDialog::remembersHistory() const
 void ConnectDialog::setRemembersHistory(bool on)
 {
     m_history->setChecked(on);
+}
+
+bool ConnectDialog::reopensSerial() const
+{
+    return m_serialReopen->isChecked();
+}
+
+void ConnectDialog::setReopensSerial(bool on)
+{
+    m_serialReopen->setChecked(on);
 }
 
 void ConnectDialog::setInitialSerial(const QString &portPath,

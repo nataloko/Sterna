@@ -73,7 +73,7 @@ PageStatusBar::PageStatusBar(QWidget *parent)
         applyLogAppearance();
     });
 
-    setConnection(false, false, QString());
+    setConnection(Link::Down, QString());
     applyPalette();
 }
 
@@ -105,19 +105,34 @@ void PageStatusBar::setName(const QString &name)
     }
 }
 
-void PageStatusBar::setConnection(bool connected, bool connecting,
-                                  const QString &text)
+void PageStatusBar::setConnection(Link state, const QString &text)
 {
-    m_connectionText = connected    ? text
-                       : connecting ? tr("connecting...")
-                                    : tr("not connected");
+    switch (state) {
+    case Link::Up:
+        m_connectionText = text;
+        break;
+    case Link::Connecting:
+        m_connectionText = tr("connecting...");
+        break;
+    case Link::Reopening:
+        // The port, not `describe()`: there is nothing to describe, and the
+        // one thing worth showing is which adapter is being waited for.
+        m_connectionText =
+            text.isEmpty() ? tr("waiting for the port") : tr("waiting for %1").arg(text);
+        break;
+    case Link::Down:
+        m_connectionText = tr("not connected");
+        break;
+    }
     m_connection->setToolTip(m_connectionText);
     m_connection->setText(fontMetrics().elidedText(
         m_connectionText, Qt::ElideMiddle,
         fontMetrics().averageCharWidth() * kConnectionChars));
     showName();
 
-    const bool down = !connected && !connecting;
+    // Reopening counts as down: the link *is* down, and a chip that stopped
+    // being red would say the opposite of what the words beside it say.
+    const bool down = state == Link::Down || state == Link::Reopening;
     if (down != m_linkDown) {
         m_linkDown = down;
         applyPalette();

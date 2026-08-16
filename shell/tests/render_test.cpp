@@ -60,6 +60,7 @@
 #include "I18n.h"
 #include "PasteDialog.h"
 #include "ConnectDialog.h"
+#include "PageStatusBar.h"
 #include "Session.h"
 #include "SettingsDialog.h"
 #include "SshPrompts.h"
@@ -3418,6 +3419,111 @@ void test_the_connect_dialog_persists_the_host_history()
           == QStringLiteral("router.example"));
 }
 
+/// `AutoComPortReconnect` has a second face on the connect dialog, beside the
+/// port it is about, and it behaves like the history box: it is a setting of
+/// its own, so unticking it is remembered even though nothing was connected to.
+///
+/// It ships **on**, which is upstream's default, so this is the off case.
+void test_the_connect_dialog_persists_the_serial_reopen_switch()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("reopen.ini"));
+    MainWindow window(path);
+    auto *action = window.findChild<QAction *>(QStringLiteral("connectAction"));
+    CHECK(action != nullptr);
+    if (!action) {
+        return;
+    }
+    CHECK(window.session()->setting(QStringLiteral("serial.auto_reconnect"))
+          == QStringLiteral("on"));
+
+    QTimer::singleShot(0, [&] {
+        auto *dialog = qobject_cast<ConnectDialog *>(
+            QApplication::activeModalWidget());
+        CHECK(dialog != nullptr);
+        if (!dialog) {
+            return;
+        }
+        // In the Serial group beside the port, not behind Details — so it is
+        // reachable without expanding anything.
+        auto *box = dialog->findChild<QCheckBox *>(
+            QStringLiteral("connectSerialReopen"));
+        CHECK(box != nullptr);
+        if (box) {
+            CHECK(box->isChecked());
+            CHECK(box->isVisibleTo(dialog));
+            box->setChecked(false);
+        }
+        QTimer::singleShot(0, [] {
+            if (auto *warning = qobject_cast<QMessageBox *>(
+                    QApplication::activeModalWidget())) {
+                warning->accept();
+            }
+        });
+        dialog->accept();
+    });
+    action->trigger();
+
+    // Applied to the live session, not only written: turning it off has to
+    // reach a wait that is already running.
+    CHECK(window.session()->setting(QStringLiteral("serial.auto_reconnect"))
+          == QStringLiteral("off"));
+
+    QFile saved(path);
+    CHECK(saved.open(QIODevice::ReadOnly));
+    const QByteArray bytes = saved.readAll();
+    saved.close();
+    CHECK(bytes.contains("AutoComPortReconnect=off"));
+
+    MainWindow reopened(path);
+    CHECK(reopened.session()->setting(QStringLiteral("serial.auto_reconnect"))
+          == QStringLiteral("off"));
+}
+
+/// Nothing is connected in a test, so this drives the status line directly:
+/// what matters is that waiting for a port says which port, and that the chip
+/// stays in its disconnected colour — the link *is* down.
+void test_the_status_line_says_which_port_it_is_waiting_for()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    MainWindow window(dir.filePath(QStringLiteral("status.ini")));
+    auto *status = window.findChild<PageStatusBar *>();
+    CHECK(status != nullptr);
+    if (!status) {
+        return;
+    }
+
+    auto *label = status->findChild<QLabel *>(QStringLiteral("connectionStatus"));
+    CHECK(label != nullptr);
+    if (!label) {
+        return;
+    }
+
+    status->setConnection(PageStatusBar::Link::Down, QString());
+    const QString downChip = label->styleSheet();
+    CHECK(downChip.contains(QStringLiteral("#b71c1c")));
+
+    status->setConnection(PageStatusBar::Link::Reopening,
+                          QStringLiteral("/dev/ttyUSB0"));
+    CHECK(label->toolTip().contains(QStringLiteral("/dev/ttyUSB0")));
+    CHECK(label->toolTip().contains(QStringLiteral("waiting")));
+    // The chip stays exactly as it was: the link *is* down while a port is
+    // being waited for, and only the words beside it change.
+    CHECK(label->styleSheet() == downChip);
+
+    // A port that was never named still says what it is doing.
+    status->setConnection(PageStatusBar::Link::Reopening, QString());
+    CHECK(label->toolTip().contains(QStringLiteral("waiting")));
+    CHECK(label->styleSheet() == downChip);
+
+    status->setConnection(PageStatusBar::Link::Up,
+                          QStringLiteral("/dev/ttyUSB0 115200"));
+    CHECK(label->toolTip() == QStringLiteral("/dev/ttyUSB0 115200"));
+    CHECK(label->styleSheet().isEmpty());
+}
+
 /// The About item is the visible version check for an installed build. The
 /// real application takes this value from the Rust core, so the dialog must
 /// read Qt's application version live rather than duplicate it in the shell.
@@ -4163,6 +4269,8 @@ int main(int argc, char **argv)
     test_the_connect_dialog_covers_every_transport();
     test_the_connect_dialog_offers_the_host_history();
     test_the_connect_dialog_persists_the_host_history();
+    test_the_connect_dialog_persists_the_serial_reopen_switch();
+    test_the_status_line_says_which_port_it_is_waiting_for();
 
     // `--write <dir>` dumps what was rendered, for looking at a failure rather
     // than guessing at it.
