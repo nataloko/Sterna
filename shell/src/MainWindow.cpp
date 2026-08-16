@@ -3722,15 +3722,21 @@ void MainWindow::reloadQuickButtons()
     if (!m_quickBar) {
         return;
     }
-    // Every run is an index into the list that is about to be replaced, and a
-    // button at index 3 after an edit need not be the button that was at index
-    // 3 before it. Following one would mean guessing which; stopping is the
-    // answer that cannot be wrong, and the press to start it again is one
-    // click.
-    if (m_quickRepeat) {
+    const QVector<QuickButton> buttons = loadQuickButtons(m_settingsPath);
+    // Every run is an index into the list, and a button at index 3 after an
+    // edit need not be the button that was at index 3 before it. Following one
+    // would mean guessing which; stopping is the answer that cannot be wrong,
+    // and the press to start it again is one click.
+    //
+    // **Only when the list actually moved.** This runs on every settings
+    // change, and stopping unconditionally made every unrelated setting — a
+    // font, a colour, the panel's own width — end a repeat somebody had
+    // started, which is neither what `docs/deviations.md` entry 7 promises nor
+    // anything the screen explains. The comparison is `QuickButton::operator==`
+    // over the whole list, the same one `setButtons` gates its rebuild on.
+    if (m_quickRepeat && buttons != m_quickBar->buttons()) {
         m_quickRepeat->stopAll();
     }
-    const QVector<QuickButton> buttons = loadQuickButtons(m_settingsPath);
     m_quickBar->setButtons(buttons);
 
     // Shortcuts live on the bar's own actions, so hiding the bar hands the

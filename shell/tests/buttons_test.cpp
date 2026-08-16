@@ -1187,6 +1187,54 @@ void a_second_press_stops_a_run_with_no_end()
     CHECK(markerCount(*session, "keepalive") == settled);
 }
 
+/// A setting that is nothing to do with the buttons does not end a run.
+///
+/// `reloadQuickButtons` runs on **every** settings change, and it used to stop
+/// every repeat before it had looked at what had changed — so a font, a colour
+/// or the panel's own width ended a keepalive somebody had started, with
+/// nothing on screen saying why. `docs/deviations.md` entry 7 lists the ways a
+/// run stops and this was not among them.
+void an_unrelated_setting_leaves_a_repeat_running()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini =
+        writeIni(dir,
+                 "[Sterna Buttons]\r\nButton1Label=Keepalive\r\n"
+                 "Button1Value=keepalive$0D\r\n"
+                 "Button1Repeat=forever\r\nButton1IntervalMs=100\r\n");
+
+    MainWindow window(ini);
+    window.show();
+    window.connectPty({QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+                       QStringLiteral("cat > /dev/null")});
+    Session *session = window.session();
+    CHECK(spin([session] { return session->isConnected(); }, 3000));
+    CHECK(spin([&window] { return buttonAction(window, 0)->isEnabled(); }, 2000));
+
+    press(window, 0);
+    CHECK(spin([session] { return markerCount(*session, "keepalive") >= 2; },
+               3000));
+    CHECK(buttonAction(window, 0)->isChecked());
+
+    CHECK(window.session()->setSetting(QStringLiteral("terminal.local_echo"),
+                                       QStringLiteral("on"), nullptr));
+    qApp->processEvents();
+
+    // Still going, and still going in a way that puts bytes on the wire rather
+    // than only leaving the face pressed.
+    CHECK(buttonAction(window, 0)->isChecked());
+    const int settled = markerCount(*session, "keepalive");
+    CHECK(spin([session, settled]
+               { return markerCount(*session, "keepalive") > settled; },
+               3000));
+
+    TerminalView *view = window.findChild<TerminalView *>();
+    CHECK(view != nullptr && view->stopKeyArmed());
+    press(window, 0);
+    CHECK(!buttonAction(window, 0)->isChecked());
+}
+
 /// Escape in the terminal stops everything — and the key belongs to the host
 /// again the moment nothing is running.
 void escape_stops_every_run_and_only_then()
@@ -1400,6 +1448,7 @@ int main(int argc, char **argv)
     adding_starts_on_a_new_row();
     a_repeat_sends_its_count_and_stops();
     a_second_press_stops_a_run_with_no_end();
+    an_unrelated_setting_leaves_a_repeat_running();
     escape_stops_every_run_and_only_then();
     a_repeat_ends_with_the_connection();
     the_editor_round_trips_a_repeat();
