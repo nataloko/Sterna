@@ -299,6 +299,24 @@ public:
     /// the usual case.
     QString closeNote() const;
 
+    // --- reopening a serial port that went away ------------------------------
+
+    /// Is a serial adapter being waited for?
+    ///
+    /// **Deliberately not folded into `isConnecting`.** Nothing is being
+    /// negotiated: the session is idle and is the right one to connect
+    /// somewhere else with. `MainWindow::ensureIdlePage` opens a *new tab* for
+    /// a session that is connecting, so folding the two would take somebody
+    /// who gave up waiting and clicked Connect to a fresh tab — throwing away
+    /// the scrollback this whole feature exists to keep.
+    bool isReopening() const;
+    /// The port being waited for, or empty.
+    QString reopeningPort() const;
+    /// Stop waiting. Every connect route but SSH already does this through the
+    /// core; `startSsh` has to say so, because it leaves the session with
+    /// nothing attached while the handshake runs.
+    void cancelReopen();
+
     // --- ssh ----------------------------------------------------------------
     //
     // Connecting over SSH is a conversation, not a call: the far end asks
@@ -597,6 +615,7 @@ private slots:
     void onReadable();
     void onRetryPending();
     void onTransferDeadline();
+    void onReopenDeadline();
 
 private:
     enum class DuplicateKind { None, Telnet, Ssh };
@@ -669,10 +688,18 @@ private:
     /// timer in the class, and like the first it exists for a case a
     /// descriptor genuinely cannot cover.
     QTimer *m_xferTimer = nullptr;
-    /// The third and last timer, and the only one that runs while nothing is
-    /// happening: `tt_session_tick`, which is what lets a transport act on the
-    /// line having gone *quiet*. See `kTickIntervalMs` for why it is cheap.
+    /// The third timer, and the only one that runs while nothing is happening:
+    /// `tt_session_tick`, which is what lets a transport act on the line having
+    /// gone *quiet*. See `kTickIntervalMs` for why it is cheap.
     QTimer *m_tick = nullptr;
+    /// The fourth, and the reason it is not the third: it runs only while a
+    /// serial port that went away is being waited for, and it has to be
+    /// accurate. `m_tick` is a `Qt::VeryCoarseTimer` — it rounds to whole
+    /// seconds — and the shipped settle delay is 500 ms, so riding that timer
+    /// would round a setting to twice its value and say nothing about it. The
+    /// core owns the instant (`tt_session_reopen_deadline_ms`) and this owns
+    /// the sleep, which is exactly the arrangement `m_xferTimer` has.
+    QTimer *m_reopenTimer = nullptr;
     QString m_title;
     QString m_connectionHost;
     quint16 m_connectionPort = 0;

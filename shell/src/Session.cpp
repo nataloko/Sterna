@@ -69,6 +69,13 @@ Session::Session(int cols, int rows, QObject *parent)
     m_xferTimer->setSingleShot(true);
     connect(m_xferTimer, &QTimer::timeout, this, &Session::onTransferDeadline);
 
+    m_reopenTimer = new QTimer(this);
+    m_reopenTimer->setSingleShot(true);
+    // Coarse, but not *very* coarse: the settle delay ships at 500 ms and
+    // `Qt::VeryCoarseTimer` rounds to whole seconds. See the member.
+    m_reopenTimer->setTimerType(Qt::CoarseTimer);
+    connect(m_reopenTimer, &QTimer::timeout, this, &Session::onReopenDeadline);
+
     m_tick = new QTimer(this);
     m_tick->setInterval(kTickIntervalMs);
     // Coarse on purpose: this must never be the reason a laptop wakes up, and
@@ -494,10 +501,32 @@ QString Session::closeNote() const
     return note ? QString::fromUtf8(note) : QString();
 }
 
+bool Session::isReopening() const { return tt_session_is_reopening(m_session); }
+
+QString Session::reopeningPort() const
+{
+    const char *port = tt_session_reopen_port(const_cast<TtSession *>(m_session));
+    return port ? QString::fromUtf8(port) : QString();
+}
+
+void Session::cancelReopen()
+{
+    if (!tt_session_is_reopening(m_session)) {
+        return;
+    }
+    tt_session_cancel_reopen(m_session);
+    // The timer is armed from `rearm`, which reads the deadline the cancel has
+    // just cleared.
+    rearm();
+    emit connectionChanged();
+}
+
 void Session::disconnectPort()
 {
     // A connection still being set up is a connection: "Disconnect" while a
-    // password dialog is open has to stop the attempt, not do nothing.
+    // password dialog is open has to stop the attempt, not do nothing. A port
+    // being waited for is the same case — `tt_session_disconnect` calls the
+    // wait off, and Disconnect is the one command a user has for saying so.
     cancelSsh();
     // Drop the notifier first — `tt_session_disconnect` closes the descriptor
     // it is watching.
@@ -517,6 +546,11 @@ void Session::disconnectPort()
 bool Session::startSsh(const TtSshParams &params, QString *outError)
 {
     cancelSsh();
+    // The one connect route the core cannot see coming: the session has no
+    // transport until the handshake finishes, so a serial port that came back
+    // in the middle would be opened underneath it. Every other route ends in
+    // `Session::connect`, which clears the wait itself.
+    tt_session_cancel_reopen(m_session);
     m_ssh = tt_ssh_connect_for_session(&params, m_session);
     if (!m_ssh) {
         if (outError) {
@@ -1305,6 +1339,18 @@ void Session::onRetryPending()
     pumpAndDispatch(0);
 }
 
+void Session::onReopenDeadline()
+{
+    tt_session_service_reopen(m_session);
+    // Not `pumpAndDispatch`: there is usually nothing connected to pump, and
+    // when the port has just been opened the first read belongs to the
+    // notifier `dispatch` is about to arm. `dispatch` ends in `rearm`, which is
+    // the only place a notifier is made — so a reopened port gets its
+    // descriptor watched here and nowhere else, and the next deadline is set
+    // from the same call.
+    dispatch();
+}
+
 void Session::pumpAndDispatch(uint32_t budgetMs)
 {
     if (tt_session_pump(m_session, budgetMs, nullptr) != TT_OK) {
@@ -1325,6 +1371,9 @@ void Session::dispatch()
     bool connectionEnded = false;
     bool windowCloseRequested = false;
     bool transferMoved = false;
+    std::optional<QString> reopenStarted;
+    std::optional<QString> reopenDone;
+    std::optional<QString> reopenFailed;
     std::optional<TransferResult> transferEnded;
     for (size_t i = 0; i < n; i++) {
         switch (events[i].kind) {
@@ -1347,6 +1396,15 @@ void Session::dispatch()
             break;
         case TT_EVENT_KIND_DISCONNECTED:
             connectionEnded = true;
+            break;
+        case TT_EVENT_KIND_REOPENING:
+            reopenStarted = QString::fromUtf8(events[i].text ? events[i].text : "");
+            break;
+        case TT_EVENT_KIND_REOPENED:
+            reopenDone = QString::fromUtf8(events[i].text ? events[i].text : "");
+            break;
+        case TT_EVENT_KIND_REOPEN_FAILED:
+            reopenFailed = QString::fromUtf8(events[i].text ? events[i].text : "");
             break;
         case TT_EVENT_KIND_RESIZE:
             // Passed on rather than acted on. The core does not resize itself
@@ -1486,8 +1544,35 @@ void Session::dispatch()
         // A local shell knows why it ended; a serial line does not. "bash
         // exited with status 1" is the difference between a window that
         // explains itself and one that just goes quiet.
+        //
+        // When a reopen was armed by the same drop, the two are one remark:
+        // "Disconnected" followed a moment later by "waiting for the port"
+        // reads as two things going wrong rather than one being handled.
         const QString note = closeNote();
-        emit notice(note.isEmpty() ? tr("Disconnected") : note);
+        const QString ended = note.isEmpty() ? tr("Disconnected") : note;
+        if (reopenStarted) {
+            emit notice(tr("%1 Waiting for %2 to come back.")
+                            .arg(ended, *reopenStarted));
+        } else {
+            emit notice(ended);
+        }
+        emit connectionChanged();
+    } else if (reopenStarted) {
+        // The write path can arm one without the read path having reported the
+        // drop in the same drain.
+        emit notice(tr("Waiting for %1 to come back.").arg(*reopenStarted));
+        emit connectionChanged();
+    }
+    if (reopenDone) {
+        emit notice(tr("%1 is open again.").arg(*reopenDone));
+        emit connectionChanged();
+    }
+    if (reopenFailed) {
+        // Upstream raises a message box on the last try (`vtwin.cpp:481`).
+        // Deviation 21: a window here holds several terminals and does not
+        // close when one disconnects, so a modal box cannot say which terminal
+        // it is about — and it would arrive over whatever the user moved on to.
+        emit notice(tr("Could not open the port again: %1").arg(*reopenFailed));
         emit connectionChanged();
     }
     if (windowCloseRequested) {
@@ -1554,5 +1639,15 @@ void Session::rearm()
         // on every pass of the event loop, which is a spin.
         const int64_t ms = deadline < 1 ? 1 : (deadline > 60000 ? 60000 : deadline);
         m_xferTimer->start(static_cast<int>(ms));
+    }
+
+    // The same arrangement for the serial reopen, and -1 is its only sentinel:
+    // unlike a transfer, this cannot exist with nothing armed.
+    const int64_t reopen = tt_session_reopen_deadline_ms(m_session);
+    if (reopen < 0) {
+        m_reopenTimer->stop();
+    } else {
+        const int64_t ms = reopen < 1 ? 1 : (reopen > 60000 ? 60000 : reopen);
+        m_reopenTimer->start(static_cast<int>(ms));
     }
 }
