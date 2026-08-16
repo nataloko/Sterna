@@ -67,7 +67,7 @@ pub use tt_vt::DebugMode;
 pub use tt_vt::{PrinterEvent, WindowMetrics, WindowRequest};
 
 use tt_conn::{Error, Result, Transport, TransportEvent};
-use tt_grid::{Cell, Grid, ATTR_LINE_CONTINUED, ATTR_URL, WIDTH_PAD, WIDTH_WIDE};
+use tt_grid::{Cell, Grid, ATTR_CONTROL, ATTR_LINE_CONTINUED, ATTR_URL, WIDTH_PAD, WIDTH_WIDE};
 use tt_vt::{ClipboardRequest, Config, CrSend, Key, Modifiers, MouseEvent, Tracking, Vt};
 
 /// Which half of the terminal byte stream a plugin filter is transforming.
@@ -999,6 +999,14 @@ impl Session {
                     x += 1;
                     continue;
                 }
+                // A control mark is the terminal's own annotation, so Find and
+                // the highlight rules match the host's line without it. That
+                // is not only tidiness: it means `ERR` `BEL` `OR` still matches
+                // `ERROR`, and the rule paints both halves around the mark.
+                if cell.attrs & ATTR_CONTROL != 0 {
+                    x += 1;
+                    continue;
+                }
                 let width = if cell.width_class == WIDTH_WIDE { 2 } else { 1 };
                 flat.starts.push(flat.text.len() as u32);
                 for cp in cell.codepoints() {
@@ -1314,7 +1322,10 @@ impl Session {
                 .rposition(|c| c.text[0] != u32::from(b' ') || c.width_class == WIDTH_PAD)
                 .map_or(0, |i| i + 1);
             for cell in &line[..end] {
-                if cell.width_class == WIDTH_PAD {
+                // A control mark is not in the buffer as far as anything
+                // reading it as text is concerned — the same promise the
+                // clipboard and the printer keep.
+                if cell.width_class == WIDTH_PAD || cell.attrs & ATTR_CONTROL != 0 {
                     continue;
                 }
                 for &cp in cell.text.iter().take_while(|&&cp| cp != 0) {
