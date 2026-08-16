@@ -1493,8 +1493,8 @@ bool MainWindow::onSettingsChanged()
     if (m_resetLineCounterAction) {
         m_resetLineCounterAction->setEnabled(lineNumbers);
     }
-    // And the line-break switch, whose tick has to follow the Setup page's
-    // checkbox as well as its own menu item — they are one setting.
+    // And the wrap switch, whose tick has to follow the Setup page's checkbox
+    // as well as its own menu item — they are one setting.
     if (m_wrapAction) {
         const QSignalBlocker block(m_wrapAction);
         m_wrapAction->setChecked(m_view->sizeFollowsWindow());
@@ -2560,12 +2560,17 @@ void MainWindow::buildMenus()
     // `TermIsWin` from the other end. Upstream's own label for it is "Term size
     // = win size" and stays on the Setup page, translated, because it is
     // upstream's word for upstream's key. This one names what a person watching
-    // the screen sees change, which is where a line ends. `wrap` is not an
-    // approved word (rule 9) and `BREAK` is the dictionary's, which is lucky:
-    // "break" is also the more accurate verb, because the line is still broken
-    // when this is off — just at the terminal's edge instead, out of sight.
-    m_wrapAction = view->addAction(tr("Break lines at the window edge"));
-    m_wrapAction->setObjectName(QStringLiteral("breakLinesAction"));
+    // the screen sees change.
+    //
+    // "Wrap" is permitted here and the dictionary entry against it does not
+    // apply: `wrap (v)` is unapproved in its *general English* meaning, the one
+    // whose alternatives are `PUT` and `WIND` — wrapping a part in oilpaper.
+    // Text wrapping is a technical verb, rule 1.12 category 2(b), user
+    // interface and application processes, beside `scroll`, `highlight` and
+    // `maximize`. Rule 1.6 spells out the same pattern for nouns with
+    // `backup`, which is unapproved and still correct in category 19.
+    m_wrapAction = view->addAction(tr("Wrap lines"));
+    m_wrapAction->setObjectName(QStringLiteral("wrapLinesAction"));
     m_wrapAction->setCheckable(true);
     connect(m_wrapAction, &QAction::triggered, this, [this](bool on) {
         if (!on) {
@@ -2582,7 +2587,7 @@ void MainWindow::buildMenus()
                                QString::number(m_session->rows())}});
         }
         setViewSwitch(QStringLiteral("terminal.size_follows_window"), on,
-                      tr("Could not change the line breaks: %1"));
+                      tr("Could not change line wrapping: %1"));
     });
 
     // "Setup", which is Tera Term's own name for this menu, so that someone

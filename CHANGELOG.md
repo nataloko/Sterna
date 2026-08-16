@@ -7,11 +7,11 @@ are available from the [GitHub releases page].
 
 ### Added
 
-- The terminal can stop following the window. View > **Break lines at the
-  window edge**, or "Term size = win size" on the Setup > Terminal page — one
-  switch, either name. With it on, which is how Sterna has always behaved,
-  lines break where the window ends and dragging the window narrower changes
-  the terminal. With it off the terminal keeps the width it has, a horizontal
+- The terminal can stop following the window. View > **Wrap lines**, or "Term
+  size = win size" on the Setup > Terminal page — one switch, either name. With
+  it on, which is how Sterna has always behaved, lines wrap where the window
+  ends and dragging the window narrower changes the terminal. With it off the
+  terminal keeps the width it has and lines wrap at *that* width, a horizontal
   scrollbar appears under it, and **the text survives**: narrowing a terminal
   cuts every line at its new right-hand edge, in the scrollback as well as on
   screen, and nothing puts the ends back. It is also how to give a 200-column

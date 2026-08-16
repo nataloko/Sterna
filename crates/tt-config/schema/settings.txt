@@ -188,7 +188,7 @@ terminal.line_number_width | int_clamp(1..10) | Sterna | LineNumberWidth | 6 | -
 # upstream's (`vtdisp.c:3070`). That is also the only way to narrow a window
 # without losing text: `Grid::resize` truncates every line it shortens, in the
 # scrollback as well as the page, and nothing puts the ends back.
-#@ This setting sets the terminal width and height from the window. Lines then break at the right edge of the window. If this setting is off, the terminal keeps its width. A horizontal scroll bar then shows the columns that are not in the window.
+#@ This setting sets the terminal width and height from the window. Long lines then wrap at the right edge of the window. If this setting is off, the terminal keeps its width, and long lines wrap at that width. A horizontal scroll bar then shows the columns that are not in the window.
 terminal.size_follows_window | bool | Tera Term | TermIsWin | on | DLG_TERM_TERMISWIN
 
 # `ttset.c:628`. With it on, a remote resize resizes the window.

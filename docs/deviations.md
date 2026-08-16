@@ -35,7 +35,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 18 | A log names itself by the clock and remembers its directory | `teraterm.log`, in whatever directory the settings resolve to | 0.3.2 |
 | 19 | Edit > Find searches the screen and the scrollback | Nothing searches the buffer; the log and another program do | 0.3.2 |
 | 20 | An optional column of line numbers down the left of the terminal | Nothing numbers the lines | 0.3.2 |
-| 21 | The terminal is the window on a fresh install, and the switch is in the View menu | `TermIsWin` ships off, and lives on the Setup page alone | 0.5.5 |
+| 21 | The terminal is the window on a fresh install, and View > Wrap lines is the switch | `TermIsWin` ships off, and lives on the Setup page alone | 0.5.5 |
 | 22 | The terminal's size appears over it while the window changes, and can be switched off | A tooltip beside the corner being dragged, with no switch | 0.5.5 |
 
 ---
@@ -931,7 +931,7 @@ and no existing setting changes meaning. A `TERATERM.INI` shared with a real
 Tera Term opens identically in both programs, with the gutter absent from the
 one that has never heard of it.
 
-## 21. The terminal is the window by default, and the switch says so in the View menu
+## 21. The terminal is the window by default, and View > Wrap lines is the switch
 
 `terminal.size_follows_window` is upstream's `TermIsWin` (`ttset.c:625`), which
 ships **off**: a Tera Term window is a viewport onto a terminal of its own
@@ -968,15 +968,19 @@ choice. `ConfirmPasteMouseRButton` (deviation 11) is the other.
 Terminal keeps upstream's own label, `DLG_TERM_TERMISWIN` — "Term size = win
 size" — in all fourteen translations, because it is upstream's word for
 upstream's key and somebody arriving from Tera Term should find it. The View
-menu says **Break lines at the window edge**, which is what a person watching
-the screen sees the switch do. They are one setting: either one moves the other,
-and the tick follows a change made by a script or by a hand-edited file.
+menu says **Wrap lines**, which is what a person watching the screen sees the
+switch do, and what somebody looking for it will look for. They are one setting:
+either one moves the other, and the tick follows a change made by a script or by
+a hand-edited file.
 
-The verb is not "wrap" because `wrap` is not an approved word (`AGENTS.md`
-rule 9, and the dictionary offers `PUT` and `WIND`, neither of which is this).
-`BREAK` is approved, and it is also the more accurate word: with the switch off
-the line is still broken, just at the terminal's own edge instead, out of sight
-until you scroll to it.
+"Wrap" is permitted under rule 9, and the dictionary entry that appears to
+forbid it does not apply. `wrap (v)` is unapproved in its *general English*
+meaning — the one whose alternatives are `PUT` and `WIND`, as in wrapping a part
+in oilpaper. Text wrapping is a technical verb, rule 1.12 category 2(b), user
+interface and application processes, listed there beside `scroll`, `highlight`
+and `maximize`. Rule 1.6 states the same pattern for nouns and gives `backup` as
+its example: unapproved in the dictionary, correct as a technical noun in
+category 19. An unapproved entry restricts a meaning, not a spelling.
 
 **Turning it off freezes the width where it is.** `Session::resize` has been
 writing every refit into `terminal.cols` all along, so the live width is already

@@ -300,7 +300,7 @@ void test_the_menu_item_and_the_setting_are_one_switch()
 {
     Harness h;
     auto *action =
-        h.window.findChild<QAction *>(QStringLiteral("breakLinesAction"));
+        h.window.findChild<QAction *>(QStringLiteral("wrapLinesAction"));
     CHECK(action != nullptr);
     if (!action) {
         return;
@@ -327,7 +327,7 @@ void test_the_freeze_is_written_down()
     h.narrowBy(9);
     const int frozen = h.cols();
     auto *action =
-        h.window.findChild<QAction *>(QStringLiteral("breakLinesAction"));
+        h.window.findChild<QAction *>(QStringLiteral("wrapLinesAction"));
     CHECK(action != nullptr);
     if (!action) {
         return;
