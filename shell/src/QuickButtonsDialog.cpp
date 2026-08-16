@@ -485,7 +485,11 @@ void QuickButtonsDialog::load(int row)
     m_remove->setEnabled(has);
     if (has) {
         const QuickButton &button = m_set.buttons[m_current];
-        const int pageRow = m_pageOf->findData(button.page);
+        // `int`, matching what `rebuildPages` put in: `findData` compares
+        // `QVariant`s, and a `quint32` against a stored `int` is a comparison
+        // that need not hold — the failure would be silent, showing the wrong
+        // page in a field whose next edit then moves the button there.
+        const int pageRow = m_pageOf->findData(static_cast<int>(button.page));
         m_pageOf->setCurrentIndex(pageRow < 0 ? m_page - 1 : pageRow);
         m_label->setText(button.label);
         const int kindRow = m_kind->findData(button.kind);

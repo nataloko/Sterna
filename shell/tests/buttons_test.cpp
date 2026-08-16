@@ -1416,6 +1416,10 @@ void the_editor_moves_a_button_between_pages()
     CHECK(list->count() == 1);
     CHECK(list->item(0)->text() == QLatin1String("Version"));
     CHECK(pageList->count() == 2);
+    // The field shows the page the button is really on, which is a lookup that
+    // fails silently if the stored data and the button's number are compared
+    // as different types.
+    CHECK(pageOf->currentData().toInt() == 1);
 
     // Move the visible one to page 2. The editor follows it there rather than
     // leaving the fields showing a button that is not in the list beside them.
