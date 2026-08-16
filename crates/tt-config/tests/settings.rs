@@ -1311,3 +1311,32 @@ fn the_proxy_port_is_a_word_like_every_other_narrow_field() {
     let ini = Ini::parse(b"[TTProxy]\r\nProxyPort=65537\r\n");
     assert_eq!(Settings::load(&ini).proxy_port, 1);
 }
+
+/// The counter field ships **on**, which makes it the one `[Sterna]` chrome
+/// switch whose default is not the shipped-off shape — and that changes what a
+/// value in the file means. `GetOnOff` is default-biased: with a default of on,
+/// only the literal `off` turns it off, where `LineEdit` above needs the
+/// literal `on` to turn it on.
+#[test]
+fn counters_are_an_on_by_default_sterna_setting() {
+    let mut settings = Settings::default();
+    assert!(settings.window_counters);
+
+    let ini = Ini::parse(b"[Sterna]\r\nCounters=off\r\n");
+    settings = Settings::load(&ini);
+    assert!(!settings.window_counters);
+    assert_eq!(settings.get_str("window.counters"), Some("off".into()));
+
+    // Default-biased, and this is the half that surprises: anything which is
+    // not literally `off` reads as on.
+    assert!(Settings::load(&Ini::parse(b"[Sterna]\r\nCounters=1\r\n")).window_counters);
+    assert!(Settings::load(&Ini::parse(b"[Sterna]\r\nCounters=\r\n")).window_counters);
+
+    assert!(settings.set_str("window.counters", "on"));
+    assert!(settings.window_counters);
+    assert!(!settings.set_str("window.meters", "on"));
+
+    let mut stored = ini;
+    assert!(settings.store_one(&mut stored, "window.counters"));
+    assert_eq!(stored.to_bytes(), b"[Sterna]\r\nCounters=on\r\n");
+}

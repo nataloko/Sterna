@@ -4246,6 +4246,22 @@ pub struct Settings {
     /// widest caption, because the buttons shorten their text instead of holding the
     /// panel open. What it buys is a target a pointer can hit.
     pub window_quick_buttons_width: i32,
+    /// **`[Sterna]`**, because nothing upstream counts anything: there is no key to
+    /// be compatible with, and a serial port's control lines are visible only to a
+    /// macro's `getmodemstatus`. See `docs/deviations.md` entry 21.
+    ///
+    /// Whether each terminal's status line carries the counter field — the connect
+    /// clock and the two rates — and with it the click that opens the rest: bytes
+    /// each way, lines, breaks, queued output, and on a serial port the live CTS,
+    /// DSR, CD and RI lines.
+    ///
+    /// It ships **on**, which the other two chrome switches above do not settle by
+    /// precedent. The question it answers — is anything coming out of this thing at
+    /// all — is one people have before they know to go looking for a switch, and the
+    /// field is a fixed width in a row that already carries three others. What is
+    /// behind the click costs nothing until it is opened: the modem lines are read
+    /// from the port only while the popover is on screen.
+    pub window_counters: bool,
     /// The device path, not a number: `ComPort` is upstream's and cannot spell
     /// `/dev/serial/by-id/usb-FTDI_…`. Written as the port was opened, so it is the
     /// `open_path` a stable symlink resolves from rather than the `ttyUSB<n>` that
@@ -4703,6 +4719,7 @@ impl Default for Settings {
             window_panel_layout: WindowPanelLayout::default(),
             window_quick_buttons: true,
             window_quick_buttons_width: 0,
+            window_counters: true,
             recent_serial_port: String::from(""),
             recent_host_history: String::from(""),
             recent_ssh_host: String::from(""),
@@ -5947,6 +5964,7 @@ impl Settings {
                 0,
                 2000,
             ),
+            window_counters: crate::schema::on_off(ini.get("Sterna", "Counters"), true),
             recent_serial_port: ini
                 .get_or("Sterna", "SerialPort", &d.recent_serial_port)
                 .to_string(),
@@ -8149,6 +8167,11 @@ impl Settings {
             "Sterna",
             "QuickButtonsWidth",
             &self.window_quick_buttons_width.to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "Counters",
+            &if self.window_counters { "on" } else { "off" }.to_string(),
         );
         ini.set("Sterna", "SerialPort", &self.recent_serial_port.clone());
         ini.set("Sterna", "HostHistory", &self.recent_host_history.clone());
@@ -11025,6 +11048,13 @@ impl Settings {
                     &self.window_quick_buttons_width.to_string(),
                 );
             }
+            "window.counters" => {
+                ini.set(
+                    "Sterna",
+                    "Counters",
+                    &if self.window_counters { "on" } else { "off" }.to_string(),
+                );
+            }
             "recent.serial_port" => {
                 ini.set("Sterna", "SerialPort", &self.recent_serial_port.clone());
             }
@@ -11981,6 +12011,7 @@ impl Settings {
             }
             .to_string(),
             "window.quick_buttons_width" => self.window_quick_buttons_width.to_string(),
+            "window.counters" => if self.window_counters { "on" } else { "off" }.to_string(),
             "recent.serial_port" => self.recent_serial_port.clone(),
             "recent.host_history" => self.recent_host_history.clone(),
             "recent.ssh_host" => self.recent_ssh_host.clone(),
@@ -12918,6 +12949,7 @@ impl Settings {
                     2000,
                 )
             }
+            "window.counters" => self.window_counters = crate::schema::on_off(Some(value), true),
             "recent.serial_port" => self.recent_serial_port = value.to_string(),
             "recent.host_history" => self.recent_host_history = value.to_string(),
             "recent.ssh_host" => self.recent_ssh_host = value.to_string(),
@@ -16174,6 +16206,16 @@ pub const FIELDS: &[Field] = &[
         doc: "How wide the panel is, in pixels. **The bar is always down the right-hand side** — a terminal's rows are the scarce dimension, a window is usually far wider than the 80 columns it needs and exactly as tall as it can be, so a vertical bar costs nothing that is being used and the labels have room to be words rather than abbreviations.  There was a `QuickButtonsArea` here until 0.5.4, naming one of the four edges. It went with the dock that made it possible: a dock separator takes its pixels out of the central widget, and the terminal beside it is fitted to whatever width is left in whole cells — so widening the panel resized the grid, and `Grid::resize` truncates every line it shortens, page and scrollback alike. The width below is the same gesture with the pixels coming out of the *window* instead, which is a thing a terminal can survive.  **The reachable route to this is the panel's own context menu** — Panel width > Fit to buttons, or Set width… — because a panel that looks draggable and is not needs its answer within reach of the thing it is about. This row is the same setting from the other end.  **Zero means as wide as the buttons need**, and it is what ships. Pixels are the only honest unit for a panel of words — the same eight captions want a different number of them at every font size and every scale factor — so a shipped number would be a guess, and measuring is not. It also keeps a fresh install exactly where it was before this setting existed: the panel hugged its widest caption, and an empty one was as wide as its Add button.  `int_clamp` rather than `int`: a number outside the range is somebody's typo, and clamping it keeps the panel on screen where taking the default would throw the width away and silently go back to measuring. The ceiling is a corruption guard and not the real limit — the real one is how far the window can grow before it leaves the screen, which only the window knows. The floor a panel is really held to is its own minimum, which depends on the captions and the font, so the window applies that too: validation at the boundary, the way `TerminalUID` is — and that floor is a fixed number rather than the widest caption, because the buttons shorten their text instead of holding the panel open. What it buys is a target a pointer can hit.",
     },
     Field {
+        name: "window.counters",
+        page: "window",
+        section: "Sterna",
+        key: "Counters",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "**`[Sterna]`**, because nothing upstream counts anything: there is no key to be compatible with, and a serial port's control lines are visible only to a macro's `getmodemstatus`. See `docs/deviations.md` entry 21.  Whether each terminal's status line carries the counter field — the connect clock and the two rates — and with it the click that opens the rest: bytes each way, lines, breaks, queued output, and on a serial port the live CTS, DSR, CD and RI lines.  It ships **on**, which the other two chrome switches above do not settle by precedent. The question it answers — is anything coming out of this thing at all — is one people have before they know to go looking for a switch, and the field is a fixed width in a row that already carries three others. What is behind the click costs nothing until it is opened: the modem lines are read from the port only while the popover is on screen.",
+    },
+    Field {
         name: "recent.serial_port",
         page: "recent",
         section: "Sterna",
@@ -16688,6 +16730,7 @@ pub const SETTING_HELP: &[&str] = &[
     "This setting selects one tabbed connection view or one tiled grid. The tiled grid shows all connections. The previous two-panel and four-panel values select the tiled layout.",
     "This setting shows the quick-button bar. You can change the buttons on this bar. An empty bar shows the Add button. You can use this button to make the first command.",
     "This setting sets the width of the quick-button bar in pixels. Zero makes the bar as wide as its widest button. A narrow bar makes the text on the buttons shorter. Sterna changes the window width, and the terminal keeps its columns. You can also set the width from the menu of the bar.",
+    "This setting shows a counter field in the status line of each terminal. The field gives the data received and sent, the connection time, and the data rates. The field opens more counts when you click it. The other counts include the received lines, the breaks, and the serial control lines.",
     "This setting stores the serial-device path that the connection dialog used last. Adapter renumbering changes a temporary name more frequently than a stable device link.",
     "This setting stores host entries for the New Connection dialog. This list puts the host from the last connection first. Host history must be active before Sterna updates this list.",
     "This setting stores the last SSH host or SSH configuration alias entered in the connection dialog. An empty value removes the SSH record.",
