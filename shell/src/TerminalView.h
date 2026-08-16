@@ -254,6 +254,7 @@ signals:
 protected:
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    void showEvent(QShowEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
@@ -319,6 +320,11 @@ private:
     void dragTo(const QPointF &pos);
     /// Re-fit the terminal to the widget, in whole cells.
     void refit();
+    /// Put the size readout in the middle of the terminal. Floating, like the
+    /// find bar, and for the same reason.
+    void positionSizeIndicator();
+    /// Show the terminal's size if this resize changed it — `window.show_terminal_size`.
+    void announceSize();
     /// A widget position in the terminal's own pixel space. The two differ by
     /// the horizontal origin, so everything that turns a pointer into a cell —
     /// the core's mouse reporting included — goes through this rather than
@@ -361,6 +367,18 @@ private:
     /// hidden and per terminal, because a window can be showing nine of them
     /// and a search belongs to one session's scrollback.
     class FindBar *m_findBar = nullptr;
+
+    /// The `COLSxROWS` box, floating over the middle of the terminal for a
+    /// second after a resize. Per terminal, like the find bar: in a tiled
+    /// window every tile changes size at once and each one answers for itself.
+    class SizeIndicator *m_sizeIndicator = nullptr;
+    /// `window.show_terminal_size`.
+    bool m_showSize = true;
+    /// The size the box last reported, and whether it may report at all yet.
+    /// The second is what keeps a window from flashing its size as it opens —
+    /// see `showEvent`.
+    QSize m_announced{0, 0};
+    bool m_sizeSeen = false;
 
     /// The three keyboard settings which decide whether Qt's Alt key belongs
     /// to the desktop or to the terminal, and how a Meta character is put on

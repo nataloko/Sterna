@@ -24,6 +24,7 @@
 #include "FindBar.h"
 #include "PasteDialog.h"
 #include "Session.h"
+#include "SizeIndicator.h"
 
 namespace {
 
@@ -500,6 +501,10 @@ TerminalView::TerminalView(Session *session, QWidget *parent, const I18n *i18n)
     // the grid — see `positionFindBar`.
     m_findBar = new FindBar(this, m_session);
 
+    // The same arrangement, for the same reason: a box that reports resizes
+    // must not be able to cause one.
+    m_sizeIndicator = new SizeIndicator(m_theme, this);
+
     // Only ever runs while output is arriving faster than the frame floor
     // below, and stops itself at the next frame. Same shape as the session's
     // pending-out retry: a timer that exists during a burst and not otherwise.
@@ -661,6 +666,7 @@ void TerminalView::applySettings()
     setHintCells(m_session->setting(QStringLiteral("terminal.cols")).toInt(),
                  m_session->setting(QStringLiteral("terminal.rows")).toInt());
 
+    m_showSize = flag("window.show_terminal_size", true);
     setLineEditEnabled(flag("terminal.line_edit", false));
     m_clipboard.autoCopy = flag("clipboard.auto_copy", m_clipboard.autoCopy);
     m_clipboard.selectOnlyByLButton =
@@ -1165,6 +1171,62 @@ void TerminalView::resizeEvent(QResizeEvent *)
     refit();
     positionLineEditor();
     positionFindBar();
+    positionSizeIndicator();
+}
+
+void TerminalView::positionSizeIndicator()
+{
+    if (!m_sizeIndicator || m_sizeIndicator->isHidden()) {
+        return;
+    }
+    const QSize want = m_sizeIndicator->sizeHint();
+    m_sizeIndicator->setGeometry((width() - want.width()) / 2,
+                                 (height() - want.height()) / 2, want.width(),
+                                 want.height());
+    m_sizeIndicator->raise();
+}
+
+void TerminalView::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    // **Opening a window is not a resize somebody performed**, and it arrives
+    // as a burst of them: the layout settles, the settings are applied, the
+    // window is grown to the configured terminal size. None of that is news to
+    // report, so the baseline is taken a turn later — after the burst, and
+    // before anything a hand could have done.
+    m_sizeSeen = false;
+    QTimer::singleShot(0, this, [this] {
+        m_announced = QSize(visibleCols(), m_session->rows());
+        m_sizeSeen = true;
+    });
+}
+
+void TerminalView::announceSize()
+{
+    if (!m_sizeIndicator || !m_showSize || !m_sizeSeen || !isVisible()) {
+        return;
+    }
+    const int visible = visibleCols();
+    const int rows = m_session->rows();
+    const int cols = m_session->cols();
+    const QSize now(visible, rows);
+    if (now == m_announced) {
+        return;
+    }
+    m_announced = now;
+    // Two numbers while they agree, four while they do not: with the terminal
+    // free of the window the pair that is moving is the visible one, and the
+    // pair that decides where lines end is still the terminal's. Upstream shows
+    // the viewport alone in that state (`vtwin.cpp:2794`), which cannot say
+    // which of the two a number is.
+    m_sizeIndicator->flash(cols == visible
+                               ? tr("%1x%2").arg(visible).arg(rows)
+                               : tr("%1x%2 of %3x%4")
+                                     .arg(visible)
+                                     .arg(rows)
+                                     .arg(cols)
+                                     .arg(rows));
+    positionSizeIndicator();
 }
 
 void TerminalView::positionFindBar()
@@ -1259,6 +1321,9 @@ void TerminalView::refit()
         positionLineEditor();
     }
     emit viewChanged();
+    // Last, so it reports what the two above settled on rather than what this
+    // function was called with.
+    announceSize();
 }
 
 /// The character boundary nearest a widget position.

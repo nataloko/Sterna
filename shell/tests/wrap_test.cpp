@@ -16,17 +16,21 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QFile>
 #include <QMouseEvent>
 #include <QScrollBar>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QTimer>
 
 #include <cstdio>
 #include <cstring>
 
 #include "MainWindow.h"
 #include "Session.h"
+#include "SizeIndicator.h"
 #include "TerminalPage.h"
 #include "TerminalView.h"
 #include "Theme.h"
@@ -42,6 +46,22 @@ static int failures = 0;
     } while (0)
 
 namespace {
+
+/// Run the event loop until `done` or the deadline — `buttons_test`'s helper.
+/// A timer is the thing under test in one case here, so waiting for it has to
+/// be the loop actually running rather than a sleep.
+template <typename F>
+bool spin(F done, int ms)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (!done() && timer.elapsed() < ms) {
+        QEventLoop loop;
+        QTimer::singleShot(20, &loop, &QEventLoop::quit);
+        loop.exec(QEventLoop::AllEvents);
+    }
+    return done();
+}
 
 /// A window with its own settings file — see `AGENTS.md`, and `gutter_test`,
 /// which takes the same precaution for the same reason: anything constructing a
@@ -321,6 +341,67 @@ void test_the_freeze_is_written_down()
     CHECK(text.contains("TermIsWin=off"));
 }
 
+void test_the_size_shows_while_the_window_changes()
+{
+    Harness h;
+    auto *box = h.window.findChild<QWidget *>(QStringLiteral("sizeIndicator"));
+    CHECK(box != nullptr);
+    if (!box) {
+        return;
+    }
+    // Opening a window is a run of resize events like any other, and none of
+    // them is news: the first measurement is the baseline.
+    CHECK(box->isHidden());
+
+    h.narrowBy(7);
+    CHECK(!box->isHidden());
+    const auto *label = qobject_cast<const SizeIndicator *>(box);
+    CHECK(label != nullptr);
+    CHECK(label
+          && label->text()
+                 == QStringLiteral("%1x%2").arg(h.cols()).arg(
+                     h.window.session()->rows()));
+    // In the middle of the terminal, which is where an eye watching the text
+    // already is.
+    CHECK(qAbs(box->geometry().center().x() - h.view->width() / 2) <= 1);
+    CHECK(qAbs(box->geometry().center().y() - h.view->height() / 2) <= 1);
+
+    // And gone once the resizing stops. `spin` rather than a sleep: the timer
+    // is the thing under test.
+    CHECK(spin([&] { return box->isHidden(); }, 4000));
+}
+
+void test_a_fixed_terminal_reports_both_pairs()
+{
+    Harness h;
+    const int width = h.cols();
+    h.set("terminal.size_follows_window", QStringLiteral("off"));
+    h.narrowBy(11);
+
+    const auto *label =
+        h.window.findChild<SizeIndicator *>(QStringLiteral("sizeIndicator"));
+    CHECK(label != nullptr);
+    // The visible pair is what moved; the terminal's pair is what still decides
+    // where a line ends. A single pair could not say which of the two it was.
+    CHECK(label
+          && label->text()
+                 == QStringLiteral("%1x%2 of %3x%4")
+                        .arg(h.view->visibleCols())
+                        .arg(h.window.session()->rows())
+                        .arg(width)
+                        .arg(h.window.session()->rows()));
+}
+
+void test_the_readout_can_be_switched_off()
+{
+    Harness h;
+    h.set("window.show_terminal_size", QStringLiteral("off"));
+    auto *box = h.window.findChild<QWidget *>(QStringLiteral("sizeIndicator"));
+    CHECK(box != nullptr);
+    h.narrowBy(7);
+    CHECK(box && box->isHidden());
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -340,6 +421,9 @@ int main(int argc, char **argv)
     test_a_window_wider_than_its_terminal_letterboxes();
     test_the_menu_item_and_the_setting_are_one_switch();
     test_the_freeze_is_written_down();
+    test_the_size_shows_while_the_window_changes();
+    test_a_fixed_terminal_reports_both_pairs();
+    test_the_readout_can_be_switched_off();
 
     if (failures) {
         fprintf(stderr, "%d check(s) failed\n", failures);

@@ -152,6 +152,7 @@ add_library(sterna_shell STATIC
     src/Recent.cpp
     src/Control.cpp
     src/FindBar.cpp
+    src/SizeIndicator.cpp
     src/Highlights.cpp
     src/HighlightsDialog.cpp
     src/I18n.cpp
