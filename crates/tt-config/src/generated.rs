@@ -2662,6 +2662,39 @@ pub struct Settings {
     /// clamping is the predictable answer where `ttset.c:615` would take the default
     /// for anything below the floor.
     pub terminal_line_number_width: i32,
+    /// **`[Sterna]`**. Every control character the terminal executes leaves a
+    /// two-cell caret mark where it happened — `^G` for BEL, `^I` for HT — carrying
+    /// `ATTR_CONTROL`, which is what tells the mark apart from a host that sent the
+    /// two characters `^` and `G` itself.
+    ///
+    /// It is not debug display mode: `Vt::feed` does not short-circuit, so escape
+    /// sequences are still interpreted and the terminal goes on working. The price
+    /// of that is what a mark cannot cover — `ESC` and everything inside a sequence
+    /// never reach `Perform::execute`, 8-bit C1 is folded by `rewrite_c1` before vte
+    /// sees it, and DEL is swallowed in the ground state.
+    ///
+    /// CR and LF are `terminal.show_eol`'s, not this setting's: the cursor has
+    /// already moved by the time either is executed, so a mark written at it would
+    /// land on top of the line.
+    pub terminal_show_control_chars: bool,
+    /// **`[Sterna]`**. A mark past the last character of every line the host ended,
+    /// saying that it ended and which bytes spelt it.
+    ///
+    /// Painted rather than written, so unlike the marks above it costs no column and
+    /// reaches no clipboard, log, printer or macro — the same arrangement the line
+    /// number gutter has, for the same reason. The evidence is `ATTR_EOL_CR` and
+    /// `ATTR_EOL_LF` on cell 0 of the row the terminator left; a soft wrap sets
+    /// neither, which is what makes a wrapped line legible as one.
+    pub terminal_show_eol: bool,
+    /// **`[Sterna]`**. Narrows the mark above from the caret spelling of what
+    /// arrived (`^M^J`, `^M`, `^J`) back to a plain `¶`.
+    ///
+    /// On a device that ends every line with CR LF those two bytes are most of the
+    /// traffic, and after the first minute their spelling says nothing the mark does
+    /// not. It is deliberately not a third state of one setting: the two questions —
+    /// did this line end, and what ended it — are asked by different people on
+    /// different days.
+    pub terminal_hide_cr_lf: bool,
     /// `ttset.c:625`. With it on, resizing the window resizes the terminal.
     pub terminal_size_follows_window: bool,
     /// `ttset.c:628`. With it on, a remote resize resizes the window.
@@ -4392,6 +4425,9 @@ impl Default for Settings {
             terminal_dark_mode: false,
             terminal_line_numbers: false,
             terminal_line_number_width: 6,
+            terminal_show_control_chars: false,
+            terminal_show_eol: false,
+            terminal_hide_cr_lf: false,
             terminal_size_follows_window: false,
             terminal_auto_win_resize: false,
             terminal_clear_on_resize: false,
@@ -4772,6 +4808,12 @@ impl Settings {
                 1,
                 10,
             ),
+            terminal_show_control_chars: crate::schema::on_off(
+                ini.get("Sterna", "ShowControlChars"),
+                false,
+            ),
+            terminal_show_eol: crate::schema::on_off(ini.get("Sterna", "ShowEol"), false),
+            terminal_hide_cr_lf: crate::schema::on_off(ini.get("Sterna", "HideCrLf"), false),
             terminal_size_follows_window: crate::schema::on_off(
                 ini.get("Tera Term", "TermIsWin"),
                 false,
@@ -6072,6 +6114,31 @@ impl Settings {
             "Sterna",
             "LineNumberWidth",
             &self.terminal_line_number_width.to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "ShowControlChars",
+            &if self.terminal_show_control_chars {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "ShowEol",
+            &if self.terminal_show_eol { "on" } else { "off" }.to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "HideCrLf",
+            &if self.terminal_hide_cr_lf {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
         );
         ini.set(
             "Tera Term",
@@ -8308,6 +8375,37 @@ impl Settings {
                     "Sterna",
                     "LineNumberWidth",
                     &self.terminal_line_number_width.to_string(),
+                );
+            }
+            "terminal.show_control_chars" => {
+                ini.set(
+                    "Sterna",
+                    "ShowControlChars",
+                    &if self.terminal_show_control_chars {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
+            "terminal.show_eol" => {
+                ini.set(
+                    "Sterna",
+                    "ShowEol",
+                    &if self.terminal_show_eol { "on" } else { "off" }.to_string(),
+                );
+            }
+            "terminal.hide_cr_lf" => {
+                ini.set(
+                    "Sterna",
+                    "HideCrLf",
+                    &if self.terminal_hide_cr_lf {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
                 );
             }
             "terminal.size_follows_window" => {
@@ -11152,6 +11250,19 @@ impl Settings {
             }
             .to_string(),
             "terminal.line_number_width" => self.terminal_line_number_width.to_string(),
+            "terminal.show_control_chars" => if self.terminal_show_control_chars {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "terminal.show_eol" => if self.terminal_show_eol { "on" } else { "off" }.to_string(),
+            "terminal.hide_cr_lf" => if self.terminal_hide_cr_lf {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "terminal.size_follows_window" => if self.terminal_size_follows_window {
                 "on"
             } else {
@@ -12051,6 +12162,15 @@ impl Settings {
                     1,
                     10,
                 )
+            }
+            "terminal.show_control_chars" => {
+                self.terminal_show_control_chars = crate::schema::on_off(Some(value), false)
+            }
+            "terminal.show_eol" => {
+                self.terminal_show_eol = crate::schema::on_off(Some(value), false)
+            }
+            "terminal.hide_cr_lf" => {
+                self.terminal_hide_cr_lf = crate::schema::on_off(Some(value), false)
             }
             "terminal.size_follows_window" => {
                 self.terminal_size_follows_window = crate::schema::on_off(Some(value), false)
@@ -13062,6 +13182,36 @@ pub const FIELDS: &[Field] = &[
         default: "6",
         label: None,
         doc: "**`[Sterna]`**. How many digits the gutter above reserves.  Fixed rather than sized to the largest number on screen, so the terminal never re-flows mid-session at line 1000; a number that does not fit is left blank rather than clipped, because the column is at the window's left edge and a clipped `10001` reads as `0001`. Six because the number a session reaches has no ceiling — four is a few minutes of `cat`. `int_clamp` and not `int(1..10)` because there is no upstream reader to reproduce here, and clamping is the predictable answer where `ttset.c:615` would take the default for anything below the floor.",
+    },
+    Field {
+        name: "terminal.show_control_chars",
+        page: "terminal",
+        section: "Sterna",
+        key: "ShowControlChars",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "**`[Sterna]`**. Every control character the terminal executes leaves a two-cell caret mark where it happened — `^G` for BEL, `^I` for HT — carrying `ATTR_CONTROL`, which is what tells the mark apart from a host that sent the two characters `^` and `G` itself.  It is not debug display mode: `Vt::feed` does not short-circuit, so escape sequences are still interpreted and the terminal goes on working. The price of that is what a mark cannot cover — `ESC` and everything inside a sequence never reach `Perform::execute`, 8-bit C1 is folded by `rewrite_c1` before vte sees it, and DEL is swallowed in the ground state.  CR and LF are `terminal.show_eol`'s, not this setting's: the cursor has already moved by the time either is executed, so a mark written at it would land on top of the line.",
+    },
+    Field {
+        name: "terminal.show_eol",
+        page: "terminal",
+        section: "Sterna",
+        key: "ShowEol",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "**`[Sterna]`**. A mark past the last character of every line the host ended, saying that it ended and which bytes spelt it.  Painted rather than written, so unlike the marks above it costs no column and reaches no clipboard, log, printer or macro — the same arrangement the line number gutter has, for the same reason. The evidence is `ATTR_EOL_CR` and `ATTR_EOL_LF` on cell 0 of the row the terminator left; a soft wrap sets neither, which is what makes a wrapped line legible as one.",
+    },
+    Field {
+        name: "terminal.hide_cr_lf",
+        page: "terminal",
+        section: "Sterna",
+        key: "HideCrLf",
+        kind: Kind::Bool,
+        default: "off",
+        label: None,
+        doc: "**`[Sterna]`**. Narrows the mark above from the caret spelling of what arrived (`^M^J`, `^M`, `^J`) back to a plain `¶`.  On a device that ends every line with CR LF those two bytes are most of the traffic, and after the first minute their spelling says nothing the mark does not. It is deliberately not a third state of one setting: the two questions — did this line end, and what ended it — are asked by different people on different days.",
     },
     Field {
         name: "terminal.size_follows_window",
@@ -16377,6 +16527,9 @@ pub const SETTING_HELP: &[&str] = &[
     "This setting uses a dark palette for terminal content and its line editor. Menus, dialogs, and other application controls keep the desktop theme.",
     "This setting shows line numbers in a column at the left side of the terminal. The first line from the host is line 1, and a line keeps its number in the scrollback. The numbers are not terminal content. Sterna does not include them in a selection, the session log, the printer output, or macro text.",
     "This setting sets the number of digits in the line-number column. The width stays the same for the full session, because a change would move the terminal. A line with a longer number has no number. Values use 1 thru 10.",
+    "This setting shows a mark on the screen for each control character from the host. A mark uses the caret form, for example ^G for the bell character. Each mark uses two columns of the screen, and the text after it moves to the right. The marks are not terminal content. Sterna does not include them in a selection, the session log, the printer output, or macro text.",
+    "This setting shows a mark at the end of each line from the host. A line that continues on the next row has no mark. The mark is not terminal content. Sterna does not include it in a selection, the session log, the printer output, or macro text.",
+    "This setting removes the carriage return and line feed characters from the mark at the end of a line. The line keeps its mark, but the mark does not show these two characters. This setting has no effect if the control character setting is off.",
     "This setting stores Tera Term's option for resizing the terminal with its window. Sterna always fits the terminal to its view. Thus, this setting has no effect.",
     "This setting stores Tera Term's option for remote terminal-size requests. Sterna handles supported remote resize requests even if this setting is off.",
     "This setting clears the displayed page and homes the cursor each time Sterna applies terminal size. It can also clear the page if the size does not change.",

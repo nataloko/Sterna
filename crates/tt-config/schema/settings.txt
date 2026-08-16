@@ -178,6 +178,45 @@ terminal.line_numbers | bool | Sterna | LineNumbers | off | -
 #@ This setting sets the number of digits in the line-number column. The width stays the same for the full session, because a change would move the terminal. A line with a longer number has no number. Values use 1 thru 10.
 terminal.line_number_width | int_clamp(1..10) | Sterna | LineNumberWidth | 6 | -
 
+# **`[Sterna]`**. Every control character the terminal executes leaves a
+# two-cell caret mark where it happened — `^G` for BEL, `^I` for HT — carrying
+# `ATTR_CONTROL`, which is what tells the mark apart from a host that sent the
+# two characters `^` and `G` itself.
+#
+# It is not debug display mode: `Vt::feed` does not short-circuit, so escape
+# sequences are still interpreted and the terminal goes on working. The price
+# of that is what a mark cannot cover — `ESC` and everything inside a sequence
+# never reach `Perform::execute`, 8-bit C1 is folded by `rewrite_c1` before vte
+# sees it, and DEL is swallowed in the ground state.
+#
+# CR and LF are `terminal.show_eol`'s, not this setting's: the cursor has
+# already moved by the time either is executed, so a mark written at it would
+# land on top of the line.
+#@ This setting shows a mark on the screen for each control character from the host. A mark uses the caret form, for example ^G for the bell character. Each mark uses two columns of the screen, and the text after it moves to the right. The marks are not terminal content. Sterna does not include them in a selection, the session log, the printer output, or macro text.
+terminal.show_control_chars | bool | Sterna | ShowControlChars | off | -
+
+# **`[Sterna]`**. A mark past the last character of every line the host ended,
+# saying that it ended and which bytes spelt it.
+#
+# Painted rather than written, so unlike the marks above it costs no column and
+# reaches no clipboard, log, printer or macro — the same arrangement the line
+# number gutter has, for the same reason. The evidence is `ATTR_EOL_CR` and
+# `ATTR_EOL_LF` on cell 0 of the row the terminator left; a soft wrap sets
+# neither, which is what makes a wrapped line legible as one.
+#@ This setting shows a mark at the end of each line from the host. A line that continues on the next row has no mark. The mark is not terminal content. Sterna does not include it in a selection, the session log, the printer output, or macro text.
+terminal.show_eol | bool | Sterna | ShowEol | off | -
+
+# **`[Sterna]`**. Narrows the mark above from the caret spelling of what
+# arrived (`^M^J`, `^M`, `^J`) back to a plain `¶`.
+#
+# On a device that ends every line with CR LF those two bytes are most of the
+# traffic, and after the first minute their spelling says nothing the mark does
+# not. It is deliberately not a third state of one setting: the two questions —
+# did this line end, and what ended it — are asked by different people on
+# different days.
+#@ This setting removes the carriage return and line feed characters from the mark at the end of a line. The line keeps its mark, but the mark does not show these two characters. This setting has no effect if the control character setting is off.
+terminal.hide_cr_lf | bool | Sterna | HideCrLf | off | -
+
 # `ttset.c:625`. With it on, resizing the window resizes the terminal.
 #@ This setting stores Tera Term's option for resizing the terminal with its window. Sterna always fits the terminal to its view. Thus, this setting has no effect.
 terminal.size_follows_window | bool | Tera Term | TermIsWin | off | DLG_TERM_TERMISWIN
