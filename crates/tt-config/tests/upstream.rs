@@ -202,6 +202,12 @@ const DEFAULTS_MOVED_ON_PURPOSE: &[&str] = &[
     // putting the clipboard straight on the wire. Upstream ships the menu
     // behind this key and ships the key off; this port ships it on.
     "ConfirmPasteMouseRButton",
+    // The terminal is the window on a fresh install, which is what this port
+    // did unconditionally before the key was honoured at all. Upstream ships
+    // off, and a window narrower than its terminal is then the ordinary state
+    // there — it has had a horizontal scrollbar since before this port existed
+    // (`vtwin.cpp:650`). Deviation 21.
+    "TermIsWin",
 ];
 
 #[test]
