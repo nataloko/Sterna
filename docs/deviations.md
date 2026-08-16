@@ -38,6 +38,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 21 | The terminal is the window on a fresh install, and View > Wrap lines is the switch | `TermIsWin` ships off, and lives on the Setup page alone | 0.5.5 |
 | 22 | The terminal's size appears over it while the window changes, and can be switched off | A tooltip beside the corner being dragged, with no switch | 0.5.5 |
 | 23 | A serial port that goes away is opened again by itself, and a reopen that gives up says so on the terminal's own line | The same five keys, driven by `WM_DEVICECHANGE`, with a message box on the last try | 0.5.5 |
+| 24 | Per-terminal counters: bytes, rates, connect time, and a serial port's live control lines | Nothing counts anything; the control lines are visible only to a macro's `getmodemstatus` | 0.5.5 |
 
 ---
 
@@ -1130,3 +1131,98 @@ platform: Linux has no such message and the equivalent is a udev monitor. That
 is a port, not a decision, and it lives in a comment at
 `tt-session::reopen` and in `AGENTS.md`. Nothing about it is user-visible except
 that the wait is bounded below by half a second.
+
+---
+
+## 24. Counters, rates, connect time and serial state
+
+Each terminal's status line carries a counter field — the time since the
+connection opened and the two data rates — and clicking it opens the rest:
+bytes each way, lines, breaks, queued output, and on a serial port the live
+CTS, DSR, CD and RI lines. `window.counters`, `[Sterna]`'s `Counters`, shipped
+on. The user page is [`counters.md`](counters.md).
+
+**Why.** "Is anything coming out of this thing at all" is the first question
+anybody asks of a link that is not working, and answering it today means
+starting a session log, waiting, stopping it and looking at the size of a file.
+On serial the *next* question is whether the cable or flow control is why
+nothing is moving, and the program already knew — `Session::modem_lines` has
+been there since Stage 1, reachable only from a macro's `getmodemstatus`. This
+is the graduation of item 7 of `yat-ideas.md`, which is where the shape came
+from: YAT is a communications monitor and has had meters for a decade.
+
+**Why the counts are on the session and not in the widget.** A rate that each
+reader worked out by differencing its own two polls would give three different
+answers — the status line, `ttctl status` and a duplicated session are three
+readers of one connection. So the core owns the numbers and the frontend only
+draws them, which is also what puts them on the control socket for free.
+
+**Why the clock and the rates are in the strip and the totals are behind a
+click.** The strip is per terminal (deviation 4) and a window can be showing
+nine of them, so anything permanent there is paid for nine times. What earns a
+permanent place is the pair that answers the question from across the room:
+whether the number is *moving*, and how long it has been connected. A total is
+something you go and look at. Four serial captions reading nothing on every SSH
+tab is the case this arrangement exists to avoid.
+
+**Why the counters reset on connect where the terminal deliberately does not.**
+`Session::connect` keeps the scrollback on purpose — reconnecting a serial
+console is how you keep the text that explains why it dropped. The counters go
+the other way, because a byte total spanning three reconnects is not a number
+anybody can use. The connect time sits beside the totals so they always say
+which connection they are for.
+
+**And why a disconnect freezes them rather than clearing them.** "How much did
+that session move before it died" is asked *after* the line has gone. The
+totals and the break count stay, both rates fall to zero, the clock stops and
+the field dims to say so. `close_note` already made the same choice for the
+same reason: the connection ending is not a reason to forget what it did.
+
+**A file transfer counts, which the session log deliberately does not.** The
+pump's transfer arm hands the byte stream to the protocol and `continue`s
+before `log_bytes_in` is reached, so a ZMODEM download is invisible to the log
+in either mode — right for a log, which records a terminal session. A counter
+whose whole job is "is anything moving" must not read zero for the one case
+where a great deal is, so it counts at the transport read, above the branch.
+`tt-session/tests/xfer.rs` pins both halves against a real `rz`.
+
+**Why the rate decays when it is read.** An idle line never calls `pump`, so a
+rate published when a one-second bucket closed and never revisited would sit on
+the screen saying 12 MB/s at a console that has been silent all afternoon. The
+window is therefore evaluated at the moment somebody asks, and a line quiet for
+two seconds reads zero. That also keeps the getter `&self`, and with it the C
+ABI's const handle.
+
+**There is no line-feed count, and `lines` is a count of the stream.** A `CR`,
+an `LF` or a `CR LF` is one line each. Counting only `LF` reads zero on a
+console that ends its lines with a bare `CR`, which is common on the equipment
+this program is pointed at — `CRReceive` has five values here and `DETECT` is
+the default for exactly that reason (deviation 9). The cost is that a `CR`
+inside an escape sequence counts. The fully honest definition is *line feeds
+the terminal executed*, which is `CRReceive`-aware by construction and agrees
+with the session log and a macro's `wait`; if that is ever wanted it belongs in
+`tt-vt`, in the shape of `Vt::take_bells`. It is never `Grid::scrolled_off`,
+which counts lines that left the page: that reads zero on a session which never
+filled the screen and adds two pages for a trip in and out of vim.
+
+**Why the serial lines are read only while the popover is open.** There is no
+cache and no change notification behind them, so a live reading means asking
+the port — one `ioctl(TIOCMGET)` on Linux, but four separate `GetCommModemStatus`
+calls on Windows, which is also why the Windows reading is not atomic and can
+catch a device mid-transition. Once a second per serial tab for something
+nobody is looking at is not worth paying, so the popover starts and stops its
+own poll. Nothing opens the port to ask: probing a port by opening it raises
+DTR for the life of the probe, which reboots an Arduino-style board.
+
+**It adds no timer.** The connect clock and a rate falling back to zero are
+functions of the clock rather than of a byte, and an idle line raises no damage
+to hang them off — so they ride `Session::m_tick`, the once-a-second wakeup the
+telnet keepalive already needed. It is a `Qt::VeryCoarseTimer`, so the reading
+is recomputed from the core on every tick and never incremented locally: a
+coalesced tick then skips a repaint rather than making the clock permanently
+slow.
+
+**What is unchanged.** No cell is written, nothing reaches the wire, and no
+existing setting changes meaning. `Counters` is a `[Sterna]` key that no real
+Tera Term reads, so a `TERATERM.INI` shared with one still opens correctly in
+both programs — with no counters in the one that has never heard of them.

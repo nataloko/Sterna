@@ -592,3 +592,53 @@ fn a_port_that_comes_back_is_opened_again_and_carries_the_session() {
         row(&s, 0)
     );
 }
+
+/// The counters, over a real wire rather than a memory transport.
+///
+/// What this adds to `tests/session.rs` is the same thing the rest of this
+/// file adds: the memory transport hands over exactly what it was fed, in one
+/// piece, so it cannot show that the count survives a read boundary landing
+/// anywhere the driver felt like putting one. A `CR LF` split across two
+/// reads is the case, and at 115200 over USB it happens on its own.
+#[test]
+fn the_counters_follow_a_real_wire() {
+    let Some((a, b)) = rig() else { return };
+    let mut far = SerialConn::open(&b, &params()).expect("open the far end");
+    let near = SerialConn::open(&a, &params()).expect("open the near end");
+    let mut s = Session::new(Config::default());
+    s.connect(Box::new(near));
+
+    // Fresh connection, so everything starts from zero and the clock is
+    // running rather than absent.
+    let start = s.counters();
+    assert_eq!((start.bytes_in, start.bytes_out, start.lines_in), (0, 0, 0));
+    assert!(start.live);
+    assert!(start.connected_for.is_some());
+
+    // Twenty lines, so a read boundary lands inside at least one `CR LF`.
+    let mut sent = Vec::new();
+    for i in 0..20 {
+        sent.extend_from_slice(format!("line {i}\r\n").as_bytes());
+    }
+    let mut written = 0;
+    while written < sent.len() {
+        written += far
+            .write(&sent[written..], Duration::from_secs(1))
+            .expect("write from the far end");
+    }
+
+    let want = sent.len() as u64;
+    pump_until(&mut s, Duration::from_secs(5), |s| {
+        s.counters().bytes_in >= want
+    });
+
+    let c = s.counters();
+    assert_eq!(c.bytes_in, want, "every byte the cable carried");
+    assert_eq!(c.lines_in, 20, "a CR LF is one line however it was read");
+
+    // And the other direction, counted where the transport accepted it.
+    s.send_bytes(b"hello").expect("send");
+    s.pump(Duration::from_millis(50)).expect("pump");
+    assert_eq!(s.counters().bytes_out, 5);
+    assert_eq!(read_for(&mut far, Duration::from_millis(500)), b"hello");
+}

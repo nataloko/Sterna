@@ -55,6 +55,7 @@
 
 #include "ConnectBar.h"
 #include "Control.h"
+#include "CountersPopover.h"
 #include "FindBar.h"
 #include "HighlightsDialog.h"
 #include "I18n.h"
@@ -661,6 +662,17 @@ void MainWindow::wirePage(TerminalPage *page)
     });
     connect(session, &Session::damaged, this, [this, page] {
         updateLogStatus(page);
+        updateCounters(page);
+    });
+    // The byte counts move when bytes move, which `damaged` above already
+    // says. The connect clock and the rate falling back to zero do not: an
+    // idle line produces no damage at all, so they need the one wakeup that
+    // runs anyway.
+    connect(session, &Session::ticked, this, [this, page] {
+        updateCounters(page);
+    });
+    connect(page->status(), &PageStatusBar::countersClicked, this, [this, page] {
+        showCountersPopover(page);
     });
     // The indicator pauses the log it is counting. It belongs to *this* page,
     // so it pauses this page's log whether or not the page is the active one —
@@ -913,6 +925,16 @@ void MainWindow::closePage(TerminalPage *page, bool confirm)
     // to wait for, and a pointer to a freed page could compare equal to a later
     // one allocated in its place.
     m_pendingSsh.remove(page);
+    // ...and the counters popover is showing this page's numbers, on the same
+    // rule: `updateCounters` decides whose tick repaints it by comparing this
+    // pointer, and a later page allocated in the freed one's place would then
+    // be repainting somebody else's popover.
+    if (m_countersPage == page) {
+        m_countersPage = nullptr;
+        if (m_countersPopover) {
+            m_countersPopover->hide();
+        }
+    }
     m_panels->removePage(index);
     page->deleteLater();
     updateTabBar();
@@ -1498,6 +1520,22 @@ bool MainWindow::onSettingsChanged()
     if (m_wrapAction) {
         const QSignalBlocker block(m_wrapAction);
         m_wrapAction->setChecked(m_view->sizeFollowsWindow());
+    }
+    // The counter field, cached here rather than asked for per page per read.
+    // Every page is refreshed at once, so the switch takes effect now instead
+    // of at the next second's tick — and turning it off has to reach the pages
+    // that are not in front, because each carries its own strip.
+    m_countersOn =
+        m_session->setting(QStringLiteral("window.counters")) == QLatin1String("on");
+    if (m_countersAction) {
+        const QSignalBlocker block(m_countersAction);
+        m_countersAction->setChecked(m_countersOn);
+    }
+    if (!m_countersOn && m_countersPopover) {
+        m_countersPopover->hide();
+    }
+    for (int i = 0; i < m_panels->count(); i++) {
+        updateCounters(static_cast<TerminalPage *>(m_panels->widget(i)));
     }
     updatePanelActions();
     // The buttons themselves are not settings, so this rereads the list as
@@ -2512,6 +2550,13 @@ void MainWindow::buildMenus()
     connect(m_quickButtonsAction, &QAction::triggered, this, [this](bool on) {
         setViewSwitch(QStringLiteral("window.quick_buttons"), on,
                       tr("Could not change the quick buttons: %1"));
+    });
+    m_countersAction = view->addAction(tr("Show counters"));
+    m_countersAction->setObjectName(QStringLiteral("showCountersAction"));
+    m_countersAction->setCheckable(true);
+    connect(m_countersAction, &QAction::triggered, this, [this](bool on) {
+        setViewSwitch(QStringLiteral("window.counters"), on,
+                      tr("Could not change the counters: %1"));
     });
     m_lineNumbersAction = view->addAction(tr("Show line numbers"));
     m_lineNumbersAction->setObjectName(QStringLiteral("showLineNumbersAction"));
@@ -4447,6 +4492,39 @@ void MainWindow::updateLogStatus(TerminalPage *page)
                                logging && session->logPaused());
 }
 
+void MainWindow::updateCounters(TerminalPage *page)
+{
+    // The cached setting first, so a window with the feature off pays a bool
+    // test per page per read. This is on the same per-read path as
+    // `updateLogStatus` above and it is also reached once a second from
+    // `Session::ticked`, for every page, connected or not.
+    if (!m_countersOn) {
+        page->status()->setCounters(false, -1, 0, 0, false);
+        return;
+    }
+    Session *session = page->session();
+    const TtCounters c = session->counters();
+    page->status()->setCounters(true, c.connected_ms, c.rate_in, c.rate_out, c.live);
+
+    // The popover is the only thing that reads the serial control lines, and
+    // it only does it while it is on screen — one ioctl on Linux and four
+    // kernel calls on Windows, per tab, per second, is a real cost to pay for
+    // something nobody is looking at.
+    if (m_countersPopover && m_countersPopover->isVisible()
+        && m_countersPage == page) {
+        m_countersPopover->refresh(session);
+    }
+}
+
+void MainWindow::showCountersPopover(TerminalPage *page)
+{
+    if (!m_countersPopover) {
+        m_countersPopover = new CountersPopover(this);
+    }
+    m_countersPage = page;
+    m_countersPopover->popUp(page->status(), page->session());
+}
+
 void MainWindow::updatePanelActions()
 {
     if (m_tiledAction) {
@@ -4479,6 +4557,7 @@ void MainWindow::updatePageStatus(TerminalPage *page)
                                   : PageStatusBar::Link::Down,
         reopening ? session->reopeningPort() : session->describe());
     updateLogStatus(page);
+    updateCounters(page);
 }
 
 void MainWindow::showPageMessage(TerminalPage *page, const QString &text,

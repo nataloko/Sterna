@@ -295,10 +295,10 @@ The rule for going on that list: user-visible, not forced by the platform, and
 reproducing upstream instead would have been easy. A divergence Linux or Qt
 forces is a port, and belongs in a code comment and in `AGENTS.md`.
 
-**`docs/deviations.md` is the canonical list** — twenty-three entries as of
+**`docs/deviations.md` is the canonical list** — twenty-four entries as of
 2026-08-16, each with its reason, what stays compatible, and where it lives.
-The write-ups that used to sit here — the first batch of eight, Find, and
-line numbers — are in `docs/history.md`.
+The write-ups that used to sit here — the first batch of eight, Find, line
+numbers and the counters — are in `docs/history.md`.
 
 ---
 

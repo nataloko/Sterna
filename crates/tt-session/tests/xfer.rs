@@ -363,3 +363,52 @@ fn a_dropped_connection_ends_the_transfer_too() {
     assert!(saw_done, "the transfer was never told the line had gone");
     assert!(session.transfer().is_none());
 }
+
+/// The counters see a transfer, and the session log does not.
+///
+/// This is deviation 24's one deliberate disagreement with the log. The pump's
+/// transfer arm `continue`s before `log_bytes_in`, so a protocol's traffic
+/// never reaches the log in either mode — right for a log, and wrong for a
+/// counter whose whole job is answering "is anything coming out of this thing".
+/// The count therefore happens at the transport read, above the branch.
+#[test]
+fn a_transfer_is_counted_where_the_log_cannot_see_it() {
+    if !have("rz") {
+        eprintln!("skipping: lrzsz is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("payload.bin");
+    let out = dir.path().join("out");
+    let log = dir.path().join("session.log");
+    std::fs::create_dir(&out).unwrap();
+    payload(&src, 64 * 1024);
+
+    let mut session = session_on("rz -b", &out);
+    session
+        .start_log(&log, tt_session::LogOptions::default())
+        .unwrap();
+    let before = session.counters();
+
+    session.send_files(ZSEND, &[&src], &opts()).unwrap();
+    let outcome = run(&mut session, Duration::from_secs(60));
+    assert!(outcome.success, "{outcome:?}");
+    session.stop_log();
+
+    let after = session.counters();
+    assert!(
+        after.bytes_out - before.bytes_out > 64 * 1024,
+        "the payload went out and was counted: {} bytes",
+        after.bytes_out
+    );
+    assert!(
+        after.bytes_in > before.bytes_in,
+        "the receiver's ZMODEM replies were counted too"
+    );
+    // And the log, which is the half that stays as it was.
+    let logged = std::fs::metadata(&log).map(|m| m.len()).unwrap_or(0);
+    assert!(
+        logged < 1024,
+        "the transfer must not have reached the log: {logged} bytes"
+    );
+}

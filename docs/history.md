@@ -5725,6 +5725,77 @@ numbers: %1` is one of four identically worded notices, so all three are left
 alone, as Find's labels were. `.ste100.toml` now records the variant
 (`official`) so no later session has to ask.
 
+**Counters landed 2026-08-16** as deviation 24 — a field in each terminal's
+status line carrying the connect clock and the two data rates, and a popover
+behind it with the bytes each way, the lines, the breaks, the queued output and,
+on a serial port, the live CTS/DSR/CD/RI lines. `window.counters`, shipped on.
+It is the graduation of item 7 of `docs/yat-ideas.md`, which called it one of
+the best ratios on that page; the estimate held, and most of the work was in the
+four places the obvious build is wrong.
+
+- **The counts belong to the session, and so does the rate.** Three things read
+  them — the status line, `ttctl status`, and a duplicated session — and a rate
+  each of them worked out by differencing its own two polls is three answers to
+  one question. So `counters.rs` owns a one-second bucket and everyone reads it.
+  What that costs is a rule about *when* it decays: an idle line never calls
+  `pump`, so a rate published when a bucket closed and never revisited sits on
+  screen saying 12 MB/s at a console silent since lunch. The window is therefore
+  evaluated at the moment somebody asks and a line quiet for two seconds reads
+  zero — which also keeps the getter `&self`, and with it the ABI's const handle
+  and `ttctl`'s one-shot call.
+- **A file transfer is counted where the log cannot see it.** The pump's
+  transfer arm hands the stream to the protocol and `continue`s before
+  `log_bytes_in`, so a ZMODEM download never reaches the log in either mode.
+  `AGENTS.md` already recorded that as a log property nothing tested. Counting
+  beside the log would have inherited it, and a counter that reads zero during
+  a 4 MB download has failed at the one job it has — so the count happens at the
+  transport read, above the branch, and `tests/xfer.rs` now pins both halves
+  against a real `rz`: the counters move, the log stays under a kilobyte.
+- **The clock stops with a second instant rather than by clearing the first.**
+  `connected_at` is what `sync_log_epoch` reads for the `ElapsedConnection` log
+  stamp, so clearing it on disconnect would have quietly broken a log format.
+  `stopped_at` freezes the elapsed value instead, and a test opens such a log,
+  disconnects, and asserts the stamp is still written. The counters otherwise go
+  the opposite way from the terminal: `Session::connect` keeps the scrollback on
+  purpose, and resets every count, because a byte total spanning three
+  reconnects is not a number anybody can use.
+- **The field's width is a floor and its height is not negotiable.** The only
+  stretching item in the status strip is the elided host name, so a field whose
+  width followed its digits would re-elide the name every time a rate crossed
+  `999` to `1.2k` — the toolbar-reflow trap in a new place. A floor rather than
+  a fixed width because Qt clips a label at the *far* end, so a fixed field
+  would drop the leading digit of a long clock and show a smaller number with
+  nothing saying so, which is the `LineNumberGutter` failure exactly. And the
+  height matters more than the width: `TerminalPage::sizeHint` adds the strip's
+  height to the page's, so one pixel there costs the terminal a row, which
+  `Grid::resize` truncates in the page and the scrollback alike. `tabs_test`
+  pins all three, and measured the answer to the question that decided the
+  layout — on a tiled quarter-window the field takes 144 px of 460 and leaves
+  the name 52, which is `router1…` beside a right-hand field still spelling the
+  host in full.
+
+Two things it deliberately does not have. There is **no line-feed count**:
+`lines` counts `CR`, `LF` or `CR LF` in the stream, one each, because counting
+only `LF` reads zero on a bare-CR console — the same fact that made `DETECT` the
+default receive-CR mode (deviation 9). The honest definition is line feeds the
+terminal *executed*, which needs a `tt-vt` counter in `Vt::take_bells`' shape;
+what it must never be is `Grid::scrolled_off`. And there is **no new timer**:
+the clock and the decaying rate ride `Session::m_tick`, the once-a-second
+wakeup telnet's keepalive already needed, which is `VeryCoarseTimer` and
+therefore recomputed from the core on every tick rather than incremented.
+The serial lines are read only while the popover is on screen — one ioctl on
+Linux but four kernel calls on Windows, per tab, per second, is not a price to
+pay for something nobody is looking at.
+
+Its interface text went through rule 9, and the feature's *name* came out of it.
+`meter` is a unit of length in the dictionary, so using it for a measuring
+instrument is a restricted-meaning problem — everything user-facing therefore
+says **counters**, which is also what `Reset line counter` above already
+established (rule 1.11). `click` and `open` are approved technical verbs under
+computer processes, and `count` is a technical noun in the mathematical and
+engineering category, so the vocabulary needed no invention. `CTS`, `DSR`, `CD`
+and `RI` are exact interface labels and are left as they are.
+
 ## Measurements
 
 ### Measured — the real shell, 2026-08-08

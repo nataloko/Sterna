@@ -1439,6 +1439,90 @@ typedef struct {
 } TtTransferResult;
 
 /**
+ * What this connection has moved, and for how long.
+ *
+ * Nothing upstream counts any of this — see `docs/deviations.md` entry 24 for
+ * why it exists and `docs/counters.md` for what a user is shown.
+ *
+ * **Every number is reset by a connect and frozen by a disconnect**, so with
+ * [`TtCounters::live`] false they describe the connection that ended rather
+ * than the one that has not started. That is deliberate: a byte total spanning
+ * three reconnects is not a number anybody can use, and `connected_ms` beside
+ * it always says what the total covers.
+ */
+typedef struct {
+    /**
+     * Bytes the transport handed over, counted at the read: before the input
+     * stream filter, and **including a file transfer's traffic**, which
+     * [`tt_session_log_bytes`] deliberately never sees.
+     */
+    uint64_t bytes_in;
+    /**
+     * Bytes the transport accepted, counted at the write, so a short write
+     * under flow control counts what went rather than what was asked for.
+     */
+    uint64_t bytes_out;
+    /**
+     * Line endings received: `CR`, `LF` or `CR LF` counts one each.
+     *
+     * A count of the stream rather than of what the parser did with it, so a
+     * bare `CR` inside an escape sequence counts. Counting only `LF` would
+     * read zero on a console that ends its lines with a bare `CR`, which is
+     * common on the equipment this program is pointed at.
+     */
+    uint64_t lines_in;
+    /**
+     * Breaks received, from any transport that has one.
+     */
+    uint64_t breaks;
+    /**
+     * Bytes per second over the last complete second, or zero once the line
+     * has been quiet for two.
+     *
+     * Worked out in the core so that the status line, `ttctl` and a duplicated
+     * session cannot each difference their own two polls and get three
+     * answers. It decays when it is *read*, so a frontend showing a rate needs
+     * a once-a-second repaint: an idle line calls [`tt_session_pump`] never,
+     * and a number that only moved on a pump would sit there saying 12 MB/s at
+     * a console that has been silent all afternoon.
+     */
+    uint64_t rate_in;
+    uint64_t rate_out;
+    /**
+     * How long the connection has been up, or how long the last one lasted.
+     * **-1 when nothing has ever connected on this session.**
+     */
+    int64_t connected_ms;
+    /**
+     * False means the connection has ended: the counts above are its final
+     * ones, both rates are zero, and `connected_ms` has stopped moving.
+     */
+    bool live;
+} TtCounters;
+
+/**
+ * The four serial control lines, as one reading.
+ */
+typedef struct {
+    /**
+     * Clear to send.
+     */
+    bool cts;
+    /**
+     * Data set ready.
+     */
+    bool dsr;
+    /**
+     * Ring indicator.
+     */
+    bool ri;
+    /**
+     * Carrier detect.
+     */
+    bool cd;
+} TtModemLines;
+
+/**
  * What [`tt_session_send_key_code`] did.
  */
 typedef uint32_t TtKeyCodeKind;
@@ -3834,6 +3918,32 @@ TtStatus tt_session_tick(TtSession *session);
  * costs nothing.
  */
 size_t tt_session_pending_out(const TtSession *session);
+
+/**
+ * Fill `out` with what this connection has moved. See [`TtCounters`].
+ *
+ * Cheap enough for a once-a-second readout on every open tab: one clock
+ * reading and a struct copy, no I/O and nothing cached.
+ */
+void tt_session_counters(const TtSession *session, TtCounters *out);
+
+/**
+ * Read CTS, DSR, RI and carrier detect. **False means there is nothing to
+ * ask** — the link is not serial, or the read failed; one answer for both, the
+ * way `getmodemstatus` gives a macro one.
+ *
+ * Takes a mutable session because the port is asked rather than remembered:
+ * there is no cache and no change notification, so anything showing these has
+ * to poll.
+ *
+ * **Poll it only while something is showing it.** One `ioctl(TIOCMGET)` on
+ * Linux, but four separate calls on Windows — which is also why the Windows
+ * reading is not atomic and can catch a device mid-transition. At the once a
+ * second a human-readable indicator needs, neither matters; on the receive
+ * path or behind a closed panel, both do.
+ */
+bool tt_session_modem_lines(TtSession *session,
+                            TtModemLines *out);
 
 /**
  * A descriptor that becomes readable when [`tt_session_pump`] has something

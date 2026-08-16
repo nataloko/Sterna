@@ -24,6 +24,9 @@ Sterna has these functions:
   with case, whole-word, and regular-expression modes
 - [Serial ports that open again by themselves](docs/serial-reopen.md) when you
   power-cycle the equipment, keeping the screen and the scrollback
+- [Counters](docs/counters.md) in each terminal's status line, which give the
+  connection time, the data rates, the data received and sent, and the four
+  control lines of a serial port
 - [Highlight rules](docs/highlighting.md), which are regular expressions that
   change the colors on the screen and in the scrollback
 - [Quick buttons](docs/buttons.md), a bar of commands that you click to start,

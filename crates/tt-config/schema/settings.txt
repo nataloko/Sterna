@@ -2546,6 +2546,24 @@ window.quick_buttons_width | int_clamp(0..2000) | Sterna | QuickButtonsWidth | 0
 #@ This setting shows the terminal width and height in the middle of the terminal while you change the window. Sterna removes the numbers one second after the last change.
 window.show_terminal_size | bool | Sterna | ShowTerminalSize | on | -
 
+# **`[Sterna]`**, because nothing upstream counts anything: there is no key to
+# be compatible with, and a serial port's control lines are visible only to a
+# macro's `getmodemstatus`. See `docs/deviations.md` entry 24.
+#
+# Whether each terminal's status line carries the counter field — the connect
+# clock and the two rates — and with it the click that opens the rest: bytes
+# each way, lines, breaks, queued output, and on a serial port the live CTS,
+# DSR, CD and RI lines.
+#
+# It ships **on**, which the other two chrome switches above do not settle by
+# precedent. The question it answers — is anything coming out of this thing at
+# all — is one people have before they know to go looking for a switch, and the
+# field is a fixed width in a row that already carries three others. What is
+# behind the click costs nothing until it is opened: the modem lines are read
+# from the port only while the popover is on screen.
+#@ This setting shows a counter field in the status line of each terminal. The field gives the data received and sent, the connection time, and the data rates. The field opens more counts when you click it. The other counts include the received lines, the breaks, and the serial control lines.
+window.counters | bool | Sterna | Counters | on | -
+
 # --- recent -----------------------------------------------------------------
 #
 # **`[Sterna]` is this program's own section and nothing upstream reads it.**

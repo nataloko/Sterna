@@ -4291,6 +4291,22 @@ pub struct Settings {
     /// COLSxROWS` while it is not, because the pair that moves is then the visible
     /// one and the pair that matters is still the terminal's.
     pub window_show_terminal_size: bool,
+    /// **`[Sterna]`**, because nothing upstream counts anything: there is no key to
+    /// be compatible with, and a serial port's control lines are visible only to a
+    /// macro's `getmodemstatus`. See `docs/deviations.md` entry 24.
+    ///
+    /// Whether each terminal's status line carries the counter field — the connect
+    /// clock and the two rates — and with it the click that opens the rest: bytes
+    /// each way, lines, breaks, queued output, and on a serial port the live CTS,
+    /// DSR, CD and RI lines.
+    ///
+    /// It ships **on**, which the other two chrome switches above do not settle by
+    /// precedent. The question it answers — is anything coming out of this thing at
+    /// all — is one people have before they know to go looking for a switch, and the
+    /// field is a fixed width in a row that already carries three others. What is
+    /// behind the click costs nothing until it is opened: the modem lines are read
+    /// from the port only while the popover is on screen.
+    pub window_counters: bool,
     /// The device path, not a number: `ComPort` is upstream's and cannot spell
     /// `/dev/serial/by-id/usb-FTDI_…`. Written as the port was opened, so it is the
     /// `open_path` a stable symlink resolves from rather than the `ttyUSB<n>` that
@@ -4749,6 +4765,7 @@ impl Default for Settings {
             window_quick_buttons: true,
             window_quick_buttons_width: 0,
             window_show_terminal_size: true,
+            window_counters: true,
             recent_serial_port: String::from(""),
             recent_host_history: String::from(""),
             recent_ssh_host: String::from(""),
@@ -5997,6 +6014,7 @@ impl Settings {
                 ini.get("Sterna", "ShowTerminalSize"),
                 true,
             ),
+            window_counters: crate::schema::on_off(ini.get("Sterna", "Counters"), true),
             recent_serial_port: ini
                 .get_or("Sterna", "SerialPort", &d.recent_serial_port)
                 .to_string(),
@@ -8209,6 +8227,11 @@ impl Settings {
                 "off"
             }
             .to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "Counters",
+            &if self.window_counters { "on" } else { "off" }.to_string(),
         );
         ini.set("Sterna", "SerialPort", &self.recent_serial_port.clone());
         ini.set("Sterna", "HostHistory", &self.recent_host_history.clone());
@@ -11097,6 +11120,13 @@ impl Settings {
                     .to_string(),
                 );
             }
+            "window.counters" => {
+                ini.set(
+                    "Sterna",
+                    "Counters",
+                    &if self.window_counters { "on" } else { "off" }.to_string(),
+                );
+            }
             "recent.serial_port" => {
                 ini.set("Sterna", "SerialPort", &self.recent_serial_port.clone());
             }
@@ -12059,6 +12089,7 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "window.counters" => if self.window_counters { "on" } else { "off" }.to_string(),
             "recent.serial_port" => self.recent_serial_port.clone(),
             "recent.host_history" => self.recent_host_history.clone(),
             "recent.ssh_host" => self.recent_ssh_host.clone(),
@@ -12999,6 +13030,7 @@ impl Settings {
             "window.show_terminal_size" => {
                 self.window_show_terminal_size = crate::schema::on_off(Some(value), true)
             }
+            "window.counters" => self.window_counters = crate::schema::on_off(Some(value), true),
             "recent.serial_port" => self.recent_serial_port = value.to_string(),
             "recent.host_history" => self.recent_host_history = value.to_string(),
             "recent.ssh_host" => self.recent_ssh_host = value.to_string(),
@@ -16265,6 +16297,16 @@ pub const FIELDS: &[Field] = &[
         doc: "**`[Sterna]`**, because upstream's is a tooltip and has no key at all: it is created on `WM_ENTERSIZEMOVE` and destroyed on `WM_EXITSIZEMOVE` (`sizetip.c:111`, `vtwin.cpp:3111`), so there is nothing to store. Wayland has no such pair of events, and no way to put a window anywhere near the corner being dragged, so this one floats over the terminal and leaves on a timer — near enough that the number is where the eye already is, and far enough from upstream to be worth a switch (deviation 22).  It reads `COLSxROWS` while the terminal is the window, and `COLSxROWS of COLSxROWS` while it is not, because the pair that moves is then the visible one and the pair that matters is still the terminal's.",
     },
     Field {
+        name: "window.counters",
+        page: "window",
+        section: "Sterna",
+        key: "Counters",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "**`[Sterna]`**, because nothing upstream counts anything: there is no key to be compatible with, and a serial port's control lines are visible only to a macro's `getmodemstatus`. See `docs/deviations.md` entry 24.  Whether each terminal's status line carries the counter field — the connect clock and the two rates — and with it the click that opens the rest: bytes each way, lines, breaks, queued output, and on a serial port the live CTS, DSR, CD and RI lines.  It ships **on**, which the other two chrome switches above do not settle by precedent. The question it answers — is anything coming out of this thing at all — is one people have before they know to go looking for a switch, and the field is a fixed width in a row that already carries three others. What is behind the click costs nothing until it is opened: the modem lines are read from the port only while the popover is on screen.",
+    },
+    Field {
         name: "recent.serial_port",
         page: "recent",
         section: "Sterna",
@@ -16780,6 +16822,7 @@ pub const SETTING_HELP: &[&str] = &[
     "This setting shows the quick-button bar. You can change the buttons on this bar. An empty bar shows the Add button. You can use this button to make the first command.",
     "This setting sets the width of the quick-button bar in pixels. Zero makes the bar as wide as its widest button. A narrow bar makes the text on the buttons shorter. Sterna changes the window width, and the terminal keeps its columns. You can also set the width from the menu of the bar.",
     "This setting shows the terminal width and height in the middle of the terminal while you change the window. Sterna removes the numbers one second after the last change.",
+    "This setting shows a counter field in the status line of each terminal. The field gives the data received and sent, the connection time, and the data rates. The field opens more counts when you click it. The other counts include the received lines, the breaks, and the serial control lines.",
     "This setting stores the serial-device path that the connection dialog used last. Adapter renumbering changes a temporary name more frequently than a stable device link.",
     "This setting stores host entries for the New Connection dialog. This list puts the host from the last connection first. Host history must be active before Sterna updates this list.",
     "This setting stores the last SSH host or SSH configuration alias entered in the connection dialog. An empty value removes the SSH record.",

@@ -20,6 +20,47 @@ constexpr int kConnectionChars = 34;
 /// A full red/blank cycle is long enough to catch the eye without turning the
 /// status strip into a strobe.
 constexpr int kLogBlinkMs = 600;
+
+/// A rate, in as few characters as it can be said in.
+///
+/// Deliberately not `QLocale::formattedDataSize` with a `/s` on the end: that
+/// spells a kilobyte `1.0 kB` and a mebibyte `1.0 MiB`, and four of those plus
+/// a clock is a third of a tiled quarter-window's status strip. What the field
+/// is for is whether the number is *moving*, so one significant decimal and a
+/// single-letter multiplier says everything it has to.
+QString shortRate(quint64 bytesPerSecond)
+{
+    static const char *const suffix[] = {"", "k", "M", "G", "T"};
+    double n = static_cast<double>(bytesPerSecond);
+    size_t i = 0;
+    while (n >= 1000.0 && i + 1 < sizeof suffix / sizeof *suffix) {
+        n /= 1000.0;
+        i++;
+    }
+    // No decimal below a thousand: `44` is a byte count, not `44.0`.
+    const int digits = (i == 0 || n >= 100.0) ? 0 : 1;
+    return QString::number(n, 'f', digits) + QLatin1String(suffix[i]);
+}
+
+/// `H:MM:SS`, and hours that keep counting rather than wrapping at a day: a
+/// serial console left open over a weekend is the case, not the exception.
+QString elapsed(qint64 ms)
+{
+    const qint64 total = ms / 1000;
+    return QStringLiteral("%1:%2:%3")
+        .arg(total / 3600)
+        .arg((total / 60) % 60, 2, 10, QLatin1Char('0'))
+        .arg(total % 60, 2, 10, QLatin1Char('0'));
+}
+
+/// What the counter field says. One composer, used for the live reading and
+/// for the width template, so the reservation cannot disagree with the text.
+QString counterText(qint64 connectedMs, quint64 rateIn, quint64 rateOut)
+{
+    return QStringLiteral("%1 ↓%2 ↑%3")
+        .arg(elapsed(connectedMs < 0 ? 0 : connectedMs), shortRate(rateIn),
+             shortRate(rateOut));
+}
 } // namespace
 
 PageStatusBar::PageStatusBar(QWidget *parent)
@@ -52,6 +93,15 @@ PageStatusBar::PageStatusBar(QWidget *parent)
     m_log->installEventFilter(this);
     layout->addWidget(m_log);
 
+    m_counters = new QLabel(this);
+    m_counters->setObjectName(QStringLiteral("statusCounters"));
+    m_counters->installEventFilter(this);
+    // Hidden rather than empty until somebody says otherwise. A `QBoxLayout`
+    // skips a hidden item entirely — no width, and no 12 px of spacing beside
+    // it — so a window with the setting off pays nothing at all for this.
+    m_counters->hide();
+    layout->addWidget(m_counters);
+
     m_connection = new QLabel(this);
     // The window's single label had this name. Keeping it means a test that
     // asks a one-terminal window for its connection state still finds it.
@@ -74,6 +124,7 @@ PageStatusBar::PageStatusBar(QWidget *parent)
     });
 
     setConnection(Link::Down, QString());
+    reserveCounterWidth();
     applyPalette();
 }
 
@@ -183,14 +234,80 @@ void PageStatusBar::setLogging(bool logging, quint64 bytes, bool paused)
     applyLogAppearance();
 }
 
+void PageStatusBar::setCounters(bool on, qint64 connectedMs, quint64 rateIn,
+                                quint64 rateOut, bool live)
+{
+    if (!on) {
+        if (m_countersOn) {
+            m_countersOn = false;
+            m_counters->hide();
+        }
+        return;
+    }
+
+    const QString text = counterText(connectedMs, rateIn, rateOut);
+    // Compared before it is assigned, for `setLogging`'s reason one function
+    // up: this is reached from `Session::damaged`, which fires on every read
+    // of every open session, and `QLabel::setText` is a relayout.
+    if (text != m_counters->text()) {
+        m_counters->setText(text);
+    }
+    // **The whole state, and `live` is part of it.** A connection that ended
+    // keeps its totals, so nothing in the digits says the clock has stopped —
+    // leave `live` out of this comparison and a disconnected tab wears the
+    // connected styling for ever. Same shape as `setLogging` above and as
+    // `ConnectBar::Entry::operator==`.
+    if (on == m_countersOn && live == m_countersLive) {
+        return;
+    }
+    m_countersOn = on;
+    m_countersLive = live;
+    m_counters->show();
+    m_counters->setCursor(Qt::PointingHandCursor);
+    m_counters->setToolTip(tr("This field gives the connection time and the "
+                              "data rates. Click the field for more counts."));
+    // Dimmed rather than hidden when the line has gone: the numbers are still
+    // true of the connection that ended, and that is when somebody reads them.
+    m_counters->setStyleSheet(live ? QString()
+                                   : QStringLiteral("QLabel { color: palette(mid); }"));
+}
+
+bool PageStatusBar::countersVisible() const { return m_countersOn; }
+
+void PageStatusBar::reserveCounterWidth()
+{
+    // The widest reading the field is expected to hold: a hundred hours, and
+    // both rates at their longest. Run through the same composer as the live
+    // text, because how wide `1.2M` renders is a question about the font and
+    // the locale, not one a literal can answer.
+    const QString widest = counterText(100 * 3600 * 1000LL, 999'000'000, 999'000'000);
+    // A floor and not a fixed width. Fixed would hold the layout still and
+    // then *clip* anything longer — and Qt clips a label from the far end, so
+    // a connection open for longer than the reservation allows would lose a
+    // digit off its hour and read `0:44:00` for `100:44:00`. That is the
+    // `LineNumberGutter` failure exactly: a wrong number on screen with
+    // nothing saying so. A floor holds the width still for every reading that
+    // fits — which is all of them, for four days — and lets the one that does
+    // not make the field wider instead of lying.
+    m_counters->setMinimumWidth(fontMetrics().horizontalAdvance(widest));
+}
+
 bool PageStatusBar::eventFilter(QObject *watched, QEvent *event)
 {
-    if (watched == m_log && event->type() == QEvent::MouseButtonPress && m_logging) {
-        auto *press = static_cast<QMouseEvent *>(event);
-        if (press->button() == Qt::LeftButton) {
-            emit logClicked();
-            return true;
-        }
+    if (event->type() != QEvent::MouseButtonPress) {
+        return QWidget::eventFilter(watched, event);
+    }
+    auto *press = static_cast<QMouseEvent *>(event);
+    if (press->button() != Qt::LeftButton) {
+        return QWidget::eventFilter(watched, event);
+    }
+    if (watched == m_log && m_logging) {
+        emit logClicked();
+        return true;
+    }
+    if (watched == m_counters && m_countersOn) {
+        emit countersClicked();
+        return true;
     }
     return QWidget::eventFilter(watched, event);
 }
@@ -231,6 +348,18 @@ void PageStatusBar::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
     showName();
+}
+
+void PageStatusBar::changeEvent(QEvent *event)
+{
+    QWidget::changeEvent(event);
+    // The style's font reaches a widget here, on first show — after the
+    // constructor measured whatever the default was. A reservation made
+    // against the wrong font is the `LineNumberGutter` failure in a new place:
+    // too narrow, and Qt clips the *start* of the field, which is the hours.
+    if (event->type() == QEvent::FontChange) {
+        reserveCounterWidth();
+    }
 }
 
 void PageStatusBar::showName()

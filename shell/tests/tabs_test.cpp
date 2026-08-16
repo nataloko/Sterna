@@ -897,6 +897,98 @@ void test_the_status_strip_never_widens_its_page()
     CHECK(page->sizeHint().width() == before.width());
     CHECK(page->minimumSizeHint().width() <= before.width());
     CHECK(window.size() == windowBefore);
+
+    // And the counter field is a fourth thing in that row, which ships on. It
+    // has a reserved width rather than an elided one, so it is the one item
+    // here that could have pushed the page out — including in *height*, which
+    // the strip really does decide (`TerminalPage::sizeHint` adds it).
+    //
+    // Measured from here rather than from `before`: the connection above
+    // already moved the height by itself, because the disconnected chip is a
+    // stylesheet with padding in it and going connected takes the padding away.
+    const QSize beforeCounters = page->sizeHint();
+    // Already there, without waiting for a tick: the field ships on, and a
+    // status line that filled itself in a second after the window opened would
+    // read as the window still starting up.
+    CHECK(page->status()->findChild<QLabel *>(QStringLiteral("statusCounters"))
+              ->isVisible());
+    auto *tick = page->session()->findChild<QTimer *>(
+        QStringLiteral("sessionTickTimer"));
+    CHECK(tick != nullptr);
+    if (tick) {
+        QMetaObject::invokeMethod(tick, "timeout", Qt::DirectConnection);
+    }
+    QApplication::processEvents();
+    auto *field = page->status()->findChild<QLabel *>(
+        QStringLiteral("statusCounters"));
+    CHECK(field != nullptr);
+    CHECK(field != nullptr && field->isVisible());
+    CHECK(page->sizeHint() == beforeCounters);
+    CHECK(window.size() == windowBefore);
+}
+
+/// The counter field, on a strip with no window round it.
+///
+/// Three properties, and each is a way the obvious build goes wrong. Its width
+/// must not follow its digits, because the only stretching item in that row is
+/// the host name and it would re-elide twice a second. Its *height* must not
+/// move at all, because `TerminalPage::sizeHint` adds the strip's to the
+/// page's — one pixel there and the terminal above gives up a row, which
+/// `Grid::resize` truncates. And the early return that keeps it cheap on the
+/// per-read path has to compare the whole state: `live` changes the styling
+/// without changing a digit.
+void test_the_counter_field_never_moves_the_strip()
+{
+    PageStatusBar status;
+    status.show();
+    QApplication::processEvents();
+    auto *field = status.findChild<QLabel *>(QStringLiteral("statusCounters"));
+    CHECK(field != nullptr);
+    if (!field) {
+        return;
+    }
+
+    // Off is hidden, not blank: a `QBoxLayout` skips a hidden item, so the
+    // feature costs no width and no spacing when nobody asked for it.
+    status.setCounters(false, -1, 0, 0, false);
+    QApplication::processEvents();
+    CHECK(!field->isVisible());
+    const int heightOff = status.sizeHint().height();
+
+    status.setCounters(true, 0, 0, 0, true);
+    QApplication::processEvents();
+    CHECK(field->isVisible());
+    CHECK(field->text().startsWith(QStringLiteral("0:00:00")));
+    CHECK(status.sizeHint().height() == heightOff);
+
+    // The reservation. A hundred hours and a megabyte a second each way must
+    // occupy exactly what a fresh connection does — that is the whole point of
+    // a floor, and the alternative is a host name that re-elides twice a
+    // second as a rate crosses from `999` to `1.2k`.
+    const int narrow = field->width();
+    status.setCounters(true, 100LL * 3600 * 1000, 1'200'000, 999'000'000, true);
+    QApplication::processEvents();
+    CHECK(field->width() == narrow);
+    CHECK(status.sizeHint().height() == heightOff);
+    // Past the reservation the field grows rather than clipping: Qt cuts a
+    // label at the far end, so a clipped clock would drop the leading digit of
+    // its hour and read as a smaller number with nothing saying so.
+    status.setCounters(true, 100000LL * 3600 * 1000, 999'000'000, 999'000'000, true);
+    QApplication::processEvents();
+    CHECK(field->text().startsWith(QStringLiteral("100000:")));
+    CHECK(field->sizeHint().width() >= narrow);
+    // ...and the strip still refuses to have an opinion about width.
+    CHECK(status.sizeHint().width() == 0);
+    CHECK(status.minimumSizeHint().width() == 0);
+
+    // `live` alone, with every number the same. Left out of the comparison,
+    // this repaints nothing and a dead line wears the connected styling.
+    status.setCounters(true, 3600 * 1000, 1'200, 8, true);
+    const QString text = field->text();
+    CHECK(field->styleSheet().isEmpty());
+    status.setCounters(true, 3600 * 1000, 1'200, 8, false);
+    CHECK(field->text() == text);
+    CHECK(field->styleSheet().contains(QStringLiteral("palette(mid)")));
 }
 
 void test_visible_panels_refit_and_receive_their_own_metrics()
@@ -1114,6 +1206,7 @@ int main(int argc, char **argv)
     test_the_logging_indicator_blinks_red();
     test_an_ssh_attempt_dismisses_its_connecting_message();
     test_the_status_strip_never_widens_its_page();
+    test_the_counter_field_never_moves_the_strip();
     test_visible_panels_refit_and_receive_their_own_metrics();
     test_empty_panel_dialogs_cancel_or_connect_in_place();
     test_duplicate_reopens_telnet_with_the_live_settings();

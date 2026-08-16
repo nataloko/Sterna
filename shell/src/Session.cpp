@@ -77,11 +77,17 @@ Session::Session(int cols, int rows, QObject *parent)
     connect(m_reopenTimer, &QTimer::timeout, this, &Session::onReopenDeadline);
 
     m_tick = new QTimer(this);
+    // Named so a test can fire it directly rather than waiting a real second,
+    // the way `statusLogBlinkTimer` is.
+    m_tick->setObjectName(QStringLiteral("sessionTickTimer"));
     m_tick->setInterval(kTickIntervalMs);
     // Coarse on purpose: this must never be the reason a laptop wakes up, and
     // nothing behind it needs better than a second.
     m_tick->setTimerType(Qt::VeryCoarseTimer);
-    connect(m_tick, &QTimer::timeout, this, [this] { tt_session_tick(m_session); });
+    connect(m_tick, &QTimer::timeout, this, [this] {
+        tt_session_tick(m_session);
+        emit ticked();
+    });
     m_tick->start();
 
     // Ahead of anything the window connects, so that a slot reacting to a
@@ -992,6 +998,26 @@ QString Session::logPath() const
 quint64 Session::logBytes() const
 {
     return tt_session_log_bytes(m_session);
+}
+
+TtCounters Session::counters() const
+{
+    TtCounters out;
+    tt_session_counters(m_session, &out);
+    return out;
+}
+
+bool Session::modemLines(TtModemLines *out) const
+{
+    // The ABI takes a mutable session because the port is *asked* rather than
+    // remembered — the same reason `logPath` and `describe` above do. Nothing
+    // observable about the session changes.
+    return tt_session_modem_lines(const_cast<TtSession *>(m_session), out);
+}
+
+quint64 Session::pendingOut() const
+{
+    return tt_session_pending_out(m_session);
 }
 
 void Session::pauseLog(bool paused)

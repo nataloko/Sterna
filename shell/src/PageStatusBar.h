@@ -63,6 +63,21 @@ public:
     /// the blink is there to say a recording is running.
     void setLogging(bool logging, quint64 bytes, bool paused = false);
 
+    /// The counter field: how long the connection has been up and how fast
+    /// bytes are moving each way, or nothing at all when `on` is false.
+    ///
+    /// `live` is part of the state rather than something derived from the
+    /// numbers — a connection that ended keeps its totals, so the digits alone
+    /// cannot say whether it is still running, and the field dims to say so.
+    ///
+    /// Reached from `Session::damaged` and from the one-second tick, so an
+    /// unchanged reading must cost a string compare and nothing else.
+    void setCounters(bool on, qint64 connectedMs, quint64 rateIn, quint64 rateOut,
+                     bool live);
+    /// Whether the counter field is showing. `MainWindow` asks before it reads
+    /// the serial control lines, which is a syscall per tab per second.
+    bool countersVisible() const;
+
     /// Say something for `ms` milliseconds, over the name. Upstream's
     /// `QStatusBar::showMessage`, scoped to the terminal it happened in.
     void showMessage(const QString &text, int ms = 5000);
@@ -86,10 +101,18 @@ signals:
     /// while something is being counted.
     void logClicked();
 
+    /// The counter field was clicked. The window opens the popover over it —
+    /// which is also the only thing that makes the serial control lines get
+    /// read at all.
+    void countersClicked();
+
 protected:
     /// Re-elide the name: how much of it fits is a function of the width the
     /// tile was just given.
     void resizeEvent(QResizeEvent *event) override;
+    /// Re-reserve the counter field's width. The style's font arrives here on
+    /// first show, after the constructor has already measured one.
+    void changeEvent(QEvent *event) override;
     /// The indicator is a `QLabel`, which has no clicked signal of its own, so
     /// the press is caught here rather than by subclassing one label.
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -99,9 +122,19 @@ private:
     void applyLogAppearance();
     void showName();
     void elideInto(QLabel *label, const QString &text);
+    /// Hold the counter field's width at the widest reading it expects.
+    ///
+    /// **Not a measurement of the current text.** The only item in this layout
+    /// that stretches is the name, so a field whose width followed its digits
+    /// would take its pixels out of the host name — which would re-elide every
+    /// time a rate crossed from `999` to `1.2k`. A floor rather than a fixed
+    /// width, so that a reading past the reservation grows the field instead of
+    /// being clipped into a wrong number.
+    void reserveCounterWidth();
 
     QLabel *m_name = nullptr;
     QLabel *m_log = nullptr;
+    QLabel *m_counters = nullptr;
     QLabel *m_connection = nullptr;
     QTimer *m_messageTimer = nullptr;
     QTimer *m_logBlinkTimer = nullptr;
@@ -113,4 +146,6 @@ private:
     bool m_logging = false;
     bool m_logPaused = false;
     bool m_logBlinkOn = false;
+    bool m_countersOn = false;
+    bool m_countersLive = false;
 };
