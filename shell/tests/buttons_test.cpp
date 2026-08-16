@@ -397,7 +397,7 @@ void an_unrelated_setting_leaves_the_buttons_alone()
     // appear — the guard is about equality, not about the path being dead.
     QVector<QuickButton> edited = bar->buttons();
     edited[0].label = QStringLiteral("Renamed");
-    bar->setButtons(edited);
+    bar->setButtons(QuickButtonSet {edited, {}});
     CHECK(buttonAction(window, 0) != before);
     CHECK(bar->buttons()[0].label == QLatin1String("Renamed"));
 }
@@ -427,7 +427,7 @@ void an_empty_list_keeps_the_add_button()
     made.text = QStringLiteral("uptime\r");
     buttons.append(made);
     QString error;
-    CHECK(saveQuickButtons(ini, buttons, &error));
+    CHECK(saveQuickButtons(ini, QuickButtonSet {buttons, {}}, &error));
 
     // The window rereads on a settings change, which is what the editor's OK
     // ends in.
@@ -453,7 +453,7 @@ void the_editor_round_trips_a_button()
     const QString ini = writeIni(dir, "");
 
     MainWindow window(ini);
-    QuickButtonsDialog dialog(QVector<QuickButton>(), window.session(), &window);
+    QuickButtonsDialog dialog(QuickButtonSet(), 1, window.session(), &window);
     QuickButton seed;
     seed.kind = TT_QUICK_BUTTON_TEXT;
     seed.text = QStringLiteral("show version\r");
@@ -493,8 +493,8 @@ void the_editor_round_trips_a_button()
     CHECK(dialog.buttons()[0].text == QLatin1String("show version\r"));
 
     QString error;
-    CHECK(saveQuickButtons(ini, dialog.buttons(), &error));
-    const QVector<QuickButton> back = loadQuickButtons(ini);
+    CHECK(saveQuickButtons(ini, dialog.set(), &error));
+    const QVector<QuickButton> back = loadQuickButtons(ini).buttons;
     CHECK(back.size() == 1);
     CHECK(back[0].label == QLatin1String("Version"));
     CHECK(back[0].value == QLatin1String("show version$0D"));
@@ -514,7 +514,8 @@ void the_editor_preserves_an_unknown_command()
     QuickButton unknown;
     unknown.kind = TT_QUICK_BUTTON_COMMAND;
     unknown.text = QStringLiteral("60000");
-    QuickButtonsDialog dialog({unknown}, window.session(), &window);
+    QuickButtonsDialog dialog(QuickButtonSet {{unknown}, {}}, 1, window.session(),
+                              &window);
     auto *command =
         dialog.findChild<QComboBox *>(QStringLiteral("quickButtonCommand"));
     auto *confirm =
@@ -552,7 +553,8 @@ void the_editor_warns_about_a_key_the_host_wants()
     taken.shortcut = QStringLiteral("Ctrl+Alt+9");
     existing.append(taken);
 
-    QuickButtonsDialog dialog(existing, window.session(), &window);
+    QuickButtonsDialog dialog(QuickButtonSet {existing, {}}, 1, window.session(),
+                              &window);
     QuickButton seed;
     seed.text = QStringLiteral("y\r");
     dialog.appendButton(seed);
@@ -1073,7 +1075,7 @@ void adding_starts_on_a_new_row()
                  "Button2Label=Two\r\nButton2Value=b$0D\r\n");
 
     MainWindow window(ini);
-    QuickButtonsDialog dialog(barOf(window)->buttons(), window.session(), &window);
+    QuickButtonsDialog dialog(barOf(window)->set(), 1, window.session(), &window);
     auto *list = dialog.findChild<QListWidget *>(QStringLiteral("quickButtonsList"));
     auto *label = dialog.findChild<QLineEdit *>(QStringLiteral("quickButtonLabel"));
     CHECK(list != nullptr && label != nullptr);
@@ -1087,6 +1089,536 @@ void adding_starts_on_a_new_row()
     CHECK(dialog.buttons().size() == 3);
     CHECK(dialog.buttons()[0].label == QLatin1String("One"));
     CHECK(dialog.buttons()[1].label == QLatin1String("Two"));
+}
+
+// --- pages -----------------------------------------------------------------
+
+/// The two-page fixture the cases below share: one command per page, a name on
+/// the second, and a shortcut on the button that is *not* on the first.
+QByteArray twoPages()
+{
+    return "[Sterna Buttons]\r\nPage2Name=BMCs\r\n"
+           "Button1Label=Version\r\nButton1Value=echo page-one$0D\r\n"
+           "Button2Label=Power\r\nButton2Page=2\r\n"
+           "Button2Value=echo page-two$0D\r\nButton2Shortcut=Ctrl+Alt+2\r\n";
+}
+
+QComboBox *pageBoxOf(const MainWindow &window)
+{
+    return window.findChild<QComboBox *>(QStringLiteral("quickButtonPageBox"));
+}
+
+/// The selector is chrome, so it arrives with the second page and not before.
+void a_second_page_puts_a_selector_on_the_panel()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString one = writeIni(
+        dir, "[Sterna Buttons]\r\nButton1Label=Only\r\nButton1Value=a$0D\r\n");
+    {
+        MainWindow window(one);
+        window.show();
+        QuickButtonBar *bar = barOf(window);
+        CHECK(bar != nullptr && spin([bar] { return bar->isVisible(); }, 2000));
+        CHECK(bar->pageCount() == 1);
+        // One page: exactly the panel this was before pages existed.
+        CHECK(pageBoxOf(window) == nullptr);
+    }
+
+    QTemporaryDir second;
+    CHECK(second.isValid());
+    const QString two = writeIni(second, twoPages());
+    MainWindow window(two);
+    window.show();
+    QuickButtonBar *bar = barOf(window);
+    CHECK(bar != nullptr && spin([bar] { return bar->isVisible(); }, 2000));
+    CHECK(bar->pageCount() == 2);
+    QComboBox *box = pageBoxOf(window);
+    CHECK(box != nullptr);
+    CHECK(box->count() == 2);
+    // A page with no name is called by its number; a named one by its name.
+    CHECK(box->itemText(0) == QLatin1String("Page 1"));
+    CHECK(box->itemText(1) == QLatin1String("BMCs"));
+    CHECK(box->currentIndex() == 0);
+}
+
+/// A page filters the widgets and nothing else. The list, the indices and the
+/// object names every other part of this window speaks are the whole list's.
+void the_panel_shows_only_the_current_page()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = writeIni(dir, twoPages());
+
+    MainWindow window(ini);
+    window.show();
+    QuickButtonBar *bar = barOf(window);
+    CHECK(bar != nullptr && spin([bar] { return bar->isVisible(); }, 2000));
+
+    CHECK(bar->buttons().size() == 2);
+    CHECK(bar->page() == 1);
+    CHECK(bar->buttonWidget(0) != nullptr);
+    CHECK(bar->buttonWidget(1) == nullptr);
+
+    // The actions are the flat list's, so the one for page 2's button exists
+    // while page 1 is showing — which is what keeps its shortcut installed.
+    QAction *offPage = buttonAction(window, 1);
+    CHECK(offPage != nullptr);
+    CHECK(offPage->text() == QLatin1String("Power"));
+
+    bar->setPage(2);
+    CHECK(bar->page() == 2);
+    CHECK(bar->buttonWidget(0) == nullptr);
+    CHECK(bar->buttonWidget(1) != nullptr);
+    // ...and the actions were not destroyed and rebuilt on the way.
+    CHECK(buttonAction(window, 1) == offPage);
+    CHECK(bar->buttons().size() == 2);
+
+    // **One `+`, however many pages have been through.** Its widget is not in
+    // the per-button vector, so a rebuild that deleted only its action left the
+    // old button in the layout still reading `+` — a panel that grew one more
+    // every time somebody changed page. Nothing but the picture showed it.
+    const auto plusCount = [bar] {
+        int found = 0;
+        for (QToolButton *widget : bar->findChildren<QToolButton *>()) {
+            if (widget->text() == QLatin1String("+")) {
+                found++;
+            }
+        }
+        return found;
+    };
+    CHECK(plusCount() == 1);
+    bar->setPage(1);
+    bar->setPage(2);
+    bar->setPage(1);
+    CHECK(plusCount() == 1);
+}
+
+/// A shortcut is a key the host stops receiving. It must not come and go with
+/// a drop-down nobody looked at, so it fires from any page.
+void a_shortcut_fires_from_another_page()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = writeIni(dir, twoPages());
+
+    MainWindow window(ini);
+    window.show();
+    QuickButtonBar *bar = barOf(window);
+    CHECK(bar != nullptr && spin([bar] { return bar->isVisible(); }, 2000));
+    CHECK(bar->page() == 1);
+
+    QAction *offPage = buttonAction(window, 1);
+    CHECK(offPage != nullptr);
+    // Installed, while its button is not drawn.
+    CHECK(offPage->shortcut()
+          == QKeySequence::fromString(QStringLiteral("Ctrl+Alt+2"),
+                                      QKeySequence::PortableText));
+    CHECK(offPage->shortcutContext() == Qt::WindowShortcut);
+
+    window.connectPty({QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+                       QStringLiteral("cat")});
+    Session *session = window.session();
+    CHECK(spin([session] { return session->isConnected(); }, 3000));
+    CHECK(spin([offPage] { return offPage->isEnabled(); }, 2000));
+
+    offPage->trigger();
+    CHECK(spin([session]
+               { return screenText(*session).contains(QLatin1String("page-two")); },
+               3000));
+
+    // And hiding the whole panel still hands every key back — an action on a
+    // hidden widget answers no shortcut, and page 2's hangs off the bar rather
+    // than off a button, so it goes with the rest.
+    QString error;
+    CHECK(window.session()->setSetting(QStringLiteral("window.quick_buttons"),
+                                       QStringLiteral("off"), &error));
+    CHECK(spin([bar] { return !bar->isVisible(); }, 2000));
+    CHECK(!bar->isVisible());
+}
+
+/// The index invariant, and the case that fails loudly if a page is ever
+/// allowed to renumber: a run belongs to a button, not to what is on screen.
+void switching_pages_leaves_a_repeat_running()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini =
+        writeIni(dir,
+                 "[Sterna Buttons]\r\nPage2Name=BMCs\r\n"
+                 "Button1Label=Keepalive\r\nButton1Value=keepalive$0D\r\n"
+                 "Button1Repeat=forever\r\nButton1IntervalMs=100\r\n"
+                 "Button2Label=Power\r\nButton2Page=2\r\nButton2Value=power$0D\r\n");
+
+    MainWindow window(ini);
+    window.show();
+    window.connectPty({QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+                       QStringLiteral("cat > /dev/null")});
+    Session *session = window.session();
+    CHECK(spin([session] { return session->isConnected(); }, 3000));
+    QuickButtonBar *bar = barOf(window);
+    CHECK(bar != nullptr);
+    CHECK(spin([&window] { return buttonAction(window, 0)->isEnabled(); }, 2000));
+
+    press(window, 0);
+    CHECK(spin([session] { return markerCount(*session, "keepalive") >= 2; },
+               3000));
+
+    bar->setPage(2);
+    CHECK(bar->page() == 2);
+    // Still going, and still going in a way that reaches the wire.
+    CHECK(buttonAction(window, 0)->isChecked());
+    const int settled = markerCount(*session, "keepalive");
+    CHECK(spin([session, settled]
+               { return markerCount(*session, "keepalive") > settled; },
+               3000));
+
+    // Back, and the button is where it was, still marked as running.
+    bar->setPage(1);
+    CHECK(bar->buttonWidget(0) != nullptr);
+    CHECK(buttonAction(window, 0)->isChecked());
+    CHECK(buttonAction(window, 0)->text()
+          == QString::fromUtf8("Keepalive ⟳"));
+    press(window, 0);
+    CHECK(!buttonAction(window, 0)->isChecked());
+}
+
+/// The page the panel was left on is where it opens.
+void the_remembered_page_is_opened_at()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = writeIni(dir, twoPages());
+
+    {
+        MainWindow window(ini);
+        window.show();
+        QuickButtonBar *bar = barOf(window);
+        CHECK(bar != nullptr && spin([bar] { return bar->isVisible(); }, 2000));
+        QComboBox *box = pageBoxOf(window);
+        CHECK(box != nullptr);
+        // Through the drop-down, which is the gesture — `setPage` alone is the
+        // programmatic half and deliberately writes nothing down.
+        box->setCurrentIndex(1);
+        CHECK(spin([bar] { return bar->page() == 2; }, 2000));
+    }
+
+    QFile file(ini);
+    CHECK(file.open(QIODevice::ReadOnly));
+    const QByteArray saved = file.readAll();
+    CHECK(saved.contains("QuickButtonsPage=2"));
+
+    MainWindow again(ini);
+    again.show();
+    QuickButtonBar *bar = barOf(again);
+    CHECK(bar != nullptr && spin([bar] { return bar->isVisible(); }, 2000));
+    CHECK(bar->page() == 2);
+    CHECK(bar->buttonWidget(1) != nullptr);
+    CHECK(bar->buttonWidget(0) == nullptr);
+}
+
+/// A page that has stopped existing is not one to open on, and the answer is
+/// written back rather than quietly differing from the file.
+void a_page_that_stops_existing_moves_the_setting_down()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = writeIni(
+        dir,
+        "[Sterna]\r\nQuickButtonsPage=2\r\n"
+        "[Sterna Buttons]\r\nButton1Label=Version\r\nButton1Value=a$0D\r\n"
+        "Button2Label=Power\r\nButton2Page=2\r\nButton2Value=b$0D\r\n");
+
+    MainWindow window(ini);
+    window.show();
+    QuickButtonBar *bar = barOf(window);
+    CHECK(bar != nullptr && spin([bar] { return bar->isVisible(); }, 2000));
+    CHECK(bar->page() == 2);
+
+    // Delete page 2's only button — and its name with it, since it had none.
+    // Written to the file and then let in through a settings change, which is
+    // the path the editor's OK takes.
+    QuickButtonSet set = bar->set();
+    set.buttons.remove(1);
+    QString error;
+    CHECK(saveQuickButtons(ini, set, &error));
+    CHECK(window.session()->setSetting(QStringLiteral("terminal.local_echo"),
+                                       QStringLiteral("on"), &error));
+    CHECK(spin([bar] { return bar->pageCount() == 1; }, 2000));
+    CHECK(bar->page() == 1);
+
+    QFile file(ini);
+    CHECK(file.open(QIODevice::ReadOnly));
+    CHECK(file.readAll().contains("QuickButtonsPage=1"));
+}
+
+/// The panel's own menu: which page, and where a button goes.
+void the_panel_menu_offers_the_pages()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = writeIni(dir, twoPages());
+
+    MainWindow window(ini);
+    window.show();
+    QuickButtonBar *bar = barOf(window);
+    CHECK(bar != nullptr && spin([bar] { return bar->isVisible(); }, 2000));
+
+    QMenu *menu = bar->buildContextMenu(0);
+    CHECK(menu != nullptr);
+    QMenu *pages = menu->findChild<QMenu *>(QStringLiteral("quickMenuPage"));
+    CHECK(pages != nullptr);
+    auto *first = pages->findChild<QAction *>(QStringLiteral("quickMenuPage1"));
+    auto *second = pages->findChild<QAction *>(QStringLiteral("quickMenuPage2"));
+    CHECK(first != nullptr && second != nullptr);
+    CHECK(first->isChecked() && !second->isChecked());
+    CHECK(second->text() == QLatin1String("BMCs"));
+
+    // Move to page offers every page but the one the button is already on.
+    QMenu *move = menu->findChild<QMenu *>(QStringLiteral("quickMenuMoveToPage"));
+    CHECK(move != nullptr);
+    CHECK(move->findChild<QAction *>(QStringLiteral("quickMenuMoveToPage1"))
+          == nullptr);
+    auto *to2 = move->findChild<QAction *>(QStringLiteral("quickMenuMoveToPage2"));
+    CHECK(to2 != nullptr);
+
+    second->trigger();
+    CHECK(spin([bar] { return bar->page() == 2; }, 2000));
+    delete menu;
+
+    // ...and the move writes the file and rebuilds the panel around it.
+    menu = bar->buildContextMenu(1);
+    move = menu->findChild<QMenu *>(QStringLiteral("quickMenuMoveToPage"));
+    CHECK(move != nullptr);
+    auto *back = move->findChild<QAction *>(QStringLiteral("quickMenuMoveToPage1"));
+    CHECK(back != nullptr);
+    back->trigger();
+    CHECK(spin([bar] { return bar->buttons()[1].page == 1; }, 2000));
+    delete menu;
+}
+
+/// The editor moves a button between pages, and its list is one page's.
+void the_editor_moves_a_button_between_pages()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = writeIni(dir, twoPages());
+
+    MainWindow window(ini);
+    QuickButtonsDialog dialog(barOf(window)->set(), 1, window.session(), &window);
+    auto *list = dialog.findChild<QListWidget *>(QStringLiteral("quickButtonsList"));
+    auto *pageOf = dialog.findChild<QComboBox *>(QStringLiteral("quickButtonPage"));
+    auto *pageList =
+        dialog.findChild<QComboBox *>(QStringLiteral("quickButtonsPageList"));
+    CHECK(list != nullptr && pageOf != nullptr && pageList != nullptr);
+
+    // One page's buttons, not the whole list.
+    CHECK(list->count() == 1);
+    CHECK(list->item(0)->text() == QLatin1String("Version"));
+    CHECK(pageList->count() == 2);
+    // The field shows the page the button is really on, which is a lookup that
+    // fails silently if the stored data and the button's number are compared
+    // as different types.
+    CHECK(pageOf->currentData().toInt() == 1);
+
+    // Move the visible one to page 2. The editor follows it there rather than
+    // leaving the fields showing a button that is not in the list beside them.
+    pageOf->setCurrentIndex(1);
+    CHECK(dialog.buttons()[0].page == 2);
+    CHECK(list->count() == 2);
+
+    pageList->setCurrentIndex(0);
+    CHECK(list->count() == 0);
+}
+
+/// The editor opens on the page it was handed, which is the one the panel is
+/// showing.
+///
+/// It did not: `rebuildPages` fills the page box, the first `addItem` emits
+/// `currentIndexChanged(0)`, and an unguarded handler turned that into
+/// `setPage(1)` — inside the constructor, after the argument had been taken.
+/// Every page operation then worked on page 1 whatever was on screen, so
+/// Remove page removed the wrong one.
+void the_editor_opens_on_the_page_it_was_given()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini =
+        writeIni(dir,
+                 "[Sterna Buttons]\r\nPage2Name=BMCs\r\nPage3Name=Switches\r\n"
+                 "Button1Label=One\r\nButton1Value=a$0D\r\n"
+                 "Button2Label=Two\r\nButton2Page=2\r\nButton2Value=b$0D\r\n"
+                 "Button3Label=Three\r\nButton3Page=3\r\nButton3Value=c$0D\r\n");
+
+    MainWindow window(ini);
+    QuickButtonsDialog dialog(barOf(window)->set(), 3, window.session(), &window);
+    auto *pageList =
+        dialog.findChild<QComboBox *>(QStringLiteral("quickButtonsPageList"));
+    auto *list = dialog.findChild<QListWidget *>(QStringLiteral("quickButtonsList"));
+    CHECK(pageList != nullptr && list != nullptr);
+    CHECK(pageList->currentIndex() == 2);
+    CHECK(pageList->currentText() == QLatin1String("Switches"));
+    CHECK(list->count() == 1);
+    CHECK(list->item(0)->text() == QLatin1String("Three"));
+}
+
+/// Removing a page keeps every command on it, and removes the page the editor
+/// is actually showing. Only Remove deletes a command, and only Remove asks.
+void removing_a_page_keeps_its_buttons()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini =
+        writeIni(dir,
+                 "[Sterna Buttons]\r\nPage2Name=BMCs\r\nPage3Name=Switches\r\n"
+                 "Button1Label=One\r\nButton1Value=a$0D\r\n"
+                 "Button2Label=Two\r\nButton2Page=2\r\nButton2Value=b$0D\r\n"
+                 "Button3Label=Three\r\nButton3Page=3\r\nButton3Value=c$0D\r\n");
+
+    MainWindow window(ini);
+    QuickButtonsDialog dialog(barOf(window)->set(), 3, window.session(), &window);
+    auto *remove =
+        dialog.findChild<QAction *>(QStringLiteral("quickButtonsPageRemove"));
+    CHECK(remove != nullptr && remove->isEnabled());
+
+    // Three pages, showing the third: its command joins the second, and no page
+    // below it moves. A dialog that had quietly gone back to page 1 would merge
+    // pages 1 and 2 instead, which these three labels can tell apart.
+    remove->trigger();
+    CHECK(dialog.buttons().size() == 3);
+    CHECK(dialog.set().pageCount() == 2);
+    CHECK(dialog.buttons()[0].page == 1);
+    CHECK(dialog.buttons()[1].page == 2);
+    CHECK(dialog.buttons()[2].page == 2);
+    CHECK(dialog.set().pageLabel(2) == QLatin1String("BMCs"));
+    // **And nothing landed on page 0.** `rebuildPages` clears both combos, and
+    // a leaked loading flag turned the empty one's `currentData()` into a page
+    // number no button may hold — which took the button off every page in the
+    // editor and out of an export, silently.
+    for (const QuickButton &button : dialog.buttons()) {
+        CHECK(button.page >= 1);
+    }
+
+    remove->trigger();
+    CHECK(dialog.set().pageCount() == 1);
+    CHECK(dialog.buttons().size() == 3);
+    // ...and with one page left there is nothing to remove.
+    CHECK(!remove->isEnabled());
+}
+
+/// The panel's drop-down says which page is drawn, after a rebuild as well as
+/// after a switch.
+///
+/// A rebuild destroys the box and the new one starts at row 0, so a panel on
+/// page 2 came back drawing page 2 under a drop-down reading `Page 1` — and
+/// clicking `Page 1` then emitted nothing, so it read as a dead control.
+void a_rebuilt_panel_keeps_its_page_selector_in_step()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = writeIni(dir, twoPages());
+
+    MainWindow window(ini);
+    window.show();
+    QuickButtonBar *bar = barOf(window);
+    CHECK(bar != nullptr && spin([bar] { return bar->isVisible(); }, 2000));
+    QComboBox *box = pageBoxOf(window);
+    CHECK(box != nullptr);
+
+    box->setCurrentIndex(1);
+    CHECK(spin([bar] { return bar->page() == 2; }, 2000));
+
+    // Every editor OK, Move to page and Remove goes through here.
+    QuickButtonSet edited = bar->set();
+    edited.buttons[0].label = QStringLiteral("Renamed");
+    QString error;
+    CHECK(saveQuickButtons(ini, edited, &error));
+    CHECK(window.session()->setSetting(QStringLiteral("terminal.local_echo"),
+                                       QStringLiteral("on"), &error));
+    CHECK(spin([bar] {
+        return bar->buttons().value(0).label == QLatin1String("Renamed");
+    }, 2000));
+
+    CHECK(bar->page() == 2);
+    box = pageBoxOf(window);
+    CHECK(box != nullptr);
+    CHECK(box->currentIndex() == 1);
+    CHECK(box->currentText() == QLatin1String("BMCs"));
+    // ...and the drawn buttons agree with it.
+    CHECK(bar->buttonWidget(0) == nullptr);
+    CHECK(bar->buttonWidget(1) != nullptr);
+}
+
+/// An exported page is an ordinary settings file, and a settings file imports
+/// as a page.
+void a_page_exported_and_imported_comes_back()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = writeIni(dir, twoPages());
+    const QString out = dir.filePath(QStringLiteral("bmcs.ini"));
+
+    MainWindow window(ini);
+    // Export page 2 by hand along the path the dialog takes — the file dialog
+    // itself is modal and not something a test can click through.
+    QuickButtonSet page;
+    for (const QuickButton &button : barOf(window)->buttons()) {
+        if (button.page != 2) {
+            continue;
+        }
+        QuickButton copy = button;
+        copy.page = 1;
+        page.buttons.append(copy);
+    }
+    page.pageNames.append(QStringLiteral("BMCs"));
+    QString error;
+    CHECK(saveQuickButtons(out, page, &error));
+
+    QFile file(out);
+    CHECK(file.open(QIODevice::ReadOnly));
+    const QByteArray text = file.readAll();
+    // No `Page` key at all: an exported page is a one-page file, which is what
+    // makes it paste-able into a settings file by hand.
+    CHECK(!text.contains("Button1Page"));
+    CHECK(text.contains("Page1Name=BMCs"));
+    CHECK(text.contains("Button1Label=Power"));
+
+    const QuickButtonSet back = loadQuickButtons(out);
+    CHECK(back.buttons.size() == 1);
+    CHECK(back.buttons[0].page == 1);
+    CHECK(back.pageCount() == 1);
+    CHECK(back.pageLabel(1) == QLatin1String("BMCs"));
+    // The shortcut travelled with it in the file; the importer is what clears
+    // it, so that a key is never taken from a button in *this* file silently.
+    CHECK(back.buttons[0].shortcut == QLatin1String("Ctrl+Alt+2"));
+}
+
+/// A page name must not hold the panel open any more than a caption does.
+void a_narrow_panel_shortens_the_page_name_too()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = writeIni(
+        dir,
+        "[Sterna Buttons]\r\nPage2Name=Out-of-band management network\r\n"
+        "Button1Label=Version\r\nButton1Value=a$0D\r\n"
+        "Button2Label=Power\r\nButton2Page=2\r\nButton2Value=b$0D\r\n");
+
+    MainWindow window(ini);
+    window.show();
+    QuickButtonBar *bar = barOf(window);
+    CHECK(bar != nullptr && spin([bar] { return bar->isVisible(); }, 2000));
+    QComboBox *box = pageBoxOf(window);
+    CHECK(box != nullptr);
+
+    CHECK(setPanelWidth(window, 90));
+    CHECK(box->width() <= 90);
+    // Elision is paint-only: the model still holds the real name, which is
+    // what the popup, the tooltip and the settings file all show.
+    CHECK(box->itemText(1) == QLatin1String("Out-of-band management network"));
+    // The floor is the window's fixed 48 and not this widget's idea of itself.
+    CHECK(box->minimumSizeHint().width() == 0);
+    CHECK(bar->minimumSizeHint().width() <= 48);
 }
 
 /// `--write <dir>`: the bar and its editor as PNGs, for a human to look at.
@@ -1187,6 +1719,54 @@ void a_second_press_stops_a_run_with_no_end()
     CHECK(markerCount(*session, "keepalive") == settled);
 }
 
+/// A setting that is nothing to do with the buttons does not end a run.
+///
+/// `reloadQuickButtons` runs on **every** settings change, and it used to stop
+/// every repeat before it had looked at what had changed — so a font, a colour
+/// or the panel's own width ended a keepalive somebody had started, with
+/// nothing on screen saying why. `docs/deviations.md` entry 7 lists the ways a
+/// run stops and this was not among them.
+void an_unrelated_setting_leaves_a_repeat_running()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini =
+        writeIni(dir,
+                 "[Sterna Buttons]\r\nButton1Label=Keepalive\r\n"
+                 "Button1Value=keepalive$0D\r\n"
+                 "Button1Repeat=forever\r\nButton1IntervalMs=100\r\n");
+
+    MainWindow window(ini);
+    window.show();
+    window.connectPty({QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+                       QStringLiteral("cat > /dev/null")});
+    Session *session = window.session();
+    CHECK(spin([session] { return session->isConnected(); }, 3000));
+    CHECK(spin([&window] { return buttonAction(window, 0)->isEnabled(); }, 2000));
+
+    press(window, 0);
+    CHECK(spin([session] { return markerCount(*session, "keepalive") >= 2; },
+               3000));
+    CHECK(buttonAction(window, 0)->isChecked());
+
+    CHECK(window.session()->setSetting(QStringLiteral("terminal.local_echo"),
+                                       QStringLiteral("on"), nullptr));
+    qApp->processEvents();
+
+    // Still going, and still going in a way that puts bytes on the wire rather
+    // than only leaving the face pressed.
+    CHECK(buttonAction(window, 0)->isChecked());
+    const int settled = markerCount(*session, "keepalive");
+    CHECK(spin([session, settled]
+               { return markerCount(*session, "keepalive") > settled; },
+               3000));
+
+    TerminalView *view = window.findChild<TerminalView *>();
+    CHECK(view != nullptr && view->stopKeyArmed());
+    press(window, 0);
+    CHECK(!buttonAction(window, 0)->isChecked());
+}
+
 /// Escape in the terminal stops everything — and the key belongs to the host
 /// again the moment nothing is running.
 void escape_stops_every_run_and_only_then()
@@ -1281,7 +1861,7 @@ void the_editor_round_trips_a_repeat()
     const QString ini = writeIni(dir, "");
 
     MainWindow window(ini);
-    QuickButtonsDialog dialog(QVector<QuickButton>(), window.session(), &window);
+    QuickButtonsDialog dialog(QuickButtonSet(), 1, window.session(), &window);
     QuickButton seed;
     seed.kind = TT_QUICK_BUTTON_TEXT;
     seed.text = QStringLiteral("show clock\r");
@@ -1307,8 +1887,8 @@ void the_editor_round_trips_a_repeat()
     CHECK(dialog.buttons()[0].repeatsForever());
 
     QString error;
-    CHECK(saveQuickButtons(ini, dialog.buttons(), &error));
-    const QVector<QuickButton> back = loadQuickButtons(ini);
+    CHECK(saveQuickButtons(ini, dialog.set(), &error));
+    const QVector<QuickButton> back = loadQuickButtons(ini).buttons;
     CHECK(back.size() == 1);
     CHECK(back[0].repeatsForever());
     CHECK(back[0].intervalMs == 2500);
@@ -1351,7 +1931,7 @@ void render_widgets()
     spin([] { return false; }, 300);
     window.grab().save(g_writeTo + QStringLiteral("/quick-buttons-wide.png"));
 
-    QuickButtonsDialog dialog(loadQuickButtons(ini), window.session(), &window);
+    QuickButtonsDialog dialog(loadQuickButtons(ini), 1, window.session(), &window);
     dialog.selectRow(3);
     // Without this the dialog is grabbed before layout and the wrapped warning
     // overlaps the fields in the image and nowhere else.
@@ -1360,10 +1940,45 @@ void render_widgets()
 
     // ...and the repeat row with something in it, which is the only state in
     // which it shows an interval.
-    QuickButtonsDialog repeating(loadQuickButtons(ini), window.session(), &window);
+    QuickButtonsDialog repeating(loadQuickButtons(ini), 1, window.session(),
+                                 &window);
     repeating.selectRow(5);
     repeating.adjustSize();
     repeating.grab().save(g_writeTo + QStringLiteral("/quick-buttons-repeat.png"));
+
+    // The panel with pages on it, and the editor showing the second one —
+    // where the page row is a control rather than a greyed reminder that the
+    // feature exists.
+    QTemporaryDir paged;
+    const QString pagedIni = writeIni(
+        paged,
+        "[Sterna Buttons]\r\nPage2Name=BMCs\r\n"
+        "Button1Label=Show version\r\nButton1Value=show version$0D\r\n"
+        "Button2Label=Interfaces\r\nButton2Value=show ip int brief$0D\r\n"
+        "Button3Label=Save config\r\nButton3Value=write memory$0D\r\n"
+        "Button4Label=Power status\r\nButton4Page=2\r\n"
+        "Button4Value=power status$0D\r\n"
+        "Button5Label=Power cycle\r\nButton5Page=2\r\n"
+        "Button5Value=power cycle$0D\r\nButton5Confirm=on\r\n"
+        "Button6Label=SOL console\r\nButton6Page=2\r\n"
+        "Button6Value=sol activate$0D\r\n");
+
+    MainWindow pagedWindow(pagedIni);
+    pagedWindow.resize(760, 400);
+    pagedWindow.show();
+    spin([] { return false; }, 300);
+    pagedWindow.grab().save(g_writeTo + QStringLiteral("/quick-buttons-pages.png"));
+
+    barOf(pagedWindow)->setPage(2);
+    spin([] { return false; }, 300);
+    pagedWindow.grab().save(g_writeTo
+                            + QStringLiteral("/quick-buttons-page-two.png"));
+
+    QuickButtonsDialog pages(loadQuickButtons(pagedIni), 2,
+                             pagedWindow.session(), &pagedWindow);
+    pages.selectRow(4);
+    pages.adjustSize();
+    pages.grab().save(g_writeTo + QStringLiteral("/quick-buttons-pages-editor.png"));
 }
 
 } // namespace
@@ -1400,7 +2015,21 @@ int main(int argc, char **argv)
     adding_starts_on_a_new_row();
     a_repeat_sends_its_count_and_stops();
     a_second_press_stops_a_run_with_no_end();
+    an_unrelated_setting_leaves_a_repeat_running();
     escape_stops_every_run_and_only_then();
+    a_second_page_puts_a_selector_on_the_panel();
+    the_panel_shows_only_the_current_page();
+    a_shortcut_fires_from_another_page();
+    switching_pages_leaves_a_repeat_running();
+    the_remembered_page_is_opened_at();
+    a_page_that_stops_existing_moves_the_setting_down();
+    the_panel_menu_offers_the_pages();
+    the_editor_moves_a_button_between_pages();
+    the_editor_opens_on_the_page_it_was_given();
+    removing_a_page_keeps_its_buttons();
+    a_rebuilt_panel_keeps_its_page_selector_in_step();
+    a_page_exported_and_imported_comes_back();
+    a_narrow_panel_shortens_the_page_name_too();
     a_repeat_ends_with_the_connection();
     the_editor_round_trips_a_repeat();
     render_widgets();

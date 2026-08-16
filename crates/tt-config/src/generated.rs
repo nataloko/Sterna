@@ -4312,6 +4312,30 @@ pub struct Settings {
     /// widest caption, because the buttons shorten their text instead of holding the
     /// panel open. What it buys is a target a pointer can hit.
     pub window_quick_buttons_width: i32,
+    /// Which page of buttons the panel is showing.
+    ///
+    /// A flat list is the wrong shape as soon as somebody keeps commands for four
+    /// different devices, so a button carries the page it is on (`Button4Page=2` in
+    /// `[Sterna Buttons]`, absent for the first page) and the panel shows one page
+    /// at a time. This is which one — written by the panel's own drop-down, the way
+    /// the width is written by the panel's own menu.
+    ///
+    /// **It is remembered rather than reset**, because the page somebody works on is
+    /// a preference and not a mode: a console engineer with a page per device does
+    /// not start every morning on the first one. Written with `rememberSettings`
+    /// alone and not `setSetting` first, which is the opposite of the width — the
+    /// panel has already moved by the time this is written, so emitting
+    /// `settingsChanged` would re-apply every terminal's settings on a click that
+    /// only changed which buttons are drawn.
+    ///
+    /// `int_clamp` for the width's reason: a number outside the range is a typo, and
+    /// clamping keeps the panel showing something where taking the default would
+    /// throw away a deliberate choice. The ceiling is the section's own — pages are
+    /// bounded by how many buttons there can be. The *real* bound is how many pages
+    /// exist, which only the window knows, so the window clamps again on the way in
+    /// and writes the answer back when a page has stopped existing: validation at
+    /// the boundary, the way `TerminalUID` is.
+    pub window_quick_buttons_page: i32,
     /// **`[Sterna]`**, because upstream's is a tooltip and has no key at all: it is
     /// created on `WM_ENTERSIZEMOVE` and destroyed on `WM_EXITSIZEMOVE`
     /// (`sizetip.c:111`, `vtwin.cpp:3111`), so there is nothing to store. Wayland
@@ -4800,6 +4824,7 @@ impl Default for Settings {
             window_panel_layout: WindowPanelLayout::default(),
             window_quick_buttons: true,
             window_quick_buttons_width: 0,
+            window_quick_buttons_page: 1,
             window_show_terminal_size: true,
             window_counters: true,
             recent_serial_port: String::from(""),
@@ -6051,6 +6076,11 @@ impl Settings {
                 ini.get_int("Sterna", "QuickButtonsWidth", d.window_quick_buttons_width) as i32,
                 0,
                 2000,
+            ),
+            window_quick_buttons_page: crate::schema::clamped(
+                ini.get_int("Sterna", "QuickButtonsPage", d.window_quick_buttons_page) as i32,
+                1,
+                99,
             ),
             window_show_terminal_size: crate::schema::on_off(
                 ini.get("Sterna", "ShowTerminalSize"),
@@ -8284,6 +8314,11 @@ impl Settings {
             "Sterna",
             "QuickButtonsWidth",
             &self.window_quick_buttons_width.to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "QuickButtonsPage",
+            &self.window_quick_buttons_page.to_string(),
         );
         ini.set(
             "Sterna",
@@ -11206,6 +11241,13 @@ impl Settings {
                     &self.window_quick_buttons_width.to_string(),
                 );
             }
+            "window.quick_buttons_page" => {
+                ini.set(
+                    "Sterna",
+                    "QuickButtonsPage",
+                    &self.window_quick_buttons_page.to_string(),
+                );
+            }
             "window.show_terminal_size" => {
                 ini.set(
                     "Sterna",
@@ -12194,6 +12236,7 @@ impl Settings {
             }
             .to_string(),
             "window.quick_buttons_width" => self.window_quick_buttons_width.to_string(),
+            "window.quick_buttons_page" => self.window_quick_buttons_page.to_string(),
             "window.show_terminal_size" => if self.window_show_terminal_size {
                 "on"
             } else {
@@ -13145,6 +13188,13 @@ impl Settings {
                     crate::schema::int(value, self.window_quick_buttons_width),
                     0,
                     2000,
+                )
+            }
+            "window.quick_buttons_page" => {
+                self.window_quick_buttons_page = crate::schema::clamped(
+                    crate::schema::int(value, self.window_quick_buttons_page),
+                    1,
+                    99,
                 )
             }
             "window.show_terminal_size" => {
@@ -16437,6 +16487,16 @@ pub const FIELDS: &[Field] = &[
         doc: "How wide the panel is, in pixels. **The bar is always down the right-hand side** — a terminal's rows are the scarce dimension, a window is usually far wider than the 80 columns it needs and exactly as tall as it can be, so a vertical bar costs nothing that is being used and the labels have room to be words rather than abbreviations.  There was a `QuickButtonsArea` here until 0.5.4, naming one of the four edges. It went with the dock that made it possible: a dock separator takes its pixels out of the central widget, and the terminal beside it is fitted to whatever width is left in whole cells — so widening the panel resized the grid, and `Grid::resize` truncates every line it shortens, page and scrollback alike. The width below is the same gesture with the pixels coming out of the *window* instead, which is a thing a terminal can survive.  **The reachable route to this is the panel's own context menu** — Panel width > Fit to buttons, or Set width… — because a panel that looks draggable and is not needs its answer within reach of the thing it is about. This row is the same setting from the other end.  **Zero means as wide as the buttons need**, and it is what ships. Pixels are the only honest unit for a panel of words — the same eight captions want a different number of them at every font size and every scale factor — so a shipped number would be a guess, and measuring is not. It also keeps a fresh install exactly where it was before this setting existed: the panel hugged its widest caption, and an empty one was as wide as its Add button.  `int_clamp` rather than `int`: a number outside the range is somebody's typo, and clamping it keeps the panel on screen where taking the default would throw the width away and silently go back to measuring. The ceiling is a corruption guard and not the real limit — the real one is how far the window can grow before it leaves the screen, which only the window knows. The floor a panel is really held to is its own minimum, which depends on the captions and the font, so the window applies that too: validation at the boundary, the way `TerminalUID` is — and that floor is a fixed number rather than the widest caption, because the buttons shorten their text instead of holding the panel open. What it buys is a target a pointer can hit.",
     },
     Field {
+        name: "window.quick_buttons_page",
+        page: "window",
+        section: "Sterna",
+        key: "QuickButtonsPage",
+        kind: Kind::IntClamp(1, 99),
+        default: "1",
+        label: None,
+        doc: "Which page of buttons the panel is showing.  A flat list is the wrong shape as soon as somebody keeps commands for four different devices, so a button carries the page it is on (`Button4Page=2` in `[Sterna Buttons]`, absent for the first page) and the panel shows one page at a time. This is which one — written by the panel's own drop-down, the way the width is written by the panel's own menu.  **It is remembered rather than reset**, because the page somebody works on is a preference and not a mode: a console engineer with a page per device does not start every morning on the first one. Written with `rememberSettings` alone and not `setSetting` first, which is the opposite of the width — the panel has already moved by the time this is written, so emitting `settingsChanged` would re-apply every terminal's settings on a click that only changed which buttons are drawn.  `int_clamp` for the width's reason: a number outside the range is a typo, and clamping keeps the panel showing something where taking the default would throw away a deliberate choice. The ceiling is the section's own — pages are bounded by how many buttons there can be. The *real* bound is how many pages exist, which only the window knows, so the window clamps again on the way in and writes the answer back when a page has stopped existing: validation at the boundary, the way `TerminalUID` is.",
+    },
+    Field {
         name: "window.show_terminal_size",
         page: "window",
         section: "Sterna",
@@ -16974,6 +17034,7 @@ pub const SETTING_HELP: &[&str] = &[
     "This setting selects one tabbed connection view or one tiled grid. The tiled grid shows all connections. The previous two-panel and four-panel values select the tiled layout.",
     "This setting shows the quick-button bar. You can change the buttons on this bar. An empty bar shows the Add button. You can use this button to make the first command.",
     "This setting sets the width of the quick-button bar in pixels. Zero makes the bar as wide as its widest button. A narrow bar makes the text on the buttons shorter. Sterna changes the window width, and the terminal keeps its columns. You can also set the width from the menu of the bar.",
+    "This setting selects the page of quick buttons that the bar shows. The bar shows the list of pages only when there is more than one page. Sterna keeps this page for the next time you open the program.",
     "This setting shows the terminal width and height in the middle of the terminal while you change the window. Sterna removes the numbers one second after the last change.",
     "This setting shows a counter field in the status line of each terminal. The field gives the data received and sent, the connection time, and the data rates. The field opens more counts when you click it. The other counts include the received lines, the breaks, and the serial control lines.",
     "This setting stores the serial-device path that the connection dialog used last. Adapter renumbering changes a temporary name more frequently than a stable device link.",

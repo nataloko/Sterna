@@ -138,15 +138,38 @@ QuickButton QuickButton::withoutEnter() const
     return copy;
 }
 
-QVector<QuickButton> loadQuickButtons(const QString &settingsPath)
+int QuickButtonSet::pageCount() const
 {
-    QVector<QuickButton> out;
-    TtQuickButtons *list = tt_quick_buttons_load(settingsPath.toUtf8().constData());
+    int count = qMax(1, static_cast<int>(pageNames.size()));
+    for (const QuickButton &button : buttons) {
+        count = qMax(count, static_cast<int>(button.page));
+    }
+    return count;
+}
+
+QString QuickButtonSet::pageLabel(int page) const
+{
+    const QString name = pageNames.value(page - 1);
+    if (!name.trimmed().isEmpty()) {
+        return name;
+    }
+    // A page nobody has named is still a page, and the number is the only
+    // thing there is to call it by.
+    return QCoreApplication::translate("QuickButton", "Page %1").arg(page);
+}
+
+namespace {
+
+/// Copy the core's list into ours. Shared by the loader and the two page
+/// operations, which go out to the core and come back.
+QuickButtonSet fromList(TtQuickButtons *list)
+{
+    QuickButtonSet out;
     if (!list) {
         return out;
     }
     const size_t count = tt_quick_buttons_len(list);
-    out.reserve(static_cast<qsizetype>(count));
+    out.buttons.reserve(static_cast<qsizetype>(count));
     for (size_t i = 0; i < count; i++) {
         const TtQuickButton *b = tt_quick_buttons_at(list, i);
         if (!b) {
@@ -161,49 +184,118 @@ QVector<QuickButton> loadQuickButtons(const QString &settingsPath)
         button.confirm = b->confirm;
         button.repeat = b->repeat;
         button.intervalMs = b->interval_ms;
-        out.append(button);
+        button.page = b->page;
+        out.buttons.append(button);
     }
+    const uint32_t pages = tt_quick_buttons_page_count(list);
+    for (uint32_t p = 1; p <= pages; p++) {
+        const char *name = tt_quick_buttons_page_name(list, p);
+        out.pageNames.append(name ? QString::fromUtf8(name) : QString());
+    }
+    // The core stops at the last named page and so do we: a trailing empty
+    // would be a page that exists because somebody once typed a name.
+    while (!out.pageNames.isEmpty() && out.pageNames.last().isEmpty()) {
+        out.pageNames.removeLast();
+    }
+    return out;
+}
+
+/// ...and the other direction. Null on failure, with `tt_last_error` set.
+TtQuickButtons *toList(const QuickButtonSet &set)
+{
+    TtQuickButtons *list = tt_quick_buttons_new();
+    if (!list) {
+        return nullptr;
+    }
+    bool ok = true;
+    // The byte arrays outlive the call that reads them, which a temporary from
+    // `toUtf8()` inside the struct initialiser would not.
+    for (qsizetype i = 0; i < set.buttons.size() && ok; i++) {
+        const QByteArray label = set.buttons[i].label.toUtf8();
+        const QByteArray text = set.buttons[i].text.toUtf8();
+        const QByteArray shortcut = set.buttons[i].shortcut.toUtf8();
+        TtQuickButton entry {};
+        entry.label = label.constData();
+        entry.kind = set.buttons[i].kind;
+        entry.value = nullptr; // Ignored: the core escapes `text` itself.
+        entry.text = text.constData();
+        entry.shortcut = shortcut.constData();
+        entry.confirm = set.buttons[i].confirm;
+        entry.repeat = set.buttons[i].repeat;
+        entry.interval_ms = set.buttons[i].intervalMs;
+        entry.page = set.buttons[i].page;
+        ok = tt_quick_buttons_set(list, static_cast<size_t>(i), &entry) == TT_OK;
+    }
+    for (qsizetype p = 0; p < set.pageNames.size() && ok; p++) {
+        const QByteArray name = set.pageNames[p].toUtf8();
+        ok = tt_quick_buttons_set_page_name(list, static_cast<uint32_t>(p + 1),
+                                            name.constData())
+            == TT_OK;
+    }
+    if (!ok) {
+        tt_quick_buttons_free(list);
+        return nullptr;
+    }
+    return list;
+}
+
+} // namespace
+
+QuickButtonSet loadQuickButtons(const QString &settingsPath)
+{
+    TtQuickButtons *list = tt_quick_buttons_load(settingsPath.toUtf8().constData());
+    QuickButtonSet out = fromList(list);
     tt_quick_buttons_free(list);
     return out;
 }
 
-bool saveQuickButtons(const QString &settingsPath,
-                      const QVector<QuickButton> &buttons, QString *outError)
+bool saveQuickButtons(const QString &settingsPath, const QuickButtonSet &set,
+                      QString *outError)
 {
     // A fresh list rather than the file's: what is saved is what the editor
     // holds, and the core replaces the whole section with it.
-    TtQuickButtons *list = tt_quick_buttons_new();
+    TtQuickButtons *list = toList(set);
     if (!list) {
         if (outError) {
             *outError = QString::fromUtf8(tt_last_error());
         }
         return false;
     }
-
-    bool ok = true;
-    // The byte arrays outlive the call that reads them, which a temporary from
-    // `toUtf8()` inside the struct initialiser would not.
-    for (qsizetype i = 0; i < buttons.size() && ok; i++) {
-        const QByteArray label = buttons[i].label.toUtf8();
-        const QByteArray text = buttons[i].text.toUtf8();
-        const QByteArray shortcut = buttons[i].shortcut.toUtf8();
-        TtQuickButton entry {};
-        entry.label = label.constData();
-        entry.kind = buttons[i].kind;
-        entry.value = nullptr; // Ignored: the core escapes `text` itself.
-        entry.text = text.constData();
-        entry.shortcut = shortcut.constData();
-        entry.confirm = buttons[i].confirm;
-        entry.repeat = buttons[i].repeat;
-        entry.interval_ms = buttons[i].intervalMs;
-        ok = tt_quick_buttons_set(list, static_cast<size_t>(i), &entry) == TT_OK;
-    }
-    if (ok) {
-        ok = tt_quick_buttons_save(list, settingsPath.toUtf8().constData()) == TT_OK;
-    }
+    const bool ok =
+        tt_quick_buttons_save(list, settingsPath.toUtf8().constData()) == TT_OK;
     if (!ok && outError) {
         *outError = QString::fromUtf8(tt_last_error());
     }
     tt_quick_buttons_free(list);
     return ok;
+}
+
+QuickButtonSet removeQuickButtonPage(const QuickButtonSet &set, int page)
+{
+    TtQuickButtons *list = toList(set);
+    if (!list) {
+        return set;
+    }
+    QuickButtonSet out = set;
+    if (tt_quick_buttons_remove_page(list, static_cast<uint32_t>(page)) == TT_OK) {
+        out = fromList(list);
+    }
+    tt_quick_buttons_free(list);
+    return out;
+}
+
+QuickButtonSet moveQuickButtonPage(const QuickButtonSet &set, int from, int to)
+{
+    TtQuickButtons *list = toList(set);
+    if (!list) {
+        return set;
+    }
+    QuickButtonSet out = set;
+    if (tt_quick_buttons_move_page(list, static_cast<uint32_t>(from),
+                                   static_cast<uint32_t>(to))
+        == TT_OK) {
+        out = fromList(list);
+    }
+    tt_quick_buttons_free(list);
+    return out;
 }

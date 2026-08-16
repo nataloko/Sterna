@@ -9,6 +9,8 @@
 //!
 //! ```ini
 //! [Sterna Buttons]
+//! Page2Name=BMCs
+//!
 //! Button1Label=Show version
 //! Button1Kind=text
 //! Button1Value=show version$0D
@@ -16,6 +18,10 @@
 //! Button1Confirm=off
 //! Button1Repeat=1
 //! Button1IntervalMs=1000
+//!
+//! Button2Label=Power status
+//! Button2Page=2
+//! Button2Value=power status$0D
 //! ```
 //!
 //! A key per field rather than one comma-separated line, because a label and a
@@ -25,6 +31,15 @@
 //!
 //! `Button1..Button99` are scanned the way `[User keys]` scans `User1..User99`
 //! — a gap is skipped, and the order buttons appear in is index order.
+//!
+//! **Pages are a field on a button, not a section of their own.** A flat list
+//! is the wrong shape as soon as somebody keeps commands for four different
+//! devices, but the answer that keeps everything else working is one more key:
+//! `Page` is absent for page 1, so a file with one page is byte-for-byte the
+//! file this section held before pages existed, and the *index* stays flat —
+//! which matters because a running repeat is an index and nothing else. The
+//! writer groups the pages as it renumbers, so the file reads in page order
+//! even though the reader does not need it to.
 
 use std::path::Path;
 
@@ -38,7 +53,21 @@ use crate::Ini;
 pub const SECTION: &str = "Sterna Buttons";
 
 /// How many are looked for, matching `[User keys]`' own ceiling.
+///
+/// The whole section, every page together — so pages divide these ninety-nine
+/// rather than multiplying them, and the `Button1..Button99` scan is the same
+/// scan it always was.
 pub const MAX: usize = 99;
+
+/// How many pages there may be — the same ceiling, for a reason.
+///
+/// Not a smaller, friendlier number. A page above the ceiling is clamped to
+/// it, and a low ceiling therefore *merges* pages on somebody's hand-edited
+/// file: `Page=30` and `Page=40` become one page and nothing says so. Tying it
+/// to [`MAX`] means the only files that can collide are ones naming pages that
+/// could not hold a button anyway. This is a corruption guard, exactly as
+/// [`MAX`] is; how many pages are usable is the drop-down's business.
+pub const MAX_PAGES: u32 = MAX as u32;
 
 /// [`Button::repeat`] for a run with no end — until it is stopped, or until
 /// the link it is sending down goes away.
@@ -101,6 +130,15 @@ pub struct Button {
     /// Milliseconds between the starts of two sends, when `repeat` is not 1.
     /// Bounded by [`MIN_INTERVAL_MS`] and [`MAX_INTERVAL_MS`].
     pub interval_ms: u32,
+    /// Which page of the panel it is on, counting from 1. Bounded by
+    /// [`MAX_PAGES`]; `0` reads as 1, so a zeroed C struct is an ordinary
+    /// button on the first page.
+    ///
+    /// A number on the button rather than a list of lists, because everything
+    /// above this — a repeat in progress, the shortcut installed on an action,
+    /// the frontend's parallel vectors — is keyed on a button's position in one
+    /// flat list. A page filters what is on screen; it never renumbers.
+    pub page: u32,
 }
 
 impl Default for Button {
@@ -113,6 +151,7 @@ impl Default for Button {
             confirm: false,
             repeat: 1,
             interval_ms: DEFAULT_INTERVAL_MS,
+            page: 1,
         }
     }
 }
@@ -164,13 +203,18 @@ impl Button {
         self.repeat == REPEAT_FOREVER
     }
 
-    /// Put `repeat` and `interval_ms` inside their bounds.
+    /// Put `repeat`, `interval_ms` and `page` inside their bounds.
     ///
     /// Called wherever a button arrives from outside this crate — the file
     /// reader and the C ABI both — so that one place decides what an out-of-
     /// range number means and nothing downstream has to defend itself against
     /// a zero interval.
     pub fn normalize(&mut self) {
+        // A page is clamped rather than defaulted: the number names where
+        // somebody put this button, and a typo above the ceiling should land it
+        // on the last page rather than move it back to the first, where it
+        // would sit among commands for a different device.
+        self.page = self.page.clamp(1, MAX_PAGES);
         if self.repeat != REPEAT_FOREVER {
             // Zero is the one value with two readings, and neither is what a
             // button is for: it is either "send nothing" or, to somebody who
@@ -258,8 +302,139 @@ fn key(index: usize, field: &str) -> String {
     format!("Button{index}{field}")
 }
 
+fn page_key(page: u32) -> String {
+    format!("Page{page}Name")
+}
+
+/// The whole section: the buttons, and what the pages are called.
+///
+/// One type rather than two calls, because a save that took only the buttons
+/// would write a file whose page names had quietly gone — and the names are the
+/// only thing keeping a page somebody has just made and not yet filled.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Buttons {
+    pub items: Vec<Button>,
+    /// Page names, `names[0]` being page 1's. An empty string is a page with no
+    /// name, which a frontend shows as `Page N`; trailing empties are trimmed,
+    /// so this is as long as the last *named* page and no longer.
+    pub names: Vec<String>,
+}
+
+impl Buttons {
+    /// How many pages there are: enough to hold every button, and every page
+    /// that has been named. **A named page with nothing on it counts** — that
+    /// is what makes Add page survive until somebody puts a command on it.
+    pub fn page_count(&self) -> u32 {
+        let used = self.items.iter().map(|b| b.page).max().unwrap_or(1);
+        used.max(self.names.len() as u32).max(1)
+    }
+
+    /// What page `page` is called, or an empty string.
+    pub fn name(&self, page: u32) -> &str {
+        if page == 0 {
+            return "";
+        }
+        self.names
+            .get(page as usize - 1)
+            .map(String::as_str)
+            .unwrap_or_default()
+    }
+
+    /// Name `page`, growing the list if it has to. An empty name un-names it.
+    pub fn set_name(&mut self, page: u32, name: &str) {
+        if page == 0 || page > MAX_PAGES {
+            return;
+        }
+        if self.names.len() < page as usize {
+            self.names.resize(page as usize, String::new());
+        }
+        self.names[page as usize - 1] = name.to_string();
+        self.trim_names();
+    }
+
+    /// Drop `page` and its name, moving its buttons to the page beside it and
+    /// pulling every page above it down one.
+    ///
+    /// **Removing a page never removes a command.** Removing a page is
+    /// arranging; removing a command is its own act, and the one place that
+    /// asks before it happens. So the buttons land on the page before this one
+    /// — or, for the first page, on what was the second — and nothing needs a
+    /// confirmation, which is what makes pages safe to try out.
+    ///
+    /// Here rather than in a dialog because two frontends and a C ABI would
+    /// otherwise each have their own idea of where page 3 goes when page 2
+    /// does. It renumbers nothing in the flat list, so a caller's indices
+    /// survive it.
+    pub fn remove_page(&mut self, page: u32) {
+        if page == 0 || page > MAX_PAGES {
+            return;
+        }
+        let onto = page.saturating_sub(1).max(1);
+        for button in &mut self.items {
+            if button.page == page {
+                button.page = onto;
+            } else if button.page > page {
+                button.page -= 1;
+            }
+        }
+        if (page as usize) <= self.names.len() {
+            self.names.remove(page as usize - 1);
+        }
+        self.trim_names();
+    }
+
+    /// Move a page and everything on it, the way dragging a tab would.
+    pub fn move_page(&mut self, from: u32, to: u32) {
+        let count = self.page_count();
+        if from == 0 || to == 0 || from > count || to > count || from == to {
+            return;
+        }
+        for button in &mut self.items {
+            button.page = shift_page(button.page, from, to);
+        }
+        self.names.resize(count as usize, String::new());
+        let moved = self.names.remove(from as usize - 1);
+        self.names.insert(to as usize - 1, moved);
+        self.trim_names();
+    }
+
+    /// Names are only ever as long as the last named page: a trailing empty
+    /// would otherwise be a page that exists because somebody once typed a name
+    /// and then removed it.
+    fn trim_names(&mut self) {
+        while self.names.last().is_some_and(String::is_empty) {
+            self.names.pop();
+        }
+    }
+}
+
+/// Where page `page` lands when `from` is moved to `to`.
+fn shift_page(page: u32, from: u32, to: u32) -> u32 {
+    if page == from {
+        to
+    } else if from < to && page > from && page <= to {
+        page - 1
+    } else if to < from && page >= to && page < from {
+        page + 1
+    } else {
+        page
+    }
+}
+
 /// Read the section. Order is index order, and a gap is skipped.
-pub fn from_ini(ini: &Ini) -> Vec<Button> {
+pub fn from_ini(ini: &Ini) -> Buttons {
+    let mut names: Vec<String> = (1..=MAX_PAGES)
+        .map(|p| {
+            ini.get(SECTION, &page_key(p))
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        })
+        .collect();
+    while names.last().is_some_and(String::is_empty) {
+        names.pop();
+    }
+
     let mut out = Vec::new();
     for i in 1..=MAX {
         let label = ini.get(SECTION, &key(i, "Label"));
@@ -291,8 +466,18 @@ pub fn from_ini(ini: &Ini) -> Vec<Button> {
                 .and_then(|v| v.trim().parse::<u32>().ok())
                 .unwrap_or(DEFAULT_INTERVAL_MS)
                 .clamp(MIN_INTERVAL_MS, MAX_INTERVAL_MS),
+            // Absent is page 1, which is every file written before pages
+            // existed and every file belonging to somebody who never wanted
+            // them.
+            page: ini
+                .get(SECTION, &key(i, "Page"))
+                .and_then(|v| v.trim().parse::<u32>().ok())
+                .unwrap_or(1)
+                .clamp(1, MAX_PAGES),
         });
     }
+    let mut out = Buttons { items: out, names };
+    out.trim_names();
     out
 }
 
@@ -300,7 +485,13 @@ pub fn from_ini(ini: &Ini) -> Vec<Button> {
 ///
 /// Every index up to [`MAX`] is cleared first, so removing a button removes
 /// its keys rather than leaving a shorter list in front of an orphan.
-pub fn write_into(ini: &mut Ini, buttons: &[Button]) {
+///
+/// **The buttons are written a page at a time**, renumbered densely from 1
+/// within the whole section. `Ini::set` puts a new key at the end of its
+/// section, so the order these calls are made in is the order the file reads
+/// in — and a file whose pages are grouped is one somebody can edit by hand,
+/// which is what this format is for. Reading does not depend on it.
+pub fn write_into(ini: &mut Ini, buttons: &Buttons) {
     for i in 1..=MAX {
         for field in [
             "Label",
@@ -310,11 +501,35 @@ pub fn write_into(ini: &mut Ini, buttons: &[Button]) {
             "Confirm",
             "Repeat",
             "IntervalMs",
+            "Page",
         ] {
             ini.remove(SECTION, &key(i, field));
         }
     }
-    for (n, button) in buttons.iter().take(MAX).enumerate() {
+    for p in 1..=MAX_PAGES {
+        ini.remove(SECTION, &page_key(p));
+    }
+
+    // Names first, so the section opens with what its pages are called rather
+    // than burying `Page4Name` between two commands.
+    for p in 1..=buttons.page_count().min(MAX_PAGES) {
+        let name = buttons.name(p);
+        if !name.is_empty() {
+            ini.set(SECTION, &page_key(p), name);
+        }
+    }
+
+    // **A stable sort rather than a filter per page**, so that a page nothing
+    // else can produce still writes its buttons somewhere. `items` is public;
+    // the reader and the C ABI both clamp, but a `Buttons` built in Rust need
+    // not have been through either, and a writer that silently drops a command
+    // is the worst way to find that out. The order within a page is the order
+    // it had, which is the order the buttons are pressed in.
+    let mut ordered: Vec<&Button> = buttons.items.iter().collect();
+    ordered.sort_by_key(|b| b.page.clamp(1, MAX_PAGES));
+    // ...and `take` after the sort, so the cap is on the whole section the way
+    // `MAX` reads, rather than on each page.
+    for (n, button) in ordered.into_iter().take(MAX).enumerate() {
         let i = n + 1;
         ini.set(SECTION, &key(i, "Label"), &button.label);
         ini.set(SECTION, &key(i, "Kind"), kind_name(button.kind));
@@ -324,6 +539,14 @@ pub fn write_into(ini: &mut Ini, buttons: &[Button]) {
         }
         if button.confirm {
             ini.set(SECTION, &key(i, "Confirm"), "on");
+        }
+        // Omitted for page 1, the way every other optional field is omitted at
+        // its default — which is what keeps a file that has never had a second
+        // page byte-for-byte the file it was before pages existed. Written as
+        // the clamped number, matching where the sort above put it.
+        let page = button.page.clamp(1, MAX_PAGES);
+        if page > 1 {
+            ini.set(SECTION, &key(i, "Page"), &page.to_string());
         }
         // The pair travels together: an interval with no repeat behind it is
         // a line that reads as though the button waits a second before doing
@@ -341,16 +564,16 @@ pub fn write_into(ini: &mut Ini, buttons: &[Button]) {
 
 /// Read the buttons out of a settings file. A file that is not there is a
 /// first run and has no buttons, not an error.
-pub fn load(path: &Path) -> Vec<Button> {
+pub fn load(path: &Path) -> Buttons {
     match Ini::load(path) {
         Ok(ini) => from_ini(&ini),
-        Err(_) => Vec::new(),
+        Err(_) => Buttons::default(),
     }
 }
 
 /// Write them back into `path`, preserving everything else in it — comments,
 /// ordering, and every setting this program does not know about.
-pub fn save(path: &Path, buttons: &[Button]) -> std::io::Result<()> {
+pub fn save(path: &Path, buttons: &Buttons) -> std::io::Result<()> {
     let mut ini = Ini::load(path).unwrap_or_else(|_| Ini::new());
     write_into(&mut ini, buttons);
     ini.save(path)
@@ -361,7 +584,28 @@ mod tests {
     use super::*;
 
     fn parse(s: &str) -> Vec<Button> {
+        parse_all(s).items
+    }
+
+    fn parse_all(s: &str) -> Buttons {
         from_ini(&Ini::parse(s.as_bytes()))
+    }
+
+    /// A page-less set, for the cases that predate pages.
+    fn flat(items: Vec<Button>) -> Buttons {
+        Buttons {
+            items,
+            names: Vec::new(),
+        }
+    }
+
+    fn labels(buttons: &Buttons, page: u32) -> Vec<&str> {
+        buttons
+            .items
+            .iter()
+            .filter(|b| b.page == page)
+            .map(|b| b.label.as_str())
+            .collect()
     }
 
     #[test]
@@ -562,6 +806,7 @@ mod tests {
                 ..Button::default()
             },
         ];
+        let buttons = flat(buttons);
         let mut ini = Ini::new();
         write_into(&mut ini, &buttons);
         assert_eq!(from_ini(&ini), buttons);
@@ -585,12 +830,12 @@ mod tests {
         );
         write_into(
             &mut ini,
-            &[Button {
+            &flat(vec![Button {
                 label: "two".into(),
                 kind: UserKeyType::Text,
                 value: "b".into(),
                 ..Button::default()
-            }],
+            }]),
         );
         let text = String::from_utf8(ini.to_bytes()).unwrap();
         assert!(!text.contains("Button2"), "{text}");
@@ -606,9 +851,188 @@ mod tests {
         // is what makes this storable at all.
         let b = Button::with_text(UserKeyType::Text, "conf t\rinterface eth0\r");
         let mut ini = Ini::new();
-        write_into(&mut ini, std::slice::from_ref(&b));
+        write_into(&mut ini, &flat(vec![b]));
         let text = String::from_utf8(ini.to_bytes()).unwrap();
         assert_eq!(text.lines().filter(|l| l.starts_with("Button1")).count(), 3);
-        assert_eq!(from_ini(&ini)[0].text(), "conf t\rinterface eth0\r");
+        assert_eq!(from_ini(&ini).items[0].text(), "conf t\rinterface eth0\r");
+    }
+
+    // --- pages ------------------------------------------------------------
+
+    #[test]
+    fn a_button_with_no_page_key_is_on_page_one() {
+        let b = parse_all("[Sterna Buttons]\nButton1Value=a\nButton2Value=b\nButton2Page=3\n");
+        assert_eq!(b.items[0].page, 1);
+        assert_eq!(b.items[1].page, 3);
+        assert_eq!(b.page_count(), 3);
+        // Unnamed, so a frontend calls them Page 1..3 and the file says
+        // nothing about them.
+        assert!(b.names.is_empty());
+    }
+
+    #[test]
+    fn a_page_above_the_ceiling_is_clamped() {
+        // Clamped and not defaulted: a typo puts the button on the last page,
+        // not back among a different device's commands.
+        let b = parse("[Sterna Buttons]\nButton1Value=a\nButton1Page=999\n");
+        assert_eq!(b[0].page, MAX_PAGES);
+        let b = parse("[Sterna Buttons]\nButton1Value=a\nButton1Page=0\n");
+        assert_eq!(b[0].page, 1);
+        let b = parse("[Sterna Buttons]\nButton1Value=a\nButton1Page=two\n");
+        assert_eq!(b[0].page, 1);
+        // ...and the C ABI's clamp point agrees with the reader's.
+        let mut button = Button {
+            page: 999,
+            ..Button::default()
+        };
+        button.normalize();
+        assert_eq!(button.page, MAX_PAGES);
+    }
+
+    #[test]
+    fn a_page_name_round_trips_and_an_empty_one_is_not_written() {
+        let mut b = flat(vec![Button::with_text(UserKeyType::Text, "a")]);
+        b.items[0].page = 2;
+        b.set_name(2, "BMCs");
+        let mut ini = Ini::new();
+        write_into(&mut ini, &b);
+        let text = String::from_utf8(ini.to_bytes()).unwrap();
+        assert!(text.contains("Page2Name=BMCs"), "{text}");
+        // Page 1 has no name, so it has no key — and the names list is only as
+        // long as the last named page.
+        assert!(!text.contains("Page1Name"), "{text}");
+        let back = from_ini(&ini);
+        assert_eq!(back.name(2), "BMCs");
+        assert_eq!(back.name(1), "");
+        assert_eq!(back, b);
+    }
+
+    #[test]
+    fn a_named_page_with_nothing_on_it_still_exists() {
+        // What makes Add page survive until somebody puts a command on it.
+        let mut b = flat(vec![Button::with_text(UserKeyType::Text, "a")]);
+        b.set_name(3, "Switches");
+        assert_eq!(b.page_count(), 3);
+        let mut ini = Ini::new();
+        write_into(&mut ini, &b);
+        assert_eq!(from_ini(&ini).page_count(), 3);
+    }
+
+    #[test]
+    fn pages_are_grouped_and_renumbered_on_the_way_out() {
+        // Interleaved on the way in, grouped on the way out — and the order
+        // within a page is kept, because that is the order they are pressed in.
+        let ini = Ini::parse(
+            b"[Sterna Buttons]\n\
+              Button1Label=one\nButton1Value=a\nButton1Page=2\n\
+              Button2Label=two\nButton2Value=b\n\
+              Button3Label=three\nButton3Value=c\nButton3Page=2\n",
+        );
+        let b = from_ini(&ini);
+        let mut out = Ini::new();
+        write_into(&mut out, &b);
+        let text = String::from_utf8(out.to_bytes()).unwrap();
+        assert!(text.contains("Button1Label=two"), "{text}");
+        assert!(text.contains("Button2Label=one"), "{text}");
+        assert!(text.contains("Button3Label=three"), "{text}");
+        assert!(!text.contains("Button1Page"), "{text}");
+        assert!(text.contains("Button2Page=2"), "{text}");
+        assert!(text.contains("Button3Page=2"), "{text}");
+        // ...and nothing about which page a button is on has changed.
+        let back = from_ini(&out);
+        assert_eq!(labels(&back, 1), ["two"]);
+        assert_eq!(labels(&back, 2), ["one", "three"]);
+    }
+
+    #[test]
+    fn a_one_page_section_is_written_exactly_as_before() {
+        // The compatibility promise: a settings file belonging to somebody who
+        // has never made a second page must not gain a byte.
+        let source = "[Tera Term]\r\nBaudRate=115200\r\n[Sterna Buttons]\r\n\
+                      Button1Label=Show version\r\nButton1Kind=text\r\n\
+                      Button1Value=show version$0D\r\n\
+                      Button2Label=Reload\r\nButton2Kind=text\r\n\
+                      Button2Value=reload$0D\r\nButton2Confirm=on\r\n";
+        let mut ini = Ini::parse(source.as_bytes());
+        let buttons = from_ini(&ini);
+        write_into(&mut ini, &buttons);
+        assert_eq!(String::from_utf8(ini.to_bytes()).unwrap(), source);
+    }
+
+    #[test]
+    fn removing_a_page_keeps_its_buttons() {
+        // Removing a page is arranging, not deleting: the commands land on the
+        // page beside it, and only Remove — which asks — takes a command away.
+        let mut b = parse_all(
+            "[Sterna Buttons]\nPage2Name=BMCs\nPage3Name=Switches\n\
+             Button1Label=one\nButton1Value=a\n\
+             Button2Label=two\nButton2Value=b\nButton2Page=2\n\
+             Button3Label=three\nButton3Value=c\nButton3Page=3\n",
+        );
+        b.remove_page(2);
+        assert_eq!(b.items.len(), 3);
+        assert_eq!(labels(&b, 1), ["one", "two"]);
+        assert_eq!(labels(&b, 2), ["three"]);
+        assert_eq!(b.name(2), "Switches");
+        assert_eq!(b.page_count(), 2);
+
+        // The first page has no page before it, so its commands join what was
+        // the second — which is now the first.
+        let mut b = parse_all(
+            "[Sterna Buttons]\nButton1Label=one\nButton1Value=a\n\
+             Button2Label=two\nButton2Value=b\nButton2Page=2\n",
+        );
+        b.remove_page(1);
+        assert_eq!(labels(&b, 1), ["one", "two"]);
+        assert_eq!(b.page_count(), 1);
+    }
+
+    #[test]
+    fn the_writer_drops_no_button_whatever_page_it_names() {
+        // `items` is public and neither the reader nor the C ABI is on this
+        // path, so a page past the ceiling can exist here — and a writer that
+        // silently dropped the command would be the worst way to discover it.
+        let mut b = flat(vec![
+            Button {
+                label: "sane".into(),
+                ..Button::with_text(UserKeyType::Text, "a")
+            },
+            Button {
+                label: "wild".into(),
+                page: 4000,
+                ..Button::with_text(UserKeyType::Text, "b")
+            },
+        ]);
+        b.items[0].page = 1;
+        let mut ini = Ini::new();
+        write_into(&mut ini, &b);
+        let text = String::from_utf8(ini.to_bytes()).unwrap();
+        assert!(text.contains("Button1Label=sane"), "{text}");
+        assert!(text.contains("Button2Label=wild"), "{text}");
+        // Clamped to the last page rather than dropped, and written as the
+        // number it was clamped to.
+        assert!(text.contains(&format!("Button2Page={MAX_PAGES}")), "{text}");
+        assert_eq!(from_ini(&ini).items.len(), 2);
+    }
+
+    #[test]
+    fn moving_a_page_takes_its_buttons_with_it() {
+        let mut b = parse_all(
+            "[Sterna Buttons]\nPage2Name=BMCs\n\
+             Button1Label=one\nButton1Value=a\n\
+             Button2Label=two\nButton2Value=b\nButton2Page=2\n\
+             Button3Label=three\nButton3Value=c\nButton3Page=3\n",
+        );
+        b.move_page(1, 3);
+        assert_eq!(labels(&b, 1), ["two"]);
+        assert_eq!(labels(&b, 2), ["three"]);
+        assert_eq!(labels(&b, 3), ["one"]);
+        assert_eq!(b.name(1), "BMCs");
+        // The flat order is untouched: a page move is not a renumbering, which
+        // is the whole reason a page is a field rather than a list of lists.
+        assert_eq!(
+            b.items.iter().map(|x| x.label.as_str()).collect::<Vec<_>>(),
+            ["one", "two", "three"]
+        );
     }
 }

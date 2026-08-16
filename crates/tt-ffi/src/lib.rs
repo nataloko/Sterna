@@ -3231,6 +3231,22 @@ const _: () = assert!(TT_QUICK_BUTTON_MAX_REPEAT == tt_session::buttons::MAX_REP
 const _: () = assert!(TT_QUICK_BUTTON_MIN_INTERVAL_MS == tt_session::buttons::MIN_INTERVAL_MS);
 const _: () = assert!(TT_QUICK_BUTTON_MAX_INTERVAL_MS == tt_session::buttons::MAX_INTERVAL_MS);
 
+/// How many buttons a settings file holds, every page together.
+///
+/// Here so that a frontend importing a set can refuse before it truncates:
+/// [`tt_quick_buttons_set`] rejects the append that would pass this, which
+/// answers one button at a time and not "will this whole file fit".
+pub const TT_QUICK_BUTTON_MAX: u32 = 99;
+const _: () = assert!(TT_QUICK_BUTTON_MAX as usize == tt_session::buttons::MAX);
+
+/// The largest [`TtQuickButton::page`]. A page above it is clamped to it, not
+/// moved back to the first — the number names where somebody put the button.
+///
+/// The same ceiling as the button count, deliberately: a lower one would merge
+/// two pages of a hand-edited file into one and say nothing.
+pub const TT_QUICK_BUTTON_MAX_PAGES: u32 = 99;
+const _: () = assert!(TT_QUICK_BUTTON_MAX_PAGES == tt_session::buttons::MAX_PAGES);
+
 /// One button, borrowed from its list.
 ///
 /// `value` and `text` are the same string in two forms: stored, still
@@ -3265,30 +3281,48 @@ pub struct TtQuickButton {
     /// Milliseconds between the starts of two sends when `repeat` is not 1.
     /// Zero is read as the default rather than as no wait at all.
     pub interval_ms: u32,
+    /// Which page of the panel it is on, counting from 1 and bounded by
+    /// [`TT_QUICK_BUTTON_MAX_PAGES`]. `0` is read as 1, so a zeroed struct is
+    /// an ordinary button on the first page.
+    ///
+    /// A page is a filter on what a frontend shows, never a renumbering: the
+    /// list stays flat, and the index a button has here is the index it has
+    /// everywhere. Anything holding an index — a repeat in progress, a
+    /// shortcut on an action — depends on that.
+    pub page: u32,
 }
 
-/// An owned list of quick buttons. Free it with [`tt_quick_buttons_free`].
+/// An owned list of quick buttons, and what its pages are called. Free it with
+/// [`tt_quick_buttons_free`].
 pub struct TtQuickButtons {
-    items: Vec<tt_session::Button>,
-    /// The C view, rebuilt whenever `items` changes.
+    set: tt_session::buttons::Buttons,
+    /// The C view, rebuilt whenever `set` changes.
     view: Vec<TtQuickButton>,
     /// The strings the view points into. Order does not matter; keeping them
     /// alive until the next rebuild does.
     strings: Vec<CString>,
+    /// The page names, in their own vector because there are not four of them
+    /// per button — `strings` is indexed by a fixed stride and this would break
+    /// it.
+    page_strings: Vec<CString>,
 }
 
 impl TtQuickButtons {
     fn rebuild(&mut self) {
         self.strings.clear();
-        for b in &self.items {
+        for b in &self.set.items {
             self.strings.push(cstring(&b.label));
             self.strings.push(cstring(&b.value));
             self.strings.push(cstring(&b.text()));
             self.strings.push(cstring(&b.shortcut));
         }
+        self.page_strings = (1..=self.set.page_count())
+            .map(|p| cstring(self.set.name(p)))
+            .collect();
         // Two passes, like `tt_serial_enumerate`: `strings` must stop
         // reallocating before any pointer into it is taken.
         self.view = self
+            .set
             .items
             .iter()
             .enumerate()
@@ -3303,6 +3337,7 @@ impl TtQuickButtons {
                     confirm: b.confirm,
                     repeat: b.repeat,
                     interval_ms: b.interval_ms,
+                    page: b.page,
                 }
             })
             .collect();
@@ -3343,9 +3378,10 @@ pub extern "C" fn tt_quick_buttons_load(path: *const c_char) -> *mut TtQuickButt
         return ptr::null_mut();
     };
     let mut list = TtQuickButtons {
-        items: tt_session::buttons::load(Path::new(path)),
+        set: tt_session::buttons::load(Path::new(path)),
         view: Vec::new(),
         strings: Vec::new(),
+        page_strings: Vec::new(),
     };
     list.rebuild();
     Box::into_raw(Box::new(list))
@@ -3360,16 +3396,17 @@ pub extern "C" fn tt_quick_buttons_load(path: *const c_char) -> *mut TtQuickButt
 #[no_mangle]
 pub extern "C" fn tt_quick_buttons_new() -> *mut TtQuickButtons {
     Box::into_raw(Box::new(TtQuickButtons {
-        items: Vec::new(),
+        set: tt_session::buttons::Buttons::default(),
         view: Vec::new(),
         strings: Vec::new(),
+        page_strings: Vec::new(),
     }))
 }
 
 #[no_mangle]
 pub extern "C" fn tt_quick_buttons_len(list: *const TtQuickButtons) -> usize {
     match unsafe { list.as_ref() } {
-        Some(l) => l.items.len(),
+        Some(l) => l.set.items.len(),
         None => 0,
     }
 }
@@ -3424,8 +3461,8 @@ pub extern "C" fn tt_quick_buttons_set(
         (Ok(l), Ok(s)) => (l, s),
         (Err(e), _) | (_, Err(e)) => return e,
     };
-    if index > l.items.len()
-        || (index == l.items.len() && l.items.len() >= tt_session::buttons::MAX)
+    if index > l.set.items.len()
+        || (index == l.set.items.len() && l.set.items.len() >= tt_session::buttons::MAX)
     {
         return fail(TT_ERR_INVALID, "button index out of range");
     }
@@ -3441,14 +3478,17 @@ pub extern "C" fn tt_quick_buttons_set(
         } else {
             b.interval_ms
         },
+        // Zero is the first page, so a zeroed struct is an ordinary button and
+        // a frontend that has never heard of pages keeps working.
+        page: if b.page == 0 { 1 } else { b.page },
     };
     // The same bounds the file reader applies, so a button that arrived
     // through the ABI and one that came out of the INI are the same button.
     made.normalize();
-    if index == l.items.len() {
-        l.items.push(made);
+    if index == l.set.items.len() {
+        l.set.items.push(made);
     } else {
-        l.items[index] = made;
+        l.set.items[index] = made;
     }
     l.rebuild();
     TT_OK
@@ -3460,10 +3500,10 @@ pub extern "C" fn tt_quick_buttons_remove(list: *mut TtQuickButtons, index: usiz
         Some(l) => l,
         None => return fail(TT_ERR_INVALID, "null TtQuickButtons"),
     };
-    if index >= l.items.len() {
+    if index >= l.set.items.len() {
         return fail(TT_ERR_INVALID, "button index out of range");
     }
-    l.items.remove(index);
+    l.set.items.remove(index);
     l.rebuild();
     TT_OK
 }
@@ -3479,11 +3519,119 @@ pub extern "C" fn tt_quick_buttons_move(
         Some(l) => l,
         None => return fail(TT_ERR_INVALID, "null TtQuickButtons"),
     };
-    if from >= l.items.len() || to >= l.items.len() {
+    if from >= l.set.items.len() || to >= l.set.items.len() {
         return fail(TT_ERR_INVALID, "button index out of range");
     }
-    let button = l.items.remove(from);
-    l.items.insert(to, button);
+    let button = l.set.items.remove(from);
+    l.set.items.insert(to, button);
+    l.rebuild();
+    TT_OK
+}
+
+/// How many pages the list has.
+///
+/// Enough to hold every button, and every page that has been named — a named
+/// page with nothing on it counts, which is what lets somebody make a page and
+/// then fill it. Never zero: a list with no buttons still has a first page.
+#[no_mangle]
+pub extern "C" fn tt_quick_buttons_page_count(list: *const TtQuickButtons) -> u32 {
+    match unsafe { list.as_ref() } {
+        Some(l) => l.set.page_count(),
+        None => 0,
+    }
+}
+
+/// Borrow the name of `page`, counting from 1.
+///
+/// Empty for a page nobody has named, which a frontend shows as `Page N` — the
+/// name is optional and its absence is not an error. Null only for a null list
+/// or a page outside the list. Valid until the list is changed or freed.
+#[no_mangle]
+pub extern "C" fn tt_quick_buttons_page_name(
+    list: *const TtQuickButtons,
+    page: u32,
+) -> *const c_char {
+    let Some(l) = (unsafe { list.as_ref() }) else {
+        return ptr::null();
+    };
+    if page == 0 {
+        return ptr::null();
+    }
+    l.page_strings
+        .get(page as usize - 1)
+        .map_or(ptr::null(), |s| s.as_ptr())
+}
+
+/// Name `page`. An empty string un-names it; a null one is the same thing.
+///
+/// Naming a page beyond the last is how a page is *made*: the name is the only
+/// thing a file can hold about a page with no buttons on it yet.
+#[no_mangle]
+pub extern "C" fn tt_quick_buttons_set_page_name(
+    list: *mut TtQuickButtons,
+    page: u32,
+    name: *const c_char,
+) -> TtStatus {
+    let l = match unsafe { list.as_mut() } {
+        Some(l) => l,
+        None => return fail(TT_ERR_INVALID, "null TtQuickButtons"),
+    };
+    if page == 0 || page > tt_session::buttons::MAX_PAGES {
+        return fail(TT_ERR_INVALID, "page out of range");
+    }
+    let name = if name.is_null() {
+        ""
+    } else {
+        match unsafe { str_arg(name, usize::MAX) } {
+            Ok(n) => n,
+            Err(e) => return e,
+        }
+    };
+    l.set.set_name(page, name.trim());
+    l.rebuild();
+    TT_OK
+}
+
+/// Remove `page` and its name, moving its buttons to the page beside it and
+/// pulling the pages above it down one.
+///
+/// **Removing a page never removes a command**: the buttons land on the page
+/// before this one, or on what was the second when the first goes. Removing a
+/// command is its own act and the one that asks first. The rule lives here so
+/// that two frontends cannot disagree about it; the flat list is not
+/// renumbered, so a caller's indices survive.
+#[no_mangle]
+pub extern "C" fn tt_quick_buttons_remove_page(list: *mut TtQuickButtons, page: u32) -> TtStatus {
+    let l = match unsafe { list.as_mut() } {
+        Some(l) => l,
+        None => return fail(TT_ERR_INVALID, "null TtQuickButtons"),
+    };
+    if page == 0 || page > l.set.page_count() {
+        return fail(TT_ERR_INVALID, "page out of range");
+    }
+    l.set.remove_page(page);
+    l.rebuild();
+    TT_OK
+}
+
+/// Move a page and everything on it, the way dragging a tab would.
+///
+/// The buttons keep their places in the flat list; only the page numbers move.
+#[no_mangle]
+pub extern "C" fn tt_quick_buttons_move_page(
+    list: *mut TtQuickButtons,
+    from: u32,
+    to: u32,
+) -> TtStatus {
+    let l = match unsafe { list.as_mut() } {
+        Some(l) => l,
+        None => return fail(TT_ERR_INVALID, "null TtQuickButtons"),
+    };
+    let count = l.set.page_count();
+    if from == 0 || to == 0 || from > count || to > count {
+        return fail(TT_ERR_INVALID, "page out of range");
+    }
+    l.set.move_page(from, to);
     l.rebuild();
     TT_OK
 }
@@ -3506,7 +3654,7 @@ pub extern "C" fn tt_quick_buttons_save(
         Ok(p) => p,
         Err(e) => return e,
     };
-    match tt_session::buttons::save(Path::new(path), &l.items) {
+    match tt_session::buttons::save(Path::new(path), &l.set) {
         Ok(()) => TT_OK,
         Err(e) => fail(TT_ERR_IO, e.to_string()),
     }

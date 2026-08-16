@@ -757,6 +757,19 @@ SSH:
   `addAction(text)` parents them to the bar — so a rebuilt toolbar keeps every
   previous action alive as a child, holding its shortcut and answering
   `findChild` first. The symptom is a widget that stops following the session.
+- **...and the other half: deleting a `QAction` does not delete the button
+  showing it.** A `QToolButton` whose default action has been destroyed stays
+  in the layout still painting the caption that action last gave it. A partial
+  rebuild that deletes actions and only the widgets it tracks therefore *grows*
+  one more of the untracked ones each time — `QuickButtonBar::rebuildPageColumn`
+  deletes `m_widgets`, one slot per button, and the panel's **+** is not a
+  button, so every page switch added another **+**. No assertion saw it and the
+  screenshot did: **when a rebuild is partial, list what it leaves behind, not
+  what it takes.**
+- **`QComboBox::findData` compares `QVariant`s, so the type it was stored as is
+  part of the key.** `addItem(label, int)` then `findData(quint32)` is a lookup
+  that can answer -1 for a value that is there, and the fallback is a field
+  quietly showing the wrong row — which the next edit then writes.
 - **A `QToolBar` cannot have a button wider than its own caption.**
   `QToolBarLayout` sizes each item to its text and centres it across the bar's
   thickness, and it ignores the button's size policy in that direction — so a

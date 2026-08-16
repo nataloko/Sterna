@@ -459,7 +459,11 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
     connect(m_quickBar, &QuickButtonBar::activated, this,
             &MainWindow::runQuickButton);
     connect(m_quickBar, &QuickButtonBar::addRequested, this, [this] {
-        const QuickButton blank;
+        QuickButton blank;
+        // On the page showing. The `+` sits at the foot of that page's column,
+        // so a button appearing on a different one would be the wrong answer
+        // to where somebody just clicked.
+        blank.page = static_cast<quint32>(m_quickBar->page());
         editQuickButtons(-1, &blank);
     });
     connect(m_quickBar, &QuickButtonBar::fitWidthRequested, this,
@@ -470,39 +474,53 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
             [this](int index) { editQuickButtons(index); });
     connect(m_quickBar, &QuickButtonBar::duplicateRequested, this,
             [this](int index) {
-                QVector<QuickButton> buttons = m_quickBar->buttons();
-                if (index < 0 || index >= buttons.size()) {
+                QuickButtonSet set = m_quickBar->set();
+                if (index < 0 || index >= set.buttons.size()) {
                     return;
                 }
-                QuickButton copy = buttons[index];
+                QuickButton copy = set.buttons[index];
                 // Not the shortcut: two buttons cannot have the same key, and
                 // silently giving it to the copy would take it from the
-                // original.
+                // original. The page *is* kept — a copy belongs beside what it
+                // was copied from.
                 copy.shortcut.clear();
-                buttons.insert(index + 1, copy);
-                if (storeQuickButtons(buttons)) {
+                set.buttons.insert(index + 1, copy);
+                if (storeQuickButtons(set)) {
                     editQuickButtons(index + 1);
                 }
             });
     connect(m_quickBar, &QuickButtonBar::removeRequested, this,
             [this](int index) {
-                QVector<QuickButton> buttons = m_quickBar->buttons();
-                if (index < 0 || index >= buttons.size()) {
+                QuickButtonSet set = m_quickBar->set();
+                if (index < 0 || index >= set.buttons.size()) {
                     return;
                 }
                 // Asked about, and it names the button: this is the one
                 // destructive thing on the bar, and undo is retyping it.
                 if (QMessageBox::question(
                         this, tr("Remove quick button"),
-                        tr("Remove \"%1\"?").arg(buttons[index].caption()))
+                        tr("Remove \"%1\"?").arg(set.buttons[index].caption()))
                     != QMessageBox::Yes) {
                     return;
                 }
-                buttons.remove(index);
-                storeQuickButtons(buttons);
+                set.buttons.remove(index);
+                storeQuickButtons(set);
             });
     connect(m_quickBar, &QuickButtonBar::stopRequested, this,
             [this](int index) { m_quickRepeat->stop(index); });
+    connect(m_quickBar, &QuickButtonBar::pageChanged, this,
+            &MainWindow::setQuickButtonsPage);
+    connect(m_quickBar, &QuickButtonBar::editPagesRequested, this,
+            &MainWindow::showQuickButtonsDialog);
+    connect(m_quickBar, &QuickButtonBar::moveToPageRequested, this,
+            [this](int index, int page) {
+                QuickButtonSet set = m_quickBar->set();
+                if (index < 0 || index >= set.buttons.size()) {
+                    return;
+                }
+                set.buttons[index].page = static_cast<quint32>(page);
+                storeQuickButtons(set);
+            });
 
     m_quickRepeat = new QuickButtonRepeat(this);
     connect(m_quickRepeat, &QuickButtonRepeat::fire, this,
@@ -3825,16 +3843,24 @@ void MainWindow::reloadQuickButtons()
     if (!m_quickBar) {
         return;
     }
-    // Every run is an index into the list that is about to be replaced, and a
-    // button at index 3 after an edit need not be the button that was at index
-    // 3 before it. Following one would mean guessing which; stopping is the
-    // answer that cannot be wrong, and the press to start it again is one
-    // click.
-    if (m_quickRepeat) {
+    const QuickButtonSet set = loadQuickButtons(m_settingsPath);
+    const QVector<QuickButton> &buttons = set.buttons;
+    // Every run is an index into the list, and a button at index 3 after an
+    // edit need not be the button that was at index 3 before it. Following one
+    // would mean guessing which; stopping is the answer that cannot be wrong,
+    // and the press to start it again is one click.
+    //
+    // **Only when the list actually moved.** This runs on every settings
+    // change, and on every page switch — so stopping unconditionally made a
+    // font, a colour or the panel's own width end a repeat somebody had
+    // started, which is neither what `docs/deviations.md` entry 7 promises nor
+    // anything the screen explains. Asked of the bar rather than compared here,
+    // so that the question "will this renumber?" has one answer and cannot come
+    // apart from the rebuild it is about.
+    if (m_quickRepeat && m_quickBar->wouldRebuild(set)) {
         m_quickRepeat->stopAll();
     }
-    const QVector<QuickButton> buttons = loadQuickButtons(m_settingsPath);
-    m_quickBar->setButtons(buttons);
+    m_quickBar->setButtons(set);
 
     // Shortcuts live on the bar's own actions, so hiding the bar hands the
     // keys back to the terminal. That is the honest behaviour: a shortcut is a
@@ -3858,6 +3884,22 @@ void MainWindow::reloadQuickButtons()
         }
         action->setShortcutContext(Qt::WindowShortcut);
         action->setShortcut(sequence);
+    }
+
+    // **The page before the width**, because the panel's size hint depends on
+    // which buttons are on it — and, when the fit is being measured, on whether
+    // there is a drop-down at all.
+    //
+    // The clamp is the second one: the schema bounds the number against the
+    // section's own ceiling, and this bounds it against the pages that actually
+    // exist. A page whose last button was deleted has stopped existing, so the
+    // answer is written back — or the next launch opens on a page that is not
+    // there and the panel silently shows the first.
+    const int askedPage =
+        m_session->setting(QStringLiteral("window.quick_buttons_page")).toInt();
+    m_quickBar->setPage(askedPage);
+    if (m_quickBar->page() != askedPage) {
+        setQuickButtonsPage(m_quickBar->page());
     }
 
     // Zero is the shipped value and means "as wide as the buttons need", so
@@ -3948,6 +3990,18 @@ void MainWindow::setQuickPanelWidth(int px)
         return;
     }
     rememberSettings({{QStringLiteral("window.quick_buttons_width"), value}});
+}
+
+void MainWindow::setQuickButtonsPage(int page)
+{
+    // **`rememberSettings` alone**, where the width writes through `setSetting`
+    // first. That order exists because the panel only reacts to a width through
+    // `onSettingsChanged`, and `tt_session_settings_remember` applies a value on
+    // its way to the file without emitting one. Here the panel has already
+    // moved — the drop-down moved it — so an emit would buy nothing and cost a
+    // whole settings pass, on a click that changed which buttons are drawn.
+    rememberSettings({{QStringLiteral("window.quick_buttons_page"),
+                       QString::number(qMax(1, page))}});
 }
 
 void MainWindow::askQuickPanelWidth()
@@ -4194,11 +4248,11 @@ void MainWindow::stopRepeatsWithNoLink()
     }
 }
 
-bool MainWindow::storeQuickButtons(const QVector<QuickButton> &buttons)
+bool MainWindow::storeQuickButtons(const QuickButtonSet &set)
 {
     QDir().mkpath(QFileInfo(m_settingsPath).absolutePath());
     QString error;
-    if (!saveQuickButtons(m_settingsPath, buttons, &error)) {
+    if (!saveQuickButtons(m_settingsPath, set, &error)) {
         QMessageBox::warning(this, tr("Quick buttons"),
                              tr("Could not save the quick buttons: %1").arg(error));
         return false;
@@ -4214,7 +4268,8 @@ void MainWindow::editQuickButtons(int index, const QuickButton *seed)
     if (!m_quickBar) {
         return;
     }
-    QuickButtonsDialog dialog(m_quickBar->buttons(), m_session, this, this);
+    QuickButtonsDialog dialog(m_quickBar->set(), m_quickBar->page(), m_session,
+                              this, this);
     if (seed) {
         // The `+`, Add from the context menu, and New from selection: all
         // three asked for a *new* button, so the editor opens on a new row
@@ -4225,12 +4280,14 @@ void MainWindow::editQuickButtons(int index, const QuickButton *seed)
     } else if (m_quickBar->buttons().isEmpty()) {
         // Opened from the menu with nothing defined: the first thing anybody
         // wants here is a button, not an empty list looking at them.
-        dialog.appendButton(QuickButton());
+        QuickButton first;
+        first.page = static_cast<quint32>(m_quickBar->page());
+        dialog.appendButton(first);
     }
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
-    storeQuickButtons(dialog.buttons());
+    storeQuickButtons(dialog.set());
 }
 
 void MainWindow::quickButtonFromSelection()
@@ -4247,6 +4304,9 @@ void MainWindow::quickButtonFromSelection()
     // one somebody has to finish typing.
     seed.text = selected.section(QLatin1Char('\n'), 0, 0).trimmed()
         + QLatin1Char('\r');
+    // On the page in front of somebody, not on the first — a new command
+    // belongs beside the ones it was made next to.
+    seed.page = static_cast<quint32>(m_quickBar->page());
     editQuickButtons(-1, &seed);
 }
 

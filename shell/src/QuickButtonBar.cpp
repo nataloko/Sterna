@@ -3,12 +3,16 @@
 #include "QuickButtonBar.h"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QBoxLayout>
+#include <QComboBox>
 #include <QFrame>
 #include <QMenu>
+#include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QHelpEvent>
+#include <QStyleOptionComboBox>
 #include <QStyleOptionToolButton>
 #include <QStylePainter>
 #include <QToolButton>
@@ -98,6 +102,60 @@ private:
     bool m_elided = false;
 };
 
+/// The page drop-down, which shortens its text for `BarButton`'s reason.
+///
+/// `QComboBox::minimumSizeHint` sizes to its **longest item** plus the arrow,
+/// so one page called `Out-of-band management` would hold the whole panel open
+/// at a width nothing else on it asked for — undoing the work above. Same
+/// answer: drop the minimum, elide at paint, leave the model alone so the
+/// popup, the tooltip and every test still see the real name.
+///
+/// `sizeHint` is deliberately *not* touched. That one is what Panel width >
+/// Fit to buttons measures, and a fit that cut the page name off would be a
+/// panel nobody could read the top of.
+class PageBox : public QComboBox {
+public:
+    using QComboBox::QComboBox;
+
+    QSize minimumSizeHint() const override
+    {
+        QSize hint = QComboBox::minimumSizeHint();
+        hint.setWidth(0);
+        return hint;
+    }
+
+    bool event(QEvent *event) override
+    {
+        if (event->type() == QEvent::ToolTip && m_elided && !currentText().isEmpty()) {
+            QToolTip::showText(static_cast<QHelpEvent *>(event)->globalPos(),
+                               currentText(), this);
+            return true;
+        }
+        return QComboBox::event(event);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QStylePainter painter(this);
+        QStyleOptionComboBox option;
+        initStyleOption(&option);
+        const QRect area =
+            style()->subControlRect(QStyle::CC_ComboBox, &option,
+                                    QStyle::SC_ComboBoxEditField, this);
+        if (area.width() > 0) {
+            option.currentText = option.fontMetrics.elidedText(
+                option.currentText, Qt::ElideRight, area.width());
+        }
+        m_elided = option.currentText != currentText();
+        painter.drawComplexControl(QStyle::CC_ComboBox, option);
+        painter.drawControl(QStyle::CE_ComboBoxLabel, option);
+    }
+
+private:
+    bool m_elided = false;
+};
+
 } // namespace
 
 QuickButtonBar::QuickButtonBar(QWidget *parent) : QWidget(parent)
@@ -157,6 +215,9 @@ void QuickButtonBar::clearContents()
     m_layout->addStretch();
     m_widgets.clear();
     m_separator = nullptr;
+    // Deleted by the sweep above; the pointers have to follow them.
+    m_pageBox = nullptr;
+    m_addWidget = nullptr;
 
     // The actions are children of this widget rather than of the buttons, so
     // that `findChild` can install a shortcut on one; deleting the buttons
@@ -170,7 +231,12 @@ void QuickButtonBar::clearContents()
     m_add = nullptr;
 }
 
-void QuickButtonBar::setButtons(const QVector<QuickButton> &buttons)
+bool QuickButtonBar::wouldRebuild(const QuickButtonSet &set) const
+{
+    return !m_built || set != m_set;
+}
+
+void QuickButtonBar::setButtons(const QuickButtonSet &set)
 {
     // **The early return is load bearing, and not for the widgets it saves.**
     // This runs on every settings change, and a rebuild throws away every
@@ -189,28 +255,42 @@ void QuickButtonBar::setButtons(const QVector<QuickButton> &buttons)
     // `m_built` and not an empty check: the panel with no buttons on it still
     // has contents — the `+` that defines the first one is made here — so the
     // opening call has to run even though it changes nothing about the list.
-    if (m_built && buttons == m_buttons) {
+    if (!wouldRebuild(set)) {
         return;
     }
     m_built = true;
-    m_buttons = buttons;
+    m_set = set;
     // Nothing is repeating across a rebuild: the indices these count against
     // have just been renumbered, and the window stops every run for the same
     // reason.
-    m_remaining.fill(0, buttons.size());
+    m_remaining.fill(0, m_set.buttons.size());
+    // A page whose last button has gone, and which has no name of its own, has
+    // stopped existing; the panel must not be left pointing at it.
+    m_page = qBound(1, m_page, pageCount());
     clearContents();
 
-    for (int i = 0; i < m_buttons.size(); i++) {
-        const QuickButton &button = m_buttons[i];
+    // **Every button on every page gets an action**, and the object names are
+    // positions in the whole list. A page filters what is *drawn*; the window's
+    // shortcut loop, `QuickButtonRepeat`'s indices and every test's
+    // `quickButton%1` lookup all speak the flat index and go on doing so.
+    for (int i = 0; i < m_set.buttons.size(); i++) {
+        const QuickButton &button = m_set.buttons[i];
         auto *action = new QAction(button.shortCaption(), this);
         action->setObjectName(QStringLiteral("quickButton%1").arg(i));
         // Checkable only for a button that can repeat, because "on" here means
         // a run in progress and a button that cannot start one must never look
         // as though it has.
         action->setCheckable(button.repeats());
+        // **On the bar, whatever page it is on.** A shortcut is a key the host
+        // stops receiving, and one that came and went with the page showing
+        // would be a key whose meaning depends on a drop-down nobody looked
+        // at. Qt registers one shortcut per action however many widgets it is
+        // associated with, so the `BarButton` below adding it again is not an
+        // ambiguity — that is two different actions holding one sequence.
+        // Hiding the panel still hands every key back: these hang off a widget
+        // inside it.
+        addAction(action);
         m_actions.append(action);
-        m_widgets.append(addButton(action));
-        describeAction(i);
         connect(action, &QAction::triggered, this, [this, i, action] {
             // Qt has already toggled a checkable action by the time this runs,
             // and whether a run is on is not the press's to decide — a
@@ -226,7 +306,77 @@ void QuickButtonBar::setButtons(const QVector<QuickButton> &buttons)
         });
     }
 
-    if (!m_buttons.isEmpty()) {
+    // Only when there is a second page, the same rule that keeps the bar itself
+    // out of the way until a button exists — so a panel nobody has made a page
+    // on is the panel it always was, fitted width included.
+    if (pageCount() > 1) {
+        m_pageBox = new PageBox(this);
+        m_pageBox->setObjectName(QStringLiteral("quickButtonPageBox"));
+        // The terminal keeps the keyboard; there is nothing to type here.
+        m_pageBox->setFocusPolicy(Qt::NoFocus);
+        m_pageBox->setToolTip(tr("This list selects the page of buttons to show."));
+        for (int p = 1; p <= pageCount(); p++) {
+            m_pageBox->addItem(m_set.pageLabel(p));
+        }
+        // **Point it at the page actually showing, before anything is
+        // connected.** A rebuild destroys the old box and the new one starts at
+        // row 0, so a panel on page 2 — every editor OK, Move to page and
+        // Remove goes through here — came back drawing page 2 with a drop-down
+        // reading `Page 1`. `MainWindow` cannot repair it either: its
+        // `setPage(askedPage)` early-returns on an unchanged page, so the box
+        // is never told. Set before `connect` rather than under a blocker, so
+        // there is no signal to suppress.
+        m_pageBox->setCurrentIndex(m_page - 1);
+        m_layout->insertWidget(0, m_pageBox);
+        connect(m_pageBox, &QComboBox::currentIndexChanged, this,
+                [this](int index) {
+                    // **A combo popup opens under the pointer**, so the release
+                    // that opened it names the row already showing. `setPage`
+                    // returning early on an unchanged page is what absorbs
+                    // that; it is load-bearing for correctness, not for speed.
+                    const int before = m_page;
+                    setPage(index + 1);
+                    if (m_page != before) {
+                        emit pageChanged(m_page);
+                    }
+                });
+    }
+
+    rebuildPageColumn();
+}
+
+void QuickButtonBar::rebuildPageColumn()
+{
+    // Take out only what belongs to the page: the buttons, the rule and the
+    // `+`. The actions stay — they are the whole list's, and deleting them
+    // would take every shortcut and every running repeat with them.
+    for (QToolButton *widget : m_widgets) {
+        delete widget;
+    }
+    // `fill` and not `assign`: the latter is Qt 6.6 and CI builds against the
+    // Ubuntu container's 6.4.2, where this is the difference between a green
+    // run and a compile error nothing local would have shown.
+    m_widgets.fill(nullptr, m_set.buttons.size());
+    delete m_separator;
+    m_separator = nullptr;
+    // **The action and its widget, both.** `m_addWidget` is not in `m_widgets`
+    // — that vector is one slot per button — so deleting only the action left a
+    // live `QToolButton` in the layout still reading `+`, and every page switch
+    // added another.
+    delete m_add;
+    m_add = nullptr;
+    delete m_addWidget;
+    m_addWidget = nullptr;
+
+    for (int i = 0; i < m_set.buttons.size(); i++) {
+        if (static_cast<int>(m_set.buttons[i].page) != m_page) {
+            continue;
+        }
+        m_widgets[i] = addButton(m_actions[i]);
+        describeAction(i);
+    }
+
+    if (!m_set.buttons.isEmpty()) {
         m_separator = new QFrame(this);
         m_separator->setFrameShadow(QFrame::Sunken);
         // A rule across the panel, because the buttons run down it. There is
@@ -240,8 +390,26 @@ void QuickButtonBar::setButtons(const QVector<QuickButton> &buttons)
     m_add = new QAction(QStringLiteral("+"), this);
     m_add->setObjectName(QStringLiteral("quickButtonAdd"));
     m_add->setToolTip(tr("This button opens the editor for a new quick button."));
-    addButton(m_add);
+    m_addWidget = addButton(m_add);
     connect(m_add, &QAction::triggered, this, &QuickButtonBar::addRequested);
+}
+
+void QuickButtonBar::setPage(int page)
+{
+    const int wanted = qBound(1, page, pageCount());
+    if (wanted == m_page && m_built) {
+        return;
+    }
+    m_page = wanted;
+    if (m_built) {
+        rebuildPageColumn();
+    }
+    if (m_pageBox) {
+        // Blocked: this is the programmatic half, and the drop-down's own
+        // change is what reports through `pageChanged`.
+        const QSignalBlocker block(m_pageBox);
+        m_pageBox->setCurrentIndex(m_page - 1);
+    }
 }
 
 QToolButton *QuickButtonBar::buttonWidget(int index) const
@@ -254,7 +422,7 @@ void QuickButtonBar::describeAction(int index)
     if (index < 0 || index >= m_actions.size()) {
         return;
     }
-    const QuickButton &button = m_buttons[index];
+    const QuickButton &button = m_set.buttons[index];
     QAction *action = m_actions[index];
     const int left = m_remaining.value(index);
 
@@ -316,8 +484,8 @@ void QuickButtonBar::refresh(const Session *session)
     for (int i = 0; i < m_actions.size(); i++) {
         // Only the two sending kinds need a wire. A macro may establish its
         // own connection, and a menu command such as Save setup works offline.
-        const bool needsLink = m_buttons[i].kind == TT_QUICK_BUTTON_TEXT
-            || m_buttons[i].kind == TT_QUICK_BUTTON_BYTES;
+        const bool needsLink = m_set.buttons[i].kind == TT_QUICK_BUTTON_TEXT
+            || m_set.buttons[i].kind == TT_QUICK_BUTTON_BYTES;
         // ...and a button in the middle of a run stays pressable whatever the
         // session says, because pressing it is how it is stopped.
         m_actions[i]->setEnabled(live || !needsLink
@@ -331,9 +499,16 @@ int QuickButtonBar::indexAt(const QPoint &pos) const
     // can be a child of its own, and the answer wanted is the action.
     for (QWidget *child = childAt(pos); child && child != this;
          child = child->parentWidget()) {
-        const int index = m_widgets.indexOf(qobject_cast<QToolButton *>(child));
-        if (index >= 0) {
-            return index;
+        // **The cast has to be checked now that `m_widgets` holds nulls.** A
+        // right-click on the drop-down, the rule or the panel's own background
+        // casts to null, and `indexOf(nullptr)` answers with the first button
+        // that is not on this page — a context menu offering to remove
+        // somebody else's command.
+        if (auto *button = qobject_cast<QToolButton *>(child)) {
+            const int index = m_widgets.indexOf(button);
+            if (index >= 0) {
+                return index;
+            }
         }
     }
     return -1;
@@ -376,9 +551,52 @@ QMenu *QuickButtonBar::buildContextMenu(int index)
         connect(remove, &QAction::triggered, this,
                 [this, index] { emit removeRequested(index); });
     }
+    // Where a button goes, on the button's own menu — the page it belongs to
+    // is a property of the button and this is the shortest route to it.
+    if (index >= 0 && pageCount() > 1) {
+        QMenu *move = menu.addMenu(tr("Move to page"));
+        move->setObjectName(QStringLiteral("quickMenuMoveToPage"));
+        for (int p = 1; p <= pageCount(); p++) {
+            if (p == static_cast<int>(m_set.buttons[index].page)) {
+                continue;
+            }
+            QAction *to = move->addAction(m_set.pageLabel(p));
+            to->setObjectName(QStringLiteral("quickMenuMoveToPage%1").arg(p));
+            connect(to, &QAction::triggered, this,
+                    [this, index, p] { emit moveToPageRequested(index, p); });
+        }
+        menu.addSeparator();
+    }
+
     QAction *add = menu.addAction(tr("Add..."));
     add->setObjectName(QStringLiteral("quickMenuAdd"));
     connect(add, &QAction::triggered, this, &QuickButtonBar::addRequested);
+
+    // The pages, for the same reason the width is here: this is where the hand
+    // already is, and a drop-down at the top of the panel is a way to *choose*
+    // a page rather than a way to make one.
+    menu.addSeparator();
+    QMenu *pages = menu.addMenu(tr("Page"));
+    pages->setObjectName(QStringLiteral("quickMenuPage"));
+    auto *group = new QActionGroup(pages);
+    for (int p = 1; p <= pageCount(); p++) {
+        QAction *show = pages->addAction(m_set.pageLabel(p));
+        show->setObjectName(QStringLiteral("quickMenuPage%1").arg(p));
+        show->setCheckable(true);
+        show->setChecked(p == m_page);
+        group->addAction(show);
+        connect(show, &QAction::triggered, this, [this, p] {
+            const int before = m_page;
+            setPage(p);
+            if (m_page != before) {
+                emit pageChanged(m_page);
+            }
+        });
+    }
+    pages->addSeparator();
+    QAction *edit = pages->addAction(tr("Add, rename or remove pages..."));
+    edit->setObjectName(QStringLiteral("quickMenuEditPages"));
+    connect(edit, &QAction::triggered, this, &QuickButtonBar::editPagesRequested);
 
     // **The width lives here because this is where the hand already is.** It is
     // an ordinary setting on Setup's Window page and reachable there too, but a

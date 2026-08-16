@@ -56,6 +56,55 @@ handle never moves out from under the pointer — which is exactly the opposite
 of how a handle should feel. The menu does the same job, and it works on a
 maximised window, from the keyboard, and from a macro.
 
+## Pages
+
+One flat column is the right shape until it is not. The moment somebody keeps
+commands for four different devices — a router, a BMC, a switch, a board on the
+end of a serial cable — a single list is something to read rather than a bar to
+hit, and the `reload` for one of them is sitting next to the `show version` for
+another.
+
+So the panel has pages. Each button is on one, and the panel shows one at a
+time.
+
+**A drop-down appears at the top of the panel when there is a second page**,
+and not before: a control that can only say one thing is chrome in a program
+whose claim is being light. It is also on the panel's own right-click menu,
+under **Page**, along with *Add, rename or remove pages…* — which opens the
+editor on its page controls.
+
+In the editor, the list on the left is one page's, with the page above it and a
+**Pages** menu beside it. A button's own **On page** field moves it, and so
+does **Move to page** on its right-click menu on the panel.
+
+**Removing a page keeps its commands.** They move to the page before it — or,
+for the first page, onto what was the second — so nothing is lost and nothing
+has to ask. Deleting a command is still Remove, which asks by name.
+
+**The page you were on is the page you come back to**, across a restart, per
+settings file. So `sterna --ini datacentre.ini` opens where it was left.
+
+A shortcut works from every page. That is deliberate rather than incidental: a
+shortcut is a key the terminal stops receiving, and one that came and went with
+a drop-down would be a key that works when nobody is looking at it and not when
+they are.
+
+### Taking a page somewhere else
+
+**Pages > Export page…** writes the page as an ordinary settings file — one
+`[Sterna Buttons]` section, nothing else — and **Import page…** reads one back
+as a new page. That means three things at once:
+
+- an exported page can be pasted into a settings file by hand;
+- any settings file can be imported, and a file with several pages in it
+  arrives as several pages;
+- exporting onto a file that already exists replaces its buttons and leaves
+  everything else in it alone, so "export this page" and "put these commands in
+  the `router.ini` I already have" are one command.
+
+An imported button arrives with no shortcut. The file it came from knows
+nothing about the keys this one has already given away.
+
 ## What a button can do
 
 | Kind | What happens |
@@ -143,6 +192,8 @@ edited by hand as well as through the dialog:
 
 ```ini
 [Sterna Buttons]
+Page2Name=BMCs
+
 Button1Label=Show version
 Button1Kind=text
 Button1Value=show version$0D
@@ -162,10 +213,29 @@ Button4Label=Poll
 Button4Value=show clock$0D
 Button4Repeat=forever
 Button4IntervalMs=5000
+
+Button5Label=Power status
+Button5Page=2
+Button5Value=power status$0D
 ```
 
 `Button1` … `Button99`, in that order; a gap is skipped. Only `Value` is
-required — a button with no `Label` is captioned with its own command.
+required — a button with no `Label` is captioned with its own command. The
+ninety-nine are the whole file, every page together, so pages divide them
+rather than multiplying them.
+
+**A file that says nothing about pages is a one-page file**, byte for byte what
+it was before pages existed — `Page` is only written for a button that is not
+on the first page, and `PageNName` only for a page that has been named. Sterna
+groups each page's buttons together when it writes the section, so a file that
+has pages reads in page order however it was edited.
+
+One thing to know if you go **back** to a Sterna older than pages: it reads a
+paged file happily, showing every button in one column, but it does not know
+the `Page` keys are there. Saving from it renumbers the buttons and leaves
+those keys where they were, so they end up on whichever button now has that
+number. Copy the file before downgrading, the same as for any other setting a
+newer version wrote.
 
 | Key | Meaning |
 |---|---|
@@ -176,17 +246,24 @@ required — a button with no `Label` is captioned with its own command.
 | `Confirm` | `on` to ask first. Anything else is off |
 | `Repeat` | How many sends one press makes. `1` if absent; `forever` (or `0`) for a run only a person stops; anything unreadable is one send |
 | `IntervalMs` | Milliseconds between sends. 1000 if absent, and held between 100 and 3600000. Milliseconds, so the file needs no decimal point — the dialog is where this is seconds |
+| `Page` | Which page it is on, from 1. Page 1 if absent, and a number past 99 lands on the last page rather than back on the first |
+
+Beside the buttons, `Page2Name`, `Page3Name` … name the pages. A page with no
+name is called `Page 2` on screen and has no key in the file. **A page exists
+when a button says it is on that page, or when it has a name** — which is what
+lets you make a page and fill it later.
 
 `Value`'s escape is Tera Term's own — the one `Answerback` and `DelimList` are
 stored in. `$0D` is a Return, `$0A` a line feed, `$24` a literal `$`. Anything
 the file cannot hold is written that way, and everything else is left legible.
 
-The two settings beside them are ordinary `[Sterna]` keys: `QuickButtons` (on)
-shows or hides the bar, and `QuickButtonsWidth` is how wide it is in pixels.
-`0` — the shipped value — means as wide as the widest button needs, which is
-where the panel sits until somebody puts a number there. Pixels rather than a
-column count because the panel holds words and not cells, and the same captions
-want a different number of pixels at every font size.
+The three settings beside them are ordinary `[Sterna]` keys: `QuickButtons` (on)
+shows or hides the bar, `QuickButtonsWidth` is how wide it is in pixels, and
+`QuickButtonsPage` is the page it opens on. `0` — the shipped width — means as
+wide as the widest button needs, which is where the panel sits until somebody
+puts a number there. Pixels rather than a column count because the panel holds
+words and not cells, and the same captions want a different number of pixels at
+every font size.
 
 ## Menu command ids
 

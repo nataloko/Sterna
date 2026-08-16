@@ -9,6 +9,7 @@
 
 #include "QuickButtons.h"
 
+class QAction;
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
@@ -38,11 +39,15 @@ public:
     /// `session` is asked whether a shortcut is already a `KEYBOARD.CNF` key,
     /// and `window` for the shortcuts its own actions and Lua plugins hold.
     /// Both may be null in a test that only cares about the list.
-    QuickButtonsDialog(const QVector<QuickButton> &buttons, const Session *session,
+    ///
+    /// `page` is the one the panel is showing, so the editor opens where the
+    /// user was rather than on the first page.
+    QuickButtonsDialog(const QuickButtonSet &set, int page, const Session *session,
                        const QWidget *window, QWidget *parent = nullptr);
 
-    /// The edited list. Only meaningful after `exec()` returned `Accepted`.
-    QVector<QuickButton> buttons() const { return m_buttons; }
+    /// The edited section. Only meaningful after `exec()` returned `Accepted`.
+    QuickButtonSet set() const { return m_set; }
+    QVector<QuickButton> buttons() const { return m_set.buttons; }
 
     /// Select a row, or append `seed` and select that. Called by the window
     /// for Edit, Add and New from selection.
@@ -51,15 +56,34 @@ public:
 
 private:
     void rebuildList();
-    /// Copy the fields into `m_buttons[m_current]`. Called on every edit, so
-    /// that switching rows or pressing OK never loses what was typed.
+    /// Copy the fields into `m_set.buttons[m_current]`. Called on every edit,
+    /// so that switching rows or pressing OK never loses what was typed.
     void commit();
-    /// Point the fields at row `row`.
+    /// Point the fields at list row `row`.
     void load(int row);
     void addButton();
     void duplicateButton();
     void removeButton();
     void assignDefaultShortcuts();
+
+    // --- pages --------------------------------------------------------------
+    //
+    // **The list is filtered to one page, so a row is no longer an index.**
+    // `m_current` stays the *global* one, because everything else in this
+    // dialog — the shortcut check, duplicate, remove — is about a button's
+    // place in the whole list. `m_rows` is the only place the two meet.
+    int globalOf(int row) const { return m_rows.value(row, -1); }
+    int rowOf(int global) const { return static_cast<int>(m_rows.indexOf(global)); }
+    void rebuildPages();
+    void setPage(int page);
+    void addPage();
+    void renamePage();
+    void removePage();
+    void importPage();
+    void exportPage();
+    /// Grey the page controls that need a second page, and leave the Pages
+    /// menu alone — that is where the second page comes from.
+    void applyPageControls();
     /// Update the warning under the shortcut field.
     void checkShortcut();
     /// What is wrong with `sequence`, or an empty string.
@@ -70,15 +94,25 @@ private:
     /// a button that sends more than once.
     void applyRepeat();
 
-    QVector<QuickButton> m_buttons;
+    QuickButtonSet m_set;
+    /// Which page the list is filtered to, counting from 1.
+    int m_page = 1;
+    /// Global indices of the rows on show, in row order.
+    QVector<int> m_rows;
     const Session *m_session = nullptr;
     const QWidget *m_window = nullptr;
+    /// The **global** index of the button the fields are showing, or -1.
     int m_current = -1;
     /// True while `load` is writing the widgets, so their change signals do
     /// not write straight back into the row being loaded.
     bool m_loading = false;
 
     QListWidget *m_list = nullptr;
+    QWidget *m_pageRow = nullptr;
+    QComboBox *m_pageList = nullptr;
+    /// The button a button is on. In the fields rather than only in the panel's
+    /// menu, because moving one is an edit like any other.
+    QComboBox *m_pageOf = nullptr;
     QLineEdit *m_label = nullptr;
     QComboBox *m_kind = nullptr;
     QStackedWidget *m_value = nullptr;
@@ -102,4 +136,7 @@ private:
     QWidget *m_fields = nullptr;
     QPushButton *m_duplicate = nullptr;
     QPushButton *m_remove = nullptr;
+    /// Disabled while there is only one page: there is nowhere for its buttons
+    /// to go, and a page nobody can leave is not one to remove.
+    QAction *m_pageRemove = nullptr;
 };
