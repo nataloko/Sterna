@@ -354,9 +354,16 @@ QuickButtonsDialog::QuickButtonsDialog(const QuickButtonSet &set, int page,
     });
 
     connect(m_pageList, &QComboBox::currentIndexChanged, this, [this](int index) {
-        if (!m_loading) {
-            commit();
+        // **The whole body is guarded, not only the commit.** `rebuildPages`
+        // fills this box, and the *first* `addItem` emits
+        // `currentIndexChanged(0)` — so an unguarded `setPage(1)` here ran
+        // inside the constructor and threw away the page the panel asked the
+        // editor to open on. The symptom was Remove page removing the wrong
+        // one.
+        if (m_loading) {
+            return;
         }
+        commit();
         setPage(index + 1);
     });
     // Moving a button between pages: an edit like any other, so it commits and
@@ -366,9 +373,16 @@ QuickButtonsDialog::QuickButtonsDialog(const QuickButtonSet &set, int page,
         if (m_loading || m_current < 0 || m_current >= m_set.buttons.size()) {
             return;
         }
+        // **A cleared box has no data, and `toInt()` on nothing is 0** — a page
+        // number no button may hold, which would take it off every page in this
+        // dialog and out of an export. `clear()` emits `currentIndexChanged(-1)`,
+        // so this is one leaked `m_loading` away from being reachable.
+        const QVariant page = m_pageOf->currentData();
+        if (!page.isValid()) {
+            return;
+        }
         const int moved = m_current;
-        m_set.buttons[moved].page =
-            static_cast<quint32>(m_pageOf->currentData().toInt());
+        m_set.buttons[moved].page = static_cast<quint32>(page.toInt());
         commit();
         rebuildList();
         // Follow it, rather than leaving the fields showing a button that is no
@@ -733,8 +747,8 @@ void QuickButtonsDialog::setPage(int page)
     if (wanted == m_page) {
         return;
     }
-    m_page = wanted;
     const bool wasLoading = m_loading;
+    m_page = wanted;
     m_loading = true;
     m_pageList->setCurrentIndex(m_page - 1);
     m_loading = wasLoading;
@@ -743,6 +757,10 @@ void QuickButtonsDialog::setPage(int page)
     // — or nothing at all, on a page waiting for its first command.
     m_list->setCurrentRow(m_list->count() > 0 ? 0 : -1);
     load(m_list->currentRow());
+    // **`load` ends by clearing `m_loading`**, so calling it from here would
+    // otherwise leak the flag off for whoever was mid-rebuild — and the next
+    // `clear()` on a combo would reach a handler that should have been quiet.
+    m_loading = wasLoading;
 }
 
 void QuickButtonsDialog::addPage()

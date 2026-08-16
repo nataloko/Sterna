@@ -1431,27 +1431,122 @@ void the_editor_moves_a_button_between_pages()
     CHECK(list->count() == 0);
 }
 
-/// Removing a page keeps every command on it. Only Remove deletes a command,
-/// and only Remove asks.
+/// The editor opens on the page it was handed, which is the one the panel is
+/// showing.
+///
+/// It did not: `rebuildPages` fills the page box, the first `addItem` emits
+/// `currentIndexChanged(0)`, and an unguarded handler turned that into
+/// `setPage(1)` — inside the constructor, after the argument had been taken.
+/// Every page operation then worked on page 1 whatever was on screen, so
+/// Remove page removed the wrong one.
+void the_editor_opens_on_the_page_it_was_given()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini =
+        writeIni(dir,
+                 "[Sterna Buttons]\r\nPage2Name=BMCs\r\nPage3Name=Switches\r\n"
+                 "Button1Label=One\r\nButton1Value=a$0D\r\n"
+                 "Button2Label=Two\r\nButton2Page=2\r\nButton2Value=b$0D\r\n"
+                 "Button3Label=Three\r\nButton3Page=3\r\nButton3Value=c$0D\r\n");
+
+    MainWindow window(ini);
+    QuickButtonsDialog dialog(barOf(window)->set(), 3, window.session(), &window);
+    auto *pageList =
+        dialog.findChild<QComboBox *>(QStringLiteral("quickButtonsPageList"));
+    auto *list = dialog.findChild<QListWidget *>(QStringLiteral("quickButtonsList"));
+    CHECK(pageList != nullptr && list != nullptr);
+    CHECK(pageList->currentIndex() == 2);
+    CHECK(pageList->currentText() == QLatin1String("Switches"));
+    CHECK(list->count() == 1);
+    CHECK(list->item(0)->text() == QLatin1String("Three"));
+}
+
+/// Removing a page keeps every command on it, and removes the page the editor
+/// is actually showing. Only Remove deletes a command, and only Remove asks.
 void removing_a_page_keeps_its_buttons()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini =
+        writeIni(dir,
+                 "[Sterna Buttons]\r\nPage2Name=BMCs\r\nPage3Name=Switches\r\n"
+                 "Button1Label=One\r\nButton1Value=a$0D\r\n"
+                 "Button2Label=Two\r\nButton2Page=2\r\nButton2Value=b$0D\r\n"
+                 "Button3Label=Three\r\nButton3Page=3\r\nButton3Value=c$0D\r\n");
+
+    MainWindow window(ini);
+    QuickButtonsDialog dialog(barOf(window)->set(), 3, window.session(), &window);
+    auto *remove =
+        dialog.findChild<QAction *>(QStringLiteral("quickButtonsPageRemove"));
+    CHECK(remove != nullptr && remove->isEnabled());
+
+    // Three pages, showing the third: its command joins the second, and no page
+    // below it moves. A dialog that had quietly gone back to page 1 would merge
+    // pages 1 and 2 instead, which these three labels can tell apart.
+    remove->trigger();
+    CHECK(dialog.buttons().size() == 3);
+    CHECK(dialog.set().pageCount() == 2);
+    CHECK(dialog.buttons()[0].page == 1);
+    CHECK(dialog.buttons()[1].page == 2);
+    CHECK(dialog.buttons()[2].page == 2);
+    CHECK(dialog.set().pageLabel(2) == QLatin1String("BMCs"));
+    // **And nothing landed on page 0.** `rebuildPages` clears both combos, and
+    // a leaked loading flag turned the empty one's `currentData()` into a page
+    // number no button may hold — which took the button off every page in the
+    // editor and out of an export, silently.
+    for (const QuickButton &button : dialog.buttons()) {
+        CHECK(button.page >= 1);
+    }
+
+    remove->trigger();
+    CHECK(dialog.set().pageCount() == 1);
+    CHECK(dialog.buttons().size() == 3);
+    // ...and with one page left there is nothing to remove.
+    CHECK(!remove->isEnabled());
+}
+
+/// The panel's drop-down says which page is drawn, after a rebuild as well as
+/// after a switch.
+///
+/// A rebuild destroys the box and the new one starts at row 0, so a panel on
+/// page 2 came back drawing page 2 under a drop-down reading `Page 1` — and
+/// clicking `Page 1` then emitted nothing, so it read as a dead control.
+void a_rebuilt_panel_keeps_its_page_selector_in_step()
 {
     QTemporaryDir dir;
     CHECK(dir.isValid());
     const QString ini = writeIni(dir, twoPages());
 
     MainWindow window(ini);
-    QuickButtonsDialog dialog(barOf(window)->set(), 2, window.session(), &window);
-    auto *remove =
-        dialog.findChild<QAction *>(QStringLiteral("quickButtonsPageRemove"));
-    CHECK(remove != nullptr && remove->isEnabled());
+    window.show();
+    QuickButtonBar *bar = barOf(window);
+    CHECK(bar != nullptr && spin([bar] { return bar->isVisible(); }, 2000));
+    QComboBox *box = pageBoxOf(window);
+    CHECK(box != nullptr);
 
-    remove->trigger();
-    CHECK(dialog.buttons().size() == 2);
-    CHECK(dialog.buttons()[0].page == 1);
-    CHECK(dialog.buttons()[1].page == 1);
-    CHECK(dialog.set().pageCount() == 1);
-    // ...and with one page left there is nothing to remove.
-    CHECK(!remove->isEnabled());
+    box->setCurrentIndex(1);
+    CHECK(spin([bar] { return bar->page() == 2; }, 2000));
+
+    // Every editor OK, Move to page and Remove goes through here.
+    QuickButtonSet edited = bar->set();
+    edited.buttons[0].label = QStringLiteral("Renamed");
+    QString error;
+    CHECK(saveQuickButtons(ini, edited, &error));
+    CHECK(window.session()->setSetting(QStringLiteral("terminal.local_echo"),
+                                       QStringLiteral("on"), &error));
+    CHECK(spin([bar] {
+        return bar->buttons().value(0).label == QLatin1String("Renamed");
+    }, 2000));
+
+    CHECK(bar->page() == 2);
+    box = pageBoxOf(window);
+    CHECK(box != nullptr);
+    CHECK(box->currentIndex() == 1);
+    CHECK(box->currentText() == QLatin1String("BMCs"));
+    // ...and the drawn buttons agree with it.
+    CHECK(bar->buttonWidget(0) == nullptr);
+    CHECK(bar->buttonWidget(1) != nullptr);
 }
 
 /// An exported page is an ordinary settings file, and a settings file imports
@@ -1930,7 +2025,9 @@ int main(int argc, char **argv)
     a_page_that_stops_existing_moves_the_setting_down();
     the_panel_menu_offers_the_pages();
     the_editor_moves_a_button_between_pages();
+    the_editor_opens_on_the_page_it_was_given();
     removing_a_page_keeps_its_buttons();
+    a_rebuilt_panel_keeps_its_page_selector_in_step();
     a_page_exported_and_imported_comes_back();
     a_narrow_panel_shortens_the_page_name_too();
     a_repeat_ends_with_the_connection();

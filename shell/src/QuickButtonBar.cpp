@@ -318,6 +318,15 @@ void QuickButtonBar::setButtons(const QuickButtonSet &set)
         for (int p = 1; p <= pageCount(); p++) {
             m_pageBox->addItem(m_set.pageLabel(p));
         }
+        // **Point it at the page actually showing, before anything is
+        // connected.** A rebuild destroys the old box and the new one starts at
+        // row 0, so a panel on page 2 — every editor OK, Move to page and
+        // Remove goes through here — came back drawing page 2 with a drop-down
+        // reading `Page 1`. `MainWindow` cannot repair it either: its
+        // `setPage(askedPage)` early-returns on an unchanged page, so the box
+        // is never told. Set before `connect` rather than under a blocker, so
+        // there is no signal to suppress.
+        m_pageBox->setCurrentIndex(m_page - 1);
         m_layout->insertWidget(0, m_pageBox);
         connect(m_pageBox, &QComboBox::currentIndexChanged, this,
                 [this](int index) {
