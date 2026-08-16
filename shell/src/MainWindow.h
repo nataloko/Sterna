@@ -590,6 +590,12 @@ private:
     /// and not a switch, so it writes no setting and is greyed while the page
     /// in front is not numbering anything.
     QAction *m_resetLineCounterAction = nullptr;
+    /// The three switches for what the wire is carrying — deviation 21. Each
+    /// writes its `[Sterna]` setting; the marks themselves are the core's and
+    /// the painter's.
+    QAction *m_controlCharsAction = nullptr;
+    QAction *m_showEolAction = nullptr;
+    QAction *m_hideCrLfAction = nullptr;
     QAction *m_quickButtonFromSelectionAction = nullptr;
     /// The Edit menu's clipboard commands, which the right button's menu
     /// borrows rather than duplicating.
