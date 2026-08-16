@@ -1173,6 +1173,25 @@ void the_panel_shows_only_the_current_page()
     // ...and the actions were not destroyed and rebuilt on the way.
     CHECK(buttonAction(window, 1) == offPage);
     CHECK(bar->buttons().size() == 2);
+
+    // **One `+`, however many pages have been through.** Its widget is not in
+    // the per-button vector, so a rebuild that deleted only its action left the
+    // old button in the layout still reading `+` — a panel that grew one more
+    // every time somebody changed page. Nothing but the picture showed it.
+    const auto plusCount = [bar] {
+        int found = 0;
+        for (QToolButton *widget : bar->findChildren<QToolButton *>()) {
+            if (widget->text() == QLatin1String("+")) {
+                found++;
+            }
+        }
+        return found;
+    };
+    CHECK(plusCount() == 1);
+    bar->setPage(1);
+    bar->setPage(2);
+    bar->setPage(1);
+    CHECK(plusCount() == 1);
 }
 
 /// A shortcut is a key the host stops receiving. It must not come and go with
@@ -1827,6 +1846,40 @@ void render_widgets()
     repeating.selectRow(5);
     repeating.adjustSize();
     repeating.grab().save(g_writeTo + QStringLiteral("/quick-buttons-repeat.png"));
+
+    // The panel with pages on it, and the editor showing the second one —
+    // where the page row is a control rather than a greyed reminder that the
+    // feature exists.
+    QTemporaryDir paged;
+    const QString pagedIni = writeIni(
+        paged,
+        "[Sterna Buttons]\r\nPage2Name=BMCs\r\n"
+        "Button1Label=Show version\r\nButton1Value=show version$0D\r\n"
+        "Button2Label=Interfaces\r\nButton2Value=show ip int brief$0D\r\n"
+        "Button3Label=Save config\r\nButton3Value=write memory$0D\r\n"
+        "Button4Label=Power status\r\nButton4Page=2\r\n"
+        "Button4Value=power status$0D\r\n"
+        "Button5Label=Power cycle\r\nButton5Page=2\r\n"
+        "Button5Value=power cycle$0D\r\nButton5Confirm=on\r\n"
+        "Button6Label=SOL console\r\nButton6Page=2\r\n"
+        "Button6Value=sol activate$0D\r\n");
+
+    MainWindow pagedWindow(pagedIni);
+    pagedWindow.resize(760, 400);
+    pagedWindow.show();
+    spin([] { return false; }, 300);
+    pagedWindow.grab().save(g_writeTo + QStringLiteral("/quick-buttons-pages.png"));
+
+    barOf(pagedWindow)->setPage(2);
+    spin([] { return false; }, 300);
+    pagedWindow.grab().save(g_writeTo
+                            + QStringLiteral("/quick-buttons-page-two.png"));
+
+    QuickButtonsDialog pages(loadQuickButtons(pagedIni), 2,
+                             pagedWindow.session(), &pagedWindow);
+    pages.selectRow(4);
+    pages.adjustSize();
+    pages.grab().save(g_writeTo + QStringLiteral("/quick-buttons-pages-editor.png"));
 }
 
 } // namespace

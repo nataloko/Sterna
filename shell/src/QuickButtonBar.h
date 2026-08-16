@@ -167,6 +167,11 @@ private:
     /// Per button: sends left, -1 for a run with no end, 0 for not running.
     QVector<int> m_remaining;
     QAction *m_add = nullptr;
+    /// ...and the widget holding it, which is **not** in `m_widgets` — that
+    /// vector is one slot per button and this is not a button. Deleting the
+    /// action alone leaves the widget in the layout still reading `+`, so a
+    /// page switch grew one more of them each time.
+    QToolButton *m_addWidget = nullptr;
     QBoxLayout *m_layout = nullptr;
     QFrame *m_separator = nullptr;
     /// The page drop-down, or null when there is only one page — the same rule

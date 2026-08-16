@@ -215,8 +215,9 @@ void QuickButtonBar::clearContents()
     m_layout->addStretch();
     m_widgets.clear();
     m_separator = nullptr;
-    // Deleted by the sweep above; the pointer has to follow it.
+    // Deleted by the sweep above; the pointers have to follow them.
     m_pageBox = nullptr;
+    m_addWidget = nullptr;
 
     // The actions are children of this widget rather than of the buttons, so
     // that `findChild` can install a shortcut on one; deleting the buttons
@@ -346,8 +347,14 @@ void QuickButtonBar::rebuildPageColumn()
     m_widgets.assign(m_set.buttons.size(), nullptr);
     delete m_separator;
     m_separator = nullptr;
+    // **The action and its widget, both.** `m_addWidget` is not in `m_widgets`
+    // — that vector is one slot per button — so deleting only the action left a
+    // live `QToolButton` in the layout still reading `+`, and every page switch
+    // added another.
     delete m_add;
     m_add = nullptr;
+    delete m_addWidget;
+    m_addWidget = nullptr;
 
     for (int i = 0; i < m_set.buttons.size(); i++) {
         if (static_cast<int>(m_set.buttons[i].page) != m_page) {
@@ -371,7 +378,7 @@ void QuickButtonBar::rebuildPageColumn()
     m_add = new QAction(QStringLiteral("+"), this);
     m_add->setObjectName(QStringLiteral("quickButtonAdd"));
     m_add->setToolTip(tr("This button opens the editor for a new quick button."));
-    addButton(m_add);
+    m_addWidget = addButton(m_add);
     connect(m_add, &QAction::triggered, this, &QuickButtonBar::addRequested);
 }
 
