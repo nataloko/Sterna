@@ -1318,6 +1318,20 @@ void a_long_list_scrolls_rather_than_growing_the_window()
     QApplication::sendEvent(scroll->viewport(), &wheel);
     CHECK(vertical->value() > at);
     CHECK(scroll->focusPolicy() == Qt::NoFocus);
+
+    // A right-click still finds the button under it. `indexAt` walks up from
+    // `childAt`, and the buttons are two widgets deeper than they were — a
+    // scroll area's viewport is between them and the panel now.
+    //
+    // Back to the top first: a button scrolled out of the viewport is still
+    // `isVisible()`, and its middle is a point outside the panel. That is not a
+    // fault to assert on — nobody can click what is not on screen — but it is a
+    // very easy way to write a test that fails for the wrong reason.
+    vertical->setValue(0);
+    spin([] { return false; }, 50);
+    const QPoint middleOf(first->width() / 2, first->height() / 2);
+    const QWidget *hit = bar->childAt(bar->mapFromGlobal(first->mapToGlobal(middleOf)));
+    CHECK(hit == first || (hit && first->isAncestorOf(hit)));
 }
 
 /// The **+** and the page list are under the scrolling part, not in it.
