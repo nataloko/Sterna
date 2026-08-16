@@ -3260,7 +3260,19 @@ void MainWindow::onRemoteResize(int cols, int rows)
         onNotice(tr("Ignoring a remote request for a %1x%2 terminal").arg(cols).arg(rows));
         return;
     }
-    if (cols == m_session->cols() && rows == m_session->rows()) {
+    // **Against the view, not against the grid.** The core resizes the grid on
+    // its way to telling us about it, so asking the session whether anything
+    // moved always answers no — and this returned before doing anything, every
+    // time, for as long as the function has existed. The symptom was a host
+    // that asked for 132 columns getting a 132-column terminal in an 80-column
+    // window, invisible past the edge until the next resize event refitted it
+    // back and undid the request. It is `onSettingsChanged`'s trap exactly,
+    // reached by the other route: what is still true here is how many cells the
+    // view has room for.
+    const QSize cell = m_view->sizeForCells(1, 1);
+    const int haveCols = cell.width() > 0 ? m_view->width() / cell.width() : cols;
+    const int haveRows = cell.height() > 0 ? m_view->height() / cell.height() : rows;
+    if (cols == haveCols && rows == haveRows) {
         return;
     }
     // The *window* is resized, not the grid: the view fits the terminal to
@@ -3269,8 +3281,21 @@ void MainWindow::onRemoteResize(int cols, int rows)
     // resize event undid it. A window manager that refuses — tiled, maximised
     // — leaves the size where it was, and the notice below is then the only
     // record that anything was asked.
-    const QSize want = m_view->sizeForCells(cols, rows);
-    resize(size() + (want - m_view->size()));
+    //
+    // **Unless the terminal is not the window, where `AutoWinResize` decides.**
+    // This is upstream's own division (`buffer.c:5078`): with `TermIsWin` on
+    // the window has to follow, because it *is* the terminal — with it off the
+    // window is a viewport, and a host asking for 132 columns in an 80-column
+    // window has asked for a horizontal scrollbar. The setting has been read
+    // and written since this port began and has never decided anything until
+    // now.
+    const bool follows = m_view->sizeFollowsWindow();
+    if (follows
+        || m_session->setting(QStringLiteral("terminal.auto_win_resize"))
+               == QLatin1String("on")) {
+        const QSize want = m_view->sizeForCells(cols, rows);
+        resize(size() + (want - m_view->size()));
+    }
     onNotice(tr("The far end asked for %1x%2").arg(cols).arg(rows));
 }
 

@@ -341,6 +341,47 @@ void test_the_freeze_is_written_down()
     CHECK(text.contains("TermIsWin=off"));
 }
 
+void test_a_remote_resize_grows_the_window_it_is_the_terminal_of()
+{
+    Harness h;
+    const int windowBefore = h.window.width();
+    const int before = h.cols();
+    h.feed("\033[8;24;120t");
+    // With the terminal following the window, a host that asks for 120 columns
+    // has asked for a wider window — and until the guard above was measured
+    // against the view this did nothing at all, leaving a 120-column terminal
+    // in a window that could show 94 of them.
+    CHECK(before != 120);
+    CHECK(h.cols() == 120);
+    CHECK(h.window.width() > windowBefore);
+    CHECK(spin([&] { return h.view->visibleCols() == 120; }, 2000));
+}
+
+void test_a_remote_resize_asks_the_window_only_when_it_may()
+{
+    Harness h;
+    const int windowBefore = h.window.width();
+    h.set("terminal.size_follows_window", QStringLiteral("off"));
+    // `CSI 8 ; rows ; cols t`. The core resizes the grid itself and tells the
+    // window; what the window does about it is the setting under test.
+    h.feed("\033[8;24;120t");
+    CHECK(h.cols() == 120);
+    // `AutoWinResize` is off, so the window did not chase it — the scrollbar
+    // covers the columns that do not fit, which is the whole point of the
+    // terminal not being the window.
+    CHECK(h.window.width() == windowBefore);
+    CHECK(h.hbar && !h.hbar->isHidden());
+
+    h.set("terminal.auto_win_resize", QStringLiteral("on"));
+    h.feed("\033[8;24;100t");
+    CHECK(h.cols() == 100);
+    // And with it on the window follows, which is what the key has always
+    // said and never done.
+    CHECK(h.window.width() != windowBefore);
+    CHECK(spin([&] { return h.view->visibleCols() == 100; }, 2000));
+    CHECK(h.hbar && h.hbar->isHidden());
+}
+
 void test_the_size_shows_while_the_window_changes()
 {
     Harness h;
@@ -402,6 +443,7 @@ void test_the_readout_can_be_switched_off()
     CHECK(box && box->isHidden());
 }
 
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -421,6 +463,8 @@ int main(int argc, char **argv)
     test_a_window_wider_than_its_terminal_letterboxes();
     test_the_menu_item_and_the_setting_are_one_switch();
     test_the_freeze_is_written_down();
+    test_a_remote_resize_grows_the_window_it_is_the_terminal_of();
+    test_a_remote_resize_asks_the_window_only_when_it_may();
     test_the_size_shows_while_the_window_changes();
     test_a_fixed_terminal_reports_both_pairs();
     test_the_readout_can_be_switched_off();
