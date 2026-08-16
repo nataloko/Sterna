@@ -44,14 +44,30 @@ pub struct ReopenLimits {
     /// `AutoComPortReconnectDelayIllegal`, `ttset.c:1090` — the longer wait for
     /// when the reopen is a guess.
     ///
-    /// Upstream's guess is about the *notification*: some drivers send only
+    /// Upstream's doubt is about the *notification*: some drivers send only
     /// `DBT_DEVTYP_DEVICEINTERFACE` and never the `DBT_DEVTYP_PORT` that would
-    /// say which port arrived (`vtwin.cpp:335`). There is no such message here,
-    /// so the same doubt is reached by the Linux fact instead: a port opened by
-    /// its kernel name — `/dev/ttyUSB0`, or any `COM<n>` — may not be the
-    /// device that left, because `ttyUSB<n>` is assigned in attach order. A
-    /// port opened by its `/dev/serial/…` topology name is the same socket it
-    /// always was and takes [`ReopenLimits::delay`].
+    /// say which port arrived (`vtwin.cpp:335`), so the reopen is a guess and
+    /// gets the longer wait. There is no such message here, and the same doubt
+    /// turns out to have a **mechanical** Linux spelling rather than only an
+    /// analogous one:
+    ///
+    /// `devtmpfs` creates `/dev/ttyUSB0` the instant the driver binds. udev's
+    /// rules run afterwards — they apply the group and mode, and only then make
+    /// the `/dev/serial/by-path/…` symlink. So a **bare node appearing means
+    /// udev has not finished**, and opening it there routinely fails with
+    /// `EACCES` (the `dialout` group is not on it yet) or `EBUSY` (something is
+    /// still probing it). A **`by-path` name appearing means udev has
+    /// finished.** The two waits are therefore exactly "I saw a device" and "I
+    /// saw the device, set up" — which is what the two mean on Windows.
+    ///
+    /// It carries the attach-order doubt as well: `/dev/ttyUSB<n>` is assigned
+    /// in the order adapters attach, so a bare node that came back need not be
+    /// the one that left.
+    ///
+    /// Windows always takes the short [`ReopenLimits::delay`]: `QueryDosDeviceW`
+    /// names the exact port, so nothing there is a guess. That is the one place
+    /// this port is *less* uncertain than upstream, and spending two seconds
+    /// pretending otherwise would buy nothing.
     pub delay_unknown: Duration,
     /// `AutoComPortReconnectRetryInterval`, `ttset.c:1092`. Between one failed
     /// open and the next.
@@ -85,13 +101,27 @@ pub enum ReopenAction {
     GiveUp,
 }
 
+/// How often to look for a node that is not there yet, and how long before
+/// that slows down.
+///
+/// Not settings, and deliberately: this is a *resolution*, not a preference —
+/// nobody wants to notice their adapter more slowly — and a key the schema
+/// invents is a permanent promise in a file Tera Term will never read. The
+/// wait is indefinite, so it does have to stop being a twice-a-second wakeup
+/// eventually; after half a minute it is slower than the session tick that
+/// `AGENTS.md` already accepts as running for the life of the window.
+const POLL_FAST: Duration = Duration::from_millis(500);
+const POLL_SLOW: Duration = Duration::from_secs(2);
+const SLOW_AFTER: Duration = Duration::from_secs(30);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
     Idle,
     /// The node is not there. Indefinite — upstream waits for a device-arrival
     /// message for ever, and a board switched off overnight should still be
-    /// there in the morning.
-    Waiting,
+    /// there in the morning. The instant is when this wait began, which is
+    /// what the poll backs off from.
+    Waiting(Instant),
     /// The node is back; leave it alone until this instant.
     Settling(Instant),
     /// An open failed; try again at this instant.
@@ -126,9 +156,9 @@ impl Reopen {
     /// tick if the node has not actually gone. A read can report the device
     /// disconnected for reasons that leave the node in place, and this way that
     /// case takes the ordinary settle-then-open path rather than a second one.
-    pub fn arm(&mut self, target: tt_conn::ReopenTarget, limits: &ReopenLimits) {
+    pub fn arm(&mut self, now: Instant, target: tt_conn::ReopenTarget, limits: &ReopenLimits) {
         self.left = limits.retries;
-        self.state = State::Waiting;
+        self.state = State::Waiting(now);
         self.target = Some(target);
     }
 
@@ -152,6 +182,36 @@ impl Reopen {
         self.target.as_ref()
     }
 
+    /// How long until there is something to do, so a frontend can sleep for
+    /// exactly that long instead of asking on a timer of its own choosing.
+    ///
+    /// This is why the machine is not driven from `Session::tick`: that timer
+    /// is `Qt::VeryCoarseTimer`, which rounds to whole seconds, and the shipped
+    /// settle delay is 500 ms. A setting the program rounds to twice its value
+    /// is worse than a setting it does not have. The transfer deadline
+    /// (`Session::transfer_deadline`) is the same arrangement — the core owns
+    /// the instant, the frontend owns the timer.
+    ///
+    /// `None` when nothing is armed. `Duration::ZERO` means now.
+    pub fn deadline(&self, now: Instant) -> Option<Duration> {
+        self.target.as_ref()?;
+        let at = match self.state {
+            State::Idle => return None,
+            // Indefinite, so there is no instant to wait for — only how long
+            // to leave it before looking again.
+            State::Waiting(since) => {
+                let poll = if now.saturating_duration_since(since) < SLOW_AFTER {
+                    POLL_FAST
+                } else {
+                    POLL_SLOW
+                };
+                return Some(poll);
+            }
+            State::Settling(at) | State::Retrying(at) => at,
+        };
+        Some(at.saturating_duration_since(now))
+    }
+
     /// Step the machine. `present` is [`tt_conn::serial::present`] for
     /// [`Reopen::waiting_for`] — passed in rather than asked here so that the
     /// tests are about the algorithm, the way [`crate::bell`]'s `now` is.
@@ -161,7 +221,7 @@ impl Reopen {
         };
         match self.state {
             State::Idle => ReopenAction::Nothing,
-            State::Waiting => {
+            State::Waiting(_) => {
                 if !present {
                     return ReopenAction::Nothing;
                 }
@@ -177,8 +237,9 @@ impl Reopen {
                 if !present {
                     // It bounced. Back to the start of the wait, and this costs
                     // nothing: the budget is for opens that failed, and no open
-                    // has been tried.
-                    self.state = State::Waiting;
+                    // has been tried. The poll goes back to its fast rate for
+                    // the same reason — something is happening.
+                    self.state = State::Waiting(now);
                     return ReopenAction::Nothing;
                 }
                 if now < at {
@@ -262,7 +323,7 @@ mod tests {
         let base = Instant::now();
         let limits = ReopenLimits::default();
         let mut r = Reopen::default();
-        r.arm(target(STABLE), &limits);
+        r.arm(base, target(STABLE), &limits);
 
         // A whole day of the board being switched off.
         for hour in 0..24 {
@@ -291,7 +352,7 @@ mod tests {
         let base = Instant::now();
         let limits = ReopenLimits::default();
         let mut r = Reopen::default();
-        r.arm(target(STABLE), &limits);
+        r.arm(base, target(STABLE), &limits);
 
         assert_eq!(r.poll(base, true, &limits), ReopenAction::Nothing);
         assert_eq!(r.poll(at(base, 499), true, &limits), ReopenAction::Nothing);
@@ -306,7 +367,7 @@ mod tests {
         let base = Instant::now();
         let limits = ReopenLimits::default();
         let mut r = Reopen::default();
-        r.arm(target("/dev/ttyUSB0"), &limits);
+        r.arm(base, target("/dev/ttyUSB0"), &limits);
 
         assert_eq!(r.poll(base, true, &limits), ReopenAction::Nothing);
         assert_eq!(r.poll(at(base, 1999), true, &limits), ReopenAction::Nothing);
@@ -318,7 +379,7 @@ mod tests {
         let base = Instant::now();
         let limits = ReopenLimits::default();
         let mut r = Reopen::default();
-        r.arm(target(STABLE), &limits);
+        r.arm(base, target(STABLE), &limits);
         r.poll(base, true, &limits);
         assert_eq!(r.poll(at(base, 500), true, &limits), ReopenAction::Attempt);
 
@@ -337,7 +398,7 @@ mod tests {
         let base = Instant::now();
         let limits = ReopenLimits::default();
         let mut r = Reopen::default();
-        r.arm(target(STABLE), &limits);
+        r.arm(base, target(STABLE), &limits);
         r.poll(base, true, &limits);
 
         let mut now = at(base, 500);
@@ -376,7 +437,7 @@ mod tests {
             ..ReopenLimits::default()
         };
         let mut r = Reopen::default();
-        r.arm(target(STABLE), &limits);
+        r.arm(base, target(STABLE), &limits);
         r.poll(base, true, &limits);
 
         assert_eq!(r.poll(at(base, 500), true, &limits), ReopenAction::Attempt);
@@ -395,7 +456,7 @@ mod tests {
         let base = Instant::now();
         let limits = ReopenLimits::default();
         let mut r = Reopen::default();
-        r.arm(target(STABLE), &limits);
+        r.arm(base, target(STABLE), &limits);
         r.poll(base, true, &limits);
         assert_eq!(r.poll(at(base, 500), true, &limits), ReopenAction::Attempt);
 
@@ -422,7 +483,7 @@ mod tests {
         let base = Instant::now();
         let limits = ReopenLimits::default();
         let mut r = Reopen::default();
-        r.arm(target(STABLE), &limits);
+        r.arm(base, target(STABLE), &limits);
 
         for i in 0..5 {
             let t = 1000 * i;
@@ -446,7 +507,7 @@ mod tests {
         let base = Instant::now();
         let limits = ReopenLimits::default();
         let mut r = Reopen::default();
-        r.arm(target(STABLE), &limits);
+        r.arm(base, target(STABLE), &limits);
         r.cancel();
         assert!(!r.is_armed());
         assert_eq!(r.waiting_for(), None);
@@ -460,6 +521,7 @@ mod tests {
         let limits = ReopenLimits::default();
         let mut r = Reopen::default();
         r.arm(
+            Instant::now(),
             tt_conn::ReopenTarget {
                 path: STABLE.into(),
                 params: SerialParams {
@@ -470,5 +532,49 @@ mod tests {
             &limits,
         );
         assert_eq!(r.target().expect("armed").params.baud, 921_600);
+    }
+
+    /// The frontend sleeps for exactly this, so it has to be the real wait and
+    /// not a rounded one — which is the whole reason the machine is not driven
+    /// from the once-a-second session tick.
+    #[test]
+    fn the_deadline_is_what_a_frontend_should_sleep_for() {
+        let base = Instant::now();
+        let limits = ReopenLimits::default();
+        let mut r = Reopen::default();
+        assert_eq!(r.deadline(base), None, "nothing armed, nothing to wait for");
+
+        r.arm(base, target(STABLE), &limits);
+        assert_eq!(r.deadline(base), Some(POLL_FAST));
+
+        // The node arrives: now there is a real instant to wait until, and it
+        // is the settle delay rather than a poll.
+        r.poll(base, true, &limits);
+        assert_eq!(r.deadline(base), Some(Duration::from_millis(500)));
+        assert_eq!(r.deadline(at(base, 200)), Some(Duration::from_millis(300)));
+        assert_eq!(
+            r.deadline(at(base, 900)),
+            Some(Duration::ZERO),
+            "past the deadline is now, not a negative"
+        );
+    }
+
+    /// An indefinite wait must not stay a twice-a-second wakeup for ever.
+    #[test]
+    fn the_poll_backs_off_once_the_wait_is_long() {
+        let base = Instant::now();
+        let limits = ReopenLimits::default();
+        let mut r = Reopen::default();
+        r.arm(base, target(STABLE), &limits);
+
+        assert_eq!(r.deadline(at(base, 29_999)), Some(POLL_FAST));
+        assert_eq!(r.deadline(at(base, 30_000)), Some(POLL_SLOW));
+        assert_eq!(r.deadline(at(base, 86_400_000)), Some(POLL_SLOW));
+
+        // ...and a node that appears and goes again is activity, so the fast
+        // rate comes back with it.
+        r.poll(at(base, 40_000), true, &limits);
+        r.poll(at(base, 40_100), false, &limits);
+        assert_eq!(r.deadline(at(base, 40_100)), Some(POLL_FAST));
     }
 }

@@ -144,28 +144,55 @@ pub fn number_of_port(path: &str) -> Result<Option<u16>> {
 ///
 /// On Unix this follows a `/dev/serial/by-path/…` symlink to the node it names
 /// and insists the answer is a character device, so a remembered path that has
-/// become an ordinary file reads as absent rather than as a port. On Windows
-/// there is no node to stat — `Path::exists("COM3")` is false for a port that
-/// is plugged in and working — so it goes through [`enumerate`], which is what
-/// makes this the expensive arm of the two.
+/// become an ordinary file reads as absent rather than as a port.
+///
+/// Windows has no node to stat — `Path::exists("COM3")` is false for a port
+/// that is plugged in and working — so it asks the object manager instead.
+/// **Not [`enumerate`], which is what upstream's `CheckComPort` does**: that
+/// runs SetupAPI over every port on the machine, and an ordinary desktop
+/// answers with thirty-three of them. `QueryDosDeviceW` reads one symbolic
+/// link. Same answer, and it is the difference between a question that can be
+/// asked twice a second and one that cannot.
+///
+/// This is deliberately stricter than the existence test in
+/// [`crate::Error::from_open`], which asks a different question — see the
+/// comment there.
 pub fn present(path: &str) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::FileTypeExt;
         std::fs::metadata(path).is_ok_and(|md| md.file_type().is_char_device())
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        // Case-insensitively, because `com3` names the same port as `COM3` and
-        // a settings file may hold either.
-        enumerate().is_ok_and(|ports| {
-            ports.iter().any(|p| {
-                p.device.eq_ignore_ascii_case(path)
-                    || p.stable_id
-                        .as_deref()
-                        .is_some_and(|id| id.eq_ignore_ascii_case(path))
-            })
-        })
+        use windows_sys::Win32::Foundation::ERROR_INSUFFICIENT_BUFFER;
+        use windows_sys::Win32::Storage::FileSystem::QueryDosDeviceW;
+
+        // `QueryDosDeviceW` wants the object-manager name — `COM3`, not
+        // `\\.\COM3` and not `COM3:`. Both spellings reach here: `\\.\` is
+        // what a port above COM9 has to be opened as, and a hand-edited
+        // settings file may carry the trailing colon.
+        let name = path
+            .strip_prefix(r"\\.\")
+            .unwrap_or(path)
+            .trim_end_matches(':');
+        if name.is_empty() {
+            return false;
+        }
+        let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut buf = [0u16; 256];
+        // Zero is the only failure. A short buffer means the name resolved and
+        // its target did not fit, which is a *present* port — the easy half of
+        // this to get wrong, because it arrives as an error.
+        let n = unsafe { QueryDosDeviceW(wide.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) };
+        n != 0
+            || unsafe { windows_sys::Win32::Foundation::GetLastError() }
+                == ERROR_INSUFFICIENT_BUFFER
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        false
     }
 }
 

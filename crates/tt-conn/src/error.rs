@@ -119,11 +119,17 @@ impl Error {
         }
 
         // No errno: the crate raised this itself. If the node is gone the
-        // device really did leave. Asked through `serial::present` so that
-        // this and the auto-reopen loop cannot disagree about what "the node
-        // is there" means — and it opens nothing, which is what lets the
-        // reopen loop ask it on a timer.
-        if !crate::serial::present(path) {
+        // device really did leave.
+        //
+        // **Deliberately not `serial::present`**, which is a stricter test and
+        // a different question. That one asks "is there a serial port node
+        // here" so that a reopen loop can wait for one; this asks "is there
+        // anything here to blame at all", and answering it with the strict
+        // test would turn `cannot open /home/me/notaport: Is a directory` —
+        // which says what to fix — into "the device disconnected", which does
+        // not. The two agree on the case that matters to both: a path with
+        // nothing at it.
+        if !std::path::Path::new(path).exists() {
             return Error::Disconnected;
         }
         let text = io.to_string().to_ascii_lowercase();
