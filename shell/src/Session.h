@@ -409,6 +409,28 @@ public:
     void pauseLog(bool paused);
     bool logPaused() const;
 
+    // --- counters -----------------------------------------------------------
+
+    /// What this connection has moved, and for how long — see [`TtCounters`].
+    ///
+    /// Reset by a connect and frozen by a disconnect, so `live` false means the
+    /// numbers belong to the connection that ended. Cheap enough to ask once a
+    /// second on every open tab.
+    TtCounters counters() const;
+
+    /// CTS, DSR, RI and carrier detect, or false when there is nothing to ask
+    /// — a link that is not serial, or a read that failed.
+    ///
+    /// **Ask only while something is showing them.** The port is read every
+    /// call: one ioctl on Linux, four kernel calls on Windows. That is why the
+    /// popover polls and the status strip does not.
+    bool modemLines(TtModemLines *out) const;
+
+    /// Bytes still queued for the far end. Non-zero means flow control is
+    /// holding the line, which is one of the answers the counters exist to
+    /// give — `rearm` watches the same number for a different reason.
+    quint64 pendingOut() const;
+
     // --- file transfer ------------------------------------------------------
     //
     // The terminal is deaf and mute while one runs: keystrokes are dropped and
@@ -573,6 +595,19 @@ signals:
     /// which is the case that matters, because a window still claiming to log
     /// lets someone walk away from a capture that ended an hour ago.
     void logStateChanged();
+
+    /// The one-second idle wakeup, made visible.
+    ///
+    /// Anything whose reading is a function of the clock rather than of a byte
+    /// hangs off this: a connect time, a rate that has to decay, a control line
+    /// nothing notifies about. It rides the timer the telnet keepalive already
+    /// needed, so the feature adds no wakeup of its own.
+    ///
+    /// **Recompute from the core; never increment.** The timer is
+    /// `Qt::VeryCoarseTimer`, so it rounds to whole seconds and coalesces — a
+    /// counter kept up by hand here would run permanently slow, where a
+    /// recomputed one merely skips a repaint and jumps a second.
+    void ticked();
 
     /// The far end's host key needs a decision. Answer with `answerHostKey`.
     void sshHostKeyWanted(const HostKeyRequest &request);

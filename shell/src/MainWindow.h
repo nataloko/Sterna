@@ -18,6 +18,7 @@
 #include "Session.h"
 
 class ConnectBar;
+class CountersPopover;
 class QuickButtonBar;
 class QuickButtonRepeat;
 class Control;
@@ -454,6 +455,17 @@ private:
     /// is what `damaged` means — so the idle path stays free of wakeups, which
     /// is the same reason `Session` has no poll timer.
     void updateLogStatus(TerminalPage *page);
+    /// One page's counter field, and the popover when that page's is open.
+    ///
+    /// Driven from `damaged` *and* from the one-second tick, unlike the log
+    /// indicator above: the byte counts move when bytes arrive, but the connect
+    /// clock and a rate falling back to zero are functions of the clock, and an
+    /// idle line produces no damage to hang them off.
+    void updateCounters(TerminalPage *page);
+    /// Open the detail over `page`'s status strip, building it on first use.
+    /// One popover for the window: only one can be on screen, and it is the
+    /// thing that decides whether the serial control lines are read at all.
+    void showCountersPopover(TerminalPage *page);
     /// Select the catalog named by `settings.language_file`. Missing catalogs
     /// leave the source-language UI in place, as upstream's defaults do.
     void reloadLanguage();
@@ -583,6 +595,18 @@ private:
     /// the layout is a mode now, not a count.
     QAction *m_tiledAction = nullptr;
     QAction *m_quickButtonsAction = nullptr;
+    /// View > Show counters, and the two things behind it.
+    ///
+    /// The setting is cached rather than read per page per read, because
+    /// `updateCounters` runs on the `damaged` path — which fires on every read
+    /// of every open session — and on a once-a-second tick for every page.
+    QAction *m_countersAction = nullptr;
+    bool m_countersOn = false;
+    /// One popover for the window, built on first use. `m_countersPage` is
+    /// whose numbers it is showing, so a tick for any *other* page does not
+    /// repaint it — and does not read that page's serial control lines.
+    CountersPopover *m_countersPopover = nullptr;
+    TerminalPage *m_countersPage = nullptr;
     /// View > Show line numbers. The gutter itself belongs to `TerminalPage`;
     /// this only writes `terminal.line_numbers`.
     QAction *m_lineNumbersAction = nullptr;

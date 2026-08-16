@@ -151,6 +151,7 @@ add_library(sterna_shell STATIC
     src/ConnectBar.cpp
     src/Recent.cpp
     src/Control.cpp
+    src/CountersPopover.cpp
     src/FindBar.cpp
     src/Highlights.cpp
     src/HighlightsDialog.cpp
@@ -269,6 +270,20 @@ if(UNIX)
     target_link_libraries(pty_test PRIVATE sterna_shell)
     target_compile_options(pty_test PRIVATE ${TT_WARNINGS})
     add_test(NAME pty COMMAND pty_test)
+endif()
+
+# The counters, over a real connection: bytes reaching the field, the popover
+# reading the same numbers the core has, and the port going unread while the
+# popover is shut. `tabs_test` owns the status strip's own geometry properties.
+#
+# UNIX only for `pty_test`'s reason and no other — every case is a shell
+# script. The serial half needs the loopback rig, so it is a core test
+# (`tt-session/tests/serial_loopback.rs`) rather than one of these.
+if(UNIX)
+    add_executable(counters_test tests/counters_test.cpp)
+    target_link_libraries(counters_test PRIVATE sterna_shell)
+    target_compile_options(counters_test PRIVATE ${TT_WARNINGS})
+    add_test(NAME counters COMMAND counters_test)
 endif()
 
 # The highlight rules: the file, the editor, and what reaches the pixels. The
