@@ -2662,9 +2662,23 @@ pub struct Settings {
     /// clamping is the predictable answer where `ttset.c:615` would take the default
     /// for anything below the floor.
     pub terminal_line_number_width: i32,
-    /// `ttset.c:625`. With it on, resizing the window resizes the terminal.
+    /// `ttset.c:625`, and **this ships on where upstream ships it off**
+    /// (deviation 21). With it on the terminal is exactly as wide and as tall as the
+    /// window, which is what this port did unconditionally until the switch was
+    /// honoured.
+    ///
+    /// With it off the window is a viewport onto a terminal of its own size,
+    /// scrolled sideways by `TerminalView`'s origin column the way `WinOrgX` scrolls
+    /// upstream's (`vtdisp.c:3070`). That is also the only way to narrow a window
+    /// without losing text: `Grid::resize` truncates every line it shortens, in the
+    /// scrollback as well as the page, and nothing puts the ends back.
     pub terminal_size_follows_window: bool,
     /// `ttset.c:628`. With it on, a remote resize resizes the window.
+    ///
+    /// It decides what happens to the *window* when the host moves the terminal, so
+    /// it can say anything only while `terminal.size_follows_window` is off — with
+    /// that on the window is the terminal, and a remote resize has to move it.
+    /// Upstream's rule is the same one, in the `else` arm at `buffer.c:5078`.
     pub terminal_auto_win_resize: bool,
     /// `ttset.c:1676`, part of `TermFlag` — the same trap as `ColorFlag`. Whether
     /// changing the terminal's size scrolls the page away and homes the cursor.
@@ -4246,6 +4260,18 @@ pub struct Settings {
     /// widest caption, because the buttons shorten their text instead of holding the
     /// panel open. What it buys is a target a pointer can hit.
     pub window_quick_buttons_width: i32,
+    /// **`[Sterna]`**, because upstream's is a tooltip and has no key at all: it is
+    /// created on `WM_ENTERSIZEMOVE` and destroyed on `WM_EXITSIZEMOVE`
+    /// (`sizetip.c:111`, `vtwin.cpp:3111`), so there is nothing to store. Wayland
+    /// has no such pair of events, and no way to put a window anywhere near the
+    /// corner being dragged, so this one floats over the terminal and leaves on a
+    /// timer — near enough that the number is where the eye already is, and far
+    /// enough from upstream to be worth a switch (deviation 22).
+    ///
+    /// It reads `COLSxROWS` while the terminal is the window, and `COLSxROWS of
+    /// COLSxROWS` while it is not, because the pair that moves is then the visible
+    /// one and the pair that matters is still the terminal's.
+    pub window_show_terminal_size: bool,
     /// The device path, not a number: `ComPort` is upstream's and cannot spell
     /// `/dev/serial/by-id/usb-FTDI_…`. Written as the port was opened, so it is the
     /// `open_path` a stable symlink resolves from rather than the `ttyUSB<n>` that
@@ -4392,7 +4418,7 @@ impl Default for Settings {
             terminal_dark_mode: false,
             terminal_line_numbers: false,
             terminal_line_number_width: 6,
-            terminal_size_follows_window: false,
+            terminal_size_follows_window: true,
             terminal_auto_win_resize: false,
             terminal_clear_on_resize: false,
             terminal_home_erase_clears_screen: true,
@@ -4703,6 +4729,7 @@ impl Default for Settings {
             window_panel_layout: WindowPanelLayout::default(),
             window_quick_buttons: true,
             window_quick_buttons_width: 0,
+            window_show_terminal_size: true,
             recent_serial_port: String::from(""),
             recent_host_history: String::from(""),
             recent_ssh_host: String::from(""),
@@ -4774,7 +4801,7 @@ impl Settings {
             ),
             terminal_size_follows_window: crate::schema::on_off(
                 ini.get("Tera Term", "TermIsWin"),
-                false,
+                true,
             ),
             terminal_auto_win_resize: crate::schema::on_off(
                 ini.get("Tera Term", "AutoWinResize"),
@@ -5946,6 +5973,10 @@ impl Settings {
                 ini.get_int("Sterna", "QuickButtonsWidth", d.window_quick_buttons_width) as i32,
                 0,
                 2000,
+            ),
+            window_show_terminal_size: crate::schema::on_off(
+                ini.get("Sterna", "ShowTerminalSize"),
+                true,
             ),
             recent_serial_port: ini
                 .get_or("Sterna", "SerialPort", &d.recent_serial_port)
@@ -8149,6 +8180,16 @@ impl Settings {
             "Sterna",
             "QuickButtonsWidth",
             &self.window_quick_buttons_width.to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "ShowTerminalSize",
+            &if self.window_show_terminal_size {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
         );
         ini.set("Sterna", "SerialPort", &self.recent_serial_port.clone());
         ini.set("Sterna", "HostHistory", &self.recent_host_history.clone());
@@ -11025,6 +11066,18 @@ impl Settings {
                     &self.window_quick_buttons_width.to_string(),
                 );
             }
+            "window.show_terminal_size" => {
+                ini.set(
+                    "Sterna",
+                    "ShowTerminalSize",
+                    &if self.window_show_terminal_size {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_string(),
+                );
+            }
             "recent.serial_port" => {
                 ini.set("Sterna", "SerialPort", &self.recent_serial_port.clone());
             }
@@ -11981,6 +12034,12 @@ impl Settings {
             }
             .to_string(),
             "window.quick_buttons_width" => self.window_quick_buttons_width.to_string(),
+            "window.show_terminal_size" => if self.window_show_terminal_size {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             "recent.serial_port" => self.recent_serial_port.clone(),
             "recent.host_history" => self.recent_host_history.clone(),
             "recent.ssh_host" => self.recent_ssh_host.clone(),
@@ -12053,7 +12112,7 @@ impl Settings {
                 )
             }
             "terminal.size_follows_window" => {
-                self.terminal_size_follows_window = crate::schema::on_off(Some(value), false)
+                self.terminal_size_follows_window = crate::schema::on_off(Some(value), true)
             }
             "terminal.auto_win_resize" => {
                 self.terminal_auto_win_resize = crate::schema::on_off(Some(value), false)
@@ -12918,6 +12977,9 @@ impl Settings {
                     2000,
                 )
             }
+            "window.show_terminal_size" => {
+                self.window_show_terminal_size = crate::schema::on_off(Some(value), true)
+            }
             "recent.serial_port" => self.recent_serial_port = value.to_string(),
             "recent.host_history" => self.recent_host_history = value.to_string(),
             "recent.ssh_host" => self.recent_ssh_host = value.to_string(),
@@ -13069,9 +13131,9 @@ pub const FIELDS: &[Field] = &[
         section: "Tera Term",
         key: "TermIsWin",
         kind: Kind::Bool,
-        default: "off",
+        default: "on",
         label: Some("DLG_TERM_TERMISWIN"),
-        doc: "`ttset.c:625`. With it on, resizing the window resizes the terminal.",
+        doc: "`ttset.c:625`, and **this ships on where upstream ships it off** (deviation 21). With it on the terminal is exactly as wide and as tall as the window, which is what this port did unconditionally until the switch was honoured.  With it off the window is a viewport onto a terminal of its own size, scrolled sideways by `TerminalView`'s origin column the way `WinOrgX` scrolls upstream's (`vtdisp.c:3070`). That is also the only way to narrow a window without losing text: `Grid::resize` truncates every line it shortens, in the scrollback as well as the page, and nothing puts the ends back.",
     },
     Field {
         name: "terminal.auto_win_resize",
@@ -13081,7 +13143,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "off",
         label: None,
-        doc: "`ttset.c:628`. With it on, a remote resize resizes the window.",
+        doc: "`ttset.c:628`. With it on, a remote resize resizes the window.  It decides what happens to the *window* when the host moves the terminal, so it can say anything only while `terminal.size_follows_window` is off — with that on the window is the terminal, and a remote resize has to move it. Upstream's rule is the same one, in the `else` arm at `buffer.c:5078`.",
     },
     Field {
         name: "terminal.clear_on_resize",
@@ -16174,6 +16236,16 @@ pub const FIELDS: &[Field] = &[
         doc: "How wide the panel is, in pixels. **The bar is always down the right-hand side** — a terminal's rows are the scarce dimension, a window is usually far wider than the 80 columns it needs and exactly as tall as it can be, so a vertical bar costs nothing that is being used and the labels have room to be words rather than abbreviations.  There was a `QuickButtonsArea` here until 0.5.4, naming one of the four edges. It went with the dock that made it possible: a dock separator takes its pixels out of the central widget, and the terminal beside it is fitted to whatever width is left in whole cells — so widening the panel resized the grid, and `Grid::resize` truncates every line it shortens, page and scrollback alike. The width below is the same gesture with the pixels coming out of the *window* instead, which is a thing a terminal can survive.  **The reachable route to this is the panel's own context menu** — Panel width > Fit to buttons, or Set width… — because a panel that looks draggable and is not needs its answer within reach of the thing it is about. This row is the same setting from the other end.  **Zero means as wide as the buttons need**, and it is what ships. Pixels are the only honest unit for a panel of words — the same eight captions want a different number of them at every font size and every scale factor — so a shipped number would be a guess, and measuring is not. It also keeps a fresh install exactly where it was before this setting existed: the panel hugged its widest caption, and an empty one was as wide as its Add button.  `int_clamp` rather than `int`: a number outside the range is somebody's typo, and clamping it keeps the panel on screen where taking the default would throw the width away and silently go back to measuring. The ceiling is a corruption guard and not the real limit — the real one is how far the window can grow before it leaves the screen, which only the window knows. The floor a panel is really held to is its own minimum, which depends on the captions and the font, so the window applies that too: validation at the boundary, the way `TerminalUID` is — and that floor is a fixed number rather than the widest caption, because the buttons shorten their text instead of holding the panel open. What it buys is a target a pointer can hit.",
     },
     Field {
+        name: "window.show_terminal_size",
+        page: "window",
+        section: "Sterna",
+        key: "ShowTerminalSize",
+        kind: Kind::Bool,
+        default: "on",
+        label: None,
+        doc: "**`[Sterna]`**, because upstream's is a tooltip and has no key at all: it is created on `WM_ENTERSIZEMOVE` and destroyed on `WM_EXITSIZEMOVE` (`sizetip.c:111`, `vtwin.cpp:3111`), so there is nothing to store. Wayland has no such pair of events, and no way to put a window anywhere near the corner being dragged, so this one floats over the terminal and leaves on a timer — near enough that the number is where the eye already is, and far enough from upstream to be worth a switch (deviation 22).  It reads `COLSxROWS` while the terminal is the window, and `COLSxROWS of COLSxROWS` while it is not, because the pair that moves is then the visible one and the pair that matters is still the terminal's.",
+    },
+    Field {
         name: "recent.serial_port",
         page: "recent",
         section: "Sterna",
@@ -16377,8 +16449,8 @@ pub const SETTING_HELP: &[&str] = &[
     "This setting uses a dark palette for terminal content and its line editor. Menus, dialogs, and other application controls keep the desktop theme.",
     "This setting shows line numbers in a column at the left side of the terminal. The first line from the host is line 1, and a line keeps its number in the scrollback. The numbers are not terminal content. Sterna does not include them in a selection, the session log, the printer output, or macro text.",
     "This setting sets the number of digits in the line-number column. The width stays the same for the full session, because a change would move the terminal. A line with a longer number has no number. Values use 1 thru 10.",
-    "This setting stores Tera Term's option for resizing the terminal with its window. Sterna always fits the terminal to its view. Thus, this setting has no effect.",
-    "This setting stores Tera Term's option for remote terminal-size requests. Sterna handles supported remote resize requests even if this setting is off.",
+    "This setting sets the terminal width and height from the window. Long lines then wrap at the right edge of the window. If this setting is off, the terminal keeps its width, and long lines wrap at that width. A horizontal scroll bar then shows the columns that are not in the window.",
+    "This setting makes the window larger or smaller when the host changes the terminal width or height. It applies only when the terminal does not get its width from the window. If this setting is off, a horizontal scroll bar shows the columns that are not in the window.",
     "This setting clears the displayed page and homes the cursor each time Sterna applies terminal size. It can also clear the page if the size does not change.",
     "This setting treats a move home followed by erase-to-end as a full screen clear. The clear moves the old page into scrollback.",
     "This setting keeps lines that scroll off the page in view. The off value keeps only the current screen.",
@@ -16688,6 +16760,7 @@ pub const SETTING_HELP: &[&str] = &[
     "This setting selects one tabbed connection view or one tiled grid. The tiled grid shows all connections. The previous two-panel and four-panel values select the tiled layout.",
     "This setting shows the quick-button bar. You can change the buttons on this bar. An empty bar shows the Add button. You can use this button to make the first command.",
     "This setting sets the width of the quick-button bar in pixels. Zero makes the bar as wide as its widest button. A narrow bar makes the text on the buttons shorter. Sterna changes the window width, and the terminal keeps its columns. You can also set the width from the menu of the bar.",
+    "This setting shows the terminal width and height in the middle of the terminal while you change the window. Sterna removes the numbers one second after the last change.",
     "This setting stores the serial-device path that the connection dialog used last. Adapter renumbering changes a temporary name more frequently than a stable device link.",
     "This setting stores host entries for the New Connection dialog. This list puts the host from the last connection first. Host history must be active before Sterna updates this list.",
     "This setting stores the last SSH host or SSH configuration alias entered in the connection dialog. An empty value removes the SSH record.",

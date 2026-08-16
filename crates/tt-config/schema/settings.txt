@@ -178,12 +178,26 @@ terminal.line_numbers | bool | Sterna | LineNumbers | off | -
 #@ This setting sets the number of digits in the line-number column. The width stays the same for the full session, because a change would move the terminal. A line with a longer number has no number. Values use 1 thru 10.
 terminal.line_number_width | int_clamp(1..10) | Sterna | LineNumberWidth | 6 | -
 
-# `ttset.c:625`. With it on, resizing the window resizes the terminal.
-#@ This setting stores Tera Term's option for resizing the terminal with its window. Sterna always fits the terminal to its view. Thus, this setting has no effect.
-terminal.size_follows_window | bool | Tera Term | TermIsWin | off | DLG_TERM_TERMISWIN
+# `ttset.c:625`, and **this ships on where upstream ships it off**
+# (deviation 21). With it on the terminal is exactly as wide and as tall as the
+# window, which is what this port did unconditionally until the switch was
+# honoured.
+#
+# With it off the window is a viewport onto a terminal of its own size,
+# scrolled sideways by `TerminalView`'s origin column the way `WinOrgX` scrolls
+# upstream's (`vtdisp.c:3070`). That is also the only way to narrow a window
+# without losing text: `Grid::resize` truncates every line it shortens, in the
+# scrollback as well as the page, and nothing puts the ends back.
+#@ This setting sets the terminal width and height from the window. Long lines then wrap at the right edge of the window. If this setting is off, the terminal keeps its width, and long lines wrap at that width. A horizontal scroll bar then shows the columns that are not in the window.
+terminal.size_follows_window | bool | Tera Term | TermIsWin | on | DLG_TERM_TERMISWIN
 
 # `ttset.c:628`. With it on, a remote resize resizes the window.
-#@ This setting stores Tera Term's option for remote terminal-size requests. Sterna handles supported remote resize requests even if this setting is off.
+#
+# It decides what happens to the *window* when the host moves the terminal, so
+# it can say anything only while `terminal.size_follows_window` is off — with
+# that on the window is the terminal, and a remote resize has to move it.
+# Upstream's rule is the same one, in the `else` arm at `buffer.c:5078`.
+#@ This setting makes the window larger or smaller when the host changes the terminal width or height. It applies only when the terminal does not get its width from the window. If this setting is off, a horizontal scroll bar shows the columns that are not in the window.
 terminal.auto_win_resize | bool | Tera Term | AutoWinResize | off | -
 
 # `ttset.c:1676`, part of `TermFlag` — the same trap as `ColorFlag`. Whether
@@ -2498,6 +2512,20 @@ window.quick_buttons | bool | Sterna | QuickButtons | on | -
 # panel open. What it buys is a target a pointer can hit.
 #@ This setting sets the width of the quick-button bar in pixels. Zero makes the bar as wide as its widest button. A narrow bar makes the text on the buttons shorter. Sterna changes the window width, and the terminal keeps its columns. You can also set the width from the menu of the bar.
 window.quick_buttons_width | int_clamp(0..2000) | Sterna | QuickButtonsWidth | 0 | -
+
+# **`[Sterna]`**, because upstream's is a tooltip and has no key at all: it is
+# created on `WM_ENTERSIZEMOVE` and destroyed on `WM_EXITSIZEMOVE`
+# (`sizetip.c:111`, `vtwin.cpp:3111`), so there is nothing to store. Wayland
+# has no such pair of events, and no way to put a window anywhere near the
+# corner being dragged, so this one floats over the terminal and leaves on a
+# timer — near enough that the number is where the eye already is, and far
+# enough from upstream to be worth a switch (deviation 22).
+#
+# It reads `COLSxROWS` while the terminal is the window, and `COLSxROWS of
+# COLSxROWS` while it is not, because the pair that moves is then the visible
+# one and the pair that matters is still the terminal's.
+#@ This setting shows the terminal width and height in the middle of the terminal while you change the window. Sterna removes the numbers one second after the last change.
+window.show_terminal_size | bool | Sterna | ShowTerminalSize | on | -
 
 # --- recent -----------------------------------------------------------------
 #

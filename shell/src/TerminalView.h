@@ -153,6 +153,9 @@ public:
     void selectSpan(SelPoint from, SelPoint to);
     /// Scroll `line` into view, centred, if it is not on screen already.
     void revealLine(quint64 line);
+    /// The same for a column, when the window is narrower than the terminal.
+    /// A no-op while the whole terminal fits, which is most of the time.
+    void revealColumn(int column);
     /// Open the find bar and put the keyboard in it. Already open, it takes
     /// the focus back and selects what is there, which is what pressing the
     /// shortcut twice means everywhere else.
@@ -206,9 +209,27 @@ public:
     void setStopKeyArmed(bool armed) { m_stopKeyArmed = armed; }
     bool stopKeyArmed() const { return m_stopKeyArmed; }
 
+    /// Whether the terminal is the window — `TermIsWin`, and what ships.
+    ///
+    /// Off, the window is a viewport onto a terminal of its own width: the
+    /// grid keeps `terminal.cols` however narrow the window gets, and
+    /// [`originX`] decides which of its columns are on screen. That is the only
+    /// state in which a narrowed window keeps its text, because `Grid::resize`
+    /// truncates every line it shortens, scrollback included.
+    bool sizeFollowsWindow() const { return m_sizeFollowsWindow; }
+    /// The leftmost terminal column the widget is showing — upstream's
+    /// `WinOrgX` (`vtdisp.c:119`). Always 0 while the terminal is the window.
+    int originX() const { return m_originX; }
+    /// How many of the terminal's columns fit, which is all of them unless the
+    /// window is narrower than the terminal.
+    int visibleCols() const;
+
 public slots:
     /// Scroll the view back by `offset` lines; 0 is the live screen.
     void setViewOffset(int offset);
+    /// Scroll sideways to put `column` at the left edge. Clamped to the range
+    /// there is, so 0 and a large number are both "as far as it goes".
+    void setOriginX(int column);
 
 signals:
     /// The viewport moved, or the history grew. A scrollbar watches this
@@ -233,6 +254,7 @@ signals:
 protected:
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    void showEvent(QShowEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
@@ -298,6 +320,16 @@ private:
     void dragTo(const QPointF &pos);
     /// Re-fit the terminal to the widget, in whole cells.
     void refit();
+    /// Put the size readout in the middle of the terminal. Floating, like the
+    /// find bar, and for the same reason.
+    void positionSizeIndicator();
+    /// Show the terminal's size if this resize changed it — `window.show_terminal_size`.
+    void announceSize();
+    /// A widget position in the terminal's own pixel space. The two differ by
+    /// the horizontal origin, so everything that turns a pointer into a cell —
+    /// the core's mouse reporting included — goes through this rather than
+    /// taking the widget's x for the terminal's.
+    QPointF gridPos(const QPointF &pos) const;
 
     Session *m_session;
     const I18n *m_i18n;
@@ -310,6 +342,14 @@ private:
     /// view was constructed with and moved by `setHintCells`; never by `refit`,
     /// which measures the width this decides.
     QSize m_hintCells{80, 24};
+    /// `TermIsWin` — see `sizeFollowsWindow`. The default matches the schema's,
+    /// which is what this view did unconditionally before the switch existed.
+    bool m_sizeFollowsWindow = true;
+    /// The leftmost visible terminal column — see `originX`. It is a property
+    /// of the *view* and not of the session: two views onto one terminal could
+    /// honestly be looking at different columns, the way two scroll positions
+    /// would be.
+    int m_originX = 0;
     /// Whether [`refit`] is allowed to move the grid — see `setGridHeld`.
     bool m_gridHeld = false;
     /// Whether a refit was asked for and refused while held, which is what
@@ -327,6 +367,18 @@ private:
     /// hidden and per terminal, because a window can be showing nine of them
     /// and a search belongs to one session's scrollback.
     class FindBar *m_findBar = nullptr;
+
+    /// The `COLSxROWS` box, floating over the middle of the terminal for a
+    /// second after a resize. Per terminal, like the find bar: in a tiled
+    /// window every tile changes size at once and each one answers for itself.
+    class SizeIndicator *m_sizeIndicator = nullptr;
+    /// `window.show_terminal_size`.
+    bool m_showSize = true;
+    /// The size the box last reported, and whether it may report at all yet.
+    /// The second is what keeps a window from flashing its size as it opens —
+    /// see `showEvent`.
+    QSize m_announced{0, 0};
+    bool m_sizeSeen = false;
 
     /// The three keyboard settings which decide whether Qt's Alt key belongs
     /// to the desktop or to the terminal, and how a Meta character is put on

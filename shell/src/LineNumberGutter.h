@@ -23,6 +23,14 @@ class Theme;
 /// cursor placement, in the line editor and in `refit` — a dozen chances to get
 /// the clipboard wrong by getting an offset wrong.
 ///
+/// The view has since grown a horizontal origin anyway, for a window narrower
+/// than its terminal, and it is worth saying how little that changes here. It
+/// is one `QPainter::translate` and one `TerminalView::gridPos`, so it exists
+/// in two places rather than a dozen — and it moves *terminal columns* under a
+/// viewport, which is a different question from taking columns away from the
+/// terminal. This widget still owns no cell, and that is still what keeps the
+/// numbers out of every copy.
+///
 /// A plain `QWidget` and not a `QAbstractScrollArea` or a `QListView`, for the
 /// same reason `TerminalView` is one: this draws digits in cell coordinates and
 /// scrolls only because the rows underneath it do.

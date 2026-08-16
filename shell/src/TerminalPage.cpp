@@ -29,6 +29,7 @@ TerminalPage::TerminalPage(const I18n *i18n, QWidget *macroWindow,
     // cell's size, the font or the background.
     , m_gutter(new LineNumberGutter(m_session, m_view->theme(), this))
     , m_scroll(new QScrollBar(Qt::Vertical, this))
+    , m_hscroll(new QScrollBar(Qt::Horizontal, this))
     // Declaration order is what actually decides construction order, so this
     // sits where the header puts it. The strip points at nothing and nothing
     // points at it, so its position among the six is free.
@@ -38,6 +39,7 @@ TerminalPage::TerminalPage(const I18n *i18n, QWidget *macroWindow,
           new Plugins(m_session, m_macro, pluginsDirectory, settingsPath, this))
 {
     m_scroll->setObjectName(QStringLiteral("terminalScrollBar"));
+    m_hscroll->setObjectName(QStringLiteral("terminalHScrollBar"));
     // A plain QWidget plus a scrollbar rather than a QAbstractScrollArea: the
     // painter draws straight onto the widget in cell coordinates, and a
     // scroll area would add a viewport child and a coordinate translation to
@@ -57,7 +59,16 @@ TerminalPage::TerminalPage(const I18n *i18n, QWidget *macroWindow,
     // copy out of the core's cells, and this widget owns none. See
     // `LineNumberGutter`.
     row->addWidget(m_gutter);
-    row->addWidget(m_view, 1);
+    // The view and the sideways bar as one column, so the bar starts where the
+    // text starts and ends where it ends. The vertical bar stays outside it and
+    // runs the full height, which leaves no dead corner between the two.
+    m_viewColumn = new QWidget(terminal);
+    auto *column = new QVBoxLayout(m_viewColumn);
+    column->setContentsMargins(0, 0, 0, 0);
+    column->setSpacing(0);
+    column->addWidget(m_view, 1);
+    column->addWidget(m_hscroll);
+    row->addWidget(m_viewColumn, 1);
     row->addWidget(m_scroll);
     // A wheel notch over the numbers is aimed at the text, not at the widget.
     m_gutter->setWheelTarget(m_view);
@@ -105,6 +116,11 @@ TerminalPage::TerminalPage(const I18n *i18n, QWidget *macroWindow,
         // counts back from the live screen. One subtraction, in one place.
         m_view->setViewOffset(m_scroll->maximum() - value);
     });
+    // Sideways there is no such disagreement: both count columns from the left,
+    // so the bar's value *is* the origin — which is upstream's arrangement too
+    // (`AdjustScrollBar` sets `WinOrgX = ScrollPosX`, `vtdisp.c:3072`).
+    connect(m_hscroll, &QScrollBar::valueChanged, this,
+            [this](int value) { m_view->setOriginX(value); });
     syncScrollBar();
 }
 
@@ -140,6 +156,12 @@ QSize TerminalPage::sizeHint() const
     // window is not permanently a few pixels narrower than the terminal in it.
     if (!m_scroll->isHidden()) {
         out.rwidth() += m_scroll->sizeHint().width();
+    }
+    // The same for the sideways one, which is hidden unless the terminal is
+    // wider than the window — and is therefore absent from every window that
+    // lets its terminal follow it.
+    if (!m_hscroll->isHidden()) {
+        out.rheight() += m_hscroll->sizeHint().height();
     }
     out.rheight() += m_status->sizeHint().height();
     return out;
@@ -181,6 +203,13 @@ void TerminalPage::applySettings()
     if (QLayout *layout = m_terminalRow->layout()) {
         layout->activate();
     }
+    // Both levels: the row's pass gives the column its geometry, and the
+    // column's own layout is what passes that on to the view. Activating only
+    // the outer one leaves the view quoting its pre-gutter width to the caller
+    // below, which is the whole reason this call is here.
+    if (QLayout *layout = m_viewColumn->layout()) {
+        layout->activate();
+    }
 }
 
 void TerminalPage::resetLineCounter()
@@ -216,4 +245,48 @@ void TerminalPage::syncScrollBar()
     // Hidden when there is nothing to scroll, so an 80x24 window is not
     // permanently a few pixels narrower than the terminal in it.
     m_scroll->setVisible(history > 0);
+
+    // And sideways. The range is upstream's exactly — `max(0, NumOfColumns -
+    // WinWidth)` (`vtdisp.c:3070`) — as is the page step of one screen less a
+    // column, which leaves an overlap to read the join by (`:3248`).
+    const int visible = m_view->visibleCols();
+    // **Two states have no sideways range by definition, and both would
+    // otherwise invent one.** A terminal that follows its window is the window,
+    // so any difference between the two numbers is a layout pass in flight; and
+    // a view with no geometry yet reports room for one column, which would put
+    // a scrollbar on every page at construction and make the window open a row
+    // shorter than it was asked for.
+    const int range = (!m_view->sizeFollowsWindow() && m_view->width() > 0)
+                          ? qMax(0, m_session->cols() - visible)
+                          : 0;
+    const QSignalBlocker across(m_hscroll);
+    m_hscroll->setRange(0, range);
+    m_hscroll->setPageStep(qMax(1, visible - 1));
+    m_hscroll->setSingleStep(1);
+    m_hscroll->setValue(m_view->originX());
+    // **Appearing costs the terminal a row, and that is allowed.** The window
+    // is not grown to absorb it, the way it is for the quick-button panel: this
+    // bar arrives because somebody was already dragging the window narrower, so
+    // the rows are moving in that same gesture and a row slid into the
+    // scrollback is not a row lost. The panel had neither excuse — it appeared
+    // on a settings change, and it took *columns*, which `Grid::resize` cuts.
+    const bool want = range > 0;
+    if (want == m_hscroll->isHidden()) {
+        m_hscroll->setVisible(want);
+        // **And it has to ask for a layout, because it is inside one.** This
+        // runs from `viewChanged`, which the view emits from `refit`, which
+        // runs in the view's own resize event — so the invalidation
+        // `setVisible` posts is consumed by the pass already in flight and the
+        // bar is left visible at zero height until something else happens to
+        // ask for a layout. The symptom is a scrollbar that appears one drag
+        // late. Same synchronous `activate()` as `applySettings`, one level up
+        // so the column's new height demand reaches the row holding it.
+        if (QLayout *layout = m_viewColumn->layout()) {
+            layout->invalidate();
+        }
+        if (QLayout *layout = m_terminalRow->layout()) {
+            layout->invalidate();
+            layout->activate();
+        }
+    }
 }
