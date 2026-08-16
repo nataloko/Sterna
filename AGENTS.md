@@ -56,13 +56,13 @@ banked tern tracing an S-shaped flight path.
     release machine, three CI steps, and a cache with nothing in it. Don't add
     a `# /// script` block back; the version note at the top of each file is
     what replaced it.
-11. **Never delete the `iced` worktree or the `worktree-iced` branch** unless
-    the user asks for it in so many words. It is a long-running experiment,
-    not a stale branch, and it will look like one: merged work leaves its
-    worktree ready to remove, and `git worktree prune`, `worktree remove` and
-    a tidy-up of merged branches all reach for this one. Leave it where it is.
-    The rule is only about that branch's *lifetime* — merging into it, working
-    in it and rebasing it are ordinary.
+11. **The `iced` experiment is over.** `worktree-iced` and its worktree were
+    removed on 2026-08-16 at the user's request; the branch was never pushed,
+    so its 57 commits live only in this checkout's reflog (tip `c27e542`,
+    recoverable for the usual ninety days). The rule that used to stand here
+    protected it from tidy-up sweeps — there is nothing left to protect, and
+    a rule guarding a deleted branch only misleads. `PLAN.md`'s toolkit note
+    is the surviving record of why Qt was chosen.
 
 ## Build and test
 
