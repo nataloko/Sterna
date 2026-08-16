@@ -2797,6 +2797,123 @@ pub extern "C" fn tt_session_pending_out(session: *const TtSession) -> usize {
     s.session.pending_out()
 }
 
+/// What this connection has moved, and for how long.
+///
+/// Nothing upstream counts any of this — see `docs/deviations.md` entry 21 for
+/// why it exists and `docs/counters.md` for what a user is shown.
+///
+/// **Every number is reset by a connect and frozen by a disconnect**, so with
+/// [`TtCounters::live`] false they describe the connection that ended rather
+/// than the one that has not started. That is deliberate: a byte total spanning
+/// three reconnects is not a number anybody can use, and `connected_ms` beside
+/// it always says what the total covers.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtCounters {
+    /// Bytes the transport handed over, counted at the read: before the input
+    /// stream filter, and **including a file transfer's traffic**, which
+    /// [`tt_session_log_bytes`] deliberately never sees.
+    pub bytes_in: u64,
+    /// Bytes the transport accepted, counted at the write, so a short write
+    /// under flow control counts what went rather than what was asked for.
+    pub bytes_out: u64,
+    /// Line endings received: `CR`, `LF` or `CR LF` counts one each.
+    ///
+    /// A count of the stream rather than of what the parser did with it, so a
+    /// bare `CR` inside an escape sequence counts. Counting only `LF` would
+    /// read zero on a console that ends its lines with a bare `CR`, which is
+    /// common on the equipment this program is pointed at.
+    pub lines_in: u64,
+    /// Breaks received, from any transport that has one.
+    pub breaks: u64,
+    /// Bytes per second over the last complete second, or zero once the line
+    /// has been quiet for two.
+    ///
+    /// Worked out in the core so that the status line, `ttctl` and a duplicated
+    /// session cannot each difference their own two polls and get three
+    /// answers. It decays when it is *read*, so a frontend showing a rate needs
+    /// a once-a-second repaint: an idle line calls [`tt_session_pump`] never,
+    /// and a number that only moved on a pump would sit there saying 12 MB/s at
+    /// a console that has been silent all afternoon.
+    pub rate_in: u64,
+    pub rate_out: u64,
+    /// How long the connection has been up, or how long the last one lasted.
+    /// **-1 when nothing has ever connected on this session.**
+    pub connected_ms: i64,
+    /// False means the connection has ended: the counts above are its final
+    /// ones, both rates are zero, and `connected_ms` has stopped moving.
+    pub live: bool,
+}
+
+/// Fill `out` with what this connection has moved. See [`TtCounters`].
+///
+/// Cheap enough for a once-a-second readout on every open tab: one clock
+/// reading and a struct copy, no I/O and nothing cached.
+#[no_mangle]
+pub extern "C" fn tt_session_counters(session: *const TtSession, out: *mut TtCounters) {
+    let s = session_ref!(session);
+    let Some(out) = (unsafe { out.as_mut() }) else {
+        return;
+    };
+    let c = s.session.counters();
+    *out = TtCounters {
+        bytes_in: c.bytes_in,
+        bytes_out: c.bytes_out,
+        lines_in: c.lines_in,
+        breaks: c.breaks,
+        rate_in: c.rate_in,
+        rate_out: c.rate_out,
+        connected_ms: c
+            .connected_for
+            .map_or(-1, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX)),
+        live: c.live,
+    };
+}
+
+/// The four serial control lines, as one reading.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtModemLines {
+    /// Clear to send.
+    pub cts: bool,
+    /// Data set ready.
+    pub dsr: bool,
+    /// Ring indicator.
+    pub ri: bool,
+    /// Carrier detect.
+    pub cd: bool,
+}
+
+/// Read CTS, DSR, RI and carrier detect. **False means there is nothing to
+/// ask** — the link is not serial, or the read failed; one answer for both, the
+/// way `getmodemstatus` gives a macro one.
+///
+/// Takes a mutable session because the port is asked rather than remembered:
+/// there is no cache and no change notification, so anything showing these has
+/// to poll.
+///
+/// **Poll it only while something is showing it.** One `ioctl(TIOCMGET)` on
+/// Linux, but four separate calls on Windows — which is also why the Windows
+/// reading is not atomic and can catch a device mid-transition. At the once a
+/// second a human-readable indicator needs, neither matters; on the receive
+/// path or behind a closed panel, both do.
+#[no_mangle]
+pub extern "C" fn tt_session_modem_lines(session: *mut TtSession, out: *mut TtModemLines) -> bool {
+    let s = session!(session, false);
+    let Some(lines) = s.session.modem_lines() else {
+        return false;
+    };
+    if let Some(out) = unsafe { out.as_mut() } {
+        *out = TtModemLines {
+            cts: lines.cts,
+            dsr: lines.dsr,
+            ri: lines.ri,
+            cd: lines.cd,
+        };
+    }
+    true
+}
+
 /// A descriptor that becomes readable when [`tt_session_pump`] has something
 /// to do — `-1` when there is none.
 ///

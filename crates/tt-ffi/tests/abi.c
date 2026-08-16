@@ -2063,6 +2063,10 @@ static void test_null_safety(void)
     CHECK(tt_session_line(NULL, 0, NULL) == NULL);
     CHECK(tt_session_url_at(NULL, 0, 0) == NULL);
     CHECK(tt_session_pending_out(NULL) == 0);
+    /* Both out-params are null too, which is the case a caller reaches by
+     * asking a dead session for something it was going to ignore. */
+    tt_session_counters(NULL, NULL);
+    CHECK(!tt_session_modem_lines(NULL, NULL));
     /* Null answers false, which happens to be the non-default — a frontend
      * that lost its session sends DEL rather than reading through a null. */
     CHECK(!tt_session_backspace_sends_bs(NULL));
@@ -2536,6 +2540,64 @@ static void test_pty(void)
     }
     /* The descriptor belonged to the transport and went with it. */
     CHECK(tt_session_poll_fd(s) < 0);
+
+    tt_session_free(s);
+}
+
+/* The counters, over the same pty: they move while the child talks, and they
+ * are still there once it has gone.
+ *
+ * The freeze is the half worth a test. "How much did that session move before
+ * it died" is asked *after* the line has ended, so a disconnect that cleared
+ * the numbers would answer every such question with a zero. */
+static void test_counters(void)
+{
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+
+    /* Nothing has connected, so there is no clock — and every number is still
+     * a number. A frontend paints this state on every idle tab. */
+    TtCounters c;
+    tt_session_counters(s, &c);
+    CHECK(c.bytes_in == 0 && c.bytes_out == 0 && c.lines_in == 0);
+    CHECK(c.breaks == 0 && c.rate_in == 0 && c.rate_out == 0);
+    CHECK(c.connected_ms == -1);
+    CHECK(!c.live);
+
+    TtPtyParams p;
+    tt_pty_params_default(&p);
+    const char *argv[] = {"/bin/sh", "-c", "printf 'one\\r\\ntwo\\r\\n'; exit 0"};
+    p.argv = argv;
+    p.argc = 3;
+    CHECK_OK(tt_session_connect_pty(s, &p));
+
+    /* A pty is not a serial port, and there is one answer for that and for a
+     * read that failed. */
+    TtModemLines lines;
+    CHECK(!tt_session_modem_lines(s, &lines));
+
+    int fd = tt_session_poll_fd(s);
+    long deadline = now_ms() + 5000;
+    while (now_ms() < deadline && tt_session_is_connected(s)) {
+        wait_readable(fd, 100);
+        tt_session_pump(s, 20, NULL);
+    }
+    CHECK(!tt_session_is_connected(s));
+
+    tt_session_counters(s, &c);
+    CHECK(c.bytes_in >= 10);   /* "one\r\ntwo\r\n", whatever the pty added */
+    CHECK(c.lines_in >= 2);    /* two CR LF pairs, one line each */
+    CHECK(c.connected_ms >= 0);
+    CHECK(!c.live);
+    /* Frozen, not cleared: the totals are the dead connection's, the rates are
+     * zero because a dead line is quiet, and the clock has stopped. */
+    long long held = c.connected_ms;
+    unsigned long long moved = c.bytes_in;
+    tt_session_counters(s, &c);
+    CHECK(c.connected_ms == held);
+    CHECK(c.bytes_in == moved);
+    CHECK(c.rate_in == 0 && c.rate_out == 0);
 
     tt_session_free(s);
 }
@@ -3502,6 +3564,7 @@ int main(void)
     test_ssh();
     test_telnet();
     test_pty();
+    test_counters();
     test_transfer();
     test_plugins();
     test_macro();
