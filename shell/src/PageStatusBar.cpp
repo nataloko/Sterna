@@ -249,8 +249,8 @@ void PageStatusBar::setCounters(bool on, qint64 connectedMs, quint64 rateIn,
     m_countersLive = live;
     m_counters->show();
     m_counters->setCursor(Qt::PointingHandCursor);
-    m_counters->setToolTip(tr("The connection time, and the data rates in and "
-                              "out. Click for more counts."));
+    m_counters->setToolTip(tr("This field gives the connection time and the "
+                              "data rates. Click the field for more counts."));
     // Dimmed rather than hidden when the line has gone: the numbers are still
     // true of the connection that ended, and that is when somebody reads them.
     m_counters->setStyleSheet(live ? QString()

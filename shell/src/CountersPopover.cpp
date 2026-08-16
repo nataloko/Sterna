@@ -84,7 +84,10 @@ CountersPopover::CountersPopover(QWidget *parent)
     m_rateOut = row(tr("Send rate"), QStringLiteral("countersRateOut"));
     m_lines = row(tr("Lines"), QStringLiteral("countersLines"));
     m_breaks = row(tr("Breaks"), QStringLiteral("countersBreaks"));
-    m_queued = row(tr("Queued to send"), QStringLiteral("countersQueued"));
+    // `Send queue` and not `Queued to send`: rule 9's `-ing` restriction and
+    // its rule against using a technical noun as a verb both land on the
+    // obvious phrasing, and a queue is an ordinary technical noun.
+    m_queued = row(tr("Send queue"), QStringLiteral("countersQueued"));
 
     // The serial half, hidden as one thing: a separator with nothing under it
     // is worse than no separator.
@@ -170,8 +173,8 @@ void CountersPopover::setLamp(QLabel *label, bool on)
     // back without looking at pixels.
     label->setStyleSheet(on ? QStringLiteral("QLabel { color: #2e7d32; font-weight: bold; }")
                             : QStringLiteral("QLabel { color: palette(mid); }"));
-    label->setToolTip(on ? tr("%1 is on").arg(label->text())
-                         : tr("%1 is off").arg(label->text()));
+    label->setToolTip(on ? tr("%1 is on.").arg(label->text())
+                         : tr("%1 is off.").arg(label->text()));
 }
 
 void CountersPopover::popUp(QWidget *anchor, const Session *session)
