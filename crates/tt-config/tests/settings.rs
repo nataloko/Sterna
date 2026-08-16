@@ -223,6 +223,35 @@ fn line_edit_is_an_off_by_default_sterna_setting() {
 }
 
 #[test]
+fn the_three_control_character_switches_are_sterna_keys_that_ship_off() {
+    let d = Settings::default();
+    assert!(!d.terminal_show_control_chars);
+    assert!(!d.terminal_show_eol);
+    assert!(!d.terminal_hide_cr_lf);
+
+    let ini = Ini::parse(b"[Sterna]\r\nShowControlChars=on\r\nShowEol=on\r\nHideCrLf=on\r\n");
+    let mut settings = Settings::load(&ini);
+    assert!(settings.terminal_show_control_chars);
+    assert!(settings.terminal_show_eol);
+    assert!(settings.terminal_hide_cr_lf);
+    assert_eq!(
+        settings.get_str("terminal.show_control_chars"),
+        Some("on".into())
+    );
+
+    // Three independent switches and not one three-state setting, so the file
+    // has three keys and each moves on its own.
+    assert!(settings.set_str("terminal.hide_cr_lf", "off"));
+    assert!(!settings.terminal_hide_cr_lf);
+    assert!(settings.terminal_show_eol);
+
+    // `GetOnOff` is default-biased and all three default off, so only the
+    // literal `on` is on.
+    let one = Ini::parse(b"[Sterna]\r\nShowEol=1\r\n");
+    assert!(!Settings::load(&one).terminal_show_eol);
+}
+
+#[test]
 fn the_deferred_encoding_settings_keep_upstreams_parsers() {
     let d = Settings::default();
     assert_eq!(d.encoding_receive, EncodingReceive::Utf8);

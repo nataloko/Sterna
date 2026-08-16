@@ -39,6 +39,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 22 | The terminal's size appears over it while the window changes, and can be switched off | A tooltip beside the corner being dragged, with no switch | 0.5.5 |
 | 23 | A serial port that goes away is opened again by itself, and a reopen that gives up says so on the terminal's own line | The same five keys, driven by `WM_DEVICECHANGE`, with a message box on the last try | 0.5.5 |
 | 24 | Per-terminal counters: bytes, rates, connect time, and a serial port's live control lines | Nothing counts anything; the control lines are visible only to a macro's `getmodemstatus` | 0.5.5 |
+| 25 | The control characters and the line endings on the wire can be shown in the terminal | Only debug display mode shows a control byte, and it stops emulating to do it | 0.5.5 |
 
 ---
 
@@ -1226,3 +1227,134 @@ slow.
 existing setting changes meaning. `Counters` is a `[Sterna]` key that no real
 Tera Term reads, so a `TERATERM.INI` shared with one still opens correctly in
 both programs — with no counters in the one that has never heard of them.
+
+## 25. The control characters and the line endings on the wire can be shown
+
+Three `[Sterna]` keys, all off by default, all on the Terminal tab of Setup, and
+all three also on the View menu:
+
+- `terminal.show_control_chars` — every control character the terminal executes
+  leaves a two-cell caret mark where it happened: `^G` for BEL, `^S` for XOFF.
+- `terminal.show_eol` — a mark past the end of every line the host ended.
+- `terminal.hide_cr_lf` — narrows that mark from the spelling of what actually
+  arrived back to a plain `¶`.
+
+What lands at the end of a line is one table, and each switch has one job:
+
+| `show_control_chars` | `hide_cr_lf` | `show_eol` | at the end of the line |
+|---|---|---|---|
+| on | off | any | `^M^J`, `^M` or `^J` — what really ended it |
+| on | on | on | `¶` |
+| on | on | off | nothing |
+| off | any | on | `¶` |
+| off | any | off | nothing |
+
+**Why.** A terminal cannot answer "which line ending is this thing sending",
+because answering it correctly is the one thing a terminal does. CR moves the
+carriage, LF feeds the line, and by the time either has reached the screen the
+evidence is gone. The same is true of everything else a console sends and a
+terminal quietly absorbs: the XON/XOFF a flow-control problem is made of, the
+NUL padding an old device pads with, the bell in a loop. Every one of those is a
+byte somebody debugging a link needs to see, and none of them is anywhere in the
+program that received it. The session log does not help — its text half is the
+macro tap, which is printed characters with the controls already executed and no
+escape sequences at all — and neither does the one thing upstream has.
+
+**Upstream has debug display mode, and it is not this.** `charset.cpp`'s
+`PutDebugChar` writes exactly these caret marks, and this port reproduces it,
+Shift+Escape and all. But debug display *replaces* the stream: `Vt::feed` returns
+before the parser runs, so escape sequences stop being interpreted and the
+terminal stops being a terminal. That is the right tool for reading a protocol
+trace and the wrong one for watching a device you are also talking to. These
+three annotate a terminal that is still working — colours, cursor motion and
+full-screen programs all keep running — which is the whole reason they are
+switches in the settings file rather than a fourth debug mode.
+
+**The caret spelling is upstream's, and it is not `␍`.** Unicode has a Control
+Pictures block, one cell per control and much prettier than two. It is also
+absent from DejaVu Sans Mono:
+
+```console
+$ fc-match -f '%{family}\n' 'DejaVu Sans Mono:charset=240d'
+Cascadia Code
+```
+
+A CI runner carries only `fonts-dejavu-core` and a minimal host may carry no
+more, so `␍` would arrive from whatever family fontconfig could find, or as a
+box. Caret notation needs nothing but ASCII, and it is already the spelling
+somebody who has used debug display mode knows. The one-cell mark that *is* used
+— `¶` at the end of a line — is U+00B6, Latin-1, present everywhere, and the
+mark every text editor showing line ends has used for thirty years.
+
+**Two mechanisms, because the two cases are not alike.** A mid-line mark has to
+be a real cell: the parser consumes control bytes, so there is nothing left in
+the grid for a painter to substitute. A line ending cannot be one — after
+`hello\r` the CR has already moved the cursor to column 0, so a mark for the LF
+that follows would land on top of the line. So the ending is recorded as two
+attribute bits on the row's first cell (`ATTR_EOL_CR`, `ATTR_EOL_LF` — the trick
+`ATTR_LINE_CONTINUED` already uses for the mirror-image question) and *painted*
+past the last character. That costs the row no column and, like the line-number
+gutter of deviation 20, reaches no clipboard, no log, no printer, no macro and
+no Find.
+
+**A soft wrap gets no mark, and that is the second thing the mark is for.** A
+line the terminal broke at the right margin and a line the host ended look
+identical on screen and always have. With `show_eol` on they stop looking
+identical, which answers a question people ask far more often than they ask
+about CR.
+
+**The bits are recorded whatever the switches say.** They cost one `|=` per line
+ending and nothing can see them otherwise, and recording them always is what
+lets ticking Show line ends explain the screenful *already* on display. A mark
+that only appeared on lines arriving after the menu item was ticked would be
+useless: "what is this thing sending?" is a question asked after the strange
+output, not before it.
+
+**Four bytes deliberately get no mark.** CR and LF are the line's, above. BS
+moves the cursor *left*, so its `^H` is stepped back onto and the `H` overwritten
+by whatever lands next — leaving a bare `^` one column right of the erasure, and
+on the classic rubout echo `BS SP BS` a trail of them marching across the line,
+hiding the very erasure the mark was for. `0x88` is HTS in its 8-bit spelling,
+the one byte above C0 that reaches the executor; caret notation has no form for
+it that is not a backspace's, and upstream's debug display says `^H` in reverse
+video. A mark that cannot be told from another byte's is worse than no mark.
+
+**And a great deal cannot be marked at all, which is the price of still
+emulating.** Only what the terminal *executes* gets a mark. A C0 inside a
+sequence does — `ESC [ 1 BEL m` marks the bell and still turns bold on, which is
+upstream's own behaviour — but `ESC` itself, a sequence's parameter and final
+bytes, an OSC's terminating BEL, and the 8-bit C1 forms that `rewrite_c1` folds
+before the parser sees them, never reach it. Anything that must see *every* byte
+wants a tap on the transport, which is a different feature.
+
+**A mark that does not fit is not written.** Two columns or none. Letting the
+write path wrap would invent a line break whose `CR LF` the character path taps
+and this one deliberately does not — a break the session log and every macro
+`wait` would never hear about, spent on annotating one byte. The painted
+end-of-line mark takes the same rule for the reason the gutter learnt it: a
+widget clips its own painting, so half a `^M` would be a lie about what ended the
+line rather than a mark hanging off the edge.
+
+**Nothing that reads the grid as text can see a mark.** They are cells, so the
+promise deviation 20 keeps by putting the gutter in another widget is kept here
+by an attribute bit instead: `ATTR_CONTROL` is skipped by the clipboard, the
+printer's line dump, `LogIncludeScreenBuffer`, `ttctl`'s screen read, DECRQCRA's
+checksum, and the flatten that Find and the highlight rules match over. The
+session log and the macro tap need no check at all — the path that writes a mark
+does not tap, so a run with every switch on is byte-identical, on the wire and in
+the file, to a run with them off. A pleasant consequence of the Find one: `ERR`
+BEL `OR` still matches `ERROR`, and the highlight paints both halves, reaching
+around the mark rather than over it.
+
+**Turning marks on moves the host's layout, and that was accepted rather than
+special-cased.** Each mark takes two columns, so text after it shifts right, and
+a full-screen program running under it will look wrong until it redraws. The
+alternate screen is not excluded either. The switch ships off and exists for a
+device console; hiding it from `vim` would add a rule without changing what the
+feature is, and `hide_cr_lf` already exists to remove the noisiest two-thirds of
+it on a device that ends every line with CR LF.
+
+**What is unchanged.** Nothing upstream reads any of the three keys, the marks
+are invisible to every reader of the grid's text, and no existing setting changes
+meaning. A `TERATERM.INI` shared with a real Tera Term opens identically in both
+programs.

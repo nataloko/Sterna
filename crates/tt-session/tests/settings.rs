@@ -353,3 +353,31 @@ fn the_override_does_not_reach_a_transport_that_declines_it() {
     s.connect(Box::new(transport));
     assert!(!s.vt().local_echo());
 }
+
+/// One of the three control-character switches reaches the parser and two
+/// deliberately do not — the map file's own rule that a setting which silently
+/// does nothing should be visible as an absence there.
+///
+/// The two that stay behind decide how a line's ending is *drawn*, and the
+/// bits it is drawn from are recorded whatever the settings say. So ticking
+/// Show EOL explains the screenful that is already there, which is what
+/// somebody asking "what is this thing sending?" needs: the question comes
+/// after the strange output, not before it.
+#[test]
+fn only_the_control_character_switch_reaches_the_parser() {
+    let (mut s, _) = session();
+    assert!(!s.vt().config().show_control_chars);
+
+    // Both paint switches move nothing in the core, and leave the screen alone.
+    s.feed(b"hi\x07there");
+    assert!(s.set_setting("terminal.show_eol", "on"));
+    assert!(s.set_setting("terminal.hide_cr_lf", "on"));
+    assert!(!s.vt().config().show_control_chars);
+    assert_eq!(row(&s, 0), "hithere");
+
+    // The one that writes cells does reach it.
+    assert!(s.set_setting("terminal.show_control_chars", "on"));
+    assert!(s.vt().config().show_control_chars);
+    s.feed(b"\r\nhi\x07there");
+    assert_eq!(row(&s, 1), "hi^Gthere");
+}

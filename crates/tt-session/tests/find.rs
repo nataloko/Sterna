@@ -351,3 +351,26 @@ fn nothing_configured_costs_nothing() {
         assert!(s.row_find(y).is_empty());
     }
 }
+
+/// A control mark is the terminal annotating its own screen, so the flatten
+/// steps over it and a search sees the host's line whole. Without that, turning
+/// a display switch on would silently stop a pattern matching — and the span
+/// still covers both halves of the word, so the paint reaches around the mark.
+#[test]
+fn a_search_reads_through_a_control_mark() {
+    let mut s = Session::from_settings(Settings {
+        terminal_cols: 40,
+        terminal_rows: 4,
+        terminal_show_control_chars: true,
+        ..Settings::default()
+    });
+    s.feed(b"an ERR\x07OR here");
+    looking_for(&mut s, &text("ERROR"));
+
+    assert_eq!(s.find_count(), 1);
+    // One match, painted as two runs: `ERR` at 3..6 and `OR` at 8..10, with
+    // the mark's own two columns left alone in between. The highlight reaches
+    // around the annotation rather than over it, which is what the mark being
+    // outside the text means when the text is painted.
+    assert_eq!(columns(s.row_find(0)), [(3, 6), (8, 10)]);
+}

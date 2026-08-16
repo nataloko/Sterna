@@ -2253,7 +2253,113 @@ void test_the_view_menu_owns_the_three_switches()
     }
 }
 
-/// ...and each of the four survives the program that set it.
+/// Deviation 21, the part only pixels can answer: a control character leaves a
+/// two-cell `^G` where it happened, drawn in the annotation colour so it cannot
+/// be mistaken for a host that sent `^` and `G` itself.
+void test_a_control_character_is_marked_in_the_annotation_colour()
+{
+    Harness h;
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("terminal.show_control_chars"),
+                               QStringLiteral("on"), &error));
+    h.view.applySettings();
+    h.feed("ab\aCD");
+    h.render();
+
+    CHECK(rowText(h.session, 0) == QStringLiteral("ab^GCD"));
+    // Columns 2 and 3 are the mark, and they are ink rather than blanks.
+    CHECK(h.ink(2, 0) > 0);
+    CHECK(h.ink(3, 0) > 0);
+    // Quieter than the text either side of it, and not the same colour.
+    const QColor quiet = h.view.theme().annotationColor();
+    CHECK(quiet != h.view.theme().defaultForeground());
+    // The background is untouched, so a mark does not punch a hole in a line.
+    CHECK(h.bgAt(2, 0) == h.bgAt(1, 0));
+
+    // ...and the clipboard gets what the host said, marks and all left out.
+    h.view.selectScreen();
+    CHECK(h.copied().trimmed() == QStringLiteral("abCD"));
+}
+
+/// The line ending, which is painted rather than written — so it costs the row
+/// no column, and a row the terminal wrapped gets nothing.
+void test_a_line_end_is_marked_past_the_last_character()
+{
+    Harness h;
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("terminal.show_eol"),
+                               QStringLiteral("on"), &error));
+    h.view.applySettings();
+    h.feed("hello\r\n");
+    h.render();
+
+    // Column 5 is the column of air, column 6 the pilcrow.
+    CHECK(h.ink(5, 0) == 0);
+    CHECK(h.ink(6, 0) > 0);
+    // And it is paint, not a cell: the grid still holds five characters.
+    CHECK(rowText(h.session, 0) == QStringLiteral("hello"));
+
+    // With the switch off there is nothing there, on the same grid.
+    CHECK(h.session.setSetting(QStringLiteral("terminal.show_eol"),
+                               QStringLiteral("off"), &error));
+    h.view.applySettings();
+    h.render();
+    CHECK(h.ink(6, 0) == 0);
+}
+
+/// The three compose into one table, and the third only ever narrows: with
+/// control characters shown the ending is spelt with what really arrived, and
+/// removing the CR and LF marks drops back to the plain mark.
+void test_the_line_end_is_spelt_only_when_control_characters_are_shown()
+{
+    Harness h;
+    QString error;
+    const auto set = [&](const char *name, const char *value) {
+        CHECK(h.session.setSetting(QString::fromLatin1(name),
+                                   QString::fromLatin1(value), &error));
+        h.view.applySettings();
+        h.render();
+    };
+    h.feed("hi\r\n");
+
+    // Show EOL alone: one column of mark.
+    set("terminal.show_eol", "on");
+    CHECK(h.ink(3, 0) > 0);
+    CHECK(h.ink(4, 0) == 0);
+
+    // Add control characters and it spells `^M^J` — four columns.
+    set("terminal.show_control_chars", "on");
+    CHECK(h.ink(3, 0) > 0);
+    CHECK(h.ink(6, 0) > 0);
+    CHECK(h.ink(7, 0) == 0);
+
+    // Remove the CR and LF marks and it is back to the plain one.
+    set("terminal.hide_cr_lf", "on");
+    CHECK(h.ink(3, 0) > 0);
+    CHECK(h.ink(4, 0) == 0);
+}
+
+/// A row the terminal wrapped carries no ending, which is the second thing the
+/// mark is for: a wrapped line now reads differently from one the host ended.
+void test_a_wrapped_row_gets_no_line_end_mark()
+{
+    Harness h;
+    QString error;
+    CHECK(h.session.setSetting(QStringLiteral("terminal.show_eol"),
+                               QStringLiteral("on"), &error));
+    h.view.applySettings();
+    // 80 columns of text, so row 0 fills and row 1 continues it.
+    h.feed(QByteArray(85, 'x').constData());
+    h.render();
+
+    for (int x = 0; x < 80; x++) {
+        CHECK(h.ink(x, 0) > 0); // all text, no room for a mark anyway
+    }
+    // Row 1 holds five characters and has not ended, so it gets nothing.
+    CHECK(h.ink(6, 1) == 0);
+}
+
+/// ...and each of the seven survives the program that set it.
 ///
 /// A menu tick is a preference, so it goes into the settings file at once —
 /// the rule View > Tiled already had. `AutoSaveSettings=off` is in the file on
@@ -2280,6 +2386,10 @@ void test_the_view_switches_survive_a_restart()
          QStringLiteral("terminal.line_numbers")},
         {QStringLiteral("highlightMatchesAction"),
          QStringLiteral("color.highlighting")},
+        {QStringLiteral("showControlCharsAction"),
+         QStringLiteral("terminal.show_control_chars")},
+        {QStringLiteral("showEolAction"), QStringLiteral("terminal.show_eol")},
+        {QStringLiteral("hideCrLfAction"), QStringLiteral("terminal.hide_cr_lf")},
     };
 
     QVector<QString> wanted;
@@ -4245,6 +4355,10 @@ int main(int argc, char **argv)
     test_the_settings_dialog_is_built_from_the_schema();
     test_the_setup_menu_opens_one_settings_dialog();
     test_the_view_menu_owns_the_three_switches();
+    test_a_control_character_is_marked_in_the_annotation_colour();
+    test_a_line_end_is_marked_past_the_last_character();
+    test_the_line_end_is_spelt_only_when_control_characters_are_shown();
+    test_a_wrapped_row_gets_no_line_end_mark();
     test_the_view_switches_survive_a_restart();
     test_the_about_dialog_carries_the_release_page();
     test_the_settings_dialog_uses_a_language_catalog();

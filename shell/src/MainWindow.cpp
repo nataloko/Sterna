@@ -1506,6 +1506,19 @@ bool MainWindow::onSettingsChanged()
         const QSignalBlocker block(m_lineNumbersAction);
         m_lineNumbersAction->setChecked(lineNumbers);
     }
+    // ...and for the three that say what the wire is carrying. Each belongs to
+    // a session, so like the gutter's they are read from the page in front.
+    const auto tick = [this](QAction *action, const char *name) {
+        if (!action) {
+            return;
+        }
+        const QSignalBlocker block(action);
+        action->setChecked(m_session->setting(QString::fromLatin1(name))
+                           == QLatin1String("on"));
+    };
+    tick(m_controlCharsAction, "terminal.show_control_chars");
+    tick(m_showEolAction, "terminal.show_eol");
+    tick(m_hideCrLfAction, "terminal.hide_cr_lf");
     // And the command beside it, which has nothing to reset while nothing is
     // numbered. The View menu asks this question again as it opens, because
     // this runs for the page in front and a tab switch is not a settings
@@ -2633,6 +2646,35 @@ void MainWindow::buildMenus()
         }
         setViewSwitch(QStringLiteral("terminal.size_follows_window"), on,
                       tr("Could not change line wrapping: %1"));
+    });
+
+    // The three from deviation 25, together and after the rest because they are
+    // about the *wire* rather than about the window's furniture: what a device
+    // is really sending, which is a question asked of a console and not of a
+    // shell. Third is a modifier on the first two rather than a switch of its
+    // own, so it comes after both. `hide` has no approved spelling (rule 9), so
+    // the caption says what it does to the mark.
+    view->addSeparator();
+    m_controlCharsAction = view->addAction(tr("Show control characters"));
+    m_controlCharsAction->setObjectName(QStringLiteral("showControlCharsAction"));
+    m_controlCharsAction->setCheckable(true);
+    connect(m_controlCharsAction, &QAction::triggered, this, [this](bool on) {
+        setViewSwitch(QStringLiteral("terminal.show_control_chars"), on,
+                      tr("Could not change the control characters: %1"));
+    });
+    m_showEolAction = view->addAction(tr("Show line ends"));
+    m_showEolAction->setObjectName(QStringLiteral("showEolAction"));
+    m_showEolAction->setCheckable(true);
+    connect(m_showEolAction, &QAction::triggered, this, [this](bool on) {
+        setViewSwitch(QStringLiteral("terminal.show_eol"), on,
+                      tr("Could not change the line ends: %1"));
+    });
+    m_hideCrLfAction = view->addAction(tr("Remove CR and LF marks"));
+    m_hideCrLfAction->setObjectName(QStringLiteral("hideCrLfAction"));
+    m_hideCrLfAction->setCheckable(true);
+    connect(m_hideCrLfAction, &QAction::triggered, this, [this](bool on) {
+        setViewSwitch(QStringLiteral("terminal.hide_cr_lf"), on,
+                      tr("Could not change the CR and LF marks: %1"));
     });
 
     // "Setup", which is Tera Term's own name for this menu, so that someone

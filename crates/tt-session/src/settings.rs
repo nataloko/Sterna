@@ -71,6 +71,11 @@ pub fn vt_config(s: &Settings, base: &Config) -> Config {
         },
         debug_enabled: s.debug_enabled && !file_debug_modes.is_empty(),
         debug_modes: DebugModes::from_bits(file_debug_modes.bits()),
+        // Its two neighbours, `terminal.show_eol` and `terminal.hide_cr_lf`,
+        // are deliberately absent — they are the window's, read by name in
+        // `TerminalView::applySettings`. Only this one writes cells, and the
+        // ending bits it does not write are recorded whatever the file says.
+        show_control_chars: s.terminal_show_control_chars,
         cr_send: cr_send_of(s.terminal_cr_send),
         local_echo: s.terminal_local_echo,
         bs_key_is_bs: s.keyboard_backspace == KeyboardBackspace::Bs,

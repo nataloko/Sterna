@@ -321,8 +321,10 @@ fn text_of(cells: &[tt_grid::Cell], trim: bool) -> String {
     let mut out = String::new();
     for cell in cells {
         // The right half of a wide character holds no text of its own; taking
-        // its blank would put a space inside every CJK glyph.
-        if cell.width_class == WIDTH_PAD {
+        // its blank would put a space inside every CJK glyph. A control mark is
+        // the terminal annotating its own screen, and a client asking what the
+        // host said must get what the host said.
+        if cell.width_class == WIDTH_PAD || cell.attrs & tt_grid::ATTR_CONTROL != 0 {
             continue;
         }
         for cp in cell.codepoints() {

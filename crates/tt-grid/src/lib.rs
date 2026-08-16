@@ -60,6 +60,43 @@ pub const ATTR2_COLOR_MASK: u32 = ATTR2_FORE | ATTR2_BACK;
 /// (`vtterm.c:2178`).
 pub const ATTR2_PROTECT: u32 = 0x0400;
 
+// --- Sterna's own, above everything upstream names ------------------------
+//
+// Upstream stops at `Attr2Protect`, so these three start where its second byte
+// ends. That is not tidiness: `ATTR_MASK` is cleared wholesale by the debug
+// display, selective erase keeps only `ATTR_SGR_MASK | !ATTR_MASK`, and DECCARA
+// XORs within the low byte — a bit put down there would be rubbed out by any of
+// the three. It also keeps them invisible to the differential dump, whose
+// `attr_char` tests only the bits `oracle/src/main.c` prints.
+
+/// This cell is a mark **the terminal wrote about a control character**, not
+/// text the host sent — `terminal.show_control_chars`. The distinction is the
+/// whole point of the bit: a host is perfectly entitled to send the two
+/// characters `^` and `M`, and without this nothing could tell that apart from
+/// the terminal's own note that a CR went past.
+///
+/// It is also what keeps the promise that a mark is annotation and never
+/// content: every reader of grid *text* — the clipboard, the printer's dump,
+/// Find, the highlight rules, `LogIncludeScreenBuffer` — skips a cell carrying
+/// it. The session log and the macro tap need no such check, because the write
+/// path that puts these down deliberately does not tap.
+pub const ATTR_CONTROL: u32 = 0x0800;
+
+/// A line ending arrived on this row and it had a CR in it, and the same for an
+/// LF — `terminal.show_eol`. Both live on **cell 0 of the row the terminator
+/// left**, which is the trick [`ATTR_LINE_CONTINUED`] already uses for the
+/// mirror-image question: [`Line`] is a bare `Vec<Cell>`, there is no per-line
+/// struct to hold this, and making one would ripple through `absolute_line`,
+/// the scrollback and the whole FFI seam for two bits.
+///
+/// A soft wrap sets neither, which is what makes the pair worth having: with
+/// them the frontend can tell a line the host ended from one the terminal
+/// broke, and say *how* it was ended, neither of which survives anywhere else.
+pub const ATTR_EOL_CR: u32 = 0x1000;
+pub const ATTR_EOL_LF: u32 = 0x2000;
+/// Both ends, for the callers that only want to ask "did this line end".
+pub const ATTR_EOL_MASK: u32 = ATTR_EOL_CR | ATTR_EOL_LF;
+
 /// Tera Term's `AttrDefaultFG` / `AttrDefaultBG` are both 0, not 7/0.
 pub const DEFAULT_FG: u32 = 0;
 pub const DEFAULT_BG: u32 = 0;
@@ -939,8 +976,14 @@ impl Grid {
         // and sets the bit in the wrap path without gating on anything, which
         // leaves the flag stale in exactly the case where nothing reads it.
         // Clearing unconditionally is the same terminal and a coherent grid.
+        //
+        // [`ATTR_EOL_MASK`] goes with it, for the reason the comment above
+        // gives about the continuation bit: a row the cursor has just arrived
+        // on has not ended yet, and a full-screen program that redraws over an
+        // old row would otherwise leave it wearing the ending of whatever text
+        // used to be there.
         let y = self.cursor.y;
-        self.lines[y][0].attrs &= !ATTR_LINE_CONTINUED;
+        self.lines[y][0].attrs &= !(ATTR_LINE_CONTINUED | ATTR_EOL_MASK);
     }
 
     /// `BuffLineContinued` (`buffer.c:5366`) — mark the cursor's row as
@@ -962,6 +1005,23 @@ impl Grid {
     /// half of `ts.EnableContinuedLineCopy`, which joins the two when copying.
     pub fn line_continued(&self, y: usize) -> bool {
         self.lines[y][0].attrs & ATTR_LINE_CONTINUED != 0
+    }
+
+    /// Record that a line ending took the cursor off row `y`, and which bytes
+    /// spelt it — [`ATTR_EOL_CR`], [`ATTR_EOL_LF`] or both.
+    ///
+    /// Deliberately OR rather than assign: `CR LF` arrives as two bytes and
+    /// reaches this twice, and the second call must not forget the first.
+    pub fn set_line_end(&mut self, y: usize, bits: u32) {
+        if y < self.lines.len() {
+            self.lines[y][0].attrs |= bits & ATTR_EOL_MASK;
+        }
+    }
+
+    /// What ended row `y`, or zero for a row that wrapped, was erased, or is
+    /// still being written.
+    pub fn line_end(&self, y: usize) -> u32 {
+        self.lines[y][0].attrs & ATTR_EOL_MASK
     }
 
     /// RI. Mirror image of `line_feed`.
@@ -2451,5 +2511,39 @@ mod tests {
         // The numbering does not move under a line somebody is holding on to.
         assert_eq!(g.scrolled_off(), 6);
         g.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn a_line_end_accumulates_both_halves_of_a_pair() {
+        let mut g = Grid::new(8, 4, 0);
+        assert_eq!(g.line_end(0), 0);
+        // `CR LF` reaches the setter twice, and the second call must not
+        // forget the first.
+        g.set_line_end(0, ATTR_EOL_CR);
+        g.set_line_end(0, ATTR_EOL_LF);
+        assert_eq!(g.line_end(0), ATTR_EOL_CR | ATTR_EOL_LF);
+        // And it is a different question from the wrap, which shares the cell.
+        assert!(!g.line_continued(0));
+    }
+
+    #[test]
+    fn a_wrapped_line_has_no_ending_and_an_erased_one_loses_it() {
+        let mut g = Grid::new(4, 4, 0);
+        for c in "abcde".chars() {
+            g.put(c as u32);
+        }
+        // The wrap put `e` on row 1 and marked both ends; neither row claims a
+        // line ending, because the host did not end one.
+        assert!(g.line_continued(1));
+        assert_eq!(g.line_end(0), 0);
+        assert_eq!(g.line_end(1), 0);
+
+        g.set_line_end(0, ATTR_EOL_LF);
+        assert_eq!(g.line_end(0), ATTR_EOL_LF);
+        // `Cell::erased` keeps only the colour flags, so erasing the line takes
+        // the ending with it — which is right, an erased line did not end.
+        g.cursor.y = 0;
+        g.erase_line(2);
+        assert_eq!(g.line_end(0), 0);
     }
 }

@@ -252,6 +252,11 @@ signals:
     void stopRequested();
 
 protected:
+    /// The mark past the end of one painted row — deviation 25. Painted rather
+    /// than written into the grid, so it costs no column and reaches no
+    /// selection, log, printer, macro or Find; what it draws from is the two
+    /// `TT_ATTR_EOL_*` bits the parser leaves on the row's first cell.
+    void paintLineEnd(QPainter &p, const TtCell *cells, size_t len, int y);
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void showEvent(QShowEvent *event) override;
@@ -440,6 +445,19 @@ private:
     /// `KillFocusCursor`. On, the inactive cursor is a full-cell outline
     /// whatever shape the active one has; off, losing focus hides it.
     bool m_showUnfocusedCursor = true;
+
+    /// The three switches for showing what the wire is carrying — deviation 25.
+    ///
+    /// `terminal.show_control_chars` is really the core's: it is what makes the
+    /// parser leave `^G`-shaped cells behind, and it is read here only to
+    /// decide two painting questions — what colour a mark is drawn in, and
+    /// whether a line's ending is *spelt* rather than merely marked.
+    /// `terminal.show_eol` and `terminal.hide_cr_lf` never reach the core at
+    /// all: the `TT_ATTR_EOL_*` bits they draw from are recorded whatever they
+    /// say, so ticking one explains the screenful already on display.
+    bool m_showControlChars = false;
+    bool m_showEol = false;
+    bool m_hideCrLf = false;
 
     /// The active cursor follows the desktop's caret flash time. The terminal
     /// supplies whether blinking is enabled *now*, after both the setting and

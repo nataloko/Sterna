@@ -617,6 +617,12 @@ private:
     /// View > Wrap lines, which is `terminal.size_follows_window` and therefore
     /// the same switch as Setup's own "Term size = win size".
     QAction *m_wrapAction = nullptr;
+    /// The three switches for what the wire is carrying — deviation 25. Each
+    /// writes its `[Sterna]` setting; the marks themselves are the core's and
+    /// the painter's.
+    QAction *m_controlCharsAction = nullptr;
+    QAction *m_showEolAction = nullptr;
+    QAction *m_hideCrLfAction = nullptr;
     QAction *m_quickButtonFromSelectionAction = nullptr;
     /// The Edit menu's clipboard commands, which the right button's menu
     /// borrows rather than duplicating.

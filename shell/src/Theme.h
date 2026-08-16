@@ -89,7 +89,9 @@ public:
     const QColor &defaultForeground() const { return m_normal[0]; }
     const QColor &cursorColor() const { return m_cursor; }
 
-    /// What the line-number gutter writes its digits in.
+    /// What the terminal writes in when it is annotating rather than showing:
+    /// the line-number gutter's digits, a control character's mark, the mark at
+    /// the end of a line.
     ///
     /// The foreground run part of the way toward the background — the same mix
     /// [`shaded`] does, in the other direction, and for the same reason: those
@@ -99,10 +101,15 @@ public:
     /// move: a host's `OSC 10`/`11` and a switch to the dark palette each
     /// change it, and nothing would refresh a cached copy.
     ///
-    /// Numbers are chrome, not content, so they should read as quieter than the
-    /// text beside them without becoming unreadable — hence a mix rather than
-    /// the foreground itself.
-    QColor lineNumberColor() const;
+    /// An annotation is chrome, not content, so it should read as quieter than
+    /// the text beside it without becoming unreadable — hence a mix rather than
+    /// the foreground itself. One colour for all of them on purpose: they are
+    /// one claim, that this was the terminal talking and not the host.
+    QColor annotationColor() const;
+
+    /// The gutter's own name for [`annotationColor`], kept because that is what
+    /// its call sites and its test have always said.
+    QColor lineNumberColor() const { return annotationColor(); }
 
     /// Whether this terminal has something on the other end.
     ///
