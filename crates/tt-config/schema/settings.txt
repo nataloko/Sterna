@@ -1734,15 +1734,20 @@ serial.break_time | int | Tera Term | SendBreakTime | 1000 | -
 # adapter comes back — the USB-serial cable somebody unplugged, which is the
 # whole reason the setting exists.
 #
-# Upstream drives it from `WM_DEVICECHANGE` (`vtwin.cpp:311`), so the Linux
-# half is a udev monitor and is not built yet; the four keys below describe a
-# state machine this port carries and does not yet run.
-#@ This setting controls automatic reopening of a disconnected serial adapter when it becomes available again. At this time, Sterna does not have automatic reconnection.
+# Upstream drives it from `WM_DEVICECHANGE` (`vtwin.cpp:311`). There is no such
+# message on Linux, so the machine in `tt-session::reopen` watches for the node
+# instead — `tt_conn::serial::present`, which stats a path and opens nothing,
+# because a probe that opened one would raise DTR and reboot an Arduino-style
+# board once per interval. Forced by the platform, so it is a port and not a
+# deviation; a udev monitor would replace the poll and change nothing above it.
+#@ This setting opens the serial port again when the adapter becomes available after a connection stops. The text on the screen and in the scrollback stays.
 serial.auto_reconnect | bool | Tera Term | AutoComPortReconnect | on | -
 
 # `ttset.c:1088`, milliseconds. The wait between the device arriving and the
-# reopen, for the case where the arrival named the port it was about.
-#@ This setting sets the wait, in milliseconds, before Sterna reopens a serial adapter when Sterna knows the port number. At this time, automatic reconnection is not available in Sterna.
+# reopen, for the case where the arrival named the port it was about — here,
+# where the path names the socket rather than the attach order. See the key
+# below for what decides which of the two waits applies.
+#@ This setting sets the wait, in milliseconds, after the adapter becomes available and before Sterna opens the serial port again. Sterna uses this wait when the port name identifies the device.
 serial.auto_reconnect_delay | uint16 | Tera Term | AutoComPortReconnectDelayNormal | 500 | -
 
 # `ttset.c:1090`, milliseconds, and **"illegal" is about the notification and
@@ -1750,11 +1755,19 @@ serial.auto_reconnect_delay | uint16 | Tera Term | AutoComPortReconnectDelayNorm
 # never the `DBT_DEVTYP_PORT` that would say *which* port arrived
 # (`vtwin.cpp:335`), so this is the longer wait taken when the port number is
 # unknown and the reopen is a guess.
-#@ This setting sets the longer wait before Sterna tries a device with no identification as the serial adapter. At this time, automatic reconnection is not available in Sterna.
+#
+# The same doubt has a mechanical Linux spelling: `devtmpfs` makes
+# `/dev/ttyUSB0` when the driver binds, and udev applies the group and mode and
+# makes the `/dev/serial/…` symlink afterwards. So a bare node appearing means
+# udev has *not* finished — opening it there gets `EACCES` or `EBUSY` — and a
+# `by-path` name appearing means it has. `ReopenLimits::delay_unknown` picks
+# between them on `is_stable_path`; Windows always takes the shorter wait,
+# because `QueryDosDeviceW` names the exact port and nothing there is a guess.
+#@ This setting sets a longer wait, in milliseconds, for a serial port with a name that does not identify the device. A port with such a name can be a different adapter, or the system possibly did not prepare it.
 serial.auto_reconnect_delay_unknown_port | uint16 | Tera Term | AutoComPortReconnectDelayIllegal | 2000 | -
 
 # `ttset.c:1092`, milliseconds between one failed reopen and the next.
-#@ This setting sets the interval, in milliseconds, after each attempt that does not reopen the serial port. At this time, Sterna does not have automatic reconnection.
+#@ This setting sets the interval, in milliseconds, after each try that does not open the serial port and before the next try.
 serial.auto_reconnect_retry_interval | uint16 | Tera Term | AutoComPortReconnectRetryInterval | 1000 | -
 
 # `ttset.c:1094`. Retries **after** the first attempt, so three is four tries —
@@ -1762,13 +1775,19 @@ serial.auto_reconnect_retry_interval | uint16 | Tera Term | AutoComPortReconnect
 # not in the name: an attempt where the port is still absent costs a retry
 # without opening anything (`vtwin.cpp:475`'s `CheckComPort` guard), and the
 # *last* attempt is the one allowed to raise the error box, because the
-# suppression tests `retry_left_ != 0` (`:481`).
+# suppression tests `retry_left_ != 0` (`:481`). Both reproduced — the second
+# as a notice on the terminal's own status line rather than a modal box, which
+# is deviation 21.
+#
+# **The budget is for opens, not for the wait.** Watching for the node costs
+# nothing and is indefinite, the way upstream waits for a device-arrival
+# message indefinitely; these four tries begin once the node is back.
 #
 # The four above are `WORD` in `tttypes.h:602`, so upstream truncates them to
 # 16 bits: a two-minute retry interval written as `120000` is 54464 ms there
 # and 120000 here. Not reproduced — the schema has no type for it and the
 # divergence only exists for values nobody means.
-#@ This setting sets the number of retries after the first attempt to reopen the serial port. Thus, a value of three gives four total attempts. At this time, Sterna does not have automatic reconnection.
+#@ This setting sets how many more times Sterna tries to open the serial port after the first try. Thus, a value of three gives four tries.
 serial.auto_reconnect_retries | uint16 | Tera Term | AutoComPortReconnectRetryCount | 3 | -
 
 # --- log ---------------------------------------------------------------------
