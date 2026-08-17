@@ -444,6 +444,9 @@ private:
     /// Put button `index` on the wire once. The whole of what a press does,
     /// and therefore also what each tick of a repeat does.
     void sendQuickButton(int index, bool withoutEnter);
+    /// Start a `file` button's send on `page`, with the gate the button chose
+    /// over the settings' own.
+    void startButtonSend(TerminalPage *page, const QuickButton &button);
     /// A run started, ticked or ended: the bar's face, the terminal's stop
     /// key and the status line all follow from this one place.
     void quickRepeatChanged(int index, int remaining);

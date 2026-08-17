@@ -4280,6 +4280,7 @@ void MainWindow::sendQuickButton(int index, bool withoutEnter)
     // in front: switching tabs to watch something else must never redirect a
     // poll onto a different console.
     Session *session = m_session;
+    TerminalPage *owner = m_page;
     if (m_quickRepeatPage.contains(index)) {
         TerminalPage *page = m_quickRepeatPage.value(index);
         if (!page) {
@@ -4289,6 +4290,7 @@ void MainWindow::sendQuickButton(int index, bool withoutEnter)
             return;
         }
         session = page->session();
+        owner = page;
     }
     if (!session) {
         return;
@@ -4301,7 +4303,8 @@ void MainWindow::sendQuickButton(int index, bool withoutEnter)
     // background page's disconnect does not reach. This is the tick itself, so
     // it is the one check no run can be going without.
     const bool needsLink = button.kind == TT_QUICK_BUTTON_TEXT
-        || button.kind == TT_QUICK_BUTTON_BYTES;
+        || button.kind == TT_QUICK_BUTTON_BYTES
+        || button.kind == TT_QUICK_BUTTON_FILE;
     if (needsLink && !session->isConnected() && m_quickRepeat->isRunning(index)) {
         m_quickRepeat->stop(index);
         return;
@@ -4310,7 +4313,48 @@ void MainWindow::sendQuickButton(int index, bool withoutEnter)
     // which is the same answer a pressed key gives. Only the sending half is
     // bound to a page: what `runKeyAction` is left holding is a macro or a
     // menu command, and both of those are the window's, not a session's.
+    // A file send is the one kind whose *options* are the button's, so the
+    // core cannot start it: `runQuickButton` hands the path back and this is
+    // where the gate the button chose is put on it.
+    if (button.kind == TT_QUICK_BUTTON_FILE) {
+        startButtonSend(owner, button);
+        return;
+    }
     runKeyAction(session->runQuickButton(button.kind, button.value));
+}
+
+void MainWindow::startButtonSend(TerminalPage *page, const QuickButton &button)
+{
+    Session *session = page ? page->session() : nullptr;
+    if (!session) {
+        return;
+    }
+    const KeyCodeAction action = session->runQuickButton(button.kind, button.value);
+    if (action.kind != TT_KEY_CODE_SEND_FILE || action.text.isEmpty()) {
+        return;
+    }
+    // The settings first, then whatever the button chose over the top. The
+    // intervals are never the button's: those say how patient this machine is,
+    // not which device is on the other end.
+    TtSendOptions opts = session->sendDefaults();
+    if (button.gate != TT_SEND_GATE_FROM_SETTINGS) {
+        opts.gate = static_cast<TtSendGate>(button.gate);
+    }
+    const QByteArray prompt = button.prompt.isEmpty()
+        ? QByteArray(opts.gate_pattern ? opts.gate_pattern : "")
+        : button.prompt.toUtf8();
+    opts.gate_pattern = prompt.constData();
+
+    QString error;
+    if (!session->sendFile(action.text, opts, &error)) {
+        showPageMessage(page, error);
+        return;
+    }
+    // No progress panel: a button is one click and a panel over the terminal
+    // is the opposite of what somebody wanted from one. The status line says
+    // it started and `sendFinished` says how it went, which is the same
+    // account a repeating button gives.
+    showPageMessage(page, tr("Sending %1").arg(action.text));
 }
 
 void MainWindow::quickRepeatChanged(int index, int remaining)

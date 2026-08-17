@@ -39,6 +39,17 @@ struct QuickButton {
     /// list is the same on every page, which is what a repeat in progress and
     /// an installed shortcut depend on.
     quint32 page = 1;
+    /// For `TT_QUICK_BUTTON_FILE`: what holds each line until the far end has
+    /// answered, or `TT_SEND_GATE_FROM_SETTINGS` to use what the settings say.
+    ///
+    /// Per button because two pages of buttons is how somebody keeps a switch's
+    /// `#` and a boot loader's silence apart. The intervals are deliberately
+    /// not here: those say how patient this machine is, not which device is on
+    /// the other end.
+    int gate = TT_SEND_GATE_FROM_SETTINGS;
+    /// The pattern for a `gate` of `TT_SEND_GATE_PROMPT`. Empty falls back to
+    /// `transfer.send_gate_pattern`.
+    QString prompt;
 
     /// **Every field, because a rebuild is skipped when this says equal.**
     /// `QuickButtonBar::setButtons` destroys and recreates every widget, which
@@ -51,7 +62,8 @@ struct QuickButton {
                && value == other.value && text == other.text
                && shortcut == other.shortcut && confirm == other.confirm
                && repeat == other.repeat && intervalMs == other.intervalMs
-               && page == other.page;
+               && page == other.page && gate == other.gate
+               && prompt == other.prompt;
     }
     bool operator!=(const QuickButton &other) const { return !(*this == other); }
 

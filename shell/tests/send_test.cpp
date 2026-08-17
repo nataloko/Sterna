@@ -33,6 +33,7 @@
 
 #include "MainWindow.h"
 #include "PanelContainer.h"
+#include "QuickButtons.h"
 #include "SendFileDialog.h"
 #include "Session.h"
 #include "TerminalPage.h"
@@ -516,6 +517,88 @@ void the_dialog_reads_and_writes_the_four_settings()
     CHECK(out.binary);
 }
 
+/// The fifth quick-button kind: one click, one file, the gate the button chose.
+void a_file_button_sends_its_file()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString file =
+        writeFile(dir, QStringLiteral("boot.txt"), "echo button-one\necho button-two\n");
+
+    const QString ini = dir.filePath(QStringLiteral("sterna.ini"));
+    QFile f(ini);
+    CHECK(f.open(QIODevice::WriteOnly));
+    f.write("[Tera Term]\r\nTerminalSize=60,12\r\n[Sterna Buttons]\r\n"
+            "Button1Label=Boot\r\nButton1Kind=file\r\nButton1Value=");
+    f.write(file.toUtf8());
+    f.write("\r\nButton1Gate=none\r\n");
+    f.close();
+
+    MainWindow window(ini);
+    window.connectPty({QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+                       QStringLiteral("cat")});
+    Session *session = window.session();
+    CHECK(spin([session] { return session->isConnected(); }, 3000));
+
+    QMetaObject::invokeMethod(&window, "runQuickButton", Qt::DirectConnection,
+                              Q_ARG(int, 0), Q_ARG(bool, false));
+    CHECK(spin([session] { return !session->isSending(); }, 5000));
+    CHECK(spin(
+        [session] {
+            return screenText(*session).contains(QLatin1String("button-two"));
+        },
+        3000));
+    CHECK(screenText(*session).contains(QLatin1String("button-one")));
+}
+
+/// ...and it survives the settings file: the two keys are written only for this
+/// kind, so a file with none of them is the file it always was.
+void a_file_buttons_gate_round_trips_through_the_file()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("sterna.ini"));
+    QFile f(ini);
+    CHECK(f.open(QIODevice::WriteOnly));
+    f.write("[Tera Term]\r\nTerminalSize=60,12\r\n[Sterna Buttons]\r\n"
+            "Button1Label=Boot\r\nButton1Kind=file\r\nButton1Value=/tmp/x.txt\r\n"
+            "Button1Gate=prompt\r\nButton1Prompt=# $\r\n"
+            "Button2Label=Say\r\nButton2Kind=text\r\nButton2Value=hello\r\n");
+    f.close();
+
+    const QuickButtonSet set = loadQuickButtons(ini);
+    CHECK(set.buttons.size() == 2);
+    if (set.buttons.size() != 2) {
+        return;
+    }
+    CHECK(set.buttons[0].kind == TT_QUICK_BUTTON_FILE);
+    CHECK(set.buttons[0].text == QLatin1String("/tmp/x.txt"));
+    CHECK(set.buttons[0].gate == static_cast<int>(TT_SEND_GATE_PROMPT));
+    CHECK(set.buttons[0].prompt == QLatin1String("# $"));
+    // An ordinary button has not grown a gate: absent means the settings
+    // decide, which is what every button written before this kind existed says.
+    CHECK(set.buttons[1].gate == TT_SEND_GATE_FROM_SETTINGS);
+    CHECK(set.buttons[1].prompt.isEmpty());
+
+    const QString out = dir.filePath(QStringLiteral("out.ini"));
+    QFile blank(out);
+    CHECK(blank.open(QIODevice::WriteOnly));
+    blank.close();
+    CHECK(saveQuickButtons(out, set));
+    const QuickButtonSet again = loadQuickButtons(out);
+    CHECK(again.buttons.size() == 2);
+    if (again.buttons.size() == 2) {
+        CHECK(again.buttons[0] == set.buttons[0]);
+        CHECK(again.buttons[1] == set.buttons[1]);
+    }
+    // ...and the ordinary button's record says nothing about a gate.
+    QFile written(out);
+    CHECK(written.open(QIODevice::ReadOnly));
+    const QString body = QString::fromUtf8(written.readAll());
+    CHECK(!body.contains(QLatin1String("Button2Gate")));
+    CHECK(!body.contains(QLatin1String("Button2Prompt")));
+}
+
 /// The progress panel follows the send without being told, and turns Stop into
 /// Close when it is over.
 void the_progress_panel_follows_the_send()
@@ -605,6 +688,8 @@ int main(int argc, char **argv)
     a_gated_send_waits_for_the_prompt();
     a_gate_nobody_answers_still_finishes();
     a_bad_pattern_is_refused_where_it_is_typed();
+    a_file_button_sends_its_file();
+    a_file_buttons_gate_round_trips_through_the_file();
     the_dialog_reads_and_writes_the_four_settings();
     the_progress_panel_follows_the_send();
 

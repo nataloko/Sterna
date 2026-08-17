@@ -250,6 +250,13 @@ pub enum KeyCodeResult {
     Shortcut(Shortcut),
     RunMacro(String),
     Command(u16),
+    /// Feed this file to the far end a line at a time — see [`send`].
+    ///
+    /// Handed back rather than started here, unlike the two sending kinds
+    /// above, because the *options* belong to the button and this layer has
+    /// only been given a `UserKey`. The window that read the button is the one
+    /// that can call [`Session::send_file`] with them.
+    SendFile(String),
     Ignored,
 }
 
@@ -2070,6 +2077,7 @@ impl Session {
                 Ok(KeyCodeResult::Sent)
             }
             UserKeyType::Macro => Ok(KeyCodeResult::RunMacro(user.value.clone())),
+            UserKeyType::SendFile => Ok(KeyCodeResult::SendFile(user.value.clone())),
             UserKeyType::Command => Ok(command_id(&user.value)
                 .map(KeyCodeResult::Command)
                 .unwrap_or(KeyCodeResult::Ignored)),

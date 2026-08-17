@@ -119,6 +119,13 @@ private:
     QPlainTextEdit *m_text = nullptr;
     QLineEdit *m_path = nullptr;
     QComboBox *m_command = nullptr;
+    /// The fourth page of the value stack, and the two fields beside it that
+    /// belong to a `file` button alone — see `QuickButton::gate`.
+    QLineEdit *m_file = nullptr;
+    QComboBox *m_gate = nullptr;
+    QLineEdit *m_prompt = nullptr;
+    QLabel *m_gateLabel = nullptr;
+    QLabel *m_promptLabel = nullptr;
     QCheckBox *m_enter = nullptr;
     /// Sends per press. Its minimum, 0, is shown as "Until stopped" and means
     /// `TT_QUICK_BUTTON_REPEAT_FOREVER` — the count below one, since a run

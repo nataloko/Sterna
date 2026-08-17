@@ -150,6 +150,7 @@ QuickButtonsDialog::QuickButtonsDialog(const QuickButtonSet &set, int page,
     m_kind->addItem(tr("Send bytes"), TT_QUICK_BUTTON_BYTES);
     m_kind->addItem(tr("Run macro"), TT_QUICK_BUTTON_MACRO);
     m_kind->addItem(tr("Menu command"), TT_QUICK_BUTTON_COMMAND);
+    m_kind->addItem(tr("Send file line by line"), TT_QUICK_BUTTON_FILE);
 
     // One field per kind rather than one field that means four things: a path
     // wants a Browse button and a command wants a list of the commands there
@@ -175,10 +176,53 @@ QuickButtonsDialog::QuickButtonsDialog(const QuickButtonSet &set, int page,
         m_command->addItem(tr(c.label), QString::number(c.id));
     }
 
+    // A file send has a path too, but its own row: the macro row's Browse
+    // filters for scripts, and sharing one widget between two pages of a stack
+    // is a widget that has to be reconfigured on every switch.
+    auto *fileRow = new QWidget(this);
+    auto *fileLayout = new QHBoxLayout(fileRow);
+    fileLayout->setContentsMargins(0, 0, 0, 0);
+    m_file = new QLineEdit(fileRow);
+    m_file->setObjectName(QStringLiteral("quickButtonFile"));
+    auto *browseFile = new QPushButton(tr("Browse..."), fileRow);
+    fileLayout->addWidget(m_file);
+    fileLayout->addWidget(browseFile);
+    connect(browseFile, &QPushButton::clicked, this, [this] {
+        const QString path = QFileDialog::getOpenFileName(this, tr("Send file line by line"),
+                                                          m_file->text());
+        if (!path.isEmpty()) {
+            m_file->setText(path);
+        }
+    });
+
     m_value = new QStackedWidget(this);
     m_value->addWidget(m_text);
     m_value->addWidget(pathRow);
     m_value->addWidget(m_command);
+    m_value->addWidget(fileRow);
+
+    // The gate, which is the only thing about a file send that belongs to the
+    // *button* rather than to the settings: two pages of buttons is how
+    // somebody keeps a switch's `#` and a boot loader's silence apart.
+    m_gate = new QComboBox(this);
+    m_gate->setObjectName(QStringLiteral("quickButtonGate"));
+    m_gate->addItem(tr("What the settings say"), TT_SEND_GATE_FROM_SETTINGS);
+    m_gate->addItem(tr("Nothing"), static_cast<int>(TT_SEND_GATE_NONE));
+    m_gate->addItem(tr("A prompt"), static_cast<int>(TT_SEND_GATE_PROMPT));
+    m_gate->addItem(tr("The echo of the line"), static_cast<int>(TT_SEND_GATE_ECHO));
+    m_gate->addItem(tr("A quiet line"), static_cast<int>(TT_SEND_GATE_QUIET));
+    m_gate->setToolTip(
+        tr("Sterna sends the next line of the file when the device is ready for "
+           "it. The intervals stay in Setup: they show how long Sterna waits, "
+           "not how this device shows that it is ready."));
+    m_gateLabel = new QLabel(tr("Wait for:"), this);
+    m_prompt = new QLineEdit(this);
+    m_prompt->setObjectName(QStringLiteral("quickButtonPrompt"));
+    m_prompt->setPlaceholderText(tr("for example, [#>$] $"));
+    m_prompt->setToolTip(tr("A regular expression. An empty box uses the setting."));
+    m_promptLabel = new QLabel(tr("Prompt:"), this);
+    connect(m_gate, &QComboBox::currentIndexChanged, this,
+            &QuickButtonsDialog::applyKind);
 
     m_enter = new QCheckBox(tr("Send Enter after"), this);
     m_enter->setObjectName(QStringLiteral("quickButtonEnter"));
@@ -244,6 +288,8 @@ QuickButtonsDialog::QuickButtonsDialog(const QuickButtonSet &set, int page,
     form->addRow(tr("On page:"), m_pageOf);
     form->addRow(tr("Does:"), m_kind);
     form->addRow(tr("Command:"), m_value);
+    form->addRow(m_gateLabel, m_gate);
+    form->addRow(m_promptLabel, m_prompt);
     form->addRow(QString(), m_enter);
     form->addRow(tr("Repeat:"), repeatRow);
     form->addRow(tr("Shortcut:"), m_shortcut);
@@ -462,6 +508,9 @@ void QuickButtonsDialog::commit()
     case TT_QUICK_BUTTON_COMMAND:
         button.text = m_command->currentData().toString();
         break;
+    case TT_QUICK_BUTTON_FILE:
+        button.text = m_file->text();
+        break;
     default:
         // The box holds line feeds because that is what a text edit produces;
         // a terminal wants carriage returns, and this is the boundary where
@@ -487,6 +536,8 @@ void QuickButtonsDialog::commit()
     // 2499.
     button.intervalMs =
         static_cast<quint32>(qRound(m_interval->value() * 1000.0));
+    button.gate = m_gate->currentData().toInt();
+    button.prompt = m_prompt->text();
     // `value` is the core's to produce; it is written when the window saves.
     button.value.clear();
 }
@@ -518,6 +569,10 @@ void QuickButtonsDialog::load(int row)
         m_text->setPlainText(QString(text).replace(QLatin1Char('\r'),
                                                    QLatin1Char('\n')));
         m_path->setText(button.text);
+        m_file->setText(button.text);
+        const int gateRow = m_gate->findData(button.gate);
+        m_gate->setCurrentIndex(gateRow < 0 ? 0 : gateRow);
+        m_prompt->setText(button.prompt);
         int commandRow = m_command->findData(button.text);
         if (button.kind == TT_QUICK_BUTTON_COMMAND && commandRow < 0) {
             // The file may name a command this window does not offer in its
@@ -540,6 +595,9 @@ void QuickButtonsDialog::load(int row)
         m_label->clear();
         m_text->clear();
         m_path->clear();
+        m_file->clear();
+        m_gate->setCurrentIndex(0);
+        m_prompt->clear();
         m_shortcut->clear();
         m_confirm->setChecked(false);
         m_enter->setChecked(false);
@@ -561,6 +619,9 @@ void QuickButtonsDialog::applyKind()
     case TT_QUICK_BUTTON_COMMAND:
         m_value->setCurrentIndex(2);
         break;
+    case TT_QUICK_BUTTON_FILE:
+        m_value->setCurrentIndex(3);
+        break;
     default:
         m_value->setCurrentIndex(0);
         break;
@@ -568,6 +629,13 @@ void QuickButtonsDialog::applyKind()
     // Only the two sending kinds have a line ending to add.
     m_enter->setVisible(kind == TT_QUICK_BUTTON_TEXT
                         || kind == TT_QUICK_BUTTON_BYTES);
+    const bool file = kind == TT_QUICK_BUTTON_FILE;
+    m_gate->setVisible(file);
+    m_gateLabel->setVisible(file);
+    const bool prompt = file
+        && m_gate->currentData().toInt() == static_cast<int>(TT_SEND_GATE_PROMPT);
+    m_prompt->setVisible(prompt);
+    m_promptLabel->setVisible(prompt);
 }
 
 void QuickButtonsDialog::applyRepeat()

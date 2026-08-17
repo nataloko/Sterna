@@ -3460,6 +3460,10 @@ pub const TT_KEY_CODE_SHORTCUT: TtKeyCodeKind = 4;
 pub const TT_KEY_CODE_MACRO: TtKeyCodeKind = 5;
 pub const TT_KEY_CODE_COMMAND: TtKeyCodeKind = 6;
 pub const TT_KEY_CODE_IGNORED: TtKeyCodeKind = 7;
+/// Feed the file in `text` to the far end a line at a time. The window's to
+/// carry out, like a macro and a menu command, because the *options* belong to
+/// the button and the core was handed only its value.
+pub const TT_KEY_CODE_SEND_FILE: TtKeyCodeKind = 8;
 
 /// A `[Shortcut keys]` action. Values follow Tera Term's internal ids 71–89,
 /// so a command dispatcher can keep one table for these and type-3 user keys.
@@ -3603,13 +3607,17 @@ fn fill_key_code(s: &mut TtSession, result: KeyCodeResult, out: *mut TtKeyCodeRe
             (TT_KEY_CODE_MACRO, 0)
         }
         KeyCodeResult::Command(command) => (TT_KEY_CODE_COMMAND, command.into()),
+        KeyCodeResult::SendFile(path) => {
+            s.key_action = cstring(&path);
+            (TT_KEY_CODE_SEND_FILE, 0)
+        }
         KeyCodeResult::Ignored => (TT_KEY_CODE_IGNORED, 0),
     };
     if let Some(out) = unsafe { out.as_mut() } {
         *out = TtKeyCodeResult {
             kind,
             value,
-            text: if kind == TT_KEY_CODE_MACRO {
+            text: if kind == TT_KEY_CODE_MACRO || kind == TT_KEY_CODE_SEND_FILE {
                 s.key_action.as_ptr()
             } else {
                 ptr::null()
@@ -3637,6 +3645,10 @@ pub const TT_QUICK_BUTTON_BYTES: TtQuickButtonKind = 1;
 pub const TT_QUICK_BUTTON_MACRO: TtQuickButtonKind = 2;
 /// Invoke the menu command whose decimal id is the value.
 pub const TT_QUICK_BUTTON_COMMAND: TtQuickButtonKind = 3;
+/// Feed the file named by `value` to the far end a line at a time — this
+/// program's own, and the only one of the five that upstream has no user-key
+/// type for. See [`tt_session_send_file`].
+pub const TT_QUICK_BUTTON_FILE: TtQuickButtonKind = 4;
 
 /// [`TtQuickButton::repeat`] for a run with no end.
 ///
@@ -3722,7 +3734,22 @@ pub struct TtQuickButton {
     /// everywhere. Anything holding an index — a repeat in progress, a
     /// shortcut on an action — depends on that.
     pub page: u32,
+    /// For [`TT_QUICK_BUTTON_FILE`]: what holds each line until the far end has
+    /// answered, or [`TT_SEND_GATE_FROM_SETTINGS`] to use whatever
+    /// `transfer.send_gate` says.
+    ///
+    /// Per button because two pages of buttons is how somebody keeps a switch's
+    /// `#` and a boot loader's silence apart. The intervals stay in the
+    /// settings: those are about how patient this machine is, not about which
+    /// device is on the other end.
+    pub gate: i32,
+    /// The pattern for a `gate` of [`TtSendGate::Prompt`]. Empty falls back to
+    /// `transfer.send_gate_pattern`.
+    pub prompt: *const c_char,
 }
+
+/// [`TtQuickButton::gate`] for a button that has not chosen one.
+pub const TT_SEND_GATE_FROM_SETTINGS: i32 = -1;
 
 /// An owned list of quick buttons, and what its pages are called. Free it with
 /// [`tt_quick_buttons_free`].
@@ -3747,6 +3774,7 @@ impl TtQuickButtons {
             self.strings.push(cstring(&b.value));
             self.strings.push(cstring(&b.text()));
             self.strings.push(cstring(&b.shortcut));
+            self.strings.push(cstring(&b.prompt));
         }
         self.page_strings = (1..=self.set.page_count())
             .map(|p| cstring(self.set.name(p)))
@@ -3759,7 +3787,7 @@ impl TtQuickButtons {
             .iter()
             .enumerate()
             .map(|(i, b)| {
-                let at = |n: usize| self.strings[i * 4 + n].as_ptr();
+                let at = |n: usize| self.strings[i * 5 + n].as_ptr();
                 TtQuickButton {
                     label: at(0),
                     kind: quick_button_kind_id(b.kind),
@@ -3770,6 +3798,8 @@ impl TtQuickButtons {
                     repeat: b.repeat,
                     interval_ms: b.interval_ms,
                     page: b.page,
+                    gate: b.gate.map_or(TT_SEND_GATE_FROM_SETTINGS, gate_id),
+                    prompt: at(4),
                 }
             })
             .collect();
@@ -3782,6 +3812,7 @@ fn quick_button_kind_id(kind: UserKeyType) -> TtQuickButtonKind {
         UserKeyType::Binary => TT_QUICK_BUTTON_BYTES,
         UserKeyType::Macro => TT_QUICK_BUTTON_MACRO,
         UserKeyType::Command => TT_QUICK_BUTTON_COMMAND,
+        UserKeyType::SendFile => TT_QUICK_BUTTON_FILE,
         // Not reachable through this API: an unreadable kind is dropped by the
         // parser rather than carried, so a button that exists always does
         // something known.
@@ -3795,6 +3826,29 @@ fn quick_button_kind(id: TtQuickButtonKind) -> Option<UserKeyType> {
         TT_QUICK_BUTTON_BYTES => Some(UserKeyType::Binary),
         TT_QUICK_BUTTON_MACRO => Some(UserKeyType::Macro),
         TT_QUICK_BUTTON_COMMAND => Some(UserKeyType::Command),
+        TT_QUICK_BUTTON_FILE => Some(UserKeyType::SendFile),
+        _ => None,
+    }
+}
+
+fn gate_id(gate: tt_session::buttons::SendGate) -> i32 {
+    use tt_session::buttons::SendGate as G;
+    match gate {
+        G::None => TtSendGate::None as i32,
+        G::Prompt => TtSendGate::Prompt as i32,
+        G::Echo => TtSendGate::Echo as i32,
+        G::Quiet => TtSendGate::Quiet as i32,
+    }
+}
+
+fn gate_of_id(id: i32) -> Option<tt_session::buttons::SendGate> {
+    use tt_session::buttons::SendGate as G;
+    match id {
+        x if x == TtSendGate::None as i32 => Some(G::None),
+        x if x == TtSendGate::Prompt as i32 => Some(G::Prompt),
+        x if x == TtSendGate::Echo as i32 => Some(G::Echo),
+        x if x == TtSendGate::Quiet as i32 => Some(G::Quiet),
+        // `TT_SEND_GATE_FROM_SETTINGS` and anything else: the settings decide.
         _ => None,
     }
 }
@@ -3893,6 +3947,10 @@ pub extern "C" fn tt_quick_buttons_set(
         (Ok(l), Ok(s)) => (l, s),
         (Err(e), _) | (_, Err(e)) => return e,
     };
+    let prompt = match borrow(b.prompt) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
     if index > l.set.items.len()
         || (index == l.set.items.len() && l.set.items.len() >= tt_session::buttons::MAX)
     {
@@ -3913,6 +3971,12 @@ pub extern "C" fn tt_quick_buttons_set(
         // Zero is the first page, so a zeroed struct is an ordinary button and
         // a frontend that has never heard of pages keeps working.
         page: if b.page == 0 { 1 } else { b.page },
+        // ...and zero is a real gate, so this one needs its own sentinel. A
+        // zeroed struct therefore says `Gate::None` rather than "ask the
+        // settings", which is the safe direction: a button that sends is
+        // better than one that holds every line against a pattern nobody set.
+        gate: gate_of_id(b.gate),
+        prompt: prompt.to_string(),
     };
     // The same bounds the file reader applies, so a button that arrived
     // through the ABI and one that came out of the INI are the same button.

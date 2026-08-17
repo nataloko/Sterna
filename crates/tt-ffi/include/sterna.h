@@ -57,6 +57,11 @@
 #define TT_QUICK_BUTTON_MAX_PAGES 99
 
 /**
+ * [`TtQuickButton::gate`] for a button that has not chosen one.
+ */
+#define TT_SEND_GATE_FROM_SETTINGS -1
+
+/**
  * A colour a rule is not asking to change, in [`TtHighlight::fore`] and
  * friends. Every real colour is `0x00RRGGBB`, so this cannot collide with one.
  */
@@ -1823,6 +1828,22 @@ typedef struct {
      * shortcut on an action — depends on that.
      */
     uint32_t page;
+    /**
+     * For [`TT_QUICK_BUTTON_FILE`]: what holds each line until the far end has
+     * answered, or [`TT_SEND_GATE_FROM_SETTINGS`] to use whatever
+     * `transfer.send_gate` says.
+     *
+     * Per button because two pages of buttons is how somebody keeps a switch's
+     * `#` and a boot loader's silence apart. The intervals stay in the
+     * settings: those are about how patient this machine is, not about which
+     * device is on the other end.
+     */
+    int32_t gate;
+    /**
+     * The pattern for a `gate` of [`TtSendGate::Prompt`]. Empty falls back to
+     * `transfer.send_gate_pattern`.
+     */
+    const char *prompt;
 } TtQuickButton;
 
 /**
@@ -2992,6 +3013,13 @@ typedef uint32_t TtShortcut;
 
 #define TT_KEY_CODE_IGNORED 7
 
+/**
+ * Feed the file in `text` to the far end a line at a time. The window's to
+ * carry out, like a macro and a menu command, because the *options* belong to
+ * the button and the core was handed only its value.
+ */
+#define TT_KEY_CODE_SEND_FILE 8
+
 #define TT_SHORTCUT_EDIT_COPY 71
 
 #define TT_SHORTCUT_EDIT_PASTE 72
@@ -3049,6 +3077,13 @@ typedef uint32_t TtShortcut;
  * Invoke the menu command whose decimal id is the value.
  */
 #define TT_QUICK_BUTTON_COMMAND 3
+
+/**
+ * Feed the file named by `value` to the far end a line at a time — this
+ * program's own, and the only one of the five that upstream has no user-key
+ * type for. See [`tt_session_send_file`].
+ */
+#define TT_QUICK_BUTTON_FILE 4
 
 /**
  * Every byte is data, `0xFF` included. What a console server's per-line port

@@ -64,6 +64,13 @@ pub struct UserKey {
 }
 
 /// How a user key's value is used.
+///
+/// Four of the five are `[User keys]`' own types, in upstream's own order.
+/// [`UserKeyType::SendFile`] is **not** one of them and deliberately has no
+/// integer: it is reachable from `[Sterna Buttons]`, where the kind is a word,
+/// and a `KEYBOARD.CNF` naming a type `4` still reads as
+/// [`UserKeyType::Unknown`] and still does nothing — so a keyboard file stays
+/// portable between the two programs. See `docs/deviations.md`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum UserKeyType {
     /// Send bytes, with `$HH` escapes and no text conversion.
@@ -78,6 +85,9 @@ pub enum UserKeyType {
     Macro,
     /// Invoke the decimal menu command id in the value.
     Command,
+    /// Send the named file down the line a line at a time — this program's
+    /// own, and the value is a path.
+    SendFile,
     /// Upstream stores an unknown integer too; pressing it then does nothing.
     Unknown(i32),
 }
