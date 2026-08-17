@@ -124,6 +124,7 @@ nothing about the keys this one has already given away.
 | **Send bytes** | Put on the wire unchanged: no encoding, no newline conversion |
 | **Run macro** | Starts a `.ttl` or `.lua` file, as Control > Run macro does |
 | **Menu command** | Does what a menu item does — send a break, start logging, disconnect |
+| **Send file line by line** | Feeds a text file to the far end a line at a time, waiting for the device between lines — see [`sending.md`](sending.md) |
 
 **Send Enter after** is what makes a command run rather than just appear. It is
 ticked by default for a new text button, and a **Shift+click** sends the
@@ -228,6 +229,12 @@ Button4IntervalMs=5000
 Button5Label=Power status
 Button5Page=2
 Button5Value=power status$0D
+
+Button6Label=Base config
+Button6Kind=file
+Button6Value=/home/me/switch-base.txt
+Button6Gate=prompt
+Button6Prompt=[#>] $
 ```
 
 `Button1` … `Button99`, in that order; a gap is skipped. Only `Value` is
@@ -251,13 +258,22 @@ newer version wrote.
 | Key | Meaning |
 |---|---|
 | `Label` | What is written on the button. Plain text |
-| `Kind` | `text`, `bytes`, `macro` or `command`. `text` if absent; an unrecognised word drops the button rather than guessing |
-| `Value` | The command. `$HH`-escaped for `text` and `bytes`; a file path for `macro`; a decimal menu id for `command` |
+| `Kind` | `text`, `bytes`, `macro`, `command` or `file`. `text` if absent; an unrecognised word drops the button rather than guessing |
+| `Value` | The command. `$HH`-escaped for `text` and `bytes`; a file path for `macro` and `file`; a decimal menu id for `command` |
 | `Shortcut` | A Qt key sequence, such as `Ctrl+Alt+1`. Absent means none |
 | `Confirm` | `on` to ask first. Anything else is off |
 | `Repeat` | How many sends one press makes. `1` if absent; `forever` (or `0`) for a run only a person stops; anything unreadable is one send |
 | `IntervalMs` | Milliseconds between sends. 1000 if absent, and held between 100 and 3600000. Milliseconds, so the file needs no decimal point — the dialog is where this is seconds |
 | `Page` | Which page it is on, from 1. Page 1 if absent, and a number past 99 lands on the last page rather than back on the first |
+| `Gate` | `file` only: what to wait for between lines — `none`, `prompt`, `echo` or `quiet`. Absent uses `SendGate` from the settings, and so does anything unrecognised |
+| `Prompt` | `file` only: the pattern for `Gate=prompt`. Absent or empty uses `SendGatePattern` |
+
+`Gate` and `Prompt` are written only for a `file` button, so a file with none
+of them is byte for byte the file it was before this kind existed. They are the
+button's rather than the settings' because two pages of buttons is exactly how
+somebody keeps a switch's `#` and a boot loader's silence apart. The
+*intervals* are not here: those say how long Sterna is prepared to wait, not
+how a particular device shows that it is ready.
 
 Beside the buttons, `Page2Name`, `Page3Name` … name the pages. A page with no
 name is called `Page 2` on screen and has no key in the file. **A page exists

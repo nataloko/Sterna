@@ -606,6 +606,54 @@ The proxy — a Winsock hook upstream, so it has no seam at all:
   against Tera Term's — "improving" the format costs that. Credentials are
   in it.
 
+Sending, which has two pacing layers and they are not the same one:
+
+- **`SendMem` and `commlib.c`'s governor are separate, and folding them
+  together loses one.** `sendmem.cpp` is a FIFO of *jobs* with a delay type,
+  and it applies to whatever was queued; `commlib.c:1068` is inside the serial
+  **write**, applies to everything a serial port sends, and is suppressed for
+  the length of a protocol transfer (`cv->DelayFlag`). A paste on a serial port
+  is subject to both. `send::Sender` and `send::WriteDelay`.
+- **A gate holds the queue *between* pieces**, so a gate with no pace has one
+  piece and nothing to hold — the file goes out in one write and the gate is
+  never consulted. `Job::effective_pace` turns `Pace::None` plus a gate into
+  one line at a time.
+- **A prompt is not a line**, which is why the gate could not reuse
+  `waitregex`'s matcher: a prompt is the one thing a console prints without a
+  line ending. `Watch` holds the text since the last line feed and tests it at
+  each line end *and* at the tail. The CR stays on a completed line, which is
+  `waitregex`'s rule kept on purpose — so `$` never matches at the end of a
+  CRLF line, and the dialog and `docs/sending.md` both say so.
+- **The gate's engine is the `regex` crate's, not Oniguruma.** It matches
+  inside `Session::service_send`, on the frontend's thread; `waitregex` can
+  afford backtracking because it runs on a macro thread.
+- **`set_macro_tap_enabled` has three consumers now**, so it is written in one
+  place (`Session::refresh_macro_tap`). Each of the three used to set the
+  switch from what it knew about the other one; a send finishing under a
+  running macro would have turned the macro's tap off.
+- **Upstream's paste goes through `CommTextOutW`, so its CRs are expanded by
+  `CRSend`** exactly as a typed Return's are (`ttcmn.c:896` → `OutControl`).
+  This port queued the raw bytes and a test asserted the difference on the
+  grounds that "bracketed paste means verbatim" — about a paste that was not
+  bracketed. The brackets are inside the string `CBSendStart` is handed
+  (`clipboar.c:298`), so they are paced *and echoed* with it.
+- **`PasteDelayPerLine` ships at 10 ms**, so converting the paste to the queue
+  made every multi-line paste asynchronous and every one of the four tests
+  that asserted the wire straight afterwards fail. That is upstream's
+  behaviour; the tests drive the queue now (`finish_send` in
+  `tests/session.rs`).
+- **`sendfile` sets no `result`** (`Interp::cmd_send_file`) — upstream waits on
+  `IdTTLWaitCmndEnd`, not `...Result`. A test checking `result` after one is
+  reading whatever the command before it left there.
+- **`SendfileSize` is not carried by the `Pace`** — only its own arm holds it —
+  so `tt_session_send_defaults` reads the setting directly. Seeded from the
+  pace, a dialog would show the number only when the file already said
+  `PerSendSize`, and changing the pace *to* it would silently offer a default
+  in place of what the user last chose. `send_test` found this.
+- **The window's send timer is `Qt::PreciseTimer`**, unlike the two beside it:
+  a per-character pace ships as low as 1 ms and a coarse timer may adjust an
+  interval by 5%, which at that scale is the whole interval.
+
 The local pty:
 
 - **Wine's `Z:` drive makes Unix-only fixtures pass in a Windows binary**

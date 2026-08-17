@@ -94,6 +94,15 @@ are the drafted reports below, not repeated here.
   one-sided, no documented form has the trailing slash, `-noproxy` /
   `-proxy=none://` still work); the bare-token half *is* reproduced.
   `cmdline::proxy::ProxyOptions::url`.
+- **39: `sendfile`'s manual page describes a sender Tera Term 5 does not
+  use** — it says text mode converts line endings and "strips out" every
+  control character except TAB, LF and CR, which is `FileSend1`
+  (`filesys.cpp:278`), the Tera Term 4 path. `ttdde.c:807` `#if 0`'d that out
+  in favour of `SendMemSendFile2`, and `SendMem`'s text path normalises the
+  line endings and strips nothing. So a macro's `sendfile` puts control bytes
+  on the wire that its own documentation says it removes. Either the code or
+  the page is wrong and only a maintainer can say which; this port follows the
+  code (`tt_session::send::Session::send_file`).
 - **In `vte` (a dependency, so not in that file; `docs/vte-bug.md`):**
   0.15.0's `advance_partial_utf8` (`lib.rs:687`) drops complete characters
   across a chunk boundary. Worked around in `tt-vt`.
