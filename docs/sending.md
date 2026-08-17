@@ -38,6 +38,16 @@ for the device. **Hold** stops the clock; **Stop** ends the send where it is.
 of a configuration is a line the device runs in the wrong place, so anything
 typed is dropped until the file is done — which is what Tera Term does too.
 
+**A macro's `send` waits for the file to go.** Sterna ignores what you type
+while a send runs. A macro is different: Sterna keeps its `send` and puts it on
+the line after the file. Tera Term does the same.
+
+**A file transfer stops a send.** ZMODEM and the other protocols must have the
+connection for their data, thus Sterna holds the lines that it did not send.
+When the transfer ends, the send starts again at the same line. A gate then gets
+its full time again, because the device gave no answer while the transfer used
+the line.
+
 ## The four ways of knowing the device is ready
 
 **Nothing** is the interval on its own: send a line, wait, send the next.

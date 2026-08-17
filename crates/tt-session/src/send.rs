@@ -848,6 +848,44 @@ impl Sender {
             self.state.0 = State::Draining(now + BACKOFF);
         }
     }
+
+    /// Put every deadline back on the clock after the queue has been held.
+    ///
+    /// A file transfer owns the byte stream, so the queue does not run while
+    /// one does — and by the time it comes back every instant it was carrying
+    /// has passed. Without this a **gated** job resumes with its timeout
+    /// already expired: it releases the next line into a device that never
+    /// answered, and counts a timeout for a wait that never happened, which is
+    /// the one number this feature exists to report honestly.
+    ///
+    /// `Watch::last` moves too. Nothing reaches the tap during a transfer — the
+    /// pump's transfer arm returns before `macro_bytes_in` — so a
+    /// [`Gate::Quiet`] would otherwise measure the whole transfer as silence
+    /// and open on the instant it ends.
+    ///
+    /// Idempotent, and a no-op in the three states that carry no instant.
+    pub fn rebase(&mut self, now: Instant) {
+        match self.state.0 {
+            // The pace's interval is not served again: whatever held the queue
+            // took far longer than one, and this is the moment it is due.
+            State::Waiting(_) => self.state.0 = State::Waiting(now),
+            State::Draining(_) => self.state.0 = State::Draining(now),
+            State::Gated(_) => {
+                let timeout = self
+                    .queue
+                    .front()
+                    .map_or(Duration::ZERO, |j| j.gate.timeout());
+                self.state.0 = State::Gated(now + timeout);
+            }
+            State::Idle | State::Ready | State::Paused => {}
+        }
+        // Only when something was already watching: an unarmed `Watch` has no
+        // gate behind it, and giving it a clock would make `is_open` answer for
+        // a job that never asked.
+        if self.watch.last.is_some() {
+            self.watch.last = Some(now);
+        }
+    }
 }
 
 /// The *other* pacing layer: `commlib.c:1068`, inside the serial write itself.
@@ -1162,6 +1200,53 @@ impl crate::Session {
         Ok(())
     }
 
+    /// A macro's `send`/`sendln` — the one input path that **queues behind** a
+    /// running send instead of being dropped by it.
+    ///
+    /// [`crate::Session::send_text`] is the *keyboard's* path and drops, which
+    /// is `keyboard.c:1480` testing `TalkStatus` before every key and right for
+    /// a keystroke: a line typed into the middle of a configuration is a line
+    /// the far end runs in the wrong place. A macro is the exception upstream
+    /// makes as well — `AcceptPoke` (`ttdde.c:460`) accepts a poke when
+    /// `TalkStatus` is `IdTalkKeyb` **or** `IdTalkSendMem`, and hands it to
+    /// `SendData`, which pushes another `SendMem` job onto the same FIFO. A
+    /// script's `send` after a `sendfile` therefore arrives after the file
+    /// rather than vanishing, and the order is the order the script wrote.
+    ///
+    /// Straight through when nothing is queued, so the common case costs
+    /// nothing and raises no [`crate::Event::SendDone`]. Still dropped during a
+    /// **transfer**, which is where it was already dropped before the queue
+    /// existed.
+    pub fn send_macro_text(&mut self, text: &str) -> Result<()> {
+        if !self.sender.is_running() {
+            return self.send_text(text);
+        }
+        if self.xfer.is_some() {
+            return Ok(());
+        }
+        self.push_send(
+            Job::new(Body::Text(text.to_string()))
+                // Read now rather than when the piece goes out, which is
+                // `SendMemInitEcho`: a setting changed while the job waits its
+                // turn must not echo half of it.
+                .echoed(self.vt.local_echo()),
+        );
+        Ok(())
+    }
+
+    /// The binary half of the above — `sendbinary`, and whatever
+    /// `looks_like_text` sends this way.
+    pub fn send_macro_bytes(&mut self, bytes: &[u8]) -> Result<()> {
+        if !self.sender.is_running() {
+            return self.send_bytes(bytes);
+        }
+        if self.xfer.is_some() {
+            return Ok(());
+        }
+        self.push_send(Job::new(Body::Bytes(bytes.to_vec())).echoed(self.vt.local_echo()));
+        Ok(())
+    }
+
     fn check_can_send(&self) -> std::result::Result<(), SendError> {
         if self.xfer.is_some() {
             return Err(SendError::TransferRunning);
@@ -1249,6 +1334,14 @@ impl crate::Session {
     /// and after anything else that touches the session. It is idempotent —
     /// asking does not postpone the answer.
     pub fn send_deadline(&self) -> Option<Duration> {
+        // A transfer owns the byte stream, so the queue is held for the length
+        // of one and there is nothing to wake up for — see
+        // [`Session::service_send`]. Answering with the queue's own deadline
+        // here would arm a timer that fires, finds the hold, and re-arms for
+        // `Duration::ZERO`: a spin for the whole transfer.
+        if self.xfer.is_some() {
+            return None;
+        }
         let now = Instant::now();
         // Two clocks, one timer. The queue's is a caller's pace; the write
         // governor's is the serial port's, and either can be the reason the
@@ -1310,6 +1403,29 @@ impl crate::Session {
     /// answers with nothing — which is what makes it safe to call from a pump
     /// that is not sure.
     pub fn service_send(&mut self) -> Result<()> {
+        // **A transfer owns the byte stream, so the queue holds.** Both write
+        // through `self.pending` — `xfer.rs` straight into it — so a piece
+        // handed over here while a protocol is up lands in the middle of a
+        // packet, and the file arrives with a line of somebody's configuration
+        // in it. Nothing said so: `Sender` cannot see a transport, let alone a
+        // transfer.
+        //
+        // Upstream has the same hole and reaches it the same way — `SendMem`'s
+        // `SetTimer` keeps firing after a protocol has moved `TalkStatus` to
+        // `IdTalkQuiet`, and `USE_ENABLE_WINDOW` is `0` so nothing stops the
+        // File menu (defect 40 in `docs/upstream-bugs.md`). It is worse here
+        // because a [`Gate`] can hold a send for minutes rather than for a
+        // pace's milliseconds.
+        //
+        // Held rather than refused, in both directions: [`Session::send_file`]
+        // already refuses a send while a transfer runs, and refusing the
+        // transfer as well would let a paste still trickling out at
+        // `PasteDelayPerLine` fail somebody's ZMODEM. The queue keeps its place
+        // and [`send::Sender::rebase`] puts its deadlines back on the clock when
+        // the transfer ends.
+        if self.xfer.is_some() {
+            return Ok(());
+        }
         if !self.sender.is_running() {
             // The queue is empty, but the *port* may still be holding bytes:
             // a keystroke on a serial line with `DelayPerChar` set is one

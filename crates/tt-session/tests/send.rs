@@ -854,3 +854,165 @@ fn an_unechoed_send_leaves_the_screen_alone() {
         .collect();
     assert_eq!(row.trim_end(), "");
 }
+
+// --- a transfer owns the byte stream, so the queue holds ----------------------
+
+/// Cancel the running transfer and pump until it has really ended.
+///
+/// `cancel_transfer` only marks it: the protocol notices on the next pump, and
+/// `finish_transfer` — the one place both endings reach — is what puts the send
+/// queue's deadlines back on the clock.
+fn end_transfer(s: &mut Session) {
+    s.cancel_transfer();
+    for _ in 0..200 {
+        if s.transfer().is_none() {
+            return;
+        }
+        s.pump(Duration::from_millis(1)).expect("pump");
+    }
+    panic!("the transfer never ended");
+}
+
+/// The refusal above is one direction only, and this is the other: a transfer
+/// can start *under* a running send, because refusing it would let a paste
+/// still trickling out at `PasteDelayPerLine` fail somebody's ZMODEM.
+///
+/// So the queue holds instead. Both write through `Session::pending` — and
+/// `xfer.rs` straight into it — so a piece handed over while a protocol is up
+/// lands in the middle of a packet. Nothing else says so: the sender cannot see
+/// a transport, let alone a transfer. Upstream has this too (defect 40).
+#[test]
+fn a_transfer_holds_the_send_queue_rather_than_sharing_the_wire() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut s, h) = connected();
+    s.queue_send(
+        Job::new(Body::Text("one\rtwo\rthree\rfour\r".into()))
+            .paced(Pace::PerLine(Duration::from_millis(20))),
+    )
+    .expect("queue");
+    s.service_send().expect("service");
+    assert_eq!(h.outbound(), b"one\r", "the first line goes at once");
+
+    let opts = s.transfer_options();
+    s.receive_files(
+        tt_xfer::Job::Raw {
+            autostop: Duration::from_secs(0),
+        },
+        dir.path(),
+        Some("received.bin"),
+        &opts,
+    )
+    .expect("start a receive");
+
+    // Nothing wakes up for a held queue: a deadline here would arm a timer that
+    // fires, finds the hold and re-arms for zero, which is a spin for the whole
+    // transfer.
+    assert_eq!(s.send_deadline(), None, "a held queue arms nothing");
+    let before = h.outbound().len();
+    for _ in 0..5 {
+        std::thread::sleep(Duration::from_millis(20));
+        s.service_send().expect("service");
+    }
+    assert_eq!(
+        h.outbound().len(),
+        before,
+        "the send put bytes into the transfer's stream"
+    );
+    // ...and it is still queued, not thrown away.
+    assert!(s.sending(), "the send should have kept its place");
+
+    // `cancel_transfer` only marks it; the protocol ends on the next pump, and
+    // `finish_transfer` is where the queue's deadlines go back on the clock.
+    end_transfer(&mut s);
+    run(&mut s);
+    assert_eq!(
+        h.outbound(),
+        b"one\rtwo\rthree\rfour\r",
+        "the held send did not resume when the transfer let go"
+    );
+}
+
+/// ...and a gated job comes back with its timeout back on the clock.
+///
+/// Without `Sender::rebase` the wait it was holding has expired by the time the
+/// protocol lets go, so the next line goes out unanswered and the timeout count
+/// — the one number this feature reports — gains one for a wait that never
+/// happened.
+#[test]
+fn a_held_gate_does_not_time_out_while_it_waits_for_the_transfer() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut s, _h) = connected();
+    s.queue_send(
+        Job::new(Body::Text("one\rtwo\r".into()))
+            .gated(Gate::prompt("never-appears", Duration::from_millis(40)).expect("pattern")),
+    )
+    .expect("queue");
+    s.service_send().expect("service");
+
+    let opts = s.transfer_options();
+    s.receive_files(
+        tt_xfer::Job::Raw {
+            autostop: Duration::from_secs(0),
+        },
+        dir.path(),
+        Some("received.bin"),
+        &opts,
+    )
+    .expect("start a receive");
+    // Longer than the gate's own timeout, which is the whole point.
+    std::thread::sleep(Duration::from_millis(120));
+    s.cancel_transfer();
+
+    // The gate is armed again, so nothing has been released yet.
+    assert_eq!(
+        s.send_progress().map(|p| p.timeouts),
+        Some(0),
+        "the transfer was counted as an unanswered line"
+    );
+    s.cancel_send();
+}
+
+/// A macro is the one input path that queues behind rather than being dropped.
+///
+/// The keyboard's three above are right to drop — a line typed into the middle
+/// of a configuration is a line the far end runs in the wrong place. A script's
+/// `send` is not: upstream's `AcceptPoke` (`ttdde.c:460`) accepts a poke under
+/// `IdTalkSendMem` and pushes it onto the same FIFO, so the order is the order
+/// the script wrote. Routed through `send_text` instead, it vanished.
+#[test]
+fn a_macros_send_queues_behind_a_running_send_rather_than_vanishing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = text_file(dir.path(), "one\ntwo\n");
+    let (mut s, h) = connected();
+    s.send_file(
+        &path,
+        &FileSend {
+            pace: Pace::PerLine(Duration::from_millis(20)),
+            ..FileSend::default()
+        },
+    )
+    .expect("send");
+    s.service_send().expect("service");
+    s.send_macro_text("after\r").expect("macro send");
+    // ...and a keystroke beside it is still dropped, which is the whole
+    // distinction.
+    s.send_text("typed").expect("typed");
+    run(&mut s);
+    assert_eq!(h.outbound(), b"one\rtwo\rafter\r");
+}
+
+/// With nothing queued it goes straight through, so the common case pays
+/// nothing and raises no `SendDone` for a frontend to report.
+#[test]
+fn a_macros_send_with_nothing_queued_goes_straight_out() {
+    let (mut s, h) = connected();
+    s.send_macro_text("plain\r").expect("macro send");
+    assert_eq!(h.outbound(), b"plain\r");
+    assert!(!s.sending(), "nothing should have been queued");
+    assert!(
+        s.drain_events()
+            .iter()
+            .all(|e| !matches!(e, Event::SendDone(_))),
+        "an unqueued macro send should not report a finished send"
+    );
+}

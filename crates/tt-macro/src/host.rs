@@ -313,12 +313,19 @@ impl ScriptHost for SessionHost {
             },
             SendMode::Compat => tt_ttl::host::looks_like_text(bytes),
         };
+        // The `_macro_` pair rather than `send_text`/`send_bytes`: a script's
+        // `send` **queues behind** a running paced send where a keystroke is
+        // dropped by it. That is upstream's own exception — `AcceptPoke`
+        // (`ttdde.c:460`) accepts a poke under `IdTalkSendMem` and pushes it
+        // onto the same FIFO — and it is why a `sendfile` followed by a `send`
+        // arrives in the order the script wrote rather than losing the second
+        // line.
         if text {
             let s = String::from_utf8_lossy(bytes).into_owned();
-            self.ask(move |sess| sess.send_text(&s))?
+            self.ask(move |sess| sess.send_macro_text(&s))?
         } else {
             let bytes = bytes.to_vec();
-            self.ask(move |sess| sess.send_bytes(&bytes))?
+            self.ask(move |sess| sess.send_macro_bytes(&bytes))?
         }
         .map_err(|_| TtlError::CantCall)
     }

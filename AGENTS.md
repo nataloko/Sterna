@@ -614,6 +614,29 @@ Sending, which has two pacing layers and they are not the same one:
   **write**, applies to everything a serial port sends, and is suppressed for
   the length of a protocol transfer (`cv->DelayFlag`). A paste on a serial port
   is subject to both. `send::Sender` and `send::WriteDelay`.
+- **A transfer and the send queue both write through `Session::pending`, and
+  only one of them may own it.** `xfer.rs` writes straight into it, so a piece
+  handed over while a protocol is up lands in the middle of a packet — the
+  transfer succeeds and the file has a line of somebody's configuration in it.
+  `Session::send_file` already refused the other direction; the missing half was
+  `service_send`, which now returns while `self.xfer` is `Some`, and
+  `send_deadline`, which must answer `None` there or the timer it arms fires,
+  finds the hold and re-arms for zero for the whole transfer. Held rather than
+  refused, so a paste still trickling out at `PasteDelayPerLine` cannot fail
+  somebody's ZMODEM. And the release needs `Sender::rebase`: every instant the
+  queue was carrying has passed, so a gated job would otherwise release its next
+  line unanswered the moment the protocol let go **and count a timeout for a
+  wait that never happened** — the one number this feature exists to report
+  honestly. Upstream has all of this and it is defect 40.
+- **A macro's `send` queues behind a running send; a keystroke is dropped by
+  it.** Both facts are upstream's and they are not the same fact:
+  `keyboard.c:1480` tests `TalkStatus` before every key, while `AcceptPoke`
+  (`ttdde.c:460`) accepts a poke under `IdTalkKeyb` **or** `IdTalkSendMem` and
+  pushes another job onto the same FIFO. `Session::send_text` is the keyboard's
+  path and `send_macro_text`/`send_macro_bytes` are the macro's — routing the
+  macro through `send_text` reads as correct and silently ate every `send` that
+  landed inside a paced paste, which `PasteDelayPerLine`'s 10 ms default makes
+  every multi-line paste.
 - **A gate holds the queue *between* pieces**, so a gate with no pace has one
   piece and nothing to hold — the file goes out in one write and the gate is
   never consulted. `Job::effective_pace` turns `Pace::None` plus a gate into
