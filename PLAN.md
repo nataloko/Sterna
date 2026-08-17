@@ -264,9 +264,9 @@ The live remainder, collected here so it cannot hide in the narrative:
   monitor on Linux, and a `WM_DEVICECHANGE` native event filter on Windows,
   would replace the poll and change nothing above it. Windows is the one that
   would gain: its half of `serial::present` is a `QueryDosDeviceW` per tick.
-- **`sendfile` and the two serial send delays** stay refused in the macro
-  host pending a `SendMem`-shaped send queue with its four callers;
-  `crates/tt-macro/src/host.rs` keeps the list.
+- **`sendfile` says it strips control characters and does not** — defect 39 in
+  `docs/upstream-bugs.md`, and one more for the account that has to be made
+  before any of the found-by-reading list can be filed.
 - **The text session log lacks the tapped `HT`, `BS` and wrap line break**
   the macro tap has — a divergence rather than a choice; it is `LogOptions`'
   neighbourhood when somebody gets to it.
@@ -295,8 +295,8 @@ The rule for going on that list: user-visible, not forced by the platform, and
 reproducing upstream instead would have been easy. A divergence Linux or Qt
 forces is a port, and belongs in a code comment and in `AGENTS.md`.
 
-**`docs/deviations.md` is the canonical list** — twenty-five entries as of
-2026-08-16, each with its reason, what stays compatible, and where it lives.
+**`docs/deviations.md` is the canonical list** — twenty-six entries as of
+2026-08-17, each with its reason, what stays compatible, and where it lives.
 The write-ups that used to sit here — the first batch of eight, Find, line
 numbers and the counters — are in `docs/history.md`.
 

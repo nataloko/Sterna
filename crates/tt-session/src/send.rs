@@ -1,0 +1,1870 @@
+//! The paced send queue — upstream's `SendMem` (`teraterm/teraterm/sendmem.cpp`).
+//!
+//! Everything this port has sent so far went straight through: `send_text`,
+//! `send_bytes` and `paste` each queue the whole thing and flush it. Upstream
+//! has not done that since 2019. `SendMem` sits between a caller and the wire
+//! and lets go of the bytes a piece at a time — a character, a line, or a fixed
+//! chunk — with a wait in between, and it does not consider itself finished
+//! until the transport's own queue has drained. Six callers go through it
+//! there: a paste (`clipboar.c:200`), the macro's `send`/`sendln`/`sendfile`
+//! and `sendkcode` (`ttdde.c:399`, `:407`, `:811`, `keyboard.c:1580`),
+//! File > Send file (`vtwin.cpp:4312`) and a file drop (`vtwin.cpp:2048`).
+//!
+//! Its absence is why nine settings in this program's own schema said "At this
+//! time, Sterna does not use this", and why `crates/tt-macro/src/host.rs`
+//! refuses `sendfile`, `setserialdelaychar` and `setserialdelayline`.
+//!
+//! ## What is here and what is one layer up
+//!
+//! This module decides **what goes next and when**. It never touches a
+//! transport, a parser or a setting: [`Sender::take`] hands a [`Piece`] back
+//! and [`crate::Session::service_send`] is what encodes it, echoes it and
+//! queues it. That is the same split [`crate::reopen`] makes with
+//! `ReopenAction`, and it is what lets the tests here be about the algorithm.
+//!
+//! The clock is not here either, in the sense that matters: **every deadline is
+//! an instant, never an interval measured from the moment it is asked for.**
+//! `Session::rearm` re-reads [`Sender::deadline`] after anything at all happens
+//! to a session — `Session::mouse` calls it on every mouse-move event — so a
+//! state answering "20 ms from now" would get a fresh full wait sixty times a
+//! second and never fire. `Reopen::Waiting` had exactly this and stopped
+//! noticing a returning adapter while the pointer was moving.
+//!
+//! ## Two pacing layers, and this is only one of them
+//!
+//! Upstream has a **second**, entirely separate governor inside the serial
+//! write itself (`commlib.c:1068`): `cv->DelayFlag && PortType==IdSerial`, per
+//! character and per line, from `ts.DelayPerChar` and `ts.DelayPerLine`, and
+//! suppressed for the duration of a protocol transfer. That one paces
+//! everything a serial port sends, not just a queued job, and it is not this
+//! module. Do not fold them together — a paste through this queue on a serial
+//! port is subject to both, upstream and here.
+
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
+
+use tt_conn::Result;
+
+/// How long to wait before offering the transport more, when it would not take
+/// what it was last given.
+///
+/// The same 20 ms as the frontend's own retry timer (`shell/src/Session.cpp`'s
+/// `kRetryIntervalMs`), and for the same reason: short enough that a device
+/// releasing CTS is not noticed as lag, long enough that a genuinely wedged
+/// line does not spin.
+const BACKOFF: Duration = Duration::from_millis(20);
+
+/// How much may be queued for the transport before this stops adding to it.
+///
+/// `OutBuffSize` (`tttypes.h:789`). Upstream's is a real fixed buffer and this
+/// is a high-water mark on a `Vec`, so the number is a policy here rather than
+/// a limit — but it is the policy a paced send has always had, and without one
+/// a per-line job on a stalled line would read a whole file into memory twice.
+pub const HIGH_WATER: usize = 16 * 1024;
+
+/// A job's bytes, and which of the two send paths they belong to.
+///
+/// The distinction is `SendMemTextW` against `SendMemBinary`, and it is not
+/// cosmetic: text goes through [`tt_vt::Vt::encode_text`], so a `CR` in it
+/// becomes whatever `CRSend` and LNM say, and bytes do not.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Body {
+    /// Line breaks are already one `CR` each — see
+    /// [`crate::normalize_line_break_cr`], which is what upstream's
+    /// `NormalizeLineBreakCR` does to a text file before it is queued
+    /// (`sendmem.cpp:774`).
+    Text(String),
+    Bytes(Vec<u8>),
+    /// Not bytes at all: the two serial delays, **queued** rather than applied
+    /// at once.
+    ///
+    /// `SendMemSetDelay` (`sendmem.cpp:625`), and it is a job for a reason a
+    /// macro can see. `setserialdelaychar 50` immediately after a `send` must
+    /// pace what comes *after* that send, not the tail of it; putting it in the
+    /// same FIFO is what makes the order the order the script wrote.
+    SetDelay {
+        per_char: Duration,
+        per_line: Duration,
+    },
+}
+
+impl Body {
+    /// How many bytes the whole job is, for a progress display. For
+    /// [`Body::Text`] this is UTF-8 bytes rather than upstream's `wchar_t`
+    /// count; nothing but the progress bar can tell.
+    pub fn len(&self) -> usize {
+        match self {
+            Body::Text(s) => s.len(),
+            Body::Bytes(b) => b.len(),
+            Body::SetDelay { .. } => 0,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// How much goes at once, and how long the queue waits afterwards.
+///
+/// `SendMemDelayType` (`sendmem.h:41`) and `SendMemInitDelay`. Upstream keeps
+/// three separate `delay_per_*` fields and reads them in a fixed order — char
+/// beats line beats chunk (`sendmem.cpp:396`, `:419`, `:459`) — so only one is
+/// ever non-zero and the order is unreachable. One enum says the same thing
+/// without the dead branches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pace {
+    /// Everything at once, which is what every send in this program did before
+    /// this module existed.
+    None,
+    /// One Unicode scalar, or one byte of a [`Body::Bytes`].
+    PerChar(Duration),
+    /// Up to and including the next line break.
+    PerLine(Duration),
+    /// A fixed number of bytes. `SENDMEM_DELAYTYPE_PER_SENDSIZE`.
+    PerChunk { bytes: usize, wait: Duration },
+}
+
+impl Pace {
+    /// The pace a delay type and a tick of zero really mean.
+    ///
+    /// Upstream stores the type and the tick separately and a tick of zero is a
+    /// real value meaning no wait (`ttset.c:2011`) — so `PerLine` with a tick of
+    /// zero is a job that pauses for nothing after every line, which is
+    /// [`Pace::None`] with extra work. `clipboar.c:205` makes the same
+    /// collapse by hand for a paste.
+    pub fn of(kind: PaceKind, tick: Duration, chunk: usize) -> Pace {
+        if tick.is_zero() {
+            return Pace::None;
+        }
+        match kind {
+            PaceKind::None => Pace::None,
+            PaceKind::PerChar => Pace::PerChar(tick),
+            PaceKind::PerLine => Pace::PerLine(tick),
+            // A chunk of nothing would hand over nothing for ever. Upstream
+            // reaches the same answer by a different route: `send_size_max` of
+            // zero falls out of its `else if` into the send-everything arm
+            // (`sendmem.cpp:459`).
+            PaceKind::PerChunk if chunk == 0 => Pace::None,
+            PaceKind::PerChunk => Pace::PerChunk {
+                bytes: chunk,
+                wait: tick,
+            },
+        }
+    }
+}
+
+/// The delay type as the settings file spells it, before the tick is known.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PaceKind {
+    #[default]
+    None,
+    PerChar,
+    PerLine,
+    PerChunk,
+}
+
+/// What holds the next piece until the far end is ready for it.
+///
+/// **This half is Sterna's own** — deviation 26. Everything else in this module
+/// is `SendMem`, which can only wait for a *duration*: it guesses at a number
+/// where the device is already saying it is ready by printing a prompt. YAT's
+/// `WaitForResponse` (`TextTerminalSettings.cs:703`) is where the idea comes
+/// from; the three kinds here are the three answers people actually have to
+/// "how do I know it has finished with the last line".
+///
+/// Every one carries a timeout, and the timeout releases the line rather than
+/// stopping the send. A gate that stops on the first unanswered line is a gate
+/// that leaves half a configuration in a switch.
+#[derive(Clone, Debug)]
+pub enum Gate {
+    /// Nothing: the pace alone decides.
+    None,
+    /// Wait for received text matching this.
+    Prompt { re: regex::Regex, timeout: Duration },
+    /// Wait for the far end to send the line back — a console with no fixed
+    /// prompt, but which echoes.
+    Echo { timeout: Duration },
+    /// Wait for the far end to stop talking for `idle`.
+    Quiet { idle: Duration, timeout: Duration },
+}
+
+impl Gate {
+    /// Compile a prompt pattern, or say why not.
+    ///
+    /// The engine is the `regex` crate's, as [`crate::highlight`]'s and
+    /// [`crate::find`]'s are, and **not** `waitregex`'s Oniguruma: a gate is
+    /// matched inside [`crate::Session::service_send`] on the frontend's
+    /// thread, where a catastrophic backtrack is a window that stops answering.
+    /// For everything short of backreferences and lookaround the two agree.
+    pub fn prompt(pattern: &str, timeout: Duration) -> std::result::Result<Gate, String> {
+        regex::Regex::new(pattern)
+            .map(|re| Gate::Prompt { re, timeout })
+            .map_err(|e| e.to_string())
+    }
+
+    /// Whether the engine will take this pattern, for a dialog to ask as it is
+    /// typed — [`crate::highlight::check`]'s shape.
+    pub fn check(pattern: &str) -> std::result::Result<(), String> {
+        regex::Regex::new(pattern)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn is_none(&self) -> bool {
+        matches!(self, Gate::None)
+    }
+
+    fn timeout(&self) -> Duration {
+        match self {
+            Gate::None => Duration::ZERO,
+            Gate::Prompt { timeout, .. } | Gate::Echo { timeout } => *timeout,
+            Gate::Quiet { timeout, .. } => *timeout,
+        }
+    }
+}
+
+impl PartialEq for Gate {
+    /// By what it means, which for a pattern is its source text —
+    /// `regex::Regex` has no `PartialEq` of its own and two compiled copies of
+    /// the same pattern are the same gate.
+    fn eq(&self, other: &Gate) -> bool {
+        match (self, other) {
+            (Gate::None, Gate::None) => true,
+            (Gate::Prompt { re: a, timeout: x }, Gate::Prompt { re: b, timeout: y }) => {
+                a.as_str() == b.as_str() && x == y
+            }
+            (Gate::Echo { timeout: x }, Gate::Echo { timeout: y }) => x == y,
+            (
+                Gate::Quiet {
+                    idle: a,
+                    timeout: x,
+                },
+                Gate::Quiet {
+                    idle: b,
+                    timeout: y,
+                },
+            ) => a == b && x == y,
+            _ => false,
+        }
+    }
+}
+
+/// One thing to send.
+#[derive(Clone, Debug)]
+pub struct Job {
+    pub body: Body,
+    pub pace: Pace,
+    /// What holds the next piece until the far end has answered.
+    pub gate: Gate,
+    /// Whether to put a copy through the receive parser as it goes.
+    ///
+    /// Captured when the job is queued rather than read live, which is
+    /// upstream's `SendMemInitEcho`: changing `LocalEcho` halfway through a
+    /// file send must not leave half of it echoed.
+    pub echo: bool,
+    /// What a progress display should call it — a file's path, or nothing for a
+    /// paste. Not used for anything else.
+    pub name: Option<String>,
+}
+
+impl Job {
+    /// A job that sends `body` as fast as the transport will take it.
+    pub fn new(body: Body) -> Job {
+        Job {
+            body,
+            pace: Pace::None,
+            gate: Gate::None,
+            echo: false,
+            name: None,
+        }
+    }
+
+    pub fn paced(mut self, pace: Pace) -> Job {
+        self.pace = pace;
+        self
+    }
+
+    pub fn gated(mut self, gate: Gate) -> Job {
+        self.gate = gate;
+        self
+    }
+
+    pub fn echoed(mut self, echo: bool) -> Job {
+        self.echo = echo;
+        self
+    }
+
+    pub fn named(mut self, name: impl Into<String>) -> Job {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// The pace this job really sends at.
+    ///
+    /// A gate holds the queue **between pieces**, so a gate on a job with no
+    /// pace would have exactly one piece and nothing to hold — the file would
+    /// go out in one write and the gate would never be consulted. `Pace::None`
+    /// with a gate therefore means one line at a time with no interval: the
+    /// gate *is* the interval, which is what somebody asking to wait for a
+    /// prompt has asked for.
+    fn effective_pace(&self) -> Pace {
+        match self.pace {
+            Pace::None if !self.gate.is_none() => Pace::PerLine(Duration::ZERO),
+            p => p,
+        }
+    }
+}
+
+/// What [`Sender::take`] handed over, for the caller to put on the wire.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Piece {
+    Text {
+        text: String,
+        echo: bool,
+    },
+    Bytes {
+        data: Vec<u8>,
+        echo: bool,
+    },
+    /// Apply these to the serial write governor. Nothing goes on the wire.
+    SetDelay {
+        per_char: Duration,
+        per_line: Duration,
+    },
+}
+
+/// Why a job stopped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SendEnd {
+    /// Every byte was handed over and the transport's queue drained.
+    Finished,
+    /// Somebody stopped it.
+    Cancelled,
+    /// The link went away underneath it.
+    LinkLost,
+}
+
+/// A finished job, for the frontend that was showing its progress.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SendOutcome {
+    pub name: Option<String>,
+    pub end: SendEnd,
+    /// Bytes handed to the transport. Equal to `total` for
+    /// [`SendEnd::Finished`].
+    pub sent: usize,
+    pub total: usize,
+    /// Pieces released by a [`Gate`]'s timeout rather than by an answer. A
+    /// finished send with a number here went out, but the far end did not keep
+    /// up — or the pattern was wrong, which is the commoner reason and the one
+    /// worth saying out loud.
+    pub timeouts: u32,
+}
+
+/// What a progress display needs, answered by polling rather than by an event.
+///
+/// An event per piece would be one event per character on a per-character
+/// paced job, and the frontend is already being woken for the deadline.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SendProgress {
+    pub name: Option<String>,
+    pub sent: usize,
+    pub total: usize,
+    pub paused: bool,
+    /// Jobs queued behind this one.
+    pub queued: usize,
+    /// Whether the queue is holding, waiting for the far end to answer.
+    pub gated: bool,
+    /// Pieces released by the gate's timeout rather than by an answer.
+    pub timeouts: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum State {
+    /// Nothing queued.
+    Idle,
+    /// There is more to hand over and nothing is stopping it.
+    Ready,
+    /// Nothing until this instant — a pace's wait, or a transport that would
+    /// not take the last piece.
+    ///
+    /// An instant and not a duration, for the reason in this module's own
+    /// documentation.
+    Waiting(Instant),
+    /// Held until the far end answers — see [`Gate`]. The instant is when to
+    /// give up waiting and send anyway.
+    Gated(Instant),
+    /// A person stopped it. No deadline at all: nothing is going to happen
+    /// until somebody says so, and a timer that fires to discover that is a
+    /// timer that should not have been armed.
+    Paused,
+    /// Every byte is handed over; the job ends when the transport's queue is
+    /// empty. `Instant` is when to look again, for the same reason as
+    /// [`State::Waiting`].
+    Draining(Instant),
+}
+
+/// What a [`Gate`] has seen since the last piece went out.
+///
+/// **The buffer is not a line.** `waitregex` matches whole lines, because that
+/// is what upstream's `CheckEOLCheckLog` hands it — but a prompt is the one
+/// piece of text a console prints *without* a line ending, so a gate that
+/// waited for a newline would never see `Switch#` and would time out on every
+/// line of the file. This holds the text since the last line feed and tests it
+/// after every read, so a prompt matches the moment it appears and a whole line
+/// matches when it completes.
+///
+/// The CR stays on a completed line, which is `waitregex`'s rule and worth
+/// keeping so one pattern means one thing in both places: **`$` never matches
+/// at the end of a CRLF line.**
+#[derive(Debug, Default)]
+struct Watch {
+    /// Received text since the last line feed, bounded.
+    seen: String,
+    /// The piece just sent, minus its line ending — [`Gate::Echo`]'s question.
+    sent: String,
+    /// When the last tap byte arrived — [`Gate::Quiet`]'s.
+    last: Option<Instant>,
+    open: bool,
+    /// Pieces released by the timeout rather than by an answer.
+    timeouts: u32,
+}
+
+/// How much received text a gate keeps to match against.
+///
+/// A prompt is short and a banner is not. Dropping from the front rather than
+/// clearing keeps the tail — which is where a prompt is — and the tail is the
+/// only part any of the three gates asks about.
+const WATCH_MAX: usize = 4096;
+
+impl Watch {
+    /// Start watching for the answer to `sent`.
+    fn arm(&mut self, now: Instant, sent: &str) {
+        self.seen.clear();
+        self.sent = sent.trim_end_matches(['\r', '\n']).to_string();
+        self.last = Some(now);
+        self.open = false;
+    }
+
+    /// Received text, straight off the parser's tap.
+    ///
+    /// Tested **once per line and once for the tail**, not once per character:
+    /// a completed line has to be looked at before the buffer is cleared for
+    /// the next one, and the tail has to be looked at because a prompt has no
+    /// line ending. Per character would be a regex run per byte of everything
+    /// the far end says, which is a price a terminal cannot pay on its receive
+    /// path.
+    fn feed(&mut self, now: Instant, gate: &Gate, text: &str) {
+        self.last = Some(now);
+        let mut rest = text;
+        while let Some(at) = rest.find('\n') {
+            self.seen.push_str(&rest[..at]);
+            self.test(gate);
+            self.seen.clear();
+            rest = &rest[at + 1..];
+        }
+        self.seen.push_str(rest);
+        self.trim();
+        self.test(gate);
+    }
+
+    /// Keep the tail, which is where a prompt is, and drop the head.
+    ///
+    /// In one drain rather than a character at a time: a device that prints a
+    /// megabyte with no line feed in it is exactly the case this bound exists
+    /// for, and dropping one character per pass would be quadratic in it.
+    fn trim(&mut self) {
+        if self.seen.len() <= WATCH_MAX {
+            return;
+        }
+        let want = self.seen.len() - WATCH_MAX;
+        let cut = (want..=self.seen.len())
+            .find(|&i| self.seen.is_char_boundary(i))
+            .unwrap_or(self.seen.len());
+        self.seen.drain(..cut);
+    }
+
+    fn test(&mut self, gate: &Gate) {
+        if self.open || self.seen.is_empty() {
+            return;
+        }
+        self.open = match gate {
+            Gate::None => true,
+            Gate::Prompt { re, .. } => re.is_match(&self.seen),
+            // A substring rather than an equality: a console that prints its
+            // prompt and the echo on one line has both in the buffer, and a
+            // gate that insisted on the line being *only* the echo would never
+            // open on the commonest arrangement there is.
+            Gate::Echo { .. } => !self.sent.is_empty() && self.seen.contains(&self.sent),
+            // Time, not text.
+            Gate::Quiet { .. } => false,
+        };
+    }
+
+    /// Whether the gate is open at `now`, which for [`Gate::Quiet`] is a
+    /// question about the clock rather than about anything received.
+    fn is_open(&self, now: Instant, gate: &Gate) -> bool {
+        if self.open {
+            return true;
+        }
+        match gate {
+            Gate::Quiet { idle, .. } => self
+                .last
+                .is_some_and(|at| now.saturating_duration_since(at) >= *idle),
+            _ => false,
+        }
+    }
+
+    /// When to look again, for a gate that answers to the clock.
+    fn quiet_deadline(&self, gate: &Gate) -> Option<Instant> {
+        match gate {
+            Gate::Quiet { idle, .. } => self.last.map(|at| at + *idle),
+            _ => None,
+        }
+    }
+}
+
+/// The queue of jobs, the cursor into the running one, and when the next thing
+/// is due.
+#[derive(Debug, Default)]
+pub struct Sender {
+    queue: VecDeque<Job>,
+    /// How far into `queue.front()`'s body the cursor is, in bytes. Always on a
+    /// character boundary for a [`Body::Text`].
+    at: usize,
+    state: SendState,
+    watch: Watch,
+}
+
+/// `State` is not `Default`, and a `Sender::default()` is the state a session
+/// spends nearly all of its life in.
+#[derive(Debug)]
+struct SendState(State);
+
+impl Default for SendState {
+    fn default() -> SendState {
+        SendState(State::Idle)
+    }
+}
+
+impl Sender {
+    /// Queue one. It starts the moment the caller next services the sender,
+    /// which is what `SendMemStart` does by setting `TalkStatus`.
+    ///
+    /// A second job **queues behind** the first rather than replacing it —
+    /// upstream keeps a FIFO of them (`smptrPush`, `sendmem.cpp:107`) so a
+    /// macro's `send` during a file send arrives after the file rather than
+    /// interleaved with it.
+    pub fn push(&mut self, job: Job) {
+        let first = self.queue.is_empty();
+        self.queue.push_back(job);
+        if first {
+            self.at = 0;
+            self.watch = Watch::default();
+            self.state.0 = State::Ready;
+        }
+    }
+
+    /// Whether anything is queued at all. The hot-path question: a session with
+    /// nothing sending must pay nothing for this module.
+    pub fn is_running(&self) -> bool {
+        !self.queue.is_empty()
+    }
+
+    pub fn is_paused(&self) -> bool {
+        matches!(self.state.0, State::Paused)
+    }
+
+    /// Stop everything and say what to report. `None` when nothing was running.
+    ///
+    /// Every queued job goes, not only the running one: cancelling is a person
+    /// saying stop, and leaving three more behind to start by themselves is not
+    /// what they asked for.
+    pub fn cancel(&mut self, end: SendEnd) -> Option<SendOutcome> {
+        let job = self.queue.pop_front()?;
+        let outcome = SendOutcome {
+            name: job.name,
+            end,
+            sent: self.at,
+            total: job.body.len(),
+            timeouts: self.watch.timeouts,
+        };
+        self.queue.clear();
+        self.at = 0;
+        self.watch = Watch::default();
+        self.state.0 = State::Idle;
+        Some(outcome)
+    }
+
+    /// Hold, or let go. Upstream's `OnPause` (`sendmem.cpp:224`), which
+    /// re-triggers the timer on release rather than working out what was left
+    /// of the wait — so a pause of an hour costs the paused line one more
+    /// interval and no more.
+    pub fn set_paused(&mut self, paused: bool) {
+        if !self.is_running() {
+            return;
+        }
+        match (paused, self.state.0) {
+            (true, State::Paused) => {}
+            (true, _) => self.state.0 = State::Paused,
+            (false, State::Paused) => self.state.0 = State::Ready,
+            (false, _) => {}
+        }
+    }
+
+    /// When there is next something to do. `None` when there is not, and
+    /// `Duration::ZERO` for now.
+    ///
+    /// **Idempotent in every state**, which is the whole contract: a frontend
+    /// re-reads this after anything at all and restarts one single-shot timer
+    /// with the answer.
+    pub fn deadline(&self, now: Instant) -> Option<Duration> {
+        if self.queue.is_empty() {
+            return None;
+        }
+        match self.state.0 {
+            State::Idle | State::Paused => None,
+            State::Ready => Some(Duration::ZERO),
+            State::Waiting(at) | State::Draining(at) => Some(at.saturating_duration_since(now)),
+            // Two instants, and the earlier one wins: the gate's own timeout,
+            // and — for a gate watching for silence — the moment the line will
+            // have been quiet long enough. Received bytes move the second, and
+            // `Session::gate_bytes_in` re-reads this afterwards.
+            State::Gated(timeout_at) => {
+                let gate = self.queue.front().map(|j| &j.gate);
+                let quiet = gate.and_then(|g| self.watch.quiet_deadline(g));
+                let at = quiet.map_or(timeout_at, |q| q.min(timeout_at));
+                Some(at.saturating_duration_since(now))
+            }
+        }
+    }
+
+    /// What the running job looks like from outside.
+    pub fn progress(&self) -> Option<SendProgress> {
+        let job = self.queue.front()?;
+        Some(SendProgress {
+            name: job.name.clone(),
+            sent: self.at,
+            total: job.body.len(),
+            paused: self.is_paused(),
+            queued: self.queue.len() - 1,
+            gated: matches!(self.state.0, State::Gated(_)),
+            timeouts: self.watch.timeouts,
+        })
+    }
+
+    /// Hand over the next piece, or nothing.
+    ///
+    /// `free` is how much the transport's queue will take — zero is a line that
+    /// has not moved, and the sender waits rather than growing the queue, which
+    /// is upstream's `GetBufferFreeSpece` returning zero (`sendmem.cpp:388`).
+    ///
+    /// Returns `None` in three different situations that all look the same from
+    /// here: nothing queued, a wait that has not expired, and a job whose bytes
+    /// are all handed over. [`Sender::drained`] tells the last one apart,
+    /// because only the caller knows whether the transport has caught up.
+    pub fn take(&mut self, now: Instant, free: usize) -> Option<Piece> {
+        self.enter_gate(now);
+        match self.state.0 {
+            State::Idle | State::Paused | State::Draining(_) => return None,
+            State::Waiting(at) if now < at => return None,
+            State::Gated(timeout_at) => {
+                let gate = self
+                    .queue
+                    .front()
+                    .map(|j| j.gate.clone())
+                    .unwrap_or(Gate::None);
+                if self.watch.is_open(now, &gate) {
+                    // Answered. On to the next piece.
+                } else if now >= timeout_at {
+                    // Released rather than stopped. A gate that gave up on the
+                    // first unanswered line would leave half a configuration in
+                    // a switch — so this counts and carries on, and the count
+                    // is what the progress panel and the outcome report.
+                    self.watch.timeouts = self.watch.timeouts.saturating_add(1);
+                } else {
+                    return None;
+                }
+            }
+            State::Waiting(_) | State::Ready => {}
+        }
+        let job = self.queue.front()?;
+        if let Body::SetDelay { per_char, per_line } = job.body {
+            // No bytes, so nothing to pace and nothing to drain — but it still
+            // goes through `Draining` so that the job ahead of it in the FIFO
+            // has reached the wire before its delays change.
+            self.state.0 = State::Draining(now);
+            return Some(Piece::SetDelay { per_char, per_line });
+        }
+        let left = job.body.len() - self.at;
+        if left == 0 {
+            // Handed over on an earlier call; it ends when the wire catches up.
+            self.state.0 = State::Draining(now);
+            return None;
+        }
+        if free == 0 {
+            self.state.0 = State::Waiting(now + BACKOFF);
+            return None;
+        }
+
+        let take = span(&job.body, self.at, job.effective_pace(), free);
+        // A pace that could not fit even its smallest unit into the room going:
+        // wait rather than send a fragment. Only `PerLine` and `PerChunk` can
+        // ask for more than `free`, and a line longer than the whole buffer is
+        // the one case upstream gets wrong — `sendmem.cpp:454` truncates the
+        // length, clears the line detector and then returns without sending
+        // any of it, so the truncation is dead and the detector is reset for
+        // no reason. Waiting is what that code meant to do.
+        let Some(take) = take else {
+            self.state.0 = State::Waiting(now + BACKOFF);
+            return None;
+        };
+
+        let slice = self.at..self.at + take;
+        let piece = match &job.body {
+            Body::Text(s) => Piece::Text {
+                text: s[slice.clone()].to_string(),
+                echo: job.echo,
+            },
+            Body::Bytes(b) => Piece::Bytes {
+                data: b[slice.clone()].to_vec(),
+                echo: job.echo,
+            },
+            // Handled above: it has no bytes and never reaches `span`.
+            Body::SetDelay { .. } => return None,
+        };
+        // Armed before the piece goes out, so an answer that arrives during the
+        // pace's own wait has already opened the gate by the time the wait
+        // expires. Watching only from the moment the gate is entered would make
+        // a fast device look like a silent one.
+        let gate = job.gate.clone();
+        if !gate.is_none() {
+            let sent = match &job.body {
+                Body::Text(s) => s[slice].to_string(),
+                Body::Bytes(b) => String::from_utf8_lossy(&b[slice]).into_owned(),
+                Body::SetDelay { .. } => String::new(),
+            };
+            self.watch.arm(now, &sent);
+        }
+        self.at += take;
+
+        // The wait comes *after* a piece and not before the next one, and only
+        // when something is left — upstream's `send_left != 0 && need_delay`
+        // (`sendmem.cpp:515`). A job whose last line is exactly one line long
+        // therefore does not sit through an interval it cannot use.
+        // With both a pace and a gate the interval is served first and the gate
+        // second, which is the order YAT's two settings compose in — and
+        // `enter_gate` is what makes the second half happen.
+        let done = self.at == job.body.len();
+        self.state.0 = match (done, job.effective_pace()) {
+            (true, _) => State::Draining(now),
+            (false, Pace::None) => State::Ready,
+            (false, Pace::PerChar(w) | Pace::PerLine(w) | Pace::PerChunk { wait: w, .. }) => {
+                State::Waiting(now + w)
+            }
+        };
+        Some(piece)
+    }
+
+    /// Move from a pace's wait into the gate's, once the interval is up.
+    ///
+    /// Its own step rather than part of `take`, because the two are different
+    /// questions and only the first has an answer at the moment the piece goes
+    /// out: how long to hold the line, and then whether the far end has spoken.
+    fn enter_gate(&mut self, now: Instant) {
+        let State::Waiting(at) = self.state.0 else {
+            return;
+        };
+        if now < at {
+            return;
+        }
+        let Some(job) = self.queue.front() else {
+            return;
+        };
+        if !job.gate.is_none() {
+            self.state.0 = State::Gated(now + job.gate.timeout());
+        }
+    }
+
+    /// Received text, for whatever gate is watching. A no-op when none is.
+    pub fn feed_tap(&mut self, now: Instant, text: &str) {
+        let Some(job) = self.queue.front() else {
+            return;
+        };
+        if job.gate.is_none() {
+            return;
+        }
+        let gate = job.gate.clone();
+        self.watch.feed(now, &gate, text);
+    }
+
+    /// Whether anything queued is watching the received stream.
+    ///
+    /// The parser's tap costs something to keep, so it is turned on only while
+    /// this is true — see `Session::refresh_macro_tap`.
+    pub fn needs_tap(&self) -> bool {
+        self.queue.front().is_some_and(|j| !j.gate.is_none())
+    }
+
+    /// How many pieces went out on the timeout rather than on an answer.
+    pub fn timeouts(&self) -> u32 {
+        self.watch.timeouts
+    }
+
+    /// The transport's queue is empty, so a job that had handed everything over
+    /// is finished. `None` at any other time.
+    ///
+    /// Upstream will not end a job until `GetOutBuffInfo` says zero
+    /// (`sendmem.cpp:373`), and the reason is visible in the progress dialog it
+    /// is refreshing one line earlier: "sent" must mean *gone*, not *queued*.
+    /// It matters more here, because the thing waiting on the answer is a
+    /// macro's `sendfile` returning.
+    pub fn drained(&mut self) -> Option<SendOutcome> {
+        let State::Draining(_) = self.state.0 else {
+            return None;
+        };
+        let job = self.queue.pop_front()?;
+        let outcome = SendOutcome {
+            name: job.name,
+            end: SendEnd::Finished,
+            sent: self.at,
+            total: job.body.len(),
+            timeouts: self.watch.timeouts,
+        };
+        self.at = 0;
+        // Per job, not per queue: the next one's gate starts from nothing.
+        self.watch = Watch::default();
+        self.state.0 = if self.queue.is_empty() {
+            State::Idle
+        } else {
+            State::Ready
+        };
+        Some(outcome)
+    }
+
+    /// Come back to a draining job later — the transport still has bytes.
+    pub fn still_draining(&mut self, now: Instant) {
+        if matches!(self.state.0, State::Draining(_)) {
+            self.state.0 = State::Draining(now + BACKOFF);
+        }
+    }
+
+    /// Put every deadline back on the clock after the queue has been held.
+    ///
+    /// A file transfer owns the byte stream, so the queue does not run while
+    /// one does — and by the time it comes back every instant it was carrying
+    /// has passed. Without this a **gated** job resumes with its timeout
+    /// already expired: it releases the next line into a device that never
+    /// answered, and counts a timeout for a wait that never happened, which is
+    /// the one number this feature exists to report honestly.
+    ///
+    /// `Watch::last` moves too. Nothing reaches the tap during a transfer — the
+    /// pump's transfer arm returns before `macro_bytes_in` — so a
+    /// [`Gate::Quiet`] would otherwise measure the whole transfer as silence
+    /// and open on the instant it ends.
+    ///
+    /// Idempotent, and a no-op in the three states that carry no instant.
+    pub fn rebase(&mut self, now: Instant) {
+        match self.state.0 {
+            // The pace's interval is not served again: whatever held the queue
+            // took far longer than one, and this is the moment it is due.
+            State::Waiting(_) => self.state.0 = State::Waiting(now),
+            State::Draining(_) => self.state.0 = State::Draining(now),
+            State::Gated(_) => {
+                let timeout = self
+                    .queue
+                    .front()
+                    .map_or(Duration::ZERO, |j| j.gate.timeout());
+                self.state.0 = State::Gated(now + timeout);
+            }
+            State::Idle | State::Ready | State::Paused => {}
+        }
+        // Only when something was already watching: an unarmed `Watch` has no
+        // gate behind it, and giving it a clock would make `is_open` answer for
+        // a job that never asked.
+        if self.watch.last.is_some() {
+            self.watch.last = Some(now);
+        }
+    }
+}
+
+/// The *other* pacing layer: `commlib.c:1068`, inside the serial write itself.
+///
+/// Not part of the queue above and deliberately not folded into it. That one is
+/// a caller's decision about one job; this is a property of the **port**, it
+/// applies to everything a serial line sends — a keystroke, a paste, a macro's
+/// `send` — and it is suppressed for the duration of a protocol transfer, which
+/// is what `cv->DelayFlag` is (`filesys_proto.cpp:436`, `:1060`). A paste on a
+/// serial port is subject to both, upstream and here.
+///
+/// `DelayPerChar` and `DelayPerLine` have been in this program's schema since
+/// it had one, describing a behaviour it did not have.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WriteDelay {
+    per_char: Duration,
+    per_line: Duration,
+    /// Nothing may go until this instant. An instant and not a duration, for
+    /// the reason at the top of this module.
+    until: Option<Instant>,
+}
+
+impl WriteDelay {
+    /// Take the two numbers. `setserialdelaychar` and `setserialdelayline` move
+    /// them, as does opening a port (`commlib.c:175`, `:313`).
+    pub fn set(&mut self, per_char: Duration, per_line: Duration) {
+        self.per_char = per_char;
+        self.per_line = per_line;
+        if per_char.is_zero() && per_line.is_zero() {
+            // Nothing to hold the line for. Releasing rather than waiting out
+            // an interval that no longer exists: a macro that has just turned
+            // the delays off is asking for the next byte to go now.
+            self.until = None;
+        }
+    }
+
+    pub fn per_char(&self) -> Duration {
+        self.per_char
+    }
+
+    pub fn per_line(&self) -> Duration {
+        self.per_line
+    }
+
+    /// Whether it is doing anything. The common answer, on every write of every
+    /// session, is no.
+    pub fn is_active(&self) -> bool {
+        !self.per_char.is_zero() || !self.per_line.is_zero()
+    }
+
+    /// When the line may be written to again, or `None` for now.
+    pub fn deadline(&self, now: Instant) -> Option<Duration> {
+        let until = self.until?;
+        (until > now).then(|| until.saturating_duration_since(now))
+    }
+
+    /// How much of `bytes` may go now, or `None` while the line is held.
+    ///
+    /// `line_end` is `0x0d` when `CRSend` is a bare CR and `0x0a` otherwise —
+    /// upstream's own choice (`commlib.c:1071`), and it is the *live* mode
+    /// rather than the file's.
+    ///
+    /// With both delays set, upstream sends **one byte** and waits the
+    /// per-character interval unless that byte happens to be the line end. The
+    /// per-line scan is skipped entirely in that case (`commlib.c:1077`), which
+    /// is not what either name suggests and is reproduced here.
+    pub fn plan(&self, now: Instant, bytes: &[u8], line_end: u8) -> Option<(usize, Duration)> {
+        if bytes.is_empty() {
+            return None;
+        }
+        if let Some(until) = self.until {
+            if until > now {
+                return None;
+            }
+        }
+        if !self.per_line.is_zero() {
+            let mut n = 1;
+            if self.per_char.is_zero() {
+                while n < bytes.len() && bytes[n - 1] != line_end {
+                    n += 1;
+                }
+            }
+            let wait = if bytes[n - 1] == line_end {
+                self.per_line
+            } else {
+                self.per_char
+            };
+            return Some((n, wait));
+        }
+        if !self.per_char.is_zero() {
+            return Some((1, self.per_char));
+        }
+        Some((bytes.len(), Duration::ZERO))
+    }
+
+    /// Report what the transport took. `wait` is the second half of
+    /// [`WriteDelay::plan`]'s answer.
+    ///
+    /// The hold is armed only when the write took **everything** it was
+    /// offered — upstream's `C == D` (`commlib.c:1148`). A short write has not
+    /// finished the unit the interval belongs to, so waiting for it would pace
+    /// a line that is still half on the wire.
+    pub fn wrote(&mut self, now: Instant, planned: usize, wrote: usize, wait: Duration) {
+        if planned == wrote && !wait.is_zero() {
+            self.until = Some(now + wait);
+        }
+    }
+
+    /// Let go of the line. A connect and a disconnect both reach this: the hold
+    /// belongs to a port, and the next one need not be the same port.
+    pub fn release(&mut self) {
+        self.until = None;
+    }
+}
+
+/// Where a finished send's outcome goes besides the event queue, for a caller
+/// on another thread that is blocked on it.
+///
+/// `TransferReply`'s shape and for the same reason: a macro's `sendfile` runs
+/// on the macro's thread and the send runs on the frontend's, and the command
+/// does not return until the file has gone. Upstream reaches the same place
+/// through `SendMemSendFile2`'s completion callback (`ttdde.c:811`), which is
+/// what unparks `ttpmacro` from `IdTTLWaitCmndResult`.
+#[derive(Clone, Debug, Default)]
+pub struct SendReply(std::sync::Arc<(std::sync::Mutex<Option<SendOutcome>>, std::sync::Condvar)>);
+
+impl SendReply {
+    pub fn new() -> SendReply {
+        SendReply::default()
+    }
+
+    /// The session's end.
+    pub fn post(&self, outcome: SendOutcome) {
+        let (slot, wake) = &*self.0;
+        *slot.lock().unwrap() = Some(outcome);
+        wake.notify_all();
+    }
+
+    /// The waiter's end: block for up to `timeout`, and take the outcome if it
+    /// has arrived. A timeout rather than a plain wait, so the caller keeps the
+    /// turn — it has a cancel to answer and a frontend that may have gone.
+    pub fn wait(&self, timeout: Duration) -> Option<SendOutcome> {
+        let (slot, wake) = &*self.0;
+        let guard = slot.lock().unwrap();
+        let (mut guard, _) = wake
+            .wait_timeout_while(guard, timeout, |o| o.is_none())
+            .unwrap();
+        guard.take()
+    }
+}
+
+/// Why a send could not be started.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SendError {
+    NotConnected,
+    /// A file transfer owns the byte stream. Everything a person could type is
+    /// refused while one is up, and a file is the largest stray byte there is.
+    TransferRunning,
+    /// The file could not be read. `String` is the operating system's reason,
+    /// which is the only useful thing to say about it.
+    Unreadable(String),
+}
+
+impl std::fmt::Display for SendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SendError::NotConnected => write!(f, "not connected"),
+            SendError::TransferRunning => write!(f, "a file transfer is running"),
+            SendError::Unreadable(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for SendError {}
+
+/// What File > Send file line by line was asked for.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FileSend {
+    /// `TransBin`. Text goes through [`tt_vt::Vt::encode_text`] with its line
+    /// breaks already normalised; bytes go exactly as they are on disk.
+    pub binary: bool,
+    pub pace: Pace,
+    /// What holds each line until the far end has answered — the half of this
+    /// feature that upstream has no equivalent for.
+    pub gate: Gate,
+    /// `ts.LocalEcho` at the moment the job is queued.
+    pub echo: bool,
+}
+
+impl Default for FileSend {
+    fn default() -> FileSend {
+        FileSend {
+            binary: false,
+            pace: Pace::None,
+            gate: Gate::None,
+            echo: false,
+        }
+    }
+}
+
+/// What File > Send file would do right now, out of the settings file.
+///
+/// Upstream's own dialog is seeded the same way and writes back to the same
+/// four keys (`vtwin.cpp:4290`), which is what `SendfileSkipOptionDialog` then
+/// lets somebody skip. Those keys have been read, written and acted on by
+/// nothing since this program had a settings file; this is where they start
+/// meaning something.
+pub fn file_send_defaults(s: &crate::Settings) -> FileSend {
+    use tt_config::TransferRawSendDelayType as D;
+    let kind = match s.transfer_raw_send_delay_type {
+        D::NoDelay => PaceKind::None,
+        D::PerChar => PaceKind::PerChar,
+        D::PerLine => PaceKind::PerLine,
+        D::PerSendSize => PaceKind::PerChunk,
+    };
+    FileSend {
+        binary: s.transfer_binary,
+        pace: Pace::of(
+            kind,
+            Duration::from_millis(s.transfer_raw_send_delay_tick.max(0) as u64),
+            s.transfer_raw_send_size.max(0) as usize,
+        ),
+        gate: gate_from(s),
+        echo: s.terminal_local_echo,
+    }
+}
+
+/// The gate the settings describe — [`Gate::None`] when they describe none, and
+/// when they describe a prompt the engine will not compile.
+///
+/// A pattern that does not compile is a gate that would hold every line until
+/// its timeout, which is worse than no gate at all and says nothing about why.
+/// The dialog checks the pattern where somebody can see the answer; this is the
+/// backstop for a hand-edited file.
+pub fn gate_from(s: &crate::Settings) -> Gate {
+    use tt_config::TransferSendGate as G;
+    let timeout = Duration::from_millis(s.transfer_send_gate_timeout.max(0) as u64);
+    match s.transfer_send_gate {
+        G::None => Gate::None,
+        G::Prompt => match regex::Regex::new(&s.transfer_send_gate_pattern) {
+            Ok(re) if !s.transfer_send_gate_pattern.is_empty() => Gate::Prompt { re, timeout },
+            _ => Gate::None,
+        },
+        G::Echo => Gate::Echo { timeout },
+        G::Quiet => Gate::Quiet {
+            idle: Duration::from_millis(s.transfer_send_quiet_ms.max(0) as u64),
+            timeout,
+        },
+    }
+}
+
+impl crate::Session {
+    /// Send a file through the terminal's own write path, a piece at a time.
+    ///
+    /// Upstream's `SendMemSendFile` (`sendmem.cpp:805`), which is what
+    /// File > Send file does there and what the macro command `sendfile` runs.
+    /// It is **not** a file transfer: nothing is framed, nothing is
+    /// acknowledged, and the far end sees exactly what somebody typing it
+    /// would have sent.
+    ///
+    /// The whole file is read into memory, which is upstream's `LoadFileWW` /
+    /// `LoadFileBinary`. `SendfileSequential` is the setting that asks for the
+    /// other behaviour and this port does not have a second sender to point it
+    /// at; the schema says so.
+    ///
+    /// A text file is decoded as UTF-8, lossily, with a byte-order mark
+    /// removed. Upstream decodes by BOM and then by the machine's ANSI code
+    /// page, which is a Windows answer to a Windows question — `tt-ttl` keeps
+    /// the ACP path because a `.ttl` is a Windows artefact, and a configuration
+    /// somebody is about to paste into a console is not.
+    ///
+    /// **Nothing is stripped.** `sendfile`'s manual page says text mode removes
+    /// every control character except TAB, LF and CR, and that was true of the
+    /// Tera Term 4 sender (`FileSend1`, `filesys.cpp:278`) — which Tera Term 5
+    /// `#if 0`'d out of the macro path in favour of `SendMemSendFile2`
+    /// (`ttdde.c:807`). `SendMem` strips nothing, so neither does this; the
+    /// documentation is what is stale. See `docs/upstream-bugs.md`.
+    pub fn send_file(
+        &mut self,
+        path: &std::path::Path,
+        opts: &FileSend,
+    ) -> std::result::Result<(), SendError> {
+        self.check_can_send()?;
+        let raw = std::fs::read(path).map_err(|e| SendError::Unreadable(e.to_string()))?;
+        let body = if opts.binary {
+            Body::Bytes(raw)
+        } else {
+            let text = String::from_utf8_lossy(&raw);
+            Body::Text(crate::normalize_line_break_cr(
+                text.strip_prefix('\u{feff}').unwrap_or(&text),
+            ))
+        };
+        let job = Job {
+            body,
+            pace: opts.pace,
+            gate: opts.gate.clone(),
+            echo: opts.echo,
+            name: Some(path.display().to_string()),
+        };
+        self.push_send(job);
+        Ok(())
+    }
+
+    /// Queue a job built by hand — a paste, or a macro's `send`.
+    ///
+    /// Refused for the same two reasons a file send is, and silently: the
+    /// callers here are the paths a keystroke reaches, and upstream drops those
+    /// rather than reporting them (`keyboard.c:1480`'s `TalkStatus` test).
+    pub fn queue_send(&mut self, job: Job) -> std::result::Result<(), SendError> {
+        self.check_can_send()?;
+        self.push_send(job);
+        Ok(())
+    }
+
+    /// A macro's `send`/`sendln` — the one input path that **queues behind** a
+    /// running send instead of being dropped by it.
+    ///
+    /// [`crate::Session::send_text`] is the *keyboard's* path and drops, which
+    /// is `keyboard.c:1480` testing `TalkStatus` before every key and right for
+    /// a keystroke: a line typed into the middle of a configuration is a line
+    /// the far end runs in the wrong place. A macro is the exception upstream
+    /// makes as well — `AcceptPoke` (`ttdde.c:460`) accepts a poke when
+    /// `TalkStatus` is `IdTalkKeyb` **or** `IdTalkSendMem`, and hands it to
+    /// `SendData`, which pushes another `SendMem` job onto the same FIFO. A
+    /// script's `send` after a `sendfile` therefore arrives after the file
+    /// rather than vanishing, and the order is the order the script wrote.
+    ///
+    /// Straight through when nothing is queued, so the common case costs
+    /// nothing and raises no [`crate::Event::SendDone`]. Still dropped during a
+    /// **transfer**, which is where it was already dropped before the queue
+    /// existed.
+    pub fn send_macro_text(&mut self, text: &str) -> Result<()> {
+        if !self.sender.is_running() {
+            return self.send_text(text);
+        }
+        if self.xfer.is_some() {
+            return Ok(());
+        }
+        self.push_send(
+            Job::new(Body::Text(text.to_string()))
+                // Read now rather than when the piece goes out, which is
+                // `SendMemInitEcho`: a setting changed while the job waits its
+                // turn must not echo half of it.
+                .echoed(self.vt.local_echo()),
+        );
+        Ok(())
+    }
+
+    /// The binary half of the above — `sendbinary`, and whatever
+    /// `looks_like_text` sends this way.
+    pub fn send_macro_bytes(&mut self, bytes: &[u8]) -> Result<()> {
+        if !self.sender.is_running() {
+            return self.send_bytes(bytes);
+        }
+        if self.xfer.is_some() {
+            return Ok(());
+        }
+        self.push_send(Job::new(Body::Bytes(bytes.to_vec())).echoed(self.vt.local_echo()));
+        Ok(())
+    }
+
+    fn check_can_send(&self) -> std::result::Result<(), SendError> {
+        if self.xfer.is_some() {
+            return Err(SendError::TransferRunning);
+        }
+        if self.conn.is_none() {
+            return Err(SendError::NotConnected);
+        }
+        Ok(())
+    }
+
+    fn push_send(&mut self, job: Job) {
+        self.sender.push(job);
+        // A gated job is the third thing that wants the parser's tap on.
+        self.refresh_macro_tap();
+    }
+
+    /// Whether a queued send owns the wire.
+    ///
+    /// While one does, **typing is dropped** — upstream sets
+    /// `TalkStatus = IdTalkSendMem` for the duration and `keyboard.c:1480`
+    /// tests it before every key. A line typed into the middle of a
+    /// configuration being pasted is a line the far end runs in the wrong
+    /// place. A macro's `send` is not dropped; it queues behind, which is the
+    /// one exception upstream makes too (`ttdde.c:460`).
+    pub fn sending(&self) -> bool {
+        self.sender.is_running()
+    }
+
+    /// What the running send is doing, for a progress display.
+    pub fn send_progress(&self) -> Option<SendProgress> {
+        self.sender.progress()
+    }
+
+    /// Hold the running send, or let it go again.
+    pub fn pause_send(&mut self, paused: bool) {
+        self.sender.set_paused(paused);
+    }
+
+    /// Post the *next* send's outcome to `reply` as well as raising the event.
+    ///
+    /// Armed by whoever is about to start one and cleared when it fires, so a
+    /// caller blocked on a reply cannot be woken by somebody else's send. The
+    /// same arrangement as [`crate::Session::notify_transfer`].
+    pub fn notify_send(&mut self, reply: SendReply) {
+        self.send_reply = Some(reply);
+    }
+
+    /// Stop it. Raises [`crate::Event::SendDone`] unless nothing was running.
+    pub fn cancel_send(&mut self) {
+        if let Some(outcome) = self.sender.cancel(SendEnd::Cancelled) {
+            self.finish_send(outcome);
+        }
+    }
+
+    /// End a send because the link did — called from `Session::line_went_away`,
+    /// where every other thing that a dead connection ends is ended.
+    pub(crate) fn send_link_lost(&mut self) {
+        if let Some(outcome) = self.sender.cancel(SendEnd::LinkLost) {
+            self.finish_send(outcome);
+        }
+    }
+
+    /// The one place a send ends. All three callers reach it.
+    fn finish_send(&mut self, outcome: SendOutcome) {
+        // ...and the one place the tap it may have turned on is given back. A
+        // macro or a plugin still holding it keeps it: that is the whole reason
+        // `refresh_macro_tap` exists rather than a `set_macro_tap_enabled`
+        // written from what this side happens to know.
+        self.refresh_macro_tap();
+        if let Some(reply) = self.send_reply.take() {
+            reply.post(outcome.clone());
+        }
+        self.events.push(crate::Event::SendDone(Box::new(outcome)));
+    }
+
+    /// How long the caller may sleep before the send queue needs attention.
+    ///
+    /// **The core owns the instant and the frontend owns the timer**, the same
+    /// arrangement as [`crate::Session::transfer_deadline`] and
+    /// [`crate::Session::reopen_deadline`], and for a sharper reason than
+    /// either: a per-character pace of 1 ms cannot be expressed by the session
+    /// tick at all, which is `Qt::VeryCoarseTimer` and rounds to whole seconds.
+    ///
+    /// Re-read it after every [`Session::service_send`](crate::Session::service_send)
+    /// and after anything else that touches the session. It is idempotent —
+    /// asking does not postpone the answer.
+    pub fn send_deadline(&self) -> Option<Duration> {
+        // A transfer owns the byte stream, so the queue is held for the length
+        // of one and there is nothing to wake up for — see
+        // [`Session::service_send`]. Answering with the queue's own deadline
+        // here would arm a timer that fires, finds the hold, and re-arms for
+        // `Duration::ZERO`: a spin for the whole transfer.
+        if self.xfer.is_some() {
+            return None;
+        }
+        let now = Instant::now();
+        // Two clocks, one timer. The queue's is a caller's pace; the write
+        // governor's is the serial port's, and either can be the reason the
+        // next byte is not going yet. Nothing distinguishes them above this: a
+        // frontend arms one timer and calls `service_send`.
+        let queue = self.sender.deadline(now);
+        let wire = self
+            .write_delay_applies()
+            .then(|| self.write_delay.deadline(now))
+            .flatten();
+        match (queue, wire) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    /// The two serial delays, which pace everything this port sends.
+    ///
+    /// `commlib.c:175` copies them out of the settings when the port opens and
+    /// `SendMemSetDelay` moves them from a macro. Reading them live instead
+    /// would be a different feature: a macro's `setserialdelaychar` is not
+    /// supposed to survive into the settings file.
+    pub fn set_write_delay(&mut self, per_char: Duration, per_line: Duration) {
+        self.write_delay.set(per_char, per_line);
+    }
+
+    /// `setserialdelaychar` / `setserialdelayline` — the macro's half.
+    ///
+    /// Queued rather than applied, which is `SendMemSetDelay`: a delay change
+    /// on the line after a `send` must pace what comes next and not the tail of
+    /// what is already going. False when the connection is not a serial port,
+    /// which is the answer the command reports and not an error — the same
+    /// shape as the control lines.
+    pub fn queue_write_delay(&mut self, per_char: Duration, per_line: Duration) -> bool {
+        if !self
+            .conn
+            .as_ref()
+            .is_some_and(|c| matches!(c.link_kind(), tt_conn::LinkKind::Serial { .. }))
+        {
+            return false;
+        }
+        self.sender
+            .push(Job::new(Body::SetDelay { per_char, per_line }));
+        // Started now rather than on the next timer tick, so a script that sets
+        // a delay and sends nothing does not leave a job waiting for a wakeup
+        // nobody has a reason to arm.
+        let _ = self.service_send();
+        true
+    }
+
+    pub fn write_delay(&self) -> WriteDelay {
+        self.write_delay
+    }
+
+    /// Hand the transport the next piece, if one is due.
+    ///
+    /// Call it when [`Session::send_deadline`](crate::Session::send_deadline)
+    /// has elapsed. Doing it at any other time is harmless — the sender
+    /// answers with nothing — which is what makes it safe to call from a pump
+    /// that is not sure.
+    pub fn service_send(&mut self) -> Result<()> {
+        // **A transfer owns the byte stream, so the queue holds.** Both write
+        // through `self.pending` — `xfer.rs` straight into it — so a piece
+        // handed over here while a protocol is up lands in the middle of a
+        // packet, and the file arrives with a line of somebody's configuration
+        // in it. Nothing said so: `Sender` cannot see a transport, let alone a
+        // transfer.
+        //
+        // Upstream has the same hole and reaches it the same way — `SendMem`'s
+        // `SetTimer` keeps firing after a protocol has moved `TalkStatus` to
+        // `IdTalkQuiet`, and `USE_ENABLE_WINDOW` is `0` so nothing stops the
+        // File menu (defect 40 in `docs/upstream-bugs.md`). It is worse here
+        // because a [`Gate`] can hold a send for minutes rather than for a
+        // pace's milliseconds.
+        //
+        // Held rather than refused, in both directions: [`Session::send_file`]
+        // already refuses a send while a transfer runs, and refusing the
+        // transfer as well would let a paste still trickling out at
+        // `PasteDelayPerLine` fail somebody's ZMODEM. The queue keeps its place
+        // and [`send::Sender::rebase`] puts its deadlines back on the clock when
+        // the transfer ends.
+        if self.xfer.is_some() {
+            return Ok(());
+        }
+        if !self.sender.is_running() {
+            // The queue is empty, but the *port* may still be holding bytes:
+            // a keystroke on a serial line with `DelayPerChar` set is one
+            // character in `pending` and a governor counting down to it, and
+            // this is the only thing that will ever offer it again.
+            if !self.pending.is_empty() {
+                return self.flush_pending();
+            }
+            return Ok(());
+        }
+        let now = Instant::now();
+        let free = HIGH_WATER.saturating_sub(self.pending.len());
+        match self.sender.take(now, free) {
+            Some(Piece::Text { text, echo }) => {
+                let bytes = self.vt.encode_text(&text);
+                if echo {
+                    self.feed(&bytes);
+                }
+                self.queue(&bytes);
+            }
+            Some(Piece::Bytes { data, echo }) => {
+                if echo {
+                    self.feed(&data);
+                }
+                self.queue(&data);
+            }
+            Some(Piece::SetDelay { per_char, per_line }) => {
+                self.write_delay.set(per_char, per_line);
+            }
+            // Either nothing is due, or the body is spent and the job is
+            // waiting for the wire. Only this layer knows which, because only
+            // this layer can see the transport's queue.
+            None => {}
+        }
+        let out = self.flush_pending();
+        // ...and the flush is what may have emptied it. Asking before would
+        // add a whole `BACKOFF` to every job that fitted in one piece.
+        if self.pending.is_empty() {
+            if let Some(outcome) = self.sender.drained() {
+                self.finish_send(outcome);
+            }
+        } else {
+            self.sender.still_draining(now);
+        }
+        out
+    }
+}
+
+/// How many bytes of `body` from `at` the pace wants to hand over, or `None`
+/// when the unit it wants does not fit in `free`.
+fn span(body: &Body, at: usize, pace: Pace, free: usize) -> Option<usize> {
+    let left = body.len() - at;
+    if matches!(body, Body::SetDelay { .. }) {
+        return None;
+    }
+    match pace {
+        // Everything, in one piece. `free` has no say: an unpaced send is what
+        // every caller in this program did before this module existed, and
+        // `Session::flush_pending` already keeps whatever a short write left
+        // behind. Cutting it into buffer-sized pieces would put a whole file
+        // through the event queue to reach the same bytes.
+        Pace::None => Some(left),
+        Pace::PerChar(_) => match body {
+            Body::Text(s) => {
+                let n = s[at..].chars().next()?.len_utf8();
+                (n <= free).then_some(n)
+            }
+            _ => (free >= 1).then_some(1),
+        },
+        Pace::PerLine(_) => {
+            let n = line_span(body, at);
+            (n <= free).then_some(n)
+        }
+        Pace::PerChunk { bytes, .. } => {
+            // A chunk is a length and not a character boundary, so a text body
+            // has to round *down* to one or the slice panics. Rounding down can
+            // reach zero only for a chunk smaller than one character, which
+            // `Pace::of` cannot produce and a hand-edited file can.
+            let n = match body {
+                Body::Text(s) => floor_char_boundary(s, at, bytes.min(left)),
+                _ => bytes.min(left),
+            };
+            (n > 0 && n <= free).then_some(n)
+        }
+    }
+}
+
+/// Bytes from `at` up to and including the next line break.
+///
+/// A [`Body::Text`] has been through `NormalizeLineBreakCR`, so its only line
+/// break is a bare `CR` and this is exact. A [`Body::Bytes`] has not been
+/// through anything — and upstream reads one as `wchar_t` here regardless
+/// (`sendmem.cpp:422` casts unconditionally), which pairs bytes into
+/// characters that are not there. This takes an `LF` or a `CR`, whichever comes
+/// first, which is what per-line pacing on a binary file has to mean if it is
+/// to mean anything.
+fn line_span(body: &Body, at: usize) -> usize {
+    let rest: &[u8] = match body {
+        Body::Text(s) => &s.as_bytes()[at..],
+        Body::Bytes(b) => &b[at..],
+        Body::SetDelay { .. } => &[],
+    };
+    rest.iter()
+        .position(|&b| b == b'\r' || b == b'\n')
+        .map_or(rest.len(), |i| i + 1)
+}
+
+/// The largest `n <= want` with `at + n` on a character boundary.
+fn floor_char_boundary(s: &str, at: usize, want: usize) -> usize {
+    let mut n = want;
+    while n > 0 && !s.is_char_boundary(at + n) {
+        n -= 1;
+    }
+    n
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text(s: &str) -> Job {
+        Job::new(Body::Text(s.to_string()))
+    }
+
+    fn drain(sender: &mut Sender, now: Instant) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut at = now;
+        // A bounded loop: a test that stops making progress should fail by
+        // asserting the wrong answer, not by hanging a suite.
+        for _ in 0..1000 {
+            let Some(d) = sender.deadline(at) else { break };
+            at += d;
+            match sender.take(at, HIGH_WATER) {
+                Some(Piece::Text { text, .. }) => out.push(text),
+                Some(Piece::Bytes { data, .. }) => {
+                    out.push(String::from_utf8_lossy(&data).into_owned())
+                }
+                Some(Piece::SetDelay { .. }) => out.push("<delay>".into()),
+                None => {
+                    if sender.drained().is_some() {
+                        break;
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn nothing_queued_has_no_deadline() {
+        let s = Sender::default();
+        assert_eq!(s.deadline(Instant::now()), None);
+        assert!(!s.is_running());
+        assert_eq!(s.progress(), None);
+    }
+
+    #[test]
+    fn an_unpaced_job_goes_in_one_piece() {
+        let mut s = Sender::default();
+        s.push(text("one\rtwo\rthree\r"));
+        assert_eq!(drain(&mut s, Instant::now()), vec!["one\rtwo\rthree\r"]);
+        assert!(!s.is_running());
+    }
+
+    /// ...even when it is larger than the high-water mark, because an unpaced
+    /// send is what every caller did before this module and `flush_pending`
+    /// already keeps what a short write left behind.
+    #[test]
+    fn an_unpaced_job_is_not_cut_by_the_high_water_mark() {
+        let mut s = Sender::default();
+        let big = "x".repeat(HIGH_WATER * 3);
+        s.push(text(&big));
+        assert_eq!(drain(&mut s, Instant::now()), vec![big]);
+    }
+
+    #[test]
+    fn per_line_hands_over_one_line_at_a_time() {
+        let mut s = Sender::default();
+        s.push(text("one\rtwo\rthree\r").paced(Pace::PerLine(Duration::from_millis(50))));
+        assert_eq!(
+            drain(&mut s, Instant::now()),
+            vec!["one\r", "two\r", "three\r"]
+        );
+    }
+
+    /// A last line with nothing after it is still a line.
+    #[test]
+    fn per_line_sends_a_final_line_with_no_break() {
+        let mut s = Sender::default();
+        s.push(text("one\rtwo").paced(Pace::PerLine(Duration::from_millis(50))));
+        assert_eq!(drain(&mut s, Instant::now()), vec!["one\r", "two"]);
+    }
+
+    #[test]
+    fn per_line_waits_exactly_the_interval_between_lines() {
+        let now = Instant::now();
+        let mut s = Sender::default();
+        s.push(text("a\rb\r").paced(Pace::PerLine(Duration::from_millis(50))));
+        assert_eq!(s.deadline(now), Some(Duration::ZERO));
+        assert!(s.take(now, HIGH_WATER).is_some());
+        assert_eq!(s.deadline(now), Some(Duration::from_millis(50)));
+        // Nothing comes out early...
+        assert_eq!(s.take(now + Duration::from_millis(49), HIGH_WATER), None);
+        // ...and the wait is not renewed by having been asked.
+        assert_eq!(
+            s.deadline(now + Duration::from_millis(49)),
+            Some(Duration::from_millis(1))
+        );
+        assert!(s
+            .take(now + Duration::from_millis(50), HIGH_WATER)
+            .is_some());
+    }
+
+    /// The trap this whole module is shaped around: `Session::rearm` asks on
+    /// every mouse-move event, so a deadline that answered "the full interval,
+    /// from now" would never come due.
+    #[test]
+    fn asking_for_the_deadline_does_not_postpone_it() {
+        let now = Instant::now();
+        let mut s = Sender::default();
+        s.push(text("a\rb\r").paced(Pace::PerLine(Duration::from_millis(50))));
+        s.take(now, HIGH_WATER);
+        for i in 0..40u64 {
+            let t = now + Duration::from_millis(i);
+            assert_eq!(s.deadline(t), Some(Duration::from_millis(50 - i)));
+        }
+    }
+
+    #[test]
+    fn per_char_hands_over_one_scalar_at_a_time() {
+        let mut s = Sender::default();
+        s.push(text("aé\u{1f600}").paced(Pace::PerChar(Duration::from_millis(5))));
+        assert_eq!(drain(&mut s, Instant::now()), vec!["a", "é", "\u{1f600}"]);
+    }
+
+    #[test]
+    fn per_char_on_bytes_hands_over_one_byte_at_a_time() {
+        let mut s = Sender::default();
+        s.push(Job::new(Body::Bytes(vec![1, 2, 3])).paced(Pace::PerChar(Duration::from_millis(5))));
+        let mut out = Vec::new();
+        let mut at = Instant::now();
+        while let Some(d) = s.deadline(at) {
+            at += d;
+            match s.take(at, HIGH_WATER) {
+                Some(Piece::Bytes { data, .. }) => out.push(data),
+                _ => {
+                    s.drained();
+                }
+            }
+        }
+        assert_eq!(out, vec![vec![1], vec![2], vec![3]]);
+    }
+
+    #[test]
+    fn per_chunk_hands_over_a_fixed_size() {
+        let mut s = Sender::default();
+        s.push(text("abcdefg").paced(Pace::PerChunk {
+            bytes: 3,
+            wait: Duration::from_millis(5),
+        }));
+        assert_eq!(drain(&mut s, Instant::now()), vec!["abc", "def", "g"]);
+    }
+
+    /// A chunk boundary in the middle of a character rounds down rather than
+    /// panicking on the slice.
+    #[test]
+    fn a_chunk_never_splits_a_character() {
+        let mut s = Sender::default();
+        s.push(text("aéb").paced(Pace::PerChunk {
+            bytes: 2,
+            wait: Duration::from_millis(5),
+        }));
+        assert_eq!(drain(&mut s, Instant::now()), vec!["a", "é", "b"]);
+    }
+
+    /// Zero is a real value for the tick and means no wait at all
+    /// (`ttset.c:2011`), so the pace collapses rather than becoming a job that
+    /// pauses for nothing after every line.
+    #[test]
+    fn a_tick_of_zero_is_not_a_pace() {
+        assert_eq!(Pace::of(PaceKind::PerLine, Duration::ZERO, 0), Pace::None);
+        assert_eq!(Pace::of(PaceKind::PerChar, Duration::ZERO, 0), Pace::None);
+        assert_eq!(
+            Pace::of(PaceKind::PerChunk, Duration::from_millis(5), 0),
+            Pace::None
+        );
+        assert_eq!(
+            Pace::of(PaceKind::PerChunk, Duration::from_millis(5), 8),
+            Pace::PerChunk {
+                bytes: 8,
+                wait: Duration::from_millis(5)
+            }
+        );
+    }
+
+    #[test]
+    fn a_full_transport_is_waited_for_rather_than_queued_behind() {
+        let now = Instant::now();
+        let mut s = Sender::default();
+        s.push(text("one\rtwo\r").paced(Pace::PerLine(Duration::from_millis(5))));
+        assert_eq!(s.take(now, 0), None);
+        assert_eq!(s.deadline(now), Some(BACKOFF));
+        // And it is still the first line that comes out when there is room.
+        let t = now + BACKOFF;
+        assert_eq!(
+            s.take(t, HIGH_WATER),
+            Some(Piece::Text {
+                text: "one\r".into(),
+                echo: false
+            })
+        );
+    }
+
+    /// A line longer than the room going waits for room rather than being cut
+    /// in half — see the comment at the call site for what upstream does here.
+    #[test]
+    fn a_line_too_long_for_the_room_waits() {
+        let now = Instant::now();
+        let mut s = Sender::default();
+        s.push(text("aaaaaaaaaa\rb\r").paced(Pace::PerLine(Duration::from_millis(5))));
+        assert_eq!(s.take(now, 4), None);
+        assert_eq!(s.deadline(now), Some(BACKOFF));
+        assert!(s.take(now + BACKOFF, 11).is_some());
+    }
+
+    #[test]
+    fn a_job_is_not_finished_until_the_wire_has_caught_up() {
+        let now = Instant::now();
+        let mut s = Sender::default();
+        s.push(text("hello"));
+        assert!(s.take(now, HIGH_WATER).is_some());
+        assert!(s.is_running());
+        // The caller has bytes left in its own queue, so it says so instead of
+        // taking the outcome.
+        s.still_draining(now);
+        assert_eq!(s.deadline(now), Some(BACKOFF));
+        assert!(s.is_running());
+        let out = s.drained().unwrap();
+        assert_eq!(out.end, SendEnd::Finished);
+        assert_eq!(out.sent, 5);
+        assert_eq!(out.total, 5);
+        assert!(!s.is_running());
+    }
+
+    #[test]
+    fn a_second_job_queues_behind_the_first() {
+        let now = Instant::now();
+        let mut s = Sender::default();
+        s.push(text("one\rtwo\r").paced(Pace::PerLine(Duration::from_millis(5))));
+        s.push(text("three\r"));
+        assert_eq!(s.progress().unwrap().queued, 1);
+        let out = drain(&mut s, now);
+        assert_eq!(out, vec!["one\r", "two\r"]);
+        // ...and the next one starts on the following service.
+        assert_eq!(s.progress().unwrap().queued, 0);
+        assert_eq!(drain(&mut s, now), vec!["three\r"]);
+        assert!(!s.is_running());
+    }
+
+    #[test]
+    fn cancelling_takes_everything_queued() {
+        let now = Instant::now();
+        let mut s = Sender::default();
+        s.push(text("one\rtwo\rthree\r").paced(Pace::PerLine(Duration::from_millis(5))));
+        s.push(text("and another"));
+        s.take(now, HIGH_WATER);
+        let out = s.cancel(SendEnd::Cancelled).unwrap();
+        assert_eq!(out.end, SendEnd::Cancelled);
+        assert_eq!(out.sent, 4);
+        assert_eq!(out.total, 14);
+        assert!(!s.is_running());
+        assert_eq!(s.deadline(now), None);
+        assert_eq!(s.cancel(SendEnd::Cancelled), None);
+    }
+
+    /// A pause has no deadline, so nothing wakes up to discover it is paused.
+    #[test]
+    fn a_paused_job_arms_nothing() {
+        let now = Instant::now();
+        let mut s = Sender::default();
+        s.push(text("one\rtwo\r").paced(Pace::PerLine(Duration::from_millis(5))));
+        s.set_paused(true);
+        assert!(s.is_paused());
+        assert_eq!(s.deadline(now), None);
+        assert_eq!(s.take(now, HIGH_WATER), None);
+        s.set_paused(false);
+        assert!(!s.is_paused());
+        assert_eq!(s.deadline(now), Some(Duration::ZERO));
+        assert!(s.take(now, HIGH_WATER).is_some());
+    }
+
+    #[test]
+    fn pausing_nothing_does_nothing() {
+        let mut s = Sender::default();
+        s.set_paused(true);
+        assert!(!s.is_paused());
+        assert_eq!(s.deadline(Instant::now()), None);
+    }
+
+    #[test]
+    fn the_echo_flag_rides_every_piece_of_its_job() {
+        let now = Instant::now();
+        let mut s = Sender::default();
+        s.push(
+            text("a\rb\r")
+                .paced(Pace::PerLine(Duration::from_millis(5)))
+                .echoed(true),
+        );
+        let Some(Piece::Text { echo, .. }) = s.take(now, HIGH_WATER) else {
+            panic!("no piece");
+        };
+        assert!(echo);
+    }
+
+    #[test]
+    fn progress_counts_bytes_handed_over() {
+        let now = Instant::now();
+        let mut s = Sender::default();
+        s.push(
+            text("one\rtwo\r")
+                .paced(Pace::PerLine(Duration::from_millis(5)))
+                .named("/tmp/config.txt"),
+        );
+        let p = s.progress().unwrap();
+        assert_eq!((p.sent, p.total), (0, 8));
+        assert_eq!(p.name.as_deref(), Some("/tmp/config.txt"));
+        s.take(now, HIGH_WATER);
+        assert_eq!(s.progress().unwrap().sent, 4);
+    }
+
+    #[test]
+    fn an_empty_job_finishes_without_sending_anything() {
+        let now = Instant::now();
+        let mut s = Sender::default();
+        s.push(text(""));
+        assert_eq!(s.take(now, HIGH_WATER), None);
+        let out = s.drained().unwrap();
+        assert_eq!(out.end, SendEnd::Finished);
+        assert_eq!(out.total, 0);
+        assert!(!s.is_running());
+    }
+}

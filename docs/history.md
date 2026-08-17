@@ -5796,6 +5796,97 @@ computer processes, and `count` is a technical noun in the mathematical and
 engineering category, so the vocabulary needed no invention. `CTS`, `DSR`, `CD`
 and `RI` are exact interface labels and are left as they are.
 
+**The paced, prompt-gated send landed 2026-08-17** as deviation 26 — File >
+Send file line by line…, a fifth quick-button kind, and nine settings that
+stopped saying "At this time, Sterna does not use this". It is the graduation of
+item 5 of `docs/yat-ideas.md`, and it is the entry on that page whose estimate
+was furthest out, in a direction worth recording.
+
+That entry said the already-parsed pacing settings "should precede the YAT
+extension" and treated making them work as the small half. It was most of the
+job, because the pacing was not a missing *schedule* but a missing *subsystem*
+— and not one subsystem but two.
+
+- **Upstream has `SendMem` and this port had never built it.**
+  `teraterm/sendmem.cpp` is 839 lines: a FIFO of send jobs, each with a source,
+  a delay type (none / per char / per line / per chunk), a local-echo flag, a
+  progress dialog and a completion callback, driven from the idle loop. Six
+  callers go through it there — a paste, a macro's `send`/`sendln`/`sendfile`
+  and `sendkcode`, File > Send file, and a file drop. Its absence is exactly
+  what `crates/tt-macro/src/host.rs` had been citing since the TTL work: "one
+  feature with three other callers waiting on it".
+- **...and a second, entirely separate governor inside the serial write.**
+  `commlib.c:1068`, `cv->DelayFlag && PortType==IdSerial`, from `DelayPerChar`
+  and `DelayPerLine`, suppressed for the length of a protocol transfer. That one
+  paces *everything* a serial port sends. Reading `SendMem` alone gives a port
+  where the two serial settings still do nothing and `setserialdelaychar` still
+  cannot be answered. Both are reproduced, including the branch where having
+  both delays set skips the line scan entirely and sends one byte
+  (`commlib.c:1077`), which is not what either name suggests.
+
+Only the **gate** is this project's own, and it is one idea: wait until the
+device says it is ready rather than for a number of milliseconds. Three ways of
+saying it — a prompt pattern, the echo of the line, the line going quiet — each
+with a timeout that releases the line rather than stopping the send.
+
+Four things the obvious build gets wrong, all found by building it.
+
+- **A prompt is not a line.** `waitregex` matches completed lines because
+  `CheckEOLCheckLog` hands it text that way, and reusing that matcher was the
+  plan. It cannot work: a prompt is the one thing a console prints *without* a
+  line ending, so a whole-line matcher never sees `Switch#` and times out on
+  every line of the file. `Watch` keeps the text since the last line feed and
+  tests it at each line end and again at the tail. The CR stays on a completed
+  line — `waitregex`'s rule, kept deliberately so one pattern means one thing in
+  both places, with `$` never matching at the end of a CRLF line as the price.
+- **A gate holds the queue between pieces**, so a gate with no pace has one
+  piece and nothing to hold. The first version sent whole files in one write
+  with the gate never consulted, and the test that caught it was the one asking
+  whether the *second* line had waited.
+- **Upstream's paste expands its CRs and this port's did not.** `CBSendStart`
+  hands the string to `SendMemTextW`, which sends it with `CommTextOutW`, whose
+  `OutControl` is the same expansion a typed Return goes through. The old code
+  queued the raw bytes, and a test asserted the divergence with the comment
+  "because bracketed paste means verbatim" — about a paste that was not
+  bracketed. The brackets are inside the string upstream hands over, so they are
+  paced and echoed with it; the comment that said otherwise was describing a
+  Tera Term 4 that is not there.
+- **`SendfileSize` is not carried by the pace.** Only the per-chunk arm holds
+  it, so a dialog seeded from the compiled `Pace` showed the file's number only
+  when the file already said `PerSendSize` — and changing the pace *to* it
+  offered a default in place of what the user last chose. `send_test` found it
+  on its first run.
+
+Two consequences worth stating because they are behaviour changes and not
+features. **A multi-line paste is now paced** — `PasteDelayPerLine` ships at
+10 ms — and **the keyboard is quiet while it runs**, which is upstream's
+`TalkStatus` (`keyboard.c:1480`). Both were always true of Tera Term and never
+of this program. The four core tests that asserted the wire immediately after a
+paste all failed, correctly, and now drive the queue.
+
+`sendfile` stopped being refused, and with it `setserialdelaychar` and
+`setserialdelayline` — the latter two as a *queued* job, which is
+`SendMemSetDelay`: a delay set on the line after a `send` paces what comes next
+and not the tail of what is already going. Reading `sendfile`'s manual page
+against its code turned up defect 39: the page describes Tera Term 4's sender,
+which strips control characters, and Tera Term 5 `#if 0`'d that out in favour of
+one that strips nothing.
+
+The clock is the frontend's, as the reopen's and the transfer's are, and for a
+sharper reason than either: a per-character pace can be 1 ms, which the session
+tick cannot express at all. It is the fifth timer on `Session` and the only
+`Qt::PreciseTimer` among them. `bench/bench.py --core` was run because the gate
+adds a consumer to the parser's tap; the answer was no change, which is what
+`Sender::needs_tap` being one boolean on the early return buys.
+
+Its interface text went through rule 9. `delay` is not an approved noun —
+`INTERVAL` is — and `pause` is not approved at all, so the dialog says *interval*
+and *wait*, and the schema's help lines were rewritten with it. `option` is
+likewise unapproved (`ALTERNATIVE`), which is why the gate combo's help says
+"the alternatives are". `prompt`, `regular expression`, `timeout` and `byte` are
+technical nouns already established in this tree and were left alone; `chunk`
+was not, and became *group of bytes*.
+
 ## Measurements
 
 ### Measured — the real shell, 2026-08-08

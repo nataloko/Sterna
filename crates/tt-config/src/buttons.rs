@@ -130,6 +130,17 @@ pub struct Button {
     /// Milliseconds between the starts of two sends, when `repeat` is not 1.
     /// Bounded by [`MIN_INTERVAL_MS`] and [`MAX_INTERVAL_MS`].
     pub interval_ms: u32,
+    /// For [`UserKeyType::SendFile`]: what holds each line until the far end
+    /// has answered, or `None` to use whatever the settings say.
+    ///
+    /// Per button rather than only in the settings, because two pages of
+    /// buttons is exactly how somebody keeps a switch's `#` and a boot loader's
+    /// silence apart. The *numbers* — the interval, the timeout — stay in the
+    /// settings: those are about how patient this machine is, not about which
+    /// device is on the other end.
+    pub gate: Option<SendGate>,
+    /// The pattern for [`SendGate::Prompt`]. Empty falls back to the setting.
+    pub prompt: String,
     /// Which page of the panel it is on, counting from 1. Bounded by
     /// [`MAX_PAGES`]; `0` reads as 1, so a zeroed C struct is an ordinary
     /// button on the first page.
@@ -151,6 +162,8 @@ impl Default for Button {
             confirm: false,
             repeat: 1,
             interval_ms: DEFAULT_INTERVAL_MS,
+            gate: None,
+            prompt: String::new(),
             page: 1,
         }
     }
@@ -174,6 +187,9 @@ impl Button {
     pub fn text(&self) -> String {
         match self.kind {
             UserKeyType::Text | UserKeyType::Binary => hex_decode_str(&self.value),
+            // A macro's value is a path, a command's a decimal id, and a file
+            // send's a path again — all three are used raw upstream and here,
+            // so decoding would change what a `$` in a path means.
             _ => self.value.clone(),
         }
     }
@@ -235,16 +251,59 @@ pub fn encode(kind: UserKeyType, text: &str) -> String {
     }
 }
 
+/// What a [`Button`] waits for after each line of a file it sends.
+///
+/// The same four the settings have (`transfer.send_gate`), spelled here as
+/// well because `[Sterna Buttons]` is read by this crate and the settings enum
+/// is generated beside it — one more `use` across that seam would be a
+/// dependency in the wrong direction.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SendGate {
+    #[default]
+    None,
+    Prompt,
+    Echo,
+    Quiet,
+}
+
+/// The word a [`SendGate`] is written as.
+pub fn gate_name(gate: SendGate) -> &'static str {
+    match gate {
+        SendGate::None => "none",
+        SendGate::Prompt => "prompt",
+        SendGate::Echo => "echo",
+        SendGate::Quiet => "quiet",
+    }
+}
+
+/// ...and back. `None` for anything unrecognised, which reads as "the settings
+/// decide" — the same answer an absent key gives, and the safe one: a typo
+/// leaves a button that sends, not one that holds every line.
+pub fn parse_gate(value: &str) -> Option<SendGate> {
+    let value = value.trim();
+    [
+        SendGate::None,
+        SendGate::Prompt,
+        SendGate::Echo,
+        SendGate::Quiet,
+    ]
+    .into_iter()
+    .find(|g| value.eq_ignore_ascii_case(gate_name(*g)))
+}
+
 /// The file's spelling of a kind.
 ///
 /// Words rather than upstream's integers: `[User keys]` writes `0`, `1`, `2`,
-/// `3` because a dialog wrote them, and this section is meant to be read.
+/// `3` because a dialog wrote them, and this section is meant to be read. It is
+/// also what lets a fifth kind exist at all — `file` has no integer, so a
+/// `KEYBOARD.CNF` stays portable between the two programs.
 pub fn kind_name(kind: UserKeyType) -> &'static str {
     match kind {
         UserKeyType::Text => "text",
         UserKeyType::Binary => "bytes",
         UserKeyType::Macro => "macro",
         UserKeyType::Command => "command",
+        UserKeyType::SendFile => "file",
         UserKeyType::Unknown(_) => "",
     }
 }
@@ -263,6 +322,7 @@ pub fn parse_kind(value: &str) -> Option<UserKeyType> {
         UserKeyType::Binary,
         UserKeyType::Macro,
         UserKeyType::Command,
+        UserKeyType::SendFile,
     ] {
         if value.eq_ignore_ascii_case(kind_name(kind)) {
             return Some(kind);
@@ -466,6 +526,11 @@ pub fn from_ini(ini: &Ini) -> Buttons {
                 .and_then(|v| v.trim().parse::<u32>().ok())
                 .unwrap_or(DEFAULT_INTERVAL_MS)
                 .clamp(MIN_INTERVAL_MS, MAX_INTERVAL_MS),
+            gate: ini.get(SECTION, &key(i, "Gate")).and_then(parse_gate),
+            prompt: ini
+                .get(SECTION, &key(i, "Prompt"))
+                .unwrap_or_default()
+                .to_string(),
             // Absent is page 1, which is every file written before pages
             // existed and every file belonging to somebody who never wanted
             // them.
@@ -501,6 +566,8 @@ pub fn write_into(ini: &mut Ini, buttons: &Buttons) {
             "Confirm",
             "Repeat",
             "IntervalMs",
+            "Gate",
+            "Prompt",
             "Page",
         ] {
             ini.remove(SECTION, &key(i, field));
@@ -536,6 +603,15 @@ pub fn write_into(ini: &mut Ini, buttons: &Buttons) {
         ini.set(SECTION, &key(i, "Value"), &button.value);
         if !button.shortcut.is_empty() {
             ini.set(SECTION, &key(i, "Shortcut"), &button.shortcut);
+        }
+        // Written only when they say something, so a file with no file-buttons
+        // in it is byte for byte the file it was before this kind existed —
+        // which is the same rule `Page` follows.
+        if let Some(gate) = button.gate {
+            ini.set(SECTION, &key(i, "Gate"), gate_name(gate));
+        }
+        if !button.prompt.is_empty() {
+            ini.set(SECTION, &key(i, "Prompt"), &button.prompt);
         }
         if button.confirm {
             ini.set(SECTION, &key(i, "Confirm"), "on");

@@ -482,6 +482,11 @@ pub struct TtSession {
     xfer_file: CString,
     xfer_message: CString,
     transfer_result: Option<tt_session::TransferOutcome>,
+    /// The same two for the paced send queue: the name the running job is
+    /// showing, and how the last one ended.
+    send_name: CString,
+    send_gate_pattern: CString,
+    send_result: Option<tt_session::send::SendOutcome>,
     /// The window operations the last event drain turned up. Kept here for the
     /// same reason the strings above are: a C caller has nowhere to put them,
     /// and `TtEvent` has no room to carry two `int`s.
@@ -540,6 +545,9 @@ pub extern "C" fn tt_session_new(config: *const TtConfig) -> *mut TtSession {
         xfer_file: CString::default(),
         xfer_message: CString::default(),
         transfer_result: None,
+        send_name: CString::default(),
+        send_gate_pattern: CString::default(),
+        send_result: None,
         window_requests: Vec::new(),
         printer_events: Vec::new(),
         printer_texts: Vec::new(),
@@ -2232,6 +2240,14 @@ pub enum TtEventKind {
     /// The tries are spent and the wait is over. `text` is why the last one
     /// failed.
     ReopenFailed = 22,
+    /// A queued send ended. Read [`tt_session_send_result`] for how, and read
+    /// it on this event: it is kept until the next send ends.
+    ///
+    /// There is no matching progress event. A per-character paced job would
+    /// raise one per character, and the frontend is already being woken by
+    /// [`tt_session_send_deadline_ms`] — so it polls
+    /// [`tt_session_send_progress`] when it wakes.
+    SendDone = 23,
 }
 
 #[repr(C)]
@@ -2350,6 +2366,13 @@ pub extern "C" fn tt_session_drain_events(
                 s.event_texts.push(cstring(&why));
                 let p = s.event_texts.last().expect("just pushed").as_ptr();
                 (TtEventKind::ReopenFailed, 0, p)
+            }
+            // The same arrangement as `TransferDone` below and for the same
+            // reason: `TtEvent` is a fixed struct and this outcome is a string
+            // and three numbers.
+            Event::SendDone(outcome) => {
+                s.send_result = Some(*outcome);
+                (TtEventKind::SendDone, 0, ptr::null())
             }
             // The payload does not travel in the event: `TtEvent` is a fixed
             // struct and a transfer's is two strings and six numbers. It is
@@ -2770,6 +2793,426 @@ pub extern "C" fn tt_session_transfer_deadline_ms(session: *const TtSession) -> 
     }
 }
 
+// --- the paced send queue -------------------------------------------------
+
+/// How much of a send goes at once. `SendMemDelayType` (`sendmem.h:41`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TtSendPace {
+    /// Everything the transport will take. A `tick_ms` of zero means this
+    /// whichever pace was asked for — upstream reads a tick of zero as a real
+    /// value meaning no wait (`ttset.c:2011`).
+    None = 0,
+    PerChar = 1,
+    PerLine = 2,
+    PerChunk = 3,
+}
+
+/// What holds each line of a send until the far end is ready for it.
+///
+/// **This half is Sterna's own** — upstream's sender can only wait for a
+/// duration. See `tt_session::send::Gate`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TtSendGate {
+    /// The pace alone decides.
+    None = 0,
+    /// Wait for received text matching `gate_pattern`.
+    Prompt = 1,
+    /// Wait for the far end to send the line back.
+    Echo = 2,
+    /// Wait for the far end to stop talking for `quiet_ms`.
+    Quiet = 3,
+}
+
+/// What File > Send file line by line was asked for.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtSendOptions {
+    /// `TransBin`. False decodes the file as UTF-8, normalises every line
+    /// break to one `CR`, and lets [`tt_session_send_text`]'s encoding decide
+    /// what reaches the wire. True sends the file's bytes unchanged.
+    pub binary: bool,
+    pub pace: TtSendPace,
+    /// Milliseconds to wait after each piece. Zero is a real value and means
+    /// no wait, which collapses `pace` to [`TtSendPace::None`].
+    pub tick_ms: u32,
+    /// Bytes per piece for [`TtSendPace::PerChunk`], and ignored otherwise.
+    /// Zero collapses to [`TtSendPace::None`].
+    pub chunk: u32,
+    /// `ts.LocalEcho`, read once when the job is queued rather than live, so
+    /// changing the setting halfway through does not echo half a file.
+    pub echo: bool,
+    /// What holds each line until the far end has answered.
+    ///
+    /// A gate makes a send go one line at a time whatever `pace` says: it holds
+    /// the queue *between* pieces, so a single-piece send would never consult
+    /// it. With both, the interval is served first and the gate second.
+    pub gate: TtSendGate,
+    /// The pattern for [`TtSendGate::Prompt`], borrowed for the call. Ask
+    /// [`tt_send_gate_check`] first if a person is typing it: a pattern the
+    /// engine refuses fails the send rather than quietly becoming no gate.
+    pub gate_pattern: *const c_char,
+    /// How long to wait for the answer before sending anyway. The line goes
+    /// either way — a gate that stopped on the first unanswered line would
+    /// leave half a configuration in a switch — and
+    /// [`TtSendProgress::timeouts`] counts how often it came to that.
+    pub gate_timeout_ms: u32,
+    /// [`TtSendGate::Quiet`]'s own interval: how long the far end has to be
+    /// silent for the silence to count as an answer.
+    pub quiet_ms: u32,
+}
+
+/// What the running send is doing, for a progress display.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtSendProgress {
+    /// The file being sent, or null for a job with no name. Borrowed until the
+    /// next call on this session.
+    pub name: *const c_char,
+    pub sent: usize,
+    pub total: usize,
+    pub paused: bool,
+    /// Jobs queued behind this one.
+    pub queued: usize,
+    /// Whether the queue is holding, waiting for the far end to answer.
+    pub gated: bool,
+    /// Lines released by the gate's timeout rather than by an answer.
+    pub timeouts: u32,
+}
+
+/// Why a send stopped.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TtSendEnd {
+    Finished = 0,
+    Cancelled = 1,
+    LinkLost = 2,
+}
+
+/// How the last send ended.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtSendResult {
+    /// Borrowed until the next call on this session.
+    pub name: *const c_char,
+    pub end: TtSendEnd,
+    pub sent: usize,
+    pub total: usize,
+    /// Lines released by the gate's timeout rather than by an answer. A
+    /// finished send with a number here went out, but the far end did not keep
+    /// up — or the pattern was wrong, which is the commoner reason.
+    pub timeouts: u32,
+}
+
+/// Send a file through the terminal's own write path, a piece at a time.
+///
+/// Upstream's File > Send file (`vtwin.cpp:4312` → `SendMemSendFile`), and the
+/// macro command `sendfile`. **This is not a file transfer**: nothing is
+/// framed and nothing is acknowledged, so the far end sees what somebody
+/// typing the file would have sent. [`tt_session_send_files`] is the other
+/// thing, and it speaks XMODEM and its relatives.
+///
+/// While a send is running the terminal **stops accepting typing** —
+/// [`tt_session_send_text`] and its neighbours become no-ops, which is what
+/// upstream's `TalkStatus` does (`keyboard.c:1480`). Ask
+/// [`tt_session_sending`] before greying a widget.
+///
+/// The frontend owns the clock: arm a single-shot timer for
+/// [`tt_session_send_deadline_ms`] and call [`tt_session_service_send`] when it
+/// fires. Nothing else moves the queue.
+#[no_mangle]
+pub extern "C" fn tt_session_send_file(
+    session: *mut TtSession,
+    path: *const c_char,
+    opts: *const TtSendOptions,
+) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    let path = match unsafe { str_arg(path, usize::MAX) } {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let Some(o) = (unsafe { opts.as_ref() }) else {
+        return fail(TT_ERR_INVALID, "null TtSendOptions");
+    };
+    let kind = match o.pace {
+        TtSendPace::None => tt_session::send::PaceKind::None,
+        TtSendPace::PerChar => tt_session::send::PaceKind::PerChar,
+        TtSendPace::PerLine => tt_session::send::PaceKind::PerLine,
+        TtSendPace::PerChunk => tt_session::send::PaceKind::PerChunk,
+    };
+    let gate = match gate_of(o) {
+        Ok(g) => g,
+        Err(e) => return e,
+    };
+    let opts = tt_session::send::FileSend {
+        binary: o.binary,
+        pace: tt_session::send::Pace::of(
+            kind,
+            Duration::from_millis(o.tick_ms as u64),
+            o.chunk as usize,
+        ),
+        gate,
+        echo: o.echo,
+    };
+    match s.session.send_file(std::path::Path::new(path), &opts) {
+        Ok(()) => TT_OK,
+        // Three refusals, three statuses a frontend already distinguishes:
+        // nothing to send down, something else already owning the wire, and a
+        // file the operating system would not give us.
+        Err(e @ tt_session::send::SendError::NotConnected) => {
+            fail(TT_ERR_DISCONNECTED, e.to_string())
+        }
+        Err(e @ tt_session::send::SendError::TransferRunning) => fail(TT_ERR_BUSY, e.to_string()),
+        Err(e @ tt_session::send::SendError::Unreadable(_)) => fail(TT_ERR_IO, e.to_string()),
+    }
+}
+
+/// Fill `opts` with what this session's settings say a send should start as —
+/// `TransBin`, `SendfileDelayType`, `SendfileDelayTick`, `SendfileSize` and
+/// `LocalEcho`.
+///
+/// A frontend calls this to seed its dialog, and writes the answers back with
+/// [`tt_session_set_setting`] when the dialog is accepted. That is upstream's
+/// own arrangement (`vtwin.cpp:4290`), and it is what
+/// `SendfileSkipOptionDialog` exists to let somebody skip. Without it the
+/// dialog invents the values, which is how three of the transfer defaults
+/// beside it once came to be hardcoded.
+///
+/// Does nothing on a null pointer.
+#[no_mangle]
+pub extern "C" fn tt_session_send_defaults(session: *mut TtSession, opts: *mut TtSendOptions) {
+    // Mutable, unlike its transfer neighbour, because the prompt pattern is a
+    // borrowed string and the session is where it is kept alive.
+    let (Some(s), Some(out)) = (unsafe { session.as_mut() }, unsafe { opts.as_mut() }) else {
+        set_error("null session or TtSendOptions");
+        return;
+    };
+    let d = tt_session::send::file_send_defaults(s.session.settings());
+    let (pace, tick_ms) = match d.pace {
+        tt_session::send::Pace::None => (TtSendPace::None, 0),
+        tt_session::send::Pace::PerChar(w) => (TtSendPace::PerChar, w.as_millis() as u32),
+        tt_session::send::Pace::PerLine(w) => (TtSendPace::PerLine, w.as_millis() as u32),
+        tt_session::send::Pace::PerChunk { wait, .. } => {
+            (TtSendPace::PerChunk, wait.as_millis() as u32)
+        }
+    };
+    let (gate, gate_timeout_ms, quiet_ms) = match &d.gate {
+        tt_session::send::Gate::None => (TtSendGate::None, 0, 0),
+        tt_session::send::Gate::Prompt { timeout, .. } => {
+            (TtSendGate::Prompt, timeout.as_millis() as u32, 0)
+        }
+        tt_session::send::Gate::Echo { timeout } => {
+            (TtSendGate::Echo, timeout.as_millis() as u32, 0)
+        }
+        tt_session::send::Gate::Quiet { idle, timeout } => (
+            TtSendGate::Quiet,
+            timeout.as_millis() as u32,
+            idle.as_millis() as u32,
+        ),
+    };
+    // The pattern is the setting's own text rather than the compiled gate's,
+    // for the reason `chunk` below is: `gate_from` answers `None` for a pattern
+    // that will not compile, and a dialog seeded from that would silently
+    // replace what somebody typed with an empty box.
+    s.send_gate_pattern = cstring(&s.session.settings().transfer_send_gate_pattern);
+    *out = TtSendOptions {
+        binary: d.binary,
+        pace,
+        tick_ms,
+        gate,
+        gate_pattern: s.send_gate_pattern.as_ptr(),
+        gate_timeout_ms,
+        quiet_ms,
+        // Straight from the setting rather than out of the `Pace` above, which
+        // carries it in one arm only. A dialog seeded from the `Pace` would
+        // show `SendfileSize`'s number only when the file already said
+        // `PerSendSize` — so changing the pace *to* it would quietly offer a
+        // default in place of what the user last chose.
+        chunk: s.session.settings().transfer_raw_send_size.max(0) as u32,
+        echo: d.echo,
+    };
+}
+
+/// The gate a `TtSendOptions` describes, or the reason its pattern was refused.
+fn gate_of(o: &TtSendOptions) -> std::result::Result<tt_session::send::Gate, TtStatus> {
+    let timeout = Duration::from_millis(o.gate_timeout_ms as u64);
+    Ok(match o.gate {
+        TtSendGate::None => tt_session::send::Gate::None,
+        TtSendGate::Prompt => {
+            let pattern = unsafe { str_arg(o.gate_pattern, usize::MAX) }?;
+            // No pattern is no gate, which is what `send::gate_from` answers for
+            // the same pair of settings — and the two have to agree or a send
+            // paces one way from the dialog and another way after a restart.
+            // An empty pattern *compiles*, and matches everything, so without
+            // this the two paths disagree in silence rather than at the
+            // refusal below. `SendFileDialog` will not let anybody choose it;
+            // this is the backstop for a hand-edited file and for a quick
+            // button that names a gate and no prompt.
+            if pattern.is_empty() {
+                return Ok(tt_session::send::Gate::None);
+            }
+            match tt_session::send::Gate::prompt(pattern, timeout) {
+                Ok(gate) => gate,
+                // Refused rather than degraded to no gate: somebody who asked
+                // to wait for a prompt and silently got a send that waits for
+                // nothing has been told the opposite of what happened.
+                Err(e) => return Err(fail(TT_ERR_INVALID, e)),
+            }
+        }
+        TtSendGate::Echo => tt_session::send::Gate::Echo { timeout },
+        TtSendGate::Quiet => tt_session::send::Gate::Quiet {
+            idle: Duration::from_millis(o.quiet_ms as u64),
+            timeout,
+        },
+    })
+}
+
+/// Whether the engine will accept a prompt pattern, for a dialog to ask as it
+/// is typed. The reason it will not is in [`tt_last_error`].
+///
+/// The same engine the highlight rules and Find use, and **not** `waitregex`'s:
+/// a gate is matched on the frontend's thread, where a catastrophic backtrack
+/// is a window that stops answering.
+#[no_mangle]
+pub extern "C" fn tt_send_gate_check(pattern: *const c_char) -> TtStatus {
+    let pattern = match unsafe { str_arg(pattern, usize::MAX) } {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    match tt_session::send::Gate::check(pattern) {
+        Ok(()) => TT_OK,
+        Err(e) => fail(TT_ERR_INVALID, e),
+    }
+}
+
+/// Whether a queued send owns the wire, and so whether typing is being dropped.
+#[no_mangle]
+pub extern "C" fn tt_session_sending(session: *const TtSession) -> bool {
+    let s = session_ref!(session, false);
+    s.session.sending()
+}
+
+/// Milliseconds until the send queue needs attention, or -1 when nothing is
+/// queued and nothing is due — a paused send included.
+///
+/// **The core owns the instant and the frontend owns the timer**, the same
+/// arrangement as [`tt_session_transfer_deadline_ms`] and
+/// [`tt_session_reopen_deadline_ms`], and for a sharper reason than either: a
+/// per-character pace of 1 ms cannot be expressed by a once-a-second session
+/// tick at all. Re-read it after every [`tt_session_service_send`] and after
+/// anything else that touches the session; asking does not postpone it.
+#[no_mangle]
+pub extern "C" fn tt_session_send_deadline_ms(session: *const TtSession) -> i64 {
+    let s = session_ref!(session, -1);
+    match s.session.send_deadline() {
+        Some(d) => d.as_millis() as i64,
+        None => -1,
+    }
+}
+
+/// Hand the transport the next piece, if one is due.
+///
+/// Harmless at any other time — the queue answers with nothing — which is what
+/// makes it safe to call from a pump that is not sure.
+#[no_mangle]
+pub extern "C" fn tt_session_service_send(session: *mut TtSession) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    match s.session.service_send() {
+        Ok(()) => TT_OK,
+        Err(e) => report(e),
+    }
+}
+
+/// Hold the running send, or let it go again. A no-op with none running.
+///
+/// A paused send arms no deadline at all: nothing is going to happen until
+/// somebody says so, and a timer that fires to discover that is a timer that
+/// should not have been armed.
+#[no_mangle]
+pub extern "C" fn tt_session_pause_send(session: *mut TtSession, paused: bool) {
+    let s = session!(session);
+    s.session.pause_send(paused);
+}
+
+/// Stop the running send and everything queued behind it.
+///
+/// Raises [`TtEventKind::SendDone`] unless nothing was running. Everything
+/// queued goes, not only the running job: cancelling is a person saying stop,
+/// and leaving three more behind to start by themselves is not what they asked
+/// for.
+#[no_mangle]
+pub extern "C" fn tt_session_cancel_send(session: *mut TtSession) {
+    let s = session!(session);
+    s.session.cancel_send();
+}
+
+/// What the running send is doing. False when none is.
+#[no_mangle]
+pub extern "C" fn tt_session_send_progress(
+    session: *mut TtSession,
+    out: *mut TtSendProgress,
+) -> bool {
+    let s = session!(session, false);
+    let Some(p) = s.session.send_progress() else {
+        return false;
+    };
+    s.send_name = match &p.name {
+        Some(n) => cstring(n),
+        None => CString::default(),
+    };
+    if let Some(out) = unsafe { out.as_mut() } {
+        *out = TtSendProgress {
+            name: if p.name.is_some() {
+                s.send_name.as_ptr()
+            } else {
+                ptr::null()
+            },
+            sent: p.sent,
+            total: p.total,
+            paused: p.paused,
+            queued: p.queued,
+            gated: p.gated,
+            timeouts: p.timeouts,
+        };
+    }
+    true
+}
+
+/// How the last send ended. False when none has.
+///
+/// Read it on [`TtEventKind::SendDone`]: it is kept until the next send ends
+/// and then replaced.
+#[no_mangle]
+pub extern "C" fn tt_session_send_result(session: *mut TtSession, out: *mut TtSendResult) -> bool {
+    let s = session!(session, false);
+    let Some(r) = s.send_result.clone() else {
+        return false;
+    };
+    s.send_name = match &r.name {
+        Some(n) => cstring(n),
+        None => CString::default(),
+    };
+    if let Some(out) = unsafe { out.as_mut() } {
+        *out = TtSendResult {
+            name: if r.name.is_some() {
+                s.send_name.as_ptr()
+            } else {
+                ptr::null()
+            },
+            end: match r.end {
+                tt_session::send::SendEnd::Finished => TtSendEnd::Finished,
+                tt_session::send::SendEnd::Cancelled => TtSendEnd::Cancelled,
+                tt_session::send::SendEnd::LinkLost => TtSendEnd::LinkLost,
+            },
+            sent: r.sent,
+            total: r.total,
+            timeouts: r.timeouts,
+        };
+    }
+    true
+}
+
 // --- the loop -------------------------------------------------------------
 
 /// Move bytes in both directions for at most `budget_ms`, and write how many
@@ -3028,6 +3471,10 @@ pub const TT_KEY_CODE_SHORTCUT: TtKeyCodeKind = 4;
 pub const TT_KEY_CODE_MACRO: TtKeyCodeKind = 5;
 pub const TT_KEY_CODE_COMMAND: TtKeyCodeKind = 6;
 pub const TT_KEY_CODE_IGNORED: TtKeyCodeKind = 7;
+/// Feed the file in `text` to the far end a line at a time. The window's to
+/// carry out, like a macro and a menu command, because the *options* belong to
+/// the button and the core was handed only its value.
+pub const TT_KEY_CODE_SEND_FILE: TtKeyCodeKind = 8;
 
 /// A `[Shortcut keys]` action. Values follow Tera Term's internal ids 71–89,
 /// so a command dispatcher can keep one table for these and type-3 user keys.
@@ -3171,13 +3618,17 @@ fn fill_key_code(s: &mut TtSession, result: KeyCodeResult, out: *mut TtKeyCodeRe
             (TT_KEY_CODE_MACRO, 0)
         }
         KeyCodeResult::Command(command) => (TT_KEY_CODE_COMMAND, command.into()),
+        KeyCodeResult::SendFile(path) => {
+            s.key_action = cstring(&path);
+            (TT_KEY_CODE_SEND_FILE, 0)
+        }
         KeyCodeResult::Ignored => (TT_KEY_CODE_IGNORED, 0),
     };
     if let Some(out) = unsafe { out.as_mut() } {
         *out = TtKeyCodeResult {
             kind,
             value,
-            text: if kind == TT_KEY_CODE_MACRO {
+            text: if kind == TT_KEY_CODE_MACRO || kind == TT_KEY_CODE_SEND_FILE {
                 s.key_action.as_ptr()
             } else {
                 ptr::null()
@@ -3205,6 +3656,10 @@ pub const TT_QUICK_BUTTON_BYTES: TtQuickButtonKind = 1;
 pub const TT_QUICK_BUTTON_MACRO: TtQuickButtonKind = 2;
 /// Invoke the menu command whose decimal id is the value.
 pub const TT_QUICK_BUTTON_COMMAND: TtQuickButtonKind = 3;
+/// Feed the file named by `value` to the far end a line at a time — this
+/// program's own, and the only one of the five that upstream has no user-key
+/// type for. See [`tt_session_send_file`].
+pub const TT_QUICK_BUTTON_FILE: TtQuickButtonKind = 4;
 
 /// [`TtQuickButton::repeat`] for a run with no end.
 ///
@@ -3290,7 +3745,22 @@ pub struct TtQuickButton {
     /// everywhere. Anything holding an index — a repeat in progress, a
     /// shortcut on an action — depends on that.
     pub page: u32,
+    /// For [`TT_QUICK_BUTTON_FILE`]: what holds each line until the far end has
+    /// answered, or [`TT_SEND_GATE_FROM_SETTINGS`] to use whatever
+    /// `transfer.send_gate` says.
+    ///
+    /// Per button because two pages of buttons is how somebody keeps a switch's
+    /// `#` and a boot loader's silence apart. The intervals stay in the
+    /// settings: those are about how patient this machine is, not about which
+    /// device is on the other end.
+    pub gate: i32,
+    /// The pattern for a `gate` of [`TtSendGate::Prompt`]. Empty falls back to
+    /// `transfer.send_gate_pattern`.
+    pub prompt: *const c_char,
 }
+
+/// [`TtQuickButton::gate`] for a button that has not chosen one.
+pub const TT_SEND_GATE_FROM_SETTINGS: i32 = -1;
 
 /// An owned list of quick buttons, and what its pages are called. Free it with
 /// [`tt_quick_buttons_free`].
@@ -3315,6 +3785,7 @@ impl TtQuickButtons {
             self.strings.push(cstring(&b.value));
             self.strings.push(cstring(&b.text()));
             self.strings.push(cstring(&b.shortcut));
+            self.strings.push(cstring(&b.prompt));
         }
         self.page_strings = (1..=self.set.page_count())
             .map(|p| cstring(self.set.name(p)))
@@ -3327,7 +3798,7 @@ impl TtQuickButtons {
             .iter()
             .enumerate()
             .map(|(i, b)| {
-                let at = |n: usize| self.strings[i * 4 + n].as_ptr();
+                let at = |n: usize| self.strings[i * 5 + n].as_ptr();
                 TtQuickButton {
                     label: at(0),
                     kind: quick_button_kind_id(b.kind),
@@ -3338,6 +3809,8 @@ impl TtQuickButtons {
                     repeat: b.repeat,
                     interval_ms: b.interval_ms,
                     page: b.page,
+                    gate: b.gate.map_or(TT_SEND_GATE_FROM_SETTINGS, gate_id),
+                    prompt: at(4),
                 }
             })
             .collect();
@@ -3350,6 +3823,7 @@ fn quick_button_kind_id(kind: UserKeyType) -> TtQuickButtonKind {
         UserKeyType::Binary => TT_QUICK_BUTTON_BYTES,
         UserKeyType::Macro => TT_QUICK_BUTTON_MACRO,
         UserKeyType::Command => TT_QUICK_BUTTON_COMMAND,
+        UserKeyType::SendFile => TT_QUICK_BUTTON_FILE,
         // Not reachable through this API: an unreadable kind is dropped by the
         // parser rather than carried, so a button that exists always does
         // something known.
@@ -3363,6 +3837,29 @@ fn quick_button_kind(id: TtQuickButtonKind) -> Option<UserKeyType> {
         TT_QUICK_BUTTON_BYTES => Some(UserKeyType::Binary),
         TT_QUICK_BUTTON_MACRO => Some(UserKeyType::Macro),
         TT_QUICK_BUTTON_COMMAND => Some(UserKeyType::Command),
+        TT_QUICK_BUTTON_FILE => Some(UserKeyType::SendFile),
+        _ => None,
+    }
+}
+
+fn gate_id(gate: tt_session::buttons::SendGate) -> i32 {
+    use tt_session::buttons::SendGate as G;
+    match gate {
+        G::None => TtSendGate::None as i32,
+        G::Prompt => TtSendGate::Prompt as i32,
+        G::Echo => TtSendGate::Echo as i32,
+        G::Quiet => TtSendGate::Quiet as i32,
+    }
+}
+
+fn gate_of_id(id: i32) -> Option<tt_session::buttons::SendGate> {
+    use tt_session::buttons::SendGate as G;
+    match id {
+        x if x == TtSendGate::None as i32 => Some(G::None),
+        x if x == TtSendGate::Prompt as i32 => Some(G::Prompt),
+        x if x == TtSendGate::Echo as i32 => Some(G::Echo),
+        x if x == TtSendGate::Quiet as i32 => Some(G::Quiet),
+        // `TT_SEND_GATE_FROM_SETTINGS` and anything else: the settings decide.
         _ => None,
     }
 }
@@ -3461,6 +3958,10 @@ pub extern "C" fn tt_quick_buttons_set(
         (Ok(l), Ok(s)) => (l, s),
         (Err(e), _) | (_, Err(e)) => return e,
     };
+    let prompt = match borrow(b.prompt) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
     if index > l.set.items.len()
         || (index == l.set.items.len() && l.set.items.len() >= tt_session::buttons::MAX)
     {
@@ -3481,6 +3982,12 @@ pub extern "C" fn tt_quick_buttons_set(
         // Zero is the first page, so a zeroed struct is an ordinary button and
         // a frontend that has never heard of pages keeps working.
         page: if b.page == 0 { 1 } else { b.page },
+        // ...and zero is a real gate, so this one needs its own sentinel. A
+        // zeroed struct therefore says `Gate::None` rather than "ask the
+        // settings", which is the safe direction: a button that sends is
+        // better than one that holds every line against a pattern nobody set.
+        gate: gate_of_id(b.gate),
+        prompt: prompt.to_string(),
     };
     // The same bounds the file reader applies, so a button that arrived
     // through the ABI and one that came out of the INI are the same button.

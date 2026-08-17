@@ -40,6 +40,7 @@ a `TERATERM.INI` written by either program still opens correctly in the other.
 | 23 | A serial port that goes away is opened again by itself, and a reopen that gives up says so on the terminal's own line | The same five keys, driven by `WM_DEVICECHANGE`, with a message box on the last try | 0.5.5 |
 | 24 | Per-terminal counters: bytes, rates, connect time, and a serial port's live control lines | Nothing counts anything; the control lines are visible only to a macro's `getmodemstatus` | 0.5.5 |
 | 25 | The control characters and the line endings on the wire can be shown in the terminal | Only debug display mode shows a control byte, and it stops emulating to do it | 0.5.5 |
+| 26 | A file can be fed a line at a time, each line held until the far end answers | `SendMem` paces by the clock and cannot hear the far end at all | 0.7.0 |
 
 ---
 
@@ -1389,3 +1390,80 @@ it on a device that ends every line with CR LF.
 are invisible to every reader of the grid's text, and no existing setting changes
 meaning. A `TERATERM.INI` shared with a real Tera Term opens identically in both
 programs.
+
+---
+
+## 26. A file can be fed a line at a time, held until the far end answers
+
+**File > Send file line by line…**, a fifth quick-button kind, and a `sendfile`
+that works. The pacing half is not a deviation at all — it is upstream's
+`SendMem` (`teraterm/sendmem.cpp`), which this port had never built, and its
+absence is why nine settings in this program's own schema said "At this time,
+Sterna does not use this". What is Sterna's own is the **gate**: waiting until
+the device says it is ready rather than for a number of milliseconds. See
+[`sending.md`](sending.md) for the user-facing half.
+
+**Why.** Pasting a configuration into a console is the commonest serial task
+there is, and a console port with no flow control drops what arrives while it is
+still echoing the last line. `PasteDelayPerLine` is the blind half of the
+answer: it guesses a duration where the device is already telling you it is
+ready by printing a prompt. Upstream cannot express that — `SendMem` waits on a
+timer and has no way to hear the far end at all — so there is no key here to be
+compatible with. The idea is YAT's `WaitForResponse`
+(`TextTerminalSettings.cs:703`), which is what people buy SecureCRT for.
+
+**Three gates, not one.** A **prompt** is a regular expression matched against
+received text. An **echo** waits for the line just sent to come back, for a
+console with no fixed prompt. **Quiet** waits for the far end to stop talking,
+for a device that answers with something different every time. Every one carries
+a timeout, and **the timeout sends the line anyway** rather than stopping: a
+gate that gave up on the first unanswered line would leave half a configuration
+in a switch, which is the failure this exists to prevent. The count of lines
+released that way is reported, because it is almost always a pattern that does
+not match.
+
+**A prompt is not a line, and that is the whole reason this needed its own
+matcher.** `waitregex` matches completed lines, because `CheckEOLCheckLog` is
+what hands it text — but a prompt is the one thing a console prints *without* a
+line ending, so a whole-line matcher would never see `Switch#` and would time
+out on every line of the file. The buffer here is the text since the last line
+feed and it is tested at each line end and again at the tail. The CR stays on a
+completed line, which *is* `waitregex`'s rule and is kept deliberately so that
+one pattern means one thing in both places — with the consequence, stated in the
+dialog and the doc, that `$` never matches at the end of a CRLF line.
+
+**The engine is the `regex` crate's and not `waitregex`'s Oniguruma.** A gate is
+matched inside `Session::service_send`, on the frontend's thread, where a
+catastrophic backtrack is a window that stops answering; the highlight rules
+made the same choice for the same reason (deviation 6). For everything short of
+backreferences and lookaround the two agree.
+
+**Where it lives.** `crates/tt-session/src/send.rs` is the queue, the gate and
+the serial write governor; `shell/src/SendFileDialog.{h,cpp}` is the dialog and
+the progress panel. Four `[Sterna]` keys — `SendGate`, `SendGatePattern`,
+`SendGateTimeout` and `SendQuietTime` — beside upstream's own `Sendfile*`, which
+this now reads and writes for the first time.
+
+**The button kind is `Kind=file` and its type number does not exist.** A quick
+button is a `KEYBOARD.CNF` user key with a face on it (deviation 7), and the
+four kinds are upstream's `[User keys]` types 0 to 3. This fifth one is reachable
+only from `[Sterna Buttons]`, where the kind is a *word*: a keyboard file naming
+a type `4` still reads as unknown and still does nothing, so a `KEYBOARD.CNF`
+stays portable between the two programs. The button carries its own gate and
+prompt — two more keys, written only for this kind, so a file with no file
+buttons is byte for byte the file it was — because two pages of buttons is
+exactly how somebody keeps a switch's `#` and a boot loader's silence apart. The
+*intervals* are not the button's: they say how long this program is prepared to
+wait, not how a particular device shows that it is ready.
+
+**A paste is now paced, and that is upstream rather than a decision here.**
+`CBSendStart` (`clipboar.c:199`) hands the prepared string to `SendMemTextW`
+with a per-line pace unless `PasteDelayPerLine` is zero, and it ships at 10 ms —
+so a multi-line paste goes a line at a time on a fresh install, and the keyboard
+is quiet for the length of it (`TalkStatus`, `keyboard.c:1480`). Both were
+already true of Tera Term; neither had ever been true here.
+
+**Compatibility.** The nine settings that now do something are all upstream's
+and none of them changes meaning — they were read, written and ignored, and are
+now read, written and obeyed. The four gate keys are `[Sterna]`'s own, and a
+`TERATERM.INI` written by either program still opens correctly in the other.

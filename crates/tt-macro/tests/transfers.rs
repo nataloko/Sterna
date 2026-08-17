@@ -63,6 +63,11 @@ impl Rig {
     /// One turn of the frontend's loop: run the macro's jobs, then the line.
     fn turn(&mut self) {
         self.rx.service(&mut self.session, &mut NullUi);
+        // The frontend's send timer. `sendfile` is a queue and nothing else
+        // empties it — a window arms `m_sendTimer` for the same job.
+        if self.session.send_deadline().is_some() {
+            self.session.service_send().unwrap();
+        }
         self.session.pump(Duration::from_millis(1)).unwrap();
         let out = self.far.with(|s| std::mem::take(&mut s.outbound));
         self.sent.extend_from_slice(&out);
@@ -215,4 +220,40 @@ fn a_transfer_that_cannot_start_reports_zero_without_waiting() {
         start.elapsed() < Duration::from_secs(5),
         "it waited for a transfer that never began"
     );
+}
+
+/// `sendfile` — the sixteenth command, and the one that is not a protocol. It
+/// was refused until this queue existed.
+///
+/// **The `send` on the next line is the assertion.** A queued send owns the
+/// wire while it runs and the core drops typing for the duration — upstream's
+/// `TalkStatus` — so a `sendfile` that returned as soon as it had queued the
+/// file would have `after` dropped rather than appended. Its presence is proof
+/// that the command waited for the last byte.
+///
+/// `result` is deliberately not checked: `sendfile` sets none, because upstream
+/// waits on `IdTTLWaitCmndEnd` rather than `IdTTLWaitCmndResult`. See
+/// `Interp::cmd_send_file`.
+#[test]
+fn sendfile_blocks_until_the_file_has_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("config.txt");
+    std::fs::write(&file, "show version\nshow clock\n").unwrap();
+
+    let script = format!("sendfile '{}' 0\nsend 'after'", file.display());
+    // The file, with its line breaks as the *terminal* spells them.
+    assert_eq!(
+        Rig::start(&script).finish(),
+        b"show version\rshow clock\rafter"
+    );
+}
+
+/// A file that cannot be read stops nothing: the script carries on, and the
+/// wire never had anything queued on it to drop the next line.
+#[test]
+fn a_sendfile_that_cannot_read_its_file_sends_nothing_and_carries_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("nothing-here.txt");
+    let script = format!("sendfile '{}' 0\nsend 'after'", missing.display());
+    assert_eq!(Rig::start(&script).finish(), b"after");
 }

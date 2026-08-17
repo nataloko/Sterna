@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 
 use tt_conn::serial::FlowControl as ConnFlow;
 use tt_session::open::{Startup, Target};
+use tt_session::send::{FileSend, SendEnd, SendReply};
 use tt_session::{
     DebugMode as VtDebugMode, LogMode, LogOptions, MacroLink, Session, Timestamp, TransferReply,
 };
@@ -140,6 +141,55 @@ impl SessionHost {
         F: FnOnce(&mut Session, &mut dyn crate::ui::MacroUi) -> T + Send + 'static,
     {
         self.tx.call(f).ok_or(TtlError::CantCall)
+    }
+
+    /// `sendfile` — the file down the line, at the settings' own pace.
+    ///
+    /// It blocks until the file has gone, which is upstream's shape and the one
+    /// worth keeping: a script's next line nearly always depends on the far end
+    /// having read the last one. The wait is `transfer`'s, down to the
+    /// quarter-second knock — this is the other command whose outcome is posted
+    /// from a thread that may have stopped existing.
+    ///
+    /// The answer is the same 1-or-0: false for a file that could not be read,
+    /// nothing connected, a transfer already owning the wire, or a send that
+    /// did not finish.
+    fn send_file(&mut self, path: &[u8], binary: bool) -> Result<bool, TtlError> {
+        let path = resolve(&self.transfer_dir, path);
+        let reply = SendReply::new();
+        let armed = reply.clone();
+        let started = self.ask(move |s| {
+            let opts = FileSend {
+                binary,
+                ..tt_session::send::file_send_defaults(s.settings())
+            };
+            if s.send_file(&path, &opts).is_err() {
+                return false;
+            }
+            // Only once it is running, so a refused start cannot leave a reply
+            // armed for somebody else's send.
+            s.notify_send(armed);
+            true
+        })?;
+        if !started {
+            return Ok(false);
+        }
+
+        let mut cancelling = false;
+        let mut probed = Instant::now();
+        loop {
+            if let Some(outcome) = reply.wait(POLL) {
+                return Ok(outcome.end == SendEnd::Finished);
+            }
+            if !cancelling && self.tx.cancelled() {
+                cancelling = true;
+                let _ = self.tx.call(|s, _| s.cancel_send());
+            }
+            if probed.elapsed() >= PROBE {
+                self.ask(|_| ())?;
+                probed = Instant::now();
+            }
+        }
     }
 
     /// `DispErr`'s dialog, for an error from any language.
@@ -263,12 +313,19 @@ impl ScriptHost for SessionHost {
             },
             SendMode::Compat => tt_ttl::host::looks_like_text(bytes),
         };
+        // The `_macro_` pair rather than `send_text`/`send_bytes`: a script's
+        // `send` **queues behind** a running paced send where a keystroke is
+        // dropped by it. That is upstream's own exception — `AcceptPoke`
+        // (`ttdde.c:460`) accepts a poke under `IdTalkSendMem` and pushes it
+        // onto the same FIFO — and it is why a `sendfile` followed by a `send`
+        // arrives in the order the script wrote rather than losing the second
+        // line.
         if text {
             let s = String::from_utf8_lossy(bytes).into_owned();
-            self.ask(move |sess| sess.send_text(&s))?
+            self.ask(move |sess| sess.send_macro_text(&s))?
         } else {
             let bytes = bytes.to_vec();
-            self.ask(move |sess| sess.send_bytes(&bytes))?
+            self.ask(move |sess| sess.send_macro_bytes(&bytes))?
         }
         .map_err(|_| TtlError::CantCall)
     }
@@ -674,6 +731,14 @@ impl ScriptHost for SessionHost {
     /// protocol succeeded and 0 for everything else, including a transfer that
     /// never started because nothing is connected.
     fn transfer(&mut self, req: &Xfer<'_>) -> Result<bool, TtlError> {
+        // The sixteenth, and the one that is not a protocol: it goes down the
+        // line as though somebody had typed it, through the send queue, at
+        // whatever pace the settings ask for. `SendMemSendFile2`
+        // (`ttdde.c:811`) is upstream's, and it blocks the macro on a
+        // completion callback exactly as the fifteen below block on `ProtoEnd`.
+        if let Xfer::SendFile { path, binary } = *req {
+            return self.send_file(path, binary);
+        }
         let plan = Plan::of(req, &self.transfer_dir)?;
         let reply = TransferReply::new();
         let armed = reply.clone();
@@ -748,16 +813,35 @@ impl ScriptHost for SessionHost {
         }
     }
 
+    /// `setserialdelaychar` / `setserialdelayline` — the two of the serial
+    /// group that are not a control line.
+    ///
+    /// **Queued rather than applied**, which is `SendMemSetDelay`
+    /// (`sendmem.cpp:625`): upstream puts the change in the same FIFO as the
+    /// sends, so a delay set on the line after a `send` paces what comes next
+    /// and not the tail of what is already going.
+    ///
+    /// Serial only, and a false is the documented answer rather than a
+    /// failure — the same shape as `setdtr` and its neighbours, which are
+    /// silent no-ops over SSH.
+    fn set_serial_delay(&mut self, per_line: bool, ms: i32) -> Result<bool, TtlError> {
+        let ms = Duration::from_millis(ms.max(0) as u64);
+        // One closure and not two calls: the other delay has to be read on the
+        // session's own thread, or a second `setserialdelay*` arriving between
+        // the read and the write would be overwritten by a stale number.
+        self.ask(move |s| {
+            let live = s.write_delay();
+            let (per_char, line) = match per_line {
+                true => (live.per_char(), ms),
+                false => (ms, live.per_line()),
+            };
+            s.queue_write_delay(per_char, line)
+        })
+    }
+
     // Everything not written above keeps the trait's own refusing default, and
     // each is refused for a reason rather than for want of typing:
     //
-    // `setserialdelaychar`, `setserialdelayline` — the two of the serial group
-    //   that are not a control line. They pace what is *sent*, and upstream
-    //   paces it in `SendMem`, a queue between the macro and the wire that
-    //   this port does not have: `send` writes straight through. One feature
-    //   with three other callers waiting on it — a paste, a `sendfile` and
-    //   the File menu's own send all go through the same queue — so it wants
-    //   building once, for all of them, rather than behind these two.
     // `sendfile` — the one of the sixteen transfer commands that is not a
     //   protocol; the reason is in `Plan::of`, where the other fifteen are.
     // `scp` — an SSH channel `tt-conn` does not open yet.
@@ -981,12 +1065,10 @@ impl Plan {
             // the first byte that starts the clock and a zero-byte transfer
             // waits as long as one with `autostop 0`.
             Xfer::RecvFile { path, autostop } => recv_named(XferJob::Raw { autostop }, path),
-            // `sendfile` is the File menu's, not `ttpfile`'s: upstream runs it
-            // from `filesys.cpp:359` a byte at a time through the terminal's
-            // own write path, with bracketed paste, local echo and the DBCS
-            // decoding that goes with them. `raw.h` says outright that there
-            // is no raw *send* protocol. It wants `Session`'s own file send,
-            // which nothing has needed yet — the shell has no File menu.
+            // `sendfile` is the File menu's, not `ttpfile`'s — `raw.h` says
+            // outright that there is no raw *send* protocol. It goes through
+            // `Session::send_file`, which is the send queue, so it is handled
+            // by `SessionHost::transfer` before it reaches here.
             Xfer::SendFile { .. } => return Err(TtlError::NotSupported),
         })
     }

@@ -57,6 +57,11 @@
 #define TT_QUICK_BUTTON_MAX_PAGES 99
 
 /**
+ * [`TtQuickButton::gate`] for a button that has not chosen one.
+ */
+#define TT_SEND_GATE_FROM_SETTINGS -1
+
+/**
  * A colour a rule is not asking to change, in [`TtHighlight::fore`] and
  * friends. Every real colour is `0x00RRGGBB`, so this cannot collide with one.
  */
@@ -698,6 +703,16 @@ enum TtEventKind
      * failed.
      */
     TT_EVENT_KIND_REOPEN_FAILED = 22,
+    /**
+     * A queued send ended. Read [`tt_session_send_result`] for how, and read
+     * it on this event: it is kept until the next send ends.
+     *
+     * There is no matching progress event. A per-character paced job would
+     * raise one per character, and the frontend is already being woken by
+     * [`tt_session_send_deadline_ms`] — so it polls
+     * [`tt_session_send_progress`] when it wakes.
+     */
+    TT_EVENT_KIND_SEND_DONE = 23,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -723,6 +738,55 @@ typedef enum {
      */
     TT_XFER_PROTOCOL_RAW = 6,
 } TtXferProtocol;
+
+/**
+ * How much of a send goes at once. `SendMemDelayType` (`sendmem.h:41`).
+ */
+typedef enum {
+    /**
+     * Everything the transport will take. A `tick_ms` of zero means this
+     * whichever pace was asked for — upstream reads a tick of zero as a real
+     * value meaning no wait (`ttset.c:2011`).
+     */
+    TT_SEND_PACE_NONE = 0,
+    TT_SEND_PACE_PER_CHAR = 1,
+    TT_SEND_PACE_PER_LINE = 2,
+    TT_SEND_PACE_PER_CHUNK = 3,
+} TtSendPace;
+
+/**
+ * What holds each line of a send until the far end is ready for it.
+ *
+ * **This half is Sterna's own** — upstream's sender can only wait for a
+ * duration. See `tt_session::send::Gate`.
+ */
+typedef enum {
+    /**
+     * The pace alone decides.
+     */
+    TT_SEND_GATE_NONE = 0,
+    /**
+     * Wait for received text matching `gate_pattern`.
+     */
+    TT_SEND_GATE_PROMPT = 1,
+    /**
+     * Wait for the far end to send the line back.
+     */
+    TT_SEND_GATE_ECHO = 2,
+    /**
+     * Wait for the far end to stop talking for `quiet_ms`.
+     */
+    TT_SEND_GATE_QUIET = 3,
+} TtSendGate;
+
+/**
+ * Why a send stopped.
+ */
+typedef enum {
+    TT_SEND_END_FINISHED = 0,
+    TT_SEND_END_CANCELLED = 1,
+    TT_SEND_END_LINK_LOST = 2,
+} TtSendEnd;
 
 /**
  * A key with a terminal meaning. Names and grouping follow
@@ -1494,6 +1558,105 @@ typedef struct {
 } TtTransferResult;
 
 /**
+ * What File > Send file line by line was asked for.
+ */
+typedef struct {
+    /**
+     * `TransBin`. False decodes the file as UTF-8, normalises every line
+     * break to one `CR`, and lets [`tt_session_send_text`]'s encoding decide
+     * what reaches the wire. True sends the file's bytes unchanged.
+     */
+    bool binary;
+    TtSendPace pace;
+    /**
+     * Milliseconds to wait after each piece. Zero is a real value and means
+     * no wait, which collapses `pace` to [`TtSendPace::None`].
+     */
+    uint32_t tick_ms;
+    /**
+     * Bytes per piece for [`TtSendPace::PerChunk`], and ignored otherwise.
+     * Zero collapses to [`TtSendPace::None`].
+     */
+    uint32_t chunk;
+    /**
+     * `ts.LocalEcho`, read once when the job is queued rather than live, so
+     * changing the setting halfway through does not echo half a file.
+     */
+    bool echo;
+    /**
+     * What holds each line until the far end has answered.
+     *
+     * A gate makes a send go one line at a time whatever `pace` says: it holds
+     * the queue *between* pieces, so a single-piece send would never consult
+     * it. With both, the interval is served first and the gate second.
+     */
+    TtSendGate gate;
+    /**
+     * The pattern for [`TtSendGate::Prompt`], borrowed for the call. Ask
+     * [`tt_send_gate_check`] first if a person is typing it: a pattern the
+     * engine refuses fails the send rather than quietly becoming no gate.
+     */
+    const char *gate_pattern;
+    /**
+     * How long to wait for the answer before sending anyway. The line goes
+     * either way — a gate that stopped on the first unanswered line would
+     * leave half a configuration in a switch — and
+     * [`TtSendProgress::timeouts`] counts how often it came to that.
+     */
+    uint32_t gate_timeout_ms;
+    /**
+     * [`TtSendGate::Quiet`]'s own interval: how long the far end has to be
+     * silent for the silence to count as an answer.
+     */
+    uint32_t quiet_ms;
+} TtSendOptions;
+
+/**
+ * What the running send is doing, for a progress display.
+ */
+typedef struct {
+    /**
+     * The file being sent, or null for a job with no name. Borrowed until the
+     * next call on this session.
+     */
+    const char *name;
+    size_t sent;
+    size_t total;
+    bool paused;
+    /**
+     * Jobs queued behind this one.
+     */
+    size_t queued;
+    /**
+     * Whether the queue is holding, waiting for the far end to answer.
+     */
+    bool gated;
+    /**
+     * Lines released by the gate's timeout rather than by an answer.
+     */
+    uint32_t timeouts;
+} TtSendProgress;
+
+/**
+ * How the last send ended.
+ */
+typedef struct {
+    /**
+     * Borrowed until the next call on this session.
+     */
+    const char *name;
+    TtSendEnd end;
+    size_t sent;
+    size_t total;
+    /**
+     * Lines released by the gate's timeout rather than by an answer. A
+     * finished send with a number here went out, but the far end did not keep
+     * up — or the pattern was wrong, which is the commoner reason.
+     */
+    uint32_t timeouts;
+} TtSendResult;
+
+/**
  * What this connection has moved, and for how long.
  *
  * Nothing upstream counts any of this — see `docs/deviations.md` entry 24 for
@@ -1665,6 +1828,22 @@ typedef struct {
      * shortcut on an action — depends on that.
      */
     uint32_t page;
+    /**
+     * For [`TT_QUICK_BUTTON_FILE`]: what holds each line until the far end has
+     * answered, or [`TT_SEND_GATE_FROM_SETTINGS`] to use whatever
+     * `transfer.send_gate` says.
+     *
+     * Per button because two pages of buttons is how somebody keeps a switch's
+     * `#` and a boot loader's silence apart. The intervals stay in the
+     * settings: those are about how patient this machine is, not about which
+     * device is on the other end.
+     */
+    int32_t gate;
+    /**
+     * The pattern for a `gate` of [`TtSendGate::Prompt`]. Empty falls back to
+     * `transfer.send_gate_pattern`.
+     */
+    const char *prompt;
 } TtQuickButton;
 
 /**
@@ -2834,6 +3013,13 @@ typedef uint32_t TtShortcut;
 
 #define TT_KEY_CODE_IGNORED 7
 
+/**
+ * Feed the file in `text` to the far end a line at a time. The window's to
+ * carry out, like a macro and a menu command, because the *options* belong to
+ * the button and the core was handed only its value.
+ */
+#define TT_KEY_CODE_SEND_FILE 8
+
 #define TT_SHORTCUT_EDIT_COPY 71
 
 #define TT_SHORTCUT_EDIT_PASTE 72
@@ -2891,6 +3077,13 @@ typedef uint32_t TtShortcut;
  * Invoke the menu command whose decimal id is the value.
  */
 #define TT_QUICK_BUTTON_COMMAND 3
+
+/**
+ * Feed the file named by `value` to the far end a line at a time — this
+ * program's own, and the only one of the five that upstream has no user-key
+ * type for. See [`tt_session_send_file`].
+ */
+#define TT_QUICK_BUTTON_FILE 4
 
 /**
  * Every byte is data, `0xFF` included. What a console server's per-line port
@@ -3940,6 +4133,113 @@ void tt_session_cancel_transfer(TtSession *session);
  * this value, and re-read it after every pump.
  */
 int64_t tt_session_transfer_deadline_ms(const TtSession *session);
+
+/**
+ * Send a file through the terminal's own write path, a piece at a time.
+ *
+ * Upstream's File > Send file (`vtwin.cpp:4312` → `SendMemSendFile`), and the
+ * macro command `sendfile`. **This is not a file transfer**: nothing is
+ * framed and nothing is acknowledged, so the far end sees what somebody
+ * typing the file would have sent. [`tt_session_send_files`] is the other
+ * thing, and it speaks XMODEM and its relatives.
+ *
+ * While a send is running the terminal **stops accepting typing** —
+ * [`tt_session_send_text`] and its neighbours become no-ops, which is what
+ * upstream's `TalkStatus` does (`keyboard.c:1480`). Ask
+ * [`tt_session_sending`] before greying a widget.
+ *
+ * The frontend owns the clock: arm a single-shot timer for
+ * [`tt_session_send_deadline_ms`] and call [`tt_session_service_send`] when it
+ * fires. Nothing else moves the queue.
+ */
+TtStatus tt_session_send_file(TtSession *session,
+                              const char *path,
+                              const TtSendOptions *opts);
+
+/**
+ * Fill `opts` with what this session's settings say a send should start as —
+ * `TransBin`, `SendfileDelayType`, `SendfileDelayTick`, `SendfileSize` and
+ * `LocalEcho`.
+ *
+ * A frontend calls this to seed its dialog, and writes the answers back with
+ * [`tt_session_set_setting`] when the dialog is accepted. That is upstream's
+ * own arrangement (`vtwin.cpp:4290`), and it is what
+ * `SendfileSkipOptionDialog` exists to let somebody skip. Without it the
+ * dialog invents the values, which is how three of the transfer defaults
+ * beside it once came to be hardcoded.
+ *
+ * Does nothing on a null pointer.
+ */
+void tt_session_send_defaults(TtSession *session,
+                              TtSendOptions *opts);
+
+/**
+ * Whether the engine will accept a prompt pattern, for a dialog to ask as it
+ * is typed. The reason it will not is in [`tt_last_error`].
+ *
+ * The same engine the highlight rules and Find use, and **not** `waitregex`'s:
+ * a gate is matched on the frontend's thread, where a catastrophic backtrack
+ * is a window that stops answering.
+ */
+TtStatus tt_send_gate_check(const char *pattern);
+
+/**
+ * Whether a queued send owns the wire, and so whether typing is being dropped.
+ */
+bool tt_session_sending(const TtSession *session);
+
+/**
+ * Milliseconds until the send queue needs attention, or -1 when nothing is
+ * queued and nothing is due — a paused send included.
+ *
+ * **The core owns the instant and the frontend owns the timer**, the same
+ * arrangement as [`tt_session_transfer_deadline_ms`] and
+ * [`tt_session_reopen_deadline_ms`], and for a sharper reason than either: a
+ * per-character pace of 1 ms cannot be expressed by a once-a-second session
+ * tick at all. Re-read it after every [`tt_session_service_send`] and after
+ * anything else that touches the session; asking does not postpone it.
+ */
+int64_t tt_session_send_deadline_ms(const TtSession *session);
+
+/**
+ * Hand the transport the next piece, if one is due.
+ *
+ * Harmless at any other time — the queue answers with nothing — which is what
+ * makes it safe to call from a pump that is not sure.
+ */
+TtStatus tt_session_service_send(TtSession *session);
+
+/**
+ * Hold the running send, or let it go again. A no-op with none running.
+ *
+ * A paused send arms no deadline at all: nothing is going to happen until
+ * somebody says so, and a timer that fires to discover that is a timer that
+ * should not have been armed.
+ */
+void tt_session_pause_send(TtSession *session, bool paused);
+
+/**
+ * Stop the running send and everything queued behind it.
+ *
+ * Raises [`TtEventKind::SendDone`] unless nothing was running. Everything
+ * queued goes, not only the running job: cancelling is a person saying stop,
+ * and leaving three more behind to start by themselves is not what they asked
+ * for.
+ */
+void tt_session_cancel_send(TtSession *session);
+
+/**
+ * What the running send is doing. False when none is.
+ */
+bool tt_session_send_progress(TtSession *session, TtSendProgress *out);
+
+/**
+ * How the last send ended. False when none has.
+ *
+ * Read it on [`TtEventKind::SendDone`]: it is kept until the next send ends
+ * and then replaced.
+ */
+bool tt_session_send_result(TtSession *session, TtSendResult *out);
 
 /**
  * Move bytes in both directions for at most `budget_ms`, and write how many

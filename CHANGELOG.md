@@ -5,6 +5,46 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+### Added
+
+- **A file can be sent a line at a time, each line held until the far end
+  answers.** Pasting a configuration into a console is the commonest thing
+  anybody does to a switch, and the commonest way it goes wrong is that a port
+  with no flow control drops the lines that arrive while it is still echoing the
+  last one. File > **Send file line by line…** feeds a text file at a pace the
+  device can take: a fixed interval, as Tera Term has always had, or — and this
+  is the half an interval can only guess at — a wait for the device to say it is
+  ready. Three ways of saying it: a **prompt** you give as a pattern, the
+  **echo** of the line coming back, or the line simply going **quiet**. Each
+  carries a timeout that sends the line anyway rather than stopping, because a
+  send that gave up at the first unanswered line would leave half a
+  configuration in the device; the panel counts how many went out unanswered,
+  which is nearly always a prompt pattern that does not match. A quick button
+  can carry a file and its own prompt, so a page of buttons for a switch and a
+  page for a boot loader each wait for the right thing. See
+  [`docs/sending.md`](docs/sending.md).
+- The macro command **`sendfile`** works. It was refused for want of the queue
+  above; it now sends at whatever pace the settings describe and, like the other
+  fifteen transfer commands, does not return until the last byte has gone. So do
+  **`setserialdelaychar`** and **`setserialdelayline`**.
+
+### Changed
+
+- **Nine settings that described pacing and did nothing now do it.** They have
+  been in the settings file since Sterna had one, read and written faithfully
+  and acted on by nothing. `PasteDelayPerLine` ships at 10 ms, so **a multi-line
+  paste now goes a line at a time on a fresh install** — and, as in Tera Term,
+  the keyboard is quiet while it does, because a line typed into the middle of a
+  paste is a line the far end runs in the wrong place. `DelayPerChar` and
+  `DelayPerLine` pace everything a serial port sends and are suspended for the
+  length of a file transfer. `SendfileDelayType`, `SendfileDelayTick`,
+  `SendfileSize` and `TransBin` are what the new dialog opens with and writes
+  back to.
+- A pasted carriage return is expanded by the terminal's own newline mode, as a
+  typed Return is. Tera Term has always done this — both go through the same
+  conversion — and this program was quietly sending the clipboard's bytes
+  instead. It shows only on a terminal set to send CRLF or LF.
+
 ## [0.6.2] - 2026-08-17
 
 ### Changed

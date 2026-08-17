@@ -371,6 +371,15 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: cd shell && ./build/buttons_test
+      # Sending a file a piece at a time, which needs a pty and nothing else.
+      # Here rather than in the core's own tests because the thing that can
+      # break is the *clock*: the queue is handed a fake instant below the ABI,
+      # so nothing there can tell whether the window arms its timer, and a paced
+      # send with no timer looks exactly like one that sent nothing.
+      - name: Sending a file a piece at a time, on the window's own clock
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: cd shell && ./build/send_test
       # A printer is a file when `PassThruPort` names one, so this needs no
       # printer, no spooler and no CUPS — which is why it is here rather than
       # out with `xfer_test`.

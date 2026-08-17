@@ -43,6 +43,7 @@ pub mod logname;
 pub mod macros;
 pub mod open;
 pub mod reopen;
+pub mod send;
 mod serial;
 pub mod settings;
 pub mod xfer;
@@ -218,6 +219,17 @@ pub enum Event {
     Reopened(String),
     /// The retries are spent. `String` is why the last attempt failed.
     ReopenFailed(String),
+    /// A queued send ended — see [`send`]. Finished, cancelled, or cut off by
+    /// the link going away.
+    ///
+    /// There is no matching progress event: a per-character paced job would
+    /// produce one per character, and the frontend is already being woken for
+    /// the deadline, so it reads [`Session::send_progress`] when it wakes.
+    ///
+    /// Boxed for the reason [`Event::TransferDone`] is — every other event
+    /// carries the largest variant's footprint, and `Damage` is both the
+    /// cheapest to make and the one made most.
+    SendDone(Box<send::SendOutcome>),
 }
 
 /// What pressing a legacy `KEYBOARD.CNF` scan code did.
@@ -238,6 +250,13 @@ pub enum KeyCodeResult {
     Shortcut(Shortcut),
     RunMacro(String),
     Command(u16),
+    /// Feed this file to the far end a line at a time — see [`send`].
+    ///
+    /// Handed back rather than started here, unlike the two sending kinds
+    /// above, because the *options* belong to the button and this layer has
+    /// only been given a `UserKey`. The window that read the button is the one
+    /// that can call [`Session::send_file`] with them.
+    SendFile(String),
     Ignored,
 }
 
@@ -283,6 +302,16 @@ pub struct Session {
     tcp_cr_send_used: bool,
     /// The file transfer that owns the byte stream, if one is running.
     xfer: Option<xfer::Running>,
+    /// The paced send queue — upstream's `SendMem`. Empty for nearly all of a
+    /// session's life, and [`send::Sender::is_running`] is the question every
+    /// hot path asks first.
+    sender: send::Sender,
+    /// The *other* pacing layer, which is the serial port's own and applies to
+    /// everything it sends — see [`send::WriteDelay`].
+    write_delay: send::WriteDelay,
+    /// Where a finished send's outcome goes besides the event queue, for a
+    /// macro's `sendfile` blocked on it. `xfer_reply`'s arrangement.
+    send_reply: Option<send::SendReply>,
     /// Where the running transfer's outcome goes besides the event queue, for
     /// a caller on another thread that is blocked on it. See
     /// [`Session::notify_transfer`].
@@ -365,6 +394,9 @@ impl Session {
             key_map: KeyboardMap::default(),
             xfer: None,
             xfer_reply: None,
+            sender: send::Sender::default(),
+            write_delay: send::WriteDelay::default(),
+            send_reply: None,
             macro_link: None,
             plugin_link: None,
             stream_filter: None,
@@ -441,6 +473,11 @@ impl Session {
             self.reopen.cancel();
         }
         self.settings = settings;
+        // Upstream copies these into `cv` when a port opens and when
+        // `CommResetSerial` runs (`commlib.c:175`, `:313`), and Setup > Serial
+        // port is what runs the second one — so the dialog moves them on a live
+        // port and a macro's `setserialdelaychar` does not reach the file.
+        self.load_write_delay();
         self.vt.set_config(config);
         // `set_config` may have resized the grid, which is the one thing here
         // that moves the viewport's anchor: the offset would otherwise point
@@ -532,7 +569,20 @@ impl Session {
         }
         self.clear_com_buff_on_open();
         self.tcp_echo_cr_override();
+        // `CommOpen` copies the two serial delays into `cv` (`commlib.c:175`),
+        // and a hold left over from the last port belongs to that port.
+        self.load_write_delay();
         self.connect_beep(kind);
+    }
+
+    /// Take `DelayPerChar` and `DelayPerLine` out of the settings and let go of
+    /// any hold the last port left.
+    fn load_write_delay(&mut self) {
+        self.write_delay.set(
+            Duration::from_millis(self.settings.serial_delay_per_char.max(0) as u64),
+            Duration::from_millis(self.settings.serial_delay_per_line.max(0) as u64),
+        );
+        self.write_delay.release();
     }
 
     /// `TCPLocalEcho` and `TCPCRSend` — the two settings a TCP connection that
@@ -1630,13 +1680,26 @@ impl Session {
         link
     }
 
+    /// Turn the parser's tap on or off from the three things that want it.
+    ///
+    /// One place, and it has to be: the tap is a single switch with **three**
+    /// consumers now — a macro, a plugin worker, and a gated send — and each
+    /// of the three arriving or leaving used to write the switch itself from
+    /// what it knew about the other one. A send finishing under a running macro
+    /// would have turned the macro's own tap off.
+    fn refresh_macro_tap(&mut self) {
+        let wanted =
+            self.macro_link.is_some() || self.plugin_link.is_some() || self.sender.needs_tap();
+        self.vt.set_macro_tap_enabled(wanted);
+    }
+
     /// Detach it — `DDELog = FALSE` and `DDEFreeBuf`. A no-op when none is
     /// linked.
     pub fn unlink_macro(&mut self) {
         if let Some(link) = self.macro_link.take() {
             link.clear();
         }
-        self.vt.set_macro_tap_enabled(self.plugin_link.is_some());
+        self.refresh_macro_tap();
     }
 
     /// Whether a macro is driving this session.
@@ -1663,7 +1726,7 @@ impl Session {
         if let Some(link) = self.plugin_link.take() {
             link.clear();
         }
-        self.vt.set_macro_tap_enabled(self.macro_link.is_some());
+        self.refresh_macro_tap();
     }
 
     pub fn plugin_linked(&self) -> bool {
@@ -1685,7 +1748,11 @@ impl Session {
     /// Called wherever the log is fed, and for the same reason: the tap fills
     /// as the parser runs and something has to take it away before it grows.
     fn macro_bytes_in(&mut self) {
-        if self.macro_link.is_none() && self.plugin_link.is_none() {
+        // The receive hot path: a session with no macro, no plugin and no gated
+        // send must pay one boolean for all of this. `bench/bench.py --core` is
+        // the check that it does.
+        let gated = self.sender.needs_tap();
+        if self.macro_link.is_none() && self.plugin_link.is_none() && !gated {
             return;
         }
         let bytes = self.vt.take_macro_bytes();
@@ -1694,6 +1761,14 @@ impl Session {
         }
         if let Some(link) = &self.plugin_link {
             link.push(&bytes);
+        }
+        if gated {
+            // The third consumer, and not through a `MacroLink`: a gate lives
+            // in this struct, so it takes the bytes rather than a ring somebody
+            // has to drain. What it sees is the same tap `waitregex` reads —
+            // printed characters, executed CR/LF, no escape sequences.
+            let now = Instant::now();
+            self.sender.feed_tap(now, &String::from_utf8_lossy(&bytes));
         }
     }
 
@@ -2002,6 +2077,7 @@ impl Session {
                 Ok(KeyCodeResult::Sent)
             }
             UserKeyType::Macro => Ok(KeyCodeResult::RunMacro(user.value.clone())),
+            UserKeyType::SendFile => Ok(KeyCodeResult::SendFile(user.value.clone())),
             UserKeyType::Command => Ok(command_id(&user.value)
                 .map(KeyCodeResult::Command)
                 .unwrap_or(KeyCodeResult::Ignored)),
@@ -2016,7 +2092,7 @@ impl Session {
     /// either, so a frontend sends `"\r"` and the core decides whether a line
     /// feed follows.
     pub fn send_text(&mut self, text: &str) -> Result<()> {
-        if self.xfer.is_some() {
+        if self.wire_is_busy() {
             return Ok(());
         }
         let bytes = self.vt.encode_text(text);
@@ -2035,7 +2111,7 @@ impl Session {
     /// the saved setting. Turning the editor off therefore restores the
     /// previous echo behaviour instead of silently pinning it on.
     pub fn send_edited_line(&mut self, text: &str) -> Result<()> {
-        if self.xfer.is_some() {
+        if self.wire_is_busy() {
             return Ok(());
         }
         let mut bytes = self.vt.encode_text(text);
@@ -2061,7 +2137,7 @@ impl Session {
     /// Refused during a transfer, like everything else that could put a stray
     /// byte in the middle of a packet.
     pub fn send_bytes(&mut self, bytes: &[u8]) -> Result<()> {
-        if self.xfer.is_some() {
+        if self.wire_is_busy() {
             return Ok(());
         }
         self.feed_local_echo(bytes);
@@ -2097,11 +2173,18 @@ impl Session {
     /// `BracketedControlOnly` on a single line pasted this way is sent
     /// unbracketed even though a control character is going out, and a
     /// clipboard already ending in a CR sends two.
+    ///
+    /// **It goes through the send queue** ([`send`]), which is where
+    /// `PasteDelayPerLine` finally means something: `CBSendStart`
+    /// (`clipboar.c:199`) hands the whole prepared string to `SendMemTextW` and
+    /// asks for a per-line pace unless the setting is zero. The setting ships at
+    /// **10 ms**, so a multi-line paste is paced on a fresh install — which is
+    /// the point, since a switch with no flow control drops what arrives while
+    /// it is still echoing the last line. A paste is therefore no longer over
+    /// when this returns: the first line is, and the frontend's send timer
+    /// carries the rest.
     pub fn paste(&mut self, text: &str, add_cr: bool) -> Result<()> {
-        // Everything the user could type is refused while a transfer is up —
-        // a stray byte in the middle of a packet is a corrupted file, and a
-        // paste is the largest stray byte there is.
-        if self.xfer.is_some() {
+        if self.wire_is_busy() {
             return Ok(());
         }
         let mut text = paste_text(text, &self.settings);
@@ -2116,17 +2199,29 @@ impl Session {
         if add_cr {
             text.push('\r');
         }
+        // One body with the brackets inside it, which is upstream's
+        // `clipboar.c:298` — they are part of the string `CBSendStart` is
+        // handed, so they are paced with it and **echoed with it**. An earlier
+        // version of this function kept them out of the echo and said upstream
+        // did too; it does not, and echoing them is invisible anyway (an
+        // unrecognised `CSI 200 ~` prints nothing).
         if bracket {
-            self.queue(b"\x1b[200~");
+            text.insert_str(0, "\x1b[200~");
+            text.push_str("\x1b[201~");
         }
-        // The brackets describe the paste to the host; they are not keyboard
-        // input and upstream does not put them through `CommTextEchoW`.
-        self.feed_local_echo(text.as_bytes());
-        self.queue(text.as_bytes());
-        if bracket {
-            self.queue(b"\x1b[201~");
-        }
-        self.flush_pending()
+        let pace = match self.settings.clipboard_paste_delay_per_line {
+            0 => send::Pace::None,
+            ms => send::Pace::PerLine(Duration::from_millis(ms as u64)),
+        };
+        self.sender.push(
+            send::Job::new(send::Body::Text(text))
+                .paced(pace)
+                .echoed(self.vt.local_echo()),
+        );
+        // The first piece now rather than one timer interval from now, so a
+        // paste with the delay switched off is over before this returns and
+        // every caller that could see the difference is a caller that set it.
+        self.service_send()
     }
 
     /// Answer an accepted OSC 52 clipboard read. `selection` is the string
@@ -2412,6 +2507,24 @@ impl Session {
         true
     }
 
+    /// Whether something already owns the byte stream, so typing must be
+    /// dropped rather than interleaved with it.
+    ///
+    /// Two things can: a **file transfer**, because a stray byte in the middle
+    /// of a packet is a corrupted file; and a **queued send**, because a line
+    /// typed into the middle of a configuration being pasted is a line the far
+    /// end runs in the wrong place. Upstream spells both with one variable —
+    /// `TalkStatus`, tested at `keyboard.c:1480` before every key and at
+    /// `clipboar.c:231` before every paste — and drops the input silently,
+    /// which is the only thing a keystroke path can do.
+    ///
+    /// Not consulted by [`send::Sender`]'s own pieces: they reach
+    /// [`Session::queue`] directly, which is how upstream's `SendMem` reaches
+    /// `CommTextOutW`.
+    fn wire_is_busy(&self) -> bool {
+        self.xfer.is_some() || self.sender.is_running()
+    }
+
     fn queue(&mut self, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
@@ -2446,19 +2559,58 @@ impl Session {
         Cow::Owned(result.bytes)
     }
 
+    /// Whether the serial write governor has anything to say about this port.
+    ///
+    /// Three conditions, all upstream's: the delays are set, the link is a
+    /// **serial** one (`commlib.c:1068` tests `PortType==IdSerial`), and no
+    /// protocol transfer is running — `filesys_proto.cpp` clears
+    /// `cv.DelayFlag` for the length of one, because pacing a ZMODEM packet
+    /// would time the protocol out.
+    ///
+    /// Asked on every write of every session, and the common answer is no.
+    fn write_delay_applies(&self) -> bool {
+        self.write_delay.is_active()
+            && self.xfer.is_none()
+            && self
+                .conn
+                .as_ref()
+                .is_some_and(|c| matches!(c.link_kind(), tt_conn::LinkKind::Serial { .. }))
+    }
+
     /// Push what is queued, keeping whatever the transport would not take.
     fn flush_pending(&mut self) -> Result<()> {
         if self.pending.is_empty() {
             return Ok(());
         }
-        let Some(conn) = self.conn.as_mut() else {
+        if self.conn.is_none() {
             // Nowhere to send it. Dropping beats growing without bound while
             // someone types at a disconnected window.
             self.pending.clear();
             return Ok(());
-        };
-        match conn.write(&self.pending, self.write_timeout) {
+        }
+        // Worked out before the transport is borrowed, because it reads the
+        // settings and the live newline mode as well as the port.
+        let mut plan = None;
+        if self.write_delay_applies() {
+            let line_end = match self.vt.cr_send() {
+                CrSend::Cr => 0x0d,
+                _ => 0x0a,
+            };
+            let now = Instant::now();
+            let Some(step) = self.write_delay.plan(now, &self.pending, line_end) else {
+                // The line is held. What is queued stays queued, and
+                // `Session::send_deadline` is what gets it moving again.
+                return Ok(());
+            };
+            plan = Some((now, step));
+        }
+        let take = plan.map_or(self.pending.len(), |(_, (n, _))| n);
+        let conn = self.conn.as_mut().expect("checked above");
+        match conn.write(&self.pending[..take], self.write_timeout) {
             Ok(n) => {
+                if let Some((now, (planned, wait))) = plan {
+                    self.write_delay.wrote(now, planned, n, wait);
+                }
                 // The only place that sees every outbound byte. `queue` above
                 // merely buffers, and a file transfer writes straight into
                 // `self.pending` without passing through it (`xfer.rs`). `n`
@@ -2495,6 +2647,9 @@ impl Session {
         self.pending.clear();
         self.restore_tcp_echo_cr();
         self.transfer_disconnected();
+        // Before the `Disconnected`, so a frontend showing a send's progress is
+        // told the send is over before it is told why.
+        self.send_link_lost();
         self.events.push(Event::Disconnected);
         // After the `Disconnected`, so a frontend reading the queue in order
         // sees the line drop and then sees what is being done about it.
@@ -2650,9 +2805,18 @@ pub fn paste_text(text: &str, s: &Settings) -> String {
     } else {
         text
     };
-    // `CR LF` and a bare `LF` both become one `CR`; a bare `CR` stays one. The
-    // pair has to be collapsed rather than mapped byte by byte, or a file
-    // copied out of an editor arrives as two line endings for every line.
+    normalize_line_break_cr(text)
+}
+
+/// `NormalizeLineBreakCR` (`clipboar.c:289`): `CR LF` and a bare `LF` both
+/// become one `CR`; a bare `CR` stays one.
+///
+/// The pair has to be collapsed rather than mapped byte by byte, or a file
+/// copied out of an editor arrives as two line endings for every line. What
+/// reaches the wire is then decided once, by `CRSend` and LNM, in
+/// [`tt_vt::Vt::encode_text`] — which is why a paste and a text file send both
+/// come through here first (`sendmem.cpp:774` does the same to a file).
+pub fn normalize_line_break_cr(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {

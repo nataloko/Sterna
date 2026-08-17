@@ -103,6 +103,11 @@ QString QuickButton::describe() const
         what = QCoreApplication::translate("QuickButton", "This button runs this menu command: %1.")
                    .arg(text);
         break;
+    case TT_QUICK_BUTTON_FILE:
+        what = QCoreApplication::translate(
+                   "QuickButton", "This button sends this file line by line: %1.")
+                   .arg(text);
+        break;
     case TT_QUICK_BUTTON_TEXT:
     default:
         what = QCoreApplication::translate("QuickButton", "This button sends this text: %1.")
@@ -185,6 +190,8 @@ QuickButtonSet fromList(TtQuickButtons *list)
         button.repeat = b->repeat;
         button.intervalMs = b->interval_ms;
         button.page = b->page;
+        button.gate = b->gate;
+        button.prompt = QString::fromUtf8(b->prompt ? b->prompt : "");
         out.buttons.append(button);
     }
     const uint32_t pages = tt_quick_buttons_page_count(list);
@@ -214,6 +221,7 @@ TtQuickButtons *toList(const QuickButtonSet &set)
         const QByteArray label = set.buttons[i].label.toUtf8();
         const QByteArray text = set.buttons[i].text.toUtf8();
         const QByteArray shortcut = set.buttons[i].shortcut.toUtf8();
+        const QByteArray prompt = set.buttons[i].prompt.toUtf8();
         TtQuickButton entry {};
         entry.label = label.constData();
         entry.kind = set.buttons[i].kind;
@@ -224,6 +232,8 @@ TtQuickButtons *toList(const QuickButtonSet &set)
         entry.repeat = set.buttons[i].repeat;
         entry.interval_ms = set.buttons[i].intervalMs;
         entry.page = set.buttons[i].page;
+        entry.gate = set.buttons[i].gate;
+        entry.prompt = prompt.constData();
         ok = tt_quick_buttons_set(list, static_cast<size_t>(i), &entry) == TT_OK;
     }
     for (qsizetype p = 0; p < set.pageNames.size() && ok; p++) {

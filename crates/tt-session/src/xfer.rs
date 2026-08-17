@@ -316,6 +316,13 @@ impl crate::Session {
 
     /// The one place a transfer ends. Both callers reach it.
     fn finish_transfer(&mut self, outcome: TransferOutcome) {
+        // A queued send was held for the length of this transfer
+        // (`Session::service_send`), so every deadline it was carrying has
+        // passed. Putting them back on the clock is what stops a gated job
+        // releasing its next line the instant the protocol lets go — and it has
+        // to be here rather than at the end of the pump, because this is the one
+        // place both endings reach.
+        self.sender.rebase(std::time::Instant::now());
         if let Some(reply) = self.xfer_reply.take() {
             reply.post(outcome.clone());
         }

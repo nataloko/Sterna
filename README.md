@@ -18,6 +18,8 @@ Sterna has these functions:
 - [Lua plugins](docs/plugins.md) for menus, global shortcuts, connection
   hooks, byte-stream filters, and settings pages
 - XMODEM, YMODEM, ZMODEM, Kermit, B-Plus, and Quick-VAN file transfers
+- [Send a file a line at a time](docs/sending.md), which holds each line until
+  the device prints its prompt, sends the line back, or becomes quiet
 - [Sixel graphics](docs/sixel.md) in the terminal, and images in the
   scrollback
 - [Find](docs/find.md), which finds text on the screen and in the scrollback

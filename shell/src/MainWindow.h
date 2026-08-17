@@ -234,6 +234,8 @@ private slots:
     void onWindowOperation(const TtWindowRequest &request);
     void sendBreak();
     void sendFile();
+    /// File > Send file line by line — the paced send, which is not a transfer.
+    void sendFileLineByLine();
     void receiveFile();
     /// File > Log — the options dialog, then the log it configures. A no-op
     /// while one is already open, which is what upstream's greyed item means.
@@ -442,6 +444,9 @@ private:
     /// Put button `index` on the wire once. The whole of what a press does,
     /// and therefore also what each tick of a repeat does.
     void sendQuickButton(int index, bool withoutEnter);
+    /// Start a `file` button's send on `page`, with the gate the button chose
+    /// over the settings' own.
+    void startButtonSend(TerminalPage *page, const QuickButton &button);
     /// A run started, ticked or ended: the bar's face, the terminal's stop
     /// key and the status line all follow from this one place.
     void quickRepeatChanged(int index, int remaining);
@@ -651,6 +656,7 @@ private:
     QAction *m_pauseLogAction = nullptr;
     QAction *m_stopLogAction = nullptr;
     QAction *m_sendAction = nullptr;
+    QAction *m_sendLineAction = nullptr;
     QAction *m_receiveAction = nullptr;
     QAction *m_stopMacroAction = nullptr;
     /// The macro runner, for this window's lifetime. One at a time — which is

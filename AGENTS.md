@@ -127,6 +127,9 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/highlight_test           # the highlight rules, to the pixels — needs nothing
 ./build/gutter_test              # line numbers: painted, and never copied
 ./build/buttons_test             # the quick buttons, over a pty — needs nothing
+./build/send_test                # ...and a file fed to one a piece at a time.
+                                 # The send queue's *clock* is only testable
+                                 # here: below the ABI it is a fake instant
 QT_QPA_PLATFORM=offscreen \
   ./build/cmdline_test           # a Tera Term command line, argv to connected
                                  # — NOT under Wayland; see the traps
@@ -602,6 +605,92 @@ The proxy — a Winsock hook upstream, so it has no seam at all:
   (`sendToSocketFormat`). Reproduced byte-exactly so traces can be compared
   against Tera Term's — "improving" the format costs that. Credentials are
   in it.
+
+Sending, which has two pacing layers and they are not the same one:
+
+- **`SendMem` and `commlib.c`'s governor are separate, and folding them
+  together loses one.** `sendmem.cpp` is a FIFO of *jobs* with a delay type,
+  and it applies to whatever was queued; `commlib.c:1068` is inside the serial
+  **write**, applies to everything a serial port sends, and is suppressed for
+  the length of a protocol transfer (`cv->DelayFlag`). A paste on a serial port
+  is subject to both. `send::Sender` and `send::WriteDelay`.
+- **A transfer and the send queue both write through `Session::pending`, and
+  only one of them may own it.** `xfer.rs` writes straight into it, so a piece
+  handed over while a protocol is up lands in the middle of a packet — the
+  transfer succeeds and the file has a line of somebody's configuration in it.
+  `Session::send_file` already refused the other direction; the missing half was
+  `service_send`, which now returns while `self.xfer` is `Some`, and
+  `send_deadline`, which must answer `None` there or the timer it arms fires,
+  finds the hold and re-arms for zero for the whole transfer. Held rather than
+  refused, so a paste still trickling out at `PasteDelayPerLine` cannot fail
+  somebody's ZMODEM. And the release needs `Sender::rebase`: every instant the
+  queue was carrying has passed, so a gated job would otherwise release its next
+  line unanswered the moment the protocol let go **and count a timeout for a
+  wait that never happened** — the one number this feature exists to report
+  honestly. Upstream has all of this and it is defect 40.
+- **A macro's `send` queues behind a running send; a keystroke is dropped by
+  it.** Both facts are upstream's and they are not the same fact:
+  `keyboard.c:1480` tests `TalkStatus` before every key, while `AcceptPoke`
+  (`ttdde.c:460`) accepts a poke under `IdTalkKeyb` **or** `IdTalkSendMem` and
+  pushes another job onto the same FIFO. `Session::send_text` is the keyboard's
+  path and `send_macro_text`/`send_macro_bytes` are the macro's — routing the
+  macro through `send_text` reads as correct and silently ate every `send` that
+  landed inside a paced paste, which `PasteDelayPerLine`'s 10 ms default makes
+  every multi-line paste.
+- **A gate holds the queue *between* pieces**, so a gate with no pace has one
+  piece and nothing to hold — the file goes out in one write and the gate is
+  never consulted. `Job::effective_pace` turns `Pace::None` plus a gate into
+  one line at a time.
+- **A prompt is not a line**, which is why the gate could not reuse
+  `waitregex`'s matcher: a prompt is the one thing a console prints without a
+  line ending. `Watch` holds the text since the last line feed and tests it at
+  each line end *and* at the tail. The CR stays on a completed line, which is
+  `waitregex`'s rule kept on purpose — so `$` never matches at the end of a
+  CRLF line, and the dialog and `docs/sending.md` both say so.
+- **The gate's engine is the `regex` crate's, not Oniguruma.** It matches
+  inside `Session::service_send`, on the frontend's thread; `waitregex` can
+  afford backtracking because it runs on a macro thread.
+- **`set_macro_tap_enabled` has three consumers now**, so it is written in one
+  place (`Session::refresh_macro_tap`). Each of the three used to set the
+  switch from what it knew about the other one; a send finishing under a
+  running macro would have turned the macro's tap off.
+- **Upstream's paste goes through `CommTextOutW`, so its CRs are expanded by
+  `CRSend`** exactly as a typed Return's are (`ttcmn.c:896` → `OutControl`).
+  This port queued the raw bytes and a test asserted the difference on the
+  grounds that "bracketed paste means verbatim" — about a paste that was not
+  bracketed. The brackets are inside the string `CBSendStart` is handed
+  (`clipboar.c:298`), so they are paced *and echoed* with it.
+- **`PasteDelayPerLine` ships at 10 ms**, so converting the paste to the queue
+  made every multi-line paste asynchronous and every one of the four tests
+  that asserted the wire straight afterwards fail. That is upstream's
+  behaviour; the tests drive the queue now (`finish_send` in
+  `tests/session.rs`).
+- **`sendfile` sets no `result`** (`Interp::cmd_send_file`) — upstream waits on
+  `IdTTLWaitCmndEnd`, not `...Result`. A test checking `result` after one is
+  reading whatever the command before it left there.
+- **`SendfileSize` is not carried by the `Pace`** — only its own arm holds it —
+  so `tt_session_send_defaults` reads the setting directly. Seeded from the
+  pace, a dialog would show the number only when the file already said
+  `PerSendSize`, and changing the pace *to* it would silently offer a default
+  in place of what the user last chose. `send_test` found this.
+- **A spinbox offering more than its setting's C field can hold is a number that
+  comes back different.** `SendfileDelayTick` is a `WORD`, so the schema is
+  `uint16` and `set_setting` *narrows* rather than clamps (the field-width trap,
+  under Settings) — the interval box offered an hour, the send honoured the hour,
+  and the next load read 3600000 mod 65536: a 34-second wait where somebody
+  asked for sixty minutes. Range a control from the schema's type, not from what
+  looks like a generous bound. Its two neighbours are `int_clamp` and were
+  already right, which is what made the odd one out invisible.
+- **An empty prompt pattern is a gate on one path and no gate on the other.** It
+  *compiles* — `regex` accepts it and it matches everything — so `gate_of` built
+  a gate that opens on any byte while `gate_from` had always answered
+  `Gate::None` for the same pair of settings. The same send therefore paced one
+  way from the dialog and another way after a restart. Both paths agree now and
+  `SendFileDialog` refuses the empty case outright; a compiling pattern is not
+  the same question as a meaningful one.
+- **The window's send timer is `Qt::PreciseTimer`**, unlike the two beside it:
+  a per-character pace ships as low as 1 ms and a coarse timer may adjust an
+  interval by 5%, which at that scale is the whole interval.
 
 The local pty:
 

@@ -1205,10 +1205,10 @@ clipboard.trim_trailing_newline | bool | Tera Term | TrimTrailingNLonPaste | off
 # `ttset.c:1633`, milliseconds between the lines of a paste — for a host with
 # no flow control that drops what arrives while it is still echoing. The only
 # setting in the file clamped at **both** ends; see `int_clamp` above for why
-# that is a third bound rather than one of the other two. Read and written and
-# acting on nothing yet: pacing a paste means handing the send path a schedule,
-# and `Session::paste` queues the whole thing.
-#@ This setting stores a delay of 0 thru 5000 milliseconds between pasted lines. Sterna does not apply this delay at this time.
+# that is a third bound rather than one of the other two. `Session::paste`
+# queues the text as one `send::Job` and asks for this as its per-line pace,
+# which is `clipboar.c:205`; zero collapses it to no pace at all.
+#@ This setting sets an interval of 0 thru 5000 milliseconds after each line of a paste. Use it for a device that loses the text that arrives while it echoes the last line.
 clipboard.paste_delay_per_line | int_clamp(0..5000) | Tera Term | PasteDelayPerLine | 10 | -
 
 # `ttset.c:1580`. Upstream writes the size back when the confirmation dialog
@@ -1698,12 +1698,17 @@ serial.stop_bits | enum(1=One,2=Two) | Tera Term | StopBit | 1 | DLG_SERIAL_STOP
 serial.flow | enum(none=None,x=XonXoff,hard/rtscts=Hardware,dsrdtr=DsrDtr) | Tera Term | FlowCtrl | none | DLG_SERIAL_FLOW
 
 # `ttset.c:951`, milliseconds between characters — for a device that cannot
-# keep up with a paste.
-#@ This setting stores Tera Term's serial transmit delay for each character, in milliseconds. At this time, Sterna does not use this delay.
+# keep up with a paste. Copied into `cv` when the port opens (`commlib.c:175`)
+# and applied inside the write itself (`commlib.c:1068`), so it paces
+# *everything* a serial port sends and not only a queued job — which is
+# `send::WriteDelay`, the second of this port's two pacing layers.
+#@ This setting sets an interval, in milliseconds, after each character that Sterna sends to a serial port. Use it for a device that cannot read a full-speed paste.
 serial.delay_per_char | uint16 | Tera Term | DelayPerChar | 0 | DLG_SERIAL_DELAYCHAR
 
-# `ttset.c:955`, milliseconds between lines.
-#@ This setting stores Tera Term's serial transmit delay for each line, in milliseconds. At this time, Sterna does not use this delay.
+# `ttset.c:955`, milliseconds between lines. With the character delay above
+# also set, upstream sends one character and uses *this* interval only when
+# that character is the line end (`commlib.c:1077`) — reproduced.
+#@ This setting sets an interval, in milliseconds, after each line that Sterna sends to a serial port.
 serial.delay_per_line | uint16 | Tera Term | DelayPerLine | 0 | DLG_SERIAL_DELAYLINE
 
 # `ttset.c:1151`. Wait for the port to appear instead of failing — a USB
@@ -2227,24 +2232,55 @@ transfer.raw_high_speed | bool | Tera Term | FileSendHighSpeedMode | on | -
 transfer.confirm_file_drop | bool | Tera Term | ConfirmFileDragAndDrop | on | -
 
 # `ttset.c:2006`. How raw Send file spaces writes. Anything unrecognised takes
-# `NoDelay`, including an empty present value.
-#@ This setting stores the Tera Term option that pauses a raw send after each character, line, or chunk. At this time, Sterna does not use this setting to add raw-send delays.
+# `NoDelay`, including an empty present value. Read by `send::file_send_defaults`
+# — this is what seeds File > Send file line by line, and what that dialog
+# writes back.
+#@ This setting selects when Sterna waits while it sends a file: after each character, after each line, or after each group of bytes.
 transfer.raw_send_delay_type | enum(NoDelay=NoDelay,PerChar=PerChar,PerLine=PerLine,PerSendSize=PerSendSize) | Tera Term | SendfileDelayType | NoDelay | -
 
 # `ttset.c:2011`, in milliseconds. The delay selected above; zero is a real
-# value and means no wait.
-#@ This setting stores the raw-send pause in milliseconds for Tera Term's selected delay mode. At this time, Sterna does not use this pause.
+# value and means no wait — so it collapses the type to `NoDelay`, which is
+# what `Pace::of` does and what `clipboar.c:205` does by hand for a paste.
+#@ This setting sets the interval, in milliseconds, that Sterna waits between the pieces of a file send. A value of 0 removes the interval.
 transfer.raw_send_delay_tick | uint16 | Tera Term | SendfileDelayTick | 0 | -
 
 # `ttset.c:2012`. The chunk size for `PerSendSize`, and the raw sender's read
 # size. Upstream applies no range at settings-load time.
-#@ This setting stores Tera Term's raw-send chunk size in bytes. At this time, Sterna does not use this setting.
+#@ This setting sets the number of bytes in each group, for a file send that waits after each group of bytes.
 transfer.raw_send_size | int | Tera Term | SendfileSize | 4096 | -
 
 # `ttset.c:2013`. Use Tera Term 4's sequential file reader rather than loading
-# chunks into memory before sending them. Off is the newer sender.
-#@ This setting controls the sequential raw-file sender from Tera Term 4. At this time, Sterna does not use this setting.
+# chunks into memory before sending them. Off is the newer sender, and it is
+# the only sender here: `send::Session::send_file` reads the file whole, the
+# way `SendMemSendFileCom` does.
+#@ This setting controls the sequential file sender from Tera Term 4. Sterna has one sender only, thus this setting has no effect.
 transfer.raw_send_sequential | bool | Tera Term | SendfileSequential | off | -
+
+# **`[Sterna]`**, because upstream's sender can only wait for a *duration* —
+# `SendMem` has no way to hear the far end at all, so there is no key here to
+# be compatible with. Deviation 26; the idea is YAT's `WaitForResponse`.
+#@ This setting selects what Sterna waits for after each line of a file that it sends. The alternatives are nothing, a prompt, the echo of the line, and a quiet line.
+transfer.send_gate | enum(none=None,prompt=Prompt,echo=Echo,quiet=Quiet) | Sterna | SendGate | none | -
+
+# **`[Sterna]`**, for the same reason. The engine is the `regex` crate's, as
+# Find's and the highlight rules' are, and **not** `waitregex`'s Oniguruma:
+# this runs on the frontend's thread inside `service_send`, where a
+# catastrophic backtrack is a window that stops answering.
+#@ This setting sets the regular expression for the prompt. Sterna sends the next line when the received text has a match for it.
+transfer.send_gate_pattern | string | Sterna | SendGatePattern |  | -
+
+# **`[Sterna]`**. YAT's own default is 500 ms
+# (`TextTerminalSettings.cs:107`); the timeout releases the line rather than
+# stopping the send, because a gate that gave up on the first unanswered line
+# would leave half a configuration in a switch.
+#@ This setting sets the time, in milliseconds, that Sterna waits for the device. When this time is complete, Sterna sends the next line and counts a timeout.
+transfer.send_gate_timeout | int_clamp(100..600000) | Sterna | SendGateTimeout | 500 | -
+
+# **`[Sterna]`**. The quiet gate's own interval, which is a different question
+# from the timeout above: one is how long silence has to last to count as an
+# answer, the other is how long to wait for one.
+#@ This setting sets the time, in milliseconds, that the device must be quiet before Sterna sends the next line.
+transfer.send_quiet_ms | int_clamp(10..60000) | Sterna | SendQuietTime | 300 | -
 
 # `ttset.c:2014`. Skip raw Send file's option page and use the remembered
 # binary and delay settings directly.

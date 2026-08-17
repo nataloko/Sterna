@@ -94,6 +94,30 @@ are the drafted reports below, not repeated here.
   one-sided, no documented form has the trailing slash, `-noproxy` /
   `-proxy=none://` still work); the bare-token half *is* reproduced.
   `cmdline::proxy::ProxyOptions::url`.
+- **39: `sendfile`'s manual page describes a sender Tera Term 5 does not
+  use** — it says text mode converts line endings and "strips out" every
+  control character except TAB, LF and CR, which is `FileSend1`
+  (`filesys.cpp:278`), the Tera Term 4 path. `ttdde.c:807` `#if 0`'d that out
+  in favour of `SendMemSendFile2`, and `SendMem`'s text path normalises the
+  line endings and strips nothing. So a macro's `sendfile` puts control bytes
+  on the wire that its own documentation says it removes. Either the code or
+  the page is wrong and only a maintainer can say which; this port follows the
+  code (`tt_session::send::Session::send_file`).
+- **40: a `SendMem` job keeps writing after a protocol transfer has taken the
+  wire** — `SendMemStart_i` sets `TalkStatus = IdTalkSendMem` and drives the
+  queue from a `SetTimer` (`sendmem.cpp:261`, `:517`). Starting a transfer
+  assigns `TalkStatus = IdTalkQuiet` (`filesys_proto.cpp:1057` and its ten
+  siblings) but stops no timer, and the exclusion that would have made it
+  unreachable is compiled out — `USE_ENABLE_WINDOW` is `0` (`sendmem.cpp:60`),
+  so the VT window keeps its File menu for the length of a send. The next timer
+  tick then hands `CommTextOutW` a line of the file being sent, in the middle of
+  a packet: the transfer completes and the received file has somebody's
+  configuration in it, with nothing reporting either. Reachable from the menu in
+  a paste's `PasteDelayPerLine` window, and for as long as a file send takes.
+  **Not reproduced** — `Session::service_send` holds the queue while
+  `self.xfer` is `Some` and `send::Sender::rebase` puts its deadlines back on
+  the clock afterwards. Refusing the transfer instead would let a paste still
+  trickling out fail a ZMODEM, so the queue waits rather than the protocol.
 - **In `vte` (a dependency, so not in that file; `docs/vte-bug.md`):**
   0.15.0's `advance_partial_utf8` (`lib.rs:687`) drops complete characters
   across a chunk boundary. Worked around in `tt-vt`.
