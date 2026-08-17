@@ -7,8 +7,8 @@ landing, finding and measurement from stages 0–4 — moved verbatim to
 **`docs/history.md`** on 2026-08-15; read that for the story behind a
 decision, not to start a session.
 
-**Last updated:** 2026-08-16 · **Stage:** 4 complete, deliberate deviations
-landing (`docs/deviations.md`) · **Commits:** 927
+**Last updated:** 2026-08-17 · **Stage:** 4 complete, deliberate deviations
+landing (`docs/deviations.md`) · **Commits:** 933
 
 ---
 
