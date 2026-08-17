@@ -5,6 +5,8 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-17
+
 ### Added
 
 - **A file can be sent a line at a time, each line held until the far end
@@ -630,7 +632,8 @@ Initial public release.
 - Linux AppImage and Windows installer packages.
 
 [GitHub releases page]: https://github.com/nataloko/Sterna/releases
-[Unreleased]: https://github.com/nataloko/Sterna/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/nataloko/Sterna/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/nataloko/Sterna/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/nataloko/Sterna/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/nataloko/Sterna/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/nataloko/Sterna/compare/v0.5.4...v0.6.0
