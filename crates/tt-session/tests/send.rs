@@ -459,6 +459,26 @@ fn the_settings_answer_for_the_gate() {
     );
 }
 
+/// A device that says a great deal without a line feed in it must not grow the
+/// gate's buffer without bound, and must not stop the prompt at the end of it
+/// from matching.
+#[test]
+fn a_talkative_device_keeps_the_tail_and_nothing_else() {
+    let (mut s, h) = connected();
+    s.queue_send(Job::new(Body::Text("one\rtwo\r".into())).gated(prompt_gate("# $", 5000)))
+        .expect("queue");
+    s.service_send().expect("service");
+
+    // A quarter of a megabyte with no line feed anywhere, then the prompt.
+    let noise = "x".repeat(256 * 1024);
+    s.feed(noise.as_bytes());
+    idle(&mut s, 20);
+    assert_eq!(h.outbound(), b"one\r");
+    s.feed(b"# ");
+    s.service_send().expect("service");
+    assert_eq!(h.outbound(), b"one\rtwo\r");
+}
+
 /// A whole line matches too, CR and all — the same rule `waitregex` follows,
 /// so one pattern means one thing in both places.
 #[test]

@@ -469,15 +469,19 @@ impl Watch {
     }
 
     /// Keep the tail, which is where a prompt is, and drop the head.
+    ///
+    /// In one drain rather than a character at a time: a device that prints a
+    /// megabyte with no line feed in it is exactly the case this bound exists
+    /// for, and dropping one character per pass would be quadratic in it.
     fn trim(&mut self) {
-        while self.seen.len() > WATCH_MAX {
-            let cut = self
-                .seen
-                .char_indices()
-                .nth(1)
-                .map_or(self.seen.len(), |(i, _)| i);
-            self.seen.drain(..cut);
+        if self.seen.len() <= WATCH_MAX {
+            return;
         }
+        let want = self.seen.len() - WATCH_MAX;
+        let cut = (want..=self.seen.len())
+            .find(|&i| self.seen.is_char_boundary(i))
+            .unwrap_or(self.seen.len());
+        self.seen.drain(..cut);
     }
 
     fn test(&mut self, gate: &Gate) {
