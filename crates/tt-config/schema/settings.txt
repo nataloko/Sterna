@@ -1205,10 +1205,10 @@ clipboard.trim_trailing_newline | bool | Tera Term | TrimTrailingNLonPaste | off
 # `ttset.c:1633`, milliseconds between the lines of a paste — for a host with
 # no flow control that drops what arrives while it is still echoing. The only
 # setting in the file clamped at **both** ends; see `int_clamp` above for why
-# that is a third bound rather than one of the other two. Read and written and
-# acting on nothing yet: pacing a paste means handing the send path a schedule,
-# and `Session::paste` queues the whole thing.
-#@ This setting stores a delay of 0 thru 5000 milliseconds between pasted lines. Sterna does not apply this delay at this time.
+# that is a third bound rather than one of the other two. `Session::paste`
+# queues the text as one `send::Job` and asks for this as its per-line pace,
+# which is `clipboar.c:205`; zero collapses it to no pace at all.
+#@ This setting sets an interval of 0 thru 5000 milliseconds after each line of a paste. Use it for a device that loses the text that arrives while it echoes the last line.
 clipboard.paste_delay_per_line | int_clamp(0..5000) | Tera Term | PasteDelayPerLine | 10 | -
 
 # `ttset.c:1580`. Upstream writes the size back when the confirmation dialog
@@ -1698,12 +1698,17 @@ serial.stop_bits | enum(1=One,2=Two) | Tera Term | StopBit | 1 | DLG_SERIAL_STOP
 serial.flow | enum(none=None,x=XonXoff,hard/rtscts=Hardware,dsrdtr=DsrDtr) | Tera Term | FlowCtrl | none | DLG_SERIAL_FLOW
 
 # `ttset.c:951`, milliseconds between characters — for a device that cannot
-# keep up with a paste.
-#@ This setting stores Tera Term's serial transmit delay for each character, in milliseconds. At this time, Sterna does not use this delay.
+# keep up with a paste. Copied into `cv` when the port opens (`commlib.c:175`)
+# and applied inside the write itself (`commlib.c:1068`), so it paces
+# *everything* a serial port sends and not only a queued job — which is
+# `send::WriteDelay`, the second of this port's two pacing layers.
+#@ This setting sets an interval, in milliseconds, after each character that Sterna sends to a serial port. Use it for a device that cannot read a full-speed paste.
 serial.delay_per_char | uint16 | Tera Term | DelayPerChar | 0 | DLG_SERIAL_DELAYCHAR
 
-# `ttset.c:955`, milliseconds between lines.
-#@ This setting stores Tera Term's serial transmit delay for each line, in milliseconds. At this time, Sterna does not use this delay.
+# `ttset.c:955`, milliseconds between lines. With the character delay above
+# also set, upstream sends one character and uses *this* interval only when
+# that character is the line end (`commlib.c:1077`) — reproduced.
+#@ This setting sets an interval, in milliseconds, after each line that Sterna sends to a serial port.
 serial.delay_per_line | uint16 | Tera Term | DelayPerLine | 0 | DLG_SERIAL_DELAYLINE
 
 # `ttset.c:1151`. Wait for the port to appear instead of failing — a USB

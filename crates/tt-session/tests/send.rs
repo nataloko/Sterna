@@ -362,6 +362,162 @@ fn a_paste_during_a_paste_is_dropped() {
     assert_eq!(h.outbound(), b"one\rtwo\rthree\r");
 }
 
+// --- the other pacing layer, which is the serial port's own ------------------
+
+fn serial(per_char: u16, per_line: u16) -> (Session, MemoryHandle) {
+    let mut s = Session::new(Config::default());
+    let mut settings = s.settings().clone();
+    settings.serial_delay_per_char = per_char as i32;
+    settings.serial_delay_per_line = per_line as i32;
+    s.set_settings(settings);
+    let (transport, handle) = MemoryTransport::with_kind(tt_conn::LinkKind::Serial {
+        baud: 115200,
+        seven_bit: false,
+    });
+    s.connect(Box::new(transport));
+    (s, handle)
+}
+
+/// `DelayPerChar` — read, written and acted on by nothing since this program
+/// had a settings file. It paces **everything** the port sends, not a queued
+/// job: this is a plain keystroke.
+#[test]
+fn a_serial_port_with_a_character_delay_sends_one_byte_at_a_time() {
+    let (mut s, h) = serial(20, 0);
+    s.send_text("abc").expect("send");
+    assert_eq!(h.outbound(), b"a");
+    // ...and the frontend's send timer is what offers the rest, exactly as it
+    // does for a queued job. There is one timer and two reasons for it.
+    assert!(s.send_deadline().is_some());
+    run(&mut s);
+    assert_eq!(h.outbound(), b"abc");
+}
+
+#[test]
+fn a_line_delay_sends_up_to_the_line_end() {
+    let (mut s, h) = serial(0, 20);
+    s.send_text("one\rtwo\r").expect("send");
+    // `CRSend` ships as a bare CR, so that is the line end upstream looks for.
+    assert_eq!(h.outbound(), b"one\r");
+    run(&mut s);
+    assert_eq!(h.outbound(), b"one\rtwo\r");
+}
+
+/// The line end is the **live** newline mode and not the file's — `cv->CRSend`
+/// at `commlib.c:1071`, which `SM 20` moves.
+#[test]
+fn the_line_end_follows_the_terminals_newline_mode() {
+    let (mut s, h) = serial(0, 20);
+    s.feed(b"\x1b[20h"); // LNM, so CR becomes CRLF and the line end is the LF
+    s.send_text("one\rtwo\r").expect("send");
+    assert_eq!(h.outbound(), b"one\r\n");
+    run(&mut s);
+    assert_eq!(h.outbound(), b"one\r\ntwo\r\n");
+}
+
+/// Both set is not "a line, then a character": upstream skips the line scan
+/// entirely and sends one byte, waiting the per-line interval only when that
+/// one byte happens to be the line end (`commlib.c:1077`).
+#[test]
+fn both_delays_set_sends_one_byte_and_mostly_waits_the_character_one() {
+    let (mut s, h) = serial(15, 500);
+    s.send_text("ab\r").expect("send");
+    assert_eq!(h.outbound(), b"a");
+    // Two characters at 15 ms each; if the line interval were being used for
+    // them this would take a second.
+    let started = Instant::now();
+    for _ in 0..2 {
+        let d = s.send_deadline().expect("armed");
+        std::thread::sleep(d);
+        s.service_send().expect("service");
+    }
+    assert_eq!(h.outbound(), b"ab\r");
+    assert!(started.elapsed() < Duration::from_millis(400));
+}
+
+/// `cv.DelayFlag` is cleared for the length of a protocol transfer
+/// (`filesys_proto.cpp:436`): pacing a ZMODEM packet would time it out.
+#[test]
+fn a_protocol_transfer_is_not_paced() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut s, _h) = serial(50, 0);
+    let opts = s.transfer_options();
+    s.receive_files(
+        tt_xfer::Job::Raw {
+            autostop: Duration::from_secs(0),
+        },
+        dir.path(),
+        Some("received.bin"),
+        &opts,
+    )
+    .expect("start a receive");
+    // Nothing is holding the line, so nothing is armed for it.
+    assert_eq!(s.send_deadline(), None);
+    s.cancel_transfer();
+}
+
+/// It is the *port's* governor. A telnet or SSH session carrying the same
+/// settings is not paced, because `commlib.c:1068` tests `PortType==IdSerial`.
+#[test]
+fn only_a_serial_port_is_paced() {
+    let mut s = Session::new(Config::default());
+    let mut settings = s.settings().clone();
+    settings.serial_delay_per_char = 50;
+    s.set_settings(settings);
+    let (transport, h) = MemoryTransport::new();
+    s.connect(Box::new(transport));
+    s.send_text("abc").expect("send");
+    assert_eq!(h.outbound(), b"abc");
+    assert_eq!(s.send_deadline(), None);
+}
+
+/// `setserialdelaychar` and `setserialdelayline` — the two macro commands that
+/// were refused for want of this queue.
+///
+/// The change is **queued**, which is `SendMemSetDelay`: it paces what comes
+/// after the send in front of it and not the tail of that send.
+#[test]
+fn a_macro_can_move_the_serial_delays_and_the_change_waits_its_turn() {
+    let (mut s, h) = serial(0, 0);
+    // Nothing paced yet, so a line goes out whole.
+    s.send_text("first\r").expect("send");
+    assert_eq!(h.outbound(), b"first\r");
+
+    assert!(s.queue_write_delay(Duration::ZERO, Duration::from_millis(20)));
+    run(&mut s);
+    assert_eq!(s.write_delay().per_line(), Duration::from_millis(20));
+
+    s.send_text("one\rtwo\r").expect("send");
+    assert_eq!(h.outbound(), b"first\rone\r");
+    run(&mut s);
+    assert_eq!(h.outbound(), b"first\rone\rtwo\r");
+
+    // ...and setting them back to nothing lets go of the line at once rather
+    // than waiting out an interval that no longer exists.
+    assert!(s.queue_write_delay(Duration::ZERO, Duration::ZERO));
+    run(&mut s);
+    s.send_text("three\rfour\r").expect("send");
+    assert_eq!(h.outbound(), b"first\rone\rtwo\rthree\rfour\r");
+}
+
+/// It is the port's, so a session that is not a serial port answers no — which
+/// is what the command reports, and is not a failure.
+#[test]
+fn moving_the_serial_delays_over_something_else_answers_no() {
+    let (mut s, _h) = connected();
+    assert!(!s.queue_write_delay(Duration::ZERO, Duration::from_millis(20)));
+    assert!(!s.sending());
+}
+
+/// Both layers at once, which is what a paste on a slow serial console is.
+#[test]
+fn a_paced_paste_on_a_paced_port_is_subject_to_both() {
+    let (mut s, h) = serial(0, 20);
+    s.paste("one\ntwo\n", false).expect("paste");
+    run(&mut s);
+    assert_eq!(h.outbound(), b"one\rtwo\r");
+}
+
 #[test]
 fn a_session_with_nothing_connected_refuses_and_says_why() {
     let dir = tempfile::tempdir().unwrap();

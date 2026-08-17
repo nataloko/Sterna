@@ -75,6 +75,17 @@ pub enum Body {
     /// (`sendmem.cpp:774`).
     Text(String),
     Bytes(Vec<u8>),
+    /// Not bytes at all: the two serial delays, **queued** rather than applied
+    /// at once.
+    ///
+    /// `SendMemSetDelay` (`sendmem.cpp:625`), and it is a job for a reason a
+    /// macro can see. `setserialdelaychar 50` immediately after a `send` must
+    /// pace what comes *after* that send, not the tail of it; putting it in the
+    /// same FIFO is what makes the order the order the script wrote.
+    SetDelay {
+        per_char: Duration,
+        per_line: Duration,
+    },
 }
 
 impl Body {
@@ -85,6 +96,7 @@ impl Body {
         match self {
             Body::Text(s) => s.len(),
             Body::Bytes(b) => b.len(),
+            Body::SetDelay { .. } => 0,
         }
     }
 
@@ -198,8 +210,19 @@ impl Job {
 /// What [`Sender::take`] handed over, for the caller to put on the wire.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Piece {
-    Text { text: String, echo: bool },
-    Bytes { data: Vec<u8>, echo: bool },
+    Text {
+        text: String,
+        echo: bool,
+    },
+    Bytes {
+        data: Vec<u8>,
+        echo: bool,
+    },
+    /// Apply these to the serial write governor. Nothing goes on the wire.
+    SetDelay {
+        per_char: Duration,
+        per_line: Duration,
+    },
 }
 
 /// Why a job stopped.
@@ -390,6 +413,13 @@ impl Sender {
             State::Waiting(_) | State::Ready => {}
         }
         let job = self.queue.front()?;
+        if let Body::SetDelay { per_char, per_line } = job.body {
+            // No bytes, so nothing to pace and nothing to drain — but it still
+            // goes through `Draining` so that the job ahead of it in the FIFO
+            // has reached the wire before its delays change.
+            self.state.0 = State::Draining(now);
+            return Some(Piece::SetDelay { per_char, per_line });
+        }
         let left = job.body.len() - self.at;
         if left == 0 {
             // Handed over on an earlier call; it ends when the wire catches up.
@@ -423,6 +453,8 @@ impl Sender {
                 data: b[self.at..self.at + take].to_vec(),
                 echo: job.echo,
             },
+            // Handled above: it has no bytes and never reaches `span`.
+            Body::SetDelay { .. } => return None,
         };
         self.at += take;
 
@@ -474,6 +506,119 @@ impl Sender {
         if matches!(self.state.0, State::Draining(_)) {
             self.state.0 = State::Draining(now + BACKOFF);
         }
+    }
+}
+
+/// The *other* pacing layer: `commlib.c:1068`, inside the serial write itself.
+///
+/// Not part of the queue above and deliberately not folded into it. That one is
+/// a caller's decision about one job; this is a property of the **port**, it
+/// applies to everything a serial line sends — a keystroke, a paste, a macro's
+/// `send` — and it is suppressed for the duration of a protocol transfer, which
+/// is what `cv->DelayFlag` is (`filesys_proto.cpp:436`, `:1060`). A paste on a
+/// serial port is subject to both, upstream and here.
+///
+/// `DelayPerChar` and `DelayPerLine` have been in this program's schema since
+/// it had one, describing a behaviour it did not have.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WriteDelay {
+    per_char: Duration,
+    per_line: Duration,
+    /// Nothing may go until this instant. An instant and not a duration, for
+    /// the reason at the top of this module.
+    until: Option<Instant>,
+}
+
+impl WriteDelay {
+    /// Take the two numbers. `setserialdelaychar` and `setserialdelayline` move
+    /// them, as does opening a port (`commlib.c:175`, `:313`).
+    pub fn set(&mut self, per_char: Duration, per_line: Duration) {
+        self.per_char = per_char;
+        self.per_line = per_line;
+        if per_char.is_zero() && per_line.is_zero() {
+            // Nothing to hold the line for. Releasing rather than waiting out
+            // an interval that no longer exists: a macro that has just turned
+            // the delays off is asking for the next byte to go now.
+            self.until = None;
+        }
+    }
+
+    pub fn per_char(&self) -> Duration {
+        self.per_char
+    }
+
+    pub fn per_line(&self) -> Duration {
+        self.per_line
+    }
+
+    /// Whether it is doing anything. The common answer, on every write of every
+    /// session, is no.
+    pub fn is_active(&self) -> bool {
+        !self.per_char.is_zero() || !self.per_line.is_zero()
+    }
+
+    /// When the line may be written to again, or `None` for now.
+    pub fn deadline(&self, now: Instant) -> Option<Duration> {
+        let until = self.until?;
+        (until > now).then(|| until.saturating_duration_since(now))
+    }
+
+    /// How much of `bytes` may go now, or `None` while the line is held.
+    ///
+    /// `line_end` is `0x0d` when `CRSend` is a bare CR and `0x0a` otherwise —
+    /// upstream's own choice (`commlib.c:1071`), and it is the *live* mode
+    /// rather than the file's.
+    ///
+    /// With both delays set, upstream sends **one byte** and waits the
+    /// per-character interval unless that byte happens to be the line end. The
+    /// per-line scan is skipped entirely in that case (`commlib.c:1077`), which
+    /// is not what either name suggests and is reproduced here.
+    pub fn plan(&self, now: Instant, bytes: &[u8], line_end: u8) -> Option<(usize, Duration)> {
+        if bytes.is_empty() {
+            return None;
+        }
+        if let Some(until) = self.until {
+            if until > now {
+                return None;
+            }
+        }
+        if !self.per_line.is_zero() {
+            let mut n = 1;
+            if self.per_char.is_zero() {
+                while n < bytes.len() && bytes[n - 1] != line_end {
+                    n += 1;
+                }
+            }
+            let wait = if bytes[n - 1] == line_end {
+                self.per_line
+            } else {
+                self.per_char
+            };
+            return Some((n, wait));
+        }
+        if !self.per_char.is_zero() {
+            return Some((1, self.per_char));
+        }
+        Some((bytes.len(), Duration::ZERO))
+    }
+
+    /// Report what the transport took. `wait` is the second half of
+    /// [`WriteDelay::plan`]'s answer.
+    ///
+    /// The hold is armed only when the write took **everything** it was
+    /// offered — upstream's `C == D` (`commlib.c:1148`). A short write has not
+    /// finished the unit the interval belongs to, so waiting for it would pace
+    /// a line that is still half on the wire.
+    pub fn wrote(&mut self, now: Instant, planned: usize, wrote: usize, wait: Duration) {
+        if planned == wrote && !wait.is_zero() {
+            self.until = Some(now + wait);
+        }
+    }
+
+    /// Let go of the line. A connect and a disconnect both reach this: the hold
+    /// belongs to a port, and the next one need not be the same port.
+    pub fn release(&mut self) {
+        self.until = None;
     }
 }
 
@@ -666,7 +811,58 @@ impl crate::Session {
     /// and after anything else that touches the session. It is idempotent —
     /// asking does not postpone the answer.
     pub fn send_deadline(&self) -> Option<Duration> {
-        self.sender.deadline(Instant::now())
+        let now = Instant::now();
+        // Two clocks, one timer. The queue's is a caller's pace; the write
+        // governor's is the serial port's, and either can be the reason the
+        // next byte is not going yet. Nothing distinguishes them above this: a
+        // frontend arms one timer and calls `service_send`.
+        let queue = self.sender.deadline(now);
+        let wire = self
+            .write_delay_applies()
+            .then(|| self.write_delay.deadline(now))
+            .flatten();
+        match (queue, wire) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    /// The two serial delays, which pace everything this port sends.
+    ///
+    /// `commlib.c:175` copies them out of the settings when the port opens and
+    /// `SendMemSetDelay` moves them from a macro. Reading them live instead
+    /// would be a different feature: a macro's `setserialdelaychar` is not
+    /// supposed to survive into the settings file.
+    pub fn set_write_delay(&mut self, per_char: Duration, per_line: Duration) {
+        self.write_delay.set(per_char, per_line);
+    }
+
+    /// `setserialdelaychar` / `setserialdelayline` — the macro's half.
+    ///
+    /// Queued rather than applied, which is `SendMemSetDelay`: a delay change
+    /// on the line after a `send` must pace what comes next and not the tail of
+    /// what is already going. False when the connection is not a serial port,
+    /// which is the answer the command reports and not an error — the same
+    /// shape as the control lines.
+    pub fn queue_write_delay(&mut self, per_char: Duration, per_line: Duration) -> bool {
+        if !self
+            .conn
+            .as_ref()
+            .is_some_and(|c| matches!(c.link_kind(), tt_conn::LinkKind::Serial { .. }))
+        {
+            return false;
+        }
+        self.sender
+            .push(Job::new(Body::SetDelay { per_char, per_line }));
+        // Started now rather than on the next timer tick, so a script that sets
+        // a delay and sends nothing does not leave a job waiting for a wakeup
+        // nobody has a reason to arm.
+        let _ = self.service_send();
+        true
+    }
+
+    pub fn write_delay(&self) -> WriteDelay {
+        self.write_delay
     }
 
     /// Hand the transport the next piece, if one is due.
@@ -677,6 +873,13 @@ impl crate::Session {
     /// that is not sure.
     pub fn service_send(&mut self) -> Result<()> {
         if !self.sender.is_running() {
+            // The queue is empty, but the *port* may still be holding bytes:
+            // a keystroke on a serial line with `DelayPerChar` set is one
+            // character in `pending` and a governor counting down to it, and
+            // this is the only thing that will ever offer it again.
+            if !self.pending.is_empty() {
+                return self.flush_pending();
+            }
             return Ok(());
         }
         let now = Instant::now();
@@ -694,6 +897,9 @@ impl crate::Session {
                     self.feed(&data);
                 }
                 self.queue(&data);
+            }
+            Some(Piece::SetDelay { per_char, per_line }) => {
+                self.write_delay.set(per_char, per_line);
             }
             // Either nothing is due, or the body is spent and the job is
             // waiting for the wire. Only this layer knows which, because only
@@ -718,6 +924,9 @@ impl crate::Session {
 /// when the unit it wants does not fit in `free`.
 fn span(body: &Body, at: usize, pace: Pace, free: usize) -> Option<usize> {
     let left = body.len() - at;
+    if matches!(body, Body::SetDelay { .. }) {
+        return None;
+    }
     match pace {
         // Everything, in one piece. `free` has no say: an unpaced send is what
         // every caller in this program did before this module existed, and
@@ -730,7 +939,7 @@ fn span(body: &Body, at: usize, pace: Pace, free: usize) -> Option<usize> {
                 let n = s[at..].chars().next()?.len_utf8();
                 (n <= free).then_some(n)
             }
-            Body::Bytes(_) => (free >= 1).then_some(1),
+            _ => (free >= 1).then_some(1),
         },
         Pace::PerLine(_) => {
             let n = line_span(body, at);
@@ -743,7 +952,7 @@ fn span(body: &Body, at: usize, pace: Pace, free: usize) -> Option<usize> {
             // `Pace::of` cannot produce and a hand-edited file can.
             let n = match body {
                 Body::Text(s) => floor_char_boundary(s, at, bytes.min(left)),
-                Body::Bytes(_) => bytes.min(left),
+                _ => bytes.min(left),
             };
             (n > 0 && n <= free).then_some(n)
         }
@@ -763,6 +972,7 @@ fn line_span(body: &Body, at: usize) -> usize {
     let rest: &[u8] = match body {
         Body::Text(s) => &s.as_bytes()[at..],
         Body::Bytes(b) => &b[at..],
+        Body::SetDelay { .. } => &[],
     };
     rest.iter()
         .position(|&b| b == b'\r' || b == b'\n')
@@ -799,6 +1009,7 @@ mod tests {
                 Some(Piece::Bytes { data, .. }) => {
                     out.push(String::from_utf8_lossy(&data).into_owned())
                 }
+                Some(Piece::SetDelay { .. }) => out.push("<delay>".into()),
                 None => {
                     if sender.drained().is_some() {
                         break;

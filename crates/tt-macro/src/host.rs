@@ -748,16 +748,35 @@ impl ScriptHost for SessionHost {
         }
     }
 
+    /// `setserialdelaychar` / `setserialdelayline` — the two of the serial
+    /// group that are not a control line.
+    ///
+    /// **Queued rather than applied**, which is `SendMemSetDelay`
+    /// (`sendmem.cpp:625`): upstream puts the change in the same FIFO as the
+    /// sends, so a delay set on the line after a `send` paces what comes next
+    /// and not the tail of what is already going.
+    ///
+    /// Serial only, and a false is the documented answer rather than a
+    /// failure — the same shape as `setdtr` and its neighbours, which are
+    /// silent no-ops over SSH.
+    fn set_serial_delay(&mut self, per_line: bool, ms: i32) -> Result<bool, TtlError> {
+        let ms = Duration::from_millis(ms.max(0) as u64);
+        // One closure and not two calls: the other delay has to be read on the
+        // session's own thread, or a second `setserialdelay*` arriving between
+        // the read and the write would be overwritten by a stale number.
+        self.ask(move |s| {
+            let live = s.write_delay();
+            let (per_char, line) = match per_line {
+                true => (live.per_char(), ms),
+                false => (ms, live.per_line()),
+            };
+            s.queue_write_delay(per_char, line)
+        })
+    }
+
     // Everything not written above keeps the trait's own refusing default, and
     // each is refused for a reason rather than for want of typing:
     //
-    // `setserialdelaychar`, `setserialdelayline` — the two of the serial group
-    //   that are not a control line. They pace what is *sent*, and upstream
-    //   paces it in `SendMem`, a queue between the macro and the wire that
-    //   this port does not have: `send` writes straight through. One feature
-    //   with three other callers waiting on it — a paste, a `sendfile` and
-    //   the File menu's own send all go through the same queue — so it wants
-    //   building once, for all of them, rather than behind these two.
     // `sendfile` — the one of the sixteen transfer commands that is not a
     //   protocol; the reason is in `Plan::of`, where the other fifteen are.
     // `scp` — an SSH channel `tt-conn` does not open yet.

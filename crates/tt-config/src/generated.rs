@@ -3379,9 +3379,9 @@ pub struct Settings {
     /// `ttset.c:1633`, milliseconds between the lines of a paste — for a host with
     /// no flow control that drops what arrives while it is still echoing. The only
     /// setting in the file clamped at **both** ends; see `int_clamp` above for why
-    /// that is a third bound rather than one of the other two. Read and written and
-    /// acting on nothing yet: pacing a paste means handing the send path a schedule,
-    /// and `Session::paste` queues the whole thing.
+    /// that is a third bound rather than one of the other two. `Session::paste`
+    /// queues the text as one `send::Job` and asks for this as its per-line pace,
+    /// which is `clipboar.c:205`; zero collapses it to no pace at all.
     pub clipboard_paste_delay_per_line: i32,
     /// `ttset.c:1580`. Upstream writes the size back when the confirmation dialog
     /// is resized, which is the whole reason it is a setting. Below zero takes the
@@ -3727,9 +3727,14 @@ pub struct Settings {
     /// the canonical one first, which is what gets written back.
     pub serial_flow: SerialFlow,
     /// `ttset.c:951`, milliseconds between characters — for a device that cannot
-    /// keep up with a paste.
+    /// keep up with a paste. Copied into `cv` when the port opens (`commlib.c:175`)
+    /// and applied inside the write itself (`commlib.c:1068`), so it paces
+    /// *everything* a serial port sends and not only a queued job — which is
+    /// `send::WriteDelay`, the second of this port's two pacing layers.
     pub serial_delay_per_char: i32,
-    /// `ttset.c:955`, milliseconds between lines.
+    /// `ttset.c:955`, milliseconds between lines. With the character delay above
+    /// also set, upstream sends one character and uses *this* interval only when
+    /// that character is the line end (`commlib.c:1077`) — reproduced.
     pub serial_delay_per_line: i32,
     /// `ttset.c:1151`. Wait for the port to appear instead of failing — a USB
     /// adapter that has not been plugged in yet.
@@ -14681,7 +14686,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::IntClamp(0, 5000),
         default: "10",
         label: None,
-        doc: "`ttset.c:1633`, milliseconds between the lines of a paste — for a host with no flow control that drops what arrives while it is still echoing. The only setting in the file clamped at **both** ends; see `int_clamp` above for why that is a third bound rather than one of the other two. Read and written and acting on nothing yet: pacing a paste means handing the send path a schedule, and `Session::paste` queues the whole thing.",
+        doc: "`ttset.c:1633`, milliseconds between the lines of a paste — for a host with no flow control that drops what arrives while it is still echoing. The only setting in the file clamped at **both** ends; see `int_clamp` above for why that is a third bound rather than one of the other two. `Session::paste` queues the text as one `send::Job` and asks for this as its per-line pace, which is `clipboar.c:205`; zero collapses it to no pace at all.",
     },
     Field {
         name: "clipboard.paste_dialog_width",
@@ -15191,7 +15196,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::IntWord,
         default: "0",
         label: Some("DLG_SERIAL_DELAYCHAR"),
-        doc: "`ttset.c:951`, milliseconds between characters — for a device that cannot keep up with a paste.",
+        doc: "`ttset.c:951`, milliseconds between characters — for a device that cannot keep up with a paste. Copied into `cv` when the port opens (`commlib.c:175`) and applied inside the write itself (`commlib.c:1068`), so it paces *everything* a serial port sends and not only a queued job — which is `send::WriteDelay`, the second of this port's two pacing layers.",
     },
     Field {
         name: "serial.delay_per_line",
@@ -15201,7 +15206,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::IntWord,
         default: "0",
         label: Some("DLG_SERIAL_DELAYLINE"),
-        doc: "`ttset.c:955`, milliseconds between lines.",
+        doc: "`ttset.c:955`, milliseconds between lines. With the character delay above also set, upstream sends one character and uses *this* interval only when that character is the line end (`commlib.c:1077`) — reproduced.",
     },
     Field {
         name: "serial.wait_com",
@@ -16859,7 +16864,7 @@ pub const SETTING_HELP: &[&str] = &[
     "This setting confirms a paste when Paste with CR adds a final carriage return. This action does not examine line breaks in the pasted text.",
     "This setting contains a file name for one literal match on each line when paste confirmation is on. Confirmation is necessary for a paste that contains listed text. Relative paths start from the home directory.",
     "This setting removes a final newline from copied text before a paste. The off value keeps the final newline and lets a copied line run immediately.",
-    "This setting stores a delay of 0 thru 5000 milliseconds between pasted lines. Sterna does not apply this delay at this time.",
+    "This setting sets an interval of 0 thru 5000 milliseconds after each line of a paste. Use it for a device that loses the text that arrives while it echoes the last line.",
     "This setting sets the initial width of the paste-confirmation dialog in pixels. Sterna updates this value after the dialog closes.",
     "This setting sets the initial height of the paste-confirmation dialog in pixels. Sterna updates this value after the dialog closes.",
     "This setting adds markers to pasted text after a remote application requests bracketed paste. These markers identify pasted text and typed text as different. Sterna sends no markers with the off value.",
@@ -16910,8 +16915,8 @@ pub const SETTING_HELP: &[&str] = &[
     "This setting selects the serial parity check. The value must agree with the parity setting of the connected device.",
     "This setting selects one or two serial stop bits. The value must agree with the connected-device configuration.",
     "This setting selects serial flow control. The options are none, XON/XOFF software control, RTS/CTS hardware control, and DSR/DTR control.",
-    "This setting stores Tera Term's serial transmit delay for each character, in milliseconds. At this time, Sterna does not use this delay.",
-    "This setting stores Tera Term's serial transmit delay for each line, in milliseconds. At this time, Sterna does not use this delay.",
+    "This setting sets an interval, in milliseconds, after each character that Sterna sends to a serial port. Use it for a device that cannot read a full-speed paste.",
+    "This setting sets an interval, in milliseconds, after each line that Sterna sends to a serial port.",
     "This setting stores the Tera Term option that waits for a missing serial port. At this time, Sterna immediately gives an error if it cannot open the port. Thus, this setting has no effect.",
     "This setting sets the highest serial port number that connection options accept. The permitted range is 4 thru 4096.",
     "This setting controls the request-to-send (RTS) line. A value of -1 makes the flow control setting control the line. A value of 0 disables the line. A value of 1 enables the line. A value of 2 selects handshake. A value of 3 selects toggle.",

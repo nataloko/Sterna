@@ -299,6 +299,9 @@ pub struct Session {
     /// session's life, and [`send::Sender::is_running`] is the question every
     /// hot path asks first.
     sender: send::Sender,
+    /// The *other* pacing layer, which is the serial port's own and applies to
+    /// everything it sends — see [`send::WriteDelay`].
+    write_delay: send::WriteDelay,
     /// Where the running transfer's outcome goes besides the event queue, for
     /// a caller on another thread that is blocked on it. See
     /// [`Session::notify_transfer`].
@@ -382,6 +385,7 @@ impl Session {
             xfer: None,
             xfer_reply: None,
             sender: send::Sender::default(),
+            write_delay: send::WriteDelay::default(),
             macro_link: None,
             plugin_link: None,
             stream_filter: None,
@@ -458,6 +462,11 @@ impl Session {
             self.reopen.cancel();
         }
         self.settings = settings;
+        // Upstream copies these into `cv` when a port opens and when
+        // `CommResetSerial` runs (`commlib.c:175`, `:313`), and Setup > Serial
+        // port is what runs the second one — so the dialog moves them on a live
+        // port and a macro's `setserialdelaychar` does not reach the file.
+        self.load_write_delay();
         self.vt.set_config(config);
         // `set_config` may have resized the grid, which is the one thing here
         // that moves the viewport's anchor: the offset would otherwise point
@@ -549,7 +558,20 @@ impl Session {
         }
         self.clear_com_buff_on_open();
         self.tcp_echo_cr_override();
+        // `CommOpen` copies the two serial delays into `cv` (`commlib.c:175`),
+        // and a hold left over from the last port belongs to that port.
+        self.load_write_delay();
         self.connect_beep(kind);
+    }
+
+    /// Take `DelayPerChar` and `DelayPerLine` out of the settings and let go of
+    /// any hold the last port left.
+    fn load_write_delay(&mut self) {
+        self.write_delay.set(
+            Duration::from_millis(self.settings.serial_delay_per_char.max(0) as u64),
+            Duration::from_millis(self.settings.serial_delay_per_line.max(0) as u64),
+        );
+        self.write_delay.release();
     }
 
     /// `TCPLocalEcho` and `TCPCRSend` — the two settings a TCP connection that
@@ -2500,19 +2522,58 @@ impl Session {
         Cow::Owned(result.bytes)
     }
 
+    /// Whether the serial write governor has anything to say about this port.
+    ///
+    /// Three conditions, all upstream's: the delays are set, the link is a
+    /// **serial** one (`commlib.c:1068` tests `PortType==IdSerial`), and no
+    /// protocol transfer is running — `filesys_proto.cpp` clears
+    /// `cv.DelayFlag` for the length of one, because pacing a ZMODEM packet
+    /// would time the protocol out.
+    ///
+    /// Asked on every write of every session, and the common answer is no.
+    fn write_delay_applies(&self) -> bool {
+        self.write_delay.is_active()
+            && self.xfer.is_none()
+            && self
+                .conn
+                .as_ref()
+                .is_some_and(|c| matches!(c.link_kind(), tt_conn::LinkKind::Serial { .. }))
+    }
+
     /// Push what is queued, keeping whatever the transport would not take.
     fn flush_pending(&mut self) -> Result<()> {
         if self.pending.is_empty() {
             return Ok(());
         }
-        let Some(conn) = self.conn.as_mut() else {
+        if self.conn.is_none() {
             // Nowhere to send it. Dropping beats growing without bound while
             // someone types at a disconnected window.
             self.pending.clear();
             return Ok(());
-        };
-        match conn.write(&self.pending, self.write_timeout) {
+        }
+        // Worked out before the transport is borrowed, because it reads the
+        // settings and the live newline mode as well as the port.
+        let mut plan = None;
+        if self.write_delay_applies() {
+            let line_end = match self.vt.cr_send() {
+                CrSend::Cr => 0x0d,
+                _ => 0x0a,
+            };
+            let now = Instant::now();
+            let Some(step) = self.write_delay.plan(now, &self.pending, line_end) else {
+                // The line is held. What is queued stays queued, and
+                // `Session::send_deadline` is what gets it moving again.
+                return Ok(());
+            };
+            plan = Some((now, step));
+        }
+        let take = plan.map_or(self.pending.len(), |(_, (n, _))| n);
+        let conn = self.conn.as_mut().expect("checked above");
+        match conn.write(&self.pending[..take], self.write_timeout) {
             Ok(n) => {
+                if let Some((now, (planned, wait))) = plan {
+                    self.write_delay.wrote(now, planned, n, wait);
+                }
                 // The only place that sees every outbound byte. `queue` above
                 // merely buffers, and a file transfer writes straight into
                 // `self.pending` without passing through it (`xfer.rs`). `n`
