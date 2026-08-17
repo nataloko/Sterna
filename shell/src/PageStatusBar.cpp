@@ -84,6 +84,14 @@ PageStatusBar::PageStatusBar(QWidget *parent)
     // page's size hint out — the window would grow at the moment a session
     // connected, which reads as the terminal-size guard misfiring and gets
     // hunted nowhere near here. It takes the space that is left and elides.
+    //
+    // **And at a tiled quarter window there is none left, deliberately.** The
+    // log chip, the counters floor and the capped connection are the whole
+    // strip at 460 pixels on a desktop, so this goes to zero — which costs a
+    // reader nothing, because `m_connection` beside it is already saying the
+    // host. `counters_test` pins that rather than a width. What it does cost is
+    // a *message*: `showMessage` paints through here too, and `PLAN.md` holds
+    // that one open.
     m_name->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     m_name->setMinimumWidth(0);
     layout->addWidget(m_name, 1);

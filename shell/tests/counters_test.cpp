@@ -264,13 +264,24 @@ void test_the_serial_row_reads_the_port()
     }
 }
 
-/// What the field leaves for the host name on a tiled quarter-window.
+/// What a tiled quarter-window keeps when there is not room for all of it.
 ///
-/// The question the design turns on: the only stretching item in that row is
-/// the name, so every pixel the field reserves is a pixel the name elides
-/// away. A quarter of a 1920-wide window is the narrowest strip anybody
-/// realistically reads, and the name has to survive it.
-void test_the_field_leaves_the_name_room_on_a_quarter_window()
+/// **The name is the item that yields, and at 460 pixels it yields
+/// everything.** That is `m_name`'s own policy — `Ignored` and a zero minimum,
+/// so a host-supplied string can never push the page's size hint out — and at
+/// desktop font metrics the log chip, the counters floor and the capped
+/// connection are already the whole strip. This asserted `name->width() > 40`
+/// for a year and was never run by anything; it passed only under `offscreen`,
+/// whose text is about 20% narrower than a real plugin's, so the number it
+/// pinned was a budget that the desktop had never met.
+///
+/// What is pinned instead is what `PageStatusBar` actually promises, and none
+/// of it is in pixels: the strip does not outgrow the width it was given, the
+/// counters never lie by clipping, the name elides rather than clipping, and
+/// **the host is still on screen** — the connection label beside it reads
+/// `ssh router1.example.net`, which is why losing the name here costs nothing
+/// a reader needed. `PLAN.md` records the decision.
+void test_a_quarter_window_keeps_the_numbers_and_the_host()
 {
     // **A child, not a window.** A top-level's `resize` is a request the
     // compositor answers when it likes, so a bar that asked for 460 and
@@ -296,17 +307,38 @@ void test_the_field_leaves_the_name_room_on_a_quarter_window()
 
     auto *name = status.findChild<QLabel *>(QStringLiteral("statusName"));
     auto *field = status.findChild<QLabel *>(QStringLiteral("statusCounters"));
-    CHECK(name != nullptr && field != nullptr);
-    if (!name || !field) {
+    auto *link = status.findChild<QLabel *>(QStringLiteral("connectionStatus"));
+    CHECK(name != nullptr && field != nullptr && link != nullptr);
+    if (!name || !field || !link) {
         return;
     }
-    // Not a pixel budget anybody should tune to — what it pins is that the
-    // name is still a name. Elided to nothing would be `…`, and the failure
-    // this guards against is a later field being added beside this one.
-    CHECK(name->width() > 40);
-    CHECK(!name->text().isEmpty());
-    fprintf(stderr, "  quarter window: name=%dpx counters=%dpx of %dpx\n",
-            name->width(), field->width(), status.width());
+    // Nothing may overrun the strip. A label that asks for its own text is a
+    // label that widens the terminal above it, which is what `kConnectionChars`
+    // and the `Ignored` policy exist to stop; this is that rule measured rather
+    // than trusted.
+    for (auto *label : status.findChildren<QLabel *>()) {
+        if (label->isVisible()) {
+            CHECK(label->x() >= 0 && label->x() + label->width() <= status.width());
+        }
+    }
+    // The counters keep their floor, so the reading is whole. Clipping is the
+    // failure that matters here rather than eliding: Qt cuts a label from the
+    // far end, so a clipped `100:44:00` reads `0:44:00` — a wrong number on
+    // screen with nothing saying so, which is `LineNumberGutter`'s exactly.
+    CHECK(field->width() >= field->minimumWidth());
+    CHECK(status.fontMetrics().horizontalAdvance(field->text()) <= field->width());
+    // The name yields, and yielding is not lying: whatever it paints fits, and
+    // at zero width it paints nothing at all. The whole name stays reachable on
+    // the tooltip either way.
+    CHECK(name->width() == 0
+          || status.fontMetrics().horizontalAdvance(name->text()) <= name->width());
+    CHECK(name->toolTip() == QStringLiteral("router1.example.net"));
+    // ...and the host is still readable, because the label beside it says so.
+    // This is the whole reason the name is the item that may go.
+    CHECK(link->width() > 0);
+    CHECK(link->toolTip().contains(QStringLiteral("router1.example.net")));
+    fprintf(stderr, "  quarter window: name=%dpx counters=%dpx link=%dpx of %dpx\n",
+            name->width(), field->width(), link->width(), status.width());
 
     if (!writeDir.isEmpty()) {
         status.grab().save(
@@ -331,7 +363,7 @@ int main(int argc, char **argv)
     test_the_port_is_only_read_while_somebody_is_looking();
     test_the_popover_lets_go_of_a_session_that_dies();
     test_the_serial_row_reads_the_port();
-    test_the_field_leaves_the_name_room_on_a_quarter_window();
+    test_a_quarter_window_keeps_the_numbers_and_the_host();
 
     if (failures) {
         fprintf(stderr, "%d check(s) failed\n", failures);

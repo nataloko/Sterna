@@ -380,6 +380,16 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: cd shell && ./build/send_test
+      # The counters, over a pty, and the status strip at a tiled quarter
+      # window. It was written with the counter field and never added here, so
+      # it ran nowhere for a year — and it had been failing all along under a
+      # real plugin, on an assertion only `offscreen`'s narrower text could
+      # meet. What it pins now is font-independent, so this runs it where
+      # everything else here runs and means the same thing on a desktop.
+      - name: The counters, and what a quarter window keeps
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: cd shell && ./build/counters_test
       # A printer is a file when `PassThruPort` names one, so this needs no
       # printer, no spooler and no CUPS — which is why it is here rather than
       # out with `xfer_test`.

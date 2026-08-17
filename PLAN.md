@@ -242,19 +242,17 @@ programs already cover, and the README says so.
 
 The live remainder, collected here so it cannot hide in the narrative:
 
-- **The status strip has no room for a name on a quarter window, at desktop
-  font metrics.** `counters_test`'s last case fails under xcb and Wayland and
-  passes under offscreen: at 460 pixels the log chip, the counters floor and
-  the capped connection measure 96 + 188 + 158 and the name — deliberately the
-  item that yields, `Ignored` policy and a zero minimum — gets nothing.
-  Offscreen's text is ~20% narrower and leaves it 52. Three ways out and each
-  costs something: let the connection elide further (it already carries the
-  host name, so the name beside it is usually redundant), drop the counters
-  below a width and leave them to the popover, or accept that a 2x2 tile shows
-  the connection rather than the name and relax the assertion to what
-  `PageStatusBar` actually promises. Not decided, so **the test is not in CI**
-  — under offscreen it would pass while the desktop still squeezed the name
-  out, which is worse than the gap it would close.
+- **A transient message is invisible on a quarter window**, and that is the
+  live half of the status-strip question below. `PageStatusBar::showMessage`
+  paints into `m_name` (`showName`, `PageStatusBar.cpp:364`), so everything
+  `showPageMessage` says — a finished send, a failed one, a refused button —
+  lands in the label that is designed to yield and, at 460 pixels on a desktop,
+  has nothing to yield from. The name going is free; a message going is the
+  `qWarning`-to-journald failure again. It is not a one-line fix: `m_name` is
+  `Ignored` with a zero minimum on purpose, and giving it a floor makes the
+  strip overrun instead, so something else has to stand down for the length of
+  a message — the counters are the candidate, since the popover already has
+  them.
 - **File the upstream bug reports** — needs a GitHub account (the user). The
   five proved ones are drafted in `docs/upstream-bugs.md`, memory-safety
   first; demonstrate the found-by-reading list against a real
