@@ -664,6 +664,19 @@ void the_progress_panel_follows_the_send()
         SendFileDialog options(session);
         options.adjustSize();
         options.grab().save(g_writeTo + QStringLiteral("/send-options.png"));
+        // ...and again with every row showing, because the interesting layout
+        // question is the one the shipped defaults hide: four fields appear
+        // when a gate is chosen, and one of them carries an error line.
+        auto *gate = options.findChild<QComboBox *>(QStringLiteral("sendGate"));
+        auto *pattern = options.findChild<QLineEdit *>(QStringLiteral("sendGatePattern"));
+        auto *pace = options.findChild<QComboBox *>(QStringLiteral("sendPace"));
+        if (gate && pattern && pace) {
+            gate->setCurrentIndex(gate->findData(TT_SEND_GATE_PROMPT));
+            pattern->setText(QStringLiteral("[#>$] $"));
+            pace->setCurrentIndex(pace->findData(TT_SEND_PACE_PER_LINE));
+            options.adjustSize();
+            options.grab().save(g_writeTo + QStringLiteral("/send-options-gated.png"));
+        }
     }
 }
 

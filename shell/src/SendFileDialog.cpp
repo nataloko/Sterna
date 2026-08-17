@@ -211,7 +211,6 @@ void SendFileDialog::gateChanged()
     const bool pattern = gate == TT_SEND_GATE_PROMPT;
     m_pattern->setVisible(pattern);
     m_patternLabel->setVisible(pattern);
-    m_patternError->setVisible(pattern);
     m_timeout->setVisible(gated);
     m_timeoutLabel->setVisible(gated);
     m_quiet->setVisible(gate == TT_SEND_GATE_QUIET);
@@ -228,6 +227,9 @@ void SendFileDialog::checkPattern()
         static_cast<TtSendGate>(m_gate->currentData().toInt()) == TT_SEND_GATE_PROMPT;
     if (!wanted) {
         m_patternError->clear();
+        // Hidden as well as cleared: an empty label still takes a row, and the
+        // gap it leaves reads as a field somebody forgot to fill in.
+        m_patternError->setVisible(false);
         if (ok) {
             ok->setEnabled(true);
         }
@@ -239,6 +241,7 @@ void SendFileDialog::checkPattern()
     // its whole timeout and says nothing about why.
     const bool good = tt_send_gate_check(utf8.constData()) == TT_OK;
     m_patternError->setText(good ? QString() : QString::fromUtf8(tt_last_error()));
+    m_patternError->setVisible(!good);
     if (ok) {
         ok->setEnabled(good);
     }
