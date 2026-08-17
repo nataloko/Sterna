@@ -251,10 +251,6 @@ pub fn encode(kind: UserKeyType, text: &str) -> String {
     }
 }
 
-/// The file's spelling of a kind.
-///
-/// Words rather than upstream's integers: `[User keys]` writes `0`, `1`, `2`,
-/// `3` because a dialog wrote them, and this section is meant to be read.
 /// What a [`Button`] waits for after each line of a file it sends.
 ///
 /// The same four the settings have (`transfer.send_gate`), spelled here as
@@ -295,6 +291,12 @@ pub fn parse_gate(value: &str) -> Option<SendGate> {
     .find(|g| value.eq_ignore_ascii_case(gate_name(*g)))
 }
 
+/// The file's spelling of a kind.
+///
+/// Words rather than upstream's integers: `[User keys]` writes `0`, `1`, `2`,
+/// `3` because a dialog wrote them, and this section is meant to be read. It is
+/// also what lets a fifth kind exist at all — `file` has no integer, so a
+/// `KEYBOARD.CNF` stays portable between the two programs.
 pub fn kind_name(kind: UserKeyType) -> &'static str {
     match kind {
         UserKeyType::Text => "text",
