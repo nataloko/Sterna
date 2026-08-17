@@ -142,6 +142,9 @@ private:
 #endif
 };
 
+/// Where `--write` puts the frames it grabs, or empty for the ordinary run.
+QString g_writeTo;
+
 QString screenText(const Session &session)
 {
     QString out;
@@ -1051,6 +1054,110 @@ void test_visible_panels_refit_and_receive_their_own_metrics()
     CHECK(window.size() == topLevel);
 }
 
+/// Which tile the menus mean is readable from across the window: the active one
+/// wears an outline round the whole cell, as well as the highlight on its own
+/// status strip.
+///
+/// The other half of this test is that taking the outline on and off moves
+/// nothing. Every tile keeps the margin the outline is drawn in whether or not
+/// it is wearing one — a border that appeared with the marker would take those
+/// pixels off the terminal, and a terminal that loses a column is a real
+/// `Grid::resize`, which with `ClearOnResize` on scrolls the page into history.
+/// Clicking between tiles would clear each one it left.
+void test_the_active_tile_is_outlined_without_resizing_anything()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("sterna.ini"));
+    QFile file(ini);
+    CHECK(file.open(QIODevice::WriteOnly));
+    file.write("[Sterna]\r\nPanelLayout=tiled\r\n");
+    file.close();
+
+    MainWindow window(ini);
+    auto *panels = window.findChild<PanelContainer *>();
+    window.findChild<QAction *>(QStringLiteral("newTabAction"))->trigger();
+    auto *first = static_cast<TerminalPage *>(panels->widget(0));
+    auto *second = static_cast<TerminalPage *>(panels->widget(1));
+    window.resize(900, 620);
+    window.show();
+    QApplication::processEvents();
+    QApplication::processEvents();
+
+    auto *f0 = panels->findChild<QWidget *>(QStringLiteral("panelFrame0"));
+    auto *f1 = panels->findChild<QWidget *>(QStringLiteral("panelFrame1"));
+    CHECK(f0 != nullptr && f1 != nullptr);
+    if (!f0 || !f1) {
+        return;
+    }
+    // New tab makes its own page current, so the marker starts on the right.
+    CHECK(panels->marksActivePane());
+    CHECK(panels->currentWidget() == second);
+    CHECK(!f0->property("paneActive").toBool());
+    CHECK(f1->property("paneActive").toBool());
+
+    // ...and it is really painted, in the palette's own highlight — the same
+    // colour the active page's status strip wears, because they are one marker.
+    // The two outermost pixel columns of the cell, and the page from there on.
+    const QColor accent = f1->palette().color(QPalette::Highlight);
+    const QImage shot = panels->grab().toImage();
+    const auto edge = [&shot, panels](QWidget *frame, int x) {
+        return shot.pixelColor(
+            frame->mapTo(panels, QPoint(x, frame->height() / 2)));
+    };
+    CHECK(edge(f1, 0) == accent);
+    CHECK(edge(f1, 1) == accent);
+    CHECK(edge(f1, 3) != accent);
+    CHECK(edge(f0, 0) != accent);
+    if (!g_writeTo.isEmpty()) {
+        shot.save(g_writeTo + QStringLiteral("/tiles-active.png"));
+    }
+
+    // Clicking into the other terminal moves the outline and nothing else. The
+    // view keeps every pixel and the session keeps every column.
+    const int width = first->view()->width();
+    const int height = first->view()->height();
+    const int cols = first->session()->cols();
+    const int rows = first->session()->rows();
+    press(first->view());
+    QApplication::processEvents();
+    CHECK(panels->currentWidget() == first);
+    CHECK(f0->property("paneActive").toBool());
+    CHECK(!f1->property("paneActive").toBool());
+    CHECK(first->view()->width() == width);
+    CHECK(first->view()->height() == height);
+    CHECK(first->session()->cols() == cols);
+    CHECK(first->session()->rows() == rows);
+
+    // Back to tabs there is one terminal on screen, so there is nothing to
+    // disambiguate and the marker comes off.
+    QString error;
+    CHECK(window.session()->setSetting(QStringLiteral("window.panel_layout"),
+                                       QStringLiteral("single"), &error));
+    QApplication::processEvents();
+    CHECK(!panels->marksActivePane());
+    CHECK(!f0->property("paneActive").toBool());
+    CHECK(!f1->property("paneActive").toBool());
+
+    // A single tiled connection is the same answer for the same reason, and
+    // the spare connect cell is not a connection at all — it never wears it,
+    // whichever tile is current.
+    PanelContainer solo;
+    solo.setLayoutMode(PanelLayout::Tiled);
+    solo.addPage(mockPage(QStringLiteral("a")), QStringLiteral("A"));
+    CHECK(!solo.marksActivePane());
+    auto *only = solo.findChild<QWidget *>(QStringLiteral("panelFrame0"));
+    CHECK(only != nullptr && !only->property("paneActive").toBool());
+
+    solo.addPage(mockPage(QStringLiteral("b")), QStringLiteral("B"));
+    solo.addPage(mockPage(QStringLiteral("c")), QStringLiteral("C"));
+    CHECK(solo.marksActivePane());
+    CHECK(solo.firstEmptyPanel() == 3);
+    auto *spare = solo.findChild<QWidget *>(QStringLiteral("panelFrame3"));
+    CHECK(spare != nullptr && !spare->property("paneActive").toBool());
+    CHECK(only != nullptr && !only->property("paneActive").toBool());
+}
+
 void test_empty_panel_dialogs_cancel_or_connect_in_place()
 {
     Listener listener;
@@ -1195,6 +1302,11 @@ int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("tabs_test"));
+    for (int i = 1; i < argc; i++) {
+        if (QLatin1String(argv[i]) == QLatin1String("--write") && i + 1 < argc) {
+            g_writeTo = QString::fromLocal8Bit(argv[++i]);
+        }
+    }
     test_tiled_panels_fit_the_session_count();
     test_empty_panels_request_connections_without_creating_pages();
     test_tabs_are_independent_and_actions_follow_the_active_one();
@@ -1208,6 +1320,7 @@ int main(int argc, char **argv)
     test_the_status_strip_never_widens_its_page();
     test_the_counter_field_never_moves_the_strip();
     test_visible_panels_refit_and_receive_their_own_metrics();
+    test_the_active_tile_is_outlined_without_resizing_anything();
     test_empty_panel_dialogs_cancel_or_connect_in_place();
     test_duplicate_reopens_telnet_with_the_live_settings();
     if (failures != 0) {

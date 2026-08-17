@@ -757,6 +757,18 @@ SSH:
   become the narrowest the panel could be — both are overridden. The same
   answer is waiting for anything else that grows without bound beside a
   terminal.
+- **...and the marker round the active tile is the same rule at two pixels.**
+  A child paints over its parent, so an outline anywhere but in `PaneFrame`'s
+  own margin is simply covered by the page — and a margin that appeared when a
+  tile *became* active would take those pixels off the terminal, which is a
+  real `Grid::resize`: with `ClearOnResize` on, clicking between tiles scrolls
+  each one you left into its own history. So the room is reserved per **mode**
+  rather than per tile, and only in `Tiled`, where an outline can be drawn at
+  all. Two pixels is not too small to matter: taking them in `Single` as well
+  cost `a_width_stops_at_the_edge_of_the_screen` a column, because that window
+  is pinned at the work area's width and has nowhere to grow. The grid's own
+  spacing went to zero to pay for the margin, so the trough between tiles is
+  the four pixels it always was.
 - **A rebuilt `QObject` can land on the freed one's address**, so
   `CHECK(thing() != before)` after a rebuild is a comparison against freed
   memory that passes on the allocator's habits. `an_unrelated_setting_leaves_

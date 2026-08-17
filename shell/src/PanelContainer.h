@@ -74,6 +74,16 @@ public:
     int firstEmptyPanel() const;
     QVector<QWidget *> visiblePages() const;
 
+    /// Whether there is an active pane to point at.
+    ///
+    /// The active tile wears two things — an outline round the whole cell,
+    /// which this widget paints, and the highlight on the page's own status
+    /// strip, which the window paints — and they are one marker, so they ask
+    /// one question. False with a single terminal, tabbed or tiled: nothing is
+    /// asking which of them the menus mean, and a permanent marker reads as a
+    /// stuck state rather than an answer.
+    bool marksActivePane() const;
+
 signals:
     void currentChanged(QWidget *page);
     void closeRequested(QWidget *page);
@@ -91,6 +101,9 @@ private:
 
     void activateFromPanel(int panel);
     void requestConnection(int panel, ConnectionKind kind);
+    /// Move the outline to whichever frame holds the current page, or take it
+    /// off every frame when there is nothing to disambiguate.
+    void markActive();
     /// Put every page where the current mode says it goes, and hide the rest of
     /// the pool. The one place the grid is decided.
     void rebuild();

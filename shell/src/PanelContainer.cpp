@@ -7,12 +7,32 @@
 #include <QGridLayout>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPainter>
+#include <QPaintEvent>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QStackedLayout>
 #include <QTabBar>
 #include <QVBoxLayout>
+
+namespace {
+/// The active tile's outline, in pixels — and therefore the margin every tile
+/// in a **tiled** window keeps, active or not.
+///
+/// Two rules meet here. A child widget paints over its parent, so an outline
+/// drawn anywhere but in the frame's own margin is simply covered by the page.
+/// And a margin that appeared when a tile *became* active would take those
+/// pixels off the terminal, which is a real `Grid::resize` — with
+/// `ClearOnResize` on, clicking between tiles would scroll each one it left
+/// into that tile's own history.
+constexpr int kPaneBorder = 2;
+
+/// What a pane keeps when it can never be outlined. Not zero: it is the
+/// padding the one pane in a tabbed window has always had, and a window
+/// showing one connection must not change size because tiling grew a marker.
+constexpr int kPanePadding = 1;
+} // namespace
 
 /// One cell: either a page or the four connect buttons. The frame is
 /// deliberately only presentation; tab order and cell assignment stay in
@@ -26,14 +46,16 @@ public:
         , m_panel(panel)
     {
         setObjectName(QStringLiteral("panelFrame%1").arg(panel));
-        // The grid spacing separates panes. A styled frame changes its width
+        // The margins below separate panes, and `paintEvent` draws the active
+        // one's marker in them. Never a *styled* frame: one changes its width
         // when the platform style is first polished, which makes a pre-show
         // size hint two pixels shorter than the same hint after show.
         setFrameShape(QFrame::NoFrame);
         setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
 
         auto *outer = new QVBoxLayout(this);
-        outer->setContentsMargins(1, 1, 1, 1);
+        outer->setContentsMargins(kPanePadding, kPanePadding, kPanePadding,
+                                  kPanePadding);
         outer->setSpacing(0);
 
         m_content = new QWidget(this);
@@ -115,7 +137,57 @@ public:
         return out;
     }
 
+    /// Reserve the margin the outline is drawn in, or give it back.
+    ///
+    /// Those pixels are ones the terminal could otherwise put part of a column
+    /// in, so a tabbed window — which never draws an outline, because there is
+    /// only ever one pane on screen to point at — keeps every pixel it had
+    /// before there was a marker at all. Within a mode it does not move: see
+    /// `kPaneBorder` for what a margin that came and went would cost.
+    void setOutlineRoom(bool room)
+    {
+        const int margin = room ? kPaneBorder : kPanePadding;
+        layout()->setContentsMargins(margin, margin, margin, margin);
+    }
+
+    /// Wear the outline that says window-level actions go to this tile.
+    void setActive(bool active)
+    {
+        if (m_active == active) {
+            return;
+        }
+        m_active = active;
+        // Mirrored as a dynamic property so a test can ask which tile is
+        // wearing it without grabbing pixels, and so a stylesheet could reach
+        // it later. The paint below is the only consumer today.
+        setProperty("paneActive", active);
+        update();
+    }
+
 protected:
+    /// The outline, drawn in the margin the constructor reserved.
+    ///
+    /// A pen straddles the line it is given, so the rectangle is inset by half
+    /// the width: on `rect()` itself the outer half would fall outside the
+    /// widget and be clipped, leaving a one-pixel line where two were asked
+    /// for.
+    void paintEvent(QPaintEvent *event) override
+    {
+        QFrame::paintEvent(event);
+        if (!m_active) {
+            return;
+        }
+        QPainter painter(this);
+        QPen pen(palette().color(QPalette::Highlight));
+        pen.setWidth(kPaneBorder);
+        // Square corners: a mitred join meets the neighbouring tile's edge the
+        // way the grid's own troughs do.
+        pen.setJoinStyle(Qt::MiterJoin);
+        painter.setPen(pen);
+        const qreal inset = kPaneBorder / 2.0;
+        painter.drawRect(QRectF(rect()).adjusted(inset, inset, -inset, -inset));
+    }
+
     bool eventFilter(QObject *watched, QEvent *event) override
     {
         if ((event->type() == QEvent::MouseButtonPress
@@ -158,6 +230,7 @@ private:
     QStackedLayout *m_stack = nullptr;
     QWidget *m_empty = nullptr;
     QWidget *m_page = nullptr;
+    bool m_active = false;
     QVector<QObject *> m_watched;
 };
 
@@ -207,7 +280,11 @@ PanelContainer::PanelContainer(QWidget *parent)
     m_gridWidget->setObjectName(QStringLiteral("panelGrid"));
     m_grid = new QGridLayout(m_gridWidget);
     m_grid->setContentsMargins(0, 0, 0, 0);
-    m_grid->setSpacing(2);
+    // No spacing of its own: a tiled frame keeps `kPaneBorder` all round for
+    // the active outline, so two neighbours are already that far apart twice
+    // over — the same four-pixel trough the grid used to space, moved inside
+    // the frames where the outline can be drawn in it.
+    m_grid->setSpacing(0);
     outer->addWidget(m_gridWidget, 1);
 
     rebuild();
@@ -298,6 +375,7 @@ void PanelContainer::setCurrentWidget(QWidget *page)
         emit visiblePagesChanged();
     }
     if (currentDidChange) {
+        markActive();
         emit currentChanged(page);
     }
 }
@@ -437,6 +515,19 @@ void PanelContainer::resizeEvent(QResizeEvent *event)
     emit visiblePagesChanged();
 }
 
+bool PanelContainer::marksActivePane() const
+{
+    return m_layout == PanelLayout::Tiled && tileCount() > 1;
+}
+
+void PanelContainer::markActive()
+{
+    for (PaneFrame *frame : m_frames) {
+        frame->setActive(marksActivePane() && frame->page() != nullptr
+                         && frame->page() == m_current);
+    }
+}
+
 void PanelContainer::activateFromPanel(int panel)
 {
     if (QWidget *page = pageAtPanel(panel)) {
@@ -479,6 +570,7 @@ void PanelContainer::rebuild()
 
     for (int i = 0; i < tiles; i++) {
         PaneFrame *frame = frameAt(i);
+        frame->setOutlineRoom(m_layout == PanelLayout::Tiled);
         frame->setPage(pageAtPanel(i));
         const int row = i / cols;
         const int column = i % cols;
@@ -494,6 +586,8 @@ void PanelContainer::rebuild()
     for (int i = tiles; i < m_frames.size(); i++) {
         m_frames[i]->hide();
     }
+
+    markActive();
 
     const int rows = (tiles + cols - 1) / cols;
     for (int row = 0; row < m_grid->rowCount(); row++) {

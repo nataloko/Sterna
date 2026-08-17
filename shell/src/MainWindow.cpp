@@ -4636,12 +4636,11 @@ void MainWindow::updatePanelActions()
 
 void MainWindow::markActiveTile()
 {
-    // Only when there is more than one tile on screen. The marker answers "which
-    // of these is the menus' target"; with a single terminal — tabbed, or tiled
-    // with one connection — nothing is asking, and a permanently highlighted
-    // strip reads as a stuck state rather than an answer.
-    const bool several = m_panels->layoutMode() == PanelLayout::Tiled
-                         && m_panels->tileCount() > 1;
+    // The strip's half of the marker; the outline round the whole tile is the
+    // other, and `PanelContainer` paints that one as the current page moves.
+    // Both ask it the same question so they cannot disagree about when there is
+    // an active pane at all.
+    const bool several = m_panels->marksActivePane();
     for (int i = 0; i < m_panels->count(); i++) {
         auto *page = static_cast<TerminalPage *>(m_panels->widget(i));
         page->status()->setActive(several && page == m_page);
