@@ -1177,6 +1177,8 @@ SendProgress Session::sendProgress() const
     out.total = static_cast<qint64>(p.total);
     out.paused = p.paused;
     out.queued = static_cast<int>(p.queued);
+    out.gated = p.gated;
+    out.timeouts = static_cast<int>(p.timeouts);
     return out;
 }
 
@@ -1565,7 +1567,8 @@ void Session::dispatch()
             if (tt_session_send_result(m_session, &r)) {
                 sendEnded = SendResult{QString::fromUtf8(r.name ? r.name : ""), r.end,
                                        static_cast<qint64>(r.sent),
-                                       static_cast<qint64>(r.total)};
+                                       static_cast<qint64>(r.total),
+                                       static_cast<int>(r.timeouts)};
             } else {
                 sendEnded = SendResult{};
             }

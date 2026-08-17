@@ -22,6 +22,7 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QLabel>
+#include <QLineEdit>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSpinBox>
@@ -330,6 +331,144 @@ void a_send_that_cannot_start_says_why()
     CHECK(!session->isSending());
 }
 
+/// The whole point of the feature, against a real shell: each line waits for
+/// the prompt, and the send takes as long as the far end takes.
+///
+/// `PS1` is set to something unmistakable so the pattern is about this test and
+/// not about whatever the developer's own prompt happens to be.
+void a_gated_send_waits_for_the_prompt()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = writeIni(dir);
+    const QString file =
+        writeFile(dir, QStringLiteral("gated.txt"),
+                  "echo gate-one\necho gate-two\necho gate-three\n");
+
+    MainWindow window(ini);
+    window.connectPty({QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+                       QStringLiteral("PS1='STERNA> '; export PS1; exec /bin/sh -i")});
+    Session *session = window.session();
+    CHECK(spin([session] { return session->isConnected(); }, 3000));
+    CHECK(spin(
+        [session] {
+            return screenText(*session).contains(QLatin1String("STERNA>"));
+        },
+        5000));
+
+    SendResult ended;
+    bool sawEnd = false;
+    QObject::connect(session, &Session::sendFinished,
+                     [&ended, &sawEnd](const SendResult &r) {
+                         ended = r;
+                         sawEnd = true;
+                     });
+
+    TtSendOptions o {};
+    o.pace = TT_SEND_PACE_NONE;
+    o.gate = TT_SEND_GATE_PROMPT;
+    const QByteArray pattern = "STERNA> ";
+    o.gate_pattern = pattern.constData();
+    // Long enough that a timeout means the gate is broken rather than that the
+    // machine is busy.
+    o.gate_timeout_ms = 4000;
+    o.quiet_ms = 300;
+
+    QString error;
+    CHECK(session->sendFile(file, o, &error));
+    CHECK(error.isEmpty());
+    CHECK(spin([&sawEnd] { return sawEnd; }, 15000));
+    CHECK(ended.end == TT_SEND_END_FINISHED);
+    // **Nothing was released by the timeout**: every line waited for a real
+    // prompt. This is the assertion that separates a working gate from one that
+    // quietly gave up twice and produced an identical screen.
+    CHECK(ended.timeouts == 0);
+
+    CHECK(spin(
+        [session] {
+            return screenText(*session).contains(QLatin1String("gate-three"));
+        },
+        5000));
+    const QString screen = screenText(*session);
+    CHECK(screen.contains(QLatin1String("gate-one")));
+    CHECK(screen.contains(QLatin1String("gate-two")));
+}
+
+/// A pattern nothing will ever match must not wedge the send: the lines go
+/// anyway, and the count of how many says the pattern was wrong.
+void a_gate_nobody_answers_still_finishes()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = writeIni(dir);
+    const QString file =
+        writeFile(dir, QStringLiteral("wrong.txt"), "one\ntwo\nthree\n");
+
+    MainWindow window(ini);
+    window.connectPty({QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+                       QStringLiteral("cat > /dev/null")});
+    Session *session = window.session();
+    CHECK(spin([session] { return session->isConnected(); }, 3000));
+
+    SendResult ended;
+    bool sawEnd = false;
+    QObject::connect(session, &Session::sendFinished,
+                     [&ended, &sawEnd](const SendResult &r) {
+                         ended = r;
+                         sawEnd = true;
+                     });
+
+    TtSendOptions o {};
+    o.gate = TT_SEND_GATE_PROMPT;
+    const QByteArray pattern = "this-never-appears";
+    o.gate_pattern = pattern.constData();
+    o.gate_timeout_ms = 100;
+    QString error;
+    CHECK(session->sendFile(file, o, &error));
+    CHECK(spin([&sawEnd] { return sawEnd; }, 6000));
+    CHECK(ended.end == TT_SEND_END_FINISHED);
+    CHECK(ended.sent == ended.total);
+    // Three lines, two gaps between them: two lines went out unanswered.
+    CHECK(ended.timeouts == 2);
+}
+
+/// A pattern the engine refuses is refused at the dialog, before anything is
+/// sent — and the OK button says so.
+void a_bad_pattern_is_refused_where_it_is_typed()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString ini = writeIni(dir);
+    MainWindow window(ini);
+
+    SendFileDialog dialog(window.session());
+    auto *gate = dialog.findChild<QComboBox *>(QStringLiteral("sendGate"));
+    auto *pattern = dialog.findChild<QLineEdit *>(QStringLiteral("sendGatePattern"));
+    auto *error = dialog.findChild<QLabel *>(QStringLiteral("sendGatePatternError"));
+    auto *box = dialog.findChild<QDialogButtonBox *>();
+    CHECK(gate && pattern && error && box);
+    if (!gate || !pattern || !error || !box) {
+        return;
+    }
+    QPushButton *ok = box->button(QDialogButtonBox::Ok);
+    CHECK(ok != nullptr);
+
+    gate->setCurrentIndex(gate->findData(TT_SEND_GATE_PROMPT));
+    pattern->setText(QStringLiteral("(unclosed"));
+    CHECK(!error->text().isEmpty());
+    CHECK(ok && !ok->isEnabled());
+
+    pattern->setText(QStringLiteral("# $"));
+    CHECK(error->text().isEmpty());
+    CHECK(ok && ok->isEnabled());
+
+    // ...and a gate that needs no pattern is never blocked by one.
+    pattern->setText(QStringLiteral("(unclosed"));
+    gate->setCurrentIndex(gate->findData(TT_SEND_GATE_ECHO));
+    CHECK(ok && ok->isEnabled());
+    CHECK(!pattern->isVisibleTo(&dialog));
+}
+
 /// The dialog's fields come out of the settings file and go back into it.
 void the_dialog_reads_and_writes_the_four_settings()
 {
@@ -463,6 +602,9 @@ int main(int argc, char **argv)
     a_send_can_be_held_and_stopped();
     a_send_ends_with_the_connection();
     a_send_that_cannot_start_says_why();
+    a_gated_send_waits_for_the_prompt();
+    a_gate_nobody_answers_still_finishes();
+    a_bad_pattern_is_refused_where_it_is_typed();
     the_dialog_reads_and_writes_the_four_settings();
     the_progress_panel_follows_the_send();
 

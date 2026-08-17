@@ -125,6 +125,10 @@ struct SendProgress {
     bool paused = false;
     /// Jobs queued behind this one.
     int queued = 0;
+    /// Whether it is holding, waiting for the far end to answer.
+    bool gated = false;
+    /// Lines released by the gate's timeout rather than by an answer.
+    int timeouts = 0;
 };
 
 /// How a paced send ended.
@@ -133,6 +137,9 @@ struct SendResult {
     TtSendEnd end = TT_SEND_END_FINISHED;
     qint64 sent = 0;
     qint64 total = 0;
+    /// Lines released by the gate's timeout rather than by an answer. Usually
+    /// the sign of a prompt pattern that does not match.
+    int timeouts = 0;
 };
 
 /// A copied `TtKeyCodeResult`; the ABI's macro path is borrowed and cannot

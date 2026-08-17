@@ -750,6 +750,31 @@ typedef enum {
 } TtSendPace;
 
 /**
+ * What holds each line of a send until the far end is ready for it.
+ *
+ * **This half is Sterna's own** — upstream's sender can only wait for a
+ * duration. See `tt_session::send::Gate`.
+ */
+typedef enum {
+    /**
+     * The pace alone decides.
+     */
+    TT_SEND_GATE_NONE = 0,
+    /**
+     * Wait for received text matching `gate_pattern`.
+     */
+    TT_SEND_GATE_PROMPT = 1,
+    /**
+     * Wait for the far end to send the line back.
+     */
+    TT_SEND_GATE_ECHO = 2,
+    /**
+     * Wait for the far end to stop talking for `quiet_ms`.
+     */
+    TT_SEND_GATE_QUIET = 3,
+} TtSendGate;
+
+/**
  * Why a send stopped.
  */
 typedef enum {
@@ -1553,6 +1578,32 @@ typedef struct {
      * changing the setting halfway through does not echo half a file.
      */
     bool echo;
+    /**
+     * What holds each line until the far end has answered.
+     *
+     * A gate makes a send go one line at a time whatever `pace` says: it holds
+     * the queue *between* pieces, so a single-piece send would never consult
+     * it. With both, the interval is served first and the gate second.
+     */
+    TtSendGate gate;
+    /**
+     * The pattern for [`TtSendGate::Prompt`], borrowed for the call. Ask
+     * [`tt_send_gate_check`] first if a person is typing it: a pattern the
+     * engine refuses fails the send rather than quietly becoming no gate.
+     */
+    const char *gate_pattern;
+    /**
+     * How long to wait for the answer before sending anyway. The line goes
+     * either way — a gate that stopped on the first unanswered line would
+     * leave half a configuration in a switch — and
+     * [`TtSendProgress::timeouts`] counts how often it came to that.
+     */
+    uint32_t gate_timeout_ms;
+    /**
+     * [`TtSendGate::Quiet`]'s own interval: how long the far end has to be
+     * silent for the silence to count as an answer.
+     */
+    uint32_t quiet_ms;
 } TtSendOptions;
 
 /**
@@ -1571,6 +1622,14 @@ typedef struct {
      * Jobs queued behind this one.
      */
     size_t queued;
+    /**
+     * Whether the queue is holding, waiting for the far end to answer.
+     */
+    bool gated;
+    /**
+     * Lines released by the gate's timeout rather than by an answer.
+     */
+    uint32_t timeouts;
 } TtSendProgress;
 
 /**
@@ -1584,6 +1643,12 @@ typedef struct {
     TtSendEnd end;
     size_t sent;
     size_t total;
+    /**
+     * Lines released by the gate's timeout rather than by an answer. A
+     * finished send with a number here went out, but the far end did not keep
+     * up — or the pattern was wrong, which is the commoner reason.
+     */
+    uint32_t timeouts;
 } TtSendResult;
 
 /**
@@ -4070,8 +4135,18 @@ TtStatus tt_session_send_file(TtSession *session,
  *
  * Does nothing on a null pointer.
  */
-void tt_session_send_defaults(const TtSession *session,
+void tt_session_send_defaults(TtSession *session,
                               TtSendOptions *opts);
+
+/**
+ * Whether the engine will accept a prompt pattern, for a dialog to ask as it
+ * is typed. The reason it will not is in [`tt_last_error`].
+ *
+ * The same engine the highlight rules and Find use, and **not** `waitregex`'s:
+ * a gate is matched on the frontend's thread, where a catastrophic backtrack
+ * is a window that stops answering.
+ */
+TtStatus tt_send_gate_check(const char *pattern);
 
 /**
  * Whether a queued send owns the wire, and so whether typing is being dropped.

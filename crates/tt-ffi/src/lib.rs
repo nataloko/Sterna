@@ -485,6 +485,7 @@ pub struct TtSession {
     /// The same two for the paced send queue: the name the running job is
     /// showing, and how the last one ended.
     send_name: CString,
+    send_gate_pattern: CString,
     send_result: Option<tt_session::send::SendOutcome>,
     /// The window operations the last event drain turned up. Kept here for the
     /// same reason the strings above are: a C caller has nowhere to put them,
@@ -545,6 +546,7 @@ pub extern "C" fn tt_session_new(config: *const TtConfig) -> *mut TtSession {
         xfer_message: CString::default(),
         transfer_result: None,
         send_name: CString::default(),
+        send_gate_pattern: CString::default(),
         send_result: None,
         window_requests: Vec::new(),
         printer_events: Vec::new(),
@@ -2806,6 +2808,23 @@ pub enum TtSendPace {
     PerChunk = 3,
 }
 
+/// What holds each line of a send until the far end is ready for it.
+///
+/// **This half is Sterna's own** — upstream's sender can only wait for a
+/// duration. See `tt_session::send::Gate`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TtSendGate {
+    /// The pace alone decides.
+    None = 0,
+    /// Wait for received text matching `gate_pattern`.
+    Prompt = 1,
+    /// Wait for the far end to send the line back.
+    Echo = 2,
+    /// Wait for the far end to stop talking for `quiet_ms`.
+    Quiet = 3,
+}
+
 /// What File > Send file line by line was asked for.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -2824,6 +2843,24 @@ pub struct TtSendOptions {
     /// `ts.LocalEcho`, read once when the job is queued rather than live, so
     /// changing the setting halfway through does not echo half a file.
     pub echo: bool,
+    /// What holds each line until the far end has answered.
+    ///
+    /// A gate makes a send go one line at a time whatever `pace` says: it holds
+    /// the queue *between* pieces, so a single-piece send would never consult
+    /// it. With both, the interval is served first and the gate second.
+    pub gate: TtSendGate,
+    /// The pattern for [`TtSendGate::Prompt`], borrowed for the call. Ask
+    /// [`tt_send_gate_check`] first if a person is typing it: a pattern the
+    /// engine refuses fails the send rather than quietly becoming no gate.
+    pub gate_pattern: *const c_char,
+    /// How long to wait for the answer before sending anyway. The line goes
+    /// either way — a gate that stopped on the first unanswered line would
+    /// leave half a configuration in a switch — and
+    /// [`TtSendProgress::timeouts`] counts how often it came to that.
+    pub gate_timeout_ms: u32,
+    /// [`TtSendGate::Quiet`]'s own interval: how long the far end has to be
+    /// silent for the silence to count as an answer.
+    pub quiet_ms: u32,
 }
 
 /// What the running send is doing, for a progress display.
@@ -2838,6 +2875,10 @@ pub struct TtSendProgress {
     pub paused: bool,
     /// Jobs queued behind this one.
     pub queued: usize,
+    /// Whether the queue is holding, waiting for the far end to answer.
+    pub gated: bool,
+    /// Lines released by the gate's timeout rather than by an answer.
+    pub timeouts: u32,
 }
 
 /// Why a send stopped.
@@ -2858,6 +2899,10 @@ pub struct TtSendResult {
     pub end: TtSendEnd,
     pub sent: usize,
     pub total: usize,
+    /// Lines released by the gate's timeout rather than by an answer. A
+    /// finished send with a number here went out, but the far end did not keep
+    /// up — or the pattern was wrong, which is the commoner reason.
+    pub timeouts: u32,
 }
 
 /// Send a file through the terminal's own write path, a piece at a time.
@@ -2896,6 +2941,10 @@ pub extern "C" fn tt_session_send_file(
         TtSendPace::PerLine => tt_session::send::PaceKind::PerLine,
         TtSendPace::PerChunk => tt_session::send::PaceKind::PerChunk,
     };
+    let gate = match gate_of(o) {
+        Ok(g) => g,
+        Err(e) => return e,
+    };
     let opts = tt_session::send::FileSend {
         binary: o.binary,
         pace: tt_session::send::Pace::of(
@@ -2903,6 +2952,7 @@ pub extern "C" fn tt_session_send_file(
             Duration::from_millis(o.tick_ms as u64),
             o.chunk as usize,
         ),
+        gate,
         echo: o.echo,
     };
     match s.session.send_file(std::path::Path::new(path), &opts) {
@@ -2931,8 +2981,10 @@ pub extern "C" fn tt_session_send_file(
 ///
 /// Does nothing on a null pointer.
 #[no_mangle]
-pub extern "C" fn tt_session_send_defaults(session: *const TtSession, opts: *mut TtSendOptions) {
-    let (Some(s), Some(out)) = (unsafe { session.as_ref() }, unsafe { opts.as_mut() }) else {
+pub extern "C" fn tt_session_send_defaults(session: *mut TtSession, opts: *mut TtSendOptions) {
+    // Mutable, unlike its transfer neighbour, because the prompt pattern is a
+    // borrowed string and the session is where it is kept alive.
+    let (Some(s), Some(out)) = (unsafe { session.as_mut() }, unsafe { opts.as_mut() }) else {
         set_error("null session or TtSendOptions");
         return;
     };
@@ -2945,10 +2997,33 @@ pub extern "C" fn tt_session_send_defaults(session: *const TtSession, opts: *mut
             (TtSendPace::PerChunk, wait.as_millis() as u32)
         }
     };
+    let (gate, gate_timeout_ms, quiet_ms) = match &d.gate {
+        tt_session::send::Gate::None => (TtSendGate::None, 0, 0),
+        tt_session::send::Gate::Prompt { timeout, .. } => {
+            (TtSendGate::Prompt, timeout.as_millis() as u32, 0)
+        }
+        tt_session::send::Gate::Echo { timeout } => {
+            (TtSendGate::Echo, timeout.as_millis() as u32, 0)
+        }
+        tt_session::send::Gate::Quiet { idle, timeout } => (
+            TtSendGate::Quiet,
+            timeout.as_millis() as u32,
+            idle.as_millis() as u32,
+        ),
+    };
+    // The pattern is the setting's own text rather than the compiled gate's,
+    // for the reason `chunk` below is: `gate_from` answers `None` for a pattern
+    // that will not compile, and a dialog seeded from that would silently
+    // replace what somebody typed with an empty box.
+    s.send_gate_pattern = cstring(&s.session.settings().transfer_send_gate_pattern);
     *out = TtSendOptions {
         binary: d.binary,
         pace,
         tick_ms,
+        gate,
+        gate_pattern: s.send_gate_pattern.as_ptr(),
+        gate_timeout_ms,
+        quiet_ms,
         // Straight from the setting rather than out of the `Pace` above, which
         // carries it in one arm only. A dialog seeded from the `Pace` would
         // show `SendfileSize`'s number only when the file already said
@@ -2957,6 +3032,47 @@ pub extern "C" fn tt_session_send_defaults(session: *const TtSession, opts: *mut
         chunk: s.session.settings().transfer_raw_send_size.max(0) as u32,
         echo: d.echo,
     };
+}
+
+/// The gate a `TtSendOptions` describes, or the reason its pattern was refused.
+fn gate_of(o: &TtSendOptions) -> std::result::Result<tt_session::send::Gate, TtStatus> {
+    let timeout = Duration::from_millis(o.gate_timeout_ms as u64);
+    Ok(match o.gate {
+        TtSendGate::None => tt_session::send::Gate::None,
+        TtSendGate::Prompt => {
+            let pattern = unsafe { str_arg(o.gate_pattern, usize::MAX) }?;
+            match tt_session::send::Gate::prompt(pattern, timeout) {
+                Ok(gate) => gate,
+                // Refused rather than degraded to no gate: somebody who asked
+                // to wait for a prompt and silently got a send that waits for
+                // nothing has been told the opposite of what happened.
+                Err(e) => return Err(fail(TT_ERR_INVALID, e)),
+            }
+        }
+        TtSendGate::Echo => tt_session::send::Gate::Echo { timeout },
+        TtSendGate::Quiet => tt_session::send::Gate::Quiet {
+            idle: Duration::from_millis(o.quiet_ms as u64),
+            timeout,
+        },
+    })
+}
+
+/// Whether the engine will accept a prompt pattern, for a dialog to ask as it
+/// is typed. The reason it will not is in [`tt_last_error`].
+///
+/// The same engine the highlight rules and Find use, and **not** `waitregex`'s:
+/// a gate is matched on the frontend's thread, where a catastrophic backtrack
+/// is a window that stops answering.
+#[no_mangle]
+pub extern "C" fn tt_send_gate_check(pattern: *const c_char) -> TtStatus {
+    let pattern = match unsafe { str_arg(pattern, usize::MAX) } {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    match tt_session::send::Gate::check(pattern) {
+        Ok(()) => TT_OK,
+        Err(e) => fail(TT_ERR_INVALID, e),
+    }
 }
 
 /// Whether a queued send owns the wire, and so whether typing is being dropped.
@@ -3045,6 +3161,8 @@ pub extern "C" fn tt_session_send_progress(
             total: p.total,
             paused: p.paused,
             queued: p.queued,
+            gated: p.gated,
+            timeouts: p.timeouts,
         };
     }
     true
@@ -3078,6 +3196,7 @@ pub extern "C" fn tt_session_send_result(session: *mut TtSession, out: *mut TtSe
             },
             sent: r.sent,
             total: r.total,
+            timeouts: r.timeouts,
         };
     }
     true

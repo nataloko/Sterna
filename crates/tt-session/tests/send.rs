@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use tt_session::send::{Body, FileSend, Job, Pace, SendEnd, SendError};
+use tt_session::send::{Body, FileSend, Gate, Job, Pace, SendEnd, SendError};
 use tt_session::{Event, MemoryHandle, MemoryTransport, Session};
 use tt_vt::{Config, CrSend};
 
@@ -360,6 +360,233 @@ fn a_paste_during_a_paste_is_dropped() {
     s.paste("interloper\n", false).expect("paste");
     run(&mut s);
     assert_eq!(h.outbound(), b"one\rtwo\rthree\r");
+}
+
+// --- the gate, which is the half upstream has no equivalent for --------------
+
+/// Drive the queue *without* feeding it anything, for as long as `ms`.
+///
+/// A gated send that nobody answers should be sitting still, and the only way
+/// to say that is to keep offering it the chance to move.
+fn idle(s: &mut Session, ms: u64) {
+    let until = Instant::now() + Duration::from_millis(ms);
+    while Instant::now() < until {
+        s.service_send().expect("service");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+fn prompt_gate(pattern: &str, timeout_ms: u64) -> Gate {
+    Gate::Prompt {
+        re: regex::Regex::new(pattern).expect("pattern"),
+        timeout: Duration::from_millis(timeout_ms),
+    }
+}
+
+/// The whole point of the feature: the next line goes when the device says it
+/// is ready, and not before.
+#[test]
+fn a_prompt_holds_the_next_line_until_it_arrives() {
+    let (mut s, h) = connected();
+    s.queue_send(Job::new(Body::Text("one\rtwo\rthree\r".into())).gated(prompt_gate(r"# $", 5000)))
+        .expect("queue");
+    s.service_send().expect("service");
+    assert_eq!(h.outbound(), b"one\r");
+
+    // Nothing arrives, so nothing moves — for a good deal longer than the pace.
+    idle(&mut s, 60);
+    assert_eq!(h.outbound(), b"one\r");
+    assert!(s.send_progress().unwrap().gated);
+
+    // The prompt has **no line ending**, which is the case a whole-line matcher
+    // could never see.
+    s.feed(b"Switch# ");
+    s.service_send().expect("service");
+    assert_eq!(h.outbound(), b"one\rtwo\r");
+
+    s.feed(b"Switch# ");
+    s.service_send().expect("service");
+    assert_eq!(h.outbound(), b"one\rtwo\rthree\r");
+    run(&mut s);
+    assert_eq!(s.send_progress(), None);
+}
+
+/// A gate with no pace at all still goes one line at a time. It has to: the
+/// gate holds the queue *between* pieces, and a single-piece job would send the
+/// whole file in one write with the gate never consulted.
+#[test]
+fn a_gate_with_no_pace_still_goes_one_line_at_a_time() {
+    let (mut s, h) = connected();
+    s.queue_send(Job::new(Body::Text("one\rtwo\r".into())).gated(prompt_gate("go", 5000)))
+        .expect("queue");
+    s.service_send().expect("service");
+    assert_eq!(h.outbound(), b"one\r");
+    assert_eq!(s.send_progress().unwrap().sent, 4);
+}
+
+/// The gate the settings describe, including the two ways they describe none.
+#[test]
+fn the_settings_answer_for_the_gate() {
+    let mut settings = tt_session::Settings::default();
+    assert!(tt_session::send::gate_from(&settings).is_none());
+
+    settings.transfer_send_gate = tt_config::TransferSendGate::Prompt;
+    // A prompt with no pattern is no gate: holding every line for its timeout
+    // against an empty expression is worse than not holding it at all.
+    assert!(tt_session::send::gate_from(&settings).is_none());
+
+    settings.transfer_send_gate_pattern = "# $".into();
+    assert_eq!(
+        tt_session::send::gate_from(&settings),
+        Gate::Prompt {
+            re: regex::Regex::new("# $").unwrap(),
+            timeout: Duration::from_millis(500),
+        }
+    );
+
+    // ...and a pattern the engine will not compile is the same answer, because
+    // the alternative is a send that stalls on every line and says nothing.
+    settings.transfer_send_gate_pattern = "(unclosed".into();
+    assert!(tt_session::send::gate_from(&settings).is_none());
+
+    settings.transfer_send_gate = tt_config::TransferSendGate::Quiet;
+    assert_eq!(
+        tt_session::send::gate_from(&settings),
+        Gate::Quiet {
+            idle: Duration::from_millis(300),
+            timeout: Duration::from_millis(500),
+        }
+    );
+}
+
+/// A whole line matches too, CR and all — the same rule `waitregex` follows,
+/// so one pattern means one thing in both places.
+#[test]
+fn a_whole_line_can_be_the_prompt() {
+    let (mut s, h) = connected();
+    s.queue_send(Job::new(Body::Text("one\rtwo\r".into())).gated(prompt_gate("ready", 5000)))
+        .expect("queue");
+    s.service_send().expect("service");
+    s.feed(b"ready\r\n");
+    s.service_send().expect("service");
+    assert_eq!(h.outbound(), b"one\rtwo\r");
+}
+
+/// A wrong pattern must not wedge the send. The line goes anyway, and the count
+/// of how many went that way is what says the pattern was wrong.
+#[test]
+fn a_gate_nobody_answers_releases_on_the_timeout_and_counts_it() {
+    let (mut s, h) = connected();
+    s.queue_send(Job::new(Body::Text("one\rtwo\r".into())).gated(prompt_gate("never-appears", 40)))
+        .expect("queue");
+    s.service_send().expect("service");
+    assert_eq!(h.outbound(), b"one\r");
+    assert_eq!(s.send_progress().unwrap().timeouts, 0);
+
+    idle(&mut s, 80);
+    assert_eq!(h.outbound(), b"one\rtwo\r");
+    run(&mut s);
+    let done = s
+        .drain_events()
+        .into_iter()
+        .find_map(|e| match e {
+            Event::SendDone(o) => Some(*o),
+            _ => None,
+        })
+        .expect("a done event");
+    assert_eq!(done.end, SendEnd::Finished);
+    assert_eq!(done.timeouts, 1);
+}
+
+/// An answer that arrives during the pace's own interval has already opened the
+/// gate by the time the interval expires — the watcher is armed when the piece
+/// goes out, not when the gate is entered.
+#[test]
+fn an_answer_during_the_pace_interval_is_not_missed() {
+    let (mut s, h) = connected();
+    s.queue_send(
+        Job::new(Body::Text("one\rtwo\r".into()))
+            .paced(Pace::PerLine(Duration::from_millis(40)))
+            .gated(prompt_gate("ok", 5000)),
+    )
+    .expect("queue");
+    s.service_send().expect("service");
+    s.feed(b"ok");
+    std::thread::sleep(Duration::from_millis(45));
+    s.service_send().expect("service");
+    assert_eq!(h.outbound(), b"one\rtwo\r");
+}
+
+/// The echo gate, for a console with no fixed prompt. A substring, because a
+/// device that prints its prompt and the echo on one line is the commonest
+/// arrangement there is.
+#[test]
+fn the_echo_gate_waits_for_the_line_to_come_back() {
+    let (mut s, h) = connected();
+    s.queue_send(
+        Job::new(Body::Text("alpha\rbravo\r".into())).gated(Gate::Echo {
+            timeout: Duration::from_millis(5000),
+        }),
+    )
+    .expect("queue");
+    s.service_send().expect("service");
+    assert_eq!(h.outbound(), b"alpha\r");
+
+    // Something else coming back is not the echo.
+    s.feed(b"banner text\r\n");
+    idle(&mut s, 30);
+    assert_eq!(h.outbound(), b"alpha\r");
+
+    s.feed(b"Switch> alpha");
+    s.service_send().expect("service");
+    assert_eq!(h.outbound(), b"alpha\rbravo\r");
+}
+
+/// The quiet gate answers to the clock rather than to any text, so it needs no
+/// pattern and no echo — and it must not fire while the far end is still
+/// talking.
+#[test]
+fn the_quiet_gate_waits_for_the_talking_to_stop() {
+    let (mut s, h) = connected();
+    s.queue_send(
+        Job::new(Body::Text("one\rtwo\r".into())).gated(Gate::Quiet {
+            idle: Duration::from_millis(50),
+            timeout: Duration::from_millis(5000),
+        }),
+    )
+    .expect("queue");
+    s.service_send().expect("service");
+    assert_eq!(h.outbound(), b"one\r");
+
+    // Kept talking: each byte pushes the quiet window out again.
+    for _ in 0..5 {
+        s.feed(b"still going\r\n");
+        idle(&mut s, 20);
+    }
+    assert_eq!(h.outbound(), b"one\r");
+
+    // ...and then stopped.
+    idle(&mut s, 90);
+    assert_eq!(h.outbound(), b"one\rtwo\r");
+}
+
+/// The tap costs something to keep, so it is on for exactly as long as a gate
+/// is watching — and a send that ends under a running macro must not take the
+/// macro's tap with it.
+#[test]
+fn the_parser_tap_belongs_to_whoever_still_wants_it() {
+    let (mut s, _h) = connected();
+    let link = s.link_macro();
+    s.queue_send(Job::new(Body::Text("one\rtwo\r".into())).gated(prompt_gate("ok", 30)))
+        .expect("queue");
+    run(&mut s);
+    assert!(!s.sending());
+    // The macro still has it: a byte arriving now still reaches its ring.
+    s.feed(b"after the send\r\n");
+    assert!(
+        !link.is_empty(),
+        "the macro's tap was switched off under it"
+    );
 }
 
 // --- the other pacing layer, which is the serial port's own ------------------

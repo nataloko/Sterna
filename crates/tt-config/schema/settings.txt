@@ -2256,6 +2256,32 @@ transfer.raw_send_size | int | Tera Term | SendfileSize | 4096 | -
 #@ This setting controls the sequential file sender from Tera Term 4. Sterna has one sender only, thus this setting has no effect.
 transfer.raw_send_sequential | bool | Tera Term | SendfileSequential | off | -
 
+# **`[Sterna]`**, because upstream's sender can only wait for a *duration* —
+# `SendMem` has no way to hear the far end at all, so there is no key here to
+# be compatible with. Deviation 26; the idea is YAT's `WaitForResponse`.
+#@ This setting selects what Sterna waits for after each line of a file that it sends. The alternatives are nothing, a prompt, the echo of the line, and a quiet line.
+transfer.send_gate | enum(none=None,prompt=Prompt,echo=Echo,quiet=Quiet) | Sterna | SendGate | none | -
+
+# **`[Sterna]`**, for the same reason. The engine is the `regex` crate's, as
+# Find's and the highlight rules' are, and **not** `waitregex`'s Oniguruma:
+# this runs on the frontend's thread inside `service_send`, where a
+# catastrophic backtrack is a window that stops answering.
+#@ This setting sets the regular expression for the prompt. Sterna sends the next line when the received text has a match for it.
+transfer.send_gate_pattern | string | Sterna | SendGatePattern |  | -
+
+# **`[Sterna]`**. YAT's own default is 500 ms
+# (`TextTerminalSettings.cs:107`); the timeout releases the line rather than
+# stopping the send, because a gate that gave up on the first unanswered line
+# would leave half a configuration in a switch.
+#@ This setting sets the time, in milliseconds, that Sterna waits for the device. When this time is complete, Sterna sends the next line and counts a timeout.
+transfer.send_gate_timeout | int_clamp(100..600000) | Sterna | SendGateTimeout | 500 | -
+
+# **`[Sterna]`**. The quiet gate's own interval, which is a different question
+# from the timeout above: one is how long silence has to last to count as an
+# answer, the other is how long to wait for one.
+#@ This setting sets the time, in milliseconds, that the device must be quiet before Sterna sends the next line.
+transfer.send_quiet_ms | int_clamp(10..60000) | Sterna | SendQuietTime | 300 | -
+
 # `ttset.c:2014`. Skip raw Send file's option page and use the remembered
 # binary and delay settings directly.
 #@ This setting controls the raw Send File options. With the on value, Tera Term skips these options. At this time, Sterna does not have this options dialog. Thus, this setting has no effect.

@@ -7,6 +7,7 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSpinBox>
@@ -89,9 +90,58 @@ SendFileDialog::SendFileDialog(Session *session, QWidget *parent, const I18n *i1
            "devices send a copy back. For those devices, this box shows each "
            "line two times."));
 
+    m_gate = new QComboBox(this);
+    m_gate->setObjectName(QStringLiteral("sendGate"));
+    m_gate->addItem(tr("Nothing"), TT_SEND_GATE_NONE);
+    m_gate->addItem(tr("A prompt"), TT_SEND_GATE_PROMPT);
+    m_gate->addItem(tr("The echo of the line"), TT_SEND_GATE_ECHO);
+    m_gate->addItem(tr("A quiet line"), TT_SEND_GATE_QUIET);
+    m_gate->setToolTip(
+        tr("A device tells you that it is ready when it prints its prompt. An "
+           "interval can only be a guess at the same thing. With this "
+           "selection, Sterna sends each line when the device is ready for it."));
+
+    m_pattern = new QLineEdit(this);
+    m_pattern->setObjectName(QStringLiteral("sendGatePattern"));
+    m_pattern->setPlaceholderText(tr("for example, [#>$] $"));
+    m_pattern->setToolTip(
+        tr("This is a regular expression. Sterna tests it against the text that "
+           "the device sends, after each line feed and again at the end. Thus a "
+           "prompt with no line feed also has a match. The CR stays on a "
+           "completed line, thus $ does not have a match at the end of one."));
+    m_patternLabel = new QLabel(tr("Prompt:"), this);
+    m_patternError = new QLabel(this);
+    m_patternError->setObjectName(QStringLiteral("sendGatePatternError"));
+    m_patternError->setWordWrap(true);
+
+    m_timeout = new QSpinBox(this);
+    m_timeout->setObjectName(QStringLiteral("sendGateTimeout"));
+    m_timeout->setRange(100, 600000);
+    m_timeout->setSuffix(tr(" ms"));
+    m_timeout->setToolTip(
+        tr("Sterna waits this time for the device. When this time is complete, "
+           "Sterna sends the next line and counts a timeout. The send does not "
+           "stop: a send that stopped at the first line with no answer would "
+           "leave one half of a configuration in the device."));
+    m_timeoutLabel = new QLabel(tr("Give up after:"), this);
+
+    m_quiet = new QSpinBox(this);
+    m_quiet->setObjectName(QStringLiteral("sendQuiet"));
+    m_quiet->setRange(10, 60000);
+    m_quiet->setSuffix(tr(" ms"));
+    m_quiet->setToolTip(tr("The device must be quiet for this time."));
+    m_quietLabel = new QLabel(tr("Quiet for:"), this);
+
     connect(m_pace, &QComboBox::currentIndexChanged, this, &SendFileDialog::paceChanged);
+    connect(m_gate, &QComboBox::currentIndexChanged, this, &SendFileDialog::gateChanged);
+    connect(m_pattern, &QLineEdit::textChanged, this, &SendFileDialog::checkPattern);
 
     auto *form = new QFormLayout;
+    form->addRow(tr("Wait for:"), m_gate);
+    form->addRow(m_patternLabel, m_pattern);
+    form->addRow(QString(), m_patternError);
+    form->addRow(m_timeoutLabel, m_timeout);
+    form->addRow(m_quietLabel, m_quiet);
     form->addRow(tr("When to wait:"), m_pace);
     form->addRow(m_intervalLabel, m_interval);
     form->addRow(m_groupLabel, m_group);
@@ -133,8 +183,14 @@ SendFileDialog::SendFileDialog(Session *session, QWidget *parent, const I18n *i1
     m_group->setValue(d.chunk > 0 ? static_cast<int>(d.chunk) : 4096);
     m_binary->setChecked(d.binary);
     m_echo->setChecked(d.echo);
+    m_gate->setCurrentIndex(qMax(0, m_gate->findData(d.gate)));
+    m_pattern->setText(QString::fromUtf8(d.gate_pattern ? d.gate_pattern : ""));
+    m_timeout->setValue(d.gate_timeout_ms > 0 ? static_cast<int>(d.gate_timeout_ms) : 500);
+    m_quiet->setValue(d.quiet_ms > 0 ? static_cast<int>(d.quiet_ms) : 300);
 
     paceChanged();
+    gateChanged();
+    checkPattern();
 }
 
 void SendFileDialog::paceChanged()
@@ -148,6 +204,46 @@ void SendFileDialog::paceChanged()
     m_groupLabel->setVisible(grouped);
 }
 
+void SendFileDialog::gateChanged()
+{
+    const auto gate = static_cast<TtSendGate>(m_gate->currentData().toInt());
+    const bool gated = gate != TT_SEND_GATE_NONE;
+    const bool pattern = gate == TT_SEND_GATE_PROMPT;
+    m_pattern->setVisible(pattern);
+    m_patternLabel->setVisible(pattern);
+    m_patternError->setVisible(pattern);
+    m_timeout->setVisible(gated);
+    m_timeoutLabel->setVisible(gated);
+    m_quiet->setVisible(gate == TT_SEND_GATE_QUIET);
+    m_quietLabel->setVisible(gate == TT_SEND_GATE_QUIET);
+    checkPattern();
+}
+
+void SendFileDialog::checkPattern()
+{
+    auto *ok = findChild<QDialogButtonBox *>()
+                   ? findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)
+                   : nullptr;
+    const bool wanted =
+        static_cast<TtSendGate>(m_gate->currentData().toInt()) == TT_SEND_GATE_PROMPT;
+    if (!wanted) {
+        m_patternError->clear();
+        if (ok) {
+            ok->setEnabled(true);
+        }
+        return;
+    }
+    const QByteArray utf8 = m_pattern->text().toUtf8();
+    // Asked as it is typed, the way the highlight editor asks: a pattern the
+    // engine refuses would otherwise become a send that holds every line for
+    // its whole timeout and says nothing about why.
+    const bool good = tt_send_gate_check(utf8.constData()) == TT_OK;
+    m_patternError->setText(good ? QString() : QString::fromUtf8(tt_last_error()));
+    if (ok) {
+        ok->setEnabled(good);
+    }
+}
+
 TtSendOptions SendFileDialog::options() const
 {
     TtSendOptions out {};
@@ -156,6 +252,12 @@ TtSendOptions SendFileDialog::options() const
     out.chunk = static_cast<uint32_t>(m_group->value());
     out.binary = m_binary->isChecked();
     out.echo = m_echo->isChecked();
+    out.gate = static_cast<TtSendGate>(m_gate->currentData().toInt());
+    // Kept alive on the dialog, because the ABI borrows it for the call.
+    m_patternUtf8 = m_pattern->text().toUtf8();
+    out.gate_pattern = m_patternUtf8.constData();
+    out.gate_timeout_ms = static_cast<uint32_t>(m_timeout->value());
+    out.quiet_ms = static_cast<uint32_t>(m_quiet->value());
     return out;
 }
 
@@ -238,8 +340,14 @@ void SendProgressDialog::update(const SendProgress &progress)
     QString more;
     if (progress.paused) {
         more = tr(" · on hold");
+    } else if (progress.gated) {
+        more = tr(" · waiting for the device");
     } else if (progress.queued > 0) {
         more = tr(" · %n more waiting", nullptr, progress.queued);
+    }
+    if (progress.timeouts > 0) {
+        more += tr(" · %n line(s) with no answer", nullptr,
+                   static_cast<int>(progress.timeouts));
     }
     m_stats->setText(tr("%1 of %2%3")
                          .arg(humanBytes(progress.sent), humanBytes(progress.total), more));
@@ -256,7 +364,13 @@ void SendProgressDialog::finish(const SendResult &result)
                         : 100);
     switch (result.end) {
     case TT_SEND_END_FINISHED:
-        m_stats->setText(tr("Sent %1.").arg(humanBytes(result.sent)));
+        // The count of unanswered lines is the one thing a finished send can
+        // still have to say: it usually means the prompt was wrong.
+        m_stats->setText(result.timeouts == 0
+                             ? tr("Sent %1.").arg(humanBytes(result.sent))
+                             : tr("Sent %1. The device did not answer %n line(s).",
+                                  nullptr, static_cast<int>(result.timeouts))
+                                   .arg(humanBytes(result.sent)));
         break;
     case TT_SEND_END_CANCELLED:
         m_stats->setText(tr("Stopped after %1 of %2.")

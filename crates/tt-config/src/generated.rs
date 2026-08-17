@@ -2252,6 +2252,59 @@ impl Default for TransferRawSendDelayType {
     }
 }
 
+/// **`[Sterna]`**, because upstream's sender can only wait for a *duration* —
+/// `SendMem` has no way to hear the far end at all, so there is no key here to
+/// be compatible with. Deviation 26; the idea is YAT's `WaitForResponse`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransferSendGate {
+    /// `none`
+    None,
+    /// `prompt`
+    Prompt,
+    /// `echo`
+    Echo,
+    /// `quiet`
+    Quiet,
+}
+
+impl TransferSendGate {
+    /// The INI's own spelling, which is what gets written back.
+    pub fn as_ini(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Prompt => "prompt",
+            Self::Echo => "echo",
+            Self::Quiet => "quiet",
+        }
+    }
+
+    /// Case-insensitive, and **anything unrecognised takes the default**
+    /// rather than failing — which is how upstream spells most of its
+    /// defaults, as the `else` branch of a chain of comparisons.
+    pub fn from_ini(s: &str) -> Self {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("none") {
+            return Self::None;
+        }
+        if s.eq_ignore_ascii_case("prompt") {
+            return Self::Prompt;
+        }
+        if s.eq_ignore_ascii_case("echo") {
+            return Self::Echo;
+        }
+        if s.eq_ignore_ascii_case("quiet") {
+            return Self::Quiet;
+        }
+        Self::default()
+    }
+}
+
+impl Default for TransferSendGate {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 /// `ttset.c:1555` passes the value through `IconName2IconId`. The ten known
 /// names compare case-insensitively; anything else becomes `Default`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4113,6 +4166,24 @@ pub struct Settings {
     /// the only sender here: `send::Session::send_file` reads the file whole, the
     /// way `SendMemSendFileCom` does.
     pub transfer_raw_send_sequential: bool,
+    /// **`[Sterna]`**, because upstream's sender can only wait for a *duration* —
+    /// `SendMem` has no way to hear the far end at all, so there is no key here to
+    /// be compatible with. Deviation 26; the idea is YAT's `WaitForResponse`.
+    pub transfer_send_gate: TransferSendGate,
+    /// **`[Sterna]`**, for the same reason. The engine is the `regex` crate's, as
+    /// Find's and the highlight rules' are, and **not** `waitregex`'s Oniguruma:
+    /// this runs on the frontend's thread inside `service_send`, where a
+    /// catastrophic backtrack is a window that stops answering.
+    pub transfer_send_gate_pattern: String,
+    /// **`[Sterna]`**. YAT's own default is 500 ms
+    /// (`TextTerminalSettings.cs:107`); the timeout releases the line rather than
+    /// stopping the send, because a gate that gave up on the first unanswered line
+    /// would leave half a configuration in a switch.
+    pub transfer_send_gate_timeout: i32,
+    /// **`[Sterna]`**. The quiet gate's own interval, which is a different question
+    /// from the timeout above: one is how long silence has to last to count as an
+    /// answer, the other is how long to wait for one.
+    pub transfer_send_quiet_ms: i32,
     /// `ttset.c:2014`. Skip raw Send file's option page and use the remembered
     /// binary and delay settings directly.
     pub transfer_raw_send_skip_dialog: bool,
@@ -4784,6 +4855,10 @@ impl Default for Settings {
             transfer_raw_send_delay_tick: 0,
             transfer_raw_send_size: 4096,
             transfer_raw_send_sequential: false,
+            transfer_send_gate: TransferSendGate::default(),
+            transfer_send_gate_pattern: String::from(""),
+            transfer_send_gate_timeout: 500,
+            transfer_send_quiet_ms: 300,
             transfer_raw_send_skip_dialog: false,
             transfer_raw_receive_skip_dialog: false,
             printer_passthrough_delay: 3,
@@ -5913,6 +5988,23 @@ impl Settings {
             transfer_raw_send_sequential: crate::schema::on_off(
                 ini.get("Tera Term", "SendfileSequential"),
                 false,
+            ),
+            transfer_send_gate: match ini.get("Sterna", "SendGate") {
+                Some(v) => TransferSendGate::from_ini(v),
+                None => d.transfer_send_gate,
+            },
+            transfer_send_gate_pattern: ini
+                .get_or("Sterna", "SendGatePattern", &d.transfer_send_gate_pattern)
+                .to_string(),
+            transfer_send_gate_timeout: crate::schema::clamped(
+                ini.get_int("Sterna", "SendGateTimeout", d.transfer_send_gate_timeout) as i32,
+                100,
+                600000,
+            ),
+            transfer_send_quiet_ms: crate::schema::clamped(
+                ini.get_int("Sterna", "SendQuietTime", d.transfer_send_quiet_ms) as i32,
+                10,
+                60000,
             ),
             transfer_raw_send_skip_dialog: crate::schema::on_off(
                 ini.get("Tera Term", "SendfileSkipOptionDialog"),
@@ -7959,6 +8051,26 @@ impl Settings {
                 "off"
             }
             .to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "SendGate",
+            &self.transfer_send_gate.as_ini().to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "SendGatePattern",
+            &self.transfer_send_gate_pattern.clone(),
+        );
+        ini.set(
+            "Sterna",
+            "SendGateTimeout",
+            &self.transfer_send_gate_timeout.to_string(),
+        );
+        ini.set(
+            "Sterna",
+            "SendQuietTime",
+            &self.transfer_send_quiet_ms.to_string(),
         );
         ini.set(
             "Tera Term",
@@ -10774,6 +10886,34 @@ impl Settings {
                     .to_string(),
                 );
             }
+            "transfer.send_gate" => {
+                ini.set(
+                    "Sterna",
+                    "SendGate",
+                    &self.transfer_send_gate.as_ini().to_string(),
+                );
+            }
+            "transfer.send_gate_pattern" => {
+                ini.set(
+                    "Sterna",
+                    "SendGatePattern",
+                    &self.transfer_send_gate_pattern.clone(),
+                );
+            }
+            "transfer.send_gate_timeout" => {
+                ini.set(
+                    "Sterna",
+                    "SendGateTimeout",
+                    &self.transfer_send_gate_timeout.to_string(),
+                );
+            }
+            "transfer.send_quiet_ms" => {
+                ini.set(
+                    "Sterna",
+                    "SendQuietTime",
+                    &self.transfer_send_quiet_ms.to_string(),
+                );
+            }
             "transfer.raw_send_skip_dialog" => {
                 ini.set(
                     "Tera Term",
@@ -12101,6 +12241,10 @@ impl Settings {
                 "off"
             }
             .to_string(),
+            "transfer.send_gate" => self.transfer_send_gate.as_ini().to_string(),
+            "transfer.send_gate_pattern" => self.transfer_send_gate_pattern.clone(),
+            "transfer.send_gate_timeout" => self.transfer_send_gate_timeout.to_string(),
+            "transfer.send_quiet_ms" => self.transfer_send_quiet_ms.to_string(),
             "transfer.raw_send_skip_dialog" => if self.transfer_raw_send_skip_dialog {
                 "on"
             } else {
@@ -13070,6 +13214,22 @@ impl Settings {
             }
             "transfer.raw_send_sequential" => {
                 self.transfer_raw_send_sequential = crate::schema::on_off(Some(value), false)
+            }
+            "transfer.send_gate" => self.transfer_send_gate = TransferSendGate::from_ini(value),
+            "transfer.send_gate_pattern" => self.transfer_send_gate_pattern = value.to_string(),
+            "transfer.send_gate_timeout" => {
+                self.transfer_send_gate_timeout = crate::schema::clamped(
+                    crate::schema::int(value, self.transfer_send_gate_timeout),
+                    100,
+                    600000,
+                )
+            }
+            "transfer.send_quiet_ms" => {
+                self.transfer_send_quiet_ms = crate::schema::clamped(
+                    crate::schema::int(value, self.transfer_send_quiet_ms),
+                    10,
+                    60000,
+                )
             }
             "transfer.raw_send_skip_dialog" => {
                 self.transfer_raw_send_skip_dialog = crate::schema::on_off(Some(value), false)
@@ -15979,6 +16139,46 @@ pub const FIELDS: &[Field] = &[
         doc: "`ttset.c:2013`. Use Tera Term 4's sequential file reader rather than loading chunks into memory before sending them. Off is the newer sender, and it is the only sender here: `send::Session::send_file` reads the file whole, the way `SendMemSendFileCom` does.",
     },
     Field {
+        name: "transfer.send_gate",
+        page: "transfer",
+        section: "Sterna",
+        key: "SendGate",
+        kind: Kind::Enum(&["none", "prompt", "echo", "quiet"]),
+        default: "none",
+        label: None,
+        doc: "**`[Sterna]`**, because upstream's sender can only wait for a *duration* — `SendMem` has no way to hear the far end at all, so there is no key here to be compatible with. Deviation 26; the idea is YAT's `WaitForResponse`.",
+    },
+    Field {
+        name: "transfer.send_gate_pattern",
+        page: "transfer",
+        section: "Sterna",
+        key: "SendGatePattern",
+        kind: Kind::Str,
+        default: "",
+        label: None,
+        doc: "**`[Sterna]`**, for the same reason. The engine is the `regex` crate's, as Find's and the highlight rules' are, and **not** `waitregex`'s Oniguruma: this runs on the frontend's thread inside `service_send`, where a catastrophic backtrack is a window that stops answering.",
+    },
+    Field {
+        name: "transfer.send_gate_timeout",
+        page: "transfer",
+        section: "Sterna",
+        key: "SendGateTimeout",
+        kind: Kind::IntClamp(100, 600000),
+        default: "500",
+        label: None,
+        doc: "**`[Sterna]`**. YAT's own default is 500 ms (`TextTerminalSettings.cs:107`); the timeout releases the line rather than stopping the send, because a gate that gave up on the first unanswered line would leave half a configuration in a switch.",
+    },
+    Field {
+        name: "transfer.send_quiet_ms",
+        page: "transfer",
+        section: "Sterna",
+        key: "SendQuietTime",
+        kind: Kind::IntClamp(10, 60000),
+        default: "300",
+        label: None,
+        doc: "**`[Sterna]`**. The quiet gate's own interval, which is a different question from the timeout above: one is how long silence has to last to count as an answer, the other is how long to wait for one.",
+    },
+    Field {
         name: "transfer.raw_send_skip_dialog",
         page: "transfer",
         section: "Tera Term",
@@ -16994,6 +17194,10 @@ pub const SETTING_HELP: &[&str] = &[
     "This setting sets the interval, in milliseconds, that Sterna waits between the pieces of a file send. A value of 0 removes the interval.",
     "This setting sets the number of bytes in each group, for a file send that waits after each group of bytes.",
     "This setting controls the sequential file sender from Tera Term 4. Sterna has one sender only, thus this setting has no effect.",
+    "This setting selects what Sterna waits for after each line of a file that it sends. The alternatives are nothing, a prompt, the echo of the line, and a quiet line.",
+    "This setting sets the regular expression for the prompt. Sterna sends the next line when the received text has a match for it.",
+    "This setting sets the time, in milliseconds, that Sterna waits for the device. When this time is complete, Sterna sends the next line and counts a timeout.",
+    "This setting sets the time, in milliseconds, that the device must be quiet before Sterna sends the next line.",
     "This setting controls the raw Send File options. With the on value, Tera Term skips these options. At this time, Sterna does not have this options dialog. Thus, this setting has no effect.",
     "This setting controls the raw Receive File options. With the on value, Tera Term skips these options. At this time, Sterna does not have this options dialog. Thus, this setting has no effect.",
     "This setting sets the number of seconds that Sterna waits after a printer job closes before Sterna sends it. Automatic-print output at short intervals becomes part of one job during this wait.",

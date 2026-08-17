@@ -1673,13 +1673,26 @@ impl Session {
         link
     }
 
+    /// Turn the parser's tap on or off from the three things that want it.
+    ///
+    /// One place, and it has to be: the tap is a single switch with **three**
+    /// consumers now — a macro, a plugin worker, and a gated send — and each
+    /// of the three arriving or leaving used to write the switch itself from
+    /// what it knew about the other one. A send finishing under a running macro
+    /// would have turned the macro's own tap off.
+    fn refresh_macro_tap(&mut self) {
+        let wanted =
+            self.macro_link.is_some() || self.plugin_link.is_some() || self.sender.needs_tap();
+        self.vt.set_macro_tap_enabled(wanted);
+    }
+
     /// Detach it — `DDELog = FALSE` and `DDEFreeBuf`. A no-op when none is
     /// linked.
     pub fn unlink_macro(&mut self) {
         if let Some(link) = self.macro_link.take() {
             link.clear();
         }
-        self.vt.set_macro_tap_enabled(self.plugin_link.is_some());
+        self.refresh_macro_tap();
     }
 
     /// Whether a macro is driving this session.
@@ -1706,7 +1719,7 @@ impl Session {
         if let Some(link) = self.plugin_link.take() {
             link.clear();
         }
-        self.vt.set_macro_tap_enabled(self.macro_link.is_some());
+        self.refresh_macro_tap();
     }
 
     pub fn plugin_linked(&self) -> bool {
@@ -1728,7 +1741,11 @@ impl Session {
     /// Called wherever the log is fed, and for the same reason: the tap fills
     /// as the parser runs and something has to take it away before it grows.
     fn macro_bytes_in(&mut self) {
-        if self.macro_link.is_none() && self.plugin_link.is_none() {
+        // The receive hot path: a session with no macro, no plugin and no gated
+        // send must pay one boolean for all of this. `bench/bench.py --core` is
+        // the check that it does.
+        let gated = self.sender.needs_tap();
+        if self.macro_link.is_none() && self.plugin_link.is_none() && !gated {
             return;
         }
         let bytes = self.vt.take_macro_bytes();
@@ -1737,6 +1754,14 @@ impl Session {
         }
         if let Some(link) = &self.plugin_link {
             link.push(&bytes);
+        }
+        if gated {
+            // The third consumer, and not through a `MacroLink`: a gate lives
+            // in this struct, so it takes the bytes rather than a ring somebody
+            // has to drain. What it sees is the same tap `waitregex` reads —
+            // printed characters, executed CR/LF, no escape sequences.
+            let now = Instant::now();
+            self.sender.feed_tap(now, &String::from_utf8_lossy(&bytes));
         }
     }
 

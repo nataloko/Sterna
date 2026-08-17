@@ -164,11 +164,99 @@ pub enum PaceKind {
     PerChunk,
 }
 
+/// What holds the next piece until the far end is ready for it.
+///
+/// **This half is Sterna's own** — deviation 26. Everything else in this module
+/// is `SendMem`, which can only wait for a *duration*: it guesses at a number
+/// where the device is already saying it is ready by printing a prompt. YAT's
+/// `WaitForResponse` (`TextTerminalSettings.cs:703`) is where the idea comes
+/// from; the three kinds here are the three answers people actually have to
+/// "how do I know it has finished with the last line".
+///
+/// Every one carries a timeout, and the timeout releases the line rather than
+/// stopping the send. A gate that stops on the first unanswered line is a gate
+/// that leaves half a configuration in a switch.
+#[derive(Clone, Debug)]
+pub enum Gate {
+    /// Nothing: the pace alone decides.
+    None,
+    /// Wait for received text matching this.
+    Prompt { re: regex::Regex, timeout: Duration },
+    /// Wait for the far end to send the line back — a console with no fixed
+    /// prompt, but which echoes.
+    Echo { timeout: Duration },
+    /// Wait for the far end to stop talking for `idle`.
+    Quiet { idle: Duration, timeout: Duration },
+}
+
+impl Gate {
+    /// Compile a prompt pattern, or say why not.
+    ///
+    /// The engine is the `regex` crate's, as [`crate::highlight`]'s and
+    /// [`crate::find`]'s are, and **not** `waitregex`'s Oniguruma: a gate is
+    /// matched inside [`crate::Session::service_send`] on the frontend's
+    /// thread, where a catastrophic backtrack is a window that stops answering.
+    /// For everything short of backreferences and lookaround the two agree.
+    pub fn prompt(pattern: &str, timeout: Duration) -> std::result::Result<Gate, String> {
+        regex::Regex::new(pattern)
+            .map(|re| Gate::Prompt { re, timeout })
+            .map_err(|e| e.to_string())
+    }
+
+    /// Whether the engine will take this pattern, for a dialog to ask as it is
+    /// typed — [`crate::highlight::check`]'s shape.
+    pub fn check(pattern: &str) -> std::result::Result<(), String> {
+        regex::Regex::new(pattern)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn is_none(&self) -> bool {
+        matches!(self, Gate::None)
+    }
+
+    fn timeout(&self) -> Duration {
+        match self {
+            Gate::None => Duration::ZERO,
+            Gate::Prompt { timeout, .. } | Gate::Echo { timeout } => *timeout,
+            Gate::Quiet { timeout, .. } => *timeout,
+        }
+    }
+}
+
+impl PartialEq for Gate {
+    /// By what it means, which for a pattern is its source text —
+    /// `regex::Regex` has no `PartialEq` of its own and two compiled copies of
+    /// the same pattern are the same gate.
+    fn eq(&self, other: &Gate) -> bool {
+        match (self, other) {
+            (Gate::None, Gate::None) => true,
+            (Gate::Prompt { re: a, timeout: x }, Gate::Prompt { re: b, timeout: y }) => {
+                a.as_str() == b.as_str() && x == y
+            }
+            (Gate::Echo { timeout: x }, Gate::Echo { timeout: y }) => x == y,
+            (
+                Gate::Quiet {
+                    idle: a,
+                    timeout: x,
+                },
+                Gate::Quiet {
+                    idle: b,
+                    timeout: y,
+                },
+            ) => a == b && x == y,
+            _ => false,
+        }
+    }
+}
+
 /// One thing to send.
 #[derive(Clone, Debug)]
 pub struct Job {
     pub body: Body,
     pub pace: Pace,
+    /// What holds the next piece until the far end has answered.
+    pub gate: Gate,
     /// Whether to put a copy through the receive parser as it goes.
     ///
     /// Captured when the job is queued rather than read live, which is
@@ -186,6 +274,7 @@ impl Job {
         Job {
             body,
             pace: Pace::None,
+            gate: Gate::None,
             echo: false,
             name: None,
         }
@@ -193,6 +282,11 @@ impl Job {
 
     pub fn paced(mut self, pace: Pace) -> Job {
         self.pace = pace;
+        self
+    }
+
+    pub fn gated(mut self, gate: Gate) -> Job {
+        self.gate = gate;
         self
     }
 
@@ -204,6 +298,21 @@ impl Job {
     pub fn named(mut self, name: impl Into<String>) -> Job {
         self.name = Some(name.into());
         self
+    }
+
+    /// The pace this job really sends at.
+    ///
+    /// A gate holds the queue **between pieces**, so a gate on a job with no
+    /// pace would have exactly one piece and nothing to hold — the file would
+    /// go out in one write and the gate would never be consulted. `Pace::None`
+    /// with a gate therefore means one line at a time with no interval: the
+    /// gate *is* the interval, which is what somebody asking to wait for a
+    /// prompt has asked for.
+    fn effective_pace(&self) -> Pace {
+        match self.pace {
+            Pace::None if !self.gate.is_none() => Pace::PerLine(Duration::ZERO),
+            p => p,
+        }
     }
 }
 
@@ -245,6 +354,11 @@ pub struct SendOutcome {
     /// [`SendEnd::Finished`].
     pub sent: usize,
     pub total: usize,
+    /// Pieces released by a [`Gate`]'s timeout rather than by an answer. A
+    /// finished send with a number here went out, but the far end did not keep
+    /// up — or the pattern was wrong, which is the commoner reason and the one
+    /// worth saying out loud.
+    pub timeouts: u32,
 }
 
 /// What a progress display needs, answered by polling rather than by an event.
@@ -259,6 +373,10 @@ pub struct SendProgress {
     pub paused: bool,
     /// Jobs queued behind this one.
     pub queued: usize,
+    /// Whether the queue is holding, waiting for the far end to answer.
+    pub gated: bool,
+    /// Pieces released by the gate's timeout rather than by an answer.
+    pub timeouts: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -273,6 +391,9 @@ enum State {
     /// An instant and not a duration, for the reason in this module's own
     /// documentation.
     Waiting(Instant),
+    /// Held until the far end answers — see [`Gate`]. The instant is when to
+    /// give up waiting and send anyway.
+    Gated(Instant),
     /// A person stopped it. No deadline at all: nothing is going to happen
     /// until somebody says so, and a timer that fires to discover that is a
     /// timer that should not have been armed.
@@ -281,6 +402,122 @@ enum State {
     /// empty. `Instant` is when to look again, for the same reason as
     /// [`State::Waiting`].
     Draining(Instant),
+}
+
+/// What a [`Gate`] has seen since the last piece went out.
+///
+/// **The buffer is not a line.** `waitregex` matches whole lines, because that
+/// is what upstream's `CheckEOLCheckLog` hands it — but a prompt is the one
+/// piece of text a console prints *without* a line ending, so a gate that
+/// waited for a newline would never see `Switch#` and would time out on every
+/// line of the file. This holds the text since the last line feed and tests it
+/// after every read, so a prompt matches the moment it appears and a whole line
+/// matches when it completes.
+///
+/// The CR stays on a completed line, which is `waitregex`'s rule and worth
+/// keeping so one pattern means one thing in both places: **`$` never matches
+/// at the end of a CRLF line.**
+#[derive(Debug, Default)]
+struct Watch {
+    /// Received text since the last line feed, bounded.
+    seen: String,
+    /// The piece just sent, minus its line ending — [`Gate::Echo`]'s question.
+    sent: String,
+    /// When the last tap byte arrived — [`Gate::Quiet`]'s.
+    last: Option<Instant>,
+    open: bool,
+    /// Pieces released by the timeout rather than by an answer.
+    timeouts: u32,
+}
+
+/// How much received text a gate keeps to match against.
+///
+/// A prompt is short and a banner is not. Dropping from the front rather than
+/// clearing keeps the tail — which is where a prompt is — and the tail is the
+/// only part any of the three gates asks about.
+const WATCH_MAX: usize = 4096;
+
+impl Watch {
+    /// Start watching for the answer to `sent`.
+    fn arm(&mut self, now: Instant, sent: &str) {
+        self.seen.clear();
+        self.sent = sent.trim_end_matches(['\r', '\n']).to_string();
+        self.last = Some(now);
+        self.open = false;
+    }
+
+    /// Received text, straight off the parser's tap.
+    ///
+    /// Tested **once per line and once for the tail**, not once per character:
+    /// a completed line has to be looked at before the buffer is cleared for
+    /// the next one, and the tail has to be looked at because a prompt has no
+    /// line ending. Per character would be a regex run per byte of everything
+    /// the far end says, which is a price a terminal cannot pay on its receive
+    /// path.
+    fn feed(&mut self, now: Instant, gate: &Gate, text: &str) {
+        self.last = Some(now);
+        let mut rest = text;
+        while let Some(at) = rest.find('\n') {
+            self.seen.push_str(&rest[..at]);
+            self.test(gate);
+            self.seen.clear();
+            rest = &rest[at + 1..];
+        }
+        self.seen.push_str(rest);
+        self.trim();
+        self.test(gate);
+    }
+
+    /// Keep the tail, which is where a prompt is, and drop the head.
+    fn trim(&mut self) {
+        while self.seen.len() > WATCH_MAX {
+            let cut = self
+                .seen
+                .char_indices()
+                .nth(1)
+                .map_or(self.seen.len(), |(i, _)| i);
+            self.seen.drain(..cut);
+        }
+    }
+
+    fn test(&mut self, gate: &Gate) {
+        if self.open || self.seen.is_empty() {
+            return;
+        }
+        self.open = match gate {
+            Gate::None => true,
+            Gate::Prompt { re, .. } => re.is_match(&self.seen),
+            // A substring rather than an equality: a console that prints its
+            // prompt and the echo on one line has both in the buffer, and a
+            // gate that insisted on the line being *only* the echo would never
+            // open on the commonest arrangement there is.
+            Gate::Echo { .. } => !self.sent.is_empty() && self.seen.contains(&self.sent),
+            // Time, not text.
+            Gate::Quiet { .. } => false,
+        };
+    }
+
+    /// Whether the gate is open at `now`, which for [`Gate::Quiet`] is a
+    /// question about the clock rather than about anything received.
+    fn is_open(&self, now: Instant, gate: &Gate) -> bool {
+        if self.open {
+            return true;
+        }
+        match gate {
+            Gate::Quiet { idle, .. } => self
+                .last
+                .is_some_and(|at| now.saturating_duration_since(at) >= *idle),
+            _ => false,
+        }
+    }
+
+    /// When to look again, for a gate that answers to the clock.
+    fn quiet_deadline(&self, gate: &Gate) -> Option<Instant> {
+        match gate {
+            Gate::Quiet { idle, .. } => self.last.map(|at| at + *idle),
+            _ => None,
+        }
+    }
 }
 
 /// The queue of jobs, the cursor into the running one, and when the next thing
@@ -292,6 +529,7 @@ pub struct Sender {
     /// character boundary for a [`Body::Text`].
     at: usize,
     state: SendState,
+    watch: Watch,
 }
 
 /// `State` is not `Default`, and a `Sender::default()` is the state a session
@@ -318,6 +556,7 @@ impl Sender {
         self.queue.push_back(job);
         if first {
             self.at = 0;
+            self.watch = Watch::default();
             self.state.0 = State::Ready;
         }
     }
@@ -344,9 +583,11 @@ impl Sender {
             end,
             sent: self.at,
             total: job.body.len(),
+            timeouts: self.watch.timeouts,
         };
         self.queue.clear();
         self.at = 0;
+        self.watch = Watch::default();
         self.state.0 = State::Idle;
         Some(outcome)
     }
@@ -381,6 +622,16 @@ impl Sender {
             State::Idle | State::Paused => None,
             State::Ready => Some(Duration::ZERO),
             State::Waiting(at) | State::Draining(at) => Some(at.saturating_duration_since(now)),
+            // Two instants, and the earlier one wins: the gate's own timeout,
+            // and — for a gate watching for silence — the moment the line will
+            // have been quiet long enough. Received bytes move the second, and
+            // `Session::gate_bytes_in` re-reads this afterwards.
+            State::Gated(timeout_at) => {
+                let gate = self.queue.front().map(|j| &j.gate);
+                let quiet = gate.and_then(|g| self.watch.quiet_deadline(g));
+                let at = quiet.map_or(timeout_at, |q| q.min(timeout_at));
+                Some(at.saturating_duration_since(now))
+            }
         }
     }
 
@@ -393,6 +644,8 @@ impl Sender {
             total: job.body.len(),
             paused: self.is_paused(),
             queued: self.queue.len() - 1,
+            gated: matches!(self.state.0, State::Gated(_)),
+            timeouts: self.watch.timeouts,
         })
     }
 
@@ -407,9 +660,28 @@ impl Sender {
     /// are all handed over. [`Sender::drained`] tells the last one apart,
     /// because only the caller knows whether the transport has caught up.
     pub fn take(&mut self, now: Instant, free: usize) -> Option<Piece> {
+        self.enter_gate(now);
         match self.state.0 {
             State::Idle | State::Paused | State::Draining(_) => return None,
             State::Waiting(at) if now < at => return None,
+            State::Gated(timeout_at) => {
+                let gate = self
+                    .queue
+                    .front()
+                    .map(|j| j.gate.clone())
+                    .unwrap_or(Gate::None);
+                if self.watch.is_open(now, &gate) {
+                    // Answered. On to the next piece.
+                } else if now >= timeout_at {
+                    // Released rather than stopped. A gate that gave up on the
+                    // first unanswered line would leave half a configuration in
+                    // a switch — so this counts and carries on, and the count
+                    // is what the progress panel and the outcome report.
+                    self.watch.timeouts = self.watch.timeouts.saturating_add(1);
+                } else {
+                    return None;
+                }
+            }
             State::Waiting(_) | State::Ready => {}
         }
         let job = self.queue.front()?;
@@ -431,7 +703,7 @@ impl Sender {
             return None;
         }
 
-        let take = span(&job.body, self.at, job.pace, free);
+        let take = span(&job.body, self.at, job.effective_pace(), free);
         // A pace that could not fit even its smallest unit into the room going:
         // wait rather than send a fragment. Only `PerLine` and `PerChunk` can
         // ask for more than `free`, and a line longer than the whole buffer is
@@ -444,26 +716,43 @@ impl Sender {
             return None;
         };
 
+        let slice = self.at..self.at + take;
         let piece = match &job.body {
             Body::Text(s) => Piece::Text {
-                text: s[self.at..self.at + take].to_string(),
+                text: s[slice.clone()].to_string(),
                 echo: job.echo,
             },
             Body::Bytes(b) => Piece::Bytes {
-                data: b[self.at..self.at + take].to_vec(),
+                data: b[slice.clone()].to_vec(),
                 echo: job.echo,
             },
             // Handled above: it has no bytes and never reaches `span`.
             Body::SetDelay { .. } => return None,
         };
+        // Armed before the piece goes out, so an answer that arrives during the
+        // pace's own wait has already opened the gate by the time the wait
+        // expires. Watching only from the moment the gate is entered would make
+        // a fast device look like a silent one.
+        let gate = job.gate.clone();
+        if !gate.is_none() {
+            let sent = match &job.body {
+                Body::Text(s) => s[slice].to_string(),
+                Body::Bytes(b) => String::from_utf8_lossy(&b[slice]).into_owned(),
+                Body::SetDelay { .. } => String::new(),
+            };
+            self.watch.arm(now, &sent);
+        }
         self.at += take;
 
         // The wait comes *after* a piece and not before the next one, and only
         // when something is left — upstream's `send_left != 0 && need_delay`
         // (`sendmem.cpp:515`). A job whose last line is exactly one line long
         // therefore does not sit through an interval it cannot use.
+        // With both a pace and a gate the interval is served first and the gate
+        // second, which is the order YAT's two settings compose in — and
+        // `enter_gate` is what makes the second half happen.
         let done = self.at == job.body.len();
-        self.state.0 = match (done, job.pace) {
+        self.state.0 = match (done, job.effective_pace()) {
             (true, _) => State::Draining(now),
             (false, Pace::None) => State::Ready,
             (false, Pace::PerChar(w) | Pace::PerLine(w) | Pace::PerChunk { wait: w, .. }) => {
@@ -471,6 +760,51 @@ impl Sender {
             }
         };
         Some(piece)
+    }
+
+    /// Move from a pace's wait into the gate's, once the interval is up.
+    ///
+    /// Its own step rather than part of `take`, because the two are different
+    /// questions and only the first has an answer at the moment the piece goes
+    /// out: how long to hold the line, and then whether the far end has spoken.
+    fn enter_gate(&mut self, now: Instant) {
+        let State::Waiting(at) = self.state.0 else {
+            return;
+        };
+        if now < at {
+            return;
+        }
+        let Some(job) = self.queue.front() else {
+            return;
+        };
+        if !job.gate.is_none() {
+            self.state.0 = State::Gated(now + job.gate.timeout());
+        }
+    }
+
+    /// Received text, for whatever gate is watching. A no-op when none is.
+    pub fn feed_tap(&mut self, now: Instant, text: &str) {
+        let Some(job) = self.queue.front() else {
+            return;
+        };
+        if job.gate.is_none() {
+            return;
+        }
+        let gate = job.gate.clone();
+        self.watch.feed(now, &gate, text);
+    }
+
+    /// Whether anything queued is watching the received stream.
+    ///
+    /// The parser's tap costs something to keep, so it is turned on only while
+    /// this is true — see `Session::refresh_macro_tap`.
+    pub fn needs_tap(&self) -> bool {
+        self.queue.front().is_some_and(|j| !j.gate.is_none())
+    }
+
+    /// How many pieces went out on the timeout rather than on an answer.
+    pub fn timeouts(&self) -> u32 {
+        self.watch.timeouts
     }
 
     /// The transport's queue is empty, so a job that had handed everything over
@@ -491,8 +825,11 @@ impl Sender {
             end: SendEnd::Finished,
             sent: self.at,
             total: job.body.len(),
+            timeouts: self.watch.timeouts,
         };
         self.at = 0;
+        // Per job, not per queue: the next one's gate starts from nothing.
+        self.watch = Watch::default();
         self.state.0 = if self.queue.is_empty() {
             State::Idle
         } else {
@@ -683,12 +1020,15 @@ impl std::fmt::Display for SendError {
 impl std::error::Error for SendError {}
 
 /// What File > Send file line by line was asked for.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FileSend {
     /// `TransBin`. Text goes through [`tt_vt::Vt::encode_text`] with its line
     /// breaks already normalised; bytes go exactly as they are on disk.
     pub binary: bool,
     pub pace: Pace,
+    /// What holds each line until the far end has answered — the half of this
+    /// feature that upstream has no equivalent for.
+    pub gate: Gate,
     /// `ts.LocalEcho` at the moment the job is queued.
     pub echo: bool,
 }
@@ -698,6 +1038,7 @@ impl Default for FileSend {
         FileSend {
             binary: false,
             pace: Pace::None,
+            gate: Gate::None,
             echo: false,
         }
     }
@@ -725,7 +1066,32 @@ pub fn file_send_defaults(s: &crate::Settings) -> FileSend {
             Duration::from_millis(s.transfer_raw_send_delay_tick.max(0) as u64),
             s.transfer_raw_send_size.max(0) as usize,
         ),
+        gate: gate_from(s),
         echo: s.terminal_local_echo,
+    }
+}
+
+/// The gate the settings describe — [`Gate::None`] when they describe none, and
+/// when they describe a prompt the engine will not compile.
+///
+/// A pattern that does not compile is a gate that would hold every line until
+/// its timeout, which is worse than no gate at all and says nothing about why.
+/// The dialog checks the pattern where somebody can see the answer; this is the
+/// backstop for a hand-edited file.
+pub fn gate_from(s: &crate::Settings) -> Gate {
+    use tt_config::TransferSendGate as G;
+    let timeout = Duration::from_millis(s.transfer_send_gate_timeout.max(0) as u64);
+    match s.transfer_send_gate {
+        G::None => Gate::None,
+        G::Prompt => match regex::Regex::new(&s.transfer_send_gate_pattern) {
+            Ok(re) if !s.transfer_send_gate_pattern.is_empty() => Gate::Prompt { re, timeout },
+            _ => Gate::None,
+        },
+        G::Echo => Gate::Echo { timeout },
+        G::Quiet => Gate::Quiet {
+            idle: Duration::from_millis(s.transfer_send_quiet_ms.max(0) as u64),
+            timeout,
+        },
     }
 }
 
@@ -773,6 +1139,7 @@ impl crate::Session {
         let job = Job {
             body,
             pace: opts.pace,
+            gate: opts.gate.clone(),
             echo: opts.echo,
             name: Some(path.display().to_string()),
         };
@@ -803,6 +1170,8 @@ impl crate::Session {
 
     fn push_send(&mut self, job: Job) {
         self.sender.push(job);
+        // A gated job is the third thing that wants the parser's tap on.
+        self.refresh_macro_tap();
     }
 
     /// Whether a queued send owns the wire.
@@ -853,6 +1222,11 @@ impl crate::Session {
 
     /// The one place a send ends. All three callers reach it.
     fn finish_send(&mut self, outcome: SendOutcome) {
+        // ...and the one place the tap it may have turned on is given back. A
+        // macro or a plugin still holding it keeps it: that is the whole reason
+        // `refresh_macro_tap` exists rather than a `set_macro_tap_enabled`
+        // written from what this side happens to know.
+        self.refresh_macro_tap();
         if let Some(reply) = self.send_reply.take() {
             reply.post(outcome.clone());
         }

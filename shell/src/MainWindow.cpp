@@ -3640,6 +3640,15 @@ void MainWindow::sendFileLineByLine()
     remember("transfer.raw_send_size", QString::number(chosen.chunk));
     remember("transfer.binary", chosen.binary ? QStringLiteral("on")
                                               : QStringLiteral("off"));
+    remember("transfer.send_gate",
+             chosen.gate == TT_SEND_GATE_PROMPT  ? QStringLiteral("prompt")
+             : chosen.gate == TT_SEND_GATE_ECHO  ? QStringLiteral("echo")
+             : chosen.gate == TT_SEND_GATE_QUIET ? QStringLiteral("quiet")
+                                                 : QStringLiteral("none"));
+    remember("transfer.send_gate_pattern",
+             QString::fromUtf8(chosen.gate_pattern ? chosen.gate_pattern : ""));
+    remember("transfer.send_gate_timeout", QString::number(chosen.gate_timeout_ms));
+    remember("transfer.send_quiet_ms", QString::number(chosen.quiet_ms));
 
     QString error;
     if (!m_session->sendFile(path, chosen, &error)) {

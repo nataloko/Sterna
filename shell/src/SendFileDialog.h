@@ -16,6 +16,7 @@ class QDialogButtonBox;
 class QLabel;
 class QProgressBar;
 class QPushButton;
+class QLineEdit;
 class QSpinBox;
 class QTimer;
 class I18n;
@@ -42,16 +43,30 @@ public:
 
 private slots:
     void paceChanged();
+    void gateChanged();
+    /// Ask the engine about the pattern as it is typed, and say so beside it.
+    void checkPattern();
 
 private:
     Session *m_session;
     QComboBox *m_pace;
     QSpinBox *m_interval;
     QSpinBox *m_group;
+    QComboBox *m_gate;
+    QLineEdit *m_pattern;
+    QSpinBox *m_timeout;
+    QSpinBox *m_quiet;
+    QLabel *m_patternError;
     QCheckBox *m_binary;
     QCheckBox *m_echo;
     QLabel *m_intervalLabel;
     QLabel *m_groupLabel;
+    QLabel *m_patternLabel;
+    QLabel *m_timeoutLabel;
+    QLabel *m_quietLabel;
+    /// Held so `options()` can hand out a borrowed pointer that outlives the
+    /// call — the ABI takes the pattern as a `const char *`.
+    mutable QByteArray m_patternUtf8;
 };
 
 /// Progress, and the three buttons that matter.
