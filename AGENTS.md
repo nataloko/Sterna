@@ -953,6 +953,20 @@ Measuring anything:
   resize land inside the next thing it does and blame that instead.
   `QWidget::move()` "fails" for `/X=120` the same way. Run `cmdline_test`
   under offscreen or xcb (CI does). Applies to anything asserting position.
+- **...and xcb rescues a position but not a *size*.** A top-level's `resize` is
+  a request under both real plugins, so a widget that asks for 460 and measures
+  itself in the next statement measures whatever it already was —
+  `counters_test` read 501 under xcb *and* Wayland and blamed the layout.
+  Offscreen is the only plugin that answers immediately; the portable fix is not
+  a plugin at all but a **child** widget, whose geometry belongs to the widget
+  tree and to nobody else.
+- **Offscreen's text is about 20% narrower than a real plugin's, so a pixel
+  budget measured there is not the desktop's.** The same `PageStatusBar` labels
+  measure 77/144/139 under offscreen and 96/188/158 under xcb, on one machine
+  with one font set. A layout assertion that passes under offscreen and fails on
+  the desktop is the more useful half being hidden — so a test that puts a
+  number on a width says which plugin the number came from, the way
+  `bench/baseline.json` records platform and Qt version.
 - **A Wayland compositor stops frame callbacks to a surface it thinks
   hidden** — short-lived probe windows paint a fraction of their frames; any
   paint-waiting measurement has to tolerate it.

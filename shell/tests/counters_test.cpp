@@ -272,15 +272,27 @@ void test_the_serial_row_reads_the_port()
 /// realistically reads, and the name has to survive it.
 void test_the_field_leaves_the_name_room_on_a_quarter_window()
 {
-    PageStatusBar status;
-    status.resize(460, status.sizeHint().height());
+    // **A child, not a window.** A top-level's `resize` is a request the
+    // compositor answers when it likes, so a bar that asked for 460 and
+    // measured itself in the next statement measured the 501 it already was —
+    // wide enough that the counters never elided, which left the name, the only
+    // stretching item, with nothing. It read as the layout failure this test
+    // exists to catch and was the test asking a window manager a question.
+    // Wayland and xcb both, so the usual "run it under xcb" does not rescue a
+    // size the way it rescues a position. A child's geometry is the widget
+    // tree's and nobody else's.
+    QWidget host;
+    PageStatusBar status(&host);
     status.setName(QStringLiteral("router1.example.net"));
     status.setConnection(PageStatusBar::Link::Up,
                          QStringLiteral("ssh router1.example.net"));
     status.setLogging(true, 4'200'000);
     status.setCounters(true, 44 * 60 * 1000, 1'200, 8, true);
-    status.show();
+    status.setGeometry(0, 0, 460, status.sizeHint().height());
+    host.resize(status.size());
+    host.show();
     QApplication::processEvents();
+    CHECK(status.width() == 460);
 
     auto *name = status.findChild<QLabel *>(QStringLiteral("statusName"));
     auto *field = status.findChild<QLabel *>(QStringLiteral("statusCounters"));
