@@ -324,6 +324,44 @@ fn the_link_going_away_ends_the_send() {
     assert!(done_at < gone_at);
 }
 
+/// `PasteDelayPerLine` — the setting that has been read, written and acted on
+/// by nothing since this program had a settings file. It ships at 10 ms, so a
+/// paste is paced on a fresh install, which is what `clipboar.c:205` asks for.
+#[test]
+fn a_paste_is_paced_by_the_setting_it_has_always_carried() {
+    let (mut s, h) = connected();
+    assert_eq!(s.settings().clipboard_paste_delay_per_line, 10);
+
+    s.paste("one\ntwo\nthree\n", false).expect("paste");
+    // The first line and no more: the rest is on the frontend's timer.
+    assert_eq!(h.outbound(), b"one\r");
+    assert!(s.sending());
+    run(&mut s);
+    assert_eq!(h.outbound(), b"one\rtwo\rthree\r");
+
+    // ...and with the delay switched off it is over before `paste` returns,
+    // which is what every caller written before the queue existed expects.
+    let (mut s, h) = connected();
+    let mut settings = s.settings().clone();
+    settings.clipboard_paste_delay_per_line = 0;
+    s.set_settings(settings);
+    s.paste("one\ntwo\nthree\n", false).expect("paste");
+    assert_eq!(h.outbound(), b"one\rtwo\rthree\r");
+    assert!(!s.sending());
+}
+
+/// A second paste while the first is still going is dropped, not queued —
+/// `clipboar.c:231` refuses one whenever `TalkStatus` is not the keyboard.
+#[test]
+fn a_paste_during_a_paste_is_dropped() {
+    let (mut s, h) = connected();
+    s.paste("one\ntwo\nthree\n", false).expect("paste");
+    assert!(s.sending());
+    s.paste("interloper\n", false).expect("paste");
+    run(&mut s);
+    assert_eq!(h.outbound(), b"one\rtwo\rthree\r");
+}
+
 #[test]
 fn a_session_with_nothing_connected_refuses_and_says_why() {
     let dir = tempfile::tempdir().unwrap();

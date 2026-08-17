@@ -2114,6 +2114,16 @@ impl Session {
     /// `BracketedControlOnly` on a single line pasted this way is sent
     /// unbracketed even though a control character is going out, and a
     /// clipboard already ending in a CR sends two.
+    ///
+    /// **It goes through the send queue** ([`send`]), which is where
+    /// `PasteDelayPerLine` finally means something: `CBSendStart`
+    /// (`clipboar.c:199`) hands the whole prepared string to `SendMemTextW` and
+    /// asks for a per-line pace unless the setting is zero. The setting ships at
+    /// **10 ms**, so a multi-line paste is paced on a fresh install — which is
+    /// the point, since a switch with no flow control drops what arrives while
+    /// it is still echoing the last line. A paste is therefore no longer over
+    /// when this returns: the first line is, and the frontend's send timer
+    /// carries the rest.
     pub fn paste(&mut self, text: &str, add_cr: bool) -> Result<()> {
         if self.wire_is_busy() {
             return Ok(());
@@ -2130,17 +2140,29 @@ impl Session {
         if add_cr {
             text.push('\r');
         }
+        // One body with the brackets inside it, which is upstream's
+        // `clipboar.c:298` — they are part of the string `CBSendStart` is
+        // handed, so they are paced with it and **echoed with it**. An earlier
+        // version of this function kept them out of the echo and said upstream
+        // did too; it does not, and echoing them is invisible anyway (an
+        // unrecognised `CSI 200 ~` prints nothing).
         if bracket {
-            self.queue(b"\x1b[200~");
+            text.insert_str(0, "\x1b[200~");
+            text.push_str("\x1b[201~");
         }
-        // The brackets describe the paste to the host; they are not keyboard
-        // input and upstream does not put them through `CommTextEchoW`.
-        self.feed_local_echo(text.as_bytes());
-        self.queue(text.as_bytes());
-        if bracket {
-            self.queue(b"\x1b[201~");
-        }
-        self.flush_pending()
+        let pace = match self.settings.clipboard_paste_delay_per_line {
+            0 => send::Pace::None,
+            ms => send::Pace::PerLine(Duration::from_millis(ms as u64)),
+        };
+        self.sender.push(
+            send::Job::new(send::Body::Text(text))
+                .paced(pace)
+                .echoed(self.vt.local_echo()),
+        );
+        // The first piece now rather than one timer interval from now, so a
+        // paste with the delay switched off is over before this returns and
+        // every caller that could see the difference is a caller that set it.
+        self.service_send()
     }
 
     /// Answer an accepted OSC 52 clipboard read. `selection` is the string

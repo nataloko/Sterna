@@ -44,6 +44,25 @@ fn row(s: &Session, y: usize) -> String {
     out.trim_end().to_string()
 }
 
+/// Run the send queue to a stop, the way the frontend's single-shot timer does.
+///
+/// A paste goes through that queue now, and `PasteDelayPerLine` ships at 10 ms
+/// — so a multi-line paste is over one line at a time and an assertion made
+/// straight afterwards sees only the first. Sleeping through it here is worth
+/// the milliseconds: the alternative is to switch the delay off in every case
+/// below, and then nothing would be checking that the paced path assembles the
+/// same bytes as the unpaced one.
+fn finish_send(s: &mut Session) {
+    for _ in 0..500 {
+        let Some(d) = s.send_deadline() else { return };
+        if !d.is_zero() {
+            std::thread::sleep(d);
+        }
+        s.service_send().expect("service");
+    }
+    panic!("the send queue never emptied");
+}
+
 fn pump(s: &mut Session) -> Vec<Event> {
     s.pump(TICK).expect("pump");
     s.drain_events()
@@ -164,6 +183,7 @@ fn the_live_local_echo_setting_covers_every_keyboard_send_path() {
     s.send_bytes(b"b").unwrap();
     assert!(s.send_key(Key::Kp1).unwrap());
     s.paste("p", false).unwrap();
+    finish_send(&mut s);
     assert_eq!(row(&s, 0), "tb1p");
     assert_eq!(h.outbound(), b"tb1p");
 
@@ -374,10 +394,12 @@ fn paste_is_bracketed_only_when_the_host_asked() {
     // ...and the LF has become a CR on the way, which is `NormalizeLineBreakCR`
     // and is what the Return key would have sent.
     s.paste("plain\n", false).unwrap();
+    finish_send(&mut s);
     assert_eq!(h.outbound(), b"plain\r");
 
     s.feed(b"\x1b[?2004h");
     s.paste("x", false).unwrap();
+    finish_send(&mut s);
     assert_eq!(h.outbound(), b"plain\r\x1b[200~x\x1b[201~");
 }
 
@@ -387,6 +409,7 @@ fn paste_is_bracketed_only_when_the_host_asked() {
 fn a_paste_puts_one_cr_on_the_wire_for_every_line_break() {
     let (mut s, h) = connected(20, 4);
     s.paste("a\r\nb\nc\rd", false).unwrap();
+    finish_send(&mut s);
     assert_eq!(h.outbound(), b"a\rb\rc\rd");
 }
 
@@ -401,6 +424,7 @@ fn the_clipboard_settings_decide_what_a_paste_looks_like() {
         s.set_settings(settings);
         s.feed(b"\x1b[?2004h");
         s.paste(text, false).unwrap();
+        finish_send(&mut s);
         h.outbound()
     };
 
@@ -440,6 +464,7 @@ fn paste_cr_appends_one_carriage_return() {
         s.set_settings(settings);
         s.feed(b"\x1b[?2004h");
         s.paste(text, add_cr).unwrap();
+        finish_send(&mut s);
         h.outbound()
     };
 
@@ -768,10 +793,23 @@ fn a_typed_cr_is_expanded_by_newline_mode() {
     s.send_text("b\r").unwrap();
     assert_eq!(h.outbound(), b"b\r\n");
 
-    // And a paste is left alone, because bracketed paste means verbatim.
+    // And so is a paste. It used to be left alone here, on the grounds that
+    // "bracketed paste means verbatim" — but this paste is not bracketed, and
+    // upstream expands it either way: `CBSendStart` hands the string to
+    // `SendMemTextW`, which sends it with `CommTextOutW` (`ttcmn.c:896`), whose
+    // `OutControl` is the same CR expansion a typed Return goes through.
     h.with(|st| st.outbound.clear());
     s.paste("x\ry", false).unwrap();
-    assert_eq!(h.outbound(), b"x\ry");
+    finish_send(&mut s);
+    assert_eq!(h.outbound(), b"x\r\ny");
+
+    // ...brackets included, which is worth pinning because it is the case the
+    // old comment was reaching for. `CommTextOutW` has never heard of them.
+    h.with(|st| st.outbound.clear());
+    s.feed(b"\x1b[?2004h");
+    s.paste("x\ry", false).unwrap();
+    finish_send(&mut s);
+    assert_eq!(h.outbound(), b"\x1b[200~x\r\ny\x1b[201~");
 }
 
 #[test]
