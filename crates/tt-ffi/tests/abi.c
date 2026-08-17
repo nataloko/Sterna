@@ -2806,6 +2806,211 @@ static void test_transfer(void)
     CHECK(system(cmd) == 0);
 }
 
+/* The first row whose text starts with `want`, or -1. */
+static int find_row(const TtSession *s, const char *want)
+{
+    for (size_t y = 0; y < tt_session_rows(s); y++) {
+        size_t len = 0;
+        const TtCell *row = tt_session_row(s, y, &len);
+        if (row == NULL)
+            continue;
+        size_t x = 0;
+        while (want[x] != 0 && x < len && base(&row[x]) == (uint32_t)want[x])
+            x++;
+        if (want[x] == 0)
+            return (int)y;
+    }
+    return -1;
+}
+
+/* The paced send queue, driven the way the frontend's single-shot timer drives
+ * it: read the deadline, wait it out, service, read it again.
+ *
+ * Against a pty running `cat`, so what comes back is what went out — which is
+ * the only way from C to see that the pacing did not lose or reorder a line. */
+static void test_send_file(void)
+{
+    char dir[] = "/tmp/tt-abi-send-XXXXXX";
+    if (mkdtemp(dir) == NULL) {
+        CHECK(0);
+        return;
+    }
+    char src[256], cmd[600];
+    snprintf(src, sizeof src, "%s/config.txt", dir);
+    FILE *f = fopen(src, "w");
+    CHECK(f != NULL);
+    if (!f)
+        return;
+    fputs("alpha\nbravo\ncharlie\n", f);
+    fclose(f);
+
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+
+    TtPtyParams p;
+    tt_pty_params_default(&p);
+    const char *argv[] = {"/bin/cat"};
+    p.argv = argv;
+    p.argc = 1;
+    CHECK_OK(tt_session_connect_pty(s, &p));
+
+    CHECK(!tt_session_sending(s));
+    CHECK(tt_session_send_deadline_ms(s) < 0);
+    CHECK(!tt_session_send_progress(s, NULL));
+
+    TtSendOptions opts = {0};
+    opts.binary = false;
+    opts.pace = TT_SEND_PACE_PER_LINE;
+    opts.tick_ms = 20;
+    opts.chunk = 0;
+    opts.echo = false;
+    CHECK_OK(tt_session_send_file(s, src, &opts));
+    CHECK(tt_session_sending(s));
+
+    TtSendProgress prog;
+    CHECK(tt_session_send_progress(s, &prog));
+    CHECK(prog.name != NULL && strcmp(prog.name, src) == 0);
+    CHECK(prog.sent == 0);
+    CHECK(prog.total == 20);
+    CHECK(!prog.paused);
+    CHECK(prog.queued == 0);
+    CHECK(!tt_session_send_result(s, NULL)); /* nothing has ended yet */
+
+    int fd = tt_session_poll_fd(s);
+    int done = 0;
+    TtSendResult result = {0};
+    long deadline = now_ms() + 10000;
+    while (!done && now_ms() < deadline) {
+        long wait = tt_session_send_deadline_ms(s);
+        if (wait >= 0) {
+            /* The frontend's timer. Waiting on the descriptor as well is what
+             * the real one does — the echo coming back is a wakeup too. */
+            wait_readable(fd, wait > 50 ? 50 : (int)wait + 1);
+            CHECK_OK(tt_session_service_send(s));
+        } else {
+            wait_readable(fd, 20);
+        }
+        size_t n = 0;
+        tt_session_pump(s, 5, &n);
+        const TtEvent *evs = NULL;
+        size_t count = tt_session_drain_events(s, &evs);
+        for (size_t i = 0; i < count; i++) {
+            if (evs[i].kind == TT_EVENT_KIND_SEND_DONE) {
+                CHECK(tt_session_send_result(s, &result));
+                done = 1;
+            }
+        }
+    }
+    CHECK(done);
+    CHECK(result.end == TT_SEND_END_FINISHED);
+    CHECK(result.sent == result.total);
+    CHECK(result.total == 20);
+    CHECK(!tt_session_sending(s));
+    CHECK(tt_session_send_deadline_ms(s) < 0);
+
+    /* `cat` sent every line back, so all three are on the screen and in the
+     * order they were sent. Searched for rather than asserted at a fixed row:
+     * the pty's own line discipline echoes as well, so each line appears
+     * twice, and how the two interleave is the kernel's business. */
+    deadline = now_ms() + 3000;
+    int charlie = -1;
+    while (now_ms() < deadline && charlie < 0) {
+        size_t n = 0;
+        tt_session_pump(s, 20, &n);
+        tt_session_drain_events(s, NULL);
+        charlie = find_row(s, "charlie");
+    }
+    CHECK(charlie >= 0);
+    int alpha = find_row(s, "alpha"), bravo = find_row(s, "bravo");
+    CHECK(alpha >= 0 && bravo > alpha && charlie > bravo);
+
+    /* A file that is not there is an error and not a queued job. */
+    char missing[256];
+    snprintf(missing, sizeof missing, "%s/nothing-here", dir);
+    CHECK(tt_session_send_file(s, missing, &opts) != TT_OK);
+    CHECK(!tt_session_sending(s));
+
+    tt_session_free(s);
+    snprintf(cmd, sizeof cmd, "rm -rf %s", dir);
+    CHECK(system(cmd) == 0);
+}
+
+/* Pause, resume and cancel, which are the three buttons on the progress panel.
+ *
+ * No pty: nothing has to reach a far end for any of this to be observable, and
+ * a disconnected session refuses the send outright — so this one connects to a
+ * `cat` that is never read. */
+static void test_send_controls(void)
+{
+    char dir[] = "/tmp/tt-abi-sendc-XXXXXX";
+    if (mkdtemp(dir) == NULL) {
+        CHECK(0);
+        return;
+    }
+    char src[256], cmd[600];
+    snprintf(src, sizeof src, "%s/lines.txt", dir);
+    FILE *f = fopen(src, "w");
+    CHECK(f != NULL);
+    if (!f)
+        return;
+    for (int i = 0; i < 50; i++)
+        fputs("a line of configuration\n", f);
+    fclose(f);
+
+    TtConfig cfg;
+    tt_config_default(&cfg);
+    TtSession *s = tt_session_new(&cfg);
+
+    /* Nothing connected: refused, and it says which. */
+    TtSendOptions opts = {0};
+    opts.pace = TT_SEND_PACE_PER_LINE;
+    opts.tick_ms = 50;
+    CHECK(tt_session_send_file(s, src, &opts) == TT_ERR_DISCONNECTED);
+
+    TtPtyParams p;
+    tt_pty_params_default(&p);
+    const char *argv[] = {"/bin/cat"};
+    p.argv = argv;
+    p.argc = 1;
+    CHECK_OK(tt_session_connect_pty(s, &p));
+    CHECK_OK(tt_session_send_file(s, src, &opts));
+    CHECK_OK(tt_session_service_send(s));
+
+    /* A paused send arms nothing, so a frontend's timer stays stopped. */
+    tt_session_pause_send(s, true);
+    TtSendProgress prog;
+    CHECK(tt_session_send_progress(s, &prog));
+    CHECK(prog.paused);
+    CHECK(tt_session_send_deadline_ms(s) < 0);
+    size_t at = prog.sent;
+    for (int i = 0; i < 5; i++)
+        CHECK_OK(tt_session_service_send(s));
+    CHECK(tt_session_send_progress(s, &prog));
+    CHECK(prog.sent == at);
+
+    tt_session_pause_send(s, false);
+    CHECK(tt_session_send_deadline_ms(s) >= 0);
+
+    tt_session_cancel_send(s);
+    CHECK(!tt_session_sending(s));
+    const TtEvent *evs = NULL;
+    size_t count = tt_session_drain_events(s, &evs);
+    int saw_done = 0;
+    for (size_t i = 0; i < count; i++)
+        if (evs[i].kind == TT_EVENT_KIND_SEND_DONE)
+            saw_done = 1;
+    CHECK(saw_done);
+    TtSendResult result = {0};
+    CHECK(tt_session_send_result(s, &result));
+    CHECK(result.end == TT_SEND_END_CANCELLED);
+    CHECK(result.sent < result.total);
+
+    tt_session_free(s);
+    snprintf(cmd, sizeof cmd, "rm -rf %s", dir);
+    CHECK(system(cmd) == 0);
+}
+
 static char macro_dir[64];
 
 /* Write a macro out and hand back its path.
@@ -3671,6 +3876,8 @@ int main(void)
     test_pty();
     test_counters();
     test_transfer();
+    test_send_file();
+    test_send_controls();
     test_plugins();
     test_macro();
     test_macro_without_a_frontend();

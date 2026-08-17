@@ -482,6 +482,10 @@ pub struct TtSession {
     xfer_file: CString,
     xfer_message: CString,
     transfer_result: Option<tt_session::TransferOutcome>,
+    /// The same two for the paced send queue: the name the running job is
+    /// showing, and how the last one ended.
+    send_name: CString,
+    send_result: Option<tt_session::send::SendOutcome>,
     /// The window operations the last event drain turned up. Kept here for the
     /// same reason the strings above are: a C caller has nowhere to put them,
     /// and `TtEvent` has no room to carry two `int`s.
@@ -540,6 +544,8 @@ pub extern "C" fn tt_session_new(config: *const TtConfig) -> *mut TtSession {
         xfer_file: CString::default(),
         xfer_message: CString::default(),
         transfer_result: None,
+        send_name: CString::default(),
+        send_result: None,
         window_requests: Vec::new(),
         printer_events: Vec::new(),
         printer_texts: Vec::new(),
@@ -2232,6 +2238,14 @@ pub enum TtEventKind {
     /// The tries are spent and the wait is over. `text` is why the last one
     /// failed.
     ReopenFailed = 22,
+    /// A queued send ended. Read [`tt_session_send_result`] for how, and read
+    /// it on this event: it is kept until the next send ends.
+    ///
+    /// There is no matching progress event. A per-character paced job would
+    /// raise one per character, and the frontend is already being woken by
+    /// [`tt_session_send_deadline_ms`] — so it polls
+    /// [`tt_session_send_progress`] when it wakes.
+    SendDone = 23,
 }
 
 #[repr(C)]
@@ -2350,6 +2364,13 @@ pub extern "C" fn tt_session_drain_events(
                 s.event_texts.push(cstring(&why));
                 let p = s.event_texts.last().expect("just pushed").as_ptr();
                 (TtEventKind::ReopenFailed, 0, p)
+            }
+            // The same arrangement as `TransferDone` below and for the same
+            // reason: `TtEvent` is a fixed struct and this outcome is a string
+            // and three numbers.
+            Event::SendDone(outcome) => {
+                s.send_result = Some(*outcome);
+                (TtEventKind::SendDone, 0, ptr::null())
             }
             // The payload does not travel in the event: `TtEvent` is a fixed
             // struct and a transfer's is two strings and six numbers. It is
@@ -2768,6 +2789,257 @@ pub extern "C" fn tt_session_transfer_deadline_ms(session: *const TtSession) -> 
         Some(d) => d.as_millis() as i64,
         None => -1,
     }
+}
+
+// --- the paced send queue -------------------------------------------------
+
+/// How much of a send goes at once. `SendMemDelayType` (`sendmem.h:41`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TtSendPace {
+    /// Everything the transport will take. A `tick_ms` of zero means this
+    /// whichever pace was asked for — upstream reads a tick of zero as a real
+    /// value meaning no wait (`ttset.c:2011`).
+    None = 0,
+    PerChar = 1,
+    PerLine = 2,
+    PerChunk = 3,
+}
+
+/// What File > Send file line by line was asked for.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtSendOptions {
+    /// `TransBin`. False decodes the file as UTF-8, normalises every line
+    /// break to one `CR`, and lets [`tt_session_send_text`]'s encoding decide
+    /// what reaches the wire. True sends the file's bytes unchanged.
+    pub binary: bool,
+    pub pace: TtSendPace,
+    /// Milliseconds to wait after each piece. Zero is a real value and means
+    /// no wait, which collapses `pace` to [`TtSendPace::None`].
+    pub tick_ms: u32,
+    /// Bytes per piece for [`TtSendPace::PerChunk`], and ignored otherwise.
+    /// Zero collapses to [`TtSendPace::None`].
+    pub chunk: u32,
+    /// `ts.LocalEcho`, read once when the job is queued rather than live, so
+    /// changing the setting halfway through does not echo half a file.
+    pub echo: bool,
+}
+
+/// What the running send is doing, for a progress display.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtSendProgress {
+    /// The file being sent, or null for a job with no name. Borrowed until the
+    /// next call on this session.
+    pub name: *const c_char,
+    pub sent: usize,
+    pub total: usize,
+    pub paused: bool,
+    /// Jobs queued behind this one.
+    pub queued: usize,
+}
+
+/// Why a send stopped.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TtSendEnd {
+    Finished = 0,
+    Cancelled = 1,
+    LinkLost = 2,
+}
+
+/// How the last send ended.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TtSendResult {
+    /// Borrowed until the next call on this session.
+    pub name: *const c_char,
+    pub end: TtSendEnd,
+    pub sent: usize,
+    pub total: usize,
+}
+
+/// Send a file through the terminal's own write path, a piece at a time.
+///
+/// Upstream's File > Send file (`vtwin.cpp:4312` → `SendMemSendFile`), and the
+/// macro command `sendfile`. **This is not a file transfer**: nothing is
+/// framed and nothing is acknowledged, so the far end sees what somebody
+/// typing the file would have sent. [`tt_session_send_files`] is the other
+/// thing, and it speaks XMODEM and its relatives.
+///
+/// While a send is running the terminal **stops accepting typing** —
+/// [`tt_session_send_text`] and its neighbours become no-ops, which is what
+/// upstream's `TalkStatus` does (`keyboard.c:1480`). Ask
+/// [`tt_session_sending`] before greying a widget.
+///
+/// The frontend owns the clock: arm a single-shot timer for
+/// [`tt_session_send_deadline_ms`] and call [`tt_session_service_send`] when it
+/// fires. Nothing else moves the queue.
+#[no_mangle]
+pub extern "C" fn tt_session_send_file(
+    session: *mut TtSession,
+    path: *const c_char,
+    opts: *const TtSendOptions,
+) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    let path = match unsafe { str_arg(path, usize::MAX) } {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let Some(o) = (unsafe { opts.as_ref() }) else {
+        return fail(TT_ERR_INVALID, "null TtSendOptions");
+    };
+    let kind = match o.pace {
+        TtSendPace::None => tt_session::send::PaceKind::None,
+        TtSendPace::PerChar => tt_session::send::PaceKind::PerChar,
+        TtSendPace::PerLine => tt_session::send::PaceKind::PerLine,
+        TtSendPace::PerChunk => tt_session::send::PaceKind::PerChunk,
+    };
+    let opts = tt_session::send::FileSend {
+        binary: o.binary,
+        pace: tt_session::send::Pace::of(
+            kind,
+            Duration::from_millis(o.tick_ms as u64),
+            o.chunk as usize,
+        ),
+        echo: o.echo,
+    };
+    match s.session.send_file(std::path::Path::new(path), &opts) {
+        Ok(()) => TT_OK,
+        // Three refusals, three statuses a frontend already distinguishes:
+        // nothing to send down, something else already owning the wire, and a
+        // file the operating system would not give us.
+        Err(e @ tt_session::send::SendError::NotConnected) => {
+            fail(TT_ERR_DISCONNECTED, e.to_string())
+        }
+        Err(e @ tt_session::send::SendError::TransferRunning) => fail(TT_ERR_BUSY, e.to_string()),
+        Err(e @ tt_session::send::SendError::Unreadable(_)) => fail(TT_ERR_IO, e.to_string()),
+    }
+}
+
+/// Whether a queued send owns the wire, and so whether typing is being dropped.
+#[no_mangle]
+pub extern "C" fn tt_session_sending(session: *const TtSession) -> bool {
+    let s = session_ref!(session, false);
+    s.session.sending()
+}
+
+/// Milliseconds until the send queue needs attention, or -1 when nothing is
+/// queued and nothing is due — a paused send included.
+///
+/// **The core owns the instant and the frontend owns the timer**, the same
+/// arrangement as [`tt_session_transfer_deadline_ms`] and
+/// [`tt_session_reopen_deadline_ms`], and for a sharper reason than either: a
+/// per-character pace of 1 ms cannot be expressed by a once-a-second session
+/// tick at all. Re-read it after every [`tt_session_service_send`] and after
+/// anything else that touches the session; asking does not postpone it.
+#[no_mangle]
+pub extern "C" fn tt_session_send_deadline_ms(session: *const TtSession) -> i64 {
+    let s = session_ref!(session, -1);
+    match s.session.send_deadline() {
+        Some(d) => d.as_millis() as i64,
+        None => -1,
+    }
+}
+
+/// Hand the transport the next piece, if one is due.
+///
+/// Harmless at any other time — the queue answers with nothing — which is what
+/// makes it safe to call from a pump that is not sure.
+#[no_mangle]
+pub extern "C" fn tt_session_service_send(session: *mut TtSession) -> TtStatus {
+    let s = session!(session, TT_ERR_INVALID);
+    match s.session.service_send() {
+        Ok(()) => TT_OK,
+        Err(e) => report(e),
+    }
+}
+
+/// Hold the running send, or let it go again. A no-op with none running.
+///
+/// A paused send arms no deadline at all: nothing is going to happen until
+/// somebody says so, and a timer that fires to discover that is a timer that
+/// should not have been armed.
+#[no_mangle]
+pub extern "C" fn tt_session_pause_send(session: *mut TtSession, paused: bool) {
+    let s = session!(session);
+    s.session.pause_send(paused);
+}
+
+/// Stop the running send and everything queued behind it.
+///
+/// Raises [`TtEventKind::SendDone`] unless nothing was running. Everything
+/// queued goes, not only the running job: cancelling is a person saying stop,
+/// and leaving three more behind to start by themselves is not what they asked
+/// for.
+#[no_mangle]
+pub extern "C" fn tt_session_cancel_send(session: *mut TtSession) {
+    let s = session!(session);
+    s.session.cancel_send();
+}
+
+/// What the running send is doing. False when none is.
+#[no_mangle]
+pub extern "C" fn tt_session_send_progress(
+    session: *mut TtSession,
+    out: *mut TtSendProgress,
+) -> bool {
+    let s = session!(session, false);
+    let Some(p) = s.session.send_progress() else {
+        return false;
+    };
+    s.send_name = match &p.name {
+        Some(n) => cstring(n),
+        None => CString::default(),
+    };
+    if let Some(out) = unsafe { out.as_mut() } {
+        *out = TtSendProgress {
+            name: if p.name.is_some() {
+                s.send_name.as_ptr()
+            } else {
+                ptr::null()
+            },
+            sent: p.sent,
+            total: p.total,
+            paused: p.paused,
+            queued: p.queued,
+        };
+    }
+    true
+}
+
+/// How the last send ended. False when none has.
+///
+/// Read it on [`TtEventKind::SendDone`]: it is kept until the next send ends
+/// and then replaced.
+#[no_mangle]
+pub extern "C" fn tt_session_send_result(session: *mut TtSession, out: *mut TtSendResult) -> bool {
+    let s = session!(session, false);
+    let Some(r) = s.send_result.clone() else {
+        return false;
+    };
+    s.send_name = match &r.name {
+        Some(n) => cstring(n),
+        None => CString::default(),
+    };
+    if let Some(out) = unsafe { out.as_mut() } {
+        *out = TtSendResult {
+            name: if r.name.is_some() {
+                s.send_name.as_ptr()
+            } else {
+                ptr::null()
+            },
+            end: match r.end {
+                tt_session::send::SendEnd::Finished => TtSendEnd::Finished,
+                tt_session::send::SendEnd::Cancelled => TtSendEnd::Cancelled,
+                tt_session::send::SendEnd::LinkLost => TtSendEnd::LinkLost,
+            },
+            sent: r.sent,
+            total: r.total,
+        };
+    }
+    true
 }
 
 // --- the loop -------------------------------------------------------------

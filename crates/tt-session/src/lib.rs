@@ -43,6 +43,7 @@ pub mod logname;
 pub mod macros;
 pub mod open;
 pub mod reopen;
+pub mod send;
 mod serial;
 pub mod settings;
 pub mod xfer;
@@ -218,6 +219,17 @@ pub enum Event {
     Reopened(String),
     /// The retries are spent. `String` is why the last attempt failed.
     ReopenFailed(String),
+    /// A queued send ended — see [`send`]. Finished, cancelled, or cut off by
+    /// the link going away.
+    ///
+    /// There is no matching progress event: a per-character paced job would
+    /// produce one per character, and the frontend is already being woken for
+    /// the deadline, so it reads [`Session::send_progress`] when it wakes.
+    ///
+    /// Boxed for the reason [`Event::TransferDone`] is — every other event
+    /// carries the largest variant's footprint, and `Damage` is both the
+    /// cheapest to make and the one made most.
+    SendDone(Box<send::SendOutcome>),
 }
 
 /// What pressing a legacy `KEYBOARD.CNF` scan code did.
@@ -283,6 +295,10 @@ pub struct Session {
     tcp_cr_send_used: bool,
     /// The file transfer that owns the byte stream, if one is running.
     xfer: Option<xfer::Running>,
+    /// The paced send queue — upstream's `SendMem`. Empty for nearly all of a
+    /// session's life, and [`send::Sender::is_running`] is the question every
+    /// hot path asks first.
+    sender: send::Sender,
     /// Where the running transfer's outcome goes besides the event queue, for
     /// a caller on another thread that is blocked on it. See
     /// [`Session::notify_transfer`].
@@ -365,6 +381,7 @@ impl Session {
             key_map: KeyboardMap::default(),
             xfer: None,
             xfer_reply: None,
+            sender: send::Sender::default(),
             macro_link: None,
             plugin_link: None,
             stream_filter: None,
@@ -2016,7 +2033,7 @@ impl Session {
     /// either, so a frontend sends `"\r"` and the core decides whether a line
     /// feed follows.
     pub fn send_text(&mut self, text: &str) -> Result<()> {
-        if self.xfer.is_some() {
+        if self.wire_is_busy() {
             return Ok(());
         }
         let bytes = self.vt.encode_text(text);
@@ -2035,7 +2052,7 @@ impl Session {
     /// the saved setting. Turning the editor off therefore restores the
     /// previous echo behaviour instead of silently pinning it on.
     pub fn send_edited_line(&mut self, text: &str) -> Result<()> {
-        if self.xfer.is_some() {
+        if self.wire_is_busy() {
             return Ok(());
         }
         let mut bytes = self.vt.encode_text(text);
@@ -2061,7 +2078,7 @@ impl Session {
     /// Refused during a transfer, like everything else that could put a stray
     /// byte in the middle of a packet.
     pub fn send_bytes(&mut self, bytes: &[u8]) -> Result<()> {
-        if self.xfer.is_some() {
+        if self.wire_is_busy() {
             return Ok(());
         }
         self.feed_local_echo(bytes);
@@ -2098,10 +2115,7 @@ impl Session {
     /// unbracketed even though a control character is going out, and a
     /// clipboard already ending in a CR sends two.
     pub fn paste(&mut self, text: &str, add_cr: bool) -> Result<()> {
-        // Everything the user could type is refused while a transfer is up —
-        // a stray byte in the middle of a packet is a corrupted file, and a
-        // paste is the largest stray byte there is.
-        if self.xfer.is_some() {
+        if self.wire_is_busy() {
             return Ok(());
         }
         let mut text = paste_text(text, &self.settings);
@@ -2412,6 +2426,24 @@ impl Session {
         true
     }
 
+    /// Whether something already owns the byte stream, so typing must be
+    /// dropped rather than interleaved with it.
+    ///
+    /// Two things can: a **file transfer**, because a stray byte in the middle
+    /// of a packet is a corrupted file; and a **queued send**, because a line
+    /// typed into the middle of a configuration being pasted is a line the far
+    /// end runs in the wrong place. Upstream spells both with one variable —
+    /// `TalkStatus`, tested at `keyboard.c:1480` before every key and at
+    /// `clipboar.c:231` before every paste — and drops the input silently,
+    /// which is the only thing a keystroke path can do.
+    ///
+    /// Not consulted by [`send::Sender`]'s own pieces: they reach
+    /// [`Session::queue`] directly, which is how upstream's `SendMem` reaches
+    /// `CommTextOutW`.
+    fn wire_is_busy(&self) -> bool {
+        self.xfer.is_some() || self.sender.is_running()
+    }
+
     fn queue(&mut self, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
@@ -2495,6 +2527,9 @@ impl Session {
         self.pending.clear();
         self.restore_tcp_echo_cr();
         self.transfer_disconnected();
+        // Before the `Disconnected`, so a frontend showing a send's progress is
+        // told the send is over before it is told why.
+        self.send_link_lost();
         self.events.push(Event::Disconnected);
         // After the `Disconnected`, so a frontend reading the queue in order
         // sees the line drop and then sees what is being done about it.
@@ -2650,9 +2685,18 @@ pub fn paste_text(text: &str, s: &Settings) -> String {
     } else {
         text
     };
-    // `CR LF` and a bare `LF` both become one `CR`; a bare `CR` stays one. The
-    // pair has to be collapsed rather than mapped byte by byte, or a file
-    // copied out of an editor arrives as two line endings for every line.
+    normalize_line_break_cr(text)
+}
+
+/// `NormalizeLineBreakCR` (`clipboar.c:289`): `CR LF` and a bare `LF` both
+/// become one `CR`; a bare `CR` stays one.
+///
+/// The pair has to be collapsed rather than mapped byte by byte, or a file
+/// copied out of an editor arrives as two line endings for every line. What
+/// reaches the wire is then decided once, by `CRSend` and LNM, in
+/// [`tt_vt::Vt::encode_text`] — which is why a paste and a text file send both
+/// come through here first (`sendmem.cpp:774` does the same to a file).
+pub fn normalize_line_break_cr(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
