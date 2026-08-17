@@ -76,6 +76,14 @@ Session::Session(int cols, int rows, QObject *parent)
     m_reopenTimer->setTimerType(Qt::CoarseTimer);
     connect(m_reopenTimer, &QTimer::timeout, this, &Session::onReopenDeadline);
 
+    m_sendTimer = new QTimer(this);
+    m_sendTimer->setSingleShot(true);
+    // `Qt::PreciseTimer` and not merely coarse: a per-character pace ships as
+    // low as 1 ms, and Qt's coarse timer may adjust an interval by 5%, which at
+    // that scale is the whole interval. See the member.
+    m_sendTimer->setTimerType(Qt::PreciseTimer);
+    connect(m_sendTimer, &QTimer::timeout, this, &Session::onSendDeadline);
+
     m_tick = new QTimer(this);
     // Named so a test can fire it directly rather than waiting a real second,
     // the way `statusLogBlinkTimer` is.
@@ -1126,6 +1134,76 @@ void Session::onTransferDeadline()
     pumpAndDispatch(0);
 }
 
+// --- sending a file, a piece at a time ---------------------------------------
+
+bool Session::sendFile(const QString &path, const TtSendOptions &opts, QString *outError)
+{
+    const QByteArray utf8 = path.toUtf8();
+    if (tt_session_send_file(m_session, utf8.constData(), &opts) != TT_OK) {
+        if (outError) {
+            *outError = QString::fromUtf8(tt_last_error());
+        }
+        return false;
+    }
+    // The first piece goes now rather than one timer interval from now, so a
+    // send with no pace at all is over before the window has repainted.
+    onSendDeadline();
+    return true;
+}
+
+TtSendOptions Session::sendDefaults() const
+{
+    TtSendOptions opts {};
+    tt_session_send_defaults(m_session, &opts);
+    return opts;
+}
+
+bool Session::isSending() const
+{
+    return tt_session_sending(m_session);
+}
+
+SendProgress Session::sendProgress() const
+{
+    SendProgress out;
+    TtSendProgress p;
+    // const_cast for the same reason `transferProgress` needs one: the ABI
+    // caches the name string it hands back.
+    if (!tt_session_send_progress(const_cast<TtSession *>(m_session), &p)) {
+        return out;
+    }
+    out.name = QString::fromUtf8(p.name ? p.name : "");
+    out.sent = static_cast<qint64>(p.sent);
+    out.total = static_cast<qint64>(p.total);
+    out.paused = p.paused;
+    out.queued = static_cast<int>(p.queued);
+    return out;
+}
+
+void Session::pauseSend(bool paused)
+{
+    tt_session_pause_send(m_session, paused);
+    // Letting go arms a deadline the timer has to be told about; holding
+    // disarms one it has to stop watching. `dispatch` does both.
+    dispatch();
+}
+
+void Session::cancelSend()
+{
+    tt_session_cancel_send(m_session);
+    dispatch();
+}
+
+void Session::onSendDeadline()
+{
+    tt_session_service_send(m_session);
+    // Not a pump. With local echo the piece has just gone through the receive
+    // parser, so the screen is dirty and only draining the queue says so — and
+    // a pump would block this thread for a serial line's whole read timeout on
+    // every character of a per-character pace.
+    dispatch();
+}
+
 void Session::feed(const QByteArray &bytes)
 {
     tt_session_feed(m_session, reinterpret_cast<const uint8_t *>(bytes.constData()),
@@ -1409,6 +1487,7 @@ void Session::dispatch()
     std::optional<QString> reopenDone;
     std::optional<QString> reopenFailed;
     std::optional<TransferResult> transferEnded;
+    std::optional<SendResult> sendEnded;
     for (size_t i = 0; i < n; i++) {
         switch (events[i].kind) {
         case TT_EVENT_KIND_DAMAGE:
@@ -1478,6 +1557,17 @@ void Session::dispatch()
                     QString::fromUtf8(r.message ? r.message : ""), r.bytes, r.elapsed_ms};
             } else {
                 transferEnded = TransferResult{};
+            }
+            break;
+        }
+        case TT_EVENT_KIND_SEND_DONE: {
+            TtSendResult r;
+            if (tt_session_send_result(m_session, &r)) {
+                sendEnded = SendResult{QString::fromUtf8(r.name ? r.name : ""), r.end,
+                                       static_cast<qint64>(r.sent),
+                                       static_cast<qint64>(r.total)};
+            } else {
+                sendEnded = SendResult{};
             }
             break;
         }
@@ -1573,6 +1663,12 @@ void Session::dispatch()
     }
     if (transferEnded) {
         emit transferFinished(*transferEnded);
+    }
+    // Before the disconnection below, so a progress panel closes before the
+    // window says the line dropped — which is the order the core queues them
+    // in for the same reason.
+    if (sendEnded) {
+        emit sendFinished(*sendEnded);
     }
     if (connectionEnded) {
         // A local shell knows why it ended; a serial line does not. "bash
@@ -1683,5 +1779,17 @@ void Session::rearm()
     } else {
         const int64_t ms = reopen < 1 ? 1 : (reopen > 60000 ? 60000 : reopen);
         m_reopenTimer->start(static_cast<int>(ms));
+    }
+
+    // ...and for the send queue, whose -1 covers nothing queued *and* a send
+    // somebody has paused. A paused send is meant to arm nothing: there is
+    // going to be no change until a person makes one, and a timer that fires
+    // once a tick to rediscover that is a timer that should not be running.
+    const int64_t send = tt_session_send_deadline_ms(m_session);
+    if (send < 0) {
+        m_sendTimer->stop();
+    } else {
+        const int64_t ms = send < 1 ? 1 : (send > 60000 ? 60000 : send);
+        m_sendTimer->start(static_cast<int>(ms));
     }
 }

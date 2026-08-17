@@ -2937,19 +2937,24 @@ pub extern "C" fn tt_session_send_defaults(session: *const TtSession, opts: *mut
         return;
     };
     let d = tt_session::send::file_send_defaults(s.session.settings());
-    let (pace, tick_ms, chunk) = match d.pace {
-        tt_session::send::Pace::None => (TtSendPace::None, 0, 0),
-        tt_session::send::Pace::PerChar(w) => (TtSendPace::PerChar, w.as_millis() as u32, 0),
-        tt_session::send::Pace::PerLine(w) => (TtSendPace::PerLine, w.as_millis() as u32, 0),
-        tt_session::send::Pace::PerChunk { bytes, wait } => {
-            (TtSendPace::PerChunk, wait.as_millis() as u32, bytes as u32)
+    let (pace, tick_ms) = match d.pace {
+        tt_session::send::Pace::None => (TtSendPace::None, 0),
+        tt_session::send::Pace::PerChar(w) => (TtSendPace::PerChar, w.as_millis() as u32),
+        tt_session::send::Pace::PerLine(w) => (TtSendPace::PerLine, w.as_millis() as u32),
+        tt_session::send::Pace::PerChunk { wait, .. } => {
+            (TtSendPace::PerChunk, wait.as_millis() as u32)
         }
     };
     *out = TtSendOptions {
         binary: d.binary,
         pace,
         tick_ms,
-        chunk,
+        // Straight from the setting rather than out of the `Pace` above, which
+        // carries it in one arm only. A dialog seeded from the `Pace` would
+        // show `SendfileSize`'s number only when the file already said
+        // `PerSendSize` — so changing the pace *to* it would quietly offer a
+        // default in place of what the user last chose.
+        chunk: s.session.settings().transfer_raw_send_size.max(0) as u32,
         echo: d.echo,
     };
 }

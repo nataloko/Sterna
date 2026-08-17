@@ -65,6 +65,7 @@
 #include "QuickButtonBar.h"
 #include "QuickButtonRepeat.h"
 #include "QuickButtonsDialog.h"
+#include "SendFileDialog.h"
 #include "Session.h"
 #include "SettingsDialog.h"
 #include "SshPrompts.h"
@@ -286,6 +287,25 @@ QString transferDirectory(const Session &session)
     const QString downloads =
         QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
     return downloads.isEmpty() ? QDir::homePath() : downloads;
+}
+
+/// One line for the terminal's own status line when a paced send ends.
+///
+/// On the page's line rather than in a box, for the reason a finished transfer
+/// is: the progress panel is already saying it in more detail, and a modal box
+/// over a console somebody is watching is the wrong way to report the thing
+/// they were watching for.
+QString sendOutcomeMessage(const SendResult &result)
+{
+    switch (result.end) {
+    case TT_SEND_END_CANCELLED:
+        return MainWindow::tr("Send stopped");
+    case TT_SEND_END_LINK_LOST:
+        return MainWindow::tr("Send cut off by the connection");
+    case TT_SEND_END_FINISHED:
+    default:
+        return MainWindow::tr("Send complete");
+    }
 }
 
 } // namespace
@@ -812,6 +832,17 @@ void MainWindow::wirePage(TerminalPage *page)
                 if (auto *dialog = page->transferDialog()) {
                     dialog->update(progress);
                 }
+            });
+    connect(session, &Session::sendFinished, this,
+            [this, page](const SendResult &result) {
+                if (auto *dialog = page->sendDialog()) {
+                    // Left open, like a finished transfer's: how far a send got
+                    // before the line dropped is the only account of it there
+                    // is.
+                    dialog->finish(result);
+                }
+                showPageMessage(page, sendOutcomeMessage(result));
+                updateStatus();
             });
     connect(session, &Session::transferFinished, this,
             [this, page](const TransferResult &result) {
@@ -2443,6 +2474,18 @@ void MainWindow::buildMenus()
     m_receiveAction = file->addAction(tr("Receive file..."), this,
                                       &MainWindow::receiveFile);
     languageAction(m_receiveAction, "MENU_FILE_RECVFILE", tr("Receive file..."));
+    // Beside the protocol transfers because it is the other thing a file can
+    // do to a connection, and after them because it is the rarer of the two.
+    // It has no `.lng` key: upstream's File > Send file *is* this operation —
+    // its protocol transfers live under Transfer — so borrowing that caption
+    // would give two items here the same name.
+    m_sendLineAction = file->addAction(tr("Send file line by line..."), this,
+                                       &MainWindow::sendFileLineByLine);
+    m_sendLineAction->setObjectName(QStringLiteral("sendFileLineAction"));
+    m_sendLineAction->setStatusTip(
+        tr("This command sends a text file to the far end one line at a time. A "
+           "wait after each line gives a device with no flow control the time to "
+           "read the last one."));
     file->addSeparator();
     // Upstream's File > Print, which is the same `BuffPrint` call `CSI 0 i`
     // makes — the menu asks for the screen and the sequence can ask for the
@@ -3559,6 +3602,63 @@ void MainWindow::sendFile()
     m_page->setTransferDialog(dialog);
     connect(dialog, &XferProgressDialog::cancelled, m_session,
             &Session::cancelTransfer);
+    dialog->show();
+    updateStatus();
+}
+
+void MainWindow::sendFileLineByLine()
+{
+    SendFileDialog options(m_session, this, m_i18n);
+    if (options.exec() != QDialog::Accepted) {
+        return;
+    }
+    // The same order as `sendFile` above: how first, which file second.
+    const QString dir = transferDirectory(*m_session);
+    const QString filter = transferNameFilter(
+        m_session->setting(QStringLiteral("transfer.send_filter")));
+    const QString title = options.windowTitle();
+    const QString path = QFileDialog::getOpenFileName(this, title, dir, filter);
+    if (path.isEmpty()) {
+        return;
+    }
+
+    // Written back before the send starts, so the next one opens where this
+    // one was left — which is what those four keys are for, and what upstream
+    // does at `vtwin.cpp:4303`. A send that then fails still remembers the
+    // answers: they were the user's, and losing them to a bad path is rude.
+    const TtSendOptions chosen = options.options();
+    const auto remember = [this](const char *name, const QString &value) {
+        QString ignored;
+        m_session->setSetting(QString::fromLatin1(name), value, &ignored);
+    };
+    remember("transfer.raw_send_delay_type",
+             chosen.pace == TT_SEND_PACE_PER_CHAR    ? QStringLiteral("PerChar")
+             : chosen.pace == TT_SEND_PACE_PER_LINE  ? QStringLiteral("PerLine")
+             : chosen.pace == TT_SEND_PACE_PER_CHUNK ? QStringLiteral("PerSendSize")
+                                                     : QStringLiteral("NoDelay"));
+    remember("transfer.raw_send_delay_tick", QString::number(chosen.tick_ms));
+    remember("transfer.raw_send_size", QString::number(chosen.chunk));
+    remember("transfer.binary", chosen.binary ? QStringLiteral("on")
+                                              : QStringLiteral("off"));
+
+    QString error;
+    if (!m_session->sendFile(path, chosen, &error)) {
+        QMessageBox::warning(this, title, error);
+        return;
+    }
+
+    auto *dialog = new SendProgressDialog(title, this, m_i18n);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    m_page->setSendDialog(dialog);
+    connect(dialog, &SendProgressDialog::cancelled, m_session, &Session::cancelSend);
+    connect(dialog, &SendProgressDialog::pauseToggled, m_session, &Session::pauseSend);
+    // The page's session and not `m_session`, which follows the front tab: a
+    // send belongs to the terminal it was started on, the same rule a repeating
+    // quick button follows.
+    Session *owner = m_page->session();
+    connect(dialog, &SendProgressDialog::poll, dialog,
+            [dialog, owner] { dialog->update(owner->sendProgress()); });
+    dialog->update(owner->sendProgress());
     dialog->show();
     updateStatus();
 }
@@ -4748,5 +4848,13 @@ void MainWindow::updateStatus()
     }
     if (m_receiveAction) {
         m_receiveAction->setEnabled(canTransfer);
+    }
+    // And a paced send is refused by all three of those *and* by another paced
+    // send. That last one is the menu's alone: the core would happily queue a
+    // second job behind the first, which is upstream's FIFO and right for a
+    // macro's `send`, but somebody who has just chosen a file expects it to
+    // start rather than to wait behind a file they had forgotten about.
+    if (m_sendLineAction) {
+        m_sendLineAction->setEnabled(canTransfer && !m_session->isSending());
     }
 }

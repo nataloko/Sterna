@@ -116,6 +116,25 @@ struct TransferResult {
     quint32 elapsedMs = 0;
 };
 
+/// Where a paced send has got to.
+struct SendProgress {
+    /// The file, or empty for a job with no name.
+    QString name;
+    qint64 sent = 0;
+    qint64 total = 0;
+    bool paused = false;
+    /// Jobs queued behind this one.
+    int queued = 0;
+};
+
+/// How a paced send ended.
+struct SendResult {
+    QString name;
+    TtSendEnd end = TT_SEND_END_FINISHED;
+    qint64 sent = 0;
+    qint64 total = 0;
+};
+
 /// A copied `TtKeyCodeResult`; the ABI's macro path is borrowed and cannot
 /// survive the next core call made while the window handles it.
 struct KeyCodeAction {
@@ -471,6 +490,31 @@ public:
     /// Where it has got to. Only meaningful while `isTransferring`.
     TransferProgress transferProgress() const;
 
+    // --- sending a file, a piece at a time -----------------------------------
+    //
+    // Not a transfer: nothing is framed and nothing is acknowledged, so the far
+    // end sees what somebody typing the file would have sent. The terminal is
+    // mute while one runs — the core drops typing, which is what upstream's
+    // `TalkStatus` does — but it is not deaf, so the host's answers still reach
+    // the screen. That is the whole point of the feature.
+    //
+    // The clock is the core's instant and this class's timer, the arrangement
+    // `m_xferTimer` and `m_reopenTimer` already have.
+
+    /// Start one. False and `outError` when the file could not be read, nothing
+    /// is connected, or a transfer owns the wire.
+    bool sendFile(const QString &path, const TtSendOptions &opts, QString *outError);
+    /// What the settings say a send should start as, for seeding a dialog.
+    TtSendOptions sendDefaults() const;
+    /// Whether a send owns the wire — and so whether typing is being dropped.
+    bool isSending() const;
+    /// Where it has got to. Only meaningful while `isSending`.
+    SendProgress sendProgress() const;
+    /// Hold it, or let it go again.
+    void pauseSend(bool paused);
+    /// Stop it and everything queued behind it. `sendFinished` follows.
+    void cancelSend();
+
     /// Feed bytes as though they had arrived from the far end.
     void feed(const QByteArray &bytes);
     /// Handle Shift+Escape. False leaves Escape available to ordinary key
@@ -641,6 +685,13 @@ signals:
     /// the peer, or cut off by the connection going away.
     void transferFinished(const TransferResult &result);
 
+    /// A paced send ended: finished, cancelled, or cut off by the line.
+    ///
+    /// There is no matching progress signal. A per-character pace would emit
+    /// one per character, and the window is already being woken by the send
+    /// timer — so it reads `sendProgress` when it wakes.
+    void sendFinished(const SendResult &result);
+
     /// The **far end** says the terminal should be this size — telnet's NAWS,
     /// arriving backwards from a console server describing the equipment
     /// behind it. Nothing has resized yet: the window owns its own size.
@@ -651,6 +702,7 @@ private slots:
     void onRetryPending();
     void onTransferDeadline();
     void onReopenDeadline();
+    void onSendDeadline();
 
 private:
     enum class DuplicateKind { None, Telnet, Ssh };
@@ -735,6 +787,12 @@ private:
     /// core owns the instant (`tt_session_reopen_deadline_ms`) and this owns
     /// the sleep, which is exactly the arrangement `m_xferTimer` has.
     QTimer *m_reopenTimer = nullptr;
+    /// The fifth, for the paced send queue, and it is the one with the sharpest
+    /// case for its own timer: a per-character pace can be 1 ms, which `m_tick`
+    /// cannot express at all and `m_xferTimer` has no reason to carry. The core
+    /// owns the instant (`tt_session_send_deadline_ms`) and this owns the
+    /// sleep, the same arrangement as the two above.
+    QTimer *m_sendTimer = nullptr;
     QString m_title;
     QString m_connectionHost;
     quint16 m_connectionPort = 0;

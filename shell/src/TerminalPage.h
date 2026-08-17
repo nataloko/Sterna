@@ -20,6 +20,7 @@ class Printer;
 class QScrollBar;
 class Session;
 class TerminalView;
+class SendProgressDialog;
 class XferProgressDialog;
 
 /// The lifetime boundary for one tab.
@@ -56,6 +57,7 @@ public:
     Macro *macro() const { return m_macro; }
     Plugins *plugins() const { return m_plugins; }
     XferProgressDialog *transferDialog() const { return m_xferDialog; }
+    SendProgressDialog *sendDialog() const { return m_sendDialog; }
     /// What the shared connection selector shows when this page is active.
     ///
     /// The record is kept as well as its label: a recent SSH row carries an
@@ -76,6 +78,10 @@ public:
     /// Replace the modeless transfer dialog. The page owns it even though its
     /// visual parent is the window, so closing a tab cannot strand one.
     void setTransferDialog(XferProgressDialog *dialog);
+    /// The same for a paced send's progress panel, and separate from it: the
+    /// two cannot run at once, but they end at different moments and a shared
+    /// slot would have one closing the other's window.
+    void setSendDialog(SendProgressDialog *dialog);
 
     /// Follow the core's viewport after output or a scroll gesture.
     void syncScrollBar();
@@ -121,6 +127,7 @@ private:
     Macro *m_macro = nullptr;
     Plugins *m_plugins = nullptr;
     XferProgressDialog *m_xferDialog = nullptr;
+    SendProgressDialog *m_sendDialog = nullptr;
     std::optional<RecentConnection> m_selectorConnection;
     QString m_selectorLabel;
 };

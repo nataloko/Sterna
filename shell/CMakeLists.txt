@@ -167,6 +167,7 @@ add_library(sterna_shell STATIC
     src/QuickButtons.cpp
     src/QuickButtonsDialog.cpp
     src/ConnectDialog.cpp
+    src/SendFileDialog.cpp
     src/SerialPanel.cpp
     src/SettingsDialog.cpp
     src/SshPanel.cpp
@@ -421,6 +422,18 @@ if(UNIX)
     target_link_libraries(buttons_test PRIVATE sterna_shell)
     target_compile_options(buttons_test PRIVATE ${TT_WARNINGS})
     add_test(NAME buttons COMMAND buttons_test)
+endif()
+
+# Sending a file a piece at a time, which is the one feature whose *clock* is
+# above the ABI: the core is handed a fake instant in its own tests, so nothing
+# below this can tell whether the window ever arms the timer — and a paced send
+# with no timer looks exactly like one that finished with nothing on the wire.
+# UNIX only, again because the connected cases fork `/bin/sh`.
+if(UNIX)
+    add_executable(send_test tests/send_test.cpp)
+    target_link_libraries(send_test PRIVATE sterna_shell)
+    target_compile_options(send_test PRIVATE ${TT_WARNINGS})
+    add_test(NAME send COMMAND send_test)
 endif()
 
 # Signed metadata is parsed without a socket; the fixture also crosses the C

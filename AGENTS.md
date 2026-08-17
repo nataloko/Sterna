@@ -127,6 +127,9 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/highlight_test           # the highlight rules, to the pixels — needs nothing
 ./build/gutter_test              # line numbers: painted, and never copied
 ./build/buttons_test             # the quick buttons, over a pty — needs nothing
+./build/send_test                # ...and a file fed to one a piece at a time.
+                                 # The send queue's *clock* is only testable
+                                 # here: below the ABI it is a fake instant
 QT_QPA_PLATFORM=offscreen \
   ./build/cmdline_test           # a Tera Term command line, argv to connected
                                  # — NOT under Wayland; see the traps

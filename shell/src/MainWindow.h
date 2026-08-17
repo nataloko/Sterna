@@ -234,6 +234,8 @@ private slots:
     void onWindowOperation(const TtWindowRequest &request);
     void sendBreak();
     void sendFile();
+    /// File > Send file line by line — the paced send, which is not a transfer.
+    void sendFileLineByLine();
     void receiveFile();
     /// File > Log — the options dialog, then the log it configures. A no-op
     /// while one is already open, which is what upstream's greyed item means.
@@ -651,6 +653,7 @@ private:
     QAction *m_pauseLogAction = nullptr;
     QAction *m_stopLogAction = nullptr;
     QAction *m_sendAction = nullptr;
+    QAction *m_sendLineAction = nullptr;
     QAction *m_receiveAction = nullptr;
     QAction *m_stopMacroAction = nullptr;
     /// The macro runner, for this window's lifetime. One at a time — which is

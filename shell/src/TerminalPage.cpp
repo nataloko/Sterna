@@ -12,6 +12,7 @@
 #include "PageStatusBar.h"
 #include "Plugins.h"
 #include "Printer.h"
+#include "SendFileDialog.h"
 #include "Session.h"
 #include "TerminalView.h"
 #include "XferDialog.h"
@@ -128,6 +129,8 @@ TerminalPage::~TerminalPage()
 {
     delete m_xferDialog;
     m_xferDialog = nullptr;
+    delete m_sendDialog;
+    m_sendDialog = nullptr;
     // The plugin callbacks point at Macro's UI adapter, and both point at the
     // session. Stop that worker before either of its two dependencies.
     delete m_plugins;
@@ -227,6 +230,19 @@ void TerminalPage::setTransferDialog(XferProgressDialog *dialog)
     if (m_xferDialog) {
         connect(m_xferDialog, &QObject::destroyed, this,
                 [this] { m_xferDialog = nullptr; });
+    }
+}
+
+void TerminalPage::setSendDialog(SendProgressDialog *dialog)
+{
+    if (dialog == m_sendDialog) {
+        return;
+    }
+    delete m_sendDialog;
+    m_sendDialog = dialog;
+    if (m_sendDialog) {
+        connect(m_sendDialog, &QObject::destroyed, this,
+                [this] { m_sendDialog = nullptr; });
     }
 }
 
