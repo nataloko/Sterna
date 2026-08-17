@@ -622,6 +622,42 @@ impl WriteDelay {
     }
 }
 
+/// Where a finished send's outcome goes besides the event queue, for a caller
+/// on another thread that is blocked on it.
+///
+/// `TransferReply`'s shape and for the same reason: a macro's `sendfile` runs
+/// on the macro's thread and the send runs on the frontend's, and the command
+/// does not return until the file has gone. Upstream reaches the same place
+/// through `SendMemSendFile2`'s completion callback (`ttdde.c:811`), which is
+/// what unparks `ttpmacro` from `IdTTLWaitCmndResult`.
+#[derive(Clone, Debug, Default)]
+pub struct SendReply(std::sync::Arc<(std::sync::Mutex<Option<SendOutcome>>, std::sync::Condvar)>);
+
+impl SendReply {
+    pub fn new() -> SendReply {
+        SendReply::default()
+    }
+
+    /// The session's end.
+    pub fn post(&self, outcome: SendOutcome) {
+        let (slot, wake) = &*self.0;
+        *slot.lock().unwrap() = Some(outcome);
+        wake.notify_all();
+    }
+
+    /// The waiter's end: block for up to `timeout`, and take the outcome if it
+    /// has arrived. A timeout rather than a plain wait, so the caller keeps the
+    /// turn — it has a cancel to answer and a frontend that may have gone.
+    pub fn wait(&self, timeout: Duration) -> Option<SendOutcome> {
+        let (slot, wake) = &*self.0;
+        let guard = slot.lock().unwrap();
+        let (mut guard, _) = wake
+            .wait_timeout_while(guard, timeout, |o| o.is_none())
+            .unwrap();
+        guard.take()
+    }
+}
+
 /// Why a send could not be started.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SendError {
@@ -712,6 +748,13 @@ impl crate::Session {
     /// page, which is a Windows answer to a Windows question — `tt-ttl` keeps
     /// the ACP path because a `.ttl` is a Windows artefact, and a configuration
     /// somebody is about to paste into a console is not.
+    ///
+    /// **Nothing is stripped.** `sendfile`'s manual page says text mode removes
+    /// every control character except TAB, LF and CR, and that was true of the
+    /// Tera Term 4 sender (`FileSend1`, `filesys.cpp:278`) — which Tera Term 5
+    /// `#if 0`'d out of the macro path in favour of `SendMemSendFile2`
+    /// (`ttdde.c:807`). `SendMem` strips nothing, so neither does this; the
+    /// documentation is what is stale. See `docs/upstream-bugs.md`.
     pub fn send_file(
         &mut self,
         path: &std::path::Path,
@@ -784,10 +827,19 @@ impl crate::Session {
         self.sender.set_paused(paused);
     }
 
+    /// Post the *next* send's outcome to `reply` as well as raising the event.
+    ///
+    /// Armed by whoever is about to start one and cleared when it fires, so a
+    /// caller blocked on a reply cannot be woken by somebody else's send. The
+    /// same arrangement as [`crate::Session::notify_transfer`].
+    pub fn notify_send(&mut self, reply: SendReply) {
+        self.send_reply = Some(reply);
+    }
+
     /// Stop it. Raises [`crate::Event::SendDone`] unless nothing was running.
     pub fn cancel_send(&mut self) {
         if let Some(outcome) = self.sender.cancel(SendEnd::Cancelled) {
-            self.events.push(crate::Event::SendDone(Box::new(outcome)));
+            self.finish_send(outcome);
         }
     }
 
@@ -795,8 +847,16 @@ impl crate::Session {
     /// where every other thing that a dead connection ends is ended.
     pub(crate) fn send_link_lost(&mut self) {
         if let Some(outcome) = self.sender.cancel(SendEnd::LinkLost) {
-            self.events.push(crate::Event::SendDone(Box::new(outcome)));
+            self.finish_send(outcome);
         }
+    }
+
+    /// The one place a send ends. All three callers reach it.
+    fn finish_send(&mut self, outcome: SendOutcome) {
+        if let Some(reply) = self.send_reply.take() {
+            reply.post(outcome.clone());
+        }
+        self.events.push(crate::Event::SendDone(Box::new(outcome)));
     }
 
     /// How long the caller may sleep before the send queue needs attention.
@@ -911,7 +971,7 @@ impl crate::Session {
         // add a whole `BACKOFF` to every job that fitted in one piece.
         if self.pending.is_empty() {
             if let Some(outcome) = self.sender.drained() {
-                self.events.push(crate::Event::SendDone(Box::new(outcome)));
+                self.finish_send(outcome);
             }
         } else {
             self.sender.still_draining(now);

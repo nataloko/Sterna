@@ -302,6 +302,9 @@ pub struct Session {
     /// The *other* pacing layer, which is the serial port's own and applies to
     /// everything it sends — see [`send::WriteDelay`].
     write_delay: send::WriteDelay,
+    /// Where a finished send's outcome goes besides the event queue, for a
+    /// macro's `sendfile` blocked on it. `xfer_reply`'s arrangement.
+    send_reply: Option<send::SendReply>,
     /// Where the running transfer's outcome goes besides the event queue, for
     /// a caller on another thread that is blocked on it. See
     /// [`Session::notify_transfer`].
@@ -386,6 +389,7 @@ impl Session {
             xfer_reply: None,
             sender: send::Sender::default(),
             write_delay: send::WriteDelay::default(),
+            send_reply: None,
             macro_link: None,
             plugin_link: None,
             stream_filter: None,

@@ -264,9 +264,11 @@ The live remainder, collected here so it cannot hide in the narrative:
   monitor on Linux, and a `WM_DEVICECHANGE` native event filter on Windows,
   would replace the poll and change nothing above it. Windows is the one that
   would gain: its half of `serial::present` is a `QueryDosDeviceW` per tick.
-- **`sendfile` and the two serial send delays** stay refused in the macro
-  host pending a `SendMem`-shaped send queue with its four callers;
-  `crates/tt-macro/src/host.rs` keeps the list.
+- **`sendfile` says it strips control characters and does not.** The manual
+  page describes the Tera Term 4 sender (`FileSend1`, `filesys.cpp:278`);
+  Tera Term 5 `#if 0`'d that out of the macro path in favour of
+  `SendMemSendFile2`, which strips nothing (`ttdde.c:807`). This port follows
+  the code. It wants filing with the rest of `docs/upstream-bugs.md`.
 - **The text session log lacks the tapped `HT`, `BS` and wrap line break**
   the macro tap has — a divergence rather than a choice; it is `LogOptions`'
   neighbourhood when somebody gets to it.
