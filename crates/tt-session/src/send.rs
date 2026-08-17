@@ -522,6 +522,32 @@ impl Default for FileSend {
     }
 }
 
+/// What File > Send file would do right now, out of the settings file.
+///
+/// Upstream's own dialog is seeded the same way and writes back to the same
+/// four keys (`vtwin.cpp:4290`), which is what `SendfileSkipOptionDialog` then
+/// lets somebody skip. Those keys have been read, written and acted on by
+/// nothing since this program had a settings file; this is where they start
+/// meaning something.
+pub fn file_send_defaults(s: &crate::Settings) -> FileSend {
+    use tt_config::TransferRawSendDelayType as D;
+    let kind = match s.transfer_raw_send_delay_type {
+        D::NoDelay => PaceKind::None,
+        D::PerChar => PaceKind::PerChar,
+        D::PerLine => PaceKind::PerLine,
+        D::PerSendSize => PaceKind::PerChunk,
+    };
+    FileSend {
+        binary: s.transfer_binary,
+        pace: Pace::of(
+            kind,
+            Duration::from_millis(s.transfer_raw_send_delay_tick.max(0) as u64),
+            s.transfer_raw_send_size.max(0) as usize,
+        ),
+        echo: s.terminal_local_echo,
+    }
+}
+
 impl crate::Session {
     /// Send a file through the terminal's own write path, a piece at a time.
     ///

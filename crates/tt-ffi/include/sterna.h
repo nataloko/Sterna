@@ -4057,6 +4057,23 @@ TtStatus tt_session_send_file(TtSession *session,
                               const TtSendOptions *opts);
 
 /**
+ * Fill `opts` with what this session's settings say a send should start as —
+ * `TransBin`, `SendfileDelayType`, `SendfileDelayTick`, `SendfileSize` and
+ * `LocalEcho`.
+ *
+ * A frontend calls this to seed its dialog, and writes the answers back with
+ * [`tt_session_set_setting`] when the dialog is accepted. That is upstream's
+ * own arrangement (`vtwin.cpp:4290`), and it is what
+ * `SendfileSkipOptionDialog` exists to let somebody skip. Without it the
+ * dialog invents the values, which is how three of the transfer defaults
+ * beside it once came to be hardcoded.
+ *
+ * Does nothing on a null pointer.
+ */
+void tt_session_send_defaults(const TtSession *session,
+                              TtSendOptions *opts);
+
+/**
  * Whether a queued send owns the wire, and so whether typing is being dropped.
  */
 bool tt_session_sending(const TtSession *session);

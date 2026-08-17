@@ -2199,7 +2199,9 @@ impl Default for TransferXmodemOpt {
 }
 
 /// `ttset.c:2006`. How raw Send file spaces writes. Anything unrecognised takes
-/// `NoDelay`, including an empty present value.
+/// `NoDelay`, including an empty present value. Read by `send::file_send_defaults`
+/// — this is what seeds File > Send file line by line, and what that dialog
+/// writes back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransferRawSendDelayType {
     /// `NoDelay`
@@ -4090,16 +4092,21 @@ pub struct Settings {
     /// between raw send, SCP and cancel. The shell has no file-drop target yet.
     pub transfer_confirm_file_drop: bool,
     /// `ttset.c:2006`. How raw Send file spaces writes. Anything unrecognised takes
-    /// `NoDelay`, including an empty present value.
+    /// `NoDelay`, including an empty present value. Read by `send::file_send_defaults`
+    /// — this is what seeds File > Send file line by line, and what that dialog
+    /// writes back.
     pub transfer_raw_send_delay_type: TransferRawSendDelayType,
     /// `ttset.c:2011`, in milliseconds. The delay selected above; zero is a real
-    /// value and means no wait.
+    /// value and means no wait — so it collapses the type to `NoDelay`, which is
+    /// what `Pace::of` does and what `clipboar.c:205` does by hand for a paste.
     pub transfer_raw_send_delay_tick: i32,
     /// `ttset.c:2012`. The chunk size for `PerSendSize`, and the raw sender's read
     /// size. Upstream applies no range at settings-load time.
     pub transfer_raw_send_size: i32,
     /// `ttset.c:2013`. Use Tera Term 4's sequential file reader rather than loading
-    /// chunks into memory before sending them. Off is the newer sender.
+    /// chunks into memory before sending them. Off is the newer sender, and it is
+    /// the only sender here: `send::Session::send_file` reads the file whole, the
+    /// way `SendMemSendFileCom` does.
     pub transfer_raw_send_sequential: bool,
     /// `ttset.c:2014`. Skip raw Send file's option page and use the remembered
     /// binary and delay settings directly.
@@ -15934,7 +15941,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Enum(&["NoDelay", "PerChar", "PerLine", "PerSendSize"]),
         default: "NoDelay",
         label: None,
-        doc: "`ttset.c:2006`. How raw Send file spaces writes. Anything unrecognised takes `NoDelay`, including an empty present value.",
+        doc: "`ttset.c:2006`. How raw Send file spaces writes. Anything unrecognised takes `NoDelay`, including an empty present value. Read by `send::file_send_defaults` — this is what seeds File > Send file line by line, and what that dialog writes back.",
     },
     Field {
         name: "transfer.raw_send_delay_tick",
@@ -15944,7 +15951,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::IntWord,
         default: "0",
         label: None,
-        doc: "`ttset.c:2011`, in milliseconds. The delay selected above; zero is a real value and means no wait.",
+        doc: "`ttset.c:2011`, in milliseconds. The delay selected above; zero is a real value and means no wait — so it collapses the type to `NoDelay`, which is what `Pace::of` does and what `clipboar.c:205` does by hand for a paste.",
     },
     Field {
         name: "transfer.raw_send_size",
@@ -15964,7 +15971,7 @@ pub const FIELDS: &[Field] = &[
         kind: Kind::Bool,
         default: "off",
         label: None,
-        doc: "`ttset.c:2013`. Use Tera Term 4's sequential file reader rather than loading chunks into memory before sending them. Off is the newer sender.",
+        doc: "`ttset.c:2013`. Use Tera Term 4's sequential file reader rather than loading chunks into memory before sending them. Off is the newer sender, and it is the only sender here: `send::Session::send_file` reads the file whole, the way `SendMemSendFileCom` does.",
     },
     Field {
         name: "transfer.raw_send_skip_dialog",
@@ -16978,10 +16985,10 @@ pub const SETTING_HELP: &[&str] = &[
     "This setting stores the destination directory for drag-and-drop secure copy transfers. At this time, Sterna does not have this transfer method.",
     "This setting stores Tera Term's high-speed raw serial-send option. At this time, Sterna does not use this setting.",
     "This setting stores the Tera Term option that shows a selection after a user drops files. The selection contains raw send, SCP, and cancel. At this time, users cannot drop files into Sterna.",
-    "This setting stores the Tera Term option that pauses a raw send after each character, line, or chunk. At this time, Sterna does not use this setting to add raw-send delays.",
-    "This setting stores the raw-send pause in milliseconds for Tera Term's selected delay mode. At this time, Sterna does not use this pause.",
-    "This setting stores Tera Term's raw-send chunk size in bytes. At this time, Sterna does not use this setting.",
-    "This setting controls the sequential raw-file sender from Tera Term 4. At this time, Sterna does not use this setting.",
+    "This setting selects when Sterna waits while it sends a file: after each character, after each line, or after each group of bytes.",
+    "This setting sets the interval, in milliseconds, that Sterna waits between the pieces of a file send. A value of 0 removes the interval.",
+    "This setting sets the number of bytes in each group, for a file send that waits after each group of bytes.",
+    "This setting controls the sequential file sender from Tera Term 4. Sterna has one sender only, thus this setting has no effect.",
     "This setting controls the raw Send File options. With the on value, Tera Term skips these options. At this time, Sterna does not have this options dialog. Thus, this setting has no effect.",
     "This setting controls the raw Receive File options. With the on value, Tera Term skips these options. At this time, Sterna does not have this options dialog. Thus, this setting has no effect.",
     "This setting sets the number of seconds that Sterna waits after a printer job closes before Sterna sends it. Automatic-print output at short intervals becomes part of one job during this wait.",

@@ -2918,6 +2918,42 @@ pub extern "C" fn tt_session_send_file(
     }
 }
 
+/// Fill `opts` with what this session's settings say a send should start as —
+/// `TransBin`, `SendfileDelayType`, `SendfileDelayTick`, `SendfileSize` and
+/// `LocalEcho`.
+///
+/// A frontend calls this to seed its dialog, and writes the answers back with
+/// [`tt_session_set_setting`] when the dialog is accepted. That is upstream's
+/// own arrangement (`vtwin.cpp:4290`), and it is what
+/// `SendfileSkipOptionDialog` exists to let somebody skip. Without it the
+/// dialog invents the values, which is how three of the transfer defaults
+/// beside it once came to be hardcoded.
+///
+/// Does nothing on a null pointer.
+#[no_mangle]
+pub extern "C" fn tt_session_send_defaults(session: *const TtSession, opts: *mut TtSendOptions) {
+    let (Some(s), Some(out)) = (unsafe { session.as_ref() }, unsafe { opts.as_mut() }) else {
+        set_error("null session or TtSendOptions");
+        return;
+    };
+    let d = tt_session::send::file_send_defaults(s.session.settings());
+    let (pace, tick_ms, chunk) = match d.pace {
+        tt_session::send::Pace::None => (TtSendPace::None, 0, 0),
+        tt_session::send::Pace::PerChar(w) => (TtSendPace::PerChar, w.as_millis() as u32, 0),
+        tt_session::send::Pace::PerLine(w) => (TtSendPace::PerLine, w.as_millis() as u32, 0),
+        tt_session::send::Pace::PerChunk { bytes, wait } => {
+            (TtSendPace::PerChunk, wait.as_millis() as u32, bytes as u32)
+        }
+    };
+    *out = TtSendOptions {
+        binary: d.binary,
+        pace,
+        tick_ms,
+        chunk,
+        echo: d.echo,
+    };
+}
+
 /// Whether a queued send owns the wire, and so whether typing is being dropped.
 #[no_mangle]
 pub extern "C" fn tt_session_sending(session: *const TtSession) -> bool {
