@@ -196,10 +196,24 @@ transfer's result, a notice from its session, printer, macro or plugin. The
 window has **no** `QStatusBar`; every one of those facts belongs to a session,
 and a window can be showing nine.
 
-It doubles as the active-tile marker, so a tile has one row of chrome rather
-than a header above and a status below. The marker appears only when more than
-one tile is on screen. With a single terminal the strip sits where a status bar
-would, so nothing looks different.
+It carries **half** the active-tile marker, so a tile has one row of chrome
+rather than a header above and a status below. The other half is a two-pixel
+outline round the whole cell, painted by `PaneFrame` in the same
+`QPalette::Highlight` — the strip is along one edge, and across a window of
+nine tiles a highlight down there is easy to miss. Both halves ask
+`PanelContainer::marksActivePane()` rather than deciding for themselves, so
+they cannot disagree about whether there is an active tile at all: the answer
+is no with a single terminal on screen, tabbed or tiled. With one terminal the
+strip sits where a status bar would, so nothing looks different.
+
+**The room for that outline is reserved per layout mode, not per tile.** Every
+tile in a Tiled window keeps the two-pixel margin whether or not it is wearing
+the marker, and a Single window keeps the one pixel it always had. A margin
+that appeared when a tile became active would take those pixels off the
+terminal, and that is a real `Grid::resize` — with `ClearOnResize` on, clicking
+between tiles would scroll each one it left into that tile's own history. The
+grid's own spacing is zero to pay for it, so the trough between two tiles is
+the four pixels it has always been.
 
 Two rules are load-bearing. Its labels are `Ignored` horizontally and elide
 their own text: a status label that quoted its text as its width would push

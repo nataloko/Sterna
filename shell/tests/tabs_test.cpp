@@ -1100,7 +1100,7 @@ void test_the_active_tile_is_outlined_without_resizing_anything()
     // colour the active page's status strip wears, because they are one marker.
     // The two outermost pixel columns of the cell, and the page from there on.
     const QColor accent = f1->palette().color(QPalette::Highlight);
-    const QImage shot = panels->grab().toImage();
+    QImage shot = panels->grab().toImage();
     const auto edge = [&shot, panels](QWidget *frame, int x) {
         return shot.pixelColor(
             frame->mapTo(panels, QPoint(x, frame->height() / 2)));
@@ -1129,6 +1129,15 @@ void test_the_active_tile_is_outlined_without_resizing_anything()
     CHECK(first->session()->cols() == cols);
     CHECK(first->session()->rows() == rows);
 
+    // ...and the tile that gave the outline up is repainted. Nothing in
+    // `PaneFrame` erases it: a frame paints only its own margin, and the pixels
+    // come back because the widget is not opaque and Qt refills them from the
+    // parent. Two tiles both wearing the marker is the stuck state it exists to
+    // avoid, so the property alone is not enough to ask.
+    shot = panels->grab().toImage();
+    CHECK(edge(f0, 0) == accent);
+    CHECK(edge(f1, 0) != accent);
+
     // Back to tabs there is one terminal on screen, so there is nothing to
     // disambiguate and the marker comes off.
     QString error;
@@ -1138,6 +1147,8 @@ void test_the_active_tile_is_outlined_without_resizing_anything()
     CHECK(!panels->marksActivePane());
     CHECK(!f0->property("paneActive").toBool());
     CHECK(!f1->property("paneActive").toBool());
+    shot = panels->grab().toImage();
+    CHECK(edge(f0, 0) != accent);
 
     // A single tiled connection is the same answer for the same reason, and
     // the spare connect cell is not a connection at all — it never wears it,

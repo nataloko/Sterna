@@ -207,9 +207,14 @@ macro's or a plugin's complaint. The window has no status bar of its own.
 With one terminal it sits where a status bar would, so nothing looks different;
 with several it is the only arrangement that can say which session a fact is
 about. The `REC` counter blinks red while its log is open, keeping a recording
-that was left running visible even when no new bytes move its count. It is also
-the active-tile marker, so a tile has one row of chrome rather than a title
-above and a status below.
+that was left running visible even when no new bytes move its count. It also
+carries half the active-tile marker, so a tile has one row of chrome rather
+than a title above and a status below. The other half is a two-pixel frame
+round the whole tile, in the same highlight — a strip along one edge is easy to
+miss across a window of nine, and which terminal the keyboard and the menus go
+to is the one thing such a window has to say plainly. Neither half appears when
+one terminal is on screen, tabbed or tiled: nothing is asking, and a permanent
+marker reads as a stuck state rather than an answer.
 
 **What is unchanged.** A tile still owns exactly one independent
 `TerminalPage` and therefore one session, viewport, printer, macro runner,
