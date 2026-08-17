@@ -673,6 +673,21 @@ Sending, which has two pacing layers and they are not the same one:
   pace, a dialog would show the number only when the file already said
   `PerSendSize`, and changing the pace *to* it would silently offer a default
   in place of what the user last chose. `send_test` found this.
+- **A spinbox offering more than its setting's C field can hold is a number that
+  comes back different.** `SendfileDelayTick` is a `WORD`, so the schema is
+  `uint16` and `set_setting` *narrows* rather than clamps (the field-width trap,
+  under Settings) — the interval box offered an hour, the send honoured the hour,
+  and the next load read 3600000 mod 65536: a 34-second wait where somebody
+  asked for sixty minutes. Range a control from the schema's type, not from what
+  looks like a generous bound. Its two neighbours are `int_clamp` and were
+  already right, which is what made the odd one out invisible.
+- **An empty prompt pattern is a gate on one path and no gate on the other.** It
+  *compiles* — `regex` accepts it and it matches everything — so `gate_of` built
+  a gate that opens on any byte while `gate_from` had always answered
+  `Gate::None` for the same pair of settings. The same send therefore paced one
+  way from the dialog and another way after a restart. Both paths agree now and
+  `SendFileDialog` refuses the empty case outright; a compiling pattern is not
+  the same question as a meaningful one.
 - **The window's send timer is `Qt::PreciseTimer`**, unlike the two beside it:
   a per-character pace ships as low as 1 ms and a coarse timer may adjust an
   interval by 5%, which at that scale is the whole interval.

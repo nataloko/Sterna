@@ -3041,6 +3041,17 @@ fn gate_of(o: &TtSendOptions) -> std::result::Result<tt_session::send::Gate, TtS
         TtSendGate::None => tt_session::send::Gate::None,
         TtSendGate::Prompt => {
             let pattern = unsafe { str_arg(o.gate_pattern, usize::MAX) }?;
+            // No pattern is no gate, which is what `send::gate_from` answers for
+            // the same pair of settings — and the two have to agree or a send
+            // paces one way from the dialog and another way after a restart.
+            // An empty pattern *compiles*, and matches everything, so without
+            // this the two paths disagree in silence rather than at the
+            // refusal below. `SendFileDialog` will not let anybody choose it;
+            // this is the backstop for a hand-edited file and for a quick
+            // button that names a gate and no prompt.
+            if pattern.is_empty() {
+                return Ok(tt_session::send::Gate::None);
+            }
             match tt_session::send::Gate::prompt(pattern, timeout) {
                 Ok(gate) => gate,
                 // Refused rather than degraded to no gate: somebody who asked

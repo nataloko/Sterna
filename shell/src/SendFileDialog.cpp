@@ -60,10 +60,14 @@ SendFileDialog::SendFileDialog(Session *session, QWidget *parent, const I18n *i1
 
     m_interval = new QSpinBox(this);
     m_interval->setObjectName(QStringLiteral("sendInterval"));
-    // The ceiling is an hour, the same as a repeating quick button's, and for
-    // the same reason: it is a bound against a mistyped number rather than a
-    // limit anybody will meet.
-    m_interval->setRange(0, 60 * 60 * 1000);
+    // The ceiling is the one the *file* can hold, not a round number of hours.
+    // `SendfileDelayTick` is a `WORD` upstream, so the schema is `uint16` — and
+    // the C field's width is part of the bound and runs first, which means
+    // `setSetting` narrows rather than clamps: an hour offered here came back
+    // from the next load as 3600000 mod 65536, a wait of 34.5 seconds where
+    // somebody asked for sixty minutes, with the send itself having honoured the
+    // number they typed. Sixty-five seconds is the honest offer.
+    m_interval->setRange(0, 65535);
     m_interval->setSuffix(tr(" ms"));
     m_interval->setToolTip(
         tr("Sterna waits for this time after each piece of the file. A value of "
@@ -236,6 +240,19 @@ void SendFileDialog::checkPattern()
         return;
     }
     const QByteArray utf8 = m_pattern->text().toUtf8();
+    // An empty one is refused before the engine sees it, because the engine
+    // takes it: it compiles, it matches everything, and it would make this a
+    // send that waits for any byte at all. The settings reader answers "no
+    // gate" for the same pair (`send::gate_from`), so accepting it here would
+    // pace one way now and another way after a restart. Saying so beats either.
+    if (utf8.isEmpty()) {
+        m_patternError->setText(tr("Give a pattern for the prompt to wait for."));
+        m_patternError->setVisible(true);
+        if (ok) {
+            ok->setEnabled(false);
+        }
+        return;
+    }
     // Asked as it is typed, the way the highlight editor asks: a pattern the
     // engine refuses would otherwise become a send that holds every line for
     // its whole timeout and says nothing about why.
