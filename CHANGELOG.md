@@ -5,6 +5,15 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+### Changed
+
+- **The active tile has a frame around it.** In tiled mode, only the highlight
+  on the tile's own status line showed which connection the menus and the
+  keyboard go to. That line is at the bottom of the tile and is easy to miss.
+  The whole tile now has a two-pixel frame, in the same highlight the status
+  line already uses. A window that shows one connection has no frame: there is
+  nothing to point at, and the terminal keeps every pixel.
+
 ## [0.6.1] - 2026-08-16
 
 ### Fixed
