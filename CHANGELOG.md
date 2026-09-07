@@ -5,6 +5,29 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Tab key reaches the far end.** Qt offers Tab and Shift+Tab to focus
+  navigation before the terminal is asked, so with the bar under the menu on
+  screen every Tab went to the destination field on it: no completion in a
+  shell, nothing at a boot loader that expects one, and Shift+Tab could not be
+  sent at all. The terminal keeps both now. Turning the toolbar off used to
+  make Tab work, which is most of why this lasted as long as it did. One
+  consequence worth knowing: Tab is no longer a way to move the keyboard out of
+  the terminal, which is how every other terminal behaves — the bar is a click
+  away, and the menu bar still answers Alt.
+- **A checkbox on a bar no longer takes the keyboard.** Ticking **Local echo**
+  or **Line edit** moved the keyboard onto the checkbox itself, where the next
+  space bar unticked what had just been ticked and everything else went
+  nowhere; the find bar's **Case**, **Whole word** and **Regex** took it off
+  the pattern in the middle of typing one. All five toggle without moving the
+  focus, and Tab still reaches them from the field beside them.
+
+The serial hardware suites did not run for this release: no adapter and no rig
+were attached to the machine that built it. Neither change goes near the serial
+path. Everything else ran, including the differential suite against Tera Term
+and the whole Qt shell suite.
+
 ## [0.7.0] - 2026-08-17
 
 ### Added
