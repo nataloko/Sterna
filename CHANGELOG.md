@@ -5,6 +5,8 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-08
+
 ### Fixed
 
 - **The Tab key reaches the far end.** Qt offers Tab and Shift+Tab to focus
@@ -655,7 +657,8 @@ Initial public release.
 - Linux AppImage and Windows installer packages.
 
 [GitHub releases page]: https://github.com/nataloko/Sterna/releases
-[Unreleased]: https://github.com/nataloko/Sterna/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/nataloko/Sterna/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/nataloko/Sterna/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/nataloko/Sterna/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/nataloko/Sterna/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/nataloko/Sterna/compare/v0.6.0...v0.6.1
