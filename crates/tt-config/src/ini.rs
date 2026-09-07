@@ -418,8 +418,10 @@ impl Default for Ini {
 fn decode(bytes: &[u8]) -> (String, Encoding) {
     if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
         let units: Vec<u16> = bytes[2..]
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| u16::from_le_bytes(*c))
             .collect();
         return (String::from_utf16_lossy(&units), Encoding::Utf16Le);
     }

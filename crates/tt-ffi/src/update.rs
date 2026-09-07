@@ -48,7 +48,7 @@ mod tests {
         }
         let text = text.trim().as_bytes();
         let mut out = Vec::new();
-        for chunk in text.chunks_exact(4) {
+        for chunk in text.as_chunks::<4>().0 {
             let a = value(chunk[0]);
             let b = value(chunk[1]);
             let c = (chunk[2] != b'=').then(|| value(chunk[2]));

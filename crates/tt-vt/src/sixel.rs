@@ -174,7 +174,11 @@ impl SixelImage {
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.pixels.chunks_exact(4).all(|pixel| pixel[3] == 0)
+        self.pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| pixel[3] == 0)
     }
 }
 
@@ -471,7 +475,7 @@ impl Decoder {
         }
 
         let mut pixels = vec![0; stride * allocated_height * 4];
-        for pixel in pixels.chunks_exact_mut(4) {
+        for pixel in pixels.as_chunks_mut::<4>().0 {
             pixel.copy_from_slice(&self.background);
         }
         for y in 0..self.allocated_height {
@@ -622,8 +626,10 @@ mod tests {
         assert_eq!((raster.width, raster.height), (4, 3));
         assert!(raster
             .pixels
-            .chunks_exact(4)
-            .all(|pixel| pixel == [9, 8, 7, 255]));
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| *pixel == [9, 8, 7, 255]));
     }
 
     #[test]
@@ -665,7 +671,9 @@ mod tests {
         assert_eq!((raster.width, raster.height), (4, 6));
         assert!(raster
             .pixels
-            .chunks_exact(4)
-            .all(|pixel| pixel == [255, 0, 0, 255]));
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| *pixel == [255, 0, 0, 255]));
     }
 }

@@ -261,12 +261,14 @@ pub(crate) fn from_upstream_wide(wide: &[u16]) -> Vec<u8> {
 /// somebody truncated.
 fn from_utf16(bytes: &[u8], read: fn([u8; 2]) -> u16) -> Vec<u8> {
     let mut units: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|c| read([c[0], c[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| read(*c))
         .take_while(|&u| u != 0)
         .collect();
     if units.len() == bytes.len() / 2 {
-        if let [odd] = bytes.chunks_exact(2).remainder() {
+        if let [odd] = bytes.as_chunks::<2>().1 {
             units.push(*odd as u16);
         }
     }
