@@ -203,10 +203,17 @@ Ubuntu container packages a rebuild needs again: `libudev-dev`
 
 ## The dev container is not headless
 
-Verified 2026-08-07 with real Qt windows and real serial hardware. Rootless
-podman (`agents`, `ubuntu:24.04`) via distrobox on a Bluefin / Fedora
+Verified 2026-08-07 with real Qt windows and real serial hardware, from a
+rootless podman distrobox (`agents`, `ubuntu:24.04`) on a Bluefin / Fedora
 Silverblue 44 host; the desktop session passes straight through. **Do not
-assume anything GUI- or hardware-shaped is untestable here — check first.**
+assume anything GUI- or hardware-shaped is untestable — check first.**
+
+**Ask which side of the container wall you are on before reaching for the
+other.** That `agents` container was gone by 2026-09-07 and the session that
+day ran on the host itself, where `distrobox` is called directly and
+`distrobox-host-exec` answers *"You must run distrobox-host-exec inside a
+container!"*. Everything in the table below except the last row is the
+machine's and is there from either side.
 
 | | |
 |---|---|
@@ -218,40 +225,58 @@ assume anything GUI- or hardware-shaped is untestable here — check first.**
 | GPU / input | `/dev/dri/{card1,renderD128}`, `/dev/input/event*` |
 | Serial | FTDI Quad RS232-HS — **`ttyUSB0` and `ttyUSB1` are wired back-to-back**, data *and* control lines |
 | Hotplug | kernel uevents reach the container; `/run/udev/data` is mounted |
-| Host | root at `/run/host`, home at `/var/home/nata`, and `distrobox-host-exec` runs commands on the host |
+| Host | *(from inside a container)* root at `/run/host`, home at `/var/home/nata`, and `distrobox-host-exec` runs commands on the host |
 
 The serial pair is a complete loopback rig: data both ways, DTR→DSR, RTS→CTS,
 break visible as a NUL, 9600–3000000 baud clean, RTS/CTS flow control. Only a
 physical unplug/replug needs the user.
 
-### Qt work goes in the `sterna-fedora` container, not this one
+### Qt work goes in the `sterna-fedora` container
 
-This container has Qt **6.4.2**; the desktop runs **6.11.1**, and that gap has
-already manufactured one false finding (see the traps). The second distrobox:
+An Ubuntu container has Qt **6.4.2** and the desktop has **6.11.1**, and that
+gap has already manufactured one false finding (see the traps). So there is a
+second distrobox, rebuilt 2026-09-07 — the old one's `--home` was renamed out
+from under it, after which it would not start at all (`crun: cannot stat
+/var/home/nata/agents-home`) and both of its build trees were dead with it.
+From the host:
 
 ```sh
-distrobox-host-exec distrobox enter sterna-fedora --no-tty -- <command>
+distrobox enter sterna-fedora --no-tty -- <command>
 ```
 
-Fedora 44, Qt 6.11.1 (exact desktop match), plus `gcc-c++`, `cmake`, `ninja`,
-`qt6-qttools-devel`, `xcb-util-cursor`, `systemd-devel` (Fedora's `libudev.pc`
-— serialport-rs needs it), `lrzsz`; for the Windows cross build
-`mingw64-qt6-qtbase` (also 6.11.1), `mingw64-gcc-c++`, `nasm` (`aws-lc-sys`'s
-assembler — its absence stops the *core*, minutes in), `mingw64-cmake`; for
-the installer `mingw32-nsis` + `mingw64-nsis` (one native `makensis` plus x86
-and amd64 stubs; the `.nsi` targets amd64). If Fedora's `updates` metalink
-fails, pass `--setopt=updates.metalink=` and an explicit
+Fedora 44, Qt **6.11.2** — Fedora's current, so it tracks the desktop rather
+than matching it exactly — plus `gcc-c++`, `cmake`, `ninja-build`, `git`,
+`qt6-qtbase-devel`, `qt6-qttools-devel`, `qt6-qtwayland`, `xcb-util-cursor`,
+`systemd-devel` (Fedora's `libudev.pc` — serialport-rs needs it), `lrzsz`; for
+the Windows cross build `mingw64-qt6-qtbase` (also 6.11.2),
+`mingw64-gcc-c++`, `nasm` (`aws-lc-sys`'s assembler — its absence stops the
+*core*, minutes in), `mingw64-cmake`; for the installer `mingw32-nsis` +
+`mingw64-nsis` (one native `makensis` plus x86 and amd64 stubs; the `.nsi`
+targets amd64). If Fedora's `updates` metalink fails, pass
+`--setopt=updates.metalink=` and an explicit
 `--setopt=updates.baseurl=https://dl.fedoraproject.org/pub/fedora/linux/updates/44/Everything/x86_64/`.
 
-- **Its `$HOME` is `/var/home/nata/agents-home`** — deliberately not the
-  user's real home. Always pass `--home /var/home/nata/agents-home` on
-  create; **the user does not want their host home polluted.**
+- **Its `$HOME` is `/var/home/nata/.local/share/distrobox/sterna-fedora`** —
+  deliberately not the user's real home, and out of the way of a tidy-up.
+  Pass it with `--home` on create; **the user does not want their host home
+  polluted.**
+- **Configure every build tree at the project's real path**, never at a
+  container-only spelling of it. CMake writes the source directory into the
+  cache absolutely, so a tree configured as `$HOME/Projects/Sterna/shell`
+  inside a container is unbuildable from the host, and unbuildable from
+  anywhere at all once that home moves — which is how 20 GB of build trees
+  became scrap in one rename. `/var/home/nata/Projects/Sterna` is the same
+  string on both sides.
+- **Rust is the host's rustup toolchain, and it is not on the PATH there**:
+  `export PATH=/var/home/nata/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH`
+  before any `cargo` or `cmake --build`. There is no `~/.cargo` — `cargo` on
+  the host is a Homebrew `rustup` shim — and the toolchain's own binaries run
+  on Fedora's glibc unchanged. Container-built binaries are still not portable
+  in both directions, which is why `shell/CMakeLists.txt` points
+  `CARGO_TARGET_DIR` at its own build tree rather than sharing
+  `crates/target`.
 - `distrobox create` still writes a launcher to the *host*
   `~/.local/share/applications/` — delete it; `distrobox rm` cleans it up.
-- **Rust needs no install there**: `~/.cargo` is shared and Ubuntu-built
-  binaries run on Fedora's newer glibc (not the reverse — which is why
-  `shell/CMakeLists.txt` points `CARGO_TARGET_DIR` at its own build tree
-  rather than sharing `crates/target` between containers).
 
 ## Traps
 
@@ -2104,8 +2129,11 @@ The desktop side:
   mapping, a magic env var, ~2x-flattering startup/RSS; none true on
   6.11.1).
 - **But CI's Qt is the Ubuntu container's** — a CI paint failure reproduces
-  here, in the gitignored `build-ubuntu` tree. Measurements in
-  `sterna-fedora`; CI verdicts where CI gave them.
+  there, in the gitignored `build-ubuntu` tree. Measurements in
+  `sterna-fedora`; CI verdicts where CI gave them. As of 2026-09-07 there is
+  no Ubuntu container with a Qt toolchain on this machine and `build-ubuntu`
+  is scrap (configured under the home that moved), so reproducing a CI paint
+  verdict starts with making one.
 - **...except for the fonts, and that gap hides whole failures.** CI runs on a
   bare `ubuntu-24.04` runner whose only added font is `fonts-dejavu-core`;
   both containers have hundreds. DejaVu's cell is wide enough that 80 columns
