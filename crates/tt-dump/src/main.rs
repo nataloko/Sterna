@@ -164,7 +164,7 @@ fn run_stream(vt: &mut Vt, input: &[u8]) {
     let (mut i, mut seg) = (0usize, 0usize);
 
     while i + 1 < input.len() {
-        if !(input[i] == 0x1b && input[i + 1] == b'_') || !input[i + 2..].starts_with(b"tt.") {
+        if !(input[i] == 0x1b && input[i + 1] == b'_' && input[i + 2..].starts_with(b"tt.")) {
             i += 1;
             continue;
         }
