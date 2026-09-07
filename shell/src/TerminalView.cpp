@@ -2405,6 +2405,26 @@ void TerminalView::focusOutEvent(QFocusEvent *event)
     update();
 }
 
+bool TerminalView::focusNextPrevChild(bool)
+{
+    // **Tab is a character, not a way out.** `QWidget::event` offers Tab and
+    // Shift+Tab to focus navigation *before* it calls `keyPressEvent`, so with
+    // anything else on the window able to take the keyboard — the connect
+    // bar's destination field is enough — a tab went to the bar and the host
+    // received nothing. `TT_KEY_BACK_TAB` was unreachable for the same reason,
+    // from the day the key table was written.
+    //
+    // What hid it: `focusNextPrevChild` answers false when it finds no
+    // candidate, and the key then falls through to `keyPressEvent`. Turn the
+    // toolbar off and with one tab stop left in the window Tab starts working,
+    // which reads as anything but a focus rule. Refusing outright is what
+    // `QPlainTextEdit` does for an editable document.
+    //
+    // The terminal is a focus trap after this, and that is what every terminal
+    // is. The bar is a click away and the menu bar answers Alt.
+    return false;
+}
+
 // --- selection ---------------------------------------------------------------
 
 namespace {

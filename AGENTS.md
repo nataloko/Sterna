@@ -1707,6 +1707,19 @@ The keyboard:
   Undrained, a typed character waited for the next thing the host said or for
   the cursor's own blink: half a second a keystroke on an idle line, and
   nothing at all with a steady cursor.
+- **Tab and Shift+Tab are offered to focus navigation before `keyPressEvent`
+  ever runs** (`QWidget::event`), so any other widget in the window that can
+  take focus swallows them — with the connect bar up, a tab went to the
+  destination field and the host got nothing, and `TT_KEY_BACK_TAB` could not
+  be sent at all from the day the key table was written.
+  `TerminalView::focusNextPrevChild` refuses outright, which is what
+  `QPlainTextEdit` does for an editable document, and the terminal is a focus
+  trap after it, as every terminal is. What hid it for so long is that
+  `focusNextPrevChild` answers false when it finds no candidate: turn the
+  toolbar off, or put a lone `TerminalView` in a test, and Tab arrives. So a
+  case proving this needs a second focusable widget beside the view —
+  `pty_test`'s puts a `QLineEdit` there, and fails four checks without the
+  refusal.
 
 File-shaped settings:
 

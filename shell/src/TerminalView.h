@@ -269,6 +269,9 @@ protected:
     void wheelEvent(QWheelEvent *event) override;
     void focusInEvent(QFocusEvent *event) override;
     void focusOutEvent(QFocusEvent *event) override;
+    /// Refused, always: Tab is a character this terminal sends, not a way out
+    /// of it. See the definition.
+    bool focusNextPrevChild(bool next) override;
 
     /// Launch one URL after the marked-cell and clickable-setting checks.
     /// Virtual only so the render test can capture the request without opening

@@ -19,8 +19,11 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QKeyEvent>
+#include <QLineEdit>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QVBoxLayout>
+#include <QWidget>
 
 #include <cstdio>
 #include <functional>
@@ -448,6 +451,63 @@ void test_the_window_answers_what_a_program_asks_about_it()
 
 /// ...and the action half, which is a signal rather than a report because the
 /// core has no window to iconify.
+/// **Tab is the host's key, and a widget beside the terminal used to take
+/// it.** `QWidget::event` offers Tab and Shift+Tab to focus navigation before
+/// `keyPressEvent` is reached, so on the real window — where the connect bar
+/// carries a destination field — a tab moved the keyboard onto the bar and the
+/// shell received nothing, and `TT_KEY_BACK_TAB` could not be sent at all.
+///
+/// The field is the whole point of this case. `focusNextPrevChild` answers
+/// false when there is nowhere to go, so a terminal on its own gets its tab
+/// either way: every other case in this file would pass with the fault back
+/// in, and so would this one without the widget above it.
+void test_tab_goes_to_the_host_and_not_to_the_field_beside_it()
+{
+    Session session(40, 10);
+    QWidget window;
+    auto *rows = new QVBoxLayout(&window);
+    // What the connect bar has that a bare `TerminalView` does not: somewhere
+    // for the focus to go.
+    auto *field = new QLineEdit(&window);
+    rows->addWidget(field);
+    auto *view = new TerminalView(&session, &window);
+    rows->addWidget(view);
+    view->applySettings();
+    window.show();
+    window.activateWindow();
+    QCoreApplication::processEvents();
+
+    QString error;
+    CHECK(session.connectPty(
+        sh(QStringLiteral("stty raw -echo; printf 'ready\\r\\nbytes:'; "
+                          "od -An -t x1 -N 4")),
+        &error));
+    CHECK(error.isEmpty());
+    CHECK(spin([&] { return screenText(session).contains(QStringLiteral("ready")); },
+               5000));
+
+    view->setFocus();
+    CHECK(window.focusWidget() == view);
+    key(*view, QEvent::KeyPress, Qt::Key_Tab, Qt::NoModifier,
+        QStringLiteral("\t"));
+    // The half that fails first, and the one that says what went wrong.
+    CHECK(window.focusWidget() == view);
+    CHECK(!field->hasFocus());
+    key(*view, QEvent::KeyPress, Qt::Key_Backtab, Qt::ShiftModifier);
+    CHECK(window.focusWidget() == view);
+
+    const bool finished = spin([&] { return !session.isConnected(); }, 5000);
+    CHECK(finished);
+    const QString screen = screenText(session);
+    if (!finished) {
+        fprintf(stderr, "tab capture screen was:\n%s\n", qPrintable(screen));
+        session.disconnectPort();
+    }
+    // HT, then the `CSI Z` that the key table has been able to name since it
+    // was written and has never until now been able to send.
+    CHECK(screen.contains(QStringLiteral("09 1b 5b 5a")));
+}
+
 void test_the_window_operations_reach_the_frontend()
 {
     Session session(40, 10);
@@ -486,6 +546,7 @@ int main(int argc, char **argv)
     test_line_edit_queues_pasted_lines_until_each_return();
     test_shift_escape_cycles_the_configured_debug_modes();
     test_the_window_answers_what_a_program_asks_about_it();
+    test_tab_goes_to_the_host_and_not_to_the_field_beside_it();
     test_the_window_operations_reach_the_frontend();
 
     if (failures) {
