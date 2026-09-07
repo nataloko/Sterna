@@ -175,6 +175,24 @@ void test_the_three_boxes()
     h.field()->lineEdit()->setText(QStringLiteral("err(or)?s"));
     h.bar()->findNext();
     CHECK(h.view.selectedText() == QLatin1String("errors"));
+
+    // **And ticking one leaves the keyboard in the pattern field.** A bar you
+    // type at is where a checkbox's own `StrongFocus` costs the most: the
+    // click took focus, and the rest of the pattern went into a checkbox. The
+    // policy is the assertion rather than a click, because
+    // `QApplication::notify` moves focus for *spontaneous* presses only — a
+    // synthesized one would pass on both sides of this. The arrows and the
+    // close button never had the fault: a plain `QToolButton` ships
+    // `TabFocus`, which is what all three boxes wear now, so Tab still walks
+    // the whole bar.
+    CHECK(h.bar()->findChild<QCheckBox *>(QStringLiteral("findCaseBox"))
+              ->focusPolicy() == Qt::TabFocus);
+    CHECK(h.bar()->findChild<QCheckBox *>(QStringLiteral("findWholeWordBox"))
+              ->focusPolicy() == Qt::TabFocus);
+    CHECK(h.bar()->findChild<QCheckBox *>(QStringLiteral("findRegexBox"))
+              ->focusPolicy() == Qt::TabFocus);
+    CHECK(h.bar()->findChild<QToolButton *>(QStringLiteral("findNextButton"))
+              ->focusPolicy() == Qt::TabFocus);
 }
 
 /// Every match is painted, and the one being stepped through is the selection.

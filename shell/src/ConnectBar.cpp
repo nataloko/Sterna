@@ -220,8 +220,20 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
     });
 
     addSeparator();
+    // **The terminal keeps the keyboard, so neither box takes it on a click.**
+    // A press hands focus to the first widget under the pointer whose policy
+    // holds `ClickFocus`, and `QCheckBox` ships `StrongFocus` — so ticking
+    // Local echo moved the keyboard onto the checkbox, where the next Space
+    // unticked it and everything else went nowhere. Nothing else here does
+    // that: Qt builds a toolbar's action buttons with `NoFocus`, and a plain
+    // `QToolButton` with `TabFocus`, so the two widgets added by hand were the
+    // only ones on the bar that could. `TabFocus` rather than the `NoFocus`
+    // the quick buttons take, because this bar is the only place either
+    // setting can be changed at all — out of the tab chain they would be
+    // reachable by mouse alone.
     m_echo = new QCheckBox(plain("DLG_TERM_LOCALECHO", tr("Local echo")), this);
     m_echo->setObjectName(QStringLiteral("connectBarLocalEcho"));
+    m_echo->setFocusPolicy(Qt::TabFocus);
     m_echo->setContentsMargins(4, 0, 4, 0);
     m_echo->setToolTip(
         tr("This option shows each key while you type. The on value is applicable "
@@ -232,6 +244,7 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
 
     m_lineEdit = new QCheckBox(tr("Line edit"), this);
     m_lineEdit->setObjectName(QStringLiteral("connectBarLineEdit"));
+    m_lineEdit->setFocusPolicy(Qt::TabFocus);
     m_lineEdit->setContentsMargins(4, 0, 4, 0);
     m_lineEdit->setToolTip(
         tr("This option lets you edit text in the terminal before you send it. "

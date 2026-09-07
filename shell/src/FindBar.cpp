@@ -84,20 +84,30 @@ FindBar::FindBar(TerminalView *view, Session *session)
                           "this command finds the first match."));
     layout->addWidget(m_next);
 
+    // **The pattern field keeps the keyboard, so none of the three takes it on
+    // a click.** Same rule as the connect bar's two, and it bites harder here:
+    // a find bar is typed at, and `QCheckBox`'s own `StrongFocus` moved the
+    // keyboard onto the box, where the rest of what somebody was typing went
+    // into nothing. The arrows and the close button beside them were always
+    // right — a plain `QToolButton` ships `TabFocus` — and Tab still walks the
+    // whole bar.
     m_case = new QCheckBox(tr("Case"), this);
     m_case->setObjectName(QStringLiteral("findCaseBox"));
+    m_case->setFocusPolicy(Qt::TabFocus);
     m_case->setToolTip(tr("This option finds only text with the same uppercase and "
                           "lowercase letters as the pattern."));
     layout->addWidget(m_case);
 
     m_word = new QCheckBox(tr("Whole word"), this);
     m_word->setObjectName(QStringLiteral("findWholeWordBox"));
+    m_word->setFocusPolicy(Qt::TabFocus);
     m_word->setToolTip(tr("This option finds the pattern only when a word boundary "
                           "is at each end of the match."));
     layout->addWidget(m_word);
 
     m_regex = new QCheckBox(tr("Regex"), this);
     m_regex->setObjectName(QStringLiteral("findRegexBox"));
+    m_regex->setFocusPolicy(Qt::TabFocus);
     m_regex->setToolTip(
         tr("This option uses the pattern as a regular expression. With the off "
            "value, a search finds the same characters as the pattern."));

@@ -935,6 +935,21 @@ SSH:
   and `Shift+F1`..`F12` are ordinary `KEYBOARD.CNF` bindings *and* F13-F24 to
   the far end. `TerminalView::scanForSequence` is what asks the core whether a
   sequence is already spoken for; quick buttons warn and do not refuse.
+- **...and a checkbox is the one widget on a bar that takes the keyboard when
+  it is clicked.** A press hands focus to the first widget under the pointer
+  whose policy holds `ClickFocus`, and `QCheckBox` ships `StrongFocus` — so
+  Local echo, Line edit and the find bar's three options each took the keyboard
+  off whatever had it, and the next Space unticked the box that had just taken
+  it. Everything beside them was already right and by Qt's doing, not ours: a
+  toolbar builds its action buttons with `NoFocus` and a plain `QToolButton`
+  ships `TabFocus`, so only a widget added by hand can have the fault. All five
+  wear `TabFocus` now — `NoFocus`, which is right for the quick buttons, would
+  drop them out of the tab chain, and the connect bar is the only place either
+  of its settings can be changed at all. **And a click cannot test it**: the
+  focus decision in `QApplication::notify` is inside its *spontaneous* arm
+  (`buttons_test`'s wheel is the same rule), so a synthesized press leaves
+  focus alone whatever the policy says and passes on both sides of the fix.
+  Assert the policy.
 
 Measuring anything:
 

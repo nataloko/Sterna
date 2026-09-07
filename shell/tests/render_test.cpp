@@ -3750,6 +3750,18 @@ void test_the_connect_bar_is_a_view_of_the_session()
                             "input. The off value is applicable if each character shows "
                             "two times."));
     CHECK(lineBox->toolTip().contains(QStringLiteral("The Enter key sends")));
+    // **Ticking either box leaves the keyboard on the terminal.** A press
+    // gives focus to the first widget under the pointer whose policy holds
+    // `ClickFocus`, and a checkbox ships `StrongFocus`, so both of these used
+    // to take it — and the next Space went to unticking the box that had just
+    // taken it. The policy is what is asserted rather than a click, for
+    // `buttons_test`'s reason at the scroll area: `QApplication::notify`
+    // decides focus for *spontaneous* presses only, so a synthesized one
+    // leaves focus alone whatever the policy says and would pass on both sides
+    // of this. The button beside them is Qt's own answer to the same question.
+    CHECK(echoBox->focusPolicy() == Qt::TabFocus);
+    CHECK(lineBox->focusPolicy() == Qt::TabFocus);
+    CHECK(darkButton->focusPolicy() == Qt::NoFocus);
     CHECK(darkAction->toolTip().contains(QStringLiteral("terminal views")));
     CHECK(!darkAction->icon().isNull());
     CHECK(darkButton->toolButtonStyle() == Qt::ToolButtonIconOnly);
