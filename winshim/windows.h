@@ -324,6 +324,12 @@ SHORT VkKeyScanA(char ch);
 #define VkKeyScan VkKeyScanA
 SHORT GetKeyState(int nVirtKey);
 BOOL  GetKeyboardState(PBYTE lpKeyState);
+/* keyboard.c calls both of these and no Tera Term header declares them. GCC 13
+ * called that a warning and `-w` hid it; from GCC 14 an implicit declaration is
+ * an error, so the oracle stopped building on a new enough compiler. The
+ * definitions are the harness's (`oracle/src/stubs_manual.c`). */
+BOOL  SetKeyboardState(PBYTE lpKeyState);
+SHORT GetAsyncKeyState(int nVirtKey);
 
 /* Virtual-key codes. Fixed by the Win32 API since 1993. */
 #define VK_BACK      0x08

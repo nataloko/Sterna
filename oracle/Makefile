@@ -35,8 +35,13 @@ INCLUDES := -include $(SHIMDIR)/msvc_compat.h -I$(SHIMDIR) -Isrc \
 
 # -w because these are someone else's sources built for a different compiler;
 # our own code is built with warnings on below.
+# `gnu++17` is pinned for the same reason `tt-xfer/build.rs` pins it:
+# `common/ttcstd.h:46` typedefs `char8_t` under an inverted C++20 guard, so in
+# C++20 or later it redeclares a built-in type and every C++ file in the oracle
+# stops compiling. Taking the compiler's default worked until the compiler's
+# default moved — GCC 16 in `sterna-fedora` is where it ran out.
 CFLAGS   := -std=gnu99 -O1 -g $(INCLUDES) -w
-CXXFLAGS := -O1 -g $(INCLUDES) -w
+CXXFLAGS := -std=gnu++17 -O1 -g $(INCLUDES) -w
 OURFLAGS := -std=gnu99 -O1 -g $(INCLUDES) -Wall -Wextra -Wno-unused-parameter
 
 OBJS := $(addprefix $(BUILD)/,$(notdir $(TT_C:.c=.o))) \

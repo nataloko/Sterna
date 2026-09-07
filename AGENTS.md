@@ -500,10 +500,16 @@ The vendored protocol C, which two compilers disagree about:
 - **GCC 13 compiles `vendor/ttpfile/` and GCC 14+ does not** (`raw.c` misses
   `<stdlib.h>`; `zmodem.c:1586` calls undeclared `SetTimer`/`KillTimer`).
   Fixes live in `winshim/windows.h`: **a vendored source that needs a
-  declaration gets it from the shim, never from an edit.**
+  declaration gets it from the shim, never from an edit.** The oracle has the
+  same two, found on GCC 16 in 2026-09: `keyboard.c` calls `SetKeyboardState`
+  and `GetAsyncKeyState`, which the harness defines and no header declared —
+  an implicit declaration is a warning `-w` hides until the compiler makes it
+  an error.
 - **`common/ttcstd.h:45` typedefs `char8_t` under an inverted C++20 guard**,
   so the vendored C++ compiles at C++17 only; `tt-xfer/build.rs` pins
-  `gnu++17`.
+  `gnu++17` and `oracle/Makefile` now does too. **Pin the standard rather
+  than inheriting it**: the oracle's C++ built for a year on the compiler's
+  default and stopped the day the default moved.
 - **`cl.exe` cannot open `\\?\D:\...` paths and misnames the file it could
   not open** (`C1083 ... '\\raw.c'`). `plain()` in `tt-xfer/build.rs` strips
   the prefix — drive spellings only; it is load-bearing in `\\?\UNC\`.
