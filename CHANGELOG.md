@@ -20,6 +20,13 @@ are available from the [GitHub releases page].
   answers with a wholly different number is still refused, and the message
   still names that number, because it is the one to try next.
 
+The serial hardware suites did not run for this release: neither the FTDI pair
+nor the ESP32-S3 rig was attached to the machine that built it. Both drive the
+Unix half of the serial transport, and this fix is inside the Windows half,
+which neither of them can reach — the run that covers it is CI's Windows job,
+and it ran. Everything else ran too: the differential suite against Tera Term,
+the C ABI harness, the oracle's own regressions, and the whole Qt shell suite.
+
 ## [0.7.1] - 2026-09-08
 
 ### Fixed
