@@ -1099,6 +1099,25 @@ Serial:
   apply piecemeal. Windows builds upstream's zeroed DCB, one `SetCommState`,
   reads every controlled field back; DTR toggle is rejected up front (no
   such Win32 mode). Don't reduce the readback to a cached comparison.
+- **...and that readback is right for four of its five fields and was wrong for
+  the fifth.** `ByteSize`, `Parity`, `StopBits` and the control flags are small
+  enumerations, where a value that comes back changed is a driver honouring a
+  request it could not meet — the `CS5` trap in Win32 spelling — and comparing
+  exactly is the only thing that catches it. A baud rate is not one of those:
+  it comes out of a clock and a divisor, so a part that lands on the nearest
+  speed it can make and reports that back has done nothing wrong (the CP210x
+  family documents the substitution; a CH340 makes 115384 out of its 12 MHz
+  clock and nothing else). Comparing it exactly refused the port at
+  `SerialConn::open` with `COM driver kept BaudRate=115384 instead of 115200`
+  — on Windows alone, because the Unix half reads back nothing but the byte
+  size and upstream checks nothing at all, so the same board opened everywhere
+  else and every test on this machine passed. `BAUD_TOLERANCE_PERCENT` is two
+  percent; past it the refusal stands, since a wholly different number is a
+  wholly different number and says more than a screen of framing errors would.
+  **The accepted rate is deliberately not recorded** — put the driver's answer
+  in `SerialConn::params` and it reaches the caption, and a macro's `setbaud`
+  writes it back to `BaudRate`, so every open would ask for the last open's
+  rounding.
 - **`serialport-rs` throws away the Win32 COM open error code** (everything
   is `NoDevice`; `Path::exists("COM3")` is false regardless). Windows opens
   with `CreateFileW` directly: access-denied/sharing-violation is busy,

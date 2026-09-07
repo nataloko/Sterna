@@ -5,6 +5,21 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+### Fixed
+
+- **A serial port whose driver rounds the speed opens again on Windows.** A
+  baud rate is made by dividing a clock, so a USB serial part often lands near
+  the rate it was asked for rather than on it — a CH340 makes 115384 out of
+  115200 and cannot make anything closer — and its driver reports back the
+  speed it really set. Sterna compared that answer for exact equality and
+  refused the port: *not supported on this platform: COM driver kept
+  BaudRate=115384 instead of 115200*. The same adapter opened on Linux, where
+  nothing reads the speed back, and in Tera Term, which checks nothing at all.
+  A reported speed within two percent of the one asked for is accepted now,
+  which is further than an 8N1 frame can drift and still be read. A driver that
+  answers with a wholly different number is still refused, and the message
+  still names that number, because it is the one to try next.
+
 ## [0.7.1] - 2026-09-08
 
 ### Fixed

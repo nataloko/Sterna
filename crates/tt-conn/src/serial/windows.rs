@@ -403,6 +403,45 @@ fn set_field(dcb: &mut DCB, bit: u32, width: u32, value: u32) {
     dcb._bitfield = (dcb._bitfield & !mask) | ((value << bit) & mask);
 }
 
+/// How far the driver's answer may sit from the rate that was asked for, as a
+/// percentage of it.
+///
+/// **A baud rate is synthesised from a clock and a divisor, so the readback is
+/// allowed to miss.** The four other fields [`verify_dcb`] compares are small
+/// enumerations, where a value that comes back changed is a driver honouring a
+/// request it could not meet — the `CS5` trap in Win32 spelling — and an exact
+/// comparison is the only thing that catches it. A rate is not one of those. A
+/// part that lands on the nearest speed its divider can make and reports that
+/// back has done nothing wrong: the CP210x family documents the substitution,
+/// a CH340 makes 115384 out of its 12 MHz clock and nothing else. Comparing
+/// exactly refused those at `SerialConn::open`, with a message naming two
+/// numbers, on a port that would have carried the session — and refused it
+/// only on Windows, because the Unix half of `SerialConn::apply` reads back
+/// nothing but the byte size, and upstream checks nothing at all.
+///
+/// Two percent because the receiver samples the middle of each bit and both
+/// ends spend from one allowance: an 8N1 frame survives further than this, so
+/// there is no session to be rescued by refusing sooner. Past it the refusal
+/// stands, because a driver that answered with a wholly different number
+/// applied a wholly different number, and a screen of framing errors says far
+/// less than a message naming the rate it took.
+///
+/// **The accepted rate is not recorded.** `SerialConn::params` keeps the rate
+/// that was asked for, which is the one the far end is set to, the one the
+/// caption shows, and the one a macro's `setbaud` writes back to `BaudRate` —
+/// store the driver's answer and every open would ask for the last open's
+/// rounding.
+const BAUD_TOLERANCE_PERCENT: u64 = 2;
+
+/// Did the driver answer with the rate that was asked for, near enough?
+///
+/// A request of zero needs an exact zero back, which falls out of the
+/// arithmetic rather than being a case of its own.
+fn baud_within_tolerance(expected: u32, actual: u32) -> bool {
+    let expected = u64::from(expected);
+    u64::from(actual).abs_diff(expected) * 100 <= expected * BAUD_TOLERANCE_PERCENT
+}
+
 fn verify_dcb(expected: &DCB, actual: &DCB) -> Result<()> {
     macro_rules! same {
         ($field:ident) => {
@@ -417,7 +456,12 @@ fn verify_dcb(expected: &DCB, actual: &DCB) -> Result<()> {
         };
     }
 
-    same!(BaudRate);
+    if !baud_within_tolerance(expected.BaudRate, actual.BaudRate) {
+        return Err(Error::Unsupported(format!(
+            "COM driver kept BaudRate={} instead of {}",
+            actual.BaudRate, expected.BaudRate
+        )));
+    }
     same!(ByteSize);
     same!(Parity);
     same!(StopBits);
@@ -718,6 +762,84 @@ mod tests {
             ..SerialParams::default()
         };
         assert!(matches!(build_dcb(&params), Err(Error::Unsupported(_))));
+    }
+
+    /// Two DCBs from one request: what was asked for, and the one the driver
+    /// is about to be made to answer with.
+    fn pair(params: &SerialParams) -> (DCB, DCB) {
+        (build_dcb(params).unwrap(), build_dcb(params).unwrap())
+    }
+
+    /// A rate that came back rounded is the rate that was asked for.
+    ///
+    /// 115384 is what a CH340 makes of 115200 and the only thing it can make;
+    /// the last two are two percent exactly, which the tolerance includes.
+    #[test]
+    fn a_rounded_baud_rate_still_opens_the_port() {
+        let params = SerialParams::default();
+        for reported in [115_200, 115_384, 115_000, 117_504, 112_896] {
+            let (expected, mut actual) = pair(&params);
+            actual.BaudRate = reported;
+            assert!(
+                verify_dcb(&expected, &actual).is_ok(),
+                "{reported} is the 115200 that was asked for"
+            );
+        }
+    }
+
+    /// ...and one the driver replaced outright is still refused, by both
+    /// numbers, because that is what somebody has to type next.
+    #[test]
+    fn a_substituted_baud_rate_is_refused_and_names_itself() {
+        let (expected, mut actual) = pair(&SerialParams::default());
+        actual.BaudRate = 9_600;
+
+        let Err(Error::Unsupported(message)) = verify_dcb(&expected, &actual) else {
+            panic!("a rate the driver replaced must not open the port");
+        };
+        assert_eq!(message, "COM driver kept BaudRate=9600 instead of 115200");
+    }
+
+    /// The tolerance has an edge, and it is measured rather than approached.
+    #[test]
+    fn a_baud_rate_past_the_tolerance_is_refused() {
+        let params = SerialParams::default();
+        for reported in [117_505, 112_895, 0] {
+            let (expected, mut actual) = pair(&params);
+            actual.BaudRate = reported;
+            assert!(verify_dcb(&expected, &actual).is_err(), "{reported}");
+        }
+    }
+
+    /// Everything beside the rate is an enumeration, so a value that came back
+    /// changed is a substituted setting and not a rounded number. The tolerance
+    /// is the rate's alone.
+    #[test]
+    fn every_other_field_is_compared_exactly() {
+        let params = SerialParams {
+            flow: FlowControl::XonXoff,
+            ..SerialParams::default()
+        };
+
+        let (expected, mut actual) = pair(&params);
+        actual.ByteSize = 7;
+        assert!(verify_dcb(&expected, &actual).is_err(), "ByteSize");
+
+        let (expected, mut actual) = pair(&params);
+        actual.Parity = ODDPARITY;
+        assert!(verify_dcb(&expected, &actual).is_err(), "Parity");
+
+        let (expected, mut actual) = pair(&params);
+        actual.StopBits = TWOSTOPBITS;
+        assert!(verify_dcb(&expected, &actual).is_err(), "StopBits");
+
+        let (expected, mut actual) = pair(&params);
+        set_flag(&mut actual, 2, true); // fOutxCtsFlow, which nobody asked for
+        assert!(verify_dcb(&expected, &actual).is_err(), "control flags");
+
+        let (expected, mut actual) = pair(&params);
+        actual.XonChar = 0x7f;
+        assert!(verify_dcb(&expected, &actual).is_err(), "XonChar");
     }
 
     /// A deadline must never round to `INFINITE`, which is what an unbounded
