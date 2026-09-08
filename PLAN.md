@@ -8,7 +8,7 @@ landing, finding and measurement from stages 0–4 — moved verbatim to
 decision, not to start a session.
 
 **Last updated:** 2026-09-08 · **Stage:** 4 complete, deliberate deviations
-landing (`docs/deviations.md`) · **Commits:** 959
+landing (`docs/deviations.md`) · **Commits:** 963
 
 ---
 
