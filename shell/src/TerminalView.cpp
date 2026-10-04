@@ -16,6 +16,8 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QProcess>
+#include <QStyle>
+#include <QStyleOptionFrame>
 #include <QTimer>
 #include <QUrl>
 #include <QWheelEvent>
@@ -35,28 +37,103 @@ constexpr qint64 kMinFrameMs = 8;
 /// How often a drag held outside the window scrolls it, in milliseconds.
 constexpr int kAutoScrollMs = 40;
 
-/// A focusless editor whose caret is still visible.
-///
-/// The terminal view keeps keyboard focus so function, control and configured
-/// physical keys continue through its existing path. Mouse selection still
-/// works on a focusless QLineEdit; the only visual it loses is its caret, so
-/// draw that one pixel here rather than move focus away from the terminal.
+/// Keep Qt's editing and mouse selection, but align its text and insertion
+/// caret with the terminal. The view retains focus to dispatch terminal keys.
 class LineEditOverlay : public QLineEdit {
 public:
-    using QLineEdit::QLineEdit;
+    explicit LineEditOverlay(TerminalView *view) : QLineEdit(view), m_view(view)
+    {
+        setAlignment(Qt::AlignLeft | Qt::AlignAbsolute | Qt::AlignTop);
+        setPlaceholderText(TerminalView::tr("Edit a line"));
+        setAccessibleName(TerminalView::tr("Line edit"));
+    }
+
+    void setCaretVisible(bool visible)
+    {
+        if (m_caretVisible != visible) {
+            m_caretVisible = visible;
+            update();
+        }
+    }
+
+    void configure(int queued)
+    {
+        const Theme &theme = m_view->theme();
+        setFont(theme.font());
+        const QColor bg = theme.defaultBackground();
+        const QColor fg = theme.defaultForeground();
+        // A slight tint and underline distinguish unsent input from output,
+        // in both light and dark themes without introducing a fixed colour.
+        const QColor field((bg.red() * 15 + fg.red()) / 16,
+                           (bg.green() * 15 + fg.green()) / 16,
+                           (bg.blue() * 15 + fg.blue()) / 16);
+        QPalette pal = palette();
+        pal.setColor(QPalette::Base, field);
+        pal.setColor(QPalette::Text, fg);
+        pal.setColor(QPalette::PlaceholderText, theme.annotationColor());
+        setPalette(pal);
+
+        m_hint = text().isEmpty() ? TerminalView::tr("Return sends")
+                                : TerminalView::tr("Not sent · Return sends");
+        if (queued > 0) {
+            m_hint += TerminalView::tr(" · More lines: %1").arg(queued);
+        }
+        setToolTip(m_hint);
+        setAccessibleDescription(m_hint);
+        const int hintWidth = fontMetrics().horizontalAdvance(m_hint) + theme.cellWidth();
+        // Small panes still get their whole width for editing. The full hint
+        // remains available as a tooltip and to accessibility tools.
+        m_hintWidth = width() >= hintWidth + 16 * theme.cellWidth() ? hintWidth : 0;
+
+        QStyleOptionFrame option;
+        initStyleOption(&option);
+        const QRect contents = style()->subElementRect(QStyle::SE_LineEditContents,
+                                                       &option, this);
+        // QLineEdit adds 2 horizontal pixels and 1 vertical pixel even with
+        // its frame disabled. Cancel those as well as the style's margins.
+        // AlignTop keeps asymmetric VTFontSpace on the terminal's baseline.
+        setTextMargins(theme.textOffsetX() - contents.left() - 2,
+                       theme.baseline() - fontMetrics().ascent() - contents.top() - 1,
+                       m_hintWidth, 0);
+        update();
+    }
 
 protected:
     void paintEvent(QPaintEvent *event) override
     {
         QLineEdit::paintEvent(event);
-        if (!isEnabled()) {
-            return;
-        }
         QPainter painter(this);
-        painter.setPen(palette().color(QPalette::Text));
-        const QRect caret = cursorRect();
-        painter.drawLine(caret.topLeft(), caret.bottomLeft());
+        const Theme &theme = m_view->theme();
+        painter.setPen(theme.annotationColor());
+        painter.drawLine(0, height() - 1, width() - 1, height() - 1);
+        if (m_hintWidth > 0) {
+            painter.drawText(QPoint(width() - m_hintWidth + theme.cellWidth() / 2,
+                                   theme.baseline()), m_hint);
+        }
+        if (isEnabled() && m_view->hasFocus() && m_caretVisible && !hasSelectedText()) {
+            // QWidgetLineControl::rectForPos adds a five-pixel damage margin
+            // on the left. Its edge is not the insertion point. Subtract the
+            // font padding too: the caret marks a cell, not the glyph's ink.
+            const int x = cursorRect().left() + 5 - theme.textOffsetX();
+            painter.setClipRect(QRect(0, 0, width() - m_hintWidth, height()));
+            painter.fillRect(QRect(x, 0, 1, height() - 1),
+                             theme.defaultForeground());
+        }
     }
+
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        // NoFocus avoids stealing terminal keys, but a click on a draft must
+        // still activate its pane after the user edited another field.
+        m_view->setFocus(Qt::MouseFocusReason);
+        QLineEdit::mousePressEvent(event);
+    }
+
+private:
+    TerminalView *m_view;
+    QString m_hint;
+    int m_hintWidth = 0;
+    bool m_caretVisible = true;
 };
 
 /// Apply one of `MouseCursor`'s four names, or leave the current pointer alone.
@@ -487,6 +564,16 @@ TerminalView::TerminalView(Session *session, QWidget *parent, const I18n *i18n)
     m_lineEditor->setFocusPolicy(Qt::NoFocus);
     m_lineEditor->setFrame(false);
     m_lineEditor->hide();
+    connect(m_lineEditor, &QLineEdit::textChanged, this, [this] {
+        positionLineEditor();
+    });
+    connect(m_lineEditor, &QLineEdit::cursorPositionChanged, this, [this] {
+        m_cursorBlinkOn = true;
+        if (m_cursorBlink->isActive()) {
+            m_cursorBlink->start();
+        }
+        static_cast<LineEditOverlay *>(m_lineEditor)->setCaretVisible(true);
+    });
     // There is one active selection. The editor has no focus of its own, so
     // its selection would otherwise coexist with the grid's and Copy would
     // have to guess which gesture was newer.
@@ -534,6 +621,7 @@ TerminalView::TerminalView(Session *session, QWidget *parent, const I18n *i18n)
     m_cursorBlink = new QTimer(this);
     connect(m_cursorBlink, &QTimer::timeout, this, [this] {
         m_cursorBlinkOn = !m_cursorBlinkOn;
+        static_cast<LineEditOverlay *>(m_lineEditor)->setCaretVisible(m_cursorBlinkOn);
         update();
     });
 
@@ -1144,7 +1232,9 @@ void TerminalView::paintEvent(QPaintEvent *)
     const TtCursor cur = m_session->cursor();
     const int cursorRow = m_session->cursorViewRow();
     const int flashTime = QApplication::cursorFlashTime();
-    const bool shouldBlink = cur.visible && cursorRow >= 0 && hasFocus()
+    const bool editing = m_lineEditEnabled && !m_lineEditor->isHidden();
+    const bool shouldBlink = (editing ? m_keyboardEnabled : cur.visible)
+                             && cursorRow >= 0 && hasFocus()
                              && !cur.nonblinking && flashTime > 0;
     if (shouldBlink) {
         const int interval = qMax(1, flashTime / 2);
@@ -1159,7 +1249,8 @@ void TerminalView::paintEvent(QPaintEvent *)
         m_cursorBlink->stop();
         m_cursorBlinkOn = true;
     }
-    if (cur.visible && cursorRow >= 0) {
+    static_cast<LineEditOverlay *>(m_lineEditor)->setCaretVisible(m_cursorBlinkOn);
+    if (!editing && cur.visible && cursorRow >= 0) {
         size_t len = 0;
         const TtCell *cells = m_session->row(cursorRow, &len);
         const int cx = static_cast<int>(cur.x);
@@ -1545,12 +1636,7 @@ void TerminalView::positionLineEditor()
     // it stays lined up with the column it is editing.
     const int left = (column - m_originX) * cw;
     m_lineEditor->setGeometry(left, row * ch, qMax(cw, width() - left), ch);
-    m_lineEditor->setFont(m_theme.font());
-    m_lineEditor->setTextMargins(m_theme.textOffsetX(), 0, 0, 0);
-    QPalette palette = m_lineEditor->palette();
-    palette.setColor(QPalette::Base, m_theme.defaultBackground());
-    palette.setColor(QPalette::Text, m_theme.defaultForeground());
-    m_lineEditor->setPalette(palette);
+    static_cast<LineEditOverlay *>(m_lineEditor)->configure(m_queuedLines.size());
     m_lineEditor->setEnabled(m_keyboardEnabled);
     m_lineEditor->show();
     m_lineEditor->raise();
@@ -2391,6 +2477,7 @@ void TerminalView::focusInEvent(QFocusEvent *event)
     QWidget::focusInEvent(event);
     m_cursorBlink->stop();
     m_cursorBlinkOn = true;
+    m_lineEditor->update();
     update();
 }
 
@@ -2402,6 +2489,7 @@ void TerminalView::focusOutEvent(QFocusEvent *event)
     QWidget::focusOutEvent(event);
     m_cursorBlink->stop();
     m_cursorBlinkOn = true;
+    m_lineEditor->update();
     update();
 }
 

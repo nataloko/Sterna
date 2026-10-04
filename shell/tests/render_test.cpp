@@ -3934,6 +3934,131 @@ void test_line_edit_delays_edits_queues_and_reanchors()
     CHECK(!h.view.hasLineEditDraft());
 }
 
+void test_line_edit_cursor_and_text_follow_the_grid()
+{
+    Harness h;
+    CHECK(h.session.setSetting(QStringLiteral("terminal.line_edit"),
+                               QStringLiteral("on"), nullptr));
+    CHECK(h.session.setSetting(QStringLiteral("cursor.nonblinking"),
+                               QStringLiteral("on"), nullptr));
+    h.view.applySettings();
+    h.feed("prompt> abc\r\nprompt> ");
+    h.activate();
+    auto *editor = h.view.findChild<QLineEdit *>(QStringLiteral("terminalLineEditor"));
+    CHECK(editor);
+    if (!editor) return;
+
+    // The insertion point belongs at the cell boundary, including Home.
+    // QLineEdit's cursorRect is a padded damage rectangle, not the caret.
+    key(h.view, Qt::Key_A, Qt::NoModifier, QStringLiteral("abc"));
+    h.render();
+    const int cw = h.view.theme().cellWidth();
+    const int ch = h.view.theme().cellHeight();
+    const QColor ink = h.view.theme().defaultForeground();
+    CHECK(h.image.pixelColor(11 * cw, ch + ch / 2) == ink);
+    key(h.view, Qt::Key_Home);
+    h.render();
+    CHECK(h.image.pixelColor(8 * cw, ch + ch / 2) == ink);
+
+    // Text and the caret stay on the terminal's baseline with asymmetric
+    // font padding, not on a text field's vertically centred baseline.
+    CHECK(h.session.setSetting(QStringLiteral("font.space_top"),
+                               QStringLiteral("5"), nullptr));
+    CHECK(h.session.setSetting(QStringLiteral("font.space_left"),
+                               QStringLiteral("3"), nullptr));
+    h.view.applySettings();
+    key(h.view, Qt::Key_End);
+    h.render();
+    const int paddedCw = h.view.theme().cellWidth();
+    const int paddedCh = h.view.theme().cellHeight();
+    CHECK(h.image.pixelColor(11 * paddedCw, paddedCh + paddedCh / 2) == ink);
+
+    // Compare the actual glyphs with the same received text one row above.
+    // Compare solid ink only: the editor's tinted background changes the
+    // antialiasing at each glyph's edge. Exclude the pending-line underline.
+    bool aligned = true;
+    int pixels = 0;
+    for (int y = 0; y < paddedCh - 1; ++y) {
+        for (int x = 8 * paddedCw; x < 11 * paddedCw; ++x) {
+            const bool received = h.image.pixelColor(x, y) == ink;
+            const bool draft = h.image.pixelColor(x, y + paddedCh) == ink;
+            aligned = aligned && received == draft;
+            pixels += received;
+        }
+    }
+    CHECK(pixels > 0);
+    CHECK(aligned);
+
+    // A draft in an inactive pane must not claim the keyboard.
+    h.view.clearFocus();
+    h.render();
+    CHECK(h.image.pixelColor(11 * paddedCw, paddedCh + paddedCh / 2) != ink);
+
+    QMouseEvent click(QEvent::MouseButtonPress, QPointF(2 * paddedCw, paddedCh / 2),
+                      QPointF(2 * paddedCw, paddedCh / 2), Qt::LeftButton,
+                      Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(editor, &click);
+    CHECK(h.view.hasFocus());
+    CHECK(editor->cursorPosition() == 2);
+}
+
+void test_line_edit_blinks_and_marks_unsent_lines()
+{
+    const int oldFlashTime = QApplication::cursorFlashTime();
+    QApplication::setCursorFlashTime(200);
+    Harness h;
+    CHECK(h.session.setSetting(QStringLiteral("terminal.line_edit"),
+                               QStringLiteral("on"), nullptr));
+    CHECK(h.session.setSetting(QStringLiteral("clipboard.confirm_paste"),
+                               QStringLiteral("off"), nullptr));
+    h.view.applySettings();
+    h.activate();
+    auto *editor = h.view.findChild<QLineEdit *>(QStringLiteral("terminalLineEditor"));
+    CHECK(editor);
+    if (!editor) {
+        QApplication::setCursorFlashTime(oldFlashTime);
+        return;
+    }
+    CHECK(!editor->placeholderText().isEmpty());
+    CHECK(editor->palette().color(QPalette::Base) != h.view.theme().defaultBackground());
+    CHECK(editor->toolTip().contains(QStringLiteral("Return")));
+    h.view.pasteText(QStringLiteral("one\ntwo\nthree"));
+    CHECK(editor->toolTip().contains(QStringLiteral("Not sent")));
+    CHECK(editor->toolTip().contains(QStringLiteral("More lines: 2")));
+    h.render();
+    const int x = 3 * h.view.theme().cellWidth();
+    const int y = h.view.theme().cellHeight() / 2;
+    const QColor ink = h.view.theme().defaultForeground();
+    CHECK(h.image.pixelColor(x, y) == ink);
+
+    QEventLoop blink;
+    QTimer::singleShot(150, &blink, &QEventLoop::quit);
+    blink.exec();
+    h.render();
+    CHECK(h.image.pixelColor(x, y) != ink);
+    key(h.view, Qt::Key_Left);
+    h.render();
+    CHECK(h.image.pixelColor(x - h.view.theme().cellWidth(), y) == ink);
+
+    key(h.view, Qt::Key_Return);
+    CHECK(editor->toolTip().contains(QStringLiteral("More lines: 1")));
+    key(h.view, Qt::Key_Return);
+    CHECK(!editor->toolTip().contains(QStringLiteral("More lines:")));
+
+    // A long draft can scroll to both ends without losing its insertion
+    // caret. Mouse placement must use the same scroll as the painted text.
+    editor->setText(QString(200, QLatin1Char('a')));
+    key(h.view, Qt::Key_End);
+    h.render();
+    const int end = editor->cursorPositionAt(QPoint(editor->width() / 2, y));
+    CHECK(end > 100);
+    key(h.view, Qt::Key_Home);
+    h.render();
+    CHECK(editor->cursorPositionAt(QPoint(0, y)) == 0);
+    CHECK(editor->text().size() == 200);
+    QApplication::setCursorFlashTime(oldFlashTime);
+}
+
 void test_line_edit_drains_its_forced_echo_damage()
 {
     Harness h;
@@ -4406,6 +4531,8 @@ int main(int argc, char **argv)
     test_about_shows_the_application_version();
     test_the_connect_bar_is_a_view_of_the_session();
     test_line_edit_delays_edits_queues_and_reanchors();
+    test_line_edit_cursor_and_text_follow_the_grid();
+    test_line_edit_blinks_and_marks_unsent_lines();
     test_line_edit_drains_its_forced_echo_damage();
     test_line_edit_keeps_control_input_immediate_and_cleans_up();
     test_line_edit_toggle_confirms_an_unsent_draft();
@@ -4431,6 +4558,18 @@ int main(int argc, char **argv)
             const QString path = dir + "/screen.png";
             h.image.save(path);
             printf("wrote %s\n", qPrintable(path));
+
+            Harness line;
+            line.session.setSetting(QStringLiteral("terminal.line_edit"),
+                                    QStringLiteral("on"), nullptr);
+            line.view.applySettings();
+            line.feed("Serial console ready\r\nrouter> ");
+            line.activate();
+            key(line.view, Qt::Key_A, Qt::NoModifier,
+                QStringLiteral("show interfaces"));
+            key(line.view, Qt::Key_Left);
+            line.render();
+            line.image.save(dir + "/line-edit.png");
 
             // The setup dialog too, because its layout is the part of it no
             // assertion can judge — what a generated dialog *looks* like is

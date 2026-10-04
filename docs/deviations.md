@@ -447,6 +447,12 @@ same lines, and each stays local until its own Return. Other control keys,
 function keys, `KEYBOARD.CNF` mappings, macros, transfers and protocol replies
 remain immediate.
 
+The editor has a different background and an underline. When there is
+sufficient space, `Not sent · Return sends` identifies the draft, and
+`More lines` gives the number of subsequent lines. These indications are also
+in the tooltip. The insertion cursor follows the terminal's font position and
+blink setting. It disappears when the pane loses keyboard focus.
+
 **Why.** Serial consoles and command-oriented appliances often need a whole
 command corrected before any byte is sent, and telnet's negotiated LINEMODE is
 not available on serial, SSH, raw TCP or a local shell. Treating the feature as
