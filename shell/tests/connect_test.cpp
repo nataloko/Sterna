@@ -20,9 +20,13 @@
 #include <QKeyEvent>
 #include <QToolButton>
 #include <QMainWindow>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QStandardPaths>
+#include <QTimer>
 
 #include <cstdio>
+#include <functional>
 
 #ifndef Q_OS_WIN
 #include <arpa/inet.h>
@@ -675,23 +679,72 @@ void test_the_dropdown_does_not_move_the_field()
 }
 
 #ifndef Q_OS_WIN
+void pressKey(QWidget *widget, Qt::Key key)
+{
+    QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier);
+    QApplication::sendEvent(widget, &press);
+}
+
+void commitWithConfirmation(MainWindow &window,
+                            const std::function<void(QMessageBox &)> &answer,
+                            Qt::Key key = Qt::Key_Return)
+{
+    bool asked = false;
+    QTimer timer;
+    timer.setSingleShot(true);
+    QObject::connect(&timer, &QTimer::timeout, &window, [&] {
+        auto *box = window.findChild<QMessageBox *>(
+            QStringLiteral("confirmBarConnection"));
+        CHECK(box);
+        if (!box) return;
+        asked = true;
+        CHECK(box->textFormat() == Qt::PlainText);
+        CHECK(box->buttonRole(box->defaultButton()) == QMessageBox::RejectRole);
+        CHECK(box->escapeButton() == box->defaultButton());
+        answer(*box);
+    });
+    timer.start(0);
+    auto *combo = window.findChild<QComboBox *>(QStringLiteral("connectBarDestination"));
+    CHECK(combo);
+    if (combo) pressKey(combo->lineEdit(), key);
+    timer.stop();
+    CHECK(asked);
+}
+
+void acceptConnection(QMessageBox &box)
+{
+    for (auto *button : box.buttons()) {
+        if (box.buttonRole(button) == QMessageBox::AcceptRole) {
+            button->click();
+            return;
+        }
+    }
+    CHECK(false);
+    box.reject();
+}
+
 /// End to end, on the one destination that needs nothing: typing it opens a
 /// session, and the connection joins the list in the settings file.
 void test_a_typed_shell_connects_and_is_remembered()
 {
     MainWindow window;
-    window.connectDestination(QStringLiteral("shell"));
+    auto *bar = window.findChild<ConnectBar *>(QStringLiteral("connectBar"));
+    CHECK(bar);
+    if (!bar) return;
+    bar->setDestination(QStringLiteral("shell"));
+    auto *combo = bar->findChild<QComboBox *>(QStringLiteral("connectBarDestination"));
+    CHECK(combo);
+    if (!combo) return;
+    // An idle page needs no confirmation.
+    pressKey(combo->lineEdit(), Qt::Key_Return);
     qApp->processEvents();
     CHECK(window.session()->isConnected());
+    CHECK(window.findChild<PanelContainer *>()->count() == 1);
 
     CHECK(window.session()->setting(QStringLiteral("recent.connections"))
           == QStringLiteral("shell:"));
 
-    auto *bar = window.findChild<ConnectBar *>(QStringLiteral("connectBar"));
-    CHECK(bar != nullptr);
-    if (bar) {
-        CHECK(bar->destination() == QStringLiteral("Local shell"));
-    }
+    CHECK(bar->destination() == QStringLiteral("Local shell"));
 
     // And the next launch opens on it. The list is read where the rest of the
     // remembered connection is, which is after the bar exists — a guard that
@@ -704,7 +757,7 @@ void test_a_typed_shell_connects_and_is_remembered()
     }
 }
 
-/// Plain typing leaves the current session open; Return opens a new one.
+/// Plain typing does nothing; Return asks before opening a new session.
 void test_typing_a_destination_during_a_live_session()
 {
     MainWindow window;
@@ -728,12 +781,88 @@ void test_typing_a_destination_during_a_live_session()
         CHECK(original->isConnected());
     }
     CHECK(editor->text() == QStringLiteral("shell"));
-    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
-    QApplication::sendEvent(editor, &enter);
+    QKeyEvent repeat(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+                     QString(), true);
+    QApplication::sendEvent(editor, &repeat);
+    CHECK(window.session() == original);
+    auto *panels = window.findChild<PanelContainer *>();
+    CHECK(panels);
+    if (!panels) return;
+    for (Qt::Key key : {Qt::Key_Return, Qt::Key_Escape}) {
+        commitWithConfirmation(window, [&](QMessageBox &box) {
+            CHECK(box.text().contains(QStringLiteral("\"shell\"")));
+            pressKey(&box, key);
+        });
+        CHECK(panels->count() == 1);
+        CHECK(window.session() == original);
+        CHECK(original->isConnected());
+        CHECK(editor->text() == QStringLiteral("shell"));
+    }
+    commitWithConfirmation(window, acceptConnection, Qt::Key_Enter);
     qApp->processEvents();
+    CHECK(panels->count() == 2);
     CHECK(original->isConnected());
     CHECK(window.session() != original);
     CHECK(window.session()->isConnected());
+}
+
+void test_a_saved_destination_also_needs_confirmation()
+{
+    MainWindow window;
+    window.connectDestination(QStringLiteral("shell"));
+    Session *original = window.session();
+    auto *combo = window.findChild<QComboBox *>(QStringLiteral("connectBarDestination"));
+    CHECK(combo);
+    if (!combo) return;
+    const int row = rowWithText(combo, QStringLiteral("Local shell"));
+    CHECK(row >= 0);
+    if (row < 0) return;
+    QMetaObject::invokeMethod(combo, "activated", Qt::DirectConnection, Q_ARG(int, row));
+    CHECK(window.session() == original);
+    commitWithConfirmation(window, [](QMessageBox &box) {
+        CHECK(box.text().contains(QStringLiteral("Local shell")));
+        box.defaultButton()->click();
+    });
+    CHECK(window.session() == original);
+    CHECK(original->isConnected());
+    CHECK(combo->currentText() == QStringLiteral("Local shell"));
+    commitWithConfirmation(window, acceptConnection);
+    CHECK(window.session() != original);
+    CHECK(window.session()->isConnected());
+    CHECK(original->isConnected());
+}
+
+void test_confirmation_during_a_connection_attempt()
+{
+    Listener listener;
+    CHECK(listener.port() != 0);
+    if (!listener.port()) return;
+    MainWindow window;
+    window.connectSsh(QStringLiteral("127.0.0.1"), QString(), listener.port());
+    Session *original = window.session();
+    CHECK(original->isConnecting());
+    auto *bar = window.findChild<ConnectBar *>(QStringLiteral("connectBar"));
+    CHECK(bar);
+    if (!bar) return;
+    bar->setDestination(QStringLiteral("shell"));
+    commitWithConfirmation(window, [](QMessageBox &box) { box.reject(); });
+    CHECK(window.session() == original);
+    CHECK(original->isConnecting());
+
+    // The nested event loop must neither accept a second request nor apply
+    // this answer to a page selected while the question was open.
+    commitWithConfirmation(window, [&](QMessageBox &box) {
+        bar->destinationEntered(QStringLiteral("shell"));
+        CHECK(window.session() == original);
+        auto *add = window.findChild<QAction *>(QStringLiteral("newTabAction"));
+        CHECK(add);
+        if (add) add->trigger();
+        acceptConnection(box);
+    });
+    CHECK(window.session() != original);
+    CHECK(!window.session()->isConnected());
+    CHECK(original->isConnecting());
+    original->disconnectPort();
 }
 
 /// Opening the dropdown during a session must not disable Disconnect.
@@ -936,6 +1065,8 @@ int main(int argc, char **argv)
 #ifndef Q_OS_WIN
     test_a_typed_shell_connects_and_is_remembered();
     test_typing_a_destination_during_a_live_session();
+    test_a_saved_destination_also_needs_confirmation();
+    test_confirmation_during_a_connection_attempt();
     test_choosing_a_row_leaves_disconnect_alive();
     test_connecting_does_not_move_the_field();
     test_a_command_line_applies_to_the_page_it_opens();

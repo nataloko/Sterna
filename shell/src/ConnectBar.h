@@ -84,6 +84,7 @@ signals:
 
 protected:
     void changeEvent(QEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     /// What one dropdown row is. `Qt::UserRole` on the item; the payload is

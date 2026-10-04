@@ -5,8 +5,18 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+### Changed
+
+- **Confirm a new destination while a session is active.** Pressing Enter in
+  **Connect to:** now asks before opening another terminal, including for a
+  saved connection. Cancel is the default. Typing or selecting a destination
+  leaves the active session open, and confirming keeps it open too.
+
 ### Fixed
 
+- **One Enter press opens one connection.** Opening a connection could move
+  focus and make the editable dropdown process the same Enter press twice.
+  The field now consumes the key once and ignores key repeats.
 - **Keep a selected connection's data alive while it opens.** Updating the
   **Connect to:** field could free a saved connection record while a connection
   handler was still reading it. The request now keeps its own copy until the

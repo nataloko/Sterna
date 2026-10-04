@@ -11,6 +11,7 @@
 #include <QFont>
 #include <QHash>
 #include <QIcon>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPainter>
@@ -189,8 +190,7 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
     addWidget(m_destination);
 
     connect(m_destination, &QComboBox::activated, this, &ConnectBar::chose);
-    connect(m_destination->lineEdit(), &QLineEdit::returnPressed, this,
-            [this] { commit(); });
+    m_destination->lineEdit()->installEventFilter(this);
     // Typed, not polled: `refresh` runs on the window's status update, which a
     // keystroke in this field is not — so without this the Connect button
     // stays greyed over a destination somebody has just finished typing, on a
@@ -566,6 +566,24 @@ void ConnectBar::rebuildList(bool rescan)
     m_destination->setCurrentIndex(-1);
     m_destination->setCurrentText(typed);
     m_filling = false;
+}
+
+bool ConnectBar::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_destination->lineEdit() && event->type() == QEvent::KeyPress) {
+        auto *key = static_cast<QKeyEvent *>(event);
+        if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) {
+            // A combo can deliver Return to its editor twice when opening a
+            // connection moves focus. Consume the key before Qt propagates it
+            // so one press cannot open two sessions or confirmation dialogs.
+            key->accept();
+            if (!key->isAutoRepeat()) {
+                commit();
+            }
+            return true;
+        }
+    }
+    return QToolBar::eventFilter(watched, event);
 }
 
 void ConnectBar::commit()

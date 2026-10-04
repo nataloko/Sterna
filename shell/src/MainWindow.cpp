@@ -26,6 +26,7 @@
 #include <QMessageBox>
 #include <QRegularExpression>
 #include <QScreen>
+#include <QScopedValueRollback>
 #include <QPushButton>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -394,9 +395,17 @@ MainWindow::MainWindow(const QString &settingsPath, const QString &pluginsPath)
     m_connectBar = new ConnectBar(m_i18n, this);
     addToolBar(Qt::TopToolBarArea, m_connectBar);
     connect(m_connectBar, &ConnectBar::recentChosen, this,
-            &MainWindow::openRecent);
+            [this](RecentConnection recent) {
+                if (confirmBarConnection(recent.label())) {
+                    openRecent(recent);
+                }
+            });
     connect(m_connectBar, &ConnectBar::destinationEntered, this,
-            &MainWindow::connectDestination);
+            [this](QString destination) {
+                if (confirmBarConnection(destination)) {
+                    connectDestination(destination);
+                }
+            });
     connect(m_connectBar, &ConnectBar::newConnectionRequested, this,
             [this] { showConnectDialog(); });
     connect(m_connectBar, &ConnectBar::forgetRecentsRequested, this,
@@ -3472,6 +3481,34 @@ void MainWindow::onSshFailed(const QString &error)
 {
     QMessageBox::critical(this, tr("SSH"), error);
     updateStatus();
+}
+
+bool MainWindow::confirmBarConnection(const QString &destination)
+{
+    if (m_confirmingBarConnection) {
+        return false;
+    }
+    if (!m_session->isConnected() && !m_session->isConnecting()) {
+        return true;
+    }
+    QScopedValueRollback<bool> confirming(m_confirmingBarConnection, true);
+    const QPointer<TerminalPage> source = m_page;
+    QMessageBox box(QMessageBox::Question, tr("New connection"),
+                    tr("Open \"%1\" in a new terminal?").arg(destination),
+                    QMessageBox::NoButton, this);
+    box.setObjectName(QStringLiteral("confirmBarConnection"));
+    box.setTextFormat(Qt::PlainText);
+    box.setInformativeText(tr("The active session will stay open."));
+    QPushButton *connect = box.addButton(tr("Connect"), QMessageBox::AcceptRole);
+    QPushButton *cancel =
+        box.addButton(m_i18n->text("BTN_CANCEL", tr("Cancel")),
+                      QMessageBox::RejectRole);
+    box.setDefaultButton(cancel);
+    box.setEscapeButton(cancel);
+    box.exec();
+    // The modal loop can process a page closure or a control-socket request.
+    // Do not apply an answer to a different page from the one it described.
+    return box.clickedButton() == connect && source && m_page == source;
 }
 
 bool MainWindow::confirmDisconnect(TerminalPage *page)

@@ -367,6 +367,8 @@ private:
     /// Apply `VTPos` once, after the settings file is loaded and before a
     /// command line gets its later chance to override it with `/X` and `/Y`.
     void applySavedPosition();
+    /// Ask before the toolbar opens another connection from a live page.
+    bool confirmBarConnection(const QString &destination);
     /// `ConfirmDisconnect` (`ttset.c:1154`, on by default): whether to go ahead
     /// with dropping the connection.
     ///
@@ -558,6 +560,7 @@ private:
     QString m_settingsPath;
     QString m_pluginsPath;
     bool m_autoSaveChoiceChecked = false;
+    bool m_confirmingBarConnection = false;
     /// The active `KEYBOARD.CNF`, for reopening the file picker in its folder.
     QString m_keyMapPath;
     /// The highlight rules as loaded, so the editor opens on what is in force

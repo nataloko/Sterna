@@ -162,11 +162,10 @@ space in it is handed to Tera Term's parser whole, which is how
 cannot be merged is deviation 14: a bare host name is SSH in this program's
 vocabulary and telnet in Tera Term's, so a line is read one way or the other.
 
-**A live session is not closed by going somewhere else.** Picking or typing a
-destination while a connection is open puts the new one in a new tab or tile;
-Disconnect is the only thing that closes what is there. The port list this
-replaced could not raise the question, because it greyed itself out whenever a
-session was live.
+**The active session stays open.** Typing or selecting a destination only
+changes the field. If a session is open or a connection attempt is in progress,
+Enter shows a confirmation. Cancel is the default button. Connect opens the
+destination in a new tab or tile and keeps the active session open.
 
 **Where it lives.** `shell/src/ConnectBar.{h,cpp}`, `shell/src/Recent.{h,cpp}`
 for the records, and one new setting:
