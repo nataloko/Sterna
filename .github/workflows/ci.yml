@@ -346,6 +346,10 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: cd shell && ./build/pty_test
+      - name: Connection field edits and saved destinations
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: cd shell && ./build/connect_test
       # The other three that need nothing either, and were not gated: a macro
       # against the window's loop, a Tera Term command line from argv to a
       # connected window, and the control socket. `xfer_test` is deliberately

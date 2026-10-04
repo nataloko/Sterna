@@ -17,6 +17,7 @@
 #include <QComboBox>
 #include <QFile>
 #include <QLineEdit>
+#include <QKeyEvent>
 #include <QToolButton>
 #include <QMainWindow>
 #include <QStandardPaths>
@@ -488,6 +489,40 @@ void test_the_dropdown_offers_every_group()
     CHECK(typed == QStringLiteral("shell"));
 }
 
+/// Starting a connection can update the field before the signal returns.
+/// The connection being opened must keep its own record through those edits.
+void test_a_committed_record_survives_field_edits()
+{
+    ConnectBar bar(nullptr);
+    TtSerialParams params;
+    tt_serial_params_default(&params);
+    bar.showConnection(RecentConnection::serial(
+        QStringLiteral("/dev/") + QString(128, QLatin1Char('x')), params));
+    auto *combo = bar.findChild<QComboBox *>(QStringLiteral("connectBarDestination"));
+    CHECK(combo);
+    if (!combo) return;
+    bool called = false;
+    QObject::connect(&bar, &ConnectBar::recentChosen,
+                     [&](const RecentConnection &one) {
+        called = true;
+        const QString expected = one.encode();
+        auto *editor = combo->lineEdit();
+        editor->selectAll();
+        QKeyEvent press(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier,
+                        QStringLiteral("x"));
+        QApplication::sendEvent(editor, &press);
+        CHECK(editor->text() == QStringLiteral("x"));
+        CHECK(one.encode() == expected);
+        // A page change can replace the selected record as well as clear it.
+        bar.showConnection(RecentConnection::shell());
+        CHECK(one.encode() == expected);
+    });
+    auto *action = bar.findChild<QAction *>(QStringLiteral("connectBarConnect"));
+    CHECK(action);
+    if (action) action->trigger();
+    CHECK(called);
+}
+
 /// Opening the dropdown must not move the field, at any window width.
 ///
 /// The toolbar decides which of its items fit from their size hints, and it
@@ -667,6 +702,38 @@ void test_a_typed_shell_connects_and_is_remembered()
     if (nextBar) {
         CHECK(nextBar->destination() == QStringLiteral("Local shell"));
     }
+}
+
+/// Plain typing leaves the current session open; Return opens a new one.
+void test_typing_a_destination_during_a_live_session()
+{
+    MainWindow window;
+    window.show();
+    window.connectDestination(QStringLiteral("shell"));
+    qApp->processEvents();
+    Session *original = window.session();
+    CHECK(original->isConnected());
+    auto *combo = window.findChild<QComboBox *>(QStringLiteral("connectBarDestination"));
+    CHECK(combo);
+    if (!combo) return;
+    auto *editor = combo->lineEdit();
+    editor->setFocus();
+    editor->selectAll();
+    for (QChar c : QStringLiteral("shell")) {
+        QKeyEvent press(QEvent::KeyPress, c.toUpper().unicode(), Qt::NoModifier,
+                        QString(c));
+        QApplication::sendEvent(editor, &press);
+        qApp->processEvents();
+        CHECK(window.session() == original);
+        CHECK(original->isConnected());
+    }
+    CHECK(editor->text() == QStringLiteral("shell"));
+    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(editor, &enter);
+    qApp->processEvents();
+    CHECK(original->isConnected());
+    CHECK(window.session() != original);
+    CHECK(window.session()->isConnected());
 }
 
 /// Opening the dropdown during a session must not disable Disconnect.
@@ -858,6 +925,7 @@ int main(int argc, char **argv)
     test_a_record_lays_five_fields_over_the_settings();
     test_what_a_typed_destination_means();
     test_the_dropdown_offers_every_group();
+    test_a_committed_record_survives_field_edits();
     test_a_port_another_program_holds_is_greyed();
     test_the_dropdown_does_not_move_the_field();
     for (int i = 1; i + 1 < argc; i++) {
@@ -867,6 +935,7 @@ int main(int argc, char **argv)
     }
 #ifndef Q_OS_WIN
     test_a_typed_shell_connects_and_is_remembered();
+    test_typing_a_destination_during_a_live_session();
     test_choosing_a_row_leaves_disconnect_alive();
     test_connecting_does_not_move_the_field();
     test_a_command_line_applies_to_the_page_it_opens();

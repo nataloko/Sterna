@@ -571,7 +571,10 @@ void ConnectBar::rebuildList(bool rescan)
 void ConnectBar::commit()
 {
     if (m_chosen) {
-        emit recentChosen(*m_chosen);
+        // Opening a connection can update the field before this signal
+        // returns. Keep the request alive even if that clears m_chosen.
+        const RecentConnection chosen = *m_chosen;
+        emit recentChosen(chosen);
         return;
     }
     if (!destination().isEmpty()) {

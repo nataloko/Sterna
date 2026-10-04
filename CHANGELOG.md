@@ -5,6 +5,13 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+### Fixed
+
+- **Keep a selected connection's data alive while it opens.** Updating the
+  **Connect to:** field could free a saved connection record while a connection
+  handler was still reading it. The request now keeps its own copy until the
+  handler returns.
+
 ## [0.7.3] - 2026-10-04
 
 ### Fixed
