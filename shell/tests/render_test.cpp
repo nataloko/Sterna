@@ -3938,6 +3938,10 @@ void test_line_edit_delays_edits_queues_and_reanchors()
 void test_line_edit_cursor_and_text_follow_the_grid()
 {
     Harness h;
+    // Test glyph alignment with solid ink. Some fonts render every pixel
+    // with partial coverage when antialiasing is enabled.
+    CHECK(h.session.setSetting(QStringLiteral("font.quality"),
+                               QStringLiteral("nonantialiased"), nullptr));
     CHECK(h.session.setSetting(QStringLiteral("terminal.line_edit"),
                                QStringLiteral("on"), nullptr));
     CHECK(h.session.setSetting(QStringLiteral("cursor.nonblinking"),

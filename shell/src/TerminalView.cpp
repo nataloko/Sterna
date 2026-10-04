@@ -141,16 +141,23 @@ protected:
         // and line queue as Ctrl+Shift+V. QLineEdit::paste accepts embedded
         // newlines, which otherwise all reach the device on a single Return.
         for (QAction *action : menu->actions()) {
-            const bool paste = action->objectName() == QLatin1String("edit-paste");
+            const QString label = action->text().section(QLatin1Char('\t'), 0, 0);
+            // Older Qt versions leave these actions unnamed. Their labels
+            // use QLineEdit's translation context, including the mnemonic.
+            const bool paste = action->objectName() == QLatin1String("edit-paste")
+                || (action->objectName().isEmpty() && label == QLineEdit::tr("&Paste"));
+            const bool copy = action->objectName() == QLatin1String("edit-copy")
+                || (action->objectName().isEmpty() && label == QLineEdit::tr("&Copy"));
             if (paste) {
+                action->setObjectName(QStringLiteral("edit-paste"));
                 QObject::disconnect(action, nullptr, this, nullptr);
                 connect(action, &QAction::triggered, m_view,
                         [view = m_view] { view->pasteClipboard(); });
             }
-            if (paste || action->objectName() == QLatin1String("edit-copy")) {
+            if (paste || copy) {
                 // Qt advertises Ctrl+C/V here. Those remain terminal control
                 // bytes; do not promise the text field's default shortcuts.
-                action->setText(action->text().section(QLatin1Char('\t'), 0, 0));
+                action->setText(label);
             }
         }
         menu->setAttribute(Qt::WA_DeleteOnClose);
