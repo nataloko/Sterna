@@ -20,6 +20,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QColor>
+#include <QContextMenuEvent>
 #include <QImage>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -4076,6 +4077,35 @@ void test_line_edit_drains_its_forced_echo_damage()
     CHECK(repaints == 0);
 }
 
+void test_line_edit_context_paste_keeps_lines_separate()
+{
+    Harness h;
+    CHECK(h.session.setSetting(QStringLiteral("terminal.line_edit"),
+                               QStringLiteral("on"), nullptr));
+    CHECK(h.session.setSetting(QStringLiteral("clipboard.confirm_paste"),
+                               QStringLiteral("off"), nullptr));
+    h.view.applySettings();
+    h.activate();
+    auto *editor = h.view.findChild<QLineEdit *>(QStringLiteral("terminalLineEditor"));
+    CHECK(editor);
+    if (!editor) return;
+    QApplication::clipboard()->setText(QStringLiteral("one\ntwo"));
+    QContextMenuEvent event(QContextMenuEvent::Mouse, QPoint(2, 2),
+                            editor->mapToGlobal(QPoint(2, 2)));
+    QApplication::sendEvent(editor, &event);
+    auto *menu = editor->findChild<QMenu *>();
+    auto *paste = menu ? menu->findChild<QAction *>(QStringLiteral("edit-paste")) : nullptr;
+    CHECK(paste);
+    if (paste) paste->trigger();
+    if (menu) menu->close();
+    CHECK(h.view.lineEditText() == QStringLiteral("one"));
+    CHECK(h.view.queuedLineCount() == 1);
+    CHECK(rowText(h.session, 0).isEmpty());
+    key(h.view, Qt::Key_Return);
+    CHECK(h.view.lineEditText() == QStringLiteral("two"));
+    CHECK(h.view.queuedLineCount() == 0);
+}
+
 void test_line_edit_keeps_control_input_immediate_and_cleans_up()
 {
     Harness h;
@@ -4534,6 +4564,7 @@ int main(int argc, char **argv)
     test_line_edit_cursor_and_text_follow_the_grid();
     test_line_edit_blinks_and_marks_unsent_lines();
     test_line_edit_drains_its_forced_echo_damage();
+    test_line_edit_context_paste_keeps_lines_separate();
     test_line_edit_keeps_control_input_immediate_and_cleans_up();
     test_line_edit_toggle_confirms_an_unsent_draft();
     test_a_frontend_toggle_does_not_clear_on_resize();

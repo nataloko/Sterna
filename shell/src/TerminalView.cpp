@@ -7,11 +7,13 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QContextMenuEvent>
 #include <QDesktopServices>
 #include <QFontMetricsF>
 #include <QImage>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
@@ -127,6 +129,32 @@ protected:
         // still activate its pane after the user edited another field.
         m_view->setFocus(Qt::MouseFocusReason);
         QLineEdit::mousePressEvent(event);
+    }
+
+    void contextMenuEvent(QContextMenuEvent *event) override
+    {
+        QMenu *menu = createStandardContextMenu();
+        if (!menu) {
+            return;
+        }
+        // Keep Qt's editing actions, but Paste must use the same confirmation
+        // and line queue as Ctrl+Shift+V. QLineEdit::paste accepts embedded
+        // newlines, which otherwise all reach the device on a single Return.
+        for (QAction *action : menu->actions()) {
+            const bool paste = action->objectName() == QLatin1String("edit-paste");
+            if (paste) {
+                QObject::disconnect(action, nullptr, this, nullptr);
+                connect(action, &QAction::triggered, m_view,
+                        [view = m_view] { view->pasteClipboard(); });
+            }
+            if (paste || action->objectName() == QLatin1String("edit-copy")) {
+                // Qt advertises Ctrl+C/V here. Those remain terminal control
+                // bytes; do not promise the text field's default shortcuts.
+                action->setText(action->text().section(QLatin1Char('\t'), 0, 0));
+            }
+        }
+        menu->setAttribute(Qt::WA_DeleteOnClose);
+        menu->popup(event->globalPos());
     }
 
 private:
