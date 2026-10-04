@@ -28,6 +28,9 @@ are available from the [GitHub releases page].
   handler was still reading it. The request now keeps its own copy until the
   handler returns.
 
+The serial hardware suites did not run for this release: neither the FTDI pair
+nor the ESP32-S3 rig was attached.
+
 ## [0.7.3] - 2026-10-04
 
 ### Fixed
