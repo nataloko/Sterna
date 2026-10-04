@@ -382,6 +382,31 @@ bool RecentConnection::sameDestination(const RecentConnection &other) const
     return false;
 }
 
+QString RecentConnection::destination() const
+{
+    switch (kind) {
+    case Kind::Serial:
+        return path;
+    case Kind::Shell:
+        return QStringLiteral("shell");
+    case Kind::Ssh:
+    case Kind::Telnet:
+        break;
+    }
+    QString address = host;
+    if (address.contains(QLatin1Char(':')) && !address.startsWith(QLatin1Char('['))) {
+        address = QLatin1Char('[') + address + QLatin1Char(']');
+    }
+    if (kind == Kind::Ssh && !user.isEmpty()) {
+        address.prepend(user + QLatin1Char('@'));
+    }
+    if (port != 0) {
+        address += QLatin1Char(':') + QString::number(port);
+    }
+    return (kind == Kind::Ssh ? QStringLiteral("ssh://") : QStringLiteral("telnet://"))
+           + address;
+}
+
 QString RecentConnection::label(const QHash<QString, QString> &deviceFor) const
 {
     switch (kind) {

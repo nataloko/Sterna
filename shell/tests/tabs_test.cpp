@@ -505,14 +505,14 @@ void test_connection_selector_follows_the_active_page()
     listener.acceptOne();
     auto *first = static_cast<TerminalPage *>(panels->currentWidget());
     const QString firstLabel =
-        QStringLiteral("telnet 127.0.0.1:%1").arg(listener.port());
+        QStringLiteral("telnet://127.0.0.1:%1").arg(listener.port());
     CHECK(bar->destination() == firstLabel);
 
     window.connectTelnet(QStringLiteral("localhost"), listener.port());
     listener.acceptOne();
     auto *second = static_cast<TerminalPage *>(panels->currentWidget());
     const QString secondLabel =
-        QStringLiteral("telnet localhost:%1").arg(listener.port());
+        QStringLiteral("telnet://localhost:%1").arg(listener.port());
     CHECK(second != first);
     CHECK(bar->destination() == secondLabel);
 

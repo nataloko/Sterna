@@ -550,7 +550,7 @@ private:
     /// Bind a selector entry to one page and show it when that page is active.
     void setPageConnection(TerminalPage *page,
                            const RecentConnection &connection);
-    /// Point the shared selector at this page without re-reading its label.
+    /// Point the shared selector at this page's destination and settings.
     void refreshConnectionSelector(TerminalPage *page);
     void loadRecents();
     void forgetRecents();

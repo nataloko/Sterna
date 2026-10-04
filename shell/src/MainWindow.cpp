@@ -955,8 +955,7 @@ void MainWindow::duplicateSession()
         // Duplicate reopens the same target, including the parts of an SSH
         // record that are not visible in its label. Give the new page its own
         // copy so either tab can restore the shared selector later.
-        destination->setSelectorConnection(*connection,
-                                           source->selectorLabel());
+        destination->setSelectorConnection(*connection);
         refreshConnectionSelector(destination);
     }
     updateTabTitle(destination);
@@ -2099,19 +2098,10 @@ void MainWindow::setPageConnection(TerminalPage *page,
     if (!page) {
         return;
     }
+    page->setSelectorConnection(connection);
     if (page == m_page && m_connectBar) {
         m_connectBar->showConnection(connection);
-        page->setSelectorConnection(connection, m_connectBar->destination());
-        return;
     }
-    // All ordinary opens activate their page first. This fallback is for a
-    // connection finishing in the background; only serial labels need the
-    // device enumerator's friendlier spelling, and that work waits until the
-    // page is actually selected.
-    page->setSelectorConnection(
-        connection, connection.kind == RecentConnection::Kind::Serial
-                        ? QString()
-                        : connection.label());
 }
 
 void MainWindow::refreshConnectionSelector(TerminalPage *page)
@@ -2120,20 +2110,14 @@ void MainWindow::refreshConnectionSelector(TerminalPage *page)
         return;
     }
     if (const auto &connection = page->selectorConnection()) {
-        const QString label = page->selectorLabel();
-        if (label.isEmpty()) {
-            m_connectBar->showConnection(*connection);
-            page->setSelectorConnection(*connection,
-                                        m_connectBar->destination());
-        } else {
-            m_connectBar->showConnection(*connection, label);
-        }
+        m_connectBar->showConnection(*connection);
         return;
     }
-    // Connections made directly by a macro do not carry a RecentConnection,
-    // but their transport still has an honest short description.
+    // A macro can open a connection without a selector record. Only serial
+    // exposes its exact target here; the transport description is not input
+    // syntax and belongs in the status line, not in an editable destination.
     if (page->session()->isConnected()) {
-        m_connectBar->setDestination(page->session()->describe());
+        m_connectBar->setDestination(page->session()->serialPath());
         return;
     }
     // A page connected to nothing has nothing to say about the destination, so

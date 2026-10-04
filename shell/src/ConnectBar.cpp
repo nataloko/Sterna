@@ -170,6 +170,10 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
     combo->setObjectName(QStringLiteral("connectBarDestination"));
     combo->setEditable(true);
     combo->setInsertPolicy(QComboBox::NoInsert);
+    // List labels include baud rates and other descriptions. Qt's default
+    // completer copies those labels into typed destinations without selecting
+    // their records, so they must not be used as text completions.
+    combo->setCompleter(nullptr);
     // A fixed minimum and an expanding policy, never `AdjustToContents`: the
     // widest row in this dropdown is a `by-path` device name, and a combo that
     // sizes to its contents would set the window's minimum width from whatever
@@ -195,9 +199,6 @@ ConnectBar::ConnectBar(const I18n *i18n, QWidget *parent) : QToolBar(parent)
     // keystroke in this field is not — so without this the Connect button
     // stays greyed over a destination somebody has just finished typing, on a
     // machine with nothing remembered and nothing plugged in.
-    connect(m_destination->lineEdit(), &QLineEdit::textEdited, this, [this] {
-        m_chosen.reset();
-    });
     connect(m_destination->lineEdit(), &QLineEdit::textChanged, this, [this] {
         if (!m_connect->data().toBool()) {
             m_connect->setEnabled(!destination().isEmpty());
@@ -303,30 +304,7 @@ void ConnectBar::setDestination(const QString &text)
 
 void ConnectBar::showConnection(const RecentConnection &recent)
 {
-    QHash<QString, QString> deviceFor;
-    // Only a serial record has anything to look up, and this runs on the
-    // connect path: enumerating `/dev` to render the words "Local shell" is
-    // work in the way of the thing somebody actually asked for.
-    if (recent.kind != RecentConnection::Kind::Serial) {
-        showConnection(recent, recent.label());
-        return;
-    }
-    if (TtPortList *list = tt_serial_enumerate()) {
-        for (size_t i = 0; i < tt_port_list_len(list); i++) {
-            if (const TtPortInfo *info = tt_port_list_at(list, i)) {
-                deviceFor.insert(QString::fromUtf8(info->open_path),
-                                 QString::fromUtf8(info->device));
-            }
-        }
-        tt_port_list_free(list);
-    }
-    showConnection(recent, recent.label(deviceFor));
-}
-
-void ConnectBar::showConnection(const RecentConnection &recent,
-                                const QString &label)
-{
-    setDestination(label);
+    setDestination(recent.destination());
     m_chosen = recent;
 }
 
@@ -588,7 +566,7 @@ bool ConnectBar::eventFilter(QObject *watched, QEvent *event)
 
 void ConnectBar::commit()
 {
-    if (m_chosen) {
+    if (m_chosen && destination() == m_chosen->destination()) {
         // Opening a connection can update the field before this signal
         // returns. Keep the request alive even if that clears m_chosen.
         const RecentConnection chosen = *m_chosen;
@@ -618,7 +596,8 @@ void ConnectBar::chose(int index)
     // and the one they picked by accident was still the one Connect opened:
     // choose a recent shell by opening the dropdown, choose `myrouter` on
     // purpose, press Connect, and a local shell opens. So every other row
-    // clears it, and only [`textEdited`] is left to clear the rest.
+    // clears it. Typed text uses it only while it matches its destination;
+    // keeping that snapshot lets Undo recover the record's settings too.
     m_chosen.reset();
 
     // **Choosing a row fills the field; Connect is what connects.** A
@@ -628,8 +607,7 @@ void ConnectBar::chose(int index)
     case Row::Recent: {
         const int at = payload.toInt();
         if (at >= 0 && at < m_recents.size()) {
-            setDestination(m_destination->itemText(index));
-            m_chosen = m_recents.at(at);
+            showConnection(m_recents.at(at));
         }
         return;
     }

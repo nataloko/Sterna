@@ -404,12 +404,11 @@ void test_the_dropdown_offers_every_group()
     choose(rowWithText(combo, QStringLiteral("telnet 10.0.0.5:2323")));
     CHECK(chosen == -1);
     CHECK(typed.isEmpty());
-    CHECK(bar.destination() == QStringLiteral("telnet 10.0.0.5:2323"));
+    CHECK(bar.destination() == QStringLiteral("telnet://10.0.0.5:2323"));
     // Filling the field is only half of an answer if the button stays grey.
     CHECK(connectAction && connectAction->isEnabled());
 
-    // ...and committing it opens the *record*, not the words: the label has
-    // spaces in it and would otherwise be read as a command line.
+    // Committing opens the record, preserving parameters beyond the address.
     if (connectAction) {
         connectAction->trigger();
     }
@@ -431,7 +430,7 @@ void test_the_dropdown_offers_every_group()
     CHECK(chosen == 2323);
     CHECK(typed.isEmpty());
 
-    // Typing over it is somebody saying something else, so the record goes.
+    // Different text must not use the selected record's connection settings.
     chosen = -1;
     combo->lineEdit()->setText(QStringLiteral("myrouter"));
     emit combo->lineEdit()->textEdited(QStringLiteral("myrouter"));
@@ -525,6 +524,100 @@ void test_a_committed_record_survives_field_edits()
     CHECK(action);
     if (action) action->trigger();
     CHECK(called);
+}
+
+/// Serial settings belong in the list, never in text passed to a host parser.
+void test_editing_a_serial_destination_cannot_submit_its_label()
+{
+    TtSerialParams params;
+    tt_serial_params_default(&params);
+    params.baud = 9600;
+    const auto serial = RecentConnection::serial(QStringLiteral("/dev/ttyUSB0"), params);
+    ConnectBar bar(nullptr);
+    bar.setRecents({serial});
+    bar.showConnection(serial);
+    auto *combo = bar.findChild<QComboBox *>(QStringLiteral("connectBarDestination"));
+    CHECK(combo);
+    if (!combo) return;
+    CHECK(rowWithText(combo, serial.label()) >= 0);
+    CHECK(bar.destination() == serial.path);
+    CHECK(combo->completer() == nullptr);
+
+    QString chosen;
+    QString typed;
+    QObject::connect(&bar, &ConnectBar::recentChosen,
+                     [&](const RecentConnection &one) { chosen = one.encode(); });
+    QObject::connect(&bar, &ConnectBar::destinationEntered,
+                     [&](const QString &text) { typed = text; });
+    auto *editor = combo->lineEdit();
+    editor->selectAll();
+    QKeyEvent replace(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    QApplication::sendEvent(editor, &replace);
+    editor->undo();
+    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(editor, &enter);
+    // Undo must restore the serial record, including its nondefault baud rate.
+    CHECK(chosen == serial.encode());
+    CHECK(typed.isEmpty());
+
+    chosen.clear();
+    editor->end(false);
+    QApplication::sendEvent(editor, &replace);
+    QApplication::sendEvent(editor, &enter);
+    CHECK(chosen.isEmpty());
+    CHECK(typed == serial.path + QLatin1Char('x'));
+    CHECK(MainWindow::parseDestination(typed).kind
+          == MainWindow::Destination::Kind::Serial);
+
+    // Accept a real popup row with the keyboard. Its descriptive label must
+    // become an editable path, without opening anything on the selection.
+    chosen.clear();
+    typed.clear();
+    bar.show();
+    combo->showPopup();
+    const int row = rowWithText(combo, serial.label());
+    CHECK(row >= 0);
+    combo->view()->setCurrentIndex(combo->model()->index(row, 0));
+    QApplication::sendEvent(combo->view(), &enter);
+    CHECK(bar.destination() == serial.path);
+    CHECK(chosen.isEmpty());
+    CHECK(typed.isEmpty());
+    QApplication::sendEvent(editor, &enter);
+    CHECK(chosen == serial.encode());
+}
+
+void test_record_destinations_keep_their_transport()
+{
+    const auto ssh = RecentConnection::ssh(QStringLiteral("buildbox"),
+        QStringLiteral("alice"), 2222, QStringLiteral("/tmp/test-key"), true);
+    const auto telnet = RecentConnection::telnet(QStringLiteral("::1"), 2323,
+                                                TT_TELNET_RAW);
+    using Kind = MainWindow::Destination::Kind;
+    const auto sshTarget = MainWindow::parseDestination(ssh.destination());
+    CHECK(sshTarget.kind == Kind::Ssh);
+    CHECK(sshTarget.host == ssh.host);
+    CHECK(sshTarget.user == ssh.user);
+    CHECK(sshTarget.port == ssh.port);
+    const auto telnetTarget = MainWindow::parseDestination(telnet.destination());
+    CHECK(telnetTarget.kind == Kind::Telnet);
+    CHECK(telnetTarget.host == QStringLiteral("[::1]"));
+    CHECK(telnetTarget.port == telnet.port);
+    CHECK(MainWindow::parseDestination(RecentConnection::shell().destination()).kind
+          == Kind::Shell);
+
+    ConnectBar bar(nullptr);
+    bar.showConnection(ssh);
+    auto *combo = bar.findChild<QComboBox *>(QStringLiteral("connectBarDestination"));
+    CHECK(combo);
+    if (!combo) return;
+    QString chosen;
+    QObject::connect(&bar, &ConnectBar::recentChosen,
+                     [&](const RecentConnection &one) { chosen = one.encode(); });
+    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(combo->lineEdit(), &enter);
+    // The editable address omits the key and compatibility mode, but opening
+    // a chosen record must retain them.
+    CHECK(chosen == ssh.encode());
 }
 
 /// Opening the dropdown must not move the field, at any window width.
@@ -744,7 +837,7 @@ void test_a_typed_shell_connects_and_is_remembered()
     CHECK(window.session()->setting(QStringLiteral("recent.connections"))
           == QStringLiteral("shell:"));
 
-    CHECK(bar->destination() == QStringLiteral("Local shell"));
+    CHECK(bar->destination() == QStringLiteral("shell"));
 
     // And the next launch opens on it. The list is read where the rest of the
     // remembered connection is, which is after the bar exists — a guard that
@@ -753,7 +846,7 @@ void test_a_typed_shell_connects_and_is_remembered()
     auto *nextBar = next.findChild<ConnectBar *>(QStringLiteral("connectBar"));
     CHECK(nextBar != nullptr);
     if (nextBar) {
-        CHECK(nextBar->destination() == QStringLiteral("Local shell"));
+        CHECK(nextBar->destination() == QStringLiteral("shell"));
     }
 }
 
@@ -772,7 +865,7 @@ void test_typing_a_destination_during_a_live_session()
     auto *editor = combo->lineEdit();
     editor->setFocus();
     editor->selectAll();
-    for (QChar c : QStringLiteral("shell")) {
+    for (QChar c : QStringLiteral("SHELL")) {
         QKeyEvent press(QEvent::KeyPress, c.toUpper().unicode(), Qt::NoModifier,
                         QString(c));
         QApplication::sendEvent(editor, &press);
@@ -780,7 +873,7 @@ void test_typing_a_destination_during_a_live_session()
         CHECK(window.session() == original);
         CHECK(original->isConnected());
     }
-    CHECK(editor->text() == QStringLiteral("shell"));
+    CHECK(editor->text() == QStringLiteral("SHELL"));
     QKeyEvent repeat(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
                      QString(), true);
     QApplication::sendEvent(editor, &repeat);
@@ -790,13 +883,13 @@ void test_typing_a_destination_during_a_live_session()
     if (!panels) return;
     for (Qt::Key key : {Qt::Key_Return, Qt::Key_Escape}) {
         commitWithConfirmation(window, [&](QMessageBox &box) {
-            CHECK(box.text().contains(QStringLiteral("\"shell\"")));
+            CHECK(box.text().contains(QStringLiteral("\"SHELL\"")));
             pressKey(&box, key);
         });
         CHECK(panels->count() == 1);
         CHECK(window.session() == original);
         CHECK(original->isConnected());
-        CHECK(editor->text() == QStringLiteral("shell"));
+        CHECK(editor->text() == QStringLiteral("SHELL"));
     }
     commitWithConfirmation(window, acceptConnection, Qt::Key_Enter);
     qApp->processEvents();
@@ -825,7 +918,7 @@ void test_a_saved_destination_also_needs_confirmation()
     });
     CHECK(window.session() == original);
     CHECK(original->isConnected());
-    CHECK(combo->currentText() == QStringLiteral("Local shell"));
+    CHECK(combo->currentText() == QStringLiteral("shell"));
     commitWithConfirmation(window, acceptConnection);
     CHECK(window.session() != original);
     CHECK(window.session()->isConnected());
@@ -1055,6 +1148,8 @@ int main(int argc, char **argv)
     test_what_a_typed_destination_means();
     test_the_dropdown_offers_every_group();
     test_a_committed_record_survives_field_edits();
+    test_editing_a_serial_destination_cannot_submit_its_label();
+    test_record_destinations_keep_their_transport();
     test_a_port_another_program_holds_is_greyed();
     test_the_dropdown_does_not_move_the_field();
     for (int i = 1; i + 1 < argc; i++) {

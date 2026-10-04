@@ -60,20 +60,15 @@ public:
     SendProgressDialog *sendDialog() const { return m_sendDialog; }
     /// What the shared connection selector shows when this page is active.
     ///
-    /// The record is kept as well as its label: a recent SSH row carries an
-    /// identity and compatibility mode which cannot be recovered from the
-    /// words in the field. The label is cached so selecting a serial tab does
-    /// not enumerate every device again merely to redisplay its friendly name.
+    /// A recent SSH row carries an identity and compatibility mode which
+    /// cannot be recovered from the address in the field.
     const std::optional<RecentConnection> &selectorConnection() const
     {
         return m_selectorConnection;
     }
-    QString selectorLabel() const { return m_selectorLabel; }
-    void setSelectorConnection(const RecentConnection &connection,
-                               const QString &label)
+    void setSelectorConnection(const RecentConnection &connection)
     {
         m_selectorConnection = connection;
-        m_selectorLabel = label;
     }
     /// Replace the modeless transfer dialog. The page owns it even though its
     /// visual parent is the window, so closing a tab cannot strand one.
@@ -129,5 +124,4 @@ private:
     XferProgressDialog *m_xferDialog = nullptr;
     SendProgressDialog *m_sendDialog = nullptr;
     std::optional<RecentConnection> m_selectorConnection;
-    QString m_selectorLabel;
 };

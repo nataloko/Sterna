@@ -14,6 +14,12 @@ are available from the [GitHub releases page].
 
 ### Fixed
 
+- **Serial settings no longer become a host name.** Editing a saved serial
+  label and undoing the edit could submit the label as a command line, causing
+  a network lookup for `8N1`. The editable field now contains only the device
+  path or connection address; baud rate and framing stay in the dropdown.
+  Automatic completion no longer inserts descriptive labels, and Undo restores
+  the selected connection's settings as well as its address.
 - **One Enter press opens one connection.** Opening a connection could move
   focus and make the editable dropdown process the same Enter press twice.
   The field now consumes the key once and ignores key repeats.

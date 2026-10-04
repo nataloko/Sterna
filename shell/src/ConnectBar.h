@@ -53,12 +53,8 @@ public:
     /// What is typed in the destination field.
     QString destination() const;
     void setDestination(const QString &text);
-    /// Show a connection that was just opened, in the same words the list
-    /// would have offered it in.
+    /// Show the editable address and retain the record's connection settings.
     void showConnection(const RecentConnection &recent);
-    /// Restore a page's already-rendered connection without enumerating serial
-    /// devices again. `label` came from this bar when the page connected.
-    void showConnection(const RecentConnection &recent, const QString &label);
 
     /// The list the dropdown offers. Held rather than read on demand because
     /// the bar has no session to read it from; the window pushes it whenever
@@ -174,14 +170,11 @@ private:
     QHash<QString, Busy> m_busy;
     /// Which remembered connection the field is currently showing.
     ///
-    /// A record is not its own label: picking `ssh alice@buildbox:2222` and
-    /// then pressing Connect must open *that record*, with the identity and
-    /// the legacy flag it carries, and not re-read the words back out of the
-    /// field — which would parse as a command line, because it has spaces in
-    /// it. Hold the record rather than its index: successfully opening it
+    /// The address alone cannot preserve an SSH identity or legacy flag.
+    /// Hold the record rather than its index: successfully opening it
     /// moves it to the front of the recent list, and an index would then name
-    /// a different connection. Editing the text clears this, since after that
-    /// the words are the only thing anybody has said.
+    /// a different connection. It applies only when the field matches its
+    /// destination. Undo can then restore the settings as well as the text.
     std::optional<RecentConnection> m_chosen;
     QString m_connectText;
     QString m_disconnectText;

@@ -79,6 +79,9 @@ struct RecentConnection {
     /// and the newest parameters are the ones that worked.
     bool sameDestination(const RecentConnection &other) const;
 
+    /// An editable destination, without the list's descriptive settings.
+    QString destination() const;
+
     /// What the dropdown shows. `deviceFor` maps `open_path` to the friendlier
     /// `device` name for ports that are plugged in right now; a port that is
     /// not gets its stored path, because a name it no longer answers to would
