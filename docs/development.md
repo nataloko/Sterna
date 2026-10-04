@@ -32,3 +32,8 @@ release packaging environment.
 
 Tests that require serial devices, servers, or Windows need their documented
 prerequisites. A successful local build does not verify those tests.
+
+`./dev package` builds the AppImage in the pinned manylinux container. It keeps
+the release toolchain outside Projects. It copies the result and checksums to
+`Releases/<project>/<revision>-<timestamp>/` in the workspace. It does not publish
+or sign an update. The Windows installer retains its existing documented workflow.
