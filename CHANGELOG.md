@@ -5,6 +5,8 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-10-04
+
 ### Changed
 
 - **Confirm a new destination while a session is active.** Pressing Enter in
@@ -727,7 +729,8 @@ Initial public release.
 - Linux AppImage and Windows installer packages.
 
 [GitHub releases page]: https://github.com/nataloko/Sterna/releases
-[Unreleased]: https://github.com/nataloko/Sterna/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/nataloko/Sterna/compare/v0.7.4...HEAD
+[0.7.4]: https://github.com/nataloko/Sterna/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/nataloko/Sterna/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/nataloko/Sterna/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/nataloko/Sterna/compare/v0.7.0...v0.7.1
