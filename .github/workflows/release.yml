@@ -69,6 +69,10 @@ jobs:
           docker image prune --all --force
           df -h /
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install the repository Rust toolchain
+        # Cargo selects rust-toolchain.toml, which can differ from stable.
+        # Install it before the build container mounts .rustup read-only.
+        run: rustc --version
       - name: Pinned build inputs
         # Assignments only. `$GITHUB_ENV` is not a shell: a comment line in it
         # is "Invalid format" and the step fails, and that file is mostly
