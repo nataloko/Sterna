@@ -5,6 +5,24 @@ are available from the [GitHub releases page].
 
 ## [Unreleased]
 
+### Fixed
+
+- **Line edit is easier to follow at the prompt.** The insertion cursor now
+  aligns with the text, follows the blink setting, and disappears when the
+  pane loses keyboard focus. Text stays on the terminal's baseline when font
+  padding is set. A tinted background and underline distinguish the draft
+  from received text, with a **Not sent · Return sends** hint and a count of
+  additional pasted lines when there is room. Clicking the draft restores
+  keyboard focus to its pane.
+- **Right-click Paste respects the line queue.** Pasting several lines into
+  the editor now keeps them separate, just like keyboard paste: each line
+  waits for its own Return. The menu no longer advertises Ctrl+C and Ctrl+V
+  as editor shortcuts, since those keys still send terminal control bytes.
+
+The serial hardware suites did not run for this release: neither the FTDI pair
+nor the ESP32-S3 rig was attached. These changes affect the line editor and do
+not change the serial transport.
+
 ## [0.7.2] - 2026-09-08
 
 ### Fixed
