@@ -165,8 +165,11 @@ jobs:
             mingw64-qt6-qtbase
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-gnu
+      - name: Install Windows target for the repository toolchain
+        # rust-toolchain.toml selects the compiler Cargo will use. Installing
+        # the target on the action's stable toolchain leaves that compiler
+        # without Windows's standard library, even at the same Rust version.
+        run: rustup target add x86_64-pc-windows-gnu
       - name: Build NSIS installer
         run: ./packaging/windows/build.sh --clean
       - name: Check installer identity
