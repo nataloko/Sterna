@@ -60,3 +60,7 @@ compile_commands.json
 # is in the repository already, as commits on that branch; this is only the
 # checkout, and one of them holds a whole build tree.
 /.claude/worktrees/
+
+# Local development settings and direct preset output
+.cache/
+CMakeUserPresets.json

@@ -23,8 +23,15 @@ set -uo pipefail
 
 cd "$(dirname "$0")"
 
-ORACLE=oracle/build/oracle
-RUST=crates/target/debug/tt-dump
+oracle_build=${DEV_BUILD_ROOT:+$DEV_BUILD_ROOT/oracle}
+oracle_build=${oracle_build:-$PWD/oracle/build}
+ORACLE=$oracle_build/oracle
+rust_target=${CARGO_TARGET_DIR:-$PWD/crates/target}
+case "$rust_target" in
+	/*) ;;
+	*) rust_target=$PWD/crates/$rust_target ;;
+esac
+RUST=$rust_target/debug/tt-dump
 VERBOSE=0
 
 filters=()
@@ -38,7 +45,7 @@ done
 
 if [ ! -x "$ORACLE" ]; then
 	echo "run_diff: building the oracle" >&2
-	make -C oracle >/dev/null || { echo "run_diff: oracle build failed" >&2; exit 2; }
+	make -C oracle BUILD="$oracle_build" >/dev/null || { echo "run_diff: oracle build failed" >&2; exit 2; }
 fi
 
 echo "run_diff: building tt-dump" >&2

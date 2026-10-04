@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Workspace commands. Native project commands remain available.
+set -euo pipefail
+project_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+setup_dir=${DEV_SETUP_ROOT:-}
+if [ -z "$setup_dir" ]; then
+    workspace_dir=$project_dir
+    while [ "$workspace_dir" != / ]; do
+        if [ -f "$workspace_dir/dev-setup/dev.py" ]; then
+            setup_dir=$workspace_dir/dev-setup
+            break
+        fi
+        workspace_dir=$(dirname -- "$workspace_dir")
+    done
+fi
+if [ -z "$setup_dir" ] || [ ! -f "$setup_dir/dev.py" ]; then
+    echo 'Workspace setup is missing. Place dev-setup beside the project, or set DEV_SETUP_ROOT.' >&2
+    exit 2
+fi
+exec python3 "$setup_dir/dev.py" --project "$project_dir" "$@"
